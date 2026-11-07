@@ -1946,18 +1946,37 @@ func validateSharedStorageEnv(path string) error {
 	}
 	backend := strings.ToLower(values["FAAS_STORAGE_BACKEND"])
 	if !storage.IsRemoteBackendKind(backend) {
-		return errors.New("must set FAAS_STORAGE_BACKEND=oci or gcs")
+		return errors.New("must set FAAS_STORAGE_BACKEND=oci, gcs, or s3")
 	}
 	fallback := strings.ToLower(values["FAAS_STORAGE_FALLBACK_BACKEND"])
-	if fallback != "" && fallback != "oci" {
-		return errors.New("FAAS_STORAGE_FALLBACK_BACKEND must be empty or oci")
+	switch {
+	case fallback == "" || fallback == "oci":
+	case fallback == "gcs" && backend == "s3":
+	default:
+		return errors.New("FAAS_STORAGE_FALLBACK_BACKEND must be empty or oci (or gcs with s3)")
 	}
 	if backend == "oci" || fallback == "oci" {
 		if !strings.HasPrefix(values["FAAS_OCI_REGISTRY"], "https://") {
 			return errors.New("FAAS_OCI_REGISTRY must use https:// for OCI storage")
 		}
 	}
-	if backend == "gcs" {
+	if backend == "s3" {
+		pathStyle, _ := strconv.ParseBool(values["FAAS_S3_PATH_STYLE"])
+		if err := (storage.S3Config{
+			Bucket:          values["FAAS_S3_BUCKET"],
+			Endpoint:        values["FAAS_S3_ENDPOINT"],
+			Region:          values["FAAS_S3_REGION"],
+			AccessKeyID:     values["FAAS_S3_ACCESS_KEY_ID"],
+			SecretAccessKey: values["FAAS_S3_SECRET_ACCESS_KEY"],
+			PathStyle:       pathStyle,
+		}).Validate(); err != nil {
+			return err
+		}
+		if !strings.HasPrefix(values["FAAS_S3_ENDPOINT"], "https://") {
+			return errors.New("FAAS_S3_ENDPOINT must use https:// for shared S3 storage")
+		}
+	}
+	if backend == "gcs" || fallback == "gcs" {
 		bucket := strings.TrimSpace(values["FAAS_GCS_BUCKET"])
 		if bucket == "" || strings.ContainsAny(bucket, "/ \\") {
 			return errors.New("FAAS_GCS_BUCKET must contain a private GCS bucket name")
@@ -1996,10 +2015,18 @@ func validateSharedStorageEnv(path string) error {
 // override file. Loading this file after storage.env changes only the OCI
 // identity used by imaged; it cannot silently alter registry routing, cache,
 // or shared-artifact safety settings for the node.
+// validateImagedStorageEnv checks imaged's lifecycle credential file. It holds
+// exactly one credential pair that overrides the shared read/write identity for
+// imaged alone: the OCI registry login, or an S3 access key pair. Storage
+// topology stays in the shared storage.env.
 func validateImagedStorageEnv(path string) error {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return err
+	}
+	allowed := map[string]bool{
+		"FAAS_OCI_USERNAME": true, "FAAS_OCI_PASSWORD": true,
+		"FAAS_S3_ACCESS_KEY_ID": true, "FAAS_S3_SECRET_ACCESS_KEY": true,
 	}
 	values := make(map[string]string, 2)
 	for _, line := range strings.Split(string(body), "\n") {
@@ -2010,15 +2037,24 @@ func validateImagedStorageEnv(path string) error {
 		line = strings.TrimPrefix(line, "export ")
 		key, value, ok := strings.Cut(line, "=")
 		key = strings.TrimSpace(key)
-		if !ok || (key != "FAAS_OCI_USERNAME" && key != "FAAS_OCI_PASSWORD") {
-			return fmt.Errorf("only FAAS_OCI_USERNAME and FAAS_OCI_PASSWORD assignments are allowed")
+		if !ok || !allowed[key] {
+			return fmt.Errorf("only FAAS_OCI_USERNAME and FAAS_OCI_PASSWORD, or FAAS_S3_ACCESS_KEY_ID and FAAS_S3_SECRET_ACCESS_KEY, assignments are allowed")
 		}
 		if _, duplicate := values[key]; duplicate {
 			return fmt.Errorf("duplicate %s assignment", key)
 		}
 		values[key] = strings.Trim(strings.TrimSpace(value), "\"'")
 	}
-	for _, key := range []string{"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD"} {
+	pair := []string{"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD"}
+	_, s3Key := values["FAAS_S3_ACCESS_KEY_ID"]
+	_, s3Secret := values["FAAS_S3_SECRET_ACCESS_KEY"]
+	if s3Key || s3Secret {
+		pair = []string{"FAAS_S3_ACCESS_KEY_ID", "FAAS_S3_SECRET_ACCESS_KEY"}
+	}
+	if len(values) != 2 {
+		return fmt.Errorf("must set exactly one credential pair: %s and %s", pair[0], pair[1])
+	}
+	for _, key := range pair {
 		value := strings.TrimSpace(values[key])
 		if value == "" || strings.Contains(value, "__SET_") {
 			return fmt.Errorf("must set non-placeholder %s", key)

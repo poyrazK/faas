@@ -36,7 +36,7 @@ import (
 //
 // Env contract:
 //
-//	FAAS_STORAGE_BACKEND          "local" (default) | "oci" | "gcs"
+//	FAAS_STORAGE_BACKEND          "local" (default) | "oci" | "gcs" | "s3"
 //	FAAS_STORAGE_ROOT             local-only — root dir (e.g. /srv/fc)
 //	FAAS_APPS_ROOT                local-only — apps prefix (may equal ROOT)
 //	FAAS_STORAGE_LOCAL_PREFIXES   remote-only — comma-separated prefix list
@@ -75,9 +75,17 @@ import (
 //	FAAS_OCI_PASSWORD             oci-only — optional Basic-Auth password
 //	FAAS_OCI_TIMEOUT_SECONDS      oci-only — per-request timeout (default 60)
 //	FAAS_GCS_BUCKET               gcs-only — existing private bucket name
-//	FAAS_STORAGE_FALLBACK_BACKEND gcs-only — optional "oci" read fallback
-//	                                during migration. Writes go only to GCS;
-//	                                missing reads and deletes also consult OCI.
+//	FAAS_S3_BUCKET                s3-only — existing private bucket name
+//	FAAS_S3_ENDPOINT              s3-only — HTTPS origin of the S3 API (e.g.
+//	                                https://s3.bhs.io.cloud.ovh.net)
+//	FAAS_S3_REGION                s3-only — signing region (e.g. bhs)
+//	FAAS_S3_ACCESS_KEY_ID         s3-only — access key; there is no attached
+//	FAAS_S3_SECRET_ACCESS_KEY       machine identity on bare metal
+//	FAAS_S3_PATH_STYLE            s3-only — "1" for path-style addressing
+//	FAAS_STORAGE_FALLBACK_BACKEND gcs: optional "oci"; s3: optional "gcs" or
+//	                                "oci". A read fallback during migration:
+//	                                writes go only to the primary; missing
+//	                                reads and deletes also consult it.
 //	FAAS_STORAGE_SNAPSHOT_COMPRESSION
 //	                                remote — encoding for snapshot
 //	                                memory: "none" (default) | "zstd". Readers
@@ -121,8 +129,10 @@ func BackendFromEnvContext(ctx context.Context) (StorageBackend, error) {
 		be, err = ociBackendFromEnv()
 	case "gcs":
 		be, err = gcsBackendFromEnv(ctx)
+	case "s3":
+		be, err = s3BackendFromEnv(ctx)
 	default:
-		return nil, fmt.Errorf("storage: unknown FAAS_STORAGE_BACKEND=%q (want \"local\", \"oci\", or \"gcs\")", kind)
+		return nil, fmt.Errorf("storage: unknown FAAS_STORAGE_BACKEND=%q (want \"local\", \"oci\", \"gcs\", or \"s3\")", kind)
 	}
 	if err != nil {
 		return nil, err
@@ -275,7 +285,7 @@ func validateSharedArtifactMode(kind string) error {
 		return fmt.Errorf("storage: FAAS_REQUIRE_SHARED_ARTIFACTS=%q must be 0, 1, false, or true", raw)
 	}
 	if !IsRemoteBackendKind(kind) {
-		return fmt.Errorf("storage: FAAS_REQUIRE_SHARED_ARTIFACTS requires a remote FAAS_STORAGE_BACKEND (oci or gcs); got %q", kind)
+		return fmt.Errorf("storage: FAAS_REQUIRE_SHARED_ARTIFACTS requires a remote FAAS_STORAGE_BACKEND (oci, gcs, or s3); got %q", kind)
 	}
 	rawPrefixes, set := os.LookupEnv("FAAS_STORAGE_LOCAL_PREFIXES")
 	if !set || !strings.EqualFold(strings.TrimSpace(rawPrefixes), "none") {
@@ -288,8 +298,13 @@ func validateSharedArtifactMode(kind string) error {
 			return errors.New("storage: OCI shared artifact storage requires FAAS_OCI_REGISTRY to use an HTTPS URL")
 		}
 	}
-	if kind == "gcs" {
+	if kind == "gcs" || (kind == "s3" && strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_STORAGE_FALLBACK_BACKEND")), "gcs")) {
 		if err := validateGCSBucket(os.Getenv("FAAS_GCS_BUCKET")); err != nil {
+			return err
+		}
+	}
+	if kind == "s3" {
+		if err := s3ConfigFromEnv().Validate(); err != nil {
 			return err
 		}
 	}
@@ -425,6 +440,64 @@ func gcsBackendFromEnv(ctx context.Context) (StorageBackend, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	return routeRemoteBackend(remote)
+}
+
+func s3ConfigFromEnv() S3Config {
+	pathStyle, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("FAAS_S3_PATH_STYLE")))
+	return S3Config{
+		Bucket:          os.Getenv("FAAS_S3_BUCKET"),
+		Endpoint:        os.Getenv("FAAS_S3_ENDPOINT"),
+		Region:          os.Getenv("FAAS_S3_REGION"),
+		AccessKeyID:     os.Getenv("FAAS_S3_ACCESS_KEY_ID"),
+		SecretAccessKey: os.Getenv("FAAS_S3_SECRET_ACCESS_KEY"),
+		PathStyle:       pathStyle,
+	}
+}
+
+func s3BackendFromEnv(ctx context.Context) (StorageBackend, error) {
+	compression, err := snapshotCompressionFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if raw := strings.TrimSpace(os.Getenv("FAAS_S3_PATH_STYLE")); raw != "" {
+		if _, err := strconv.ParseBool(raw); err != nil {
+			return nil, fmt.Errorf("storage: FAAS_S3_PATH_STYLE=%q: want \"1\" or \"0\"", raw)
+		}
+	}
+	fallback := strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_STORAGE_FALLBACK_BACKEND")))
+	if fallback != "" && fallback != "gcs" && fallback != "oci" {
+		return nil, fmt.Errorf("storage: unsupported FAAS_STORAGE_FALLBACK_BACKEND=%q with s3 (want \"gcs\" or \"oci\")", fallback)
+	}
+	sparseExtents, err := sparseExtentsFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	s3Remote, err := NewS3StorageBackend(s3ConfigFromEnv(), compression)
+	if err != nil {
+		return nil, fmt.Errorf("storage: s3 backend: %w", err)
+	}
+	s3Remote.WithSparseExtents(sparseExtents)
+	var remote StorageBackend = s3Remote
+	switch fallback {
+	case "gcs":
+		// Migration off GCP: the GCS client uses Application Default
+		// Credentials, which outside GCP means GOOGLE_APPLICATION_CREDENTIALS.
+		legacy, legacyErr := NewGCSStorageBackend(ctx, os.Getenv("FAAS_GCS_BUCKET"), compression)
+		if legacyErr != nil {
+			return nil, fmt.Errorf("storage: GCS fallback: %w", legacyErr)
+		}
+		remote, err = NewFallbackStorageBackend(remote, legacy)
+	case "oci":
+		legacy, legacyErr := ociRemoteFromEnv()
+		if legacyErr != nil {
+			return nil, fmt.Errorf("storage: OCI fallback: %w", legacyErr)
+		}
+		remote, err = NewFallbackStorageBackend(remote, legacy)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return routeRemoteBackend(remote)
 }

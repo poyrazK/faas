@@ -874,6 +874,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case "gcs":
 		log.Info("vmmd: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
 			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	case "s3":
+		log.Info("vmmd: storage backend = s3", "bucket", envOr("FAAS_S3_BUCKET", ""),
+			"endpoint", envOr("FAAS_S3_ENDPOINT", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
 	default:
 		log.Info("vmmd: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"))
 	}

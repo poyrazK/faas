@@ -353,6 +353,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	case "gcs":
 		log.Info("imaged: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
 			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	case "s3":
+		log.Info("imaged: storage backend = s3", "bucket", envOr("FAAS_S3_BUCKET", ""),
+			"endpoint", envOr("FAAS_S3_ENDPOINT", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
 	default:
 		log.Info("imaged: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
 			"apps_root", appsRoot)

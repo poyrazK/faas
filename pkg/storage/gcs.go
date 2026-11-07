@@ -5,21 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	gcs "cloud.google.com/go/storage"
-	"github.com/klauspost/compress/zstd"
 	"google.golang.org/api/iterator"
 )
 
 const (
-	gcsEncodingMetadata         = "gregale-storage-encoding"
-	gcsUncompressedSizeMetadata = "gregale-storage-uncompressed-size"
+	gcsEncodingMetadata         = remoteEncodingMetadata
+	gcsUncompressedSizeMetadata = remoteUncompressedSizeMetadata
 	gcsContentType              = "application/octet-stream"
 )
 
@@ -128,32 +125,12 @@ func (g *GCSStorageBackend) Put(ctx context.Context, key string, r io.Reader) er
 		return fmt.Errorf("storage: gcs put %q: %w", key, err)
 	}
 
-	metadata := map[string]string{}
-	if (g.snapshotCompression == snapshotCompressionZstd && isSnapshotMemoryKey(key)) || isSnapshotDriveKey(key) || isRootfsFilesystemKey(key) {
-		encoding := snapshotCompressionZstd
-		var path string
-		var uncompressedSize int64
-		var err error
-		f, size, isFile := extentSource(r)
-		if g.sparseExtents && isFile {
-			encoding, uncompressedSize = encodingZstdExtents, size
-			path, err = compressExtentArtifact(ctx, "gcs", "faas-gcs-artifact-*.zst", key, f, size)
-		} else {
-			path, _, uncompressedSize, err = compressRemoteArtifact(ctx, "gcs", "faas-gcs-artifact-*.zst", key, r)
-		}
-		if err != nil {
-			return err
-		}
-		defer func() { _ = removeTmp(path) }()
-		file, err := os.Open(path) //nolint:forbidigo // private spool created above.
-		if err != nil {
-			return fmt.Errorf("storage: gcs put %q: open compressed spool: %w", key, err)
-		}
-		defer func() { _ = file.Close() }()
-		metadata[gcsEncodingMetadata] = encoding
-		metadata[gcsUncompressedSizeMetadata] = strconv.FormatInt(uncompressedSize, 10)
-		r = file
+	body, metadata, cleanup, err := encodeRemoteArtifact(ctx, "gcs", "faas-gcs-artifact-*.zst", key, r, g.snapshotCompression, g.sparseExtents)
+	if err != nil {
+		return err
 	}
+	defer cleanup()
+	r = body
 	if err := g.store.Put(ctx, g.bucket, key, r, metadata); err != nil {
 		return fmt.Errorf("storage: gcs put %q: %w", key, normalizeGCSError(err))
 	}
@@ -171,39 +148,7 @@ func (g *GCSStorageBackend) Get(ctx context.Context, key string) (io.ReadCloser,
 	if err != nil {
 		return nil, fmt.Errorf("storage: gcs get %q: %w", key, normalizeGCSError(err))
 	}
-	encoding := artifact.metadata[gcsEncodingMetadata]
-	switch encoding {
-	case "", snapshotCompressionNone:
-		return artifact.body, nil
-	case snapshotCompressionZstd:
-		rawSize := artifact.metadata[gcsUncompressedSizeMetadata]
-		expectedSize, parseErr := strconv.ParseInt(rawSize, 10, 64)
-		if parseErr != nil || expectedSize <= 0 {
-			_ = artifact.body.Close()
-			return nil, fmt.Errorf("storage: gcs get %q: invalid zstd uncompressed size %q", key, rawSize)
-		}
-		decoder, decodeErr := zstd.NewReader(artifact.body, zstd.WithDecoderConcurrency(1))
-		if decodeErr != nil {
-			_ = artifact.body.Close()
-			return nil, fmt.Errorf("storage: gcs get %q: start zstd decoder: %w", key, decodeErr)
-		}
-		return &decodedBlobReadCloser{decoder: decoder, source: artifact.body, expectedSize: expectedSize}, nil
-	case encodingZstdExtents:
-		rawSize := artifact.metadata[gcsUncompressedSizeMetadata]
-		expectedSize, parseErr := strconv.ParseInt(rawSize, 10, 64)
-		if parseErr != nil || expectedSize < 0 {
-			_ = artifact.body.Close()
-			return nil, fmt.Errorf("storage: gcs get %q: invalid extent logical size %q", key, rawSize)
-		}
-		reader, err := newExtentReadCloser(artifact.body, expectedSize)
-		if err != nil {
-			return nil, fmt.Errorf("storage: gcs get %q: %w", key, err)
-		}
-		return reader, nil
-	default:
-		_ = artifact.body.Close()
-		return nil, fmt.Errorf("storage: gcs get %q: unsupported object encoding %q", key, encoding)
-	}
+	return decodeRemoteArtifact("gcs", key, artifact.body, artifact.metadata)
 }
 
 func (g *GCSStorageBackend) Delete(ctx context.Context, key string) error {

@@ -1266,6 +1266,42 @@ func TestValidateSharedStorageEnv(t *testing.T) {
 	if err := validateSharedStorageEnv(path); err != nil {
 		t.Fatalf("valid GCS migration env rejected: %v", err)
 	}
+	s3Env := "FAAS_STORAGE_BACKEND=s3\n" +
+		"FAAS_S3_BUCKET=gregale-artifacts-bhs\n" +
+		"FAAS_S3_ENDPOINT=https://s3.bhs.io.cloud.ovh.net\n" +
+		"FAAS_S3_REGION=bhs\n" +
+		"FAAS_S3_ACCESS_KEY_ID=AK\n" +
+		"FAAS_S3_SECRET_ACCESS_KEY=SK\n" +
+		"FAAS_STORAGE_FALLBACK_BACKEND=gcs\n" +
+		"FAAS_GCS_BUCKET=gregale-artifacts-test\n" +
+		"FAAS_STORAGE_LOCAL_PREFIXES=none\n" +
+		"FAAS_REQUIRE_SHARED_ARTIFACTS=1\n" +
+		"FAAS_STORAGE_CACHE_SERVE_STALE=0\n"
+	if err := os.WriteFile(path, []byte(s3Env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSharedStorageEnv(path); err != nil {
+		t.Fatalf("valid S3 env with GCS migration fallback rejected: %v", err)
+	}
+	for name, body := range map[string]string{
+		"plain http endpoint":     strings.Replace(s3Env, "https://s3.bhs", "http://s3.bhs", 1),
+		"no region":               strings.Replace(s3Env, "FAAS_S3_REGION=bhs\n", "", 1),
+		"no secret":               strings.Replace(s3Env, "FAAS_S3_SECRET_ACCESS_KEY=SK\n", "", 1),
+		"gcs fallback, no bucket": strings.Replace(s3Env, "FAAS_GCS_BUCKET=gregale-artifacts-test\n", "", 1),
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateSharedStorageEnv(path); err == nil {
+			t.Fatalf("%s: invalid S3 storage env accepted", name)
+		}
+	}
+	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=gcs\nFAAS_GCS_BUCKET=b-test\nFAAS_STORAGE_FALLBACK_BACKEND=gcs\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSharedStorageEnv(path); err == nil {
+		t.Fatal("gcs fallback under gcs accepted")
+	}
 	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=local\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1300,6 +1336,12 @@ func TestValidateSharedStorageEnv(t *testing.T) {
 
 func TestValidateImagedStorageEnv(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "imaged-storage.env")
+	if err := os.WriteFile(path, []byte("FAAS_S3_ACCESS_KEY_ID=AK\nFAAS_S3_SECRET_ACCESS_KEY=SK\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateImagedStorageEnv(path); err != nil {
+		t.Fatalf("valid S3 lifecycle env rejected: %v", err)
+	}
 	if err := os.WriteFile(path, []byte("FAAS_OCI_USERNAME=gregale-bot\nFAAS_OCI_PASSWORD=secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1310,6 +1352,9 @@ func TestValidateImagedStorageEnv(t *testing.T) {
 		"FAAS_OCI_USERNAME=gregale-bot\n",
 		"FAAS_OCI_USERNAME=gregale-bot\nFAAS_OCI_PASSWORD=secret\nFAAS_STORAGE_BACKEND=local\n",
 		"FAAS_OCI_USERNAME=gregale-bot\nFAAS_OCI_PASSWORD=__SET_FROM_SECRET_STORE__\n",
+		"FAAS_S3_ACCESS_KEY_ID=AK\n",
+		"FAAS_OCI_USERNAME=gregale-bot\nFAAS_S3_SECRET_ACCESS_KEY=SK\n",
+		"FAAS_S3_ACCESS_KEY_ID=AK\nFAAS_S3_SECRET_ACCESS_KEY=SK\nFAAS_OCI_PASSWORD=secret\n",
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
