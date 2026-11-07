@@ -857,6 +857,7 @@ jobs:
         # to boot when it is reachable. Reproduce that security boundary before
         # dropping back to the runner uid for the test process.
         run: |
+          # sudo-rs ignores -E, so pass the environment the test needs explicitly.
           BOOT_CONTRACT_PATH="$PATH"
           sudo -E setpriv \
             --bounding-set=-sys_admin \
@@ -864,7 +865,9 @@ jobs:
             --regid "$(id -g)" \
             --init-groups \
             --no-new-privs \
-            -- env "PATH=$BOOT_CONTRACT_PATH" \
+            -- env "PATH=$BOOT_CONTRACT_PATH" "HOME=$HOME" \
+            "DATABASE_URL=${DATABASE_URL:-}" "FAAS_SKIP_PG_TESTS=${FAAS_SKIP_PG_TESTS:-}" \
+            "GOTOOLCHAIN=${GOTOOLCHAIN:-local}" \
             go test -race -count=1 -timeout=12m -run '^TestBootContract_' ./cmd/e2e/...
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'
