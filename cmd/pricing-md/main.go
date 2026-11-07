@@ -81,7 +81,7 @@ func render() string {
 		fmt.Fprintf(&b, "| **%s** | %d | %s |\n", titlePlan(plan), l.DeveloperApps, formatDuration(l.DeveloperLeaseMaxHours*3600))
 	}
 	b.WriteString("\n## Builds\n\n")
-	b.WriteString("Builds are free. Each plan includes builder time per UTC month, shared by every app of the account or organization that pays for them; a running build counts up to now. A build that would start past it is refused with `plan_limit_build_minutes` until the month ends or the plan grows. Deploying a prebuilt image builds nothing and still works.\n\n")
+	b.WriteString("Builds are free. Each plan includes builder time per UTC month, shared by every app of the account or organization that pays for them; a running build counts up to now, and no build counts past the 15-minute build timeout. A build that would start past it is refused with `plan_limit_build_minutes` until the month ends or the plan grows. Deploying a prebuilt image builds nothing and still works.\n\n")
 	b.WriteString("| Plan | Build minutes / month |\n")
 	b.WriteString("|---|---:|\n")
 	for _, plan := range api.Plans {

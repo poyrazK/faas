@@ -85,13 +85,12 @@ about 150 build-minutes an hour.
 
   | Plan | Build minutes / month |
   |---|---:|
-  | Free | 300 |
+  | Free | 200 |
   | Hobby | 1,000 |
   | Pro | 3,000 |
-  | Scale | 10,000 |
+  | Scale | 6,000 |
 
-  These numbers are assumed and can be changed. They are at or above common
-  free and entry build tiers, and well inside the guaranteed builder slot.
+  The owner set these numbers on 2026-11-07 (amendment 1).
 - **What counts.** Each build of the payer's apps that started this month,
   from `started_at` to `finished_at`, or to now while it runs. A coalesced
   build ran no builder of its own and does not count.
@@ -131,4 +130,19 @@ about 150 build-minutes an hour.
 - **Open follow-ups.**
   - Response headers are not counted, only bodies.
   - The log archive still keeps every line for 90 days (ADR-20261104085150).
-  - The build-minute numbers are assumed until the owner sets them.
+
+## Amendment 1 (2026-11-07): owner's numbers, and a build counts at most the build timeout
+
+- **Numbers.** Free 200, Hobby 1,000, Pro 3,000, Scale 6,000 build minutes a
+  month (were assumed at 300 / 1,000 / 3,000 / 10,000).
+  - Production over the last 30 days: 503 successful builds, median 78 s,
+    p95 248 s, max 541 s. The heaviest account used about 120 minutes.
+  - One builder slot is about 43,000 minutes a month. Scale at 6,000 keeps
+    one account under 14% of the guaranteed slot.
+- **A build counts at most `BuildTimeoutSeconds` (15 minutes).** It ends at
+  `finished_at`, else `cancelled_at`, else now, capped at `started_at` plus
+  the timeout.
+  - Production has cancelled builds with no `finished_at`. Counted to now,
+    three of them added about 69,000 minutes to one Scale account in a
+    month, which would have refused all of its builds.
+

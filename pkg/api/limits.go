@@ -4224,7 +4224,9 @@ type Limits struct {
 	// Builds are free; this bounds how much of the shared builder slots one
 	// account can hold. A build that starts past it is refused with
 	// plan_limit_build_minutes; image deploys build nothing and are not
-	// counted. A running build counts up to now.
+	// counted. A running build counts up to now, and no build counts past
+	// BuildTimeoutSeconds (amendment 1). Free 200, Hobby 1,000, Pro 3,000,
+	// Scale 6,000 (owner, 2026-11-07).
 	BuildMinutesPerMonth int
 	// DeveloperApps is the separate cap for expiring `gregale dev`
 	// environments. These sessions do not consume DeployedApps slots.
@@ -5865,7 +5867,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        10,
 		PreviewDeploysPerHour: 5,
-		BuildMinutesPerMonth:  300,
+		BuildMinutesPerMonth:  200,
 		DeveloperApps:         1,
 		MaxConcurrency:        1,
 		RAMMB:                 256,
@@ -7153,7 +7155,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        1000,
 		PreviewDeploysPerHour: 500,
-		BuildMinutesPerMonth:  10_000,
+		BuildMinutesPerMonth:  6_000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
 		RAMMB:                 2048,

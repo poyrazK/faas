@@ -292,7 +292,7 @@ type Querier interface {
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
 	// Builder time this UTC month of the account that pays for an app
 	// (ADR-20261104132753): every build of that payer's apps that started at or
-	// after month_start, a running one counted up to now. A coalesced build ran
+	// after month_start, each capped at the build timeout (a running one counts up to now). A coalesced build ran
 	// no builder of its own. The payer is an organization only when it owns its
 	// resources, as bind_app_usage_owner decides.
 	BuildSecondsThisMonthForApp(ctx context.Context, db DBTX, arg BuildSecondsThisMonthForAppParams) (BuildSecondsThisMonthForAppRow, error)

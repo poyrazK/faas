@@ -90,6 +90,7 @@ func TestPg_BuildSecondsThisMonthCountsThePayersBuilds(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	_, appID, _ := seedLiveDeploy(t, s, ctx)
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	var first string
 	build := func(started time.Time, seconds int, coalesced bool) {
 		t.Helper()
 		dep, err := s.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindTarball, Status: state.DeployPending})
@@ -104,8 +105,12 @@ func TestPg_BuildSecondsThisMonthCountsThePayersBuilds(t *testing.T) {
 			b.ID, started, started.Add(time.Duration(seconds)*time.Second)); err != nil {
 			t.Fatal(err)
 		}
+		if first == "" {
+			first = b.ID
+		}
 		if coalesced {
-			if _, err := pool.Exec(ctx, `UPDATE builds SET coalesced_with = id WHERE id = $1`, b.ID); err != nil {
+			// Coalesced into an earlier build; a build cannot name itself.
+			if _, err := pool.Exec(ctx, `UPDATE builds SET coalesced_with = $2 WHERE id = $1`, b.ID, first); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -120,5 +125,45 @@ func TestPg_BuildSecondsThisMonthCountsThePayersBuilds(t *testing.T) {
 	}
 	if plan != api.PlanPro || seconds != 420 {
 		t.Fatalf("plan=%q seconds=%d, want pro and 420", plan, seconds)
+	}
+}
+
+// A build counts at most the build timeout: a cancelled build ends at
+// cancelled_at, and a row with no end at all (production had cancelled builds
+// without finished_at) counts BuildTimeoutSeconds, not until now
+// (ADR-20261104132753 amendment 1).
+func TestPg_BuildSecondsThisMonthCapsUnfinishedBuilds(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx)
+	build := func(started time.Time, set string, args ...any) {
+		t.Helper()
+		dep, err := s.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindTarball, Status: state.DeployPending})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := s.CreateBuild(ctx, dep.ID, state.DeploymentKindTarball, 1024, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE builds SET started_at = $2, finished_at = NULL WHERE id = $1`, b.ID, started); err != nil {
+			t.Fatal(err)
+		}
+		if set != "" {
+			if _, err := pool.Exec(ctx, `UPDATE builds SET `+set+` WHERE id = $1`, append([]any{b.ID}, args...)...); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// Both start well before the database's now(), early on one day, so the
+	// month measured from start holds both.
+	start := time.Now().UTC().Add(-48 * time.Hour).Truncate(24 * time.Hour).Add(time.Hour)
+	build(start, "cancelled_at = $2", start.Add(60*time.Second)) // cancelled after 60 s
+	build(start.Add(time.Hour), "")                              // no end recorded: capped
+	_, seconds, err := s.BuildSecondsThisMonth(ctx, appID, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(60 + api.BuildTimeoutSeconds); seconds != want {
+		t.Fatalf("seconds = %d, want %d", seconds, want)
 	}
 }

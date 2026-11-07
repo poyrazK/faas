@@ -38,14 +38,14 @@ Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync r
 
 ## Builds
 
-Builds are free. Each plan includes builder time per UTC month, shared by every app of the account or organization that pays for them; a running build counts up to now. A build that would start past it is refused with `plan_limit_build_minutes` until the month ends or the plan grows. Deploying a prebuilt image builds nothing and still works.
+Builds are free. Each plan includes builder time per UTC month, shared by every app of the account or organization that pays for them; a running build counts up to now, and no build counts past the 15-minute build timeout. A build that would start past it is refused with `plan_limit_build_minutes` until the month ends or the plan grows. Deploying a prebuilt image builds nothing and still works.
 
 | Plan | Build minutes / month |
 |---|---:|
-| **Free** | 300 |
+| **Free** | 200 |
 | **Hobby** | 1,000 |
 | **Pro** | 3,000 |
-| **Scale** | 10,000 |
+| **Scale** | 6,000 |
 
 ## Managed realtime
 

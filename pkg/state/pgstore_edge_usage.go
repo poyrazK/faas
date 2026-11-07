@@ -98,6 +98,7 @@ func (s *PgStore) BuildSecondsThisMonth(ctx context.Context, appID string, now t
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	row, err := sqlc.New().BuildSecondsThisMonthForApp(ctx, s.pool, sqlc.BuildSecondsThisMonthForAppParams{
 		AppID: app, MonthStart: pgtype.Timestamptz{Time: start, Valid: true},
+		MaxBuildSeconds: float64(api.BuildTimeoutSeconds),
 	})
 	if err != nil {
 		return "", 0, err
