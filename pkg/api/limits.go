@@ -4381,12 +4381,18 @@ type Limits struct {
 	EgressMbit int // per-instance egress bandwidth cap via tc
 	// MonthlyEgressGiB is the application egress a month includes: the
 	// host-interface bytes the subject's instances send (state.Usage
-	// NetTxBytes, the egress meter's source). While egress is not billed for
-	// the plan, meterd stops the subject's apps at it until the month ends or
-	// the plan grows; once the egress meter bills live it is the included
-	// allowance and usage above it is overage under the spend cap
-	// (ADR-20261103131742). It matches the plan's object storage egress.
+	// NetTxBytes, the egress meter's source). meterd stops the subject's apps
+	// at it until the month ends or the plan grows, on every plan and even
+	// once the egress meter bills live: usage above it is overage only for a
+	// subject that opted into egress overage, which none can yet
+	// (ADR-20261103131742, ADR-20261104090000). It matches the plan's object
+	// storage egress.
 	MonthlyEgressGiB int64
+	// EgressOverageElectable is whether the plan's billing subject may elect
+	// to pay for egress above MonthlyEgressGiB instead of stopping at it
+	// (PUT /v1/account/egress-overage, ADR-20261104204500). The election takes
+	// effect only while the egress meter bills live; Free never can.
+	EgressOverageElectable bool
 	// EgressNewConnPerSecond / EgressNewConnBurst cap the rate at which a
 	// guest may open new outbound flows (ADR-361). Excess new flows are
 	// dropped in the per-instance forward chain and counted in
@@ -6305,6 +6311,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 100,
 		EgressMbit:                     25,
 		MonthlyEgressGiB:               100,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         20,
 		EgressNewConnBurst:             80,
 		EgressNewDestinationsPerMinute: 240,
@@ -6754,6 +6761,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 500,
 		EgressMbit:                     100,
 		MonthlyEgressGiB:               500,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         50,
 		EgressNewConnBurst:             200,
 		EgressNewDestinationsPerMinute: 1200,
@@ -7168,6 +7176,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 2000,
 		EgressMbit:                     250,
 		MonthlyEgressGiB:               2000,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         100,
 		EgressNewConnBurst:             400,
 		EgressNewDestinationsPerMinute: 3000,
