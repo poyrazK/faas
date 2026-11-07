@@ -301,6 +301,17 @@ func (s cliSub) subcommandChoice() string {
 	return strings.Join(names, "|")
 }
 
+// subcommandSynopsis renders the child-verb slot of a usage line. A verb
+// that also runs on its own (`postgres resize --class ... <database>` beside
+// `postgres resize status`) shows the child as optional; `<status>` read as a
+// required argument of the resize itself (ChronoLake finding 22).
+func (s cliSub) subcommandSynopsis() string {
+	if len(s.Flags) > 0 && len(s.Positionals) > 0 {
+		return "[" + s.subcommandChoice() + "]"
+	}
+	return "<" + s.subcommandChoice() + ">"
+}
+
 func (s cliSub) completionSpellings() []string {
 	spellings := []string{s.Name}
 	for _, alias := range s.Aliases {
@@ -5342,6 +5353,7 @@ var cliCommands = []cliCommand{
 					{Name: "agents", Short: "allow or deny agents in the org", Value: "allow|deny", Req: true},
 					{Name: "capabilities", Short: "comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only", Value: "LIST"},
 					{Name: "approvals", Short: "kinds of action every agent must have a person approve: delete, production, credentials, billing, all or none", Value: "LIST"},
+					{Name: "approval-channels", Short: "comma-separated names of your notification channels that also get the org's agents' approval requests; empty for none", Value: "NAMES"},
 				}},
 			}},
 			{Name: "transfer-ownership", Short: "Transfer org ownership", Flags: []cliFlag{
@@ -6119,6 +6131,7 @@ var cliCommands = []cliCommand{
 				{Name: "before", Short: "pagination cursor", Value: "ID"},
 				{Name: "source", Short: "only this source", Value: "SOURCE", ClosedSet: []string{"invocation", "trigger", "webhook"}},
 				{Name: "trigger", Short: "only dead letters from this trigger", Value: "ID"},
+				{Name: "unreplayed", Short: "hide events already replayed (by dlq replay or webhook retry)", Bool: true},
 			}},
 			{Name: "inspect", Short: "Inspect one dead-letter event", Positionals: []string{"<app>", "<event-id>"}},
 			{Name: "replay", Short: "Replay one event, or all of them", Notes: []string{"Use --all for every event."}, Positionals: []string{"<app>", "[<event-id>]"}, Flags: []cliFlag{

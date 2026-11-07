@@ -1326,7 +1326,7 @@ gregale release runtime v42 --app my-function --target RELEASE_ID --json
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale release rollback <status> [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
+`gregale release rollback [status] [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2271,7 +2271,7 @@ Show the step-by-step timeline of one app wake
 
 Inspect an app&#39;s resource bindings and credential rotation
 
-`gregale app binding <call|probe-policy|verification|release-policy|service|check|verify> [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
+`gregale app binding [call|probe-policy|verification|release-policy|service|check|verify] [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3649,7 +3649,7 @@ Keeps the rest of the rule&#39;s WAF action and its penalty.
 
 Switch attack mode on, off, or show it
 
-`gregale edge rule attack-mode <set|get> [--app <slug>] [--for <DURATION>] [on|off|status]`
+`gregale edge rule attack-mode [set|get] [--app <slug>] [--for <DURATION>] [on|off|status]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3712,7 +3712,7 @@ Attack mode challenges every visitor to the app for a while (15m to 24h); client
 
 Add a protection recipe&#39;s rule to an app in log mode
 
-`gregale edge rule recipe <apply> [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] [--alert-webhook-url <URL>] [--alert-webhook-secret-stdin] [--alert-webhook-secret <VALUE>] [--alert-threshold <N>] <recipe>`
+`gregale edge rule recipe [apply] [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] [--alert-webhook-url <URL>] [--alert-webhook-secret-stdin] [--alert-webhook-secret <VALUE>] [--alert-threshold <N>] <recipe>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4344,7 +4344,7 @@ Create, attach and restore managed PostgreSQL databases
 
 Durably switch between idle suspension and always-on compute
 
-`gregale postgres compute-policy <set|status> --scale-to-zero <BOOL> --request-id <UUID> <database>`
+`gregale postgres compute-policy [set|status] --scale-to-zero <BOOL> --request-id <UUID> <database>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4372,7 +4372,7 @@ Read compute policy change progress
 
 Durably resize compute; clients may disconnect
 
-`gregale postgres resize <status> --class <CLASS> --request-id <UUID> <database>`
+`gregale postgres resize [status] --class <CLASS> --request-id <UUID> <database>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4574,7 +4574,7 @@ Schedule requests and commands
 
 Fire one cron immediately or choose and follow a manual request
 
-`gregale cron run <get> [--interactive] [--wait] [--app <SLUG>] [--timeout <DURATION>] [<cron-id>]`
+`gregale cron run [get] [--interactive] [--wait] [--app <SLUG>] [--timeout <DURATION>] [<cron-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5962,7 +5962,7 @@ Create a receiver; omitted signing secret is generated and shown once
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | HTTPS receiver URL | required |
-| `--event <EVENT>` | distinct release event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` |
+| `--event <EVENT>` | distinct account event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |
 | `--from-stdin` | read the signing secret from stdin; mutually exclusive with --secret |  |
 | `--retry-policy <POLICY>` | delivery retry policy | one of `default` · `aggressive` · `none` |
@@ -5983,7 +5983,7 @@ Update a receiver
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | replacement HTTPS receiver URL |  |
-| `--event <EVENT>` | replacement release event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` |
+| `--event <EVENT>` | replacement account event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` |
 | `--enable` | enable the receiver; mutually exclusive with --disable |  |
 | `--disable` | disable the receiver; mutually exclusive with --enable |  |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |
@@ -6174,7 +6174,7 @@ Includes request evidence when available. Usage: running &lt;slug&gt; [--since D
 
 List, watch, triage, or roll back regressions
 
-`gregale debug regressions <watch|ack|acknowledge|dismiss|resolve|reopen|rollback> [--since <DURATION>] [--all] [<slug>]`
+`gregale debug regressions [watch|ack|acknowledge|dismiss|resolve|reopen|rollback] [--since <DURATION>] [--all] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6728,7 +6728,7 @@ Show the org&#39;s agent policy
 
 Allow or deny agents and cap their capabilities
 
-`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>] [--approvals <LIST>]`
+`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>] [--approvals <LIST>] [--approval-channels <NAMES>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6736,6 +6736,7 @@ Allow or deny agents and cap their capabilities
 | `--agents <allow|deny>` | allow or deny agents in the org | required |
 | `--capabilities <LIST>` | comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only |  |
 | `--approvals <LIST>` | kinds of action every agent must have a person approve: delete, production, credentials, billing, all or none |  |
+| `--approval-channels <NAMES>` | comma-separated names of your notification channels that also get the org&#39;s agents&#39; approval requests; empty for none |  |
 
 Examples:
 
@@ -7153,7 +7154,7 @@ Set or clear a spending cap for usage beyond your plan
 
 Show or set billing for egress above the monthly allowance
 
-`gregale billing egress-overage <get|set> [--org <SLUG>] [on|off]`
+`gregale billing egress-overage [get|set] [--org <SLUG>] [on|off]`
 
 | Flag | Meaning | |
 |---|---|---|

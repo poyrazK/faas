@@ -216,6 +216,24 @@ const (
 	AgentApprovalBodyBindBytes = 1 << 20
 )
 
+// Agent approval outcomes (ADR-20261107140000 §6): an agent repeating a
+// request denied, or expired, within AgentApprovalOutcomeWindow is told so
+// instead of asking again; a denial note holds at most
+// MaxAgentApprovalNoteChars characters.
+const (
+	AgentApprovalOutcomeWindow = 30 * time.Minute
+	MaxAgentApprovalNoteChars  = 280
+)
+
+// AgentApprovalEmailInterval is the least time between two emails to one
+// person about one agent key's approval requests (ADR-20261107140000 §2).
+const AgentApprovalEmailInterval = 10 * time.Minute
+
+// MaxAgentApprovalChannels is how many notification channels one scope (an
+// account's agents, or an organization's for one admin) may route agent
+// approval requests to (ADR-20261107140000 §3).
+const MaxAgentApprovalChannels = 5
+
 // InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
 // failed-signature deliveries one client IP may send to /v1/hooks a minute
 // before it gets 429 without a lookup.
@@ -9920,8 +9938,14 @@ const (
 	// unbounded body exhausted schedd's memory (bug hunt 2026-10-28 H56).
 	TriggerBrokerStatsMaxBytes int64 = 4 << 10
 
-	// Free-tier disk reaper (spec §4.3): zero requests this long => EVICTED_COLD.
+	// Free-tier disk reaper (spec §4.3, ADR-20261105120000): a Free app with
+	// no request, start, park or deployment this long loses its snapshots;
+	// its live app layer stays and the next request cold-boots.
 	FreeTierColdEvictDays = 14
+	// FreeTierColdEvictAppsPerTick bounds the apps one imaged GC tick evicts
+	// (ADR-20261105120000), so a first sweep over a large backlog is spread
+	// over several ticks.
+	FreeTierColdEvictAppsPerTick = 50
 
 	// Instance retention (spec §17 follow-up, PR #74; issue #2415):
 	// STOPPED/FAILED rows are deleted from their terminal_at anchor and
@@ -10796,6 +10820,31 @@ func (p Plan) DefaultOverageCapCents() (int64, bool) {
 		return 0, false
 	}
 	return int64(p.PlanIncludedGBHours()) * DefaultOverageCapAllowances * OverageMillicentsPerGBHour / MillicentsPerCent, true
+}
+
+// Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
+// owner's numbers 2026-11-07): Hobby $75, Pro $200, Scale $1,000. A larger
+// cap is an operator change.
+const (
+	HobbyMaxSelfServiceOverageCapCents int64 = 7_500
+	ProMaxSelfServiceOverageCapCents   int64 = 20_000
+	ScaleMaxSelfServiceOverageCapCents int64 = 100_000
+)
+
+// MaxSelfServiceOverageCapCents is the largest spend cap a paid subject may
+// set through the API or dashboard, and the cap a paid subject without one
+// (NULL, saved before ADR-20261105120000) is held to. Free has none: Free
+// stops at its allowance whatever its cap.
+func (p Plan) MaxSelfServiceOverageCapCents() (int64, bool) {
+	switch p {
+	case PlanHobby:
+		return HobbyMaxSelfServiceOverageCapCents, true
+	case PlanPro:
+		return ProMaxSelfServiceOverageCapCents, true
+	case PlanScale:
+		return ScaleMaxSelfServiceOverageCapCents, true
+	}
+	return 0, false
 }
 
 // Valid reports whether p is a known plan.

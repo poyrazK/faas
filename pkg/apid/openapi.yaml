@@ -22076,7 +22076,7 @@ paths:
       summary: Read an app's change timeline.
       description: |
         Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
-        otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+        otherwise 403 `change_timeline_unavailable`. Requires apps:read or
         admin; no MFA required.
 
         Merges deployment audit, edge-rule changes, the latest runtime-config
@@ -22116,7 +22116,7 @@ paths:
       summary: Search an app's log events.
       description: |
         Internal preview, enabled by
-        `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+        `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 403 `log_search_unavailable`.
         Requires apps:read or admin.
 
         Returns one newest-first page of the app's log ledger. Filters
@@ -53633,7 +53633,7 @@ paths:
       summary: Account service map of caller → target app edges.
       description: |
         Internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
-        otherwise 503 `service_map_unavailable`.
+        otherwise 403 `service_map_unavailable`.
 
         Built from the unsampled service-proxy edge series. Both the
         caller and the target are constrained to the account's apps.
@@ -53990,6 +53990,48 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AgentApprovalsResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-approvals/channels:
+    get:
+      tags: [keys]
+      operationId: getAgentApprovalChannels
+      summary: Show where the account's agents' approval requests also go.
+      description: |
+        The notification channels that get a message for each new approval
+        request of the account's agents, besides the email to the person
+        who connected the agent.
+      responses:
+        '200':
+          description: The account's approval channels.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentApprovalChannelsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [keys]
+      operationId: setAgentApprovalChannels
+      summary: Choose where the account's agents' approval requests also go.
+      description: |
+        Replaces the notification channels that get the account's agents'
+        approval requests. Name your own channels; an empty list leaves
+        email only. Needs an admin credential, so an agent cannot change
+        where its own requests go.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentApprovalChannelsRequest' }
+      responses:
+        '200':
+          description: The channels now bound.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentApprovalChannelsResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/agent-approvals/{id}:
@@ -113329,6 +113371,11 @@ components:
           type: array
           description: Kinds of action every agent acting in the organization must have a person approve; omit to keep the current ones.
           items: { type: string, enum: [delete, production, credentials, billing] }
+        approval_channels:
+          type: array
+          maxItems: 5
+          description: Names of your own notification channels that get approval requests of agents acting in the organization; omit to keep them, send an empty list to remove them.
+          items: { type: string }
 
     OrgAgentPolicyResponse:
       description: An organization's agent policy.
@@ -113344,18 +113391,45 @@ components:
           type: array
           description: Kinds of action every agent acting in the organization must have a person approve.
           items: { type: string }
+        approval_channels:
+          type: array
+          description: Your notification channels that get this organization's agents' approval requests.
+          items: { type: string }
         updated_at: { type: string, format: date-time, description: When the policy last changed; absent for an organization that never set one. }
         revoked: { type: integer, minimum: 0, description: Agent connections a change revoked because the new policy no longer allows them. }
 
     AgentApprovalPendingInfo:
-      description: "The approval request behind an approval_required problem: a person opens review_url to decide, then the agent repeats the same request once."
+      description: "The approval request behind an approval_required, approval_denied or approval_expired problem. On approval_required a person opens review_url to decide, then the agent repeats the same request once; on the other two the agent should stop repeating it."
       type: object
       required: [id, category, review_url, expires_at]
       properties:
-        id: { type: string, format: uuid, description: The id of the pending approval request. }
+        id: { type: string, format: uuid, description: The id of the approval request. }
         category: { type: string, enum: [delete, production, credentials, billing], description: The kind of action that needs approval. }
         review_url: { type: string, format: uri, description: "The page where a signed-in member who may decide approves or denies the request." }
         expires_at: { type: string, format: date-time, description: When the request and any approval of it expire. }
+        status: { type: string, enum: [denied, expired], description: "Set on approval_denied and approval_expired: what became of the request." }
+        note: { type: string, maxLength: 280, description: "The person's reason for denying the request, when they gave one." }
+
+    AgentApprovalChannelsRequest:
+      description: The notification channels to send the account's agents' approval requests to.
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          maxItems: 5
+          description: Names of your notification channels; an empty list leaves email only.
+          items: { type: string }
+
+    AgentApprovalChannelsResponse:
+      description: The notification channels that get the account's agents' approval requests.
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          description: Channel names, in alphabetical order.
+          items: { type: string }
 
     AgentApprovalResponse:
       description: "One request of an agent connection that needed a person's approval."
@@ -113373,6 +113447,7 @@ components:
         created_at: { type: string, format: date-time, description: When the agent first made the request. }
         expires_at: { type: string, format: date-time, description: After this time the request can no longer be approved or used. }
         decided_at: { type: string, format: date-time, description: When a person approved or denied it. }
+        note: { type: string, maxLength: 280, description: "Why the person denied this request, if they said; absent otherwise." }
 
     AgentApprovalsResponse:
       description: "Approval requests, newest first: an agent's own, or those pending that the caller may decide."
@@ -122031,6 +122106,24 @@ components:
         relevant_logs: { type: array, items: { type: string } }
       additionalProperties: true
 
+    AgentApprovalWebhookPayload:
+      type: object
+      description: "Delivered with agent.approval.requested, agent.approval.approved and agent.approval.denied: an agent key's request waits for a person, or a person decided it. It never carries the request body."
+      required: [approval_id, key_id, category, method, path, status, expires_at]
+      properties:
+        approval_id: { type: string, format: uuid, description: The approval request this event is about. }
+        key_id: { type: string, format: uuid, description: The agent key that made the request. }
+        org_id: { type: string, format: uuid, description: The organization the key acts in, when it acts in one. }
+        category: { type: string, enum: [delete, production, credentials, billing], description: Which kind of risky action the agent asked to take. }
+        method: { type: string, description: HTTP method of the agent's request. }
+        path: { type: string, description: Path and query of the agent's request. }
+        status: { type: string, enum: [pending, approved, denied], description: The request's status when the event was recorded. }
+        expires_at: { type: string, format: date-time, description: When the request stops being approvable or usable. }
+        review_url: { type: string, format: uri, description: "On agent.approval.requested: the page where a member who may decide opens it." }
+        decided_at: { type: string, format: date-time, description: When the person approved or denied the request. }
+        note: { type: string, maxLength: 280, description: "On agent.approval.denied: the reason the person gave the agent, if any." }
+      additionalProperties: true
+
     RolloutCompletedWebhookPayload:
       type: object
       description: The configured rollout completed. Explicit traffic splits may complete below 100%; inspect traffic_percent.
@@ -124330,7 +124423,7 @@ components:
 
     CreateAccountReleaseWebhookRequest:
       type: object
-      description: Subscribe to account release outcomes and environment GitOps status transitions.
+      description: "Subscribe to account release outcomes, environment GitOps status transitions, and agent approval requests and decisions."
       required: [target_url, webhook_secret, event_filter]
       properties:
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
@@ -124338,9 +124431,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 5
+          maxItems: 8
           uniqueItems: true
-          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"] }
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"] }
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format: { type: string, enum: [json, cloudevents], default: json }
         enabled: { type: boolean, default: true }
@@ -124516,9 +124609,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 5
+          maxItems: 8
           uniqueItems: true
-          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"] }
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"] }
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
         enabled: { type: boolean }

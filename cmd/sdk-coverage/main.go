@@ -1249,6 +1249,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/agent-connections":                                                                  "ListAgentConnections",
 	"GET /v1/agent-approvals":                                                                    "ListAgentApprovals",
 	"GET /v1/agent-approvals/{id}":                                                               "GetAgentApproval",
+	"GET /v1/agent-approvals/channels":                                                           "GetAgentApprovalChannels",
+	"PUT /v1/agent-approvals/channels":                                                           "SetAgentApprovalChannels",
 	"DELETE /v1/agent-connections/{id}":                                                          "RevokeAgentConnection",
 	"POST /v1/agent-connections/revoke_all":                                                      "RevokeAllAgentConnections",
 	"PUT /v1/agent-connections/self":                                                             "NameAgentClient",
