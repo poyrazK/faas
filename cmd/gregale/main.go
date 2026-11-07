@@ -1070,7 +1070,7 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []string) {
 	usage := localHelpSubcommandPath(command, names)
 	if len(sub.Subcommands) > 0 {
-		usage += " <" + sub.subcommandChoice() + ">"
+		usage += " " + sub.subcommandSynopsis()
 	}
 	if sub.SubcommandsAfterPositionals {
 		usage = localHelpArguments(usage, nil, sub.Flags, false)

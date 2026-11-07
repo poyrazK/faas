@@ -394,15 +394,17 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
 }
 
 export async function main(env = process.env) {
-  const config = runtimeConfig(env)
+  const config = await startupStage('configuration', 'data_api_configuration_invalid', () => runtimeConfig(env))
   if (config.connectionObservation || config.sqlDeadline) {
-    const { stdout } = await promisify(execFile)(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', ['--version'], { timeout: limits.connectionReportMs, maxBuffer: limits.healthBytes })
-    if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
+    await startupStage('engine', 'data_api_configuration_invalid', async () => {
+      const { stdout } = await promisify(execFile)(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', ['--version'], { timeout: limits.connectionReportMs, maxBuffer: limits.healthBytes })
+      if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
+    })
   }
-  if (config.sqlDeadline) await checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh })
+  if (config.sqlDeadline) await startupStage('database', 'data_api_configuration_invalid', () => checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh }))
   // Inspection connects first, with the full query budget, so a suspended
   // database is awake before the configuration checks run.
-  const snapshot = await inspect(config.connection, config.schemas)
+  const snapshot = await startupStage('inspection', 'data_api_configuration_invalid', () => inspect(config.connection, config.schemas))
   config.snapshot = snapshot
   config.functions = snapshot.functions
   if (config.publicRead) await bootCheck(() => checkPublicRelations(config.connection, config.publicRead), 'data_api_public_read_unsafe', 'Unsafe public read configuration')
@@ -497,8 +499,22 @@ export async function main(env = process.env) {
 async function bootCheck(check, unsafeEvent, unsafeMessage) {
   try { await check() } catch (error) {
     const unsafe = error instanceof UnsafeConfiguration
-    runtimeFailure(unsafe ? unsafeEvent : 'data_api_database_unavailable')
+    runtimeFailure(unsafe ? unsafeEvent : 'data_api_database_unavailable', { stage: 'database', error })
     throw Object.assign(new Error(unsafe ? unsafeMessage : 'Database unavailable during startup'), { cause: error, reported: true })
+  }
+}
+
+// startupStage reports which startup step failed and a safe reason before the
+// process exits, so a crash during snapshot_prepare is diagnosable from the
+// deployment log (ChronoLake finding 19). The event stays
+// data_api_configuration_invalid, as before; stage and reason are added.
+async function startupStage(stage, event, step) {
+  try { return await step() } catch (error) {
+    if (error?.reported !== true) {
+      runtimeFailure(event, { stage, error })
+      if (error && typeof error === 'object') error.reported = true
+    }
+    throw error
   }
 }
 
@@ -506,4 +522,4 @@ export function tokenVerifier(auth, keys) {
   return async token => (await jwtVerify(token, keys, { issuer: auth.issuer, audience: auth.audience, algorithms: ['RS256', 'ES256'], requiredClaims: ['sub', 'exp'] })).payload
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { if (error?.reported !== true) runtimeFailure('data_api_configuration_invalid'); process.exitCode = 1 })
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { if (error?.reported !== true) runtimeFailure('data_api_configuration_invalid', { stage: 'startup', error }); process.exitCode = 1 })
