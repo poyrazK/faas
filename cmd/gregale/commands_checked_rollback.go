@@ -42,6 +42,15 @@ type rollbackOperationClient interface {
 	GetRollbackOperation(context.Context, string, string) (api.RollbackOperation, error)
 }
 
+// freshRollbackReceiptStatus names the states a just-created checked rollback
+// can report. A target that is still live at zero traffic needs no snapshot
+// prime, so the server records it ready at once (CheckedRollbackReuseLive);
+// rejecting that receipt printed "Invalid rollback receipt" for a rollback
+// the server had durably accepted (ChronoLake finding 23).
+func freshRollbackReceiptStatus(status string) bool {
+	return status == "preparing" || status == "ready"
+}
+
 func rollbackReceiptMatches(got, pin api.RollbackOperation) bool {
 	return sameBindingDeployment(got.ID, pin.ID) && got.AppID == pin.AppID && got.Scope == pin.Scope && sameBindingDeployment(got.TargetDeploymentID, pin.TargetDeploymentID) && sameBindingDeployment(got.CurrentDeploymentID, pin.CurrentDeploymentID) && got.Service == pin.Service
 }
@@ -120,7 +129,7 @@ func cmdCheckedRollback(slug, target, current, reason string, acknowledgeRelease
 		return checkedRollbackCLIError(signalCtx, "Rollback request failed", err)
 	}
 	operation := response.RollbackOperation
-	if operation == nil || operation.ID == "" || operation.Scope == "" || operation.Scope != response.Scope || operation.CreatedAt.IsZero() || operation.UpdatedAt.IsZero() || operation.AppID != app.ID || !sameBindingDeployment(response.ID, targetID) || response.AppID != app.ID || !sameBindingDeployment(operation.TargetDeploymentID, targetID) || !sameBindingDeployment(operation.CurrentDeploymentID, currentID) || operation.Status != "preparing" {
+	if operation == nil || operation.ID == "" || operation.Scope == "" || operation.Scope != response.Scope || operation.CreatedAt.IsZero() || operation.UpdatedAt.IsZero() || operation.AppID != app.ID || !sameBindingDeployment(response.ID, targetID) || response.AppID != app.ID || !sameBindingDeployment(operation.TargetDeploymentID, targetID) || !sameBindingDeployment(operation.CurrentDeploymentID, currentID) || !freshRollbackReceiptStatus(operation.Status) {
 		return printErr("Invalid rollback receipt", fmt.Errorf("server did not confirm durable intent for the exact deployment pair"))
 	}
 	if _, err := uuid.Parse(operation.ID); err != nil {

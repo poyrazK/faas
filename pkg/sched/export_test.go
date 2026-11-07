@@ -102,6 +102,10 @@ var RouterCloseGrace = &routerCloseGrace
 
 // Package-level funcs
 var AppTaskFailureStage = appTaskFailureStage
+
+// ADR-20261105120000: plan caps on floors and warm pools saved under a larger plan.
+var PlanCappedFloor = planCappedFloor
+var WarmPoolTarget = warmPoolTarget
 var DeploymentStaticEgressIP = deploymentStaticEgressIP
 var AppTaskGRPCCode = appTaskGRPCCode
 var AppTaskResultFromResponse = appTaskResultFromResponse
@@ -227,6 +231,12 @@ var QuietEffective = quietEffective
 var QuietLog = quietLog
 var NewWorkPool = newWorkPool
 var QuietPauseAfterMS = quietPauseAfterMS
+
+var PauseTierWorkload = pauseTierWorkload
+
+var IdleLadderGuardedPause = idleLadderGuardedPause
+
+var VMInstanceStatFromProto = vmInstanceStatFromProto
 var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
 var ReaperAbortedCanary = reaperAbortedCanary

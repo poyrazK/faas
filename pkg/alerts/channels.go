@@ -59,7 +59,19 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 	if len(chans) == 0 {
 		return 0, 0
 	}
-	msg := e.channelMessage(ctx, rule, event, observed, now)
+	return e.SendToChannels(ctx, chans, e.channelMessage(ctx, rule, event, observed, now), now)
+}
+
+// SendToChannels delivers msg to each channel, concurrently and best
+// effort, opening destinations with the evaluator's identities and recording
+// each outcome on its channel. Agent approval notifications
+// (ADR-20261107140000 §3) use it, so their channel secrets stay in the
+// alerting seal domain. It returns how many channels were attempted and
+// delivered.
+func (e *Evaluator) SendToChannels(ctx context.Context, chans []state.NotificationChannel, msg alertchannels.Message, now time.Time) (attempted, delivered int) {
+	if e == nil || e.channels == nil || channelsOff(ctx) || len(chans) == 0 {
+		return 0, 0
+	}
 	ids := e.unsealIdentities()
 	sctx, cancel := context.WithTimeout(ctx, channelSendBudget)
 	defer cancel()

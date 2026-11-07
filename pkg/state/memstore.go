@@ -157,6 +157,9 @@ type MemStore struct {
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
+	// egressOverage is each account's or org's egress overage election
+	// (EgressOverageStore, ADR-20261104204500).
+	egressOverage map[string]EgressOverageElection
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
 	totpLastSteps                        map[string]int64
@@ -1400,9 +1403,13 @@ type MemStore struct {
 	// ADR-20261104140058: agent keys' approval categories and requests.
 	keyApprovalCategories map[string][]string
 	agentApprovals        map[string]AgentApproval
-	orgsBySlug            map[string]string // lower(slug) -> id
-	memberships           map[orgAccountKey]OrgMembership
-	invitations           map[string]OrgInvitation // hex(hash) -> OrgInvitation
+	// ADR-20261107140000: the notification outbox and email log.
+	agentApprovalNotifications   map[string]*memAgentApprovalNotification
+	agentApprovalEmailLog        map[memEmailLogKey]time.Time
+	agentApprovalChannelBindings []memApprovalChannelBinding
+	orgsBySlug                   map[string]string // lower(slug) -> id
+	memberships                  map[orgAccountKey]OrgMembership
+	invitations                  map[string]OrgInvitation // hex(hash) -> OrgInvitation
 	// computeNodes mirrors the compute_nodes table; keyed by id (issue
 	// #97 / ADR-025 axis 3). The synthetic 'default-local' row is
 	// seeded by NewMemStore so tests don't have to call
@@ -20968,8 +20975,25 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 func (m *MemStore) GetAccountOverageCapCents(_ context.Context, accountID string) (int64, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cents, ok := m.overageCapCents[accountID]
+	var stored *int64
+	if cents, ok := m.overageCapCents[accountID]; ok {
+		stored = &cents
+	}
+	plan, _ := m.overageCapPlanLocked(accountID)
+	cents, ok := EffectiveOverageCapCents(plan, stored)
 	return cents, ok, nil
+}
+
+// overageCapPlanLocked is the plan of a spend-cap subject: an account, or a
+// shared organization.
+func (m *MemStore) overageCapPlanLocked(id string) (api.Plan, bool) {
+	if acct, ok := m.accounts[id]; ok {
+		return acct.Plan, true
+	}
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		return org.Plan, true
+	}
+	return "", false
 }
 
 // LoadAllOverageCapCents returns the bulk read used by meterd's
@@ -20983,6 +21007,24 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 	out := make(map[string]int64, len(m.overageCapCents))
 	for id, c := range m.overageCapCents {
 		out[id] = c
+	}
+	// A paid subject without a cap is held to its plan's ceiling
+	// (ADR-20261105120000).
+	held := func(id string, plan api.Plan) {
+		if _, ok := out[id]; ok {
+			return
+		}
+		if c, ok := EffectiveOverageCapCents(plan, nil); ok {
+			out[id] = c
+		}
+	}
+	for id, acct := range m.accounts {
+		held(id, acct.Plan)
+	}
+	for id, org := range m.orgs {
+		if !org.Personal {
+			held(id, org.Plan)
+		}
 	}
 	return out, nil
 }

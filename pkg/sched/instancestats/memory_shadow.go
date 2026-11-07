@@ -26,8 +26,12 @@ type NodeMemoryShadow struct {
 // admission charges it on top; it reserves nothing.
 func memoryShadow(instances []state.Instance, rows []InstanceStat, bridgeMB map[string]int) map[string]NodeMemoryShadow {
 	rss := make(map[string]float64, len(rows))
+	ladderFrozen := make(map[string]struct{})
 	for _, row := range rows {
 		rss[row.InstanceID] = row.RSSMB
+		if row.IdleLadderLevel >= api.IdleLadderFreezeLevel {
+			ladderFrozen[row.InstanceID] = struct{}{}
+		}
 	}
 	out := make(map[string]NodeMemoryShadow)
 	for _, in := range instances {
@@ -44,6 +48,12 @@ func memoryShadow(instances []state.Instance, rows []InstanceStat, bridgeMB map[
 			s.Frozen++
 			// A paused VM cannot grow; its floor is FrozenChargeFloorMB
 			// (ADR 20261031143521).
+			s.MeasuredMB += api.FrozenChargeMB(in.RAMMB, sample)
+		} else if _, l2 := ladderFrozen[in.ID]; l2 {
+			// vmmd holds it quiet-paused at the idle ladder's freeze level
+			// (ADR-20261107122928): charged with the frozen floor. Its
+			// sample is still the window's p95, which covers the requests
+			// it served, because a request resumes it without admission.
 			s.MeasuredMB += api.FrozenChargeMB(in.RAMMB, sample)
 		} else {
 			s.MeasuredMB += api.MeasuredChargeMB(in.RAMMB, sample)

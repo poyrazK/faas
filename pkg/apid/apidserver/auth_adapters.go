@@ -14,6 +14,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
@@ -114,6 +115,14 @@ func (a storeAuthAdapter) ConsumeAgentApproval(ctx context.Context, binding stat
 		return "", false, errNoApprovalStore
 	}
 	return store.ConsumeAgentApproval(ctx, binding)
+}
+
+func (a storeAuthAdapter) RecentAgentApprovalOutcome(ctx context.Context, binding state.AgentApprovalBinding, window time.Duration) (state.AgentApproval, bool, error) {
+	store, ok := a.Store.(state.AgentApprovalStore)
+	if !ok {
+		return state.AgentApproval{}, false, errNoApprovalStore
+	}
+	return store.RecentAgentApprovalOutcome(ctx, binding, window)
 }
 
 func (a storeAuthAdapter) RequestAgentApproval(ctx context.Context, request state.AgentApproval) (state.AgentApproval, error) {
