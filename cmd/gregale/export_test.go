@@ -1291,7 +1291,6 @@ var DocsURLForCode = docsURLForCode
 var DocsURLForTemplate = docsURLForTemplate
 var DocsURLForTopic = docsURLForTopic
 var DoctorCheckDurableEntities = doctorCheckDurableEntities
-var DoctorCheckSecretReload = doctorCheckSecretReload
 var DoctorImageAccessError = doctorImageAccessError
 var DoctorImageContractCheck = doctorImageContractCheck
 var DoctorImageHealthcheck = doctorImageHealthcheck
