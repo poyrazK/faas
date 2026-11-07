@@ -116,10 +116,11 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeBadRequest, "Unreadable request body", "the request body could not be read"))
 		return true
 	}
-	if _, used, err := gate.ConsumeAgentApproval(ctx, binding); err != nil {
+	if approvalID, used, err := gate.ConsumeAgentApproval(ctx, binding); err != nil {
 		m.storeUnavailable(w, r, err, "could not check the request's approval; retry shortly")
 		return true
 	} else if used {
+		noteApprovalUsed(ctx, approvalID)
 		return false
 	}
 	outcome, decided, err := gate.RecentAgentApprovalOutcome(ctx, binding, api.AgentApprovalOutcomeWindow)

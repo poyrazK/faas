@@ -29683,6 +29683,26 @@ CREATE VIEW public.active_environment_git_sources AS
 
 
 --
+-- Name: agent_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_activity (
+    id uuid NOT NULL,
+    key_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    org_id uuid,
+    method text NOT NULL,
+    path text NOT NULL,
+    status integer NOT NULL,
+    approval_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_activity_method_check CHECK ((method = ANY (ARRAY['POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text]))),
+    CONSTRAINT agent_activity_path_check CHECK (((char_length(path) >= 1) AND (char_length(path) <= 512))),
+    CONSTRAINT agent_activity_status_check CHECK (((status >= 100) AND (status <= 599)))
+);
+
+
+--
 -- Name: agent_approval_channel_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58906,6 +58926,14 @@ ALTER TABLE ONLY public.accounts
 
 
 --
+-- Name: agent_activity agent_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_activity
+    ADD CONSTRAINT agent_activity_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: agent_approval_email_log agent_approval_email_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71761,6 +71789,20 @@ CREATE INDEX accounts_mfa_required_pending_idx ON public.accounts USING btree (i
 --
 
 CREATE INDEX accounts_past_due_idx ON public.accounts USING btree (past_due_at) WHERE (status = 'past_due'::text);
+
+
+--
+-- Name: agent_activity_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_activity_created_idx ON public.agent_activity USING btree (created_at);
+
+
+--
+-- Name: agent_activity_key_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_activity_key_created_idx ON public.agent_activity USING btree (key_id, created_at DESC, id DESC);
 
 
 --

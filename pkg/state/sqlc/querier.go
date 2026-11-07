@@ -997,6 +997,8 @@ type Querier interface {
 	DeleteAccountEnvironmentGitSources(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	DeleteAccountPassword(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteAccountProfileCaptures(ctx context.Context, db DBTX, arg DeleteAccountProfileCapturesParams) (int64, error)
+	// Rows older than the retention window, a bounded batch at a time.
+	DeleteAgentActivityBefore(ctx context.Context, db DBTX, arg DeleteAgentActivityBeforeParams) (int64, error)
 	// ADR-20261107140000 §3: clear one scope's bindings before setting them.
 	DeleteAgentApprovalChannelBindings(ctx context.Context, db DBTX, arg DeleteAgentApprovalChannelBindingsParams) error
 	// ADR-749 slice 2: alert rule -> notification channel bindings.
@@ -2538,6 +2540,8 @@ type Querier interface {
 	InsertAPIKeyProjectLimit(ctx context.Context, db DBTX, arg InsertAPIKeyProjectLimitParams) error
 	InsertActivatedManagedPostgresBinding(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresBindingParams) error
 	InsertActivatedManagedPostgresSecret(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresSecretParams) error
+	// ADR-20261107220000: one write request of an agent key.
+	InsertAgentActivity(ctx context.Context, db DBTX, arg InsertAgentActivityParams) error
 	InsertAgentApproval(ctx context.Context, db DBTX, arg InsertAgentApprovalParams) error
 	// The channel must be the account's own.
 	InsertAgentApprovalChannelBinding(ctx context.Context, db DBTX, arg InsertAgentApprovalChannelBindingParams) error
@@ -3435,6 +3439,9 @@ type Querier interface {
 	// The rows a vmmd adoption report settles: RUNNING and FROZEN on the node.
 	// Read only after the node's epoch moves, so a scan of the live set is fine.
 	ListAdoptionReportInstancesOnNode(ctx context.Context, db DBTX, arg ListAdoptionReportInstancesOnNodeParams) ([]ListAdoptionReportInstancesOnNodeRow, error)
+	// A key's rows since the retention cutoff, newest first, strictly before the
+	// (created_at, id) cursor.
+	ListAgentActivity(ctx context.Context, db DBTX, arg ListAgentActivityParams) ([]AgentActivity, error)
 	// One scope's bound channels, by name.
 	ListAgentApprovalChannelBindings(ctx context.Context, db DBTX, arg ListAgentApprovalChannelBindingsParams) ([]NotificationChannel, error)
 	ListAgentApprovalsForKey(ctx context.Context, db DBTX, arg ListAgentApprovalsForKeyParams) ([]AgentApprovalRequest, error)
