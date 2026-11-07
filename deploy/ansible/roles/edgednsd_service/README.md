@@ -13,6 +13,7 @@ The manifest's `public_edge.dns` turns it on and renders its settings:
 |---|---|
 | `faas_edgednsd_names` | `public_edge.dns.zone_id` with each of `public_edge.dns.names`, `:dns-only` under `public_edge.front: none`, and each of `public_edge.dns.proxied`, proxied |
 | `faas_edgednsd_node_addresses` | each compute host's `public_ipv4`, or its `entry_ipv4` under `public_edge.front: none`, under its registry name |
+| `faas_edgednsd_node_private_addresses` | each compute host's `address` (host part) under its registry name: where edgednsd probes the edge's `/readyz`, never the registry's `target_url`, which every compute node can write (ADR-20261107180000) |
 | `faas_edgednsd_dry_run` | `public_edge.dns.live`, inverted: dry run until set |
 | `faas_edgednsd_certificate_names`, `faas_edgednsd_certificate_zone_id`, `faas_edgednsd_acme_ca` | `public_edge.dns.certificate.names`, `public_edge.dns.zone_id` and `public_edge.dns.certificate.ca` (`letsencrypt-staging` by default) |
 

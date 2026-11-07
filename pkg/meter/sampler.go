@@ -323,10 +323,8 @@ type RolledRow struct {
 	// execution_mode (normal / mirror / worker / service / job).
 	// The metered_mb_seconds_total{mode,plan} counter uses this
 	// as a label so dashboards can split worker idle-RAM from
-	// request-driven RAM. Mirror-mode rows are filtered out
-	// upstream via IsMeteredSkippableMode and never reach the
-	// row constructor — Mode stays "normal" / "worker" /
-	// "service" / "job".
+	// request-driven RAM. Mirror VMs bill too (ADR-20261104145353),
+	// so Mode may also be "mirror".
 	Mode string
 	// Plan (M-2 / ADR-137 §Decision 1) is the owning account's
 	// billing plan (free / hobby / pro / scale). Mirrored onto the
@@ -684,19 +682,10 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			return mbs, nil
 		}
 		for _, ins := range ins {
-			// Issue #72 / ADR-125: skip mode='mirror' instances at
-			// the sampler. A mirror VM never serves the customer —
-			// the customer only saw the source deployment's
-			// response — so billing it would be a customer-trust
-			// bug, not a feature. The reaper also skips these rows
-			// (mirror VMs self-park on request completion, so
-			// there's no idle lifetime to reap), which keeps the
-			// sampler and reaper symmetric on the
-			// CountsForRAM-vs-mirror skip — both predicates are
-			// evaluated in the same order. The state-mode column is
-			// NOT NULL DEFAULT 'normal' (migration 00349), so
-			// pre-feature rows backfill to the default and skip
-			// this branch.
+			// ADR-20261104145353: a mirror VM bills plan RAM + 8 MB per
+			// running second like every other instance, as ADR-124 told
+			// customers. It is real capacity the customer chose to run.
+			// A platform snapshot refresh does not (ADR-20261106214916).
 			if state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
@@ -917,7 +906,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			// floor enrichment either. Skipping them keeps the floor
 			// math symmetric — a customer with a mirror rule sees
 			// their floor counted from production instances only.
-			if state.IsMeteredSkippableMode(ins.Mode) {
+			if ins.Mode == string(state.InstanceModeMirror) || state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
 			if ins.DeploymentID == "" {
