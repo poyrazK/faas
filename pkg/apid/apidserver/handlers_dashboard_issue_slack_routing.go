@@ -25,7 +25,7 @@ func (s *server) dashboardSlackRoutingForAccount(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	if !dashboardAppOwner(r, &acct, app) {
+	if !s.dashboardCanManageTrackerNotifications(r, acct, app) || !dashboardAppOwner(r, &acct, app) {
 		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Owner required", "only the app owner may manage Slack channel rules"))
 		return
 	}

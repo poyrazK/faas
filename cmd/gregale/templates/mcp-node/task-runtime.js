@@ -89,10 +89,13 @@ export async function startMcpTaskRuntime(config, {
 } = {}) {
   const settings = resolveMcpTaskSettings(config, { env, role });
   if (!settings.enabled) return { taskRuntime: undefined, async close() {} };
+  if (!Number.isInteger(settings.workerConcurrency) || settings.workerConcurrency < 1 || settings.workerConcurrency > 16) throw new Error('Invalid MCP task worker concurrency');
   const metricsSettings = resolveMcpTaskMetricsSettings({ env, role: settings.role });
   if (role === 'observer' && !metricsSettings) throw new Error('MCP task observer requires scaling metric credentials');
 
-  const pool = createPool({ connectionString: settings.databaseURL, max: 4, connectionTimeoutMillis: 5000, statement_timeout: 10_000, application_name: 'gregale-mcp-tasks' });
+  // Reserve slots for LISTEN, polling, maintenance and foreground requests.
+  const workerSlots = role === 'combined' || role === 'worker' ? settings.workerConcurrency : 0;
+  const pool = createPool({ connectionString: settings.databaseURL, max: workerSlots + 4, connectionTimeoutMillis: 5000, statement_timeout: 10_000, application_name: 'gregale-mcp-tasks' });
   // An idle client dropped by a database restart must not crash the runtime;
   // driver errors can carry connection details, so report a fixed message.
   pool.on?.('error', () => console.error('MCP task database connection unavailable'));
@@ -134,6 +137,7 @@ export async function startMcpTaskRuntime(config, {
   let closing;
   return {
     taskRuntime,
+    shutdownTimeoutMs: settings.shutdownTimeoutMs,
     async close() {
       if (closing) return closing;
       closing = (async () => {

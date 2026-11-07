@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -411,9 +412,11 @@ func insertClonedProjectEnvironment(ctx context.Context, tx pgx.Tx, clone Projec
 
 func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) (ProjectEnvironmentCloneResult, error) {
 	result := ProjectEnvironmentCloneResult{}
-	if err := tx.QueryRow(ctx, `select count(*) from apps where account_id = $1 and project_id = $2 and status <> 'deleted' and preview_of_slug is null`, clone.AccountID, clone.ProjectID).Scan(&result.WorkloadsCopied); err != nil {
-		return result, mapErr(err)
+	var scopes map[string]string
+	if err := json.Unmarshal(clone.sourceValueScopesJSON, &scopes); err != nil {
+		return result, err
 	}
+	result.WorkloadsCopied = len(scopes)
 	configurationCopied, err := copyProjectEnvironmentConfig(ctx, tx, clone)
 	if err != nil {
 		return result, err
@@ -445,12 +448,13 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 		result.ProjectSecretsCopied = int(projectSecretsCopied)
 		refsCopied, err := sqlc.New().CopyProjectEnvironmentSecretReferences(ctx, tx, sqlc.CopyProjectEnvironmentSecretReferencesParams{
 			AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug,
+			ValueScopes: clone.sourceValueScopesJSON,
 		})
 		if err != nil {
 			return result, mapErr(err)
 		}
 		result.SecretReferencesCopied = int(refsCopied)
-		if err := sqlc.New().CopyProjectEnvironmentSecretSuppressions(ctx, tx, sqlc.CopyProjectEnvironmentSecretSuppressionsParams{AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug}); err != nil {
+		if err := sqlc.New().CopyProjectEnvironmentSecretSuppressions(ctx, tx, sqlc.CopyProjectEnvironmentSecretSuppressionsParams{AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug, ValueScopes: clone.sourceValueScopesJSON}); err != nil {
 			return result, mapErr(err)
 		}
 	}
@@ -465,12 +469,13 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 			  left join project_environment_route_policies p
 			    on p.app_id = a.id and p.environment_slug = $3
 		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null
+		   and ($5::jsonb ? a.id::text)
 		   and not (coalesce(p.only_allow_declared_routes, a.only_declared_routes)
 		            and jsonb_array_length(coalesce(p.declared_routes, a.declared_routes, '[]'::jsonb)) = 0)
 			returning 1
 		)
 		select count(*) from copied
-	`, clone.AccountID, clone.ProjectID, clone.SourceSlug, clone.TargetSlug).Scan(&result.RoutesCopied); err != nil {
+	`, clone.AccountID, clone.ProjectID, clone.SourceSlug, clone.TargetSlug, clone.sourceValueScopesJSON).Scan(&result.RoutesCopied); err != nil {
 		return result, mapErr(err)
 	}
 	if result.RoutesCopied < result.WorkloadsCopied {
@@ -485,10 +490,11 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 			  join apps a on a.id = p.app_id
 			 where p.account_id = $1 and p.project_id = $2 and p.environment_slug = $3
 			   and a.status <> 'deleted' and a.preview_of_slug is null
+			   and ($5::jsonb ? a.id::text)
 			returning 1
 		)
 		select count(*) from copied
-	`, clone.AccountID, clone.ProjectID, clone.SourceSlug, clone.TargetSlug).Scan(&result.PoliciesCopied); err != nil {
+	`, clone.AccountID, clone.ProjectID, clone.SourceSlug, clone.TargetSlug, clone.sourceValueScopesJSON).Scan(&result.PoliciesCopied); err != nil {
 		return result, mapErr(err)
 	}
 	result.SharedResources = append(result.SharedResources, "policies")

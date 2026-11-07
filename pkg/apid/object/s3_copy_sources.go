@@ -107,6 +107,9 @@ func (s *Service) authorizeCopySourceManagement(w http.ResponseWriter, r *http.R
 		BucketProblem(w, err)
 		return source, false
 	}
+	if !s.authorizeCopySourceProject(w, r, acct, source) {
+		return source, false
+	}
 	if !s.AuthorizeBucketData(w, r, source, state.ObjectBucketPermissionRead) {
 		return source, false
 	}

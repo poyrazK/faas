@@ -111,10 +111,19 @@ func (p *Pusher) computeWithinCap(ctx context.Context, acct state.Account, hour 
 	if policy.EffectiveFrom.After(start) {
 		start = policy.EffectiveFrom
 	}
-	raw, err := sumMeterUsageRows(ctx, p.store, acct.ID, state.BillingMeterEgress, start, hour.Add(time.Hour))
+	// Only egress in hours the election covers is billed, so only that keeps
+	// a place under the cap (ADR-20261104204500).
+	var egress int64
+	election, err := billing.EgressOverageElectionFor(ctx, p.store, acct.ID)
 	if err != nil {
 		return 0, err
 	}
-	egress := max(raw-policy.IncludedQuantity, 0)
+	if election.EnabledAt != nil && start.Before(hour.Add(time.Hour)) {
+		rows, err := p.store.UsageByHour(ctx, acct.ID, start, hour.Add(time.Hour))
+		if err != nil {
+			return 0, err
+		}
+		egress = billing.ElectedEgressOverage(rows, policy.IncludedQuantity, election)
+	}
 	return clampToAllowance(before, after, capComputeAllowance(capCents, egress, &policy, objectStorage)), nil
 }

@@ -26,3 +26,27 @@ func TestTerminalSafeEscapesControlCharacters(t *testing.T) {
 		t.Fatalf("runtime log line = %q, want the escape shown, not sent", line)
 	}
 }
+
+// A build log entry can hold several lines. Each line break was shown as a
+// literal \x0a, running a failed build's explanation together (#6633).
+func TestTerminalSafeLinesKeepsLineBreaks(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want []string
+	}{
+		{"using persisted framework profile: node\n", []string{"using persisted framework profile: node"}},
+		{"[guest build output]\nnode toolchain HTTPS preflight: timeout\n", []string{"[guest build output]", "node toolchain HTTPS preflight: timeout"}},
+		{"crlf one\r\ncrlf two\r\n", []string{"crlf one", "crlf two"}},
+		{"blank\n\nkept", []string{"blank", "", "kept"}},
+		// Literal backslash text from the build is not a line break.
+		{`printf 'a\x0ab\n'`, []string{`printf 'a\x0ab\n'`}},
+		// Every other control character is still escaped.
+		{"red \x1b[31m\nbell\x07", []string{`red \x1b[31m`, `bell\x07`}},
+		{"bare\rreturn", []string{`bare\x0dreturn`}},
+	} {
+		got := main.TerminalSafeLines(tc.in)
+		if strings.Join(got, "|") != strings.Join(tc.want, "|") || len(got) != len(tc.want) {
+			t.Errorf("TerminalSafeLines(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

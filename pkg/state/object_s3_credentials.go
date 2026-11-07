@@ -38,6 +38,10 @@ type ObjectS3Credential struct {
 	ManagedAppID  string
 	ManagedScope  string
 	ManagedPrefix string
+	// KeyPrefix limits a compute binding's key, and the rotation stage that
+	// keeps its previous key, to object keys under it (ADR-20261106114500).
+	// Empty allows the whole bucket. The S3 gateway enforces it.
+	KeyPrefix string
 	// A rotation stage temporarily keeps the previous key valid while the
 	// binding's current key is delivered to replacement workloads. Stages are
 	// hidden from customer credential inventories.

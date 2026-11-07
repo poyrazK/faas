@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 func disabledAlertPost(t *testing.T, h http.Handler, manager *session.Manager, id, cookie string, form map[string]string, csrf bool) *httptest.ResponseRecorder {
@@ -202,8 +203,26 @@ func TestMFADisabledAlertPublicPathsAndFailureBoundaries(t *testing.T) {
 				if mode == "csrf_failure" {
 					want = http.StatusForbidden
 				}
-				if response.Code != want || len(response.Result().Cookies()) != 0 {
+				if response.Code != want {
 					t.Fatalf("disable=%d want=%d: %s", response.Code, want, response.Body.String())
+				}
+				if want == http.StatusOK && !strings.HasSuffix(method, "email") {
+					var refreshed bool
+					for _, c := range response.Result().Cookies() {
+						if !sessioncookie.IsName(c.Name) || c.Value == "" {
+							continue
+						}
+						envelope, err := manager.Verify(c.Value)
+						if err != nil || envelope.MfaPending || !envelope.StepUpAt.IsZero() || envelope.Sid != sid || envelope.AccountID != id {
+							t.Fatal("reset did not refresh its existing session and clear MFA proof", err)
+						}
+						refreshed = true
+					}
+					if !refreshed {
+						t.Fatal("successful factor reset did not refresh the browser cookie")
+					}
+				} else if len(response.Result().Cookies()) != 0 {
+					t.Fatal("failed reset or email reset issued a session cookie")
 				}
 				account, err := store.AccountByID(t.Context(), id)
 				if err != nil || account.MFAEnrolled() != (want != http.StatusOK) {

@@ -18,6 +18,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/retry"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
@@ -267,30 +269,21 @@ func (s *Served) Watch(ctx context.Context, pool *pgxpool.Pool, ready func(bool)
 }
 
 func (s *Served) listen(ctx context.Context, pool *pgxpool.Pool, notices chan<- struct{}) {
-	for ctx.Err() == nil {
+	for attempt := 0; ctx.Err() == nil; attempt++ {
+		if err := retry.Wait(ctx, api.EdgeCertificateListenRetry, 30*time.Second, attempt); err != nil {
+			return
+		}
 		if err := s.listenOnce(ctx, pool, notices); err != nil && ctx.Err() == nil {
 			s.log.Warn("edgecert: listen for new certificates", "err", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(api.EdgeCertificateListenRetry):
 		}
 	}
 }
 
 func (s *Served) listenOnce(ctx context.Context, pool *pgxpool.Pool, notices chan<- struct{}) error {
-	conn, err := pool.Acquire(ctx)
+	// The shared hub uses the direct session pool for LISTEN, leaving ordinary
+	// query slots free for requests. Resync covers lost notices.
+	changes, err := db.SubscribeWithResync(ctx, pool, []string{NotifyChannel}, s.log)
 	if err != nil {
-		return err
-	}
-	// LISTEN leaves session state behind; the connection is closed rather
-	// than returned to the pool.
-	defer func() {
-		_ = conn.Conn().Close(context.WithoutCancel(ctx))
-		conn.Release()
-	}()
-	if _, err := conn.Exec(ctx, "LISTEN "+NotifyChannel); err != nil {
 		return err
 	}
 	// A certificate stored while the edge was not listening.
@@ -298,15 +291,13 @@ func (s *Served) listenOnce(ctx context.Context, pool *pgxpool.Pool, notices cha
 	case notices <- struct{}{}:
 	default:
 	}
-	for {
-		if _, err := conn.Conn().WaitForNotification(ctx); err != nil {
-			return err
-		}
+	for range changes {
 		select {
 		case notices <- struct{}{}:
 		default:
 		}
 	}
+	return ctx.Err()
 }
 
 // Collectors are the edge's certificate series: the loads counter and

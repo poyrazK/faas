@@ -1,6 +1,7 @@
 -- Compile-time projection of the tables the Data API usage queries read.
--- Runtime schema is owned by migrations 20261019131100664 and
--- 20261020085255268 (and, for apps, earlier migrations). This file never
+-- Runtime schema is owned by migrations 20261019131100664,
+-- 20261020085255268 and the change hook reports migration (and, for apps,
+-- earlier migrations). This file never
 -- executes against a database.
 CREATE TABLE apps (
  id uuid NOT NULL,
@@ -31,4 +32,14 @@ CREATE TABLE data_api_access_configs (
  app_id uuid PRIMARY KEY,
  config jsonb NOT NULL,
  reported_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE data_api_change_hook_reports (
+ app_id uuid PRIMARY KEY,
+ reported_at timestamptz NOT NULL,
+ pending bigint NOT NULL,
+ failed bigint NOT NULL,
+ oldest_pending_at timestamptz,
+ last_published_at timestamptz,
+ last_failure_code text,
+ publishing text NOT NULL
 );

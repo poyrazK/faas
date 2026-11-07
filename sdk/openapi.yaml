@@ -951,6 +951,30 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/postgres-bindings:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: listAppPostgresBindings
+      summary: List an app's managed PostgreSQL bindings
+      description: |
+        Lists the app's live managed PostgreSQL bindings on every database it
+        is bound to, including organization databases and project environment
+        copies. Deleting the app is refused while a binding listed here is not
+        being deleted. Bindings on an environment copy are removed by tearing
+        down that environment.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: The app's bindings on every database, without credential material
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppPostgresBindingList'}
+        default:
+          description: App lookup, permission or binding listing error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/postgres/databases/{id}/bindings:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -1171,6 +1195,10 @@ paths:
         Stages deletion. The account becomes `deleted_pending` for 30 days
         during which the customer can call `POST /v1/account/restore`. After
         the grace period, all rows are GC'd.
+        An account serving as an organization's billing contact while it has
+        a billing customer must move that contact first (409
+        `billing_contact_member`). If the billing-contact check cannot
+        complete, returns retryable 503 without staging deletion.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -1183,6 +1211,7 @@ paths:
                 example: {"status": "deleted_pending", "scheduled_at": "2026-07-23T11:25:00Z", "restore_until": "2026-08-22T11:25:00Z"}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '409': {$ref: '#/components/responses/ConflictDelete'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/account/rate-limits:
     get:
       tags: [account]
@@ -4738,6 +4767,78 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/service-aborts/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: attempt_id
+        in: path
+        required: true
+        description: The opaque attempt ID persisted before reviewed service abort.
+        schema: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
+    get:
+      tags: [deployments]
+      operationId: getServiceAbortReceipt
+      summary: Read the immutable acceptance receipt for a service-abort attempt.
+      description: |
+        Requires deployment-read access to the owned app. Returns immutable acceptance
+        of an exact reviewed default or named-environment service abort, including the original native
+        reverse-handoff request ID, even after the current handoff changes. Acceptance
+        does not establish gateway acknowledgement, request draining, completion or
+        current health. Compare the request ID separately with the observed handoff.
+        A 404 means no retained evidence; it never proves rejection or permits replay.
+        The receipt is retained with the candidate deployment audit and app. Named receipts
+        also require the original project/environment UUIDs to match the current app
+        and environment. Deleted, replaced or moved targets return no evidence.
+      responses:
+        '200':
+          description: The immutable receipt for the original reviewed service abort.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ServiceAbortReceipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          description: Service-abort receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/deployment-promotions/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: attempt_id
+        in: path
+        required: true
+        description: The opaque attempt ID persisted before guarded traffic promotion.
+        schema: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
+    get:
+      tags: [deployments]
+      operationId: getDeploymentPromotionReceipt
+      summary: Read the immutable acceptance receipt for a promotion attempt.
+      description: |
+        Requires deployment-read access to the owned app. Returns the original
+        candidate and original serving guard even after traffic changes. A 404 means no retained
+        receipt is available; it does not establish rejection and must never
+        trigger automatic resubmission. Receipts expire when their deployment
+        or app is purged. Named environment identities must still exist. This lookup never changes traffic.
+      responses:
+        '200':
+          description: The immutable receipt for the original guarded traffic promotion.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeploymentPromotionReceipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          description: Promotion receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/apps/{slug}/deployment-submissions/{attempt_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -4852,7 +4953,7 @@ paths:
                   type: string
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
-                  description: "Optional repository-relative directory to build from when source contains a workspace context. Empty or omitted means the archive root."
+                  description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; '.' explicitly selects the archive root."
                 scope:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
@@ -5050,6 +5151,7 @@ paths:
                   type: string
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
+                  description: "Build directory within the developer-source archive. Empty or omitted inherits the app's configured root; '.' selects the archive root."
                 scope:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
@@ -5600,6 +5702,11 @@ paths:
         Stored binding enforcement requires this exact workflow.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Rollback-Attempt-ID
+          in: header
+          required: false
+          description: Persisted opaque identity for an exact default-scope request or service rollback without alert attribution, database restoration or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
+          schema: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
       requestBody:
         required: false
         content:
@@ -5609,7 +5716,7 @@ paths:
             example: {"target_deployment_id": "0123456789abcdef0123456789abcdef"}
       responses:
         '202':
-          description: The selected deployment and, for an exact checked request, its accepted durable rollback operation. Acceptance does not imply completion.
+          description: The selected deployment and, for an exact checked request or service rollback, its accepted durable rollback operation. Acceptance does not imply completion.
           content:
             application/json:
               schema:
@@ -5620,7 +5727,7 @@ paths:
         '404': {$ref: '#/components/responses/RollbackTargetNotFound'}
         '409':
           $ref: '#/components/responses/RollbackConflict'
-          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired | rollback_deployment_changed | rollback_operation_required'
+          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired | rollback_deployment_changed | rollback_operation_required | rollback_attempt_accepted | rollback_attempt_conflict'
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/rollbacks/{operation}:
     parameters:
@@ -5703,6 +5810,18 @@ paths:
         request and never substitute a different predecessor.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Service-Abort-Attempt-ID
+          in: header
+          required: false
+          description: |
+            Opaque identity saved before an exact reviewed default or named-environment service abort.
+            Acceptance is recorded atomically with reverse-handoff intent. Accepted
+            repeats return 409 service_abort_attempt_accepted; a changed reviewed
+            request returns 409 service_abort_attempt_conflict. Read the retained
+            service-aborts receipt after a lost response; never replay accepted intent.
+            Named scopes require the complete project/environment release review and current
+            unprotected write admission. Unsupported recovery modes reject this header.
+          schema: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
       requestBody:
         required: true
         content:
@@ -6068,6 +6187,57 @@ paths:
               example: {"id": "0123456789abcdef0123456789abcdef", "email": "alice@example.com", "plan": "pro", "status": "active"}
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+  /v1/account/egress-overage:
+    get:
+      tags: [account]
+      operationId: getEgressOverage
+      summary: Read the account's egress overage election.
+      description: |
+        Without the election every plan stops at its monthly egress allowance:
+        the account's apps are parked (`quota_exceeded_egress`) until the month
+        ends or the plan grows. With it, egress above the allowance is billed as
+        overage, within the spend cap, while egress billing is live
+        (`billing: live`); while `billing` is `off` the allowance still holds.
+      responses:
+        '200':
+          description: The account's election.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    put:
+      tags: [account]
+      operationId: setEgressOverage
+      summary: Turn the account's egress overage election on or off.
+      description: |
+        `{"enabled": true|false}`. Requires admin scope and MFA; a dashboard
+        session also needs a step-up within the last 5 minutes. Turning it on
+        needs a paid plan (HTTP 402 `plan_egress_overage_not_allowed`); turning
+        it off is always allowed. Egress already sent while the election was on
+        is still billed. Audit row `egress_overage.changed` records each change.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EgressOverageRequest'}
+            example: {"enabled": true}
+      responses:
+        '200':
+          description: The election after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402':
+          description: 'code: plan_egress_overage_not_allowed — the plan stops at its egress allowance; upgrade to a paid plan.'
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
   /v1/apps/{slug}/rename:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -6096,6 +6266,64 @@ paths:
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '409': {$ref: '#/components/responses/ConflictRename'}
+  /v1/install/connections:
+    get:
+      tags: [github]
+      operationId: listGitHubAccountConnections
+      summary: List this account's GitHub deployment connections.
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Deployment installations and a fresh management CSRF token; credentials are never returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GitHubAccountConnections'}
+  /v1/install/connections/{installationID}:
+    parameters:
+      - name: installationID
+        in: path
+        required: true
+        description: GitHub installation whose deployment connection should be removed from this account.
+        schema: {type: integer, format: int64, minimum: 1}
+    delete:
+      tags: [github]
+      operationId: disconnectGitHubAccountConnection
+      summary: Remove only this account's deployment access and bindings. Preserve login and other accounts.
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GitHubConnectionManageRequest'}
+      responses:
+        '204': {description: Disconnected. Safe to repeat.}
+        '400': {description: Missing or invalid management CSRF token.}
+  /v1/install/connections/{installationID}/verify:
+    parameters:
+      - name: installationID
+        in: path
+        required: true
+        description: Connected GitHub installation whose current access should be verified for this account.
+        schema: {type: integer, format: int64, minimum: 1}
+    post:
+      tags: [github]
+      operationId: verifyGitHubAccountConnection
+      summary: Verify live GitHub repository access and installation permissions.
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GitHubConnectionManageRequest'}
+      responses:
+        '200':
+          description: Current access granted on GitHub.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GitHubConnectionVerification'}
+        '400': {description: Verification requires a valid management CSRF token and installation identifier.}
+        '404': {description: Installation not connected to this account.}
+        '503': {description: GitHub verification temporarily unavailable.}
   /v1/install/repos/list:
     post:
       tags: [github]
@@ -7361,6 +7589,32 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/env/batch/requests/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+      - {name: request_id, in: path, required: true, schema: {type: string, format: uuid}, description: Original configuration batch request UUID.}
+      - {name: X-Gregale-Env-Receipt-Proof, in: header, required: false, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Original private receipt proof when the batch supplied one. Never place this value in a URL.}
+    get:
+      tags: [env]
+      operationId: getEnvBatchReceipt
+      summary: Read an original value-free configuration batch receipt.
+      description: Requires current app and scope read access. Named-environment receipts must contain the current immutable environment identity; legacy receipts without it are unavailable. This read does not replay a batch or prove current configuration or restart completion.
+      responses:
+        '200':
+          description: Original retained value-free receipt.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnvBatchResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          description: Configuration batch receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/apps/{slug}/config/revisions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -7435,7 +7689,7 @@ paths:
       tags: [env]
       operationId: rollbackConfig
       summary: Restore a scope's variables to a config revision.
-      description: "Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets cannot be restored from a revision; those that differ are listed in `secrets_not_restored`."
+      description: "Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets cannot be restored from a revision; those that differ are listed in `secrets_not_restored`. Reviewed requests may pin the current revision and immutable targets, and provide a private proof and request ID for passive receipt recovery."
       requestBody:
         required: true
         content:
@@ -7451,7 +7705,30 @@ paths:
         '400': {$ref: '#/components/responses/ValidationError'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/config/rollback/requests/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+      - {name: request_id, in: path, required: true, schema: {type: string, format: uuid}, description: Original reviewed rollback request UUID.}
+      - {name: X-Gregale-Env-Receipt-Proof, in: header, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Original private receipt proof. Never put it in a URL.}
+    get:
+      tags: [env]
+      operationId: getConfigRollbackReceipt
+      summary: Read a reviewed configuration rollback receipt.
+      description: Returns value-free evidence for the original app and environment, subject to current read access. Never replays a rollback.
+      responses:
+        '200':
+          description: The original rollback receipt.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConfigRollbackReceipt'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/env/{key}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -7758,6 +8035,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Id32'
     patch:
+      parameters:
+        - name: Deployment-Promotion-Attempt-ID
+          in: header
+          required: false
+          description: Opaque durable identity for guarded 100 percent promotion. An accepted retry returns 409 deployment_promotion_attempt_accepted without changing traffic; read its receipt separately. Never reuse it with another body.
+          schema: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
       tags: [deployments]
       operationId: updateDeploymentTraffic
       summary: Set the per-deployment traffic-split weight.
@@ -7944,6 +8227,32 @@ paths:
         '503':
           description: Strict promotion cannot share a transaction fence across its binding catalogs and traffic backend.
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+  /v1/deployments/{id}/release-outcome:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [deployments]
+      operationId: recordReleaseOutcomeCheck
+      summary: Record a database check after a release command with an unknown outcome.
+      description: "A release command that started but ended without an exit code (its worker was lost, it timed out or it was cancelled while running) may have changed the database partly. Until a person checks the database and records it here, or a later release command of the same scope succeeds, the app's next release fails with `release_outcome_uncertain` before its own command runs. 409 when this release's command never ran, ended with a known exit, or was checked already."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RecordReleaseOutcomeCheckRequest'}
+            example: {"note": "migration 0042 applied completely; schema matches"}
+      responses:
+        '200':
+          description: The recorded check.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReleaseOutcomeCheck'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/deployments/{id}/diff:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -8722,6 +9031,73 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '409': {$ref: '#/components/responses/Conflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/domains/plan:
+    post:
+      tags: [domains]
+      operationId: planDomains
+      summary: Review a declarative set of domain bindings.
+      description: |
+        Reads one consistent snapshot without DNS probes or writes. Lists creates,
+        moves and unchanged bindings, serving destination deployments, and default
+        selections that a move clears. Omitted domains remain attached. All apps
+        must share an account namespace and organization and the caller needs
+        deployment-write access to every source and destination. A move requires
+        verified ownership and a serving destination; it does not smoke-test the
+        application. Traffic publication is validated again during atomic apply.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DomainManifest'}
+      responses:
+        '200':
+          description: Proposed binding changes and their private-identity-bound fingerprint.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DomainPlan'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/domains/apply:
+    post:
+      tags: [domains]
+      operationId: applyDomains
+      summary: Atomically apply reviewed domain bindings.
+      description: |
+        Reauthorizes every binding, captures its current claim and serving
+        deployment set under routing and billing-subject locks, and requires the
+        exact reviewed fingerprint. A stale plan returns 409 without changes.
+        Moves retain TXT proof, verification, certificate state, wildcard host
+        allowlists and issuance budgets; source default-domain selections are
+        cleared. New claims follow normal DNS verification and pending quotas.
+        No provider DNS, deployment traffic, or application policy is changed.
+        Use the returned rollback manifest to review a move back. Rollback does
+        not detach new claims or restore default selections. Reuse the plan
+        fingerprint as Idempotency-Key for request-bound response replay.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DomainApplyRequest'}
+      responses:
+        '200':
+          description: Committed bindings, the reviewed plan and previous binding manifest.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DomainApplyResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/domains/{domain}:
     parameters:
       - name: domain
@@ -8768,15 +9144,19 @@ paths:
       operationId: verifyDomain
       summary: Re-verify a domain's DNS + cert.
       description: |
-        Re-runs the DNS verifier + cert dial; returns the canonical
-        CustomDomainResponse. Used by `gregale domains verify
-        <domain>`. Idempotent: POSTing twice does not change the
-        durable verification state.
+        Runs a bounded ownership TXT check and routing/TLS probes using the
+        background verifier's claim-bound logic. Concurrent checks for the same
+        claim are coalesced; a durable 15-second cooldown limits repeated probes
+        across API processes. Returns CustomDomainResponse with independent
+        readiness states, DNS diagnostics, and retry scheduling. DNS or TLS that
+        is not ready is a successful check with a non-ready response, not a
+        transport failure. Expired claims require recreation. The same
+        Idempotency-Key replays its original response; use a new key to recheck.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
-          description: The row + cert details. `cert_not_after` / `cert_sans` populated when the cert dial succeeds.
+          description: Current ownership, routing and TLS readiness with fresh diagnostic checks. Retry-After indicates the minimum manual-check interval.
           content:
             application/json:
               schema:
@@ -8785,14 +9165,15 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '422':
           description: |
-            code: domain_verification_failed | domain_cert_not_issued.
-            DNS walk found a missing/mismatched TXT record, or the
-            port-443 cert is a CDN cert whose SANs do not include
-            the customer's domain.
+            Older servers report domain_verification_failed or
+            domain_cert_not_issued for TLS probe failures. Current servers
+            return a non-ready CustomDomainResponse with HTTP 200 for DNS
+            and certificate configuration problems.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServerError'}
   /v1/domains/{domain}/default:
     parameters:
       - name: domain
@@ -8820,7 +9201,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
-          description: The domain is not verified and cannot be selected.
+          description: The domain is unverified, routes to another app, or belongs to a suspended tenant and cannot be selected.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -11125,6 +11506,195 @@ paths:
       description: The apps remain live. Their project_id is cleared by the database foreign-key action.
       responses:
         '204': {description: Project deleted.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/environments/{environment}/config:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the environment configuration.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+      - name: environment
+        in: path
+        required: true
+        description: Environment slug whose configuration is addressed.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentConfig
+      summary: Get the latest non-secret environment configuration.
+      responses:
+        '200':
+          description: Latest immutable configuration version, or the implicit empty configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentConfigResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [projects]
+      operationId: updateProjectEnvironmentConfig
+      summary: Append a non-secret environment configuration version.
+      description: Secret-shaped keys are rejected; sensitive values belong in the secrets surface.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateProjectEnvironmentConfigRequest'}
+      responses:
+        '200':
+          description: Stored immutable configuration version.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentConfigResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/environments/{environment}/secrets:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the listed secrets.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secrets are addressed.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+    get:
+      tags: [projects]
+      operationId: listProjectEnvironmentSecrets
+      summary: List the secrets shared by every service of a project environment.
+      description: |
+        Metadata only: key, version, sealing key id and value
+        fingerprint. Values are write-only and never returned.
+      responses:
+        '200':
+          description: The environment's shared secrets and the plan's limit.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentSharedSecretsResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/environments/{environment}/secrets/{key}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the secret.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secret is addressed.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+      - $ref: '#/components/parameters/SecretKey'
+    put:
+      tags: [projects]
+      operationId: setProjectEnvironmentSecret
+      summary: Set a secret shared by every service of a project environment.
+      description: |
+        Seals the value for the fleet and stores it once for the environment. Each service receives it at its next boot unless it sets
+        the same key itself; services' snapshots in the environment are
+        invalidated. Platform identity keys are rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetProjectEnvironmentSharedSecretRequest'}
+      responses:
+        '200':
+          description: The stored secret's metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentSharedSecretResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/PlanLimitProjectSecrets'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/SecretValueTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    delete:
+      tags: [projects]
+      operationId: deleteProjectEnvironmentSecret
+      summary: Delete a secret shared by a project environment.
+      description: Services stop receiving it at their next boot.
+      responses:
+        '204': {description: The shared secret was removed.}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the rotated secret.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secret is rotated.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+      - $ref: '#/components/parameters/SecretKey'
+    post:
+      tags: [projects]
+      operationId: rotateProjectEnvironmentSecret
+      summary: Replace the value of an existing shared secret.
+      description: Like PUT, but an unknown key is 404 instead of being created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetProjectEnvironmentSharedSecretRequest'}
+      responses:
+        '200':
+          description: The rotated secret's metadata, with its new version.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentSharedSecretResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/SecretValueTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/environments/{environment}/config/diff:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment configurations are compared.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+      - name: environment
+        in: path
+        required: true
+        description: Destination environment for the configuration comparison.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+      - name: from
+        in: query
+        required: true
+        description: Baseline environment for the configuration snapshot comparison.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentConfigDiff
+      summary: Compare two environment configuration snapshots.
+      responses:
+        '200':
+          description: Stable key-level configuration diff ordered by key.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentConfigDiffResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -14672,6 +15242,90 @@ paths:
               schema: {$ref: '#/components/schemas/AgentConnectionsResponse'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-approvals:
+    get:
+      tags: [keys]
+      operationId: listAgentApprovals
+      summary: List agent approval requests.
+      description: |
+        With an agent connection's key: that agent's requests that needed a
+        person's approval, newest first. With any other credential: the
+        pending requests the caller may decide, those of agents they
+        connected and of agents acting in organizations they own or
+        administer. A person decides only on the review page.
+      responses:
+        '200':
+          description: The approval requests.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalsResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-approvals/channels:
+    get:
+      tags: [keys]
+      operationId: getAgentApprovalChannels
+      summary: Show where the account's agents' approval requests also go.
+      description: |
+        The notification channels that get a message for each new approval
+        request of the account's agents, besides the email to the person
+        who connected the agent.
+      responses:
+        '200':
+          description: The account's approval channels.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalChannelsResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [keys]
+      operationId: setAgentApprovalChannels
+      summary: Choose where the account's agents' approval requests also go.
+      description: |
+        Replaces the notification channels that get the account's agents'
+        approval requests. Name your own channels; an empty list leaves
+        email only. Needs an admin credential, so an agent cannot change
+        where its own requests go.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentApprovalChannelsRequest'}
+      responses:
+        '200':
+          description: The channels now bound.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalChannelsResponse'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-approvals/{id}:
+    get:
+      tags: [keys]
+      operationId: getAgentApproval
+      summary: Get an agent approval request.
+      description: |
+        An agent reads its own request to learn whether a person approved
+        it; a person reads one they may decide. Any other request answers
+        404.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The approval request's id.
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The approval request.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/agent-connections/revoke_all:
     post:
       tags: [keys]
@@ -15102,6 +15756,8 @@ paths:
         the next rotation observes the new value. `days=0` is atomic
         rotation (no grace); `days=null` (or omission) clears the
         override and falls back to the plan default.
+        A failed save returns retryable 503 without invalidating the cache
+        or emitting a successful change audit event.
       requestBody:
         required: true
         content:
@@ -15122,6 +15778,7 @@ paths:
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/account/egress_allowlist_extra:
     get:
       tags: [account]
@@ -17010,6 +17667,8 @@ paths:
         the organization bills to cannot be removed while the organization
         has a billing customer (409 `billing_contact_member`); set another
         billing email with `PUT /v1/orgs/{slug}/billing/email` first.
+        If the billing-contact check cannot complete, returns retryable 503
+        without removing the member.
       responses:
         '204': {description: Member removed.}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -17036,6 +17695,7 @@ paths:
             `org_memberships_one_owner_idx` partial unique index. Stable code `org_last_owner`.
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/orgs/{slug}/transfer_ownership:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -17049,7 +17709,9 @@ paths:
         (a single PostgreSQL tx with `FOR UPDATE` locks on both
         rows). The exactly-one-owner invariant is enforced by the
         partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-        member of the org.
+        member of the org. For a Free organization, the recipient must have
+        available Free-organization ownership capacity; admission is serialized
+        with organization creation and other incoming transfers.
       requestBody:
         required: true
         content:
@@ -17064,8 +17726,9 @@ paths:
         '403':
           description: |
             `403 Forbidden` — caller is authenticated but is not the
-            active owner of the target org. Stable code
-            `org_role_forbidden`.
+            active owner of the target org (`org_role_forbidden`), or the
+            recipient already owns the maximum number of Free organizations
+            (`org_free_limit_exceeded`, with limit and observed count).
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '404':
           description: 'code: NotFound (new owner is not a member)'
@@ -18792,6 +19455,56 @@ paths:
               schema: {$ref: '#/components/schemas/AccountOverageCapResponse'}
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/egress-overage:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgEgressOverage
+      summary: Read the organization's egress overage election.
+      description: "Requires current organization membership and usage:read. An organization that owns its resources elects egress overage apart from its members."
+      responses:
+        '200':
+          description: The organization's election.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [orgs]
+      operationId: setOrgEgressOverage
+      summary: Turn the organization's egress overage election on or off.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. `{"enabled": true|false}`; turning it on needs a
+        paid plan (HTTP 402 `plan_egress_overage_not_allowed`).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EgressOverageRequest'}
+            example: {"enabled": true}
+      responses:
+        '200':
+          description: The organization's election after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402':
+          description: 'code: plan_egress_overage_not_allowed — the organization''s plan stops at its egress allowance; move the organization to a paid plan.'
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -23709,9 +24422,9 @@ components:
         from_scale_to_zero: {type: boolean}
         target_scale_to_zero: {type: boolean}
         generation: {type: integer, format: int64, minimum: 2}
-        state: {type: string, enum: [pending, succeeded]}
+        state: {type: string, enum: [pending, succeeded, failed]}
         connection_interruption_expected: {type: boolean}
-        last_error_code: {type: string, description: "Safe policy-change diagnostic; an uncertain outcome keeps the accepted intent pending for recovery."}
+        last_error_code: {type: string, description: "Safe policy-change diagnostic. A confirmed rejection retains the source policy; uncertain outcomes remain pending."}
         created_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
     ResizeManagedPostgresDatabaseRequest:
@@ -23732,9 +24445,9 @@ components:
         from_class: {type: string, enum: [development, burstable, production]}
         target_class: {type: string, enum: [development, burstable, production]}
         generation: {type: integer, format: int64, minimum: 2}
-        state: {type: string, enum: [pending, succeeded]}
+        state: {type: string, enum: [pending, succeeded, failed]}
         connection_interruption_expected: {type: boolean}
-        last_error_code: {type: string, description: "Safe diagnostic code; pending intent remains recoverable after uncertain provider outcomes."}
+        last_error_code: {type: string, description: "Safe diagnostic code. A failed resize retains the confirmed source configuration; uncertain outcomes remain pending."}
         created_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
     ManagedPostgresDatabase:
@@ -23961,6 +24674,24 @@ components:
       required: [items]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/ManagedPostgresBinding'}}
+    AppPostgresBinding:
+      description: One live managed PostgreSQL binding of an app, without credential material.
+      type: object
+      additionalProperties: false
+      required: [id, database, scope, environment_key, access, state]
+      properties:
+        id: {type: string, description: 'The binding ID that revoking the binding takes.'}
+        database: {type: string, description: The bound database's name.}
+        scope: {type: string}
+        environment_key: {type: string}
+        access: {type: string}
+        state: {type: string, description: A binding in the deleting state no longer blocks deleting the app.}
+    AppPostgresBindingList:
+      description: An app's live managed PostgreSQL bindings on every database it is bound to.
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AppPostgresBinding'}}
     CreateManagedPostgresBindingRequest:
       description: Request to inject a managed database credential into an app environment. Access values are provider-neutral; the selected database backend may support only a subset.
       type: object
@@ -24328,6 +25059,44 @@ components:
       required: [csrf_token]
       properties:
         csrf_token: {type: string}
+    GitHubConnectionManageRequest:
+      description: Named CSRF token required to manage this account's GitHub deployment connections.
+      type: object
+      required: [csrf_token]
+      properties:
+        csrf_token: {type: string}
+    GitHubAccountConnection:
+      description: Credential-free health and access summary for one account-owned deployment authorization.
+      type: object
+      required: [installation_id, github_login, health, repository_count]
+      properties:
+        access: {$ref: '#/components/schemas/GitHubConnectionVerification'}
+        installation_id: {type: integer, format: int64}
+        github_login: {type: string}
+        health: {type: string, enum: [unknown, healthy, degraded]}
+        repository_count: {type: integer}
+        last_verified_at: {type: string, format: date-time}
+    GitHubAccountConnections:
+      description: This account's deployment connections and the CSRF token for subsequent management actions.
+      type: object
+      required: [connections, csrf_token]
+      properties:
+        csrf_token: {type: string}
+        connections:
+          type: array
+          items: {$ref: '#/components/schemas/GitHubAccountConnection'}
+    GitHubConnectionVerification:
+      description: Live GitHub installation permissions, repository selection and verification time.
+      type: object
+      required: [account_type, repository_selection, permissions, verified_at, repository_count]
+      properties:
+        account_type: {type: string}
+        repository_selection: {type: string}
+        permissions:
+          type: object
+          additionalProperties: {type: string}
+        verified_at: {type: string, format: date-time}
+        repository_count: {type: integer}
     GitHubInstallStatus:
       description: |
         Account-scoped GitHub installation and app binding health. Sealed
@@ -24584,6 +25353,49 @@ components:
           type: [integer, 'null']
           format: int64
           minimum: 0
+    EgressOverageRequest:
+      description: Turns the egress overage election on or off.
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+    EgressOverageResponse:
+      description: |
+        The billing subject's election to pay for egress above its plan's monthly
+        allowance instead of stopping at it.
+      type: object
+      required: [enabled, electable, included_gib, billing]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the election is on.
+        electable:
+          type: boolean
+          description: Whether the plan allows the election; Free does not.
+        enabled_at:
+          type: string
+          format: date-time
+          description: When the election started; kept when it is turned off and on again.
+        disabled_at:
+          type: string
+          format: date-time
+          description: When the election was last turned off.
+        included_gib:
+          type: integer
+          format: int64
+          description: The plan's monthly egress allowance in GiB.
+        billing:
+          type: string
+          enum: [live, "off"]
+          description: live when egress above the allowance is billed while the election is on; off while egress is not billed, when the allowance still holds.
+        price_millicents_per_gib:
+          type: integer
+          format: int64
+          description: Price of a GiB above the allowance while billing is live, in millicents.
+        currency:
+          type: string
+          description: Currency of the price.
     OrgBillingEmailRequest:
       description: The email an organization bills to; invoices and the billing portal sign-in go to it.
       type: object
@@ -25667,7 +26479,7 @@ components:
       properties:
         wake_id: {type: string, format: uuid, description: "Wake id on the admitted instance and wake timeline (the running instance's when already_running)."}
         already_running: {type: boolean, description: "True when the app already had a routable running instance and no wake was queued."}
-        instance_id: {type: string, format: uuid, description: "The running instance, present when already_running is true."}
+        instance_id: {type: string, format: uuid, description: "The instance the wake resolves to: the running instance when already_running is true, or the frozen instance a queued wake resumes under its own wake_id."}
     PreAuthRateLimitConfig:
       description: "Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe mode records threshold crossings without rejecting requests."
       type: object
@@ -27606,7 +28418,7 @@ components:
         runtime: {type: string}
         handler: {type: string}
         dockerfile: {type: boolean}
-        source_root: {type: string}
+        source_root: {type: string, description: "Build directory saved for this resumable upload. Empty or omitted inherits the app's configured root; '.' selects the archive root."}
         scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$', description: "Named environment scope applied when the upload is committed; omitted uses default."}
         source_url: {type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by the API."}
         commit_sha: {type: string, minLength: 7, maxLength: 64, pattern: '^[0-9a-f]+$', description: "Lowercase hexadecimal Git commit identifier."}
@@ -27739,6 +28551,35 @@ components:
         status: {type: string, enum: [disabled, unavailable, ready]}
         source: {type: string, enum: [registry, object_storage]}
         sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+    ServiceAbortReceipt:
+      description: Immutable acceptance of an original reviewed service-abort intent; ACK/drain completion and the current handoff remain separate.
+      type: object
+      required: [attempt_id, request_hash, app_id, deployment_id, predecessor_deployment_id, request_id, scope, accepted_at]
+      properties:
+        attempt_id: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
+        request_hash: {type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$'}
+        app_id: {type: string, format: uuid}
+        deployment_id: {type: string, format: uuid}
+        predecessor_deployment_id: {type: string, format: uuid}
+        request_id: {type: string, format: uuid}
+        scope: {type: string, description: Default scope or the original named environment slug.}
+        project_id: {type: string, format: uuid, description: Original project identity; present for named scopes.}
+        environment_id: {type: string, format: uuid, description: Original environment identity; present for named scopes.}
+        accepted_at: {type: string, format: date-time}
+    DeploymentPromotionReceipt:
+      description: Immutable acceptance of an original guarded 100 percent traffic promotion; current traffic and health are separate.
+      type: object
+      required: [attempt_id, request_hash, app_id, deployment_id, expected_serving_deployment_id, scope, accepted_at]
+      properties:
+        attempt_id: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
+        request_hash: {type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$'}
+        app_id: {type: string, format: uuid}
+        deployment_id: {type: string, format: uuid}
+        expected_serving_deployment_id: {type: string, description: Original serving guard; empty requires no serving sibling.}
+        scope: {type: string}
+        project_id: {type: string, format: uuid}
+        environment_id: {type: string, format: uuid}
+        accepted_at: {type: string, format: date-time}
     DeploymentSubmissionReceipt:
       description: Immutable acceptance evidence for one opaque deployment submission attempt.
       type: object
@@ -27818,9 +28659,20 @@ components:
         retry_restart_reason:
           type: string
           description: Why a retry restarted from source_download rather than retry_requested_stage.
+        retry_intent: {$ref: '#/components/schemas/DeploymentRetryIntent'}
         dependency_gate: {$ref: '#/components/schemas/DeploymentDependencyGate'}
         build_dependency_gate: {$ref: '#/components/schemas/DeploymentBuildDependencyGate'}
         hosting_verification: {$ref: '#/components/schemas/DeploymentHostingVerification'}
+    DeploymentRetryIntent:
+      type: object
+      readOnly: true
+      description: Admission-time release intent retained across routing, failure and stage changes. Absent on legacy deployments.
+      required: [version, traffic_percent, traffic_percent_explicit, service_rollout]
+      properties:
+        version: {type: string, enum: [v1]}
+        traffic_percent: {type: integer, minimum: 0, maximum: 100}
+        traffic_percent_explicit: {type: boolean}
+        service_rollout: {type: boolean}
     DeploymentStageHistoryEntry:
       type: object
       description: One closed stage with server-measured duration.
@@ -28241,6 +29093,11 @@ components:
       description: "Bounded progress of an exact binding check at the service routing boundary. Passed confirms the routing transaction; scheduler ACK and drain completion are reported by the enclosing handoff phase."
       required: [request_id, action, deployment_id, status]
       properties:
+        traffic_percent:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Exact recipient traffic percentage authorized by this routing check. Omission denotes the legacy full cutover.
         request_id: {type: string, format: uuid}
         action: {type: string, enum: [promote, abort]}
         deployment_id: {type: string, format: uuid}
@@ -32137,11 +32994,85 @@ components:
           description: "Reason for the most recent terminal transition. null when still running."
           example: null
     # ─── Domains ──────────────────────────────────────────────────────────
+    DomainReadiness:
+      description: Independent ownership, DNS routing, and TLS activation state.
+      type: object
+      required: [status, ownership, routing, tls]
+      properties:
+        status: {type: string, enum: [awaiting_ownership, expired, checking_dns, fix_routing, preparing_https, ready, needs_attention]}
+        ownership: {type: string, enum: [pending, verified, expired]}
+        routing: {type: string, enum: [ok, fail, pending, na]}
+        tls: {type: string, description: "Certificate state, independently of ownership and routing."}
+    DomainManifest:
+      description: "Versioned desired bindings. Only listed domains change; omission never removes a binding. At most 20 bindings in a 128 KiB request. Use a separate file from the application deployment manifest."
+      type: object
+      additionalProperties: false
+      required: [version, domains]
+      properties:
+        version: {type: integer, enum: [1]}
+        domains: {type: array, minItems: 1, maxItems: 20, items: {$ref: '#/components/schemas/DomainBindingSpec'}}
+    DomainBindingSpec:
+      description: "A desired exact or wildcard hostname, app slug and optional project environment. An omitted environment selects ordinary default routing."
+      type: object
+      additionalProperties: false
+      required: [domain, app]
+      properties:
+        domain: {type: string, example: 'api.example.com'}
+        app: {type: string, example: 'my-api'}
+        environment: {type: string}
+    DomainBindingTarget:
+      description: "Resolved app and environment identity captured in a reviewed plan."
+      type: object
+      properties:
+        app: {type: string}
+        app_id: {type: string}
+        environment: {type: string}
+        environment_id: {type: string}
+    DomainBindingChange:
+      description: "A proposed create, move or noop. New claims need verification. A move retains proof and TLS state."
+      type: object
+      properties:
+        domain: {type: string}
+        action: {type: string, enum: [create, move, noop]}
+        before: {$ref: '#/components/schemas/DomainBindingTarget'}
+        after: {$ref: '#/components/schemas/DomainBindingTarget'}
+        verified: {type: boolean}
+        clears_default: {type: boolean, description: "The source app's default domain pointer will be cleared."}
+        deployment_ids: {type: array, items: {type: string}, description: "Serving destination deployments captured for review; this is not an HTTP smoke-test result."}
+    DomainPlan:
+      description: "Deterministic review artifact. The SHA-256 binds the diff to private claim identity, intervening moves, destination release and traffic allocations. It contains no ownership proof token."
+      type: object
+      properties:
+        version: {type: integer, enum: [1]}
+        sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        manifest: {$ref: '#/components/schemas/DomainManifest'}
+        changes: {type: array, items: {$ref: '#/components/schemas/DomainBindingChange'}}
+    DomainApplyRequest:
+      description: "Apply exactly the reviewed bindings. Confirmation and the fingerprint from planDomains are required."
+      type: object
+      additionalProperties: false
+      required: [manifest, expected_plan_sha256, confirm]
+      properties:
+        manifest: {$ref: '#/components/schemas/DomainManifest'}
+        expected_plan_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        confirm: {type: boolean, const: true}
+    DomainApplyResponse:
+      description: "The committed snapshot and optional previous bindings for a separately reviewed rollback."
+      type: object
+      properties:
+        plan: {$ref: '#/components/schemas/DomainPlan'}
+        domains: {type: array, items: {$ref: '#/components/schemas/CustomDomainResponse'}}
+        rollback: {$ref: '#/components/schemas/DomainManifest'}
     CustomDomainResponse:
       description: "A custom domain binding: domain string, target app, optional project environment, verification status, and TLS provisioning state. adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify | show` surface."
       type: object
       required: [domain, app_id, verified]
       properties:
+        readiness: {$ref: '#/components/schemas/DomainReadiness'}
+        verification_next_check_at: {type: string, format: date-time, description: "Next scheduled automatic ownership check; omitted after verification."}
+        verification_attempts: {type: integer, minimum: 0}
+        cert_retry_at: {type: string, format: date-time, description: "Next permitted legacy certificate attempt, when a durable cooldown is active. Caddy manages its own retry schedule."}
+        checks: {type: array, items: {$ref: '#/components/schemas/DomainDoctorCheck'}, description: "Fresh checks for this claim, including observed values and remediation. Stale observations are omitted."}
         domain: {type: string, example: "app.example.com"}
         app_id: {type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef"}
         environment: {type: string, description: "Project environment that owns the route; omitted for legacy application-wide domains."}
@@ -32194,6 +33125,22 @@ components:
         domain: {type: string, example: "app.example.com"}
         app_id: {type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef"}
         environment: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Optional project environment slug. When set, traffic follows only that environment's active release graph."}
+    DomainDoctorCheck:
+      description: "One row of the doctor report. Stable name tokens (dns_record / points_to_gregale / tls_certificate / caa_permits / ipv6_conflict) so the CLI can filter by name without parsing the human Detail field. Remediation is the exact record to change when status is fail — the load-bearing field for the activation drop-off."
+      type: object
+      required: [name, status, detail]
+      properties:
+        name:
+          type: string
+          enum: [dns_record, points_to_gregale, tls_certificate, caa_permits, ipv6_conflict]
+        status:
+          type: string
+          enum: [ok, fail, pending, na]
+          example: "fail"
+        detail: {type: string, example: "CNAME does not point at Gregale (observed: wrong.example.com.)"}
+        observed: {type: string, example: "wrong.example.com."}
+        remediation: {type: string, example: "Set CNAME app.example.com → edge.gregale.dev"}
+        checked_at: {type: string, format: date-time, example: "2026-08-18T14:23:11Z"}
     # ─── Tenant Surfaces (issue #879 / ADR-100 PR-C) ──────────────────────
     TemplateView:
       description: "A starter template entry from GET /v1/templates."
@@ -33018,6 +33965,89 @@ components:
         environment: {type: string}
         key: {type: string}
         reference: {type: string, pattern: '^secret:[A-Z][A-Z0-9_]*$'}
+    UpdateProjectEnvironmentConfigRequest:
+      description: Non-secret JSON configuration to append as a new environment version.
+      type: object
+      required: [values]
+      additionalProperties: false
+      properties:
+        values:
+          type: object
+          additionalProperties: true
+          maxProperties: 256
+    ProjectEnvironmentConfigResponse:
+      description: Latest immutable non-secret configuration snapshot for a project environment.
+      type: object
+      required: [project_slug, environment, version, config_hash, values]
+      properties:
+        project_slug: {type: string}
+        environment: {type: string}
+        version: {type: integer, format: int64, minimum: 0}
+        config_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        values:
+          type: object
+          additionalProperties: true
+        updated_at: {type: string, format: date-time}
+    ProjectEnvironmentSharedSecret:
+      description: Metadata of one secret shared by every service of a project environment. The value is write-only.
+      type: object
+      required: [key, version, kid, value_hash, created_at, updated_at]
+      properties:
+        key: {type: string}
+        version: {type: integer, format: int64, minimum: 1, description: "Increases on every value change."}
+        kid: {type: string, description: "Recipient of the fleet key that sealed the value."}
+        value_hash: {type: string, description: "HMAC fingerprint of the value, for comparing values without revealing them."}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ProjectEnvironmentSharedSecretsResponse:
+      description: The secrets a project environment shares with its services.
+      type: object
+      required: [project_slug, environment, secrets, limit]
+      properties:
+        project_slug: {type: string}
+        environment: {type: string}
+        secrets:
+          type: array
+          items: {$ref: '#/components/schemas/ProjectEnvironmentSharedSecret'}
+        limit: {type: integer, description: "The plan's ProjectSecretCountMax for one environment."}
+    SetProjectEnvironmentSharedSecretRequest:
+      description: The plaintext value to seal. Never returned.
+      type: object
+      required: [value]
+      properties:
+        value: {type: string, minLength: 1}
+    ProjectEnvironmentSharedSecretResponse:
+      description: A shared secret's metadata after a write.
+      type: object
+      required: [project_slug, environment, secret]
+      properties:
+        project_slug: {type: string}
+        environment: {type: string}
+        secret: {$ref: '#/components/schemas/ProjectEnvironmentSharedSecret'}
+    ProjectEnvironmentConfigChange:
+      description: One key-level change between two environment configuration snapshots.
+      type: object
+      required: [key, kind]
+      properties:
+        key: {type: string}
+        kind: {type: string, enum: [added, removed, changed]}
+        before: {}
+        after: {}
+    ProjectEnvironmentConfigDiffResponse:
+      description: Stable key-level diff between two project environment configuration snapshots.
+      type: object
+      required: [project_slug, from_environment, to_environment, from_version, to_version, from_hash, to_hash, changes]
+      properties:
+        project_slug: {type: string}
+        from_environment: {type: string}
+        to_environment: {type: string}
+        from_version: {type: integer, format: int64, minimum: 0}
+        to_version: {type: integer, format: int64, minimum: 0}
+        from_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        to_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        changes:
+          type: array
+          items: {$ref: '#/components/schemas/ProjectEnvironmentConfigChange'}
     ProjectDeploymentCheckRequest:
       type: object
       additionalProperties: false
@@ -33926,6 +34956,11 @@ components:
           type: string
           enum: [unavailable, plan, quota, unsupported, configured, not_referenced, permission]
           description: "Why apply does not provide a Compose postgres service. Omitted for other datastores and when provision is set."
+        unbound:
+          type: array
+          items: {type: string}
+          example: [api.REDIS_URL]
+          description: "Selected services' keys that point at this datastore and will have no value, as service.KEY. Omitted when none."
     PlanManagedProvision:
       description: "The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the service keys it binds."
       type: object
@@ -36756,6 +37791,7 @@ components:
         org_id: {type: string, format: uuid, description: The organization the agent acts in.}
         member: {type: string, description: "Email of the member who connected the agent, in an organization's list."}
         projects: {type: array, items: {type: string}, description: "Slugs of the projects the agent is limited to; absent when it reaches every project."}
+        approvals: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action the agent must have a person approve, including its organization's floor."}
       example: {id: "3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19", kind: hosted_mcp, client_name: Claude, client_site: claude.ai, label: mcp-login, prefix: "fp_live_ab12cd34", scopes: ["apps:read"], created_at: "2026-10-30T11:25:00Z", last_used_at: "2026-10-30T12:05:00Z", expires_at: "2026-11-06T12:05:00Z"}
     AgentConnectionsResponse:
       description: The agents connected to the account, newest first.
@@ -36790,6 +37826,15 @@ components:
           type: array
           description: Capabilities agents may get beyond inspection; empty for read-only.
           items: {type: string, enum: ['deploy:write', 'secrets:request', 'storage:manage', 'postgres:manage']}
+        approval_categories:
+          type: array
+          description: Kinds of action every agent acting in the organization must have a person approve; omit to keep the current ones.
+          items: {type: string, enum: [delete, production, credentials, billing]}
+        approval_channels:
+          type: array
+          maxItems: 5
+          description: Names of your own notification channels that get approval requests of agents acting in the organization; omit to keep them, send an empty list to remove them.
+          items: {type: string}
     OrgAgentPolicyResponse:
       description: An organization's agent policy.
       type: object
@@ -36800,8 +37845,71 @@ components:
           type: array
           description: The capabilities agents may carry beyond inspection.
           items: {type: string}
+        approval_categories:
+          type: array
+          description: Kinds of action every agent acting in the organization must have a person approve.
+          items: {type: string}
+        approval_channels:
+          type: array
+          description: Your notification channels that get this organization's agents' approval requests.
+          items: {type: string}
         updated_at: {type: string, format: date-time, description: When the policy last changed; absent for an organization that never set one.}
         revoked: {type: integer, minimum: 0, description: Agent connections a change revoked because the new policy no longer allows them.}
+    AgentApprovalPendingInfo:
+      description: "The approval request behind an approval_required, approval_denied or approval_expired problem. On approval_required a person opens review_url to decide, then the agent repeats the same request once; on the other two the agent should stop repeating it."
+      type: object
+      required: [id, category, review_url, expires_at]
+      properties:
+        id: {type: string, format: uuid, description: The id of the approval request.}
+        category: {type: string, enum: [delete, production, credentials, billing], description: The kind of action that needs approval.}
+        review_url: {type: string, format: uri, description: "The page where a signed-in member who may decide approves or denies the request."}
+        expires_at: {type: string, format: date-time, description: When the request and any approval of it expire.}
+        status: {type: string, enum: [denied, expired], description: "Set on approval_denied and approval_expired: what became of the request."}
+        note: {type: string, maxLength: 280, description: "The person's reason for denying the request, when they gave one."}
+    AgentApprovalChannelsRequest:
+      description: The notification channels to send the account's agents' approval requests to.
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          maxItems: 5
+          description: Names of your notification channels; an empty list leaves email only.
+          items: {type: string}
+    AgentApprovalChannelsResponse:
+      description: The notification channels that get the account's agents' approval requests.
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          description: Channel names, in alphabetical order.
+          items: {type: string}
+    AgentApprovalResponse:
+      description: "One request of an agent connection that needed a person's approval."
+      type: object
+      required: [id, category, method, path, body_bound, status, created_at, expires_at]
+      properties:
+        id: {type: string, format: uuid, description: The request's id.}
+        category: {type: string, enum: [delete, production, credentials, billing], description: The kind of action.}
+        method: {type: string, description: The HTTP method of the request the approval allows.}
+        path: {type: string, description: The path and query of the request the approval allows.}
+        body_bound: {type: boolean, description: "Whether the approval is tied to the request body; large and multipart bodies are not."}
+        status: {type: string, enum: [pending, approved, denied, consumed, expired], description: "`consumed` once the approved request was made."}
+        review_url: {type: string, format: uri, description: The review page, while the request is pending.: null}
+        agent: {type: string, description: "The connection's client name or key label."}
+        created_at: {type: string, format: date-time, description: When the agent first made the request.}
+        expires_at: {type: string, format: date-time, description: After this time the request can no longer be approved or used.}
+        decided_at: {type: string, format: date-time, description: When a person approved or denied it.}
+        note: {type: string, maxLength: 280, description: "Why the person denied this request, if they said; absent otherwise."}
+    AgentApprovalsResponse:
+      description: "Approval requests, newest first: an agent's own, or those pending that the caller may decide."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/AgentApprovalResponse'}
     KeyOrg:
       description: The shared organization an API key acts in.
       type: object
@@ -36839,6 +37947,7 @@ components:
           type: [string, "null"]
           description: PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again.
         projects: {type: array, items: {type: string}, description: "Project slugs the key was limited to, on the create response of a limited agent key."}
+        approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action the agent key must have a person approve, on the create response when the request chose them."}
       example: {id: "0123456789abcdef0123456789abcdef", org_id: "8b1f5e5d-273e-5a18-ae00-58fceba4fe6c", prefix: "fp_live_ab12cd34", label: "ci-deploy", scopes: ['apps:read', 'deploy:write'], created_at: "2026-08-02T11:25:00Z", expires_at: "2027-08-02T11:25:00Z", status: "active", last_used_at: "2026-07-25T13:25:00Z"}
     DeployTokenResponse:
       description: "Metadata for a per-app deploy token. The fp_deploy_ plaintext is returned only on create and rotate responses."
@@ -36906,6 +38015,7 @@ components:
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project."}
+        approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field."}
     RotateKeyResponse:
       description: "Response body of POST /v1/keys/{id}/rotate. The new `key_plaintext` is returned exactly once; the old plaintext is NEVER returned (only the hash is stored). `old_key_expires_at` is the grace deadline applied to the predecessor — the customer's CI rotates over by then."
       type: object
@@ -36931,6 +38041,7 @@ components:
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project."}
+        approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action the organization's agent key must have a person approve; the organization's floor applies on top. Omit for every kind, empty for none."}
     ListOrgAPIKeysResponse:
       description: "GET /v1/orgs/{slug}/keys body. Returns every key minted against the org (active + grace + revoked). Newest first; matches the legacy `GET /v1/keys` ordering."
       type: object
@@ -37534,6 +38645,9 @@ components:
       required: [request_id, expected_revision]
       description: At least one set or delete is required. Keys must be distinct across both collections; plan limits bound collection counts and value sizes.
       properties:
+        expected_app_id: {type: string, format: uuid, description: Optional immutable app identity; required when expected_environment_id is supplied.}
+        expected_environment_id: {type: string, format: uuid, description: Immutable named-environment identity for an identity-pinned batch; omit for the default scope.}
+        receipt_proof: {type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true, description: Optional private random proof required to read this batch receipt; never returned in a receipt. Requires expected_app_id.}
         request_id: {type: string, format: uuid}
         expected_revision: {type: integer, format: int64, minimum: 0}
         values:
@@ -37552,6 +38666,7 @@ components:
         request_id: {type: string, format: uuid}
         app_id: {type: string, format: uuid}
         scope: {type: string}
+        environment_id: {type: string, format: uuid, description: Immutable environment identity when the original named batch was pinned.}
         updated_keys: {type: array, items: {type: string}}
         deleted_keys: {type: array, items: {type: string}}
         config_change: {$ref: '#/components/schemas/ConfigChangeReceipt'}
@@ -37631,6 +38746,23 @@ components:
         comment: {type: string}
         counted: {type: boolean, description: "Whether the approval counts toward the policy; the deployer's own approval does not unless self-approval is allowed."}
         decided_at: {type: string, format: date-time}
+    RecordReleaseOutcomeCheckRequest:
+      description: "What a person checked in the database after a release command with an unknown outcome."
+      type: object
+      required: [note]
+      properties:
+        note: {type: string, minLength: 1, maxLength: 1000, description: "What was checked, for example which migrations are applied."}
+    ReleaseOutcomeCheck:
+      description: "A recorded database check after a release command with an unknown outcome. Later release commands of the scope run again."
+      type: object
+      required: [deployment_id, task_id, task_status, checked_by, note, checked_at]
+      properties:
+        deployment_id: {type: string, format: uuid}
+        task_id: {type: string, format: uuid, description: "The release command's task."}
+        task_status: {type: string, enum: [failed, timed_out, cancelled], description: "How the release command ended, without an exit code."}
+        checked_by: {type: string, description: "The person or API key that recorded the check."}
+        note: {type: string, description: "What the person recorded about the database."}
+        checked_at: {type: string, format: date-time}
     DatabaseSwitch:
       description: "A rollback that restores the app's managed PostgreSQL database with the code. The database is restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced."
       type: object
@@ -37873,6 +39005,23 @@ components:
       required: [revision]
       properties:
         revision: {type: integer, format: int64, minimum: 1}
+        expected_revision: {type: integer, format: int64, minimum: 0, description: Current configuration revision reviewed before rollback.}
+        expected_app_id: {type: string, format: uuid, description: Immutable reviewed app identity.}
+        expected_environment_id: {type: string, format: uuid, description: Immutable reviewed named environment identity.}
+        request_id: {type: string, format: uuid, description: Original reviewed rollback request identity.}
+        receipt_proof: {type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true, description: Private proof required for receipt recovery.}
+    ConfigRollbackReceipt:
+      description: Value-free evidence of a reviewed configuration rollback.
+      type: object
+      required: [request_id, app_id, scope, restored_revision, config_revision, changed]
+      properties:
+        request_id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        scope: {type: string}
+        environment_id: {type: string, format: uuid}
+        restored_revision: {type: integer, format: int64, minimum: 1}
+        config_revision: {type: integer, format: int64, minimum: 1}
+        changed: {type: boolean}
     ConfigSecretDifference:
       description: "A secret a config rollback could not restore."
       type: object
@@ -39278,6 +40427,13 @@ components:
           type: array
           description: "Why requests in this window may be missing from the totals. Empty or absent when the window is complete."
           items: {$ref: '#/components/schemas/RequestAnalyticsTelemetryGap'}
+        sampled_measures:
+          type: string
+          enum: [included, omitted]
+          description: |
+            Whether the detail only sampled raw rows carry is in this response: group CPU and sampled latency,
+            `deployment_costs`, and per-route deployment splits. `omitted` when reading it failed or ran past its
+            time budget; request counts, error rates and percentiles never depend on it.
     RequestAnalyticsTelemetryGap:
       type: string
       description: |
@@ -40291,6 +41447,7 @@ components:
         docs_url: "https://gregale.dev/docs/errors/validation_failed"
       properties:
         current_sequence: {type: integer, format: int64, minimum: 0, description: 'Observed channel head on realtime_sequence_conflict.'}
+        agent_approval: {$ref: '#/components/schemas/AgentApprovalPendingInfo'}
         condition_field: {type: string}
         condition_index: {type: integer, minimum: 0}
         field_exists: {type: boolean}
@@ -40577,7 +41734,9 @@ components:
       description: |
         Empty success body. Side effects: the matching hash is
         removed from `mfa_recovery_codes_hash`; the session cookie
-        is re-issued without `mfa_pending`.
+        is re-issued without `mfa_pending` and with recent MFA verification.
+        The last remaining code returns `mfa_last_recovery_code`; use it
+        to reset the authenticator instead, then enroll a replacement.
       type: object
       additionalProperties: false
     MFADisableRequest:
@@ -40603,7 +41762,8 @@ components:
         Empty success body. Side effects: mfa_secret_encrypted,
         mfa_recovery_codes_hash, and mfa_enrolled_at are all NULL.
         mfa_required is left as-is so an explicit policy remains in
-        force after disable.
+        force after disable. The browser cookie is refreshed with the
+        current enrollment requirement and its recent-verification stamp cleared.
       type: object
       additionalProperties: false
     MFADisableEmailRequest:
@@ -41037,6 +42197,23 @@ components:
         error_why: {type: string}
         error_fix: {type: string}
         relevant_logs: {type: array, items: {type: string}}
+      additionalProperties: true
+    AgentApprovalWebhookPayload:
+      type: object
+      description: "Delivered with agent.approval.requested, agent.approval.approved and agent.approval.denied: an agent key's request waits for a person, or a person decided it. It never carries the request body."
+      required: [approval_id, key_id, category, method, path, status, expires_at]
+      properties:
+        approval_id: {type: string, format: uuid, description: The approval request this event is about.}
+        key_id: {type: string, format: uuid, description: The agent key that made the request.}
+        org_id: {type: string, format: uuid, description: The organization the key acts in, when it acts in one.: null}
+        category: {type: string, enum: [delete, production, credentials, billing], description: Which kind of risky action the agent asked to take.}
+        method: {type: string, description: HTTP method of the agent's request.}
+        path: {type: string, description: Path and query of the agent's request.}
+        status: {type: string, enum: [pending, approved, denied], description: The request's status when the event was recorded.}
+        expires_at: {type: string, format: date-time, description: When the request stops being approvable or usable.}
+        review_url: {type: string, format: uri, description: "On agent.approval.requested: the page where a member who may decide opens it."}
+        decided_at: {type: string, format: date-time, description: When the person approved or denied the request.}
+        note: {type: string, maxLength: 280, description: "On agent.approval.denied: the reason the person gave the agent, if any."}
       additionalProperties: true
     RolloutCompletedWebhookPayload:
       type: object
@@ -41671,7 +42848,7 @@ components:
         enabled: true
     CreateAccountReleaseWebhookRequest:
       type: object
-      description: Subscribe to account release outcomes and environment GitOps status transitions.
+      description: "Subscribe to account release outcomes, environment GitOps status transitions, and agent approval requests and decisions."
       required: [target_url, webhook_secret, event_filter]
       properties:
         target_url: {type: string, format: uri, minLength: 8, maxLength: 2048}
@@ -41679,9 +42856,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 5
+          maxItems: 8
           uniqueItems: true
-          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"]}
+          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"]}
         retry_policy: {type: string, enum: [default, aggressive, none], default: default}
         delivery_format: {type: string, enum: [json, cloudevents], default: json}
         enabled: {type: boolean, default: true}
@@ -41797,9 +42974,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 5
+          maxItems: 8
           uniqueItems: true
-          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"]}
+          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"]}
         retry_policy: {type: string, enum: [default, aggressive, none]}
         delivery_format: {type: string, enum: [json, cloudevents]}
         enabled: {type: boolean}
@@ -49891,6 +51068,11 @@ components:
           schema: {$ref: '#/components/schemas/Problem'}
     PlanLimitSecrets:
       description: 'code: plan_limit_secrets'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    PlanLimitProjectSecrets:
+      description: 'code: plan_limit_project_secrets'
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}

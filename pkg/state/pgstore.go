@@ -374,6 +374,15 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 	`, org.ID, acct.ID); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, mapErr(err)
 	}
+	if params.InitialPasswordHash != "" {
+		changed, err := sqlc.New().SetAccountPassword(ctx, tx, sqlc.SetAccountPasswordParams{ID: mustPgUUID(acct.ID), Hash: params.InitialPasswordHash})
+		if err != nil {
+			return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: initialize account password: %w", mapErr(err))
+		}
+		if changed != 1 {
+			return CreateAccountWithPersonalOrgResult{}, ErrNotFound
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: commit: %w", err)
@@ -1470,7 +1479,12 @@ func (s *PgStore) UpsertBillingIdentity(ctx context.Context, identity BillingIde
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := sqlc.New().LockBillingIdentityAccount(ctx, tx, identity.AccountID); err != nil {
+	q := sqlc.New()
+	_, err = q.LockBillingIdentityAccount(ctx, tx, identity.AccountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		_, err = q.LockBillingIdentityOrg(ctx, tx, mustPgUUID(identity.AccountID))
+	}
+	if err != nil {
 		return mapErr(err)
 	}
 	_, err = tx.Exec(ctx,
@@ -1968,9 +1982,15 @@ func (s *PgStore) GetAccountKeyGraceWindow(ctx context.Context, accountID string
 //
 // Issue #189 / IAM-5.
 func (s *PgStore) SetAccountKeyGraceWindow(ctx context.Context, accountID string, days *int) error {
-	_, err := s.pool.Exec(ctx,
+	changed, err := s.pool.Exec(ctx,
 		`update accounts set key_grace_window_days = $1 where id = $2`, days, accountID)
-	return err
+	if err != nil {
+		return err
+	}
+	if changed.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // GetAccountEgressAllowlistExtra returns the per-account
@@ -5384,6 +5404,7 @@ func scanProjectEnvironmentApproval(row pgx.Row) (ProjectEnvironmentApproval, er
 		&approval.ID, &approval.AccountID, &approval.ProjectSlug, &approval.EnvironmentSlug,
 		&approval.TokenKind, &approval.PlanTokenHash, &approval.ApprovalTokenHash,
 		&approval.ExpiresAt, &approval.ConsumedAt, &approval.CreatedAt, &approval.ApprovedByAccountID,
+		&approval.ApprovedByPrincipal,
 	); err != nil {
 		return ProjectEnvironmentApproval{}, mapErr(err)
 	}
@@ -5398,16 +5419,16 @@ func (s *PgStore) CreateProjectEnvironmentApproval(ctx context.Context, approval
 	approval.ApprovalTokenHash = storedApprovalTokenHash(credTagPromotionApprovalToken, approval.ApprovalTokenHash)
 	row := s.pool.QueryRow(ctx, `
 		insert into project_environment_approvals
-			(account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, approved_by_account_id)
-		values ($1, $2, $3, $4, $5, $6, $7, nullif($8, '')::uuid)
-		returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
-	`, approval.AccountID, approval.ProjectSlug, approval.EnvironmentSlug, approval.TokenKind, approval.PlanTokenHash, approval.ApprovalTokenHash, approval.ExpiresAt, approval.ApprovedByAccountID)
+			(account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, approved_by_account_id, approved_by_principal)
+		values ($1, $2, $3, $4, $5, $6, $7, nullif($8, '')::uuid, nullif($9, ''))
+		returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, ''), coalesce(approved_by_principal, '')
+	`, approval.AccountID, approval.ProjectSlug, approval.EnvironmentSlug, approval.TokenKind, approval.PlanTokenHash, approval.ApprovalTokenHash, approval.ExpiresAt, approval.ApprovedByAccountID, approval.ApprovedByPrincipal)
 	return scanProjectEnvironmentApproval(row)
 }
 
 func (s *PgStore) ProjectEnvironmentApprovalByID(ctx context.Context, accountID, projectSlug, environmentSlug, id string) (ProjectEnvironmentApproval, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
+		select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, ''), coalesce(approved_by_principal, '')
 		  from project_environment_approvals
 		 where id = $1 and account_id = $2 and project_slug = $3 and environment_slug = $4
 	`, id, accountID, projectSlug, environmentSlug)
@@ -5417,7 +5438,7 @@ func (s *PgStore) ProjectEnvironmentApprovalByID(ctx context.Context, accountID,
 func (s *PgStore) ProjectEnvironmentApprovalByToken(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string) (ProjectEnvironmentApproval, error) {
 	for _, pair := range approvalTokenPairs(planTokenHash, approvalTokenHash) {
 		approval, err := scanProjectEnvironmentApproval(s.pool.QueryRow(ctx, `
-			select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
+			select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, ''), coalesce(approved_by_principal, '')
 			  from project_environment_approvals
 			 where account_id = $1 and project_slug = $2 and environment_slug = $3
 			   and plan_token_hash = $4 and approval_token_hash = $5 and consumed_at is null and expires_at > now()
@@ -5442,7 +5463,7 @@ func (s *PgStore) ConsumeProjectEnvironmentApproval(ctx context.Context, account
 			 where account_id = $1 and project_slug = $2 and environment_slug = $3
 			   and plan_token_hash = $4 and approval_token_hash = $5
 			   and consumed_at is null and expires_at > now()
-			returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
+			returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, ''), coalesce(approved_by_principal, '')
 		`, accountID, projectSlug, environmentSlug, pair[0], pair[1], consumedAt))
 		if !errors.Is(err, ErrNotFound) {
 			return approval, err
@@ -5524,24 +5545,34 @@ func (s *PgStore) ProjectBySlug(ctx context.Context, accountID, slug string) (Pr
 	return scanProject(row)
 }
 
-// ProjectByRepo is the push-dispatch lookup. install_id is non-null on
-// bound projects only; we surface ErrNotFound when the row is gone
-// rather than swallowing it as an empty result. The account_id filter
-// is only applied when a non-empty accountID is supplied — passing ""
-// (the cross-account push dispatch, or a test that hasn't bound an
-// account yet) skips the account predicate so the uuid→text coercion
-// in `account_id = ”` doesn't trip on an empty string.
+// ProjectByRepo resolves a repository within its account. Legacy unscoped
+// lookups return ErrConflict when multiple accounts imported the repository;
+// they must never choose another account's project arbitrarily.
 func (s *PgStore) ProjectByRepo(ctx context.Context, accountID string, installID int64, repoFullName string) (Project, error) {
 	if accountID == "" {
-		row := s.pool.QueryRow(ctx, `
+		rows, err := s.pool.Query(ctx, `
 			select id, account_id, slug, coalesce(repo_full_name,''),
 			       coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
 			       created_at, updated_at, org_id
 			  from projects
 			 where install_id = $1 and repo_full_name = $2
-			 limit 1
+			 limit 2
 		`, installID, repoFullName)
-		return scanProject(row)
+		if err != nil {
+			return Project{}, err
+		}
+		defer rows.Close()
+		projects, err := scanProjects(rows)
+		if err != nil {
+			return Project{}, err
+		}
+		if len(projects) == 0 {
+			return Project{}, ErrNotFound
+		}
+		if len(projects) > 1 {
+			return Project{}, ErrConflict
+		}
+		return projects[0], nil
 	}
 	row := s.pool.QueryRow(ctx, `
 		select id, account_id, slug, coalesce(repo_full_name,''),
@@ -5847,18 +5878,13 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
 
-	var hasLiveRelease bool
-	if err := tx.QueryRow(ctx, `
-		select exists (
-			select 1
-			  from apps a
-			  join deployments d on d.app_id = a.id
-			 where a.project_id = $1 and d.scope = $2 and d.status = 'live'
-		)
-	`, projectID, slug).Scan(&hasLiveRelease); err != nil {
+	hasActiveDeployment, err := sqlc.New().ProjectEnvironmentHasActiveDeployments(ctx, tx, sqlc.ProjectEnvironmentHasActiveDeploymentsParams{
+		ProjectID: mustPgUUID(projectID), Scope: slug,
+	})
+	if err != nil {
 		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
-	if hasLiveRelease {
+	if hasActiveDeployment {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
 	if err := cleanupEnvironmentInvocationsDB(ctx, tx, accountID, projectID, slug); err != nil {
@@ -5897,8 +5923,13 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 // deleteProjectEnvironmentRowsTx removes an environment's scoped values,
 // configuration and approvals, then the environment row, whose foreign keys
 // cascade to its workload specifications and flags. Deployments stay as
-// history; callers first make sure none is live.
+// history; callers first make sure every deployment is terminal.
 func deleteProjectEnvironmentRowsTx(ctx context.Context, tx pgx.Tx, accountID, projectID, projectSlug, slug string) error {
+	if err := sqlc.New().RetireProjectEnvironmentDeployments(ctx, tx, sqlc.RetireProjectEnvironmentDeploymentsParams{
+		ProjectID: mustPgUUID(projectID), Scope: slug,
+	}); err != nil {
+		return mapErr(err)
+	}
 	if _, err := tx.Exec(ctx, `
 		delete from app_envs e using apps a
 		 where e.app_id = a.id and a.account_id = $1 and a.project_id = $2 and e.scope = $3
@@ -6179,6 +6210,23 @@ func (s *PgStore) ApplyProjectReconcile(
 	scanSource ProjectScanSource,
 	limits api.Limits,
 ) (ProjectReconcileResult, error) {
+	var result ProjectReconcileResult
+	err := s.retryAfterDetachingCronHistory(ctx, func() error {
+		var err error
+		result, err = s.applyProjectReconcileOnce(ctx, project, mutations, desiredCrons, scanSource, limits)
+		return err
+	})
+	return result, err
+}
+
+func (s *PgStore) applyProjectReconcileOnce(
+	ctx context.Context,
+	project Project,
+	mutations []ProjectReconcileMutation,
+	desiredCrons []ProjectReconcileCron,
+	scanSource ProjectScanSource,
+	limits api.Limits,
+) (ProjectReconcileResult, error) {
 	tx, err := s.beginAccountAppTrafficMutation(ctx, project.AccountID, "")
 	if err != nil {
 		return ProjectReconcileResult{}, fmt.Errorf("state: begin project reconcile: %w", err)
@@ -6432,6 +6480,9 @@ func (s *PgStore) ApplyProjectReconcile(
 				key := cron.Schedule + "\x00" + cron.Path
 				desired, wanted := desiredByApp[appID][key]
 				if !wanted || kept[key] {
+					if err := prepareCronRemovalTx(ctx, tx, []string{cron.ID}); err != nil {
+						return ProjectReconcileResult{}, err
+					}
 					if _, err := tx.Exec(ctx, `delete from crons where id = $1`, cron.ID); err != nil {
 						return ProjectReconcileResult{}, err
 					}
@@ -6454,6 +6505,13 @@ func (s *PgStore) ApplyProjectReconcile(
 		}
 		// Remove crons attached to apps deleted by this reconcile.
 		for _, removed := range out.Removed {
+			ids, err := appCronIDsTx(ctx, tx, removed.ID)
+			if err != nil {
+				return ProjectReconcileResult{}, err
+			}
+			if err := prepareCronRemovalTx(ctx, tx, ids); err != nil {
+				return ProjectReconcileResult{}, err
+			}
 			if _, err := tx.Exec(ctx, `delete from crons where app_id = $1`, removed.ID); err != nil {
 				return ProjectReconcileResult{}, err
 			}
@@ -7278,7 +7336,7 @@ func (s *PgStore) RenameGitHubRepository(ctx context.Context, installationID int
 		 where old_set.installation_id = $1 and old_set.repo_full_name = $2
 		   and not exists (select 1 from pr_preview_sets renamed
 		     where renamed.installation_id = $1 and renamed.repo_full_name = $3
-		       and renamed.pr_number = old_set.pr_number)`, installationID, oldRepoFullName, newRepoFullName); err != nil {
+		       and renamed.pr_number = old_set.pr_number and renamed.account_id = old_set.account_id)`, installationID, oldRepoFullName, newRepoFullName); err != nil {
 		return fmt.Errorf("state: rename PR preview environments: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -7330,7 +7388,7 @@ func (s *PgStore) RenameGitHubAccount(ctx context.Context, installationID int64,
 		   and not exists (select 1 from pr_preview_sets renamed
 		     where renamed.installation_id = $1
 		       and renamed.repo_full_name = $3 || '/' || split_part(old_set.repo_full_name, '/', 2)
-		       and renamed.pr_number = old_set.pr_number)`, installationID, oldLogin, newLogin); err != nil {
+		       and renamed.pr_number = old_set.pr_number and renamed.account_id = old_set.account_id)`, installationID, oldLogin, newLogin); err != nil {
 		return fmt.Errorf("state: rename GitHub account PR preview environments: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -7637,6 +7695,9 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		return Deployment{}, 0, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	if err := lockProjectDeploymentEnvironment(ctx, tx, d.AppID, d.Scope); err != nil {
+		return Deployment{}, 0, err
+	}
 	var cloneOperation ProjectEnvironmentCloneOperation
 	var cloneRecord projectCloneWorkloadRecord
 	if len(cloneInputs) > 0 {
@@ -8455,6 +8516,9 @@ func (s *PgStore) GetDeploymentByIDScopedToSuperseded(ctx context.Context, appID
 		}
 		return Deployment{}, fmt.Errorf("state: get deployment by id scoped to superseded: %w", scanErr)
 	}
+	if d.DeletedAt != nil {
+		return Deployment{}, ErrNoRollbackTarget
+	}
 	if d.Status != DeploySuperseded && (d.Status != DeployLive || d.TrafficPercent != 0) {
 		return Deployment{}, fmt.Errorf("state: rollback target %q for app %q has status %q: %w",
 			deploymentID, appID, d.Status, ErrRollbackTargetAlreadyLive)
@@ -8755,6 +8819,19 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if _, err := sqlc.New().LockDeploymentTrafficApp(ctx, tx, mustPgUUID(id)); err != nil {
 		return Deployment{}, fmt.Errorf("state: lock traffic app: %w", mapErr(err))
 	}
+	promotionReceipt, err := promotionReceiptFor(ctx, Deployment{ID: id, AppID: trafficTarget.AppID, Scope: trafficScope}, newPercent, expectedServingID, reviews)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if promotionReceipt != nil {
+		prior, readErr := readPromotionReceipt(ctx, tx, trafficTarget.AppID, promotionReceipt.AttemptID)
+		if readErr == nil {
+			return Deployment{}, promotionAttemptError(prior, *promotionReceipt)
+		}
+		if !errors.Is(readErr, ErrNotFound) {
+			return Deployment{}, readErr
+		}
+	}
 	if len(reviews) > 0 {
 		current, err := readReleaseReview(ctx, tx, reviews[0].AppID, trafficScope)
 		if err != nil {
@@ -8988,6 +9065,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	}
 	if err := appendMCPAdmission(ctx, tx, admission, "accepted", ""); err != nil {
 		return Deployment{}, errors.Join(ErrMCPAdmissionPersistence, err)
+	}
+	if err := insertPromotionReceipt(ctx, tx, promotionReceipt); err != nil {
+		return Deployment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: commit update traffic: %w", err)
@@ -9837,6 +9917,7 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 	tag, err := s.pool.Exec(ctx, `
 		update deployments set status = $2, error = $3
 		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')
+		   and (deleted_at is null or $2 in ('failed', 'superseded', 'cancelled'))
 		   and not ($2 = 'live' and status <> 'live' and (environment_workload_runtime is not null or exists (
 		     select 1 from deployments managed where managed.app_id=deployments.app_id
 		       and managed.scope=deployments.scope and environment_workload_ownership_active(managed))))
@@ -9861,9 +9942,14 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 // rollout with no 100% fallback.
 func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedID string) error {
 	var held bool
+	var retired bool
 	var failedTraffic int
 	scope := DefaultEnvScope
-	if err := tx.QueryRow(ctx, `SELECT environment_workload_held, traffic_percent, scope FROM deployments WHERE id=$1`, failedID).Scan(&held, &failedTraffic, &scope); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	err := tx.QueryRow(ctx, `SELECT environment_workload_held, traffic_percent, scope, deleted_at IS NOT NULL FROM deployments WHERE id=$1`, failedID).Scan(&held, &failedTraffic, &scope, &retired)
+	if errors.Is(err, pgx.ErrNoRows) || retired {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
 	// A held GitOps candidate has never been allowed to serve traffic. Its
@@ -10554,6 +10640,13 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 	if err != nil {
 		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: capture route policy for %s: %w", dep.ID, err)
 	}
+	retained, err := sqlc.New().ReadRetainedDeploymentOpenAPISnapshot(ctx, tx, mustPgUUID(dep.ID))
+	if err == nil {
+		return OpenAPISnapshot{DeploymentID: dep.ID, AppID: uuidString(retained.AppID), Scope: retained.Scope, Snapshot: retained.Snapshot, SHA256: retained.Sha256, SchemaVersion: int(retained.SchemaVersion), CapturedAt: retained.CapturedAt.Time}, policySnapshot, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: read retained deployment contract: %w", err)
+	}
 	var importedDoc []byte
 	err = tx.QueryRow(ctx, `
 		select doc
@@ -10670,6 +10763,21 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
 	}
+	if err := lockProjectDeploymentEnvironment(ctx, tx, dep.AppID, normalizedDeploymentScope(dep.Scope)); err != nil {
+		return err
+	}
+	if dep.DeletedAt != nil {
+		return ErrInvalidStateTransition
+	}
+	if err := checkDatabaseSwitchLeaseTx(ctx, tx, dep); err != nil {
+		return err
+	}
+	if err := checkDeploymentActivationAttemptTx(ctx, tx, dep); err != nil {
+		return err
+	}
+	if err := checkWorkerDeploymentActivationTx(ctx, tx, dep); err != nil {
+		return err
+	}
 	if len(expectedServingID) > 0 {
 		if err := deploymentActivationServingMatchesTx(ctx, tx, dep, expectedServingID[0]); err != nil {
 			return err
@@ -10750,6 +10858,9 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 			return ErrDeploymentSuperseded
 		}
 	}
+	if err := checkPlainRollbackReleasesTx(ctx, tx, dep); err != nil {
+		return err
+	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!dep.Kind.RequiresLatestRevision() || dep.Revision <= 0) {
 			return ErrInvalidStateTransition
@@ -10800,6 +10911,9 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 			`update deployments set
 				status = $2,
 				error = '',
+    rollout_started_at = case
+     when status <> 'live' and canary_total_steps = 0 and rollout_state = 'rolling_out' then clock_timestamp()
+     else rollout_started_at end,
 				rollout_state = case
 					when canary_total_steps = 0 and coalesce(nullif(rollout_state, ''), 'pending') <> 'rolling_out' then 'complete'
 					else rollout_state
@@ -10916,11 +11030,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 		if appManifest.RevisionPinTTLSeconds > 0 && appManifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
 			// Only traffic-bearing siblings receive a new deadline. Already
 			// retained revisions keep the original cutover deadline.
-			if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-				select id, app_id, now() + ($4::integer * interval '1 second')
-				  from deployments
-				 where app_id = $1 and scope = $2 and status = 'live' and id <> $3 and traffic_percent > 0
-				on conflict (deployment_id) do nothing`, dep.AppID, normalizedDeploymentScope(dep.Scope), id, appManifest.RevisionPinTTLSeconds); err != nil {
+			if err := sqlc.New().RetainServingDeploymentSiblings(ctx, tx, sqlc.RetainServingDeploymentSiblingsParams{AppID: mustPgUUID(dep.AppID), Scope: normalizedDeploymentScope(dep.Scope), TargetID: mustPgUUID(id), Ttl: int32(appManifest.RevisionPinTTLSeconds)}); err != nil {
 				return fmt.Errorf("state: retain replaced revisions: %w", err)
 			}
 		}
@@ -11844,6 +11954,18 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 	if err != nil {
 		return Deployment{}, err
 	}
+	legacyService := false
+	intent, err := readDeploymentRetryIntent(src)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if intent == nil {
+		app, err := AppForDeployment(ctx, s, src)
+		if err != nil {
+			return Deployment{}, err
+		}
+		legacyService = app.Manifest.ExecutionMode == api.ExecutionModeService
+	}
 	tx, err := s.beginAppTrafficMutation(ctx, src.AppID)
 	if err != nil {
 		return Deployment{}, err
@@ -11857,7 +11979,7 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 	// state. The helper is shared with MemStore so canary/service-rollout and
 	// annotation semantics cannot drift between production and tests.
 	retryStartedAt := time.Now().UTC()
-	newDep, err := retryDeploymentInput(src, retryStartedAt)
+	newDep, err := retryDeploymentInput(src, retryStartedAt, legacyService)
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -11890,7 +12012,7 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		                          traffic_percent_explicit,
 		                          release_command, release_command_shell,
 		                          override_readiness_probe, override_main_depends_on,
-		                          github_source_ref, github_installation_id)
+		                          github_source_ref, github_installation_id, disable_startup_cpu_boost)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -11904,7 +12026,7 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, nullif($50, ''), nullif($51, 0))
+		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, nullif($50, ''), nullif($51, 0), $52)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -11935,7 +12057,7 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		newDep.TrafficPercentExplicit,
 		notNullEmptyTextArray(newDep.ReleaseCommand), newDep.ReleaseCommandShell,
 		nullJSONRaw(newDep.OverrideReadinessProbe), notNullEmptyJSONRaw(newDep.OverrideMainDependsOn),
-		newDep.GitHubSourceRef, newDep.GitHubInstallationID)
+		newDep.GitHubSourceRef, newDep.GitHubInstallationID, newDep.DisableStartupCPUBoost)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -11947,6 +12069,19 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 	targetID, err := operationUUID(created.ID)
 	if err != nil {
 		return Deployment{}, err
+	}
+	// Copy ownership before the spec: the spec insert's trigger verifies that
+	// it still belongs to the original environment lifetime. A deleted pin must
+	// retain its owner so the retry cannot fall back to replacement scope data.
+	if err := sqlc.New().CopyRetryDeploymentEnvironmentOwner(ctx, tx, sqlc.CopyRetryDeploymentEnvironmentOwnerParams{
+		SourceDeploymentID: sourceID, TargetDeploymentID: targetID,
+	}); err != nil {
+		return Deployment{}, mapErr(err)
+	}
+	if err := sqlc.New().CopyRetryDeploymentWorkloadSpec(ctx, tx, sqlc.CopyRetryDeploymentWorkloadSpecParams{
+		SourceDeploymentID: sourceID, TargetDeploymentID: targetID,
+	}); err != nil {
+		return Deployment{}, mapErr(err)
 	}
 	if err := sqlc.New().CopyDeploymentRuntimeUpgradeTarget(ctx, tx, sqlc.CopyDeploymentRuntimeUpgradeTargetParams{
 		SourceDeploymentID: sourceID, TargetDeploymentID: targetID,
@@ -12230,6 +12365,18 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 		}
 		return Deployment{}, fmt.Errorf("state: prepare rollback load target: %w", err)
 	}
+	if target.DeletedAt != nil {
+		return Deployment{}, ErrNoRollbackTarget
+	}
+	if err := lockProjectDeploymentEnvironment(ctx, tx, target.AppID, normalizedDeploymentScope(target.Scope)); err != nil {
+		return Deployment{}, err
+	}
+	if err := checkDatabaseSwitchLeaseTx(ctx, tx, target); err != nil {
+		return Deployment{}, err
+	}
+	if err := checkAppRollbackGraphTx(ctx, tx, appID, target.Scope, target.ID); err != nil {
+		return Deployment{}, err
+	}
 	if current := expectedRollbackCurrent(ctx); current != "" {
 		r := api.RollbackOperation{AppID: appID, Scope: normalizedDeploymentScope(target.Scope), TargetDeploymentID: target.ID, CurrentDeploymentID: current}
 		if err := rollbackCurrentMatches(ctx, tx, r); err != nil {
@@ -12249,6 +12396,10 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 	// A target whose layers were reclaimed cannot cold boot; refuse it here
 	// rather than fail its readiness prime later (Hunt 21 H21-1).
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target.ID); err != nil {
+		return Deployment{}, err
+	}
+
+	if err := preserveRollbackSuccessTx(ctx, tx, target); err != nil {
 		return Deployment{}, err
 	}
 
@@ -12281,6 +12432,9 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 		targetDeploymentID, appID, now))
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: prepare rollback update target: %w", err)
+	}
+	if err := persistPlainRollbackReview(ctx, tx, targetDeploymentID); err != nil {
+		return Deployment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: prepare rollback commit: %w", err)
@@ -13243,6 +13397,9 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 // setDeploymentFailedTx keeps the existing failure side effects in the
 // caller's transaction, including when hosting evidence must commit with it.
 func setDeploymentFailedTx(ctx context.Context, tx pgx.Tx, id, code, message string) (Deployment, error) {
+	if err := checkDeploymentActivationFailureTx(ctx, tx, id); err != nil {
+		return Deployment{}, err
+	}
 	stageState, err := failedDeploymentStageStateTx(ctx, tx, id, message)
 	if err != nil {
 		return Deployment{}, err
@@ -13336,6 +13493,12 @@ func (s *PgStore) SetDeploymentFailedEx(
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := checkDeploymentActivationFailureTx(ctx, tx, id); err != nil {
+		return Deployment{}, err
+	}
+	if err := checkSnapshotPrimeFailureTx(ctx, tx, id); err != nil {
+		return Deployment{}, err
+	}
 	stageState, err := failedDeploymentStageStateTx(ctx, tx, id, message)
 	if err != nil {
 		return Deployment{}, err
@@ -14165,20 +14328,25 @@ func (s *PgStore) SetDefaultCustomDomain(ctx context.Context, appID, domain stri
 	if bound && (probeDomainMatches(claim, domain) != nil || claim.AppID != appID) {
 		return ErrNotFound
 	}
-	_, err := sqlc.New().SetCustomDomainDefault(ctx, s.pool, sqlc.SetCustomDomainDefaultParams{AppID: appID, Domain: domain, ClaimBound: bound, Token: claim.ChallengeToken})
-	return mapErr(err)
+	routable, err := sqlc.New().SetCustomDomainDefault(ctx, s.pool, sqlc.SetCustomDomainDefaultParams{AppID: appID, Domain: domain, ClaimBound: bound, Token: claim.ChallengeToken, TenantSurfaces: customDomainTenantRouting(ctx)})
+	if err != nil {
+		return mapErr(err)
+	}
+	if !routable {
+		return ErrCustomDomainNotRoutable
+	}
+	return nil
 }
 
 func (s *PgStore) IsDefaultCustomDomain(ctx context.Context, appID, domain string) (bool, error) {
-	var isDefault bool
-	err := s.pool.QueryRow(ctx, `
-		select exists(
-			select 1 from app_default_domains ad
-			join custom_domains d on d.domain = ad.domain
-			 where ad.app_id = $1 and ad.domain = $2 and d.app_id = ad.app_id
-			   and ad.domain not like '*.%' and d.environment_id is null
-		)`, appID, domain).Scan(&isDefault)
-	return isDefault, err
+	selected, err := s.DefaultCustomDomain(ctx, appID)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(selected, domain), nil
 }
 
 // DefaultCustomDomain returns the app's selected canonical host when the
@@ -14186,21 +14354,13 @@ func (s *PgStore) IsDefaultCustomDomain(ctx context.Context, appID, domain strin
 // makes URL consumers fall back to the platform hostname if a domain is
 // removed or its verification is cleared by an operator migration.
 func (s *PgStore) DefaultCustomDomain(ctx context.Context, appID string) (string, error) {
-	var domain string
-	err := s.pool.QueryRow(ctx, `
-		select d.domain
-		  from app_default_domains ad
-		join custom_domains d on d.domain = ad.domain
-		 where ad.app_id = $1
-		   and d.app_id = ad.app_id
-		   and d.verified_at is not null
-		   and d.environment_id is null
-		   and d.domain not like '*.%'`, appID).Scan(&domain)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
-	}
+	domains, err := s.DefaultCustomDomains(ctx, []string{appID})
 	if err != nil {
 		return "", err
+	}
+	domain, ok := domains[appID]
+	if !ok {
+		return "", ErrNotFound
 	}
 	return domain, nil
 }
@@ -14321,7 +14481,7 @@ func (s *PgStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctorO
 	if obs.CAAPermits != nil {
 		caaPermits = *obs.CAAPermits
 	}
-	_, err := s.pool.Exec(ctx, `
+	result, err := s.pool.Exec(ctx, `
 		INSERT INTO domain_doctor_observations (
 			domain, surface_id, observed_at,
 			dns_record_found, points_to_gregale, caa_permits, ipv6_conflict,
@@ -14350,11 +14510,19 @@ func (s *PgStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctorO
 			last_error        = EXCLUDED.last_error,
 			dns_checked_at    = EXCLUDED.dns_checked_at,
 			cert_checked_at   = EXCLUDED.cert_checked_at
+		WHERE domain_doctor_observations.observed_at <= EXCLUDED.observed_at
+		  AND (domain_doctor_observations.dns_checked_at IS NULL OR EXCLUDED.dns_checked_at IS NULL
+		       OR domain_doctor_observations.dns_checked_at <= EXCLUDED.dns_checked_at)
+		  AND (domain_doctor_observations.cert_checked_at IS NULL OR EXCLUDED.cert_checked_at IS NULL
+		       OR domain_doctor_observations.cert_checked_at <= EXCLUDED.cert_checked_at)
 	`, obs.Domain, surfaceID, obs.ObservedAt,
 		obs.DNSRecordFound, obs.PointsToGregale, caaPermits, obs.IPv6Conflict,
 		nullableStr(obs.ObservedTarget), nullableStr(obs.ObservedAAAA), nullableStr(obs.CAAObserved),
 		obs.CertState, nullableTime(obs.CertNotAfter), nullableStr(obs.LastError),
 		nullableTime(obs.DNSCheckedAt), nullableTime(obs.CertCheckedAt))
+	if err == nil && result.RowsAffected() == 0 {
+		return ErrStaleCustomDomainObservation
+	}
 	return err
 }
 
@@ -14427,90 +14595,27 @@ func (s *PgStore) GetDoctorObservation(ctx context.Context, domain string) (Doma
 	return obs, nil
 }
 
-// ListAllCustomDomainsForDoctor returns the union of
-// custom_domains.domain and tenant_hostnames.hostname
-// so the poller has a single enumeration seam. The poller
-// does NOT need the app_id or surface_id at enumeration
-// time — those are joined lazily inside the per-domain
-// probe pass to avoid carrying app/surface state on the
-// poller goroutine.
-//
-// UNION ALL (not UNION) so Postgres skips the sort+hash
-// dedup pass: the consumer is runDoctorForDomain, which
-// upserts on domain_doctor_observations keyed by citext,
-// so a duplicate row is a no-op. Dedup is the caller's
-// job (the citext PK on the upsert target), not the
-// query's.
+// ListAllCustomDomainsForDoctor enumerates verified custom claims and
+// hostnames on non-deleted tenant surfaces, deduplicated by hostname.
 func (s *PgStore) ListAllCustomDomainsForDoctor(ctx context.Context) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT domain FROM custom_domains WHERE verified_at IS NOT NULL
-		UNION ALL
-		SELECT hostname FROM tenant_hostnames
-	`)
+	domains, err := sqlc.New().ListDoctorDomains(ctx, s.pool)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list doctor domains: %w", err)
 	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var d string
-		if err := rows.Scan(&d); err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+	return domains, nil
 }
 
-// ListCustomDomainsForDoctorBatch returns a bounded, durable, account-fair
-// doctor work set. The observation timestamp is the cursor: a successful
-// upsert moves that domain behind older or never-observed rows, so restarts do
-// not reset progress and no separate cursor row can drift from the work.
+// ListCustomDomainsForDoctorBatch selects live registry entries fairly across
+// accounts. Deleted surfaces cannot consume slots without advancing the cursor.
 func (s *PgStore) ListCustomDomainsForDoctorBatch(ctx context.Context, limit int) ([]string, error) {
 	if limit <= 0 {
 		return []string{}, nil
 	}
-	rows, err := s.pool.Query(ctx, `
-		WITH raw AS (
-			SELECT cd.domain::text AS domain, a.account_id,
-			       COALESCE(o.observed_at, 'epoch'::timestamptz) AS observed_at
-			FROM custom_domains cd
-			JOIN apps a ON a.id = cd.app_id
-			LEFT JOIN domain_doctor_observations o ON o.domain = cd.domain
-			WHERE cd.verified_at IS NOT NULL
-			UNION ALL
-			SELECT th.hostname::text AS domain, ts.account_id,
-			       COALESCE(o.observed_at, 'epoch'::timestamptz) AS observed_at
-			FROM tenant_hostnames th
-			JOIN tenant_surfaces ts ON ts.id = th.surface_id
-			LEFT JOIN domain_doctor_observations o ON o.domain = th.hostname
-		), candidates AS (
-			SELECT DISTINCT ON (domain) domain, account_id, observed_at
-			FROM raw
-			ORDER BY domain, observed_at
-		), ranked AS (
-			SELECT domain, observed_at,
-			       row_number() OVER (PARTITION BY account_id ORDER BY observed_at, domain) AS account_rank
-			FROM candidates
-		)
-		SELECT domain
-		FROM ranked
-		ORDER BY account_rank, observed_at, domain
-		LIMIT $1
-	`, limit)
+	domains, err := sqlc.New().ListDoctorDomainBatch(ctx, s.pool, int32(min(limit, math.MaxInt32)))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list doctor domain batch: %w", err)
 	}
-	defer rows.Close()
-	out := make([]string, 0, limit)
-	for rows.Next() {
-		var domain string
-		if err := rows.Scan(&domain); err != nil {
-			return nil, err
-		}
-		out = append(out, domain)
-	}
-	return out, rows.Err()
+	return domains, nil
 }
 
 // nullableStr returns nil for "" so the doctor's empty
@@ -19274,7 +19379,7 @@ func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Inst
 		           coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
 		 from instances i
 		 join deployments d on d.id = i.deployment_id and d.status = 'live' and d.traffic_percent > 0
-		 where i.app_id = $1 and i.state = 'running' and i.mode <> 'fork'
+		 where i.app_id = $1 and i.state = 'running' and i.mode NOT IN ('fork', 'refresh')
 		 order by i.started_at desc nulls last limit 1`, appID)
 	return scanInstance(row)
 }
@@ -19992,8 +20097,8 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 		select i.node_id::text,
 		       coalesce(sum(case
 	         when i.startup_cpu_boost_until > now() then
-	           greatest(case when a.cpu_millicores > 0 then a.cpu_millicores else $2 end, $2)
-	         else case when a.cpu_millicores > 0 then a.cpu_millicores else $2 end
+	           greatest(coalesce(i.booked_cpu_millicores, case when a.cpu_millicores > 0 then a.cpu_millicores else $2 end), $2)
+	         else coalesce(i.booked_cpu_millicores, case when a.cpu_millicores > 0 then a.cpu_millicores else $2 end)
 	       end), 0)::bigint
 		  from instances i
 		  join apps a on a.id = i.app_id
@@ -22981,12 +23086,13 @@ func (s *PgStore) CreateCreditLedgerEntry(ctx context.Context, e CreditLedgerEnt
 // keeps its cap on its orgs row (ADR-20261030093512).
 func (s *PgStore) GetAccountOverageCapCents(ctx context.Context, accountID string) (int64, bool, error) {
 	var cents *int64
+	var plan string
 	if err := s.pool.QueryRow(ctx,
-		`select overage_cap_cents from accounts where id = $1
+		`select overage_cap_cents, plan from accounts where id = $1
 		 union all
-		 select overage_cap_cents from orgs where id = $1 and not personal_org
+		 select overage_cap_cents, plan from orgs where id = $1 and not personal_org
 		 limit 1`,
-		accountID).Scan(&cents); err != nil {
+		accountID).Scan(&cents, &plan); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Account row gone — treat as no cap so meterd does not
 			// block on a half-deleted account. Different from
@@ -22996,10 +23102,8 @@ func (s *PgStore) GetAccountOverageCapCents(ctx context.Context, accountID strin
 		}
 		return 0, false, err
 	}
-	if cents == nil {
-		return 0, false, nil
-	}
-	return *cents, true, nil
+	capCents, ok := EffectiveOverageCapCents(api.Plan(plan), cents)
+	return capCents, ok, nil
 }
 
 // UpdateAccountOverageCapCents writes accounts.overage_cap_cents for
@@ -23373,22 +23477,26 @@ func sumActiveCents(ctx context.Context, tx pgx.Tx, accountID string) (int64, er
 // Hand-written for the same reason as GetAccountOverageCapCents; the
 // shape is meterd-internal and not on the sqlc public surface.
 func (s *PgStore) LoadAllOverageCapCents(ctx context.Context) (map[string]int64, error) {
+	// A paid subject without a cap is held to its plan's self-service
+	// ceiling (ADR-20261105120000), so its row is read too.
 	rows, err := s.pool.Query(ctx,
-		`select id, overage_cap_cents from accounts where overage_cap_cents is not null
+		`select id, overage_cap_cents, plan from accounts where overage_cap_cents is not null or plan <> 'free'
 		 union all
-		 select id, overage_cap_cents from orgs where overage_cap_cents is not null and not personal_org`)
+		 select id, overage_cap_cents, plan from orgs where (overage_cap_cents is not null or plan <> 'free') and not personal_org`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := map[string]int64{}
 	for rows.Next() {
-		var id string
-		var cents int64
-		if err := rows.Scan(&id, &cents); err != nil {
+		var id, plan string
+		var cents *int64
+		if err := rows.Scan(&id, &cents, &plan); err != nil {
 			return nil, err
 		}
-		out[id] = cents
+		if capCents, ok := EffectiveOverageCapCents(api.Plan(plan), cents); ok {
+			out[id] = capCents
+		}
 	}
 	return out, rows.Err()
 }
@@ -27928,7 +28036,7 @@ func (s *PgStore) DeleteAccountPassword(ctx context.Context, accountID string) e
 // re-bind by the SAME account updates email/email_verified in place
 // (ON CONFLICT ... DO UPDATE with WHERE account_id = excluded.account_id,
 // so a different account attempting to claim the same (provider, sub)
-// pair triggers the unique-violation → ErrConflict path). The
+// pair affects zero rows and returns ErrConflict). The
 // account_id equality check inside the WHERE clause is the load-bearing
 // bit: without it, an attacker with the same email could overwrite
 // the victim's link row. The dashboard refreshes its own email on
@@ -27937,7 +28045,7 @@ func (s *PgStore) UpsertOAuthLink(ctx context.Context, accountID, provider, prov
 	if accountID == "" || provider == "" || providerSubject == "" {
 		return ErrInvalidArgument
 	}
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`insert into oauth_links (provider, provider_subject, account_id, email, email_verified)
 		 values ($1, $2, $3, $4, $5)
 		 on conflict (provider, provider_subject) do update
@@ -27945,7 +28053,13 @@ func (s *PgStore) UpsertOAuthLink(ctx context.Context, accountID, provider, prov
 		       email_verified = excluded.email_verified
 		 where oauth_links.account_id = excluded.account_id`,
 		provider, providerSubject, accountID, email, emailVerified)
-	return mapErr(err)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
 }
 
 // OAuthLinkByProviderSubject returns the link for a (provider, sub)

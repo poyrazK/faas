@@ -30,11 +30,10 @@ var (
 )
 
 const (
-	ovhDefaultAPIBase       = "https://api.ovh.com/1.0"
-	ovhMaxResponseBytes     = 8 << 20
-	ovhMaxHistoryEntries    = 2000
-	ovhGiBBytes             = int64(1 << 30)
-	ovhMicrocentsPerMilcent = int64(1000)
+	ovhDefaultAPIBase    = "https://api.ovh.com/1.0"
+	ovhMaxResponseBytes  = 8 << 20
+	ovhMaxHistoryEntries = 2000
+	ovhGiBBytes          = int64(1 << 30)
 )
 
 // OVHUsageBucket is a durable Gregale-to-provider attribution binding. The
@@ -63,11 +62,19 @@ type OVHBucketUsage struct {
 	CostMillicents  int64
 }
 
+// OVHUsageSnapshot retains the source's actual observation. Different meters
+// may be combined only when they cover this same month-to-date interval.
+type OVHUsageSnapshot struct {
+	PeriodStart time.Time
+	ObservedAt  time.Time
+	Buckets     map[string]OVHBucketUsage
+}
+
 // OVHUsageAPI is the narrow provider seam used by OVHUsageExporter. Keeping
 // it small makes the adapter easy to test and leaves room for another OVH API
 // implementation without changing report attribution.
 type OVHUsageAPI interface {
-	UsageForPeriod(context.Context, time.Time, time.Time) (map[string]OVHBucketUsage, error)
+	UsageForPeriod(context.Context, time.Time, time.Time) (OVHUsageSnapshot, error)
 }
 
 // OVHBucketCatalog and OVHRequestMetricsSource are supplied by the operator's
@@ -118,16 +125,20 @@ func (e OVHUsageExporter) ExportUsageReports(ctx context.Context, req UsageRepor
 		}
 		bucketByName[bucket.PhysicalName] = bucket
 	}
-	usage, err := e.API.UsageForPeriod(ctx, req.PeriodStart, req.ObservedAt)
+	snapshot, err := e.API.UsageForPeriod(ctx, req.PeriodStart, req.ObservedAt)
 	if err != nil {
 		return nil, err
 	}
+	if !snapshot.PeriodStart.Equal(req.PeriodStart) || snapshot.ObservedAt.IsZero() || snapshot.ObservedAt.Before(req.PeriodStart) || snapshot.ObservedAt.After(req.ObservedAt) || !utcMonth(snapshot.ObservedAt).Equal(req.PeriodStart) || snapshot.Buckets == nil || len(snapshot.Buckets) != len(bucketByName) {
+		return nil, ErrOVHUsageInvalid
+	}
+	usage := snapshot.Buckets
 	for physicalName := range usage {
 		if _, ok := bucketByName[physicalName]; !ok {
 			return nil, fmt.Errorf("%w: unknown physical bucket", ErrOVHUsageInvalid)
 		}
 	}
-	metrics, err := e.RequestMetrics(ctx, req.BackendID, req.PeriodStart, req.ObservedAt)
+	metrics, err := e.RequestMetrics(ctx, req.BackendID, req.PeriodStart, snapshot.ObservedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +174,7 @@ func (e OVHUsageExporter) ExportUsageReports(ctx context.Context, req UsageRepor
 			BackendFingerprint: req.BackendFingerprint,
 			Source:             source,
 			PeriodStart:        req.PeriodStart,
-			ObservedAt:         req.ObservedAt,
+			ObservedAt:         snapshot.ObservedAt,
 			StoredByteHours:    bucketUsage.StoredByteHours,
 			RequestCount:       requestsByBucket[physicalName],
 			EgressBytes:        bucketUsage.EgressBytes,
@@ -235,57 +246,17 @@ type OVHUsageClient struct {
 	Timestamp         func(context.Context) (int64, error)
 }
 
-func (c *OVHUsageClient) UsageForPeriod(ctx context.Context, from, to time.Time) (map[string]OVHBucketUsage, error) {
+func (c *OVHUsageClient) UsageForPeriod(ctx context.Context, from, to time.Time) (OVHUsageSnapshot, error) {
 	if c == nil || c.ServiceName == "" || c.ApplicationKey == "" || c.ApplicationSecret == "" || c.ConsumerKey == "" {
-		return nil, ErrConfiguration
+		return OVHUsageSnapshot{}, ErrConfiguration
 	}
 	if !validOVHPathPart(c.ServiceName) {
-		return nil, ErrConfiguration
+		return OVHUsageSnapshot{}, ErrConfiguration
 	}
-	if from.IsZero() || to.IsZero() || !from.Equal(utcMonth(from)) || to.Before(from) || to.After(time.Now().UTC().Add(time.Minute)) {
-		return nil, ErrInvalid
+	if from.IsZero() || to.IsZero() || !from.Equal(utcMonth(from)) || to.Before(from) || to.After(time.Now().UTC()) {
+		return OVHUsageSnapshot{}, ErrInvalid
 	}
-	history, err := c.history(ctx, from, to)
-	if err != nil {
-		return nil, err
-	}
-	usage := make(map[string]OVHBucketUsage)
-	for _, entry := range history {
-		if !validOVHPathPart(entry.ID) {
-			return nil, ErrOVHUsageInvalid
-		}
-		detail, err := c.historyDetail(ctx, entry.ID)
-		if err != nil {
-			return nil, err
-		}
-		if detail.HourlyUsage == nil {
-			continue
-		}
-		for _, storage := range detail.HourlyUsage.Storage {
-			if storage.BucketName == "" {
-				return nil, ErrOVHUsageInvalid
-			}
-			row, err := normalizeOVHStorage(storage)
-			if err != nil {
-				return nil, err
-			}
-			old := usage[storage.BucketName]
-			old.StoredByteHours, err = addUsageValue(old.StoredByteHours, row.StoredByteHours)
-			if err != nil {
-				return nil, ErrInvalid
-			}
-			old.EgressBytes, err = addUsageValue(old.EgressBytes, row.EgressBytes)
-			if err != nil {
-				return nil, ErrInvalid
-			}
-			old.CostMillicents, err = addUsageValue(old.CostMillicents, row.CostMillicents)
-			if err != nil {
-				return nil, ErrInvalid
-			}
-			usage[storage.BucketName] = old
-		}
-	}
-	return usage, nil
+	return c.usageSnapshot(ctx, from, to)
 }
 
 func normalizeOVHStorage(storage ovhHourlyStorage) (OVHBucketUsage, error) {
@@ -329,22 +300,22 @@ func quantityToBytes(quantity *ovhQuantity, expectedUnit string) (int64, error) 
 	return int64(value), nil
 }
 
-func priceToMillicents(price ovhPrice) (int64, error) {
-	if price.CurrencyCode != "EUR" || price.PriceInUcents == nil || *price.PriceInUcents < 0 {
-		return 0, ErrOVHUsageInvalid
-	}
-	value := *price.PriceInUcents
-	if value > math.MaxInt64-(ovhMicrocentsPerMilcent-1) {
-		return 0, ErrOVHUsageInvalid
-	}
-	return (value + ovhMicrocentsPerMilcent - 1) / ovhMicrocentsPerMilcent, nil
+type ovhUsageHistory struct {
+	ID         string         `json:"id"`
+	Period     ovhUsagePeriod `json:"period"`
+	LastUpdate time.Time      `json:"lastUpdate"`
 }
 
-type ovhUsageHistory struct {
-	ID string `json:"id"`
+type ovhUsagePeriod struct {
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
 }
 
 type ovhUsageHistoryDetail struct {
+	ID          string              `json:"id"`
+	Period      ovhUsagePeriod      `json:"period"`
+	LastUpdate  time.Time           `json:"lastUpdate"`
+	TotalPrice  *ovhPrice           `json:"totalPrice"`
 	HourlyUsage *ovhHourlyResources `json:"hourlyUsage"`
 }
 
@@ -353,11 +324,11 @@ type ovhHourlyResources struct {
 }
 
 type ovhHourlyStorage struct {
-	BucketName                string        `json:"bucketName"`
-	OutgoingBandwidth         *ovhBandwidth `json:"outgoingBandwidth"`
-	OutgoingInternalBandwidth *ovhBandwidth `json:"outgoingInternalBandwidth"`
-	Stored                    *ovhStored    `json:"stored"`
-	TotalPrice                ovhPrice      `json:"totalPrice"`
+	BucketName                string          `json:"bucketName"`
+	OutgoingBandwidth         *ovhBandwidth   `json:"outgoingBandwidth"`
+	OutgoingInternalBandwidth *ovhBandwidth   `json:"outgoingInternalBandwidth"`
+	Stored                    *ovhStored      `json:"stored"`
+	TotalPrice                json.RawMessage `json:"totalPrice"`
 }
 
 type ovhStored struct {
@@ -399,7 +370,7 @@ func (c *OVHUsageClient) history(ctx context.Context, from, to time.Time) ([]ovh
 	if err := c.getJSON(ctx, "/cloud/project/"+c.ServiceName+"/usage/history", query, &history); err != nil {
 		return nil, err
 	}
-	if len(history) > ovhMaxHistoryEntries {
+	if history == nil || len(history) > ovhMaxHistoryEntries {
 		return nil, ErrOVHUsageInvalid
 	}
 	return history, nil

@@ -79,25 +79,10 @@ func (s *server) putOrgBillingEmail(w http.ResponseWriter, r *http.Request, targ
 			"Invalid billing email", "billing_email must be one email address, such as billing@example.com"))
 		return
 	}
-	writer, ok := s.store.(interface {
-		UpdateOrgBillingEmail(context.Context, string, string) error
-	})
-	if !ok {
-		api.WriteProblem(w, api.ErrInternal("organization billing email unavailable"))
-		return
-	}
-	if err := s.moveBillingCustomerEmail(r.Context(), target, email); err != nil {
-		if errors.Is(err, billing.ErrCustomerEmailInUse) {
-			api.WriteProblem(w, api.ErrBillingEmailInUse(true))
-			return
-		}
-		s.log.Error("move billing customer email", "org", target.ResourceOrgID, "err", logsanitize.FieldAny(err))
-		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "billing_email_change_failed",
-			"billing email change failed", "the billing provider could not change the email; the billing email is unchanged"))
-		return
-	}
-	if err := writer.UpdateOrgBillingEmail(r.Context(), target.ResourceOrgID, email); err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not save the organization billing email"))
+	provider, _ := providerIdentityName(s.billingProvider)
+	syncer, _ := s.billingProvider.(billing.CustomerEmailUpdater)
+	if err := orgbilling.ChangeEmail(r.Context(), s.store, target.ResourceOrgID, provider, email, syncer); err != nil {
+		s.writeOrgBillingEmailError(w, target, err)
 		return
 	}
 	s.audit.Emit(r.Context(), "org.billing_email_changed", &target.ID, map[string]any{
@@ -106,23 +91,19 @@ func (s *server) putOrgBillingEmail(w http.ResponseWriter, r *http.Request, targ
 	writeJSON(w, http.StatusOK, api.OrgBillingEmailResponse{BillingEmail: email})
 }
 
-// moveBillingCustomerEmail moves the subject's billing provider customer to
-// email. A subject without a provider customer has nothing to move: its first
-// checkout creates the customer with the saved email.
-func (s *server) moveBillingCustomerEmail(ctx context.Context, target state.Account, email string) error {
-	updater, ok := s.billingProvider.(billing.CustomerEmailUpdater)
-	if !ok || s.billingProvider == nil {
-		return nil
+func (s *server) writeOrgBillingEmailError(w http.ResponseWriter, target state.Account, err error) {
+	var upstream *orgbilling.CustomerEmailSyncError
+	if !errors.As(err, &upstream) {
+		api.WriteProblem(w, api.ErrInternal("could not save the organization billing email"))
+		return
 	}
-	billingAcct, err := s.accountForActiveBillingProvider(ctx, target)
-	if err != nil {
-		return err
+	if errors.Is(err, billing.ErrCustomerEmailInUse) {
+		api.WriteProblem(w, api.ErrBillingEmailInUse(true))
+		return
 	}
-	if billingAcct.ProviderCustomerID == "" {
-		return nil
-	}
-	billingAcct.Email = email
-	return updater.UpdateCustomerEmail(ctx, billingAcct)
+	s.log.Error("move billing customer email", "org", target.ResourceOrgID, "err", logsanitize.FieldAny(err))
+	api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "billing_email_change_failed",
+		"billing email change failed", "the billing provider could not change the email; the billing email is unchanged"))
 }
 
 // refuseBillingContactRemoval answers 409 and reports true when the member
@@ -131,7 +112,19 @@ func (s *server) moveBillingCustomerEmail(ctx context.Context, target state.Acco
 // organization's invoices and signing in to its billing portal.
 func (s *server) refuseBillingContactRemoval(ctx context.Context, w http.ResponseWriter, orgID, memberID string) bool {
 	member, err := s.store.AccountByID(ctx, memberID)
-	if err != nil || !s.isBillingContact(ctx, orgID, member.Email) {
+	if errors.Is(err, state.ErrNotFound) {
+		return false
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not check organization billing contact"))
+		return true
+	}
+	contact, err := s.isBillingContact(ctx, orgID, member.Email)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not check organization billing contact"))
+		return true
+	}
+	if !contact {
 		return false
 	}
 	api.WriteProblem(w, api.ErrBillingContactMember())
@@ -147,7 +140,14 @@ func (s *server) billingContactBlocksDeletion(ctx context.Context, acct state.Ac
 		return api.ErrCapacity("could not check organization billing contacts")
 	}
 	for _, org := range orgs {
-		if org.Personal || org.DeletedPending || !s.isBillingContact(ctx, org.ID, acct.Email) {
+		if org.Personal || org.DeletedPending {
+			continue
+		}
+		contact, err := s.isBillingContact(ctx, org.ID, acct.Email)
+		if err != nil {
+			return api.ErrCapacity("could not check organization billing contacts")
+		}
+		if !contact {
 			continue
 		}
 		problem := api.ErrBillingContactMember()
@@ -158,13 +158,19 @@ func (s *server) billingContactBlocksDeletion(ctx context.Context, acct state.Ac
 }
 
 // isBillingContact reports whether email is the organization's billing email
-// while the organization has a billing provider customer. A billing identity
-// that cannot be read counts as a customer, so the guards fail closed.
-func (s *server) isBillingContact(ctx context.Context, orgID, email string) bool {
+// while the organization has a billing provider customer. Lookup errors must
+// reach callers, which refuse the mutation until the check can be retried.
+func (s *server) isBillingContact(ctx context.Context, orgID, email string) (bool, error) {
 	org, err := state.BillingResourceAccount(ctx, s.store, orgID)
-	if err != nil || !orgbilling.IsBillingContact(org.Email, email) {
-		return false
+	if err != nil {
+		return false, err
+	}
+	if !orgbilling.IsBillingContact(org.Email, email) {
+		return false, nil
 	}
 	billingAcct, err := s.accountForActiveBillingProvider(ctx, org)
-	return err != nil || billingAcct.ProviderCustomerID != ""
+	if err != nil {
+		return false, err
+	}
+	return billingAcct.ProviderCustomerID != "", nil
 }

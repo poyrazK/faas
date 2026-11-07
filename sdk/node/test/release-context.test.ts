@@ -268,3 +268,19 @@ test('a request with no time left still sends 1 ms; invalid inbound values are i
   }
   assert.equal(gregaleRequestTimeRemainingMs(), undefined);
 });
+
+// ADR-20261102082606 amendment 2: function adapters find the request context
+// through a well-known global, so a function needs no wrapper of its own.
+test('the request context is registered for function adapters', async () => {
+  const enter = (globalThis as unknown as Record<symbol, unknown>)[Symbol.for('gregale.sdk.requestContext.v1')];
+  assert.equal(enter, withGregaleRequestContext);
+  let sent: string | null = null;
+  const fetcher = createGregaleFetch(async (_input, init) => {
+    sent = new Headers(init?.headers).get(GREGALE_DEADLINE_MS_HEADER);
+    return new Response(null, { status: 204 });
+  });
+  await (enter as typeof withGregaleRequestContext)({ 'X-Faas-Deadline-Ms': '4000' }, async () => {
+    await fetcher('http://billing.svc.gregale/charge');
+  });
+  assert.ok(Number(sent) > 3000 && Number(sent) <= 4000, `sent ${sent}`);
+});

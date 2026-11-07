@@ -83,9 +83,9 @@ grep -q 'daemon_was_active vmmd' "$SCRIPT" \
   || { echo "FAIL: vmmd restart is not limited to its original role"; exit 1; }
 echo "OK: role-aware host.age preservation steps present"
 
-# 5. The nightly producer uses tar format with `-X fetch`, which embeds required
-#    WAL in base.tar.gz. The optional pg_wal.tar.gz branch keeps compatibility
-#    with separately streamed backups; copying either archive is not a restore.
+# 5. The nightly producer uses tar format with `-X stream`, which writes the
+#    required WAL to pg_wal.tar.gz; older `-X fetch` backups embed it in
+#    base.tar.gz. The drill must extract both; copying either is not a restore.
 grep -q 'tar -xzf "\$LATEST_BB/base.tar.gz"' "$SCRIPT" \
   || { echo "FAIL: drill does not extract base.tar.gz"; exit 1; }
 grep -q 'pg_wal.tar.gz' "$SCRIPT" \

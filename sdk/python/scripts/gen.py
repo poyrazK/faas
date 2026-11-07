@@ -179,6 +179,7 @@ ROOT_WRAPPER_MODULES = (
     "pre_auth_target.py",
     "secret_reload_runtime.py",
     "async_secret_reload_runtime.py",
+    "lifecycle_runtime.py",
     "workflows.py",
     "_binding_client_runtime.py",
     "_async_binding_client_runtime.py",
@@ -733,6 +734,14 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
     for path in sdk_root.rglob("*.py"):
         text = path.read_text()
         original = text
+
+        # Generated low-level clients also need the facade's 30s default.
+        # An explicitly supplied timeout=None still opts out for streams.
+        if path.name == "client.py":
+            text = text.replace(
+                'field(default=None, kw_only=True, alias="timeout")',
+                'field(factory=lambda: httpx.Timeout(30.0), kw_only=True, alias="timeout")',
+            )
         # Preserve the optional WorkerScaling.name contract for every Unset
         # instance, including callers that construct Unset() explicitly.
         if path.relative_to(sdk_root).as_posix() in ("models/worker_scaling.py", "preview/models/worker_scaling.py"):

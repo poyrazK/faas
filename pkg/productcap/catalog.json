@@ -468,7 +468,8 @@
       "cli": [
         "app cp",
         "app exec",
-        "app port-forward"
+        "app port-forward",
+        "postgres connect"
       ]
     },
     {
@@ -563,9 +564,11 @@
         "/v1/apps/{}/resource-inventory",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
+        "/v1/apps/{}/service-aborts",
         "/v1/deleted-apps",
         "/dashboard/apps/{}/deployment-submissions",
         "/dashboard/apps/{}/deployments",
+        "/v1/apps/{}/deployment-promotions",
         "/v1/apps/{}/deployment-submissions",
         "=/v1/apps/{}/deployments",
         "/v1/apps/{}/deployments/clear-obsolete",
@@ -702,6 +705,9 @@
       ],
       "docs_url": "/docs/scaling-policy",
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestUpdateAppAutoscaleDisableZero",
+      "routes": [
+        "/v1/apps/{}/scaling"
+      ],
       "settings": [
         "app.function_concurrency",
         "app.max_concurrency",
@@ -737,7 +743,7 @@
       "id": "billing",
       "name": "Billing",
       "category": "billing",
-      "description": "Choose a plan, see usage and invoices and set an overage cap.",
+      "description": "Choose a plan, see usage and invoices, set an overage cap and elect to pay for egress above the allowance.",
       "maturity": "ga",
       "plans": [
         "free",
@@ -759,6 +765,7 @@
         "/dashboard/upgrade",
         "/dashboard/usage",
         "/v1/account/billing",
+        "/v1/account/egress-overage",
         "/v1/account/overage-cap",
         "/v1/account/plan",
         "/v1/account/statement-invoices",
@@ -771,6 +778,7 @@
         "/v1/billing/status",
         "/v1/invoices",
         "/v1/orgs/{}/billing",
+        "/v1/orgs/{}/egress-overage",
         "/v1/orgs/{}/invoices",
         "/v1/orgs/{}/overage-cap",
         "/v1/orgs/{}/plan",
@@ -786,7 +794,8 @@
         "invoices",
         "plan",
         "usage",
-        "overage-cap"
+        "overage-cap",
+        "billing egress-overage"
       ]
     },
     {
@@ -1250,6 +1259,7 @@
         "=/dashboard",
         "/dashboard/apps/new",
         "/dashboard/assets",
+        "/doctor.js",
         "/history.js",
         "/replacement.js",
         "/resolution.js",
@@ -3533,6 +3543,22 @@
       ]
     },
     {
+      "id": "object-storage-key-scopes",
+      "name": "Key-scoped bucket bindings",
+      "category": "data",
+      "description": "Limit an app's bucket binding to object keys under one prefix.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/apid/object/key_scope_test.go::TestKeyScopedBindingsNeedTheCapability",
+      "parent": "object-storage"
+    },
+    {
       "id": "object-versioning",
       "name": "Object versioning",
       "category": "data",
@@ -3876,6 +3902,7 @@
       "docs_url": "/docs/orgs",
       "acceptance_test": "pkg/apid/apidserver/handlers_org_test.go::TestOrgUUID_Pin",
       "routes": [
+        "/dashboard/invitations/{}",
         "/dashboard/orgs",
         "/v1/invitations",
         "=/v1/orgs",
@@ -4012,6 +4039,7 @@
       "acceptance_test": "cmd/gregale/commands_postgres_egress_test.go::TestPostgresBindingDeliveryGuidance",
       "parent": "managed-postgres",
       "routes": [
+        "/v1/apps/{}/postgres-bindings",
         "/v1/orgs/{}/postgres/bindings",
         "/v1/postgres/bindings",
         "/v1/postgres/databases/{}/bindings"
@@ -4185,7 +4213,8 @@
         "/v1/networks"
       ],
       "cli": [
-        "app network"
+        "app network attach",
+        "app network detach"
       ]
     },
     {
@@ -4393,11 +4422,15 @@
         "=/v1/projects/{}",
         "/v1/projects/{}/delete-preview",
         "/v1/projects/{}/deployment-readiness",
+        "/v1/projects/{}/environments/{}/config",
+        "/v1/projects/{}/environments/{}/secrets",
         "/v1/projects/{}/exclusions",
         "/v1/projects/{}/release-secrets"
       ],
       "cli": [
-        "projects"
+        "projects",
+        "projects environments config",
+        "projects environments secrets"
       ]
     },
     {
@@ -4724,6 +4757,9 @@
       ],
       "docs_url": "/docs/deploys",
       "acceptance_test": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_PinsProcfileReleaseCommand",
+      "routes": [
+        "/v1/deployments/{}/release-outcome"
+      ],
       "settings": [
         "manifest.release"
       ]

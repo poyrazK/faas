@@ -17,6 +17,7 @@ func TestGatewayRoutableNeverSelectsAFork(t *testing.T) {
 		{"running normal", func(*state.Instance) {}, true},
 		{"running service", func(i *state.Instance) { i.Mode = string(state.InstanceModeService) }, true},
 		{"running fork", func(i *state.Instance) { i.Mode = string(state.InstanceModeFork) }, false},
+		{"running snapshot refresh", func(i *state.Instance) { i.Mode = string(state.InstanceModeRefresh) }, false},
 		{"parked", func(i *state.Instance) { i.State = string(state.StateParked) }, false},
 		{"no node", func(i *state.Instance) { i.NodeID = "" }, false},
 	} {

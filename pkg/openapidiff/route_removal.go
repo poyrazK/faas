@@ -42,7 +42,7 @@ func CheckLiveContract(ctx context.Context, store state.Store, appID, id, scope 
 		}
 		weight := 0
 		for _, d := range rows {
-			if (d.Scope == scope || productionContractScope(d.Scope) && productionContractScope(scope)) && d.TrafficPercent > weight {
+			if (d.Scope == scope || IsProductionScope(d.Scope) && IsProductionScope(scope)) && d.TrafficPercent > weight {
 				baselineID = d.ID
 				weight = d.TrafficPercent
 			}
@@ -59,7 +59,7 @@ func CheckLiveContract(ctx context.Context, store state.Store, appID, id, scope 
 	if err != nil {
 		return check, fmt.Errorf("read serving contract snapshot: %w", err)
 	}
-	if baseline.AppID != appID || check.Proposed.AppID != appID || !productionContractScope(baseline.Scope) || !productionContractScope(check.Proposed.Scope) {
+	if baseline.AppID != appID || check.Proposed.AppID != appID || !IsProductionScope(baseline.Scope) || !IsProductionScope(check.Proposed.Scope) {
 		return check, fmt.Errorf("contract snapshot identity mismatch")
 	}
 	check.Baseline = baseline
@@ -146,7 +146,8 @@ func ApplyRemovalException(ctx context.Context, store state.Store, check Promoti
 	return check, fence, nil
 }
 
-func productionContractScope(scope string) bool {
+// IsProductionScope reports whether the API contract gate protects this scope.
+func IsProductionScope(scope string) bool {
 	switch strings.ToLower(strings.TrimSpace(scope)) {
 	case "", "default", "prod", "production":
 		return true
