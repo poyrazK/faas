@@ -146,7 +146,11 @@ func (m *MemStore) computeTransaction(ctx context.Context, account string, fn fu
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.accounts[account]; !ok {
-		return ErrNotFound
+		// A company organization is a billing subject of its own (#6029), as
+		// Postgres's financial transactions accept it.
+		if org, ok := m.orgs[account]; !ok || org.Personal {
+			return ErrNotFound
+		}
 	}
 	t := newMemComputeTxn(m, account)
 	err := fn(t)

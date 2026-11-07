@@ -555,7 +555,30 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 				}
 				continue
 			}
-			if within := clampToAllowance(totalBillable-billable, totalBillable, capEgressAllowance(capCents, compute, objectStorage, policy)); within < billable {
+			// The egress the month is billed before this window, not usage
+			// above the allowance: bytes never billed (overage off, Free hours)
+			// spend none of the cap. The window opens at billing_from when that
+			// falls inside the hour, and the provider this one replaced billed
+			// the minutes before it.
+			through := hour
+			identity, idErr := p.store.BillingIdentity(ctx, acct.ID, ops.opLabel)
+			if idErr != nil {
+				if firstErr == nil {
+					firstErr = idErr
+				}
+				continue
+			}
+			if from := identity.BillingFrom.UTC(); from.After(through) && from.Before(hour.Add(time.Hour)) {
+				through = from
+			}
+			prior, priorErr := p.liveEgressReserved(ctx, acct, hour, through, policy)
+			if priorErr != nil {
+				if firstErr == nil {
+					firstErr = priorErr
+				}
+				continue
+			}
+			if within := clampToAllowance(prior, prior+billable, capEgressAllowance(capCents, compute, objectStorage, policy)); within < billable {
 				p.log.Info("meter: egress overage cap reached", "account", acct.ID, "hour", window.Hour,
 					"cap_cents", capCents, "compute_mb_seconds", compute, "object_storage_millicents", objectStorage, "egress_quantity", totalBillable,
 					"billable_quantity", billable, "billed_quantity", within)
