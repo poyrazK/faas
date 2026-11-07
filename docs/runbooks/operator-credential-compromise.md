@@ -55,7 +55,7 @@ Work from a different, trusted device.
 
    ```sh
    sudo gregalectl accounts revoke-sessions --account-id <operator account uuid> \
-     --reason credential
+     --reason credential --yes
    ```
 
    If you cannot tell which accounts were used, revoke platform-wide with

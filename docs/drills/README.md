@@ -24,7 +24,7 @@ Run against a non-production fleet unless the row says otherwise.
 | Compute node loss | [twonode-fault-injection.md](../runbooks/twonode-fault-injection.md) | quarterly | never recorded here | **Missing** |
 | Break-glass release pause, credential revoke (dry run), resume | [customer-secret-store-compromise.md](../runbooks/customer-secret-store-compromise.md) §1 and §5 | twice a year | never recorded | **Missing** |
 | Seal-domain break-glass | [seal-domains-rollout.md](../runbooks/seal-domains-rollout.md) §3 | after each domain contracts | see that runbook | |
-| Paging path (test page reaches Tier 0, Tier 1 reachable) | [escalation.md](../ops/escalation.md) | monthly, and at every on-call change | never recorded | **Missing** |
+| Paging path (test page reaches Tier 0, Tier 1 reachable, external heartbeat monitor alerts when `FaasWatchdog` posts stop) | [escalation.md](../ops/escalation.md) | monthly, and at every on-call change | never recorded | **Missing** |
 | Row-level restore after an operator error | [operator-error-recovery.md](../runbooks/operator-error-recovery.md) | twice a year | never | **Missing** |
 
 ## Tabletop exercises

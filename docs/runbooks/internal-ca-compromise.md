@@ -19,8 +19,8 @@ For expiry and renewal failures, use
 
 - **Leaves can be reissued** through the internal-pki-renewal workflow and
   `gregalectl pki rotate`. A reissued leaf does not invalidate the old one:
-  there is no revocation list. `gregalectl pki revoke` is a stub (ADR-052,
-  "CRL / OCSP"). A stolen leaf stays valid until its `NotAfter`.
+  there is no revocation list and no revoke command (ADR-052 deferred
+  CRL / OCSP). A stolen leaf stays valid until its `NotAfter`.
 - **The CA cannot be rotated online.** The renewal path rejects a different
   CA on purpose, and the trust-root rotation procedure that
   FaasInternalMTLSRenewal.md refers to has not been written. Replacing the CA
@@ -41,9 +41,13 @@ reachable from fleet addresses.
    gregalectl compute-nodes drain --node <fqdn> --reason 'SEV1 <ticket>: PKI exposure'
    ```
 
-2. **Pause releases** if the control plane itself may be compromised:
-   `gregalectl break-glass pause` (see
-   [customer-secret-store-compromise.md](customer-secret-store-compromise.md) §1).
+2. **Pause releases** if the control plane itself may be compromised (see
+   [customer-secret-store-compromise.md](customer-secret-store-compromise.md) §1):
+
+   ```sh
+   sudo gregalectl break-glass pause --db-env /etc/faas/compute-db.env \
+     --reason "SEV1 <ticket>: PKI exposure"
+   ```
 3. Preserve `/etc/faas/tls` from the affected hosts before changing anything
    (`cp -a /etc/faas/tls /var/backups/faas-tls-<ticket>` and copy it off the
    host).

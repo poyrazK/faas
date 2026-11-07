@@ -36,7 +36,7 @@ anything below:
 | What was lost | Undo |
 |---|---|
 | An app | `gregale apps restore <slug>` within the deletion grace ([FaasAppDeletionGraceDegraded.md](FaasAppDeletionGraceDegraded.md)) |
-| An account | `gregalectl accounts restore --account-id <uuid> --reason <reason>` |
+| An account that was **suspended** (not deleted) | `gregalectl accounts restore --account-id <uuid> --reason <reason> --yes` returns it to active. It does not bring back a deleted or purged account; for that, go to §3 |
 | A deployment | roll back to the previous deployment through the API or CLI |
 | A platform flag | set it back ([FaasPlatformFlagPastRetireBy.md](FaasPlatformFlagPastRetireBy.md)) |
 | Data a stuck repair touched | [FaasDataRepairStuck.md](FaasDataRepairStuck.md) |

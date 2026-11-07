@@ -14,27 +14,33 @@ Scenario playbooks are listed there too.
 Alertmanager routes by the `severity` label on each rule in
 `deploy/ansible/roles/prometheus/files/*.rules.yml`:
 
-| Severity | Receiver | Delivery | Repeat |
+| Alert | Receiver | Delivery | Repeat |
 |---|---|---|---|
-| `page` | `faas-page` | Pushover at priority 2 (emergency: bypasses quiet hours, retries every minute for an hour until acknowledged) and email to `am_email_to_page` | every hour while firing |
-| `warn` | `faas-warn` | email to `am_email_to_warn` only | every 4 hours |
-| `info` | none | Prometheus and Grafana only | n/a |
+| `severity=page` | `faas-page` | Pushover at priority 2 (emergency: bypasses quiet hours, retries every minute for an hour until acknowledged), email to `am_email_to_page`, and the page chat webhook (Discord or Slack) when configured | every hour while firing |
+| `severity=warn` | `faas-warn` | email to `am_email_to_warn` and the warn chat webhook (falls back to the page webhook when no warn-only one is set). A review queue, not an interrupt (ADR-1236): grouped by `family`, new alerts batched for an hour | once a day (`am_warn_repeat_interval`, default 24h) |
+| `severity=info` | none | Prometheus and Grafana only | n/a |
+| `FaasWatchdog` (always firing) | `faas-heartbeat` | posts to the external monitor URL in `am_heartbeat_url_file` | every `am_heartbeat_interval` (default 5m) |
 
-The Pushover token, the Pushover user key and the SMTP password are files
-under `/etc/alertmanager/secrets/`. They are never in the rendered config.
+Secrets (SMTP password, Pushover token and user key, chat webhooks, heartbeat
+URL) are files under `/etc/alertmanager/secrets/`. They are never in the
+rendered config.
 
-Two consequences matter during an incident:
+What this means during an incident:
 
 - **There is one Pushover target.** Alertmanager has no secondary rotation.
   Moving to a second responder is a human step (below), not an automatic
   one. To page a group, point `am_pushover_user_key_file` at a Pushover
   *delivery group* key instead of a single user key.
-- **If Alertmanager or Prometheus is down, nothing pages.** The
-  `FaasAlertmanagerDeliveryDegraded` and `FaasPrometheusAlertingPathDegraded`
-  runbooks cover the alerting path itself. The six-hourly synthetic canary
-  (`FaasSyntheticCanaryFailed`) runs from GitHub Actions but still delivers
-  through this Alertmanager. There is no outside dead-man's switch yet, so a
-  silent pager is not proof of a healthy platform.
+- **A silent warn is not a resolved warn.** A still-firing warn family is
+  repeated once a day. Check Alertmanager or Grafana for its current state.
+- **If Alertmanager or Prometheus is down, nothing pages from inside.** The
+  dead-man's switch covers that: the external monitor alerts when the
+  `FaasWatchdog` heartbeat stops ([FaasWatchdog.md](../runbooks/FaasWatchdog.md)).
+  It only works if `am_heartbeat_url_file` is provisioned on the control
+  plane and the external monitor notifies the on-call. Check both at every
+  paging drill. `FaasAlertmanagerDeliveryDegraded` and
+  `FaasPrometheusAlertingPathDegraded` cover partial failures of the
+  alerting path.
 
 ## Tiers
 
@@ -47,6 +53,11 @@ Two consequences matter during an incident:
 Tier 1 and Tier 2 are reached by phone call or direct message from whoever
 noticed the gap: the Tier 0 responder, a teammate, or the reporter. Keep
 their contact details in the private on-call roster, not in this repository.
+
+**Don't wait out the clock on a SEV1.** If a SEV1 is in progress and Tier 0
+has not acknowledged within 10 minutes, call Tier 1 immediately rather than
+waiting the full 15. The timeouts are a floor for responsiveness, not a
+procedure to finish before acting.
 
 The platform owner can pull in anyone, approve customer-facing wording,
 engage legal for a security incident, and open provider escalations (GCP

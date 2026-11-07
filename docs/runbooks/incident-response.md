@@ -11,7 +11,7 @@ Use this runbook for any operator alert, customer report, or security signal tha
 | 5–10 min | Freeze unrelated changes and choose the safest mitigation. | Roll back or contain only when the criteria below are met; preserve evidence first. | Post the approved status-page update for customer-facing impact. |
 | 10–15 min | Confirm the next decision, owner, and deadline; escalate if progress is blocked. | Execute the mitigation and report measured effect. | Start the update cadence and record commands, links, and decisions. |
 
-If no responder has acknowledged a page after five minutes, use the escalation matrix in [`docs/ops/escalation.md`](../ops/escalation.md). A SEV1 with no working IC at 15 minutes is an escalation failure: page the secondary on-call and engineering manager immediately.
+If no responder has acknowledged a page after five minutes, follow the escalation matrix in [`docs/ops/escalation.md`](../ops/escalation.md). Secondary on-call and the platform owner are reached by phone or direct message; Alertmanager pages only the primary. A SEV1 with no working IC at 15 minutes is an escalation failure: call the secondary on-call and the platform owner immediately.
 
 ## Scenario playbooks
 

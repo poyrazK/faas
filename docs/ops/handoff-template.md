@@ -19,7 +19,8 @@ Active silences (amtool silence query):
 
 Holds in force:
 - deploy freeze issue: <link or none>
-- break-glass release pause: <on | off>  (gregalectl break-glass status)
+- break-glass release pause: <on | off>
+  (sudo gregalectl break-glass status --db-env /etc/faas/compute-db.env)
 - drained compute nodes: <node, reason | none>
 - feature flags flipped for containment: <flag, value | none>
 

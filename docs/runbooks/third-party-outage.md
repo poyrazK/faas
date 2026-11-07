@@ -59,8 +59,9 @@ otherwise SEV2 or SEV3 by the matrix in
 
 ## 3. Email providers
 
-1. Pages still arrive through Pushover. Warn-severity alerts, which are
-   email only, do not. Watch Grafana directly until mail returns.
+1. Pages still arrive through Pushover, and pages and warns still reach
+   the chat webhooks if those are configured. Email copies of both are
+   lost. Without a chat webhook, watch Grafana directly until mail returns.
 2. Sign-in by email link fails. Users with other sign-in methods (OAuth,
    API keys, agent keys) are unaffected. Say so in the status update.
 3. Do not switch providers mid-incident unless both are down. The sending

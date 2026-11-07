@@ -123,8 +123,13 @@ and §4.
    identity bindings, and re-enable the workflows.
 2. Cut a fresh release from a reviewed commit and deploy it to every host,
    so nothing still runs an artifact from the window.
-3. `gregalectl break-glass resume`, close the `deploy-freeze` issue, and watch
-   the post-deploy record ([DeployFreeze.md](DeployFreeze.md)).
+3. Resume customer releases, close the `deploy-freeze` issue, and watch the
+   post-deploy record ([DeployFreeze.md](DeployFreeze.md)):
+
+   ```sh
+   sudo gregalectl break-glass resume --db-env /etc/faas/compute-db.env \
+     --reason "SEV1 <ticket>: pipeline contained"
+   ```
 
 ## Before you need it
 
