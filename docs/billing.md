@@ -34,6 +34,20 @@ To keep the subscription instead, ask for the plan you already have: `gregale bi
 
 A subscription that is ending cannot change plans: an upgrade or downgrade answers `409 billing_subscription_ending` until you keep it. Once the period has ended the account is on Free, and a new paid plan starts with a new checkout.
 
+### Allowances after a plan change
+
+Object storage and managed PostgreSQL allowances follow plan changes. The
+included object storage is shared across the month like the included
+GB-RAM-hours: half a month on Hobby then half on Pro includes the average of
+the two. Managed PostgreSQL usage is billed against the allowance of the plan
+held while it ran, like compute: after a downgrade, usage the larger
+allowance covered is not billed again; after an upgrade, overage already
+billed stays billed. The month's managed PostgreSQL charge is still at most
+the current plan's ceiling, and managed PostgreSQL stops at the current
+plan's limits. A `min_instances` floor is billed like the instances it keeps
+warm, sidecars included, and stops when the spend cap is reached
+(ADR-20261103131742 amendment 2).
+
 Opening the billing portal (`GET /v1/billing/portal`) and changing the spend cap need an admin credential and MFA, and a dashboard session also needs a recent step-up: the portal link is a signed-in session that can cancel the subscription and replace the card.
 
 ## Billing email
@@ -140,8 +154,11 @@ dashboard session also needs a recent step-up. Free cannot elect it (HTTP 402
 `plan_egress_overage_not_allowed`).
 
 While the election is on and egress billing is live, egress above the
-allowance is billed per GiB (the response's `price_millicents_per_gib`) and
-counts toward the spend cap like compute overage. While egress billing is not
+allowance is billed at $0.03 per GiB (the response's
+`price_millicents_per_gib`) and counts toward the spend cap like compute
+overage. Each hour's egress counts against the allowance of the plan held in
+that hour, so a later plan change does not re-price it, and hours on Free are
+never billed, also after an upgrade (ADR-20261103131742 amendment 2). While egress billing is not
 live (`billing: off`), the allowance still holds and the saved election takes
 effect when billing starts.
 
