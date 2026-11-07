@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -42,8 +43,12 @@ const (
 	TrafficStaleTargetQuarantine = 30 * time.Second
 	// Reusable bridges acknowledge exchange cleanup before node capacity is
 	// released. Failure fences and reaps the bridge process instead.
-	TrafficBridgeCompletionTimeout    = 5 * time.Second
-	TrafficBridgeCompletionMaxEntries = 128
+	TrafficBridgeCompletionTimeout = 5 * time.Second
+	// TrafficBridgeCompletionMaxEntries bounds a bridge's open exchanges. It
+	// is the largest per-instance request limit runtime config may set
+	// (AppRequestConcurrencyBound, ADR-20261101215228): an open entry is a
+	// map entry and a channel, about 200 bytes.
+	TrafficBridgeCompletionMaxEntries = AppRequestConcurrencyBound
 	// A bridge keeps this many recent completions, so vmmd's fallback wait
 	// after a canceled exchange still finds one that just finished.
 	TrafficBridgeCompletionRetained = 1024
@@ -12516,6 +12521,86 @@ func (p Plan) ConcurrencyPerVMBound() int {
 	return l.ConcurrencyPerVMBound
 }
 
+// RequestConcurrencyBound is the largest per_instance_concurrency an app on p
+// may declare in this process: app_request_concurrency_max once runtime
+// config sets it, else ConcurrencyPerVMBound (ADR-20261101215228). Unknown
+// plans fail closed (return 0).
+func (p Plan) RequestConcurrencyBound() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.RequestConcurrencyBound()
+}
+
+// AppRequestConcurrencyBound is the largest value runtime config may set for
+// app_request_concurrency_default or app_request_concurrency_max, and the
+// largest per-instance limit vmmd accepts from a wake (ADR-20261101215228).
+const AppRequestConcurrencyBound = 10000
+
+// RequestConcurrency holds the runtime-config request limits per instance
+// (ADR-20261101215228): `app_request_concurrency_default`, for an app that
+// declares no per_instance_concurrency, and `app_request_concurrency_max`, the
+// largest declaration. A zero field is unset. With both unset every plan keeps
+// its concurrency_per_vm bound, as before.
+type RequestConcurrency struct {
+	Default int
+	Max     int
+}
+
+// requestConcurrency is the process's applied RequestConcurrency. Only a
+// daemon's runtime-config watcher sets it (SetRequestConcurrency); vmmd never
+// does and takes each instance's limit from its wake instead.
+var requestConcurrency atomic.Pointer[RequestConcurrency]
+
+// SetRequestConcurrency applies the runtime-config request limits to this
+// process. Values outside [0, AppRequestConcurrencyBound] are clamped.
+func SetRequestConcurrency(rc RequestConcurrency) {
+	rc.Default = min(max(rc.Default, 0), AppRequestConcurrencyBound)
+	rc.Max = min(max(rc.Max, 0), AppRequestConcurrencyBound)
+	requestConcurrency.Store(&rc)
+}
+
+// CurrentRequestConcurrency is the process's applied RequestConcurrency.
+func CurrentRequestConcurrency() RequestConcurrency {
+	if rc := requestConcurrency.Load(); rc != nil {
+		return *rc
+	}
+	return RequestConcurrency{}
+}
+
+// Set reports whether either limit is set.
+func (rc RequestConcurrency) Set() bool { return rc.Default > 0 || rc.Max > 0 }
+
+// Bound is the largest per-instance limit an app on l may declare: the
+// configured maximum, or the plan's concurrency_per_vm while it is unset.
+func (rc RequestConcurrency) Bound(l Limits) int {
+	if rc.Max > 0 {
+		return rc.Max
+	}
+	return l.ConcurrencyPerVMBound
+}
+
+// PerInstance resolves an app's declared per_instance_concurrency on l: the
+// declaration up to Bound, or for none the configured default (at most the
+// bound). With nothing set it is l's plan resolution.
+func (rc RequestConcurrency) PerInstance(l Limits, requested int) int {
+	bound := rc.Bound(l)
+	if requested > 0 {
+		return min(requested, bound)
+	}
+	if rc.Default > 0 {
+		return min(rc.Default, bound)
+	}
+	return bound
+}
+
+// RequestConcurrencyBound is the largest per_instance_concurrency an app on
+// l may declare in this process (CurrentRequestConcurrency).
+func (l Limits) RequestConcurrencyBound() int {
+	return CurrentRequestConcurrency().Bound(l)
+}
+
 // PerInstanceConcurrency resolves an app's declared
 // scaling_policy.per_instance_concurrency against the plan's
 // ConcurrencyPerVMBound (ADR-20261022203523). It is the one resolver the
@@ -12523,11 +12608,12 @@ func (p Plan) ConcurrencyPerVMBound() int {
 // in-flight scale-in floor, and apid's effective limits all use. Zero (the
 // default) and any value above the bound, which a plan downgrade can leave
 // behind, resolve to the bound: exactly the pre-ADR behaviour.
+//
+// Runtime config (ADR-20261101215228) replaces the bound with
+// app_request_concurrency_max and the zero case with
+// app_request_concurrency_default once they are set in this process.
 func (l Limits) PerInstanceConcurrency(requested int) int {
-	if requested <= 0 || requested > l.ConcurrencyPerVMBound {
-		return l.ConcurrencyPerVMBound
-	}
-	return requested
+	return CurrentRequestConcurrency().PerInstance(l, requested)
 }
 
 // LogDeploymentFilterMax returns the per-plan cap on the

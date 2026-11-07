@@ -413,8 +413,14 @@ type AppSpec struct {
 	// Non-production deployments keep shared egress even when their app has a pin.
 	// False preserves production eligibility for older callers.
 	StaticEgressExcluded bool `protobuf:"varint,36,opt,name=static_egress_excluded,json=staticEgressExcluded,proto3" json:"static_egress_excluded,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// ADR-20261101215228: requests vmmd's HTTP admission lets through to this
+	// instance at once. schedd sends it once runtime config sets the request
+	// limits: the app's declared per_instance_concurrency, or else
+	// app_request_concurrency_max. 0 (an older schedd, or nothing set) keeps the
+	// plan's concurrency_per_vm. vmmd clamps it to api.AppRequestConcurrencyBound.
+	RequestConcurrency int32 `protobuf:"varint,37,opt,name=request_concurrency,json=requestConcurrency,proto3" json:"request_concurrency,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -697,6 +703,13 @@ func (x *AppSpec) GetStaticEgressExcluded() bool {
 		return x.StaticEgressExcluded
 	}
 	return false
+}
+
+func (x *AppSpec) GetRequestConcurrency() int32 {
+	if x != nil {
+		return x.RequestConcurrency
+	}
+	return 0
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -19838,7 +19851,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xac\r\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xdd\r\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -19882,7 +19895,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"quarantine\x18# \x01(\bR\n" +
 	"quarantine\x124\n" +
-	"\x16static_egress_excluded\x18$ \x01(\bR\x14staticEgressExcluded\"\x92\b\n" +
+	"\x16static_egress_excluded\x18$ \x01(\bR\x14staticEgressExcluded\x12/\n" +
+	"\x13request_concurrency\x18% \x01(\x05R\x12requestConcurrency\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +

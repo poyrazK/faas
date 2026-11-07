@@ -1309,5 +1309,10 @@ type KeyedLocks = keyedLocks
 func (k *keyedLocks) Lock(key string) func() { return k.lock(key) }
 func (k *keyedLocks) Size() int              { return k.size() }
 
+// VMMRequestConcurrency exposes vmmRequestConcurrency (ADR-20261101215228).
+func VMMRequestConcurrency(app state.App, limits api.Limits) int32 {
+	return vmmRequestConcurrency(app, limits)
+}
+
 // DrainWithdrawsRoutes exposes drainWithdrawsRoutes to package sched_test.
 func DrainWithdrawsRoutes(ins state.Instance) bool { return drainWithdrawsRoutes(ins) }

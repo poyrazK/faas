@@ -167,8 +167,26 @@
        safety bounds (decision 3). A ceiling is rounded up to a value the
        cgroups enforce (250, 500, then whole cores). apid only validates and
        stores the keys; reporting them in `effective_limits` comes with 2b.
-     - **2b: the request keys,** read by apid, gatewayd-internal and
-       schedd, and the wake's request-limit field for vmmd.
+     - **2b (done): the request keys.** `app_request_concurrency_default`
+       and `app_request_concurrency_max` default to 0, which is unset: every
+       plan keeps its `concurrency_per_vm`. apid, gatewayd-internal and
+       schedd apply them to one process-wide value (`api.SetRequestConcurrency`)
+       that `api.Limits.PerInstanceConcurrency` and the bound checks read,
+       so every existing caller follows without new plumbing. A default above
+       the maximum resolves to the maximum; a default with no maximum stays
+       under each plan's bound.
+       - schedd sends vmmd `AppSpec.request_concurrency` on serving wakes
+         (wake, deploy prime, migration): 0 while nothing is set, else the
+         app's declaration up to the maximum, or the maximum. vmmd admits
+         that many, up to `api.AppRequestConcurrencyBound` (10,000); 0, an
+         older schedd, or an instance adopted after a vmmd restart keeps the
+         plan bound. An older vmmd ignores the field and keeps the plan
+         bound, answering App busy above it, so the maximum is set only once
+         every vmmd runs this release.
+       - The bridge's open-exchange limit (`TrafficBridgeCompletionMaxEntries`)
+         is raised to `api.AppRequestConcurrencyBound`.
+       - Releasing `per_instance_concurrency` declarations to every account
+         stays a separate owner decision (rollout step 4).
   3. **In production, set `app_request_concurrency_default` and the maximum.**
      Watch instances per app, in-flight requests per instance, p99 latency,
      and warm-queue and 429 outcomes.

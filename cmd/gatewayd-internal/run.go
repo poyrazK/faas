@@ -2201,9 +2201,14 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	if pool != nil {
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
+		// ADR-20261101215228: per-instance request limits.
+		requestConcurrency := &runtimeconfig.RequestConcurrency{}
 		keys, apply := runtimeconfig.WithPlatformFlags(
-			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones},
+			append([]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.RequestConcurrencyKeys...),
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+				if handled, err := requestConcurrency.Apply(key, value); handled {
+					return err
+				}
 				enabled, err := runtimeconfig.Bool(value)
 				if err != nil {
 					return err
