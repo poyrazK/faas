@@ -339,17 +339,35 @@ or `production` (refused for branches).
   branch calls stay in the branch. A branch caller whose target has no branch deployment
   is refused, not sent to production. PR previews keep their separate-app namespace; a
   branch needs none.
-- **Private networks** (slice 4, as built). An attachment is per app, and vmmd applies an
-  app's attachment to every live instance of the app, at boot and on every replay of the
-  attachment. A branch instance would therefore join the parent's network. Until vmmd can
-  keep an instance out of its app's network, branches and private networks do not share
-  a project: branching a project with an attached workload is refused, and so is
-  attaching a workload while its project has branches. Both answer 409
-  `environment_branch_private_network_unsupported`. The store checks both sides under the
-  project's app-row locks, so neither can slip in beside the other. The follow-up lets
-  branch instances start without the parent's attachments: a per-instance exclusion
-  carried from schedd to vmmd and kept across vmmd adoption, which needs `test-metal`.
-  Opting a branch into a network needs environment-scoped attachments after that.
+- **Private networks** (decided 2026-11-07: off by default, opt-in join). An attachment is
+  per app, and vmmd applies an app's attachment to every live instance of the app, at boot
+  and on every replay. Slice 4 therefore kept branches and attached workloads out of the
+  same project. As built now, they share it:
+  - A branch has `private_networks`, `off` (the default) or `join`, set at creation and
+    never changed (`project_environment_branches.private_networks`). Only a live branch
+    may join (a CHECK and the API refuse `join` for contained and simulated branches).
+  - **Authority.** vmmd reads the mode with the branch egress policy it already reads on
+    every wake (section 7), so a request cannot waive it, and caches it per deployment.
+    For a branch that stays off, it drops the app's attachment from the wake before the
+    network is prepared, and marks the instance `PrivateNetworkExcluded`. Both replays of
+    an app's attachment (`UpdatePrivateNetwork*`, `UpdatePrivateNetworkAttachment*`) skip
+    excluded instances, and vmmd adoption carries the mark. A branch workload that calls
+    a private peer then fails instead of reaching production.
+  - **Join.** A joined branch instance gets a member address of its own
+    (ADR-20261104000101). It never owns the app's service address: schedd marks every
+    non-production deployment `StaticEgressExcluded`, which makes it ineligible. It can
+    reach the parent's private peers, including production's, so joining is a
+    deliberate choice.
+  - **Rollout.** The refusals are gone on both sides. Environment branches stay off
+    (`environment_branches_enabled`) until every serving vmmd runs this release: an
+    older vmmd would attach every branch instance.
+  - **Evidence.** `TestEnvironmentBranchInstancesStayOffPrivateNetworksUnlessJoined` runs
+    real wakes and both replays through vmmd's manager with the private network member
+    store. The policy authority is the one `test-metal` proved for slice 6a. No metal
+    harness runs private networks yet (no fabric or connector), so a guest-level proof
+    waits for one.
+  - A copy of each network per branch (its own VXLAN and service addresses) remains a
+    possible later step.
 - **Egress identity** (#6044). Only a production-lane deployment gets the app's static
   egress IP, so branches leave through shared egress. The egress allowlist comes with the
   per-environment workload settings.
@@ -506,7 +524,7 @@ or `production` (refused for branches).
 | 3 | Overlay buckets with `live_parent` consistency, created by the branch data reconciler; overlay-bucket cleanup. `as_of` and read-through copy are follow-ups. | Read-through, write isolation, tombstones, merged listing. Parent unchanged. Nothing copied at branch time. The bucket and its credential are gone after delete. |
 | 4 | Network and identity scoping. Service calls, egress and identity come from #6034 and #6044, which key on the deployment scope. Built here: branches and private networks refuse each other per project. Branch instances without the parent's attachments are a follow-up. | A branch caller never reaches a production service or private network. |
 | 5 | Restore with a new identity (opt-in) from a lazily made credential-free capture of the parent deployment (section 3). Splits into 5a, the capture (placeholder managed secrets, `branch-capture` identity, its own `environment_branch_captures` table that production lookups cannot read), and 5b, the restore (tmpfs identity file, digest acknowledgement, lineage checks). Both need `test-metal`. | No real parent credential in any memory a branch restores. Production never restores a credential-free capture. Identity digest acknowledged; a wrong or missing digest cold-boots. |
-| 6 | `contained` and `simulated` egress. 6a (built): the contained profile, its authority and the operator gate (section 7). 6b (built): `simulated` through seeded rehearsal twins (section 7): `POST /v1/dev/sessions/{project}/seed` and `from_branch` in `gregale test rehearse`. 6c (built): contained branches with object storage, through the bridge object relay (section 7). | 6a: public TCP and non-branch bridge ports are dropped while the service proxy, resolver and the branch's own database are reached, after resets too (`TestMetalEnvironmentBranchContainedProfile`). 6b: a twin boots the branch's build with no source build and serves the branch's values (`TestEnvironmentBranchSeedTwinMetal`); the run itself is covered by the rehearsal native acceptance. 6c: a contained branch guest reads and writes its overlay bucket through the relay, while a parent key is refused at the relay and the public gateway stays unreachable (`TestEnvironmentBranchContainedObjectsMetal`). |
+| 6 | `contained` and `simulated` egress. Branches share projects with private networks (section 6): off by default, `join` by opt-in. 6a (built): the contained profile, its authority and the operator gate (section 7). 6b (built): `simulated` through seeded rehearsal twins (section 7): `POST /v1/dev/sessions/{project}/seed` and `from_branch` in `gregale test rehearse`. 6c (built): contained branches with object storage, through the bridge object relay (section 7). | 6a: public TCP and non-branch bridge ports are dropped while the service proxy, resolver and the branch's own database are reached, after resets too (`TestMetalEnvironmentBranchContainedProfile`). 6b: a twin boots the branch's build with no source build and serves the branch's values (`TestEnvironmentBranchSeedTwinMetal`); the run itself is covered by the rehearsal native acceptance. 6c: a contained branch guest reads and writes its overlay bucket through the relay, while a parent key is refused at the relay and the public gateway stays unreachable (`TestEnvironmentBranchContainedObjectsMetal`). |
 
 ## Consequences
 
