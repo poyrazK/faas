@@ -438,20 +438,28 @@ func TestSnapshotRefreshBootIsOnTheTimelineAsThePlatforms(t *testing.T) {
 			wakeID = ins.WakeID
 		}
 	}
-	rows := sched.EventuallyEventsForInstance(t, f.store, wakeID, 2)
+	// The events are emitted asynchronously; wait for both boot rows, not
+	// for a row count the park's events can also fill.
+	var rows []state.Event
 	seen := map[string]bool{}
-	for _, row := range rows {
-		if row.Kind != "wake.boot_started" && row.Kind != "wake.boot_completed" {
-			continue
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		rows = sched.EventuallyEventsForInstance(t, f.store, wakeID, 1)
+		for _, row := range rows {
+			if row.Kind != "wake.boot_started" && row.Kind != "wake.boot_completed" {
+				continue
+			}
+			var data map[string]any
+			if err := json.Unmarshal(row.Data, &data); err != nil {
+				t.Fatal(err)
+			}
+			if data["trigger"] != sched.TriggerSnapshotRefresh {
+				t.Fatalf("%s trigger = %v, want %s", row.Kind, data["trigger"], sched.TriggerSnapshotRefresh)
+			}
+			seen[row.Kind] = true
 		}
-		var data map[string]any
-		if err := json.Unmarshal(row.Data, &data); err != nil {
-			t.Fatal(err)
+		if (seen["wake.boot_started"] && seen["wake.boot_completed"]) || time.Now().After(deadline) {
+			break
 		}
-		if data["trigger"] != sched.TriggerSnapshotRefresh {
-			t.Fatalf("%s trigger = %v, want %s", row.Kind, data["trigger"], sched.TriggerSnapshotRefresh)
-		}
-		seen[row.Kind] = true
 	}
 	if !seen["wake.boot_started"] || !seen["wake.boot_completed"] {
 		t.Fatalf("timeline rows %v, want boot started and completed", sched.KindsOf(rows))
