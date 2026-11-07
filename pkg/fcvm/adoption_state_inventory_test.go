@@ -133,6 +133,7 @@ var adoptionInstanceInventory = map[string]string{
 	"Paused":                          "rebuilt", // warm-pool restore, claimed or not
 	"QuietPauseAfter":                 "rebuilt",
 	"IdleLadderEligible":              "rebuilt",
+	"IdleLadderGuardedPause":          "rebuilt",
 	"Frozen":                          "rebuilt",
 	"FrozenSince":                     "rebuilt",
 	"freezing":                        "reset",   // no freeze is in flight at startup

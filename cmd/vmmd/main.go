@@ -1429,6 +1429,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Activity: activityTracker,
 			Metrics:  fcvm.NewIdleLadderMetrics(ops.Registry()),
 			On:       on,
+			Apps:     cfg.IdleLadderApps,
 			// The activity guard (ADR §6) watches apps quiet pause does not
 			// pause: their VM CPU and veth bytes.
 			CPU: agentWaitCPU{cache: cpuCache},
@@ -1436,7 +1437,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		})
 		go mgr.RunIdleLadderObserve(ctx)
 		if on {
-			log.Info("idle ladder on (ADR-20261107122928): quiet pause at 1 s, L2 reported at 10 s quiet")
+			log.Info("idle ladder on (ADR-20261107122928): quiet pause at 1 s, L2 reported at 10 s quiet",
+				"guarded_app_pause", cfg.IdleLadderApps)
 		} else {
 			log.Info("idle ladder observe mode enabled (ADR-20261107122928): measuring ladder levels, pausing nothing")
 		}
