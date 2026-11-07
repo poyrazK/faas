@@ -15003,26 +15003,44 @@ const RequestAnalyticsSettleLag = 2 * time.Minute
 
 // Request analytics rollups (ADR-20261103113952). apid adds every telemetry
 // row a plan keeps, before the debugger ingest cap, to per-minute rollups
-// and writes them every RequestAnalyticsRollupFlushInterval in statements of
-// at most RequestAnalyticsRollupFlushRowsMax rows. For each app, minute and
-// non-route dimension a flush keeps RequestAnalyticsRollupDimensionsMax
-// distinct values and folds the rest into "__other__". The aggregator counts
+// and, every RequestAnalyticsRollupFlushInterval, writes the minutes that
+// closed at least RequestAnalyticsRollupMinuteGrace ago (amendment 3), in
+// statements of at most RequestAnalyticsRollupFlushRowsMax rows. The grace
+// covers the gateways holding a minute until it closes and flushing every
+// few seconds, and stays inside RequestAnalyticsSettleLag. For each app,
+// minute and non-route dimension the write keeps
+// RequestAnalyticsRollupDimensionsMax distinct values and folds the rest
+// into "__other__". The aggregator counts
 // a replayed event ID once among the last RequestAnalyticsRollupSeenEventsMax
 // rows; a gateway replays a batch within seconds of the original. Past
 // RequestAnalyticsRollupPendingRowsMax buffered rollup rows, because
 // Postgres is failing, new rows are dropped and counted.
 const (
 	RequestAnalyticsRollupFlushInterval = 10 * time.Second
+	RequestAnalyticsRollupMinuteGrace   = 30 * time.Second
 	RequestAnalyticsRollupFlushRowsMax  = 1000
 	RequestAnalyticsRollupDimensionsMax = 50
 	// The buffer holds up to this many values of a kind per app minute
-	// before folding new ones into __other__; the flush keeps the
-	// RequestAnalyticsRollupDimensionsMax busiest of them.
-	RequestAnalyticsRollupDimensionsBufferMax = 4 * RequestAnalyticsRollupDimensionsMax
+	// before folding new ones into __other__; the minute's write keeps the
+	// RequestAnalyticsRollupDimensionsMax busiest of them. Non-route rows
+	// are keyed by value alone, so a value costs one buffered row.
+	RequestAnalyticsRollupDimensionsBufferMax = 10 * RequestAnalyticsRollupDimensionsMax
 	// App minutes whose lost rollups wait to be recorded as gaps.
 	RequestAnalyticsRollupPendingGapsMax = 100_000
 	RequestAnalyticsRollupSeenEventsMax  = 200_000
 	RequestAnalyticsRollupPendingRowsMax = 200_000
+)
+
+// The minute tier is kept RequestAnalyticsMinuteRetention, whatever the plan
+// (ADR-20261103113952 amendment 3); the hourly tier keeps the plan's
+// telemetry retention. An analytics window reaching further back than
+// RequestAnalyticsMinuteReadHorizon starts and ends on whole UTC hours, so
+// that part is read from the hourly tier alone. The hour between the two
+// keeps the minutes a window inside the horizon reads from a sweep that runs
+// once an hour.
+const (
+	RequestAnalyticsMinuteRetention   = 48 * time.Hour
+	RequestAnalyticsMinuteReadHorizon = RequestAnalyticsMinuteRetention - time.Hour
 )
 
 // RequestAnalyticsSampledMeasuresTimeout bounds the raw telemetry read that

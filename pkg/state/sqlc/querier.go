@@ -6783,7 +6783,9 @@ type Querier interface {
 	// route/method filter applies to route rows only, so callers pass group_by
 	// 'route' or 'status' with it. A bucket counts when it starts inside the
 	// window. latency_hist is the groups' merged histogram, summed bucket by
-	// bucket; callers turn it into percentiles. filtered is not materialized:
+	// bucket; callers turn it into percentiles. A row holds its histogram in
+	// latency_hist, latency_hist_int4 or, while two releases write, both
+	// (amendment 3), so each bucket adds the two. filtered is not materialized:
 	// the top-group pass reads no histograms.
 	RequestAnalyticsRollupGroups(ctx context.Context, db DBTX, arg RequestAnalyticsRollupGroupsParams) ([]RequestAnalyticsRollupGroupsRow, error)
 	// Whether any minute starting inside the window lost rollups.

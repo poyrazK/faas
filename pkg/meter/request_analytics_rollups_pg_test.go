@@ -55,9 +55,11 @@ func TestRequestAnalyticsRollupsAddUpAndAgeOutOnThePlanLadder(t *testing.T) {
 		return r
 	}
 	old := now.Add(-4 * 24 * time.Hour) // past Hobby's 3 days
+	// Inside Hobby's 3 days but past the 48-hour minute tier (amendment 3).
+	pastMinutes := now.Add(-60 * time.Hour)
 
 	// Two flushes of the same key add up; the earlier coverage minute wins.
-	if err := store.AddRequestAnalyticsRollups(ctx, []state.RequestAnalyticsRollup{row(now, 3, 40, 3), row(old, 1, 5, 0)},
+	if err := store.AddRequestAnalyticsRollups(ctx, []state.RequestAnalyticsRollup{row(now, 3, 40, 3), row(old, 1, 5, 0), row(pastMinutes, 4, 5, 0)},
 		[]state.RequestAnalyticsCoverage{{AppID: appID, CoveredSince: now}}); err != nil {
 		t.Fatalf("first flush: %v", err)
 	}
@@ -107,7 +109,7 @@ func TestRequestAnalyticsRollupsAddUpAndAgeOutOnThePlanLadder(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM request_analytics_minutes WHERE app_id = $1), (SELECT count(*) FROM request_analytics_hours WHERE app_id = $1), (SELECT count(*) FROM request_analytics_rollup_gaps WHERE app_id = $1)`, appID).Scan(&left, &hoursLeft, &gapsLeft); err != nil {
 		t.Fatal(err)
 	}
-	if deleted != 3 || left != 1 || hoursLeft != 1 || gapsLeft != 1 {
-		t.Fatalf("retention deleted %d, left %d minute rows, %d hour rows and %d gaps; want the 4-day-old Hobby minute and hour and the 20-day-old gap gone", deleted, left, hoursLeft, gapsLeft)
+	if deleted != 4 || left != 1 || hoursLeft != 2 || gapsLeft != 1 {
+		t.Fatalf("retention deleted %d, left %d minute rows, %d hour rows and %d gaps; want the 4-day-old Hobby minute and hour, the 60-hour-old minute (its hour kept) and the 20-day-old gap gone", deleted, left, hoursLeft, gapsLeft)
 	}
 }

@@ -30,6 +30,11 @@ const (
 	rollupMethodMaxBytes     = 16  // request_analytics_minutes.method CHECK
 	rollupAnonymousConsumer  = "__anonymous__"
 	rollupFinalFlushDeadline = 5 * time.Second
+	// rollupFoldedStatus is the status of every non-route row, whose
+	// deployment is the nil UUID: no reader splits those kinds by status or
+	// deployment (amendment 3), and keying them by both multiplied their
+	// rows about fivefold.
+	rollupFoldedStatus = 0
 )
 
 var rollupFoldedKinds = [...]string{RollupKindCountry, RollupKindReferrerHost, RollupKindUAFamily, RollupKindConsumerID}
@@ -102,6 +107,9 @@ type RequestAnalyticsRollups struct {
 
 	requests *prometheus.CounterVec
 	flushes  *prometheus.CounterVec
+
+	// now is the flush clock; tests replace it.
+	now func() time.Time
 }
 
 // NewRequestAnalyticsRollups returns an aggregator writing to store. A nil
@@ -120,6 +128,7 @@ func NewRequestAnalyticsRollups(store state.RequestAnalyticsRollupStore, reg pro
 		covered:   map[uuid.UUID]struct{}{},
 		uncovered: map[uuid.UUID]int64{},
 		gaps:      map[rollupGapKey]struct{}{},
+		now:       time.Now,
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "request_analytics_rollup_requests_total",
 			Help: "Requests the analytics rollups received, by outcome: added, replayed (an event ID already counted), dropped (buffer full while Postgres fails), rejected (Postgres refused the row's data).",
@@ -164,7 +173,7 @@ func (a *RequestAnalyticsRollups) Add(row RequestAnalyticsRollupRow) bool {
 		r := a.pending[k]
 		if r == nil {
 			r = &state.RequestAnalyticsRollup{
-				AppID: row.AppID, AccountID: row.AccountID, DeploymentID: row.DeploymentID,
+				AppID: row.AppID, AccountID: row.AccountID, DeploymentID: k.deployment,
 				BucketStart: time.Unix(minute, 0).UTC(), DimensionKind: k.kind,
 				Dimension: k.dimension, Method: k.method, Status: k.status,
 			}
@@ -192,10 +201,11 @@ func (a *RequestAnalyticsRollups) Add(row RequestAnalyticsRollupRow) bool {
 	return true
 }
 
-// keysLocked returns the row's rollup keys: its route, and each folded
-// dimension. The buffer keeps up to RequestAnalyticsRollupDimensionsBufferMax
-// values of a kind per app minute, the rest go to __other__ at once, and the
-// flush keeps the RequestAnalyticsRollupDimensionsMax busiest of them.
+// keysLocked returns the row's rollup keys: its route, by method, status
+// and deployment, and each folded dimension, by value alone. The buffer
+// keeps up to RequestAnalyticsRollupDimensionsBufferMax values of a kind per
+// app minute, the rest go to __other__ at once, and the flush of the closed
+// minute keeps the RequestAnalyticsRollupDimensionsMax busiest of them.
 func (a *RequestAnalyticsRollups) keysLocked(row RequestAnalyticsRollupRow, minute int64) []rollupKey {
 	base := rollupKey{app: row.AppID, minute: minute, status: int16(row.Status), deployment: row.DeploymentID}
 	keys := make([]rollupKey, 0, 1+len(rollupFoldedKinds))
@@ -227,9 +237,7 @@ func (a *RequestAnalyticsRollups) keysLocked(row RequestAnalyticsRollupRow, minu
 				values[value] = struct{}{}
 			}
 		}
-		k := base
-		k.kind, k.dimension = kind, value
-		keys = append(keys, k)
+		keys = append(keys, rollupKey{app: row.AppID, minute: minute, kind: kind, dimension: value, status: rollupFoldedStatus})
 	}
 	return keys
 }
@@ -284,19 +292,47 @@ func requestAnalyticsLatencyBucket(latencyMS int) int {
 	return sort.SearchInts(bounds, latencyMS)
 }
 
-// Flush writes the pending rollups. Rows Postgres refuses for their data
-// are isolated and dropped, and their minutes recorded as gaps; on any other
-// error the unwritten rows are merged back, as far as the buffer bound
-// allows, so the next flush retries them.
+// Flush writes the pending rollups of the minutes that closed at least
+// RequestAnalyticsRollupMinuteGrace ago. Each minute is then written once,
+// with one top-N fold per kind, while it is still inside
+// RequestAnalyticsSettleLag, which readers report as arriving. Rows of a
+// minute that arrive after its write are added by a later flush. Rows
+// Postgres refuses for their data are isolated and dropped, and their
+// minutes recorded as gaps; on any other error the unwritten rows are merged
+// back, as far as the buffer bound allows, so the next flush retries them.
 func (a *RequestAnalyticsRollups) Flush(ctx context.Context) error {
+	return a.flush(ctx, false)
+}
+
+// flush writes the closed minutes, or every pending minute when all is set
+// (shutdown).
+func (a *RequestAnalyticsRollups) flush(ctx context.Context, all bool) error {
 	if a == nil || a.store == nil {
 		return nil
 	}
+	ready := a.now().Add(-time.Minute - api.RequestAnalyticsRollupMinuteGrace).Unix()
 	a.mu.Lock()
-	pending, uncovered := a.pending, a.uncovered
-	a.pending = map[rollupKey]*state.RequestAnalyticsRollup{}
-	a.dims = map[rollupDimensionKey]map[string]struct{}{}
-	a.uncovered = map[uuid.UUID]int64{}
+	pending := map[rollupKey]*state.RequestAnalyticsRollup{}
+	for k, r := range a.pending {
+		if all || k.minute <= ready {
+			pending[k] = r
+			delete(a.pending, k)
+		}
+	}
+	for dk := range a.dims {
+		if all || dk.minute <= ready {
+			delete(a.dims, dk)
+		}
+	}
+	// An app's coverage starts at its earliest pending minute, so it is
+	// recorded with the flush that writes that minute.
+	uncovered := map[uuid.UUID]int64{}
+	for app, minute := range a.uncovered {
+		if all || minute <= ready {
+			uncovered[app] = minute
+			delete(a.uncovered, app)
+		}
+	}
 	a.mu.Unlock()
 	if len(pending) == 0 && len(uncovered) == 0 {
 		return a.flushGaps(ctx)
@@ -549,7 +585,7 @@ func (a *RequestAnalyticsRollups) Run(ctx context.Context, interval time.Duratio
 		select {
 		case <-ctx.Done():
 			final, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollupFinalFlushDeadline)
-			if err := a.Flush(final); err != nil {
+			if err := a.flush(final, true); err != nil {
 				a.log.Error("request analytics rollups final flush failed", "err", err)
 			}
 			cancel()
