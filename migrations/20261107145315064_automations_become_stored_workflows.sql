@@ -1,4 +1,5 @@
 -- filename: 20261107145315064_automations_become_stored_workflows.sql
+-- migration-compat: contract
 -- ADR-20261107190000: automations become stored workflows, with no aliases.
 -- Renames the feature's 11 tables (and the constraints and indexes named
 -- after them), the live tables' automation_version column, the functions

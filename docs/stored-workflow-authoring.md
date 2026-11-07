@@ -528,7 +528,7 @@ history or gate requires app-read scope.
 Discover existing names and their current evidence health with:
 
 ```sh
-gregale workflow stored live baseline list --app billing --name paid-invoice --json
+gregale workflow stored baseline list --app billing --name paid-invoice --json
 ```
 
 The dashboard's **Named baselines** catalog shows each head, policy and target,
@@ -565,16 +565,16 @@ After explicitly running and checking a retained suite, promote it with a versio
 2 policy. Use a new UUID for each deliberate promotion, and preserve it for retries:
 
 ```sh
-gregale workflow stored live baseline promote --app billing --name paid-invoice \
+gregale workflow stored baseline promote --app billing --name paid-invoice \
   --baseline-name production --suite 00000000-0000-4000-8000-000000000010 \
   --promotion-id 00000000-0000-4000-8000-000000000020 --expected-revision 0 \
   --expected-version 7 --expected-published-version 4 \
   --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
   --policy stored-workflow-gate-policy.json --json
 
-gregale workflow stored live baseline show --app billing --name paid-invoice \
+gregale workflow stored baseline get --app billing --name paid-invoice \
   --baseline-name production --json
-gregale workflow stored live baseline history --app billing --name paid-invoice \
+gregale workflow stored baseline history --app billing --name paid-invoice \
   --baseline-name production --json
 ```
 
@@ -3885,7 +3885,7 @@ Use **Retire this baseline** in the dashboard, review the name and revision, the
 confirm permanent retirement. Or use an explicit stable UUID from the CLI:
 
 ```bash
-gregale workflow stored live baseline retire --app billing --name paid-invoice \
+gregale workflow stored baseline retire --app billing --name paid-invoice \
   --baseline-name production --retirement-id 00000000-0000-4000-8000-000000000012 \
   --expected-revision 3 --confirm-retirement --json
 ```
