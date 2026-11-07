@@ -207,6 +207,8 @@ touch them. The tables below map each earlier name.
 | `gregale automations recovery-start` | `gregale automation recovery create` |
 | `gregale automations recovery-suppress` | `gregale automation recovery suppress` |
 | `gregale billing budget-preview` | `gregale billing budgets create --dry-run` |
+| `gregale billing egress-overage` | `gregale billing egress-overage get` |
+| `gregale billing egress-overage` | `gregale billing egress-overage set` |
 | `gregale billing payment-method` | `gregale billing payment-method get` |
 | `gregale billing portal` | `gregale billing portal open` |
 | `gregale bindings probe-policy` | `gregale app binding probe-policy set` |
