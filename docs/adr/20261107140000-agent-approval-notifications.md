@@ -51,12 +51,19 @@ taken with their credentials.
 An account may route approval notifications to its ADR-749 notification
 channels (Slack, PagerDuty, email):
 
-- `gregale mcp approvals notify set --channels <name,...>` routes requests
-  of the account's own agent keys.
-- `gregale org agent policy set --approval-channels <name,...>` routes
-  requests of agent keys acting in an organization. The channels must belong
-  to the owner or admin setting the policy; a binding is dropped when its
-  channel is deleted.
+- `gregale mcp approval-channels --set <name,...>` (`PUT
+  /v1/agent-approvals/channels`) routes requests of the account's own agent
+  keys. Changing it needs an admin credential, which agent keys never hold,
+  so an agent cannot silence its own requests.
+- `gregale org agent policy set --approval-channels <name,...>`
+  (`approval_channels` on the organization's agent policy) routes requests
+  of agent keys acting in an organization. Channels belong to accounts, so
+  each owner or admin binds their own; the policy shows the caller's. A
+  binding is dropped when its channel is deleted.
+
+A scope holds at most `MaxAgentApprovalChannels` (5) channels. Each request
+goes to its channels once, recorded on its notification row, whatever its
+email does.
 
 Channel messages carry the same fields as the email and no body. The email
 cap does not apply to channels; channel delivery follows ADR-749 (bounded

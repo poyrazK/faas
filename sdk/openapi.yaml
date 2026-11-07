@@ -15210,6 +15210,47 @@ paths:
               schema: {$ref: '#/components/schemas/AgentApprovalsResponse'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-approvals/channels:
+    get:
+      tags: [keys]
+      operationId: getAgentApprovalChannels
+      summary: Show where the account's agents' approval requests also go.
+      description: |
+        The notification channels that get a message for each new approval
+        request of the account's agents, besides the email to the person
+        who connected the agent.
+      responses:
+        '200':
+          description: The account's approval channels.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalChannelsResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [keys]
+      operationId: setAgentApprovalChannels
+      summary: Choose where the account's agents' approval requests also go.
+      description: |
+        Replaces the notification channels that get the account's agents'
+        approval requests. Name your own channels; an empty list leaves
+        email only. Needs an admin credential, so an agent cannot change
+        where its own requests go.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentApprovalChannelsRequest'}
+      responses:
+        '200':
+          description: The channels now bound.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalChannelsResponse'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/agent-approvals/{id}:
     get:
       tags: [keys]
@@ -37645,6 +37686,11 @@ components:
           type: array
           description: Kinds of action every agent acting in the organization must have a person approve; omit to keep the current ones.
           items: {type: string, enum: [delete, production, credentials, billing]}
+        approval_channels:
+          type: array
+          maxItems: 5
+          description: Names of your own notification channels that get approval requests of agents acting in the organization; omit to keep them, send an empty list to remove them.
+          items: {type: string}
     OrgAgentPolicyResponse:
       description: An organization's agent policy.
       type: object
@@ -37659,6 +37705,10 @@ components:
           type: array
           description: Kinds of action every agent acting in the organization must have a person approve.
           items: {type: string}
+        approval_channels:
+          type: array
+          description: Your notification channels that get this organization's agents' approval requests.
+          items: {type: string}
         updated_at: {type: string, format: date-time, description: When the policy last changed; absent for an organization that never set one.}
         revoked: {type: integer, minimum: 0, description: Agent connections a change revoked because the new policy no longer allows them.}
     AgentApprovalPendingInfo:
@@ -37672,6 +37722,25 @@ components:
         expires_at: {type: string, format: date-time, description: When the request and any approval of it expire.}
         status: {type: string, enum: [denied, expired], description: "Set on approval_denied and approval_expired: what became of the request."}
         note: {type: string, maxLength: 280, description: "The person's reason for denying the request, when they gave one."}
+    AgentApprovalChannelsRequest:
+      description: The notification channels to send the account's agents' approval requests to.
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          maxItems: 5
+          description: Names of your notification channels; an empty list leaves email only.
+          items: {type: string}
+    AgentApprovalChannelsResponse:
+      description: The notification channels that get the account's agents' approval requests.
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          description: Channel names, in alphabetical order.
+          items: {type: string}
     AgentApprovalResponse:
       description: "One request of an agent connection that needed a person's approval."
       type: object
