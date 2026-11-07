@@ -44,7 +44,7 @@ covered. Update this table when a journey or a GA row changes.
 | 138 | Audit log | `TestAccountAndKeys/audit_log_records_key` | — |
 | 140 | Per-app costs | `TestWakeTimelineAndCosts/app_costs` | cost trend |
 | 141 | Public status page and incidents | `TestPublicSurface` (status API, page, incidents API) | — |
-| 142 | Signup, login, MFA, reset, verification, CLI login | the CLI login every journey uses | signup, password and magic-link login, MFA, reset, verification (no disposable accounts) |
+| 142 | Signup, login, MFA, reset, verification, CLI login, account self-service | the CLI login every journey uses; `TestAccountAndKeys/account_security_surface` (display name, sign-in providers, browser sessions, verification status) | signup, password and magic-link login, MFA, reset, verification links, email change, unlinking a provider, leaving an org (no disposable accounts or inboxes) |
 | 143 | Customer notification emails | — | all (no test inbox) |
 | 144 | API keys with scopes | `TestAccountAndKeys` | — |
 | 151 | Plans, usage, invoices, overage cap, costs, forecast | `TestBillingAndUsage` (read-only views) | changing plan or overage cap (would bill the account), FOCUS export |

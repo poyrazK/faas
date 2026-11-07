@@ -1092,7 +1092,7 @@ export class ManagedPostgresService {
   }
   /**
    * Report Data API usage deltas
-   * Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account, app and instance come from it, never from the body. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
+   * Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion from a live instance of an active app; account, app and instance come from it, never from the body. Only a production deployment reports; a stage, preview or cloned environment is refused for good with 403 workload_not_production, so its usage never counts against production's caps and its access settings never govern production's live reads. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
    * @returns DataAPIUsageReportResponse Report applied, or already applied; month-to-date totals for owner caps.
    * @throws ApiError
    */
@@ -1109,6 +1109,7 @@ export class ManagedPostgresService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -1119,7 +1120,7 @@ export class ManagedPostgresService {
   }
   /**
    * Publish recorded Data API row changes
-   * Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload assertion from a live instance of an active app; account and app come from it, never from the body. Each event publishes as an app-scoped producer-key event under the app's own source with key data-api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in order; publication stops at the first event that may succeed later, and later events are reported as retryable without being attempted. Owner API keys and application JWTs are not accepted.
+   * Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload assertion from a live instance of an active app; account and app come from it, never from the body. Only a production deployment publishes; a stage, preview or cloned environment is refused for good with 403 workload_not_production. Each event publishes as an app-scoped producer-key event under the app's own source with key data-api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in order; publication stops at the first event that may succeed later, and later events are reported as retryable without being attempted. Owner API keys and application JWTs are not accepted.
    * @returns DataAPIChangeEventBatchResponse Per-event outcomes in input order.
    * @throws ApiError
    */
@@ -1136,6 +1137,7 @@ export class ManagedPostgresService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         413: `The publication exceeds 1 MiB.`,
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -1163,6 +1165,7 @@ export class ManagedPostgresService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).

@@ -48,6 +48,7 @@ func (s *server) unverifiedSignInRefused(w http.ResponseWriter, r *http.Request,
 var overdueVerificationAllowed = map[string]bool{
 	"POST /v1/auth/verify-email/resend": true,
 	"POST /v1/auth/logout":              true,
+	"GET /v1/auth/csrf":                 true,
 	"GET /v1/account":                   true,
 	"DELETE /v1/account":                true,
 }

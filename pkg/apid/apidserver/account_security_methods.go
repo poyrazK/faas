@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/authcode"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
@@ -174,6 +176,30 @@ func (s *server) sendSecurityNotice(ctx context.Context, acct state.Account, kin
 	if err := s.mailer.Send(context.WithoutCancel(ctx), Message{To: []string{acct.Email}, Subject: subject, TextBody: body}); err != nil {
 		s.log.Error("security_notice.mailer", "kind", kind, "err", err, "account_id", acct.ID)
 	}
+}
+
+// verifySessionCSRF checks the double-submit token on browser-session
+// requests. A bearer key is never sent by a browser on its own, so CSRF
+// does not apply to it; the CLI manages sessions with a key.
+func (s *server) verifySessionCSRF(r *http.Request, action, accountID string) error {
+	if _, ok := sessionFrom(r); !ok {
+		return nil
+	}
+	return middleware.VerifyAuthenticated(s.sessions, r, action, accountID)
+}
+
+// revokeAllBrowserSessions signs out every dashboard session for a caller
+// authenticated with an API key.
+func (s *server) revokeAllBrowserSessions(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	n, err := s.store.RevokeAllSessions(r.Context(), acct.ID, uuid.Nil.String())
+	if err != nil {
+		writeCustomerInternalProblem(w, r, s.log, "revoke dashboard sessions",
+			"Gregale could not sign out your browsers.",
+			"Retry the request in a moment; if it continues, contact support.", err)
+		return
+	}
+	s.audit.Emit(r.Context(), "auth.sessions.revoke_all", &acct.ID, map[string]any{"revoked_count": n, "via": "api_key"})
+	writeJSON(w, http.StatusOK, api.SessionsRevokeAllResponse{Revoked: n})
 }
 
 // sameNetwork compares IPv4 addresses by /24 and IPv6 by /48, so a

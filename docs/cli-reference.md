@@ -6561,6 +6561,14 @@ Open MFA removal in the browser
 | `--password <PASSWORD>` | legacy option; enter the password in the browser |  |
 | `--recovery-code <CODE>` | legacy option; enter the recovery code in the browser |  |
 
+#### account mfa rotate
+
+Open new recovery codes in the browser
+
+`gregale account mfa rotate`
+
+Your current recovery codes stop working.
+
 ### account dpa
 
 Print the Data Processing Agreement template
@@ -6616,6 +6624,76 @@ Cancel a pending deletion
 ### account status
 
 Show account status
+
+### account update
+
+Set your display name
+
+`gregale account update [--name <NAME>] [--clear-name]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | display name shown to org members (at most 80 characters) |  |
+| `--clear-name` | remove the display name |  |
+
+### account sessions
+
+List or sign out browser sessions
+
+#### account sessions list
+
+List signed-in browsers
+
+`gregale account sessions list`
+
+#### account sessions revoke
+
+Sign out one browser, or every browser with --all; API keys keep working
+
+`gregale account sessions revoke [--all] [--yes] [SESSION_ID]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | sign out every browser |  |
+| `--yes` | with --all, sign out without prompting |  |
+
+### account email
+
+Verify or change your sign-in email
+
+#### account email verify
+
+Send a new email verification link
+
+`gregale account email verify`
+
+#### account email update
+
+Open the sign-in email change form in the browser
+
+`gregale account email update`
+
+A confirmation link goes to the new address.
+
+### account password
+
+Change your password
+
+#### account password update
+
+Open the password change form in the browser
+
+`gregale account password update`
+
+### account provider
+
+Show how you can sign in
+
+#### account provider list
+
+List your password, two-factor and linked Google/GitHub sign-ins
+
+`gregale account provider list`
 
 
 ## org
@@ -6883,6 +6961,18 @@ Rotate an org API key; the new plaintext is shown once
 |---|---|---|
 | `--org <SLUG>` | organization slug | required |
 | `--label <TEXT>` | new label (empty keeps the current one) |  |
+
+### org leave
+
+Leave an org you are a member of
+
+`gregale org leave [--yes] ORG_SLUG`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | leave without prompting |  |
+
+Owners transfer ownership first. Personal orgs cannot be left.
 
 ### org me
 

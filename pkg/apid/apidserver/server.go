@@ -2117,7 +2117,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.changeOrgMemberRole)))))
 	mux.HandleFunc("DELETE /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.removeOrgMember)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/leave", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.leaveOrg)))))
-	mux.HandleFunc("POST /v1/orgs/{slug}/transfer_ownership",s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.transferOrgOwnership))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/transfer_ownership", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.transferOrgOwnership))))))
 	mux.HandleFunc("GET /v1/invitations/{token}", s.authLimited(s.peekInvitation))
 	// Invitation acceptance requires the invitee's verified browser session.
 	// Bearer keys remain refused; recent MFA follows the invitee's policy.
@@ -2211,9 +2211,9 @@ func (s *server) handler() http.Handler {
 	// wildcard DELETE /v1/auth/sessions/{id} is matched by the
 	// prefix-check seam in isMFAAllowlisted.
 	mux.HandleFunc("PATCH /v1/account", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.patchAccountProfile))))
-	mux.HandleFunc("POST /v1/account/email",s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postAccountEmailChange))))
-	mux.HandleFunc("POST /v1/auth/verify-email/resend",s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.resendEmailVerification))))
-	mux.HandleFunc("POST /v1/auth/logout",s.auth(s.requireMFA(s.logout)))
+	mux.HandleFunc("POST /v1/account/email", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postAccountEmailChange))))
+	mux.HandleFunc("POST /v1/auth/verify-email/resend", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.resendEmailVerification))))
+	mux.HandleFunc("POST /v1/auth/logout", s.auth(s.requireMFA(s.logout)))
 	// The session inventory carries the owner's sign-in IPs and user
 	// agents, so a narrow automation key (usage:read, deploy:write, an
 	// OIDC CI token) must not read or revoke it. Cookie principals are
@@ -4952,7 +4952,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/mfa/recovery-codes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.mfaRegenerateRecoveryCodes)))))
 	mux.HandleFunc("GET /v1/account/sign-in-methods", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listSignInMethods))))
 	mux.HandleFunc("DELETE /v1/account/sign-in-methods/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.unlinkSignInMethod)))))
-	mux.HandleFunc("POST /v1/account/mfa/disable",s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisable))))
+	mux.HandleFunc("POST /v1/account/mfa/disable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisable))))
 	mux.HandleFunc("POST /v1/account/mfa/disable-email", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmail))))
 	mux.HandleFunc("/auth/reset/mfa", s.mfaDisableEmailPageRoute())
 	mux.HandleFunc("POST /v1/account/mfa/disable-email/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmailConfirm))))
@@ -5308,9 +5308,9 @@ func (s *server) handler() http.Handler {
 	// notification side-effects match the REST API path bit-for-bit.
 	mux.Handle("POST /dashboard/account/delete", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardDelete)))))
 	mux.Handle("POST /dashboard/account/display-name", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetDisplayName))))
-	mux.Handle("POST /dashboard/account/email",s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRequestEmailChange))))
-	mux.Handle("POST /dashboard/account/verify-email/resend",s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardResendVerification))))
-	mux.Handle("POST /dashboard/account/restore",s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRestore))))
+	mux.Handle("POST /dashboard/account/email", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRequestEmailChange))))
+	mux.Handle("POST /dashboard/account/verify-email/resend", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardResendVerification))))
+	mux.Handle("POST /dashboard/account/restore", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRestore))))
 	// TOTP challenge for mfa_pending sessions (sessionAuth confines them
 	// here). The POST shares the dashboard's per-IP auth-failure bucket
 	// and answers a wrong code with 401, so guesses count against §11's

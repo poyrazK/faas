@@ -70,8 +70,11 @@ existing account mails a notice.
 /48) match no session of the last 90 days mails a notice, except on the
 account's first sign-in.
 
-**CLI.** `gregale account sessions`, `account verify-email`, `account password`
-and `account email` (browser handoff, like MFA), `account name`, `org leave`.
+**CLI.** `gregale account sessions list|revoke [--all]` (an API key may revoke
+browser sessions; CSRF applies to cookie sessions only, and keys are kept),
+`account email verify`, `account email update` and `account password update`
+(browser handoff, like MFA), `account mfa rotate`, `account update --name`,
+`account provider list`, `org leave`.
 
 **Display name.** `accounts.display_name`, at most 80 characters, set with
 `PATCH /v1/account`.

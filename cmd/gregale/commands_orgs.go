@@ -54,7 +54,7 @@ var orgSlugRe = regexp.MustCompile(api.OrgSlugPattern)
 func cmdOrgs(args []string) int {
 	parent, _ := lookupCliCommand("orgs")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs <list|create|info|activity|update|rm|members|invitations|keys|agent-policy|transfer-ownership|seat-usage> [args]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale orgs <list|create|info|activity|update|rm|members|invitations|keys|agent-policy|transfer-ownership|leave|seat-usage> [args]", "orgs")
 		return 1
 	}
 	switch args[0] {
@@ -87,6 +87,8 @@ func cmdOrgs(args []string) int {
 		return cmdOrgsAgentPolicy(args[1:])
 	case "transfer-ownership":
 		return cmdOrgsTransferOwnership(args[1:])
+	case "leave":
+		return cmdOrgsLeave(args[1:])
 	case "seat-usage":
 		return cmdOrgsSeatUsage(args[1:])
 	case "me":
