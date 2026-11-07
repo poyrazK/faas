@@ -254,6 +254,9 @@ type Querier interface {
 	BeginProjectWorkerJobEvidence(ctx context.Context, db DBTX, arg BeginProjectWorkerJobEvidenceParams) (int64, error)
 	// Called with the financial subject's row locked, as identity writers do.
 	BillingIdentityForMutation(ctx context.Context, db DBTX, arg BillingIdentityForMutationParams) (BillingIdentityForMutationRow, error)
+	// ADR-20261107105126. A secondary-meter delivery receipt with its usage source.
+	BillingMeterUsageDeliveryRecordFromSource(ctx context.Context, db DBTX, arg BillingMeterUsageDeliveryRecordFromSourceParams) error
+	BillingMeterUsageDeliverySource(ctx context.Context, db DBTX, arg BillingMeterUsageDeliverySourceParams) (string, error)
 	// Each customer who held a plan with a monthly fee in the run's month, with
 	// or without runs (ADR-20261021154511): the assignment in force when the
 	// month starts, or one made during it.
@@ -268,6 +271,10 @@ type Querier interface {
 	// Items are keyed product_control/<app>/<tenant>, after every other item kind.
 	BillingRunProductItems(ctx context.Context, db DBTX, arg BillingRunProductItemsParams) ([]BillingRunProductItemsRow, error)
 	BillingRunUpdateProductItem(ctx context.Context, db DBTX, arg BillingRunUpdateProductItemParams) (int64, error)
+	// ADR-20261107105126. A compute delivery receipt with the usage source that
+	// quantified its hour; the first receipt for an hour wins.
+	BillingUsageDeliveryRecordFromSource(ctx context.Context, db DBTX, arg BillingUsageDeliveryRecordFromSourceParams) error
+	BillingUsageDeliverySource(ctx context.Context, db DBTX, arg BillingUsageDeliverySourceParams) (string, error)
 	// ADR-1741: the admission insert binds the new instance's recovery lineage
 	// in its own transaction. Share locks on the deployment and app order an
 	// operator cold boot, which advances the generation with an UPDATE, before
@@ -6678,10 +6685,10 @@ type Querier interface {
 	RecoverExpiredCustomerOperationExecution(ctx context.Context, db DBTX, arg RecoverExpiredCustomerOperationExecutionParams) error
 	RecoverLegacyWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) error
 	RecoverLegacyWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
-	RefreshGitHubConnectionToken(ctx context.Context, db DBTX, arg RefreshGitHubConnectionTokenParams) (int64, error)
 	// An order carried the discount. A discount is redeemed once; a replay of the
 	// same order changes nothing.
 	RedeemCreditDiscount(ctx context.Context, db DBTX, arg RedeemCreditDiscountParams) (int64, error)
+	RefreshGitHubConnectionToken(ctx context.Context, db DBTX, arg RefreshGitHubConnectionTokenParams) (int64, error)
 	RegisterApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg RegisterApplicationStandardLogConsumerParams) ([]byte, error)
 	RegisterComputeNodeRuntimeIdentity(ctx context.Context, db DBTX, arg RegisterComputeNodeRuntimeIdentityParams) (int64, error)
 	// ADR-20261018030613: schedd fences rollback before vmmd can reopen a function source.

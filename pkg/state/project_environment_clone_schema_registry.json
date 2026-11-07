@@ -2962,6 +2962,7 @@
       "meter",
       "provider",
       "quantity",
+      "usage_source",
       "window_start"
     ],
     "kind": "operational"
@@ -3119,6 +3120,7 @@
       "delivered_at",
       "mb_seconds",
       "provider",
+      "usage_source",
       "window_start"
     ],
     "kind": "operational"

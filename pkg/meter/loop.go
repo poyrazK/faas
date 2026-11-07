@@ -313,6 +313,14 @@ func (l *Loop) Run(ctx context.Context) error {
 			"per_account_flag", l.quietPauseRelease != nil)
 	}
 	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
+	if source, err := ParseUsageSource(l.cfg.BillingUsageSource); err != nil {
+		// cmd/meterd refuses to start on an invalid value; a Loop built
+		// another way keeps billing usage_minutes.
+		l.log.Warn("meter: billing usage source stays usage_minutes", "err", err)
+	} else {
+		pusher.WithUsageSource(source)
+		l.log.Info("meter: billing usage source (ADR-20261107105126)", "source", source)
+	}
 	finalLag := newUsageFinalLagGauge(l.ops.Registry())
 	// One result slot per possible worker, including monitoring and delivery;
 	// a cancelled Run must not strand workers trying to report their exit.
@@ -779,7 +787,7 @@ func liveMeterOverageCents(ctx context.Context, store state.Store, provider bill
 	if meter == state.BillingMeterEgress {
 		// The egress the month is billed by the hour rules, the figure the
 		// pusher's cap clamps reserve.
-		billed, err := monthLiveEgressBilled(ctx, store, provider, acct, now, now)
+		billed, err := monthLiveEgressBilled(ctx, usageReader{store: store}, provider, acct, now, now)
 		if !errors.Is(err, errNoHourlyUsage) {
 			if err != nil {
 				return 0, err

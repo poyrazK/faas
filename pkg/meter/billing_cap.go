@@ -121,7 +121,7 @@ func (p *Pusher) computeWithinCap(ctx context.Context, acct state.Account, hour 
 // hours) never spends the cap. A store that cannot read usage by hour
 // reserves all usage above policy's allowance, the older bound.
 func (p *Pusher) liveEgressReserved(ctx context.Context, acct state.Account, hour, through time.Time, policy billing.MeterUsagePolicy) (int64, error) {
-	billed, err := monthLiveEgressBilled(ctx, p.store, p.pusher, acct, hour, through)
+	billed, err := monthLiveEgressBilled(ctx, p.usage(), p.pusher, acct, hour, through)
 	if !errors.Is(err, errNoHourlyUsage) {
 		return billed, err
 	}

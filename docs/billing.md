@@ -160,7 +160,9 @@ overage. Each hour's egress counts against the allowance of the plan held in
 that hour, so a later plan change does not re-price it, and hours on Free are
 never billed, also after an upgrade (ADR-20261103131742 amendment 2). While egress billing is not
 live (`billing: off`), the allowance still holds and the saved election takes
-effect when billing starts.
+effect when billing starts. Only egress you are billed for counts toward the spend
+cap: egress in hours the election does not cover, or on Free, never does
+(ADR-20261107105126).
 
 Only egress sent while the election is on is billed: egress above the
 allowance before you turned it on is never billed, and turning it off keeps
@@ -222,8 +224,9 @@ Retained corrections append a negative quantity linked to the original source.
 They preserve its price, period and workload identity, record an actor and reason,
 and cannot subtract more than the original usage, including concurrent corrections.
 Replay cannot add a second correction. Original evidence and price terms cannot
-be rewritten; account deletion can remove its financial history. Provider delivery
-continues to use its existing source until correction reconciliation is accepted.
+be rewritten; account deletion can remove its financial history. A correction
+changes what the provider is billed once billing reads the retained evidence
+(below).
 
 All amounts use integer millicents (1,000 millicents per cent). One shared
 account allowance applies to each usage meter for the month. When plans change,
@@ -233,8 +236,16 @@ billed overage (ADR-20261031090658); other meters keep the largest recorded
 grant. Its quantities are shared proportionally across price versions. Within each version, net cost and
 allowance value are allocated by workload quantity using stable largest-remainder
 rounding. Allocated amounts sum exactly to the meter totals. Shadow and disabled
-egress contracts are reported as nonbillable quantities. The existing provider
-delivery remains unchanged while ledger reconciliation is validated.
+egress contracts are reported as nonbillable quantities.
+
+The provider is billed from the same usage. Each sampled minute is written
+once as retained evidence and once as a per-minute usage record, in one
+transaction. Gregale bills from the per-minute records today and compares
+every billed hour with the retained evidence; it moves billing to the
+retained evidence once a closed month and a sandbox month show both agree,
+and each billed hour records which of the two it was billed from
+(ADR-20261107105126). Hours on Free are never billed and never count toward
+a [spend cap](#spend-cap).
 
 Coverage reports the retention start, complete sampling minutes, freshness, and
 unpriced quantities. A missing sample does not establish zero usage. Quantity

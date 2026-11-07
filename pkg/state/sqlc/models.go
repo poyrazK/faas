@@ -2316,6 +2316,7 @@ type BillingMeterUsageDelivery struct {
 	WindowStart pgtype.Timestamptz
 	Quantity    int64
 	DeliveredAt pgtype.Timestamptz
+	UsageSource pgtype.Text
 }
 
 type BillingPaymentFailureReceipt struct {
@@ -2454,6 +2455,7 @@ type BillingUsageDelivery struct {
 	WindowStart pgtype.Timestamptz
 	MbSeconds   int64
 	DeliveredAt pgtype.Timestamptz
+	UsageSource pgtype.Text
 }
 
 type BindingVerificationRun struct {

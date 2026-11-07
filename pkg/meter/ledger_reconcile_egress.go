@@ -138,7 +138,7 @@ func (r *LedgerReconciler) egressCapExplains(ctx context.Context, acct state.Acc
 	p := r.pusher
 	last := end.Add(-time.Hour)
 	monthStart := time.Date(last.Year(), last.Month(), 1, 0, 0, 0, 0, time.UTC)
-	computeRaw, err := sumUsageRows(ctx, p.store, acct.ID, monthStart, end)
+	computeRaw, err := p.usage().sum(ctx, acct.ID, state.BillingMeterCompute, monthStart, end)
 	if err != nil {
 		return false, err
 	}
