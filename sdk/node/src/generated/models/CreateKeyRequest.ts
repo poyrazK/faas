@@ -16,7 +16,7 @@ export type CreateKeyRequest = {
    */
   projects?: Array<string>;
   /**
-   * Kinds of action an agent key must have a person approve before apid lets the request through. Omit for every kind; send an empty list for none. Only agent keys take this field.
+   * Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field.
    */
   approval_categories?: Array<'delete' | 'production' | 'credentials' | 'billing'>;
 };

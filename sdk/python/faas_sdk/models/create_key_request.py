@@ -32,8 +32,8 @@ class CreateKeyRequest:
     """Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only
     apps in these projects and cannot carry Postgres scopes. Omit for every project."""
     approval_categories: list[CreateKeyRequestApprovalCategoriesItem] | Unset = UNSET
-    """Kinds of action an agent key must have a person approve before apid lets the request through. Omit for every
-    kind; send an empty list for none. Only agent keys take this field."""
+    """Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for
+    every kind; send an empty list for none. Only agent keys take this field."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

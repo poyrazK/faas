@@ -113160,7 +113160,7 @@ components:
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
         projects: { type: array, maxItems: 100, items: { type: string }, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project." }
-        approval_categories: { type: array, items: { type: string, enum: [delete, production, credentials, billing] }, description: "Kinds of action an agent key must have a person approve before apid lets the request through. Omit for every kind; send an empty list for none. Only agent keys take this field." }
+        approval_categories: { type: array, items: { type: string, enum: [delete, production, credentials, billing] }, description: "Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field." }
 
     RotateKeyResponse:
       description: "Response body of POST /v1/keys/{id}/rotate. The new `key_plaintext` is returned exactly once; the old plaintext is NEVER returned (only the hash is stored). `old_key_expires_at` is the grace deadline applied to the predecessor — the customer's CI rotates over by then."
