@@ -19461,7 +19461,7 @@ paths:
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '402':
-          description: 'code: plan_egress_overage_not_allowed — the plan stops at its egress allowance; upgrade to a paid plan.'
+          description: 'code: plan_egress_overage_not_allowed — the organization''s plan stops at its egress allowance; move the organization to a paid plan.'
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}

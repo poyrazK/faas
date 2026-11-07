@@ -3300,7 +3300,7 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        402: `code: plan_egress_overage_not_allowed — the plan stops at its egress allowance; upgrade to a paid plan.`,
+        402: `code: plan_egress_overage_not_allowed — the organization's plan stops at its egress allowance; move the organization to a paid plan.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
