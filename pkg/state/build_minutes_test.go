@@ -88,11 +88,11 @@ func exerciseBillingSubjectBuildSeconds(t *testing.T, ctx context.Context, store
 	}
 
 	subject, dep := deployment()
-	build(dep, at(2, 10, 0), at(2, 11, 40))               // 100 minutes
+	build(dep, at(2, 10, 0), at(2, 11, 40))                 // 100 minutes
 	build(dep, month.Add(-time.Hour), month.Add(time.Hour)) // started last month
-	build(dep, at(31, 23, 50), time.Time{})                // running: 10 minutes to the window's end
-	build(dep, time.Time{}, time.Time{})                   // queued, never started
-	build(dep, end, end.Add(time.Hour))                    // started next month
+	build(dep, at(31, 23, 50), time.Time{})                 // running: 10 minutes to the window's end
+	build(dep, time.Time{}, time.Time{})                    // queued, never started
+	build(dep, end, end.Add(time.Hour))                     // started next month
 	other, otherDep := deployment()
 	build(otherDep, at(3, 0, 0), at(3, 1, 0))
 
