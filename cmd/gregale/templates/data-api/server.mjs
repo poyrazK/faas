@@ -401,10 +401,10 @@ export async function main(env = process.env) {
       if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
     })
   }
-  if (config.sqlDeadline) await startupStage('database', 'data_api_database_unavailable', () => checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh }))
+  if (config.sqlDeadline) await startupStage('database', 'data_api_configuration_invalid', () => checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh }))
   // Inspection connects first, with the full query budget, so a suspended
   // database is awake before the configuration checks run.
-  const snapshot = await startupStage('inspection', 'data_api_database_unavailable', () => inspect(config.connection, config.schemas))
+  const snapshot = await startupStage('inspection', 'data_api_configuration_invalid', () => inspect(config.connection, config.schemas))
   config.snapshot = snapshot
   config.functions = snapshot.functions
   if (config.publicRead) await bootCheck(() => checkPublicRelations(config.connection, config.publicRead), 'data_api_public_read_unsafe', 'Unsafe public read configuration')
@@ -506,11 +506,12 @@ async function bootCheck(check, unsafeEvent, unsafeMessage) {
 
 // startupStage reports which startup step failed and a safe reason before the
 // process exits, so a crash during snapshot_prepare is diagnosable from the
-// deployment log (ChronoLake finding 19).
+// deployment log (ChronoLake finding 19). The event stays
+// data_api_configuration_invalid, as before; stage and reason are added.
 async function startupStage(stage, event, step) {
   try { return await step() } catch (error) {
     if (error?.reported !== true) {
-      runtimeFailure(error instanceof UnsafeConfiguration ? 'data_api_configuration_invalid' : event, { stage, error })
+      runtimeFailure(event, { stage, error })
       if (error && typeof error === 'object') error.reported = true
     }
     throw error
