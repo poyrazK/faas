@@ -1,0 +1,100 @@
+# ADR-20261107203000: host security events counted by Alloy.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a root SSH login pages when its counter first appears, then clears
+    interval: 1m
+    input_series:
+      - series: faas_security_events_total{event="ssh_root_login",host="fsn-2",ident="sshd-session",source="journal",environment="production",exported_job="faas-security",instance="10.0.0.2:9080",job="promtail-compute"}
+        values: _x10 1x40
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FaasHostSecurityCritical
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: FaasHostSecurityCritical
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              family: host_security
+              host: fsn-2
+              event: ssh_root_login
+            exp_annotations:
+              summary: "Host security event ssh_root_login on fsn-2"
+              description: "fsn-2 logged ssh_root_login, which host_hardening's settings forbid: a root or password SSH login, or the kernel audit switched off. Treat the host as compromised until shown otherwise. The lines are in Loki under {job=\"faas-security\", host=\"fsn-2\", event=\"ssh_root_login\"}."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
+      - eval_time: 12m
+        alertname: FaasHostSecurityEvent
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasHostSecurityCritical
+        exp_alerts: []
+
+  - name: a refused sudo on a host that already had one warns on the increase
+    interval: 1m
+    input_series:
+      - series: faas_security_events_total{event="sudo_denied",host="fsn-3",ident="sudo",source="journal",environment="production",exported_job="faas-security",instance="10.0.0.3:9080",job="promtail-compute"}
+        values: 1x30 2x30
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasHostSecurityEvent
+        exp_alerts: []
+      - eval_time: 33m
+        alertname: FaasHostSecurityEvent
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              family: host_security
+              host: fsn-3
+              event: sudo_denied
+            exp_annotations:
+              summary: "Host security event sudo_denied on fsn-3"
+              description: "fsn-3 logged sudo_denied. It can be an operator, a package upgrade or a deploy; check who and what in Loki under {job=\"faas-security\", host=\"fsn-3\", event=\"sudo_denied\"} before closing it."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
+      - eval_time: 33m
+        alertname: FaasHostSecurityCritical
+        exp_alerts: []
+      - eval_time: 55m
+        alertname: FaasHostSecurityEvent
+        exp_alerts: []
+
+  - name: an unattended write to a unit, across an Alloy restart, warns once on the reset
+    interval: 1m
+    input_series:
+      - series: faas_security_events_total{event="host_config_write_unattended",host="fsn-2",audit_key="faas_units",audit_type="SYSCALL",source="auditd",environment="production",exported_job="faas-security",instance="10.0.0.2:9080",job="promtail-compute"}
+        values: 3x20 _x3 1x30
+    alert_rule_test:
+      - eval_time: 19m
+        alertname: FaasHostSecurityEvent
+        exp_alerts: []
+      - eval_time: 26m
+        alertname: FaasHostSecurityEvent
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              family: host_security
+              host: fsn-2
+              event: host_config_write_unattended
+            exp_annotations:
+              summary: "Host security event host_config_write_unattended on fsn-2"
+              description: "fsn-2 logged host_config_write_unattended. It can be an operator, a package upgrade or a deploy; check who and what in Loki under {job=\"faas-security\", host=\"fsn-2\", event=\"host_config_write_unattended\"} before closing it."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
+
+  - name: key logins never alert
+    interval: 1m
+    input_series:
+      - series: faas_security_events_total{event="ssh_login",host="fsn-2",ident="sshd-session",source="journal",environment="production",exported_job="faas-security",instance="10.0.0.2:9080",job="promtail-compute"}
+        values: _x10 1x10 5x20
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasHostSecurityEvent
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: FaasHostSecurityCritical
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: FaasHostSecurityEvent
+        exp_alerts: []

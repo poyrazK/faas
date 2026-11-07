@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261107203000: Host security evidence leaves the host as it is written](20261107203000-host-security-evidence-off-host.md) — accepted; Alloy ships sshd, sudo, account-change, kernel and auditd records to Loki as `job="faas-security"` and counts high-signal events in `faas_security_events_total`, which the `faas_host_security` alerts read
+
 - [ADR-20261107122928: The idle ladder — every idle second costs less, and no level wakes slower than the one below](20261107122928-idle-ladder.md) — proposed; running → quiet pause at 1 s → vmmd-local freeze at 10 s → cold pages compressed by age (not percentage) within a per-app wake budget of min(100 ms, restore time) → snapshot at 10 min or under pressure; L1–L4 unbilled through the ADR-20261023171905 ledger and booked at measured memory; measured on production-us 2026-11-07 (−79% to −88% billed seconds with gaps; 75% cold compression halves a 630 MB guest at +2 ms; full compression or 90% costs +170 ms to 3.4 s)
 - [ADR-20261107140000: Agent approval notifications and outcomes](20261107140000-agent-approval-notifications.md) — accepted; amends ADR-20261104140058: the connector (else org owners/admins) gets an email per request, capped at one per key every 10 minutes; requests can route to ADR-749 notification channels and to account webhooks (`agent.approval.requested/approved/denied`); meterd delivers email and channels; a retry after denial (with the approver's note) or expiry gets 403/410 instead of a new 428
 
