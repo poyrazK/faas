@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
 // projectWorkloadReleaseCommand resolves the release command of one workload
@@ -67,9 +69,9 @@ func serviceOwnReleaseDeclaration(staged string, workload reposcan.Workload, app
 	if dir == "." {
 		return "", "", nil
 	}
-	// The service's own directory, as the origin below names it: an app
-	// without a RootDir would otherwise read the root Procfile reposcan owns.
-	body, found, err := readSourceRefProcfileBytes(staged, dir)
+	// Only the service's own directory counts: the reader falls back to the
+	// archive root, whose Procfile reposcan already assigned to one workload.
+	body, found, err := readServiceOwnProcfile(staged, dir)
 	if err != nil {
 		return "", "", api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
 	}
@@ -95,4 +97,21 @@ func cleanWorkloadDir(dir string) string {
 
 func projectReleaseDeclarationProblem(detail string) *api.Problem {
 	return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Ambiguous release command", detail)
+}
+
+// readServiceOwnProcfile reads dir/Procfile and ignores the archive-root
+// Procfile the source-root lookup falls back to.
+func readServiceOwnProcfile(staged, dir string) ([]byte, bool, error) {
+	body, name, found, err := readSourceRefArchiveFileBytes(staged, dir, []string{"Procfile"}, sourceRefManifestMaxBytes, "Procfile")
+	if err != nil || !found {
+		return nil, false, err
+	}
+	prefix, err := tarball.RootPrefix(staged)
+	if err != nil {
+		return nil, false, err
+	}
+	if path.Dir(name) == path.Clean(strings.Trim(prefix, "/")) || path.Dir(name) == "." {
+		return nil, false, nil
+	}
+	return body, true, nil
 }
