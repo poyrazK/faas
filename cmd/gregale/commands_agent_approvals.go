@@ -26,7 +26,7 @@ func approvalsFlag(fs *flag.FlagSet, value string) (*[]string, error) {
 // cmdMCPApprovalChannels shows or replaces the notification channels that
 // also get the account's agents' approval requests (ADR-20261107140000 §3).
 func cmdMCPApprovalChannels(args []string) int {
-	const usage = "usage: gregale mcp approval-channels [--set NAME,NAME | --clear] [--json]"
+	const usage = "usage: gregale mcp server approval channels [--set NAME,NAME | --clear] [--json]"
 	fs := newFlagSet("mcp approval-channels", flag.ContinueOnError)
 	set := fs.String("set", "", "replace with these comma-separated notification channel names")
 	clear := fs.Bool("clear", false, "remove every channel; requests go to email only")
