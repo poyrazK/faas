@@ -6,7 +6,17 @@ const codes = new Set(['origin_not_allowed', 'not_found', 'invalid_path', 'metho
   'token_required', 'token_invalid', 'read_only_identity', 'serving_contract_unavailable', 'data_api_unavailable',
   'data_api_refresh_paused', 'data_api_refresh_unavailable', 'data_api_overloaded', 'data_api_rate_limited', 'data_api_concurrency_limited',
   'request_too_large', 'response_too_large', 'query_timeout', 'request_deadline_exceeded', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error',
-  'public_read_not_allowed', 'public_rpc_requires_get', 'server_key_browser_forbidden', 'server_key_permission_denied', 'data_api_monthly_cap_reached', 'rls_required'])
+  'public_read_not_allowed', 'public_rpc_requires_get', 'server_key_browser_forbidden', 'server_key_permission_denied', 'data_api_monthly_cap_reached', 'rls_required',
+  'data_api_public_read_unsafe', 'data_api_public_rpc_unsafe', 'data_api_change_hooks_off', 'data_api_change_hooks_unavailable', 'data_api_change_hooks_not_production',
+  'storage_unavailable', 'storage_busy', 'storage_client_busy', 'storage_backend_unavailable', 'storage_commit_failed', 'storage_forbidden', 'storage_rejected',
+  'storage_not_found', 'storage_bucket_not_found', 'storage_invalid_name', 'storage_invalid_content_type', 'storage_invalid_length', 'storage_length_required',
+  'storage_object_too_large', 'storage_range_not_satisfiable'])
+
+// Unavailable codes say the runtime or a backend could not serve; busy codes
+// say it shed load.
+const unavailableCodes = new Set(['data_api_unavailable', 'data_api_refresh_unavailable', 'serving_contract_unavailable', 'data_api_change_hooks_unavailable',
+  'storage_unavailable', 'storage_backend_unavailable', 'storage_commit_failed'])
+const overloadedCodes = new Set(['data_api_overloaded', 'storage_busy', 'storage_client_busy'])
 
 function route(url) {
   if (url === '/healthz' || url === '/livez') return 'health'
@@ -14,14 +24,17 @@ function route(url) {
   if (url === '/openapi.json') return 'openapi'
   if (url.startsWith('/rest/v1/rpc/')) return 'rpc'
   if (url.startsWith('/rest/v1/')) return 'rest'
+  if (url.startsWith('/storage/v1/')) return 'storage'
+  if (url.startsWith('/__gregale/hooks/')) return 'hooks'
+  if (url.startsWith('/__gregale/lifecycle/')) return 'lifecycle'
   return 'unknown'
 }
 
 function outcome(code, status) {
   if (code === 'token_required' || code === 'token_invalid') return 'authentication_failed'
   if (code === 'query_timeout' || code === 'request_deadline_exceeded') return 'query_timeout'
-  if (code === 'data_api_overloaded') return 'overloaded'
-  if (code === 'data_api_unavailable' || code === 'data_api_refresh_unavailable' || code === 'serving_contract_unavailable') return 'unavailable'
+  if (overloadedCodes.has(code)) return 'overloaded'
+  if (unavailableCodes.has(code)) return 'unavailable'
   if (code === 'upstream_error') return 'upstream_error'
   return status >= 400 ? 'rejected' : 'completed'
 }

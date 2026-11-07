@@ -15545,6 +15545,18 @@ const (
 	DataAPIStorageTransfers          = 4
 	DataAPIStorageTransferTimeout    = 120 * time.Second
 	DataAPIStorageSignedURLTTL       = 60 * time.Second
+	// One signed-in user or anonymous visitor holds at most this many of an
+	// instance's transfers, so one slow client cannot keep storage busy for
+	// everyone. Server keys (trusted backends) are bounded only by the total.
+	DataAPIStorageTransfersPerClient = 2
+	// /healthz is public and its readiness checks reach the database: a
+	// completed result answers further checks for this long, so polling it
+	// asks the database at most once per interval per instance.
+	DataAPIHealthCache = 5 * time.Second
+	// The gateway sends the SQL deadline this much early, so a VM clock that
+	// runs ahead of the database's by up to it still passes the engine's
+	// future-horizon check (ADR-1734 amendment 1).
+	DataAPISQLDeadlineClockSkew = 2 * time.Second
 	// Change hooks (ADR-20261022121642), mirrored in the runtime's limits:
 	// events and body bytes per runtime publication, the largest event data
 	// before its rows are dropped, the relay's claim lease, how long one

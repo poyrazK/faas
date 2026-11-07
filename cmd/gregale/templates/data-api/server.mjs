@@ -7,7 +7,7 @@ import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
 import { traceRequest, markRequest, markAccess, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
 import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
-import { runtimeConfig, servingContracts, limits, enginePool, UnsafeConfiguration } from './config.mjs'
+import { runtimeConfig, servingContracts, limits, enginePool, sqlDeadlineExpiry, UnsafeConfiguration } from './config.mjs'
 import { createAdmission } from './admission.mjs'
 import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
@@ -19,14 +19,15 @@ import { qualifiedConnectionEngine, startConnectionReporter } from './connection
 import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
-import { createEngine, lifecyclePaths } from './engine.mjs'
+import { createEngine, lifecyclePaths, engineStopGraceMs } from './engine.mjs'
 import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial, createAccessSafety } from './access.mjs'
-import { changeEventsTable, changeHooksDrainPath, createChangeRelay, checkChangeEvents } from './changes.mjs'
+import { relayTables, changeHooksDrainPath, createChangeRelay, checkChangeEvents } from './changes.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
   const acceptedFingerprints = servingContracts(config)
-  const health = createHealth(config, upstreamPort, readyPort)
+  // Tests drive the health cache with config.healthClock.
+  const health = createHealth(config, upstreamPort, readyPort, config.healthClock ? { monotonic: config.healthClock } : {})
   const rateLimiter = createRateLimiter(config.rateLimit)
   // Anonymous clients always have a budget and never use subject tracking slots.
   const anonymousLimiter = config.publicRead || config.publicRpc ? createRateLimiter(config.rateLimit ?? { perSecond: limits.rateLimitDefaultPerSecond, burst: limits.rateLimitDefaultBurst }) : null
@@ -111,8 +112,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       const raw = req.url.slice('/rest/v1/'.length).split('?')[0]
       let path
       try { path = decodeURIComponent(raw) } catch { return problem(res, 400, 'invalid_path') }
-      // Only the change event relay reads its table, over loopback.
-      if (path === changeEventsTable) return problem(res, 404, 'not_found')
+      // Only the change event relay reads its tables, over loopback.
+      if (relayTables.includes(path)) return problem(res, 404, 'not_found')
       if (path.includes('/')) {
         const match = /^rpc\/([a-z][a-z0-9_]{0,62})$/.exec(path)
         const read = ['GET', 'HEAD'].includes(req.method)
@@ -146,7 +147,6 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       serverKeyPermissions = config.serverKeys.find(entry => entry.slot === serverKeySlot).permissions
     }
     markAccess(res, { kind: access, ...(serverKeySlot ? { server_key_slot: serverKeySlot, ...(serverKeyPermissions ? { server_key_restricted: true } : {}) } : {}) })
-    if (counted) counted.access = access
     if (serverKeyPermissions && !(storage ? storageServerKeyAllows(storage, serverKeyPermissions, config) : serverKeyAllows(req, serverKeyPermissions, config, rpc))) return problem(res, 403, 'server_key_permission_denied')
     if (access === 'server' && config.readOnly === true && writes) return problem(res, 403, 'read_only_identity')
     // Server keys skip per-user budgets but have their own (ADR-20261021180534).
@@ -207,6 +207,11 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           userLease = admitUserConcurrency(userConcurrency, concurrencyKey, req, res, problem)
           if (userLease === false) return
         }
+        // Only an admitted request counts toward usage and monthly caps
+        // (ADR 20261019102108): one past its credential, rate, row-security
+        // and concurrency checks. Refusals before here count as rejected, so
+        // invalid tokens or a throttled flood cannot use up an owner's cap.
+        if (counted) counted.access = access
         if (req.url.startsWith('/rest/v1/')) markQueryShape(req, res, config)
         if (req.url === '/__gregale/schema') {
           if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
@@ -238,7 +243,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         if (serverKeySlot) claims.gregale_server_key = serverKeySlot
         // A caller cannot extend or enable the internal SQL retry deadline.
         delete claims.gregale_sql_deadline
-        if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: deadline.expiresAt, coordinated_refresh: config.coordinatedRefresh === true }
+        if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: sqlDeadlineExpiry(deadline.expiresAt), coordinated_refresh: config.coordinatedRefresh === true }
         // Never accept reserved coordination claims from an application JWT.
         if (config.coordinatedRefresh) {
           delete claims.gregale_refresh_hash
@@ -253,11 +258,11 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           // each call gets a fresh token and SQL deadline.
           const token = write => {
             const fresh = { ...claims, exp: Math.ceil(Date.now() / 1000) + Math.ceil(limits.queryMs / 1000) + 5, ...(write ? { gregale_storage: 'write' } : {}) }
-            if (fresh.gregale_sql_deadline) fresh.gregale_sql_deadline = { ...fresh.gregale_sql_deadline, expires_at_ms: Date.now() + limits.queryMs }
+            if (fresh.gregale_sql_deadline) fresh.gregale_sql_deadline = { ...fresh.gregale_sql_deadline, expires_at_ms: sqlDeadlineExpiry(Date.now() + limits.queryMs) }
             return new SignJWT(fresh).setProtectedHeader({ alg: 'HS256' }).sign(key)
           }
           if (!deadline.enter('upstream')) return
-          return await handleStorage({ req, res, route: storage, config, token, deadline, release, transfers, upstreamPort, problem })
+          return await handleStorage({ req, res, route: storage, config, token, deadline, release, transfers, client: concurrencyKey, upstreamPort, problem })
         }
         const internal = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(key)
         if (!deadline.check()) return
@@ -375,10 +380,12 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
       delete document.schemes
       document.basePath = restBasePath
       const schema = response.req.getHeader('accept-profile') ?? config.schemas[0]
-      // The change event table is the relay's, never part of the API.
-      delete document.paths?.[`/${changeEventsTable}`]
-      delete document.definitions?.[changeEventsTable]
-      for (const name of Object.keys(document.parameters ?? {})) if (name === `body.${changeEventsTable}` || name.startsWith(`rowFilter.${changeEventsTable}.`)) delete document.parameters[name]
+      // The change event tables are the relay's, never part of the API.
+      for (const table of relayTables) {
+        delete document.paths?.[`/${table}`]
+        delete document.definitions?.[table]
+        for (const name of Object.keys(document.parameters ?? {})) if (name === `body.${table}` || name.startsWith(`rowFilter.${table}.`)) delete document.parameters[name]
+      }
       for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) {
         if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
         else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters' && !(method === 'get' && publicRpcListed(config, { schema, name: path.slice(5) }))) delete document.paths[path][method]
@@ -467,12 +474,18 @@ export async function main(env = process.env) {
   // The access gate read at boot is rechecked while serving and after every
   // restore, so a migration since cannot leave it stale (amendment 1).
   config.accessSafety = createAccessSafety(config)
+  // The CLI registers the hooks with a 2 s budget (api.SetDataAPILifecycle);
+  // the engine stops within engineStopGraceMs of it.
+  const checkpointFlushMs = engineStopGraceMs
   config.lifecycle = {
     ready: async waitMs => {
       const started = Date.now()
       return await engine.ready(waitMs) && await config.accessSafety.ready(waitMs - (Date.now() - started))
     },
-    beforeCheckpoint: () => Promise.all([engine.stop(), refresh?.release()]),
+    // Usage counted since the last report would be dropped by the restore
+    // check, so it is reported before the snapshot, within the hook's budget;
+    // a report still in flight keeps its id and is applied once.
+    beforeCheckpoint: () => Promise.all([engine.stop(), refresh?.release(), server?.usage?.flush(checkpointFlushMs)]),
     afterRestore: () => { engine.start(); config.accessSafety.restored() },
   }
   engine.start()

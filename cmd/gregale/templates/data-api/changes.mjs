@@ -2,7 +2,7 @@ import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { SignJWT } from 'jose'
-import { limits, UnsafeConfiguration } from './config.mjs'
+import { limits, sqlDeadlineExpiry, UnsafeConfiguration } from './config.mjs'
 import { runtimeFailure } from './logging.mjs'
 
 // Change hooks (ADR-20261022121642). Owner triggers record each change of a
@@ -22,6 +22,10 @@ import { runtimeFailure } from './logging.mjs'
 // and stops, and capture's backlog bound keeps that database's table finite.
 
 export const changeEventsTable = 'gregale_change_events'
+// The relay's drop note (amendment 3): when capture last left a change out.
+export const changeDropsTable = 'gregale_change_drops'
+// The relay's tables, never part of the API.
+export const relayTables = Object.freeze([changeEventsTable, changeDropsTable])
 // The drain route a drain schedule's cron calls (api.DataAPIChangeHooksDrainPath).
 export const changeHooksDrainPath = '/__gregale/hooks/drain'
 
@@ -148,7 +152,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
   // The relay's internal token: only the gateway grants the hooks access kind.
   const token = () => {
     const claims = { role: config.role, exp: Math.ceil(now() / 1000) + Math.ceil(limits.queryMs / 1000) + 5, gregale_access: 'hooks' }
-    if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: now() + limits.queryMs, coordinated_refresh: config.coordinatedRefresh === true }
+    if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: sqlDeadlineExpiry(now() + limits.queryMs), coordinated_refresh: config.coordinatedRefresh === true }
     if (config.coordinatedRefresh) claims.gregale_serving_fingerprint = config.fingerprint
     return new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(key)
   }
@@ -214,7 +218,18 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
       oldestPendingAt: waiting.total && typeof head?.captured_at === 'string' ? new Date(head.captured_at).toISOString() : null,
       publishing: Date.parse(head?.available_at) > now() ? 'retrying' : 'ok',
       lastFailureCode: failed.total && failureCode.test(code ?? '') ? code : null,
+      lastDroppedAt: await lastDropped(),
     }
+  }
+
+  // lastDropped reads when capture last left a change out at the backlog
+  // bound (amendment 3); null when it never did, or the installation
+  // predates the note (hooks export --upgrade adds it).
+  async function lastDropped() {
+    const answer = await loopback('GET', `/${changeDropsTable}?select=last_dropped_at`)
+    const value = (answer.status === 200 || answer.status === 206) && Array.isArray(answer.json) ? answer.json[0]?.last_dropped_at : null
+    const at = typeof value === 'string' ? Date.parse(value) : NaN
+    return Number.isNaN(at) ? null : new Date(at).toISOString()
   }
 
   // workloadToken returns the runtime's platform token, or null.
@@ -236,7 +251,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
     if (!state || reportsRefused) return state
     const body = { version: 1, pending: state.pending, failed: state.failed, publishing: state.publishing,
       ...(state.oldestPendingAt ? { oldest_pending_at: state.oldestPendingAt } : {}), ...(publishedAt ? { last_published_at: publishedAt } : {}),
-      ...(state.lastFailureCode ? { last_failure_code: state.lastFailureCode } : {}) }
+      ...(state.lastFailureCode ? { last_failure_code: state.lastFailureCode } : {}), ...(state.lastDroppedAt ? { last_dropped_at: state.lastDroppedAt } : {}) }
     const signature = JSON.stringify(body)
     if (Buffer.byteLength(signature) > limits.changeHookReportBytes) return state
     if (!force && signature === reported && at - reportedAt < limits.changeHookReportHeartbeatMs) return state
