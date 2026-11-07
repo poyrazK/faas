@@ -3,8 +3,18 @@
 Use this when the provider that hosts the fleet stops serving us: a zone or
 region outage, a suspended or locked project or billing account, or the
 loss of the only account that can administer it. Today that provider is
-Google Cloud (project and owner recorded in
-[gcp-public-beta-hardening.md](gcp-public-beta-hardening.md)).
+Google Cloud: project `gregale-prod`, with the control plane `gregale-cp` and
+`gregale-compute-1` in `us-east1-b` and `gregale-compute-2` in `us-east1-c`.
+The project named in [gcp-public-beta-hardening.md](gcp-public-beta-hardening.md)
+and `deploy/gcp/public-beta-policy.json` is the earlier beta project, which
+has billing disabled. That audit does not cover production until it is
+pointed at `gregale-prod`.
+
+As of 2026-11-07, production has **no control-plane standby**: PostgreSQL on
+`gregale-cp` has no streaming replica, and the control-plane state backup
+timer is disabled. Losing `gregale-cp` means a rebuild (§4) from the
+PostgreSQL basebackups and WAL, with the CA, keys and secrets re-created or
+recovered from wherever else they are held.
 
 The loss of one host is not this runbook. Use
 [ControlPlaneFailover.md](ControlPlaneFailover.md) for the control plane and
@@ -51,6 +61,7 @@ plane.
    ([FaasEdgeDNS.md](FaasEdgeDNS.md)).
 2. **Control plane down, standby up** (standby in another zone): run the
    unplanned failover in [ControlPlaneFailover.md](ControlPlaneFailover.md).
+   Production has no standby today, so this step does not apply there.
 3. **Control plane and standby both down**: wait for the provider if its
    estimate is shorter than a rebuild (budget 2–4 hours for §4). Otherwise
    rebuild elsewhere, §4.
