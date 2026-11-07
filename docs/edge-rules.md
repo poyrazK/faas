@@ -86,6 +86,14 @@ policy and `x-gregale-allow-callers` (see
 [Internal services](networking.md#internal-services)); check credentials in the
 app itself when a caller must prove more than which app it is.
 
+Work the platform delivers on your account's behalf also skips edge rules:
+`gregale invoke` and other synchronous or asynchronous invocations
+(`POST /v1/apps/{slug}/invoke`), queue messages, delayed tasks, crons and
+exclusive operations. These requests are authorized by your account's
+credentials and scopes when they are created, not by the public edge, so an
+`ip`, `geo`, `jwt` or `throttle` rule does not stop them. An app that must
+reject them checks in its own code.
+
 ### Path globs
 
 | Pattern | Matches |
