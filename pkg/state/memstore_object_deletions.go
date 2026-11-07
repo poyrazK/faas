@@ -127,9 +127,12 @@ func (m *MemStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, po
 		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketBusy)
 	}
 	if m.objectCapacityFencedForKeyLocked(b.ID, j.Key) {
-		return ObjectDeletion{}, false, ErrConflict
+		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketTransition)
 	}
 	if !immutableDeletion(j) && versions && (m.objectUsage[b.ID].InventoryScope != ObjectInventoryAllVersions || v.ObservedStatus == "") {
+		if objectVersioningTransitionActive(v) {
+			return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketTransition)
+		}
 		return ObjectDeletion{}, false, ErrConflict
 	}
 	if !immutableDeletion(j) {

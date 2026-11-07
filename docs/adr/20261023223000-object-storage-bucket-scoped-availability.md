@@ -168,3 +168,24 @@ Validation: `TestPutSlotWaitsForTheAccountsShare`, `TestPutSlotWaitIsBounded`
 and `TestGatewayBoundsConcurrentPutStaging`. `TestProductionTransferEndToEndMem`
 now gives its account two slots, so the spool, not the slot share, refuses its
 second upload.
+
+## Amendment 2026-11-07: inventory transitions are retryable
+
+Item 6 answered a deletion refused by a versioning transition or an
+all-version inventory with `409 OperationAborted`, and the REST API answered
+every refused deletion with the generic `409 object_storage_conflict` ("Bucket
+is busy, conflicts with this request, or the bucket limit was reached"). The
+first deletion on a GCS bucket observes its versioning and starts an
+all-version inventory, so on production-us (2026-11-07) every deletion on a
+new bucket was refused that way for about 50 s, with no `Retry-After`, and
+the CLI does not retry a 409.
+
+Such a refusal is now `errors.Join(ErrConflict, ErrObjectBucketTransition)`
+when the bucket's versioning change is still running its inventory or the
+key is fenced by a capacity reconciliation. It is still refused at once (no
+admission wait: a transition can outlast it), but it answers `503` with
+`Retry-After: 30` (`api.ObjectBucketTransitionRetryAfterSeconds`): `SlowDown`
+in the S3 gateway and `object_storage_bucket_transition` in the REST API.
+A deletion still busy after the admission wait answers `503
+object_storage_busy` with `Retry-After: 1` in the REST API too, matching the
+S3 gateway. Other conflicts keep `409`.

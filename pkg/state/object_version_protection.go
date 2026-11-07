@@ -19,6 +19,23 @@ var ErrObjectVersionProtectionPending = errors.New("object version protection is
 // transitions stay plain conflicts (ADR-20261023223000).
 var ErrObjectBucketBusy = errors.New("object bucket has unsettled work")
 
+// ErrObjectBucketTransition joins ErrConflict when a deletion is refused only
+// because a bucket-wide versioning or capacity inventory is still running.
+// It stays an immediate refusal, not a wait (ADR-20261023223000: such a
+// transition can outlast an admission wait), but the inventory finishes on
+// its own, so the API answers it as retryable instead of a generic conflict.
+// The first deletion on a GCS bucket starts one: production-us 2026-11-07
+// refused every deletion for about 50 s with "Bucket is busy, conflicts with
+// this request, or the bucket limit was reached" and no Retry-After.
+var ErrObjectBucketTransition = errors.New("object bucket inventory is in progress")
+
+// objectVersioningTransitionActive reports whether a recorded versioning
+// change is still running its inventory or propagation. A bucket without a
+// versioning record has no transition.
+func objectVersioningTransitionActive(v ObjectBucketVersioning) bool {
+	return v.State != "" && versioningActive(v)
+}
+
 type ObjectVersionProtection struct {
 	api.ObjectVersionProtection
 	AccountID, AppID, ProviderVersionID, Token string                      `json:"-"`

@@ -56,4 +56,16 @@ func objectDeletionBusySuite(t *testing.T, st accountingStore) {
 	if _, _, err = d.BeginObjectDeletion(ctx, deletionCaptureInput(c), accountingPolicy()); !errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrObjectBucketBusy) {
 		t.Fatal("configuration fence reported as busy", err)
 	}
+
+	// The first deletion on a GCS bucket observes its versioning, which
+	// starts an all-versions inventory. Until it finishes, deletions are
+	// refused as a transition the API answers as retryable, not as a generic
+	// conflict (production-us 2026-11-07: ~50 s of opaque 409s).
+	g, _ := seedAccounting(t, st)
+	if _, err = st.(state.ObjectBucketVersioningStore).ObserveObjectBucketVersioning(ctx, g.AccountID, g.AppID, g.ID, "Enabled"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = d.BeginObjectDeletion(ctx, deletionCaptureInput(g), accountingPolicy()); !errors.Is(err, state.ErrConflict) || !errors.Is(err, state.ErrObjectBucketTransition) || errors.Is(err, state.ErrObjectBucketBusy) {
+		t.Fatal("deletion during a versioning inventory was not a transition", err)
+	}
 }

@@ -236,6 +236,12 @@ func BucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 501, "object_storage_unsupported", "This object storage operation is not supported by the selected provider."
 	case errors.Is(err, objectstorage.ErrNotEmpty):
 		status, code, detail = 409, "bucket_not_empty", "Empty the bucket, including any versions, before deleting it."
+	case errors.Is(err, state.ErrObjectBucketTransition):
+		status, code, detail = 503, "object_storage_bucket_transition", "The bucket is finishing a versioning or capacity inventory; retry after the Retry-After delay."
+		w.Header().Set("Retry-After", strconv.Itoa(api.ObjectBucketTransitionRetryAfterSeconds))
+	case errors.Is(err, state.ErrObjectBucketBusy):
+		status, code, detail = 503, "object_storage_busy", "Other work on this object has not settled yet; retry after the Retry-After delay."
+		w.Header().Set("Retry-After", "1")
 	case errors.Is(err, state.ErrConflict), errors.Is(err, objectstorage.ErrConflict):
 		status, code, detail = 409, "object_storage_conflict", "Bucket is busy, conflicts with this request, or the bucket limit was reached."
 	}
