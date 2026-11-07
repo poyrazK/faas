@@ -124,10 +124,15 @@ func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string, rea
 					t.Error("application JWTs would be blocked by owner-key public authentication")
 				}
 			}
+			// ChronoLake finding 21: --origins is optional; an empty secret
+			// write failed the create after the app and binding existed.
+			if strings.HasSuffix(r.URL.Path, "/DATA_API_ALLOWED_ORIGINS") {
+				t.Error("create wrote DATA_API_ALLOWED_ORIGINS without --origins")
+			}
 			settings++
 			writeJSONTest(w, map[string]any{})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/deployments"):
-			if settings != 7 {
+			if settings != 6 {
 				t.Errorf("deployment preceded configuration: %d writes", settings)
 			}
 			body, err := io.ReadAll(r.Body)
@@ -279,7 +284,8 @@ func TestDataAPIConfiguresBindingEgressAndScopedSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(writes) != 8 || !strings.HasSuffix(writes[0], "/bindings") || writes[1] != "PATCH /v1/apps/notes" {
+	// Seven writes: no empty DATA_API_ALLOWED_ORIGINS (ChronoLake finding 21).
+	if len(writes) != 7 || !strings.HasSuffix(writes[0], "/bindings") || writes[1] != "PATCH /v1/apps/notes" {
 		t.Fatalf("wrong configuration order: %v", writes)
 	}
 }

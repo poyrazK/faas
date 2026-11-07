@@ -297,7 +297,11 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 			return err
 		}
 	}
-	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_ALLOWED_ORIGINS", "DATA_API_READ_ONLY"} {
+	// --origins is optional: the runtime reads a missing
+	// DATA_API_ALLOWED_ORIGINS as "no browser origins". Writing it empty
+	// failed with "secret value must not be empty" after the app and its
+	// database binding already existed (ChronoLake finding 21).
+	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_READ_ONLY"} {
 		if err = client.SetSecretWithScope(ctx, app.Slug, key, func() string {
 			if key == "DATA_API_READ_ONLY" && settings[key] == "" {
 				return "false"
@@ -308,7 +312,7 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 		}
 	}
 	// Optional owner opt-ins are stored only when requested; absence keeps them off.
-	for _, key := range []string{"DATA_API_PUBLIC_READ", "DATA_API_PUBLIC_RPC", "DATA_API_SQL_DEADLINE", "DATA_API_AGGREGATES", dataAPIUsageURLKey} {
+	for _, key := range []string{"DATA_API_ALLOWED_ORIGINS", "DATA_API_PUBLIC_READ", "DATA_API_PUBLIC_RPC", "DATA_API_SQL_DEADLINE", "DATA_API_AGGREGATES", dataAPIUsageURLKey} {
 		if settings[key] == "" {
 			continue
 		}

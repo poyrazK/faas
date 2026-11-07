@@ -11015,6 +11015,19 @@ func (q *Queries) CopyRetryDeploymentWorkloadSpec(ctx context.Context, db DBTX, 
 	return err
 }
 
+const countAccountsCreatedSince = `-- name: CountAccountsCreatedSince :one
+select count(*)::bigint from accounts where created_at >= $1::timestamptz
+`
+
+// Accounts created at or after since (ADR-20261104145353: the platform-wide
+// daily sign-up cap). Read only on a sign-up attempt.
+func (q *Queries) CountAccountsCreatedSince(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
+	row := db.QueryRow(ctx, countAccountsCreatedSince, since)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countActiveAppForks = `-- name: CountActiveAppForks :one
 SELECT count(*) FILTER (WHERE app_id = $1::uuid)::integer AS app_active,
        count(*)::integer AS account_active

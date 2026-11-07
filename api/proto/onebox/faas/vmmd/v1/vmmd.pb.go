@@ -426,8 +426,14 @@ type AppSpec struct {
 	// would reach; nothing is paused because of it. False (an older schedd)
 	// leaves the instance out unless quiet_pause_after_ms is set.
 	IdleLadderEligible bool `protobuf:"varint,38,opt,name=idle_ladder_eligible,json=idleLadderEligible,proto3" json:"idle_ladder_eligible,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// ADR-20261107122928 §6: the instance is a request-serving app that
+	// declared no pause and is not a function, so vmmd may quiet-pause it
+	// between requests behind the idle ladder's activity guard when its
+	// idle_ladder_apps switch is on. An app that declared when_idle or never
+	// keeps what it declared. False (an older schedd) never pauses it.
+	IdleLadderGuardedPause bool `protobuf:"varint,39,opt,name=idle_ladder_guarded_pause,json=idleLadderGuardedPause,proto3" json:"idle_ladder_guarded_pause,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -722,6 +728,13 @@ func (x *AppSpec) GetRequestConcurrency() int32 {
 func (x *AppSpec) GetIdleLadderEligible() bool {
 	if x != nil {
 		return x.IdleLadderEligible
+	}
+	return false
+}
+
+func (x *AppSpec) GetIdleLadderGuardedPause() bool {
+	if x != nil {
+		return x.IdleLadderGuardedPause
 	}
 	return false
 }
@@ -19879,7 +19892,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x8f\x0e\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xca\x0e\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -19925,7 +19938,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"quarantine\x124\n" +
 	"\x16static_egress_excluded\x18$ \x01(\bR\x14staticEgressExcluded\x12/\n" +
 	"\x13request_concurrency\x18% \x01(\x05R\x12requestConcurrency\x120\n" +
-	"\x14idle_ladder_eligible\x18& \x01(\bR\x12idleLadderEligible\"\x92\b\n" +
+	"\x14idle_ladder_eligible\x18& \x01(\bR\x12idleLadderEligible\x129\n" +
+	"\x19idle_ladder_guarded_pause\x18' \x01(\bR\x16idleLadderGuardedPause\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +

@@ -90,3 +90,39 @@ func TestVMInstanceStatFromProtoCarriesIdleLadderLevel(t *testing.T) {
 		t.Fatalf("row = %+v, want vm-a quiet-paused at level 2", row)
 	}
 }
+
+// adr: 20261107122928 — schedd lets vmmd pause, behind the idle ladder's
+// activity guard, only request-serving apps that declared no pause. An app
+// that declared when_idle or never keeps what it declared, and functions
+// quiet-pause already.
+func TestIdleLadderGuardedPause(t *testing.T) {
+	http := state.App{WorkloadClass: state.WorkloadClassHTTP}
+	declared := func(pause string) state.App {
+		return state.App{WorkloadClass: state.WorkloadClassHTTP, Manifest: state.AppManifest{Pause: pause}}
+	}
+	for _, tc := range []struct {
+		name    string
+		app     state.App
+		mode    string
+		network string
+		want    bool
+	}{
+		{name: "http app with no declared pause", app: http, mode: string(state.InstanceModeNormal), want: true},
+		{name: "declared when_idle", app: declared(api.PauseWhenIdle)},
+		{name: "declared never", app: declared(api.PauseNever)},
+		{name: "declared between_requests (quiet pause has it)", app: declared(api.PauseBetweenRequests)},
+		{name: "function", app: state.App{Type: state.AppTypeFunction, WorkloadClass: state.WorkloadClassHTTP}},
+		{name: "worker", app: state.App{WorkloadClass: state.WorkloadClassWorker}},
+		{name: "mirror instance", app: http, mode: string(state.InstanceModeMirror)},
+		{name: "private network peer", app: http, network: "net-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sched.IdleLadderGuardedPause(tc.app, tc.mode, tc.network); got != tc.want {
+				t.Fatalf("idleLadderGuardedPause = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if !(sched.AppSpec{IdleLadderGuardedPause: true}).ToProto().GetIdleLadderGuardedPause() {
+		t.Fatal("idle_ladder_guarded_pause dropped on the wire")
+	}
+}

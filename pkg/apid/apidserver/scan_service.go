@@ -1688,10 +1688,11 @@ func (s *server) scanService(
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 			"project_selection_empty", "No workloads selected", "all requested workloads are excluded; review the persisted exclusions before deploying")
 	}
-	var dependencyReferences []reposcan.Workload
-	if req.Migration {
-		dependencyReferences = projectsetup.DependencyReferences(result.Workloads, filteredW)
-	}
+	// Services left out by --only or --exclude stay valid dependency targets:
+	// a partial rollout of compactor,query must not report their store
+	// dependency as unknown (ChronoLake finding 10). They are references only,
+	// never reconciled, built or counted against quotas.
+	dependencyReferences := projectsetup.DependencyReferences(result.Workloads, filteredW)
 	// Post-scan exclude-validity check: every entry in req.Exclude
 	// must correspond to a real scan workload OR an existing app in
 	// the account. A typo would otherwise silently survive and

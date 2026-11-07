@@ -30,7 +30,9 @@ func cmdEdgeRuleLists(args []string) int {
 		return cmdEdgeRuleListsCreate(args[1:])
 	case subUpdate:
 		return cmdEdgeRuleListsUpdate(args[1:])
-	case subRm:
+	case subRm, "delete":
+		// The reference and usage document `delete` (the command tree's verb);
+		// `rm` stays for existing scripts (ChronoLake finding 35).
 		return cmdEdgeRuleListsRm(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown edge-rule-lists subcommand %q\n", args[0])
