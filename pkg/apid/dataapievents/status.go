@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/dataapiworkload"
 	"github.com/onebox-faas/faas/pkg/state/dataapiusage"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -37,10 +38,9 @@ func (h StatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.Now != nil {
 		now = h.Now()
 	}
-	_, app, err := liveWorkload(r, h.Verifier, h.Store, now)
+	_, app, err := dataapiworkload.Live(r, h.Verifier, workloadidentity.DataAPIEventsAudience, h.Store, now)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required",
-			"a gregale:data-api:events workload token from a live instance of an active app is required"))
+		dataapiworkload.Refuse(w, err, "a gregale:data-api:events workload token from a live instance of an active app is required")
 		return
 	}
 	if h.Reports == nil {

@@ -841,11 +841,16 @@ var CmdDataAPILive = cmdDataAPILive
 var CmdDataAPIStorage = cmdDataAPIStorage
 var CmdDataAPIHooks = cmdDataAPIHooks
 var DataAPIHooksSQL = dataAPIHooksSQL
+var DataAPIHooksUpgradeSQL = dataAPIHooksUpgradeSQL
+var DataAPIHooksBacklogFull = dataAPIHooksBacklogFull
 var EnableDataAPIHooks = enableDataAPIHooks
 var DisableDataAPIHooks = disableDataAPIHooks
 var DataAPIHooksStatus = dataAPIHooksStatus
 var DataAPIHooksDelivery = dataAPIHooksDelivery
 var ApplyDataAPIDrainSchedule = applyDataAPIDrainSchedule
+
+type DataAPIHooksReceipt = dataAPIHooksReceipt
+
 var DataAPIDrainSchedule = dataAPIDrainSchedule
 var DataAPIDrainEvery = dataAPIDrainEvery
 var CheckDataAPIReportSettings = checkDataAPIReportSettings

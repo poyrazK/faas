@@ -223,10 +223,12 @@ test('an upload is authorized as the caller, streamed with its signed length, th
   const uploaded = await send('/storage/v1/object/uploads/alice/notes.txt', { method: 'PUT', headers: { ...as('alice'), 'content-type': 'text/plain' }, body: 'hello world' })
   assert.equal(uploaded.status, 200, uploaded.body)
   assert.deepEqual(JSON.parse(uploaded.body), { bucket: 'uploads', name: 'alice/notes.txt', size: 11, content_type: 'text/plain', owner: 'alice', created_at: 'now', updated_at: 'now' })
-  const [dry, current, commit] = state.calls
+  const [dry, current, latest, commit] = state.calls
   assert.match(dry.prefer, /tx=rollback/)
-  assert.equal(current.method, 'GET')
-  assert.equal(current.claims.gregale_storage, undefined, 'the replaced version is read without the write claim')
+  for (const read of [current, latest]) {
+    assert.equal(read.method, 'GET')
+    assert.equal(read.claims.gregale_storage, undefined, 'the replaced version is read without the write claim')
+  }
   assert.doesNotMatch(commit.prefer, /tx=rollback/)
   for (const call of [dry, commit]) {
     assert.equal(call.method, 'POST')
@@ -258,6 +260,24 @@ test('an overwrite writes a new version and deletes the one it replaced after co
   await send('/storage/v1/object/uploads/alice/seeded.txt', { method: 'PUT', headers: as('alice'), body: 'mine' })
   assert.ok(!s3.objects.has('/real-uploads/alice/seeded.txt'))
   assert.equal((await send('/storage/v1/object/uploads/alice/seeded.txt', { headers: as('alice') })).body, 'mine')
+})
+
+test('an upload that committed while another streamed loses its bytes when the other commits', async t => {
+  const { state, s3, send } = await fixture(t)
+  await send('/storage/v1/object/uploads/alice/notes.txt', { method: 'PUT', headers: as('alice'), body: 'first' })
+  const first = state.rows.get('uploads/alice/notes.txt').object_key
+  // A second upload of the name commits while this one's bytes are in flight.
+  const raced = `_gregale/objects/${'b'.repeat(32)}`
+  s3.onPut = () => {
+    s3.onPut = null
+    state.rows.set('uploads/alice/notes.txt', { ...state.rows.get('uploads/alice/notes.txt'), object_key: raced })
+    s3.objects.set(`/real-uploads/${raced}`, { body: Buffer.from('raced'), type: 'text/plain' })
+  }
+  const last = await send('/storage/v1/object/uploads/alice/notes.txt', { method: 'PUT', headers: as('alice'), body: 'third' })
+  assert.equal(last.status, 200, last.body)
+  const third = state.rows.get('uploads/alice/notes.txt').object_key
+  assert.ok(![first, raced].includes(third))
+  assert.deepEqual([...s3.objects.keys()], [`/real-uploads/${third}`], 'neither replaced version is left unreferenced')
 })
 
 test('a racing upload the policies refuse at commit never touches the committed bytes', async t => {
