@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
 	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
+	"github.com/onebox-faas/faas/pkg/apid/creditdiscount"
 	pipelineapi "github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/apid/docsassets"
@@ -585,6 +586,11 @@ type server struct {
 	// no *stripe.Client is needed at the apid level). The Paddle path
 	// sets this to a *paddle.Provider at boot.
 	billingProvider billing.Provider
+
+	// creditDiscounts applies account credit as a discount on the next order
+	// (ADR-20261104212028); nil when the provider cannot. Set by
+	// WithBillingProvider.
+	creditDiscounts *creditdiscount.Syncer
 	// billingProviderName retains the configured provider even for the legacy
 	// Stripe apid path, where billingProvider is intentionally nil.
 	billingProviderName string
@@ -983,6 +989,7 @@ func (s *server) WithRollbackArtifactVerifier(verifier interface {
 // (the legacy stripe.VerifySignature + BillingPortalURL template).
 func (s *server) WithBillingProvider(p billing.Provider) *server {
 	s.billingProvider = p
+	s.wireCreditDiscounts()
 	return s
 }
 
@@ -5633,6 +5640,10 @@ func (s *server) handler() http.Handler {
 	// on the public mux so the operator's HTTPS path serves it.
 	mux.HandleFunc("GET /status", s.statusHandler)
 	mux.HandleFunc("GET /status/slo.json", s.statusJSONHandler)
+
+	// Terms of Service, Privacy Policy and Acceptable Use Policy
+	// (pkg/legal). Public; 404 until legal.json names the operator.
+	s.registerLegalPages(mux)
 
 	// Public migration preflight (GET /v1/preflight?source=owner/repo).
 	// Unauthenticated by design: it answers "would my app run here" for

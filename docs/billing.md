@@ -34,6 +34,20 @@ To keep the subscription instead, ask for the plan you already have: `gregale bi
 
 A subscription that is ending cannot change plans: an upgrade or downgrade answers `409 billing_subscription_ending` until you keep it. Once the period has ended the account is on Free, and a new paid plan starts with a new checkout.
 
+### Allowances after a plan change
+
+Object storage and managed PostgreSQL allowances follow plan changes. The
+included object storage is shared across the month like the included
+GB-RAM-hours: half a month on Hobby then half on Pro includes the average of
+the two. Managed PostgreSQL usage is billed against the allowance of the plan
+held while it ran, like compute: after a downgrade, usage the larger
+allowance covered is not billed again; after an upgrade, overage already
+billed stays billed. The month's managed PostgreSQL charge is still at most
+the current plan's ceiling, and managed PostgreSQL stops at the current
+plan's limits. A `min_instances` floor is billed like the instances it keeps
+warm, sidecars included, and stops when the spend cap is reached
+(ADR-20261103131742 amendment 2).
+
 Opening the billing portal (`GET /v1/billing/portal`) and changing the spend cap need an admin credential and MFA, and a dashboard session also needs a recent step-up: the portal link is a signed-in session that can cancel the subscription and replace the card.
 
 ## Billing email
@@ -140,10 +154,15 @@ dashboard session also needs a recent step-up. Free cannot elect it (HTTP 402
 `plan_egress_overage_not_allowed`).
 
 While the election is on and egress billing is live, egress above the
-allowance is billed per GiB (the response's `price_millicents_per_gib`) and
-counts toward the spend cap like compute overage. While egress billing is not
+allowance is billed at $0.03 per GiB (the response's
+`price_millicents_per_gib`) and counts toward the spend cap like compute
+overage. Each hour's egress counts against the allowance of the plan held in
+that hour, so a later plan change does not re-price it, and hours on Free are
+never billed, also after an upgrade (ADR-20261103131742 amendment 2). While egress billing is not
 live (`billing: off`), the allowance still holds and the saved election takes
-effect when billing starts.
+effect when billing starts. Only egress you are billed for counts toward the spend
+cap: egress in hours the election does not cover, or on Free, never does
+(ADR-20261107105126).
 
 Only egress sent while the election is on is billed: egress above the
 allowance before you turned it on is never billed, and turning it off keeps
@@ -155,12 +174,31 @@ An organization that owns its resources elects for itself:
 `PUT /v1/orgs/{slug}/egress-overage` (owner) or
 `gregale billing egress-overage on --org SLUG`.
 
+## Credits
+
+Gregale may add credit to an account or organization, for example after an
+incident. Credit has no cash value. It is applied as a discount on your next
+subscription renewal. It reduces the whole order before tax: the plan fee and
+usage, object storage and managed PostgreSQL. The discount shows on the order
+as "Gregale credit".
+
+- The discount is the credit still valid when the subscription renews; credit
+  that expires before then is not included.
+- Only what the order used is taken from your credit; the rest stays for the
+  next renewal.
+- Credit is taken when the order is created, whether or not it is paid.
+- Credit waits for a later renewal while your subscription is set to cancel or
+  change plan at the period end, or while another discount is on it.
+- A first subscription is charged in full; credit applies from its first
+  renewal. Credit is never refunded to your card (ADR-20261104212028).
+
 ## Retained usage costs and forecasts
 
 This financial visibility preview reports supported usage costs and budget
 policies. Enabled monitored notification policies send spending alerts; disabled
-drafts do not. Monitored preview stopping and strict app compute are local
-candidates pending native acceptance; see their sections below.
+drafts do not. Monitored budgets, including preview stopping, are generally
+available; strict budgets are in beta (ADR-20261107160000); see their
+sections below.
 Coverage and unavailable bill components are reported explicitly.
 
 ```bash
@@ -187,8 +225,9 @@ Retained corrections append a negative quantity linked to the original source.
 They preserve its price, period and workload identity, record an actor and reason,
 and cannot subtract more than the original usage, including concurrent corrections.
 Replay cannot add a second correction. Original evidence and price terms cannot
-be rewritten; account deletion can remove its financial history. Provider delivery
-continues to use its existing source until correction reconciliation is accepted.
+be rewritten; account deletion can remove its financial history. A correction
+changes what the provider is billed once billing reads the retained evidence
+(below).
 
 All amounts use integer millicents (1,000 millicents per cent). One shared
 account allowance applies to each usage meter for the month. When plans change,
@@ -198,8 +237,16 @@ billed overage (ADR-20261031090658); other meters keep the largest recorded
 grant. Its quantities are shared proportionally across price versions. Within each version, net cost and
 allowance value are allocated by workload quantity using stable largest-remainder
 rounding. Allocated amounts sum exactly to the meter totals. Shadow and disabled
-egress contracts are reported as nonbillable quantities. The existing provider
-delivery remains unchanged while ledger reconciliation is validated.
+egress contracts are reported as nonbillable quantities.
+
+The provider is billed from the same usage. Each sampled minute is written
+once as retained evidence and once as a per-minute usage record, in one
+transaction. Gregale bills from the per-minute records today and compares
+every billed hour with the retained evidence; it moves billing to the
+retained evidence once a closed month and a sandbox month show both agree,
+and each billed hour records which of the two it was billed from
+(ADR-20261107105126). Hours on Free are never billed and never count toward
+a [spend cap](#spend-cap).
 
 Coverage reports the retention start, complete sampling minutes, freshness, and
 unpriced quantities. A missing sample does not establish zero usage. Quantity
@@ -696,7 +743,14 @@ spending. It does not establish a strict compute or full-invoice ceiling.
 ## Strict compute budgets
 
 Strict budgets, which hold an app's compute when it reaches a funded limit,
-are not released yet. Creating or enabling one returns 422
-`financial_budget_activation_unavailable` ("Strict budgets not released").
+are in beta and not released to accounts yet. Creating or enabling one returns
+422 `financial_budget_activation_unavailable` ("Strict budgets not released").
+
+A strict budget covers only what its owner pays for
+([ADR 20261107160000](adr/20261107160000-budgets-ga-and-strict-billing-subject.md)).
+An app that an organization pays for is never funded, held or stopped by the
+strict budget of the member who created it, and it does not have to be idle
+for that member's account budget to start. Organizations cannot have strict
+budgets yet.
 Budgets use USD; historical EUR invoices and budget revisions are retained
 without conversion.

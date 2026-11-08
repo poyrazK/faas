@@ -101,6 +101,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BILLING_MODE` | apid, meterd, shared | `unit` |  | live | `` | disabled pauses provider delivery and reconciliation paging; the public-beta control-plane role overrides the unit default to disabled |
 | `FAAS_BILLING_PORTAL_URL` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_BILLING_PROVIDER` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
+| `FAAS_BILLING_USAGE_SOURCE` | meterd | `default` |  |  | `` | overrides [meter] billing_usage_source (off\|ledger_shadow\|ledger, default ledger_shadow; ADR-20261107105126) |
 | `FAAS_BRIDGED_ROLE` | bridged, shared | `envfile` |  |  | `` | optional control-plane relay; delivered by dev-bridge.env |
 | `FAAS_BRIDGE_DROP_TO_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for a bridge unit (FAAS_INSTANCE_BRIDGE_UNIT=1), which systemd starts as root because User= refuses a uid with no account; the bridge drops to this uid before reading anything (pkg/bridgeproc) |
 | `FAAS_BRIDGE_EXPECT_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits unless it runs as this uid with no capability (pkg/bridgeproc) |

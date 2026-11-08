@@ -326,6 +326,9 @@ func (s *PgStore) CreateAccount(ctx context.Context, email string, plan api.Plan
 // postSignup / OAuth ladders collapse to the idempotent-signin
 // path on a duplicate email.
 func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params CreateAccountWithPersonalOrgParams) (CreateAccountWithPersonalOrgResult, error) {
+	if err := params.TermsAcceptance.validate(); err != nil {
+		return CreateAccountWithPersonalOrgResult{}, err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: begin tx: %w", err)
@@ -381,6 +384,16 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 		}
 		if changed != 1 {
 			return CreateAccountWithPersonalOrgResult{}, ErrNotFound
+		}
+	}
+	// 4. Terms acceptance, in the same transaction: an account created
+	//    while the Terms are published always has its row.
+	if a := params.TermsAcceptance; a != nil {
+		if _, err := tx.Exec(ctx, `
+			insert into legal_acceptances (account_id, document, version, method)
+			values ($1, $2, $3, $4)
+		`, acct.ID, LegalDocumentTerms, a.Version, a.Method); err != nil {
+			return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: record terms acceptance: %w", mapErr(err))
 		}
 	}
 
