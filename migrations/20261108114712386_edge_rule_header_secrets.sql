@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261108110000000_edge_rule_header_secrets.sql
+-- filename: 20261108114712386_edge_rule_header_secrets.sql
 
 -- +goose Up
 -- Sealed edge-rule request header values (ADR-20261108110000). apid seals a
