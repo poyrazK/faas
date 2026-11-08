@@ -469,6 +469,21 @@
     "kind": "account_identity"
   },
   {
+    "table": "mfa_trusted_browsers",
+    "columns": [
+      "account_id",
+      "created_at",
+      "created_ip",
+      "expires_at",
+      "id",
+      "last_used_at",
+      "revoked_at",
+      "token_hash",
+      "ua_family"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "accounts",
     "columns": [
       "abuse_hold_at",

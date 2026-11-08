@@ -47252,6 +47252,29 @@ CREATE TABLE public.mfa_disable_tokens (
 
 
 --
+-- Name: mfa_trusted_browsers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mfa_trusted_browsers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    ua_family text NOT NULL,
+    created_ip text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    last_used_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    CONSTRAINT mfa_trusted_browsers_created_ip_check CHECK ((char_length(created_ip) <= 64)),
+    CONSTRAINT mfa_trusted_browsers_revoked_check CHECK (((revoked_at IS NULL) OR isfinite(revoked_at))),
+    CONSTRAINT mfa_trusted_browsers_token_hash_check CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
+    CONSTRAINT mfa_trusted_browsers_ua_family_check CHECK ((char_length(ua_family) <= 64)),
+    CONSTRAINT mfa_trusted_browsers_used_check CHECK (((last_used_at IS NULL) OR isfinite(last_used_at))),
+    CONSTRAINT mfa_trusted_browsers_window_check CHECK ((isfinite(created_at) AND (expires_at > created_at)))
+);
+
+
+--
 -- Name: migration_admissions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -66749,6 +66772,22 @@ ALTER TABLE ONLY public.mfa_disable_tokens
 
 
 --
+-- Name: mfa_trusted_browsers mfa_trusted_browsers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_trusted_browsers
+    ADD CONSTRAINT mfa_trusted_browsers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mfa_trusted_browsers mfa_trusted_browsers_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_trusted_browsers
+    ADD CONSTRAINT mfa_trusted_browsers_token_hash_key UNIQUE (token_hash);
+
+
+--
 -- Name: migration_admissions migration_admissions_instance_id_lease_token_destination_no_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -78554,6 +78593,13 @@ CREATE INDEX mfa_disable_tokens_account_idx ON public.mfa_disable_tokens USING b
 --
 
 CREATE INDEX mfa_disable_tokens_expiry_idx ON public.mfa_disable_tokens USING btree (expires_at, token_hash);
+
+
+--
+-- Name: mfa_trusted_browsers_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mfa_trusted_browsers_account_idx ON public.mfa_trusted_browsers USING btree (account_id) WHERE (revoked_at IS NULL);
 
 
 --
@@ -99442,6 +99488,14 @@ ALTER TABLE ONLY public.mfa_disable_requests
 
 ALTER TABLE ONLY public.mfa_disable_tokens
     ADD CONSTRAINT mfa_disable_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mfa_trusted_browsers mfa_trusted_browsers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_trusted_browsers
+    ADD CONSTRAINT mfa_trusted_browsers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

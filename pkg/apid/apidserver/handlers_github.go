@@ -274,6 +274,10 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if s.finishOAuthLink(w, r, "github", githubUserEmailID(githubUser), email, true) {
+		return
+	}
+
 	// Provision or fetch the account. Sub-first lookup via the
 	// oauth_links table mirrors the Google handler — the
 	// §11 anti-takeover invariant is the same regardless of the

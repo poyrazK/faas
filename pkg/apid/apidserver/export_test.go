@@ -2197,6 +2197,25 @@ func (r *server) SetVerificationClock(now func() time.Time) { r.verificationCloc
 // VerificationDeadline is when an unverified account becomes restricted.
 func VerificationDeadline(acct state.Account) time.Time { return verificationDeadline(acct) }
 
+// FinishOAuthLink runs the callback's account-page link step; handled is
+// false when the request carries no link intent.
+func (r *server) FinishOAuthLink(w http.ResponseWriter, req *http.Request, provider, sub, email string) (handled bool) {
+	return r.finishOAuthLink(w, req, provider, sub, email, true)
+}
+
+// OAuthLinkCookie is the link-intent cookie name on a plain-HTTP request.
+const OAuthLinkCookie = oauthLinkCookie
+
+// IssueDashboardSession runs the sign-in session issue step and returns the
+// sealed cookie value.
+func (r *server) IssueDashboardSession(req *http.Request, accountID string, mfaPending bool) (string, error) {
+	cookie, _, err := r.issueDashboardSession(req.Context(), req, accountID, mfaPending, "password")
+	return cookie, err
+}
+
+// MFATrustCookie is the remembered-browser cookie name on a plain-HTTP request.
+const MFATrustCookie = mfaTrustCookie
+
 // LinkOAuthByEmail runs the OAuth email-match link step; the bool reports
 // a refusal because the owner removed the provider.
 func (r *server) LinkOAuthByEmail(req *http.Request, acct state.Account, provider, sub string) (refused bool, err error) {

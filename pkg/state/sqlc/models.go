@@ -9682,6 +9682,18 @@ type MfaDisableToken struct {
 	ConsumedAt       pgtype.Timestamptz
 }
 
+type MfaTrustedBrowser struct {
+	ID         pgtype.UUID
+	TokenHash  []byte
+	AccountID  pgtype.UUID
+	UaFamily   string
+	CreatedIp  string
+	CreatedAt  pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+	RevokedAt  pgtype.Timestamptz
+}
+
 type MigrationAdmission struct {
 	ID                    pgtype.UUID
 	InstanceID            pgtype.UUID
