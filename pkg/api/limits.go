@@ -4307,6 +4307,15 @@ type Limits struct {
 	// hourly count is below it, so production deploys always keep
 	// DeploysPerHour - PreviewDeploysPerHour (ADR-20261028100000).
 	PreviewDeploysPerHour int
+	// BuildMinutesPerMonth is the builder time the account that pays for an
+	// app may use per UTC month across all its apps (ADR-20261104132753).
+	// Builds are free; this bounds how much of the shared builder slots one
+	// account can hold. A build that starts past it is refused with
+	// plan_limit_build_minutes; image deploys build nothing and are not
+	// counted. A running build counts up to now, and no build counts past
+	// BuildTimeoutSeconds (amendment 1). Free 200, Hobby 1,000, Pro 3,000,
+	// Scale 6,000 (owner, 2026-11-07).
+	BuildMinutesPerMonth int
 	// DeveloperApps is the separate cap for expiring `gregale dev`
 	// environments. These sessions do not consume DeployedApps slots.
 	DeveloperApps      int
@@ -5952,6 +5961,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        10,
 		PreviewDeploysPerHour: 5,
+		BuildMinutesPerMonth:  200,
 		DeveloperApps:         1,
 		MaxConcurrency:        1,
 		RAMMB:                 256,
@@ -6378,6 +6388,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        50,
 		PreviewDeploysPerHour: 25,
+		BuildMinutesPerMonth:  1_000,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
 		RAMMB:                 512,
@@ -6826,6 +6837,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        250,
 		PreviewDeploysPerHour: 125,
+		BuildMinutesPerMonth:  3_000,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
 		RAMMB:                 1024,
@@ -7239,6 +7251,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        1000,
 		PreviewDeploysPerHour: 500,
+		BuildMinutesPerMonth:  6_000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
 		RAMMB:                 2048,
@@ -12945,6 +12958,16 @@ func (p Plan) DeveloperLeaseMax() time.Duration {
 
 // DeploysPerHour returns the account-wide deploy admission budget for the
 // plan. Unknown plans fail closed.
+// BuildMinutesPerMonth returns the plan's monthly builder-time quota; zero
+// for an unknown plan.
+func (p Plan) BuildMinutesPerMonth() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.BuildMinutesPerMonth
+}
+
 func (p Plan) DeploysPerHour() int {
 	l, ok := LimitsFor(p)
 	if !ok {
@@ -15712,6 +15735,18 @@ const (
 	DataAPIStorageTransfers          = 4
 	DataAPIStorageTransferTimeout    = 120 * time.Second
 	DataAPIStorageSignedURLTTL       = 60 * time.Second
+	// One signed-in user or anonymous visitor holds at most this many of an
+	// instance's transfers, so one slow client cannot keep storage busy for
+	// everyone. Server keys (trusted backends) are bounded only by the total.
+	DataAPIStorageTransfersPerClient = 2
+	// /healthz is public and its readiness checks reach the database: a
+	// completed result answers further checks for this long, so polling it
+	// asks the database at most once per interval per instance.
+	DataAPIHealthCache = 5 * time.Second
+	// The gateway sends the SQL deadline this much early, so a VM clock that
+	// runs ahead of the database's by up to it still passes the engine's
+	// future-horizon check (ADR-1734 amendment 1).
+	DataAPISQLDeadlineClockSkew = 2 * time.Second
 	// Change hooks (ADR-20261022121642), mirrored in the runtime's limits:
 	// events and body bytes per runtime publication, the largest event data
 	// before its rows are dropped, the relay's claim lease, how long one
@@ -18199,9 +18234,16 @@ const (
 	PublicBlockListRefreshInterval = 30 * time.Second
 )
 
-// Edge certificates (ADR-20261103163954 §3). edgednsd obtains the apps
-// domains' certificate from Let's Encrypt with DNS-01 and renews it
-// EdgeCertificateRenewBefore its expiry, checking every
+// Edge certificates (ADR-20261103163954 §3, ADR-20261108100000). edgednsd
+// obtains the apps domains' certificate from Let's Encrypt with DNS-01 under
+// the EdgeCertificateProfile ACME profile, whose certificates live about 160
+// hours, and renews it EdgeCertificateRenewBefore its expiry: a new one about
+// every 64 hours, about 2.6 of the 5 Let's Encrypt allows for the same names
+// in 7 days, which leaves two for rotating the key after a compromise. A key
+// a compromised compute node copied is good only until its certificate
+// expires. A stored certificate that lives longer than
+// EdgeCertificateLifetimeMax is replaced at once, and an order that returns
+// one is refused. edgednsd checks every
 // EdgeCertificateCheckInterval. A failed order is retried after
 // EdgeCertificateRetryMin, doubling to EdgeCertificateRetryMax: Let's
 // Encrypt allows 5 failed validations per account, hostname and hour, and 5
@@ -18211,8 +18253,10 @@ const (
 // certificate's row is kept EdgeCertificateKeepAfterExpiry past its expiry,
 // so the Certificate Transparency watch can tell ours from anyone else's.
 const (
-	EdgeCertificateRenewBefore     = 30 * 24 * time.Hour
+	EdgeCertificateRenewBefore     = 4 * 24 * time.Hour
 	EdgeCertificateCheckInterval   = time.Hour
+	EdgeCertificateProfile         = "shortlived"
+	EdgeCertificateLifetimeMax     = 7 * 24 * time.Hour
 	EdgeCertificateRetryMin        = time.Hour
 	EdgeCertificateRetryMax        = 12 * time.Hour
 	EdgeCertificateOrderTimeout    = 10 * time.Minute

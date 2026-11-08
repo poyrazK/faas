@@ -110,6 +110,7 @@ RULES = [
     (r"database-dependency", "Managed Postgres"),
     (r"bucket-dependency", "Object storage"),
     (r"function-spec|function-config", "Function runtimes"),
+    (r"fnadapter", "Function runtimes"),
     (r"worker-spec", "Worker pools"),
     (r"lifecycle-config|healthcheckproto", "Health probes"),
     (r"^manifest\.|release-config", "`gregale.yaml` deploy overrides"),

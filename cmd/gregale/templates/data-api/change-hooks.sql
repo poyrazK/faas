@@ -38,69 +38,6 @@ CREATE POLICY gregale_change_relay ON {{schema}}.gregale_change_events
 CREATE SCHEMA gregale_hooks;
 REVOKE ALL ON SCHEMA gregale_hooks FROM PUBLIC;
 
--- capture records one change. Its arguments are the key columns, the payload
--- ('row' or 'keys'), excluded columns and the hooked relation's name. Rows
--- larger than 64 KiB together are left out and the event marked truncated;
--- consumers read the row by its key.
---
--- gregale:backlog-bound (amendment 2). While {{backlog_max}} changes wait to
--- publish, because the platform does not take them (a stage, an installation
--- without workload identity) or publishing keeps failing, new changes are not
--- recorded: the table cannot grow until it fills the database. The bound
--- counts identifiers from the oldest waiting change, so it errs early.
-CREATE FUNCTION gregale_hooks.capture() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-DECLARE
-  key_columns text[] := TG_ARGV[0]::text[];
-  excluded text[] := TG_ARGV[2]::text[];
-  source jsonb;
-  old_row jsonb;
-  new_row jsonb;
-  changed text[];
-  row_key jsonb;
-  truncated boolean := false;
-  newest bigint;
-  oldest bigint;
-BEGIN
-  IF current_setting('gregale_hooks.skip', true) = 'on' THEN
-    RETURN NULL;
-  END IF;
-  IF TG_OP <> 'INSERT' THEN
-    old_row := to_jsonb(OLD) - excluded;
-  END IF;
-  IF TG_OP <> 'DELETE' THEN
-    new_row := to_jsonb(NEW) - excluded;
-  END IF;
-  IF TG_OP = 'UPDATE' THEN
-    SELECT coalesce(array_agg(n.key ORDER BY n.key), '{}') INTO changed
-      FROM jsonb_each(new_row) n WHERE n.value IS DISTINCT FROM old_row -> n.key;
-    IF cardinality(changed) = 0 THEN
-      RETURN NULL;
-    END IF;
-  END IF;
-  source := coalesce(new_row, old_row);
-  SELECT jsonb_object_agg(k, source -> k) INTO row_key FROM unnest(key_columns) k;
-  IF TG_ARGV[1] = 'keys' THEN
-    old_row := NULL;
-    new_row := NULL;
-  ELSIF coalesce(octet_length(old_row::text), 0) + coalesce(octet_length(new_row::text), 0) > 65536 THEN
-    old_row := NULL;
-    new_row := NULL;
-    truncated := true;
-  END IF;
-  -- gregale:backlog-bound
-  newest := pg_sequence_last_value(pg_get_serial_sequence('{{schema}}.gregale_change_events', 'id')::regclass);
-  SELECT id INTO oldest FROM {{schema}}.gregale_change_events WHERE failed_at IS NULL ORDER BY id LIMIT 1;
-  IF newest - oldest + 1 >= {{backlog_max}} THEN
-    RETURN NULL;
-  END IF;
-  INSERT INTO {{schema}}.gregale_change_events (relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated)
-  VALUES (TG_ARGV[3], TG_ARGV[4], lower(TG_OP), row_key, old_row, new_row, changed, truncated);
-  RETURN NULL;
-END
-$$;
-REVOKE ALL ON FUNCTION gregale_hooks.capture() FROM PUBLIC;
-
 -- enable hooks a table with a primary key, or changes its options.
 CREATE FUNCTION gregale_hooks.enable(relation regclass, payload text DEFAULT 'row', exclude text[] DEFAULT '{}')
 RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
@@ -151,16 +88,114 @@ END
 $$;
 REVOKE ALL ON FUNCTION gregale_hooks.disable(regclass) FROM PUBLIC;
 
--- retry_failed queues events the platform rejected again. They publish after
--- newer events of the same rows.
-CREATE FUNCTION gregale_hooks.retry_failed() RETURNS bigint
+-- gregale:upgrade-begin. `gregale data-api hooks export --upgrade` replays
+-- everything from here to gregale:upgrade-end on an existing installation, so
+-- each statement here can run again.
+
+-- gregale_change_drops notes when capture last left a change out at the
+-- backlog bound (ADR-20261022121642 amendment 3); the relay reports it, so
+-- owners see that changes went unrecorded. Like the event table, only the
+-- relay's claim reads it; capture writes it as the owner, which RLS skips.
+CREATE TABLE IF NOT EXISTS {{schema}}.gregale_change_drops (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  last_dropped_at timestamptz
+);
+ALTER TABLE {{schema}}.gregale_change_drops ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS gregale_change_relay ON {{schema}}.gregale_change_drops;
+CREATE POLICY gregale_change_relay ON {{schema}}.gregale_change_drops FOR SELECT
+  USING (coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'gregale_access', '') = 'hooks');
+INSERT INTO {{schema}}.gregale_change_drops (singleton) VALUES (true) ON CONFLICT DO NOTHING;
+
+-- capture records one change. Its arguments are the key columns, the payload
+-- ('row' or 'keys'), excluded columns and the hooked relation's name. Rows
+-- larger than 64 KiB together are left out and the event marked truncated;
+-- consumers read the row by its key.
+--
+-- gregale:backlog-bound (amendment 2). While {{backlog_max}} changes wait to
+-- publish, because the platform does not take them (a stage, an installation
+-- without workload identity) or publishing keeps failing, new changes are not
+-- recorded: the table cannot grow until it fills the database. The bound
+-- counts identifiers from the oldest waiting change, so it errs early.
+--
+-- gregale:drop-tracking (amendment 3). A change left out is noted in
+-- {{schema}}.gregale_change_drops, at most once a second and never waiting for another
+-- writer's note.
+CREATE OR REPLACE FUNCTION gregale_hooks.capture() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  key_columns text[] := TG_ARGV[0]::text[];
+  excluded text[] := TG_ARGV[2]::text[];
+  source jsonb;
+  old_row jsonb;
+  new_row jsonb;
+  changed text[];
+  row_key jsonb;
+  truncated boolean := false;
+  newest bigint;
+  oldest bigint;
+BEGIN
+  IF current_setting('gregale_hooks.skip', true) = 'on' THEN
+    RETURN NULL;
+  END IF;
+  IF TG_OP <> 'INSERT' THEN
+    old_row := to_jsonb(OLD) - excluded;
+  END IF;
+  IF TG_OP <> 'DELETE' THEN
+    new_row := to_jsonb(NEW) - excluded;
+  END IF;
+  IF TG_OP = 'UPDATE' THEN
+    SELECT coalesce(array_agg(n.key ORDER BY n.key), '{}') INTO changed
+      FROM jsonb_each(new_row) n WHERE n.value IS DISTINCT FROM old_row -> n.key;
+    IF cardinality(changed) = 0 THEN
+      RETURN NULL;
+    END IF;
+  END IF;
+  source := coalesce(new_row, old_row);
+  SELECT jsonb_object_agg(k, source -> k) INTO row_key FROM unnest(key_columns) k;
+  IF TG_ARGV[1] = 'keys' THEN
+    old_row := NULL;
+    new_row := NULL;
+  ELSIF coalesce(octet_length(old_row::text), 0) + coalesce(octet_length(new_row::text), 0) > 65536 THEN
+    old_row := NULL;
+    new_row := NULL;
+    truncated := true;
+  END IF;
+  -- gregale:backlog-bound
+  newest := pg_sequence_last_value(pg_get_serial_sequence('{{schema}}.gregale_change_events', 'id')::regclass);
+  SELECT id INTO oldest FROM {{schema}}.gregale_change_events WHERE failed_at IS NULL ORDER BY id LIMIT 1;
+  IF newest - oldest + 1 >= {{backlog_max}} THEN
+    -- gregale:drop-tracking
+    PERFORM 1 FROM {{schema}}.gregale_change_drops
+      WHERE singleton AND (last_dropped_at IS NULL OR last_dropped_at < clock_timestamp() - interval '1 second')
+      FOR UPDATE SKIP LOCKED;
+    IF FOUND THEN
+      UPDATE {{schema}}.gregale_change_drops SET last_dropped_at = clock_timestamp() WHERE singleton;
+    END IF;
+    RETURN NULL;
+  END IF;
+  INSERT INTO {{schema}}.gregale_change_events (relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated)
+  VALUES (TG_ARGV[3], TG_ARGV[4], lower(TG_OP), row_key, old_row, new_row, changed, truncated);
+  RETURN NULL;
+END
+$$;
+REVOKE ALL ON FUNCTION gregale_hooks.capture() FROM PUBLIC;
+
+-- retry_failed queues events the platform rejected again, under new
+-- identifiers in their old order: they publish after newer events of the same
+-- rows (each keeps its event id, time and transaction; data.sequence is new), and
+-- the backlog bound, which counts identifiers from the oldest waiting event,
+-- does not count every change recorded since they failed.
+CREATE OR REPLACE FUNCTION gregale_hooks.retry_failed() RETURNS bigint
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   n bigint;
 BEGIN
-  UPDATE {{schema}}.gregale_change_events SET failed_at = NULL, failure_code = NULL, attempts = 0,
-    available_at = '-infinity', claimed_by = NULL, claimed_until = NULL
-  WHERE failed_at IS NOT NULL;
+  WITH moved AS (
+    DELETE FROM {{schema}}.gregale_change_events WHERE failed_at IS NOT NULL
+    RETURNING id, event_key, relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated, txid, captured_at
+  )
+  INSERT INTO {{schema}}.gregale_change_events (event_key, relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated, txid, captured_at)
+  SELECT event_key, relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated, txid, captured_at FROM moved ORDER BY id;
   GET DIAGNOSTICS n = ROW_COUNT;
   RETURN n;
 END
@@ -168,7 +203,7 @@ $$;
 REVOKE ALL ON FUNCTION gregale_hooks.retry_failed() FROM PUBLIC;
 
 -- discard_failed deletes events the platform rejected.
-CREATE FUNCTION gregale_hooks.discard_failed() RETURNS bigint
+CREATE OR REPLACE FUNCTION gregale_hooks.discard_failed() RETURNS bigint
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   n bigint;
@@ -179,6 +214,24 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION gregale_hooks.discard_failed() FROM PUBLIC;
+
+-- discard_waiting deletes every change still waiting to publish, such as a
+-- backlog at the bound that will never publish, and clears the drop note.
+-- Recording resumes with the next change.
+CREATE OR REPLACE FUNCTION gregale_hooks.discard_waiting() RETURNS bigint
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  n bigint;
+BEGIN
+  DELETE FROM {{schema}}.gregale_change_events WHERE failed_at IS NULL;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  UPDATE {{schema}}.gregale_change_drops SET last_dropped_at = NULL WHERE singleton;
+  RETURN n;
+END
+$$;
+REVOKE ALL ON FUNCTION gregale_hooks.discard_waiting() FROM PUBLIC;
+
+-- gregale:upgrade-end
 
 -- The relay's claim and settlement run as the Data API login and RLS decides
 -- what they touch. They carry no @gregale:rpc marker, so the gateway never

@@ -52,7 +52,7 @@ test('gateway overwrites reserved claims with one admission deadline, including 
       assert.equal(claims.sub, supplied.sub); assert.equal(claims.role, 'restricted')
       assert.equal(forwarded['x-gregale-sql-deadline'], undefined)
       if (mode === 'off') assert.equal(claims.gregale_sql_deadline, undefined)
-      else assert.deepEqual(claims.gregale_sql_deadline, { version: 1, expires_at_ms: 1700000000000 + limits.queryMs, coordinated_refresh: mode === 'refresh' })
+      else assert.deepEqual(claims.gregale_sql_deadline, { version: 1, expires_at_ms: 1700000000000 + limits.queryMs - limits.sqlDeadlineClockSkewMs, coordinated_refresh: mode === 'refresh' })
       assert.equal(supplied.gregale_sql_deadline.version, 100, 'the verified payload must not be mutated')
     })
   }
