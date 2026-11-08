@@ -87,6 +87,11 @@ To replace your recovery codes while you still have your authenticator, run
 two-factor page) after verifying the session; the previous codes stop working
 and you get an email.
 
+At the dashboard sign-in check you can tick **Remember this browser for 30
+days**: that browser then skips the code at sign-in (not for sensitive
+actions) until it expires or you forget it on the account page. Operator
+accounts are always asked. See [account](account.md#profile-sign-in-and-sessions).
+
 ## Email verification
 
 A password signup must verify its email address. Until it does, deploying and

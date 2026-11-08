@@ -37,6 +37,10 @@ var securityActivityKinds = map[string]string{
 	"account.mfa_confirmed":                    "Two-factor authentication confirmed",
 	"account.mfa_disabled":                     "Two-factor authentication turned off",
 	"account.mfa_recovered":                    "Signed in with a recovery code",
+	"account.mfa_browser_remembered":           "Browser remembered for two-factor sign-in",
+	"auth.mfa_trusted_browser_used":            "Signed in from a remembered browser",
+	"account.mfa_browser_forgotten":            "A remembered browser was forgotten",
+	"account.mfa_browsers_forgotten":           "Remembered browsers were forgotten",
 	"account.sign_in_method_linked":            "Sign-in method linked",
 	"account.sign_in_method_unlinked":          "Sign-in method removed",
 	"account.sign_in_method_link_refused":      "Linking a sign-in method was refused",
@@ -112,7 +116,7 @@ func securityActivityFields(raw json.RawMessage) (ip, detail string) {
 			break
 		}
 	}
-	for _, k := range []string{"method", "provider", "label"} {
+	for _, k := range []string{"method", "provider", "label", "ua_family"} {
 		if v, ok := data[k].(string); ok && v != "" {
 			detail = v
 			break

@@ -58,6 +58,7 @@ func (s *server) fillAccountProfileForms(w http.ResponseWriter, r *http.Request,
 		{&data.SessionRevokeConfirmToken, dashboardSessionRevokeAction, dashboardSessionRevokeCookie},
 		{&data.ProviderUnlinkConfirmToken, dashboardProviderUnlinkAction, dashboardProviderUnlinkCookie},
 		{&data.ProviderLinkConfirmToken, dashboardProviderLinkAction, dashboardProviderLinkCookie},
+		{&data.TrustedBrowserForgetToken, dashboardMFATrustForgetAction, dashboardMFATrustForgetCookie},
 	}
 	if !acct.EmailVerified() {
 		forms = append(forms, form{&data.VerifyResendConfirmToken, dashboardVerifyResendAction, dashboardVerifyResendCSRFCookie})
@@ -91,6 +92,7 @@ func (s *server) fillAccountProfileForms(w http.ResponseWriter, r *http.Request,
 		data.DisplayName, _ = flow.AccountDisplayName(r.Context(), acct.ID)
 	}
 	s.fillAccountSessions(r, acct, data)
+	s.fillTrustedBrowsers(r, acct, data)
 	if events, err := s.securityActivity(r.Context(), acct.ID, time.Now()); err == nil {
 		for i, e := range events {
 			if i == accountPageActivityRows {
@@ -137,6 +139,8 @@ func accountFlowFlash(r *http.Request) string {
 		return "That browser was signed out."
 	case q.Get("provider") == "removed":
 		return "Sign-in method removed."
+	case q.Get("trusted_browser") == "forgotten":
+		return "Forgotten. That browser asks for a code at its next sign-in."
 	case q.Get("provider") == "linked":
 		return "Sign-in method linked. A notice was sent to your email address."
 	}

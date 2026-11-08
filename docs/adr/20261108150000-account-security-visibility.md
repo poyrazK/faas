@@ -47,9 +47,37 @@ key through the API mail the owner, off the request path and under the
 per-account security-mail throttle. The key a signup mints for itself (account
 under 10 minutes old) is not reported.
 
+**Remember this browser.** Customers with two-factor authentication entered a
+code at every dashboard sign-in. The sign-in authenticator check now offers
+"Remember this browser for 30 days". Ticking it stores a row in
+`mfa_trusted_browsers` (keyed digest of a random 32-byte token, the browser's
+user-agent family, address, expiry) and sets a host-only, HttpOnly cookie with
+the token. A later sign-in that carries the cookie, from the same browser
+family, starts a full session instead of an MFA-pending one, and records
+`auth.mfa_trusted_browser_used`. The trust:
+
+- skips only the sign-in check; step-up for sensitive actions still asks for
+  a code;
+- never applies to operators, or to an account without an enrolled factor;
+- ends after 30 days (`api.MFATrustedBrowserTTL`); an account keeps at most 10
+  (`api.MFATrustedBrowsersMax`), oldest forgotten first;
+- does not survive turning two-factor off and on again (a browser remembered
+  before the current enrollment is ignored);
+- is forgotten for every browser on a password or email change, signing out
+  everywhere, and an operator suspend or session revoke.
+
+The account page lists remembered browsers with **Forget** and **Forget all
+browsers**.
+
 ## Consequences
 
 Customers can link any provider identity they control and audit their own
 account without support. More mail goes to accounts that create keys often;
 the per-kind throttle (one a minute, five an hour) bounds it, so a burst of
 key creation reports the first ones only.
+
+A remembered browser trades one factor for the cookie on that device: someone
+who steals the cookie and the password, magic link or provider sign-in, and
+also matches the browser family, signs in without a code. The 30-day limit,
+the per-account list, forgetting on credential changes and the unchanged
+step-up gate bound that.

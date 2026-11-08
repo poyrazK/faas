@@ -5341,6 +5341,8 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/account/sessions/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRevokeSession))))
 	mux.Handle("POST /dashboard/account/providers/{provider}/unlink", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUnlinkProvider))))
 	mux.Handle("POST /dashboard/account/providers/{provider}/link", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardLinkProvider))))
+	mux.Handle("POST /dashboard/account/trusted-browsers/forget-all", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardForgetAllTrustedBrowsers))))
+	mux.Handle("POST /dashboard/account/trusted-browsers/{id}/forget", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardForgetTrustedBrowser))))
 	mux.Handle("POST /dashboard/account/display-name", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetDisplayName))))
 	// The form turns a wrong password into a redirect, so every attempt
 	// counts against the per-IP bucket shared with /login.

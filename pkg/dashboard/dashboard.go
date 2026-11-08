@@ -3622,6 +3622,10 @@ type AccountData struct {
 	// forms.
 	LinkProviders            []AccountLinkOption
 	ProviderLinkConfirmToken string
+	// TrustedBrowsers are the browsers that skip the authenticator check
+	// at sign-in; TrustedBrowserForgetToken backs the Forget forms.
+	TrustedBrowsers           []AccountTrustedBrowserRow
+	TrustedBrowserForgetToken string
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a
@@ -3659,6 +3663,16 @@ type AccountSessionRow struct {
 	IssuedUA  string
 	LastSeen  string
 	IsCurrent bool
+}
+
+// AccountTrustedBrowserRow is one remembered browser on the account page.
+type AccountTrustedBrowserRow struct {
+	ID         string
+	Browser    string
+	IP         string
+	Remembered string
+	LastUsed   string
+	Expires    string
 }
 
 // AccountActivityRow is one security event on the account page.

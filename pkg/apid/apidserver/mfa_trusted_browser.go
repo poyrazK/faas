@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
+	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -28,10 +29,8 @@ const (
 	mfaTrustCookie     = "faas_mfa_trust"
 	mfaTrustTokenBytes = 32
 
-	dashboardMFATrustForgetAction    = "account_mfa_trust_forget"
-	dashboardMFATrustForgetCSRF      = "faas_csrf_account_mfa_trust_forget"
-	dashboardMFATrustForgetAllAction = "account_mfa_trust_forget_all"
-	dashboardMFATrustForgetAllCSRF   = "faas_csrf_account_mfa_trust_forget_all"
+	dashboardMFATrustForgetAction = "account_mfa_trust_forget"
+	dashboardMFATrustForgetCookie = "faas_csrf_account_mfa_trust_forget"
 )
 
 func (s *server) trustedBrowserStore() (state.MFATrustedBrowserStore, bool) {
@@ -139,4 +138,61 @@ func (s *server) forgetTrustedBrowsers(ctx context.Context, accountID, reason st
 	if n > 0 && s.audit != nil {
 		s.audit.Emit(ctx, "account.mfa_browsers_forgotten", &accountID, map[string]any{"count": n, "reason": reason})
 	}
+}
+
+// fillTrustedBrowsers lists the account's remembered browsers for the
+// account page.
+func (s *server) fillTrustedBrowsers(r *http.Request, acct state.Account, data *dashboard.AccountData) {
+	st, ok := s.trustedBrowserStore()
+	if !ok || !acct.MFAEnrolled() {
+		return
+	}
+	browsers, err := st.ListMFATrustedBrowsers(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Warn("mfa_trust.list", "err", err, "account_id", acct.ID)
+		return
+	}
+	const day = "2006-01-02"
+	for _, b := range browsers {
+		row := dashboard.AccountTrustedBrowserRow{ID: b.ID, Browser: b.UAFamily, IP: b.CreatedIP,
+			Remembered: b.CreatedAt.UTC().Format(day), Expires: b.ExpiresAt.UTC().Format(day)}
+		if b.LastUsedAt != nil {
+			row.LastUsed = b.LastUsedAt.UTC().Format(day)
+		}
+		data.TrustedBrowsers = append(data.TrustedBrowsers, row)
+	}
+}
+
+// dashboardForgetTrustedBrowser is
+// POST /dashboard/account/trusted-browsers/{id}/forget.
+func (s *server) dashboardForgetTrustedBrowser(w http.ResponseWriter, r *http.Request) {
+	acct, ok := s.accountFormAccount(w, r, dashboardMFATrustForgetAction, dashboardMFATrustForgetCookie)
+	if !ok {
+		return
+	}
+	st, ok := s.trustedBrowserStore()
+	if !ok {
+		redirectAccountError(w, r, "failed")
+		return
+	}
+	id := r.PathValue("id")
+	if err := st.RevokeMFATrustedBrowser(r.Context(), acct.ID, id); err != nil {
+		redirectAccountError(w, r, "failed")
+		return
+	}
+	s.audit.Emit(r.Context(), "account.mfa_browser_forgotten", &acct.ID, map[string]any{"id": id})
+	http.Redirect(w, r, accountPagePath+"?trusted_browser=forgotten", http.StatusSeeOther)
+}
+
+// dashboardForgetAllTrustedBrowsers is
+// POST /dashboard/account/trusted-browsers/forget-all.
+func (s *server) dashboardForgetAllTrustedBrowsers(w http.ResponseWriter, r *http.Request) {
+	acct, ok := s.accountFormAccount(w, r, dashboardMFATrustForgetAction, dashboardMFATrustForgetCookie)
+	if !ok {
+		return
+	}
+	s.forgetTrustedBrowsers(r.Context(), acct.ID, "account_page")
+	http.SetCookie(w, &http.Cookie{Name: oauthFlowCookieName(r, mfaTrustCookie), Value: "", Path: "/",
+		HttpOnly: true, Secure: requestIsHTTPS(r), SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	http.Redirect(w, r, accountPagePath+"?trusted_browser=forgotten", http.StatusSeeOther)
 }

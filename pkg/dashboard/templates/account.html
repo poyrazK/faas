@@ -122,6 +122,35 @@
         </table>
       {{end}}
 
+      {{if $d.TrustedBrowsers}}
+        <h2>Remembered browsers</h2>
+        <p class="muted">These browsers skip the authenticator code at sign-in until the date shown. Changing your password or email, or signing out everywhere, forgets them all.</p>
+        <table>
+          <thead><tr><th>Browser</th><th>Address</th><th>Remembered</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
+          <tbody>
+            {{range $d.TrustedBrowsers}}
+              <tr>
+                <td>{{.Browser}}</td>
+                <td>{{if .IP}}<code>{{.IP}}</code>{{end}}</td>
+                <td>{{.Remembered}}</td>
+                <td>{{.LastUsed}}</td>
+                <td>{{.Expires}}</td>
+                <td>
+                  <form class="inline" method="POST" action="/dashboard/account/trusted-browsers/{{.ID}}/forget">
+                    <input type="hidden" name="csrf_token" value="{{$d.TrustedBrowserForgetToken}}">
+                    <button type="submit">Forget</button>
+                  </form>
+                </td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+        <form method="POST" action="/dashboard/account/trusted-browsers/forget-all">
+          <input type="hidden" name="csrf_token" value="{{$d.TrustedBrowserForgetToken}}">
+          <button type="submit">Forget all browsers</button>
+        </form>
+      {{end}}
+
       <h2>Security activity</h2>
       {{if $d.Activity}}
         <table>

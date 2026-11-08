@@ -54,6 +54,12 @@ operation still enforces its own authorization and admission checks.
 - **Sessions:** `gregale account sessions list`, `gregale account sessions
   revoke SESSION_ID`, or `--all` to sign out every browser. A sign-in from a
   browser and network none of your recent sessions used sends an email.
+- **Remembered browsers:** with two-factor authentication on, tick **Remember
+  this browser for 30 days** when you enter the sign-in code, and that browser
+  skips the code at sign-in until then. Sensitive actions still ask for a
+  code. The account page lists remembered browsers (at most 10) with
+  **Forget** and **Forget all browsers**; changing your password or email, or
+  signing out everywhere, forgets them all.
 - **Security activity:** the account page's **Security activity** table and
   `gregale account activity list` (`GET /v1/account/security-activity`, a
   full-access key) show sign-ins, API keys, CLI and agent sign-ins, and
