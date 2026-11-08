@@ -602,6 +602,8 @@ func (s *server) revokeSessionsAfterPasswordChange(ctx context.Context, accountI
 	if keepSID == "" {
 		keepSID = uuid.Nil.String()
 	}
+	// A changed password or email also forgets remembered browsers.
+	s.forgetTrustedBrowsers(ctx, accountID, "credential_change")
 	n, err := s.store.RevokeAllSessions(ctx, accountID, keepSID)
 	if err != nil {
 		s.log.Warn("password change: revoke sessions failed", "account", accountID, "err", err)

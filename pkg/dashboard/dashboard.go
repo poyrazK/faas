@@ -108,6 +108,8 @@ type MFAChallengeData struct {
 	// Next is where a passed challenge continues (already validated as a
 	// same-origin dashboard or CLI-approval path).
 	Next string
+	// OfferRemember shows "Remember this browser" at the sign-in check.
+	OfferRemember bool
 }
 
 // IndexData is the /dashboard/ overview payload.
