@@ -1176,6 +1176,14 @@ func gatewaydConfig(addr, controlAddr, apidLoopback string, guestDNS bool) strin
 			config += fmt.Sprintf("service_tcp_listen=%q\nservice_tcp_dns=true\n",
 				net.JoinHostPort(bridge, strconv.Itoa(api.ServiceTCPProxyPort)))
 		}
+		// ADR-1027: guests reach managed databases at api.DatabaseRouteAddress
+		// through the host DNAT and this forwarder. A test points it at its
+		// disposable SQL proxy (see DatabaseRouteEnvironment); vmmd needs
+		// FAAS_VMMD_DATABASE_ROUTE_ENABLED=1 for the netns admission and NAT.
+		if upstream := strings.TrimSpace(os.Getenv(DatabaseRouteUpstreamEnv)); upstream != "" {
+			config += fmt.Sprintf("database_route_listen=%q\ndatabase_route_upstreams=[%q]\n",
+				net.JoinHostPort(bridge, strconv.Itoa(api.DatabaseRouteProxyPort)), upstream)
+		}
 	}
 	return config
 }
