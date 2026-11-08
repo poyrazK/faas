@@ -27,6 +27,7 @@ type dataAPIHooksReceipt struct {
 	Source    string   `json:"source"`
 	Changed   []string `json:"changed"`
 	Restarted bool     `json:"restarted,omitempty"`
+	Parked    bool     `json:"parked,omitempty"`
 	// DrainEvery is the drain schedule that wakes a parked API, if any.
 	DrainEvery string `json:"drain_every,omitempty"`
 	// RuntimeReports is "unavailable" when the installation accepts no
@@ -64,31 +65,33 @@ func dataAPIHooksSQL(schema string) (string, error) {
 	return strings.NewReplacer("{{schema}}", schema, "{{backlog_max}}", strconv.Itoa(api.DataAPIChangeHooksBacklogMax)).Replace(string(content)), nil
 }
 
-const dataAPIHooksUpgradeHeader = `-- Data API change hooks upgrade (ADR-20261022121642 amendment 2). Apply as the
--- schema owner in a migration, once, to a database whose hooks were installed
--- before the backlog bound: changes stop recording while %d wait to publish,
--- so a backlog the platform never takes cannot fill the database. Building the
--- index holds writes to gregale_change_events while it runs.
+const dataAPIHooksUpgradeHeader = `-- Data API change hooks upgrade (ADR-20261022121642 amendments 2 and 3).
+-- Apply as the schema owner in a migration to a database whose hooks were
+-- installed by an earlier CLI; applying it again changes nothing. It adds the
+-- backlog bound (changes stop recording while %d wait to publish, so a
+-- backlog the platform never takes cannot fill the database), notes when
+-- changes were left out, retries rejected changes under new identifiers and
+-- adds gregale_hooks.discard_waiting(). Building the index holds writes to
+-- gregale_change_events while it runs.
 SET LOCAL lock_timeout = '5s';
 CREATE INDEX IF NOT EXISTS gregale_change_events_pending ON %s.gregale_change_events (id) WHERE failed_at IS NULL;
 
 `
 
-// dataAPIHooksUpgradeSQL renders the upgrade for hooks installed before the
-// backlog bound: the pending index and capture, from the same template as
-// the full installation so the two never drift.
+// dataAPIHooksUpgradeSQL renders the upgrade for hooks installed by an
+// earlier CLI: the pending index and the template's replayable section, from
+// the same template as the full installation so the two never drift.
 func dataAPIHooksUpgradeSQL(schema string) (string, error) {
 	full, err := dataAPIHooksSQL(schema)
 	if err != nil {
 		return "", err
 	}
-	const start, end = "CREATE FUNCTION gregale_hooks.capture()", "REVOKE ALL ON FUNCTION gregale_hooks.capture() FROM PUBLIC;\n"
+	const start, end = "-- gregale:upgrade-begin", "-- gregale:upgrade-end\n"
 	from, to := strings.Index(full, start), strings.Index(full, end)
 	if from < 0 || to < from {
-		return "", errors.New("the change hooks template has no capture function")
+		return "", errors.New("the change hooks template has no upgrade section")
 	}
-	capture := "CREATE OR REPLACE FUNCTION" + strings.TrimPrefix(full[from:to+len(end)], "CREATE FUNCTION")
-	return fmt.Sprintf(dataAPIHooksUpgradeHeader, api.DataAPIChangeHooksBacklogMax, schema) + capture, nil
+	return fmt.Sprintf(dataAPIHooksUpgradeHeader, api.DataAPIChangeHooksBacklogMax, schema) + full[from:to+len(end)], nil
 }
 
 func cmdDataAPIHooksSQL(args []string) int {
@@ -250,10 +253,11 @@ func restartDataAPIHooks(ctx context.Context, client *api.Client, receipt *dataA
 	if !restart {
 		return nil
 	}
-	if _, err := client.RestartAppFresh(ctx, receipt.App); err != nil {
+	_, parked, err := restartDataAPISettings(ctx, client, receipt.App)
+	if err != nil {
 		return fmt.Errorf("settings stored; fresh restart failed: %w", err)
 	}
-	receipt.Restarted = true
+	receipt.Restarted, receipt.Parked = !parked, parked
 	return nil
 }
 
@@ -288,6 +292,9 @@ func printDataAPIHooks(verb string, receipt dataAPIHooksReceipt) {
 	switch verb {
 	case "disable":
 		PrintOK(osStdout, "Change hooks off for %s; recorded changes stay in gregale_change_events until hooks are on again", receipt.App)
+		_, _ = fmt.Fprintf(osStdout, "Hooked tables keep recording changes, up to %d, then leave them out; they publish when hooks are on again.\n"+
+			"To stop recording, unhook each table in a migration: SELECT gregale_hooks.disable('api.orders');\n"+
+			"To drop what waits: SELECT gregale_hooks.discard_waiting();\n", api.DataAPIChangeHooksBacklogMax)
 	case "status":
 		_, _ = fmt.Fprintf(osStdout, "change hooks  %s\nsource        %s\n", onOff(receipt.Enabled), receipt.Source)
 		if receipt.Enabled {
@@ -320,9 +327,14 @@ Subscribe from any app's gregale.yaml, in commit order per row:
 		}
 	}
 	if verb == "status" && receipt.Enabled && dataAPIHooksBacklogFull(receipt.Delivery) {
-		PrintWarn(os.Stderr, "change hooks stop recording at %d waiting changes; changes beyond it are not recorded. Fix publishing (see delivery), or discard with SELECT gregale_hooks.discard_failed()", api.DataAPIChangeHooksBacklogMax)
+		PrintWarn(os.Stderr, "change hooks stop recording at %d waiting changes; changes beyond it are not recorded. Fix publishing (see delivery), or drop what waits with SELECT gregale_hooks.discard_waiting() (gregale data-api hooks export --upgrade adds it to older installations)", api.DataAPIChangeHooksBacklogMax)
 	}
-	if verb != "status" && !receipt.Restarted {
+	if verb == "status" && receipt.Enabled && receipt.Delivery != nil && receipt.Delivery.LastDroppedAt != nil {
+		PrintWarn(os.Stderr, "changes were left out at the backlog bound, most recently at %s; those changes were not recorded and will not publish", receipt.Delivery.LastDroppedAt.UTC().Format(time.RFC3339))
+	}
+	if verb != "status" && receipt.Parked {
+		_, _ = fmt.Fprintln(osStdout, dataAPIParkedSettingsNote)
+	} else if verb != "status" && !receipt.Restarted {
 		_, _ = fmt.Fprintf(osStdout, "Run gregale data-api refresh %s to apply the settings.\n", receipt.App)
 	}
 }

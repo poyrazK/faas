@@ -85786,6 +85786,7 @@ components:
         last_published_at: { type: string, format: date-time, description: When a runtime last published changes. }
         last_failure_code: { type: string, pattern: '^[a-z0-9_]{1,64}$', description: The code of the latest rejected change. }
         publishing: { type: string, enum: [ok, retrying], description: retrying when waiting changes are held back by publications that keep failing. }
+        last_dropped_at: { type: string, format: date-time, description: 'When capture last left a change out because the backlog was full; those changes were not recorded.' }
     DataAPIChangeHookReport:
       description: A runtime's change hook delivery report, read from its change event table. oldest_pending_at is present exactly when changes are pending.
       type: object
@@ -85799,6 +85800,7 @@ components:
         last_published_at: { type: string, format: date-time }
         last_failure_code: { type: string, pattern: '^[a-z0-9_]{1,64}$' }
         publishing: { type: string, enum: [ok, retrying] }
+        last_dropped_at: { type: string, format: date-time }
     DataAPIConnectionBudgets:
       description: Read-only planning snapshots. Not applicable means the app has no visible Data API binding.
       type: object
@@ -85905,7 +85907,7 @@ components:
         hours: { type: array, maxItems: 48, items: { $ref: '#/components/schemas/DataAPIUsageHour' } }
         access: { $ref: '#/components/schemas/DataAPIAccessConfig' }
     DataAPIAccessConfig:
-      description: Access settings the runtime reports for live reads without a user token, sent after start and hourly. It replaces the stored settings; turning usage reporting off forgets them. Holds key hashes, never keys.
+      description: Access settings the runtime reports for live reads, sent after start and hourly. It replaces the stored settings unless the stored ones come from a runtime process that started later; turning usage reporting off forgets them. Holds key hashes, never keys.
       type: object
       additionalProperties: false
       required: [version, schemas]
@@ -85915,6 +85917,8 @@ components:
         auth: { $ref: '#/components/schemas/DataAPIUserAuth' }
         public_read: { type: array, maxItems: 64, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}\.[A-Za-z_][A-Za-z0-9_]{0,62}$' } }
         server_keys: { type: array, maxItems: 2, items: { $ref: '#/components/schemas/DataAPIServerKey' } }
+        allow_without_rls: { type: array, maxItems: 64, description: 'Relations signed-in users may read without row-level security; live reads apply the same exemptions.', items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}\.[A-Za-z_][A-Za-z0-9_]{0,62}$' } }
+        started_at: { type: string, format: date-time, description: 'When the reporting runtime process started. A report never replaces settings from a process that started later.' }
     DataAPIUserAuth:
       description: The issuer, JWKS URL and audience the Data API verifies user tokens against. Live reads verify user tokens with the same settings.
       type: object

@@ -93,6 +93,11 @@ async function harness(t, { claims = [], publish = () => ({ status: 200, body: {
     req.on('end', () => {
       if (req.method === 'GET') {
         reads.push({ path: req.url, headers: req.headers, claims: claimsOf(req.headers.authorization) })
+        // Delivery reports read the drop note; an installation before it has no table.
+        if (req.url.startsWith('/gregale_change_drops?')) {
+          if (table.dropped === undefined) { res.statusCode = 404; return res.end('{"code":"PGRST205"}') }
+          return res.end(JSON.stringify([{ last_dropped_at: table.dropped }]))
+        }
         const rejected = req.url.includes('failed_at=not.is.null')
         const total = rejected ? table.failed ?? 0 : table.pending ?? 0
         const rows = total ? [rejected ? { failure_code: table.code } : { captured_at: table.oldest, available_at: table.availableAt ?? '-infinity' }] : []
@@ -242,7 +247,7 @@ test('the gateway hides the change event table and wakes the relay after writes'
     req.on('error', reject)
     req.end(method === 'POST' ? '{}' : undefined)
   })
-  for (const path of ['/rest/v1/gregale_change_events', '/rest/v1/gregale_change_events?select=*', '/rest/v1/rpc/gregale_change_claim']) {
+  for (const path of ['/rest/v1/gregale_change_events', '/rest/v1/gregale_change_events?select=*', '/rest/v1/gregale_change_drops', '/rest/v1/rpc/gregale_change_claim']) {
     const answer = await request(path)
     assert.equal(answer.status, 404, path)
   }
@@ -277,6 +282,19 @@ test('the relay reports delivery from its table, when it changes and as a heartb
   h.advance(limits.changeHookReportHeartbeatMs)
   await h.step()
   assert.equal(h.reports.length, 2, 'the heartbeat keeps the report fresh')
+})
+
+test('changes left out at the backlog bound are reported with when it last happened', async t => {
+  const h = await harness(t, { table: { pending: 100000, oldest: '2026-10-22T12:00:00Z', dropped: '2026-11-07T10:00:00.5+00:00' } })
+  await h.step()
+  assert.equal(h.reports[0].body.last_dropped_at, '2026-11-07T10:00:00.500Z')
+  const never = await harness(t, { table: { pending: 1, oldest: '2026-10-22T12:00:00Z', dropped: null } })
+  await never.step()
+  assert.equal(never.reports[0].body.last_dropped_at, undefined, 'never dropped')
+  const older = await harness(t, { table: { pending: 1, oldest: '2026-10-22T12:00:00Z' } })
+  await older.step()
+  assert.equal(older.reports.length, 1, 'an installation without the note still reports')
+  assert.equal(older.reports[0].body.last_dropped_at, undefined)
 })
 
 test('failing publications are reported as retrying at once', async t => {
@@ -314,7 +332,7 @@ test('a drain waits until the relay has nothing more to do', async t => {
   await h.step()
   const drained = h.relay.drain(60_000)
   await h.step()
-  assert.deepEqual(await drained, { pending: 0, failed: 0, oldestPendingAt: null, publishing: 'ok', lastFailureCode: null })
+  assert.deepEqual(await drained, { pending: 0, failed: 0, oldestPendingAt: null, publishing: 'ok', lastFailureCode: null, lastDroppedAt: null })
   const waiting = await h.relay.drain(5)
   assert.equal(waiting.pending, 0, 'a drain answers by its deadline even if no cycle runs')
 })
