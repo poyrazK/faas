@@ -87,6 +87,10 @@ type summarizedSpan struct {
 	// ErrorType is the failure class of an error span (error.type or the
 	// first exception.type); sanitized and bounded on the debugger read path.
 	ErrorType string `json:"error_type,omitempty"`
+	// resource carries the span's allowlisted resource attributes from
+	// summarizing to boundSpan, which merges them into Attributes. Never
+	// serialized on its own.
+	resource map[string]string
 }
 
 // add merges a new batch of spans into this accumulator. The

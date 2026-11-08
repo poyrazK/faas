@@ -63,6 +63,14 @@ error rate at least 5 percentage points and twice above baseline:
 
 > http "api.stripe.com" fails 12.5% of calls since the previous deployment (v80), up from 0.0%.
 
+Each retained span keeps up to 32 of its attributes. It also keeps these
+OpenTelemetry resource attributes, so a span in a trace that crosses services
+says which service produced it: `service.name`, `service.namespace`,
+`service.version`, `service.instance.id`, `deployment.environment.name` and
+`telemetry.sdk.language`. They count toward the 32 and are kept first; a span
+attribute with the same name wins. Other resource attributes (host names,
+process command lines and the like) are not kept.
+
 ## Request logs
 
 With tracing enabled, the app's own log lines are linked to the request that
