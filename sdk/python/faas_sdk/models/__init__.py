@@ -2399,6 +2399,7 @@ from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
 from .update_deployment_traffic_request_expected_mcp_access_policy import (
     UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy,
 )
+from .update_deployment_traffic_request_expected_traffic import UpdateDeploymentTrafficRequestExpectedTraffic
 from .update_edge_rule_list_request import UpdateEdgeRuleListRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
@@ -4908,6 +4909,7 @@ __all__ = (
     "UpdateDeploymentRequest",
     "UpdateDeploymentTrafficRequest",
     "UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy",
+    "UpdateDeploymentTrafficRequestExpectedTraffic",
     "UpdateEdgeRuleListRequest",
     "UpdateEdgeRuleRequest",
     "UpdateEdgeRuleRequestMatchHeaders",
