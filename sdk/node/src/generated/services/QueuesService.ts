@@ -25,6 +25,8 @@ import type { QueueLeaseRequest } from '../models/QueueLeaseRequest.js';
 import type { QueueLeaseResponse } from '../models/QueueLeaseResponse.js';
 import type { QueuePeekResponse } from '../models/QueuePeekResponse.js';
 import type { QueueReceiveResponse } from '../models/QueueReceiveResponse.js';
+import type { QueueSendBatchRequest } from '../models/QueueSendBatchRequest.js';
+import type { QueueSendBatchResponse } from '../models/QueueSendBatchResponse.js';
 import type { QueueSendRequest } from '../models/QueueSendRequest.js';
 import type { QueueSendResponse } from '../models/QueueSendResponse.js';
 import type { QueueStateResponse } from '../models/QueueStateResponse.js';
@@ -231,6 +233,58 @@ export class QueuesService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
+        403: `code: plan_queue_depth — per-app queue at the plan's MaxQueueDepth.`,
+        413: `code: source_too_large — payload exceeds the plan's MaxSourceBytesPerInvocation.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Send up to 100 messages to one queue as one request.
+   * Sends the messages in order with the same admission as a single send:
+   * queue depth, backlog bytes and message size are checked for each one.
+   * The first refused message ends the batch; the messages after it are
+   * not attempted. Resend from the first message that was not accepted.
+   * The batch counts as one request against the account's API budget.
+   * API keys require `queues:send`, `deploy:write`, or `admin`.
+   *
+   * @returns QueueSendBatchResponse The outcome of every message, in input order.
+   * @throws ApiError
+   */
+  public static queueSendBatch({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: QueueSendBatchRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<QueueSendBatchResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/queues/send-batch',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         403: `code: plan_queue_depth — per-app queue at the plan's MaxQueueDepth.`,
         413: `code: source_too_large — payload exceeds the plan's MaxSourceBytesPerInvocation.`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -1749,6 +1803,58 @@ export class QueuesService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
+        403: `code: plan_queue_depth — per-app queue at the plan's MaxQueueDepth.`,
+        413: `code: source_too_large — payload exceeds the plan's MaxSourceBytesPerInvocation.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Organization queues: Send up to 100 messages to one queue as one request
+   * Organization queues: Send up to 100 messages to one queue as one request. Owners, admins and developers can configure and operate queues. Requires current membership and the corresponding credential scope. Mutations require organization billing adoption. The first refused message ends the batch; resend from the first message that was not accepted. API keys require `queues:send`, `deploy:write`, or `admin`.
+   * @returns QueueSendBatchResponse Organization queues: The outcome of every message, in input order.
+   * @throws ApiError
+   */
+  public static sendOrgQueueMessageBatch({
+    organization,
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Organization queues: Send up to 100 messages to one queue as one request. Company owning the application or project.
+     */
+    organization: string,
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: QueueSendBatchRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<QueueSendBatchResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/apps/{slug}/queues/send-batch',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         403: `code: plan_queue_depth — per-app queue at the plan's MaxQueueDepth.`,
         413: `code: source_too_large — payload exceeds the plan's MaxSourceBytesPerInvocation.`,
         429: `429 application/problem+json response. Authentication throttling uses

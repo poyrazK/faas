@@ -1023,9 +1023,12 @@ outright.
 
 ### Verifying the caller (preview)
 
-By default a service learns who called it from platform-set headers. Signed
-caller assertions let the target verify that claim itself. They are a preview
-and are not enabled on every installation.
+The platform authorizes every internal call before forwarding it, but by
+default the target is not told which service called: the gateway's caller
+header stays on the node and is removed before the request reaches your code.
+Only the preview markers above reach the target. Signed caller assertions let
+the target learn and verify the caller itself. They are a preview and are not
+enabled on every installation.
 
 Every internal call then carries `X-Faas-Caller-Assertion`: a short-lived
 (30 s) EdDSA JWT stating `sub` = calling app id, `aud` = receiving app id,

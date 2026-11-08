@@ -14,6 +14,10 @@ export type AccountResponse = {
   email: string;
   email_verified: boolean;
   /**
+   * Optional display name; absent when unset.
+   */
+  display_name?: string;
+  /**
    * 30-day verification deadline; present only while email_verified is false.
    */
   email_verification_grace_ends_at?: string;

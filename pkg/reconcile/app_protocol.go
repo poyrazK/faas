@@ -45,3 +45,26 @@ func (s *Service) syncAppProtocols(ctx context.Context, project state.Project, w
 	}
 	return nil
 }
+
+// syncAddedAppProtocols sets the declared protocol on the apps a named
+// environment's deploy created. It leaves existing apps alone: the protocol
+// is app-wide, so a stage deploy changing it would change production
+// (ADR-20261108090000). syncAppProtocols covers production deploys.
+func (s *Service) syncAddedAppProtocols(ctx context.Context, added []state.App, workloads []reposcan.Workload) error {
+	declared := make(map[string]string, len(workloads))
+	for _, w := range workloads {
+		if w.AppProtocol != "" {
+			declared[strings.ToLower(w.Name)] = w.AppProtocol
+		}
+	}
+	for _, app := range added {
+		protocol, ok := declared[strings.ToLower(app.WorkloadName)]
+		if !ok || protocol == app.AppProtocol {
+			continue
+		}
+		if _, err := s.Store.UpdateApp(ctx, app.ID, state.UpdateAppParams{AppProtocol: &protocol, SetAppProtocol: true}); err != nil {
+			return fmt.Errorf("reconcile: set %s app protocol to %s: %w", app.Slug, protocol, err)
+		}
+	}
+	return nil
+}

@@ -51,6 +51,32 @@ func exerciseKeyProjectLimits(t *testing.T, store contractTestStore) {
 		t.Fatalf("changing a limit = %v, want ErrConflict", err)
 	}
 
+	// Rotation never widens a limit: the successor keeps it, on the account
+	// path and on the organization path the API rotates through.
+	_, rotatedHash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, _, err := store.RotateAPIKey(ctx, acct.ID, key.ID, rotatedHash, "", time.Hour)
+	if err != nil {
+		t.Fatalf("RotateAPIKey: %v", err)
+	}
+	if ids, limited, err := store.APIKeyProjectLimit(ctx, rotated.ID); err != nil || !limited || !slices.Equal(ids, projects) {
+		t.Fatalf("limit of the rotated key = %v, %v, %v; want %v", ids, limited, err, projects)
+	}
+	_, orgHash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := rotated.ID
+	orgRotated, _, err := store.RotateOrgAPIKeyWithProvenance(ctx, rotated.OrgID, rotated.ID, orgHash, "", 0, "", "", &parent)
+	if err != nil {
+		t.Fatalf("RotateOrgAPIKeyWithProvenance: %v", err)
+	}
+	if ids, limited, err := store.APIKeyProjectLimit(ctx, orgRotated.ID); err != nil || !limited || !slices.Equal(ids, projects) {
+		t.Fatalf("limit of the org-rotated key = %v, %v, %v; want %v", ids, limited, err, projects)
+	}
+
 	sum := sha256.Sum256([]byte("key-projects-code-" + suffix))
 	if err := store.IssueCliAuthCode(ctx, sum[:], time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("IssueCliAuthCode: %v", err)

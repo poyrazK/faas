@@ -48,6 +48,7 @@ type refreshFixture struct {
 	store        *state.MemStore
 	vmm          *refreshCheckVMM
 	boots        *sched.FakeVMM
+	engine       *sched.Engine
 	refresher    *sched.SnapshotRefresher
 	nodeA, nodeB state.ComputeNode
 }
@@ -67,8 +68,8 @@ func newRefreshFixture(t *testing.T) *refreshFixture {
 		}
 		*n = node
 	}
-	e := sched.XNewEngine(t, f.store, f.vmm, &sched.FakeNotifier{}, "1.10.0")
-	f.refresher = sched.NewSnapshotRefresher(e, nil, nil)
+	f.engine = sched.XNewEngine(t, f.store, f.vmm, &sched.FakeNotifier{}, "1.10.0")
+	f.refresher = sched.NewSnapshotRefresher(f.engine, nil, nil)
 	return f
 }
 

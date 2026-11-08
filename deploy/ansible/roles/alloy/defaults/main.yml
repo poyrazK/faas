@@ -56,6 +56,7 @@ alloy_journal_units:
   # Host helpers and timers.
   - faas-serving-probe.service
   - faas-cgroup-metrics.service
+  - faas-kernel-lockdown.service
   - faas-canary-artifact-sweep.service
   - faas-cp-state-backup.service
   - faas-audit-anchor.service
