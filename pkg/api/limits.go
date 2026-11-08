@@ -7689,6 +7689,26 @@ const (
 	// quiet-paused instance quiet for IdleLadderFreezeAfterSeconds, which
 	// measured admission books like a frozen instance.
 	IdleLadderFreezeLevel = 2
+	// Cold-page compression (ADR-20261107122928 §1, §2). vmmd ages a quiet
+	// VM's memory at most once per IdleLadderColdAge1Seconds of wall time,
+	// after the guest ran, so each multi-gen LRU generation spans at least
+	// that long. L3 compresses every generation but the youngest
+	// IdleLadderCold1KeepGenerations, L4 every one but the youngest
+	// IdleLadderCold2KeepGenerations (2 is the fewest the kernel keeps). A
+	// wake from L3/L4 may add at most IdleLadderWakeBudgetMillis, or the
+	// instance's own snapshot restore time if that is shorter; vmmd counts
+	// IdleLadderFaultMicrosPerPage for each page the guest brings back
+	// (measured on nested production-us; re-measure on bare metal, Rollout
+	// step 1). An app whose wake exceeds the budget keeps one more
+	// generation at each level, up to IdleLadderMaxExtraKeepGenerations;
+	// IdleLadderCeilingRelaxWakes wakes in a row under half the budget give
+	// one back.
+	IdleLadderCold1KeepGenerations    = 3
+	IdleLadderCold2KeepGenerations    = 2
+	IdleLadderWakeBudgetMillis        = 100
+	IdleLadderFaultMicrosPerPage      = 21
+	IdleLadderMaxExtraKeepGenerations = 2
+	IdleLadderCeilingRelaxWakes       = 5
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds

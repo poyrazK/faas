@@ -163,6 +163,15 @@ type Config struct {
 	// byte on a paused app's veth resumes it. Needs idle_ladder = "on". Off
 	// by default. FAAS_IDLE_LADDER_APPS overrides TOML.
 	IdleLadderApps bool `toml:"idle_ladder_apps"`
+	// IdleLadderCompress applies the idle ladder's L3 and L4
+	// (ADR-20261107122928): vmmd ages a quiet-paused VM's memory after the
+	// guest ran and, at 60 s and 180 s of quiet, compresses into memory-only
+	// zswap every multi-gen LRU generation but the youngest 3 and 2. A wake
+	// over its budget (100 ms, or the instance's restore time if shorter)
+	// makes the app keep one more generation. Needs idle_ladder = "on", and
+	// does nothing on a node without the zswap role or the multi-gen LRU.
+	// Off by default. FAAS_IDLE_LADDER_COMPRESS overrides TOML.
+	IdleLadderCompress bool `toml:"idle_ladder_compress"`
 	// AgentWaitPause enables the model-wait pause of agent runs
 	// (ADR-20261027090012): vmmd pauses a run VM while it waits on the
 	// outbound relay and nothing else, and resumes it on the relay's next
@@ -1000,6 +1009,13 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.IdleLadderApps = enabled
 	}
+	if v := os.Getenv("FAAS_IDLE_LADDER_COMPRESS"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_IDLE_LADDER_COMPRESS must be a boolean (got %q)", v)
+		}
+		c.IdleLadderCompress = enabled
+	}
 	idleLadder, ierr := parseIdleLadderMode(c.IdleLadder)
 	if ierr != nil {
 		return nil, ierr
@@ -1010,6 +1026,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if c.IdleLadderApps && c.IdleLadder != idleLadderOn {
 		return nil, fmt.Errorf("vmmd: idle_ladder_apps needs idle_ladder = on (FAAS_IDLE_LADDER_APPS, FAAS_IDLE_LADDER)")
+	}
+	if c.IdleLadderCompress && c.IdleLadder != idleLadderOn {
+		return nil, fmt.Errorf("vmmd: idle_ladder_compress needs idle_ladder = on (FAAS_IDLE_LADDER_COMPRESS, FAAS_IDLE_LADDER)")
 	}
 	if v := os.Getenv("FAAS_VMMD_AGENT_WAIT_PAUSE"); v != "" {
 		enabled, perr := strconv.ParseBool(v)
