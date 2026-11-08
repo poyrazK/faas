@@ -683,6 +683,11 @@ served by the app the host belongs to. If the gateways cannot be reached,
 the change is refused with 503 and nothing changes; retry it. Changes to one account's rules are
 applied one at a time; other accounts' changes never wait for yours.
 
+A deploy token or a project-limited agent key manages only rules for its
+own apps' hosts. It cannot change, delete or roll back over a rule whose
+`match_host` covers other hosts (`*`, a wildcard, another app's host); use an
+account API key for those. See [deploy tokens](deploys.md#deploy-tokens).
+
 Two people editing the same app's rules at once cannot overwrite each other:
 send the `ETag` from `GET /v1/apps/{slug}/edge-rules` as `If-Match`, and a
 change made since answers 412.

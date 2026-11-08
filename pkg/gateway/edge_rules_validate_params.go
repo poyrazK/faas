@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -82,25 +81,7 @@ func edgeRuleParamValues(r *http.Request, location, pathTemplate string, kinds m
 		values, err := api.ParseEdgeRuleQuery(r.URL.RawQuery)
 		return values, err == nil
 	default:
-		out := make(map[string][]string, len(kinds))
-		for name, kind := range kinds {
-			raw := r.Header.Values(name)
-			if len(raw) == 0 {
-				continue
-			}
-			if kind.Type != "array" {
-				out[name] = raw
-				continue
-			}
-			var items []string
-			for _, v := range raw {
-				for _, item := range strings.Split(v, ",") {
-					items = append(items, strings.TrimSpace(item))
-				}
-			}
-			out[name] = items
-		}
-		return out, true
+		return api.EdgeRuleHeaderParamValues(r.Header, kinds), true
 	}
 }
 
