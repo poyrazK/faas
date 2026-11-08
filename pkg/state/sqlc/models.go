@@ -4717,6 +4717,14 @@ type EdgeRuleEvent struct {
 	WafScore      int32
 }
 
+type EdgeRuleHeaderSecret struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	Ciphertext []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
 type EdgeRuleHitCount struct {
 	RuleID      pgtype.UUID
 	AppID       pgtype.UUID

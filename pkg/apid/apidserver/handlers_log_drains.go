@@ -462,6 +462,17 @@ func sealAppLogDrainAuthHeader(plaintext string) ([]byte, error) {
 	return secretbox.SealBytesTo(recipients, appLogDrainSecretSealLabel, []byte(plaintext), api.AppLogDrainAuthHeaderMaxBytes)
 }
 
+// sealEdgeRuleHeaderValue seals a secret edge-rule request header value to
+// the edge domain, like a log drain header; gatewayd-internal opens it when
+// it compiles the rule (ADR-20261108110000).
+func sealEdgeRuleHeaderValue(plaintext string) ([]byte, error) {
+	recipients, err := edgeCredentialRecipients()
+	if err != nil {
+		return nil, fmt.Errorf("seal edge rule header value: %w", err)
+	}
+	return secretbox.SealBytesTo(recipients, api.EdgeRuleHeaderSecretSealNamespace, []byte(plaintext), api.EdgeRuleHeaderSecretMaxBytes)
+}
+
 func appLogDrainHealthResponse(health state.AppLogDrainHealth) api.AppLogDrainHealthResponse {
 	return api.AppLogDrainHealthResponse{
 		LogDrainID:            health.DrainID,
