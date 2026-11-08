@@ -1284,6 +1284,26 @@ paths:
               schema: {$ref: '#/components/schemas/SignInMethodsResponse'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/security-activity:
+    get:
+      tags: [account]
+      operationId: getAccountSecurityActivity
+      summary: List the account's sign-ins and security changes.
+      description: |
+        Sign-ins, API keys and CLI sign-ins, password, email, two-factor
+        and sign-in method changes of the last 90 days, newest first, at
+        most 100. Each event carries a fixed summary, and the client address
+        and sign-in method when they were recorded. Needs a full-access
+        credential.
+      responses:
+        '200':
+          description: Security events, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SecurityActivityResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/account/sign-in-methods/{provider}:
     parameters:
       - name: provider
@@ -36842,6 +36862,25 @@ components:
             Expand ${name} request values in `value` (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>, cookie:<name>;
             $$ is a literal $). Control characters are dropped and each
             value is capped at 1 KiB. Not allowed with action=remove.
+        secret:
+          type: boolean
+          description: |
+            Seal `value` (request headers only): it is
+            stored encrypted to the edge seal domain and never returned.
+            Authorization, Proxy-Authorization, Cookie and names containing
+            token, secret, password, api-key, apikey, signature or credential
+            are sealed without it. Not allowed with template or action=remove.
+        secret_id:
+          type: string
+          description: |
+            The sealed value of a secret op, returned in place of `value`.
+            Send it back with no `value` to keep that value.
+        redacted:
+          type: boolean
+          description: |
+            Set in responses on a credential-named value stored before
+            sealing, which is left out. Send the op back with no `value` to
+            seal the stored value.
     EdgeRuleHeadersAction:
       description: 'Mutates request + response headers. The gateway enforces a hard-coded blacklist (Host, Content-Length, Transfer-Encoding, Connection, x-faas-*).'
       type: object
@@ -41456,6 +41495,24 @@ components:
       properties:
         status: {type: string, enum: [sent, already_verified]}
         email: {type: string, format: email}
+    SecurityActivityResponse:
+      description: "Body of `GET /v1/account/security-activity`."
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items: {$ref: '#/components/schemas/SecurityActivityEvent'}
+    SecurityActivityEvent:
+      description: "One sign-in, credential or account-security change."
+      type: object
+      required: [at, summary, kind]
+      properties:
+        at: {type: string, format: date-time}
+        kind: {type: string, description: "Audit event kind, e.g. auth.session.created or api_key.created."}
+        summary: {type: string, description: "Fixed English phrase for the kind."}
+        ip: {type: string, description: "Client address recorded with the event."}
+        detail: {type: string, description: "Sign-in method, provider or key label, when recorded."}
     SignInMethodsResponse:
       description: "The ways the account can sign in."
       type: object

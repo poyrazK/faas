@@ -181,6 +181,7 @@ ROOT_WRAPPER_MODULES = (
     "async_secret_reload_runtime.py",
     "lifecycle_runtime.py",
     "workflows.py",
+    "functions.py",
     "_binding_client_runtime.py",
     "_async_binding_client_runtime.py",
 )

@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // electEgressOverage turns on subjectID's egress overage election from the
@@ -115,5 +116,51 @@ func TestPushPendingEgressUnelectedNeverBills(t *testing.T) {
 	}
 	if calls := provider.MeterCalls(); len(calls) != 0 {
 		t.Fatalf("egress calls = %+v, want none", calls)
+	}
+}
+
+// Egress past the allowance counts toward the spend cap only when it was sent
+// in an hour the election covers: the bytes the subject is billed for
+// (ADR-20261103131742 amendment 2).
+func TestRunQuotaOnce_EgressOutsideElectionDoesNotCountTowardCap(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	now := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+	acct := makeAccount(t, ctx, store, api.PlanHobby)
+	store.SetClockForTest(func() time.Time { return now })
+	store.SetOverageCapCentsForTest(acct.ID, 1)
+	const gib = int64(1 << 30)
+	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1", now.Add(-time.Minute), 0, 0, 0, 0, 2*gib, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive}
+	cfg := &meter.Config{}
+	cfg.Defaults()
+	loop := meter.NewLoop(store, nil, &fakeParker{}, provider, &fakeNotifier{}, nil, nil, nil, nil,
+		func() time.Time { return now }, discardLog(), cfg, wire.NewOpsMetrics("meter_test_egress_outside_election"))
+	loop.RunQuotaOnce(ctx)
+	if _, found, err := store.GetSpendCapHold(ctx, acct.ID); err != nil || found {
+		t.Fatalf("spend cap hold found=%v err=%v; want none without an election", found, err)
+	}
+	// Elected earlier this month and withdrawn: bytes sent after the
+	// withdrawal are not billed, so they still do not count.
+	if _, err := store.SetEgressOverage(ctx, acct.ID, true, now.Add(-48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetEgressOverage(ctx, acct.ID, false, now.Add(-24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	loop.RunQuotaOnce(ctx)
+	if _, found, err := store.GetSpendCapHold(ctx, acct.ID); err != nil || found {
+		t.Fatalf("spend cap hold found=%v err=%v; want none for bytes sent after the withdrawal", found, err)
+	}
+	// Bytes above the allowance sent while the election was on are billed
+	// and count.
+	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1", now.Add(-36*time.Hour), 0, 0, 0, 0, 2*gib, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	loop.RunQuotaOnce(ctx)
+	if _, found, err := store.GetSpendCapHold(ctx, acct.ID); err != nil || !found {
+		t.Fatalf("spend cap hold found=%v err=%v; want the overage billed under the election counted", found, err)
 	}
 }

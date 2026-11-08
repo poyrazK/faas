@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "7401dc36495fe9baeb6967a085ade2be7cdb23f2d1d5a627892c8ac6857b8a64",
+      "revision": "4b537a4c342ec4b16a7925a74eb6d8fd03d394b5d515e5553a033099ecc6632b",
       "files": [
         "faas.rules.yml"
       ],
@@ -1471,11 +1471,11 @@
           "group_name": "faas_compute_edge",
           "rule_name": "FaasEdgeCertificateExpiringSoon",
           "definition": {
-            "expression_hash": "fd3f0d406294d25c8d3a4ace747ef1c20c95648be53c95b30c2b93045b68bb38",
+            "expression_hash": "f9eb75880143be3e1b901f22530f4d0719f6a10580d41240fc913ec793f5b886",
             "labels_hash": "4a22e539b275945c1a41b3c577eceb35730aaab00303f6e7112e73a61087f1d8",
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "cae16490cb95c9960393be49439f78fe8413e9ca44a296513e273232209c78e4"
+            "fingerprint": "d9d174e31b4c5d280cf9582f9c2b89a746704581ba67d95f1bbcf26840f2cd94"
           }
         },
         {
@@ -1853,6 +1853,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b5cba8e38cae58e9dcfbc42f97e2d10fac973aacc7f28bab89199884cd830f7a"
+          }
+        },
+        {
+          "id": "3cb51b23428391e0d57dac6eb6112603c890f3caf0502b9ec659321c4ebabbfc",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdLedgerEgressDrift",
+          "definition": {
+            "expression_hash": "122502a312d6e1a0d8219d4dae642506c28a6ff518239023b4ae0f71f18ab938",
+            "labels_hash": "d6f182a1e274f40cb1bfacc2304834a3508e0973909adf95fad78b511d7ce7ee",
+            "for_seconds": 7200,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6fe155f9308fa763ff2f84c236afe6c55071226e84fd278345515eeef5a76619"
           }
         },
         {
@@ -2685,6 +2698,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "382b2dfdaa225af276d642bc8295fa8535fc0062b15b7a2d2e3532bbb51228e5"
+          }
+        },
+        {
+          "id": "5ac08cd2439909805a0aca1eca1ab73a11bb0fbfec83f7ce2cb365daa8262f96",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdBillingUsageSourceMismatch",
+          "definition": {
+            "expression_hash": "1d49898e3d871b06edc7214fc428bddec9dad79de8e09a68be9f7f19ba7be78a",
+            "labels_hash": "d6f182a1e274f40cb1bfacc2304834a3508e0973909adf95fad78b511d7ce7ee",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8767877a197ed261d57297be267aa2d826c953d78c6a08b5234942b9fa0887f8"
           }
         },
         {
@@ -4760,11 +4786,11 @@
           "group_name": "faas_edge_dns",
           "rule_name": "FaasEdgeCertificateRenewalOverdue",
           "definition": {
-            "expression_hash": "8f93a31bda697f00147358408164ebc1aec14f8ea5e0033ad86038d63e06d51b",
+            "expression_hash": "ce8dec2ee2e557b6cf3cac8b6ba41e1d86f1546eabdebf698acf50bdcc42b550",
             "labels_hash": "fb0e113eb144e985c749472ac1d45e76708f42a3a189d43d1d0d01821865e321",
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "287ac041bafbd96623580d68e897aa5f3482fddf831a674bc47e1fded1d5bd7a"
+            "fingerprint": "bb5001740a7684aceb52c1647635eca6673089659f2700c140363dbc6820b9b2"
           }
         },
         {
@@ -6916,7 +6942,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "e4a229b5b94a184b2de535887a10a9c620bf68aa2d6b9fc9e8f834ea1a6d513e",
+      "revision": "3657199e6d548085d8a0f5f52218663c79ae89baab63eaa07c3e1d3bc77ce95b",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8465,11 +8491,11 @@
           "group_name": "faas_compute_edge",
           "rule_name": "FaasEdgeCertificateExpiringSoon",
           "definition": {
-            "expression_hash": "fd3f0d406294d25c8d3a4ace747ef1c20c95648be53c95b30c2b93045b68bb38",
+            "expression_hash": "f9eb75880143be3e1b901f22530f4d0719f6a10580d41240fc913ec793f5b886",
             "labels_hash": "4a22e539b275945c1a41b3c577eceb35730aaab00303f6e7112e73a61087f1d8",
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "cae16490cb95c9960393be49439f78fe8413e9ca44a296513e273232209c78e4"
+            "fingerprint": "d9d174e31b4c5d280cf9582f9c2b89a746704581ba67d95f1bbcf26840f2cd94"
           }
         },
         {
@@ -8847,6 +8873,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b5cba8e38cae58e9dcfbc42f97e2d10fac973aacc7f28bab89199884cd830f7a"
+          }
+        },
+        {
+          "id": "3cb51b23428391e0d57dac6eb6112603c890f3caf0502b9ec659321c4ebabbfc",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdLedgerEgressDrift",
+          "definition": {
+            "expression_hash": "122502a312d6e1a0d8219d4dae642506c28a6ff518239023b4ae0f71f18ab938",
+            "labels_hash": "d6f182a1e274f40cb1bfacc2304834a3508e0973909adf95fad78b511d7ce7ee",
+            "for_seconds": 7200,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6fe155f9308fa763ff2f84c236afe6c55071226e84fd278345515eeef5a76619"
           }
         },
         {
@@ -9705,6 +9744,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "382b2dfdaa225af276d642bc8295fa8535fc0062b15b7a2d2e3532bbb51228e5"
+          }
+        },
+        {
+          "id": "5ac08cd2439909805a0aca1eca1ab73a11bb0fbfec83f7ce2cb365daa8262f96",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdBillingUsageSourceMismatch",
+          "definition": {
+            "expression_hash": "1d49898e3d871b06edc7214fc428bddec9dad79de8e09a68be9f7f19ba7be78a",
+            "labels_hash": "d6f182a1e274f40cb1bfacc2304834a3508e0973909adf95fad78b511d7ce7ee",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8767877a197ed261d57297be267aa2d826c953d78c6a08b5234942b9fa0887f8"
           }
         },
         {
@@ -11897,11 +11949,11 @@
           "group_name": "faas_edge_dns",
           "rule_name": "FaasEdgeCertificateRenewalOverdue",
           "definition": {
-            "expression_hash": "8f93a31bda697f00147358408164ebc1aec14f8ea5e0033ad86038d63e06d51b",
+            "expression_hash": "ce8dec2ee2e557b6cf3cac8b6ba41e1d86f1546eabdebf698acf50bdcc42b550",
             "labels_hash": "fb0e113eb144e985c749472ac1d45e76708f42a3a189d43d1d0d01821865e321",
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "287ac041bafbd96623580d68e897aa5f3482fddf831a674bc47e1fded1d5bd7a"
+            "fingerprint": "bb5001740a7684aceb52c1647635eca6673089659f2700c140363dbc6820b9b2"
           }
         },
         {

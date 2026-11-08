@@ -33,6 +33,8 @@ class DataAPIChangeHookStatus:
     """When a runtime last published changes."""
     last_failure_code: str | Unset = UNSET
     """The code of the latest rejected change."""
+    last_dropped_at: datetime.datetime | Unset = UNSET
+    """When capture last left a change out because the backlog was full; those changes were not recorded."""
 
     def to_dict(self) -> dict[str, Any]:
         reported_at = self.reported_at.isoformat()
@@ -53,6 +55,10 @@ class DataAPIChangeHookStatus:
 
         last_failure_code = self.last_failure_code
 
+        last_dropped_at: str | Unset = UNSET
+        if not isinstance(self.last_dropped_at, Unset):
+            last_dropped_at = self.last_dropped_at.isoformat()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -69,6 +75,8 @@ class DataAPIChangeHookStatus:
             field_dict["last_published_at"] = last_published_at
         if last_failure_code is not UNSET:
             field_dict["last_failure_code"] = last_failure_code
+        if last_dropped_at is not UNSET:
+            field_dict["last_dropped_at"] = last_dropped_at
 
         return field_dict
 
@@ -99,6 +107,13 @@ class DataAPIChangeHookStatus:
 
         last_failure_code = d.pop("last_failure_code", UNSET)
 
+        _last_dropped_at = d.pop("last_dropped_at", UNSET)
+        last_dropped_at: datetime.datetime | Unset
+        if isinstance(_last_dropped_at, Unset):
+            last_dropped_at = UNSET
+        else:
+            last_dropped_at = datetime.datetime.fromisoformat(_last_dropped_at)
+
         data_api_change_hook_status = cls(
             reported_at=reported_at,
             pending=pending,
@@ -107,6 +122,7 @@ class DataAPIChangeHookStatus:
             oldest_pending_at=oldest_pending_at,
             last_published_at=last_published_at,
             last_failure_code=last_failure_code,
+            last_dropped_at=last_dropped_at,
         )
 
         return data_api_change_hook_status

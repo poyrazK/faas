@@ -1330,7 +1330,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if billingMode.Enabled() {
 		ledgerProvider = provName // with billing off there are no receipts to compare
 	}
-	ledgerRec := meter.NewLedgerReconciler(meter.NewPusher(store, pusher, log, deps.now, ops), ledgerProvider, recRegistry)
+	// The dual run reads usage through the source the pusher bills from, so
+	// its cap floors match the pusher's clamps (ADR-20261107105126).
+	ledgerPusher := meter.NewPusher(store, pusher, log, deps.now, ops)
+	if source, err := meter.ParseUsageSource(mc.BillingUsageSource); err == nil {
+		ledgerPusher.WithUsageSource(source)
+	}
+	ledgerRec := meter.NewLedgerReconciler(ledgerPusher, ledgerProvider, recRegistry)
 	go ledgerRec.Loop(ctx, mc.ReconcileInterval)
 
 	// ADR-049 §B.3: snapshot/app-layer storage rollup. The store

@@ -73,6 +73,8 @@ func cmdAccount(args []string) int {
 		return cmdAccountUpdate(args[1:])
 	case "provider":
 		return cmdAccountProvider(args[1:])
+	case "activity":
+		return cmdAccountActivity(args[1:])
 	default:
 		return unknownAccountSubcommand(parent, args[0])
 	}

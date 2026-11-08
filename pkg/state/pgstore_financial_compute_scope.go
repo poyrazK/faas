@@ -41,7 +41,7 @@ func (t *pgFinancialComputeTxn) workloadScopes(key, instance, deployment string)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return computeScopes{}, nil
 	}
-	return computeScopes{Project: row.ProjectID, Environment: row.EnvironmentID, Deployment: row.DeploymentID}, err
+	return computeScopes{Project: row.ProjectID, Environment: row.EnvironmentID, Deployment: row.DeploymentID, OrgPaid: row.OrgPaid}, err
 }
 
 func (t *pgFinancialComputeTxn) projectEnvironments(project string) ([]string, error) {

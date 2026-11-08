@@ -131,6 +131,9 @@ func (c *Config) Defaults() {
 	if c.EgressUsageEventName == "" {
 		c.EgressUsageEventName = DefaultEgressUsageEventName
 	}
+	if c.EgressMillicentsPerGiB == 0 {
+		c.EgressMillicentsPerGiB = api.EgressOverageMillicentsPerGiB
+	}
 	// The included egress a plan bills from is the egress meterd stops the
 	// plan at while egress is unbilled (ADR-20261103131742); an unset value
 	// takes the plan's limits.go allowance.

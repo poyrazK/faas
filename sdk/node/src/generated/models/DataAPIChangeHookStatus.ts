@@ -34,5 +34,9 @@ export type DataAPIChangeHookStatus = {
    * retrying when waiting changes are held back by publications that keep failing.
    */
   publishing: 'ok' | 'retrying';
+  /**
+   * When capture last left a change out because the backlog was full; those changes were not recorded.
+   */
+  last_dropped_at?: string;
 };
 

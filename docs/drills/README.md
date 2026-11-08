@@ -47,6 +47,7 @@ follow-ups.
 | `gregale.dev` name servers changed at the registrar | [dns-registrar-compromise.md](../runbooks/dns-registrar-compromise.md) | never |
 | Operator laptop stolen | [operator-credential-compromise.md](../runbooks/operator-credential-compromise.md) | never |
 | Internal CA key exposed with a control-plane backup | [internal-ca-compromise.md](../runbooks/internal-ca-compromise.md) | never |
+| Root on a compute node (`FaasHostSecurityCritical` pages for a root SSH login) | [compute-node-compromise.md](../runbooks/compute-node-compromise.md) | never |
 | Cloudflare down for four hours | [third-party-outage.md](../runbooks/third-party-outage.md) | never |
 | Personal-data breach, 72-hour notice | [breach-notification.md](../runbooks/breach-notification.md) | never |
 

@@ -469,6 +469,21 @@
     "kind": "account_identity"
   },
   {
+    "table": "mfa_trusted_browsers",
+    "columns": [
+      "account_id",
+      "created_at",
+      "created_ip",
+      "expires_at",
+      "id",
+      "last_used_at",
+      "revoked_at",
+      "token_hash",
+      "ua_family"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "accounts",
     "columns": [
       "abuse_hold_at",
@@ -3015,6 +3030,7 @@
       "meter",
       "provider",
       "quantity",
+      "usage_source",
       "window_start"
     ],
     "kind": "operational"
@@ -3172,6 +3188,7 @@
       "delivered_at",
       "mb_seconds",
       "provider",
+      "usage_source",
       "window_start"
     ],
     "kind": "operational"
@@ -4679,7 +4696,8 @@
       "oldest_pending_at",
       "last_published_at",
       "last_failure_code",
-      "publishing"
+      "publishing",
+      "last_dropped_at"
     ],
     "kind": "operational"
   },
@@ -5863,6 +5881,21 @@
     "kind": "operational"
   },
   {
+    "table": "edge_rule_header_secrets",
+    "columns": [
+      "account_id",
+      "app_id",
+      "ciphertext",
+      "created_at",
+      "id"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
     "table": "edge_rule_lists",
     "columns": [
       "account_id",
@@ -5973,6 +6006,24 @@
       "remote_port"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "credit_discounts",
+    "columns": [
+      "amount_cents",
+      "created_at",
+      "currency",
+      "id",
+      "provider",
+      "provider_discount_id",
+      "provider_invoice_id",
+      "provider_subscription_id",
+      "redeemed_cents",
+      "state",
+      "subject_id",
+      "updated_at"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "egress_policy",
@@ -8262,6 +8313,17 @@
       "started_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "legal_acceptances",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "document",
+      "method",
+      "version"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "quiet_pause_watermarks",

@@ -298,6 +298,10 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if s.finishOAuthLink(w, r, "google", googleUser.ID, googleUser.Email, googleUser.VerifiedEmail) {
+		return
+	}
+
 	// Provision or fetch account. The full googleUser struct is
 	// passed so the helper can do a sub-first lookup against the
 	// oauth_links table — the §11 anti-takeover invariant

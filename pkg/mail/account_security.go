@@ -104,6 +104,35 @@ the session under Account → Sessions and contact support@gregale.dev.
 	return subject, body
 }
 
+// CredentialCreatedBody notifies that a new API key or CLI/agent sign-in
+// credential was created on the account. what is a short human phrase such
+// as "An API key" or "A CLI sign-in".
+func CredentialCreatedBody(email, what, label, ip, userAgent string, at time.Time) (subject, body string) {
+	if len(userAgent) > 200 {
+		userAgent = userAgent[:200]
+	}
+	if label == "" {
+		label = "(no label)"
+	}
+	subject = "New API credential on your Gregale account"
+	body = fmt.Sprintf(`Hi,
+
+%s was created for %s.
+
+  Time:    %s
+  Label:   %s
+  Address: %s
+  Client:  %s
+
+If this was you, there is nothing to do. If not, revoke it under
+Account → API keys (or gregale key delete ID), change your password, and
+contact support@gregale.dev.
+
+— Gregale
+`, oneLine(what), safeRecipient(email), mailTime(at), oneLine(label), oneLine(ip), oneLine(userAgent))
+	return subject, body
+}
+
 func providerName(provider string) string {
 	switch provider {
 	case "google":

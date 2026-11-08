@@ -12631,6 +12631,27 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/account/security-activity:
+    get:
+      tags: [account]
+      operationId: getAccountSecurityActivity
+      summary: List the account's sign-ins and security changes.
+      description: |
+        Sign-ins, API keys and CLI sign-ins, password, email, two-factor
+        and sign-in method changes of the last 90 days, newest first, at
+        most 100. Each event carries a fixed summary, and the client address
+        and sign-in method when they were recorded. Needs a full-access
+        credential.
+      responses:
+        '200':
+          description: Security events, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecurityActivityResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/sign-in-methods/{provider}:
     parameters:
       - name: provider
@@ -15513,7 +15534,7 @@ paths:
           schema: { type: string, format: date-time }
         - name: until
           in: query
-          description: Exclusive UTC end of the usage window, snapped to midnight.
+          description: Exclusive UTC end of the usage window, snapped to midnight. Defaults to the next UTC midnight, so today is included.
           schema: { type: string, format: date-time }
       responses:
         '200':
@@ -19097,7 +19118,7 @@ paths:
           schema: { type: string, format: date-time }
         - name: until
           in: query
-          description: Exclusive UTC-day boundary; buckets before this instant are included.
+          description: Exclusive UTC-day boundary; buckets before this instant are included. Defaults to the next UTC midnight, so today is included.
           schema: { type: string, format: date-time }
       responses:
         '200':
@@ -19461,7 +19482,7 @@ paths:
       - name: until
         in: query
         required: false
-        description: RFC3339 exclusive upper bound. Defaults to UTC midnight today.
+        description: RFC3339 exclusive upper bound, snapped to UTC midnight. Defaults to the next UTC midnight, so today is included.
         schema: { type: string, format: date-time }
     get:
       tags: [consumers]
@@ -19498,7 +19519,7 @@ paths:
       - name: until
         in: query
         required: false
-        description: Optional RFC3339 exclusive upper bound for the quote period; defaults to UTC midnight today.
+        description: Optional RFC3339 exclusive upper bound for the quote period; defaults to the next UTC midnight, so today is included.
         schema: { type: string, format: date-time }
     get:
       tags: [consumers]
@@ -56398,7 +56419,7 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Invoice was imported from history without a verifiable historical Gregale plan; credit proration is not available.
+          description: Invoice was imported from history without a verifiable historical Gregale plan, so credit proration is not available; or the billing provider applies account credit as a discount on the next order (Polar), so credit is never drawn against a paid invoice.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -85808,6 +85829,7 @@ components:
         last_published_at: { type: string, format: date-time, description: When a runtime last published changes. }
         last_failure_code: { type: string, pattern: '^[a-z0-9_]{1,64}$', description: The code of the latest rejected change. }
         publishing: { type: string, enum: [ok, retrying], description: retrying when waiting changes are held back by publications that keep failing. }
+        last_dropped_at: { type: string, format: date-time, description: 'When capture last left a change out because the backlog was full; those changes were not recorded.' }
     DataAPIChangeHookReport:
       description: A runtime's change hook delivery report, read from its change event table. oldest_pending_at is present exactly when changes are pending.
       type: object
@@ -85821,6 +85843,7 @@ components:
         last_published_at: { type: string, format: date-time }
         last_failure_code: { type: string, pattern: '^[a-z0-9_]{1,64}$' }
         publishing: { type: string, enum: [ok, retrying] }
+        last_dropped_at: { type: string, format: date-time }
     DataAPIConnectionBudgets:
       description: Read-only planning snapshots. Not applicable means the app has no visible Data API binding.
       type: object
@@ -85927,7 +85950,7 @@ components:
         hours: { type: array, maxItems: 48, items: { $ref: '#/components/schemas/DataAPIUsageHour' } }
         access: { $ref: '#/components/schemas/DataAPIAccessConfig' }
     DataAPIAccessConfig:
-      description: Access settings the runtime reports for live reads without a user token, sent after start and hourly. It replaces the stored settings; turning usage reporting off forgets them. Holds key hashes, never keys.
+      description: Access settings the runtime reports for live reads, sent after start and hourly. It replaces the stored settings unless the stored ones come from a runtime process that started later; turning usage reporting off forgets them. Holds key hashes, never keys.
       type: object
       additionalProperties: false
       required: [version, schemas]
@@ -85937,6 +85960,8 @@ components:
         auth: { $ref: '#/components/schemas/DataAPIUserAuth' }
         public_read: { type: array, maxItems: 64, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}\.[A-Za-z_][A-Za-z0-9_]{0,62}$' } }
         server_keys: { type: array, maxItems: 2, items: { $ref: '#/components/schemas/DataAPIServerKey' } }
+        allow_without_rls: { type: array, maxItems: 64, description: 'Relations signed-in users may read without row-level security; live reads apply the same exemptions.', items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}\.[A-Za-z_][A-Za-z0-9_]{0,62}$' } }
+        started_at: { type: string, format: date-time, description: 'When the reporting runtime process started. A report never replaces settings from a process that started later.' }
     DataAPIUserAuth:
       description: The issuer, JWKS URL and audience the Data API verifies user tokens against. Live reads verify user tokens with the same settings.
       type: object
@@ -111994,6 +112019,25 @@ components:
             Expand ${name} request values in `value` (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>, cookie:<name>;
             $$ is a literal $). Control characters are dropped and each
             value is capped at 1 KiB. Not allowed with action=remove.
+        secret:
+          type: boolean
+          description: |
+            Seal `value` (request headers only): it is
+            stored encrypted to the edge seal domain and never returned.
+            Authorization, Proxy-Authorization, Cookie and names containing
+            token, secret, password, api-key, apikey, signature or credential
+            are sealed without it. Not allowed with template or action=remove.
+        secret_id:
+          type: string
+          description: |
+            The sealed value of a secret op, returned in place of `value`.
+            Send it back with no `value` to keep that value.
+        redacted:
+          type: boolean
+          description: |
+            Set in responses on a credential-named value stored before
+            sealing, which is left out. Send the op back with no `value` to
+            seal the stored value.
 
     EdgeRuleHeadersAction:
       description: 'Mutates request + response headers. The gateway enforces a hard-coded blacklist (Host, Content-Length, Transfer-Encoding, Connection, x-faas-*).'
@@ -119855,6 +119899,24 @@ components:
       properties:
         status: { type: string, enum: [sent, already_verified] }
         email: { type: string, format: email }
+    SecurityActivityResponse:
+      description: "Body of `GET /v1/account/security-activity`."
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/SecurityActivityEvent' }
+    SecurityActivityEvent:
+      description: "One sign-in, credential or account-security change."
+      type: object
+      required: [at, summary, kind]
+      properties:
+        at: { type: string, format: date-time }
+        kind: { type: string, description: "Audit event kind, e.g. auth.session.created or api_key.created." }
+        summary: { type: string, description: "Fixed English phrase for the kind." }
+        ip: { type: string, description: "Client address recorded with the event." }
+        detail: { type: string, description: "Sign-in method, provider or key label, when recorded." }
     SignInMethodsResponse:
       description: "The ways the account can sign in."
       type: object

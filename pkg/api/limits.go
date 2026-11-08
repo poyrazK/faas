@@ -117,6 +117,21 @@ const (
 	NewSignInLookback   = 90 * 24 * time.Hour
 )
 
+// The security activity view (ADR 20261108150000) shows at most
+// SecurityActivityMaxEvents events from the last SecurityActivityLookback.
+const (
+	SecurityActivityLookback  = 90 * 24 * time.Hour
+	SecurityActivityMaxEvents = 100
+)
+
+// A browser remembered at the authenticator check (ADR 20261108150000)
+// skips the code at sign-in for MFATrustedBrowserTTL; an account keeps at
+// most MFATrustedBrowsersMax, the oldest forgotten first.
+const (
+	MFATrustedBrowserTTL  = 30 * 24 * time.Hour
+	MFATrustedBrowsersMax = 10
+)
+
 // Queue receive long-polls one account, and one apid in all, may hold at a
 // time; past them a receive answers 429. A receive waits on apid's shared
 // completion listener, not on a database connection, so the caps bound
@@ -7946,6 +7961,12 @@ const (
 	// GiB-month (ADR-1430). Requests and egress are free. The operator's
 	// object-storage rate card applies it.
 	ObjectStorageMillicentsPerGiBMonth int64 = 3_000
+	// EgressOverageMillicentsPerGiB is the published rate for application
+	// egress beyond a paid plan's MonthlyEgressGiB: $0.03 per GiB. Only a
+	// subject whose egress overage election covers the hour is billed it,
+	// under its spend cap (ADR-20261104204500); every other subject's apps
+	// stop at the allowance (ADR-20261103131742 amendment 2).
+	EgressOverageMillicentsPerGiB int64 = 3_000
 	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
 	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
 	FinancialEgressMinimumCreditBytes = int64(4096)
@@ -15724,6 +15745,18 @@ const (
 	DataAPIStorageTransfers          = 4
 	DataAPIStorageTransferTimeout    = 120 * time.Second
 	DataAPIStorageSignedURLTTL       = 60 * time.Second
+	// One signed-in user or anonymous visitor holds at most this many of an
+	// instance's transfers, so one slow client cannot keep storage busy for
+	// everyone. Server keys (trusted backends) are bounded only by the total.
+	DataAPIStorageTransfersPerClient = 2
+	// /healthz is public and its readiness checks reach the database: a
+	// completed result answers further checks for this long, so polling it
+	// asks the database at most once per interval per instance.
+	DataAPIHealthCache = 5 * time.Second
+	// The gateway sends the SQL deadline this much early, so a VM clock that
+	// runs ahead of the database's by up to it still passes the engine's
+	// future-horizon check (ADR-1734 amendment 1).
+	DataAPISQLDeadlineClockSkew = 2 * time.Second
 	// Change hooks (ADR-20261022121642), mirrored in the runtime's limits:
 	// events and body bytes per runtime publication, the largest event data
 	// before its rows are dropped, the relay's claim lease, how long one
@@ -18236,9 +18269,16 @@ const (
 	PublicBlockListRefreshInterval = 30 * time.Second
 )
 
-// Edge certificates (ADR-20261103163954 §3). edgednsd obtains the apps
-// domains' certificate from Let's Encrypt with DNS-01 and renews it
-// EdgeCertificateRenewBefore its expiry, checking every
+// Edge certificates (ADR-20261103163954 §3, ADR-20261108100000). edgednsd
+// obtains the apps domains' certificate from Let's Encrypt with DNS-01 under
+// the EdgeCertificateProfile ACME profile, whose certificates live about 160
+// hours, and renews it EdgeCertificateRenewBefore its expiry: a new one about
+// every 64 hours, about 2.6 of the 5 Let's Encrypt allows for the same names
+// in 7 days, which leaves two for rotating the key after a compromise. A key
+// a compromised compute node copied is good only until its certificate
+// expires. A stored certificate that lives longer than
+// EdgeCertificateLifetimeMax is replaced at once, and an order that returns
+// one is refused. edgednsd checks every
 // EdgeCertificateCheckInterval. A failed order is retried after
 // EdgeCertificateRetryMin, doubling to EdgeCertificateRetryMax: Let's
 // Encrypt allows 5 failed validations per account, hostname and hour, and 5
@@ -18248,8 +18288,10 @@ const (
 // certificate's row is kept EdgeCertificateKeepAfterExpiry past its expiry,
 // so the Certificate Transparency watch can tell ours from anyone else's.
 const (
-	EdgeCertificateRenewBefore     = 30 * 24 * time.Hour
+	EdgeCertificateRenewBefore     = 4 * 24 * time.Hour
 	EdgeCertificateCheckInterval   = time.Hour
+	EdgeCertificateProfile         = "shortlived"
+	EdgeCertificateLifetimeMax     = 7 * 24 * time.Hour
 	EdgeCertificateRetryMin        = time.Hour
 	EdgeCertificateRetryMax        = 12 * time.Hour
 	EdgeCertificateOrderTimeout    = 10 * time.Minute

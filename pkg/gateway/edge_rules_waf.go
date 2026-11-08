@@ -255,7 +255,7 @@ func newWAFSample(r *http.Request, app App, rule *EdgeRuleWAFResolved) WAFSample
 		ExcludeRuleIDs:   rule.ExcludeRuleIDs,
 		Method:           r.Method,
 		Host:             r.Host,
-		URI:              r.URL.RequestURI(),
+		URI:              originalRequestURI(r),
 		Proto:            r.Proto,
 		Header:           r.Header.Clone(),
 		country:          wafSampleCountry(r.Context()),
