@@ -1372,6 +1372,12 @@ type Manager struct {
 	idleMu       sync.Mutex
 	idleStates   map[string]*idleLadderState
 	idleLast     time.Time
+	// idleCompressOn applies L3/L4 (idle_compress.go). idleColdMu guards
+	// idleColdCeilings, each app's compression ceiling, and is a leaf lock.
+	idleCompressOn      bool
+	idleCompressMetrics *IdleCompressMetrics
+	idleColdMu          sync.Mutex
+	idleColdCeilings    map[string]coldCeiling
 
 	// Model-wait pause of agent runs (ADR-20261027090012;
 	// agent_wait_pause.go). agentWaitCPU is nil unless vmmd.toml enables it.

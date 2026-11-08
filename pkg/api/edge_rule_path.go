@@ -278,14 +278,28 @@ func MatchEdgeRuleKindPath(kind, glob, requestPath string) (bool, error) {
 // gateway attaches such rules to whichever hosts resolve to the rule's app.
 const EdgeRuleAppHosts = "@app"
 
-// ValidateEdgeRuleMatchHost checks a match_host: 1..253 bytes, and the "@"
-// prefix is reserved for EdgeRuleAppHosts.
+// edgeRuleMatchHostReserved are the characters a match_host may not use.
+// The store serves a host's rules with `host LIKE replace(match_host, '*',
+// '%')`, where "%" and "_" are wildcards and "[", "]" and "\" are literal,
+// while the gateway's cache invalidation, convergence fences and the trace
+// simulator match with path.Match, which reads them the other way round. A
+// rule using them was served to hosts its edits never refreshed, or shown
+// as covering hosts it never applied to (ADR-091 amendment 2026-11-07,
+// later). "*" and "?" mean the same in both.
+const edgeRuleMatchHostReserved = `%_[]\`
+
+// ValidateEdgeRuleMatchHost checks a match_host: 1..253 bytes, none of the
+// characters the two host matchers disagree on, and the "@" prefix is
+// reserved for EdgeRuleAppHosts.
 func ValidateEdgeRuleMatchHost(host string) *Problem {
 	if host == "" || len(host) > 253 {
 		return ErrValidation("match_host must be 1..253 chars")
 	}
 	if strings.HasPrefix(host, "@") && !IsEdgeRuleAppHosts(host) {
 		return ErrValidation(`match_host may not start with "@" except "@app" (every host the app serves)`)
+	}
+	if i := strings.IndexAny(host, edgeRuleMatchHostReserved); i >= 0 {
+		return ErrValidation(fmt.Sprintf(`match_host may not contain %q; use "*" for any run of characters and "?" for one`, host[i:i+1]))
 	}
 	return nil
 }

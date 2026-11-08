@@ -462,8 +462,11 @@ headers the client or a CDN sends.
 A request body over `max_body_bytes` (1 byte to 25 MiB) gets 413
 `request_too_large`. A request whose `Content-Length` is over the cap is
 refused before any of the body is read. `max_body_bytes_streaming`
-(optional, at least `max_body_bytes`, at most 100 MiB) sets the size cap for
-a streamed response on the route.
+(optional, at least `max_body_bytes`, at most 100 MiB) is the request body cap
+instead of `max_body_bytes` when your app has streaming turned on: every
+request to such an app streams except WebSocket upgrades, whatever its
+`Accept` header, so on a streaming app this is the cap that applies. Leave it
+unset to keep `max_body_bytes` there too. It also caps the streamed response.
 
 ### throttle
 

@@ -114,7 +114,7 @@ func TestCurrentMonthOverageCentsAfterADowngrade(t *testing.T) {
 	if err := m.AppendUsage(ctx, acct.ID, "app", "after", downgrade.Add(time.Hour), 7*gbh, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	if cents, err := m.CurrentMonthOverageCents(ctx, acct.ID); err != nil || cents != 7 {
-		t.Fatalf("overage after 7 GB-h more = %d (%v), want 7 cents", cents, err)
+	if cents, err := m.CurrentMonthOverageCents(ctx, acct.ID); err != nil || cents != 7*api.OverageMillicentsPerGBHour/api.MillicentsPerCent {
+		t.Fatalf("overage after 7 GB-h more = %d (%v), want 7 GB-h of overage", cents, err)
 	}
 }
