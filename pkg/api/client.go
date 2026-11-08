@@ -106,7 +106,7 @@ func (e *ResponseTruncatedError) Error() string {
 	return fmt.Sprintf("API response was truncated: expected %d bytes, received %d", e.Expected, e.Received)
 }
 
-var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
+var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/capabilities(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
 
 // Client is a typed wrapper over the v1 REST API. Construct with
 // NewClient (30s default timeout) or NewClientWithDeployTimeout
@@ -513,17 +513,23 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 // caller passes a *[]byte and receives the body untouched. Returns
 // (nil, *APIError) on a non-2xx, same shape as do.
 func (c *Client) doBytes(ctx context.Context, method, path string, body, out any) error {
+	_, err := c.doBytesWithHeader(ctx, method, path, body, out)
+	return err
+}
+
+// doBytesWithHeader is doBytes that also returns the response headers.
+func (c *Client) doBytesWithHeader(ctx context.Context, method, path string, body, out any) (http.Header, error) {
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("marshal request: %w", err)
+			return nil, fmt.Errorf("marshal request: %w", err)
 		}
 		r = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -536,31 +542,31 @@ func (c *Client) doBytes(ctx context.Context, method, path string, body, out any
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("could not reach the API: %w", err)
+		return nil, fmt.Errorf("could not reach the API: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := readBoundedResponse(resp, maxResponseBodyBytes)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		return apiErrorFromResponse(resp, data)
+		return nil, apiErrorFromResponse(resp, data)
 	}
 	if out != nil {
 		if bp, ok := out.(*[]byte); ok {
 			*bp = data
-			return nil
+			return resp.Header, nil
 		}
 		// Fall through: caller wants JSON-decoded, do the same
 		// unmarshal as doReq. Untyped callers will get a decode
 		// error if they pass anything other than *[]byte.
 		if len(data) > 0 {
 			if err := json.Unmarshal(data, out); err != nil {
-				return fmt.Errorf("decode response: %w", err)
+				return nil, fmt.Errorf("decode response: %w", err)
 			}
 		}
 	}
-	return nil
+	return resp.Header, nil
 }
 
 func readBoundedResponse(resp *http.Response, limit int64) ([]byte, error) {
@@ -7569,6 +7575,24 @@ func (c *Client) ListAppDebugRequestsAll(ctx context.Context, slug string, opts 
 // Limit is capped by the server at 10,000 rows. Request bodies, headers, and
 // raw span attributes are never included.
 func (c *Client) ExportAppDebugRequests(ctx context.Context, slug string, opts DebugTelemetryExportOptions) ([]byte, error) {
+	export, err := c.ExportAppDebugRequestsWithInfo(ctx, slug, opts)
+	return export.Data, err
+}
+
+// DebugTelemetryExport is a downloaded export with what the server applied:
+// the effective window, whether plan retention clamped it, and whether the
+// row limit cut it short. It is assembled from the response headers, not a
+// wire schema.
+type DebugTelemetryExport struct {
+	Data             []byte
+	Window           string
+	RetentionClamped bool
+	Truncated        bool
+}
+
+// ExportAppDebugRequestsWithInfo is ExportAppDebugRequests with the window
+// the server applied and whether the row limit cut the export short.
+func (c *Client) ExportAppDebugRequestsWithInfo(ctx context.Context, slug string, opts DebugTelemetryExportOptions) (DebugTelemetryExport, error) {
 	path := "/v1/apps/" + slug + "/debug/requests/export"
 	q := url.Values{}
 	if opts.Since != "" {
@@ -7583,11 +7607,33 @@ func (c *Client) ExportAppDebugRequests(ctx context.Context, slug string, opts D
 	if opts.Limit > 0 {
 		q.Set("limit", strconv.Itoa(opts.Limit))
 	}
+	if opts.DeploymentID != "" {
+		q.Set("deployment_id", opts.DeploymentID)
+	}
+	if opts.Status != 0 {
+		q.Set("status", strconv.Itoa(opts.Status))
+	}
+	if opts.ColdBoot != nil {
+		q.Set("cold_boot", strconv.FormatBool(*opts.ColdBoot))
+	}
+	if opts.ConsumerID != "" {
+		q.Set("consumer_id", opts.ConsumerID)
+	}
+	if opts.MinLatencyMS > 0 {
+		q.Set("min_latency_ms", strconv.Itoa(opts.MinLatencyMS))
+	}
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out []byte
-	return out, c.doBytes(ctx, http.MethodGet, path, nil, &out)
+	var out DebugTelemetryExport
+	header, err := c.doBytesWithHeader(ctx, http.MethodGet, path, nil, &out.Data)
+	if err != nil {
+		return out, err
+	}
+	out.Window = header.Get("X-Faas-Request-Log-Window")
+	out.RetentionClamped, _ = strconv.ParseBool(header.Get("X-Faas-Request-Log-Retention-Clamped"))
+	out.Truncated, _ = strconv.ParseBool(header.Get("X-Faas-Request-Log-Truncated"))
+	return out, nil
 }
 
 // GetAppDebugCoverage returns observed debugger signal coverage for one app.

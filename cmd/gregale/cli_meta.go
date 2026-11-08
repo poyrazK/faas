@@ -618,6 +618,27 @@ var cliCommands = []cliCommand{
 				{Name: "o", ShortName: "o", Short: "write the DPA template to a file", Value: "PATH"},
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
+			{Name: "update", Short: "Set your display name", Flags: []cliFlag{
+				{Name: "name", Short: "display name shown to org members (at most 80 characters)", Value: "NAME"},
+				{Name: "clear-name", Short: "remove the display name", Bool: true},
+			}},
+			{Name: "sessions", Short: "List or sign out browser sessions", Subcommands: []cliSub{
+				{Name: "list", Short: "List signed-in browsers"},
+				{Name: "revoke", Short: "Sign out one browser, or every browser with --all; API keys keep working", Positionals: []string{"[SESSION_ID]"}, Flags: []cliFlag{
+					{Name: "all", Short: "sign out every browser", Bool: true},
+					{Name: "yes", Short: "with --all, sign out without prompting", Bool: true},
+				}},
+			}},
+			{Name: "email", Short: "Verify or change your sign-in email", Subcommands: []cliSub{
+				{Name: "verify", Short: "Send a new email verification link"},
+				{Name: "update", Short: "Open the sign-in email change form in the browser", Notes: []string{"A confirmation link goes to the new address."}},
+			}},
+			{Name: "password", Short: "Change your password", Subcommands: []cliSub{
+				{Name: "update", Short: "Open the password change form in the browser"},
+			}},
+			{Name: "provider", Short: "Show how you can sign in", Subcommands: []cliSub{
+				{Name: "list", Short: "List your password, two-factor and linked Google/GitHub sign-ins"},
+			}},
 			{Name: "billing-connection", Short: "Connect, show or disconnect a billing key for invoice exports", Notes: []string{"Supports Stripe, Paddle and Lago."}, Subcommands: []cliSub{
 				{Name: "connect", Short: "Connect a billing provider key", Notes: []string{"Reads the key from stdin, so it never appears in shell history or the process list."}, Positionals: []string{"{stripe|paddle|lago}"}, Flags: []cliFlag{
 					{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (default https://api.getlago.com)", Value: "URL"},
@@ -661,6 +682,22 @@ var cliCommands = []cliCommand{
 		DocSlug: "add",
 		Short:   "Provision and bind managed resources to an app",
 		Subcommands: []cliSub{
+			{Name: "function", Short: "Scaffold a function that declares its own trigger and settings", Positionals: []string{"<name>"}, Notes: []string{
+				"Writes functions/<name>/ with a handler whose config `gregale deploy` reads without running it, and a test beside it. Nothing is created remotely.",
+			}, Examples: []string{
+				"gregale add function digest --trigger cron --schedule \"0 8 * * *\"",
+				"gregale add function thumbs --trigger bucket --bucket uploads --lang python",
+				"gregale add function payments --trigger webhook --provider stripe",
+			}, Flags: []cliFlag{
+				{Name: "trigger", Short: "what calls the function (default http)", Value: "KIND", ClosedSet: []string{"http", "cron", "queue", "bucket", "webhook"}},
+				{Name: "lang", Short: "handler language (default: inferred from the project, else node)", Value: "LANG", ClosedSet: []string{"node", "python"}},
+				{Name: "schedule", Short: "cron schedule for --trigger cron", Value: "CRON"},
+				{Name: "queue", Short: "queue for --trigger queue (default: the function name)", Value: "NAME"},
+				{Name: "bucket", Short: "bucket for --trigger bucket", Value: "NAME"},
+				{Name: "provider", Short: "webhook provider for --trigger webhook", Value: "PROVIDER", ClosedSet: []string{"stripe", "generic"}},
+				{Name: "path", Short: "project directory", Value: "DIR"},
+				{Name: "dry-run", Short: "show the files without writing them"},
+			}},
 			{Name: "postgres", Short: "Provision or attach PostgreSQL and inject DATABASE_URL", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
 				{Name: "env", Short: "environment scope (defaults to linked project environment)", Value: "SCOPE"},
@@ -5227,6 +5264,7 @@ var cliCommands = []cliCommand{
 			{Name: "verify", Short: "Open authenticator verification in the browser", Positionals: []string{"[<6-digit-code>]"}, Flags: []cliFlag{{Name: "code", Short: "legacy option; enter the code in the browser", Value: "CODE"}}},
 			{Name: "recover", Short: "Open recovery in the browser", Positionals: []string{"[<recovery-code>]"}, Flags: []cliFlag{{Name: "code", Short: "legacy option; enter the code in the browser", Value: "CODE"}}},
 			{Name: "disable", Short: "Open MFA removal in the browser", Flags: []cliFlag{{Name: "password", Short: "legacy option; enter the password in the browser", Value: "PASSWORD"}, {Name: "recovery-code", Short: "legacy option; enter the recovery code in the browser", Value: "CODE"}}},
+			{Name: "rotate", Short: "Open new recovery codes in the browser", Notes: []string{"Your current recovery codes stop working."}},
 		},
 	},
 	{
@@ -5337,6 +5375,9 @@ var cliCommands = []cliCommand{
 			{Name: "transfer-ownership", Short: "Transfer org ownership", Flags: []cliFlag{
 				orgSlugFlag,
 				{Name: "to", Short: "user ID of the new owner", Value: "USER-ID", Req: true},
+			}},
+			{Name: "leave", Short: "Leave an org you are a member of", Notes: []string{"Owners transfer ownership first. Personal orgs cannot be left."}, Positionals: []string{"ORG_SLUG"}, Flags: []cliFlag{
+				{Name: "yes", Short: "leave without prompting", Bool: true},
 			}},
 			{Name: "seat-usage", Short: "Show seat usage", Flags: []cliFlag{orgSlugFlag}},
 			{Name: "invitations", Short: "Manage org invitations", Subcommands: []cliSub{

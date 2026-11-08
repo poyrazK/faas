@@ -95,6 +95,28 @@ const (
 	SecurityMailTrackedAccountsMax = 100_000
 )
 
+// EmailVerificationEnforcedFrom is when the 30-day verification grace
+// started to restrict accounts (ADR 20261107103000). An account created
+// before it gets its 30 days from this date, so accounts that were
+// unverified when enforcement shipped are not cut off the day it deploys.
+var EmailVerificationEnforcedFrom = time.Date(2026, time.November, 16, 0, 0, 0, 0, time.UTC)
+
+// An unverified account active in the last EmailVerificationReminderWindow
+// before its deadline is mailed a fresh verification link, at most once per
+// EmailVerificationReminderInterval per apid.
+const (
+	EmailVerificationReminderWindow   = 7 * 24 * time.Hour
+	EmailVerificationReminderInterval = 24 * time.Hour
+)
+
+// Account profile and security notices (ADR 20261107103000). A display name
+// is at most DisplayNameMaxChars characters. A browser sign-in whose device
+// and network match no session of the last NewSignInLookback mails a notice.
+const (
+	DisplayNameMaxChars = 80
+	NewSignInLookback   = 90 * 24 * time.Hour
+)
+
 // Queue receive long-polls one account, and one apid in all, may hold at a
 // time; past them a receive answers 429. A receive waits on apid's shared
 // completion listener, not on a database connection, so the caps bound
@@ -13606,10 +13628,12 @@ const (
 
 	// RequestBudgetDefault is the per-request wall-clock budget the
 	// gateway uses for Functions when no edge-rule kind=budget matches.
-	// A misconfigured deployment that wants a tighter or looser default
-	// can override per-route via kind=budget, or per-plan via the
-	// Limits.RequestBudgetMs accessor.
-	RequestBudgetDefault = 3 * time.Second
+	// It was 3 s (ADR-093) until ADR-20261107190000 raised it to 30 s, the
+	// Free plan's ceiling, because the short default failed ordinary
+	// handlers (a cold database connection, a model call) before their
+	// authors knew a limit existed. Override per-route via kind=budget,
+	// per-app via request_timeout_s, or per-plan via Limits.RequestBudgetMs.
+	RequestBudgetDefault = 30 * time.Second
 	// RequestBudgetAppDefault is the request-mode App wall-clock budget
 	// when no edge-rule kind=budget matches and the plan has no explicit
 	// RequestBudgetMs override. Apps are ordinary HTTP services and need
@@ -13769,10 +13793,10 @@ func (l Limits) RequestBudget() time.Duration {
 
 // RequestBudgetForType returns the effective baseline for an app type.
 //
-// The existing RequestBudget accessor intentionally remains the Function /
-// legacy baseline so control-plane callers and older clients keep their
-// established 3-second contract. Request-mode Apps use the longer default
-// unless the plan carries an explicit RequestBudgetMs override. The returned
+// The existing RequestBudget accessor remains the Function / legacy
+// baseline. Since ADR-20261107190000 Functions and request-mode Apps both
+// default to 30 s; the two constants stay separate so either can move
+// without the other. The returned
 // value is bounded by the plan's effective ceiling, preserving the existing
 // RequestBudgetMaxDuration invariant that an invalid ceiling cannot undercut
 // an explicit plan default.

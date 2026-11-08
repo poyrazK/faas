@@ -20,7 +20,44 @@ const (
 	debugWatchMinInterval     = 250 * time.Millisecond
 	debugWatchMaxInterval     = time.Hour
 	debugWatchSeenCap         = 10_000
+	// debugWatchMaxPages bounds how far one poll pages back to reach the
+	// requests it already showed (ADR-127 amendment 2026-11-05).
+	debugWatchMaxPages = 5
 )
+
+// debugWatchPoll reads the newest page and, after the first poll, keeps
+// paging while a whole page is new: a burst bigger than one page would
+// otherwise push requests past the page between polls. missed reports that
+// the watch stopped at debugWatchMaxPages with requests still unread. The
+// first poll shows only the newest page, as before.
+func debugWatchPoll(ctx context.Context, client *api.Client, slug string, opts api.DebugTelemetryListOptions, seen map[string]string, follow bool) (api.DebugTelemetryListResponse, bool, error) {
+	resp, err := client.ListAppDebugRequestsWithOptions(ctx, slug, opts)
+	if err != nil || !follow {
+		return resp, false, err
+	}
+	for page := 1; ; page++ {
+		// Pages are newest first: once the oldest row read so far was shown
+		// before, everything newer has been read.
+		if len(resp.Requests) == 0 || resp.NextCursor == "" {
+			return resp, false, nil
+		}
+		if _, shown := seen[resp.Requests[len(resp.Requests)-1].ID]; shown {
+			return resp, false, nil
+		}
+		if page == debugWatchMaxPages {
+			return resp, true, nil
+		}
+		next := opts
+		next.Cursor = resp.NextCursor
+		more, err := client.ListAppDebugRequestsWithOptions(ctx, slug, next)
+		if err != nil {
+			return resp, false, err
+		}
+		resp.Requests = append(resp.Requests, more.Requests...)
+		resp.NextCursor = more.NextCursor
+		opts = next
+	}
+}
 
 // debugWatchEvent is the line-oriented machine format emitted by the watch
 // commands. Keeping the poll timestamp and event kind in every line lets a
@@ -97,7 +134,16 @@ func runDebugRequestsWatch(ctx context.Context, client *api.Client, slug string,
 		if err := ctx.Err(); err != nil {
 			return 130
 		}
-		resp, err := client.ListAppDebugRequestsWithOptions(ctx, slug, opts)
+		resp, missed, err := debugWatchPoll(ctx, client, slug, opts, seen, poll > 0)
+		if err == nil && missed {
+			// More arrived since the last poll than the watch could page
+			// through: say so instead of silently skipping requests.
+			if jsonOutput {
+				_ = writeDebugWatchEvent(debugWatchEvent{Type: "gap", ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Since: resp.Since})
+			} else {
+				_, _ = fmt.Fprintf(os.Stderr, "debug requests watch: more requests arrived than %d pages of %d; older ones were skipped (raise --limit or narrow the filters)\n", debugWatchMaxPages, opts.Limit)
+			}
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return 130

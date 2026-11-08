@@ -55,7 +55,7 @@ import (
 // mfa_pending session legitimately needs are in the middleware's MFA
 // allowlist; bearer principals are unaffected.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next))))
+	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next)))))
 	return s.authMw.RequireSession(pkgNext)
 }
 
@@ -66,14 +66,14 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // the wrapping because the spec §11 "10/min/IP" rule is a
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next))))))
+	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next)))))))
 	return s.authMw.RequireLimited(pkgNext)
 }
 
 // Project publishing checks the human's verification before resolving the
 // project, so a missing resource cannot bypass the verification response.
 func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerifiedEmail(s.authorizeAppResource(next)))))))
+	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.requireVerifiedEmail(s.authorizeAppResource(next))))))))
 	return s.authMw.RequireLimited(pkgNext)
 }
 
