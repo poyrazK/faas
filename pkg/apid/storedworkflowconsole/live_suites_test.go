@@ -25,7 +25,7 @@ func (*suiteInspectionHost) IssueCSRF(http.ResponseWriter, Scope) string        
 func (*suiteInspectionHost) VerifyCSRF(http.ResponseWriter, *http.Request, Scope) bool { return false }
 
 func TestSharedSuiteInspectionUsesOnlyScopedReads(t *testing.T) {
-	for _, mode := range []string{"selected", "empty", "list-error", "get-error", "wrong-suite", "wrong-stored_workflow", "invalid-id"} {
+	for _, mode := range []string{"selected", "empty", "list-error", "get-error", "wrong-suite", "wrong-stored-workflow", "invalid-id"} {
 		t.Run(mode, func(t *testing.T) {
 			id := uuid.NewString()
 			host := &suiteInspectionHost{respond: func(operation Operation) Response {
@@ -50,7 +50,7 @@ func TestSharedSuiteInspectionUsesOnlyScopedReads(t *testing.T) {
 					if mode == "wrong-suite" {
 						view.ID = uuid.NewString()
 					}
-					if mode == "wrong-stored_workflow" {
+					if mode == "wrong-stored-workflow" {
 						view.Name = "other"
 					}
 					raw, _ := json.Marshal(view)

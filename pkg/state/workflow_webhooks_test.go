@@ -129,7 +129,7 @@ func TestGenericWebhookWorkflowCapturesSignedEventMetadata(t *testing.T) {
 		app, _ := seedEventWorkflow(t, store)
 		ctx := t.Context()
 		endpoint, err := store.(InboundWebhookStore).CreateInboundWebhookEndpointIfUnderQuota(ctx, InboundWebhookEndpoint{
-			AppID: app.ID, AccountID: app.AccountID, Name: "generic-stored_workflow", Provider: InboundWebhookProviderGeneric,
+			AppID: app.ID, AccountID: app.AccountID, Name: "generic-stored-workflow", Provider: InboundWebhookProviderGeneric,
 			DeliveryPath: "/", TokenHash: bytes.Repeat([]byte{7}, 32), SigningSecretSealed: []byte("sealed"), Enabled: true,
 		}, api.MustLimitsFor(api.PlanHobby))
 		if err != nil {

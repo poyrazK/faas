@@ -35,7 +35,7 @@ func storedWorkflowInspectorServer(t *testing.T, mode string) func() []string {
 			run.AppID = "other-app"
 		}
 		if mode == "wrong_name" {
-			run.WorkflowName = "another-stored_workflow"
+			run.WorkflowName = "another-stored-workflow"
 		}
 		if mode == "wrong_run" {
 			run.ID = "bbbbbbbb-0000-4000-8000-000000000001"

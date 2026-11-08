@@ -18,7 +18,7 @@ import (
 func seedWebhookWorkflowAPI(t *testing.T) (apidserver.TestEnv, state.App, api.InboundWebhookEndpointResponse) {
 	t.Helper()
 	e := setupWebhookTest(t, api.PlanHobby)
-	app := seedWorkflowApp(t, e, "webhook-stored_workflow")
+	app := seedWorkflowApp(t, e, "webhook-stored-workflow")
 	dep, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending, ImageDigest: "sha256:webhook", Workflows: json.RawMessage(`[{"name":"paid","steps":[{"name":"main","path":"/receipt","input":{"invoice":"{{input.data.data.object.id}}"}}]}]`)})
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestWebhookWorkflowAPIReceiptsAndRouting(t *testing.T) {
 	path := "/v1/apps/" + app.Slug + "/inbound-webhooks/" + endpoint.ID
 	zero := int64(0)
 	body := api.PutWebhookWorkflowBindingRequest{ExpectedVersion: &zero, WorkflowName: "paid", EventType: "invoice.*", TakeOverDelivery: true, Filter: json.RawMessage(`{"data":{"data":{"object":{"amount_paid":{"$gt":100}}}}}`)}
-	headers := map[string]string{"Idempotency-Key": "bind-stripe-stored_workflow"}
+	headers := map[string]string{"Idempotency-Key": "bind-stripe-stored-workflow"}
 	response := e.Do(t, "PUT", path+"/workflow-binding", body, headers)
 	var binding api.WebhookWorkflowBindingResponse
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &binding) != nil || binding.Version == 0 {
