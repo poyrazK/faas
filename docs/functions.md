@@ -63,6 +63,12 @@ idle timeout a function may be [frozen](cold-wake.md#frozen-instances)
 instead of parked. Set `lifecycle.pause` in `gregale.yaml` to `when_idle` to
 keep it running between requests, or to `never` to turn off both.
 
+`gregale deploy` ends with one line showing what the platform applies to the
+function, defaults included, for example
+`Runs with 256 MB · 30 s timeout · pauses between requests · parks after 30 s idle`.
+The same values are in `effective_limits` on the app's API response
+(`request_budget_ms`, `idle_timeout_s`, `pause`).
+
 Use `gregale invoke APP` for a smoke request and `gregale invocation get ID`
 for an async result. Runtime-specific limits are in [plans](plans.md).
 

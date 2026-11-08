@@ -6,6 +6,9 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.app_effective_limits_pause import AppEffectiveLimitsPause, check_app_effective_limits_pause
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="AppEffectiveLimits")
 
 
@@ -56,6 +59,12 @@ class AppEffectiveLimits:
     """Maximum response write window for the plan, in seconds."""
     request_body_max_bytes: int
     """Maximum inbound request body accepted for this app's plan, in bytes."""
+    idle_timeout_s: int | Unset = UNSET
+    """Idle timeout the platform applies: the app's own setting or its type's default, within the plan bounds
+    (seconds)."""
+    pause: AppEffectiveLimitsPause | Unset = UNSET
+    """When the platform may pause the VM (ADR-1151): the declared value or the default for the app's type. Apps on
+    a private network are never paused."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -95,6 +104,12 @@ class AppEffectiveLimits:
 
         request_body_max_bytes = self.request_body_max_bytes
 
+        idle_timeout_s = self.idle_timeout_s
+
+        pause: str | Unset = UNSET
+        if not isinstance(self.pause, Unset):
+            pause = self.pause
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -119,6 +134,10 @@ class AppEffectiveLimits:
                 "request_body_max_bytes": request_body_max_bytes,
             }
         )
+        if idle_timeout_s is not UNSET:
+            field_dict["idle_timeout_s"] = idle_timeout_s
+        if pause is not UNSET:
+            field_dict["pause"] = pause
 
         return field_dict
 
@@ -161,6 +180,15 @@ class AppEffectiveLimits:
 
         request_body_max_bytes = d.pop("request_body_max_bytes")
 
+        idle_timeout_s = d.pop("idle_timeout_s", UNSET)
+
+        _pause = d.pop("pause", UNSET)
+        pause: AppEffectiveLimitsPause | Unset
+        if isinstance(_pause, Unset):
+            pause = UNSET
+        else:
+            pause = check_app_effective_limits_pause(_pause)
+
         app_effective_limits = cls(
             memory_limit_mb=memory_limit_mb,
             plan_memory_max_mb=plan_memory_max_mb,
@@ -180,6 +208,8 @@ class AppEffectiveLimits:
             request_budget_max_ms=request_budget_max_ms,
             response_write_timeout_s=response_write_timeout_s,
             request_body_max_bytes=request_body_max_bytes,
+            idle_timeout_s=idle_timeout_s,
+            pause=pause,
         )
 
         app_effective_limits.additional_properties = d

@@ -76,3 +76,6 @@ func DevLocalServerForTest(t *testing.T, projectDir string) (http.Handler, strin
 	})
 	return srv, srv.token, nil
 }
+
+// FunctionLimitsLine exposes functionLimitsLine.
+var FunctionLimitsLine = functionLimitsLine
