@@ -60,6 +60,12 @@
         <button type="submit">Recover access</button>
       </form>
     </section>
+    <section id="recovery-codes">
+      <h2>New recovery codes</h2>
+      <p>Create a new set of recovery codes after verifying this session above. Your current codes stop working.</p>
+      <form data-action="recovery-codes"><button type="submit">Create new recovery codes</button></form>
+      <pre id="new-codes" hidden></pre>
+    </section>
     <section id="disable">
       <h2>Turn off two-factor authentication</h2>
       <p>Use a recovery code{{if index .Data "HasPassword"}} or your password after verifying this session{{end}} to reset your authenticator.</p>
@@ -96,7 +102,7 @@
         return result;
       }
       async function submit(action, body) {
-        if (['confirm', 'recover', 'disable', 'disable-email'].includes(action)) {
+        if (['confirm', 'recover', 'disable', 'disable-email', 'recovery-codes'].includes(action)) {
           const token = await json('/v1/auth/csrf?action=mfa_' + action.replaceAll('-', '_'));
           body.csrf_token = token.csrf_token;
         }
@@ -133,9 +139,14 @@
           if (form.dataset.action === 'disable') {
             if (!!body.password === !!body.recovery_code) throw new Error('Enter either your password or one recovery code.');
           }
+          let result;
           try {
-            await submit(form.dataset.action, body);
+            result = await submit(form.dataset.action, body);
           } catch (error) {
+            if (form.dataset.action === 'recovery-codes' && error.code === 'step_up_required') {
+              message('Verify your authenticator above, then create new recovery codes.', true);
+              return;
+            }
             if (form.dataset.action === 'recover' && error.code === 'mfa_last_recovery_code') {
               const reset = document.querySelector('form[data-action="disable"]');
               reset.elements.recovery_code.value = body.code;
@@ -148,6 +159,11 @@
           form.reset();
           if (form.dataset.action === 'disable') {
             location.replace('/dashboard/account/mfa?next=' + encodeURIComponent({{index .Data "Next"}}));
+          } else if (form.dataset.action === 'recovery-codes') {
+            const codes = document.getElementById('new-codes');
+            codes.textContent = result.recovery_codes.join('\n');
+            codes.hidden = false;
+            message('Save these recovery codes somewhere safe. Your previous codes no longer work.');
           } else if (form.dataset.action === 'disable-email') {
             message('Check your email for the recovery link and its confirmation time. The waiting period is 24 hours.');
           } else {
@@ -156,7 +172,7 @@
         });
       }));
       const action = new URLSearchParams(location.search).get('action');
-      if (['enroll', 'confirm', 'verify', 'recover', 'disable'].includes(action)) {
+      if (['enroll', 'confirm', 'verify', 'recover', 'disable', 'recovery-codes'].includes(action)) {
         const section = document.getElementById(action === 'confirm' ? 'enroll' : action);
         section?.scrollIntoView();
         section?.querySelector('input:not([type="checkbox"]), button')?.focus();

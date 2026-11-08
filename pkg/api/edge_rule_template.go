@@ -238,7 +238,7 @@ func (t *EdgeRuleTemplate) escape(s templateSegment, v string) string {
 
 func (t *EdgeRuleTemplate) value(s templateSegment, in EdgeRuleTemplateInput) string {
 	if s.kind == "query" && s.name != "" {
-		q, _ := url.ParseQuery(in.RawQuery)
+		q, _ := ParseEdgeRuleQuery(in.RawQuery)
 		return q.Get(s.name)
 	}
 	switch s.kind {

@@ -347,6 +347,12 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, dashboardRecoveryPage(acct), http.StatusFound)
 			return
 		}
+		// Past the verification grace only the account page (with its
+		// resend button) and the resend form remain.
+		if s.verificationOverdueNow(acct) && !dashboardMFARoute(r.Method, r.URL.Path) && !dashboardOverdueRoute(r.Method, r.URL.Path) {
+			http.Redirect(w, r, "/dashboard/account", http.StatusFound)
+			return
+		}
 		// The session and pending flag feed cookie re-issue on
 		// /dashboard/mfa, the same context shape RequireSession builds.
 		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.

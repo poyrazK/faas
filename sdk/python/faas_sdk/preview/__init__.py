@@ -47,6 +47,7 @@ from .. import (
     current_gregale_release,
     current_gregale_request_deadline,
     current_idempotency_key,
+    function,
     gregale_request_time_remaining_ms,
     install_chain,
     is_faas_error,

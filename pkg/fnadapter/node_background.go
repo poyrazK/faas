@@ -1,9 +1,9 @@
-package rootfs
+package fnadapter
 
-// nodeFunctionBackground is the negotiated execution-completion contract
+// NodeBackground is the negotiated execution-completion contract
 // (ADR-20261018005023). A response can finish while registered promises still own their
 // invocation slot. Only actual settlement permits execution completion.
-const nodeFunctionBackground = `
+const NodeBackground = `
 function setupBackground(env, out) {
   out.forbidBackground = env.forbid_background === true;
   if (env.background === undefined) return;

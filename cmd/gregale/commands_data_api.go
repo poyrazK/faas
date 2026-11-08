@@ -121,7 +121,7 @@ func cmdDataAPIRefresh(args []string) int {
 			return printErr("Could not check Data API readiness", err)
 		}
 	}
-	result, err := client.RestartAppFresh(ctx, fs.Arg(0))
+	result, err := refreshDataAPIFresh(ctx, client, fs.Arg(0))
 	if err != nil {
 		return printErr("Could not refresh Data API schema", err)
 	}

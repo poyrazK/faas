@@ -697,6 +697,9 @@ const (
 	// CodeDeployRateLimited marks an account that exhausted its plan's
 	// deployment admissions in the current one-hour window.
 	CodeDeployRateLimited = "deploy_rate_limited"
+	// CodePlanLimitBuildMinutes marks a build refused because the paying
+	// account used its plan's monthly build minutes (ADR-20261104132753).
+	CodePlanLimitBuildMinutes = "plan_limit_build_minutes"
 	// CodeNotificationChannelTestRateLimited marks an account that sent its
 	// notification channels more test messages than a minute allows
 	// (ADR-20261028101615).
@@ -2229,7 +2232,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodePlanLimitEdgeRuleLists, CodePlanLimitEdgeRuleListItems:
 		return http.StatusForbidden
-	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
+	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodePlanLimitBuildMinutes, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
@@ -3170,6 +3173,16 @@ func ErrExportRateLimited(retryAfterS int) *Problem {
 		"Only one account export is allowed per 24h window; retry after the indicated back-off.").
 		WithHeader("Retry-After", fmt.Sprintf("%d", retryAfterS)).
 		WithDocs("https://gregale.dev/docs/gdpr#export-rate-limit")
+}
+
+// ErrPlanLimitBuildMinutes refuses a build once the paying account used its
+// plan's monthly build minutes (ADR-20261104132753). Image deploys still work.
+func ErrPlanLimitBuildMinutes(l Limits, usedMinutes int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitBuildMinutes,
+		"Build minutes used up",
+		fmt.Sprintf("%s plan includes %d build minutes a month; this month's builds used %d. Builds resume on the 1st (UTC) or after an upgrade; deploying a prebuilt image still works.", l.Plan, l.BuildMinutesPerMonth, usedMinutes)).
+		WithLimit(int64(l.BuildMinutesPerMonth), int64(usedMinutes)).
+		WithDocs(docsBase + "/plans#builds")
 }
 
 // ErrDeployRateLimited reports an exhausted account deploy window. The
@@ -7154,6 +7167,16 @@ func ErrEmailVerificationRequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeEmailVerificationRequired,
 		"Email verification required",
 		"verify your email address before deploying apps or changing billing settings.").
+		WithDocs(docsBase + "/auth#email-verification")
+}
+
+// ErrEmailVerificationOverdue is returned once an unverified account is past
+// its verification grace period: it keeps its data, but signing in and using
+// existing credentials wait until the address is verified.
+func ErrEmailVerificationOverdue() *Problem {
+	return NewProblem(http.StatusForbidden, CodeEmailVerificationRequired,
+		"Email verification required",
+		"this account's email address was not verified within 30 days. We sent a new verification link; open it to continue.").
 		WithDocs(docsBase + "/auth#email-verification")
 }
 

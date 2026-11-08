@@ -94,6 +94,7 @@ type Account struct {
 	DeletionIncludesManagedPostgres bool
 	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
 	PlanChangedAt pgtype.Timestamptz
+	DisplayName   string
 	// When the subject elected to pay for egress above its allowance; NULL = never (ADR-20261104204500).
 	EgressOverageEnabledAt pgtype.Timestamptz
 	// When the egress overage election ended; NULL while it is on (ADR-20261104204500).
@@ -137,6 +138,22 @@ type AccountDeployRateLimit struct {
 	DeploysUsed        int32
 	DeploysWindowStart pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+}
+
+type AccountEmailChange struct {
+	TokenHash  []byte
+	AccountID  pgtype.UUID
+	OldEmail   string
+	NewEmail   string
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
+type AccountOauthUnlink struct {
+	AccountID  pgtype.UUID
+	Provider   string
+	UnlinkedAt pgtype.Timestamptz
 }
 
 type AccountPassword struct {
@@ -3621,6 +3638,8 @@ type DataApiChangeHookReport struct {
 	LastPublishedAt pgtype.Timestamptz
 	LastFailureCode pgtype.Text
 	Publishing      string
+	// ADR-20261022121642 amendment 3: when capture last left a change out at the backlog bound, as the runtime last reported.
+	LastDroppedAt pgtype.Timestamptz
 }
 
 type DataApiRuntimeConnectionObservation struct {

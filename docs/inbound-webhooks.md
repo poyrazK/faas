@@ -75,6 +75,14 @@ Treat the `X-Gregale-*` fields as metadata only after checking that source.
 Stripe retries of the same event for the same endpoint return the same receipt
 ID with `duplicate: true` and do not enqueue a second delivery.
 
+Stripe sees `202` as soon as the event is accepted, so Gregale owns the retries
+from then on. A handler that throws, or answers 408 or 429, is retried under the
+app's `retry_policy`; when the attempts run out, or the handler refuses the
+event with another 4xx, the delivery lands in the
+[dead letters](dead-letters.md), where you replay it after a fix
+(`gregale dlq replay`). Resending the event from Stripe does not deliver it
+again: it is the same receipt.
+
 ## Backlog
 
 Accepted deliveries wait in the app's queue under the plan's queue caps, the

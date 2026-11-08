@@ -552,6 +552,14 @@ var routeExclude = map[string]bool{
 	"GET /dashboard":                                                true, // HTML dashboard
 	"GET /dashboard/":                                               true, // HTML dashboard
 	"POST /dashboard/account/delete":                                true, // HTML form
+	"POST /dashboard/account/display-name":                          true, // HTML form (ADR-20261107103000)
+	"POST /dashboard/account/email":                                 true, // HTML form (ADR-20261107103000)
+	"POST /dashboard/account/providers/{provider}/unlink":           true, // HTML form (ADR-20261107103000)
+	"POST /dashboard/account/sessions/{id}/revoke":                  true, // HTML form (ADR-20261107103000)
+	"POST /dashboard/account/verify-email/resend":                   true, // HTML form (ADR-20261107103000)
+	"GET /auth/email-change":                                        true, // email-change confirm page (browser-only)
+	"POST /auth/email-change":                                       true, // email-change confirm submit (browser-only)
+	"POST /login/magic-link":                                        true, // /login magic-link form (browser-only)
 	"POST /dashboard/account/keys/{id}/delete":                      true, // HTML form (issue #248)
 	"POST /dashboard/account/plan":                                  true, // HTML form (issue #248)
 	"POST /dashboard/account/restore":                               true, // HTML form
@@ -1833,6 +1841,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", wakeTLFile),
 		filepath.Join(root, "pkg", "api", sidecarTimelineFile),
 		filepath.Join(root, "pkg", "api", orgsFile),
+		filepath.Join(root, "pkg", "api", "account_profile.go"), // ADR-20261107103000 account flow DTOs
 		filepath.Join(root, "pkg", "api", orgBillingFile),
 		filepath.Join(root, "pkg", "api", "org_queues.go"),
 		filepath.Join(root, "pkg", "api", scanFile),

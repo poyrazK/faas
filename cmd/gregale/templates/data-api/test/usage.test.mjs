@@ -103,6 +103,31 @@ test('a snapshot restore drops pending counts but keeps the in-flight report id'
   h.usage.stop()
 })
 
+test('a flush before the snapshot reports pending counts, or keeps them in flight', async () => {
+  const h = harness()
+  h.request({ access: 'user' })
+  h.setStatus(503)
+  await h.usage.flush(1000)
+  assert.equal(h.calls.length, 1, 'the checkpoint flush sent the pending counts')
+  // Restored later: the report the platform did not take keeps its id and counts.
+  h.clock.wall += 10 * 60 * 1000
+  h.setStatus(200)
+  await h.usage.report()
+  assert.equal(h.calls[1].report_id, 'instance-a.n1:1')
+  assert.equal(h.calls[1].hours[0].user_requests, 1, 'counts flushed before the snapshot are not lost')
+  h.usage.stop()
+})
+
+test('a flush waits at most its bound', async () => {
+  const clock = { wall: Date.UTC(2026, 9, 19, 10, 30), mono: 1000 }
+  const hung = createUsage(usageConfig(env), { now: () => clock.wall, monotonic: () => clock.mono, nonce: 'n1',
+    fetchImpl: () => new Promise(() => {}), access: { version: 1, schemas: ['api'] } })
+  const started = performance.now()
+  await hung.flush(50)
+  assert.ok(performance.now() - started < 1000)
+  hung.stop()
+})
+
 test('caps compare month-to-date totals plus unreported counts', async () => {
   const h = harness({ caps: { requests: 10, anonymous_requests: 4 }, answer: { requests: 8, anonymous_requests: 3 } })
   await h.usage.report()
@@ -160,7 +185,10 @@ async function gateway(t, extraEnv) {
   config.functions = []
   const upstream = http.createServer((req, res) => { req.resume(); res.writeHead(200, { 'Content-Range': '0-1/*', 'Content-Type': 'application/json' }); res.end('[{},{}]') })
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve))
-  const gw = createServer(config, async () => ({ sub: 'alice', exp: 9999999999 }), upstream.address().port, undefined, () => {})
+  const gw = createServer(config, async token => {
+    if (token === 'invalid') throw new Error('invalid token')
+    return { sub: token === 'valid' ? 'alice' : token, exp: 9999999999 }
+  }, upstream.address().port, undefined, () => {})
   await new Promise(resolve => gw.listen(0, '127.0.0.1', resolve))
   t.after(() => { gw.closeAllConnections(); gw.close(); upstream.closeAllConnections(); upstream.close() })
   return `http://127.0.0.1:${gw.address().port}`
@@ -184,17 +212,35 @@ test('a reached cap answers 429 before admission with the limit, observed value 
   assert.equal((await fetch(`${base}/healthz`)).status !== 429, true, 'health checks are never capped')
 })
 
+test('only admitted requests count toward caps: invalid tokens and throttled floods do not', async t => {
+  const base = await gateway(t, { DATA_API_MONTHLY_CAPS: '{"version":1,"requests":3}', DATA_API_RATE_LIMIT_PER_SECOND: '1', DATA_API_RATE_LIMIT_BURST: '1' })
+  for (let i = 0; i < 10; i++) {
+    const refused = await fetch(`${base}/rest/v1/products`, { headers: { Authorization: 'Bearer invalid' } })
+    assert.equal(refused.status, 401)
+  }
+  // A visitor past their rate budget is refused, not counted.
+  const visitor = () => fetch(`${base}/rest/v1/products`, { headers: { 'x-faas-client-ip': '203.0.113.9' } })
+  assert.equal((await visitor()).status, 200)
+  for (let i = 0; i < 5; i++) assert.equal((await visitor()).status, 429)
+  assert.equal((await fetch(`${base}/rest/v1/products`, { headers: { Authorization: 'Bearer valid' } })).status, 200, 'refusals left the cap untouched')
+  assert.equal((await fetch(`${base}/rest/v1/products`, { headers: { Authorization: 'Bearer bob' } })).status, 200)
+  const capped = await fetch(`${base}/rest/v1/products`, { headers: { Authorization: 'Bearer carol' } })
+  assert.equal(capped.status, 429)
+  assert.equal((await capped.json()).observed, 3, 'three admitted requests')
+})
+
 test('access settings report schemas, the token issuer, the allowlist and key hashes, never keys', () => {
   const hash = 'ab'.repeat(32)
   const config = runtimeConfig({ ...baseEnv, ...env, DATA_API_SCHEMAS: 'api,catalog', DATA_API_PUBLIC_READ: 'api.products',
-    DATA_API_SERVER_KEY_A_SHA256: hash, DATA_API_SERVER_KEY_B_SHA256: 'cd'.repeat(32),
+    DATA_API_SERVER_KEY_A_SHA256: hash, DATA_API_SERVER_KEY_B_SHA256: 'cd'.repeat(32), DATA_API_ALLOW_WITHOUT_RLS: 'api.countries',
     DATA_API_SERVER_KEY_B_PERMISSIONS: '{"version":1,"access":"read","relations":["api.orders"],"subjects":false}' })
   const auth = { issuer: 'https://issuer.example', jwks_url: 'https://issuer.example/jwks', audience: 'notes' }
-  assert.deepEqual(accessReport(config), { version: 1, schemas: ['api', 'catalog'], auth, public_read: ['api.products'], server_keys: [
+  const started = new Date('2026-11-07T10:00:00Z')
+  assert.deepEqual(accessReport(config, started), { version: 1, schemas: ['api', 'catalog'], auth, public_read: ['api.products'], server_keys: [
     { slot: 'a', sha256: hash },
     { slot: 'b', sha256: 'cd'.repeat(32), permissions: { access: 'read', relations: ['api.orders'], subjects: false } },
-  ] })
-  assert.deepEqual(accessReport(runtimeConfig({ ...baseEnv, ...env })), { version: 1, schemas: ['api'], auth })
+  ], allow_without_rls: ['api.countries'], started_at: '2026-11-07T10:00:00.000Z' })
+  assert.deepEqual(accessReport(runtimeConfig({ ...baseEnv, ...env }), started), { version: 1, schemas: ['api'], auth, started_at: '2026-11-07T10:00:00.000Z' })
 })
 
 test('access settings go out after start, after a restore and hourly', async () => {

@@ -5388,6 +5388,10 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 			s.notFound(w, "key already revoked")
 			return
 		}
+		if errors.Is(err, state.ErrAPIKeyExpired) {
+			api.WriteProblem(w, api.ErrAPIKeyExpired())
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("could not rotate key"))
 		return
 	}

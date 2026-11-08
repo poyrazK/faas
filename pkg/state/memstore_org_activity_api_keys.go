@@ -95,6 +95,10 @@ func (m *MemStore) RotateOrgAPIKeyWithActivity(_ context.Context, orgID, oldKeyI
 	if old.Status == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, 0, ErrAPIKeyRevoked
 	}
+	// Expiry is lazy (see RotateAPIKey): an expired key must not be reopened.
+	if old.ExpiresAt != nil && !old.ExpiresAt.After(time.Now()) {
+		return APIKey{}, APIKey{}, 0, ErrAPIKeyExpired
+	}
 	if _, exists := m.keyByHash[hex.EncodeToString(newHash)]; exists {
 		return APIKey{}, APIKey{}, 0, errors.New("state: duplicate key hash")
 	}

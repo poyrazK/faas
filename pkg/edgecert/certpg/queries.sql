@@ -18,7 +18,7 @@ SELECT pg_notify('edge_tls_certificate', @payload::text);
 SELECT id, account_uri, key_kid, sha256, not_after
 FROM edge_tls_certificates
 WHERE names = @names::text[] AND ca = @ca
-ORDER BY not_after DESC, id DESC
+ORDER BY not_before DESC, id DESC
 LIMIT 1;
 
 -- name: DeleteEdgeTLSCertificatesExpiredBefore :execrows
@@ -32,7 +32,7 @@ DELETE FROM edge_tls_certificates WHERE not_after < @before;
 SELECT id, names, chain_pem, key_sealed, not_before, not_after
 FROM edge_tls_certificates
 WHERE ca = @ca AND not_before <= now() AND not_after > now()
-ORDER BY not_after DESC, id DESC
+ORDER BY not_before DESC, id DESC
 LIMIT @max::int;
 
 -- name: EdgeTLSCertificateChains :many

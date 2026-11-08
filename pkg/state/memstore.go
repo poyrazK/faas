@@ -1107,6 +1107,8 @@ type MemStore struct {
 	// PK enforces it in Postgres. NUL separator is safe — neither
 	// Google subs nor GitHub IDs contain it.
 	oauthLinks map[string]OAuthLink
+	// accountFlow holds email changes and display names (account_flow.go).
+	accountFlow memAccountFlow
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic
@@ -3299,6 +3301,10 @@ func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKe
 	if old.Status == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, ErrAPIKeyRevoked
 	}
+	// Expiry is lazy (see RotateAPIKey): an expired key must not be reopened.
+	if old.ExpiresAt != nil && !old.ExpiresAt.After(time.Now()) {
+		return APIKey{}, APIKey{}, ErrAPIKeyExpired
+	}
 	if newLabel == "" {
 		newLabel = old.Label
 	}
@@ -3549,6 +3555,10 @@ func (m *MemStore) RotateAPIKey(_ context.Context, accountID, oldKeyID string, n
 	if old.Status == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, ErrAPIKeyRevoked
 	}
+	// Expiry is lazy (see RotateAPIKey): an expired key must not be reopened.
+	if old.ExpiresAt != nil && !old.ExpiresAt.After(time.Now()) {
+		return APIKey{}, APIKey{}, ErrAPIKeyExpired
+	}
 	if newLabel == "" {
 		newLabel = old.Label
 	}
@@ -3753,6 +3763,10 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 	}
 	if old.Status == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, ErrAPIKeyRevoked
+	}
+	// Expiry is lazy (see RotateAPIKey): an expired key must not be reopened.
+	if old.ExpiresAt != nil && !old.ExpiresAt.After(time.Now()) {
+		return APIKey{}, APIKey{}, ErrAPIKeyExpired
 	}
 	if newLabel == "" {
 		newLabel = old.Label
@@ -4926,6 +4940,11 @@ func (m *MemStore) ApplyProjectReconcile(
 				}
 			}
 			if tombstone.ID != "" {
+				// The same guards as RestoreApp: a tombstone past its grace
+				// deadline or claimed by the purge cannot come back.
+				if _, claimed := m.appDeletionClaims[tombstone.ID]; claimed || tombstone.DeleteGraceUntil == nil || !tombstone.DeleteGraceUntil.After(time.Now()) {
+					return ProjectReconcileResult{}, fmt.Errorf("state: workload %q is being purged after deletion: %w", app.WorkloadName, ErrConflict)
+				}
 				m.ensureAppOrgLocked(&tombstone)
 				tombstone.RootDir = app.RootDir
 				tombstone.WorkloadName = app.WorkloadName
@@ -4951,6 +4970,14 @@ func (m *MemStore) ApplyProjectReconcile(
 					stagedSpecs = append(stagedSpecs, spec)
 				}
 				stagedApps[tombstone.ID] = tombstone
+				// The crons the deletion suspended come back, as in RestoreApp.
+				for cronID, cron := range stagedCrons {
+					if cron.AppID == tombstone.ID && cron.SuspendedReason == CronSuspendedAppDeleted {
+						restored := cron
+						restored.SuspendedReason = ""
+						stagedCrons[cronID] = anchorCronSchedule(cron, restored, time.Now())
+					}
+				}
 				out.Added = append(out.Added, tombstone)
 				continue
 			}

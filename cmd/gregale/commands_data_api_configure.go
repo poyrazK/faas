@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -161,7 +162,9 @@ type dataAPIConfigureReceipt struct {
 	ServerKeyRateLimit   string   `json:"server_key_rate_limit,omitempty"`
 	Changed              []string `json:"changed"`
 	Restarted            bool     `json:"restarted"`
-	WakeID               string   `json:"wake_id,omitempty"`
+	// Parked: nothing ran to restart; the next wake boots with the settings.
+	Parked bool   `json:"parked,omitempty"`
+	WakeID string `json:"wake_id,omitempty"`
 }
 
 func cmdDataAPIConfigure(args []string) int {
@@ -272,23 +275,26 @@ func cmdDataAPIConfigure(args []string) int {
 		return printErr("Could not configure capacity", err)
 	}
 	if !*noRestart {
-		restart, restartErr := client.RestartAppFresh(ctx, app)
+		restart, parked, restartErr := restartDataAPISettings(ctx, client, app)
 		if restartErr != nil {
 			return printErr("Settings stored; fresh restart failed", restartErr)
 		}
-		receipt.Restarted, receipt.WakeID = true, restart.WakeID
+		receipt.Restarted, receipt.Parked, receipt.WakeID = !parked, parked, restart.WakeID
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(receipt))
 	}
 	PrintOK(osStdout, "Data API settings updated for %s (%s)", app, strings.Join(receipt.Changed, ", "))
+	if receipt.Parked {
+		_, _ = fmt.Fprintln(osStdout, dataAPIParkedSettingsNote)
+	}
 	if *publicRPC != "" {
 		_, _ = fmt.Fprintln(osStdout, "Public RPCs answer GET and HEAD only. Each function must be approved (@gregale:rpc) and STABLE or IMMUTABLE, or the runtime refuses to start.")
 	}
 	if *aggregates == "on" {
 		_, _ = fmt.Fprintln(osStdout, "Aggregates require the SQL deadline functions; install them first (docs: https://gregale.dev/docs/data-api#sql-deadlines-across-transaction-retries).")
 	}
-	if !receipt.Restarted {
+	if !receipt.Restarted && !receipt.Parked {
 		_, _ = fmt.Fprintf(osStdout, "Run gregale data-api refresh %s to apply the settings.\n", app)
 	}
 	return 0
@@ -497,6 +503,7 @@ type dataAPIServerKeyReceipt struct {
 	Permissions *dataAPIServerKeyPermissions `json:"permissions,omitempty"`
 	Slots       []dataAPIServerKeySlot       `json:"slots,omitempty"`
 	Restarted   bool                         `json:"restarted"`
+	Parked      bool                         `json:"parked,omitempty"`
 	WakeID      string                       `json:"wake_id,omitempty"`
 }
 
@@ -564,6 +571,13 @@ func cmdDataAPIServerKey(args []string) int {
 		if receipt.Key, hash, err = newDataAPIServerKey(); err != nil {
 			return printErr("Could not generate a server key", err)
 		}
+		// A replaced key goes first: were the new permissions stored and the
+		// new hash then refused, the old key would serve with them.
+		if slices.ContainsFunc(slots, func(s dataAPIServerKeySlot) bool { return s.Slot == receipt.Slot && s.Present }) {
+			if err = unsetDataAPISetting(ctx, client, app, dataAPIServerKeySlots[receipt.Slot], *scope); err != nil {
+				return printErr("Could not revoke the server key being replaced", err)
+			}
+		}
 		// Store the slot's permissions before its hash, so the key never exists
 		// with a previous key's permissions or none at all.
 		if permissions != nil {
@@ -593,15 +607,20 @@ func cmdDataAPIServerKey(args []string) int {
 		}
 		receipt.Slot = *slot
 	}
+	var restartErr error
 	if !*noRestart {
-		restart, restartErr := client.RestartAppFresh(ctx, app)
-		if restartErr != nil {
-			return printErr("Server key change stored; fresh restart failed", restartErr)
-		}
-		receipt.Restarted, receipt.WakeID = true, restart.WakeID
+		var restart api.AppRestartResponse
+		var parked bool
+		restart, parked, restartErr = restartDataAPISettings(ctx, client, app)
+		receipt.Restarted, receipt.Parked, receipt.WakeID = restartErr == nil && !parked, parked, restart.WakeID
 	}
+	// A created key is shown once, so it is printed even when the restart
+	// that applies it failed.
 	if jsonOutput {
-		return jsonOut(writeJSON(receipt))
+		if code := jsonOut(writeJSON(receipt)); code != 0 || restartErr == nil {
+			return code
+		}
+		return printErr("Server key change stored; fresh restart failed", restartErr)
 	}
 	if action == "create" {
 		PrintOK(osStdout, "Server key stored in slot %s for %s. It is shown once; keep it in your backend's secret store:", receipt.Slot, app)
@@ -613,7 +632,13 @@ func cmdDataAPIServerKey(args []string) int {
 	} else {
 		PrintOK(osStdout, "Server key slot %s revoked for %s", receipt.Slot, app)
 	}
-	if !receipt.Restarted {
+	if receipt.Parked {
+		_, _ = fmt.Fprintln(osStdout, dataAPIParkedSettingsNote)
+	}
+	if restartErr != nil {
+		return printErr("Server key change stored; fresh restart failed", restartErr)
+	}
+	if !receipt.Restarted && !receipt.Parked {
 		_, _ = fmt.Fprintf(osStdout, "Run gregale data-api refresh %s to apply the change.\n", app)
 	}
 	return 0
