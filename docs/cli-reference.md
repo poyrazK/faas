@@ -815,6 +815,33 @@ Provision and bind managed resources to an app
 
 `gregale add [<subcommand>]`
 
+### add function
+
+Scaffold a function that declares its own trigger and settings
+
+`gregale add function [--trigger <KIND>] [--lang <LANG>] [--schedule <CRON>] [--queue <NAME>] [--bucket <NAME>] [--provider <PROVIDER>] [--path <DIR>] [--dry-run] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--trigger <KIND>` | what calls the function (default http) | one of `http` · `cron` · `queue` · `bucket` · `webhook` |
+| `--lang <LANG>` | handler language (default: inferred from the project, else node) | one of `node` · `python` |
+| `--schedule <CRON>` | cron schedule for --trigger cron |  |
+| `--queue <NAME>` | queue for --trigger queue (default: the function name) |  |
+| `--bucket <NAME>` | bucket for --trigger bucket |  |
+| `--provider <PROVIDER>` | webhook provider for --trigger webhook | one of `stripe` · `generic` |
+| `--path <DIR>` | project directory |  |
+| `--dry-run` | show the files without writing them |  |
+
+Examples:
+
+```sh
+gregale add function digest --trigger cron --schedule "0 8 * * *"
+gregale add function thumbs --trigger bucket --bucket uploads --lang python
+gregale add function payments --trigger webhook --provider stripe
+```
+
+Writes functions/&lt;name&gt;/ with a handler whose config `gregale deploy` reads without running it, and a test beside it. Nothing is created remotely.
+
 ### add postgres
 
 Provision or attach PostgreSQL and inject DATABASE_URL
