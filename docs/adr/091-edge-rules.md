@@ -1976,3 +1976,24 @@ An edge-rules review found two gaps around agent credentials.
    maintenance or async rule moves or stops traffic as a rollback does. They
    are now `production` requests; rules addressed by ID resolve to their app
    (`TargetEdgeRule`), so a preview's rules stay ungated.
+
+## Amendment (2026-11-07, later): host characters, rollback CORS guard, streaming cap docs
+
+1. **`match_host` refuses `%`, `_`, `[`, `]` and `\`.** The store serves a
+   host's rules with `host LIKE replace(match_host, '*', '%')`, where `%` and
+   `_` are wildcards and `[`, `]` and `\` are literal, while cache
+   invalidation, convergence fences, the trace and the dashboard use
+   `path.Match`, which reads them the other way round. A `%` rule was served
+   to hosts its edits never refreshed; an `app[12]` rule showed as covering
+   hosts it never applied to. New and updated rules may not use them; stored
+   rules keep their meaning.
+2. **Rollback re-runs the credentialed CORS origin guard.** A rule-set
+   version recorded before the shared-domain (2026-10-28) and public-suffix
+   (2026-11-04) guards could restore `https://*.<apps domain>` or
+   `https://*.vercel.app` with `allow_credentials` over a fix. Rollback now
+   refuses that, unless the same rule is live with the same origins.
+3. **`max_body_bytes_streaming` is documented as the request cap it is.** On
+   an app with streaming on, every request except a WebSocket upgrade
+   streams (ADR-102 D3: a JSON `Accept` is advisory), so a `limit` rule's
+   `max_body_bytes_streaming` replaces `max_body_bytes` for request bodies, as
+   D24 §6 decided. The edge-rules guide called it a response cap only.
