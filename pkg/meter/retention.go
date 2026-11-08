@@ -273,16 +273,20 @@ func RetentionOnceRequestTelemetry(ctx context.Context, db retentionExecer) (int
 	return total, ErrRetentionBatchCap
 }
 
-// retentionRequestAnalyticsMinutesBatchSQL sweeps analytics rollups on the
-// raw telemetry's plan ladder (ADR-20261103113952), so the analytics window
-// clamp is the same whichever store answers. request_analytics_minutes is
-// not partitioned, so ctid is unique; a partitioned table needs
-// (tableoid, ctid), as the request_telemetry sweep above uses.
+// retentionRequestAnalyticsMinutesBatchSQL sweeps minute rollups past
+// api.RequestAnalyticsMinuteRetention (48 hours) on every plan, or sooner on
+// a plan whose telemetry retention is shorter (ADR-20261103113952 amendment
+// 3): windows reaching further back are read from the hourly tier. One
+// cutoff for nearly every row also lets each batch take the oldest rows off
+// the bucket index instead of walking past longer-lived plans' rows.
+// request_analytics_minutes is not partitioned, so ctid is unique; a
+// partitioned table needs (tableoid, ctid), as the request_telemetry sweep
+// above uses.
 const retentionRequestAnalyticsMinutesBatchSQL = `DELETE FROM public.request_analytics_minutes
                                                   WHERE ctid IN (
                                                       SELECT m.ctid FROM public.request_analytics_minutes m
                                                       LEFT JOIN public.app_resource_accounts ac ON ac.app_id = m.app_id
-                                                      WHERE m.bucket_start < now() - (CASE ac.plan
+                                                      WHERE m.bucket_start < now() - LEAST(interval '48 hours', CASE ac.plan
                                                           WHEN 'free'  THEN interval '0 days'
                                                           WHEN 'hobby' THEN interval '3 days'
                                                           WHEN 'pro'   THEN interval '7 days'

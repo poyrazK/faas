@@ -2,6 +2,7 @@ from http import HTTPStatus
 from io import BytesIO
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
@@ -21,6 +22,11 @@ def _get_kwargs(
     route: None | str | Unset = UNSET,
     format_: ExportAppDebugRequestsFormat | Unset = "ndjson",
     limit: int | None | Unset = 10000,
+    deployment_id: None | Unset | UUID = UNSET,
+    status: int | None | Unset = UNSET,
+    cold_boot: bool | None | Unset = UNSET,
+    consumer_id: None | str | Unset = UNSET,
+    min_latency_ms: int | None | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -51,6 +57,43 @@ def _get_kwargs(
     else:
         json_limit = limit
     params["limit"] = json_limit
+
+    json_deployment_id: None | str | Unset
+    if isinstance(deployment_id, Unset):
+        json_deployment_id = UNSET
+    elif isinstance(deployment_id, UUID):
+        json_deployment_id = str(deployment_id)
+    else:
+        json_deployment_id = deployment_id
+    params["deployment_id"] = json_deployment_id
+
+    json_status: int | None | Unset
+    if isinstance(status, Unset):
+        json_status = UNSET
+    else:
+        json_status = status
+    params["status"] = json_status
+
+    json_cold_boot: bool | None | Unset
+    if isinstance(cold_boot, Unset):
+        json_cold_boot = UNSET
+    else:
+        json_cold_boot = cold_boot
+    params["cold_boot"] = json_cold_boot
+
+    json_consumer_id: None | str | Unset
+    if isinstance(consumer_id, Unset):
+        json_consumer_id = UNSET
+    else:
+        json_consumer_id = consumer_id
+    params["consumer_id"] = json_consumer_id
+
+    json_min_latency_ms: int | None | Unset
+    if isinstance(min_latency_ms, Unset):
+        json_min_latency_ms = UNSET
+    else:
+        json_min_latency_ms = min_latency_ms
+    params["min_latency_ms"] = json_min_latency_ms
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -119,6 +162,11 @@ def sync_detailed(
     route: None | str | Unset = UNSET,
     format_: ExportAppDebugRequestsFormat | Unset = "ndjson",
     limit: int | None | Unset = 10000,
+    deployment_id: None | Unset | UUID = UNSET,
+    status: int | None | Unset = UNSET,
+    cold_boot: bool | None | Unset = UNSET,
+    consumer_id: None | str | Unset = UNSET,
+    min_latency_ms: int | None | Unset = UNSET,
 ) -> Response[File | Problem]:
     """Export retained request telemetry.
 
@@ -127,9 +175,12 @@ def sync_detailed(
     available for spreadsheet and support workflows. The export uses the
     same plan retention boundary as the debugger list, never includes
     request bodies, headers, source IPs, or raw span attributes, and is
-    capped at 10,000 rows. `X-Faas-Request-Log-Window` and
-    `X-Faas-Request-Log-Retention-Clamped` describe the effective window
-    applied to the artifact.
+    capped at 10,000 rows. It takes the request list's filters.
+    `X-Faas-Request-Log-Window` and `X-Faas-Request-Log-Retention-Clamped`
+    describe the effective window applied to the artifact, and
+    `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+    In CSV, a value that would start a spreadsheet formula is written
+    with a leading apostrophe.
 
     Args:
         slug (str):
@@ -137,6 +188,11 @@ def sync_detailed(
         route (None | str | Unset):
         format_ (ExportAppDebugRequestsFormat | Unset):  Default: 'ndjson'.
         limit (int | None | Unset):  Default: 10000.
+        deployment_id (None | Unset | UUID):
+        status (int | None | Unset):
+        cold_boot (bool | None | Unset):
+        consumer_id (None | str | Unset):
+        min_latency_ms (int | None | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,6 +208,11 @@ def sync_detailed(
         route=route,
         format_=format_,
         limit=limit,
+        deployment_id=deployment_id,
+        status=status,
+        cold_boot=cold_boot,
+        consumer_id=consumer_id,
+        min_latency_ms=min_latency_ms,
     )
 
     response = client.get_httpx_client().request(
@@ -169,6 +230,11 @@ def sync(
     route: None | str | Unset = UNSET,
     format_: ExportAppDebugRequestsFormat | Unset = "ndjson",
     limit: int | None | Unset = 10000,
+    deployment_id: None | Unset | UUID = UNSET,
+    status: int | None | Unset = UNSET,
+    cold_boot: bool | None | Unset = UNSET,
+    consumer_id: None | str | Unset = UNSET,
+    min_latency_ms: int | None | Unset = UNSET,
 ) -> File | Problem | None:
     """Export retained request telemetry.
 
@@ -177,9 +243,12 @@ def sync(
     available for spreadsheet and support workflows. The export uses the
     same plan retention boundary as the debugger list, never includes
     request bodies, headers, source IPs, or raw span attributes, and is
-    capped at 10,000 rows. `X-Faas-Request-Log-Window` and
-    `X-Faas-Request-Log-Retention-Clamped` describe the effective window
-    applied to the artifact.
+    capped at 10,000 rows. It takes the request list's filters.
+    `X-Faas-Request-Log-Window` and `X-Faas-Request-Log-Retention-Clamped`
+    describe the effective window applied to the artifact, and
+    `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+    In CSV, a value that would start a spreadsheet formula is written
+    with a leading apostrophe.
 
     Args:
         slug (str):
@@ -187,6 +256,11 @@ def sync(
         route (None | str | Unset):
         format_ (ExportAppDebugRequestsFormat | Unset):  Default: 'ndjson'.
         limit (int | None | Unset):  Default: 10000.
+        deployment_id (None | Unset | UUID):
+        status (int | None | Unset):
+        cold_boot (bool | None | Unset):
+        consumer_id (None | str | Unset):
+        min_latency_ms (int | None | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -203,6 +277,11 @@ def sync(
         route=route,
         format_=format_,
         limit=limit,
+        deployment_id=deployment_id,
+        status=status,
+        cold_boot=cold_boot,
+        consumer_id=consumer_id,
+        min_latency_ms=min_latency_ms,
     ).parsed
 
 
@@ -214,6 +293,11 @@ async def asyncio_detailed(
     route: None | str | Unset = UNSET,
     format_: ExportAppDebugRequestsFormat | Unset = "ndjson",
     limit: int | None | Unset = 10000,
+    deployment_id: None | Unset | UUID = UNSET,
+    status: int | None | Unset = UNSET,
+    cold_boot: bool | None | Unset = UNSET,
+    consumer_id: None | str | Unset = UNSET,
+    min_latency_ms: int | None | Unset = UNSET,
 ) -> Response[File | Problem]:
     """Export retained request telemetry.
 
@@ -222,9 +306,12 @@ async def asyncio_detailed(
     available for spreadsheet and support workflows. The export uses the
     same plan retention boundary as the debugger list, never includes
     request bodies, headers, source IPs, or raw span attributes, and is
-    capped at 10,000 rows. `X-Faas-Request-Log-Window` and
-    `X-Faas-Request-Log-Retention-Clamped` describe the effective window
-    applied to the artifact.
+    capped at 10,000 rows. It takes the request list's filters.
+    `X-Faas-Request-Log-Window` and `X-Faas-Request-Log-Retention-Clamped`
+    describe the effective window applied to the artifact, and
+    `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+    In CSV, a value that would start a spreadsheet formula is written
+    with a leading apostrophe.
 
     Args:
         slug (str):
@@ -232,6 +319,11 @@ async def asyncio_detailed(
         route (None | str | Unset):
         format_ (ExportAppDebugRequestsFormat | Unset):  Default: 'ndjson'.
         limit (int | None | Unset):  Default: 10000.
+        deployment_id (None | Unset | UUID):
+        status (int | None | Unset):
+        cold_boot (bool | None | Unset):
+        consumer_id (None | str | Unset):
+        min_latency_ms (int | None | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -247,6 +339,11 @@ async def asyncio_detailed(
         route=route,
         format_=format_,
         limit=limit,
+        deployment_id=deployment_id,
+        status=status,
+        cold_boot=cold_boot,
+        consumer_id=consumer_id,
+        min_latency_ms=min_latency_ms,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -262,6 +359,11 @@ async def asyncio(
     route: None | str | Unset = UNSET,
     format_: ExportAppDebugRequestsFormat | Unset = "ndjson",
     limit: int | None | Unset = 10000,
+    deployment_id: None | Unset | UUID = UNSET,
+    status: int | None | Unset = UNSET,
+    cold_boot: bool | None | Unset = UNSET,
+    consumer_id: None | str | Unset = UNSET,
+    min_latency_ms: int | None | Unset = UNSET,
 ) -> File | Problem | None:
     """Export retained request telemetry.
 
@@ -270,9 +372,12 @@ async def asyncio(
     available for spreadsheet and support workflows. The export uses the
     same plan retention boundary as the debugger list, never includes
     request bodies, headers, source IPs, or raw span attributes, and is
-    capped at 10,000 rows. `X-Faas-Request-Log-Window` and
-    `X-Faas-Request-Log-Retention-Clamped` describe the effective window
-    applied to the artifact.
+    capped at 10,000 rows. It takes the request list's filters.
+    `X-Faas-Request-Log-Window` and `X-Faas-Request-Log-Retention-Clamped`
+    describe the effective window applied to the artifact, and
+    `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+    In CSV, a value that would start a spreadsheet formula is written
+    with a leading apostrophe.
 
     Args:
         slug (str):
@@ -280,6 +385,11 @@ async def asyncio(
         route (None | str | Unset):
         format_ (ExportAppDebugRequestsFormat | Unset):  Default: 'ndjson'.
         limit (int | None | Unset):  Default: 10000.
+        deployment_id (None | Unset | UUID):
+        status (int | None | Unset):
+        cold_boot (bool | None | Unset):
+        consumer_id (None | str | Unset):
+        min_latency_ms (int | None | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -297,5 +407,10 @@ async def asyncio(
             route=route,
             format_=format_,
             limit=limit,
+            deployment_id=deployment_id,
+            status=status,
+            cold_boot=cold_boot,
+            consumer_id=consumer_id,
+            min_latency_ms=min_latency_ms,
         )
     ).parsed

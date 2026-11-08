@@ -310,8 +310,9 @@ func replayLedgerMonth(t *testing.T, source meter.UsageSource, backend replayBac
 		t.Fatalf("passes = %+v, want October as the previous month", passes)
 	}
 	october := passes[0]
-	// The default Hobby cap ($2, 200 GB-h) bounds late's compute, and
-	// capped's own cap of 50 cents bounds it; every other subject matches.
+	// The default Hobby cap ($10, one more allowance at $0.05/GB-h) bounds
+	// late's compute, and capped's own cap of 50 cents bounds it; every other
+	// subject matches.
 	want := map[string]int{meter.LedgerMatch: len(subjects) - 2, meter.LedgerCapped: 2}
 	if len(october.Results) != len(want) || october.Results[meter.LedgerMatch] != want[meter.LedgerMatch] || october.Results[meter.LedgerCapped] != want[meter.LedgerCapped] {
 		t.Errorf("October compute results = %v (drift %d MB-s), want %v", october.Results, october.DriftMBSeconds, want)
@@ -339,23 +340,26 @@ func replayLedgerMonth(t *testing.T, source meter.UsageSource, backend replayBac
 		t.Errorf("steady's day-21 receipt source = %q (%v), want %q", got, err, receipt)
 	}
 
-	// What each subject's October was delivered, worked by hand.
-	for name, gbHours := range map[string]int64{
-		"steady":    150, // 350 GB-h on Hobby, 200 included
-		"upgrade":   10,  // 210 on Hobby before the upgrade; Pro's share covers the rest
-		"downgrade": 0,   // Pro's share of the month covers all 350
-		"return":    0,   // the ten days on Pro cover the rest
-		"boundary":  60,  // September's 500 GB-h are September's
-		"capped":    50,  // its 50-cent cap; its unbilled egress reserves none of it
-		"late":      188, // 210 above the allowance after subscribing; the $2 default cap less 4 GiB of egress at 3 cents
-		"org":       150, // an organization bills like an account
+	// What each subject's October was delivered, worked by hand, in MB-s.
+	// Compute overage is $0.05/GB-h (ADR-20261107192333).
+	for name, mbSeconds := range map[string]int64{
+		"steady":    gbh(150), // 350 GB-h on Hobby, 200 included
+		"upgrade":   gbh(10),  // 210 on Hobby before the upgrade; Pro's share covers the rest
+		"downgrade": 0,        // Pro's share of the month covers all 350
+		"return":    0,        // the ten days on Pro cover the rest
+		"boundary":  gbh(60),  // September's 500 GB-h are September's
+		"capped":    gbh(10),  // its 50-cent cap; its unbilled egress reserves none of it
+		// 210 GB-h above the allowance after subscribing; the $10 default cap
+		// less 4 GiB of egress at 3 cents leaves 988 cents, 197.6 GB-h.
+		"late": gbh(197) + api.SecondsPerGBHour*3/5,
+		"org":  gbh(150), // an organization bills like an account
 	} {
 		got, err := deliveries.DeliveredComputeMBSeconds(ctx, "polar", subjects[name], month, end)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != gbh(gbHours) {
-			t.Errorf("%s compute delivered %d MB-s in October, want %d (%d GB-h)", name, got, gbh(gbHours), gbHours)
+		if got != mbSeconds {
+			t.Errorf("%s compute delivered %d MB-s in October, want %d", name, got, mbSeconds)
 		}
 	}
 	for name, gibs := range map[string]int64{

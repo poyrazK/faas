@@ -556,7 +556,7 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 				case p.meterID:
 					computeMetered++
 					if price.PriceCurrency != api.BillingCurrencyLower || !decimalEquals(price.UnitAmount, billing.PlanOverageMillicentsPerGBHour()/api.MillicentsPerCent) {
-						return fmt.Errorf("polar: validate %s product %q compute price must be %s 1 cent per unit on meter %q", plan, productID, api.BillingCurrency, p.meterID)
+						return fmt.Errorf("polar: validate %s product %q compute price must be %s %d cents per unit (GB-RAM-hour) on meter %q", plan, productID, api.BillingCurrency, billing.PlanOverageMillicentsPerGBHour()/api.MillicentsPerCent, p.meterID)
 					}
 				case p.egressMeterID:
 					egressMetered++

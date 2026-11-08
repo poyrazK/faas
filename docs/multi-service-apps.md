@@ -247,8 +247,14 @@ as `127.0.0.1:8081:8080`, which Docker publishes only on your own machine; the
 plan warns, and removing the address publishes it. Other services are public unless
 [`.gregale/project.yaml`](#without-a-compose-file) says `visibility: internal`.
 The plan lists every public service under **Public on the internet** and marks
-the rest `visibility=internal`. Visibility is set when the app is created; see
-[networking](networking.md) for changing it later.
+the rest `visibility=internal`. A production deploy also makes an existing
+service internal once Compose stops publishing its ports, and the plan says
+so: removing `ports:` takes a service off the internet. The reverse is never
+automatic: a service that starts publishing ports stays internal, and the plan
+says how to publish it (`gregale app <slug> --visibility public`). A deploy to a
+named environment changes no visibility, which is app-wide. See
+[networking](networking.md) for changing it by hand
+([ADR-20261107090000](adr/20261107090000-preview-markers-reach-services-and-compose-visibility.md)).
 
 A service listens on the container side of its first `ports:` mapping: with
 `ports: ["8080:3000"]`, Gregale sends requests to port 3000 and, unless you set

@@ -455,8 +455,9 @@ func (r *Reader) SnapshotActivity(now time.Time) map[string]sched.InstanceActivi
 			continue
 		}
 		activity := sched.InstanceActivity{
-			Inflight:    row.InflightRequests,
-			LastRequest: row.LastRequestAt,
+			Inflight:        row.InflightRequests,
+			LastRequest:     row.LastRequestAt,
+			IdleLadderLevel: int(row.IdleLadderLevel),
 		}
 		if row.RSSMB > 0 {
 			activity.ResidentMB = int(row.RSSMB)

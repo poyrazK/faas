@@ -32,7 +32,7 @@ func render() string {
 	var b strings.Builder
 	b.WriteString("# Plans and pricing\n\n")
 	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->\n\n")
-	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at $0.01 per GB-RAM-hour on paid plans.\n\n")
+	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at " + formatPrice(api.OverageMillicentsPerGBHour) + " per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
 	b.WriteString("| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App egress / month | App layer | Idle timeout | Max request timeout |\n")
 	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")

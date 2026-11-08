@@ -58,7 +58,7 @@ func testConfig(baseURL string) Config {
 }
 
 func catalogProductJSON(id string, fixedCents int64) string {
-	return `{"id":"` + id + `","recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"usd","price_amount":` + strconv.FormatInt(fixedCents, 10) + `,"is_archived":false},{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`
+	return `{"id":"` + id + `","recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"usd","price_amount":` + strconv.FormatInt(fixedCents, 10) + `,"is_archived":false},{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"5","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`
 }
 
 func catalogMeterJSON() string {
