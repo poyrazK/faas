@@ -4593,6 +4593,12 @@ type Limits struct {
 	// min_instances does, and an unbounded free-tier write endpoint is an
 	// abuse surface.
 	CustomMetricsAllowed bool
+	// CustomMetricsPerApp caps distinct custom metric names per app
+	// (ADR-20261108160000; was a flat MaxCustomMetricsPerApp = 5). A
+	// histogram uses five names (_count, _sum, _p50, _p95, _p99). Bounded
+	// because schedd reads an app's metrics every tick and apid exports
+	// every fresh one to the platform Prometheus.
+	CustomMetricsPerApp int
 
 	// MaxInstancesAllowed (issue #462 / ADR-058) toggles the per-app
 	// ceiling on live instances. Mirrors MinInstancesAllowed: Hobby+
@@ -6481,6 +6487,7 @@ var planLimits = map[Plan]Limits{
 		// they're paying for.
 		MinInstancesAllowed:  true,
 		CustomMetricsAllowed: true,
+		CustomMetricsPerApp:  20,
 		MaxInstancesAllowed:  true,
 		// MaxMinInstances (ADR-071): Hobby gets 1 — one warm
 		// instance is the minimum the floor feature exists to
@@ -6879,6 +6886,7 @@ var planLimits = map[Plan]Limits{
 		RegistryCredentialMax: 5,
 		MinInstancesAllowed:   true,
 		CustomMetricsAllowed:  true,
+		CustomMetricsPerApp:   50,
 		MaxInstancesAllowed:   true,
 		// MaxMinInstances (ADR-071): Pro = 3 — covers a small
 		// "always-warm fan-out for a customer-facing API" pattern
@@ -7295,6 +7303,7 @@ var planLimits = map[Plan]Limits{
 		RegistryCredentialMax: 20,
 		MinInstancesAllowed:   true,
 		CustomMetricsAllowed:  true,
+		CustomMetricsPerApp:   200,
 		MaxInstancesAllowed:   true,
 		// MaxMinInstances (ADR-071): Scale = 10 — half of
 		// MaxConcurrency (20). At Scale's 1024 MB instance RAM
@@ -9258,7 +9267,9 @@ const (
 	// latency bound rather than a product limit. Twelve covers a distinct
 	// window per month, which is well past any real weekly shape.
 	MaxScalingSchedules = 12
-	// MaxCustomMetricsPerApp caps distinct ADR-202 metric names per app.
+	// MaxCustomMetricsPerApp is the largest per-plan cap on distinct ADR-202
+	// metric names per app (Limits.CustomMetricsPerApp, ADR-20261108160000);
+	// enforcement reads the plan's own cap.
 	//
 	// The bound is a LATENCY property before it is a storage one: the
 	// targets trigger reads an app's custom metrics on every tick for
@@ -9266,7 +9277,7 @@ const (
 	// per-tick read. The (app_id, name) primary key means a push to an
 	// existing name is an upsert and cannot grow the count — only a new
 	// name can, which is where apid enforces this.
-	MaxCustomMetricsPerApp = 5
+	MaxCustomMetricsPerApp = 200
 	// CustomMetricNameMaxBytes bounds a metric name. Matches the
 	// app_custom_metrics_name_shape CHECK in the migration; the Go gate
 	// exists so the customer gets a 422 with a useful message instead of
@@ -11013,6 +11024,16 @@ func (p Plan) CustomMetricsAllowed() bool {
 		return false
 	}
 	return l.CustomMetricsAllowed
+}
+
+// CustomMetricsPerApp (ADR-20261108160000) returns the plan's cap on distinct
+// custom metric names per app; 0 when the plan has no custom metrics.
+func (p Plan) CustomMetricsPerApp() int {
+	l, ok := LimitsFor(p)
+	if !ok || !l.CustomMetricsAllowed {
+		return 0
+	}
+	return l.CustomMetricsPerApp
 }
 
 // QueueControlsAllowed (ADR-124) reports whether the plan may

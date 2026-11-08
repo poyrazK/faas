@@ -50,7 +50,7 @@ func (s *server) postOTLPMetrics(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	res := otlpmetrics.Translate(req, time.Now().UTC())
-	if err := s.storeOTLPPoints(r.Context(), store, app.ID, &res); err != nil {
+	if err := s.storeOTLPPoints(r.Context(), store, app.ID, s.customMetricLimit(r.Context(), acct.Plan, app), &res); err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "store OTLP metrics",
 			"Gregale could not store these metrics.", "Retry the export; OTLP exporters retry automatically.", err)
 		return
@@ -62,9 +62,11 @@ func (s *server) postOTLPMetrics(w http.ResponseWriter, r *http.Request, acct st
 // metric names are read once: points for names it has are written, new names
 // are admitted, in name order, only while the app is under its limit, and the
 // rest are rejected without a database write, so one export naming thousands
-// of metrics costs at most MaxCustomMetricsPerApp writes. The store still
-// enforces the limit against concurrent exports.
-func (s *server) storeOTLPPoints(ctx context.Context, store state.CustomMetricKindStore, appID string, res *otlpmetrics.Result) error {
+// of metrics costs at most limit writes. The store still enforces the limit
+// against concurrent exports. Delta points are added to the stored value
+// (ADR-20261108160000).
+func (s *server) storeOTLPPoints(ctx context.Context, store state.CustomMetricKindStore, appID string, limit int, res *otlpmetrics.Result) error {
+	deltas, _ := store.(state.CustomMetricDeltaStore)
 	rows, err := s.store.ListCustomMetrics(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("list custom metrics: %w", err)
@@ -73,11 +75,11 @@ func (s *server) storeOTLPPoints(ctx context.Context, store state.CustomMetricKi
 	for _, row := range rows {
 		known[row.Name] = true
 	}
-	room := api.MaxCustomMetricsPerApp - len(known)
+	room := limit - len(known)
 	reject := func(name string) {
 		res.Rejected++
 		if res.Reason == "" {
-			res.Reason = fmt.Sprintf("metric %q: app is at its limit of %d custom metrics", name, api.MaxCustomMetricsPerApp)
+			res.Reason = fmt.Sprintf("metric %q: app is at its limit of %d custom metrics", name, limit)
 		}
 	}
 	slices.SortFunc(res.Points, func(a, b otlpmetrics.Point) int { return strings.Compare(a.Name, b.Name) })
@@ -90,7 +92,16 @@ func (s *server) storeOTLPPoints(ctx context.Context, store state.CustomMetricKi
 			}
 			room--
 		}
-		err := store.PutCustomMetricOfKind(ctx, appID, p.Name, p.Kind, p.Value, p.ObservedAt, api.MaxCustomMetricsPerApp)
+		var err error
+		switch {
+		case p.Delta && deltas == nil:
+			reject(p.Name)
+			continue
+		case p.Delta:
+			err = deltas.AddCustomMetricOfKind(ctx, appID, p.Name, p.Kind, p.Value, p.ObservedAt, limit)
+		default:
+			err = store.PutCustomMetricOfKind(ctx, appID, p.Name, p.Kind, p.Value, p.ObservedAt, limit)
+		}
 		switch {
 		case errors.Is(err, state.ErrCustomMetricLimit):
 			reject(p.Name)
