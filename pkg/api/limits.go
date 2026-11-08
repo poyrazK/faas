@@ -4292,6 +4292,15 @@ type Limits struct {
 	// hourly count is below it, so production deploys always keep
 	// DeploysPerHour - PreviewDeploysPerHour (ADR-20261028100000).
 	PreviewDeploysPerHour int
+	// BuildMinutesPerMonth is the builder time the account that pays for an
+	// app may use per UTC month across all its apps (ADR-20261104132753).
+	// Builds are free; this bounds how much of the shared builder slots one
+	// account can hold. A build that starts past it is refused with
+	// plan_limit_build_minutes; image deploys build nothing and are not
+	// counted. A running build counts up to now, and no build counts past
+	// BuildTimeoutSeconds (amendment 1). Free 200, Hobby 1,000, Pro 3,000,
+	// Scale 6,000 (owner, 2026-11-07).
+	BuildMinutesPerMonth int
 	// DeveloperApps is the separate cap for expiring `gregale dev`
 	// environments. These sessions do not consume DeployedApps slots.
 	DeveloperApps      int
@@ -5937,6 +5946,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        10,
 		PreviewDeploysPerHour: 5,
+		BuildMinutesPerMonth:  200,
 		DeveloperApps:         1,
 		MaxConcurrency:        1,
 		RAMMB:                 256,
@@ -6363,6 +6373,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        50,
 		PreviewDeploysPerHour: 25,
+		BuildMinutesPerMonth:  1_000,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
 		RAMMB:                 512,
@@ -6811,6 +6822,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        250,
 		PreviewDeploysPerHour: 125,
+		BuildMinutesPerMonth:  3_000,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
 		RAMMB:                 1024,
@@ -7224,6 +7236,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        1000,
 		PreviewDeploysPerHour: 500,
+		BuildMinutesPerMonth:  6_000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
 		RAMMB:                 2048,
@@ -12930,6 +12943,16 @@ func (p Plan) DeveloperLeaseMax() time.Duration {
 
 // DeploysPerHour returns the account-wide deploy admission budget for the
 // plan. Unknown plans fail closed.
+// BuildMinutesPerMonth returns the plan's monthly builder-time quota; zero
+// for an unknown plan.
+func (p Plan) BuildMinutesPerMonth() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.BuildMinutesPerMonth
+}
+
 func (p Plan) DeploysPerHour() int {
 	l, ok := LimitsFor(p)
 	if !ok {

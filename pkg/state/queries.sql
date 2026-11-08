@@ -1937,6 +1937,81 @@ on conflict (instance_id, minute) do update
        tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
        cold_boot_count = usage_minutes.cold_boot_count + EXCLUDED.cold_boot_count;
 
+-- name: ApplyGatewayEdgeUsageEvent :execrows
+-- An edge frame's bytes, served by a gateway for an app without an instance,
+-- count as the app's egress (ADR-20261104132753): tx_bytes and net_tx_bytes
+-- under the app's edge usage ID, md5('gregale-edge-egress:' || app id).
+insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
+select a.account_id, a.id, md5('gregale-edge-egress:' || a.id::text)::uuid, sqlc.arg(minute)::timestamptz, 0, 0, 0, sqlc.arg(tx_bytes)::bigint, sqlc.arg(tx_bytes)::bigint, 0, 0, 0
+  from apps a
+ where a.id = sqlc.arg(app_id)::uuid
+on conflict (instance_id, minute) do update
+   set tx_bytes     = usage_minutes.tx_bytes     + EXCLUDED.tx_bytes,
+       net_tx_bytes = usage_minutes.net_tx_bytes + EXCLUDED.net_tx_bytes;
+
+-- name: LockRealtimeEgressSync :exec
+SELECT pg_advisory_xact_lock(hashtextextended('realtime-egress-sync', 0));
+
+-- name: SyncRealtimeEgressUsage :execrows
+-- Realtime fan-out counts as the app's egress (ADR-20261104132753). Every
+-- realtime_usage_hours row only grows, so this appends, under the app's
+-- realtime usage ID, the month's delivered bytes not yet appended. The caller
+-- holds LockRealtimeEgressSync in the same transaction.
+with delivered as (
+  select r.app_id, sum(r.delivered_bytes)::bigint as bytes
+    from realtime_usage_hours r
+   where r.hour >= sqlc.arg(month_start)::timestamptz and r.hour < sqlc.arg(month_end)::timestamptz
+   group by r.app_id
+), pending as (
+  select d.app_id, (d.bytes - coalesce((
+      select sum(u.net_tx_bytes) from usage_minutes u
+       where u.instance_id = md5('gregale-realtime-egress:' || d.app_id::text)::uuid
+         and u.minute >= sqlc.arg(month_start)::timestamptz and u.minute < sqlc.arg(month_end)::timestamptz), 0))::bigint as bytes
+    from delivered d
+)
+insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
+select a.account_id, a.id, md5('gregale-realtime-egress:' || a.id::text)::uuid, sqlc.arg(minute)::timestamptz, 0, 0, 0, p.bytes, p.bytes, 0, 0, 0
+  from pending p
+  join apps a on a.id = p.app_id
+ where p.bytes > 0
+on conflict (instance_id, minute) do update
+   set tx_bytes     = usage_minutes.tx_bytes     + EXCLUDED.tx_bytes,
+       net_tx_bytes = usage_minutes.net_tx_bytes + EXCLUDED.net_tx_bytes;
+
+-- name: BuildSecondsThisMonthForApp :one
+-- Builder time this UTC month of the account that pays for an app
+-- (ADR-20261104132753): every build of that payer's apps that started at or
+-- after month_start, each capped at the build timeout (a running one counts up to now). A coalesced build ran
+-- no builder of its own. The payer is an organization only when it owns its
+-- resources, as bind_app_usage_owner decides.
+with subject as (
+  select case when o.id is not null and not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end as id
+    from apps a
+    left join orgs o on o.id = a.org_id
+   where a.id = sqlc.arg(app_id)::uuid
+), payer_apps as (
+  select a.id
+    from subject s
+    join apps a on a.account_id = s.id or a.org_id = s.id
+    left join orgs o on o.id = a.org_id
+   where (case when o.id is not null and not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) = s.id
+), used as (
+  -- A build ends at its finish, its cancellation, or now while it runs, and
+  -- never counts past the build timeout: a row left without an end (a
+  -- cancelled build has no finished_at) must not run on to the month's end.
+  select coalesce(sum(extract(epoch from (
+           least(coalesce(b.finished_at, b.cancelled_at, now()),
+                 b.started_at + make_interval(secs => sqlc.arg(max_build_seconds)::double precision))
+           - b.started_at))), 0)::bigint as seconds
+    from payer_apps pa
+    join deployments d on d.app_id = pa.id
+    join builds b on b.deployment_id = d.id
+   where b.started_at >= sqlc.arg(month_start)::timestamptz
+     and b.coalesced_with is null
+)
+select coalesce((select br.plan from billing_resource_accounts br join subject s on br.id = s.id), '')::text as plan,
+       (select seconds from used)::bigint as used_seconds;
+
 -- name: UsageByMonth :many
 select account_id, app_id, month, mb_seconds, cpu_usec, requests, tx_bytes, net_tx_bytes
 from usage_monthly
