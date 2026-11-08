@@ -110,7 +110,7 @@ func localName(dir string) string {
 }
 
 func newLocalFunction(spec gregalemanifest.FunctionSpec, absRoot string, crons []string) (*localFunction, error) {
-	runtime, handler, err := functionRuntimeAndHandler(spec, absRoot)
+	runtime, handler, err := gregalemanifest.ResolveFunctionRuntime(spec, absRoot)
 	if err != nil {
 		return nil, err
 	}
