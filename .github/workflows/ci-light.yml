@@ -371,6 +371,7 @@ jobs:
           bash scripts/ci/postgres_runtime_roles_vars_test.sh
           bash scripts/ci/faas_environment_vars_test.sh
           bash scripts/ci/verify_unit_release_test.sh
+          bash scripts/ci/fetch_release_asset_test.sh
       - name: release binaries link no forbidden package
         run: make daemon-deps-check
       - name: MemStore stub guard

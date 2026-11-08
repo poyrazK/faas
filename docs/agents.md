@@ -131,6 +131,14 @@ owner or admin of its organization, can decide, and only from a signed-in
 session, never with an API key. After you approve, the agent repeats exactly
 the same request once. A request expires 30 minutes after it was made.
 
+The CLI prints the review link with the error. Put `--wait-for-approval`
+before the command (or set `GREGALE_WAIT_FOR_APPROVAL=1`) to have it wait
+for your decision and repeat the request once when you approve:
+
+```sh
+gregale --non-interactive --wait-for-approval app delete demo --yes
+```
+
 If you deny, you can give the agent a reason. When the agent repeats a
 request you denied, or one that expired, within 30 minutes, it gets
 `403 approval_denied` (with your reason) or `410 approval_expired` instead of
@@ -142,7 +150,7 @@ account webhook to `agent.approval.requested`, `agent.approval.approved` and
 `agent.approval.denied`:
 
 ```sh
-gregale webhook account create --target-url https://example.com/approvals \
+gregale webhook account add --target-url https://example.com/approvals \
   --event agent.approval.requested --event agent.approval.denied
 ```
 

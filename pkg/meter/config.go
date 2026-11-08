@@ -90,6 +90,11 @@ type Config struct {
 	// ledger proves. Shadow only counts them. Empty is off;
 	// FAAS_QUIET_PAUSE_UNBILLED overrides it.
 	QuietPauseUnbilled string `toml:"quiet_pause_unbilled"`
+	// BillingUsageSource (ADR-20261107105126) is off, ledger_shadow or
+	// ledger: what the provider pusher quantifies billed hours from, and
+	// whether it compares usage_minutes with the financial ledger. Empty is
+	// ledger_shadow; FAAS_BILLING_USAGE_SOURCE overrides it.
+	BillingUsageSource string `toml:"billing_usage_source"`
 	// QuotaInterval is how often the quota loop walks every account.
 	// Zero means the production default (60 s).
 	QuotaInterval time.Duration

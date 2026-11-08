@@ -33420,9 +33420,11 @@ CREATE TABLE public.billing_meter_usage_deliveries (
     window_start timestamp with time zone NOT NULL,
     quantity bigint NOT NULL,
     delivered_at timestamp with time zone DEFAULT now() NOT NULL,
+    usage_source text,
     CONSTRAINT billing_meter_usage_deliveries_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'egress'::text]))),
     CONSTRAINT billing_meter_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
-    CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0))
+    CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0)),
+    CONSTRAINT billing_meter_usage_deliveries_usage_source_chk CHECK (((usage_source IS NULL) OR (usage_source = ANY (ARRAY['usage_minutes'::text, 'ledger'::text]))))
 );
 
 
@@ -33704,8 +33706,10 @@ CREATE TABLE public.billing_usage_deliveries (
     window_start timestamp with time zone NOT NULL,
     mb_seconds bigint NOT NULL,
     delivered_at timestamp with time zone DEFAULT now() NOT NULL,
+    usage_source text,
     CONSTRAINT billing_usage_deliveries_mb_seconds_check CHECK ((mb_seconds >= 0)),
-    CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+    CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
+    CONSTRAINT billing_usage_deliveries_usage_source_chk CHECK (((usage_source IS NULL) OR (usage_source = ANY (ARRAY['usage_minutes'::text, 'ledger'::text]))))
 );
 
 
@@ -35004,6 +35008,42 @@ CREATE TABLE public.crash_snapshot_settings (
     enabled boolean NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: credit_discounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.credit_discounts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    subject_id uuid NOT NULL,
+    provider text NOT NULL,
+    provider_subscription_id text NOT NULL,
+    provider_discount_id text NOT NULL,
+    amount_cents bigint NOT NULL,
+    currency text NOT NULL,
+    state text DEFAULT 'attached'::text NOT NULL,
+    provider_invoice_id text,
+    redeemed_cents bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT credit_discounts_amount_cents_check CHECK ((amount_cents > 0)),
+    CONSTRAINT credit_discounts_currency_check CHECK ((currency ~ '^[a-z]{3}$'::text)),
+    CONSTRAINT credit_discounts_provider_check CHECK ((provider = 'polar'::text)),
+    CONSTRAINT credit_discounts_provider_discount_id_check CHECK (((char_length(provider_discount_id) >= 1) AND (char_length(provider_discount_id) <= 200))),
+    CONSTRAINT credit_discounts_provider_invoice_id_check CHECK (((provider_invoice_id IS NULL) OR ((char_length(provider_invoice_id) >= 1) AND (char_length(provider_invoice_id) <= 200)))),
+    CONSTRAINT credit_discounts_provider_subscription_id_check CHECK (((char_length(provider_subscription_id) >= 1) AND (char_length(provider_subscription_id) <= 200))),
+    CONSTRAINT credit_discounts_redeemed_cents_check CHECK (((redeemed_cents IS NULL) OR (redeemed_cents >= 0))),
+    CONSTRAINT credit_discounts_redeemed_check CHECK (((state = 'redeemed'::text) = ((provider_invoice_id IS NOT NULL) AND (redeemed_cents IS NOT NULL)))),
+    CONSTRAINT credit_discounts_state_check CHECK ((state = ANY (ARRAY['attached'::text, 'redeemed'::text, 'detached'::text])))
+);
+
+
+--
+-- Name: TABLE credit_discounts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.credit_discounts IS 'One-time fixed provider discounts Gregale attached to a billing subject''s subscription to apply its account credit to the next order; redeemed when an order carries it. Written only by apid (ADR-20261104212028).';
 
 
 --
@@ -61484,6 +61524,14 @@ ALTER TABLE ONLY public.crash_snapshot_settings
 
 
 --
+-- Name: credit_discounts credit_discounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.credit_discounts
+    ADD CONSTRAINT credit_discounts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: credit_ledger credit_ledger_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74017,6 +74065,20 @@ CREATE UNIQUE INDEX crash_captures_one_in_flight_uniq ON public.crash_captures U
 --
 
 CREATE INDEX crash_captures_plaintext_idx ON public.crash_captures USING btree (captured_at, id) WHERE ((status = 'ready'::text) AND (plaintext_state <> 'absent'::text));
+
+
+--
+-- Name: credit_discounts_attached_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX credit_discounts_attached_subject_idx ON public.credit_discounts USING btree (subject_id) WHERE (state = 'attached'::text);
+
+
+--
+-- Name: credit_discounts_provider_discount_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX credit_discounts_provider_discount_key ON public.credit_discounts USING btree (provider, provider_discount_id);
 
 
 --
@@ -93146,6 +93208,14 @@ ALTER TABLE ONLY public.crash_snapshot_settings
 
 ALTER TABLE ONLY public.crash_snapshot_settings
     ADD CONSTRAINT crash_snapshot_settings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: credit_discounts credit_discounts_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.credit_discounts
+    ADD CONSTRAINT credit_discounts_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
