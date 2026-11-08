@@ -609,7 +609,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	for _, a := range accounts {
 		planByAccount[a.ID] = a.Plan
 	}
-	floorHeld := newFloorHolders(s.store)
+	floorHeld := newFloorHolders(s.store, minute)
 	instancesByApp, err := s.catchUpWindowInstances(ctx, minute, catchUp)
 	if err != nil {
 		return nil, err
@@ -970,14 +970,21 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			// that point schedd cannot fulfil the floor. Real CountsForRAM
 			// instances above remain billable because they consume memory
 			// regardless of deployment metadata.
-			floorAvailable, billableErr := s.billableFloorDeployment(ctx, app.ID)
+			floorDeployment, floorAvailable, billableErr := s.billableFloorDeployment(ctx, app.ID)
 			if billableErr != nil {
 				return out, billableErr
 			}
 			if !floorAvailable {
 				continue
 			}
-			billable := api.BillableRAMMB(app.RAMMB)
+			// A floor instance runs the deployment's sidecars too, so it is
+			// priced like a live instance of that deployment
+			// (ADR-20261103131742 amendment 2).
+			floorSidecars, sidecarErr := sidecarsFor(floorDeployment)
+			if sidecarErr != nil {
+				return out, sidecarErr
+			}
+			billable := api.BillableRAMMBWithSidecars(app.RAMMB, floorSidecars)
 			gap := floor - liveCount
 			floorTotal := int64(gap) * MBSecondsPerMinute(billable)
 			if exactResidency {
@@ -1029,19 +1036,23 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 // its latest deployment is still being provisioned. A terminal latest
 // deployment without a live fallback cannot satisfy a min-instances promise
 // and therefore cannot justify synthetic floor usage. Older abandoned pipeline
-// rows do not keep billing alive.
-func (s *Sampler) billableFloorDeployment(ctx context.Context, appID string) (bool, error) {
-	if _, err := s.store.LiveDeployment(ctx, appID); err == nil {
-		return true, nil
+// rows do not keep billing alive. It also names the deployment whose
+// instances fill the floor, for their sidecars.
+func (s *Sampler) billableFloorDeployment(ctx context.Context, appID string) (string, bool, error) {
+	if live, err := s.store.LiveDeployment(ctx, appID); err == nil {
+		return live.ID, true, nil
 	} else if !errors.Is(err, state.ErrNotFound) {
-		return false, fmt.Errorf("meter: resolve live deployment for floor %s: %w", appID, err)
+		return "", false, fmt.Errorf("meter: resolve live deployment for floor %s: %w", appID, err)
 	}
 
 	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, 1, 0)
 	if err != nil {
-		return false, fmt.Errorf("meter: list deployments for floor %s: %w", appID, err)
+		return "", false, fmt.Errorf("meter: list deployments for floor %s: %w", appID, err)
 	}
-	return len(deployments) == 1 && !deployments[0].Status.IsTerminal(), nil
+	if len(deployments) != 1 || deployments[0].Status.IsTerminal() {
+		return "", false, nil
+	}
+	return deployments[0].ID, true, nil
 }
 
 // cpuDeltaForMinute computes the per-minute CPU-µs delta for the

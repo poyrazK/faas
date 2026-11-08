@@ -203,6 +203,8 @@ type Querier interface {
 	AttachCloneCheckpointPgActivationConnection(ctx context.Context, db DBTX, arg AttachCloneCheckpointPgActivationConnectionParams) (int64, error)
 	AttachDeploymentSubmission(ctx context.Context, db DBTX, arg AttachDeploymentSubmissionParams) (AttachDeploymentSubmissionRow, error)
 	AttachProjectEnvironmentCloneDeployment(ctx context.Context, db DBTX, arg AttachProjectEnvironmentCloneDeploymentParams) (int64, error)
+	// The subject's discounts still attached, newest first.
+	AttachedCreditDiscounts(ctx context.Context, db DBTX, arg AttachedCreditDiscountsParams) ([]AttachedCreditDiscountsRow, error)
 	AttestPromotionMigrationRuntime(ctx context.Context, db DBTX, arg AttestPromotionMigrationRuntimeParams) error
 	// One page of the audit rows received in [window_start, window_end), in the
 	// order anchors digest them, after the (received_at, id) cursor. data is
@@ -260,6 +262,9 @@ type Querier interface {
 	BeginProjectWorkerJobEvidence(ctx context.Context, db DBTX, arg BeginProjectWorkerJobEvidenceParams) (int64, error)
 	// Called with the financial subject's row locked, as identity writers do.
 	BillingIdentityForMutation(ctx context.Context, db DBTX, arg BillingIdentityForMutationParams) (BillingIdentityForMutationRow, error)
+	// ADR-20261107105126. A secondary-meter delivery receipt with its usage source.
+	BillingMeterUsageDeliveryRecordFromSource(ctx context.Context, db DBTX, arg BillingMeterUsageDeliveryRecordFromSourceParams) error
+	BillingMeterUsageDeliverySource(ctx context.Context, db DBTX, arg BillingMeterUsageDeliverySourceParams) (string, error)
 	// Each customer who held a plan with a monthly fee in the run's month, with
 	// or without runs (ADR-20261021154511): the assignment in force when the
 	// month starts, or one made during it.
@@ -274,6 +279,10 @@ type Querier interface {
 	// Items are keyed product_control/<app>/<tenant>, after every other item kind.
 	BillingRunProductItems(ctx context.Context, db DBTX, arg BillingRunProductItemsParams) ([]BillingRunProductItemsRow, error)
 	BillingRunUpdateProductItem(ctx context.Context, db DBTX, arg BillingRunUpdateProductItemParams) (int64, error)
+	// ADR-20261107105126. A compute delivery receipt with the usage source that
+	// quantified its hour; the first receipt for an hour wins.
+	BillingUsageDeliveryRecordFromSource(ctx context.Context, db DBTX, arg BillingUsageDeliveryRecordFromSourceParams) error
+	BillingUsageDeliverySource(ctx context.Context, db DBTX, arg BillingUsageDeliverySourceParams) (string, error)
 	// ADR-1741: the admission insert binds the new instance's recovery lineage
 	// in its own transaction. Share locks on the deployment and app order an
 	// operator cold boot, which advances the generation with an UPDATE, before
@@ -842,6 +851,8 @@ type Querier interface {
 	CreateBindingVerificationTask(ctx context.Context, db DBTX, arg CreateBindingVerificationTaskParams) (pgtype.UUID, error)
 	CreateBuild(ctx context.Context, db DBTX, arg CreateBuildParams) (CreateBuildRow, error)
 	CreateCapturedProjectEnvironmentCloneOperation(ctx context.Context, db DBTX, arg CreateCapturedProjectEnvironmentCloneOperationParams) error
+	// ADR-20261104212028: account credit applied as a provider discount.
+	CreateCreditDiscount(ctx context.Context, db DBTX, arg CreateCreditDiscountParams) (CreateCreditDiscountRow, error)
 	CreateCron(ctx context.Context, db DBTX, arg CreateCronParams) (CreateCronRow, error)
 	CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCustomDomainParams) (CreateCustomDomainRow, error)
 	CreateDeployment(ctx context.Context, db DBTX, arg CreateDeploymentParams) (CreateDeploymentRow, error)
@@ -921,6 +932,10 @@ type Querier interface {
 	// not the customer-facing quota.
 	CreateUploadSession(ctx context.Context, db DBTX, arg CreateUploadSessionParams) (UploadSession, error)
 	CreateWorkflowForEachItem(ctx context.Context, db DBTX, arg CreateWorkflowForEachItemParams) error
+	CreditDiscountByProviderID(ctx context.Context, db DBTX, arg CreditDiscountByProviderIDParams) (CreditDiscountByProviderIDRow, error)
+	// Subjects whose discount may need attaching, replacing or removing: those
+	// with credit left, and those with a discount still attached.
+	CreditDiscountSubjects(ctx context.Context, db DBTX, provider string) ([]string, error)
 	// The plan of the app's billing subject (ADR-202610171904), as
 	// AppResourceAccount resolves it: its organization's once the organization
 	// adopted billing, else its creator's.
@@ -1193,6 +1208,7 @@ type Querier interface {
 	// expired rows preserves the miss count for the next backoff stamp.
 	// The partial index `deployments_snapshot_backoff_idx` covers this lookup.
 	DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentSnapshotBackoffActiveRow, error)
+	DetachCreditDiscount(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	DetachEnvironmentGitSource(ctx context.Context, db DBTX, arg DetachEnvironmentGitSourceParams) (int64, error)
 	DetachedEnvironmentJobWasDeleted(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error)
 	DevBridgeByID(ctx context.Context, db DBTX, arg DevBridgeByIDParams) (DevBridgeByIDRow, error)
@@ -1879,17 +1895,24 @@ type Querier interface {
 	FinancialBudgetStopTargetPut(ctx context.Context, db DBTX, arg FinancialBudgetStopTargetPutParams) (int64, error)
 	FinancialBudgetUpdate(ctx context.Context, db DBTX, arg FinancialBudgetUpdateParams) (FinancialBudgetPolicy, error)
 	FinancialCompletedComputeMinutes(ctx context.Context, db DBTX, arg FinancialCompletedComputeMinutesParams) ([]pgtype.Timestamptz, error)
+	// An account cap covers what the account pays for: apps an organization
+	// that owns its resources pays for need not be quiet (ADR-20261107160000).
 	FinancialComputeAccountActivationSafe(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Bool, error)
 	// All account compute, including deleted apps and former jobs, consumes the
 	// same quantity allowance. Missing or above-ceiling contracts fail closed.
 	FinancialComputeAccountBaseline(ctx context.Context, db DBTX, arg FinancialComputeAccountBaselineParams) (FinancialComputeAccountBaselineRow, error)
 	FinancialComputeAccountBookGet(ctx context.Context, db DBTX, arg FinancialComputeAccountBookGetParams) ([]byte, error)
 	FinancialComputeAccountBookPut(ctx context.Context, db DBTX, arg FinancialComputeAccountBookPutParams) error
+	// An organization-paid app's attempt joins its creator's account book only
+	// when that book funded it (ADR-20261107160000).
 	FinancialComputeAccountLeases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([][]byte, error)
 	FinancialComputeAccountSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeAccountSamplingReadyParams) (pgtype.Bool, error)
 	FinancialComputeAccountStrictEnabled(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error)
 	FinancialComputeActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeActivationSafeParams) (bool, error)
 	FinancialComputeAppLeases(ctx context.Context, db DBTX, arg FinancialComputeAppLeasesParams) ([][]byte, error)
+	// Strict budgets follow the billing subject: an app an organization that
+	// owns its resources pays for is never managed by its creator's books
+	// (ADR-20261107160000).
 	FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (pgtype.Bool, error)
 	FinancialComputeAppOwned(ctx context.Context, db DBTX, arg FinancialComputeAppOwnedParams) (bool, error)
 	// The account's budgets with the app's project, the one scope an app's
@@ -1899,6 +1922,8 @@ type Querier interface {
 	// The scopes an app attempt funds: its current project, and the environment
 	// of its deployment. The instance's recorded deployment wins over the
 	// request's; an app outside any project has neither.
+	// org_paid marks an app an organization that owns its resources pays for:
+	// its creator's strict budgets never cover it (ADR-20261107160000).
 	FinancialComputeAppScopes(ctx context.Context, db DBTX, arg FinancialComputeAppScopesParams) (FinancialComputeAppScopesRow, error)
 	// Positive retained charges seed admission conservatively. Corrections cannot
 	// grant execution authority, and missing contracts must fail activation.
@@ -1980,6 +2005,10 @@ type Querier interface {
 	// ADR-20261019193600. Compute MB-seconds the pusher delivered to one provider for one
 	// account in [start, end); the ledger dual run compares it with ledger evidence.
 	FinancialLedgerDeliveredComputeMBSeconds(ctx context.Context, db DBTX, arg FinancialLedgerDeliveredComputeMBSecondsParams) (int64, error)
+	// ADR-20261019193600. Egress bytes the pusher settled for one provider and
+	// account in [start, end), shadow or live; the dual run compares them with
+	// the ledger's egress evidence.
+	FinancialLedgerDeliveredEgressBytes(ctx context.Context, db DBTX, arg FinancialLedgerDeliveredEgressBytesParams) (int64, error)
 	FinancialObjectStorageEstimateGet(ctx context.Context, db DBTX, arg FinancialObjectStorageEstimateGetParams) (FinancialObjectStorageEstimate, error)
 	// ADR-20261020160000: apid's newest live object-storage estimate replaces
 	// the month's row; an older observation never overwrites a newer one.
@@ -1996,6 +2025,10 @@ type Querier interface {
 	FinancialSamplingWindowPut(ctx context.Context, db DBTX, arg FinancialSamplingWindowPutParams) error
 	FinancialUsageAggregate(ctx context.Context, db DBTX, arg FinancialUsageAggregateParams) ([]FinancialUsageAggregateRow, error)
 	FinancialUsageEvidenceList(ctx context.Context, db DBTX, arg FinancialUsageEvidenceListParams) ([]FinancialUsageEvidence, error)
+	// ADR-20261019193600. One meter's ledger evidence summed by the UTC hour its
+	// source started in, through one evidence head, so billing rules that run hour
+	// by hour can be applied to the ledger.
+	FinancialUsageHourly(ctx context.Context, db DBTX, arg FinancialUsageHourlyParams) ([]FinancialUsageHourlyRow, error)
 	FindCustomDomainTenantOverlap(ctx context.Context, db DBTX, suffix string) (string, error)
 	FindForeignVerifiedDomainForTenantHostname(ctx context.Context, db DBTX, arg FindForeignVerifiedDomainForTenantHostnameParams) (string, error)
 	// The caller holds the domain publication guard and destination app lock.
@@ -6712,6 +6745,9 @@ type Querier interface {
 	RecoverExpiredCustomerOperationExecution(ctx context.Context, db DBTX, arg RecoverExpiredCustomerOperationExecutionParams) error
 	RecoverLegacyWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) error
 	RecoverLegacyWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
+	// An order carried the discount. A discount is redeemed once; a replay of the
+	// same order changes nothing.
+	RedeemCreditDiscount(ctx context.Context, db DBTX, arg RedeemCreditDiscountParams) (int64, error)
 	RefreshGitHubConnectionToken(ctx context.Context, db DBTX, arg RefreshGitHubConnectionTokenParams) (int64, error)
 	RegisterApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg RegisterApplicationStandardLogConsumerParams) ([]byte, error)
 	RegisterComputeNodeRuntimeIdentity(ctx context.Context, db DBTX, arg RegisterComputeNodeRuntimeIdentityParams) (int64, error)
@@ -7981,6 +8017,9 @@ type Querier interface {
 	UpsertTenantWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertTenantWorkflowScheduleCursorParams) (PlatformTenantWorkflowScheduleCursor, error)
 	UpsertWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertWorkflowScheduleCursorParams) (WorkflowScheduleCursor, error)
 	UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthParams) ([]UsageByMonthRow, error)
+	// One account's usage_minutes summed by UTC hour: compute MB-seconds and
+	// interface egress bytes, so the pusher can apply its hour rules to a month.
+	UsageMinutesHourly(ctx context.Context, db DBTX, arg UsageMinutesHourlyParams) ([]UsageMinutesHourlyRow, error)
 	ValidateApplicationStandardResourceRefs(ctx context.Context, db DBTX, arg ValidateApplicationStandardResourceRefsParams) (pgtype.Bool, error)
 	ValidateBoundQueueInvocationClaim(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
 	ValidateEnvironmentInvocationCleanup(ctx context.Context, db DBTX, environmentID pgtype.UUID) (ValidateEnvironmentInvocationCleanupRow, error)

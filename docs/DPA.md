@@ -1,38 +1,23 @@
 # Data Processing Addendum (DPA)
 
 <!--
-  Operator-facing template notes (PR #83 review #16):
-
-  1. Placeholders use Go html/template action syntax ({{...}}).
-     The dashboard route at /dashboard/account/dpa renders this
-     file through html/template, which means the body MUST be
-     syntactically valid template input. The {{...}} placeholders
-     already in this file work because html/template treats them
-     as plain text outside any {{...}} action. Adding a real
-     {{if ...}}, {{range ...}}, or {{ $x := ... }} DIRECTIVE
-     (rather than a placeholder) will be parsed and executed at
-     render time — keep this template logic-free. Operator-only
-     Go-template-style placeholders (the {{ALL_CAPS}} shape above)
-     are fine; do not switch to {{ .Foo }} or {{ range ... }}.
-
-  2. The body is rendered inside <pre class="dpa"> (see
-     pkg/dashboard/templates/dpa.html). HTML in the body is shown
-     as text — the operator should not rely on HTML formatting;
-     markdown-style text is the right shape.
-
-  3. Keep this file small. Production deploys ship
-     FAAS_DPA_PATH pointing at /etc/faas/dpa.md; the in-repo copy
-     is the dev fallback and the source of truth the operator
-     customises.
+  This addendum is part of the Terms of Service: it binds every customer
+  that accepts them, so it names no customer, date or jurisdiction and has
+  no placeholders. pkg/legal's TestDPAHasNoPlaceholders fails on any template
+  braces or bracketed ALL-CAPS text. ansible ships this file to /etc/faas/dpa.md
+  (FAAS_DPA_PATH) and the docs site vendors it, so both copies match.
 -->
 
-**Effective date:** {{EFFECTIVE_DATE}}
-**Customer:** {{CUSTOMER_NAME}}
-**Jurisdiction:** {{JURISDICTION}}
+**Parties:** Gregale ("Processor") and the customer that accepted the
+Gregale Terms of Service ("Controller").
+**Effective:** from the date the Controller accepted the Terms of
+Service, for as long as they apply.
 
-This Data Processing Addendum ("DPA") supplements the master services
-agreement between Gregale ("Processor", the platform operator)
-and {{CUSTOMER_NAME}} ("Controller", the customer) and reflects the
+This Data Processing Addendum ("DPA") supplements the Gregale Terms of
+Service (the "master agreement", https://gregale.dev/terms) between
+Gregale ("Processor", the platform operator) and the customer that
+accepted them ("Controller"). It forms part of the master agreement
+and needs no separate signature. It reflects the
 parties' agreement with respect to the Processing of Personal Data
 by Processor on behalf of Controller in connection with the Gregale FaaS
 service.
@@ -158,7 +143,7 @@ of data subjects via the documented Gregale endpoints:
 | Right to erasure (Art. 17) | `DELETE /v1/account` (30-day grace) |
 | Right to restriction (Art. 18) | `POST /v1/account/restore` cancels a pending erasure |
 | Right to portability (Art. 20) | `GET /v1/account/export` returns the JSON bundle |
-| Right to object (Art. 21) | Contact support@gregale.dev |
+| Right to object (Art. 21) | Contact gregale@gregale.dev |
 
 The DPA itself is publicly available at
 `GET /v1/account/dpa` (no auth required) so prospects can read it
@@ -169,8 +154,8 @@ before signing up.
 The current sub-processor list is published at
 https://gregale.dev/docs/dpa/subprocessors for advance notification
 of additions and replacements (30-day notice, see paragraph below);
-the executed sub-processor set for any signed DPA is the list
-enumerated in this section at the time of signature, and the
+the sub-processor set that applies when the Controller accepts this
+DPA is the list enumerated in this section at that time, and the
 notification URL is the channel by which Processor signals
 upcoming changes.
 
@@ -291,20 +276,14 @@ delete all Personal Data from its systems, including any copies,
 within 30 days, save where retention is required by applicable law
 (tax invoices, anti-money-laundering records).
 
-## 12. Governing law ({{JURISDICTION}})
+## 12. Governing law
 
-This DPA is governed by the laws of {{JURISDICTION}}. Any dispute
-arising out of or in connection with this DPA shall be subject to
-the exclusive jurisdiction of the courts of {{JURISDICTION}},
+This DPA is governed by the same law, and disputes arising out of or
+in connection with it go to the same courts, as the master agreement,
 without prejudice to data subjects' rights to bring claims in their
 own jurisdiction under Art. 79 GDPR.
 
 ---
 
-**Signatures**
-
-Controller: _________________________  Date: ____________
-
-Processor: __________________________  Date: ____________
-
-— Gregale, {{EFFECTIVE_DATE}}
+This DPA is accepted together with the Terms of Service. A Controller
+that needs a countersigned copy can request one at gregale@gregale.dev.

@@ -277,7 +277,7 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 		s.notFound(w, "no such consumer")
 		return
 	}
-	since, until, windowErr := parseUsageWindow(r, time.Now().UTC())
+	since, until, windowErr := parseLedgerUsageWindow(r, time.Now().UTC())
 	if windowErr != nil {
 		api.WriteProblem(w, windowErr)
 		return

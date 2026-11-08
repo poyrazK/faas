@@ -106,6 +106,58 @@ tests:
               summary: "2 accounts' previous month reconcile as drift"
               description: "The financial ledger's net compute and the compute receipts meterd delivered disagree (drift) or could not be compared (failed) for the previous UTC month, for two hours (ADR-20261019193600). Customers may be billed differently from the ledger the cost reports use. meterd_financial_ledger_drift_mb_seconds is the summed difference."
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md
+  # ADR-20261107105126: egress dual-run drift and usage-source mismatches.
+  - name: egress ledger drift for two hours fires
+    interval: 1m
+    input_series:
+      - series: meterd_financial_ledger_egress_reconcile_accounts{job="meterd",instance="cp",month="current",result="failed"}
+        values: 0x30 1x150
+      - series: meterd_financial_ledger_egress_reconcile_accounts{job="meterd",instance="cp",month="current",result="match"}
+        values: 12x180
+    alert_rule_test:
+      - eval_time: 140m
+        alertname: FaasMeterdLedgerEgressDrift
+        exp_alerts: []
+      - eval_time: 160m
+        alertname: FaasMeterdLedgerEgressDrift
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: billing_delivery
+              public_status: internal
+              month: current
+              result: failed
+            exp_annotations:
+              summary: "1 accounts' current month egress reconciles as failed"
+              description: "The egress the financial ledger bills, by the egress hour rules, and the egress receipts meterd settled disagree (drift) or could not be compared (failed) for the current UTC month, for two hours (ADR-20261107105126). meterd_financial_ledger_egress_drift_bytes is the summed difference."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md
+  - name: a usage-source mismatch fires for the hour after it
+    interval: 1m
+    input_series:
+      - series: meterd_billing_usage_source_mismatch_windows_total{job="meterd",instance="cp",meter="compute",source="ledger_shadow"}
+        values: 0x60 1x120
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: FaasMeterdBillingUsageSourceMismatch
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: FaasMeterdBillingUsageSourceMismatch
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: billing_delivery
+              public_status: internal
+              meter: compute
+              source: ledger_shadow
+            exp_annotations:
+              summary: "Delivered compute hours had different usage_minutes and ledger quantities (billing from ledger_shadow)"
+              description: "meterd compared the usage_minutes and financial-ledger quantities of the hours it delivered in the last hour and some differed (ADR-20261107105126). The hour was billed from the source in the source label. Both are written in one transaction, so a difference is a bug or an operator ledger correction; meterd logs each one as 'billing usage sources disagree'."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md
+      - eval_time: 180m
+        alertname: FaasMeterdBillingUsageSourceMismatch
+        exp_alerts: []
   - name: held usage about to leave the lookback fires after an hour
     interval: 1m
     input_series:

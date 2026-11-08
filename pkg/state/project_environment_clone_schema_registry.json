@@ -2985,6 +2985,7 @@
       "meter",
       "provider",
       "quantity",
+      "usage_source",
       "window_start"
     ],
     "kind": "operational"
@@ -3142,6 +3143,7 @@
       "delivered_at",
       "mb_seconds",
       "provider",
+      "usage_source",
       "window_start"
     ],
     "kind": "operational"
@@ -5946,6 +5948,24 @@
     "kind": "operational"
   },
   {
+    "table": "credit_discounts",
+    "columns": [
+      "amount_cents",
+      "created_at",
+      "currency",
+      "id",
+      "provider",
+      "provider_discount_id",
+      "provider_invoice_id",
+      "provider_subscription_id",
+      "redeemed_cents",
+      "state",
+      "subject_id",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "egress_policy",
     "columns": [
       "changed_at",
@@ -8233,6 +8253,17 @@
       "started_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "legal_acceptances",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "document",
+      "method",
+      "version"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "quiet_pause_watermarks",

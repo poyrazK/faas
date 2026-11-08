@@ -364,6 +364,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:         StrictBudgets,
+		Capability:  "strict-budgets",
 		Label:       "Strict budgets",
 		Description: "Release strict (suspend_workloads) compute and egress budgets to accounts. Off by default until native acceptance passes. Strict budgets that are already enabled keep enforcing and stay editable while it is off; only creating or enabling one is refused.",
 		ADR:         "ADR-1750",

@@ -870,7 +870,10 @@ func printAutomationDelete(name string, version int64, restoreManifest bool) int
 }
 
 type automationRevisionSummary struct {
-	Version        int64     `json:"version"`
+	Version int64 `json:"version"`
+	// Revision repeats Version under the name that `revisions show --revision`
+	// and `restore --revision` take.
+	Revision       int64     `json:"revision"`
 	DefinitionHash string    `json:"definition_hash"`
 	RecordedAt     time.Time `json:"recorded_at"`
 	LegacySnapshot bool      `json:"legacy_snapshot"`
@@ -970,7 +973,7 @@ func printAutomationRevisionRestore(revision int64, result api.AutomationRespons
 }
 
 func summarizeAutomationRevision(result api.AutomationRevisionResponse) automationRevisionSummary {
-	return automationRevisionSummary{Version: result.Version, DefinitionHash: result.DefinitionHash, RecordedAt: result.RecordedAt, LegacySnapshot: result.LegacySnapshot}
+	return automationRevisionSummary{Version: result.Version, Revision: result.Version, DefinitionHash: result.DefinitionHash, RecordedAt: result.RecordedAt, LegacySnapshot: result.LegacySnapshot}
 }
 
 func printAutomationHealth(result api.AutomationHealthResponse) int {
