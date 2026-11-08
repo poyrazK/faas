@@ -218,6 +218,7 @@ sql:
 
   - engine: "postgresql"
     queries:
+      - "pkg/state/account_flow_queries.sql"
       - "pkg/state/agent_connection_queries.sql"
       - "pkg/state/github_connection_queries.sql"
       - "pkg/state/audit_anchor_queries.sql"

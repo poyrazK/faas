@@ -8,11 +8,13 @@ from .account_deletion_response import AccountDeletionResponse
 from .account_deletion_response_status import AccountDeletionResponseStatus
 from .account_deploy_rate_limit import AccountDeployRateLimit
 from .account_egress_allowlist_extra_response import AccountEgressAllowlistExtraResponse
+from .account_email_change_request import AccountEmailChangeRequest
 from .account_export_response import AccountExportResponse
 from .account_export_response_schema_version import AccountExportResponseSchemaVersion
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_overage_cap_response import AccountOverageCapResponse
+from .account_profile_update import AccountProfileUpdate
 from .account_rate_limits_response import AccountRateLimitsResponse
 from .account_release_webhook_response import AccountReleaseWebhookResponse
 from .account_release_webhook_response_delivery_format import AccountReleaseWebhookResponseDeliveryFormat
@@ -740,6 +742,8 @@ from .edge_waf_review_response import EdgeWAFReviewResponse
 from .egress_overage_request import EgressOverageRequest
 from .egress_overage_response import EgressOverageResponse
 from .egress_overage_response_billing import EgressOverageResponseBilling
+from .email_verification_resend_response import EmailVerificationResendResponse
+from .email_verification_resend_response_status import EmailVerificationResendResponseStatus
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .enable_edge_attack_mode_request import EnableEdgeAttackModeRequest
@@ -1022,6 +1026,8 @@ from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
 from .key_org import KeyOrg
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
+from .linked_sign_in import LinkedSignIn
+from .linked_sign_in_provider import LinkedSignInProvider
 from .list_account_workflow_attention_dependency_status import ListAccountWorkflowAttentionDependencyStatus
 from .list_account_workflow_attention_priority import ListAccountWorkflowAttentionPriority
 from .list_account_workflow_attention_reason import ListAccountWorkflowAttentionReason
@@ -1143,6 +1149,7 @@ from .mfa_enroll_request import MFAEnrollRequest
 from .mfa_enroll_response import MFAEnrollResponse
 from .mfa_recover_request import MFARecoverRequest
 from .mfa_recover_response import MFARecoverResponse
+from .mfa_regenerate_recovery_codes_body import MfaRegenerateRecoveryCodesBody
 from .mfa_verify_request import MFAVerifyRequest
 from .mfa_verify_response import MFAVerifyResponse
 from .mirror_clean_condition import MirrorCleanCondition
@@ -2013,6 +2020,7 @@ from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
 from .record_release_outcome_check_request import RecordReleaseOutcomeCheckRequest
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
+from .recovery_codes_response import RecoveryCodesResponse
 from .release_approval_decision import ReleaseApprovalDecision
 from .release_approval_decision_decision import ReleaseApprovalDecisionDecision
 from .release_approval_decision_role import ReleaseApprovalDecisionRole
@@ -2048,6 +2056,8 @@ from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
 from .repo_response import RepoResponse
+from .request_account_email_change_response_202 import RequestAccountEmailChangeResponse202
+from .request_account_email_change_response_202_status import RequestAccountEmailChangeResponse202Status
 from .request_analytics_compute_cost import RequestAnalyticsComputeCost
 from .request_analytics_compute_cost_allocation_method import RequestAnalyticsComputeCostAllocationMethod
 from .request_analytics_compute_cost_basis import RequestAnalyticsComputeCostBasis
@@ -2284,6 +2294,7 @@ from .sidecar_preset import SidecarPreset
 from .sidecar_probe import SidecarProbe
 from .sidecar_tcp_socket_probe import SidecarTCPSocketProbe
 from .sidecar_type import SidecarType
+from .sign_in_methods_response import SignInMethodsResponse
 from .source_ref_deploy_request import SourceRefDeployRequest
 from .source_ref_deploy_request_format import SourceRefDeployRequestFormat
 from .source_ref_deploy_request_native_rollout import SourceRefDeployRequestNativeRollout
@@ -2324,6 +2335,7 @@ from .traffic_runtime_status_scope import TrafficRuntimeStatusScope
 from .traffic_runtime_status_state import TrafficRuntimeStatusState
 from .transfer_ownership_request import TransferOwnershipRequest
 from .trigger_kind import TriggerKind
+from .unlink_account_sign_in_method_provider import UnlinkAccountSignInMethodProvider
 from .update_account_billing_info_request import UpdateAccountBillingInfoRequest
 from .update_account_release_webhook_request import UpdateAccountReleaseWebhookRequest
 from .update_account_release_webhook_request_delivery_format import UpdateAccountReleaseWebhookRequestDeliveryFormat
@@ -2665,11 +2677,13 @@ __all__ = (
     "AccountDeletionResponseStatus",
     "AccountDeployRateLimit",
     "AccountEgressAllowlistExtraResponse",
+    "AccountEmailChangeRequest",
     "AccountExportResponse",
     "AccountExportResponseSchemaVersion",
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountOverageCapResponse",
+    "AccountProfileUpdate",
     "AccountRateLimitsResponse",
     "AccountReleaseWebhookResponse",
     "AccountReleaseWebhookResponseDeliveryFormat",
@@ -3391,6 +3405,8 @@ __all__ = (
     "EgressOverageRequest",
     "EgressOverageResponse",
     "EgressOverageResponseBilling",
+    "EmailVerificationResendResponse",
+    "EmailVerificationResendResponseStatus",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnableEdgeAttackModeRequest",
@@ -3661,6 +3677,8 @@ __all__ = (
     "KafkaTriggerConfig",
     "KeyOrg",
     "LatestDeploymentsByAppResponse",
+    "LinkedSignIn",
+    "LinkedSignInProvider",
     "ListAccountWorkflowAttentionDependencyStatus",
     "ListAccountWorkflowAttentionPriority",
     "ListAccountWorkflowAttentionReason",
@@ -3774,6 +3792,7 @@ __all__ = (
     "MFAEnrollResponse",
     "MFARecoverRequest",
     "MFARecoverResponse",
+    "MfaRegenerateRecoveryCodesBody",
     "MFAVerifyRequest",
     "MFAVerifyResponse",
     "MirrorCleanCondition",
@@ -4520,6 +4539,7 @@ __all__ = (
     "RecordReleaseOutcomeCheckRequest",
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
+    "RecoveryCodesResponse",
     "ReleaseApprovalDecision",
     "ReleaseApprovalDecisionDecision",
     "ReleaseApprovalDecisionRole",
@@ -4555,6 +4575,8 @@ __all__ = (
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
     "RepoResponse",
+    "RequestAccountEmailChangeResponse202",
+    "RequestAccountEmailChangeResponse202Status",
     "RequestAnalyticsComputeCost",
     "RequestAnalyticsComputeCostAllocationMethod",
     "RequestAnalyticsComputeCostBasis",
@@ -4785,6 +4807,7 @@ __all__ = (
     "SidecarProbe",
     "SidecarTCPSocketProbe",
     "SidecarType",
+    "SignInMethodsResponse",
     "SourceRefDeployRequest",
     "SourceRefDeployRequestFormat",
     "SourceRefDeployRequestNativeRollout",
@@ -4825,6 +4848,7 @@ __all__ = (
     "TrafficRuntimeStatusState",
     "TransferOwnershipRequest",
     "TriggerKind",
+    "UnlinkAccountSignInMethodProvider",
     "UpdateAccountBillingInfoRequest",
     "UpdateAccountReleaseWebhookRequest",
     "UpdateAccountReleaseWebhookRequestDeliveryFormat",

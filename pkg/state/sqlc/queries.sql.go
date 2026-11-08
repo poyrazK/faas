@@ -17768,7 +17768,7 @@ func (q *Queries) EnvironmentQualificationNetworkInstances(ctx context.Context, 
 
 const environmentQualificationNodeUsedMB = `-- name: EnvironmentQualificationNodeUsedMB :one
 SELECT coalesce(sum(ram_mb+$1::integer),0)::bigint FROM instances
-WHERE node_id=$2::uuid AND state IN ('waking','cold_booting','running','draining','warm')
+WHERE node_id=$2::uuid AND state IN ('waking','cold_booting','running','draining','warm','snapshotting')
 `
 
 type EnvironmentQualificationNodeUsedMBParams struct {

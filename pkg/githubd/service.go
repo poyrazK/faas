@@ -814,6 +814,7 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 	if deployProject {
 		s.holdPushOverDeployRate(ctx, project, toEnqueue, held)
 		siblingAddresses = s.pushSiblingAddresses(ctx, tree.FS(), project, scan)
+		s.reportReviewedOnlyProjectSettings(ctx, tree.FS(), changedFiles, filterMode, install.InstallationID, ev.Repository.FullName, ev.After, project, deploymentScope)
 	}
 	// App-bound apps have no project dependency graph and deploy to their
 	// production scope, whichever scope the branch maps the project's to.

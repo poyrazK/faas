@@ -20493,6 +20493,7 @@ CREATE TABLE public.accounts (
     mfa_totp_last_step bigint,
     deletion_includes_managed_postgres boolean DEFAULT false NOT NULL,
     plan_changed_at timestamp with time zone,
+    display_name text DEFAULT ''::text NOT NULL,
     egress_overage_enabled_at timestamp with time zone,
     egress_overage_disabled_at timestamp with time zone,
     CONSTRAINT accounts_abuse_hold_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'operator'::text]))))),
@@ -20500,6 +20501,7 @@ CREATE TABLE public.accounts (
     CONSTRAINT accounts_billing_mail_revision_check CHECK ((billing_mail_revision > 0)),
     CONSTRAINT accounts_business_name_length_chk CHECK (((business_name IS NULL) OR ((char_length(business_name) >= 1) AND (char_length(business_name) <= 256)))),
     CONSTRAINT accounts_deployment_mail_revision_check CHECK ((deployment_mail_revision > 0)),
+    CONSTRAINT accounts_display_name_check CHECK (((char_length(display_name) <= 80) AND (display_name = btrim(display_name)) AND (display_name !~ '[[:cntrl:]]'::text))),
     CONSTRAINT accounts_egress_allowlist_extra_check CHECK ((egress_allowlist_extra >= 0)),
     CONSTRAINT accounts_egress_overage_chk CHECK ((((egress_overage_enabled_at IS NULL) OR isfinite(egress_overage_enabled_at)) AND ((egress_overage_disabled_at IS NULL) OR ((egress_overage_enabled_at IS NOT NULL) AND isfinite(egress_overage_disabled_at) AND (egress_overage_disabled_at >= egress_overage_enabled_at))))),
     CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
@@ -29589,6 +29591,39 @@ CREATE TABLE public.account_deploy_rate_limits (
     deploys_window_start timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT account_deploy_rate_limits_deploys_used_check CHECK ((deploys_used >= 0))
+);
+
+
+--
+-- Name: account_email_changes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_email_changes (
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    old_email text NOT NULL,
+    new_email text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT account_email_changes_consumed_check CHECK (((consumed_at IS NULL) OR (consumed_at >= created_at))),
+    CONSTRAINT account_email_changes_new_email_check CHECK (((new_email = lower(new_email)) AND ((length(new_email) >= 3) AND (length(new_email) <= 254)) AND (POSITION((chr(10)) IN (new_email)) = 0) AND (POSITION((chr(13)) IN (new_email)) = 0))),
+    CONSTRAINT account_email_changes_old_email_check CHECK ((length(old_email) <= 254)),
+    CONSTRAINT account_email_changes_token_hash_check CHECK ((length(token_hash) = ANY (ARRAY[32, 33]))),
+    CONSTRAINT account_email_changes_window_check CHECK ((expires_at > created_at))
+);
+
+
+--
+-- Name: account_oauth_unlinks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_oauth_unlinks (
+    account_id uuid NOT NULL,
+    provider text NOT NULL,
+    unlinked_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT account_oauth_unlinks_provider_check CHECK ((provider = ANY (ARRAY['google'::text, 'github'::text]))),
+    CONSTRAINT account_oauth_unlinks_unlinked_at_check CHECK (isfinite(unlinked_at))
 );
 
 
@@ -58946,6 +58981,22 @@ ALTER TABLE ONLY public.account_deploy_rate_limits
 
 
 --
+-- Name: account_email_changes account_email_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_email_changes
+    ADD CONSTRAINT account_email_changes_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: account_oauth_unlinks account_oauth_unlinks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_oauth_unlinks
+    ADD CONSTRAINT account_oauth_unlinks_pkey PRIMARY KEY (account_id, provider);
+
+
+--
 -- Name: account_passwords account_passwords_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71830,6 +71881,13 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 --
 
 CREATE INDEX account_credits_account_active_idx ON public.account_credits USING btree (account_id, expires_at, cents_remaining) WHERE (cents_remaining > 0);
+
+
+--
+-- Name: account_email_changes_one_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX account_email_changes_one_pending_idx ON public.account_email_changes USING btree (account_id) WHERE (consumed_at IS NULL);
 
 
 --
@@ -89912,6 +89970,22 @@ ALTER TABLE ONLY public.account_credits
 
 ALTER TABLE ONLY public.account_deploy_rate_limits
     ADD CONSTRAINT account_deploy_rate_limits_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_email_changes account_email_changes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_email_changes
+    ADD CONSTRAINT account_email_changes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_oauth_unlinks account_oauth_unlinks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_oauth_unlinks
+    ADD CONSTRAINT account_oauth_unlinks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
