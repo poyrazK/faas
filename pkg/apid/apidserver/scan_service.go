@@ -2150,6 +2150,8 @@ func (s *server) scanService(
 	if shortfall := s.projectDeployRateShortfall(r.Context(), acct, len(filteredW), timeNow().UTC()); shortfall != "" {
 		warnings = append(warnings, "deploy rate: "+strings.TrimPrefix(shortfall, "not deployed: "))
 	}
+	warnings = append(warnings, s.environmentDependencyNotes(r.Context(), req.Environment, filteredW, projectApps)...)
+	warnings = append(warnings, allowCallersNotes(filteredW, result.Workloads, projectApps, acctApps)...)
 	respManaged := make([]api.PlanManaged, len(filteredMc))
 	for i, m := range filteredMc {
 		respManaged[i] = toPlanManaged(m)
@@ -2707,7 +2709,7 @@ func (s *server) scanService(
 	}
 	if len(req.Secrets) > 0 {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
-		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, req.Environment, req.Secrets); prob != nil {
+		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, filteredW, req.Environment, req.Secrets); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 		// Secret-only redeploys also need a build, even if source reconciliation
