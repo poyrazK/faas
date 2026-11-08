@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261107192333: Compute overage is $0.05 per GB-RAM-hour](20261107192333-overage-five-cents.md) — accepted; amends ADR-1430: overage above every plan's price per included GB-h, so upgrading is always cheaper than overage; plans and included GB-h unchanged; Polar's compute price must be 5 cents per GB-h before billing goes live
+
 - [ADR-20261104145353: Mirror VMs bill, object storage has monthly request ceilings, and sign-ups have a platform-wide daily cap](20261104145353-mirror-billing-object-requests-signup-cap.md) — accepted; mirror VMs bill per running second and stop at the spend cap, plans cap object storage requests (Free 50k, Hobby 500k, Pro 2.5M, Scale 10M a month), and at most 2,000 accounts are created in any 24 hours
 - [ADR-20261107203000: Host security evidence leaves the host as it is written](20261107203000-host-security-evidence-off-host.md) — accepted; Alloy ships sshd, sudo, account-change, kernel and auditd records to Loki as `job="faas-security"` and counts high-signal events in `faas_security_events_total`, which the `faas_host_security` alerts read
 

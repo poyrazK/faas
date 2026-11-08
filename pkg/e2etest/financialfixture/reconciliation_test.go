@@ -37,6 +37,17 @@ type replayFixture struct {
 
 // This fixture restores historical usage and settled funding, without running
 // guests or claiming native enforcement. The native lane supplies that evidence.
+// Money in the replay. Compute is billed at the published rate; egress at
+// 2,000 mC per GiB above 1 GiB included. The first invoice is 4 paid GB-h and
+// 3 paid GiB; the late window adds 1 of each. Retained funding settles 5 GB-h
+// and 4 paid GiB, and the shared paid ceiling leaves 7,000 mC above it.
+const (
+	replayInitialInvoiceMillicents = 4*api.OverageMillicentsPerGBHour + 3*2000
+	replayFinalInvoiceMillicents   = 5*api.OverageMillicentsPerGBHour + 4*2000
+	replayCommittedMillicents      = replayFinalInvoiceMillicents
+	replayLimitMillicents          = replayCommittedMillicents + 7000
+)
+
 func seedReplay(t *testing.T) replayFixture {
 	t.Helper()
 	ctx := t.Context()
@@ -81,6 +92,12 @@ func seedReplay(t *testing.T) replayFixture {
 	if err := s.UpsertBillingIdentity(ctx, state.BillingIdentity{AccountID: a.ID, Provider: "polar", CustomerID: "acceptance-customer", SubscriptionID: "acceptance-subscription", BillingFrom: month}); err != nil {
 		t.Fatal(err)
 	}
+	// Egress above the allowance is billed only in hours an egress overage
+	// election covers (ADR-20261104204500); elect it from the period start so
+	// every replayed hour delivers its egress window.
+	if _, err := s.SetEgressOverage(ctx, a.ID, true, month); err != nil {
+		t.Fatal(err)
+	}
 	want := make(map[string]int64)
 	// Deliberately insert completed hours out of chronological order.
 	// Provider retries below replay the same durable windows in both meters.
@@ -121,7 +138,7 @@ func seedReplay(t *testing.T) replayFixture {
 
 	// A retained settlement can be more conservative than measured usage:
 	// 5 GiB issued, 4 GiB measured, 1 GiB included, 3 GiB actually billed.
-	book := financial.ComputeBook{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Committed: 5000, QuantityCommitted: computeAllowance + 5*api.SecondsPerGBHour, AllowanceGranted: computeAllowance, Egress: financial.EgressBook{Initialized: true, QuantityCommitted: 5 * gib, AllowanceGranted: gib, Committed: 8000, RateMillicents: 2000, RateQuantity: gib}}
+	book := financial.ComputeBook{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Committed: 5 * api.OverageMillicentsPerGBHour, QuantityCommitted: computeAllowance + 5*api.SecondsPerGBHour, AllowanceGranted: computeAllowance, Egress: financial.EgressBook{Initialized: true, QuantityCommitted: 5 * gib, AllowanceGranted: gib, Committed: 8000, RateMillicents: 2000, RateQuantity: gib}}
 	payload, err := json.Marshal(book)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +146,7 @@ func seedReplay(t *testing.T) replayFixture {
 	if _, err = pool.Exec(ctx, `INSERT INTO financial_compute_account_books(account_id,period_start,period_end,payload) VALUES($1,$2,$3,$4)`, a.ID, month, month.AddDate(0, 1, 0), payload); err != nil {
 		t.Fatal(err)
 	}
-	spec := financial.BudgetSpec{Name: "restored acceptance policy", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute", "egress"}, Basis: "net_usage", LimitMillicents: 20000, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
+	spec := financial.BudgetSpec{Name: "restored acceptance policy", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute", "egress"}, Basis: "net_usage", LimitMillicents: replayLimitMillicents, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
 	data, err := json.Marshal(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -242,13 +259,13 @@ func TestFinancialSystemBillingReconciliation(t *testing.T) {
 				}
 			}
 			// Verify the financial ledger independently of funding's unused
-			// credit commitment. Actual invoice quantities cost 10,000 mC.
+			// credit commitment.
 			report, err := billing.ReadFinancialCosts(t.Context(), f.store, f.account.ID, financial.ComputeMonth(f.start), time.Now().UTC())
-			if err != nil || report.KnownUsageMillicents != 10000 {
+			if err != nil || report.KnownUsageMillicents != replayInitialInvoiceMillicents {
 				t.Fatalf("measured ledger=%+v err=%v", report, err)
 			}
 			b, err := f.store.FinancialComputeBalance(t.Context(), f.policy, f.start)
-			if err != nil || b.CommittedMillicents != 13000 || b.ReservedMillicents != 0 || b.Egress == nil || b.Egress.CommittedBytes != 5*gib {
+			if err != nil || b.CommittedMillicents != replayCommittedMillicents || b.ReservedMillicents != 0 || b.Egress == nil || b.Egress.CommittedBytes != 5*gib {
 				t.Fatalf("retained funding=%+v err=%v", b, err)
 			}
 			if report.KnownUsageMillicents > b.CommittedMillicents || b.CommittedMillicents > f.policy.Spec.LimitMillicents {
@@ -277,7 +294,7 @@ func TestFinancialSystemBillingReconciliation(t *testing.T) {
 				t.Fatal("late provider and receipt vectors diverged")
 			}
 			report, err = billing.ReadFinancialCosts(t.Context(), f.store, f.account.ID, financial.ComputeMonth(f.start), time.Now().UTC())
-			if err != nil || report.KnownUsageMillicents != 13000 {
+			if err != nil || report.KnownUsageMillicents != replayFinalInvoiceMillicents {
 				t.Fatalf("final measured invoice=%d err=%v", report.KnownUsageMillicents, err)
 			}
 			var measuredMB, measuredBytes int64
@@ -288,7 +305,7 @@ func TestFinancialSystemBillingReconciliation(t *testing.T) {
 				t.Fatalf("measured quantities exceed or miss restored funding: mb_seconds=%d bytes=%d", measuredMB, measuredBytes)
 			}
 
-			evidence := map[string]any{"scenario": scenario, "account_id": f.account.ID, "measured_mb_seconds": measuredMB, "measured_egress_bytes": measuredBytes, "funded_mb_seconds": f.fundedMBSeconds, "funded_egress_bytes": b.Egress.CommittedBytes, "expected": f.want, "receipts": receipts(t, f), "provider": p.Snapshot(), "initial_invoice_millicents": 10000, "invoice_millicents": report.KnownUsageMillicents, "committed_millicents": b.CommittedMillicents, "limit_millicents": f.policy.Spec.LimitMillicents}
+			evidence := map[string]any{"scenario": scenario, "account_id": f.account.ID, "measured_mb_seconds": measuredMB, "measured_egress_bytes": measuredBytes, "funded_mb_seconds": f.fundedMBSeconds, "funded_egress_bytes": b.Egress.CommittedBytes, "expected": f.want, "receipts": receipts(t, f), "provider": p.Snapshot(), "initial_invoice_millicents": replayInitialInvoiceMillicents, "invoice_millicents": report.KnownUsageMillicents, "committed_millicents": b.CommittedMillicents, "limit_millicents": f.policy.Spec.LimitMillicents}
 			encoded, err := json.MarshalIndent(evidence, "", "  ")
 			if err != nil {
 				t.Fatal(err)
@@ -301,7 +318,7 @@ func TestFinancialSystemBillingReconciliation(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			t.Logf("reconciled account=%s events=8 initial_invoice_millicents=10000 final_invoice_millicents=13000 committed_millicents=13000 scenario=%s", f.account.ID, scenario)
+			t.Logf("reconciled account=%s events=8 initial_invoice_millicents=%d final_invoice_millicents=%d committed_millicents=%d scenario=%s", f.account.ID, replayInitialInvoiceMillicents, replayFinalInvoiceMillicents, replayCommittedMillicents, scenario)
 
 		})
 	}
