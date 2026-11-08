@@ -2,8 +2,12 @@ package e2etest
 
 import (
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -69,4 +73,30 @@ func LoopbackPort(t *testing.T, address string) uint16 {
 		t.Fatalf("e2etest: loopback port %q: %v", port, err)
 	}
 	return uint16(value)
+}
+
+// WaitForBuilderBaseScan waits until imaged has rescanned the builder base
+// after started. On startup imaged replaces the base's scan sidecar with a
+// failed-scan placeholder and rescans (about a minute on n2); vmmd refuses to
+// boot a builder on the placeholder ("Base image scan unavailable"), so a
+// build queued in that window fails.
+func WaitForBuilderBaseScan(t *testing.T, started time.Time, timeout time.Duration) {
+	t.Helper()
+	root := os.Getenv("FAAS_STORAGE_ROOT")
+	if root == "" {
+		root = "/srv/fc"
+	}
+	sidecar := filepath.Join(root, "scans", filepath.Base(StagedBuilderBasePath())+".scan.json")
+	deadline := time.Now().Add(timeout)
+	for {
+		if info, err := os.Stat(sidecar); err == nil && !info.ModTime().Before(started) {
+			if raw, err := os.ReadFile(sidecar); err == nil && !strings.Contains(string(raw), "0001-01-01T00:00:00Z") {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("e2etest: builder base scan %s not refreshed within %s", sidecar, timeout)
+		}
+		time.Sleep(2 * time.Second)
+	}
 }

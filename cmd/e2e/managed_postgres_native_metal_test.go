@@ -143,7 +143,9 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	if root := os.Getenv("FAAS_STORAGE_ROOT"); root != "" {
 		environment = append(environment, "FAAS_STORAGE_ROOT="+root)
 	}
+	started := time.Now()
 	h := e2etest.Start(t, pool, e2etest.All, environment...)
+	e2etest.WaitForBuilderBaseScan(t, started, 6*time.Minute)
 	revision, err := exec.CommandContext(t.Context(), "git", "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Fatal("guest qualification requires a checkout revision")

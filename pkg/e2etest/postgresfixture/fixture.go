@@ -26,15 +26,15 @@ import (
 )
 
 type Fixture struct {
-	Catalog     *mp.PostgresStore
-	Service     *mp.Service
-	Bindings    *mp.BindingService
-	Observer    credentialdelivery.Observer
-	Data        *pgxpool.Pool
-	Provider    *Provider
-	Major       int
-	Enabled     bool
-	Config      mp.Config
+	Catalog  *mp.PostgresStore
+	Service  *mp.Service
+	Bindings *mp.BindingService
+	Observer credentialdelivery.Observer
+	Data     *pgxpool.Pool
+	Provider *Provider
+	Major    int
+	Enabled  bool
+	Config   mp.Config
 	// HostAddress, when set, is the host:port the test process itself dials
 	// for a binding URI. Bindings published at the database route address
 	// (e2etest.DatabaseRouteEndpoint) are reachable only from guests; the
