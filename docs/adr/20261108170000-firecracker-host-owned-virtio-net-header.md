@@ -115,15 +115,27 @@ because its driver never negotiated an offload.
   correct Linux driver sends, and it cannot place a checksum outside the
   transport header. Old snapshots age out as they are rebuilt. A later change
   may mark them stale to force the switch.
-- **Throughput:**
-  - Guest-to-host bulk traffic loses TSO. The guest kernel segments to the MTU
-    and checksums in software, which means more VM exits and more guest CPU per
-    byte.
-  - Host-to-guest traffic loses GRO/TSO coalescing. The host segments and
-    checksums before delivery.
-  - Request and response sizes typical of functions and web apps are dominated
-    by latency, not bulk throughput. This has to be measured on test-metal
-    before rollout (README).
+- **Throughput.** Guest-to-host bulk traffic loses TSO: the guest kernel
+  segments to the MTU and checksums in software, and the host sees more packets
+  per byte.
+  - Measured 2026-11-08 on `gregale-internal-test-1` (n2, nested KVM) with
+    `TestMetalGuestTransferThroughput`. The guest was uncapped, 2 vCPU, and
+    each test ran 5× 64 MiB GETs plus 300 small GETs, two rounds per binary,
+    with the rc.330 guest kernel:
+
+    | Firecracker v1.17.0 | bulk guest→host (median MiB/s) | small GET p50 / p99 (ms) |
+    | --- | --- | --- |
+    | upstream | 530, 1103 | 2.9 / 9.5, 2.4 / 7.2 |
+    | patched | 115, 116 | 3.2 / 7.9, 1.1 / 2.4 |
+
+  - Bulk throughput falls about 5–10×, to roughly 970 Mbit/s per VM.
+    Small-request latency is unchanged within noise.
+  - Customer instances never get near that ceiling. The plan cap (10, 25, 100
+    or 250 Mbit/s, a `tbf` on the netns's `VethPeer`) shapes everything a
+    guest sends, HTTP responses included. The patch therefore costs host CPU
+    per byte, not customer-visible bandwidth.
+  - Uncapped VMs (`EgressMbit` 0, such as builders) do see the lower ceiling.
+  - Host-to-guest throughput, which loses GRO/GUEST_TSO, was not measured.
 - Each release now builds Firecracker (a few minutes in the release job).
   `release.firecracker_digest` changes when the patch, the pin or the toolchain
   changes, and new runtime qualifications record it.
