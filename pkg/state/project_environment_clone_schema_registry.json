@@ -5862,6 +5862,21 @@
     "kind": "operational"
   },
   {
+    "table": "edge_rule_header_secrets",
+    "columns": [
+      "account_id",
+      "app_id",
+      "ciphertext",
+      "created_at",
+      "id"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
     "table": "edge_rule_lists",
     "columns": [
       "account_id",
