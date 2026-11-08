@@ -95,7 +95,7 @@ const liveEdgeTLSCertificates = `-- name: LiveEdgeTLSCertificates :many
 SELECT id, names, chain_pem, key_sealed, not_before, not_after
 FROM edge_tls_certificates
 WHERE ca = $1 AND not_before <= now() AND not_after > now()
-ORDER BY not_after DESC, id DESC
+ORDER BY not_before DESC, id DESC
 LIMIT $2::int
 `
 
@@ -148,7 +148,7 @@ const newestEdgeTLSCertificateTerms = `-- name: NewestEdgeTLSCertificateTerms :o
 SELECT id, account_uri, key_kid, sha256, not_after
 FROM edge_tls_certificates
 WHERE names = $1::text[] AND ca = $2
-ORDER BY not_after DESC, id DESC
+ORDER BY not_before DESC, id DESC
 LIMIT 1
 `
 

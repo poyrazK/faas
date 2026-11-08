@@ -359,7 +359,7 @@ func (s *Served) Collectors() []prometheus.Collector {
 }
 
 var expiryDesc = prometheus.NewDesc("edge_certificate_expiry_seconds",
-	"Seconds until the apps-domain certificate this edge serves for name expires; edgednsd renews 30 days ahead (ADR-20261103163954 §3).",
+	"Seconds until the apps-domain certificate this edge serves for name expires; edgednsd renews short-lived certificates 4 days ahead (ADR-20261108100000).",
 	[]string{"name"}, nil)
 
 type expiryCollector struct{ s *Served }

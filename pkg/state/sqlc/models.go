@@ -3650,6 +3650,8 @@ type DataApiChangeHookReport struct {
 	LastPublishedAt pgtype.Timestamptz
 	LastFailureCode pgtype.Text
 	Publishing      string
+	// ADR-20261022121642 amendment 3: when capture last left a change out at the backlog bound, as the runtime last reported.
+	LastDroppedAt pgtype.Timestamptz
 }
 
 type DataApiRuntimeConnectionObservation struct {

@@ -15,9 +15,9 @@ export function readRuntimeVersion(file = new URL('./runtime-version.json', impo
   }
 }
 
-// Share in-flight work without caching completed results. Reuse the existing
+// Share in-flight work and cache completed checks briefly. Reuse the existing
 // engine pool and reserved refresh reader; never create a diagnostic SQL pool.
-export function createHealth(config, upstreamPort, readyPort) {
+export function createHealth(config, upstreamPort, readyPort, { monotonic = () => performance.now() } = {}) {
   const runtimeVersion = config.runtimeVersion ?? readRuntimeVersion()
   const pool = config.poolObservation ?? createPoolObservation(readyPort, enginePool(config))
   const pending = new Map()
@@ -80,12 +80,26 @@ export function createHealth(config, upstreamPort, readyPort) {
     }
     return bounded(reading, 'unavailable')
   }
+  // /healthz is public and its checks reach the database (PostgREST's /ready
+  // and the refresh reader). A completed set of checks answers further health
+  // checks for healthCacheMs, so polling asks the database at most once per
+  // interval; admission is read live, it costs nothing.
+  let checked = null
+  function checks() {
+    const at = monotonic()
+    if (checked && at - checked.at < limits.healthCacheMs) return checked.result
+    const result = Promise.all([probe('/ready'), engine(), refresh(), pool()])
+    checked = { at, result }
+    // A completed result is cached from when it completed.
+    void result.then(() => { if (checked?.result === result) checked.at = monotonic() })
+    return result
+  }
   return {
     sql: () => probe('/ready'),
     async snapshot(admission) {
       // PostgREST 14.3's admin /live also checks SQL with listeners disabled.
       // A TCP check observes only the engine listener, never pool availability.
-      const [sql, listener, gate, poolObservation] = await Promise.all([probe('/ready'), engine(), refresh(), pool()])
+      const [sql, listener, gate, poolObservation] = await checks()
       return { version: 1, runtime_version: runtimeVersion, live: true, ready: sql === 'ready' && gate !== 'unavailable',
         checks: { engine: listener,
           sql, database: sql === 'ready' || gate === 'active' || gate === 'paused' ? 'reachable' : 'unknown', refresh: gate },
