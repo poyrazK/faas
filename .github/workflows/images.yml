@@ -340,19 +340,13 @@ jobs:
       # amd64-specific digest via `crane digest --platform
       # linux/amd64`.
       - name: Verify faas-guest-init is in the image
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # Install a static, checksum-pinned crane. Avoid the Go-toolchain
           # dance so this verification step cannot drift with @latest.
-          CRANE_SHA256=ffca5eafe0af8078f2c627fb852104f9d762fad1eb36c04e93ca14fce76d47d2
-          curl --fail --silent --show-error --location \
-            --retry 3 --retry-all-errors --retry-delay 2 \
-            -o /tmp/crane.tgz \
-            https://github.com/google/go-containerregistry/releases/download/v0.21.1/go-containerregistry_Linux_x86_64.tar.gz
-          echo "${CRANE_SHA256}  /tmp/crane.tgz" | sha256sum --check --strict
-          tar -C /usr/local/bin -xzf /tmp/crane.tgz crane
-          chmod +x /usr/local/bin/crane
-          rm /tmp/crane.tgz
+          bash scripts/ci/install-crane.sh /usr/local/bin
           if [ "${GITHUB_REF_NAME:-}" = "main" ] && \
              [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             # Verify the staging tag. The release-facing latest/sha tags are
@@ -692,17 +686,13 @@ jobs:
       - name: Resolve platform digest (main)
         id: platform-digest
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # The same checksum-pinned crane as builder-base, and the lookup
           # release.yml uses for runtime-bases.env.
-          CRANE_SHA256=ffca5eafe0af8078f2c627fb852104f9d762fad1eb36c04e93ca14fce76d47d2
-          curl --fail --silent --show-error --location \
-            --retry 3 --retry-all-errors --retry-delay 2 \
-            -o "$RUNNER_TEMP/crane.tgz" \
-            https://github.com/google/go-containerregistry/releases/download/v0.21.1/go-containerregistry_Linux_x86_64.tar.gz
-          echo "${CRANE_SHA256}  $RUNNER_TEMP/crane.tgz" | sha256sum --check --strict
-          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/crane.tgz" crane
+          bash scripts/ci/install-crane.sh "$RUNNER_TEMP"
           echo "amd64=$("$RUNNER_TEMP/crane" digest --platform linux/amd64 "${IMAGE_NAME}:ci-${GITHUB_SHA}")" >> "$GITHUB_OUTPUT"
 
       - name: Attest runtime base provenance (main, linux/amd64)
