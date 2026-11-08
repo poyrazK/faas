@@ -75,13 +75,17 @@ func (t *memFinancialComputeTxn) accountReady() bool {
 			}
 		}
 	}
+	// An account cap covers what the account pays for: organization-paid
+	// apps need not be quiet (ADR-20261107160000).
 	for _, i := range m.instances {
-		if (m.apps[i.AppID].AccountID == t.account || m.jobs[i.JobID].AccountID == t.account) && State(i.State).CountsForRAM() {
+		app := m.apps[i.AppID]
+		if (app.AccountID == t.account && !m.computeOrgPaidLocked(app) || m.jobs[i.JobID].AccountID == t.account) && State(i.State).CountsForRAM() {
 			return false
 		}
 	}
 	for _, task := range m.appTasks {
-		if m.apps[task.AppID].AccountID == t.account && (task.Status == "running" || task.Status == "restoring") {
+		app := m.apps[task.AppID]
+		if app.AccountID == t.account && !m.computeOrgPaidLocked(app) && (task.Status == "running" || task.Status == "restoring") {
 			return false
 		}
 	}

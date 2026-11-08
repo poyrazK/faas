@@ -3000,6 +3000,7 @@
       "meter",
       "provider",
       "quantity",
+      "usage_source",
       "window_start"
     ],
     "kind": "operational"
@@ -3157,6 +3158,7 @@
       "delivered_at",
       "mb_seconds",
       "provider",
+      "usage_source",
       "window_start"
     ],
     "kind": "operational"
@@ -5959,6 +5961,24 @@
       "remote_port"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "credit_discounts",
+    "columns": [
+      "amount_cents",
+      "created_at",
+      "currency",
+      "id",
+      "provider",
+      "provider_discount_id",
+      "provider_invoice_id",
+      "provider_subscription_id",
+      "redeemed_cents",
+      "state",
+      "subject_id",
+      "updated_at"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "egress_policy",

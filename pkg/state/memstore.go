@@ -160,6 +160,9 @@ type MemStore struct {
 	// egressOverage is each account's or org's egress overage election
 	// (EgressOverageStore, ADR-20261104204500).
 	egressOverage map[string]EgressOverageElection
+	// creditDiscounts are the provider discounts that carry account credit
+	// (CreditDiscountStore), keyed by row id, created on first use.
+	creditDiscounts map[string]CreditDiscount
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
 	totpLastSteps                        map[string]int64
@@ -21299,6 +21302,9 @@ type billingUsageDelivery struct {
 	hour                time.Time
 	quantity            int64
 	deliveredAt         time.Time
+	// source is the usage source that quantified the hour; empty for a
+	// receipt written without one (ADR-20261107105126).
+	source string
 }
 
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
