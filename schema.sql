@@ -44344,6 +44344,22 @@ CREATE TABLE public.layer_artifact_retention (
 
 
 --
+-- Name: legal_acceptances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.legal_acceptances (
+    account_id uuid NOT NULL,
+    document text NOT NULL,
+    version text NOT NULL,
+    method text NOT NULL,
+    accepted_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT legal_acceptances_document_check CHECK ((document = 'terms'::text)),
+    CONSTRAINT legal_acceptances_method_check CHECK (((method <> ''::text) AND (length(method) <= 32))),
+    CONSTRAINT legal_acceptances_version_check CHECK ((version ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text))
+);
+
+
+--
 -- Name: log_archive_erasure_instances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -65642,6 +65658,14 @@ ALTER TABLE ONLY public.jobs
 
 ALTER TABLE ONLY public.layer_artifact_retention
     ADD CONSTRAINT layer_artifact_retention_pkey PRIMARY KEY (storage_key);
+
+
+--
+-- Name: legal_acceptances legal_acceptances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.legal_acceptances
+    ADD CONSTRAINT legal_acceptances_pkey PRIMARY KEY (account_id, document, version);
 
 
 --
@@ -98218,6 +98242,14 @@ ALTER TABLE ONLY public.jobs
 
 ALTER TABLE ONLY public.jobs
     ADD CONSTRAINT jobs_environment_git_source_fk FOREIGN KEY (environment_git_source_id) REFERENCES public.environment_git_sources(id);
+
+
+--
+-- Name: legal_acceptances legal_acceptances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.legal_acceptances
+    ADD CONSTRAINT legal_acceptances_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

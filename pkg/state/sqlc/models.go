@@ -8121,6 +8121,14 @@ type LayerArtifactRetention struct {
 	DeleteRequestedAt pgtype.Timestamptz
 }
 
+type LegalAcceptance struct {
+	AccountID  pgtype.UUID
+	Document   string
+	Version    string
+	Method     string
+	AcceptedAt pgtype.Timestamptz
+}
+
 type LogArchiveErasure struct {
 	AccountID           pgtype.UUID
 	DeletionRequestedAt pgtype.Timestamptz

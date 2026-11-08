@@ -8255,6 +8255,17 @@
     "kind": "operational"
   },
   {
+    "table": "legal_acceptances",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "document",
+      "method",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "quiet_pause_watermarks",
     "columns": [
       "covered_until",
