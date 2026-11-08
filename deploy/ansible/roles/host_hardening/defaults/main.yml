@@ -97,3 +97,91 @@ faas_hardening_sysctl:
   fs.protected_fifos: 2
   fs.protected_regular: 2
   fs.suid_dumpable: 0
+  # ADR-20261107220000: root cannot replace the running kernel, and nothing
+  # on the host uses io_uring (Firecracker's block engine is Sync, Go and
+  # PostgreSQL 16 do not use it), so its attack surface is closed.
+  # kexec_load_disabled cannot be turned back on until reboot.
+  kernel.kexec_load_disabled: 1
+  kernel.io_uring_disabled: 2
+  dev.tty.ldisc_autoload: 0
+
+# Kernel lockdown (ADR-20261107220000). faas-kernel-lockdown.service raises
+# /sys/kernel/security/lockdown to this level early in boot. The kernel only
+# lets it go up until the next reboot, so root cannot undo it at run time.
+# integrity: no unsigned modules, no /dev/mem or /dev/kmem, no kexec of an
+# unsigned kernel, no MSR or I/O port writes, no ACPI table overrides.
+# confidentiality would also stop reading kernel memory (kprobes, perf
+# kernel sampling, BPF reads), which tracing and runtime detection need.
+# "" leaves lockdown alone.
+faas_hardening_kernel_lockdown: integrity
+
+# Kernel module lock (ADR-20261107220000), off by default. When on, the same
+# unit loads faas_hardening_modules_preload and then sets
+# kernel.modules_disabled=1: no module can load until reboot, so a feature
+# that needs a module not listed fails with EPERM. Turn it on per host group
+# only after collecting `lsmod` from hosts that ran every feature
+# (docs/runbooks/kernel-lockdown.md).
+faas_hardening_modules_lock: false
+# What platform features load after boot: the modules loaded on
+# internal-test-1 after 37 days of metal runs and the full pkg/fcvm metal
+# suite under lockdown (2026-11-07), plus the overlay network's tunnels and
+# nftables reject/fib. A module this kernel lacks is skipped. KVM,
+# tap/bridge/veth and vsock for
+# Firecracker, nftables and its expressions for netns policy and NAT,
+# traffic control for bandwidth shaping, overlay and xfs, zram, and the
+# overlay network's tunnels. Hardware drivers load at boot before the lock.
+faas_hardening_modules_preload:
+  - kvm
+  - kvm_intel
+  - kvm_amd
+  - vhost_vsock
+  - vsock
+  - vsock_loopback
+  - tun
+  - bridge
+  - veth
+  - dummy
+  - ifb
+  - 8021q
+  - vxlan
+  - wireguard
+  - nf_tables
+  - nft_chain_nat
+  - nft_compat
+  - nft_connlimit
+  - nft_ct
+  - nft_limit
+  - nft_masq
+  - nft_nat
+  - nft_quota
+  - nft_reject
+  - nft_reject_inet
+  - nft_fib_inet
+  - nf_nat
+  - nf_conncount
+  - ip_set
+  - x_tables
+  - ip_tables
+  - xt_MASQUERADE
+  - xt_addrtype
+  - xt_conntrack
+  - xt_set
+  - sch_fq_codel
+  - sch_ingress
+  - sch_netem
+  - sch_tbf
+  - sch_htb
+  - cls_matchall
+  - cls_u32
+  - act_mirred
+  - overlay
+  - xfs
+  - zram
+  - lz4
+  - zstd
+  - tls
+  - inet_diag
+  - tcp_diag
+  - udp_diag
+  - unix_diag
+  - binfmt_misc
