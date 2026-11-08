@@ -111959,7 +111959,7 @@ components:
         secret:
           type: boolean
           description: |
-            Seal `value` (request headers only, ADR-20261108110000): it is
+            Seal `value` (request headers only): it is
             stored encrypted to the edge seal domain and never returned.
             Authorization, Proxy-Authorization, Cookie and names containing
             token, secret, password, api-key, apikey, signature or credential
