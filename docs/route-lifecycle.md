@@ -205,6 +205,14 @@ it. This binds old-route silence to production traffic and the exact captured
 contract that still exposes the old route. A quiet preview or removal candidate
 cannot establish that production customers have stopped calling the route.
 
+Old-route traffic counts under every label the gateway can record for it: the
+declared template, the `{id}` form it infers when no document declares the
+route, the raw path, and HEAD requests to a GET route. After you upload a
+contract without the old route, the gateway keeps labeling its requests with
+the removal baseline's template, so they never fold into `__route_other__`.
+Requests labeled with an operation the candidate keeps do not count against
+the removed route.
+
 The next candidate removes the old route while retaining its reviewed successor.
 Inspect the proposed removal in report-only mode:
 
