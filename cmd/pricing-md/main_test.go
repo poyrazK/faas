@@ -44,6 +44,9 @@ func TestRenderUsesEveryPlanAndCanonicalValues(t *testing.T) {
 	if !strings.Contains(out, "## Developer environments") {
 		t.Errorf("render missing the developer-environments section")
 	}
+	if !strings.Contains(out, "$0.03 per GiB, up to the [spend cap]") {
+		t.Errorf("render missing the egress overage price")
+	}
 }
 
 func TestFormatPrice(t *testing.T) {

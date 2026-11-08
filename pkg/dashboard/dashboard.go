@@ -108,6 +108,8 @@ type MFAChallengeData struct {
 	// Next is where a passed challenge continues (already validated as a
 	// same-origin dashboard or CLI-approval path).
 	Next string
+	// OfferRemember shows "Remember this browser" at the sign-in check.
+	OfferRemember bool
 }
 
 // IndexData is the /dashboard/ overview payload.
@@ -3601,7 +3603,11 @@ type AccountData struct {
 	DisplayNameConfirmToken string
 	// Sessions lists signed-in browsers; SessionRevokeConfirmToken backs
 	// their "Sign out" buttons.
-	Sessions                  []AccountSessionRow
+	Sessions []AccountSessionRow
+	// Activity is the newest security activity; MoreActivity says the
+	// CLI or API has older rows (gregale account activity list).
+	Activity                  []AccountActivityRow
+	MoreActivity              bool
 	SessionRevokeConfirmToken string
 	// Providers lists linked Google/GitHub sign-ins; HasPassword and
 	// ProviderUnlinkConfirmToken back their "Remove" buttons.
@@ -3610,9 +3616,16 @@ type AccountData struct {
 	MFAEnabled                 bool
 	ProviderUnlinkConfirmToken string
 	// LinkProviders are the enabled providers not yet linked. Linking
-	// signs in with the provider from this signed-in browser, which is
-	// the only way to link one the owner removed.
-	LinkProviders []AccountLinkOption
+	// signs in with the provider from this signed-in browser and attaches
+	// the identity to this account whatever its email; it is the only way
+	// to link one the owner removed. ProviderLinkConfirmToken backs the
+	// forms.
+	LinkProviders            []AccountLinkOption
+	ProviderLinkConfirmToken string
+	// TrustedBrowsers are the browsers that skip the authenticator check
+	// at sign-in; TrustedBrowserForgetToken backs the Forget forms.
+	TrustedBrowsers           []AccountTrustedBrowserRow
+	TrustedBrowserForgetToken string
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a
@@ -3652,13 +3665,31 @@ type AccountSessionRow struct {
 	IsCurrent bool
 }
 
-// AccountProviderRow is one linked Google or GitHub sign-in.
-// AccountLinkOption is one "Link" button on the account page.
-type AccountLinkOption struct {
-	Name string // "Google"
-	URL  string // OAuth start path with next back to the account page
+// AccountTrustedBrowserRow is one remembered browser on the account page.
+type AccountTrustedBrowserRow struct {
+	ID         string
+	Browser    string
+	IP         string
+	Remembered string
+	LastUsed   string
+	Expires    string
 }
 
+// AccountActivityRow is one security event on the account page.
+type AccountActivityRow struct {
+	At      string
+	Summary string
+	IP      string
+	Detail  string
+}
+
+// AccountLinkOption is one "Link" button on the account page.
+type AccountLinkOption struct {
+	Provider string // "google"
+	Name     string // "Google"
+}
+
+// AccountProviderRow is one linked Google or GitHub sign-in.
 type AccountProviderRow struct {
 	Provider string
 	Email    string
@@ -3744,6 +3775,10 @@ type ManagedPostgresBindingItem struct {
 type AuthCapabilitiesView struct {
 	GoogleEnabled bool
 	GitHubEnabled bool
+	// TermsPublished shows the "by continuing you agree" notice linking
+	// /terms and /privacy (pkg/legal). Continuing with Google or GitHub
+	// creates an account, which records the Terms version it accepted.
+	TermsPublished bool
 }
 
 // AdminData carries operator-only repair health and durable TLS cutover state.

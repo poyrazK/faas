@@ -1459,6 +1459,7 @@ var methodRouteMap = map[string]string{
 	// ADR-20261107103000 account flow routes.
 	"PATCH /v1/account":                              "SetDisplayName",
 	"GET /v1/account/sign-in-methods":                "SignInMethods",
+	"GET /v1/account/security-activity":              "SecurityActivity",
 	"DELETE /v1/account/sign-in-methods/{provider}":  "UnlinkSignInMethod",
 	"POST /v1/auth/verify-email/resend":              "ResendEmailVerification",
 	"POST /v1/orgs/{slug}/leave":                     "LeaveOrg",

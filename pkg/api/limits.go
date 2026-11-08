@@ -117,6 +117,21 @@ const (
 	NewSignInLookback   = 90 * 24 * time.Hour
 )
 
+// The security activity view (ADR 20261108150000) shows at most
+// SecurityActivityMaxEvents events from the last SecurityActivityLookback.
+const (
+	SecurityActivityLookback  = 90 * 24 * time.Hour
+	SecurityActivityMaxEvents = 100
+)
+
+// A browser remembered at the authenticator check (ADR 20261108150000)
+// skips the code at sign-in for MFATrustedBrowserTTL; an account keeps at
+// most MFATrustedBrowsersMax, the oldest forgotten first.
+const (
+	MFATrustedBrowserTTL  = 30 * 24 * time.Hour
+	MFATrustedBrowsersMax = 10
+)
+
 // Queue receive long-polls one account, and one apid in all, may hold at a
 // time; past them a receive answers 429. A receive waits on apid's shared
 // completion listener, not on a database connection, so the caps bound
@@ -7955,6 +7970,12 @@ const (
 	// GiB-month (ADR-1430). Requests and egress are free. The operator's
 	// object-storage rate card applies it.
 	ObjectStorageMillicentsPerGiBMonth int64 = 3_000
+	// EgressOverageMillicentsPerGiB is the published rate for application
+	// egress beyond a paid plan's MonthlyEgressGiB: $0.03 per GiB. Only a
+	// subject whose egress overage election covers the hour is billed it,
+	// under its spend cap (ADR-20261104204500); every other subject's apps
+	// stop at the allowance (ADR-20261103131742 amendment 2).
+	EgressOverageMillicentsPerGiB int64 = 3_000
 	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
 	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
 	FinancialEgressMinimumCreditBytes = int64(4096)

@@ -33440,9 +33440,11 @@ CREATE TABLE public.billing_meter_usage_deliveries (
     window_start timestamp with time zone NOT NULL,
     quantity bigint NOT NULL,
     delivered_at timestamp with time zone DEFAULT now() NOT NULL,
+    usage_source text,
     CONSTRAINT billing_meter_usage_deliveries_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'egress'::text]))),
     CONSTRAINT billing_meter_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
-    CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0))
+    CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0)),
+    CONSTRAINT billing_meter_usage_deliveries_usage_source_chk CHECK (((usage_source IS NULL) OR (usage_source = ANY (ARRAY['usage_minutes'::text, 'ledger'::text]))))
 );
 
 
@@ -33724,8 +33726,10 @@ CREATE TABLE public.billing_usage_deliveries (
     window_start timestamp with time zone NOT NULL,
     mb_seconds bigint NOT NULL,
     delivered_at timestamp with time zone DEFAULT now() NOT NULL,
+    usage_source text,
     CONSTRAINT billing_usage_deliveries_mb_seconds_check CHECK ((mb_seconds >= 0)),
-    CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+    CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
+    CONSTRAINT billing_usage_deliveries_usage_source_chk CHECK (((usage_source IS NULL) OR (usage_source = ANY (ARRAY['usage_minutes'::text, 'ledger'::text]))))
 );
 
 
@@ -35024,6 +35028,42 @@ CREATE TABLE public.crash_snapshot_settings (
     enabled boolean NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: credit_discounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.credit_discounts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    subject_id uuid NOT NULL,
+    provider text NOT NULL,
+    provider_subscription_id text NOT NULL,
+    provider_discount_id text NOT NULL,
+    amount_cents bigint NOT NULL,
+    currency text NOT NULL,
+    state text DEFAULT 'attached'::text NOT NULL,
+    provider_invoice_id text,
+    redeemed_cents bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT credit_discounts_amount_cents_check CHECK ((amount_cents > 0)),
+    CONSTRAINT credit_discounts_currency_check CHECK ((currency ~ '^[a-z]{3}$'::text)),
+    CONSTRAINT credit_discounts_provider_check CHECK ((provider = 'polar'::text)),
+    CONSTRAINT credit_discounts_provider_discount_id_check CHECK (((char_length(provider_discount_id) >= 1) AND (char_length(provider_discount_id) <= 200))),
+    CONSTRAINT credit_discounts_provider_invoice_id_check CHECK (((provider_invoice_id IS NULL) OR ((char_length(provider_invoice_id) >= 1) AND (char_length(provider_invoice_id) <= 200)))),
+    CONSTRAINT credit_discounts_provider_subscription_id_check CHECK (((char_length(provider_subscription_id) >= 1) AND (char_length(provider_subscription_id) <= 200))),
+    CONSTRAINT credit_discounts_redeemed_cents_check CHECK (((redeemed_cents IS NULL) OR (redeemed_cents >= 0))),
+    CONSTRAINT credit_discounts_redeemed_check CHECK (((state = 'redeemed'::text) = ((provider_invoice_id IS NOT NULL) AND (redeemed_cents IS NOT NULL)))),
+    CONSTRAINT credit_discounts_state_check CHECK ((state = ANY (ARRAY['attached'::text, 'redeemed'::text, 'detached'::text])))
+);
+
+
+--
+-- Name: TABLE credit_discounts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.credit_discounts IS 'One-time fixed provider discounts Gregale attached to a billing subject''s subscription to apply its account credit to the next order; redeemed when an order carries it. Written only by apid (ADR-20261104212028).';
 
 
 --
@@ -44324,6 +44364,22 @@ CREATE TABLE public.layer_artifact_retention (
 
 
 --
+-- Name: legal_acceptances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.legal_acceptances (
+    account_id uuid NOT NULL,
+    document text NOT NULL,
+    version text NOT NULL,
+    method text NOT NULL,
+    accepted_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT legal_acceptances_document_check CHECK ((document = 'terms'::text)),
+    CONSTRAINT legal_acceptances_method_check CHECK (((method <> ''::text) AND (length(method) <= 32))),
+    CONSTRAINT legal_acceptances_version_check CHECK ((version ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text))
+);
+
+
+--
 -- Name: log_archive_erasure_instances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -47212,6 +47268,29 @@ CREATE TABLE public.mfa_disable_tokens (
     CONSTRAINT mfa_disable_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
     CONSTRAINT mfa_disable_tokens_password_revision_check CHECK ((password_revision > 0)),
     CONSTRAINT mfa_disable_tokens_requested_at_check CHECK (isfinite(requested_at))
+);
+
+
+--
+-- Name: mfa_trusted_browsers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mfa_trusted_browsers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    ua_family text NOT NULL,
+    created_ip text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    last_used_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    CONSTRAINT mfa_trusted_browsers_created_ip_check CHECK ((char_length(created_ip) <= 64)),
+    CONSTRAINT mfa_trusted_browsers_revoked_check CHECK (((revoked_at IS NULL) OR isfinite(revoked_at))),
+    CONSTRAINT mfa_trusted_browsers_token_hash_check CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
+    CONSTRAINT mfa_trusted_browsers_ua_family_check CHECK ((char_length(ua_family) <= 64)),
+    CONSTRAINT mfa_trusted_browsers_used_check CHECK (((last_used_at IS NULL) OR isfinite(last_used_at))),
+    CONSTRAINT mfa_trusted_browsers_window_check CHECK ((isfinite(created_at) AND (expires_at > created_at)))
 );
 
 
@@ -61497,6 +61576,14 @@ ALTER TABLE ONLY public.crash_snapshot_settings
 
 
 --
+-- Name: credit_discounts credit_discounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.credit_discounts
+    ADD CONSTRAINT credit_discounts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: credit_ledger credit_ledger_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -65625,6 +65712,14 @@ ALTER TABLE ONLY public.layer_artifact_retention
 
 
 --
+-- Name: legal_acceptances legal_acceptances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.legal_acceptances
+    ADD CONSTRAINT legal_acceptances_pkey PRIMARY KEY (account_id, document, version);
+
+
+--
 -- Name: log_archive_erasure_instances log_archive_erasure_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -66694,6 +66789,22 @@ ALTER TABLE ONLY public.mfa_disable_requests
 
 ALTER TABLE ONLY public.mfa_disable_tokens
     ADD CONSTRAINT mfa_disable_tokens_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: mfa_trusted_browsers mfa_trusted_browsers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_trusted_browsers
+    ADD CONSTRAINT mfa_trusted_browsers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mfa_trusted_browsers mfa_trusted_browsers_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_trusted_browsers
+    ADD CONSTRAINT mfa_trusted_browsers_token_hash_key UNIQUE (token_hash);
 
 
 --
@@ -74039,6 +74150,20 @@ CREATE INDEX crash_captures_plaintext_idx ON public.crash_captures USING btree (
 
 
 --
+-- Name: credit_discounts_attached_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX credit_discounts_attached_subject_idx ON public.credit_discounts USING btree (subject_id) WHERE (state = 'attached'::text);
+
+
+--
+-- Name: credit_discounts_provider_discount_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX credit_discounts_provider_discount_key ON public.credit_discounts USING btree (provider, provider_discount_id);
+
+
+--
 -- Name: credit_ledger_account_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -78502,6 +78627,13 @@ CREATE INDEX mfa_disable_tokens_account_idx ON public.mfa_disable_tokens USING b
 --
 
 CREATE INDEX mfa_disable_tokens_expiry_idx ON public.mfa_disable_tokens USING btree (expires_at, token_hash);
+
+
+--
+-- Name: mfa_trusted_browsers_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mfa_trusted_browsers_account_idx ON public.mfa_trusted_browsers USING btree (account_id) WHERE (revoked_at IS NULL);
 
 
 --
@@ -93161,6 +93293,14 @@ ALTER TABLE ONLY public.crash_snapshot_settings
 
 
 --
+-- Name: credit_discounts credit_discounts_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.credit_discounts
+    ADD CONSTRAINT credit_discounts_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
 -- Name: credit_ledger credit_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -98193,6 +98333,14 @@ ALTER TABLE ONLY public.jobs
 
 
 --
+-- Name: legal_acceptances legal_acceptances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.legal_acceptances
+    ADD CONSTRAINT legal_acceptances_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: log_archive_erasure_instances log_archive_erasure_instances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -99374,6 +99522,14 @@ ALTER TABLE ONLY public.mfa_disable_requests
 
 ALTER TABLE ONLY public.mfa_disable_tokens
     ADD CONSTRAINT mfa_disable_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mfa_trusted_browsers mfa_trusted_browsers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_trusted_browsers
+    ADD CONSTRAINT mfa_trusted_browsers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

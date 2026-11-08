@@ -1,0 +1,33 @@
+{{define "acceptable-use"}}
+<p>This policy lists what you may not do with Gregale. It applies to you, your organization's members and anyone using apps you run on Gregale, and it is part of our <a href="/terms">Terms of Service</a>.</p>
+
+<h2>1. Illegal and harmful content</h2>
+<ul>
+<li>Anything illegal where you or your users are, or that facilitates illegal activity.</li>
+<li>Child sexual abuse material, in any form. We report it to the authorities.</li>
+<li>Content that promotes terrorism or violent extremism, threatens or incites violence, or harasses people.</li>
+<li>Infringing others' intellectual property, or distributing others' personal data without a lawful basis.</li>
+</ul>
+
+<h2>2. Abuse of networks and systems</h2>
+<ul>
+<li>Malware, phishing, credential harvesting, or sites that impersonate another person or organization.</li>
+<li>Sending spam or unsolicited bulk messages, or running open relays and open proxies.</li>
+<li>Denial-of-service attacks, botnet command and control, scanning or probing networks or systems you are not authorized to test.</li>
+<li>Getting around access controls, rate limits, plan limits, or the isolation between customers, or accessing other customers' data.</li>
+<li>Security testing of Gregale itself beyond your own apps, except under our <a href="https://gregale.dev/.well-known/security.txt">vulnerability disclosure policy</a>.</li>
+</ul>
+
+<h2>3. Fair use of shared resources</h2>
+<ul>
+<li>Cryptocurrency mining, or proof-of-work or proof-of-space workloads.</li>
+<li>Using the Service mainly as file storage, a content mirror, or a traffic proxy or VPN for others.</li>
+<li>Opening many accounts to get more free usage, or reselling free resources.</li>
+</ul>
+
+<h2>4. Reporting abuse</h2>
+<p>Report abuse to <a href="mailto:{{.C.AbuseEmail}}">{{.C.AbuseEmail}}</a> with the URL or app, what you saw and when. We acknowledge reports and act on them as described in the Terms.</p>
+
+<h2>5. What happens on a breach</h2>
+<p>We may remove content, block traffic, suspend an app or account, or end the account, depending on how serious the breach is. Where we can, we tell you first and give you time to fix it. Section 7 of the <a href="/terms">Terms</a> explains how to contest a suspension.</p>
+{{end}}

@@ -26,8 +26,10 @@
         "/logout",
         "/signup",
         "=/v1/account",
+        "/v1/account/email",
         "/v1/account/mfa",
         "/v1/account/rate-limits",
+        "/v1/account/sign-in-methods",
         "/v1/auth/capabilities",
         "/v1/auth/csrf",
         "/v1/auth/github",
@@ -341,6 +343,7 @@
       "routes": [
         "/dashboard/account/keys",
         "/v1/account/keys",
+        "/v1/agent-approvals",
         "/v1/agent-connections",
         "/v1/keys",
         "/v1/orgs/{}/agent-connections",
@@ -917,8 +920,8 @@
       "id": "budgets",
       "name": "Budgets",
       "category": "billing",
-      "description": "Set budgets with projections, alerts and automatic stops.",
-      "maturity": "beta",
+      "description": "Set account, organization, project, environment, app and job budgets with projected overruns, threshold alerts to email, Slack and PagerDuty, and automatic preview stops.",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -1752,7 +1755,10 @@
       "acceptance_test": "cmd/gatewayd-public/main_test.go::TestInstallPublicStaticRoutes_SecurityTxt",
       "core": true,
       "routes": [
-        "/docs"
+        "/acceptable-use",
+        "/docs",
+        "/privacy",
+        "/terms"
       ]
     },
     {
@@ -3913,6 +3919,7 @@
         "/v1/orgs/{}/activity",
         "/v1/orgs/{}/apps",
         "/v1/orgs/{}/invitations",
+        "/v1/orgs/{}/leave",
         "/v1/orgs/{}/members",
         "/v1/orgs/{}/transfer_ownership"
       ],
@@ -5646,6 +5653,22 @@
         "/dashboard/apps/{}/streaming-cap",
         "/v1/apps/{}/streaming-cap"
       ]
+    },
+    {
+      "id": "strict-budgets",
+      "name": "Strict budgets",
+      "category": "billing",
+      "description": "Cap compute and egress spending with budgets that stop workloads before they spend past the limit.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/billing",
+      "acceptance_test": "pkg/state/financialtest/financial_compute_account_test.go::TestFinancialComputeAccountReservations",
+      "parent": "budgets"
     },
     {
       "id": "synthetic-checks",

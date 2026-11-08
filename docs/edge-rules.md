@@ -102,6 +102,13 @@ Other characters follow Go's `path.Match`: `*` matches within one segment,
 as `/users/{id}` are not globs; the API rejects them and suggests the glob
 (`/users/?*`).
 
+Before any rule runs, the gateway resolves `.` and `..` segments (also when
+percent-encoded) and collapses repeated slashes, keeping a trailing slash,
+and forwards that path to your app: `/public/../upload` and `//upload` are
+`/upload` to every rule and to the app. A path already in that form is
+forwarded unchanged. Backslashes, `;` parameters and letter case are left
+as sent.
+
 Rules that refuse or limit requests (`ip`, `geo`, `jwt`, `limit`, `throttle`,
 `validate`, `maintenance`, `waf`, `challenge`) also match the path's
 normalized form, with `.` and `..` segments and repeated slashes resolved, and
@@ -682,6 +689,11 @@ whose target app is being renamed: until the change lands, its requests get
 served by the app the host belongs to. If the gateways cannot be reached,
 the change is refused with 503 and nothing changes; retry it. Changes to one account's rules are
 applied one at a time; other accounts' changes never wait for yours.
+
+A deploy token or a project-limited agent key manages only rules for its
+own apps' hosts. It cannot change, delete or roll back over a rule whose
+`match_host` covers other hosts (`*`, a wildcard, another app's host); use an
+account API key for those. See [deploy tokens](deploys.md#deploy-tokens).
 
 Two people editing the same app's rules at once cannot overwrite each other:
 send the `ETag` from `GET /v1/apps/{slug}/edge-rules` as `If-Match`, and a

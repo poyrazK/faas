@@ -160,6 +160,9 @@ type MemStore struct {
 	// egressOverage is each account's or org's egress overage election
 	// (EgressOverageStore, ADR-20261104204500).
 	egressOverage map[string]EgressOverageElection
+	// creditDiscounts are the provider discounts that carry account credit
+	// (CreditDiscountStore), keyed by row id, created on first use.
+	creditDiscounts map[string]CreditDiscount
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
 	totpLastSteps                        map[string]int64
@@ -1101,6 +1104,7 @@ type MemStore struct {
 	// OAuth-only accounts have no row; the absence of a row is the
 	// signal that an OAuth-only flow is required to mint a session.
 	accountPasswords map[string]AccountPassword
+	legalAcceptances map[string][]LegalAcceptance
 	// oauthLinks is keyed by (provider + "\x00" + provider_subject)
 	// so the §11 anti-takeover invariant (one OAuth subject per
 	// account) is enforceable in-memory the same way the composite
@@ -1944,6 +1948,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		mfaDisableRequests:      map[string]MFADisableRequest{},
 		cliAuthCodes:            map[string]CliAuthCode{},
 		accountPasswords:        map[string]AccountPassword{},
+		legalAcceptances:        map[string][]LegalAcceptance{},
 		oauthLinks:              map[string]OAuthLink{},
 		deploymentLogs:          map[string][]LogEntry{},
 		deploymentSeq:           map[string]int64{},
@@ -2150,6 +2155,9 @@ func (m *MemStore) CreateAccountWithPersonalOrg(ctx context.Context, params Crea
 	if err := ctx.Err(); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, err
 	}
+	if err := params.TermsAcceptance.validate(); err != nil {
+		return CreateAccountWithPersonalOrgResult{}, err
+	}
 
 	// 1. Email uniqueness probe.
 	for _, a := range m.accounts {
@@ -2207,6 +2215,11 @@ func (m *MemStore) CreateAccountWithPersonalOrg(ctx context.Context, params Crea
 		Role:      OrgRoleOwner,
 		JoinedAt:  now,
 	})
+	if a := params.TermsAcceptance; a != nil {
+		m.legalAcceptances[acct.ID] = append(m.legalAcceptances[acct.ID], LegalAcceptance{
+			AccountID: acct.ID, Document: LegalDocumentTerms, Version: a.Version, Method: a.Method, AcceptedAt: now,
+		})
+	}
 	return CreateAccountWithPersonalOrgResult{Account: acct, PersonalOrg: org}, nil
 }
 
@@ -21301,6 +21314,9 @@ type billingUsageDelivery struct {
 	hour                time.Time
 	quantity            int64
 	deliveredAt         time.Time
+	// source is the usage source that quantified the hour; empty for a
+	// receipt written without one (ADR-20261107105126).
+	source string
 }
 
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
@@ -24890,6 +24906,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 			delete(m.orgs, orgID)
 		}
 	}
+	delete(m.legalAcceptances, id) // ON DELETE CASCADE
 	delete(m.accounts, id)
 	for promotionID := range m.environmentPromotionReceipts {
 		if m.projectEnvironmentPromotions[promotionID].AccountID == id {

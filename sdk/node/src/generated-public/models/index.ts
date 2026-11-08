@@ -1110,6 +1110,8 @@ export type { SecretReferenceEnvironment } from './SecretReferenceEnvironment.js
 export type { SecretRevocationTarget } from './SecretRevocationTarget.js';
 export type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObservation.js';
 export type { SecretScanResult } from './SecretScanResult.js';
+export type { SecurityActivityEvent } from './SecurityActivityEvent.js';
+export type { SecurityActivityResponse } from './SecurityActivityResponse.js';
 export type { ServiceAbortReceipt } from './ServiceAbortReceipt.js';
 export type { ServiceAuthorizationCheck } from './ServiceAuthorizationCheck.js';
 export type { ServiceBindingExplanation } from './ServiceBindingExplanation.js';
