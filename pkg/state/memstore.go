@@ -444,8 +444,10 @@ type MemStore struct {
 	// object storage timeline fence (ADR-20261025111015 amendment).
 	objectStorageTimeline         string
 	acceptedObjectStorageTimeline string
-	alertRuleChannels             map[string][]string // rule id → channel ids (ADR-749)
-	appSLOs                       map[string][]SLO    // app id → definitions (ADR-747), lazily made
+	alertRuleChannels             map[string][]string                               // rule id → channel ids (ADR-749)
+	alertChannelResolveRetries    map[alertChannelRetryKey]AlertChannelResolveRetry // ADR-20261031144636
+	alertChannelStandDowns        map[alertChannelRetryKey]memStandDown             // ADR-20261104142830
+	appSLOs                       map[string][]SLO                                  // app id → definitions (ADR-747), lazily made
 	sloHours                      map[string]map[time.Time]memSLOHour
 	syntheticChecks               map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
 	syntheticRuns                 map[string][]SyntheticCheckRun
@@ -732,29 +734,29 @@ type MemStore struct {
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
-	workflowResumes                   map[string][]WorkflowResume
-	workflowRuns                      map[string]WorkflowRun
-	workflowRunCreateKeys             map[workflowRunCreateKey]workflowRunCreateKeyEntry
-	automationLiveVerifications       map[string]automationLiveRecord
-	automationLiveSuites              map[string]automationLiveSuiteRecord
-	automationLiveBaselines           map[string][]api.AutomationLiveBaseline
-	automationLiveBaselineRetirements map[string]api.AutomationLiveBaselineRetirement
-	workflowSchedules                 map[string]WorkflowScheduleCursor
-	workflowTenantSchedules           map[string]WorkflowScheduleCursor
-	workflowScheduleOccurrences       map[string]WorkflowScheduleOccurrence
-	automationFailurePolicies         map[string]api.AutomationFailurePolicy
-	automationFailureGuards           map[string]automationFailureGuard
-	automationFailureHistory          map[string][]api.AutomationFailureTransition
-	automationPublishPolicies         map[string]api.AutomationPublishPolicy
-	automationPublishReceipts         map[string]automationPublishReceipt
-	automationVersion                 int64
-	automations                       map[string]Automation
-	automationRevisions               map[string][]AutomationRevision
-	workflowSteps                     map[string]map[string]WorkflowStep // run_id → step_name → step
-	workflowStepAttempts              map[workflowStepAttemptKey]WorkflowStepAttempt
-	workflowOperationEffects          map[workflowStepAttemptKey][]workflowOperationStoredEffect
-	workflowEvents                    map[string][]WorkflowEvent // run_id → []WorkflowEvent
-	workflowEventApps                 map[string]string          // run_id → app_id, retained after run cleanup
+	workflowResumes                       map[string][]WorkflowResume
+	workflowRuns                          map[string]WorkflowRun
+	workflowRunCreateKeys                 map[workflowRunCreateKey]workflowRunCreateKeyEntry
+	storedWorkflowLiveVerifications       map[string]storedWorkflowLiveRecord
+	storedWorkflowLiveSuites              map[string]storedWorkflowLiveSuiteRecord
+	storedWorkflowLiveBaselines           map[string][]api.StoredWorkflowLiveBaseline
+	storedWorkflowLiveBaselineRetirements map[string]api.StoredWorkflowLiveBaselineRetirement
+	workflowSchedules                     map[string]WorkflowScheduleCursor
+	workflowTenantSchedules               map[string]WorkflowScheduleCursor
+	workflowScheduleOccurrences           map[string]WorkflowScheduleOccurrence
+	storedWorkflowFailurePolicies         map[string]api.StoredWorkflowFailurePolicy
+	storedWorkflowFailureGuards           map[string]storedWorkflowFailureGuard
+	storedWorkflowFailureHistory          map[string][]api.StoredWorkflowFailureTransition
+	storedWorkflowPublishPolicies         map[string]api.StoredWorkflowPublishPolicy
+	storedWorkflowPublishReceipts         map[string]storedWorkflowPublishReceipt
+	storedWorkflowVersion                 int64
+	storedWorkflows                       map[string]StoredWorkflow
+	storedWorkflowRevisions               map[string][]StoredWorkflowRevision
+	workflowSteps                         map[string]map[string]WorkflowStep // run_id → step_name → step
+	workflowStepAttempts                  map[workflowStepAttemptKey]WorkflowStepAttempt
+	workflowOperationEffects              map[workflowStepAttemptKey][]workflowOperationStoredEffect
+	workflowEvents                        map[string][]WorkflowEvent // run_id → []WorkflowEvent
+	workflowEventApps                     map[string]string          // run_id → app_id, retained after run cleanup
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -824,9 +826,9 @@ type MemStore struct {
 	// (ADR-20261101093517), kept beside the rows so AppWebhook stays as is.
 	appWebhookPreviousSecrets       map[string]appWebhookPreviousSecret
 	inboundWebhookEndpoints         map[string]InboundWebhookEndpoint
-	webhookAutomationBindings       map[string]WebhookAutomationBinding
-	webhookAutomationReceipts       map[string]WebhookAutomationReceipt
-	webhookAutomationRevision       int64
+	webhookWorkflowBindings         map[string]WebhookWorkflowBinding
+	webhookWorkflowReceipts         map[string]WebhookWorkflowReceipt
+	webhookWorkflowRevision         int64
 	workflowCallbackWebhookBindings map[string]WorkflowCallbackWebhookBinding
 	queueBindings                   map[string]QueueBinding
 	managedRealtimeEndpoints        map[string]ManagedRealtimeEndpoint
@@ -887,6 +889,7 @@ type MemStore struct {
 	edgeRules                 map[string]EdgeRule
 	edgeRuleSetVersions       map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-961)
 	edgeRuleLists             map[string]EdgeRuleList         // list id -> list (ADR-963)
+	edgeRuleHeaderSecrets     map[string]EdgeRuleHeaderSecret // secret id -> sealed value (ADR-20261108110000)
 	edgeCrawlerRanges         map[string]EdgeCrawlerRanges    // crawler -> published ranges (ADR-20261022083601)
 	edgeRuleEvents            []EdgeRuleEvent                 // sampled events (ADR-964)
 	edgeRuleEventSeq          int64
@@ -7931,6 +7934,8 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	m.deleteEventExecutionLedgerAppLocked(id)
 	m.deleteScenarioWorkerFaultsForAppLocked(id)
+	// alert_rules.app_id ON DELETE CASCADE; the episodes stay (ADR-20261030214500).
+	m.deleteAlertRulesLocked(func(r AlertRule) bool { return r.AppID == id })
 	if purged, ok := m.apps[id]; ok {
 		m.holdSlugLocked(purged.Slug, purged.AccountID)
 	}
@@ -8613,7 +8618,7 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 			}
 		}
 	}
-	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
+	if err := m.checkDeploymentStoredWorkflowsLocked(d); err != nil {
 		return Deployment{}, 0, err
 	}
 	buildGate, gateErr := newBuildDependencyGate(d, d.BuildDependencies, time.Now())
@@ -10300,7 +10305,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 
 		return ErrConflict
 	}
-	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
+	if err := m.checkDeploymentStoredWorkflowsLocked(d); err != nil {
 		return err
 	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
@@ -25338,7 +25343,16 @@ func (m *MemStore) deleteAlertRulesLocked(match func(AlertRule) bool) {
 // deleteAlertRuleLocked mirrors the alert_rules delete: its episodes stay
 // (ADR-20261030214500) and everything else of the rule cascades.
 func (m *MemStore) deleteAlertRuleLocked(id string) {
+	// The alert_rules_channel_stand_downs trigger: a deleted rule still owes
+	// its channels the recovery notice of an open episode
+	// (ADR-20261104142830), unless its account is being deleted too.
+	if rule, ok := m.alertRules[id]; ok {
+		if _, live := m.accounts[rule.AccountID]; live {
+			m.queueAlertChannelStandDownsLocked(rule, StandDownDeleted, time.Now().UTC())
+		}
+	}
 	m.keepDeletedRuleEpisodesLocked(m.alertRules[id], time.Now().UTC())
+	m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.rule == id })
 	delete(m.alertRules, id)
 	delete(m.readinessIncidentCursors, id)
 	delete(m.readinessPagerDutyPolicies, id)

@@ -140,7 +140,7 @@ func TestReleasedByDefaultIgnoresAccountRules(t *testing.T) {
 }
 
 func TestEveryAccountRequiresAllAncestorsWithoutNarrowingRules(t *testing.T) {
-	if !load(t, nil).EveryAccount("workflows") || load(t, nil).EveryAccount("automations") {
+	if !load(t, nil).EveryAccount("workflows") || load(t, nil).EveryAccount("stored-workflows") {
 		t.Fatal("tier defaults should decide when no flag is configured")
 	}
 	id, parent := child(t)

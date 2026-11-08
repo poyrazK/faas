@@ -257,3 +257,37 @@ func TestServedRefusesAnUntrustedOrExpiredLeaf(t *testing.T) {
 		}
 	}
 }
+
+// Two live certificates for the same name (a renewal stored beside the one it
+// replaces) report that name once, with the expiry of the certificate served
+// for it. The duplicate series failed the whole /metrics scrape on rc.331.
+func TestExpiryReportsEachNameOnceForTheServedCertificate(t *testing.T) {
+	ca, id := newFakeCA(t), newIdentity(t)
+	older := stored(t, ca, wildcard, id, 1)
+	newer := stored(t, ca, wildcard, id, 2)
+	if older.NotAfter.After(newer.NotAfter) {
+		older, newer = newer, older
+	}
+	s := newServed(t, ca, &liveStore{rows: []edgecert.Stored{newer, older}}, id)
+	if _, err := s.Load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(s.Collectors()...)
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather with two certificates for one name: %v", err)
+	}
+	for _, f := range families {
+		if f.GetName() != "edge_certificate_expiry_seconds" {
+			continue
+		}
+		m := f.GetMetric()
+		left := time.Until(newer.NotAfter).Seconds()
+		if len(m) != 1 || m[0].GetLabel()[0].GetValue() != "*.gregale.dev" || m[0].GetGauge().GetValue() > left+1 || m[0].GetGauge().GetValue() < left-60 {
+			t.Fatalf("expiry = %v, want one series of about %.0f s (the later certificate)", m, left)
+		}
+		return
+	}
+	t.Fatal("no edge_certificate_expiry_seconds")
+}

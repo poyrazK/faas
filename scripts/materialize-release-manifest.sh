@@ -14,10 +14,11 @@ OUTPUT=""
 BUILDER_BASE_DIGEST=""
 RUNTIME_BASES_ENV=""
 KERNEL_DIGEST=""
+FIRECRACKER_DIGEST=""
 
 usage() {
   cat >&2 <<'USAGE'
-usage: materialize-release-manifest.sh --git-sha SHA --output PATH --runtime-bases-env PATH [--template PATH] [--builder-base-digest DIGEST] [--kernel-digest DIGEST]
+usage: materialize-release-manifest.sh --git-sha SHA --output PATH --runtime-bases-env PATH [--template PATH] [--builder-base-digest DIGEST] [--kernel-digest DIGEST] [--firecracker-digest DIGEST]
 USAGE
 }
 
@@ -53,6 +54,11 @@ while [[ $# -gt 0 ]]; do
       KERNEL_DIGEST=$2
       shift 2
       ;;
+    --firecracker-digest)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      FIRECRACKER_DIGEST=$2
+      shift 2
+      ;;
     -h|--help)
       usage >&2
       exit 0
@@ -86,6 +92,13 @@ if [[ -n "$KERNEL_DIGEST" && ! "$KERNEL_DIGEST" =~ ^(sha256:)?[0-9a-f]{64}$ ]]; 
   exit 2
 fi
 KERNEL_DIGEST="${KERNEL_DIGEST#sha256:}"
+# ADR-20261108170000: release CI builds the patched Firecracker VMM and
+# anchors the manifest to the bytes it ships.
+if [[ -n "$FIRECRACKER_DIGEST" && ! "$FIRECRACKER_DIGEST" =~ ^(sha256:)?[0-9a-f]{64}$ ]]; then
+  echo "materialize-release-manifest: --firecracker-digest must be a sha256 digest" >&2
+  exit 2
+fi
+FIRECRACKER_DIGEST="${FIRECRACKER_DIGEST#sha256:}"
 if [[ -z "$RUNTIME_BASES_ENV" || ! -f "$RUNTIME_BASES_ENV" ]]; then
   echo "materialize-release-manifest: --runtime-bases-env must name a generated runtime contract" >&2
   exit 2
@@ -119,6 +132,7 @@ release_id="pre-1.0-${GIT_SHA:0:8}"
 awk -v release_id="$release_id" -v release_sha="$GIT_SHA" \
   -v builder_base_digest="$BUILDER_BASE_DIGEST" \
   -v kernel_digest="$KERNEL_DIGEST" \
+  -v firecracker_digest="$FIRECRACKER_DIGEST" \
   -v minimal_ref="$MINIMAL_REF" \
   -v debian_parent_ref="$DEBIAN_PARENT_REF" \
   -v node22_ref="$NODE22_REF" \
@@ -166,6 +180,11 @@ awk -v release_id="$release_id" -v release_sha="$GIT_SHA" \
   in_release && kernel_digest != "" && /^  kernel_digest:[[:space:]]/ {
     print "  kernel_digest: " kernel_digest
     kernel_digests++
+    next
+  }
+  in_release && firecracker_digest != "" && /^  firecracker_digest:[[:space:]]/ {
+    print "  firecracker_digest: " firecracker_digest
+    firecracker_digests++
     next
   }
   in_release && /^    minimal:[[:space:]]/ {
@@ -221,6 +240,9 @@ awk -v release_id="$release_id" -v release_sha="$GIT_SHA" \
     }
     if (kernel_digest != "" && kernel_digests != 1) {
       fail("template must contain one indented release.kernel_digest when an override is supplied")
+    }
+    if (firecracker_digest != "" && firecracker_digests != 1) {
+      fail("template must contain one indented release.firecracker_digest when an override is supplied")
     }
     if (runtime_base_refs != 8) {
       fail("template must contain the eight runtime_base_refs entries")

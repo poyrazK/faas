@@ -140,13 +140,15 @@ var registry = []Spec{
 		cols("github_installations", "sealed_install_token"),
 		cols("github_webhook_secrets", "secret_sealed"),
 	)},
-	// gatewayd-internal on compute opens basic-auth credentials and log
-	// drain headers. gatewayd-public's DNS-provider token is not stored in
-	// these columns, so it is not a reader.
+	// gatewayd-internal on compute opens basic-auth credentials, log drain
+	// headers and sealed edge-rule request header values
+	// (ADR-20261108110000). gatewayd-public's DNS-provider token is not
+	// stored in these columns, so it is not a reader.
 	{Domain: Edge, Readers: []string{"gatewayd-internal"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("apps", "public_auth_basic"),
 		cols("app_log_drains", "auth_header_sealed"),
 		cols("application_standard_log_destinations", "auth_header_sealed"),
+		cols("edge_rule_header_secrets", "ciphertext"),
 	)},
 	// The apps domains' certificate key (ADR-20261103163954 §3). edgednsd
 	// seals it to this domain alone, never the fleet identity: the table is

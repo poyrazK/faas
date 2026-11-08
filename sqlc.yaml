@@ -223,7 +223,7 @@ sql:
       - "pkg/state/github_connection_queries.sql"
       - "pkg/state/audit_anchor_queries.sql"
       - "pkg/state/audit_outbox_delivery_queries.sql"
-      - "pkg/state/automation_live_queries.sql"
+      - "pkg/state/stored_workflow_live_queries.sql"
       - "pkg/state/billing_run_product_queries.sql"
       - "pkg/state/binding_verification_run_queries.sql"
       - "pkg/state/build_coalescing_queries.sql"

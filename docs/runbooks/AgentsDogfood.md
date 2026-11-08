@@ -161,7 +161,7 @@ gregalectl flags inspect --key agents --account-id <account-uuid>
 Only this account now sees `/v1/agents` and `/v1/agent-runs`, can save
 agent steps, and gets `gregale.github` events.
 
-## 7. Create the agent and its automation
+## 7. Create the agent and its stored workflow
 
 As the account, with `API` the production API origin and `TOKEN` its API
 token. First the account's Anthropic integration, with its key read from the
@@ -198,7 +198,7 @@ jq -n --arg integration "$integration" '{
 }' | curl -fsS -X POST "$API/v1/agents" -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d @-
 ```
 
-The automation is a workflow in an app's `gregale.yaml`. Deploy any small app
+The stored workflow is a workflow in an app's `gregale.yaml`. Deploy any small app
 of the account with this workflow:
 
 ```yaml

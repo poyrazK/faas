@@ -127,12 +127,12 @@ var AllowedAppWebhookEvents = []string{
 	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
 	"routes.insight.detected", "routes.insight.resolved",
 	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.compound_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
-	"workflow.finished", "automation.paused",
+	"workflow.finished", "stored_workflow.paused",
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
 	"event_recovery.execution_attention",
-	"automation.recovery_review_ready", "automation.recovery_review_finished",
-	"automation.recovery_polling_status", "automation.recovery_policy_paused", "automation.recovery_queue_blocked",
-	"automation.recovery_health_alert", "automation.recovery_health_recovered",
+	"stored_workflow.recovery_review_ready", "stored_workflow.recovery_review_finished",
+	"stored_workflow.recovery_polling_status", "stored_workflow.recovery_policy_paused", "stored_workflow.recovery_queue_blocked",
+	"stored_workflow.recovery_health_alert", "stored_workflow.recovery_health_recovered",
 }
 
 // Account receivers intentionally cannot use the app-level all-events
