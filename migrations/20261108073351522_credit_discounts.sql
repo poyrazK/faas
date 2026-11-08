@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261104212028000_credit_discounts.sql
+-- filename: 20261108073351522_credit_discounts.sql
 
 -- ADR-20261104212028: account credit reaches the customer as a one-time fixed
 -- discount on the billing provider subscription's next order, instead of a
