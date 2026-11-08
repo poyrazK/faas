@@ -26,7 +26,7 @@ gregale alert delete --app APP_ID ALERT_ID
 
 Useful presets include availability, latency, error rate, out-of-memory, certificate expiry, quota, and spend. Use the preset as a starting point; narrow the threshold and notification window in the generated configuration when needed.
 
-For automations, the opt-in `automation_backlog` preset sends a webhook when
+For stored workflows, the opt-in `stored_workflow_backlog` preset sends a webhook when
 due work has waited at least five minutes. It covers overdue timers, event or
 callback timeouts, expired worker leases and concurrency-blocked runs. Future
 waits, retry backoff and live execution do not count. Its 30-minute default
@@ -34,12 +34,12 @@ cooldown limits repeat notifications; age is current state rather than a
 window average. The preset supports webhook notifications only.
 
 ```bash
-printf '%s\n' "$ALERT_SECRET" | gregale alert preset enable automation_backlog \
+printf '%s\n' "$ALERT_SECRET" | gregale alert preset enable stored_workflow_backlog \
   --app billing --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 ```
 
 Use `workflow_due_age_seconds` for a custom threshold in seconds. Inspect
-[automation health](automation-authoring.md#inspect-automation-health) and run
+[stored workflow health](stored-workflow-authoring.md#inspect-stored-workflow-health) and run
 history to find waiting reasons. The preset does not enable itself for
 existing apps; add it to each app that needs it.
 

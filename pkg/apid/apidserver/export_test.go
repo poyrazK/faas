@@ -1149,8 +1149,8 @@ func (r *server) ApplySourceRefManifest(p0 context.Context, p1 state.Account, p2
 func (r *server) AssessProfileDeploymentCheck(p0 context.Context, p1 state.ProfileDeploymentCheckWork) (api.ProfileRegressionAssessment, bool) {
 	return r.assessProfileDeploymentCheck(p0, p1)
 }
-func (r *server) AuditAutomationMutation(p0 *http.Request, p1 state.Account, p2 string, p3 string, p4 state.AutomationMutation, p5 state.Automation) {
-	r.auditAutomationMutation(p0, p1, p2, p3, p4, p5)
+func (r *server) AuditStoredWorkflowMutation(p0 *http.Request, p1 state.Account, p2 string, p3 string, p4 state.StoredWorkflowMutation, p5 state.StoredWorkflow) {
+	r.auditStoredWorkflowMutation(p0, p1, p2, p3, p4, p5)
 }
 func (r *server) AutoAdvanceFeatureFlagRollout(p0 context.Context, p1 state.FeatureFlagAutoRolloutCandidate, p2 time.Time) error {
 	return r.autoAdvanceFeatureFlagRollout(p0, p1, p2)

@@ -82,8 +82,8 @@ def sync_detailed(
 ) -> Response[ListTenantWorkflowSchedulesResponse | Problem]:
     """List schedules this tenant may customize for a linked app.
 
-     Requires platform_tenant:automations:read. Results include only live published schedule triggers
-    that the app owner marked tenant_configurable. Version zero means the tenant still uses the
+     Requires platform_tenant:stored_workflows:read. Results include only live published schedule
+    triggers that the app owner marked tenant_configurable. Version zero means the tenant still uses the
     published defaults.
 
     Args:
@@ -115,8 +115,8 @@ def sync(
 ) -> ListTenantWorkflowSchedulesResponse | Problem | None:
     """List schedules this tenant may customize for a linked app.
 
-     Requires platform_tenant:automations:read. Results include only live published schedule triggers
-    that the app owner marked tenant_configurable. Version zero means the tenant still uses the
+     Requires platform_tenant:stored_workflows:read. Results include only live published schedule
+    triggers that the app owner marked tenant_configurable. Version zero means the tenant still uses the
     published defaults.
 
     Args:
@@ -143,8 +143,8 @@ async def asyncio_detailed(
 ) -> Response[ListTenantWorkflowSchedulesResponse | Problem]:
     """List schedules this tenant may customize for a linked app.
 
-     Requires platform_tenant:automations:read. Results include only live published schedule triggers
-    that the app owner marked tenant_configurable. Version zero means the tenant still uses the
+     Requires platform_tenant:stored_workflows:read. Results include only live published schedule
+    triggers that the app owner marked tenant_configurable. Version zero means the tenant still uses the
     published defaults.
 
     Args:
@@ -174,8 +174,8 @@ async def asyncio(
 ) -> ListTenantWorkflowSchedulesResponse | Problem | None:
     """List schedules this tenant may customize for a linked app.
 
-     Requires platform_tenant:automations:read. Results include only live published schedule triggers
-    that the app owner marked tenant_configurable. Version zero means the tenant still uses the
+     Requires platform_tenant:stored_workflows:read. Results include only live published schedule
+    triggers that the app owner marked tenant_configurable. Version zero means the tenant still uses the
     published defaults.
 
     Args:

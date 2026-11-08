@@ -451,7 +451,7 @@ While it is paused:
 - Events already accepted are kept and wait to be routed; routing resumes when
   the pause ends. Delivery-age limits keep counting while they wait.
 - Deliveries that already became invocations run as usual.
-- Object-storage notifications, inbound webhook automation and other events
+- Object-storage notifications, inbound webhook stored workflow and other events
   Gregale publishes for you are still accepted and wait with the rest.
 
 ### Publish rate

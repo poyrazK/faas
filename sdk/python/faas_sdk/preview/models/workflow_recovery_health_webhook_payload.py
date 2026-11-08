@@ -18,9 +18,10 @@ T = TypeVar("T", bound="WorkflowRecoveryHealthWebhookPayload")
 
 @_attrs_define
 class WorkflowRecoveryHealthWebhookPayload:
-    """Historical automation.recovery_health_alert or automation.recovery_health_recovered transition with stable event and
-    incident identities. Recovery targets only original alert receivers still enabled and subscribed to recovery at
-    capture. Delivery can occur after the observed condition changes and does not authorize retries or release slots.
+    """Historical stored_workflow.recovery_health_alert or stored_workflow.recovery_health_recovered transition with stable
+    event and incident identities. Recovery targets only original alert receivers still enabled and subscribed to
+    recovery at capture. Delivery can occur after the observed condition changes and does not authorize retries or
+    release slots.
 
     """
 

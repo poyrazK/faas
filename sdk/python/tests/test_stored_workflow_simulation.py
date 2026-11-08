@@ -1,0 +1,115 @@
+import json
+
+import httpx
+import pytest
+
+from faas_sdk import AuthenticatedClient
+from faas_sdk.preview.api.workflows import simulate_stored_workflow
+from faas_sdk.preview.models.stored_workflow_simulation_step import StoredWorkflowSimulationStep
+from faas_sdk.preview.models.simulate_stored_workflow_request import SimulateStoredWorkflowRequest
+from faas_sdk.preview.models.simulate_stored_workflow_response import SimulateStoredWorkflowResponse
+from faas_sdk.types import UNSET
+
+REQUEST = {
+    "definition": {
+        "name": "sample",
+        "steps": [
+            {"name": "a", "run": "a"},
+            {"name": "b", "run": "b"},
+            {"name": "approval", "wait_for_event": "approved"},
+        ],
+    },
+    "input": {"number": 9007199254740993, "active": False},
+    "mock_outputs": {"a": None},
+    "mock_item_outputs": {"batch": [False, None]},
+    "mock_item_attempts": {
+        "retry_batch": {
+            "0": [{"outcome": "timeout"}, {"outcome": "success", "output": None}],
+            "2": [{"outcome": "failure", "http_status": 400}],
+        }
+    },
+    "mock_attempts": {
+        "approval": [{"outcome": "success", "output": {"approved_by": "reviewer-42"}}],
+        "b": [{"outcome": "failure", "http_status": 503}, {"outcome": "success", "output": None}],
+    },
+}
+RESPONSE = {
+    "definition_valid": True,
+    "definition_hash": "hash",
+    "complete": False,
+    "issues": [],
+    "warnings": [],
+    "step_order": ["b"],
+    "trace": [
+        {
+            "step_name": "b",
+            "kind": "run",
+            "state": "mocked",
+            "path": "/contacts/contact%2042",
+            "raw_query": "email=a%2Bb%40example.com",
+            "output": None,
+            "when_matched": False,
+            "attempts": [
+                {"attempt": 1, "outcome": "failure", "http_status": 503},
+                {"attempt": 2, "outcome": "success"},
+            ],
+        },
+        {
+            "step_name": "approval",
+            "kind": "event_wait",
+            "state": "mocked",
+            "reason": "event_received_mocked",
+            "output": {"approved_by": "reviewer-42"},
+            "attempts": [{"attempt": 1, "outcome": "success"}],
+        },
+    ],
+}
+
+
+def handle(request):
+    assert request.method == "POST"
+    assert request.url.path == "/v1/apps/billing/workflows/stored:simulate"
+    assert json.loads(request.content) == REQUEST
+    return httpx.Response(200, json=RESPONSE)
+
+
+def assert_trace(response):
+    assert isinstance(response, SimulateStoredWorkflowResponse)
+    assert response.definition_valid is True
+    assert response.complete is False
+    assert response.trace[0].output is None
+    assert response.trace[0].path == "/contacts/contact%2042"
+    assert response.trace[0].raw_query == "email=a%2Bb%40example.com"
+    assert response.trace[0].when_matched is False
+    assert len(response.trace[0].attempts) == 2
+    assert response.trace[0].attempts[0].http_status == 503
+    assert response.trace[0].input_ is UNSET
+    assert response.trace[1].reason == "event_received_mocked"
+    assert response.trace[1].output == {"approved_by": "reviewer-42"}
+    assert response.to_dict() == RESPONSE
+
+
+def test_simulation_sync_preserves_samples_and_trace():
+    client = AuthenticatedClient(base_url="https://api.example.com", token="token")
+    body = SimulateStoredWorkflowRequest.from_dict(REQUEST)
+    assert body.to_dict() == REQUEST
+    with httpx.Client(base_url="https://api.example.com", transport=httpx.MockTransport(handle)) as transport:
+        client.set_httpx_client(transport)
+        assert_trace(simulate_stored_workflow.sync(slug="billing", client=client, body=body))
+    missing = StoredWorkflowSimulationStep.from_dict({"step_name": "a", "kind": "run", "state": "would_execute"})
+    assert missing.output is UNSET
+    assert "output" not in missing.to_dict()
+
+
+@pytest.mark.asyncio
+async def test_simulation_async_preserves_samples_and_trace():
+    client = AuthenticatedClient(base_url="https://api.example.com", token="token")
+    async with httpx.AsyncClient(
+        base_url="https://api.example.com", transport=httpx.MockTransport(handle)
+    ) as transport:
+        client.set_async_httpx_client(transport)
+        assert_trace(
+            await simulate_stored_workflow.asyncio(
+                slug="billing", client=client, body=SimulateStoredWorkflowRequest.from_dict(REQUEST)
+            )
+        )
