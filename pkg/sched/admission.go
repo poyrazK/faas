@@ -54,6 +54,10 @@ type NodeLedger struct {
 	// quietPaused, when set, lets the vCPU and CPU gates count only active
 	// instances (ADR-1151, admission_cpu_discount.go).
 	quietPaused QuietPaused
+	// idleLadderFrozen, when set, leaves instances vmmd holds at the idle
+	// ladder's freeze level out of measured admission's cap on reservations
+	// (ADR-20261107122928, admission_idle_ladder.go).
+	idleLadderFrozen IdleLadderFrozen
 	// measuredCPU, when set, charges measured instances their measured CPU
 	// at the vCPU and CPU gates (ADR 20261029151111, admission_cpu_discount.go).
 	measuredCPU MeasuredCPU
@@ -1028,7 +1032,7 @@ func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceili
 	// Frozen reservations already book measured memory, so the cap on
 	// reservations leaves them out (ADR-1151).
 	overcommit := ceiling * (api.MeasuredAdmissionMaxOvercommitPercent - 100) / 100
-	if capped := reserved - frozen - overcommit; capped > used {
+	if capped := reserved - frozen - l.idleLadderDiscountMB_locked(nodeID, ceiling) - overcommit; capped > used {
 		return capped, "reservations beyond the overcommit allowance"
 	}
 	return used, "measured"

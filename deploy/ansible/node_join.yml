@@ -725,6 +725,16 @@
   become: true
   serial: 1
   max_fail_percentage: 0
+  vars:
+    # ADR-20261023104734 step 3: the compute daemons with their own database
+    # login; scripts/ci/compute_db_roles.py UNIT_ROLES names their roles.
+    faas_join_db_role_units:
+      - faas-vmmd
+      - faas-schedd
+      - faas-imaged
+      - faas-builderd
+      - faas-gatewayd-internal
+      - faas-gatewayd-public-edge
   tasks:
     - name: Refuse activation when the OCI cache is outside fast storage
       ansible.builtin.shell: |
@@ -1895,6 +1905,127 @@
       # envelope opts into the strict warning gate (the CLI validation also
       # requires the pair and their box-age key).
 
+    # ADR-20261023104734 step 3: each compute daemon logs in as its own
+    # faas_runtime member. cd-compute derives the logins
+    # (scripts/ci/compute_db_roles.py) into compute-db-roles.env; each unit
+    # reads its file through a drop-in that overrides compute-db.env's
+    # faas_compute DSN. Every login is proven before any unit is pointed at
+    # it, all or none; without the file the drop-ins go and the daemons fall
+    # back to faas_compute at the restart below.
+    - name: Read the per-daemon compute database logins
+      ansible.builtin.set_fact:
+        faas_join_db_role_lines: >-
+          {{ lookup('ansible.builtin.file', faas_join_compute_db_roles_source).splitlines()
+             | map('trim') | select | list }}
+      no_log: true
+      when: (faas_join_compute_db_roles_source | default('') | trim) != ''
+
+    - name: Refuse per-daemon logins for unknown units
+      ansible.builtin.assert:
+        that:
+          - (faas_join_db_role_lines | map('regex_replace', '=.*$', '') | sort | list)
+            == (faas_join_db_role_units | sort | list)
+          - faas_join_db_role_lines | map('regex_search', '^[a-z-]+=postgres(ql)?://faas_[a-z_]+:[0-9a-f]{64}@') | select | list | length
+            == faas_join_db_role_units | length
+        fail_msg: compute-db-roles.env must name exactly {{ faas_join_db_role_units | join(', ') }}, each with a faas_<role> password DSN.
+        quiet: true
+      no_log: true
+      when: faas_join_db_role_lines is defined
+
+    - name: Create the per-daemon login directory
+      ansible.builtin.file:
+        path: /etc/faas/secrets/db
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: faas_join_db_role_lines is defined
+
+    - name: Stage each daemon's candidate login
+      ansible.builtin.copy:
+        dest: "/etc/faas/secrets/db/{{ item.split('=', 1)[0] }}.env.candidate"
+        content: |
+          DATABASE_URL={{ item.split('=', 1)[1] }}
+          {% if item.split('=', 1)[0] == 'faas-vmmd' %}
+          FAAS_VMMD_DBURL={{ item.split('=', 1)[1] }}
+          {% endif %}
+        owner: root
+        group: root
+        mode: "0600"
+      loop: "{{ faas_join_db_role_lines | default([]) }}"
+      no_log: true
+
+    # drain-status reads this node's row and instances: a working login prints
+    # one of its three status lines whatever the exit code, a refused one only
+    # an error.
+    - name: Prove each daemon's login before any unit uses it
+      ansible.builtin.shell: |
+        set -a
+        . /etc/faas/secrets/db/{{ item }}.env.candidate
+        set +a
+        FAAS_PG_DSN="$DATABASE_URL" /usr/local/bin/gregalectl compute-nodes drain-status \
+          --node "{{ faas_join_database_node }}" --break-glass-db || true
+      args:
+        executable: /bin/bash
+      register: faas_join_db_role_proof
+      changed_when: false
+      failed_when: faas_join_db_role_proof.stdout is not search('instances still on|waiting for maintenance hold|drain-safe:')
+      loop: "{{ faas_join_db_role_units }}"
+      when: faas_join_db_role_lines is defined
+
+    - name: Install each daemon's proven login
+      ansible.builtin.copy:
+        src: "/etc/faas/secrets/db/{{ item }}.env.candidate"
+        dest: "/etc/faas/secrets/db/{{ item }}.env"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+      register: faas_join_db_role_envs
+      loop: "{{ faas_join_db_role_units }}"
+      when: faas_join_db_role_lines is defined
+
+    - name: Create the per-daemon login drop-in directories
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}.service.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop: "{{ faas_join_db_role_units }}"
+      when: faas_join_db_role_lines is defined
+
+    - name: Point each daemon at its own login
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item }}.service.d/zz-faas-db-role.conf"
+        content: |
+          [Service]
+          # ADR-20261023104734 step 3: this daemon's own faas_runtime login,
+          # read after compute-db.env so its DSN wins.
+          EnvironmentFile=/etc/faas/secrets/db/{{ item }}.env
+        owner: root
+        group: root
+        mode: "0644"
+      register: faas_join_db_role_dropins
+      loop: "{{ faas_join_db_role_units }}"
+      when: faas_join_db_role_lines is defined
+
+    - name: Return the daemons to faas_compute without per-daemon logins
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      register: faas_join_db_role_removed
+      loop: >-
+        {{ faas_join_db_role_units | map('regex_replace', '^(.*)$', '/etc/systemd/system/\1.service.d/zz-faas-db-role.conf') | list
+           + faas_join_db_role_units | map('regex_replace', '^(.*)$', '/etc/faas/secrets/db/\1.env') | list }}
+      when: faas_join_db_role_lines is not defined
+
+    - name: Remove the candidate logins
+      ansible.builtin.file:
+        path: "/etc/faas/secrets/db/{{ item }}.env.candidate"
+        state: absent
+      loop: "{{ faas_join_db_role_units }}"
+
     - name: Reload systemd after release/config publication
       ansible.builtin.systemd:
         daemon_reload: true
@@ -1916,6 +2047,17 @@
         - faas-gatewayd-internal.service
         - faas-builderd.service
         - faas-imaged.service
+
+    # The app edge is not in the set above; a no-drain rollout keeps it
+    # serving. Restart it only when its database login changed.
+    - name: Restart the app edge onto its changed database login
+      ansible.builtin.command: systemctl try-restart faas-gatewayd-public-edge.service  # noqa: command-instead-of-module
+      changed_when: true
+      when: >-
+        (faas_join_db_role_envs.results | default([]) + faas_join_db_role_dropins.results | default([])
+         + faas_join_db_role_removed.results | default([]))
+        | selectattr('changed', 'defined') | selectattr('changed')
+        | map(attribute='item') | select('search', 'faas-gatewayd-public-edge') | list | length > 0
 
     # The restarted gatewayd-internal already wants the edge; the connector
     # (and the socket, on a node whose edge was taken out above) come back

@@ -120,6 +120,13 @@ that only allows its declared routes (`only_allow_declared_routes`) gets the
 same treatment: a POST that asks to run as `DELETE` needs both `POST` and
 `DELETE` declared for its path.
 
+A `match` condition on these rules reads the same forms: it holds when it
+holds for the raw path or any normalized form above, and on a `HEAD` request
+also when it holds for `GET`. A `jwt` rule on `/**` with
+`{"not": {"field": "path", "op": "prefix", "value": "/public"}}` therefore
+still checks `/public/../admin`, and a `path prefix /admin` condition covers
+`//admin` and `/ADMIN`. Other kinds compare conditions exactly.
+
 A gate scoped by `match_headers`, or by a `header:`, `cookie:` or `query:`
 field in `match`, applies only when the client sends that value, and the
 client chooses what it sends: one that leaves the header out is not checked.
@@ -455,8 +462,11 @@ headers the client or a CDN sends.
 A request body over `max_body_bytes` (1 byte to 25 MiB) gets 413
 `request_too_large`. A request whose `Content-Length` is over the cap is
 refused before any of the body is read. `max_body_bytes_streaming`
-(optional, at least `max_body_bytes`, at most 100 MiB) sets the size cap for
-a streamed response on the route.
+(optional, at least `max_body_bytes`, at most 100 MiB) is the request body cap
+instead of `max_body_bytes` when your app has streaming turned on: every
+request to such an app streams except WebSocket upgrades, whatever its
+`Accept` header, so on a streaming app this is the cap that applies. Leave it
+unset to keep `max_body_bytes` there too. It also caps the streamed response.
 
 ### throttle
 
@@ -531,7 +541,13 @@ most four bodies, so other customers' uploads cannot use it up. A body sent
 without `Content-Length` is held as it arrives. When a bound is reached, a
 request gets 503 `capacity_unavailable` with `Retry-After`. Set
 `reject_on_unknown_fields` to reject properties the schema does not declare,
-and `apply_while_streaming` to validate a WebSocket handshake too. Path,
+and `apply_while_streaming` to validate a WebSocket handshake too. A body that
+names a property twice in one object, or in two spellings that differ only in
+case (`role` and `ROLE`), fails with `expected: unique_properties`: Go and
+ASP.NET Core bind property names case-insensitively, so the second spelling
+would reach your app unchecked. Query parameters are read as apps read them,
+split on `&` only, so `?id=1;--` is checked as `id=1;--`; a query with a
+percent-escape that does not decode fails with `expected: query_string`. Path,
 query and header parameters are always checked, and so is any body sent with
 `Connection: Upgrade`: servers that do not speak the named protocol run such a
 request as usual.

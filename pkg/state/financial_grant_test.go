@@ -87,10 +87,12 @@ func TestMonthOverageCentsCountsAnUncapturedPlanChangeFromNow(t *testing.T) {
 	// (ADR-20261031100000).
 	usage := 610*api.SecondsPerGBHour + api.SecondsPerGBHour/2
 	beforeChange := func(time.Time) (int64, error) { return 300 * api.SecondsPerGBHour, nil }
-	if got, err := state.MonthOverageCents(api.PlanPro, hobby, month.Add(half), usage, beforeChange); err != nil || got != 110 {
-		t.Fatalf("overage = %d cents (%v), want 110 (100 on Hobby + 10.5 over 600)", got, err)
+	over := api.OverageCentsForBillableMBSeconds(110*api.SecondsPerGBHour + api.SecondsPerGBHour/2)
+	if got, err := state.MonthOverageCents(api.PlanPro, hobby, month.Add(half), usage, beforeChange); err != nil || got != over {
+		t.Fatalf("overage = %d cents (%v), want %d (100 GB-h on Hobby + 10.5 over 600)", got, err, over)
 	}
-	if got, err := state.MonthOverageCents(api.PlanHobby, hobby, month.Add(half), usage, beforeChange); err != nil || got != 410 {
-		t.Fatalf("overage = %d cents (%v), want 410 (610.5 GB-h over Hobby's 200)", got, err)
+	over = api.OverageCentsForBillableMBSeconds(410*api.SecondsPerGBHour + api.SecondsPerGBHour/2)
+	if got, err := state.MonthOverageCents(api.PlanHobby, hobby, month.Add(half), usage, beforeChange); err != nil || got != over {
+		t.Fatalf("overage = %d cents (%v), want %d (610.5 GB-h over Hobby's 200)", got, err, over)
 	}
 }

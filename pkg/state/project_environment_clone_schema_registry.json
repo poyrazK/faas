@@ -447,6 +447,28 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_email_changes",
+    "columns": [
+      "account_id",
+      "consumed_at",
+      "created_at",
+      "expires_at",
+      "new_email",
+      "old_email",
+      "token_hash"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "account_oauth_unlinks",
+    "columns": [
+      "account_id",
+      "provider",
+      "unlinked_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "accounts",
     "columns": [
       "abuse_hold_at",
@@ -458,6 +480,7 @@
       "deletion_includes_managed_postgres",
       "deletion_requested_at",
       "deployment_mail_revision",
+      "display_name",
       "egress_allowlist_extra",
       "egress_overage_disabled_at",
       "egress_overage_enabled_at",
@@ -4626,7 +4649,8 @@
       "oldest_pending_at",
       "last_published_at",
       "last_failure_code",
-      "publishing"
+      "publishing",
+      "last_dropped_at"
     ],
     "kind": "operational"
   },
@@ -17503,6 +17527,7 @@
       "dimension_kind",
       "error_requests",
       "latency_hist",
+      "latency_hist_int4",
       "latency_max_ms",
       "method",
       "request_time_ms",
@@ -17523,6 +17548,7 @@
       "dimension_kind",
       "error_requests",
       "latency_hist",
+      "latency_hist_int4",
       "latency_max_ms",
       "method",
       "request_time_ms",

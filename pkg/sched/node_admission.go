@@ -28,6 +28,8 @@ func (e *Engine) nodePlacementContext(ctx context.Context, p Placement, r Reques
 		BookedCPUMillicores: r.BookedCPUMillicores}
 	if e.ledger != nil {
 		admission.ReservationPercent = e.ledger.ReservationPercent(p.NodeID)
+		// ADR-20261107122928: the idle ladder discount placement applied.
+		admission.ReservationDiscountMB = e.ledger.ReservationDiscountMB(p.NodeID)
 		if !r.AllowResidentRecovery {
 			discountVCPU, discountCPU := e.ledger.CPUDiscount(p.NodeID)
 			admission.Compute = state.NodeCompute{VCPU: r.VCPU, CPUMillicores: r.CPUMillicores,

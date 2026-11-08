@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/hex"
 	"errors"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
@@ -19,6 +20,14 @@ type DataAPIAccessConfig struct {
 	Auth       *DataAPIUserAuth   `json:"auth,omitempty"`
 	PublicRead []string           `json:"public_read,omitempty"`
 	ServerKeys []DataAPIServerKey `json:"server_keys,omitempty"`
+	// AllowWithoutRLS lists the relations signed-in users may read without
+	// row-level security (ADR 20261026140223); live reads apply the same
+	// gate, so they need the same exemptions.
+	AllowWithoutRLS []string `json:"allow_without_rls,omitempty"`
+	// StartedAt is when the reporting runtime process started. A report from
+	// an older process (one restored from an older snapshot, or still running
+	// beside a fresh restart) never replaces a newer process's settings.
+	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
 // DataAPIUserAuth is the issuer, JWKS and audience a Data API verifies user
@@ -80,6 +89,12 @@ func (c DataAPIAccessConfig) Validate() error {
 	}
 	if !uniqueMatching(c.PublicRead, dataAPIAccessRelation) {
 		return errors.New("data api access: invalid public-read entry")
+	}
+	if len(c.AllowWithoutRLS) > DataAPIPublicReadMaxRelations || !uniqueMatching(c.AllowWithoutRLS, dataAPIAccessRelation) {
+		return errors.New("data api access: invalid row-level security exemption")
+	}
+	if c.StartedAt != nil && c.StartedAt.Year() < 2000 {
+		return errors.New("data api access: invalid start time")
 	}
 	slots := map[string]bool{}
 	for _, k := range c.ServerKeys {

@@ -55,8 +55,10 @@ type snapshotBackingRouter interface {
 // apps whose snapshots on that node the release made stale, and refreshes
 // them (ADR-20261106214916). It runs one pass per node per release it sees,
 // including once per node when schedd starts, since schedd restarts during a
-// release. A pass asks the node's vmmd whether each candidate's snapshot
-// would restore. In shadow it only counts the answers; on, it boots each
+// release, and again when the CPU shape settings change the guest vCPU count
+// apps boot with (ADR-20261101160231). A pass refreshes a snapshot captured
+// at another vCPU count than its app boots with now, and asks the node's vmmd
+// whether each other candidate's snapshot would restore. In shadow it only counts the answers; on, it boots each
 // stale one on the node, captures a fresh snapshot and parks it, one at a
 // time per node, while the node keeps its headroom.
 type SnapshotRefresher struct {
@@ -68,7 +70,8 @@ type SnapshotRefresher struct {
 	mu          sync.Mutex
 	mode        string
 	windowHours int
-	// passed is the release each node's last completed pass was for.
+	// passed is the release and CPU shape each node's last completed pass
+	// was for.
 	passed map[string]string
 }
 
@@ -154,19 +157,20 @@ func (r *SnapshotRefresher) Tick(ctx context.Context) {
 	wg.Wait()
 }
 
-// tickNode runs nodeID's pass when its release has not been passed yet. A
-// pass that deferred a refresh, or whose vmmd did not answer, runs again on
-// the next tick.
+// tickNode runs nodeID's pass when its release, or the CPU shape apps boot
+// with, has not been passed yet. A pass that deferred a refresh, or whose
+// vmmd did not answer, runs again on the next tick.
 func (r *SnapshotRefresher) tickNode(ctx context.Context, node state.ComputeNode) {
 	r.reapOrphanedRefreshes(ctx, node.ID)
 	release := ""
 	if node.ReleaseID != nil {
 		release = *node.ReleaseID
 	}
+	key := release + "\x00" + r.e.guestVCPUShapeKey()
 	r.mu.Lock()
 	done, seen := r.passed[node.ID]
 	r.mu.Unlock()
-	if seen && done == release {
+	if seen && done == key {
 		return
 	}
 	pass, err := r.Pass(ctx, node.ID, release)
@@ -178,7 +182,7 @@ func (r *SnapshotRefresher) tickNode(ctx context.Context, node state.ComputeNode
 		return
 	}
 	r.mu.Lock()
-	r.passed[node.ID] = release
+	r.passed[node.ID] = key
 	r.mu.Unlock()
 }
 
@@ -204,8 +208,15 @@ func (r *SnapshotRefresher) Pass(ctx context.Context, nodeID, releaseID string) 
 	if err != nil {
 		return pass, fmt.Errorf("sched: snapshot refresh: list candidates: %w", err)
 	}
+	vcpus, vcpusKnown, err := r.e.readVCPUShapeHistory(ctx)
+	if err != nil {
+		return pass, err
+	}
+	if !vcpusKnown {
+		r.log.Info("snapshot refresh: CPU shape history does not explain the current settings; restores check the vCPU count", "node_id", nodeID)
+	}
 	for _, c := range cands {
-		outcome, detail, target, err := r.classify(ctx, nodeID, c)
+		outcome, detail, target, err := r.classify(ctx, nodeID, c, vcpus, vcpusKnown)
 		if errors.Is(err, ErrSnapshotBackingUnsupported) {
 			r.log.Info("snapshot refresh: node's vmmd predates the backing check; pass ends", "node_id", nodeID, "release_id", releaseID)
 			break
@@ -235,18 +246,19 @@ func (r *SnapshotRefresher) Pass(ctx context.Context, nodeID, releaseID string) 
 
 // classify decides one candidate without changing anything, and for a stale
 // one returns what its refresh boots. An error means the node's vmmd did not
-// answer.
-func (r *SnapshotRefresher) classify(ctx context.Context, nodeID string, c state.SnapshotRefreshCandidate) (outcome, detail string, t refreshTarget, err error) {
+// answer. vcpus is consulted only when vcpusKnown.
+func (r *SnapshotRefresher) classify(ctx context.Context, nodeID string, c state.SnapshotRefreshCandidate, vcpus vcpuShapeHistory, vcpusKnown bool) (outcome, detail string, t refreshTarget, err error) {
 	e := r.e
-	if c.Live {
-		return SnapshotRefreshSkippedLive, "", t, nil
-	}
 	t.app, t.acct, t.limits, err = e.resolveAppAccount(ctx, c.AppID)
 	if err != nil {
 		return lookupOutcome(SnapshotRefreshSkippedIneligible, err, t)
 	}
+	// Every scheduler sees every candidate: only the owner counts it.
 	if !e.ownsApp(t.app) {
 		return "", "", t, nil
+	}
+	if c.Live {
+		return SnapshotRefreshSkippedLive, "", t, nil
 	}
 	var reason string
 	if t.dep, reason = r.refreshableDeployment(ctx, t.app, c.DeploymentID); reason != "" {
@@ -264,6 +276,18 @@ func (r *SnapshotRefresher) classify(ctx context.Context, nodeID string, c state
 	}
 	if (t.app.AppProtocol == api.AppProtocolHTTP2 || t.app.AppProtocol == api.AppProtocolGRPC) && t.snap.BaseImageVersion != fcvm.FAAS_BASE_IMAGE_VERSION {
 		return SnapshotRefreshWouldRefresh, ColdReasonBaseImage, t, nil
+	}
+	// The check vmmd makes after the restore (fcvm.ErrSnapshotVCPUMismatch).
+	// The app's last instance ran at the count schedd chose when it
+	// started, and so does the snapshot it captured or restored from: an
+	// instance that started before a change and parked after it captured the
+	// old count.
+	vcpusAt := c.StartedAt
+	if vcpusAt.IsZero() {
+		vcpusAt = t.snap.CreatedAt
+	}
+	if vcpusKnown && vcpus.vcpusAt(vcpusAt, t.app, t.limits) != e.guestVCPUs(t.app, t.limits) {
+		return SnapshotRefreshWouldRefresh, SnapshotRefreshDetailVCPUs, t, nil
 	}
 	verdict, detail, err := r.askBacking(ctx, nodeID, t)
 	if err != nil {

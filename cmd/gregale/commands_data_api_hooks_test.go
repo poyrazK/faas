@@ -23,7 +23,7 @@ func TestDataAPIHooksSQLRendersTheSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"CREATE TABLE catalog.gregale_change_events", "ENABLE ROW LEVEL SECURITY", "CREATE FUNCTION gregale_hooks.capture()", "SECURITY DEFINER",
+	for _, want := range []string{"CREATE TABLE catalog.gregale_change_events", "ENABLE ROW LEVEL SECURITY", "CREATE OR REPLACE FUNCTION gregale_hooks.capture()", "CREATE TABLE IF NOT EXISTS catalog.gregale_change_drops", "CREATE OR REPLACE FUNCTION gregale_hooks.discard_waiting()", "SECURITY DEFINER",
 		"CREATE FUNCTION catalog.gregale_change_claim", "CREATE FUNCTION catalog.gregale_change_settle", "SELECT gregale_hooks.enable('catalog.orders')"} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("missing %q", want)
@@ -304,12 +304,15 @@ func TestDataAPIHooksBacklogBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"SET LOCAL lock_timeout", "CREATE INDEX IF NOT EXISTS gregale_change_events_pending ON catalog.gregale_change_events", "CREATE OR REPLACE FUNCTION gregale_hooks.capture()",
-		"gregale:backlog-bound", "FROM catalog.gregale_change_events WHERE failed_at IS NULL", "REVOKE ALL ON FUNCTION gregale_hooks.capture() FROM PUBLIC;"} {
+		"gregale:backlog-bound", "FROM catalog.gregale_change_events WHERE failed_at IS NULL", "REVOKE ALL ON FUNCTION gregale_hooks.capture() FROM PUBLIC;",
+		// Amendment 3: the drop note, retries under new identifiers and discard_waiting.
+		"gregale:drop-tracking", "CREATE TABLE IF NOT EXISTS catalog.gregale_change_drops", "CREATE OR REPLACE FUNCTION gregale_hooks.retry_failed()",
+		"CREATE OR REPLACE FUNCTION gregale_hooks.discard_waiting()", "-- gregale:upgrade-end"} {
 		if !strings.Contains(upgrade, want) {
 			t.Fatalf("upgrade lacks %q:\n%s", want, upgrade)
 		}
 	}
-	for _, unwanted := range []string{"CREATE TABLE", "gregale_change_claim", "{{"} {
+	for _, unwanted := range []string{"CREATE TABLE {{", "CREATE TABLE catalog.gregale_change_events", "CREATE SCHEMA", "gregale_change_claim", "gregale_hooks.enable(", "{{"} {
 		if strings.Contains(upgrade, unwanted) {
 			t.Fatalf("upgrade contains %q", unwanted)
 		}

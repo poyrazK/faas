@@ -881,6 +881,8 @@ jobs:
           EDGEDNSD_CF_TOKEN: ${{ secrets.EDGEDNSD_CF_TOKEN }}
           POSTGRES_RUNTIME_ROLES_ENABLED: ${{ vars.POSTGRES_RUNTIME_ROLES_ENABLED }}
           POSTGRES_OWNER_CONTRACT_ENABLED: ${{ vars.POSTGRES_OWNER_CONTRACT_ENABLED }}
+          POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
+          POSTGRES_COMPUTE_ROLE_KEY: ${{ secrets.POSTGRES_COMPUTE_ROLE_KEY }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
         run: |
           set -euo pipefail
@@ -918,6 +920,12 @@ jobs:
           # root alone (step 2). A release cut before the script stages nothing.
           if [[ -f scripts/ci/postgres_runtime_roles_vars.sh ]]; then
             bash scripts/ci/postgres_runtime_roles_vars.sh "$work/vars.yml"
+          fi
+          # ADR-20261023104734 step 3: one role per compute daemon; the roles'
+          # SCRAM verifiers derive from POSTGRES_COMPUTE_ROLE_KEY. Off unless
+          # POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED is true.
+          if [[ -f scripts/ci/compute_db_roles.py ]]; then
+            python3 -I scripts/ci/compute_db_roles.py verifiers "$work/vars.yml"
           fi
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
@@ -1754,6 +1762,8 @@ jobs:
           EDGEDNSD_CF_TOKEN: ${{ secrets.EDGEDNSD_CF_TOKEN }}
           POSTGRES_RUNTIME_ROLES_ENABLED: ${{ vars.POSTGRES_RUNTIME_ROLES_ENABLED }}
           POSTGRES_OWNER_CONTRACT_ENABLED: ${{ vars.POSTGRES_OWNER_CONTRACT_ENABLED }}
+          POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
+          POSTGRES_COMPUTE_ROLE_KEY: ${{ secrets.POSTGRES_COMPUTE_ROLE_KEY }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
           HOSTED_RUNNER: ${{ inputs.hosted_runner }}
           ROLES: ${{ steps.plan.outputs.roles }}
@@ -1793,6 +1803,12 @@ jobs:
           # root alone (step 2). A release cut before the script stages nothing.
           if [[ -f scripts/ci/postgres_runtime_roles_vars.sh ]]; then
             bash scripts/ci/postgres_runtime_roles_vars.sh "$work/vars.yml"
+          fi
+          # ADR-20261023104734 step 3: one role per compute daemon; the roles'
+          # SCRAM verifiers derive from POSTGRES_COMPUTE_ROLE_KEY. Off unless
+          # POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED is true.
+          if [[ -f scripts/ci/compute_db_roles.py ]]; then
+            python3 -I scripts/ci/compute_db_roles.py verifiers "$work/vars.yml"
           fi
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"

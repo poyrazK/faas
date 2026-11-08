@@ -83,6 +83,11 @@ func TestPgAppEgressPolicyReconcilesAndRecordsPerNodeApply(t *testing.T) {
 	if err != nil || desired != 2 {
 		t.Fatalf("updated desired revision = %d, %v; want 2", desired, err)
 	}
+	// A wake spec built from the app row names this revision (vmmd prefers
+	// a newer request over its cached policy).
+	if loaded, err := store.AppBySlugIncludingDeleted(ctx, app.Slug); err != nil || loaded.EgressAllowlistRevision != 2 || len(loaded.EgressAllowlist) != 1 {
+		t.Fatalf("app row revision = %d allowlist %v, %v; want revision 2 with the new allowlist", loaded.EgressAllowlistRevision, loaded.EgressAllowlist, err)
+	}
 	targets = loadPending()
 	if len(targets) != 1 || targets[0].Revision != 2 || len(targets[0].Allowlist) != 1 || targets[0].Allowlist[0] != allowlist[0] {
 		t.Fatalf("updated targets = %+v; want revision 2 and %v", targets, allowlist)

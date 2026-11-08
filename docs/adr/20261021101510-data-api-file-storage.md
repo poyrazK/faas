@@ -182,3 +182,21 @@ bytes stayed in the bucket with nothing pointing to them. The upload now reads
 the row again just before its commit and deletes the bytes of both versions it
 read, never its own. Only the moment between that read and the commit remains
 a race, instead of the whole transfer; deletion stays best effort.
+
+## Amendment 3 (2026-11-07): removals commit before deleting bytes; transfers per client
+
+**Removals commit first.** A removal deleted the object's bytes and then
+committed the row deletion. A commit that failed or was refused left a row
+pointing at missing bytes. It now commits the row deletion first, then deletes
+the bytes the committed row referenced, including a newer version an upload
+committed after the dry run. That deletion is best effort: a failure leaves the
+bytes unreferenced, never a row without its bytes.
+
+**Transfers per client.** An instance streams at most `DataAPIStorageTransfers`
+(4) transfers at once, each for up to two minutes. One slow client (any
+signed-in user, or an anonymous visitor when storage is publicly readable)
+could hold all of them and keep storage at `503 storage_busy` for everyone.
+One signed-in subject or anonymous visitor now holds at most
+`DataAPIStorageTransfersPerClient` (2), and is answered
+`429 storage_client_busy` with the limit beyond that. Server keys (trusted
+backends) are bounded by the instance total only.

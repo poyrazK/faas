@@ -243,3 +243,45 @@ platform that takes no runtime reports (publishing needs the same workload
 identity) and on a non-production scope. With `--drain-every`, the drain cron
 is created first, so a plan that allows no crons (Free) refuses the schedule
 before hooks turn on, instead of leaving hooks on without it.
+
+## Amendment 3 (2026-11-07): changes left out are visible; retries take new identifiers; discard what waits
+
+**Left-out changes are reported.** Amendment 2 drops changes past the bound
+without a trace: identifiers stay contiguous and nothing counts them. The
+bounded `capture()` now notes the time in a one-row table,
+`<schema>.gregale_change_drops`, when it leaves a change out. It writes at most
+once a second and skips the note when another writer holds it
+(`FOR UPDATE SKIP LOCKED`), so a full backlog never makes writers wait on each
+other. Like the event table, the note has RLS and a read policy for the relay's
+`hooks` claim only. The gateway answers `404` for it, and the contract,
+OpenAPI document and types leave it out. The relay sends it as
+`last_dropped_at` in its delivery report. apid keeps the latest one in
+`data_api_change_hook_reports.last_dropped_at`, and `hooks status` warns when
+changes were left out. The note is a table, not a function in the exposed
+schema, because a managed binding's credential checks refuse any
+`SECURITY DEFINER` function the serving login can run there.
+
+**Retries take new identifiers.** `retry_failed()` used to queue rejected
+events again under their original identifiers. The bound counts identifiers
+from the oldest waiting event, so retrying an event rejected long ago tripped
+it at once, and new changes were dropped until that event settled. Retried
+events are now moved to new identifiers in their old order. Each keeps its
+event id (the platform still deduplicates it), its capture time and its
+transaction; `data.sequence` is the new identifier.
+
+**Discard what waits.** The full-backlog warning pointed at
+`discard_failed()`, which removes only rejected events. The bound counts
+waiting events, so that freed nothing. `gregale_hooks.discard_waiting()`
+deletes every event still waiting and clears the drop note. The warning now
+names it.
+
+**Disabling says what keeps happening.** `hooks disable` stops publishing, not
+recording. It now says that hooked tables keep recording until the bound and
+then leave changes out, and how to unhook tables or discard what waits.
+
+**Upgrade.** The template's replayable part (the note, `capture()`,
+`retry_failed()`, `discard_failed()` and `discard_waiting()`) sits between
+`gregale:upgrade-begin` and `gregale:upgrade-end` markers.
+`gregale data-api hooks export --upgrade` prints the pending index and that
+section, which can be applied more than once. Installations that lack the
+note still report delivery, just without `last_dropped_at`.

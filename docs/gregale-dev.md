@@ -44,6 +44,75 @@ start the developer loop after authentication; it cannot be combined with
 values and destination. TOML manifests require an explicit migration before
 using this YAML writer.
 
+## Run functions on this machine
+
+`gregale dev --local` runs the project's Node, Python and Go functions on
+your computer, with the same adapters and runner code a deployed function
+uses, and reloads a function within a second of saving its files. Nothing is
+uploaded and no login is needed:
+
+```sh
+gregale dev --local
+```
+
+```
+Serving 3 function(s) on this machine (ctrl-c to stop):
+  web       http://web.localhost:8787     node   functions/web
+  users     http://users.localhost:8787   python functions/users
+  digest    http://digest.localhost:8787  node   functions/digest  cron 0 8 * * *
+  http://localhost:8787 routes like the entry address (entry: web)
+```
+
+- Each function has its own address, `http://<name>.localhost:8787`, as it
+  has its own host on Gregale. With an `entry: true` function,
+  `http://localhost:8787` routes by the functions' `routes:`, and a project
+  with one function is also served there. `--port` picks another port.
+- Requests carry the platform's `x-faas-invocation-id` and
+  `x-faas-deadline-ms` headers, and client-sent `x-faas-*` headers are
+  dropped, as on Gregale.
+- If this directory has a developer environment (`gregale dev` created
+  one), local functions use its resources:
+  - **Postgres**: the binding's variable (usually `DATABASE_URL`) points at a
+    local tunnel to the session's database. The CLI makes the TLS connection
+    to the database itself and verifies it as the binding asks, so every
+    driver works with the plain local URL. The tunnel starts a task VM, so it
+    needs app tasks on your plan.
+  - **Buckets**: each bucket's `GREGALE_S3_*` settings use a credential made
+    for this local session and revoked when you stop.
+  - **Secrets** never leave Gregale. The CLI lists the session's secret
+    names that nothing local sets; put their values in an `--env-file`.
+
+  `--no-remote` skips all of this. Without a login or a developer
+  environment, functions run with local settings only.
+- `--offline` runs the resources on your machine in Docker instead, with
+  no Gregale account involved:
+
+  ```sh
+  gregale dev --local --offline --postgres --bucket uploads
+  ```
+
+  `--postgres` starts Postgres 16 and sets `DATABASE_URL`; each `--bucket`
+  creates a bucket in a local S3 gateway (Versity, `versity/versitygw`) and
+  sets its `GREGALE_S3_<NAME>_*` settings. `dev.postgres` and
+  `dev.buckets` in `gregale.yaml` are read too. Data stays in Docker
+  volumes for this project between runs; `--reset` wipes them. The
+  containers listen on loopback only and stop when you stop.
+- Settings layer in this order, later winning: your shell, the session's
+  resources, `--env-file`, then each function's `env:` in `gregale.yaml`.
+- Run a cron or an async call as Gregale would, with
+  `x-faas-invocation-source` set:
+
+  ```sh
+  gregale dev trigger --local cron digest
+  gregale dev trigger --local invoke users /users/7 --data '{"id":7}'
+  ```
+
+- `node`, `python3` and `go` must be installed for their functions. Go
+  functions are rebuilt on save.
+
+A local run has no memory cap, no pause between requests and no snapshot.
+Use `gregale dev` without `--local` to check those on real infrastructure.
+
 ## The development loop
 
 The CLI detects the application shape, uploads the current working tree

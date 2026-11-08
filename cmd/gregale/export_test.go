@@ -532,6 +532,8 @@ var CampaignTrendTemplate = &campaignTrendTemplate
 var CliCommands = &cliCommands
 var CorsDefaultMethods = &corsDefaultMethods
 var DataAPIRotationActions = &dataAPIRotationActions
+var DataAPIDiagnosticCodes = &dataAPIDiagnosticCodes
+var DataAPIDiagnosticRoutes = &dataAPIDiagnosticRoutes
 var DocsPageSlugs = &docsPageSlugs
 var DocsURLPrefix = &docsURLPrefix
 var EdgeRuleKindVocab = &edgeRuleKindVocab
@@ -2706,6 +2708,19 @@ var WithEntry = withEntry
 // GitHub connector commands (ADR-20261101160300).
 var CmdGithub = cmdGithub
 var CmdGithubSetup = cmdGithubSetup
+
+// DebugWatchPoll runs one debug requests watch poll against baseURL and
+// returns the request IDs it read and whether it reported a gap.
+func DebugWatchPoll(baseURL, slug string, limit int, seen map[string]string, follow bool) ([]string, bool, error) {
+	resp, missed, err := debugWatchPoll(context.Background(), api.NewClient(baseURL, "fp_test"), slug, api.DebugTelemetryListOptions{Limit: limit}, seen, follow)
+	ids := make([]string, 0, len(resp.Requests))
+	for _, request := range resp.Requests {
+		ids = append(ids, request.ID)
+	}
+	return ids, missed, err
+}
+
+const DebugWatchMaxPages = debugWatchMaxPages
 
 var McpNativeDrainBudget = mcpNativeDrainBudget
 var McpNativeDrainableWorkerIDs = mcpNativeDrainableWorkerIDs

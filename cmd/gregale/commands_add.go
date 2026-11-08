@@ -58,7 +58,7 @@ type addBucketBindingResult struct {
 
 func cmdAdd(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale add <postgres|bucket|datadog|ai>", "add")
+		PrintUsage(os.Stderr, "usage: gregale add <postgres|bucket|datadog|ai|function>", "add")
 		return 1
 	}
 	switch args[0] {
@@ -70,6 +70,8 @@ func cmdAdd(args []string) int {
 		return cmdAddDatadog(args[1:])
 	case "ai":
 		return cmdAddAI(args[1:])
+	case "function":
+		return cmdAddFunction(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown add resource %q\n", args[0])
 		return unknownSubcommandChoices(os.Stderr, "add", nestedCliCommand("add"), args[0])
