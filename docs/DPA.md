@@ -159,36 +159,24 @@ DPA is the list enumerated in this section at that time, and the
 notification URL is the channel by which Processor signals
 upcoming changes.
 
-- **Postgres hosting** (database): single-tenant managed Postgres
-  with encryption at rest + TLS in transit. Daily encrypted
-  snapshots retained 30 days.
-- **Polar** (billing): public-release merchant of record. Polar receives
-  customer email, plan and subscription metadata, and calendar-month net
-  metered usage; Polar handles payment data and applicable merchant-of-record
-  tax obligations under its own controls. The default is Polar when
-  `FAAS_BILLING_PROVIDER` is empty or `=polar`.
-- **Paddle** (billing compatibility provider, explicit opt-in): the provider
-  switch (`FAAS_BILLING_PROVIDER=paddle`) selects Paddle for deployments that
-  already use it. Paddle receives the same billing data and its catalog is
-  managed in the Paddle dashboard. Stripe remains an explicit legacy opt-in
-  through `FAAS_BILLING_PROVIDER=stripe`. The §10 (breach notification) and
-  §11 (data return on termination) obligations bind Processor regardless of the
-  billing provider in use.
-- **Resend / Postmark** (transactional email): receives recipient
-  address + subject + body. Email bodies contain no end-user
-  personal data — they target the account holder only. Today the
-  platform default is `log` (writes to slog; no third-party
-  processing of customer email). Production wires
-  `FAAS_MAIL_TRANSPORT=resend` or `=postmark` to send real email.
-- **Hetzner Storage Box** (off-host encrypted backups): the Postgres
-  backup cron (`deploy/ansible/roles/postgres_backup/tasks/main.yml`)
-  pushes an encrypted pg_dump to the customer's storage box via
-  rclone. Backups are encrypted with the operator's host X25519
-  age recipient (the key sealed at `/etc/faas/secrets/host.age`,
-  ADR-020) **before** transit; the storage box sees ciphertext
-  only. The customer's own storage box is the Processor-side
-  target; Processor holds the decryption key but does not access
-  backup contents absent a Controller-initiated restore request.
+- **OVHcloud** (infrastructure hosting, US): dedicated bare-metal servers
+  that run Gregale's control plane, compute nodes, managed Postgres and
+  storage for the public release. Gregale administers the servers;
+  customer secrets are sealed with host keys before storage.
+- **Google Cloud** (infrastructure hosting, US, us-east1): Compute Engine
+  and Cloud Storage host the current production fleet during the public
+  beta, and a standby and test environments afterwards.
+- **Cloudflare** (DNS, reverse proxy, CDN, DDoS and firewall protection):
+  every request to Gregale and to customer apps passes through Cloudflare,
+  which sees request metadata (IP address, headers, URL) and carries
+  request and response bodies in transit.
+- **Polar** (billing): merchant of record. Polar receives customer email,
+  plan and subscription metadata, and monthly metered usage; it handles
+  payment data and merchant-of-record tax obligations under its own
+  controls.
+- **Resend** (transactional email): receives the recipient address,
+  subject and body of account emails, which go to the account holder
+  only, and reports bounces and complaints back to Gregale.
 - **Google** (OAuth identity provider): account holders who choose
   Google login exchange the OAuth subject (`sub`) and a verified
   email address — and the optional profile name and avatar URL —
@@ -199,14 +187,18 @@ upcoming changes.
   email address, and the login handle — and the optional name and
   avatar URL — at `POST /v1/auth/github/callback`. No repo list,
   no contact list, no org list. Scopes are `read:user user:email`.
-- **GitHub Checks API + install-token exchange** (outbound from
-  githubd): the `githubd` daemon is the only outbound caller to
-  `api.github.com`. The outbound traffic carries SHA-only commit
-  metadata (Checks) and OAuth install-token exchange — no
-  customer PII. Inbound webhook reception at
-  `POST /webhooks/github` is HMAC-SHA-256 verified
-  (`X-Hub-Signature-256`, constant-time compare) before any
-  payload is consumed.
+- **GitHub App** (deploys from GitHub): the `githubd` daemon is the only
+  outbound caller to `api.github.com`. It fetches the source of
+  repositories a customer connects to build their deployments, posts
+  Checks results keyed by commit SHA and exchanges installation tokens.
+  Inbound webhooks at `POST /webhooks/github` are HMAC-SHA-256 verified
+  before any payload is consumed.
+- **Vercel** (website hosting): serves the gregale.dev website,
+  documentation and web front end, and sees website visitors' request
+  metadata. Account data and applications are not stored there.
+- **Amazon Web Services** (test environments): runs test and development
+  environments with test accounts and synthetic data only; production
+  customer data is not copied there.
 
 Processor shall notify Controller at least 30 days before adding a
 new sub-processor. Controller may object on reasonable

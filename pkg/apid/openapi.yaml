@@ -12631,6 +12631,27 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/account/security-activity:
+    get:
+      tags: [account]
+      operationId: getAccountSecurityActivity
+      summary: List the account's sign-ins and security changes.
+      description: |
+        Sign-ins, API keys and CLI sign-ins, password, email, two-factor
+        and sign-in method changes of the last 90 days, newest first, at
+        most 100. Each event carries a fixed summary, and the client address
+        and sign-in method when they were recorded. Needs a full-access
+        credential.
+      responses:
+        '200':
+          description: Security events, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecurityActivityResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/sign-in-methods/{provider}:
     parameters:
       - name: provider
@@ -119836,6 +119857,24 @@ components:
       properties:
         status: { type: string, enum: [sent, already_verified] }
         email: { type: string, format: email }
+    SecurityActivityResponse:
+      description: "Body of `GET /v1/account/security-activity`."
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/SecurityActivityEvent' }
+    SecurityActivityEvent:
+      description: "One sign-in, credential or account-security change."
+      type: object
+      required: [at, summary, kind]
+      properties:
+        at: { type: string, format: date-time }
+        kind: { type: string, description: "Audit event kind, e.g. auth.session.created or api_key.created." }
+        summary: { type: string, description: "Fixed English phrase for the kind." }
+        ip: { type: string, description: "Client address recorded with the event." }
+        detail: { type: string, description: "Sign-in method, provider or key label, when recorded." }
     SignInMethodsResponse:
       description: "The ways the account can sign in."
       type: object
