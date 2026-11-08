@@ -2095,11 +2095,12 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
       # ADR-20261103163954 §3: edgednsd renews the apps domains' certificate
-      # 30 days before it expires, so an edge serving one with 14 days left
-      # means renewal has failed for two weeks, or this edge is not loading
-      # the new one.
+      # 4 days before its roughly 6.7-day certificate expires
+      # (ADR-20261108100000), so an edge serving one with 2 days left means
+      # renewal has failed for two days, or this edge is not loading the new
+      # one.
       - alert: FaasEdgeCertificateExpiringSoon
-        expr: min by (node, name) (edge_certificate_expiry_seconds) < 14 * 86400
+        expr: min by (node, name) (edge_certificate_expiry_seconds) < 2 * 86400
         for: 30m
         labels:
           severity: warn
@@ -2107,8 +2108,8 @@ groups:
           family: compute_edge
           public_status: internal
         annotations:
-          summary: "The edge on {{ $labels.node }} serves a certificate for {{ $labels.name }} that expires within 14 days"
-          description: "The certificate the compute edge on {{ $labels.node }} serves for {{ $labels.name }} expires in {{ $value | humanizeDuration }}. edgednsd renews 30 days ahead, so either renewal is failing or this edge has not loaded the renewed certificate. Clients connecting directly fail their handshakes once it expires."
+          summary: "The edge on {{ $labels.node }} serves a certificate for {{ $labels.name }} that expires within 2 days"
+          description: "The certificate the compute edge on {{ $labels.node }} serves for {{ $labels.name }} expires in {{ $value | humanizeDuration }}. edgednsd renews short-lived certificates 4 days ahead, so either renewal is failing or this edge has not loaded the renewed certificate. Clients connecting directly fail their handshakes once it expires."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCertificate.md"
 
   # ────────────────────────────────────────────────────────────────────
@@ -2182,10 +2183,11 @@ groups:
           description: "Prometheus cannot scrape edgednsd on the control plane. The records stay as they were, so traffic flows, but a compute node that fails now is not withdrawn."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
 
-      # ADR-20261103163954 §3: edgednsd should have renewed 30 days ahead;
-      # 21 days left means a week of failed orders, before any edge alerts.
+      # ADR-20261103163954 §3, ADR-20261108100000: edgednsd should have
+      # renewed 4 days ahead; 3 days left means a day of failed orders,
+      # before any edge alerts.
       - alert: FaasEdgeCertificateRenewalOverdue
-        expr: (min by (ca) (edge_certificate_stored_expiry_timestamp_seconds) - time()) < 21 * 86400
+        expr: (min by (ca) (edge_certificate_stored_expiry_timestamp_seconds) - time()) < 3 * 86400
         for: 1h
         labels:
           severity: warn
@@ -2194,7 +2196,7 @@ groups:
           public_status: internal
         annotations:
           summary: "edgednsd has not renewed the apps domains' {{ $labels.ca }} certificate"
-          description: "The newest apps-domain certificate edgednsd stored from {{ $labels.ca }} expires in {{ $value | humanizeDuration }}; it renews 30 days ahead, so its orders have been failing for a week. edge_certificate_orders_total{result=\"failed\"} and edgednsd's log say why."
+          description: "The newest apps-domain certificate edgednsd stored from {{ $labels.ca }} expires in {{ $value | humanizeDuration }}; it renews 4 days ahead, so its orders have been failing for a day. edge_certificate_orders_total{result=\"failed\"} and edgednsd's log say why."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCertificate.md"
 
       # ADR-20261103163954 §3: the Certificate Transparency watch. A

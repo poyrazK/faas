@@ -30,7 +30,7 @@ func open(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(ctx, `CREATE TABLE apps (id uuid PRIMARY KEY, account_id uuid NOT NULL, deleted_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"20261019131100664_data_api_usage.sql", "20261020085255268_data_api_access_configs.sql", "20261105082800587_data_api_change_hook_reports.sql"} {
+	for _, name := range []string{"20261019131100664_data_api_usage.sql", "20261020085255268_data_api_access_configs.sql", "20261105082800587_data_api_change_hook_reports.sql", "20261107172523494_data_api_change_hook_drops.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -168,6 +168,26 @@ func TestAccessSettingsAreReplacedReadAndForgotten(t *testing.T) {
 	config, reported, ok, err := store.Access(ctx, app)
 	if err != nil || !ok || reported.IsZero() || !strings.Contains(string(config), `"schemas"`) || strings.Contains(string(config), "public_read") {
 		t.Fatalf("settings = %s %v %v %v (the latest report replaces; a report without settings keeps them)", config, reported, ok, err)
+	}
+	// A process that started before the one whose settings are stored (one a
+	// fresh restart has not replaced yet, or one restored from an older
+	// snapshot) never replaces them; a newer one does.
+	newer := []byte(`{"version":1,"schemas":["api"],"started_at":"2026-10-19T09:00:00Z"}`)
+	older := []byte(`{"version":1,"schemas":["api"],"public_read":["api.revoked"],"started_at":"2026-10-19T08:00:00Z"}`)
+	newest := []byte(`{"version":1,"schemas":["api","catalog"],"started_at":"2026-10-19T09:30:00Z"}`)
+	for i, report := range [][]byte{newer, older} {
+		if _, err := store.Record(ctx, account, app, "s"+string(rune('a'+i)), nil, report, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if config, _, _, _ := store.Access(ctx, app); strings.Contains(string(config), "api.revoked") {
+		t.Fatalf("an older process replaced newer settings: %s", config)
+	}
+	if _, err := store.Record(ctx, account, app, "sc", nil, newest, now); err != nil {
+		t.Fatal(err)
+	}
+	if config, _, _, _ := store.Access(ctx, app); !strings.Contains(string(config), "catalog") {
+		t.Fatalf("a newer process did not replace the settings: %s", config)
 	}
 	if err := store.DeleteAccess(ctx, other, app); err != nil {
 		t.Fatal(err)

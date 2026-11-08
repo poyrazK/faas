@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "a2bf0f6671da4cea34ca8dabccf61fd5119f93a92ec7ca3a665da029477f6ecf",
+      "revision": "c982164f22052546003af4e5fe8f81857a6fe22133ea4f65c3c4cad99839c204",
       "files": [
         "faas.rules.yml"
       ],
@@ -1471,11 +1471,11 @@
           "group_name": "faas_compute_edge",
           "rule_name": "FaasEdgeCertificateExpiringSoon",
           "definition": {
-            "expression_hash": "fd3f0d406294d25c8d3a4ace747ef1c20c95648be53c95b30c2b93045b68bb38",
+            "expression_hash": "f9eb75880143be3e1b901f22530f4d0719f6a10580d41240fc913ec793f5b886",
             "labels_hash": "4a22e539b275945c1a41b3c577eceb35730aaab00303f6e7112e73a61087f1d8",
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "cae16490cb95c9960393be49439f78fe8413e9ca44a296513e273232209c78e4"
+            "fingerprint": "d9d174e31b4c5d280cf9582f9c2b89a746704581ba67d95f1bbcf26840f2cd94"
           }
         },
         {
@@ -4773,11 +4773,11 @@
           "group_name": "faas_edge_dns",
           "rule_name": "FaasEdgeCertificateRenewalOverdue",
           "definition": {
-            "expression_hash": "8f93a31bda697f00147358408164ebc1aec14f8ea5e0033ad86038d63e06d51b",
+            "expression_hash": "ce8dec2ee2e557b6cf3cac8b6ba41e1d86f1546eabdebf698acf50bdcc42b550",
             "labels_hash": "fb0e113eb144e985c749472ac1d45e76708f42a3a189d43d1d0d01821865e321",
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "287ac041bafbd96623580d68e897aa5f3482fddf831a674bc47e1fded1d5bd7a"
+            "fingerprint": "bb5001740a7684aceb52c1647635eca6673089659f2700c140363dbc6820b9b2"
           }
         },
         {
@@ -6929,7 +6929,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "2c8ef8aa934795133407721c5ee76e5097636c84fd8e665501af421fad1dcfb0",
+      "revision": "7e5d92fe18a4018375b5d205aa9cb91f33719cd3d7904a32c489c6cfe78727fe",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8478,11 +8478,11 @@
           "group_name": "faas_compute_edge",
           "rule_name": "FaasEdgeCertificateExpiringSoon",
           "definition": {
-            "expression_hash": "fd3f0d406294d25c8d3a4ace747ef1c20c95648be53c95b30c2b93045b68bb38",
+            "expression_hash": "f9eb75880143be3e1b901f22530f4d0719f6a10580d41240fc913ec793f5b886",
             "labels_hash": "4a22e539b275945c1a41b3c577eceb35730aaab00303f6e7112e73a61087f1d8",
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "cae16490cb95c9960393be49439f78fe8413e9ca44a296513e273232209c78e4"
+            "fingerprint": "d9d174e31b4c5d280cf9582f9c2b89a746704581ba67d95f1bbcf26840f2cd94"
           }
         },
         {
@@ -11923,11 +11923,11 @@
           "group_name": "faas_edge_dns",
           "rule_name": "FaasEdgeCertificateRenewalOverdue",
           "definition": {
-            "expression_hash": "8f93a31bda697f00147358408164ebc1aec14f8ea5e0033ad86038d63e06d51b",
+            "expression_hash": "ce8dec2ee2e557b6cf3cac8b6ba41e1d86f1546eabdebf698acf50bdcc42b550",
             "labels_hash": "fb0e113eb144e985c749472ac1d45e76708f42a3a189d43d1d0d01821865e321",
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "287ac041bafbd96623580d68e897aa5f3482fddf831a674bc47e1fded1d5bd7a"
+            "fingerprint": "bb5001740a7684aceb52c1647635eca6673089659f2700c140363dbc6820b9b2"
           }
         },
         {

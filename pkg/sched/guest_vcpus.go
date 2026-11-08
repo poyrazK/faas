@@ -5,6 +5,7 @@ package sched
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -39,6 +40,17 @@ func (s *guestVCPUAppSet) includes(appID string) bool {
 // app cold-boots once. schedd sets it from the `guest_vcpu_from_cpu_apps`
 // runtime-config key (ADR-20261101215228).
 func (e *Engine) SetGuestVCPUFromCPUApps(entries []string) error {
+	set, err := parseGuestVCPUApps(entries)
+	if err != nil {
+		return err
+	}
+	e.guestVCPUApps.Store(set)
+	return nil
+}
+
+// parseGuestVCPUApps parses guest_vcpu_from_cpu_apps entries. An empty list
+// is nil: every app on its plan.
+func parseGuestVCPUApps(entries []string) (*guestVCPUAppSet, error) {
 	set := &guestVCPUAppSet{ids: map[string]struct{}{}}
 	for _, entry := range entries {
 		entry = strings.TrimSpace(entry)
@@ -50,16 +62,31 @@ func (e *Engine) SetGuestVCPUFromCPUApps(entries []string) error {
 		default:
 			id, err := uuid.Parse(entry)
 			if err != nil {
-				return fmt.Errorf("sched: guest_vcpu_from_cpu_apps: %q is not an app ID or *", entry)
+				return nil, fmt.Errorf("sched: guest_vcpu_from_cpu_apps: %q is not an app ID or *", entry)
 			}
 			set.ids[id.String()] = struct{}{}
 		}
 	}
 	if !set.all && len(set.ids) == 0 {
-		set = nil
+		return nil, nil
 	}
-	e.guestVCPUApps.Store(set)
-	return nil
+	return set, nil
+}
+
+// key is a stable rendering of the set, for comparing two of them.
+func (s *guestVCPUAppSet) key() string {
+	if s == nil {
+		return ""
+	}
+	if s.all {
+		return "*"
+	}
+	ids := make([]string, 0, len(s.ids))
+	for id := range s.ids {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ",")
 }
 
 // SetCPUShape applies the runtime-config values that shape a listed app's
@@ -81,10 +108,26 @@ func (e *Engine) loadCPUShape() api.CPUShape {
 // or for a listed app one per guest_vcpu_millicores of its CPU ceiling
 // (appCPUMillicores), never more than the plan's.
 func (e *Engine) guestVCPUs(app state.App, limits api.Limits) int {
-	if !e.guestVCPUApps.Load().includes(app.ID) {
+	return guestVCPUsUnder(e.guestVCPUApps.Load(), e.loadCPUShape(), app, limits)
+}
+
+// guestVCPUsUnder is the guest vCPU count app boots with under a given list
+// and shape.
+func guestVCPUsUnder(apps *guestVCPUAppSet, shape api.CPUShape, app state.App, limits api.Limits) int {
+	if !apps.includes(app.ID) {
 		return limits.VCPU
 	}
-	return e.loadCPUShape().VCPUs(e.appCPUMillicores(app, limits), limits.VCPU)
+	return shape.VCPUs(listedAppCPUMillicores(true, effectiveAppCPUMillicores(app), limits, shape), limits.VCPU)
+}
+
+// guestVCPUShapeKey renders the list and shape the engine boots with, so a
+// change to either can be seen.
+func (e *Engine) guestVCPUShapeKey() string {
+	return guestVCPUShapeKey(e.guestVCPUApps.Load(), e.loadCPUShape())
+}
+
+func guestVCPUShapeKey(apps *guestVCPUAppSet, shape api.CPUShape) string {
+	return fmt.Sprintf("%s|%d|%d|%d", apps.key(), shape.BaselineMillicoresPerGB, shape.CeilingFloorMillicores, shape.VCPUMillicores)
 }
 
 // appCPUMillicores is the sustained CPU ceiling (cpu.max) app boots, books

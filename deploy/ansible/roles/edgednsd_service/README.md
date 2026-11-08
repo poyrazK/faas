@@ -36,7 +36,8 @@ With `faas_edgednsd_certificate_names` set (for example `["*.gregale.dev"]`),
 edgednsd also keeps the apps domains' publicly trusted certificate
 (ADR-20261103163954 §3). It orders the certificate from Let's Encrypt with
 the DNS-01 challenge in the zone `faas_edgednsd_certificate_zone_id`, with the
-same token, and renews it 30 days before it expires. Each certificate gets a
+same token, under Let's Encrypt's `shortlived` profile (about 160 hours),
+and renews it 4 days before it expires (ADR-20261108100000). Each certificate gets a
 new ECDSA P-256 key, sealed to the `edge-tls` seal domain before it is
 stored; only the compute edges hold that identity, so edgednsd cannot read
 the key back.

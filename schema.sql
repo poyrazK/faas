@@ -35962,6 +35962,7 @@ CREATE TABLE public.data_api_change_hook_reports (
     last_published_at timestamp with time zone,
     last_failure_code text,
     publishing text NOT NULL,
+    last_dropped_at timestamp with time zone,
     CONSTRAINT data_api_change_hook_reports_check CHECK (((pending = 0) = (oldest_pending_at IS NULL))),
     CONSTRAINT data_api_change_hook_reports_failed_check CHECK (((failed >= 0) AND (failed <= '1000000000000'::bigint))),
     CONSTRAINT data_api_change_hook_reports_last_failure_code_check CHECK ((last_failure_code ~ '^[a-z0-9_]{1,64}$'::text)),
@@ -35975,6 +35976,13 @@ CREATE TABLE public.data_api_change_hook_reports (
 --
 
 COMMENT ON TABLE public.data_api_change_hook_reports IS 'ADR-20261022121642 amendment 1: change hook delivery last reported by each Data API runtime (counts and codes only).';
+
+
+--
+-- Name: COLUMN data_api_change_hook_reports.last_dropped_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.data_api_change_hook_reports.last_dropped_at IS 'ADR-20261022121642 amendment 3: when capture last left a change out at the backlog bound, as the runtime last reported.';
 
 
 --
