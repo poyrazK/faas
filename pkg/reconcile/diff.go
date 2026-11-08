@@ -153,6 +153,11 @@ func workloadDiff(
 		if _, ok := renamed[a.WorkloadName]; ok {
 			continue
 		}
+		// A function the repository no longer declares keeps its app; deleting
+		// it stays explicit (ADR-20261108160000 Â§2).
+		if a.Type == state.AppTypeFunction {
+			continue
+		}
 		removes = append(removes, Action{
 			Op:  "remove",
 			App: a,
@@ -451,6 +456,7 @@ func DeriveScanSource(workloads []reposcan.Workload) state.ProjectScanSource {
 		{"render", state.ProjectScanSourceRender},
 		{"fly", state.ProjectScanSourceFly},
 		{"serverless", state.ProjectScanSourceServerless},
+		{"functions", state.ProjectScanSourceFunctions},
 	}
 	for _, candidate := range priority {
 		for _, workload := range workloads {
@@ -522,7 +528,7 @@ func tierRank(s state.ProjectScanSource) int {
 		return 8
 	case state.ProjectScanSourceFly:
 		return 8
-	case state.ProjectScanSourceServerless:
+	case state.ProjectScanSourceServerless, state.ProjectScanSourceFunctions:
 		return 8
 	case state.ProjectScanSourceProcfile:
 		return 6

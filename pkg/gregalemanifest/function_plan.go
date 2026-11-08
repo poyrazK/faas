@@ -2,9 +2,9 @@ package gregalemanifest
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -44,22 +44,28 @@ func FunctionSlug(projectSlug, name string) string {
 // PlanFunctions validates the manifest and resolves every function against
 // the source tree at projectDir before anything is deployed.
 func (m *Manifest) PlanFunctions(projectDir, projectSlug string) ([]FunctionPlan, error) {
+	return m.PlanFunctionsFS(os.DirFS(projectDir), projectSlug)
+}
+
+// PlanFunctionsFS is PlanFunctions over a source tree whose root is the
+// project directory. An empty projectSlug skips the slug check, for a caller
+// (the repository scan) that names apps itself.
+func (m *Manifest) PlanFunctionsFS(fsys fs.FS, projectSlug string) ([]FunctionPlan, error) {
 	if err := m.Validate(); err != nil {
 		return nil, err
 	}
 	planned := make([]FunctionPlan, 0, len(m.Functions))
 	for _, fn := range m.Functions {
 		slug := FunctionSlug(projectSlug, fn.Name)
-		if !api.ValidAppSlug(slug) {
+		if projectSlug != "" && !api.ValidAppSlug(slug) {
 			return nil, fmt.Errorf("function %q: app slug %q must be 3-40 lowercase letters, digits and hyphens; shorten the function or project name", fn.Name, slug)
 		}
 		root := fn.FunctionRoot()
-		absRoot := filepath.Join(projectDir, filepath.FromSlash(root))
-		info, err := os.Stat(absRoot)
+		info, err := fs.Stat(fsys, root)
 		if err != nil || !info.IsDir() {
 			return nil, fmt.Errorf("function %q: root %q is not a directory", fn.Name, fn.Root)
 		}
-		runtime, handler, err := ResolveFunctionRuntime(fn, absRoot)
+		runtime, handler, err := resolveFunctionRuntimeFS(fsys, root, fn)
 		if err != nil {
 			return nil, fmt.Errorf("function %q: %w", fn.Name, err)
 		}
@@ -69,11 +75,16 @@ func (m *Manifest) PlanFunctions(projectDir, projectSlug string) ([]FunctionPlan
 }
 
 // ResolveFunctionRuntime resolves the runtime and wire handler of one
-// function. A handler file in a shared tree must exist; without one, the
-// root's conventional handler.* file decides the runtime.
+// function whose root is absRoot. A handler file in a shared tree must
+// exist; without one, the root's conventional handler.* file decides the
+// runtime.
 func ResolveFunctionRuntime(fn FunctionSpec, absRoot string) (runtime, handler string, err error) {
+	return resolveFunctionRuntimeFS(os.DirFS(absRoot), ".", fn)
+}
+
+func resolveFunctionRuntimeFS(fsys fs.FS, root string, fn FunctionSpec) (runtime, handler string, err error) {
 	if fn.Handler != "" {
-		info, err := os.Stat(filepath.Join(absRoot, filepath.FromSlash(fn.Handler)))
+		info, err := fs.Stat(fsys, path.Join(root, path.Clean(fn.Handler)))
 		if err != nil || info.IsDir() {
 			return "", "", fmt.Errorf("handler %q is not a file in %s", fn.Handler, fn.FunctionRoot())
 		}
@@ -91,7 +102,7 @@ func ResolveFunctionRuntime(fn FunctionSpec, absRoot string) (runtime, handler s
 	if fn.Runtime != "" {
 		return fn.Runtime, DefaultFunctionHandler, nil
 	}
-	runtime, handler, ok := InferFunctionRuntime(absRoot)
+	runtime, handler, ok := InferFunctionRuntimeFS(fsys, root)
 	if !ok {
 		return "", "", fmt.Errorf("could not infer a runtime from %s; set runtime: in gregale.yaml", fn.FunctionRoot())
 	}
@@ -101,12 +112,18 @@ func ResolveFunctionRuntime(fn FunctionSpec, absRoot string) (runtime, handler s
 // InferFunctionRuntime reads a single function's root: a gregale.yaml
 // `function:` block wins, else exactly one conventional handler file.
 func InferFunctionRuntime(srcDir string) (runtime, handler string, ok bool) {
-	if manifest, found, err := Load(srcDir); err == nil && found && manifest.Function != nil {
+	return InferFunctionRuntimeFS(os.DirFS(srcDir), ".")
+}
+
+// InferFunctionRuntimeFS is InferFunctionRuntime for the directory dir of a
+// source tree.
+func InferFunctionRuntimeFS(fsys fs.FS, dir string) (runtime, handler string, ok bool) {
+	if manifest, found, err := LoadFS(fsys, dir); err == nil && found && manifest.Function != nil {
 		if err := manifest.Validate(); err == nil {
 			return strings.TrimSpace(manifest.Function.Runtime), strings.TrimSpace(manifest.Function.Handler), true
 		}
 	}
-	entries, err := os.ReadDir(srcDir)
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		return "", "", false
 	}

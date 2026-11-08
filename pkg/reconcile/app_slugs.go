@@ -96,6 +96,13 @@ func AllocateAppSlugs(ctx context.Context, lookup SlugLookup, workloads []reposc
 		if out[i].AppSlug != "" {
 			continue
 		}
+		// A function app is <project>-<name>, the slug `gregale deploy`
+		// gives it, so a repository adopts the apps a CLI deploy made
+		// (ADR-20261108160000 Â§1).
+		if out[i].Function != nil {
+			out[i].AppSlug = SuggestedAppSlug(projectSlug, out[i].Name)
+			continue
+		}
 		free, err := bareAppSlugFree(ctx, lookup, out[i].Name, accountSlugs, accountID)
 		if err != nil {
 			return nil, err
