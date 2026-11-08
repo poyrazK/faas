@@ -144,6 +144,10 @@ because its driver never negotiated an offload.
 - **Keep host-to-guest offloads.** They are not a guest-controlled input. They
   were dropped too, at the operator's choice, to keep the device surface
   minimal.
-- **Host-side tc/eBPF filter on each TAP.** It cannot see `csum_start` for the
-  skb before the kernel has already consumed the header, and it would duplicate
-  per-node state outside the VMM.
+- **Host-side tc/eBPF filter on each TAP.**
+  - tc programs run after `tun_get_user` has already turned the guest header
+    into skb state.
+  - `__sk_buff` exposes neither `csum_start` nor `ip_summed`, so the filter can
+    only guess from indirect signals.
+  - It would also be per-node state outside the VMM.
+  - It remains an option for hosts that cannot take a new VMM.

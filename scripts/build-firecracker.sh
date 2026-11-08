@@ -80,6 +80,7 @@ done < <(find "$patch_dir" -maxdepth 1 -type f -name '[!.]*.patch' | LC_ALL=C so
 (( ${#patches[@]} > 0 )) || fail "patch series $patch_dir is empty"
 
 command -v git >/dev/null || fail "git is required"
+command -v strip >/dev/null || fail "strip is required (apt-get install binutils)"
 command -v rustup >/dev/null || fail "rustup is required (the toolchain comes from Firecracker's rust-toolchain.toml)"
 # aws-lc-sys and other C dependencies compile for the musl target.
 command -v musl-gcc >/dev/null || fail "musl-gcc is required (apt-get install musl-tools)"
@@ -160,6 +161,10 @@ version=$("$binary" --version | head -n 1)
 [[ "$version" == *"${fc_release}"* ]] || fail "unexpected version string: $version"
 
 mkdir -p "$(dirname "$output")"
-install -m 0755 "$binary" "$output"
+# Ship it stripped, as upstream does (debug info nearly doubles the size, and
+# vmmd keeps a resident tmpfs copy on every node, ADR-20261105100000).
+strip --strip-all -o "$output" "$binary"
+chmod 0755 "$output"
+"$output" --version > /dev/null || fail "stripped binary does not run"
 echo "build-firecracker: $version"
 echo "build-firecracker: sha256 $(sha256sum "$output" | awk '{print $1}') $output"
