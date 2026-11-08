@@ -67,13 +67,14 @@ func TestComputeInvoiceOverageCents_Floor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compute: %v", err)
 	}
-	const wantCents = int64(3)
+	// 3 GB-hours at $0.05 (ADR-20261107192333).
+	const wantCents = int64(15)
 	if got != wantCents {
 		t.Fatalf("got %d cents, want %d", got, wantCents)
 	}
 
-	// Add half a GB-hour. The total is 203.5 GB-hours, which still floors
-	// to 3 cents of overage.
+	// Add half a GB-hour. The total is 203.5 GB-hours: 3.5 billable
+	// GB-hours are 17.5 cents, which floors to 17.
 	inv2 := inv
 	inv2.ID = uuid.NewString()
 	inv2.ProviderInvoiceID = "in_test_002"
@@ -86,7 +87,7 @@ func TestComputeInvoiceOverageCents_Floor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compute 2: %v", err)
 	}
-	const wantCentsFloor = int64(3)
+	const wantCentsFloor = int64(17)
 	if got2 != wantCentsFloor {
 		t.Fatalf("got %d cents, want %d (floor under 1)", got2, wantCentsFloor)
 	}
@@ -154,9 +155,10 @@ func TestConsumeCreditsForInvoice_EndToEnd(t *testing.T) {
 	}
 	store.SeedInvoiceForTest(inv)
 
-	// Plant 200 included GB-hours plus 250 billable GB-hours.
+	// Plant 200 included GB-hours plus 50 billable GB-hours: 250 cents at
+	// $0.05/GB-h (ADR-20261107192333).
 	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1",
-		periodStart.Add(24*time.Hour), 450*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		periodStart.Add(24*time.Hour), 250*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("usage: %v", err)
 	}
 

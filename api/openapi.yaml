@@ -12556,6 +12556,110 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/ConflictDelete' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    patch:
+      tags: [account]
+      operationId: updateAccountProfile
+      summary: Set the account display name.
+      description: |
+        Sets the optional display name shown to org members and in the
+        dashboard. Leading and trailing spaces are removed; an empty string
+        clears it. At most 80 characters, no control characters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountProfileUpdate' }
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountProfileUpdate' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/email:
+    post:
+      tags: [account]
+      operationId: requestAccountEmailChange
+      summary: Start a sign-in email change.
+      description: |
+        Browser sessions only; an API key gets 403. Accounts with two-factor
+        authentication need a recent authenticator verification
+        (`step_up_required` otherwise); accounts with a password send
+        `current_password`. A single-use link valid for 1 hour is emailed to
+        the new address; opening it and confirming moves the account and
+        signs out every browser. The previous address gets a notice. A new
+        address that already belongs to an account gets the same response
+        and no email. CSRF: action `account_email_change`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountEmailChangeRequest' }
+      responses:
+        '202':
+          description: Confirmation sent to the new address.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, email]
+                properties:
+                  status: { type: string, enum: [confirmation_sent] }
+                  email: { type: string, format: email }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'An API key was used, or a recent authenticator verification is required (`step_up_required`).'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/sign-in-methods:
+    get:
+      tags: [account]
+      operationId: listAccountSignInMethods
+      summary: List the ways to sign in to the account.
+      description: Whether a password and two-factor authentication are set, and the linked Google or GitHub identities.
+      responses:
+        '200':
+          description: Sign-in methods.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SignInMethodsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/sign-in-methods/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: Linked sign-in provider to remove.
+        schema: { type: string, enum: [google, github] }
+    delete:
+      tags: [account]
+      operationId: unlinkAccountSignInMethod
+      summary: Remove a linked Google or GitHub sign-in.
+      description: |
+        Browser sessions need a recent authenticator verification when
+        two-factor authentication is on. Refused with 409 when it is the
+        last way to sign in; set a password or link another provider first.
+        The provider stays removed: signing in with it no longer links it by
+        matching email, until it is linked again from a browser signed in to
+        the account. CSRF: action `sign_in_method_unlink` (browser sessions
+        only; API keys need no token).
+      responses:
+        '204': { description: Sign-in method unlinked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: The provider is not linked to this account.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: The provider is the last way to sign in.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # Issue #1278 — account-wide failed-events inbox. This surface includes
   # app-owned queue/trigger/webhook failures and account-owned job runs.
@@ -13097,6 +13201,43 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/mfa/recovery-codes:
+    post:
+      tags: [mfa]
+      operationId: mfaRegenerateRecoveryCodes
+      summary: Replace the recovery codes.
+      description: |
+        Browser sessions with a recent authenticator verification only.
+        Creates a new set of recovery codes, shown once; the previous codes
+        stop working and the account gets an email notice. CSRF: action
+        `mfa_recovery_codes`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csrf_token]
+              properties:
+                csrf_token: { type: string }
+      responses:
+        '200':
+          description: New recovery codes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoveryCodesResponse' }
+        '400':
+          description: CSRF token missing or wrong for a browser session.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'Recovery codes need a browser session with a recent authenticator verification (`step_up_required`); API keys are refused.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: Two-factor authentication is not set up.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/account/mfa/disable:
     post:
@@ -13944,26 +14085,49 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/auth/verify-email/resend:
+    post:
+      tags: [auth]
+      operationId: resendEmailVerification
+      summary: Send a new email verification link.
+      description: |
+        Mails a new 24-hour verification link when the account's address is
+        unverified, at most once a minute and five times an hour. Returns
+        `already_verified` when there is nothing to send. Available after the
+        30-day verification period ends, when other routes answer
+        `email_verification_required`.
+      responses:
+        '200':
+          description: The address is already verified.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmailVerificationResendResponse' }
+        '202':
+          description: A link was sent, or held back by the per-account limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmailVerificationResendResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/auth/sessions/revoke_all:
     post:
       tags: [auth]
       operationId: postAccountSessionsRevokeAll
       summary: Revoke every session except the calling one.
       description: |
-        Revokes all `sessions` rows for the calling account
-        whose `id` is NOT the calling cookie's `sid`. The
-        caller's session stays active. Returns the count of
-        rows revoked so the dashboard can render "Signed out
-        N other devices".
+        From a browser session: revokes every other browser session of the
+        calling account and keeps the caller's. CSRF: action
+        `sessions_revoke_all`.
 
-        CSRF: action `sessions_revoke_all`.
+        With an API key: revokes every browser session. API keys keep
+        working, and no CSRF token is needed.
 
-        Emits `auth.sessions.revoke_all` with
-        `{revoked_count, retained_sid}`.
+        Returns the count of sessions revoked.
       parameters:
         - $ref: '#/components/parameters/CookieSession'
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
@@ -22553,7 +22717,7 @@ paths:
         Overage computation: `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)`. The included band is echoed from
         `acct.Plan.PlanIncludedGBHours`; the overage figure is the
-        integer-rounded float the Stripe pusher bills at $0.01/GB-h.
+        integer-rounded float the Stripe pusher bills at $0.05/GB-h.
 
         Source: `usage_minutes` today (after the 30d retention cap).
         `usage_daily` / `mixed` land with the trail-period reader
@@ -24768,9 +24932,12 @@ paths:
         available for spreadsheet and support workflows. The export uses the
         same plan retention boundary as the debugger list, never includes
         request bodies, headers, source IPs, or raw span attributes, and is
-        capped at 10,000 rows. `X-Faas-Request-Log-Window` and
-        `X-Faas-Request-Log-Retention-Clamped` describe the effective window
-        applied to the artifact.
+        capped at 10,000 rows. It takes the request list's filters.
+        `X-Faas-Request-Log-Window` and `X-Faas-Request-Log-Retention-Clamped`
+        describe the effective window applied to the artifact, and
+        `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+        In CSV, a value that would start a spreadsheet formula is written
+        with a leading apostrophe.
       parameters:
         - name: since
           in: query
@@ -24792,6 +24959,31 @@ paths:
           required: false
           schema: { type: [integer, 'null'], minimum: 1, maximum: 10000, default: 10000 }
           description: "Maximum number of retained rows to export."
+        - name: deployment_id
+          in: query
+          required: false
+          schema: { type: [string, 'null'], format: uuid }
+          description: "Export only rows served by this deployment UUID."
+        - name: status
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 100, maximum: 599 }
+          description: "Export only rows with this HTTP status."
+        - name: cold_boot
+          in: query
+          required: false
+          schema: { type: [boolean, 'null'] }
+          description: "Export only cold-start rows when true, or only warm rows when false."
+        - name: consumer_id
+          in: query
+          required: false
+          schema: { type: [string, 'null'], maxLength: 64 }
+          description: "Export only one consumer's rows (UUID), or __anonymous__ for rows without a stable consumer identity."
+        - name: min_latency_ms
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 0, maximum: 86400000 }
+          description: "Export only rows whose latency bucket bound is at least this many milliseconds."
       responses:
         '200':
           description: Metadata-only request telemetry export.
@@ -24807,6 +24999,9 @@ paths:
             X-Faas-Request-Log-Retention-Clamped:
               schema: { type: boolean }
               description: Whether the requested window exceeded plan retention.
+            X-Faas-Request-Log-Truncated:
+              schema: { type: boolean }
+              description: Whether more rows matched than the row limit exported.
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
@@ -47707,6 +47902,38 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/queues/send-batch:
+    post:
+      tags: [queues]
+      operationId: queueSendBatch
+      summary: Send up to 100 messages to one queue as one request.
+      description: |
+        Sends the messages in order with the same admission as a single send:
+        queue depth, backlog bytes and message size are checked for each one.
+        The first refused message ends the batch; the messages after it are
+        not attempted. Resend from the first message that was not accepted.
+        The batch counts as one request against the account's API budget.
+        API keys require `queues:send`, `deploy:write`, or `admin`.
+      x-faas-queue-leases: false
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueSendBatchRequest' }
+      responses:
+        '200':
+          description: The outcome of every message, in input order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueSendBatchResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/PlanQueueDepth' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/commit-sources:
     post:
       tags: [queues]
@@ -58866,6 +59093,29 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/orgs/{slug}/leave:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    post:
+      tags: [orgs]
+      operationId: leaveOrg
+      summary: Leave an org.
+      description: |
+        Ends the caller's own membership. Any role except owner may leave;
+        the owner transfers ownership first. A personal org cannot be left,
+        and the org's billing contact must be replaced first
+        (`billing_contact_member`).
+      responses:
+        '204': { description: Left the org. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: The caller is not an active member.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: 'The caller is the owner (`org_last_owner`), the org is personal, or the caller is the billing contact.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/orgs/{slug}/transfer_ownership:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -68314,6 +68564,49 @@ paths:
       required: true
       description: 'Organization queues: Enqueue a row on the per-app FIFO queue. Company owning the application or
         project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/send-batch:
+    post:
+      tags:
+      - queues
+      operationId: sendOrgQueueMessageBatch
+      summary: 'Organization queues: Send up to 100 messages to one queue as one request'
+      description: 'Organization queues: Send up to 100 messages to one queue as one request. Owners, admins and
+        developers can configure and operate queues. Requires current membership and the corresponding credential
+        scope. Mutations require organization billing adoption. The first refused message ends the batch; resend from
+        the first message that was not accepted. API keys require `queues:send`, `deploy:write`, or `admin`.'
+      x-faas-queue-leases: false
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueSendBatchRequest'
+      responses:
+        '200':
+          description: 'Organization queues: The outcome of every message, in input order.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueSendBatchResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '403':
+          $ref: '#/components/responses/PlanQueueDepth'
+        '413':
+          $ref: '#/components/responses/PlanSourceBytes'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Send up to 100 messages to one queue as one request. Company owning the
+        application or project.'
       schema:
         type: string
   /v1/orgs/{organization}/apps/{slug}/queue-bindings:
@@ -87670,6 +87963,7 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         email: { type: string, format: email }
         email_verified: { type: boolean }
+        display_name: { type: string, maxLength: 80, description: "Optional display name; absent when unset." }
         email_verification_grace_ends_at:
           type: string
           format: date-time
@@ -116826,7 +117120,7 @@ components:
         rounding). `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)` — 0 when the customer is under
         their included band, the billable overage above the band
-        otherwise. The Stripe pusher bills overage at $0.01/GB-h
+        otherwise. The Stripe pusher bills overage at $0.05/GB-h
         (CLAUDE.md integer-cents-only rule).
       type: object
       required: [slug, period_start, period_end, mb_seconds, gb_hours, requests, tx_bytes, net_tx_bytes, builder_seconds, cold_boot_count, plan_included_gb_hours, overage_gb_hours, source, as_of]
@@ -117489,7 +117783,7 @@ components:
         used_gb_hours: { type: number , example: 1.234}
         included_gb_hours: { type: integer, format: int64 }
         overage_gb_hours: { type: number }
-        overage_cents: { type: integer, format: int64, description: 'Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.' }
+        overage_cents: { type: integer, format: int64, description: 'Integer cents. Includes compute at $0.05/GB-h and configured live egress overage; shadow egress is excluded.' }
         quiet_paused_gb_hours:
           type: number
           description: 'GB-hours this month that instances spent quiet-paused between requests and were not billed for, in the same plan RAM + 8 MB unit as used_gb_hours and not included in it. Absent while zero.'
@@ -119382,6 +119676,49 @@ components:
           allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
           description: "Optional keyed ordering policy for a queue message. Scoped environment bindings reject this option until their policy adapter is available."
 
+    QueueSendBatchRequest:
+      description: "Body for POST /v1/apps/{slug}/queues/send-batch: up to 100 messages for one queue, sent in order. The body is at most 8 MiB; each message meets its plan's message size."
+      type: object
+      required: [messages]
+      properties:
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Target registered environment with an enabled scoped queue binding. Omission sends through the default environment." }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Logical queue that receives every message in the batch. Required when an app has multiple enabled queue consumers." }
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          description: Optional retry curve override for every message of the batch.
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/QueueSendBatchMessage' }
+
+    QueueSendBatchMessage:
+      description: One message of a batch send.
+      type: object
+      properties:
+        payload: { type: object, additionalProperties: true }
+
+    QueueSendBatchResult:
+      description: "The outcome of one message by its zero-based input index: accepted, rejected with the problem, or not attempted after an earlier rejection."
+      type: object
+      required: [index, status]
+      properties:
+        index: { type: integer, minimum: 0, description: "Zero-based position of the message in the request's messages array." }
+        status: { type: string, enum: [accepted, rejected, not_attempted] }
+        message: { $ref: '#/components/schemas/QueueSendResponse' }
+        problem: { $ref: '#/components/schemas/Problem' }
+
+    QueueSendBatchResponse:
+      description: Per-message outcomes in the original input order.
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/QueueSendBatchResult' }
+
     QueueWorkloadProfileRequest:
       description: |
         Declarative setup for the common queue worker profile. The server
@@ -119590,6 +119927,53 @@ components:
           description: "Active sessions, newest first. Revoked rows are not returned."
           items: { $ref: '#/components/schemas/SessionInfo' }
 
+    AccountProfileUpdate:
+      description: "Body for `PATCH /v1/account`."
+      type: object
+      required: [display_name]
+      properties:
+        display_name: { type: string, maxLength: 80, description: "Empty clears the display name." }
+    AccountEmailChangeRequest:
+      description: "Body for `POST /v1/account/email`."
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        current_password: { type: string, description: "Required when the account has a password and no two-factor authentication." }
+        csrf_token: { type: string }
+    EmailVerificationResendResponse:
+      description: "Result of `POST /v1/auth/verify-email/resend`."
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [sent, already_verified] }
+        email: { type: string, format: email }
+    SignInMethodsResponse:
+      description: "The ways the account can sign in."
+      type: object
+      required: [password, mfa, providers]
+      properties:
+        password: { type: boolean }
+        mfa: { type: boolean }
+        providers:
+          type: array
+          items: { $ref: '#/components/schemas/LinkedSignIn' }
+    LinkedSignIn:
+      description: "A Google or GitHub identity linked to the account."
+      type: object
+      required: [provider, email, linked_at]
+      properties:
+        provider: { type: string, enum: [google, github] }
+        email: { type: string, format: email }
+        linked_at: { type: string, format: date-time }
+    RecoveryCodesResponse:
+      description: "New MFA recovery codes, shown once."
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          items: { type: string }
     SessionsRevokeAllResponse:
       description: "Body for `POST /v1/auth/sessions/revoke_all`."
       type: object
@@ -121757,6 +122141,10 @@ components:
         email:
           type: string
           format: email
+        display_name:
+          type: string
+          maxLength: 80
+          description: The member's display name; absent when unset.
           example: "bob@acme.com"
         role:
           type: string
@@ -125369,6 +125757,15 @@ components:
         guest_evidence: { $ref: '#/components/schemas/DebugCoverageSignal' }
         oldest_telemetry_at: { type: string, format: date-time }
         latest_telemetry_at: { type: string, format: date-time }
+        requests_not_retained:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Requests the app's request analytics counted in the window's whole
+            minutes that the debugger did not keep, because the plan's
+            per-minute debugger row limit turned them away. A lower bound;
+            absent when request analytics do not cover the window.
 
     DebugRunningRequestAttribution:
       type: object

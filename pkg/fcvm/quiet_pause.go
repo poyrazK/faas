@@ -116,6 +116,8 @@ type quietState struct {
 	// observation off or ends it in QuietResume.
 	observing     atomic.Bool
 	observedSince time.Time
+	// cold is the idle ladder's L3/L4 compression record (idle_compress.go).
+	cold coldState
 }
 
 // quietPauseAfterFor is the quiet pause delay an instance gets. Instances
@@ -445,6 +447,7 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	if migrating {
 		return ErrInstanceBusy
 	}
+	wake := m.startColdWake(st, inst)
 	started := time.Now()
 	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), quietVMMTimeout)
 	err := m.ensureRehearsalNetwork(resumeCtx, inst)
@@ -467,6 +470,7 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	st.paused.Store(false)
 	st.since = time.Time{}
 	st.epoch.Add(1)
+	m.resumedColdWake(st, inst, wake, time.Since(started))
 	if inst.AgentRunOnly {
 		m.agentWaitMetrics.observeResume(time.Since(started))
 	} else {

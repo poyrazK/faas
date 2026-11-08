@@ -392,6 +392,13 @@ type AppSpec struct {
 	// forbidden ports again before rendering the per-instance egress_ports
 	// set. Empty = base ports only.
 	EgressPorts []uint32 `protobuf:"varint,29,rep,packed,name=egress_ports,json=egressPorts,proto3" json:"egress_ports,omitempty"`
+	// egress_revision is apps.egress_allowlist_revision for the
+	// egress_allowlist and egress_ports above, read in the same row. vmmd keeps
+	// the last policy schedd pushed per app and lays it over wake requests;
+	// when this revision is newer than that cached policy the request's own
+	// policy wins (a wake right after an egress change while the app was
+	// parked). 0 = unknown (older schedd): the cache wins as before.
+	EgressRevision int64 `protobuf:"varint,40,opt,name=egress_revision,json=egressRevision,proto3" json:"egress_revision,omitempty"`
 	// liveness_probe_json is the deployment's validated primary-app
 	// liveness_probe override (ADR-078), carried like readiness_probe_json.
 	// Empty keeps the plan defaults. production-us hunt #8: without this field
@@ -688,6 +695,13 @@ func (x *AppSpec) GetEgressPorts() []uint32 {
 		return x.EgressPorts
 	}
 	return nil
+}
+
+func (x *AppSpec) GetEgressRevision() int64 {
+	if x != nil {
+		return x.EgressRevision
+	}
+	return 0
 }
 
 func (x *AppSpec) GetLivenessProbeJson() string {
@@ -19892,7 +19906,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xca\x0e\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xf3\x0e\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -19930,7 +19944,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1eprivate_network_firewall_rules\x18\x17 \x03(\v2/.onebox.faas.vmmd.v1.PrivateNetworkFirewallRuleR\x1bprivateNetworkFirewallRules\x129\n" +
 	"\x19disable_startup_cpu_boost\x18\x18 \x01(\bR\x16disableStartupCpuBoost\x12O\n" +
 	"\x0fmain_depends_on\x18\x1c \x03(\v2'.onebox.faas.vmmd.v1.WorkloadDependencyR\rmainDependsOn\x12!\n" +
-	"\fegress_ports\x18\x1d \x03(\rR\vegressPorts\x12.\n" +
+	"\fegress_ports\x18\x1d \x03(\rR\vegressPorts\x12'\n" +
+	"\x0fegress_revision\x18( \x01(\x03R\x0eegressRevision\x12.\n" +
 	"\x13liveness_probe_json\x18\x1f \x01(\tR\x11livenessProbeJson\x12/\n" +
 	"\x14quiet_pause_after_ms\x18  \x01(\x03R\x11quietPauseAfterMs\x12\x1e\n" +
 	"\n" +

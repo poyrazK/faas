@@ -38,6 +38,9 @@ func UnitRealtimed() daemonunit.Unit {
 			// MemoryMax: without fair use the node cap stays 10,000 connections,
 			// about 520 MB at ~52 KB each. apid sets fair use too.
 			{Key: "FAAS_REALTIME_FAIR_USE_ENABLED", Value: "1"},
+			// ADR-20261104132753: realtime delivered bytes count as the app's
+			// egress; meterd reads them from the usage apid records.
+			{Key: "FAAS_REALTIME_USAGE_ENABLED", Value: "1"},
 			{Key: "FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED", Value: "1"},
 		},
 

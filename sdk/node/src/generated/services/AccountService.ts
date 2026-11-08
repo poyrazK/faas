@@ -7,8 +7,10 @@ import type { AccountDeadLetterPurgeResponse } from '../models/AccountDeadLetter
 import type { AccountDeadLetterReplayAllResponse } from '../models/AccountDeadLetterReplayAllResponse.js';
 import type { AccountDeletionResponse } from '../models/AccountDeletionResponse.js';
 import type { AccountEgressAllowlistExtraResponse } from '../models/AccountEgressAllowlistExtraResponse.js';
+import type { AccountEmailChangeRequest } from '../models/AccountEmailChangeRequest.js';
 import type { AccountExportResponse } from '../models/AccountExportResponse.js';
 import type { AccountOverageCapResponse } from '../models/AccountOverageCapResponse.js';
+import type { AccountProfileUpdate } from '../models/AccountProfileUpdate.js';
 import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsResponse.js';
 import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
@@ -32,6 +34,7 @@ import type { PutBillingRunScheduleRequest } from '../models/PutBillingRunSchedu
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
 import type { SelectedTraceLookupResponse } from '../models/SelectedTraceLookupResponse.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
+import type { SignInMethodsResponse } from '../models/SignInMethodsResponse.js';
 import type { StatementInvoiceListResponse } from '../models/StatementInvoiceListResponse.js';
 import type { UpdateAccountBillingInfoRequest } from '../models/UpdateAccountBillingInfoRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -119,6 +122,134 @@ export class AccountService {
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Set the account display name.
+   * Sets the optional display name shown to org members and in the
+   * dashboard. Leading and trailing spaces are removed; an empty string
+   * clears it. At most 80 characters, no control characters.
+   *
+   * @returns AccountProfileUpdate Saved.
+   * @throws ApiError
+   */
+  public static updateAccountProfile({
+    requestBody,
+  }: {
+    requestBody: AccountProfileUpdate,
+  }): CancelablePromise<AccountProfileUpdate> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/account',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Start a sign-in email change.
+   * Browser sessions only; an API key gets 403. Accounts with two-factor
+   * authentication need a recent authenticator verification
+   * (`step_up_required` otherwise); accounts with a password send
+   * `current_password`. A single-use link valid for 1 hour is emailed to
+   * the new address; opening it and confirming moves the account and
+   * signs out every browser. The previous address gets a notice. A new
+   * address that already belongs to an account gets the same response
+   * and no email. CSRF: action `account_email_change`.
+   *
+   * @returns any Confirmation sent to the new address.
+   * @throws ApiError
+   */
+  public static requestAccountEmailChange({
+    requestBody,
+  }: {
+    requestBody: AccountEmailChangeRequest,
+  }): CancelablePromise<{
+    status: 'confirmation_sent';
+    email: string;
+  }> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/email',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `An API key was used, or a recent authenticator verification is required (\`step_up_required\`).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the ways to sign in to the account.
+   * Whether a password and two-factor authentication are set, and the linked Google or GitHub identities.
+   * @returns SignInMethodsResponse Sign-in methods.
+   * @throws ApiError
+   */
+  public static listAccountSignInMethods(): CancelablePromise<SignInMethodsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/sign-in-methods',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Remove a linked Google or GitHub sign-in.
+   * Browser sessions need a recent authenticator verification when
+   * two-factor authentication is on. Refused with 409 when it is the
+   * last way to sign in; set a password or link another provider first.
+   * The provider stays removed: signing in with it no longer links it by
+   * matching email, until it is linked again from a browser signed in to
+   * the account. CSRF: action `sign_in_method_unlink` (browser sessions
+   * only; API keys need no token).
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static unlinkAccountSignInMethod({
+    provider,
+  }: {
+    /**
+     * Linked sign-in provider to remove.
+     */
+    provider: 'google' | 'github',
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/sign-in-methods/{provider}',
+      path: {
+        'provider': provider,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `The provider is not linked to this account.`,
+        409: `The provider is the last way to sign in.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });

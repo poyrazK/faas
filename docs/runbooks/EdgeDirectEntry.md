@@ -208,9 +208,12 @@ injected failure as soon as it is measured.
   request is forwarded or wakes anything (`EdgeHostRequests*`): twice the
   highest plan's per-app limit, so the gateway's plan limit answers an app
   first. A refusal is `429 rate_limited` with
-  `x-faas-rate-limit-scope: host`. At most `EdgeHostTrackedMax` hostnames
-  are tracked; while the table is full, an untracked hostname passes, so a
-  flood of random `Host` values cannot refuse every tenant's host.
+  `x-faas-rate-limit-scope: host`. Only a host that has served an app's
+  answer (a 2xx, 101 or 304) is tracked and limited; any other name passes
+  to routing without taking one of the `EdgeHostTrackedMax` slots. A flood
+  of random `Host` values therefore neither refuses tenant hosts nor fills
+  the table, and a real host first seen during one is limited from its first
+  answered request.
 - **Open connections, new connections a second and TLS handshakes in
   progress**, only with `faas_edge_public_front: none`. A refused connection
   is reset before TLS; a handshake slot is held at most

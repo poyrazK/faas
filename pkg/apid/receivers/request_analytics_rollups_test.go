@@ -87,7 +87,7 @@ func TestRequestAnalyticsRollupsCountRowsTheIngestCapTurnsAway(t *testing.T) {
 	if limited == 0 {
 		t.Fatalf("no row of %d reached the Hobby ingest cap of %d", sent, limit)
 	}
-	if err := rollups.Flush(t.Context()); err != nil {
+	if err := flushClosed(t, rollups); err != nil {
 		t.Fatal(err)
 	}
 	for _, kind := range []string{RollupKindRoute, RollupKindCountry, RollupKindReferrerHost, RollupKindUAFamily, RollupKindConsumerID} {
@@ -105,7 +105,7 @@ func TestRequestAnalyticsRollupsCountRowsTheIngestCapTurnsAway(t *testing.T) {
 	// Coverage is recorded once per process.
 	r.HandleOne(t.Context(), rollupTelemetryRequest(accountID, appID, deploymentID, now))
 	rollupStore.coverage = nil
-	if err := rollups.Flush(t.Context()); err != nil || len(rollupStore.coverage) != 0 {
+	if err := flushClosed(t, rollups); err != nil || len(rollupStore.coverage) != 0 {
 		t.Fatalf("second flush coverage = %+v err %v, want none", rollupStore.coverage, err)
 	}
 }
@@ -125,7 +125,7 @@ func TestRequestAnalyticsRollupsSkipPlansWithoutTelemetryAndReplays(t *testing.T
 	req.Count = 4
 	pro.HandleOne(t.Context(), req)
 	pro.HandleOne(t.Context(), req) // the gateway replays a batch whose response it missed
-	if err := rollups.Flush(t.Context()); err != nil {
+	if err := flushClosed(t, rollups); err != nil {
 		t.Fatal(err)
 	}
 	if got := rollupStore.requests(RollupKindRoute, ""); got != 4 {
@@ -146,7 +146,7 @@ func TestRequestAnalyticsRollupsFoldDimensionsPastTheBound(t *testing.T) {
 			Country: fmt.Sprintf("C%d", i), ColdBoot: i == 0,
 		})
 	}
-	if err := rollups.Flush(t.Context()); err != nil {
+	if err := flushClosed(t, rollups); err != nil {
 		t.Fatal(err)
 	}
 	countries, routes := 0, 0
@@ -180,16 +180,138 @@ func TestRequestAnalyticsRollupsKeepRowsWhenAFlushFails(t *testing.T) {
 			ReceivedAt: now, Route: "GET /", Method: "GET", Status: 200, LatencyMS: 10, Count: n})
 	}
 	add(2)
-	if err := rollups.Flush(t.Context()); err == nil {
+	if err := flushClosed(t, rollups); err == nil {
 		t.Fatal("flush against a failing store succeeded")
 	}
 	add(3)
 	rollupStore.err = nil
-	if err := rollups.Flush(t.Context()); err != nil {
+	if err := flushClosed(t, rollups); err != nil {
 		t.Fatal(err)
 	}
 	if got := rollupStore.requests(RollupKindRoute, ""); got != 5 || len(rollupStore.coverage) != 1 {
 		t.Fatalf("route rollup = %d, coverage %d; want 5 requests in one row and the coverage kept", got, len(rollupStore.coverage))
+	}
+}
+
+// flushClosed flushes as if every pending minute had closed past its grace.
+func flushClosed(t *testing.T, a *RequestAnalyticsRollups) error {
+	t.Helper()
+	a.now = func() time.Time { return time.Now().Add(time.Hour) }
+	return a.Flush(t.Context())
+}
+
+// Non-route rows are keyed by value alone (amendment 3): no reader splits
+// them by status or deployment, and keying them by both multiplied them.
+func TestRequestAnalyticsRollupsKeyDimensionRowsByValueAlone(t *testing.T) {
+	rollupStore := &fakeRollupStore{}
+	rollups := NewRequestAnalyticsRollups(rollupStore, nil, nil)
+	app, account := uuid.New(), uuid.New()
+	deployments := []uuid.UUID{uuid.New(), uuid.New()}
+	now := time.Now().UTC()
+	statuses := []int{200, 201, 404, 500}
+	for i := range 40 {
+		rollups.Add(RequestAnalyticsRollupRow{
+			EventID: uuid.New(), AccountID: account, AppID: app, DeploymentID: deployments[(i/4)%2], ReceivedAt: now,
+			Route: "GET /", Method: "GET", Status: statuses[i%4], LatencyMS: 10, Count: 1,
+			Country: "DE", ReferrerHost: "example.com", UAFamily: "Chrome", ConsumerID: "c1",
+		})
+	}
+	if err := flushClosed(t, rollups); err != nil {
+		t.Fatal(err)
+	}
+	perKind := map[string]int{}
+	for _, r := range rollupStore.rows {
+		perKind[r.DimensionKind]++
+		if r.DimensionKind == RollupKindRoute {
+			if r.Status < 100 || r.DeploymentID == uuid.Nil {
+				t.Fatalf("route row %+v: want its status and deployment", r)
+			}
+			continue
+		}
+		if r.Status != rollupFoldedStatus || r.DeploymentID != uuid.Nil || r.Requests != 40 || r.ErrorRequests != 20 {
+			t.Fatalf("%s row %+v: want one status-0, nil-deployment row of all 40 requests, 20 of them errors", r.DimensionKind, r)
+		}
+	}
+	if perKind[RollupKindRoute] != 8 {
+		t.Fatalf("route rows = %d, want 8 (4 statuses x 2 deployments)", perKind[RollupKindRoute])
+	}
+	for _, kind := range rollupFoldedKinds {
+		if perKind[kind] != 1 {
+			t.Fatalf("%s rows = %d, want 1", kind, perKind[kind])
+		}
+	}
+}
+
+// A minute is written once it has closed past the grace, with one top-N
+// fold over all of it: a value busy late in the minute is not folded away by
+// an earlier, quieter flush, and an open minute waits.
+func TestRequestAnalyticsRollupsWriteAMinuteOnceItCloses(t *testing.T) {
+	rollupStore := &fakeRollupStore{}
+	rollups := NewRequestAnalyticsRollups(rollupStore, nil, nil)
+	app, account, deployment := uuid.New(), uuid.New(), uuid.New()
+	minute := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	clock := minute.Add(10 * time.Second)
+	rollups.now = func() time.Time { return clock }
+	add := func(at time.Time, consumer string, n int) {
+		rollups.Add(RequestAnalyticsRollupRow{
+			EventID: uuid.New(), AccountID: account, AppID: app, DeploymentID: deployment, ReceivedAt: at,
+			Route: "GET /", Method: "GET", Status: 200, LatencyMS: 10, Count: n, ConsumerID: consumer,
+		})
+	}
+	// Early in the minute: the 50 quiet consumers fill the top-N.
+	for i := range api.RequestAnalyticsRollupDimensionsMax {
+		add(minute.Add(5*time.Second), fmt.Sprintf("quiet-%d", i), 2)
+	}
+	for ; clock.Before(minute.Add(time.Minute)); clock = clock.Add(api.RequestAnalyticsRollupFlushInterval) {
+		if err := rollups.Flush(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Late in the minute a new consumer is the busiest.
+	add(minute.Add(55*time.Second), "busy", 500)
+	if len(rollupStore.rows) != 0 || len(rollupStore.coverage) != 0 {
+		t.Fatalf("wrote %d rows, %d coverage before the minute closed", len(rollupStore.rows), len(rollupStore.coverage))
+	}
+	clock = minute.Add(time.Minute + api.RequestAnalyticsRollupMinuteGrace)
+	if err := rollups.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	consumers := 0
+	for _, r := range rollupStore.rows {
+		if r.DimensionKind == RollupKindConsumerID {
+			consumers++
+		}
+	}
+	if got := rollupStore.requests(RollupKindConsumerID, "busy"); got != 500 || consumers != api.RequestAnalyticsRollupDimensionsMax+1 {
+		t.Fatalf("busy consumer = %d requests in %d consumer rows; want its 500 kept among %d rows", got, consumers, api.RequestAnalyticsRollupDimensionsMax+1)
+	}
+	if len(rollupStore.coverage) != 1 || !rollupStore.coverage[0].CoveredSince.Equal(minute) {
+		t.Fatalf("coverage = %+v, want the closed minute", rollupStore.coverage)
+	}
+	// A straggler for the written minute goes out with the next flush.
+	add(minute.Add(59*time.Second), "busy", 1)
+	clock = clock.Add(api.RequestAnalyticsRollupFlushInterval)
+	if err := rollups.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := rollupStore.requests(RollupKindRoute, ""); got != 2*api.RequestAnalyticsRollupDimensionsMax+501 {
+		t.Fatalf("route requests = %d, want every request once", got)
+	}
+}
+
+// Shutdown writes the open minute too.
+func TestRequestAnalyticsRollupsFinalFlushWritesOpenMinutes(t *testing.T) {
+	rollupStore := &fakeRollupStore{}
+	rollups := NewRequestAnalyticsRollups(rollupStore, nil, nil)
+	rollups.Add(RequestAnalyticsRollupRow{
+		EventID: uuid.New(), AccountID: uuid.New(), AppID: uuid.New(), DeploymentID: uuid.New(), ReceivedAt: time.Now(),
+		Route: "GET /", Method: "GET", Status: 200, LatencyMS: 10, Count: 3,
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	rollups.Run(ctx, time.Hour)
+	if got := rollupStore.requests(RollupKindRoute, ""); got != 3 {
+		t.Fatalf("route requests after shutdown = %d, want 3", got)
 	}
 }
 

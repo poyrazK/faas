@@ -187,9 +187,12 @@ func PrewarmIfSupported(ctx context.Context, spec Spec) (handled bool, err error
 }
 
 func poolFor(spec Spec) *pool {
-	key := fmt.Sprintf("%t\x00%s", spec.RequireResourceLifecycle, strings.Join(append([]string{spec.Executable}, spec.Args...), "\x00"))
-	value, _ := pools.LoadOrStore(key, newPool(spec))
+	value, _ := pools.LoadOrStore(poolKey(spec), newPool(spec))
 	return value.(*pool)
+}
+
+func poolKey(spec Spec) string {
+	return fmt.Sprintf("%t\x00%s", spec.RequireResourceLifecycle, strings.Join(append([]string{spec.Executable}, spec.Args...), "\x00"))
 }
 
 func supportsPersistentProtocol(spec Spec) bool {
@@ -272,6 +275,19 @@ func Recycle() int {
 		return true
 	})
 	return closed
+}
+
+// RecycleSpec closes the workers of one command, as Recycle does for all of
+// them, and forgets the handler's cached protocol check. `gregale dev
+// --local` calls it when a function's source changes so the next request
+// loads the new code (ADR-20261107210000).
+func RecycleSpec(spec Spec) int {
+	supportCache.Delete(spec.HandlerPath)
+	value, ok := pools.Load(poolKey(spec))
+	if !ok {
+		return 0
+	}
+	return value.(*pool).recycle()
 }
 
 func (p *pool) recycle() int {

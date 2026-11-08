@@ -66,6 +66,37 @@ func TestReconcileAppliesComposeAppProtocol(t *testing.T) {
 	}
 }
 
+// A service a staging deploy creates gets its declared protocol; it stayed
+// http1 because only production deploys synced it (ADR-20261108090000).
+func TestReconcileEnvironmentAppliesProtocolToAddedService(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "stage-protocol@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "shop", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	service := reconcile.NewService(store, audit.New(store, log, nil, "reconcile"), log)
+	scan := reposcan.Result{Tier: reposcan.TierCompose, Workloads: []reposcan.Workload{{
+		Name: "orders", Image: "docker.io/library/nginx:1.27", Ports: []int{80}, Class: reposcan.ClassHTTP,
+		Tier: reposcan.TierCompose, AppProtocol: "grpc", DetectedBy: reposcan.Detection{Detector: "compose"}}}}
+	result, err := service.ReconcileEnvironment(ctx, project, scan, "staging", "source", false)
+	if err != nil || len(result.Added) != 1 {
+		t.Fatalf("stage result: added=%d err=%v", len(result.Added), err)
+	}
+	app, err := store.AppByID(ctx, result.Added[0].ID)
+	if err != nil || app.AppProtocol != "grpc" {
+		t.Fatalf("orders protocol = %q, %v; want grpc", app.AppProtocol, err)
+	}
+}
+
 // A plan without gRPC refuses a service that declares it, before any write.
 func TestWorkloadPlanAdmissionRefusesAppProtocolOutsidePlan(t *testing.T) {
 	workloads := []reposcan.Workload{{Name: "orders", Class: reposcan.ClassHTTP, AppProtocol: "grpc"}}

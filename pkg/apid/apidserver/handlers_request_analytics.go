@@ -270,6 +270,7 @@ func parseRequestAnalyticsWindow(r *http.Request, now time.Time, retention time.
 			windowClamped = true
 		}
 	}
+	from, until = analyticsrollup.AlignWindow(from, until, now, retention)
 	return requestAnalyticsWindow{
 		From:           from,
 		Until:          until,

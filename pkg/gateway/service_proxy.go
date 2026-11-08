@@ -1761,6 +1761,7 @@ func (p *ServiceProxy) prepareGuestRequest(ctx context.Context, request *http.Re
 		callerEnv = servicecallerEnvPreview
 		request.Header.Set(ServiceCallerEnvHeader, callerEnv)
 		request.Header.Set(ServiceCallerPreviewOfHeader, caller.PreviewOfSlug)
+		ctx = context.WithValue(ctx, trustedServiceCallerEnvContextKey{}, true)
 		if target.PreviewScoped {
 			p.metrics.IncServicePreviewToPreview()
 		} else {
