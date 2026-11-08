@@ -1512,35 +1512,35 @@ from crons where id = $1;
 insert into events (actor, kind, subject, data)
 values ($1, $2, $3, $4);
 
--- name: LockWebhookAutomationEndpoint :one
+-- name: LockWebhookWorkflowEndpoint :one
 SELECT * FROM inbound_webhook_endpoints
 WHERE id=$1 AND app_id=$2 AND account_id=$3 FOR UPDATE;
 
--- name: GetWebhookAutomationBinding :one
+-- name: GetWebhookWorkflowBinding :one
 SELECT * FROM workflow_webhook_bindings WHERE endpoint_id=$1;
 
--- name: SaveWebhookAutomationBinding :one
+-- name: SaveWebhookWorkflowBinding :one
 INSERT INTO workflow_webhook_bindings(endpoint_id,workflow_name,event_type,filter,version)
 VALUES($1,$2,$3,$4,nextval('workflow_webhook_binding_revision_seq'))
 ON CONFLICT(endpoint_id) DO UPDATE SET workflow_name=EXCLUDED.workflow_name,
 event_type=EXCLUDED.event_type,filter=EXCLUDED.filter,version=EXCLUDED.version,updated_at=clock_timestamp()
 RETURNING *;
 
--- name: DeleteWebhookAutomationBinding :execrows
+-- name: DeleteWebhookWorkflowBinding :execrows
 DELETE FROM workflow_webhook_bindings WHERE endpoint_id=$1 AND version=$2;
 
--- name: WebhookAutomationLegacyReceiptExists :one
+-- name: WebhookWorkflowLegacyReceiptExists :one
 SELECT EXISTS(SELECT 1 FROM invocations WHERE id=$1);
 
--- name: InsertWebhookAutomationOutbox :one
+-- name: InsertWebhookWorkflowOutbox :one
 INSERT INTO event_fanout_outbox(account_id,source,event_id,event_type,event_data,payload,recipient_snapshot)
 VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id;
 
--- name: InsertWebhookAutomationReceipt :exec
+-- name: InsertWebhookWorkflowReceipt :exec
 INSERT INTO workflow_webhook_receipts(endpoint_id,provider_event_id,receipt_id,body_hash,workflow_name,recipient_id,outbox_id,status,ignored_reason)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9);
 
--- name: GetWebhookAutomationReceipt :one
+-- name: GetWebhookWorkflowReceipt :one
 SELECT r.*, er.run_id, o.recipient_progress
 FROM workflow_webhook_receipts r JOIN event_fanout_outbox o ON o.id=r.outbox_id
 LEFT JOIN workflow_event_receipts er ON er.outbox_id=r.outbox_id AND er.recipient_id=r.recipient_id
@@ -19562,19 +19562,19 @@ VALUES(sqlc.arg(id)::uuid, sqlc.arg(app_id)::uuid, nullif(sqlc.arg(platform_tena
 -- name: InsertEventWorkflowReceipt :exec
 INSERT INTO workflow_event_receipts(outbox_id, recipient_id, run_id) VALUES($1, $2, $3);
 
--- name: ListAutomations :many
-SELECT * FROM workflow_automation_definitions WHERE app_id=$1 ORDER BY name;
+-- name: ListStoredWorkflows :many
+SELECT * FROM stored_workflows WHERE app_id=$1 ORDER BY name;
 
--- name: ListWorkflowAutomationRevisions :many
-SELECT * FROM workflow_automation_revisions
+-- name: ListStoredWorkflowRevisions :many
+SELECT * FROM stored_workflow_revisions
 WHERE app_id=$1 AND name=$2
 ORDER BY version DESC
 LIMIT $3 OFFSET $4;
 
--- name: CountWorkflowAutomationRevisions :one
-SELECT count(*) FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2;
+-- name: CountStoredWorkflowRevisions :one
+SELECT count(*) FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2;
 
--- name: GetWorkflowAutomationHealthSummary :one
+-- name: GetStoredWorkflowHealthSummary :one
 SELECT count(*)::bigint AS run_count,
        count(*) FILTER (WHERE status='pending')::bigint AS pending_runs,
        count(*) FILTER (WHERE status='running')::bigint AS running_runs,
@@ -19594,7 +19594,7 @@ WHERE app_id=sqlc.arg(app_id)::uuid AND workflow_name=sqlc.arg(workflow_name)::t
   AND created_at >= sqlc.arg(created_after)::timestamptz
   AND created_at <= sqlc.arg(created_before)::timestamptz;
 
--- name: ListWorkflowAutomationHealthRecentRuns :many
+-- name: ListStoredWorkflowHealthRecentRuns :many
 WITH recent AS (
     (SELECT 'latest'::text AS kind, id, status, created_at, finished_at
      FROM workflow_runs
@@ -19619,7 +19619,7 @@ WITH recent AS (
 )
 SELECT kind, id, status, created_at, finished_at FROM recent;
 
--- name: ListWorkflowAutomationHealthFailedSteps :many
+-- name: ListStoredWorkflowHealthFailedSteps :many
 SELECT COALESCE(s.foreach_parent, s.step_name) AS step_name,
        count(DISTINCT r.id)::bigint AS failed_run_count,
        max(COALESCE(r.finished_at, r.created_at))::timestamptz AS last_failed_at
@@ -19633,43 +19633,43 @@ GROUP BY COALESCE(s.foreach_parent, s.step_name)
 ORDER BY failed_run_count DESC, step_name
 LIMIT sqlc.arg(max_steps)::int;
 
--- name: GetWorkflowAutomationRevision :one
-SELECT * FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2 AND version=$3;
+-- name: GetStoredWorkflowRevision :one
+SELECT * FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2 AND version=$3;
 
--- name: InsertWorkflowAutomationRevision :exec
-INSERT INTO workflow_automation_revisions(
+-- name: InsertStoredWorkflowRevision :exec
+INSERT INTO stored_workflow_revisions(
  app_id,name,version,definition,recorded_at,legacy_snapshot,published_by_account_id,published_by_api_key_id,check_evidence
 ) VALUES($1,$2,$3,$4,$5,false,$6,$7,$8);
 
--- name: SaveAutomation :exec
-INSERT INTO workflow_automation_definitions(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report)
+-- name: SaveStoredWorkflow :exec
+INSERT INTO stored_workflows(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
  published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at,
  test_suite=excluded.test_suite,test_report=excluded.test_report;
 
--- name: DeleteAutomation :exec
-DELETE FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2;
+-- name: DeleteStoredWorkflow :exec
+DELETE FROM stored_workflows WHERE app_id=$1 AND name=$2;
 
--- name: DeleteAutomationScheduleCursor :exec
+-- name: DeleteStoredWorkflowScheduleCursor :exec
 DELETE FROM workflow_schedule_cursors WHERE app_id=$1 AND workflow_name=$2;
 
 -- Preserve tenant cadence, version and admission priority, but invalidate the
 -- evaluated deployment so publish/pause/resume cannot replay the paused interval.
--- name: RearmTenantAutomationSchedules :exec
+-- name: RearmTenantStoredWorkflowSchedules :exec
 UPDATE platform_tenant_workflow_schedule_cursors
 SET deployment_id=NULL,scheduled_for=NULL,status='armed',last_run_id=NULL
 WHERE app_id=sqlc.arg(app_id)::uuid AND workflow_name=sqlc.arg(workflow_name)::text;
 
--- name: AutomationManifest :one
+-- name: StoredWorkflowManifest :one
 SELECT id,workflows FROM deployments WHERE app_id=$1 AND status='live' AND scope='default'
 ORDER BY (traffic_percent>0) DESC,created_at DESC,id DESC LIMIT 1;
 
 -- name: EffectiveWorkflowDefinitions :one
 SELECT app_workflow_definitions(sqlc.arg(app_id)::uuid,sqlc.arg(manifest)::jsonb)::jsonb;
 
--- name: NextAutomationVersion :one
-SELECT nextval('automation_definition_versions')::bigint;
+-- name: NextStoredWorkflowVersion :one
+SELECT nextval('stored_workflow_versions')::bigint;
 -- name: WorkflowOutboundSigningKey :one
 SELECT key_id, public_key_pem FROM cluster_signing_keys WHERE id=1 AND retired_at IS NULL;
 
@@ -22854,8 +22854,8 @@ SELECT jsonb_build_object(
  'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
- 'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
- 'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'stored_workflow_live_suites.deployment_id', (SELECT count(*) FROM stored_workflow_live_suites WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'stored_workflow_live_verifications.deployment_id', (SELECT count(*) FROM stored_workflow_live_verifications WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
  'release_freezes.source_deployment_id', (SELECT count(*) FROM release_freezes WHERE source_deployment_id=sqlc.arg(deployment_id)::uuid),
  'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=sqlc.arg(deployment_id)::uuid),
@@ -23068,7 +23068,7 @@ WITH owned_apps AS (
  -- Account-wide rules skip rehearsal-enrolled apps (ADR-20261019180000).
  AND (sqlc.narg(app_id)::uuid IS NOT NULL OR NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id = apps.id))
 ), due_runs AS (
- -- Same wake/lease eligibility as automation queue health (ADR-730/643).
+ -- Same wake/lease eligibility as stored workflow queue health (ADR-730/643).
  SELECT r.created_at,CASE WHEN r.status='running'
   THEN coalesce(r.lease_until,r.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))
   ELSE r.scheduled_for END AS due_at
@@ -23181,7 +23181,7 @@ ON CONFLICT(app_id,scope_key) DO UPDATE SET last_claimed_at=excluded.last_claime
 
 -- ADR-730: live diagnostics share the health transaction's observation time.
 -- Candidate capacity matches NextFairDueWorkflowRun, excluding native custody.
--- name: GetWorkflowAutomationQueueHealth :one
+-- name: GetStoredWorkflowQueueHealth :one
 WITH clock AS MATERIALIZED (SELECT now() AS at),
 app_runs AS MATERIALIZED (
  SELECT r.id,r.workflow_name,r.platform_tenant_id,r.operation_id,r.status,r.started_at,r.scheduled_for,r.created_at,
@@ -25444,49 +25444,49 @@ WHERE o.id=sqlc.arg(operation_id)::uuid AND o.account_id=sqlc.arg(account_id)::u
 AND step->>'workflow'=sqlc.arg(workflow_name)::text AND COALESCE(NULLIF((step->>'version')::integer,0),1)=sqlc.arg(contract_version)::integer
 AND (o.state IN ('accepted','running','waiting') OR o.expires_at>sqlc.arg(now)::timestamptz);
 
--- name: GetAutomationPublishPolicy :one
+-- name: GetStoredWorkflowPublishPolicy :one
 SELECT COALESCE(p.mode,'optional')::text AS mode, COALESCE(p.version,0)::bigint AS version
-FROM apps a LEFT JOIN workflow_automation_publish_policies p ON p.app_id=a.id
+FROM apps a LEFT JOIN stored_workflow_publish_policies p ON p.app_id=a.id
 WHERE a.id=$1 AND a.status <> 'deleted';
 
--- name: UpsertAutomationPublishPolicy :exec
-INSERT INTO workflow_automation_publish_policies(app_id,mode,version) VALUES($1,$2,$3)
+-- name: UpsertStoredWorkflowPublishPolicy :exec
+INSERT INTO stored_workflow_publish_policies(app_id,mode,version) VALUES($1,$2,$3)
 ON CONFLICT(app_id) DO UPDATE SET mode=EXCLUDED.mode,version=EXCLUDED.version;
 
--- name: GetAutomationPublishDraftVersion :one
-SELECT version FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2;
+-- name: GetStoredWorkflowPublishDraftVersion :one
+SELECT version FROM stored_workflows WHERE app_id=$1 AND name=$2;
 
--- name: UpsertAutomationPublishReceipt :exec
-INSERT INTO workflow_automation_publish_receipts(app_id,name,account_id,api_key_id,token_hash,policy_version,expires_at,evidence)
+-- name: UpsertStoredWorkflowPublishReceipt :exec
+INSERT INTO stored_workflow_publish_receipts(app_id,name,account_id,api_key_id,token_hash,policy_version,expires_at,evidence)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT(app_id,name,account_id,api_key_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,policy_version=EXCLUDED.policy_version,expires_at=EXCLUDED.expires_at,evidence=EXCLUDED.evidence;
 
--- name: GetAutomationPublishReceipt :one
-SELECT * FROM workflow_automation_publish_receipts WHERE app_id=$1 AND name=$2 AND account_id=$3 AND api_key_id=$4;
+-- name: GetStoredWorkflowPublishReceipt :one
+SELECT * FROM stored_workflow_publish_receipts WHERE app_id=$1 AND name=$2 AND account_id=$3 AND api_key_id=$4;
 
--- name: AutomationFailureTargetExists :one
+-- name: StoredWorkflowFailureTargetExists :one
 SELECT EXISTS(SELECT 1 FROM jsonb_array_elements(app_workflow_definitions(sqlc.arg(app_id)::uuid,
  coalesce((SELECT workflows FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid AND status='live' AND scope='default' ORDER BY (traffic_percent>0) DESC,created_at DESC,id DESC LIMIT 1),'[]'::jsonb))) d WHERE d->>'name'=sqlc.arg(name)::text)::boolean;
 
--- name: GetAutomationFailurePolicy :one
+-- name: GetStoredWorkflowFailurePolicy :one
 SELECT jsonb_build_object('policy',jsonb_build_object('version',coalesce(p.version,0),'enabled',coalesce(p.enabled,false),
  'failure_threshold',coalesce(p.failure_threshold,3),'min_completed_runs',coalesce(p.min_completed_runs,5),'window_seconds',coalesce(p.window_seconds,300)),
  'paused',g.paused_at IS NOT NULL,'generation',coalesce(g.generation,0),'monitoring_since',g.monitoring_since,'paused_at',g.paused_at,
  'history',coalesce((SELECT jsonb_agg(jsonb_build_object('generation',h.generation,'state',h.state,'reason',h.reason,'recorded_at',h.recorded_at,
  'failures',h.failures,'completed_runs',h.completed_runs,'policy_version',h.policy_version,'actor_account_id',coalesce(h.actor_account_id::text,'')) ORDER BY h.generation DESC)
- FROM (SELECT * FROM workflow_automation_failure_history WHERE app_id=a.id AND name=sqlc.arg(name)::text ORDER BY generation DESC LIMIT sqlc.arg(history_limit)::int) h),'[]'::jsonb))::jsonb
-FROM apps a LEFT JOIN workflow_automation_failure_policies p ON p.app_id=a.id AND p.name=sqlc.arg(name)::text
-LEFT JOIN workflow_automation_failure_guards g ON g.app_id=a.id AND g.name=sqlc.arg(name)::text WHERE a.id=sqlc.arg(app_id)::uuid AND a.status<>'deleted';
+ FROM (SELECT * FROM stored_workflow_failure_history WHERE app_id=a.id AND name=sqlc.arg(name)::text ORDER BY generation DESC LIMIT sqlc.arg(history_limit)::int) h),'[]'::jsonb))::jsonb
+FROM apps a LEFT JOIN stored_workflow_failure_policies p ON p.app_id=a.id AND p.name=sqlc.arg(name)::text
+LEFT JOIN stored_workflow_failure_guards g ON g.app_id=a.id AND g.name=sqlc.arg(name)::text WHERE a.id=sqlc.arg(app_id)::uuid AND a.status<>'deleted';
 
--- name: UpsertAutomationFailurePolicy :exec
-INSERT INTO workflow_automation_failure_policies(app_id,name,version,enabled,failure_threshold,min_completed_runs,window_seconds)
+-- name: UpsertStoredWorkflowFailurePolicy :exec
+INSERT INTO stored_workflow_failure_policies(app_id,name,version,enabled,failure_threshold,min_completed_runs,window_seconds)
 VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,
  failure_threshold=excluded.failure_threshold,min_completed_runs=excluded.min_completed_runs,window_seconds=excluded.window_seconds;
 
--- name: EnsureAutomationFailureGuard :exec
-INSERT INTO workflow_automation_failure_guards(app_id,name) VALUES($1,$2) ON CONFLICT(app_id,name) DO NOTHING;
+-- name: EnsureStoredWorkflowFailureGuard :exec
+INSERT INTO stored_workflow_failure_guards(app_id,name) VALUES($1,$2) ON CONFLICT(app_id,name) DO NOTHING;
 
--- name: AutomationFailureSignals :one
+-- name: StoredWorkflowFailureSignals :one
 SELECT count(*) FILTER(WHERE status IN ('failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=sqlc.arg(since_at)::timestamptz AND finished_at<=sqlc.arg(now_at)::timestamptz)::bigint AS failures,
  count(*) FILTER(WHERE status IN ('succeeded','failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=sqlc.arg(since_at)::timestamptz AND finished_at<=sqlc.arg(now_at)::timestamptz)::bigint AS completed_runs,
  count(*) FILTER(WHERE status='pending')::bigint AS pending_runs,
@@ -25494,49 +25494,49 @@ SELECT count(*) FILTER(WHERE status IN ('failed','dead') AND cancelled_at IS NUL
  count(*) FILTER(WHERE status='awaiting_event')::bigint AS waiting_runs
 FROM workflow_runs WHERE app_id=sqlc.arg(app_id)::uuid AND workflow_name=sqlc.arg(name)::text;
 
--- name: AutomationFailureRetainedEvents :one
+-- name: StoredWorkflowFailureRetainedEvents :one
 SELECT count(*)::bigint FROM event_fanout_outbox o CROSS JOIN LATERAL jsonb_array_elements(o.recipient_snapshot) r
 WHERE o.state IN ('pending','processing') AND r->>'app_id'=sqlc.arg(app_id)::text AND r->'workflow'->>'name'=sqlc.arg(name)::text
 AND NOT EXISTS(SELECT 1 FROM workflow_event_receipts x WHERE x.outbox_id=o.id AND x.recipient_id=(r->>'id')::uuid);
 
--- name: ListAutomationFailurePolicyCandidates :many
-SELECT p.app_id::text AS app_id,p.name FROM workflow_automation_failure_policies p JOIN apps a ON a.id=p.app_id
+-- name: ListStoredWorkflowFailurePolicyCandidates :many
+SELECT p.app_id::text AS app_id,p.name FROM stored_workflow_failure_policies p JOIN apps a ON a.id=p.app_id
 JOIN app_resource_accounts ac ON ac.app_id = a.id
 WHERE p.enabled AND a.status<>'deleted' AND (sqlc.narg(owner_node_id)::uuid IS NULL OR a.node_id=sqlc.narg(owner_node_id)::uuid)
 AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
 AND p.app_id::text||'/'||p.name>sqlc.arg(after_key)::text
 ORDER BY p.app_id::text,p.name LIMIT sqlc.arg(batch_limit)::int;
 
--- name: ListAutomationFailurePauses :many
-SELECT name FROM workflow_automation_failure_guards WHERE app_id=$1 AND paused_at IS NOT NULL ORDER BY name;
+-- name: ListStoredWorkflowFailurePauses :many
+SELECT name FROM stored_workflow_failure_guards WHERE app_id=$1 AND paused_at IS NOT NULL ORDER BY name;
 
--- name: AutomationFailurePaused :one
-SELECT EXISTS(SELECT 1 FROM workflow_automation_failure_guards WHERE app_id=$1 AND name=$2 AND paused_at IS NOT NULL)::boolean;
+-- name: StoredWorkflowFailurePaused :one
+SELECT EXISTS(SELECT 1 FROM stored_workflow_failure_guards WHERE app_id=$1 AND name=$2 AND paused_at IS NOT NULL)::boolean;
 
--- name: LatchAutomationFailurePause :exec
+-- name: LatchStoredWorkflowFailurePause :exec
 WITH changed AS (
- UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=sqlc.arg(now_at)::timestamptz
+ UPDATE stored_workflow_failure_guards SET generation=generation+1,paused_at=sqlc.arg(now_at)::timestamptz
  WHERE app_id=sqlc.arg(app_id)::uuid AND name=sqlc.arg(name)::text AND paused_at IS NULL RETURNING *
 ), history AS (
- INSERT INTO workflow_automation_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version)
+ INSERT INTO stored_workflow_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version)
  SELECT app_id,name,generation,'paused','failure_threshold',paused_at,sqlc.arg(failures)::bigint,sqlc.arg(completed_runs)::bigint,sqlc.arg(policy_version)::bigint FROM changed RETURNING *
 ), recipients AS (
  SELECT h.id,h.app_id,a.account_id,h.name,h.generation,h.failures,h.completed_runs,h.policy_version,h.recorded_at,array_agg(w.id ORDER BY w.id) AS ids
  FROM history h JOIN apps a ON a.id=h.app_id JOIN app_webhooks w ON w.app_id=a.id AND w.account_id=a.account_id AND w.scope='app' AND w.enabled
- AND (cardinality(w.event_filter)=0 OR 'automation.paused'=ANY(w.event_filter))
+ AND (cardinality(w.event_filter)=0 OR 'stored_workflow.paused'=ANY(w.event_filter))
  GROUP BY h.id,h.app_id,a.account_id,h.name,h.generation,h.failures,h.completed_runs,h.policy_version,h.recorded_at
 )
 INSERT INTO app_webhook_event_outbox(account_id,app_id,event,source_id,payload,recipient_webhook_ids)
-SELECT account_id,app_id,'automation.paused',id,jsonb_build_object('app_id',app_id::text,'automation_name',name,'generation',generation,
+SELECT account_id,app_id,'stored_workflow.paused',id,jsonb_build_object('app_id',app_id::text,'stored_workflow_name',name,'generation',generation,
  'reason','failure_threshold','failures',failures,'completed_runs',completed_runs,'policy_version',policy_version,'paused_at',recorded_at),ids FROM recipients
 ON CONFLICT(event,source_id) DO NOTHING;
 
--- name: ResumeAutomationFailurePause :exec
+-- name: ResumeStoredWorkflowFailurePause :exec
 WITH changed AS (
- UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=NULL,monitoring_since=clock_timestamp()
+ UPDATE stored_workflow_failure_guards SET generation=generation+1,paused_at=NULL,monitoring_since=clock_timestamp()
  WHERE app_id=sqlc.arg(app_id)::uuid AND name=sqlc.arg(name)::text AND paused_at IS NOT NULL RETURNING *
 )
-INSERT INTO workflow_automation_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version,actor_account_id)
+INSERT INTO stored_workflow_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version,actor_account_id)
 SELECT app_id,name,generation,'resumed','operator_resume',monitoring_since,sqlc.arg(failures)::bigint,sqlc.arg(completed_runs)::bigint,
  sqlc.arg(policy_version)::bigint,sqlc.arg(actor_account_id)::uuid FROM changed;
 
@@ -27862,9 +27862,9 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
 
--- Observation only: suite/definition changes advance version through SaveAutomation.
--- name: SaveAutomationTestReport :execrows
-UPDATE workflow_automation_definitions SET test_report=$4
+-- Observation only: suite/definition changes advance version through SaveStoredWorkflow.
+-- name: SaveStoredWorkflowTestReport :execrows
+UPDATE stored_workflows SET test_report=$4
 WHERE app_id=$1 AND name=$2 AND version=$3;
 
 -- name: JobRunAttachSession :one

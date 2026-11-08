@@ -734,29 +734,29 @@ type MemStore struct {
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
-	workflowResumes                   map[string][]WorkflowResume
-	workflowRuns                      map[string]WorkflowRun
-	workflowRunCreateKeys             map[workflowRunCreateKey]workflowRunCreateKeyEntry
-	automationLiveVerifications       map[string]automationLiveRecord
-	automationLiveSuites              map[string]automationLiveSuiteRecord
-	automationLiveBaselines           map[string][]api.AutomationLiveBaseline
-	automationLiveBaselineRetirements map[string]api.AutomationLiveBaselineRetirement
-	workflowSchedules                 map[string]WorkflowScheduleCursor
-	workflowTenantSchedules           map[string]WorkflowScheduleCursor
-	workflowScheduleOccurrences       map[string]WorkflowScheduleOccurrence
-	automationFailurePolicies         map[string]api.AutomationFailurePolicy
-	automationFailureGuards           map[string]automationFailureGuard
-	automationFailureHistory          map[string][]api.AutomationFailureTransition
-	automationPublishPolicies         map[string]api.AutomationPublishPolicy
-	automationPublishReceipts         map[string]automationPublishReceipt
-	automationVersion                 int64
-	automations                       map[string]Automation
-	automationRevisions               map[string][]AutomationRevision
-	workflowSteps                     map[string]map[string]WorkflowStep // run_id → step_name → step
-	workflowStepAttempts              map[workflowStepAttemptKey]WorkflowStepAttempt
-	workflowOperationEffects          map[workflowStepAttemptKey][]workflowOperationStoredEffect
-	workflowEvents                    map[string][]WorkflowEvent // run_id → []WorkflowEvent
-	workflowEventApps                 map[string]string          // run_id → app_id, retained after run cleanup
+	workflowResumes                       map[string][]WorkflowResume
+	workflowRuns                          map[string]WorkflowRun
+	workflowRunCreateKeys                 map[workflowRunCreateKey]workflowRunCreateKeyEntry
+	storedWorkflowLiveVerifications       map[string]storedWorkflowLiveRecord
+	storedWorkflowLiveSuites              map[string]storedWorkflowLiveSuiteRecord
+	storedWorkflowLiveBaselines           map[string][]api.StoredWorkflowLiveBaseline
+	storedWorkflowLiveBaselineRetirements map[string]api.StoredWorkflowLiveBaselineRetirement
+	workflowSchedules                     map[string]WorkflowScheduleCursor
+	workflowTenantSchedules               map[string]WorkflowScheduleCursor
+	workflowScheduleOccurrences           map[string]WorkflowScheduleOccurrence
+	storedWorkflowFailurePolicies         map[string]api.StoredWorkflowFailurePolicy
+	storedWorkflowFailureGuards           map[string]storedWorkflowFailureGuard
+	storedWorkflowFailureHistory          map[string][]api.StoredWorkflowFailureTransition
+	storedWorkflowPublishPolicies         map[string]api.StoredWorkflowPublishPolicy
+	storedWorkflowPublishReceipts         map[string]storedWorkflowPublishReceipt
+	storedWorkflowVersion                 int64
+	storedWorkflows                       map[string]StoredWorkflow
+	storedWorkflowRevisions               map[string][]StoredWorkflowRevision
+	workflowSteps                         map[string]map[string]WorkflowStep // run_id → step_name → step
+	workflowStepAttempts                  map[workflowStepAttemptKey]WorkflowStepAttempt
+	workflowOperationEffects              map[workflowStepAttemptKey][]workflowOperationStoredEffect
+	workflowEvents                        map[string][]WorkflowEvent // run_id → []WorkflowEvent
+	workflowEventApps                     map[string]string          // run_id → app_id, retained after run cleanup
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -826,9 +826,9 @@ type MemStore struct {
 	// (ADR-20261101093517), kept beside the rows so AppWebhook stays as is.
 	appWebhookPreviousSecrets       map[string]appWebhookPreviousSecret
 	inboundWebhookEndpoints         map[string]InboundWebhookEndpoint
-	webhookAutomationBindings       map[string]WebhookAutomationBinding
-	webhookAutomationReceipts       map[string]WebhookAutomationReceipt
-	webhookAutomationRevision       int64
+	webhookWorkflowBindings         map[string]WebhookWorkflowBinding
+	webhookWorkflowReceipts         map[string]WebhookWorkflowReceipt
+	webhookWorkflowRevision         int64
 	workflowCallbackWebhookBindings map[string]WorkflowCallbackWebhookBinding
 	queueBindings                   map[string]QueueBinding
 	managedRealtimeEndpoints        map[string]ManagedRealtimeEndpoint
@@ -8616,7 +8616,7 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 			}
 		}
 	}
-	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
+	if err := m.checkDeploymentStoredWorkflowsLocked(d); err != nil {
 		return Deployment{}, 0, err
 	}
 	buildGate, gateErr := newBuildDependencyGate(d, d.BuildDependencies, time.Now())
@@ -10303,7 +10303,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 
 		return ErrConflict
 	}
-	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
+	if err := m.checkDeploymentStoredWorkflowsLocked(d); err != nil {
 		return err
 	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {

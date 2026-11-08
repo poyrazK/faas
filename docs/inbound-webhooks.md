@@ -99,14 +99,14 @@ minute: Free 60, Hobby 1,200, Pro 3,000, Scale 6,000. Past it a delivery gets
 `429 inbound_webhook_rate_limited` with `Retry-After`. Deliveries that fail
 signature verification are limited separately, per client IP.
 
-## Start an automation
+## Start a stored workflow
 
-An endpoint can start a published automation directly through its
-`automation-binding` resource. This opts into automation delivery for that
+An endpoint can start a published stored workflow directly through its
+`workflow-binding` resource. This opts into stored workflow delivery for that
 endpoint. Signature verification, sealed secrets and endpoint ownership retain
 their existing behavior. The durable receipt and captured workflow definition
 commit before acknowledgement; no relay handler is needed. See
-[automation authoring](automation-authoring.md#start-from-a-stripe-webhook) for
+[stored workflow authoring](stored-workflow-authoring.md#start-from-a-stripe-webhook) for
 binding, filters, provider retry behavior and receipt inspection.
 
 ## Complete a workflow callback

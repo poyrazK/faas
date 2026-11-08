@@ -22,8 +22,8 @@ func TestPublicReferenceListsOnlyGAAndBetaCommands(t *testing.T) {
 			t.Errorf("public reference lost the GA heading %q", strings.TrimSpace(heading))
 		}
 	}
-	// events, mcp-hosting and automations are preview or internal.
-	for _, heading := range []string{"## event\n", "## mcp\n", "## automation\n", "### release mirror\n"} {
+	// events, mcp-hosting and stored workflows are preview or internal.
+	for _, heading := range []string{"## event\n", "## mcp\n", "### workflow stored\n", "### release mirror\n"} {
 		if strings.Contains(ref, heading) {
 			t.Errorf("public reference documents the preview or internal heading %q", strings.TrimSpace(heading))
 		}
