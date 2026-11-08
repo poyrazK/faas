@@ -20,19 +20,42 @@ INSTANTS = 2000                    # capacity: exact state at random instants af
 NB = INSTANTS
 K_CAP = 120                        # >120 req/min: treat the minute as continuously busy
 
-PLANS = {  # RAM MB, guest vCPU, idle timeout s, €/month, included GB-h
-    'free':  dict(ram=128,  vcpu=2, idle=30,  price=0.0,  incl=5),
-    'hobby': dict(ram=256,  vcpu=2, idle=60,  price=9.0,  incl=50),
-    'pro':   dict(ram=512,  vcpu=2, idle=300, price=29.0, incl=250),
-    'scale': dict(ram=1024, vcpu=4, idle=600, price=99.0, incl=1500),
+# Plan tables: RAM MB, guest vCPU, idle timeout s, monthly price, included
+# GB-h. PLAN_TABLE=adr1430 (the default) is pkg/api/limits.go since ADR-1430,
+# billed in USD; eur-2026-10-12 is the table ADR-906, ADR-1151 and
+# ADR-20261023171905 were first simulated with.
+PLAN_TABLES = {
+    'adr1430': ('USD', {
+        'free':  dict(ram=256,  vcpu=2, idle=60,  price=0.0,  incl=20),
+        'hobby': dict(ram=512,  vcpu=2, idle=60,  price=10.0, incl=200),
+        'pro':   dict(ram=1024, vcpu=2, idle=300, price=30.0, incl=1000),
+        'scale': dict(ram=2048, vcpu=4, idle=600, price=99.0, incl=3000),
+    }),
+    'eur-2026-10-12': ('EUR', {
+        'free':  dict(ram=128,  vcpu=2, idle=30,  price=0.0,  incl=5),
+        'hobby': dict(ram=256,  vcpu=2, idle=60,  price=9.0,  incl=50),
+        'pro':   dict(ram=512,  vcpu=2, idle=300, price=29.0, incl=250),
+        'scale': dict(ram=1024, vcpu=4, idle=600, price=99.0, incl=1500),
+    }),
 }
+PLAN_TABLE = os.environ.get('PLAN_TABLE', 'adr1430')
+CURRENCY, PLANS = PLAN_TABLES[PLAN_TABLE]
 # FUNCTIONS=1: every app is a function app, which idles out after
 # FunctionIdleTimeoutDefaultSeconds (30 s, ADR-974) on every plan.
 if os.environ.get('FUNCTIONS') == '1':
     for _plan in PLANS.values():
         _plan['idle'] = min(_plan['idle'], 30)
 MIX ={'free': 0.80, 'hobby': 0.11, 'pro': 0.08, 'scale': 0.01}   # 4 free riders per payer, 55/40/5
-OVERAGE_EUR_PER_GBH = 0.01
+OVERAGE_PER_GBH = 0.01  # in the plan table's currency ($ since ADR-1430)
+# Free usage past its included GB-h is never billed: meterd hard-stops the
+# account instead (spec §4.7, pkg/meter/pusher.go). A Free app over its
+# included GB-h in apps_over_included_pct_by_plan is one that would be
+# stopped. FREE_OVERAGE=1 counts it as revenue, as the ADR-906 and ADR-1151
+# tables did, to reproduce them.
+FREE_OVERAGE = os.environ.get('FREE_OVERAGE') == '1'
+# Compute COGS per GB-RAM-hour the node holds, from the October 2026 COGS
+# report (ADR-1430, €0.003 on OVH RISE-S; the report treats $ as €).
+COMPUTE_COST_PER_GBH = 0.003
 NODES = {
     'EX44 (€44/mo, 47.6 GB, 160 vCPU slots)': dict(cost=44.0, ceiling=47600, vcpu=160, vms=10000),
     'GCP n2-standard-4 (~€130/mo, 8.6 GB, 32 vCPU slots)': dict(cost=130.0, ceiling=8593, vcpu=32, vms=10000),
@@ -56,6 +79,12 @@ POLICIES = {
     'idle running VMs hold no vCPU, no pause, park at idle timeout': dict(kind='quiet', qp=0, freeze=False, ttl=0),
     'quiet pause 2 s (billed), park at idle timeout': dict(kind='quiet', qp=2, freeze=False, ttl=0),
     'quiet pause 2 s (billed) + freeze at idle timeout -> 1 h (ADR-1151)': dict(kind='quiet', qp=2, freeze=True, ttl=3600),
+    # ADR-20261023171905 (policy G): a quiet-paused second is not billed. The
+    # 10 min variants use production's FrozenTTL; frozen time is unbilled
+    # either way, so billing matches the 1 h ones.
+    'G: quiet pause 2 s UNBILLED + freeze at idle timeout -> 1 h': dict(kind='quiet', qp=2, freeze=True, ttl=3600, unbilled=True),
+    'E: quiet pause 2 s (billed) + freeze at idle timeout -> 10 min': dict(kind='quiet', qp=2, freeze=True, ttl=600),
+    'G: quiet pause 2 s UNBILLED + freeze at idle timeout -> 10 min': dict(kind='quiet', qp=2, freeze=True, ttl=600, unbilled=True),
 }
 COLD_AFTER = 7 * 86400
 
@@ -105,7 +134,10 @@ def run_policy(pol, starts, ends, nreq, plan):
     run_flags = np.zeros(NB, dtype=bool)
     frozen_flags = np.zeros(NB, dtype=bool)
     paused_flags = np.zeros(NB, dtype=bool)
-    out = {'wakes': {'warm': 0, 'paused': 0, 'frozen': 0, 'parked': 0, 'cold': 0}, 'billed_s': 0.0, 'frozen_s': 0.0, 'requests': nreq}
+    # resident_s: seconds the VM holds its plan RAM running or quiet-paused,
+    # which compute COGS follows whether or not they are billed.
+    out = {'wakes': {'warm': 0, 'paused': 0, 'frozen': 0, 'parked': 0, 'cold': 0}, 'billed_s': 0.0, 'resident_s': 0.0,
+           'frozen_s': 0.0, 'requests': nreq}
     if n == 0:
         return out, run_flags, frozen_flags, paused_flags
     busy = float((ends - starts).sum())
@@ -123,7 +155,10 @@ def run_policy(pol, starts, ends, nreq, plan):
         idle_tail = np.minimum(gaps, idle)
         frz = np.clip(gaps - idle, 0, pol['ttl']) if pol['freeze'] else np.zeros(n)
         out['frozen_s'] = float(frz.sum())
-        out['billed_s'] = busy + float(idle_tail.sum())
+        out['resident_s'] = busy + float(idle_tail.sum())
+        # Unbilled (ADR-20261023171905): only the qp seconds before each
+        # pause are billed, not the paused rest of the idle timeout.
+        out['billed_s'] = busy + float((active_tail if pol.get('unbilled') else idle_tail).sum())
         mark(run_flags, starts, ends + active_tail)
         mark(paused_flags, ends + active_tail, ends + idle_tail)
         mark(frozen_flags, ends + idle_tail, ends + idle_tail + frz)
@@ -138,7 +173,7 @@ def run_policy(pol, starts, ends, nreq, plan):
     elif pol['kind'] == 'today':
         idle = PLANS[plan]['idle']
         tail = np.minimum(gaps, idle)
-        out['billed_s'] = busy + float(tail.sum())
+        out['billed_s'] = out['resident_s'] = busy + float(tail.sum())
         mark(run_flags, starts, ends + tail)
         wake_gaps = gaps[:-1]
         out['wakes']['parked'] = int((wake_gaps > idle).sum()) + 1
@@ -149,6 +184,7 @@ def run_policy(pol, starts, ends, nreq, plan):
         tail = np.minimum(gaps, thr)
         frz = np.clip(gaps - thr, 0, ttl)
         out['frozen_s'] = float(frz.sum())
+        out['resident_s'] = busy + float(tail.sum())
         out['billed_s'] = busy + float(tail.sum()) + (out['frozen_s'] if pol['billed'] else 0.0)
         mark(run_flags, starts, ends + tail)
         mark(frozen_flags, ends + tail, ends + tail + frz)
@@ -227,7 +263,8 @@ def main():
     mem = np.where(np.isfinite(mem), mem, np.nanmedian(mem))
     dur_s = np.clip(np.where(np.isfinite(dur), dur, np.nanmedian(dur)) / 1000.0, 0.005, 30.0)
     intervals = [busy_intervals(counts[i], dur_s[i], rnd) for i in range(napps)]
-    report = {'apps': napps, 'invocations': int(counts.sum()), 'policies': {}}
+    report = {'apps': napps, 'invocations': int(counts.sum()), 'plan_table': PLAN_TABLE, 'currency': CURRENCY,
+              'functions': os.environ.get('FUNCTIONS') == '1', 'free_overage_counted': FREE_OVERAGE, 'policies': {}}
     for name, pol in POLICIES.items():
         run_f = np.zeros((napps, NB), dtype=bool)
         frz_f = np.zeros((napps, NB), dtype=bool)
@@ -238,6 +275,7 @@ def main():
         vcpu = np.zeros(napps, dtype=np.float32)
         wakes = {'warm': 0, 'paused': 0, 'frozen': 0, 'parked': 0, 'cold': 0}
         billed_gbh = np.zeros(napps)
+        resident_gbh = np.zeros(napps)
         frozen_s = 0.0
         for i in range(napps):
             starts, ends, nreq = intervals[i]
@@ -249,12 +287,17 @@ def main():
             vcpu[i] = PLANS[plan]['vcpu']
             for k in wakes:
                 wakes[k] += o['wakes'][k]
-            billed_gbh[i] = (PLANS[plan]['ram'] + 8) / 1024 * o['billed_s'] / 3600 * (30 / DAYS)
+            gb_month = (PLANS[plan]['ram'] + 8) / 1024 / 3600 * (30 / DAYS)
+            billed_gbh[i] = gb_month * o['billed_s']
+            resident_gbh[i] = gb_month * o['resident_s']
             frozen_s += o['frozen_s']
         # revenue per app-month
         incl = np.array([PLANS[p]['incl'] for p in plans])
         price = np.array([PLANS[p]['price'] for p in plans])
-        overage = np.maximum(0, billed_gbh - incl) * OVERAGE_EUR_PER_GBH
+        overage = np.maximum(0, billed_gbh - incl) * OVERAGE_PER_GBH
+        if not FREE_OVERAGE:
+            overage = np.where(price > 0, overage, 0.0)
+        compute_cogs = resident_gbh * COMPUTE_COST_PER_GBH
         total_req = sum(wakes.values())
         mean_lat = sum(LAT[k] * v for k, v in wakes.items()) / max(total_req, 1)
         wake_events = total_req - wakes['warm']
@@ -269,8 +312,12 @@ def main():
         report['policies'][name] = {
             'billed_gbh_per_app_month_mean': round(float(billed_gbh.mean()), 2),
             'billed_gbh_by_plan': {p: round(float(billed_gbh[plans == p].mean()), 2) for p in PLANS},
-            'revenue_eur_per_app_month': round(float((price + overage).mean()), 3),
-            'overage_eur_per_app_month': round(float(overage.mean()), 4),
+            'resident_gbh_per_app_month_mean': round(float(resident_gbh.mean()), 2),
+            'revenue_per_app_month': round(float((price + overage).mean()), 3),
+            'overage_per_app_month': round(float(overage.mean()), 4),
+            'overage_by_plan': {p: round(float(overage[plans == p].mean()), 4) for p in PLANS},
+            'apps_over_included_pct_by_plan': {p: round(100 * float((billed_gbh[plans == p] > incl[plans == p]).mean()), 2) for p in PLANS},
+            'compute_cogs_per_app_month': round(float(compute_cogs.mean()), 4),
             'wakes_per_app_week': round(wake_events / napps, 1),
             'wake_tier_share_pct': per_wake,
             'mean_wake_latency_ms': round(mean_wake_lat, 1),

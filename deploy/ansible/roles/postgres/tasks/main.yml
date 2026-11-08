@@ -186,6 +186,25 @@
     - faas_postgres_compute_password is defined
     - not (faas_postgres_standby_mode | default(false) | bool)
 
+# ADR-20261023104734 step 3: every compute daemon logs in as its own role.
+# CD derives each role's password from POSTGRES_COMPUTE_ROLE_KEY and passes
+# only its SCRAM verifier (scripts/ci/compute_db_roles.py), which PostgreSQL
+# stores as given; the derived salt keeps it stable across converges.
+- name: postgres — create per-daemon compute roles — ADR-20261023104734
+  community.postgresql.postgresql_user:
+    name: "{{ item.key }}"
+    password: "{{ item.value }}"
+    role_attr_flags: LOGIN
+    state: present
+  become: true
+  become_user: postgres
+  no_log: true
+  loop: "{{ faas_postgres_compute_daemon_role_verifiers | default({}) | dict2items }}"
+  when:
+    - not (faas_postgres_standby_mode | default(false) | bool)
+    - item.key is match('^faas_[a-z][a-z0-9_]{0,40}$')
+    - item.value is match('^SCRAM-SHA-256\$')
+
 # Creates faas_runtime and the per-daemon roles, grants row DML on every table
 # and sequence, and sets default privileges for the objects later migrations
 # create. The script prints a fingerprint of the result before and after.
@@ -198,6 +217,83 @@
   register: faas_runtime_roles
   changed_when: (faas_runtime_roles.stdout_lines | first) != (faas_runtime_roles.stdout_lines | last)
   when: not (faas_postgres_standby_mode | default(false) | bool)
+
+# ADR-20261023104734 step 2 (contract): with faas_postgres_owner_contracted
+# only root may log in as the owner. pg_ident keeps `root faas` and the
+# runtime-role lines, and pg_hba drops the owner's password lines, so no
+# daemon and no compute node can authenticate as `faas`. The switch refuses to
+# act until nothing else still does: every unit has to be on its runtime role
+# (a converge with faas_postgres_runtime_roles_enabled that has soaked) and
+# compute nodes have to log in as faas_compute.
+- name: postgres — require the runtime roles before contracting the owner — ADR-20261023104734
+  ansible.builtin.assert:
+    that:
+      - faas_postgres_runtime_roles_enabled | default(false) | bool
+      - not (faas_pgbouncer_enabled | default(false) | bool)
+    fail_msg: >-
+      faas_postgres_owner_contracted needs faas_postgres_runtime_roles_enabled
+      (every daemon on its runtime role first) and is not yet supported with
+      pgbouncer, whose server leg still logs in as the owner.
+    quiet: true
+  when: faas_postgres_owner_contracted | default(false) | bool
+
+- name: postgres — read the logins that still use the owner — ADR-20261023104734
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -A
+      - -t
+      - -d
+      - faas
+      - -c
+      - >-
+        SELECT coalesce(nullif(application_name, ''), '?') || '@' ||
+        coalesce(host(client_addr), 'socket') FROM pg_stat_activity
+        WHERE usename = 'faas' AND pid <> pg_backend_pid()
+        UNION ALL
+        SELECT 'faas_compute role missing' WHERE {{ (faas_postgres_allowed_cidrs | default([]) | length > 0) | ternary('true', 'false') }}
+        AND NOT EXISTS (SELECT 1 FROM pg_authid WHERE rolname = 'faas_compute' AND rolcanlogin AND rolpassword IS NOT NULL)
+  become: true
+  become_user: postgres
+  register: faas_owner_contract_blockers
+  changed_when: false
+  when:
+    - faas_postgres_owner_contracted | default(false) | bool
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+- name: postgres — refuse to contract the owner while something still uses it — ADR-20261023104734
+  ansible.builtin.assert:
+    that:
+      - faas_owner_contract_blockers.stdout | trim | length == 0
+    fail_msg: >-
+      faas_postgres_owner_contracted would lock these out of the database:
+      {{ faas_owner_contract_blockers.stdout_lines | unique | join(', ') }}.
+      Move each daemon to its runtime role (faas_postgres_runtime_roles_enabled)
+      and each compute node's compute-db.env to faas_compute
+      (faas_postgres_compute_password, docs/runbooks/postgres-runtime-roles.md),
+      then converge again.
+    quiet: true
+  when:
+    - faas_postgres_owner_contracted | default(false) | bool
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+# control_plane_peer_access rewrites pg_hba.conf during a node join from the
+# rendered inventory alone; the marker tells it the owner is contracted here.
+- name: postgres — record the owner contract for node joins — ADR-20261023104734
+  ansible.builtin.copy:
+    dest: "{{ postgres_config_dir }}/faas-owner-contracted"
+    content: "ADR-20261023104734: only root logs in as the faas owner on this cluster.\n"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+  when: faas_postgres_owner_contracted | default(false) | bool
+
+- name: postgres — remove the owner contract marker when it is off — ADR-20261023104734
+  ansible.builtin.file:
+    path: "{{ postgres_config_dir }}/faas-owner-contracted"
+    state: absent
+  when: not (faas_postgres_owner_contracted | default(false) | bool)
 
 - name: postgres — make /run/postgresql writable for faas (peer auth)
   ansible.builtin.file:
@@ -245,6 +341,7 @@
       # single faas database role. The ident map keeps peer auth local and
       # avoids placing the database password in sealed.env on the control box.
       local   all             faas                                    peer map=faas_map
+      {% if not (faas_postgres_owner_contracted | default(false) | bool) %}
       # Split-box compute daemons use a password-authenticated TCP DSN. Keep
       # loopback explicit for operator diagnostics and legacy migrations; the
       # control-plane services use the peer-mapped Unix socket above.
@@ -253,6 +350,10 @@
       {% for cidr in (faas_postgres_allowed_cidrs | default([])) %}
       host    faas            faas                                    {{ cidr }}                scram-sha-256
       {% endfor %}
+      {% else %}
+      # ADR-20261023104734 step 2: the owner logs in only from root over the
+      # socket (faas_map root faas); compute nodes use faas_compute below.
+      {% endif %}
       # ADR-20261023104734: daemons on their own faas_runtime member role.
       # Per-daemon roles have no password and log in over the socket only;
       # faas_compute authenticates over TCP.
@@ -261,6 +362,11 @@
       host    faas            +faas_runtime                           ::1/128                  scram-sha-256
       {% for cidr in (faas_postgres_allowed_cidrs | default([])) %}
       host    faas            +faas_runtime                           {{ cidr }}                scram-sha-256
+      {% endfor %}
+      # ADR-1027: database nodes' pgproxyd reads role verifiers as the
+      # read-only faas_pgproxyd role (database_node.yml creates it).
+      {% for cidr in (faas_postgres_pgproxyd_cidrs | default([])) %}
+      host    faas            faas_pgproxyd                           {{ cidr }}                scram-sha-256
       {% endfor %}
       {% if faas_postgres_standby_address | default('') %}
       # ADR-1344 §8: the warm standby streams WAL from this address only, over
@@ -282,12 +388,13 @@
     mode: "0640"
     marker: "# {mark} faas control-plane peer map"
     block: |
-      faas_map faas         faas
       # cd-controlplane runs gregalectl/deployctl/migrate as root with
       # --db-env /etc/faas/sealed.env (fleet-seal migrate, deploy, schema).
       # Root can already reach the cluster as postgres; this only lets those
       # tools use the same socket DSN as the daemons.
       faas_map root         faas
+      {% if not (faas_postgres_owner_contracted | default(false) | bool) %}
+      faas_map faas         faas
       faas_map faas-apid    faas
       faas_map faas-schedd  faas
       faas_map faas-meterd  faas
@@ -295,9 +402,10 @@
       faas_map faas-outboundd faas
       faas_map faas-bridged faas
       faas_map faas-mcp-bridge faas
+      {% endif %}
       # ADR-20261023104734: each daemon user may also log in as its own
       # faas_runtime member (FAAS_DB_ROLE). The lines mapping it to the owner
-      # above are removed once every unit has moved.
+      # above go away with faas_postgres_owner_contracted (step 2).
       faas_map faas         faas_shared
       faas_map faas-apid    faas_apid
       faas_map faas-schedd  faas_schedd
@@ -309,6 +417,17 @@
   register: pg_ident
   failed_when: false
   notify: reload postgresql
+
+# Older deploy steps appended owner mappings outside the managed block (for
+# example cd-controlplane's `faas_map  faas-outboundd  faas`). Once the owner
+# is contracted, no OS user but root may map to it anywhere in the file.
+- name: postgres — remove owner mappings outside the managed block when contracted — ADR-20261023104734
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/pg_ident.conf"
+    regexp: '^faas_map\s+(?!root\s)\S+\s+faas\s*$'
+    state: absent
+  notify: reload postgresql
+  when: faas_postgres_owner_contracted | default(false) | bool
 
 - name: postgres — verify unix-socket-only listeners (defensive)
   ansible.builtin.command: pg_lsclusters

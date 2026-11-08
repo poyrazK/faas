@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -88,6 +89,23 @@ func (a *stateBindingsAdapter) ListForAccount(ctx context.Context, accountID str
 	return a.store.ListGithubInstallBindingsForAccount(ctx, accountID)
 }
 
+// ListForInstallationRepo returns the live bindings of repoFullName under
+// installationID; a release tag finds apps bound to a non-default branch
+// with it.
+func (a *stateBindingsAdapter) ListForInstallationRepo(ctx context.Context, installationID int64, repoFullName string) ([]state.GitHubBinding, error) {
+	all, err := a.store.ListGitHubInstallBindingsForInstallation(ctx, installationID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]state.GitHubBinding, 0, len(all))
+	for _, binding := range all {
+		if strings.EqualFold(binding.RepoFullName, repoFullName) {
+			out = append(out, binding)
+		}
+	}
+	return out, nil
+}
+
 // FindForRepoBranch is the inbound-webhook dispatch lookup.
 func (a *stateBindingsAdapter) FindForRepoBranch(ctx context.Context, repoFullName, branch string) (state.GitHubBinding, error) {
 	return a.store.GithubInstallBindingForRepoBranch(ctx, repoFullName, branch)
@@ -107,6 +125,27 @@ func (a *stateBindingsAdapter) GetAppBinding(ctx context.Context, repoFullName, 
 
 func (a *stateBindingsAdapter) GetAppBindingForInstallation(ctx context.Context, repoFullName, branch string, installationID int64) (state.GitHubBinding, error) {
 	return a.store.GithubInstallBindingForRepoBranchInstallation(ctx, repoFullName, branch, installationID)
+}
+
+func (a *stateBindingsAdapter) ListBindingsForInstallation(ctx context.Context, installationID int64) ([]state.GitHubBinding, error) {
+	bindings, err := a.store.ListGitHubInstallBindingsForInstallation(ctx, installationID)
+	if err != nil {
+		return nil, err
+	}
+	projects, err := a.store.GitHubProjectBindingsForInstallation(ctx, installationID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool)
+	for _, b := range bindings {
+		seen[b.AccountID+"\x00"+b.RepoFullName] = true
+	}
+	for _, project := range projects {
+		if !seen[project.AccountID+"\x00"+project.RepoFullName] {
+			bindings = append(bindings, project)
+		}
+	}
+	return bindings, nil
 }
 
 // InstallationIDForRepo is the legacy ChecksAPI seam. Maps
@@ -179,6 +218,10 @@ func (a *stateLifecycleAdapter) RenameGitHubRepository(ctx context.Context, inst
 	return a.store.RenameGitHubRepository(ctx, installationID, oldRepoFullName, newRepoFullName)
 }
 
+func (a *stateLifecycleAdapter) RenameGitHubAccount(ctx context.Context, installationID int64, oldLogin, newLogin string) error {
+	return a.store.RenameGitHubAccount(ctx, installationID, oldLogin, newLogin)
+}
+
 func (a *stateLifecycleAdapter) ListGitHubInstallations(ctx context.Context) ([]state.GitHubInstall, error) {
 	return a.store.ListGitHubInstallations(ctx)
 }
@@ -193,3 +236,7 @@ func (a *stateLifecycleAdapter) RecordGitHubInstallationSync(ctx context.Context
 
 var _ githubd.InstallationLifecycleStore = (*stateLifecycleAdapter)(nil)
 var _ githubd.InstallationSyncStore = (*stateLifecycleAdapter)(nil)
+
+func (a *stateInstallsAdapter) RefreshToken(ctx context.Context, previous []byte, inst state.GitHubInstall) error {
+	return a.store.RefreshGitHubConnectionToken(ctx, previous, inst)
+}

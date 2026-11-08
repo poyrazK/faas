@@ -75,7 +75,9 @@
       "docs_url": "/docs/adr/20261027090010-agent-runs-and-agent-step",
       "acceptance_test": "pkg/e2etest/agentchain/agentchain_metal_test.go::TestMetalAgentPRTriage",
       "routes": [
+        "/v1/agent-callbacks",
         "/v1/agent-runs",
+        "/v1/agent-tools",
         "/v1/agents"
       ],
       "consumers": [
@@ -259,6 +261,9 @@
       "routes": [
         "/dashboard/apps/{}/alert-rollbacks",
         "/v1/apps/{}/alert-rollbacks"
+      ],
+      "cli": [
+        "alerts actions"
       ]
     },
     {
@@ -336,7 +341,10 @@
       "routes": [
         "/dashboard/account/keys",
         "/v1/account/keys",
+        "/v1/agent-connections",
         "/v1/keys",
+        "/v1/orgs/{}/agent-connections",
+        "/v1/orgs/{}/agent-policy",
         "/v1/orgs/{}/keys"
       ],
       "cli": [
@@ -408,7 +416,8 @@
       "parent": "billing",
       "routes": [
         "/dashboard/app-costs",
-        "/v1/billing/costs"
+        "/v1/billing/costs",
+        "/v1/apps/{}/costs"
       ],
       "cli": [
         "app costs",
@@ -455,6 +464,12 @@
       "routes": [
         "/dashboard/apps/{}/tasks",
         "/v1/apps/{}/tasks"
+      ],
+      "cli": [
+        "app cp",
+        "app exec",
+        "app port-forward",
+        "postgres connect"
       ]
     },
     {
@@ -496,7 +511,9 @@
         "/v1/apps/{}/inbox",
         "/v1/apps/{}/outbox",
         "/v1/apps/{}/queues/send",
-        "/v1/orgs/{}/apps/{}/queues/send"
+        "/v1/apps/{}/queues/send-batch",
+        "/v1/orgs/{}/apps/{}/queues/send",
+        "/v1/orgs/{}/apps/{}/queues/send-batch"
       ],
       "cli": [
         "send",
@@ -545,11 +562,15 @@
         "/dashboard/apps/{}/restore",
         "=/v1/apps",
         "=/v1/apps/{}",
+        "/v1/apps/{}/operation-preview",
+        "/v1/apps/{}/resource-inventory",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
+        "/v1/apps/{}/service-aborts",
         "/v1/deleted-apps",
         "/dashboard/apps/{}/deployment-submissions",
         "/dashboard/apps/{}/deployments",
+        "/v1/apps/{}/deployment-promotions",
         "/v1/apps/{}/deployment-submissions",
         "=/v1/apps/{}/deployments",
         "/v1/apps/{}/deployments/clear-obsolete",
@@ -686,6 +707,9 @@
       ],
       "docs_url": "/docs/scaling-policy",
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestUpdateAppAutoscaleDisableZero",
+      "routes": [
+        "/v1/apps/{}/scaling"
+      ],
       "settings": [
         "app.function_concurrency",
         "app.max_concurrency",
@@ -721,7 +745,7 @@
       "id": "billing",
       "name": "Billing",
       "category": "billing",
-      "description": "Choose a plan, see usage and invoices and set an overage cap.",
+      "description": "Choose a plan, see usage and invoices, set an overage cap and elect to pay for egress above the allowance.",
       "maturity": "ga",
       "plans": [
         "free",
@@ -743,6 +767,7 @@
         "/dashboard/upgrade",
         "/dashboard/usage",
         "/v1/account/billing",
+        "/v1/account/egress-overage",
         "/v1/account/overage-cap",
         "/v1/account/plan",
         "/v1/account/statement-invoices",
@@ -755,6 +780,7 @@
         "/v1/billing/status",
         "/v1/invoices",
         "/v1/orgs/{}/billing",
+        "/v1/orgs/{}/egress-overage",
         "/v1/orgs/{}/invoices",
         "/v1/orgs/{}/overage-cap",
         "/v1/orgs/{}/plan",
@@ -770,7 +796,8 @@
         "invoices",
         "plan",
         "usage",
-        "overage-cap"
+        "overage-cap",
+        "billing egress-overage"
       ]
     },
     {
@@ -824,6 +851,7 @@
       "description": "Grant other apps access to a bucket.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -843,6 +871,7 @@
       "description": "Let browsers on your own sites use a bucket's signed URLs and upload grants.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -865,6 +894,7 @@
       "description": "Encrypt buckets with customer-chosen keys.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -1231,6 +1261,7 @@
         "=/dashboard",
         "/dashboard/apps/new",
         "/dashboard/assets",
+        "/doctor.js",
         "/history.js",
         "/replacement.js",
         "/resolution.js",
@@ -1247,6 +1278,7 @@
       "description": "Serve a managed Postgres database over a generated HTTP API.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -1303,6 +1335,28 @@
       ]
     },
     {
+      "id": "database-rollbacks",
+      "name": "Rollbacks that restore the database",
+      "category": "data",
+      "description": "Roll an app back with its managed databases restored to that release's point in time.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/apid/databaseswitch/worker_test.go::TestDatabaseSwitchRestoresFencesDrainsSwitchesAndResumes",
+      "parent": "postgres-restore",
+      "routes": [
+        "/v1/apps/{}/database-switches"
+      ],
+      "cli": [
+        "rollback switch",
+        "rollback switches"
+      ]
+    },
+    {
       "id": "datadog-integration",
       "name": "Datadog integration",
       "category": "observability",
@@ -1354,7 +1408,6 @@
       "docs_url": "/docs/cli",
       "acceptance_test": "pkg/apid/apidserver/handlers_debug_running_test.go::TestDebugRunning_IsPlanGated",
       "routes": [
-        "/dashboard/apps/{}/debug",
         "/v1/apps/{}/debug"
       ],
       "cli": [
@@ -2616,7 +2669,7 @@
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/deploy-from-github",
-      "acceptance_test": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath",
+      "acceptance_test": "pkg/githubd/app_binding_push_test.go::TestPushDeploysAppBoundWithoutProject",
       "consumers": [
         "githubd"
       ],
@@ -3022,6 +3075,9 @@
       "acceptance_test": "pkg/apid/livequeries/service_test.go::TestLiveQueriesLogins",
       "routes": [
         "/v1/postgres/databases/{}/live"
+      ],
+      "cli": [
+        "postgres live"
       ]
     },
     {
@@ -3118,16 +3174,17 @@
       "id": "managed-postgres",
       "name": "Managed PostgreSQL",
       "category": "data",
-      "description": "Provision and bind a managed PostgreSQL database to an API.",
-      "maturity": "preview",
+      "description": "Create a managed PostgreSQL database and bind it to an app.",
+      "maturity": "ga",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/managed-postgres",
+      "docs_url": "/docs/postgres",
       "operator_flag": "FAAS_MANAGED_POSTGRES_CONFIG",
-      "acceptance_test": "pkg/managedpostgres/service_test.go::TestCreateIsIdempotentAndPersistsPlacement",
+      "acceptance_test": "tests/journeys/postgres_test.go::TestManagedPostgres",
       "settings": [
         "manifest.databases"
       ],
@@ -3315,6 +3372,7 @@
       "description": "Upload large objects in parts.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3380,6 +3438,7 @@
       "description": "Expire or transition objects by rule.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3402,6 +3461,7 @@
       "description": "Lock objects, protect writes and keep write receipts.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3433,6 +3493,7 @@
       "description": "Use private managed object buckets and signed URLs from an API.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3484,12 +3545,29 @@
       ]
     },
     {
+      "id": "object-storage-key-scopes",
+      "name": "Key-scoped bucket bindings",
+      "category": "data",
+      "description": "Limit an app's bucket binding to object keys under one prefix.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/apid/object/key_scope_test.go::TestKeyScopedBindingsNeedTheCapability",
+      "parent": "object-storage"
+    },
+    {
       "id": "object-versioning",
       "name": "Object versioning",
       "category": "data",
       "description": "Keep and restore earlier versions of objects.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3799,13 +3877,13 @@
       "name": "Organization databases",
       "category": "data",
       "description": "Own managed databases at the organization level.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/managed-postgres",
+      "docs_url": "/docs/postgres",
       "acceptance_test": "pkg/apid/apidserver/org_managed_postgres_pg_test.go::TestOrgManagedPostgresPostgresHTTP",
       "parent": "managed-postgres",
       "routes": [
@@ -3826,6 +3904,7 @@
       "docs_url": "/docs/orgs",
       "acceptance_test": "pkg/apid/apidserver/handlers_org_test.go::TestOrgUUID_Pin",
       "routes": [
+        "/dashboard/invitations/{}",
         "/dashboard/orgs",
         "/v1/invitations",
         "=/v1/orgs",
@@ -3951,16 +4030,18 @@
       "name": "Postgres bindings",
       "category": "data",
       "description": "Bind databases to apps and rotate their credentials.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/managed-postgres",
+      "docs_url": "/docs/postgres",
       "acceptance_test": "cmd/gregale/commands_postgres_egress_test.go::TestPostgresBindingDeliveryGuidance",
       "parent": "managed-postgres",
       "routes": [
+        "/v1/apps/{}/postgres-bindings",
         "/v1/orgs/{}/postgres/bindings",
         "/v1/postgres/bindings",
         "/v1/postgres/databases/{}/bindings"
@@ -3971,13 +4052,13 @@
       "name": "Postgres compute policy and resize",
       "category": "data",
       "description": "Resize a database and set its scale-to-zero compute policy.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/managed-postgres",
+      "docs_url": "/docs/postgres",
       "acceptance_test": "pkg/apid/apidserver/handlers_managed_postgres_compute_policy_test.go::TestManagedPostgresComputePolicyRoutesAndReplay",
       "parent": "managed-postgres",
       "routes": [
@@ -3998,11 +4079,33 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/managed-postgres",
+      "docs_url": "/docs/postgres",
       "acceptance_test": "pkg/dashboard/tls_cutover_test.go::TestReadTLSCutoverState",
       "parent": "managed-postgres",
       "routes": [
         "/v1/postgres/cutovers"
+      ],
+      "cli": [
+        "postgres cutover"
+      ]
+    },
+    {
+      "id": "postgres-major-upgrades",
+      "name": "Postgres major version upgrades",
+      "category": "data",
+      "description": "Upgrade a native database in place to a later PostgreSQL major version.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/managed-postgres",
+      "acceptance_test": "pkg/apid/apidserver/managed_postgres_upgrade_rollout_test.go::TestManagedPostgresUpgradeHiddenOutsideTheRollout",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/postgres/databases/{}/upgrade",
+        "/v1/postgres/databases/{}/upgrades"
       ]
     },
     {
@@ -4032,22 +4135,18 @@
       "name": "Postgres point-in-time restore",
       "category": "data",
       "description": "Restore a database to an earlier point in time.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/managed-postgres",
-      "acceptance_test": "pkg/objectstorage/snapshot_test.go::TestCaptureObjectManifestSelectsPointInTimeAcrossPages",
+      "docs_url": "/docs/postgres",
+      "acceptance_test": "tests/journeys/postgres_test.go::TestManagedPostgres",
       "parent": "managed-postgres",
       "routes": [
-        "/v1/apps/{}/database-switches",
         "/v1/postgres/databases/{}/restore"
-      ],
-      "cli": [
-        "rollback switch",
-        "rollback switches"
       ]
     },
     {
@@ -4116,7 +4215,8 @@
         "/v1/networks"
       ],
       "cli": [
-        "app network"
+        "app network attach",
+        "app network detach"
       ]
     },
     {
@@ -4173,7 +4273,7 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_pgstore_test.go::TestPGHandler_DebuggerRequestAndRegressionReadPaths",
       "parent": "debug",
       "routes": [
-        "/dashboard/apps/{}/debug/requests",
+        "/dashboard/apps/{}/debug",
         "/v1/apps/{}/debug/compare",
         "/v1/apps/{}/debug/critical-paths",
         "/v1/apps/{}/debug/requests",
@@ -4291,6 +4391,7 @@
         "/v1/deployments/{}/canary/advance",
         "/v1/deployments/{}/promote",
         "/v1/deployments/{}/promote-with-application-ack",
+        "/v1/deployments/{}/timeline",
         "/v1/deployments/{}/traffic"
       ],
       "cli": [
@@ -4302,7 +4403,7 @@
       "id": "projects",
       "name": "Projects",
       "category": "delivery",
-      "description": "Deploy a Compose file or a repository of several services as one project: each service is an app, and they call each other by name.",
+      "description": "Deploy a Compose file or repository as one project: each service counts toward the plan's app limit. Free supports one service; multi-service projects require Hobby or higher, and services call each other by name.",
       "maturity": "ga",
       "plans": [
         "free",
@@ -4323,11 +4424,15 @@
         "=/v1/projects/{}",
         "/v1/projects/{}/delete-preview",
         "/v1/projects/{}/deployment-readiness",
+        "/v1/projects/{}/environments/{}/config",
+        "/v1/projects/{}/environments/{}/secrets",
         "/v1/projects/{}/exclusions",
         "/v1/projects/{}/release-secrets"
       ],
       "cli": [
-        "projects"
+        "projects",
+        "projects environments config",
+        "projects environments secrets"
       ]
     },
     {
@@ -4654,6 +4759,9 @@
       ],
       "docs_url": "/docs/deploys",
       "acceptance_test": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_PinsProcfileReleaseCommand",
+      "routes": [
+        "/v1/deployments/{}/release-outcome"
+      ],
       "settings": [
         "manifest.release"
       ]
@@ -4773,6 +4881,36 @@
         "domains wait",
         "crons status",
         "crons wait"
+      ]
+    },
+    {
+      "id": "resource-labels",
+      "name": "Resource labels",
+      "category": "delivery",
+      "description": "Label apps, managed databases, crons and jobs with key/value pairs and filter their lists with a selector.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/labels",
+      "acceptance_test": "pkg/apid/apidserver/handlers_resource_labels_test.go::TestAppLabelsAPI",
+      "settings": [
+        "manifest.labels"
+      ],
+      "routes": [
+        "/v1/apps/{}/labels",
+        "/v1/postgres/databases/{}/labels",
+        "/v1/crons/{}/labels",
+        "/v1/jobs/{}/labels"
+      ],
+      "cli": [
+        "app label",
+        "postgres label",
+        "crons label",
+        "jobs label"
       ]
     },
     {
@@ -5033,6 +5171,7 @@
       "description": "Mint S3-compatible credentials for a bucket.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -5327,6 +5466,7 @@
       "description": "Share objects with signed URLs and accept browser uploads.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -5731,8 +5871,6 @@
       "description": "Serve a wildcard custom domain.",
       "maturity": "ga",
       "plans": [
-        "free",
-        "hobby",
         "pro",
         "scale"
       ],

@@ -338,6 +338,11 @@ func (i *TenantSurfaceCertIssuer) RequestCertForWildcardDomain(ctx context.Conte
 	if i == nil || i.store == nil || !state.IsWildcardCustomDomain(domain) {
 		return nil
 	}
+	if api.CustomDomainTLSOnDemand() {
+		return nil // Caddy owns this certificate lifecycle.
+	}
+	ctx, cancel := context.WithTimeout(ctx, api.CustomDomainCertRetryTimeout)
+	defer cancel()
 	d, err := i.store.DomainByName(ctx, domain)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -345,22 +350,43 @@ func (i *TenantSurfaceCertIssuer) RequestCertForWildcardDomain(ctx context.Conte
 		}
 		return fmt.Errorf("gateway: lookup wildcard domain %q: %w", domain, err)
 	}
+	if expected, bound := state.CustomDomainProbe(ctx); bound && !state.SameCustomDomainClaim(expected, d) {
+		return state.ErrStaleCustomDomainProbe
+	}
 	if !d.Verified() {
 		return nil
 	}
+	attempts, ok := i.store.(state.CustomDomainCertificateAttemptStore)
+	if !ok {
+		return errors.New("gateway: custom-domain certificate attempt storage unavailable")
+	}
+	claimed, err := attempts.BeginCustomDomainCertificateAttempt(ctx, d, i.now(), api.CustomDomainCertRetryDelay)
+	if err != nil || !claimed {
+		return err
+	}
+	app, err := i.store.AppByID(ctx, d.AppID)
+	if err != nil {
+		return fmt.Errorf("gateway: wildcard certificate app: %w", err)
+	}
+	owner, err := state.AppResourceAccount(ctx, i.store, app)
+	if err != nil {
+		return fmt.Errorf("gateway: wildcard certificate owner: %w", err)
+	}
+	if app.Status == state.AppDeleted || !owner.Plan.WildcardDomainsAllowed() {
+		return nil
+	}
+	ctx = state.WithCustomDomainProbe(ctx, d)
 	if err := i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertPending, time.Time{}, "", d.DNSLastCheckedAt); err != nil {
 		return err
 	}
 	if i.le == nil {
 		errMsg := "cert engine unwired: wildcard DNS-01 issuer is not configured"
-		_ = i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertFailed, time.Time{}, errMsg, d.DNSLastCheckedAt)
-		return nil
+		return i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertFailed, time.Time{}, errMsg, d.DNSLastCheckedAt)
 	}
 	notAfter, err := i.le.Issue(ctx, domain)
 	if err != nil {
 		errMsg := fmt.Sprintf("certmagic wildcard Issue: %v", err)
-		_ = i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertFailed, time.Time{}, errMsg, d.DNSLastCheckedAt)
-		return err
+		return errors.Join(err, i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertFailed, time.Time{}, errMsg, d.DNSLastCheckedAt))
 	}
 	return i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertIssued, notAfter, "", d.DNSLastCheckedAt)
 }

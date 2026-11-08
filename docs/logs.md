@@ -33,18 +33,25 @@ says so instead of skipping silently.
 
 ## Retention
 
-| Plan | Archived logs readable for | HTTP request events | Log drains |
-|---|---|---|---|
-| Free | 1 day | — | — |
-| Hobby | 7 days | 3 days | 3 per app, 10 per account |
-| Pro | 30 days | 7 days | 10 per app, 30 per account |
-| Scale | 90 days | 14 days | 25 per app, 100 per account |
+| Plan | Archived logs readable for | Job task output kept for | HTTP request events | Log drains |
+|---|---|---|---|---|
+| Free | 1 day | 1 day | — | — |
+| Hobby | 7 days | 7 days | 3 days | 3 per app, 10 per account |
+| Pro | 30 days | 30 days | 7 days | 10 per app, 30 per account |
+| Scale | 90 days | 90 days | 14 days | 25 per app, 100 per account |
 
 The archive deletes logs 90 days after they are written, whatever your plan,
 and deletes all of them when your account is deleted. Lines still in a
 running instance's memory are lost if the node
 running it fails before they are archived; use a [log drain](#log-drains) when
 every line matters.
+
+[Job](jobs.md) task output, what `gregale job logs` and the attempt history
+show, is deleted once the run finished longer ago than your plan's window. The
+run, its tasks and their attempts stay, with their statuses and exit codes;
+their output reads as empty and truncated (`gregale job logs` prints only
+`...[truncated]`). Deleting your account deletes all of it
+([ADR-20261102183152](adr/20261102183152-job-log-retention.md)).
 
 ## Filtering
 
@@ -58,6 +65,12 @@ every line matters.
 | `--status 500`, `--route "GET /orders"` | HTTP events with that status or route |
 | `--request ID`, `--trace TRACE_ID` | One request, or every request of a trace |
 | `--explain` | A short summary of the latest failure and repeated errors |
+
+`--deployment ID` on a deployment that never served (failed, cancelled or
+still building) prints its build and deploy log, then its failure reason. With
+`--json` each entry is a `{"type":"log"}` record and the last record is a
+`{"type":"summary"}` with the deployment's `status`, `error` and `error_code`.
+`--explain` is a terminal summary and is refused with `--json`.
 
 `--level` reads the `level` or `severity` field of JSON log lines (the
 format Pino, Zap, Logrus and Cloud Logging use) and common text shapes such as
@@ -114,8 +127,12 @@ LOG_TOKEN='Bearer …' gregale logs drain create --app my-api \
 gregale logs drain health my-api <drain-id>
 ```
 
-- `--kind http_json` (the default) posts batches of JSON lines; `--kind otlp`
-  sends OTLP/HTTP log records.
+- `--kind http_json` (the default) posts each line as one JSON object;
+  `--kind otlp` sends OTLP/HTTP log records in batches of up to 100 lines,
+  as does the Datadog integration.
+- A drain picks up where it left off after a restart or a change: lines
+  still held by the running instances are forwarded once, and lines that
+  were no longer available are counted as gaps in `health`.
 - The credential is read from an environment variable, stored encrypted, and
   shown masked.
 - The destination must be a public `https://` or `http://` URL; private,
@@ -124,8 +141,32 @@ gregale logs drain health my-api <drain-id>
 - `health` shows the queue, delivered and failed counts and the last error.
   Lines a destination keeps refusing are retried and then dead-lettered, so a
   broken drain never holds up your app.
+- Drains follow your current plan. The plan's limits apply when you create a
+  drain and again when logs are delivered: if you move to a plan with fewer
+  drains (or to Free, which has none), your oldest enabled drains keep
+  delivering up to the new limits and the rest pause, with `health` showing
+  them as `inactive`. A company app's drains follow the organization's plan
+  once the organization pays for its apps. Disable or delete drains to choose
+  which ones deliver; upgrading resumes them all. You can list, read, disable
+  and delete drains on every plan; creating, enabling or changing one needs a
+  plan that includes drains.
+- Many destinations (Sumo Logic and Loggly, for example) put their ingestion
+  token in the URL, so only whoever may change a drain sees its full URL: you
+  in a browser session or with an `admin` or `deploy:write` key, and on a
+  company app the organization's owners and admins. Everyone else (viewers,
+  developers, `apps:read` keys) sees the destination without its path and
+  query, as `https://collectors.example.com/***`.
 
 ## Limits
 
 - A line is at most 1 MiB. Output without a newline beyond that is dropped.
-- Logs have no separate charge.
+- An account can hold a limited number of log streams open at once (Free 2,
+  Hobby 5, Pro 20, Scale 50); more answer `429 log_streams_limit`.
+- `--follow` reconnects by itself after ten quiet minutes.
+- Each instance can write a limited amount of log output per UTC hour:
+  Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB. Past it, Gregale
+  writes one line saying so and drops the rest of the hour's output
+  ([ADR-20261104085150](adr/20261104085150-log-volume-allowance.md)).
+- A log drain delivers at most 1 MiB of lines a second (bursts to 4 MiB);
+  lines past that are dropped and counted in `health`.
+- Logs have no separate charge. Bytes a drain delivers count toward the app's monthly egress, like the app's own traffic ([plans](plans.md#what-each-limit-means)).

@@ -13,9 +13,13 @@ export type UsageSummaryResponse = {
   included_gb_hours: number;
   overage_gb_hours: number;
   /**
-   * Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.
+   * Integer cents. Includes compute at $0.05/GB-h and configured live egress overage; shadow egress is excluded.
    */
   overage_cents: number;
+  /**
+   * GB-hours this month that instances spent quiet-paused between requests and were not billed for, in the same plan RAM + 8 MB unit as used_gb_hours and not included in it. Absent while zero.
+   */
+  quiet_paused_gb_hours?: number;
   /**
    * Per-month CPU-hours (informational; not billed).
    */

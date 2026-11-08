@@ -289,6 +289,18 @@ func ApplyBillingEnvOverlay(cfg *RootBillingConfig, env func(string) string) *Ro
 	if v := env("FAAS_POLAR_OBJECT_STORAGE_METER_ID"); v != "" {
 		cfg.Polar.ObjectStorageMeterID = v
 	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE"); v != "" {
+		cfg.Polar.ManagedPostgresBillingMode = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM"); v != "" {
+		cfg.Polar.ManagedPostgresBillingFrom = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_USAGE_EVENT_NAME"); v != "" {
+		cfg.Polar.ManagedPostgresUsageEventName = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_METER_ID"); v != "" {
+		cfg.Polar.ManagedPostgresMeterID = v
+	}
 	if v := env("FAAS_POLAR_SUCCESS_URL"); v != "" {
 		cfg.Polar.SuccessURL = v
 	}

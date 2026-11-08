@@ -29,6 +29,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -44,6 +45,8 @@ import (
 // cheap — it copies two string IDs per call.
 type requireAuthnAdapter struct {
 	authn authmw.Authenticator
+	// limits loads a key's project limit; nil leaves keys unlimited.
+	limits authmw.KeyProjectLimiter
 }
 
 // newRequireAuthnAdapter wraps the production middleware.
@@ -51,11 +54,11 @@ type requireAuthnAdapter struct {
 // is nil-safe so a nil return means "authz branch disabled"
 // (the pre-issue behaviour, preserved for unit tests + dev
 // boxes).
-func newRequireAuthnAdapter(mw *authmw.Middleware) *requireAuthnAdapter {
+func newRequireAuthnAdapter(mw *authmw.Middleware, limits authmw.KeyProjectLimiter) *requireAuthnAdapter {
 	if mw == nil {
 		return nil
 	}
-	return &requireAuthnAdapter{authn: mw.Authn}
+	return &requireAuthnAdapter{authn: mw.Authn, limits: limits}
 }
 
 // AuthenticateKey implements gateway.RequireAuthnAuthenticator.
@@ -84,7 +87,18 @@ func (a *requireAuthnAdapter) AuthenticateKey(ctx context.Context, hash []byte) 
 		}
 		return gateway.RequireAuthnAccount{}, gateway.RequireAuthnKey{}, err
 	}
-	return gateway.RequireAuthnAccount{ID: acct.ID}, gateway.RequireAuthnKey{ID: key.ID, Scopes: append([]string(nil), key.Scopes...)}, nil
+	out := gateway.RequireAuthnKey{ID: key.ID, Scopes: append([]string(nil), key.Scopes...), OrgID: key.OrgID, AppID: key.AppID}
+	// ADR-20261104085712: an agent or mcp-login key limited to projects
+	// unlocks only their apps here too. The limit is read for those keys
+	// only; the gateway's key cache keeps the answer with the key.
+	if a.limits != nil && authmw.ProjectLimitable(key) {
+		ids, limited, err := a.limits.APIKeyProjectLimit(ctx, key.ID)
+		if err != nil {
+			return gateway.RequireAuthnAccount{}, gateway.RequireAuthnKey{}, fmt.Errorf("gatewayd: read key project limit: %w", err)
+		}
+		out.ProjectLimited, out.ProjectIDs = limited, ids
+	}
+	return gateway.RequireAuthnAccount{ID: acct.ID}, out, nil
 }
 
 // Compile-time check: requireAuthnAdapter satisfies the narrow

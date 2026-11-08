@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var ErrCustomDomainQuotaExceeded = errors.New("state: custom domain quota exceeded")
@@ -100,6 +103,9 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		for update of a`, appID, environmentID).Scan(&accountID); err != nil {
 		return CustomDomain{}, 0, mapErr(err)
 	}
+	if err := checkPublicCustomDomainClaim(ctx, tx, domain, appID); err != nil {
+		return CustomDomain{}, 0, err
+	}
 	var n int
 	if err = tx.QueryRow(ctx, `select count(*) from custom_domains where app_id=$1 and verified_at is null and verification_expires_at > now()`, appID).Scan(&n); err != nil {
 		return CustomDomain{}, 0, err
@@ -150,6 +156,7 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		    last_cert_issuance_failed_email_at = null,
 		    verification_next_check_at = now(),
 		    verification_attempts = 0,
+		    verification_manual_check_at = NULL,
 		    verification_expires_at = now() + interval '7 days'
 		where custom_domains.verified_at is null
 		  and (custom_domains.verification_expires_at <= now()
@@ -168,6 +175,11 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		}
 		return d, 0, mapErr(err)
 	}
+	// A reclaimed or taken-over row starts as a new claim: no host
+	// allowlist or known hosts from the previous claimant.
+	if err = forgetCustomDomainTLSHostsTx(ctx, tx, domain); err != nil {
+		return CustomDomain{}, 0, err
+	}
 	var outboxID int64
 	if entry != nil {
 		outboxID, err = enqueueOrgActivityOutboxTx(ctx, tx, *entry)
@@ -182,7 +194,7 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 }
 
 func (s *PgStore) ClaimCustomDomainsForVerification(ctx context.Context, limit int) ([]CustomDomain, error) {
-	rows, err := s.pool.Query(ctx, `with accounts_due as (select a.account_id,min(d.verification_next_check_at) oldest from custom_domains d join apps a on a.id=d.app_id where d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() group by a.account_id order by oldest limit $1), due as (select candidate.domain from accounts_due q cross join lateral (select d.domain from custom_domains d join apps a on a.id=d.app_id where a.account_id=q.account_id and d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() order by d.verification_next_check_at,d.domain limit 1 for update of d skip locked) candidate), bumped as (update custom_domains d set verification_attempts=d.verification_attempts+1, verification_next_check_at=now()+least(interval '1 hour',interval '30 seconds'*power(2,least(d.verification_attempts,7))) from due where d.domain=due.domain returning d.*) select domain,app_id,challenge_token,coalesce(verified_at,'epoch'),cert_status,coalesce(cert_expires_at,'epoch'),coalesce(cert_last_error,''),coalesce(dns_last_checked_at,'epoch'),coalesce(cert_failed_at,'epoch'),verification_next_check_at,verification_expires_at,verification_attempts,coalesce(environment_id::text,'') from bumped`, limit)
+	rows, err := s.pool.Query(ctx, `with accounts_due as (select a.account_id,min(d.verification_next_check_at) oldest from custom_domains d join apps a on a.id=d.app_id where d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() group by a.account_id order by oldest limit $1), due as (select candidate.domain from accounts_due q cross join lateral (select d.domain from custom_domains d join apps a on a.id=d.app_id where a.account_id=q.account_id and d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() order by d.verification_next_check_at,d.domain limit 1 for update of d skip locked) candidate), bumped as (update custom_domains d set verification_attempts=d.verification_attempts+1, verification_next_check_at=now()+least(interval '1 hour',interval '30 seconds'*power(2,least(d.verification_attempts,7))*(0.8+random()*0.4)) from due where d.domain=due.domain returning d.*) select domain,app_id,challenge_token,coalesce(verified_at,'epoch'),cert_status,coalesce(cert_expires_at,'epoch'),coalesce(cert_last_error,''),coalesce(dns_last_checked_at,'epoch'),coalesce(cert_failed_at,'epoch'),verification_next_check_at,verification_expires_at,verification_attempts,coalesce(environment_id::text,'') from bumped`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -207,14 +219,16 @@ func (s *PgStore) CustomDomainVerificationStats(ctx context.Context) (int, time.
 	return n, age, nil
 }
 func (s *PgStore) RetryCustomDomainVerification(ctx context.Context, domain string) error {
-	// Retry accelerates the next probe but never extends ownership. Otherwise
-	// an account could refresh a pending row forever and turn a seven-day
-	// challenge into a permanent global domain reservation.
-	tag, err := s.pool.Exec(ctx, `update custom_domains set verification_next_check_at=now(),verification_attempts=0 where domain=$1 and verified_at is null and verification_expires_at>now()`, domain)
+	// Retry accelerates a probe without extending the claim's ownership lease.
+	claim, bound := CustomDomainProbe(ctx)
+	if bound && probeDomainMatches(claim, domain) != nil {
+		return ErrNotFound
+	}
+	n, err := sqlc.New().RetryCustomDomainVerificationClaim(ctx, s.pool, sqlc.RetryCustomDomainVerificationClaimParams{Domain: domain, ClaimBound: bound, AppID: claim.AppID, Token: claim.ChallengeToken})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -274,6 +288,18 @@ func (m *MemStore) createCustomDomainIfUnderQuotaLocked(ctx context.Context, dom
 	if !ok {
 		return CustomDomain{}, ErrNotFound
 	}
+	if err := m.checkPublicCustomDomainTenantOverlapLocked(ctx, domain); err != nil {
+		return CustomDomain{}, err
+	}
+	if publicCustomDomainClaim(ctx) {
+		wildcard, err := ForeignVerifiedWildcard(ctx, lockedCustomDomainReader{m}, domain, a)
+		if err != nil {
+			return CustomDomain{}, err
+		}
+		if wildcard != "" {
+			return CustomDomain{}, &CustomDomainWildcardConflictError{Domain: domain, Wildcard: wildcard}
+		}
+	}
 	if environmentID != "" {
 		environment, exists := m.projectEnvironments[environmentID]
 		if !exists {
@@ -312,10 +338,11 @@ func (m *MemStore) createCustomDomainIfUnderQuotaLocked(ctx context.Context, dom
 	if ac >= accountLimit {
 		return CustomDomain{}, &CustomDomainQuotaError{"account", accountLimit}
 	}
-	d := CustomDomain{Domain: domain, AppID: appID, EnvironmentID: environmentID, ChallengeToken: token, CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now, VerificationExpiresAt: now.Add(7 * 24 * time.Hour)}
+	d := CustomDomain{Domain: domain, AppID: appID, EnvironmentID: environmentID, ChallengeToken: token, BindingVersion: uuid.NewString(), CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now, VerificationExpiresAt: now.Add(7 * 24 * time.Hour)}
 	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
 		return CustomDomain{}, err
 	}
+	m.dropCustomDomainTLSHostsLocked(domain)
 	m.domains[domain] = d
 	return d, nil
 }
@@ -338,7 +365,7 @@ func (m *MemStore) ClaimCustomDomainsForVerification(_ context.Context, limit in
 		}
 		if !d.VerificationExpiresAt.IsZero() {
 			d.VerificationAttempts++
-			delay := 30 * time.Second * time.Duration(1<<min(d.VerificationAttempts-1, 7))
+			delay := time.Duration(float64(30*time.Second*time.Duration(1<<min(d.VerificationAttempts-1, 7))) * (0.8 + rand.Float64()*0.4))
 			if delay > time.Hour {
 				delay = time.Hour
 			}
@@ -349,11 +376,11 @@ func (m *MemStore) ClaimCustomDomainsForVerification(_ context.Context, limit in
 	}
 	return out, nil
 }
-func (m *MemStore) RetryCustomDomainVerification(_ context.Context, domain string) error {
+func (m *MemStore) RetryCustomDomainVerification(ctx context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
-	if !ok || d.Verified() || d.VerificationExpiresAt.IsZero() || !d.VerificationExpiresAt.After(time.Now()) {
+	if !ok || !customDomainProbeMatches(ctx, d) || d.Verified() || d.VerificationExpiresAt.IsZero() || !d.VerificationExpiresAt.After(time.Now()) {
 		return ErrNotFound
 	}
 	d.VerificationAttempts = 0

@@ -118,8 +118,8 @@ func (c *Client) GetDashboardData(ctx context.Context, id string) (DashboardData
 
 // ErrDashboardsUnavailable is the FAAS_CUSTOM_DASHBOARDS_ENABLED gate's answer.
 func ErrDashboardsUnavailable() *Problem {
-	return NewProblem(http.StatusServiceUnavailable, "dashboards_unavailable", "Custom dashboards unavailable",
-		"the custom dashboards preview is not enabled").WithHint(PreviewNotEnabledHint)
+	return ErrPreviewNotEnabled("dashboards_unavailable", "Custom dashboards unavailable",
+		"the custom dashboards preview is not enabled")
 }
 
 // ErrDashboardNotFound names a dashboard the account does not have.

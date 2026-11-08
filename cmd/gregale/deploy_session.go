@@ -58,6 +58,16 @@ type savedDeploySession struct {
 	path     string
 	resuming bool
 	key      string
+	// warnings are this run's advisory notices for the receipt (for
+	// example credential-looking files in a local-files upload). They are
+	// not saved: a resume does not upload again.
+	warnings []string
+}
+
+func (s *savedDeploySession) addWarning(warning string) {
+	if warning != "" {
+		s.warnings = append(s.warnings, warning)
+	}
 }
 
 type deploySessionContextKey struct{}
@@ -83,6 +93,37 @@ func deploySessionDir(c *Client) (string, error) {
 		}
 	}
 	return filepath.Join(base, "gregale", "deploys", deployConnection(c)), nil
+}
+
+// preflightDeploySessionStorage proves the deploy-session directory is
+// writable before a deploy changes anything remotely. The session was first
+// written after the app was created, so a read-only state directory left a
+// new app behind with "Could not save deploy session" and no word on whether
+// to retry or pick another name (CLI journey 2026-11-05, #6625).
+func preflightDeploySessionStorage(c *Client) error {
+	dir, err := deploySessionDir(c)
+	if err == nil {
+		err = os.MkdirAll(dir, 0o700)
+	}
+	if err == nil {
+		var probe *os.File
+		if probe, err = os.CreateTemp(dir, ".preflight-*"); err == nil {
+			name := probe.Name()
+			_ = probe.Close()
+			_ = os.Remove(name)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("the local deploy-session directory is not writable (%w); nothing was created or deployed. Set XDG_STATE_HOME to a writable directory and run the command again", err)
+	}
+	return nil
+}
+
+// appExistsNothingDeployed tells the customer what a failure after app
+// creation left behind: the app exists, nothing was deployed, and the same
+// command reuses the app rather than creating another.
+func appExistsNothingDeployed(slug string, err error) error {
+	return fmt.Errorf("%w; app %s exists but nothing was deployed. Fix the error and run the same command again: it reuses %s", err, slug, slug)
 }
 
 func validDeploySessionID(id string) bool {
@@ -267,7 +308,14 @@ func (s *savedDeploySession) resumeCommand() string {
 }
 
 func (s *savedDeploySession) recovery(stage string) *deployRecovery {
-	r := newDeployRecovery(stage, s.record.AppSlug, s.record.DeploymentID, s.key, 0, s.record.WaitForRollout)
+	return s.recoveryWithTimeout(stage, 0)
+}
+
+// recoveryWithTimeout is recovery with the wait deadline the run used, so
+// the `release wait` next step repeats that --timeout instead of the
+// default (CLI audit 2026-10-31). Zero means the default.
+func (s *savedDeploySession) recoveryWithTimeout(stage string, timeout time.Duration) *deployRecovery {
+	r := newDeployRecovery(stage, s.record.AppSlug, s.record.DeploymentID, s.key, timeout, s.record.WaitForRollout)
 	r.SessionID, r.SubmissionOutcome = s.record.ID, s.record.Outcome
 	r.Configuration = s.record.CronConfiguration
 	r.ResumeCommand = s.resumeCommand()
@@ -305,6 +353,7 @@ func (s *savedDeploySession) failure(title, stage string, err error) int {
 
 func (s *savedDeploySession) decorate(receipt *DeployReceipt) {
 	receipt.SessionID = s.record.ID
+	receipt.Warnings = append([]string(nil), s.warnings...)
 	if receipt.SimpleAppPlan == nil {
 		receipt.SimpleAppPlan = s.record.SimpleAppPlan
 	}
@@ -347,7 +396,7 @@ func sessionDeployReceipt(ctx context.Context, receipt *DeployReceipt) *DeployRe
 
 func printSessionWaitRecovery(ctx context.Context, err error, dep api.DeploymentResponse, slug, stage string, timeout time.Duration, rollout bool, exit int) int {
 	if s := sessionFromContext(ctx); s != nil {
-		return printErr(fmt.Sprintf("Deployment %s stopped during %s", dep.ID, stage), &deployRecoveryError{err: err, recovery: s.recovery(stage), exit: exit})
+		return printErr(fmt.Sprintf("Deployment %s stopped during %s", dep.ID, stage), &deployRecoveryError{err: err, recovery: s.recoveryWithTimeout(stage, timeout), exit: exit})
 	}
 	return printDeploymentWaitRecovery(err, dep, slug, stage, timeout, rollout, exit)
 }

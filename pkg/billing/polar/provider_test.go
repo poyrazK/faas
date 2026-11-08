@@ -58,7 +58,7 @@ func testConfig(baseURL string) Config {
 }
 
 func catalogProductJSON(id string, fixedCents int64) string {
-	return `{"id":"` + id + `","recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"usd","price_amount":` + strconv.FormatInt(fixedCents, 10) + `,"is_archived":false},{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`
+	return `{"id":"` + id + `","recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"usd","price_amount":` + strconv.FormatInt(fixedCents, 10) + `,"is_archived":false},{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"5","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`
 }
 
 func catalogMeterJSON() string {
@@ -285,7 +285,7 @@ func TestPushMeterUsageRecordRequiresLiveAndUsesDistinctEvent(t *testing.T) {
 func withOrganization(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/organizations/" {
-			_, _ = io.WriteString(w, `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false}}],"pagination":{"total_count":1,"max_page":1}}`)
+			_, _ = io.WriteString(w, `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"},"customer_portal_settings":{"subscription":{"update_plan":false}}}],"pagination":{"total_count":1,"max_page":1}}`)
 			return
 		}
 		next(w, r)
@@ -293,13 +293,18 @@ func withOrganization(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // The preflight refuses an organization that lets a customer hold several
-// subscriptions, or a token that does not name exactly one organization.
-// adr: 20261029180000
+// subscriptions, that charges a portal upgrade only at the next renewal, that
+// lets customers switch plans in the portal, or a token that does not name
+// exactly one organization.
+// adr: 20261029180000, 20261031090658, 20261103131742
 func TestEnsurePlanProductsRequiresSingleSubscriptionOrganization(t *testing.T) {
 	for name, body := range map[string]string{
-		"multiple allowed": `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":true}}]}`,
-		"setting missing":  `{"items":[{"id":"org-1","subscription_settings":{}}]}`,
-		"no organization":  `{"items":[]}`,
+		"multiple allowed":     `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":true,"proration_behavior":"invoice"},"customer_portal_settings":{"subscription":{"update_plan":false}}}]}`,
+		"setting missing":      `{"items":[{"id":"org-1","subscription_settings":{}}]}`,
+		"upgrade charge later": `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"prorate"},"customer_portal_settings":{"subscription":{"update_plan":false}}}]}`,
+		"no organization":      `{"items":[]}`,
+		"portal plan switch":   `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"},"customer_portal_settings":{"subscription":{"update_plan":true}}}]}`,
+		"portal setting gone":  `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"}}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			var catalogReads int
@@ -746,7 +751,7 @@ func TestChangeSubscriptionPlanSchedulesNextPeriodUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	effectiveAt, err := p.ChangeSubscriptionPlan(context.Background(), state.Account{
-		ID: "acct-1", StripeSubscriptionItem: "sub-1",
+		ID: "acct-1", Plan: api.PlanScale, StripeSubscriptionItem: "sub-1",
 	}, api.PlanPro)
 	if err != nil {
 		t.Fatalf("ChangeSubscriptionPlan: %v", err)

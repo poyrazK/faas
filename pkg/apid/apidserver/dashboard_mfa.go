@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -29,8 +28,8 @@ func (s *server) dashboardMFA(w http.ResponseWriter, r *http.Request) {
 		writeDashboardUnauthorized(w, r)
 		return
 	}
-	if pending, _ := authmw.MFAPendingFrom(r); !pending {
-		http.Redirect(w, r, "/dashboard/", http.StatusFound)
+	if !s.sessionMFAPending(acct) {
+		http.Redirect(w, r, dashboardMFANext(r.URL.Query().Get("next")), http.StatusFound)
 		return
 	}
 	s.renderDashboardMFA(w, r, acct, http.StatusOK, "", dashboardMFANext(r.URL.Query().Get("next")))
@@ -42,8 +41,7 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 		writeDashboardUnauthorized(w, r)
 		return
 	}
-	if pending, _ := authmw.MFAPendingFrom(r); !pending {
-		http.Redirect(w, r, "/dashboard/", http.StatusSeeOther)
+	if !requireEnrolledMFA(w, acct) {
 		return
 	}
 	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardMFAAction, acct.ID, dashboardMFACSRFCookie); err != nil {
@@ -65,7 +63,6 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if reason != "" {
-		s.totp.fail(acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": reason, "via": "dashboard"})
 		// 401 so the dashboard auth limiter counts the guess.
 		s.renderDashboardMFA(w, r, acct, http.StatusUnauthorized, reason, dashboardMFANext(r.PostFormValue("next")))

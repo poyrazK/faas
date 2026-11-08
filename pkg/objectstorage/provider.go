@@ -75,9 +75,12 @@ type ObjectVersionListRequest struct {
 type ListedObjectVersion struct {
 	Object
 	ProviderVersionID string `json:"-"`
-	IsLatest          bool
-	DeleteMarker      bool
-	StorageClass      string
+	// GCS records the instant a generation became noncurrent, even when no
+	// live generation remains. It is independent of mutable metadata times.
+	NoncurrentSince time.Time `json:"-"`
+	IsLatest        bool
+	DeleteMarker    bool
+	StorageClass    string
 }
 
 type ObjectVersionListPage struct {
@@ -663,6 +666,9 @@ type Backend struct {
 	Usage            UsageConfig
 	// MaxBuckets is the backend's placement ceiling; 0 is none.
 	MaxBuckets int64
+	// GatewayCredential reports that Provider holds the backend's gateway
+	// credential rather than its bucket-admin one (ADR-20261031122757 §4).
+	GatewayCredential bool
 }
 
 func fingerprint(c BackendConfig) string {

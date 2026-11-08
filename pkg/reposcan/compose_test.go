@@ -72,8 +72,10 @@ services:
 			if s.commandShell {
 				t.Error("api sequence command marked as shell form")
 			}
-			if len(s.ports) != 1 || s.ports[0] != 8080 {
-				t.Errorf("api ports = %v, want [8080]", s.ports)
+			// The container side of "8080:80" is the port the service
+			// listens on (ADR-20261103112845).
+			if len(s.ports) != 1 || s.ports[0] != 80 {
+				t.Errorf("api ports = %v, want [80]", s.ports)
 			}
 			if !equalSet(s.envKeys, []string{"RAILS_ENV", "DATABASE_URL"}) {
 				t.Errorf("api envKeys = %v, want {RAILS_ENV,DATABASE_URL}", s.envKeys)
@@ -630,7 +632,7 @@ func TestDetectCompose_InterpolationFromDotEnv(t *testing.T) {
   api:
     build: ${API_CONTEXT:-./fallback}
     command: ["node", "server.js", "${MODE:+--production}", "$$HOME"]
-    ports: ["${API_PORT:-8080}:8080"]
+    ports: ["8080:${API_PORT:-8080}"]
 `)},
 	}
 	seeds, _, _, err := detectCompose(fsys)

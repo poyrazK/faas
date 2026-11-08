@@ -29,6 +29,9 @@ type Spec struct {
 	Profile    string
 	Port       int
 	HealthPath string
+	// ExecutionMode is empty for the default or request; a simple app is a
+	// request-mode app, so any other mode is refused.
+	ExecutionMode string
 }
 
 // Plan is the resolved stateless application contract shown by the CLI. The
@@ -106,7 +109,14 @@ func Resolve(spec Spec) (Plan, error) {
 		return Plan{}, fmt.Errorf("port must be between 1 and 65535")
 	}
 	health := strings.TrimSpace(spec.HealthPath)
-	defaults := []string{"execution_mode=request", "scale_to_zero=true", "local_storage=ephemeral", "durable_state=external"}
+	defaults := []string{"scale_to_zero=true", "local_storage=ephemeral", "durable_state=external"}
+	switch strings.TrimSpace(spec.ExecutionMode) {
+	case "":
+		defaults = append([]string{"execution_mode=request"}, defaults...)
+	case api.ExecutionModeRequest:
+	default:
+		return Plan{}, fmt.Errorf("execution mode must be %q for a simple app", api.ExecutionModeRequest)
+	}
 	if health == "" {
 		if source == SourceDirectory {
 			health = DefaultHealthPath

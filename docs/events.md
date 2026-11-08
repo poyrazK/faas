@@ -5,6 +5,10 @@ recover failed deliveries. Events are a preview; this page moved out of
 [event-driven workloads](event-driven.md) so that page can be published
 (#5709), and it is published when events reach beta.
 
+To consume records from a broker you run (Kafka, NATS JetStream, Redis
+Streams), use a broker trigger; its delivery guarantees, retries, ordering,
+limits and TLS are on [broker triggers](broker-triggers.md).
+
 ## Event workflow starts
 
 A workflow can start directly from an internal event without an adapter handler:
@@ -147,8 +151,10 @@ effects with an idempotency key or version check. See
 `expires_after_ms` bounds how long a delivery may wait before it starts. A
 delivery that has not started by then expires and is not run. Once a delivery
 has started, its deadline no longer applies: a failed attempt keeps retrying
-until it succeeds or is dead-lettered, so a failure is never dropped silently
+until it succeeds or is dead-lettered
 ([ADR 20261031101000](adr/20261031101000-keyed-expiry-spares-started-work.md)).
+Under `pending_updates: keep_latest`, a newer event for the key still
+supersedes a delivery that is waiting to retry; that is the policy's point.
 A dead-lettered keyed delivery whose deadline has passed cannot be replayed
 from the dead-letter queue, because a replay starts it over and it would
 expire at once: replaying it answers `409 keyed_replay_expired`, and
@@ -196,7 +202,7 @@ that throws (the runner answers 500), any other 5xx, a timeout, and a handler
 that answers `408` or `429`. Any other 4xx means the handler refused the
 event, so it is not retried but moves straight to the dead-letter queue, where
 you can replay it after a fix
-([ADR 20261031100000](adr/20261031100000-event-delivery-failures.md)). Retries
+([ADR 20261031100001](adr/20261031100001-event-delivery-failures.md)). Retries
 are paced by the app's `retry_policy` in `gregale.yaml` when it sets one,
 waiting at most 5 minutes between attempts, otherwise 5 seconds
 doubling to 5 minutes, with ±20 % jitter. The plan limits the attempts (3 on
@@ -211,7 +217,8 @@ app's unified dead-letter queue (`gregale dlq list <app>`); its origin is shown 
 `event_subscription`.
 
 Publish an event from the CLI without learning the CloudEvents envelope. Gregale
-generates the stable event id for you:
+generates an event id for you and prints it; if the command fails, it prints
+the id it used so you can retry with `--id` without publishing twice:
 
 ```bash
 gregale event publish billing.stripe invoice.paid \
@@ -225,6 +232,72 @@ choose the idempotency key explicitly. The flag-based form remains supported:
 gregale event publish --id evt-123 --source billing.stripe --type invoice.paid \
   --data '{"amount":150}'
 ```
+
+HTTP and CLI publication require the complete event envelope, including
+server-added metadata, to fit within the 1 MiB workflow input limit. The check
+also conservatively accounts for exponent-form JSON numbers expanding when
+stored. Oversized events are rejected before acceptance with
+`event_envelope_too_large`; batch publication reports that error on the item.
+
+### Subscription limits and removal
+
+On a production deploy, the `event_triggers` in `gregale.yaml` are the app's
+whole set of event subscriptions
+([ADR 20261031130000](adr/20261031130000-event-subscription-reconcile.md)).
+The set takes effect when that release serves all production traffic
+([ADR 20261101030512](adr/20261101030512-event-subscriptions-go-live.md)):
+a scheduled, `--no-traffic`, failed or cancelled deploy disables nothing, and
+the old release's triggers keep delivering until the new one is live.
+
+- A trigger you remove is disabled once the release is live. Events not yet
+  routed to it are not delivered; their receipts show it as filtered.
+  Deliveries that already started finish.
+- Changing a trigger's filter replaces its subscription; the old filter stops
+  delivering.
+- Declaring a trigger again re-enables the same subscription, with its
+  history and controls.
+- A deploy whose `gregale.yaml` has no `event_triggers` disables them all. A
+  deploy without a `gregale.yaml`, a stage deploy and `gregale deploy
+  --no-triggers` leave subscriptions as they are.
+
+Each plan caps the enabled subscriptions per app and per account:
+
+| Plan | Per app | Per account |
+|---|---:|---:|
+| Free | 0 | 0 |
+| Hobby | 5 | 10 |
+| Pro | 20 | 50 |
+| Scale | 100 | 500 |
+
+A deploy is counted as its declared set will stand once live, so replacing
+every trigger of an app at its cap works. A deploy, stage deploy or batch
+trigger create that would go past a cap is refused with `403
+plan_event_subscription_quota`, naming the limit and the count it would have
+reached, and changes nothing. If an `event_triggers` entry names an app that
+doesn't exist (for example after a rename), the deploy only adds
+subscriptions and disables none; update `gregale.yaml` to the new name.
+Numbers in filters are kept exactly, so a filter
+on an integer ID larger than 2^53 matches only that ID.
+
+### Delivery identity
+
+Delivery is at least once. A handler can see the same event more than once:
+after a retry, a replay, a lease that lapsed mid-run, or a database failover
+or restore. Each delivery carries headers that let the handler recognize
+repeats:
+
+| Header | Stays the same across | Use it to |
+|---|---|---|
+| `x-gregale-event-id` | every delivery, retry and replay of the event, and a republish with the same id | Deduplicate side effects. This is the key to store. |
+| `x-gregale-event-source`, `x-gregale-event-type` | every delivery | Route inside the handler. |
+| `x-gregale-event-subscription-id` | deliveries to this subscription | Tell apart two subscriptions of the same app that receive the same event. |
+| `x-gregale-event-acceptance-id` | deliveries of this accepted copy | Correlate with the publish receipt (`receipt_url`). A lost event that is published again gets a new one. |
+| `X-Faas-Invocation-Id` | retries of one delivery | Correlate with `gregale invocation` and logs. A recovery replay may run as a new invocation with a new id. |
+| `X-Faas-Invocation-Attempt` | nothing; it counts up from 1 on each retry | Log or back off; never deduplicate on it. |
+
+Deduplicate on `x-gregale-event-id` together with the subscription id when one
+app has several subscriptions to the same event. Record the id in the same
+transaction as the side effect, so a repeat finds it and stops.
 
 ### Settled receipt retention
 
@@ -388,9 +461,12 @@ decision on that event
 |---|---|---|
 | `202` | | Accepted and stored; it will be routed. |
 | `400` | `invalid_event` | The envelope is malformed or uses a reserved source. Fix it; do not retry as is. |
+| `413` | `event_envelope_too_large` | The normalized event envelope exceeds the workflow input limit. Reduce the data before retrying. |
 | `422` | `validation_failed` | The data does not match the event's registered schema. |
 | `429` | `event_publish_rate_limited` | Over your plan's [publish rate](#publish-rate). Retry the same event after `Retry-After`. |
 | `503` | `events_paused` | Events are [paused](#pausing-events). Retry the same event after `Retry-After`. |
+| `409` | `conflict` | The source and `id` already name an event with different content. Use a new `id`; retrying cannot succeed. |
+| `429` | `event_storage_capacity_exhausted` | Your plan's retained event storage is full. Retry the same event after `Retry-After`, once stored receipts are pruned or the plan is upgraded. |
 | `503` | `event_publish_unavailable` | Not stored. Retry the same event after `Retry-After`. |
 | `503` | `event_publish_unconfirmed` | The platform got the event but its answer was lost, so it may have been stored. Retry the same event, with the same `id`: if it was stored, the retry answers `202` and the event is still delivered once. |
 

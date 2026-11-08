@@ -6,6 +6,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apphealth"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -37,7 +38,12 @@ func (s *server) collectAppHealth(w http.ResponseWriter, r *http.Request, acct s
 	ctx, cancel := context.WithTimeout(r.Context(), api.AppHealthCollectionTimeout)
 	defer cancel()
 	w.Header().Set("Cache-Control", "no-store")
-	assessment := apphealth.CollectScope(ctx, s.store, s.promqlClient, app, acct.Plan.PerAppMetricsAllowed(), scope)
+	assessment := apphealth.CollectScopeWith(ctx, s.store, s.promqlClient, app, scope, apphealth.Options{
+		MetricsAllowed: acct.Plan.PerAppMetricsAllowed(),
+		AssessWorkers:  s.platformFlagEnabled(platformflags.AppHealthWorkers, acct),
+		AssessMemory:   s.platformFlagEnabled(platformflags.AppHealthMemory, acct),
+		Plan:           acct.Plan,
+	})
 	if environment.ID != "" {
 		current, err := s.store.ProjectEnvironmentBySlug(ctx, acct.ID, app.ProjectID, scope)
 		if err != nil || current.ID != environment.ID {

@@ -218,8 +218,8 @@ func TestFacetsCountTheWindow(t *testing.T) {
 
 func TestGateAndUnknownApp(t *testing.T) {
 	svc, acct := newService(t, false)
-	if code := serve(t, svc.Search, acct, "/v1/apps/shop/log-events", nil); code != http.StatusServiceUnavailable {
-		t.Fatalf("disabled status = %d, want 503", code)
+	if code := serve(t, svc.Search, acct, "/v1/apps/shop/log-events", nil); code != http.StatusForbidden {
+		t.Fatalf("disabled status = %d, want 403", code)
 	}
 	svc.Enabled = true
 	r := httptest.NewRequest(http.MethodGet, "/v1/apps/nope/log-events/facets", nil)

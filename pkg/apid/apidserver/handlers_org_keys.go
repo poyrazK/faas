@@ -137,6 +137,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	}
 	var req api.CreateOrgAPIKeyRequest
 	_ = decodeJSON(r, &req)
+	if problem := reservedKeyLabelProblem(req.Label); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	scopes, err := api.NormalizeCreateKeyScopes(req.Scopes)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -159,6 +163,20 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, p)
 		return
 	}
+	if p := s.orgAgentKeyProblem(r.Context(), mem.OrgID, acct.ID, scopes); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	projects, prob := s.keyProjects(r.Context(), acct, mem.OrgID, scopes, req.Projects)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	approvals, approvalsSet, prob := keyApprovalCategories(scopes, req.ApprovalCategories)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	plaintext, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))
@@ -172,6 +190,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	var expiresAt *time.Time
 	if !slices.Contains(scopes, api.ScopeAdmin) {
 		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
+		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
+		if slices.Contains(scopes, api.ScopeAgent) {
+			t = time.Now().UTC().Add(api.AgentKeyLifetime)
+		}
 		expiresAt = &t
 	}
 	// IAM hardening mega-PR (logical change 2): stamp the
@@ -188,6 +210,14 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	k, err := s.createOrgAPIKeyWithActivity(r.Context(), acct, mem.OrgID, hash, req.Label, scopes, expiresAt, bindIP, bindUA, nil, activity)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create key"))
+		return
+	}
+	if prob := s.limitKeyToProjects(r.Context(), acct, k, projects); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.setKeyApprovalCategories(r.Context(), acct, k, approvals, approvalsSet); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
@@ -207,6 +237,12 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	resp := orgAPIKeyResponse(k)
 	resp.Prefix = keyPrefix(plaintext)
 	resp.Plaintext = plaintext
+	if len(projects) > 0 {
+		resp.Projects = projectSlugs(projects)
+	}
+	if approvalsSet {
+		resp.ApprovalCategories = &approvals
+	}
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -328,6 +364,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	}
 	var req api.RotateOrgAPIKeyRequest
 	_ = decodeJSON(r, &req)
+	if problem := reservedKeyLabelProblem(req.Label); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if p := authz.AuthorizeOrgAction(r.Context(), authz.OrgActionCreateApiKey, s.authzAuditForCurrentRequest()); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -384,6 +424,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		}
 		if errors.Is(err, state.ErrAPIKeyRevoked) {
 			s.notFound(w, "key already revoked")
+			return
+		}
+		if errors.Is(err, state.ErrAPIKeyExpired) {
+			api.WriteProblem(w, api.ErrAPIKeyExpired())
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not rotate key"))

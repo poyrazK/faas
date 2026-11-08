@@ -3,7 +3,7 @@
 Date: 2026-10-31
 Status: Accepted
 Amends: [ADR-609](609-safe-keyed-invocation-replay.md) (keyed replay keeps its deadline)
-Related: [ADR 20261031100000](20261031100000-event-delivery-failures.md) (failed event deliveries), [ADR 20261029190000](20261029190000-event-delivery-retry-backoff.md) (event delivery retry backoff)
+Related: [ADR 20261031100001](20261031100001-event-delivery-failures.md) (failed event deliveries), [ADR 20261029190000](20261029190000-event-delivery-retry-backoff.md) (event delivery retry backoff)
 
 ## Context
 

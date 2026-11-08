@@ -1,0 +1,21 @@
+# ADR-20261102100000: An identical build waits for the build in progress
+
+- **Status:** accepted
+- **Date:** 2026-11-02
+- **Owner:** builderd and state maintainers
+- **Decision:** When a build misses the cache while another claim is already building the same cache key, builderd defers it behind that build instead of building the same image again. The deferred build is claimed again once that build is done, on the node whose cache holds the result, and takes the cache hit.
+  - **Detect.** After the cache lookup misses, builderd asks for the earliest-claimed other build that is running, missed the cache with the same key, was claimed before this one and within `state.BuildCoalescingWindow` (30 minutes, twice the builder VM limit). Waiting only for an earlier claim means two identical builds never wait for each other. The cache key already partitions by account, build secrets and registry credentials, so only builds that may share an image wait. GitOps reuse builds, which have their own trust rules, never wait.
+  - **Defer.** The claim goes back to the queue with `builds.coalesced_with` naming that build. This is fenced like `RequeueBuildIfClaim`, so a stale worker cannot defer a newer claim, and a claim that is no longer current stops. builderd returns `ErrCoalesced`, which the workers treat like `ErrNoSlot`. The deferred build holds no builder slot.
+  - **Do not block the queue.** Every claim query skips a build while the build it waits for is queued, or running and not stale. Claims are FIFO by `enqueued_at`, and a requeued build keeps its place, so without this check the deferred build would be re-claimed every tick ahead of other work.
+  - **Route to the cache.** The node-affinity claims let the node that built the awaited build (its `build_provenance.builder_node_id`) claim the deferred build at once. Any other node can claim it once the affinity grace has passed since that build finished. A build that failed, has no provenance, or has disappeared releases the waiter to any node, which then builds normally.
+- **Why:** The production journey's four-service project took 629–1106 s to deploy. `web`, `ops` and `batch` share `build: ./web`, so their cache keys are equal, but all three missed the cache at once and each took a builder VM. Those duplicate builds held the slots that `api` waited 2–4 minutes for. Compose projects commonly build several services from one context (`web`, `worker` and `beat` on `build: .`). Production runs a builderd per compute host, each with its own cache, so coalescing has to work across nodes.
+- **Consequences:**
+  - A project whose services share a build context builds that image once. The others take the cache hit when it finishes, and the builder slots stay free for other builds.
+  - A deferred build waits at most as long as the build it waits for, which is no longer than building it itself. If that build fails, the waiter builds its own image.
+  - `builds.coalesced_with` is a nullable uuid without a foreign key: a dangling id only means there is nothing left to wait for, and deleting builds must not scan for references. The detection query uses the existing `builds_running_started_idx`.
+  - New metric labels: `builderd_build_requeues_total{reason="identical_build"}` and the worker outcome `coalesced`.
+- **Rejected alternatives:**
+  - **Coalesce inside one builderd process.** Each compute host runs its own builderd with its own cache, so identical builds often land on different nodes and would not meet.
+  - **Requeue the duplicate in place.** It keeps its FIFO position and would be claimed and requeued every tick ahead of other builds, holding up the build it is meant to help.
+  - **Group identical services at project apply (apid).** That covers only project deploys, not push deploys, previews or other paths. builderd sees every build's cache key.
+  - **Reuse the build dependency gate.** That gate waits for another deployment to go live and is shown to customers in `stage_state`. A wait for an identical image is internal scheduling.

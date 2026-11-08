@@ -41,14 +41,15 @@ SELECT * FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid A
 
 -- name: PipelineControl :one
 UPDATE data_pipelines SET
- verification_progress=CASE WHEN sqlc.arg(generation_delta)::bigint>0 OR sqlc.arg(verify_requested)::boolean THEN '{}'::jsonb ELSE verification_progress END,
+ verification_progress=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '{}'::jsonb
+ WHEN sqlc.arg(start_verification)::boolean THEN jsonb_build_object('ManualAttempt',revision+1) ELSE verification_progress END,
  schema_change=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '{}'::jsonb ELSE schema_change END,
  schema_approval=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '' ELSE schema_approval END,
  desired_state=sqlc.arg(desired_state),state=sqlc.arg(state),generation=generation+sqlc.arg(generation_delta)::bigint,
  applied_through_at=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN NULL ELSE applied_through_at END,
  initialized=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN false ELSE initialized END,
- revision=revision+1,verify_requested=sqlc.arg(verify_requested),verification=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN 'unknown' WHEN sqlc.arg(verify_requested) THEN 'pending' ELSE verification END,
- verified_at=CASE WHEN sqlc.arg(verify_requested) OR sqlc.arg(generation_delta)::bigint>0 THEN NULL ELSE verified_at END,
+ revision=revision+1,verify_requested=sqlc.arg(verify_requested),verification=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN 'unknown' WHEN sqlc.arg(start_verification) THEN 'pending' ELSE verification END,
+ verified_at=CASE WHEN sqlc.arg(start_verification) OR sqlc.arg(generation_delta)::bigint>0 THEN NULL ELSE verified_at END,
  retry_at=clock_timestamp()
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision) AND state<>'deleted'
  AND (coalesce(reader_change->>'State','')<>'approved' OR sqlc.arg(generation_delta)::bigint=0)
@@ -109,6 +110,12 @@ JOIN data_pipeline_connections c ON c.id=ch.connection_id AND c.account_id=ch.ac
 WHERE ch.account_id=sqlc.arg(account_id)::text::uuid AND ch.connection_id=sqlc.arg(connection_id)::text::uuid
 FOR SHARE OF c,ch;
 
+-- name: PipelineSetupCheckOwner :one
+SELECT phase,database_id::text AS database_id FROM data_pipeline_setups
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND source_connection_id=sqlc.arg(connection_id)::text::uuid
+ AND state='working' AND phase IN ('checking_source','provisioning','checking_mirror','starting') AND pipeline_id=''
+FOR UPDATE;
+
 -- name: PipelineCheckRequest :one
 INSERT INTO data_connection_checks(connection_id,account_id,id,connection_revision,database_id)
 VALUES(sqlc.arg(connection_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(id)::text::uuid,sqlc.arg(connection_revision),sqlc.arg(database_id))
@@ -155,6 +162,17 @@ VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(connec
 UPDATE data_pipeline_setups SET state=sqlc.arg(state),revision=revision+1,reason='',retry_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
  AND (state='blocked' OR (sqlc.arg(state)::text='cancelled' AND state='working')) RETURNING *;
+
+-- name: PipelineSetupLock :one
+SELECT * FROM data_pipeline_setups WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid FOR UPDATE;
+
+-- name: PipelineSetupInvalidateFailedCheck :exec
+UPDATE data_connection_checks SET observed_at=NULL
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND connection_id=sqlc.arg(connection_id)::text::uuid
+ AND database_id=sqlc.arg(database_id)::text
+ AND (state='blocked' OR (state='passed' AND sqlc.arg(capacity_retry)::boolean AND
+  (coalesce(result#>>'{capacity,source,state}','')<>'ready' OR
+   (database_id<>'' AND coalesce(result#>>'{capacity,destination,state}','')<>'ready'))));
 
 -- name: PipelineSetupClaim :one
 WITH candidate AS (
@@ -234,9 +252,15 @@ VALUES(sqlc.arg(pipeline_id)::text::uuid,sqlc.arg(change_id),sqlc.arg(attempt),s
 ON CONFLICT DO NOTHING;
 
 -- name: PipelineSchemaApps :many
-SELECT DISTINCT a.id,a.slug,a.status FROM managed_postgres_bindings b JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+SELECT DISTINCT a.id,a.slug,a.status,
+ EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.status='live') AS has_live_deployment
+FROM managed_postgres_bindings b JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
 WHERE b.account_id=sqlc.arg(account_id)::text::uuid AND b.database_id=sqlc.arg(database_id)::text::uuid AND b.state<>'deleted' AND a.status<>'deleted'
 ORDER BY a.id LIMIT sqlc.arg(page_limit);
+
+-- name: PipelineSchemaRefreshQueued :one
+SELECT EXISTS(SELECT 1 FROM notification_outbox WHERE channel='runtime_config_restart'
+ AND payload::jsonb->>'app_id'=sqlc.arg(app_id)::text AND payload::jsonb->>'wake_id'=sqlc.arg(wake_id)::text);
 
 -- name: PipelineSchemaRefreshStamp :exec
 INSERT INTO app_runtime_config_changes(app_id,changed_at) VALUES(sqlc.arg(app_id)::text::uuid,clock_timestamp())
@@ -257,7 +281,7 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uui
 -- name: PipelineRequestTableRecovery :execrows
 UPDATE data_pipelines SET revision=revision+1,retry_at=clock_timestamp(),
  schema_change=jsonb_set(schema_change,'{Recovery}',CASE WHEN sqlc.arg(kind)::text='live'
- THEN (schema_change->'Recovery')||jsonb_build_object('State','requested','ID','','Stage','quarantined')
+ THEN (schema_change->'Recovery')||jsonb_build_object('State','requested','ID','','Stage','quarantined','CopyRetry',reason IN ('table_copy_stalled','table_addition_tracking_lost'))
  ELSE jsonb_build_object('Table',sqlc.arg(table_name)::text,'Kind',sqlc.arg(kind)::text,'State','requested') END)
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
  AND desired_state='running' AND state='blocked'
@@ -269,7 +293,9 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uui
  AND ((sqlc.arg(kind)::text='live' AND schema_change->'Recovery'->>'Kind'='live' AND reason IN ('live_table_mismatch','replica_mismatch')
  AND verification_progress->>'State'='mismatch' AND verification_progress->>'Table'=sqlc.arg(table_name)::text)
  OR (sqlc.arg(kind)::text='' AND coalesce(schema_change->'Recovery'->>'Kind','')<>'live' AND reason='replica_mismatch' AND verification_progress->>'State'='mismatch' AND verification_progress->>'Table'=sqlc.arg(table_name)::text)
- OR (sqlc.arg(kind)::text='copy' AND reason IN ('table_copy_stalled','table_addition_tracking_lost')
+ OR ((sqlc.arg(kind)::text='copy' OR (sqlc.arg(kind)::text='live' AND schema_change->'Recovery'->>'Kind'='live'
+ AND schema_change->'Recovery'->>'State'='blocked' AND schema_change->'Recovery'->>'Stage'='copying'))
+ AND reason IN ('table_copy_stalled','table_addition_tracking_lost')
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(schema_change->'Copies','[]')) c WHERE c->>'Table'=sqlc.arg(table_name)::text
  AND coalesce(c->>'NativeState','')<>'r' AND (coalesce((c->>'Stalled')::boolean,false) OR c->>'Phase'='missing'))
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(schema_change->'Copies','[]')) other_copy WHERE other_copy->>'Table'<>sqlc.arg(table_name)::text AND coalesce(other_copy->>'NativeState','')='')))
@@ -343,6 +369,19 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uui
  AND schema_change->'Cancellation'->>'Kind'='live' AND schema_change->'Cancellation'->>'State'='pending'
  AND schema_change->'Cancellation'->>'ID'=sqlc.arg(cancellation_id)::text AND schema_change->'Cancellation'->>'Retention'='retain_private'
  AND jsonb_array_length(tables)>1 AND tables=schema_change->'RequestedTables' AND tables ? (schema_change->'Cancellation'->>'Table')
+ AND observed_revision=revision AND observed_at>clock_timestamp()-(sqlc.arg(max_age_seconds)::bigint*interval '1 second');
+
+-- name: PipelineRetryTableRetirement :execrows
+UPDATE data_pipelines SET revision=revision+1,retry_at=clock_timestamp(),
+ schema_change=jsonb_set(schema_change,'{Cancellation,RefreshRetry}',to_jsonb(coalesce((schema_change->'Cancellation'->>'RefreshRetry')::integer,0)+1))
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
+ AND desired_state='running' AND state='blocked' AND reason='schema_api_refresh_failed'
+ AND schema_approval=schema_change->>'ID'
+ AND schema_change->'Cancellation'->>'ID'=sqlc.arg(cancellation_id)::text
+ AND schema_change->'Cancellation'->>'State'='approved' AND schema_change->'Cancellation'->>'Stage'='archived'
+ AND schema_change->'Cancellation'->>'Retention'='retain_private'
+ AND coalesce((schema_change->'Cancellation'->>'RefreshRetry')::integer,0)<sqlc.arg(max_retries)::integer
+ AND coalesce(reader_change->>'State','')<>'approved'
  AND observed_revision=revision AND observed_at>clock_timestamp()-(sqlc.arg(max_age_seconds)::bigint*interval '1 second');
 
 -- name: PipelineReaders :execrows

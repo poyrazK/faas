@@ -68,7 +68,8 @@ docs/adr/
   `gatewayd` daemon was removed in PR-A (Tier A7 ship). Cross-node
   HA is achieved by having N nodes each with one `gatewayd-public` in
   front of their local `gatewayd-internal` set — NOT by having multiple
-  public listeners on one node.
+  public listeners on one node. Database nodes (ADR-1027) run no app VMs
+  and their one public listener is `pgproxyd`.
 - Components talk via Postgres rows + `pg_notify`, or gRPC on unix sockets in /run/faas/.
   Never add a direct call that bypasses an owner (e.g. apid must not call vmmd).
 
@@ -109,7 +110,7 @@ docs/adr/
 ## Hard limits (source: financial model §1 as amended by the Oct 2026 COGS report, ADR-1430; encoded in pkg/api/limits.go)
 
 Plans (deployed/concurrent/RAM MB/GB-h): Free 1/1/256/20 · Hobby 5/2/512/200 ·
-Pro 25/5/1024/1000 · Scale 100/20/2048/3000. Overage $0.01/GB-h (USD, ADR-1430). Source tarball ≤100 MB
+Pro 25/5/1024/1000 · Scale 100/20/2048/3000. Overage $0.05/GB-h (USD, ADR-20261107192333). Source tarball ≤100 MB
 (≤250 MB Pro+). App layer ≤256 MB/512 MB/1 GB/2 GB by plan. Build VM: 2 vCPU, 2048 MB,
 15 min (ADR-791). Idle timeouts: 60/60/300/600 s by plan (functions default to 30 s on every plan, ADR-974; spec §4.3). RAM admission ceiling: 47,600 MB.
 Fleet snapshot average target: 130 MB — `snapshot_fleet_avg_mb` alerts at 160.

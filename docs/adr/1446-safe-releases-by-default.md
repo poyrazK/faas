@@ -253,3 +253,48 @@ Enable in staging first, then run and record, under `docs/drills/`:
 
 Promote progressive rollouts toward `beta` in the product registry only with
 that evidence, per the capability promotion rule.
+
+## Amendment 1 (2026-11-03): a project's production environment and project apply get the default
+
+The default filled in a canary and `rollback_on_5xx` only for a release into the default scope, and not at all for `gregale project apply`. A release into a project's `production` environment, which freezes and approvals already treat as production, so got no canary, no first-wake 5xx guard and no post-release watch, and an apply into production got none either (release review 2026-11-03). The default now applies to every production scope: the default scope and the project `production` environment, with the predecessor looked up in the release's own scope. A first release into a scope still deploys at once. A project apply into production gets it per app, as a GitHub push does. An atomic project release (`safe_release`) stages dark and cuts every app over together, so it keeps its own coordinated rollout.
+
+## Amendment 2 (2026-11-03): a promotion into production gets first-wake rollback
+
+A project environment promotion copies its staging release, canary cleared and at full traffic. Staging is not a production scope, so the copy carried no `rollback_on_5xx`, and a promotion into production shipped with no first-wake 5xx guard and no post-release watch (release review 2026-11-03). A promotion into a production scope that already serves now gets `rollback_on_5xx` by the same rules as a deploy (release policy, plan, app kind, operator switch). It does not get the default canary: its protected approval already stands in for the apps' approval policies, and a canary would hold it for them again. A dark (release-graph) promotion activates its apps together and keeps its promotion rollback.
+
+## Amendment 3 (2026-11-05): snapshot verification belongs to its activation attempt
+
+Snapshot activation binds its preparation clock, artifact, and runtime inputs
+before publication and verification, then rechecks them under the final traffic
+lock. Timing out and preparing the same deployment again does not let the old
+handler consume the replacement preparation marker. Configuration edits during
+verification require new evidence too. Modern captures from a preceding
+preparation are discarded on redelivery; legacy writers retain their existing
+source/publication checks. Warm snapshots and completed activation replays keep
+their publication-only behavior.
+
+Failed hosting verification uses the same attempt and configuration fence at
+its final write. The failed receipt, lifecycle status, and stage finalization
+commit together only for that attempt. A failure arriving after timeout and a
+new preparation of the same deployment is discarded, leaving the replacement
+request and its receipt intact. Configuration changes during a failing probe
+also require new verification. Legacy failure callers keep their status checks.
+
+## Amendment 4 (2026-11-06): a stage nobody called advances at its boundary
+
+The bounded low-traffic hold assumed probes would cover a quiet release. They
+go through the public edge, so a `visibility: internal` service never gets
+probe evidence, and each stage of its rollout waited its dwell time plus the
+whole `CanaryLowTrafficMaxHold`. A four-stage rollout of an internal service
+took about 25 minutes and outlasted the CLI's 20-minute deploy wait although
+it finished cleanly (ChronoLake field report, rc.325).
+
+A stage in which neither the candidate nor its predecessor answered a single
+request, organic or probe (`canary.NoTrafficStage`), now takes the bounded
+advance at its boundary instead of after the bound. Every other condition of
+the bounded advance still applies (readable, clean OOM and liveness signals,
+zero candidate 5xx), and any request on either side keeps the bound. Holding
+such a stage longer produced no evidence and protected no request; the ADR-625
+first-wake window still covers the release when traffic arrives. The advance
+is still exported as `advance_low_traffic`, and meterd logs it with
+`no_traffic=true`.

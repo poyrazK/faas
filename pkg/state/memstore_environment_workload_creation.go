@@ -93,7 +93,7 @@ func (m *MemStore) PrepareEnvironmentGitOpsWorkloads(ctx context.Context, lease 
 			app := gitOpsIntentApp{ID: appModel.ID, Slug: appModel.Slug, Type: appModel.Type,
 				WorkloadClass: appModel.WorkloadClass, Manifest: appModel.Manifest, StartCommand: appModel.StartCommand}
 			name := strings.TrimPrefix(resource, "workload/")
-			row, err = m.syncEnvironmentGitOpsJobLocked(row, app, desired.Definition.Workloads[name], snapshot.Plan)
+			row, err = m.syncEnvironmentGitOpsJobLocked(memory.source, row, app, desired.Definition.Workloads[name], snapshot.Plan, true)
 			if err != nil {
 				return nil, fmt.Errorf("prepare scheduled workload %s: %w", resource, err)
 			}

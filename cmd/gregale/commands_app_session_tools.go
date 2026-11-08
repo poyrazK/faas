@@ -138,6 +138,17 @@ func openAppTaskStreamSession(ctx context.Context, client *api.Client, slug stri
 	return newAppTaskStreamSession(conn, osStderr), func() { _ = conn.Close() }, nil
 }
 
+// forwardAppTaskSession relays ln over an app-task session until ctx ends or
+// the remote side does. apptaskmux.Forward returns only once the peer stream
+// ends; cancelling ctx merely closes ln. So a cancelled ctx (Ctrl-C, or psql
+// exiting under `postgres connect`) also closes the session, which ends the
+// stream instead of waiting on a remote that never hangs up.
+func forwardAppTaskSession(ctx context.Context, ln net.Listener, toPeer io.Writer, fromPeer io.Reader, closeSession func()) error {
+	stop := context.AfterFunc(ctx, closeSession)
+	defer stop()
+	return apptaskmux.Forward(ctx, ln, toPeer, fromPeer)
+}
+
 func cmdAppCopy(slug string, args []string) int {
 	fs := newFlagSet("app-cp", flag.ContinueOnError)
 	waitTimeout := fs.Duration("wait-timeout", appExecInteractiveStartupWait, "maximum time to wait for the task VM to start")
@@ -155,9 +166,16 @@ func cmdAppCopy(slug string, args []string) int {
 	defer stop()
 	session, closeSession, err := openAppTaskStreamSession(ctx, client, slug, []string{api.AppTaskCopyOutCommand, remote}, *waitTimeout)
 	if err != nil {
+		if ctx.Err() != nil {
+			return appCopyInterrupted()
+		}
 		return printErr("Could not start the copy", err)
 	}
 	defer closeSession()
+	// Nothing below reads ctx, so Ctrl-C closes the connection instead: that
+	// fails the copy at its next read and ends the remote session.
+	stopClosing := context.AfterFunc(ctx, closeSession)
+	defer stopClosing()
 	_ = session.CloseStdin()
 	var copyErr error
 	if local == "-" {
@@ -165,15 +183,28 @@ func cmdAppCopy(slug string, args []string) int {
 	} else {
 		copyErr = extractAppTaskTar(session.stdout, local)
 	}
+	if ctx.Err() != nil {
+		return appCopyInterrupted()
+	}
 	if copyErr != nil {
 		closeSession()
 		return printErr("Copy failed", copyErr)
 	}
 	terminal, err := session.Wait(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return appCopyInterrupted()
+		}
 		return printErr("Copy session ended unexpectedly", err)
 	}
 	return appSessionExitCode(terminal)
+}
+
+// appCopyInterrupted reports a copy stopped by Ctrl-C with the conventional
+// 130. What was already written stays, incomplete.
+func appCopyInterrupted() int {
+	PrintWarn(osStderr, "Copy interrupted; anything already written is incomplete")
+	return 130
 }
 
 func appSessionExitCode(terminal api.AppTaskAttachTerminalMessage) int {
@@ -297,7 +328,7 @@ func cmdAppPortForward(slug string, args []string) int {
 	}
 	defer closeSession()
 	PrintOK(osStderr, "Forwarding %s -> %s from inside %s (Ctrl-C to stop)", ln.Addr(), target, slug)
-	forwardErr := apptaskmux.Forward(ctx, ln, session, session.stdout)
+	forwardErr := forwardAppTaskSession(ctx, ln, session, session.stdout, closeSession)
 	_ = session.CloseStdin()
 	waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

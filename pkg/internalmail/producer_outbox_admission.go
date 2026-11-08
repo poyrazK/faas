@@ -126,6 +126,14 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "managed_postgres_cap_disabled"
 	}
+	if review.Template == ProducerOutboxManagedPostgresRestoreSlotTemplate && !s.managedPostgresRestoreSlotOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "managed_postgres_restore_slot_disabled"
+	}
+	if review.Template == ProducerOutboxManagedPostgresPlanExcessTemplate && !s.managedPostgresPlanExcessOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "managed_postgres_plan_excess_disabled"
+	}
 	return review, err
 }
 

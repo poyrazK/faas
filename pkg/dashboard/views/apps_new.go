@@ -46,7 +46,6 @@ type AppsNewRepoView struct {
 // CSRF envelopes stamped at GET time for the two browser actions.
 type AppsNewView struct {
 	NeedsGithubConnect        bool
-	NeedsGithubInstall        bool
 	ConnectGithubConfirmToken string
 	PreFilledRepo             string
 	PreFilledInstallID        string
@@ -60,6 +59,9 @@ type AppsNewView struct {
 	Repos                     []AppsNewRepoView
 	Installations             []AppsNewInstallView
 	CreateAppConfirmToken     string
+	// ExistingApp names an app the wizard binds instead of creating one
+	// (ADR-20261101160300); the slug input then shows it read-only.
+	ExistingApp string
 }
 
 // AppsNewInstallView is one row in the wizard's installation <select>.

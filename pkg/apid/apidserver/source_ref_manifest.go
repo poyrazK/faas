@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"path"
 	"reflect"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -41,6 +43,7 @@ type deploymentReleaseCommand struct {
 type sourceRefManifestStaged struct {
 	accountID             string
 	appID                 string
+	baselineDeploymentID  string
 	edgeRuleChanges       []sourceRefManifestEdgeRuleChange
 	cronIDs               []string
 	cronIntent            *api.DeploymentCronStagingRequest
@@ -52,6 +55,7 @@ type sourceRefManifestStaged struct {
 	eventVersionChanges   []sourceRefEventVersionsChange
 	workPolicyChanges     []sourceRefWorkPolicyChange
 	bindingIDs            []string
+	queueBindingChanges   []sourceRefQueueBindingChange
 	scalingChanged        bool
 	previousScalingPolicy *state.ScalingPolicy
 	appliedScalingPolicy  *state.ScalingPolicy
@@ -60,6 +64,21 @@ type sourceRefManifestStaged struct {
 	appliedRetryPolicy    json.RawMessage
 	lifecycleChanged      bool
 	previousLifecycle     state.AppManifest
+	appliedLifecycle      state.AppManifest
+
+	// ADR-20261031130000: subscriptions this deploy disabled or re-enabled,
+	// restored if the deploy rolls back.
+	eventSubscriptionsEnabled []sourceRefEventSubscriptionToggle
+	// eventSubscriptionIntent is the production deploy's declared set, applied
+	// when its deployment serves all production traffic (ADR-20261101030512).
+	// nil records no intent.
+	eventSubscriptionIntent []string
+}
+
+// sourceRefEventSubscriptionToggle names a subscription a deploy turned back
+// on; its own account id addresses it on rollback.
+type sourceRefEventSubscriptionToggle struct {
+	id, accountID string
 }
 
 type sourceRefEventWorkBindingChange struct {
@@ -81,7 +100,8 @@ func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
 	return staged.cronIntent != nil || staged.scalingChanged || staged.retryPolicyChanged || staged.lifecycleChanged || len(staged.edgeRuleChanges) > 0 ||
 		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 || len(staged.triggerWorkChanges) > 0 ||
 		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 || len(staged.eventRetryChanges) > 0 || len(staged.eventVersionChanges) > 0 ||
-		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0
+		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0 || len(staged.queueBindingChanges) > 0 ||
+		len(staged.eventSubscriptionsEnabled) > 0
 }
 
 // loadSourceRefManifest reads the root manifest from the already validated
@@ -103,6 +123,9 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan, agen
 	}
 	if err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
+	}
+	if m == nil {
+		return nil, nil
 	}
 	if prob := validateManifestAgainstPlan(m, plan, agentSteps); prob != nil {
 		return nil, prob
@@ -173,7 +196,30 @@ func (s *server) applyManifestWorkloads(
 // deployments: an explicit gregale.yaml release.command wins, otherwise the
 // selected source root's Procfile release: process is used. Both forms are
 // stored as a single shell command, matching Heroku's Procfile semantics.
-func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
+// A source that declares neither keeps the release command its project's
+// Compose file gave the app (ADR-20261102192943).
+//
+// A deployment that declares one is refused while this installation cannot
+// run release commands (releasePhaseOff), rather than failing in imaged after
+// its build.
+func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest, releasePhaseOff bool) (deploymentReleaseCommand, *api.Problem) {
+	resolved, problem := resolveSourceReleaseDeclaration(sourcePath, app, manifest)
+	if problem == nil && releasePhaseOff && len(resolved.command) > 0 {
+		return deploymentReleaseCommand{}, releasePhaseOffProblem()
+	}
+	return resolved, problem
+}
+
+// releasePhaseOffProblem refuses a deployment that declares a release command
+// while FAAS_RELEASE_PHASE_ENABLED is off on apid: imaged would fail it after
+// the build with the same code.
+func releasePhaseOffProblem() *api.Problem {
+	return api.NewProblem(http.StatusUnprocessableEntity, api.CodeReleasePhaseUnavailable, "Release commands unavailable",
+		"This deployment declares a release command (gregale.yaml release.command, a Procfile release: process, or its project's Compose file), "+
+			"but release commands are not available on this Gregale installation yet. Remove the declaration and run the command from the app or a machine you control.")
+}
+
+func resolveSourceReleaseDeclaration(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
 	if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
 		return validateDeploymentReleaseCommand(manifest.Release.Command)
 	}
@@ -182,16 +228,28 @@ func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gre
 		return deploymentReleaseCommand{}, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
 	}
 	if !found {
-		return deploymentReleaseCommand{}, nil
+		return projectReleaseCommand(app), nil
 	}
 	command, ok, err := reposcan.ParseProcfileReleaseCommand(body)
 	if err != nil {
 		return deploymentReleaseCommand{}, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid Procfile", "release: "+err.Error())
 	}
 	if !ok {
-		return deploymentReleaseCommand{}, nil
+		return projectReleaseCommand(app), nil
 	}
 	return validateDeploymentReleaseCommand(command)
+}
+
+// projectReleaseCommand is the release command a project's Compose file gave
+// app: the command of the service it waits for to complete.
+func projectReleaseCommand(app state.App) deploymentReleaseCommand {
+	if len(app.Manifest.ProjectReleaseCommand) == 0 {
+		return deploymentReleaseCommand{}
+	}
+	return deploymentReleaseCommand{
+		command: append([]string(nil), app.Manifest.ProjectReleaseCommand...),
+		shell:   app.Manifest.ProjectReleaseCommandShell,
+	}
 }
 
 func validateDeploymentReleaseCommand(command string) (deploymentReleaseCommand, *api.Problem) {
@@ -316,6 +374,16 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	if m == nil {
 		return staged, nil
 	}
+	if _, lifecycle := m.LifecycleRequest(); lifecycle || m.RetryPolicy != nil || m.ScalingPolicyRequest() != nil {
+		baseline, err := s.store.LatestDeployment(ctx, app.ID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return staged, api.ErrCapacity("could not read deployment before manifest settings")
+		}
+		staged.baselineDeploymentID = baseline.ID
+	}
+	if problem := s.applyManifestLabels(ctx, acct, app, m.Labels); problem != nil {
+		return staged, problem
+	}
 	if !s.operation.OperationDefinitionsAdmission(acct.ID, app.ID, deploymentScope, sourceOperationSpecs(m)) {
 		return staged, api.ErrCapacity("new operation admission is disabled for this preview cohort")
 	}
@@ -328,68 +396,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		return staged, problem
 	}
 	staged.bindingIDs = bindingIDs
-	if m.RetryPolicy != nil {
-		desiredDTO := retryPolicyDTOFromManifest(m.RetryPolicy)
-		desired, retryProblem := marshalAppRetryPolicy(desiredDTO)
-		if retryProblem != nil {
-			return staged, retryProblem
-		}
-		if !retryPoliciesEqual(app.RetryPolicyJSON, desired) {
-			updated, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
-				RetryPolicyJSON: &desired,
-				SetRetryPolicy:  true,
-			})
-			if err != nil {
-				return staged, sourceRefRetryPolicyStoreProblem(err)
-			}
-			staged.retryPolicyChanged = true
-			staged.previousRetryPolicy = cloneRetryPolicyJSON(app.RetryPolicyJSON)
-			staged.appliedRetryPolicy = cloneRetryPolicyJSON(updated.RetryPolicyJSON)
-			if len(staged.appliedRetryPolicy) == 0 {
-				staged.appliedRetryPolicy = cloneRetryPolicyJSON(desired)
-			}
-			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
-				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","retry_policy_changed":true}`, app.Slug, app.ID))
-		}
+	if problem := s.applySourceManifestSettings(ctx, acct, app, m, &staged); problem != nil {
+		return staged, problem
 	}
-	// A worker block's scale applies here too, as the CLI applies it
-	// (ADR-20261018101500 amendment 2026-10-27).
-	if policy := m.ScalingPolicyRequest(); policy != nil {
-		limits, ok := api.LimitsFor(acct.Plan)
-		if !ok {
-			return staged, api.ErrCapacity("could not resolve account plan limits")
-		}
-		scalingReq := &api.UpdateAppRequest{ScalingPolicy: policy}
-		if lifecycle, ok := m.LifecycleRequest(); ok {
-			// The lifecycle step below sets the mode a queue target needs.
-			scalingReq.ExecutionMode = lifecycle.ExecutionMode
-		}
-		if prob := validateUpdateApp(scalingReq, acct, limits, app); prob != nil {
-			return staged, prob
-		}
-		desired := policyPtrFromReq(scalingReq)
-		if !scalingPoliciesEqual(app.ScalingPolicy, desired) {
-			updated, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
-				ScalingPolicy:    desired,
-				SetScalingPolicy: true,
-			})
-			if err != nil {
-				return staged, sourceRefScalingStoreProblem(err)
-			}
-			staged.scalingChanged = true
-			staged.previousScalingPolicy = cloneScalingPolicy(app.ScalingPolicy)
-			staged.appliedScalingPolicy = cloneScalingPolicy(updated.ScalingPolicy)
-			if staged.appliedScalingPolicy == nil {
-				staged.appliedScalingPolicy = cloneScalingPolicy(desired)
-			}
-			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
-				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","scaling_changed":true}`, app.Slug, app.ID))
-		}
-	}
-	if req, ok := m.LifecycleRequest(); ok {
-		if problem := s.applySourceRefLifecycle(ctx, acct, app, req, &staged); problem != nil {
-			return staged, problem
-		}
+	if problem := s.applySourceRefQueueBindings(ctx, acct, app, m.QueueBindings, deploymentScope, &staged); problem != nil {
+		return staged, problem
 	}
 	if len(m.WorkPolicies) > 0 {
 		policyStore, ok := s.store.(state.AppWorkPolicyStore)
@@ -429,6 +440,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		return staged, nil
 	}
 	if len(m.Triggers) == 0 && len(m.EventTriggers) == 0 {
+		if sourceManifestReconcilesEvents(ctx) {
+			if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, &staged); problem != nil {
+				return staged, problem
+			}
+		}
 		if m.AsyncRoutes != nil {
 			if problem := s.applySourceRefManifestAsyncRoutes(ctx, acct, app, m.AsyncRoutes, &staged); problem != nil {
 				return staged, problem
@@ -594,106 +610,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			"enabled": declaration.IsEnabled(), "source": "deploy.source_ref",
 		})
 	}
-	if len(m.EventTriggers) > 0 {
-		eventStore, ok := s.store.(state.EventSubscriptionStore)
-		if !ok {
-			return staged, api.ErrCapacity("event subscriptions are unavailable")
-		}
-		workBindings, ok := s.store.(state.EventWorkBindingStore)
-		if !ok {
-			return staged, api.ErrCapacity("event work bindings are unavailable")
-		}
-		subscriptions, err := eventStore.ListEventSubscriptionsForApp(ctx, app.ID)
-		if err != nil {
-			return staged, api.ErrCapacity("could not list app event subscriptions")
-		}
-		subscriptionKeys := make(map[string]state.EventSubscription, len(subscriptions))
-		ids := make([]string, 0, len(subscriptions))
-		for _, subscription := range subscriptions {
-			key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
-			if keyErr == nil {
-				subscriptionKeys[key] = subscription
-				ids = append(ids, subscription.ID)
-			}
-		}
-		bindingByID, err := workBindings.EventWorkBindingsByIDs(ctx, ids)
-		if err != nil {
-			return staged, api.ErrCapacity("could not list event work bindings")
-		}
-		for _, declaration := range m.EventTriggers {
-			if declaration.App != "" && declaration.App != app.Slug {
-				continue
-			}
-			subscription, convertErr := declaration.AsSubscription(acct.ID)
-			if convertErr != nil {
-				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", convertErr.Error())
-			}
-			key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
-			if keyErr != nil {
-				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", keyErr.Error())
-			}
-			row, exists := subscriptionKeys[key]
-			createdHere := false
-			if !exists {
-				var inserted bool
-				row, inserted, err = eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
-				if err != nil {
-					return staged, sourceRefEventSubscriptionProblem(err)
-				}
-				if problem := s.applySourceRefEventVersions(ctx, acct.ID, app.ID, row, declaration, createdHere, &staged); problem != nil {
-					return staged, problem
-				}
-				row.SchemaVersions, _ = api.NormalizeEventSchemaVersions(declaration.SchemaVersions)
-				subscriptionKeys[key] = row
-				if inserted {
-					createdHere = true
-					staged.eventSubscriptionIDs = append(staged.eventSubscriptionIDs, row.ID)
-					_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
-						fmt.Sprintf(`{"kind":"created","app_id":"%s","subscription_id":"%s"}`, app.ID, row.ID))
-					s.audit.Emit(ctx, "event.subscription.created", &acct.ID, map[string]any{
-						"subscription_id": row.ID, "app_id": app.ID, "source": subscription.Source,
-						"type": subscription.Type, "source_ref": true,
-					})
-				}
-			}
-			if problem := s.applySourceRefEventRetry(ctx, acct.ID, app.ID, row, declaration, createdHere, &staged); problem != nil {
-				return staged, problem
-			}
-			if policy, _ := declaration.RoutingRetryPolicy(); policy != nil {
-				row.RoutingRetryPolicy = policy
-			} else {
-				row.RoutingRetryPolicy = nil
-			}
-			if problem := s.applySourceRefEventVersions(ctx, acct.ID, app.ID, row, declaration, createdHere, &staged); problem != nil {
-				return staged, problem
-			}
-			row.SchemaVersions, _ = api.NormalizeEventSchemaVersions(declaration.SchemaVersions)
-			subscriptionKeys[key] = row
-			previous := bindingByID[row.ID]
-			previousAction := previous.Action
-			if previousAction == "" {
-				previousAction = state.EventWorkInvoke
-			}
-			if previous.PolicyName == declaration.WorkPolicy && previous.KeySelector == declaration.WorkKey &&
-				previous.FairnessSelector == declaration.WorkFairnessKey &&
-				previousAction == declaration.EffectiveWorkAction() && previous.Ordered == declaration.Ordered {
-				continue
-			}
-			old, bindingErr := workBindings.SetEventWorkBinding(ctx, app.ID, row.ID, declaration.WorkPolicy,
-				declaration.WorkKey, state.EventWorkBindingOptions{
-					Action: declaration.EffectiveWorkAction(), FairnessSelector: declaration.WorkFairnessKey, Ordered: declaration.Ordered})
-			if bindingErr != nil {
-				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
-					"Invalid manifest", "event work policy must exist on the target app")
-			}
-			if !createdHere {
-				staged.eventWorkChanges = append(staged.eventWorkChanges,
-					sourceRefEventWorkBindingChange{subscriptionID: row.ID, previous: old})
-			}
-			bindingByID[row.ID] = state.EventWorkBinding{SubscriptionID: row.ID,
-				AppID: app.ID, PolicyName: declaration.WorkPolicy, KeySelector: declaration.WorkKey,
-				FairnessSelector: declaration.WorkFairnessKey,
-				Action:           declaration.EffectiveWorkAction(), Ordered: declaration.Ordered}
+	if len(m.EventTriggers) > 0 || sourceManifestReconcilesEvents(ctx) {
+		if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, &staged); problem != nil {
+			return staged, problem
 		}
 	}
 	if m.AsyncRoutes != nil {
@@ -725,11 +644,300 @@ func eventSubscriptionManifestKey(source, typ string, filter json.RawMessage) (s
 	return strings.Join([]string{source, typ, string(canonical)}, "\x00"), nil
 }
 
+// applySourceRefEventTriggers installs the manifest's event_triggers for the
+// app and, on a production deploy, makes them the app's whole set
+// (ADR-20261031130000).
+func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, staged *sourceRefManifestStaged) *api.Problem {
+	eventStore, ok := s.store.(state.EventSubscriptionStore)
+	if !ok {
+		if len(m.EventTriggers) == 0 {
+			return nil
+		}
+		return api.ErrCapacity("event subscriptions are unavailable")
+	}
+	workBindings, ok := s.store.(state.EventWorkBindingStore)
+	if !ok {
+		return api.ErrCapacity("event work bindings are unavailable")
+	}
+	subscriptions, err := eventStore.ListEventSubscriptionsForApp(ctx, app.ID)
+	if err != nil {
+		return api.ErrCapacity("could not list app event subscriptions")
+	}
+	declared := make(map[string]bool, len(m.EventTriggers))
+	subscriptionKeys := make(map[string]state.EventSubscription, len(subscriptions))
+	ids := make([]string, 0, len(subscriptions))
+	for _, subscription := range subscriptions {
+		key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
+		if keyErr == nil {
+			subscriptionKeys[key] = subscription
+			ids = append(ids, subscription.ID)
+		}
+	}
+	bindingByID, err := workBindings.EventWorkBindingsByIDs(ctx, ids)
+	if err != nil {
+		return api.ErrCapacity("could not list event work bindings")
+	}
+	for _, declaration := range m.EventTriggers {
+		if declaration.App != "" && declaration.App != app.Slug {
+			continue
+		}
+		subscription, convertErr := declaration.AsSubscription(acct.ID)
+		if convertErr != nil {
+			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", convertErr.Error())
+		}
+		key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
+		if keyErr != nil {
+			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", keyErr.Error())
+		}
+		row, exists := subscriptionKeys[key]
+		createdHere := false
+		// A declaration the app declares again re-enables its disabled row
+		// (ADR-20261031130000); the upsert sets enabled.
+		if !exists || !row.Enabled {
+			wasDisabled := exists && !row.Enabled
+			var inserted bool
+			row, inserted, err = eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
+			if err != nil {
+				return sourceRefEventSubscriptionProblem(err)
+			}
+			if problem := s.applySourceRefEventVersions(ctx, acct.ID, app.ID, row, declaration, createdHere, staged); problem != nil {
+				return problem
+			}
+			row.SchemaVersions, _ = api.NormalizeEventSchemaVersions(declaration.SchemaVersions)
+			subscriptionKeys[key] = row
+			if wasDisabled {
+				staged.eventSubscriptionsEnabled = append(staged.eventSubscriptionsEnabled, sourceRefEventSubscriptionToggle{row.ID, row.AccountID})
+			}
+			if inserted {
+				createdHere = true
+				staged.eventSubscriptionIDs = append(staged.eventSubscriptionIDs, row.ID)
+				_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
+					fmt.Sprintf(`{"kind":"created","app_id":"%s","subscription_id":"%s"}`, app.ID, row.ID))
+				s.audit.Emit(ctx, "event.subscription.created", &acct.ID, map[string]any{
+					"subscription_id": row.ID, "app_id": app.ID, "source": subscription.Source,
+					"type": subscription.Type, "source_ref": true,
+				})
+			}
+		}
+		if problem := s.applySourceRefEventRetry(ctx, acct.ID, app.ID, row, declaration, createdHere, staged); problem != nil {
+			return problem
+		}
+		if policy, _ := declaration.RoutingRetryPolicy(); policy != nil {
+			row.RoutingRetryPolicy = policy
+		} else {
+			row.RoutingRetryPolicy = nil
+		}
+		if problem := s.applySourceRefEventVersions(ctx, acct.ID, app.ID, row, declaration, createdHere, staged); problem != nil {
+			return problem
+		}
+		row.SchemaVersions, _ = api.NormalizeEventSchemaVersions(declaration.SchemaVersions)
+		subscriptionKeys[key] = row
+		declared[row.ID] = true
+		previous := bindingByID[row.ID]
+		previousAction := previous.Action
+		if previousAction == "" {
+			previousAction = state.EventWorkInvoke
+		}
+		if previous.PolicyName == declaration.WorkPolicy && previous.KeySelector == declaration.WorkKey &&
+			previous.FairnessSelector == declaration.WorkFairnessKey &&
+			previousAction == declaration.EffectiveWorkAction() && previous.Ordered == declaration.Ordered {
+			continue
+		}
+		old, bindingErr := workBindings.SetEventWorkBinding(ctx, app.ID, row.ID, declaration.WorkPolicy,
+			declaration.WorkKey, state.EventWorkBindingOptions{
+				Action: declaration.EffectiveWorkAction(), FairnessSelector: declaration.WorkFairnessKey, Ordered: declaration.Ordered})
+		if bindingErr != nil {
+			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+				"Invalid manifest", "event work policy must exist on the target app")
+		}
+		if !createdHere {
+			staged.eventWorkChanges = append(staged.eventWorkChanges,
+				sourceRefEventWorkBindingChange{subscriptionID: row.ID, previous: old})
+		}
+		bindingByID[row.ID] = state.EventWorkBinding{SubscriptionID: row.ID,
+			AppID: app.ID, PolicyName: declaration.WorkPolicy, KeySelector: declaration.WorkKey,
+			FairnessSelector: declaration.WorkFairnessKey,
+			Action:           declaration.EffectiveWorkAction(), Ordered: declaration.Ordered}
+	}
+	reconcile := sourceManifestReconcilesEvents(ctx) && s.manifestEventTriggersNameKnownApps(ctx, app, m)
+	if reconcile {
+		staged.eventSubscriptionIntent = make([]string, 0, len(declared))
+		for id := range declared {
+			staged.eventSubscriptionIntent = append(staged.eventSubscriptionIntent, id)
+		}
+		sort.Strings(staged.eventSubscriptionIntent)
+	}
+	// A stage deploy or a batch trigger create records no intent, but what it
+	// adds counts against the same caps.
+	return s.checkSourceRefEventSubscriptionQuota(ctx, acct, app, len(declared), reconcile, staged)
+}
+
+// manifestEventTriggersNameKnownApps reports whether every event_triggers
+// entry that names another app names one that exists in the app's account.
+// A manifest still naming an app by a slug it was renamed from would declare
+// nothing for it; recording that as the app's whole set would disable every
+// subscription it has once the release is live, so such a deploy only adds.
+func (s *server) manifestEventTriggersNameKnownApps(ctx context.Context, app state.App, m *gregalemanifest.Manifest) bool {
+	for _, declaration := range m.EventTriggers {
+		if declaration.App == "" || declaration.App == app.Slug {
+			continue
+		}
+		other, err := s.store.AppBySlug(ctx, declaration.App)
+		if err != nil || other.AccountID != app.AccountID || other.Status == state.AppDeleted {
+			s.log.Warn("manifest event_triggers name an unknown app; event subscriptions are only added",
+				"app_id", app.ID, "named_app", declaration.App)
+			return false
+		}
+	}
+	return true
+}
+
+// checkSourceRefEventSubscriptionQuota holds the app's enabled event
+// subscriptions to the plan's caps (ADR-20261031130000). A production deploy
+// is counted as its declared set will stand once it is live (the app's
+// undeclared subscriptions are disabled then); every other apply counts what
+// is enabled now. Counting after the writes makes concurrent applies of one
+// account safe without a lock: the later of two counts sees both. Only an
+// apply that added or re-enabled a subscription is refused, so an app already
+// over a cap can still shrink.
+func (s *server) checkSourceRefEventSubscriptionQuota(ctx context.Context, acct state.Account, app state.App, declared int, projected bool, staged *sourceRefManifestStaged) *api.Problem {
+	if len(staged.eventSubscriptionIDs) == 0 && len(staged.eventSubscriptionsEnabled) == 0 {
+		return nil
+	}
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok {
+		return nil
+	}
+	counter, ok := s.store.(state.EventSubscriptionReconcileStore)
+	if !ok {
+		return api.ErrCapacity("event subscription counts are unavailable")
+	}
+	perApp, perAccount, err := counter.EventSubscriptionQuotaCounts(ctx, app.ID)
+	if err != nil {
+		return api.ErrCapacity("could not count event subscriptions")
+	}
+	if projected {
+		perAccount, perApp = perAccount-perApp+declared, declared
+	}
+	if perApp > limits.EventSubscriptionsPerApp {
+		return api.ErrPlanEventSubscriptionQuota(acct.Plan, api.PlanQuotaScopeApp, limits.EventSubscriptionsPerApp, perApp)
+	}
+	if perAccount > limits.EventSubscriptionsPerAccount {
+		return api.ErrPlanEventSubscriptionQuota(acct.Plan, api.PlanQuotaScopeAccount, limits.EventSubscriptionsPerAccount, perAccount)
+	}
+	return nil
+}
+
 func sourceRefEventSubscriptionProblem(err error) *api.Problem {
 	if errors.Is(err, state.ErrNotFound) {
 		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
 	}
 	return api.ErrCapacity("could not apply manifest event subscription")
+}
+
+// applySourceManifestSettings applies a gregale.yaml's app settings: its retry
+// policy, its scaling policy and its lifecycle block (after_restore,
+// before_checkpoint, restart policy, timeouts, replicas). Single-app deploys
+// apply them through applySourceRefManifest; project applies and GitHub
+// deploys apply them per service (ADR-20261104221217), since a project
+// service's own gregale.yaml was otherwise ignored. staged records each change
+// so rollbackSourceRefManifest can undo it.
+func (s *server) applySourceManifestSettings(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, staged *sourceRefManifestStaged) *api.Problem {
+	if m.RetryPolicy != nil {
+		desiredDTO := retryPolicyDTOFromManifest(m.RetryPolicy)
+		desired, retryProblem := marshalAppRetryPolicy(desiredDTO)
+		if retryProblem != nil {
+			return retryProblem
+		}
+		if !retryPoliciesEqual(app.RetryPolicyJSON, desired) {
+			updated, err := s.store.UpdateApp(ctx, app.ID, sourceManifestSettingsParams(*staged, func(current state.App) (state.UpdateAppParams, error) {
+				if !retryPoliciesEqual(current.RetryPolicyJSON, app.RetryPolicyJSON) {
+					return state.UpdateAppParams{}, state.ErrConflict
+				}
+				return state.UpdateAppParams{RetryPolicyJSON: &desired, SetRetryPolicy: true}, nil
+			}))
+			if err != nil {
+				return sourceRefRetryPolicyStoreProblem(err)
+			}
+			staged.retryPolicyChanged = true
+			staged.previousRetryPolicy = cloneRetryPolicyJSON(app.RetryPolicyJSON)
+			staged.appliedRetryPolicy = cloneRetryPolicyJSON(updated.RetryPolicyJSON)
+			if len(staged.appliedRetryPolicy) == 0 {
+				staged.appliedRetryPolicy = cloneRetryPolicyJSON(desired)
+			}
+			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","retry_policy_changed":true}`, app.Slug, app.ID))
+		}
+	}
+	// A worker block's scale applies here too, as the CLI applies it
+	// (ADR-20261018101500 amendment 2026-10-27).
+	if policy := m.ScalingPolicyRequest(); policy != nil {
+		limits, ok := api.LimitsFor(acct.Plan)
+		if !ok {
+			return api.ErrCapacity("could not resolve account plan limits")
+		}
+		scalingReq := &api.UpdateAppRequest{ScalingPolicy: policy}
+		if lifecycle, ok := m.LifecycleRequest(); ok {
+			// The lifecycle step below sets the mode a queue target needs.
+			scalingReq.ExecutionMode = lifecycle.ExecutionMode
+		}
+		if prob := validateUpdateApp(scalingReq, acct, limits, app); prob != nil {
+			return prob
+		}
+		desired := policyPtrFromReq(scalingReq)
+		if !scalingPoliciesEqual(app.ScalingPolicy, desired) {
+			updated, err := s.store.UpdateApp(ctx, app.ID, sourceManifestSettingsParams(*staged, func(current state.App) (state.UpdateAppParams, error) {
+				if !scalingPoliciesEqual(current.ScalingPolicy, app.ScalingPolicy) {
+					return state.UpdateAppParams{}, state.ErrConflict
+				}
+				return state.UpdateAppParams{ScalingPolicy: desired, SetScalingPolicy: true}, nil
+			}))
+			if err != nil {
+				return sourceRefScalingStoreProblem(err)
+			}
+			staged.scalingChanged = true
+			staged.previousScalingPolicy = cloneScalingPolicy(app.ScalingPolicy)
+			staged.appliedScalingPolicy = cloneScalingPolicy(updated.ScalingPolicy)
+			if staged.appliedScalingPolicy == nil {
+				staged.appliedScalingPolicy = cloneScalingPolicy(desired)
+			}
+			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","scaling_changed":true}`, app.Slug, app.ID))
+		}
+	}
+	if req, ok := m.LifecycleRequest(); ok {
+		if problem := s.applySourceRefLifecycle(ctx, acct, app, req, staged); problem != nil {
+			return problem
+		}
+	}
+	return nil
+}
+
+// applyBridgeSourceSettings applies a GitHub deploy's gregale.yaml settings
+// for the githubd bridge, which has no server of its own. It returns the app
+// as it now is and the undo for a failed enqueue.
+func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (state.App, func(context.Context), *api.Problem) {
+	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	baseline, err := s.store.LatestDeployment(ctx, app.ID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return app, func(context.Context) {}, api.ErrCapacity("could not read deployment before manifest settings")
+	}
+	staged.baselineDeploymentID = baseline.ID
+	undo := func(ctx context.Context) {
+		if err := s.rollbackSourceRefManifest(ctx, staged); err != nil {
+			s.log.Warn("apid: roll back GitHub deploy settings", "app_id", app.ID, "err", err)
+		}
+	}
+	if problem := s.applySourceManifestSettings(ctx, acct, app, m, &staged); problem != nil {
+		undo(context.WithoutCancel(ctx))
+		return app, func(context.Context) {}, problem
+	}
+	if staged.lifecycleChanged || staged.scalingChanged || staged.retryPolicyChanged {
+		if reloaded, err := s.store.AppByID(ctx, app.ID); err == nil {
+			app = reloaded
+		}
+	}
+	return app, undo, nil
 }
 
 // applySourceRefLifecycle applies a manifest's lifecycle and worker blocks with
@@ -745,11 +953,21 @@ func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
 		return prob
 	}
+	if prob := s.executionModeApprovalProblem(ctx, app, &req); prob != nil {
+		return prob
+	}
 	updated, changed := stateManifestForUpdate(app, &req)
 	if !changed || reflect.DeepEqual(sourceLifecycleFields(*updated), sourceLifecycleFields(app.Manifest)) {
 		return nil
 	}
-	if _, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: updated}); err != nil {
+	applied, err := s.store.UpdateApp(ctx, app.ID, sourceManifestSettingsParams(*staged, func(current state.App) (state.UpdateAppParams, error) {
+		if !reflect.DeepEqual(sourceLifecycleFields(current.Manifest), sourceLifecycleFields(app.Manifest)) {
+			return state.UpdateAppParams{}, state.ErrConflict
+		}
+		manifest, _ := stateManifestForUpdate(current, &req)
+		return state.UpdateAppParams{Manifest: manifest}, nil
+	}))
+	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
 		}
@@ -757,6 +975,7 @@ func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account
 	}
 	staged.lifecycleChanged = true
 	staged.previousLifecycle = sourceLifecycleFields(app.Manifest)
+	staged.appliedLifecycle = sourceLifecycleFields(applied.Manifest)
 	if !reflect.DeepEqual(updated.BeforeCheckpoint, app.Manifest.BeforeCheckpoint) ||
 		!reflect.DeepEqual(updated.Profiling, app.Manifest.Profiling) || !reflect.DeepEqual(updated.Tracing, app.Manifest.Tracing) {
 		// As PATCH /v1/apps/{slug} does: existing process snapshots were
@@ -773,18 +992,40 @@ func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account
 // rollbackSourceRefLifecycle restores only the fields a lifecycle or worker
 // block can set, so a concurrent change to other manifest fields survives.
 func (s *server) rollbackSourceRefLifecycle(ctx context.Context, staged sourceRefManifestStaged) error {
-	current, err := s.store.AppByID(ctx, staged.appID)
+	changed, err := s.rollbackSourceManifestSettings(ctx, staged, func(current state.App) (state.UpdateAppParams, error) {
+		if !reflect.DeepEqual(sourceLifecycleFields(current.Manifest), staged.appliedLifecycle) {
+			return state.UpdateAppParams{}, state.ErrConflict
+		}
+		restored := current.Manifest
+		copySourceLifecycleFields(&restored, staged.previousLifecycle)
+		return state.UpdateAppParams{Manifest: &restored}, nil
+	})
 	if err != nil {
-		return fmt.Errorf("rollback manifest lifecycle: read app: %w", err)
-	}
-	restored := current.Manifest
-	copySourceLifecycleFields(&restored, staged.previousLifecycle)
-	if _, err := s.store.UpdateApp(ctx, staged.appID, state.UpdateAppParams{Manifest: &restored}); err != nil {
 		return fmt.Errorf("rollback manifest lifecycle: %w", err)
 	}
-	_ = s.notif.Notify(ctx, db.NotifyAppChanged,
-		fmt.Sprintf(`{"kind":"updated","app_id":"%s","lifecycle_changed":true}`, staged.appID))
+	if changed {
+		_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+			fmt.Sprintf(`{"kind":"updated","app_id":"%s","lifecycle_changed":true}`, staged.appID))
+	}
 	return nil
+}
+
+// Compare and restore under the store's app lock. A newer accepted deployment
+// or edit owns its settings; a failed older request must leave them intact.
+func (s *server) rollbackSourceManifestSettings(ctx context.Context, staged sourceRefManifestStaged, prepare func(state.App) (state.UpdateAppParams, error)) (bool, error) {
+	_, err := s.store.UpdateApp(ctx, staged.appID, sourceManifestSettingsParams(staged, prepare))
+	if errors.Is(err, state.ErrConflict) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func sourceManifestSettingsParams(staged sourceRefManifestStaged, prepare func(state.App) (state.UpdateAppParams, error)) state.UpdateAppParams {
+	return state.UpdateAppParams{DeploySettingsGuard: &state.DeploySettingsGuard{
+		AppID: staged.appID, AccountID: staged.accountID,
+		DeploymentID: staged.baselineDeploymentID, MatchDeploymentIDOnly: true,
+		Prepare: prepare,
+	}}
 }
 
 // sourceLifecycleFields projects the manifest fields that
@@ -850,6 +1091,8 @@ func cloneScalingPolicy(policy *state.ScalingPolicy) *state.ScalingPolicy {
 		return nil
 	}
 	clone := *policy
+	clone.Targets = append([]state.ScalingTarget(nil), policy.Targets...)
+	clone.Schedules = append([]state.ScalingSchedule(nil), policy.Schedules...)
 	if policy.Target != nil {
 		target := *policy.Target
 		clone.Target = &target
@@ -861,18 +1104,11 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
-	if left.MinInstances != right.MinInstances || left.MaxInstances != right.MaxInstances ||
-		left.ScaleOutCooldownS != right.ScaleOutCooldownS || left.ScaleInCooldownS != right.ScaleInCooldownS ||
-		left.ConcurrencyOverflow != right.ConcurrencyOverflow || left.MaxQueueWaitMS != right.MaxQueueWaitMS ||
-		left.MaxQueueDepth != right.MaxQueueDepth || left.WakeMaxQueueDepth != right.WakeMaxQueueDepth ||
-		left.WakeMaxQueueWaitSeconds != right.WakeMaxQueueWaitSeconds ||
-		left.PerInstanceConcurrency != right.PerInstanceConcurrency {
-		return false
-	}
-	if left.Target == nil || right.Target == nil {
-		return left.Target == nil && right.Target == nil
-	}
-	return left.Target.Metric == right.Target.Metric && left.Target.Value == right.Target.Value
+	// Compare every policy field, while treating omitted and empty lists alike.
+	leftFields, rightFields := *left, *right
+	leftFields.Targets, rightFields.Targets = nil, nil
+	leftFields.Schedules, rightFields.Schedules = nil, nil
+	return reflect.DeepEqual(leftFields, rightFields) && slices.Equal(left.Targets, right.Targets) && slices.Equal(left.Schedules, right.Schedules)
 }
 
 func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Problem {
@@ -910,15 +1146,21 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 		if restore == nil {
 			restore = &state.ScalingPolicy{}
 		}
-		if _, err := s.store.UpdateApp(ctx, staged.appID, state.UpdateAppParams{
-			ScalingPolicy:    restore,
-			SetScalingPolicy: true,
-		}); err != nil {
+		changed, err := s.rollbackSourceManifestSettings(ctx, staged, func(current state.App) (state.UpdateAppParams, error) {
+			if !scalingPoliciesEqual(current.ScalingPolicy, staged.appliedScalingPolicy) {
+				return state.UpdateAppParams{}, state.ErrConflict
+			}
+			return state.UpdateAppParams{ScalingPolicy: restore, SetScalingPolicy: true}, nil
+		})
+		if err != nil {
 			errs = append(errs, err)
-		} else {
+		} else if changed {
 			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 				fmt.Sprintf(`{"kind":"updated","app_id":"%s","scaling_changed":true}`, staged.appID))
 		}
+	}
+	if err := s.rollbackSourceRefQueueBindings(ctx, staged); err != nil {
+		errs = append(errs, err)
 	}
 	if staged.lifecycleChanged {
 		if err := s.rollbackSourceRefLifecycle(ctx, staged); err != nil {
@@ -931,12 +1173,15 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 			restore = json.RawMessage(`{}`)
 		}
 		restoreBytes := []byte(restore)
-		if _, err := s.store.UpdateApp(ctx, staged.appID, state.UpdateAppParams{
-			RetryPolicyJSON: &restoreBytes,
-			SetRetryPolicy:  true,
-		}); err != nil {
+		changed, err := s.rollbackSourceManifestSettings(ctx, staged, func(current state.App) (state.UpdateAppParams, error) {
+			if !retryPoliciesEqual(current.RetryPolicyJSON, staged.appliedRetryPolicy) {
+				return state.UpdateAppParams{}, state.ErrConflict
+			}
+			return state.UpdateAppParams{RetryPolicyJSON: &restoreBytes, SetRetryPolicy: true}, nil
+		})
+		if err != nil {
 			errs = append(errs, err)
-		} else {
+		} else if changed {
 			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 				fmt.Sprintf(`{"kind":"updated","app_id":"%s","retry_policy_changed":true}`, staged.appID))
 		}
@@ -1003,6 +1248,17 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 			}
 		} else {
 			errs = append(errs, errors.New("event work bindings unavailable during rollback"))
+		}
+	}
+	if len(staged.eventSubscriptionsEnabled) > 0 {
+		if reconcile, ok := s.store.(state.EventSubscriptionReconcileStore); ok {
+			for _, toggled := range staged.eventSubscriptionsEnabled {
+				if err := reconcile.SetEventSubscriptionEnabled(ctx, toggled.id, toggled.accountID, staged.appID, false); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		} else {
+			errs = append(errs, errors.New("event subscription reconcile unavailable during rollback"))
 		}
 	}
 	if len(staged.eventSubscriptionIDs) > 0 {

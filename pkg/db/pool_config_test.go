@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -30,6 +31,7 @@ func TestPoolConfigWarmFloor(t *testing.T) {
 	}{
 		{name: "schedd keeps a warm floor", appName: "faas-schedd", wantMin: DaemonMinConnections["schedd"], wantJitter: warmFloorLifetimeJitter},
 		{name: "unprefixed name resolves the same floor", appName: "schedd", wantMin: DaemonMinConnections["schedd"], wantJitter: warmFloorLifetimeJitter},
+		{name: "gatewayd-internal keeps a warm floor", appName: "faas-gatewayd-internal", wantMin: DaemonMinConnections["gatewayd-internal"], wantJitter: warmFloorLifetimeJitter},
 		{name: "apid closes idle connections", appName: "faas-apid"},
 		{name: "read-only pool without a floor", appName: "bridged", readOnly: true},
 		{name: "unknown daemon", appName: "faas-unknown"},
@@ -60,6 +62,32 @@ func TestPoolConfigWarmFloor(t *testing.T) {
 				t.Errorf("read-only session = %t, want %t", got, tc.readOnly)
 			}
 		})
+	}
+}
+
+// TestPoolConfigConnectionWarmup pins which pools warm each new connection
+// before handing it out.
+func TestPoolConfigConnectionWarmup(t *testing.T) {
+	t.Setenv(NotifyHubEnv, "")
+	t.Setenv(DirectDSNEnv, "")
+	t.Setenv(RuntimeRoleEnv, "")
+	for _, tc := range []struct {
+		appName string
+		want    bool
+	}{
+		{appName: "faas-gatewayd-internal", want: true},
+		{appName: "gatewayd-internal", want: true},
+		{appName: "faas-schedd"},
+		{appName: "faas-apid"},
+		{appName: ""},
+	} {
+		cfg, err := poolConfig("postgres://faas@127.0.0.1:5432/faas", tc.appName, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.AfterConnect != nil; got != tc.want {
+			t.Errorf("%q: warm-up hook set = %t, want %t", tc.appName, got, tc.want)
+		}
 	}
 }
 
@@ -105,5 +133,39 @@ func TestPoolConfigMigratorTimeouts(t *testing.T) {
 	}
 	if _, set := pooled.ConnConfig.RuntimeParams["statement_timeout"]; set {
 		t.Error("a pgbouncer pool got a startup statement_timeout")
+	}
+}
+
+// TestPoolConfigPacesDials: a pool may open its whole budget at once, then
+// dials at connectionDialsPerSecond, so a pool emptied by a stall does not
+// redial everything into the database at once (2026-11-05 17:29).
+func TestPoolConfigPacesDials(t *testing.T) {
+	t.Setenv(NotifyHubEnv, "")
+	t.Setenv(DirectDSNEnv, "")
+	t.Setenv(RuntimeRoleEnv, "")
+	cfg, err := poolConfig("postgres://faas@127.0.0.1:5432/faas", "faas-gatewayd-internal", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BeforeConnect == nil {
+		t.Fatal("no dial pacing")
+	}
+	for i := range cfg.MaxConns {
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		err := cfg.BeforeConnect(ctx, cfg.ConnConfig)
+		cancel()
+		if err != nil {
+			t.Fatalf("dial %d of a %d-connection budget waited: %v", i+1, cfg.MaxConns, err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if err := cfg.BeforeConnect(ctx, cfg.ConnConfig); err == nil {
+		t.Fatal("a dial past the budget's burst was not paced")
+	}
+	ctx, cancel = context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := cfg.BeforeConnect(ctx, cfg.ConnConfig); err != nil {
+		t.Fatalf("a paced dial never went ahead: %v", err)
 	}
 }

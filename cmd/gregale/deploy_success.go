@@ -180,7 +180,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		appURL = canonicalAppURL(app)
 	}
 	noHTTP := appOK && servesNoHTTP(app.Manifest.ExecutionMode)
-	if final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
+	if final.RolloutState == rolloutStateAborted {
 		reason := final.RolloutAbortedReason
 		if reason == "" {
 			reason = "the rollout was aborted"
@@ -211,6 +211,10 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		if appOK && app.ReleasePolicy != api.ReleasePolicyImmediate && final.CanaryPreset == api.ReleasePolicyCanaryPreset(app.ReleasePolicy) {
 			PrintProgress(osStdout, "A health-gated rollout is this app's default: skip it once with --rollout immediate, or always with gregale app %s --release-policy immediate", appSlug)
 		}
+	} else if final.RolloutState == "rolling_out" {
+		PrintOK(osStdout, "Candidate %s ready. %s", deploymentCommandRef(final), appURL)
+		PrintProgress(osStdout, "Service rollout: %d%% traffic · cutover in progress", final.TrafficPercent)
+		PrintProgress(osStdout, "follow: gregale release wait %s --rollout", final.ID)
 	} else if darkDeploy {
 		if final.TrafficPercent != 0 {
 			// A scheduled release whose time passed during its build starts
@@ -280,25 +284,24 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	return 0
 }
 
-// deploymentRolloutComplete is deliberately separate from readiness
-// completion. A canary deployment can be live and routable while it is still
-// below 100% traffic; safe deploys must wait for the rollout state machine to
-// finish before reporting success.
+// Readiness can finish before a canary's traffic progression or a service's
+// acknowledged routing and drain handoff. Both must close before a rollout
+// wait reports success; plain releases without a rollout remain complete.
 func deploymentRolloutComplete(dep api.DeploymentResponse) bool {
 	if dep.Status != statusLive {
 		return false
 	}
-	if dep.CanaryTotalSteps <= 0 {
+	if dep.RolloutState == rolloutStateComplete {
 		return true
 	}
-	return dep.RolloutState == rolloutStateComplete
+	return dep.CanaryTotalSteps <= 0 && dep.RolloutState != "rolling_out" && dep.RolloutState != rolloutStateAborted
 }
 
 func deploymentRolloutTerminal(dep api.DeploymentResponse) bool {
 	if dep.Status != statusLive {
 		return isTerminalDeploymentStatus(dep.Status)
 	}
-	return dep.CanaryTotalSteps <= 0 || dep.RolloutState == rolloutStateComplete || dep.RolloutState == rolloutStateAborted
+	return deploymentRolloutComplete(dep) || dep.RolloutState == rolloutStateAborted
 }
 
 // waitForDeploymentRollout polls the durable deployment row after readiness
@@ -354,11 +357,13 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 	// production-us hunt #8: during a canary the previous release still
 	// serves most traffic, and the rollback target skips live deployments,
 	// so the hint named the release before it ("--to v5" while v6 served
-	// 90%) - following it would have discarded both. The safe way back is
-	// to promote the still-serving release.
+	// 90%) - following it would have discarded both. Promoting the
+	// still-serving release is refused while the canary owns the weights
+	// (409 traffic_change_during_canary), so the way back is to abort the
+	// rollout, which returns its traffic to that release.
 	if prev := summary.Previous; prev != nil && prev.Status == statusLive && summary.Deployment.TrafficPercent < 100 &&
 		summary.Deployment.CanaryPreset != "" && summary.Deployment.CanaryPreset != "none" {
-		_, _ = fmt.Fprintf(w, "  Abort canary: gregale release traffic promote --app %s --release %s\n", appSlug, deploymentLabel(*prev))
+		_, _ = fmt.Fprintf(w, "  Abort canary: gregale rollouts recover %s --action abort\n", appSlug)
 		return
 	}
 	if summary.Deployment.TrafficPercent > 0 && summary.Deployment.TrafficPercent < 100 {
@@ -479,7 +484,7 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		if receipt.Interrupted {
 			return printSessionWaitRecovery(ctx, context.Canceled, receiptDep, appSlug, stage, deadline, waitForRollout, 130)
 		}
-		return printSessionWaitRecovery(ctx, context.DeadlineExceeded, receiptDep, appSlug, stage, deadline, waitForRollout, 3)
+		return printSessionWaitRecovery(ctx, deploymentWaitDeadlineError(deadline), receiptDep, appSlug, stage, deadline, waitForRollout, 3)
 	}
 	var configurationErr error
 	if session := sessionFromContext(ctx); session != nil && final.Status == statusLive && (!waitForRollout || final.RolloutState != rolloutStateAborted) && (!darkDeploy || final.TrafficPercent == 0) {
@@ -509,7 +514,7 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 	}
 	if configurationErr != nil {
 		receipt.WaitStage = "configuration"
-		receipt.Recovery = sessionFromContext(ctx).recovery("configuration")
+		receipt.Recovery = sessionFromContext(ctx).recoveryWithTimeout("configuration", deadline)
 	}
 	if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 		return code
@@ -517,7 +522,7 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 	if configurationErr != nil {
 		return sessionFromContext(ctx).failure("Saved deploy settings remain pending", "configuration", configurationErr)
 	}
-	if waitForRollout && final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
+	if waitForRollout && final.RolloutState == rolloutStateAborted {
 		return 1
 	}
 	if final.Status != statusLive {

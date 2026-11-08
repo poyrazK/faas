@@ -133,15 +133,17 @@ printf '{"tag_name":"v2.0.0-rc.7","prerelease":true,"assets":[{"name":"gregale_2
 # ------------------------------------------------------------------ harness
 
 # run <expect-ok|expect-fail> <label> [extra install.sh args...]
-# Captures combined output into $RUN_OUT for assertions.
+# Captures combined output into $RUN_OUT for assertions. RUN_PATH_PREFIX
+# ("dir:dir:") goes in front of the stubs on the installer's PATH.
 RUN_OUT=""
+RUN_PATH_PREFIX=""
 run() {
 	local mode="$1" label="$2"
 	shift 2
 	local status=0
 	set +e
 	RUN_OUT="$(
-		PATH="$STUB:$PATH" \
+		PATH="$RUN_PATH_PREFIX$STUB:$PATH" \
 			FAKE_ROOT="$FAKE_ROOT" \
 			FAKE_UNAME_S="${FAKE_UNAME_S:-Linux}" \
 			FAKE_UNAME_M="${FAKE_UNAME_M:-x86_64}" \
@@ -179,6 +181,38 @@ grep -Fq "next: gregale start" <<<"$RUN_OUT" ||
 DEST="$TMP_DIR/bin-bare-semver"
 run expect-ok "bare semver --version" --version "$SEMVER" --dir "$DEST"
 [ -x "$DEST/gregale" ] || fail "bare semver form did not install"
+
+# ------------------------------------------------------- PATH shadowing
+
+# An older gregale earlier on PATH (an npm install, /usr/local/bin) keeps
+# answering to plain `gregale`; the installer must say so and name it.
+SHADOW="$TMP_DIR/shadow-bin"
+mkdir -p "$SHADOW"
+printf '#!/bin/sh\necho gregale old\n' >"$SHADOW/gregale"
+chmod 0755 "$SHADOW/gregale"
+DEST="$TMP_DIR/bin-shadowed"
+RUN_PATH_PREFIX="$SHADOW:$DEST:"
+run expect-ok "older gregale earlier on PATH" --version "$TAG" --dir "$DEST"
+grep -Fq "on your PATH runs $SHADOW/gregale, not the copy just installed" <<<"$RUN_OUT" ||
+	fail "a shadowing gregale on PATH must be named: $RUN_OUT"
+grep -Fq "$DEST before $SHADOW on your PATH" <<<"$RUN_OUT" ||
+	fail "the shadow warning should say how to fix PATH: $RUN_OUT"
+
+# The installed copy first on PATH, or a symlink to it, is not shadowed.
+RUN_PATH_PREFIX="$DEST:$SHADOW:"
+run expect-ok "installed gregale first on PATH" --version "$TAG" --dir "$DEST"
+if grep -Fq "not the copy just installed" <<<"$RUN_OUT"; then
+	fail "the installed copy first on PATH must not warn: $RUN_OUT"
+fi
+LINKED="$TMP_DIR/linked-bin"
+mkdir -p "$LINKED"
+ln -s "$DEST/gregale" "$LINKED/gregale"
+RUN_PATH_PREFIX="$LINKED:$DEST:"
+run expect-ok "symlink to the installed gregale first on PATH" --version "$TAG" --dir "$DEST"
+if grep -Fq "not the copy just installed" <<<"$RUN_OUT"; then
+	fail "a symlink to the installed copy must not warn: $RUN_OUT"
+fi
+RUN_PATH_PREFIX=""
 
 # ----------------------------------------------------- version resolution
 

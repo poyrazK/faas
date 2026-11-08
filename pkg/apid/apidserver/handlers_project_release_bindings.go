@@ -76,7 +76,7 @@ func (s *server) executeCheckedProjectRelease(r *http.Request, acct state.Accoun
 	if !ok || s.managedPostgresBindings == nil {
 		return response, api.ErrCapacity("checked graph activation is unavailable")
 	}
-	apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+	apps, err := bindings.ProjectReleaseApps(r.Context(), s.store, acct.ID, project.ID, r.PathValue("environment"))
 	if err != nil {
 		return response, api.ErrCapacity("could not read project workloads")
 	}
@@ -94,6 +94,11 @@ func (s *server) executeCheckedProjectRelease(r *http.Request, acct state.Accoun
 			return response, problem
 		}
 		members[i].DeploymentID = deployment.ID
+	}
+	if !manifest.Deactivate {
+		if problem := s.checkedProjectReleaseGuardProblem(r.Context(), manifest, members); problem != nil {
+			return response, problem
+		}
 	}
 	if err := s.durable.CheckProjectValidatorMembers(r.Context(), members); err != nil {
 		return response, api.ErrCapacity("validator artifact preflight blocked graph activation")
@@ -158,6 +163,55 @@ func (s *server) executeCheckedProjectRelease(r *http.Request, acct state.Accoun
 	}
 	response.Release = projectReleaseSetResponse(release)
 	return response, nil
+}
+
+// checkedProjectReleaseGuardProblem holds activating or rolling back a
+// project release graph to the guards giving its members traffic meets
+// (ADR-20261019071733 amendment 9). A member that does not serve yet takes
+// traffic as `traffic` or promote would give it: a release staged without
+// traffic meets the break-glass pause, the freezes that began after it was
+// deployed, the app's approvals, and protected environments other than
+// production. Members already serving, and a deactivation's fallback, are
+// not new releases.
+func (s *server) checkedProjectReleaseGuardProblem(ctx context.Context, manifest api.CheckedProjectReleaseManifest, members []state.ProjectReleaseMember) *api.Problem {
+	return s.releaseSetMembersGuardProblem(ctx, manifest.Environment, manifest.RollbackReleaseID != "", members)
+}
+
+// releaseSetMembersGuardProblem holds a project release set that is about to
+// serve in environment to the release guards, member by member
+// (checkedProjectReleaseGuardProblem). A rollback returns to a set that was
+// published before, so it is not refused for its environment's protection;
+// its members still meet the guards giving them traffic does. Publishing a
+// set directly meets the same guards (ADR-20261019071733 amendment 10).
+func (s *server) releaseSetMembersGuardProblem(ctx context.Context, environment string, rollback bool, members []state.ProjectReleaseMember) *api.Problem {
+	for _, member := range members {
+		if _, err := uuid.Parse(member.DeploymentID); err != nil {
+			return api.ErrValidation("invalid release set deployment ID")
+		}
+		d, err := s.store.DeploymentByID(ctx, member.DeploymentID)
+		if errors.Is(err, state.ErrNotFound) || err == nil && d.AppID != member.AppID {
+			return api.ErrValidation("invalid release set deployment ID")
+		}
+		if err != nil {
+			return api.ErrCapacity("could not read a release graph member")
+		}
+		if d.Status == state.DeployLive && d.TrafficPercent > 0 {
+			continue
+		}
+		app, err := s.store.AppByID(ctx, member.AppID)
+		if err != nil {
+			return api.ErrCapacity("could not read a release graph member's app")
+		}
+		if !rollback {
+			if p := protectedEnvironmentReleaseProblem(ctx, s.store, app, environment); p != nil {
+				return p
+			}
+		}
+		if p := s.approvalTrafficProblem(ctx, app, d); p != nil {
+			return p
+		}
+	}
+	return nil
 }
 
 func bindingGraphInventoryRequest(r *http.Request, app state.App) (*http.Request, *api.Problem) {

@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"path"
 	"slices"
 	"strings"
@@ -117,6 +118,37 @@ func templateGlob(template string, escape bool) (string, bool) {
 	return glob, true
 }
 
+// edgeRuleMethodOverrideHeaders are the headers frameworks read to run a
+// request as another method (Express method-override, Laravel, ASP.NET Core,
+// Rack); "_method" in the query is the parameter form (Rails, Laravel,
+// Spring's HiddenHttpMethodFilter).
+var edgeRuleMethodOverrideHeaders = []string{"X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override"}
+
+// EdgeRuleMethodOverride returns the method a request asks the app to run it
+// as, through a method-override header or a "_method" query parameter, when
+// that differs from method; else "". A rule that denies or constrains
+// requests and is scoped to methods matches the overridden method too, or a
+// POST the app runs as DELETE would pass a DELETE-only gate (ADR-091
+// amendment 2026-11-02, later). A "_method" form field in the body is not
+// read here.
+func EdgeRuleMethodOverride(method string, header http.Header, rawQuery string) string {
+	candidates := make([]string, 0, 2)
+	for _, name := range edgeRuleMethodOverrideHeaders {
+		candidates = append(candidates, header.Values(name)...)
+	}
+	if strings.Contains(rawQuery, "_method") {
+		if q, err := url.ParseQuery(rawQuery); err == nil {
+			candidates = append(candidates, q["_method"]...)
+		}
+	}
+	for _, c := range candidates {
+		if m := strings.ToUpper(strings.TrimSpace(c)); m != method && slices.Contains(edgeRuleMatchMethods, m) {
+			return m
+		}
+	}
+	return ""
+}
+
 // EdgeRuleKindUsesProtectivePathMatch reports whether a rule kind denies or
 // constrains requests, and therefore matches path variants protectively
 // (MatchProtectiveEdgeRulePath) rather than exactly.
@@ -147,11 +179,56 @@ func MatchProtectiveEdgeRulePath(glob, requestPath string) (bool, error) {
 			return true, nil
 		}
 	}
+	// Java servlet containers and Spring route /admin;x/users as
+	// /admin/users: they drop a segment's ";" parameters before matching
+	// (ADR-091 amendment 2026-11-02, later).
+	if bare := stripPathParameters(cleaned); bare != cleaned {
+		if ok, _ := MatchEdgeRulePath(glob, bare); ok {
+			return true, nil
+		}
+		cleaned = bare
+	}
 	foldedGlob := strings.ToLower(glob)
 	if folded := strings.ToLower(cleaned); folded != cleaned || foldedGlob != glob {
 		return MatchEdgeRulePath(foldedGlob, folded)
 	}
 	return false, nil
+}
+
+// ProtectiveEdgeRulePaths returns the path forms a rule that denies or
+// constrains matches requestPath under (MatchProtectiveEdgeRulePath): the raw
+// path, its dot-segment/duplicate-slash normalized form, that form with each
+// segment's ";" parameters dropped, and the case-folded forms, each once and
+// raw first. Match conditions on such rules hold when they hold for any form
+// (ADR-20261107190000), as the match_path selector already does.
+func ProtectiveEdgeRulePaths(requestPath string) []string {
+	out := []string{requestPath}
+	add := func(p string) {
+		if !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	cleaned := path.Clean("/" + strings.ReplaceAll(requestPath, "\\", "/"))
+	bare := stripPathParameters(cleaned)
+	add(cleaned)
+	add(bare)
+	add(strings.ToLower(cleaned))
+	add(strings.ToLower(bare))
+	return out
+}
+
+// stripPathParameters drops each segment's ";" parameters (RFC 3986 section
+// 3.3), as servlet containers do before routing: /a;jsessionid=1/b;v=2
+// becomes /a/b.
+func stripPathParameters(p string) string {
+	if !strings.Contains(p, ";") {
+		return p
+	}
+	segments := strings.Split(p, "/")
+	for i, s := range segments {
+		segments[i], _, _ = strings.Cut(s, ";")
+	}
+	return path.Clean("/" + strings.Join(segments, "/"))
 }
 
 // edgeRuleMatchMethods is the closed vocabulary of match_methods: the RFC 9110
@@ -201,14 +278,28 @@ func MatchEdgeRuleKindPath(kind, glob, requestPath string) (bool, error) {
 // gateway attaches such rules to whichever hosts resolve to the rule's app.
 const EdgeRuleAppHosts = "@app"
 
-// ValidateEdgeRuleMatchHost checks a match_host: 1..253 bytes, and the "@"
-// prefix is reserved for EdgeRuleAppHosts.
+// edgeRuleMatchHostReserved are the characters a match_host may not use.
+// The store serves a host's rules with `host LIKE replace(match_host, '*',
+// '%')`, where "%" and "_" are wildcards and "[", "]" and "\" are literal,
+// while the gateway's cache invalidation, convergence fences and the trace
+// simulator match with path.Match, which reads them the other way round. A
+// rule using them was served to hosts its edits never refreshed, or shown
+// as covering hosts it never applied to (ADR-091 amendment 2026-11-07,
+// later). "*" and "?" mean the same in both.
+const edgeRuleMatchHostReserved = `%_[]\`
+
+// ValidateEdgeRuleMatchHost checks a match_host: 1..253 bytes, none of the
+// characters the two host matchers disagree on, and the "@" prefix is
+// reserved for EdgeRuleAppHosts.
 func ValidateEdgeRuleMatchHost(host string) *Problem {
 	if host == "" || len(host) > 253 {
 		return ErrValidation("match_host must be 1..253 chars")
 	}
 	if strings.HasPrefix(host, "@") && !IsEdgeRuleAppHosts(host) {
 		return ErrValidation(`match_host may not start with "@" except "@app" (every host the app serves)`)
+	}
+	if i := strings.IndexAny(host, edgeRuleMatchHostReserved); i >= 0 {
+		return ErrValidation(fmt.Sprintf(`match_host may not contain %q; use "*" for any run of characters and "?" for one`, host[i:i+1]))
 	}
 	return nil
 }

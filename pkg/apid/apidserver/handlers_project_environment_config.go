@@ -25,6 +25,9 @@ func (s *server) getProjectEnvironmentConfig(w http.ResponseWriter, r *http.Requ
 
 func (s *server) updateProjectEnvironmentConfig(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	project, environment, _, problem := s.loadProjectEnvironmentConfig(r.Context(), acct, r.PathValue("slug"), r.PathValue("environment"))
+	if problem == nil {
+		problem = protectedEnvironmentConfigProblem(r.Context(), s.store, project.AccountID, project.ID, environment.Slug)
+	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return

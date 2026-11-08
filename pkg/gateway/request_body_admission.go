@@ -64,14 +64,14 @@ func admitRequestBody(w http.ResponseWriter, r *http.Request, app App, spoolBudg
 	if r.ContentLength >= 0 && r.ContentLength <= limit {
 		allowance = api.RequestUploadTimeoutForBytes(r.ContentLength)
 	}
-	return admitRequestBodyBudgeted(w, r, limit, allowance, spoolBudget)
+	return admitRequestBodyBudgeted(w, r, limit, allowance, spoolBudget, requestBodyOwner(app))
 }
 
 func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64, allowance time.Duration) bool {
-	return admitRequestBodyBudgeted(w, r, limit, allowance, nil)
+	return admitRequestBodyBudgeted(w, r, limit, allowance, nil, "")
 }
 
-func admitRequestBodyBudgeted(w http.ResponseWriter, r *http.Request, limit int64, allowance time.Duration, spoolBudget *requestBodyBudget) bool {
+func admitRequestBodyBudgeted(w http.ResponseWriter, r *http.Request, limit int64, allowance time.Duration, spoolBudget *requestBodyBudget, owner string) bool {
 	defer measureTrafficPhase(r.Context(), trafficBody)()
 	if r.Body == nil || r.Body == http.NoBody || isUpgradeRequest(r) {
 		return false
@@ -122,7 +122,7 @@ func admitRequestBodyBudgeted(w http.ResponseWriter, r *http.Request, limit int6
 			}
 			if spool == nil && total > requestBodyMemoryThreshold {
 				var ok bool
-				if lease, ok = spoolBudget.lease(requestBodyClient(r)); !ok || !lease.grow(int64(memory.Len())) {
+				if lease, ok = spoolBudget.lease(requestBodyClient(r), owner); !ok || !lease.grow(int64(memory.Len())) {
 					cleanupSpool()
 					_ = original.Close()
 					api.WriteProblem(w, api.ErrRequestBodyBudget())
@@ -216,7 +216,12 @@ func admitRequestBodyBudgeted(w http.ResponseWriter, r *http.Request, limit int6
 	// closes it exactly once; every attempt, including the first, proxies a
 	// NopCloser. When retry is disabled nothing calls GetBody and r.Body stays
 	// the owning body, which is byte-identical to the pre-ADR-201 path.
-	if spool != nil {
+	if total == 0 {
+		// An empty body (an empty chunked upload) is no body: the forwarder
+		// then sends none instead of pumping an empty stream.
+		r.Body = http.NoBody
+		r.GetBody = func() (io.ReadCloser, error) { return http.NoBody, nil }
+	} else if spool != nil {
 		if _, err := spool.Seek(0, io.SeekStart); err != nil {
 			cleanupSpool()
 			api.WriteProblem(w, api.ErrInternal("request body admission storage is unavailable"))

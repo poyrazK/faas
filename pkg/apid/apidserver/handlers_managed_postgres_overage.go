@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -39,9 +40,11 @@ func (s *server) managedPostgresOverageOn(ctx context.Context, account state.Acc
 	return s.managedPostgres.Overage(ctx, subject)
 }
 
-func managedPostgresOverageView(limits api.ManagedPostgresPlanLimits, enabled bool) api.ManagedPostgresOverage {
+// managedPostgresOverageView reports the ceiling admission enforces: the
+// plan's, capped by the operator's usage policy.
+func (s *server) managedPostgresOverageView(limits api.ManagedPostgresPlanLimits, enabled bool) api.ManagedPostgresOverage {
 	view := api.ManagedPostgresOverage{Enabled: enabled, ComputeAllowanceUnitSeconds: limits.MonthlyComputeUnitSeconds}
-	view.ComputeCeilingUnitSeconds = managedPostgresComputeCeiling(limits, enabled)
+	view.ComputeCeilingUnitSeconds = s.managedPostgres.EffectiveComputeCeiling(managedPostgresComputeCeiling(limits, enabled))
 	return view
 }
 
@@ -75,7 +78,7 @@ func (s *server) getManagedPostgresOverage(w http.ResponseWriter, r *http.Reques
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresOverageView(limits, enabled))
+	writeJSON(w, http.StatusOK, s.managedPostgresOverageView(limits, enabled))
 }
 
 func (s *server) putManagedPostgresOverage(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -98,7 +101,7 @@ func (s *server) putManagedPostgresOverage(w http.ResponseWriter, r *http.Reques
 		managedPostgresProblem(w, err)
 		return
 	}
-	view := managedPostgresOverageView(limits, *req.Enabled)
+	view := s.managedPostgresOverageView(limits, *req.Enabled)
 	s.audit.Emit(r.Context(), "managed_postgres.overage.changed", &acct.ID, map[string]any{
 		"subject_id": subject, "enabled": view.Enabled, "compute_ceiling_unit_seconds": view.ComputeCeilingUnitSeconds,
 	})
@@ -118,4 +121,11 @@ func (s *server) managedPostgresOverageLimits(w http.ResponseWriter, acct state.
 		return api.ManagedPostgresPlanLimits{}, false
 	}
 	return limits, true
+}
+
+// managedPostgresChargeSink is the billing provider's managed PostgreSQL
+// overage sink, or nil without one (ADR-20261031110037).
+func (s *server) managedPostgresChargeSink() billing.ManagedPostgresChargeSink {
+	sink, _ := s.billingProvider.(billing.ManagedPostgresChargeSink)
+	return sink
 }

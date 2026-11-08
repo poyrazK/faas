@@ -79,40 +79,22 @@ func (s *server) createSharedOrg(w http.ResponseWriter, r *http.Request, acct st
 			api.CodeValidation, "Name required", "name must be a non-empty string"))
 		return
 	}
-	// Plan defaults to Free; CreateOrg stamps it. The caller seeds
-	// the exactly-one-owner partial unique (zero owners at insert
-	// time), so AddOrgMember cannot trip ErrOrgLastOwner.
-	newOrg, err := s.store.CreateOrg(r.Context(), state.Org{Slug: slug, Name: name})
-	if err != nil {
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.ErrOrgSlugTaken(slug))
-		} else {
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				api.CodeCapacity, "CreateOrg failed",
-				"try again; if the problem persists, contact support"))
-		}
+	creation, ok := s.store.(state.SharedOrgCreationStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("organization creation unavailable"))
 		return
 	}
-	// Note (IAM-6 / ADR-061 PR 2): we deliberately do NOT call
-	// enforceMemberCap here — the initial-owner seed is the
-	// first active membership on a brand-new org, and Free's
-	// fail-closed 0/0 cap would refuse it. The cap is a
-	// per-add gate for subsequent members; the personal-org
-	// path (which is immutable and never reaches this handler)
-	// is unaffected. The store-side cap check inside AddOrgMember
-	// is the defence-in-depth back-stop — it also reads
-	// 0/0 for Free but only trips when active >= limit, so
-	// the initial seed (active=0) passes cleanly.
-	invitedBy := acct.ID
-	if err := s.store.AddOrgMember(r.Context(), newOrg.ID, acct.ID, state.OrgRoleOwner, &invitedBy); err != nil {
-		if errors.Is(err, state.ErrOrgMemberCapExceeded) {
-			limit := newOrg.Plan.OrgMembersMax()
-			api.WriteProblem(w, api.ErrOrgMemberCapExceeded(limit, limit))
-			return
+	newOrg, err := creation.CreateSharedOrg(r.Context(), acct.ID, slug, name)
+	if err != nil {
+		var limit *state.OrgFreeLimitError
+		switch {
+		case errors.As(err, &limit):
+			api.WriteProblem(w, api.ErrOrgFreeLimitExceeded(api.FreeOrganizationsOwnedMax, limit.Owned))
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.ErrOrgSlugTaken(slug))
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not create organization"))
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			api.CodeCapacity, "AddOrgMember (initial owner) failed",
-			"the org row was created but the owner membership failed to seed; contact support"))
 		return
 	}
 	s.audit.Emit(r.Context(), "org.created", &acct.ID, map[string]any{

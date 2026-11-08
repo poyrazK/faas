@@ -41,6 +41,11 @@ service AppErrors {
   // transient DB failure on one record returns ResourceExhausted
   // for that single response — the stream continues.
   rpc IncrementAppError(stream IncrementAppErrorRequest) returns (stream IncrementAppErrorResponse);
+
+  // RecordHTTPIssue retries only the idempotent Issues occurrence. It never
+  // increments the legacy app-error counter, whose outcome can be ambiguous
+  // after a broken stream. Older apid versions return Unimplemented.
+  rpc RecordHTTPIssue(IncrementAppErrorRequest) returns (IncrementAppErrorResponse);
 }
 
 // IncrementAppErrorRequest is one error record from the gateway edge.
@@ -116,6 +121,19 @@ message IncrementAppErrorRequest {
   // request_id is the platform request/trace UUID used by the drill-down
   // surface. Empty or malformed values are replaced by apid for compatibility.
   string request_id = 19;
+  // count is how many requests this record stands for. The gateway folds
+  // an app's repeats of one error into a few sampled records per flush
+  // (bug hunt 2026-10-28 H41). 0, from an older gateway, means 1.
+  int64 count = 20;
+  // request_row_omitted marks a record that only counts requests: the
+  // gateway already sent its sample of them, so apid stores no request row.
+  bool request_row_omitted = 21;
+  // Stable identity for this gateway record, independent of the public
+  // request ID. Empty on older gateways.
+  string issue_event_id = 22;
+  // Counts for each millisecond in the sampled request's UTC second. Empty
+  // means an older gateway did not preserve the times of a folded batch.
+  repeated uint32 issue_time_buckets = 23;
 }
 
 // IncrementAppErrorResponse is the per-record outcome the server
@@ -136,4 +154,9 @@ message IncrementAppErrorResponse {
   // outcome string but lets the gateway hot-path avoid a string
   // compare on every record.
   bool dedupe_merged = 3;
+
+  // "queued" means the receiver accepted the Issue for asynchronous work;
+  // "retry" asks a new gateway to retry the Issue alone after queue overflow.
+  // Empty means an older receiver or a record ineligible for Issues.
+  string issue_handoff = 4;
 }

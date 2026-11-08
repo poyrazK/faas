@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Stable problem codes for the ADR-749 notification channel endpoints.
@@ -14,7 +15,7 @@ const (
 	CodeNotificationChannelLimit   = "notification_channel_limit_reached"
 )
 
-var notificationChannelNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+var notificationChannelNamePattern = lazyregexp.New(`^[a-z][a-z0-9_-]{0,62}$`)
 
 // CreateNotificationChannelRequest is the POST /v1/notification-channels
 // body. Exactly the fields for Kind are used: slack_webhook_url for slack,

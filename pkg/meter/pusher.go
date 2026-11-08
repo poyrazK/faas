@@ -283,11 +283,21 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	}
 	cursors := make(map[string]overageCursor)
 	grants := p.newMonthGrants()
+	held := newHeldUsage(start)
+	defer p.publishHeld(state.BillingMeterCompute, held)
 	pushed := 0
 	var firstErr error
 	for _, window := range ordered {
 		acct, ok := byID[window.AccountID]
-		if !ok || acct.Plan == "free" || !usageDeliverable(acct, window.Hour) {
+		if !ok {
+			held.add(state.BillingMeterCompute, UsageHeldUnknownSubject, window.Hour)
+			continue
+		}
+		if acct.Plan == "free" {
+			continue
+		}
+		if !usageDeliverable(acct, window.Hour) {
+			held.add(state.BillingMeterCompute, heldReason(acct), window.Hour)
 			continue
 		}
 		acct, err = p.accountForProvider(ctx, acct)
@@ -306,10 +316,20 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 			p.log.Warn("meter: billing identity incomplete",
 				"account", acct.ID, "provider_customer_id_set", acct.ProviderCustomerID != "",
 				"subscription_id_set", acct.StripeSubscriptionItem != "", "replay", true)
+			held.add(state.BillingMeterCompute, UsageHeldIdentityIncomplete, window.Hour)
+			continue
+		}
+		free, err := grants.freeAt(ctx, acct, window.Hour)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		billableMBSeconds := window.MBSeconds
-		if mode == billing.UsageModeOverage {
+		if free {
+			billableMBSeconds = 0 // settled below with a zero receipt
+		} else if mode == billing.UsageModeOverage {
 			billableMBSeconds, err = p.billablePendingUsage(ctx, acct, window, cursors, caps, grants)
 			if err != nil {
 				if firstErr == nil {
@@ -398,11 +418,22 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 		return windows[i].AccountID < windows[j].AccountID
 	})
 	cursors := make(map[string]overageCursor)
+	elections := make(map[string]state.EgressOverageElection)
+	held := newHeldUsage(start)
+	defer p.publishHeld(meter, held)
 	pushed := 0
 	var firstErr error
 	for _, window := range windows {
 		acct, exists := byID[window.AccountID]
-		if !exists || acct.Plan == api.PlanFree || !usageDeliverable(acct, window.Hour) {
+		if !exists {
+			held.add(meter, UsageHeldUnknownSubject, window.Hour)
+			continue
+		}
+		if acct.Plan == api.PlanFree {
+			continue
+		}
+		if !usageDeliverable(acct, window.Hour) {
+			held.add(meter, heldReason(acct), window.Hour)
 			continue
 		}
 		policy, configured := policyProvider.MeterUsagePolicy(acct.Plan, meter)
@@ -426,9 +457,17 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 		}
 		if acct.ProviderCustomerID == "" || acct.StripeSubscriptionItem == "" {
 			p.log.Warn("meter: billing identity incomplete", "account", acct.ID, "provider", ops.opLabel, "meter", meter, "replay", true)
+			held.add(meter, UsageHeldIdentityIncomplete, window.Hour)
 			continue
 		}
-		if window.Hour.Before(policy.EffectiveFrom) {
+		free, err := grants.freeAt(ctx, acct, window.Hour)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if free || window.Hour.Before(policy.EffectiveFrom) {
 			if err := p.store.RecordBillingMeterUsageDelivery(ctx, ops.opLabel, acct.ID, meter, window.Hour, 0); err != nil && firstErr == nil {
 				firstErr = err
 			}
@@ -441,6 +480,25 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 			}
 			p.log.Warn("meter: calculate meter overage", "account", acct.ID, "provider", ops.opLabel, "meter", meter, "hour", window.Hour, "quantity", window.Quantity, "err", err)
 			continue
+		}
+		if meter == state.BillingMeterEgress && billable > 0 {
+			// Egress above the allowance is billed only in hours the
+			// subject's egress overage election covers; any other hour
+			// settles at zero, like a Free hour (ADR-20261104204500).
+			covered, err := p.egressHourElected(ctx, elections, acct.ID, window.Hour)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				p.log.Warn("meter: load egress overage election", "account", acct.ID, "hour", window.Hour, "err", err)
+				continue
+			}
+			if !covered {
+				if err := p.store.RecordBillingMeterUsageDelivery(ctx, ops.opLabel, acct.ID, meter, window.Hour, 0); err != nil && firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
 		}
 		if err := p.checkFundedEgressDelivery(ctx, acct, window, policy, totalBillable); err != nil {
 			if firstErr == nil {
@@ -475,7 +533,9 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 				}
 				continue
 			}
-			included, grantErr := grants.included(ctx, acct, hour)
+			// The compute the month is billed through this hour, not usage
+			// above its allowance (ADR-20261031100000).
+			compute, grantErr := grants.billedBefore(ctx, p.store, acct, hour.Add(time.Hour), computeRaw)
 			if grantErr != nil {
 				if firstErr == nil {
 					firstErr = grantErr
@@ -489,7 +549,6 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 				}
 				continue
 			}
-			compute := api.BillableMBSecondsAbove(included, computeRaw)
 			if within := clampToAllowance(totalBillable-billable, totalBillable, capEgressAllowance(capCents, compute, objectStorage, policy)); within < billable {
 				p.log.Info("meter: egress overage cap reached", "account", acct.ID, "hour", window.Hour,
 					"cap_cents", capCents, "compute_mb_seconds", compute, "object_storage_millicents", objectStorage, "egress_quantity", totalBillable,
@@ -578,6 +637,21 @@ func (p *Pusher) billablePendingMeterUsage(ctx context.Context, acct state.Accou
 	after := max(current-policy.IncludedQuantity, 0)
 	cursors[key] = cursor
 	return after - before, after, nil
+}
+
+// egressHourElected reports whether the subject's egress overage election
+// covers the egress hour, reading each subject's election once per pass.
+func (p *Pusher) egressHourElected(ctx context.Context, elections map[string]state.EgressOverageElection, subjectID string, hour time.Time) (bool, error) {
+	election, ok := elections[subjectID]
+	if !ok {
+		var err error
+		election, err = billing.EgressOverageElectionFor(ctx, p.store, subjectID)
+		if err != nil {
+			return false, err
+		}
+		elections[subjectID] = election
+	}
+	return election.Covers(hour), nil
 }
 
 func saturatedAdd(left, right int64) int64 {
@@ -682,7 +756,13 @@ func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, w
 	after := api.BillableMBSecondsAbove(included, current)
 	cursors[key] = cursor
 	if capCents, capped := caps[acct.ID]; capped {
-		return p.computeWithinCap(ctx, acct, hour, capCents, before, after)
+		// The cap bounds what the month is billed, which after a plan change
+		// is not usage above this hour's allowance (ADR-20261031100000).
+		billed, err := grants.billedBefore(ctx, p.store, acct, hour, prior)
+		if err != nil {
+			return 0, err
+		}
+		return p.computeWithinCap(ctx, acct, hour, capCents, billed, billed+after-before)
 	}
 	return after - before, nil
 }
@@ -703,11 +783,36 @@ func (p *Pusher) newMonthGrants() *monthGrants {
 // through the end of hour. Stores without recorded activations keep the
 // current plan's allowance.
 func (g *monthGrants) included(ctx context.Context, acct state.Account, hour time.Time) (int64, error) {
+	hour = hour.UTC().Truncate(time.Hour)
+	snapshots, err := g.snapshots(ctx, acct, hour)
+	if err != nil {
+		return 0, err
+	}
+	return state.MonthComputeIncludedMBSeconds(acct.Plan, snapshots, hour.Add(time.Hour)), nil
+}
+
+// freeAt reports whether acct was on Free for the hour starting at hour, by
+// its month's recorded plan history (ADR-20261101143527). Usage on Free is
+// never billed, also when the subject subscribes again within the lookback
+// and its unsettled Free hours come up as pending. A store without recorded
+// activations keeps the current plan.
+func (g *monthGrants) freeAt(ctx context.Context, acct state.Account, hour time.Time) (bool, error) {
+	hour = hour.UTC().Truncate(time.Hour)
+	snapshots, err := g.snapshots(ctx, acct, hour)
+	if err != nil {
+		return false, err
+	}
+	return state.MonthPlanAt(acct.Plan, snapshots, hour.Add(time.Hour)) == api.PlanFree, nil
+}
+
+// snapshots returns acct's recorded plan activations for hour's month; nil
+// for a store without them.
+func (g *monthGrants) snapshots(ctx context.Context, acct state.Account, hour time.Time) ([]state.FinancialPriceSnapshot, error) {
 	record, ok := g.store.(state.FinancialStore)
 	if !ok {
-		return api.IncludedMBSeconds(acct.Plan), nil
+		return nil, nil
 	}
-	hour = hour.UTC().Truncate(time.Hour)
+	hour = hour.UTC()
 	monthStart := time.Date(hour.Year(), hour.Month(), 1, 0, 0, 0, 0, time.UTC)
 	key := acct.ID + "\x00" + monthStart.Format("2006-01")
 	snapshots, cached := g.byKey[key]
@@ -715,11 +820,26 @@ func (g *monthGrants) included(ctx context.Context, acct state.Account, hour tim
 		var err error
 		snapshots, err = record.ListFinancialPriceSnapshots(ctx, acct.ID, monthStart)
 		if err != nil {
-			return 0, fmt.Errorf("meter: load plan history for %s: %w", acct.ID, err)
+			return nil, fmt.Errorf("meter: load plan history for %s: %w", acct.ID, err)
 		}
 		g.byKey[key] = snapshots
 	}
-	return state.MonthComputeIncludedMBSeconds(acct.Plan, snapshots, hour.Add(time.Hour)), nil
+	return snapshots, nil
+}
+
+// billedBefore is the compute overage the pusher bills acct's month before
+// at, given usage, the month's usage before at (state.MonthBilledComputeMBSeconds).
+// Only a month with a plan change reads its usage at the change.
+func (g *monthGrants) billedBefore(ctx context.Context, store state.Store, acct state.Account, at time.Time, usage int64) (int64, error) {
+	snapshots, err := g.snapshots(ctx, acct, at)
+	if err != nil {
+		return 0, err
+	}
+	at = at.UTC()
+	monthStart := time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return state.MonthBilledComputeMBSeconds(acct.Plan, snapshots, at, usage, func(t time.Time) (int64, error) {
+		return sumUsageRows(ctx, store, acct.ID, monthStart, t)
+	})
 }
 
 // usageFinalThrough returns the instant before which meterd writes no further

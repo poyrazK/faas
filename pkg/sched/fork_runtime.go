@@ -18,6 +18,10 @@ var (
 	ErrForkDeploymentUnavailable = errors.New("sched: fork deployment unavailable")
 	ErrForkAccountInactive       = errors.New("sched: fork account is not active")
 	ErrForkNoCapture             = errors.New("sched: fork has no usable capture")
+	// ErrForkSpendCap refuses a fork of an app whose billing subject is at
+	// its monthly spend cap (ADR-1162): a fork is billed like any instance,
+	// and the reaper would park it on its next tick.
+	ErrForkSpendCap = errors.New("sched: fork billing subject is at its spend cap")
 )
 
 // ForkRestore is what a successful restore produced.
@@ -36,6 +40,8 @@ func ForkFailureCode(err error) (code, message string) {
 		return "no_capture", "the deployment has no snapshot to fork yet; send it some traffic and try again"
 	case errors.Is(err, ErrForkAccountInactive):
 		return "account_inactive", "the account is suspended; resolve billing to create forks"
+	case errors.Is(err, ErrForkSpendCap):
+		return "spend_cap_reached", "the monthly spend cap is reached; raise the cap to create forks"
 	case errors.Is(err, ErrForkDeploymentUnavailable):
 		return "deployment_unavailable", "the forked deployment is no longer available"
 	case errors.Is(err, ErrNoCapacity), errors.Is(err, ErrAtCapacity), isCapacityProblem(err):
@@ -66,6 +72,9 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	if err != nil {
 		return ForkRestore{}, err
 	}
+	if e.spendCapReached(ctx, e.spendCapSubject(ctx, app)) {
+		return ForkRestore{}, ErrForkSpendCap
+	}
 	snap, sealedKey, err := e.forkSnapshot(ctx, fork, dep, string(acct.Plan), app)
 	if err != nil {
 		return ForkRestore{}, err
@@ -78,8 +87,8 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	// incompatible node and fault on resume.
 	restoreSnap := snap
 	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU,
-		CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits),
+		CPUMillicores: e.appCPUBookingMillicores(app, limits), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID, restoreSnapshot: &restoreSnap,
 	})
 	if err != nil {
@@ -92,7 +101,7 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	}
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
+		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: e.appCPUBookingMillicores(app, limits),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindFork, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
 		CPUBudgetMillicores: placement.CPUBudgetMillicores,
@@ -167,8 +176,8 @@ func (e *Engine) bootFork(ctx context.Context, ins state.Instance, app state.App
 	limits := api.MustLimitsFor(acct.Plan)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), //nolint:gosec // plan-bounded
-		CPUMillicores: int32(effectiveAppCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit), //nolint:gosec // plan-bounded
+		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), //nolint:gosec // plan-bounded
+		CPUMillicores: int32(e.appCPUMillicores(app, limits)), EgressMbit: int32(limits.EgressMbit), //nolint:gosec // plan-bounded
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
 		Port: deploymentRuntimePort(dep), HealthcheckPath: healthcheckPathForApp(dep, app),

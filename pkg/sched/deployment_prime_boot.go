@@ -72,8 +72,8 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 	}
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: primeLayer,
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
-		EgressMbit: int32(limits.EgressMbit),
+		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(e.appCPUMillicores(app, limits)),
+		EgressMbit: int32(limits.EgressMbit), RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
 		// as ordinary wakes, so first boot and later wakes agree.
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
@@ -89,10 +89,10 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
-		APIEnv: appendPlatformIdentity(
+		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(
 			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
-		),
+		)),
 		// ADR-031: see the Wake builder above. Prime is the
 		// deploy-pipeline first boot — same wire shape, same
 		// per-netns ruleset; a freshly-deployed app starts under
@@ -100,6 +100,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// wake.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:                 app.EgressPorts,
+		EgressRevision:              app.EgressAllowlistRevision,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
@@ -109,7 +110,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// the customer-supplied static IPv4 (BYOIP, Scale-only)
 		// onto the vmmd AppSpec so the per-netns renderer
 		// emits the SNAT-to-customer sibling rule.
-		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
+		StaticEgressIP: deploymentStaticEgressIP(app, dep),
 		// ADR-053: snapshot priming is the first cold boot for a source
 		// deployment, so it must use the same resolved guest port as later
 		// wakes. Without this field vmmd falls back to guest :8080 while the

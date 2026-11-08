@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
@@ -22,6 +23,7 @@ type MemoryStore struct {
 	databases                 map[string]Database
 	names                     map[string]string
 	bindings                  map[string]Binding
+	rotationRefreshes         map[string]BindingRotationRefresh
 	targets                   map[string]string
 	usage                     map[usageKey]UsageRecord
 	restoreProofs             map[string]RestoreProof
@@ -33,6 +35,11 @@ type MemoryStore struct {
 	overage                   map[string]bool
 	capEvents                 map[memoryCapEventKey]CapEvent
 	capEventsMailed           map[memoryCapEventKey]bool
+	restoreSlotNotices        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice
+	restoreSlotNoticesMailed  map[memoryRestoreSlotNoticeKey]bool
+	planExcessNotices         map[string]memoryPlanExcessNotice
+	overageDeliveries         map[memoryOverageKey]OverageDelivery
+	overagePending            map[memoryOverageKey]OveragePendingStep
 	usageWaivers              map[string][]usageWaiver
 }
 
@@ -47,6 +54,7 @@ func NewMemoryStore() *MemoryStore {
 		billingSubjects:           map[string]string{},
 		names:                     map[string]string{},
 		bindings:                  map[string]Binding{},
+		rotationRefreshes:         map[string]BindingRotationRefresh{},
 		targets:                   map[string]string{},
 		usage:                     map[usageKey]UsageRecord{},
 		restoreProofs:             map[string]RestoreProof{},
@@ -58,6 +66,11 @@ func NewMemoryStore() *MemoryStore {
 		overage:                   map[string]bool{},
 		capEvents:                 map[memoryCapEventKey]CapEvent{},
 		capEventsMailed:           map[memoryCapEventKey]bool{},
+		restoreSlotNotices:        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice{},
+		restoreSlotNoticesMailed:  map[memoryRestoreSlotNoticeKey]bool{},
+		planExcessNotices:         map[string]memoryPlanExcessNotice{},
+		overageDeliveries:         map[memoryOverageKey]OverageDelivery{},
+		overagePending:            map[memoryOverageKey]OveragePendingStep{},
 		usageWaivers:              map[string][]usageWaiver{},
 	}
 }
@@ -80,6 +93,9 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 	if id, ok := s.names[key]; ok {
 		if s.databases[id].EnvironmentCloneOperationID != "" {
 			return Database{}, false, ErrConflict
+		}
+		if !restoreSlotAllowed(ctx) && !s.databases[id].RestoreSlotUntil.IsZero() {
+			return Database{}, false, ErrQuotaExceeded
 		}
 		return cloneDatabase(s.databases[id]), false, nil
 	}
@@ -104,12 +120,26 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 	}
 	active := 0
 	for _, existing := range s.databases {
-		if s.sameQuotaOwner(ctx, existing, database) && existing.State != StateDeleted {
+		if s.sameQuotaOwner(ctx, existing, database) && existing.CountsTowardLimit() {
 			active++
 		}
 	}
 	if active >= limit {
-		return Database{}, false, ErrQuotaExceeded
+		// Only a restore may go one database past the limit, while no other
+		// database of the owner holds the slot (ADR-20261031123259), and
+		// not one that must fit inside it.
+		if database.RestoreSourceDatabaseID == "" || !restoreSlotAllowed(ctx) {
+			return Database{}, false, ErrQuotaExceeded
+		}
+		for _, existing := range s.databases {
+			if s.sameQuotaOwner(ctx, existing, database) && existing.State != StateDeleted && !existing.RestoreSlotUntil.IsZero() {
+				return Database{}, false, ErrRestoreSlotInUse
+			}
+		}
+		if active >= limit+api.ManagedPostgresRestoreSlots {
+			return Database{}, false, ErrQuotaExceeded
+		}
+		database.RestoreSlotUntil = database.CreatedAt.Add(api.ManagedPostgresRestoreSlotWindow)
 	}
 	s.databases[database.ID] = cloneDatabase(database)
 	s.billingSubjects[database.ID] = PolicySubject(ctx, database.AccountID)
@@ -178,16 +208,25 @@ func (s *MemoryStore) Due(_ context.Context, includeProvisioning bool, limit int
 		if database.State != StateDeleting && database.State != StateUpdating && (!includeProvisioning || !provisioning) {
 			continue
 		}
-		if database.RetryAt.After(now) || database.LeaseUntil.After(now) {
+		pendingHold := database.Restorable(now) && database.LastErrorCode == deletionHoldPendingCode &&
+			!database.UpdatedAt.After(now.Add(-defaultPollInterval))
+		if (database.RetryAt.After(now) && !pendingHold) || database.LeaseUntil.After(now) {
 			continue
 		}
 		items = append(items, cloneDatabase(database))
 	}
+	dueAt := func(database Database) time.Time {
+		if database.Restorable(now) && database.LastErrorCode == deletionHoldPendingCode {
+			return database.UpdatedAt
+		}
+		return database.RetryAt
+	}
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].RetryAt.Equal(items[j].RetryAt) {
+		a, b := dueAt(items[i]), dueAt(items[j])
+		if a.Equal(b) {
 			return items[i].ID < items[j].ID
 		}
-		return items[i].RetryAt.Before(items[j].RetryAt)
+		return a.Before(b)
 	})
 	if len(items) > limit {
 		items = items[:limit]
@@ -255,14 +294,10 @@ func (s *MemoryStore) ClaimDelete(ctx context.Context, accountID, databaseID, le
 	if s.databaseCutoverPinned(databaseID) || database.State == StateUpdating || database.State == StateDeleted || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
 		return Database{}, ErrConflict
 	}
-	for _, candidate := range s.databases {
-		if candidate.RestoreSourceDatabaseID == database.ID && candidate.State != StateDeleted {
-			return Database{}, ErrConflict
-		}
-	}
+	// Restore copies do not refuse a delete (ADR-20261103091657).
 	for _, binding := range s.bindings {
 		if binding.DatabaseID == database.ID && binding.State != BindingStateDeleted {
-			return Database{}, ErrConflict
+			return Database{}, errDatabaseHasBindings
 		}
 	}
 	if database.State != StateDeleting {

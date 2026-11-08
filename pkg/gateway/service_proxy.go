@@ -328,10 +328,14 @@ type ServiceProxyConfig struct {
 	// ObserveRequest receives only an actual vmmd response from the selected
 	// target, never a platform rejection or synthetic chaos response (ADR-429).
 	ObserveRequest func(*http.Request, ServiceRequestObservation)
-	// InferCallerTrace returns the traceparent of the one request the calling
-	// instance (identified by remoteAddr) is serving, for a call that arrived
-	// without trace context, or "" (ADR-1138). Nil disables linking.
-	InferCallerTrace func(ctx context.Context, remoteAddr string) string
+	// InferCallerRequest returns what the local vmmd knows of the one request
+	// the calling instance (identified by remoteAddr) is serving: its
+	// traceparent, for a call that arrived without trace context (ADR-1138),
+	// and its deadline (ADR-20261102082606). Nil disables both.
+	InferCallerRequest func(ctx context.Context, remoteAddr string) InferredCallerRequest
+	// CallerDeadlines bounds each service call by the calling request's
+	// remaining budget (ADR-20261102082606, FAAS_SERVICE_CALL_DEADLINES).
+	CallerDeadlines bool
 	// Metrics observes internal call outcomes, cold-path wake latency, and
 	// ADR-201 §2 breaker transitions. nil is allowed and every observation
 	// is a no-op — the breaker keeps working and simply publishes nothing.
@@ -397,7 +401,8 @@ type ServiceProxy struct {
 	observeRequestAttempt     ServiceProxyRequestAttemptObserver
 	observeTCPAttempt         ServiceProxyChaosObserver
 	observeRequest            func(*http.Request, ServiceRequestObservation)
-	inferCallerTrace          func(context.Context, string) string
+	inferCallerRequest        func(context.Context, string) InferredCallerRequest
+	callerDeadlines           bool
 	metrics                   *Metrics
 	endpointTTL               time.Duration
 	now                       func() time.Time
@@ -513,7 +518,8 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		observeRequestAttempt:     cfg.ObserveRequestAttempt,
 		observeTCPAttempt:         cfg.ObserveTCPAttempt,
 		observeRequest:            cfg.ObserveRequest,
-		inferCallerTrace:          cfg.InferCallerTrace,
+		inferCallerRequest:        cfg.InferCallerRequest,
+		callerDeadlines:           cfg.CallerDeadlines,
 		metrics:                   cfg.Metrics,
 		endpointTTL:               ttl,
 		now:                       now,
@@ -549,8 +555,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = withGuestExecutionEvidence(r, p.apiMonetization != nil && p.apiMonetization())
 	r = withServiceWakeRecorder(r)
 	// A caller that forwarded no trace context joins the trace of the one
-	// request its instance is serving, marked as inferred (ADR-1138).
-	r = p.withInferredCallerTrace(r)
+	// request its instance is serving, marked as inferred (ADR-1138); the same
+	// lookup names that request's deadline (ADR-20261102082606).
+	r, inferredDeadline := p.withInferredCaller(r)
 	// The guest-facing service-proxy listener is a standalone http.Server, not
 	// wrapped by otelhttp. Extract W3C context here so a caller that forwards
 	// its inbound traceparent joins the original request instead of always
@@ -747,7 +754,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	setProbeStage("binding")
 	p.withServiceRoutingInputs(r, callerDeploymentID, targetPath, probe)
-	if p.pinServicePolicy(dispatchWriter, r, caller, service, alias) {
+	if p.pinServicePolicy(dispatchWriter, r, caller, service, alias, environmentBinding) {
 		return
 	}
 	dependencyCtx = r.Context()
@@ -814,7 +821,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencySpan.SetAttributes(attribute.String("gregale.service.target_app_id", target.AppID))
 	authorize := p.authorizeServiceCaller
-	if environmentBinding != nil && environmentBinding.FrozenPolicy {
+	if environmentBinding != nil && environmentBinding.FrozenPolicy && p.policy == nil {
 		authorize = p.authorizeBound
 		if authorize == nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "frozen service authorization is unavailable")
@@ -902,6 +909,21 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		dependencyCtx = boundedCtx
 		r = r.WithContext(newManagedDeadlineChain(boundedCtx, callerInfo.AccountID))
+		dependencyCtx = r.Context()
+	}
+	// The call may run only as long as the request that made it
+	// (ADR-20261102082606). WithStarted only tightens, so a forwarded value
+	// can shorten the call and never extend it.
+	if deadline, known := callerDeadline(r, inferredDeadline, dependencyStarted); p.callerDeadlines && known {
+		now := p.now()
+		remaining := deadline.Sub(now) - api.ServiceCallDeadlineHopOverhead
+		if remaining <= 0 {
+			writeRequestBudgetExceeded(dispatchWriter, r, "the calling request's deadline has passed; the service call was not made")
+			return
+		}
+		boundedCtx, cancel, _ := reqbudget.WithStarted(dependencyCtx, now, remaining, remaining, "service_proxy_caller", target.AppID)
+		defer cancel()
+		r = r.WithContext(boundedCtx)
 		dependencyCtx = r.Context()
 	}
 	// Only the authorizer can establish the tenant identity. Stamp it after a
@@ -1033,6 +1055,13 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.policy != nil {
 		var err error
 		versionDeploymentID, err = p.serviceSnapshotDeployment(r.Context(), target.AppID)
+		var missing *ServiceEnvironmentMissingError
+		if errors.As(err, &missing) {
+			p.metrics.IncServiceCall(ServiceCallEnvironmentDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden,
+				fmt.Sprintf("service %q has no deployment in environment %q; deploy it to %q", service, missing.Environment, missing.Environment))
+			return
+		}
 		if err != nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service routing policy has no admitted deployment")
 			return
@@ -1732,6 +1761,7 @@ func (p *ServiceProxy) prepareGuestRequest(ctx context.Context, request *http.Re
 		callerEnv = servicecallerEnvPreview
 		request.Header.Set(ServiceCallerEnvHeader, callerEnv)
 		request.Header.Set(ServiceCallerPreviewOfHeader, caller.PreviewOfSlug)
+		ctx = context.WithValue(ctx, trustedServiceCallerEnvContextKey{}, true)
 		if target.PreviewScoped {
 			p.metrics.IncServicePreviewToPreview()
 		} else {

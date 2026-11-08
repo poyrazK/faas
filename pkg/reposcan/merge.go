@@ -8,6 +8,36 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// foldCoveredRoots renames a workspace or convention seed to the one
+// explicit workload that builds the same root from source, so mergeByKey
+// folds the two into one workload. Without it a Compose service `api`
+// building ./services/backend and the workspace package `backend` there
+// became two workloads deploying one source (rc.318 field report). A root
+// that several explicit workloads build (a Compose web and worker from one
+// context) is already covered, so the inferred seed is dropped. A Go module
+// command is its own program at that root and stays as it is.
+func foldCoveredRoots(seeds []workloadSeed) []workloadSeed {
+	builders := map[string][]string{}
+	for _, s := range seeds {
+		if s.tier == TierCompose && s.image == "" && !slices.Contains(builders[s.rootDir], s.name) {
+			builders[s.rootDir] = append(builders[s.rootDir], s.name)
+		}
+	}
+	out := seeds[:0]
+	for _, s := range seeds {
+		names := builders[s.rootDir]
+		if s.tier == TierCompose || s.goCommand != "" || len(names) == 0 || slices.Contains(names, s.name) {
+			out = append(out, s)
+			continue
+		}
+		if len(names) == 1 {
+			s.name = names[0]
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // mergeByKey collapses workloadSeeds with the same (RootDir, Name)
 // into a single Workload. Merge semantics, verbatim from impl
 // plan §3.227-231:
@@ -59,6 +89,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		healthcheck         *api.ComposeHealthcheck
 		readinessCheck      *api.DeploymentHealthcheck
 		ingressSettings     []IngressSetting
+		labels              map[string]string
 		imageProcess        *api.ComposeProcess
 		secretFiles         []api.SecretFile
 		resources           *api.ComposeResources
@@ -72,14 +103,16 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		serviceBindingTransport   ServiceBindingTransport
 		serviceReliability        map[string]api.ServiceReliabilityPolicy
 		previewServiceCallsPolicy PreviewServiceCallsPolicy
+		appProtocol               string
 		allowedServiceCallers     *[]string
 		allowedServiceCallScopes  *api.ServiceCallerScopes
 		platformTenantRequired    *bool
 		renamedFrom               string
 
-		schedules []CronSchedule
-		ports     []int
-		envKeys   []string
+		schedules     []CronSchedule
+		ports         []int
+		portsLoopback bool
+		envKeys       []string
 		// internalPorts follows the same first-declaration-wins rule.
 		internalPorts    []api.WorkloadPort
 		internalPortsSet bool
@@ -164,6 +197,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		if b.ingressSettings == nil && s.ingressSettings != nil {
 			b.ingressSettings = slices.Clone(s.ingressSettings)
 		}
+		if b.labels == nil && s.labels != nil {
+			b.labels = maps.Clone(s.labels)
+		}
 		if !b.imageSet && (s.imageSet || s.image != "") {
 			b.image = s.image
 			b.healthcheck = s.healthcheck.Clone()
@@ -207,6 +243,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.previewServiceCallsPolicy = s.previewServiceCallsPolicy
 			b.previewServiceCallsPolicySet = true
 		}
+		if b.appProtocol == "" {
+			b.appProtocol = s.appProtocol
+		}
 		if !b.allowedServiceCallersSet && s.allowedServiceCallers != nil {
 			callers := append([]string{}, (*s.allowedServiceCallers)...)
 			b.allowedServiceCallers = &callers
@@ -233,6 +272,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		}
 		if !b.portsSet && len(s.ports) > 0 {
 			b.ports = append([]int(nil), s.ports...)
+			b.portsLoopback = s.portsLoopback
 			b.portsSet = true
 		}
 		if !b.internalPortsSet && s.internalPorts != nil {
@@ -283,6 +323,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			ImageHealthcheck:    b.healthcheck.Clone(),
 			ReadinessCheck:      b.readinessCheck.Clone(),
 			IngressSettings:     slices.Clone(b.ingressSettings),
+			Labels:              maps.Clone(b.labels),
 			ImageProcess:        b.imageProcess.Clone(),
 			SecretFiles:         api.CloneSecretFiles(b.secretFiles),
 			Resources:           b.resources.Clone(),
@@ -293,11 +334,12 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			ServiceBindingTransport:   b.serviceBindingTransport,
 			ServiceReliability:        b.serviceReliability,
 			PreviewServiceCallsPolicy: b.previewServiceCallsPolicy,
+			AppProtocol:               b.appProtocol,
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
 			RenamedFrom:               b.renamedFrom,
-			Unpublished:               b.det == detCompose && len(b.ports) == 0,
+			Unpublished:               b.det == detCompose && (len(b.ports) == 0 || b.portsLoopback),
 			InternalPorts:             b.internalPorts,
 
 			Class:                cls,

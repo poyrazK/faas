@@ -102,6 +102,24 @@ type EgressSource interface {
 	ReadUsageDeltas(instanceID string) (UsageDeltas, bool)
 }
 
+// CumulativeNetworkSource is an EgressSource whose host-interface bytes are
+// vmmd's cumulative per-instance counters (UsageDeltas.NetworkCumulative),
+// which the Store checkpoints exactly once. A missed, failed or caught-up
+// tick then loses no bytes: the next reading carries them into the minute it
+// is taken, and a counter reset counts its new value in full. So a minute the
+// compute sampler rolled in full is complete egress evidence too
+// (ADR-20261101113742). cmd/meterd's egress aggregator implements it.
+type CumulativeNetworkSource interface {
+	CumulativeNetworkCounters() bool
+}
+
+// cumulativeNetwork reports whether the sampler's egress source keeps
+// cumulative, checkpointed network counters.
+func (s *Sampler) cumulativeNetwork() bool {
+	source, ok := s.egress.(CumulativeNetworkSource)
+	return ok && source.CumulativeNetworkCounters()
+}
+
 // TailSecondsSource (issue #667 / ADR-078) is the per-instance
 // tail-seconds reader the sampler uses to populate
 // usage_minutes.tail_seconds. The reader is backed by vmmd
@@ -305,10 +323,8 @@ type RolledRow struct {
 	// execution_mode (normal / mirror / worker / service / job).
 	// The metered_mb_seconds_total{mode,plan} counter uses this
 	// as a label so dashboards can split worker idle-RAM from
-	// request-driven RAM. Mirror-mode rows are filtered out
-	// upstream via IsMeteredSkippableMode and never reach the
-	// row constructor — Mode stays "normal" / "worker" /
-	// "service" / "job".
+	// request-driven RAM. Mirror VMs bill too (ADR-20261104145353),
+	// so Mode may also be "mirror".
 	Mode string
 	// Plan (M-2 / ADR-137 §Decision 1) is the owning account's
 	// billing plan (free / hobby / pro / scale). Mirrored onto the
@@ -599,7 +615,12 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		return nil, err
 	}
 	var out []RolledRow
+	// The previous app's unbilled paused usage is recorded when the next app
+	// starts, after every path through its floor below (rollout step 3). An
+	// error return drops the app's record: the floor it nets out is unknown.
+	var quietPausedUsage quietPausedApp
 	for _, app := range apps {
+		s.recordQuietPaused(ctx, &quietPausedUsage, minute)
 		compute, hasCompute := s.store.(state.FinancialComputeStore)
 		// The strict-budget check costs one or two queries. It ran for every
 		// app every minute, parked and deleted ones included; it is now read
@@ -661,19 +682,10 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			return mbs, nil
 		}
 		for _, ins := range ins {
-			// Issue #72 / ADR-125: skip mode='mirror' instances at
-			// the sampler. A mirror VM never serves the customer —
-			// the customer only saw the source deployment's
-			// response — so billing it would be a customer-trust
-			// bug, not a feature. The reaper also skips these rows
-			// (mirror VMs self-park on request completion, so
-			// there's no idle lifetime to reap), which keeps the
-			// sampler and reaper symmetric on the
-			// CountsForRAM-vs-mirror skip — both predicates are
-			// evaluated in the same order. The state-mode column is
-			// NOT NULL DEFAULT 'normal' (migration 00349), so
-			// pre-feature rows backfill to the default and skip
-			// this branch.
+			// ADR-20261104145353: a mirror VM bills plan RAM + 8 MB per
+			// running second like every other instance, as ADR-124 told
+			// customers. It is real capacity the customer chose to run.
+			// A platform snapshot refresh does not (ADR-20261106214916).
 			if state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
@@ -688,8 +700,19 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 				// A quiet-paused second is not a running second (§4.7,
 				// ADR-20261023171905). Subtracted before compute funding and
 				// the floor fill, so a floor still bills its paused capacity.
-				seconds = s.unbilledQuietSeconds(quietPaused, quietMode, ins.ID,
+				billed := s.unbilledQuietSeconds(quietPaused, quietMode, ins.ID,
 					string(planByAccount[meterAppSubject(app, planByAccount)]), seconds)
+				if billed < seconds {
+					sidecarMBs, err := sidecarsFor(ins.DeploymentID)
+					if err != nil {
+						return out, err
+					}
+					quietPausedUsage.records = append(quietPausedUsage.records, quietPausedRecord{
+						accountID: meterAppSubject(app, planByAccount), appID: app.ID, instanceID: ins.ID,
+						seconds: seconds - billed, mb: api.BillableRAMMBWithSidecars(ins.RAMMB, sidecarMBs),
+					})
+				}
+				seconds = billed
 			}
 			if seconds > 0 && (exactResidency || state.State(ins.State).Billable()) {
 				covered, err := managed()
@@ -883,7 +906,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			// floor enrichment either. Skipping them keeps the floor
 			// math symmetric — a customer with a mirror rule sees
 			// their floor counted from production instances only.
-			if state.IsMeteredSkippableMode(ins.Mode) {
+			if ins.Mode == string(state.InstanceModeMirror) || state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
 			if ins.DeploymentID == "" {
@@ -911,8 +934,11 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		// outlives a downgrade, and schedd then holds none (Free) or no more
 		// than the plan allows, while the gap was still billed. An unknown
 		// plan (a failed prefetch) keeps the stored floor, as before.
+		// The billing subject's plan, as schedd's floor trigger reads it: a
+		// company app's floor follows its organization's plan, not its
+		// creator's (ADR-20261101113742).
 		floorCap := floor
-		if plan, known := planByAccount[app.AccountID]; known {
+		if plan, known := planByAccount[subject]; known {
 			floorCap = planFloorCap(app, plan)
 		}
 		floor = min(floor, floorCap)
@@ -990,8 +1016,12 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 					SyntheticFloor: true,
 				})
 			}
+			if exactResidency {
+				quietPausedUsage.refilled = floorSeconds - liveSeconds
+			}
 		}
 	}
+	s.recordQuietPaused(ctx, &quietPausedUsage, minute)
 	return out, nil
 }
 

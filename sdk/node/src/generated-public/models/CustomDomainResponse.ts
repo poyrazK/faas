@@ -3,10 +3,26 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DNSRecordInstruction } from './DNSRecordInstruction.js';
+import type { DomainDoctorCheck } from './DomainDoctorCheck.js';
+import type { DomainReadiness } from './DomainReadiness.js';
 /**
  * A custom domain binding: domain string, target app, optional project environment, verification status, and TLS provisioning state. adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify | show` surface.
  */
 export type CustomDomainResponse = {
+  readiness?: DomainReadiness;
+  /**
+   * Next scheduled automatic ownership check; omitted after verification.
+   */
+  verification_next_check_at?: string;
+  verification_attempts?: number;
+  /**
+   * Next permitted legacy certificate attempt, when a durable cooldown is active. Caddy manages its own retry schedule.
+   */
+  cert_retry_at?: string;
+  /**
+   * Fresh checks for this claim, including observed values and remediation. Stale observations are omitted.
+   */
+  checks?: Array<DomainDoctorCheck>;
   domain: string;
   app_id: string;
   /**
@@ -16,6 +32,14 @@ export type CustomDomainResponse = {
   challenge_token?: string | null;
   verified: boolean;
   verified_at?: string | null;
+  /**
+   * Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof.
+   */
+  verification_expires_at?: string;
+  /**
+   * True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS instructions are omitted; resume domain setup to recreate the claim.
+   */
+  verification_expired?: boolean;
   txt_record?: string | null;
   /**
    * True when this domain is the app's default. Set via `gregale domains set-default`.

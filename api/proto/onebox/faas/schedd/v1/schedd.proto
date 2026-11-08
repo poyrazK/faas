@@ -334,6 +334,63 @@ service Schedd {
   // Reports for instances this schedd does not own are ignored
   // (queued=false). Additive per ADR-016.
   rpc ReportSlowRequest(ReportSlowRequestRequest) returns (ReportSlowRequestAck);
+  // Database VMs (ADR-1027): schedd's database scheduler places native
+  // managed databases on database nodes, wakes them within each node's RAM
+  // ceiling and parks idle ones. ProvisionDatabase, DeleteDatabase,
+  // DatabaseAdmin and GetDatabase accept only apid; WakeDatabase,
+  // ParkDatabase and TouchDatabase also accept pgproxyd. Without a
+  // database scheduler they return UNIMPLEMENTED.
+  rpc ProvisionDatabase(ProvisionDatabaseRequest) returns (DatabaseRuntime);
+  rpc WakeDatabase(DatabaseRef) returns (DatabaseRuntime);
+  rpc ParkDatabase(DatabaseRef) returns (DatabaseRuntime);
+  rpc TouchDatabase(TouchDatabaseRequest) returns (TouchDatabaseResponse);
+  // DatabaseAdmin runs SQL as the superuser, waking the database first.
+  // The SQL can carry role passwords and is never logged.
+  rpc DatabaseAdmin(DatabaseAdminRequest) returns (DatabaseAdminResponse);
+  rpc DeleteDatabase(DatabaseRef) returns (DeleteDatabaseResponse);
+  rpc GetDatabase(DatabaseRef) returns (DatabaseRuntime);
+  // SetDatabaseAlwaysOn switches a database between scale-to-zero and
+  // always-on (ADR-1027). apid only.
+  rpc SetDatabaseAlwaysOn(SetDatabaseAlwaysOnRequest) returns (DatabaseRuntime);
+  // RestoreDatabase creates a database as a point-in-time restore of
+  // another (ADR-1027). It returns at once with the database provisioning;
+  // schedd restores it in the background. apid only.
+  rpc RestoreDatabase(RestoreDatabaseRequest) returns (DatabaseRuntime);
+  // DatabaseUsage reports a database's metered consumption over a window,
+  // also after it was deleted (ADR-1027). apid only.
+  rpc DatabaseUsage(DatabaseUsageRequest) returns (DatabaseUsageResponse);
+  // ResizeDatabase changes a database's VM shape and grows its volume
+  // (never shrinks it), and turns its synchronous standby on or off
+  // (the production class). A running database restarts on the new
+  // shape. Repeating the request resumes an interrupted resize. apid only.
+  rpc ResizeDatabase(ResizeDatabaseRequest) returns (DatabaseRuntime);
+  // UpgradeDatabase upgrades a database in place to a later PostgreSQL
+  // major with pg_upgrade (ADR-1027). It returns once the upgrade is
+  // recorded, with the database upgrading; schedd runs it in the
+  // background, parking a running database for it. operation_id names
+  // the upgrade: repeating it reports the upgrade's progress or outcome in
+  // DatabaseRuntime.upgrade and never upgrades twice. apid only.
+  rpc UpgradeDatabase(UpgradeDatabaseRequest) returns (DatabaseRuntime);
+  // ImportDatabase starts copying another PostgreSQL database into an
+  // empty database of this one (ADR-1027 migration off Neon), waking it.
+  // A running or finished import is reported, not restarted. apid only.
+  rpc ImportDatabase(ImportDatabaseRequest) returns (DatabaseImportProgress);
+  // DatabaseImportStatus reports the import; a database that stopped
+  // since has none. apid only.
+  rpc DatabaseImportStatus(DatabaseRef) returns (DatabaseImportProgress);
+  // CaptureDatabaseSnapshot holds a database's archive at an instant once
+  // the archive reaches it (ADR-1027 environment clones): a restore with
+  // the snapshot recovers to that instant until the snapshot is deleted,
+  // past the database's restore window. Capturing the same name and point
+  // again returns the snapshot; another point under the name is
+  // FAILED_PRECONDITION. apid only.
+  rpc CaptureDatabaseSnapshot(CaptureDatabaseSnapshotRequest) returns (DatabaseSnapshot);
+  // GetDatabaseSnapshot reports a snapshot; NOT_FOUND when it, or its
+  // database, is gone. apid only.
+  rpc GetDatabaseSnapshot(DatabaseSnapshotRef) returns (DatabaseSnapshot);
+  // DeleteDatabaseSnapshot releases a snapshot; a missing one is success.
+  // apid only.
+  rpc DeleteDatabaseSnapshot(DatabaseSnapshotRef) returns (DeleteDatabaseSnapshotResponse);
 }
 
 message LivenessFailedReport {
@@ -779,6 +836,14 @@ message InstanceStatsRow {
   // absent-versus-zero semantics for older nodes and first samples.
   google.protobuf.Int64Value disk_used_bytes = 11;
   google.protobuf.Int64Value disk_capacity_bytes = 12;
+  // departed marks the last row of an instance that has left this schedd's
+  // stats snapshot (it parked or moved to another node), served for
+  // api.MeterFinalNetworkReadingRetention so meterd can checkpoint its final
+  // network counters (ADR-20261103121407). Only its network counters are
+  // meaningful. A live row for the same instance from any node wins over it:
+  // a live-migrated instance keeps its ID and restarts its counters on the new
+  // node (ADR-20261104090000). Older schedds never set it.
+  bool departed = 13;
 }
 
 message ListInstanceStatsRequest {
@@ -1088,6 +1153,11 @@ message InstanceTelemetry {
   google.protobuf.Timestamp quiet_last_pause_started_at = 22;
   google.protobuf.Timestamp quiet_last_pause_ended_at = 23;
   google.protobuf.Int64Value quiet_paused_ns_total = 24;
+  // ADR-20261107122928: vmmd's InstanceStats.idle_ladder_level, the idle
+  // ladder level vmmd holds the instance at (1 quiet-paused, 2 quiet-paused
+  // and quiet for the ladder's freeze delay). 0 when off, running or not on
+  // the ladder.
+  int32 idle_ladder_level = 25;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"
@@ -1231,6 +1301,7 @@ message AgentRunEvent {
     AgentRunBooted booted = 2;
     AgentRunOutput output = 3;
     AgentRunResult result = 4;
+    AgentRunUsage usage = 5;
   }
 }
 
@@ -1256,12 +1327,33 @@ message AgentRunResult {
   bytes result = 1;
 }
 
+// AgentRunUsage is vmmd's measured memory of the run VM (ADR-20261027090011),
+// forwarded as vmmd sent it: at most once, before the result or the error
+// that ends the stream. The fields mean what vmmd's AgentRunUsage says.
+message AgentRunUsage {
+  int32 method = 1;
+  int32 samples = 2;
+  int32 expected_samples = 3;
+  int64 measured_ms = 4;
+  int64 paused_ms = 5;
+  int64 private_mb_ms = 6;
+  int64 unpaused_private_mb_ms = 7;
+  int64 billable_mb_ms = 8;
+  int64 peak_private_mb = 9;
+  bool cold_boot = 10;
+}
+
 message ReportMemoryPressureRequest {
   string instance_id = 1;
   string source_node_id = 2;
   uint32 available_mb = 3;
   uint32 total_mb = 4;
   uint32 anon_mb = 5;
+  // profiling_active says whether a profile collector was active in the
+  // guest (ADR-20261102124306); schedd queues a heap capture only then. An
+  // older vmmd leaves it unset, which means true: its guests reported only
+  // while profiling.
+  optional bool profiling_active = 6;
 }
 
 message ReportMemoryPressureAck {
@@ -1290,3 +1382,208 @@ message ReportSlowRequestAck {
   // running, plan without profiling, instance not running).
   string reason = 2;
 }
+// Database VMs (ADR-1027).
+message DatabaseRef {
+  string database_id = 1;
+}
+
+message ProvisionDatabaseRequest {
+  string database_id = 1;
+  int32 postgres_major = 2;
+  int32 vcpu_count = 3;
+  int32 mem_mib = 4;
+  int64 volume_bytes = 5;
+  // always_on keeps the database running (scale_to_zero = false).
+  bool always_on = 6;
+  // How far back the database may be restored; zero means no promise.
+  int64 restore_window_seconds = 7;
+  // replicated keeps a synchronous hot standby on a second database node
+  // (ADR-1027 production class).
+  bool replicated = 8;
+}
+
+message RestoreDatabaseRequest {
+  // The new database and its shape; the major must match the source's.
+  ProvisionDatabaseRequest database = 1;
+  string source_database_id = 2;
+  // The instant to recover the source to; not in the future.
+  google.protobuf.Timestamp point_in_time = 3;
+  // The source's snapshot at point_in_time, which keeps it restorable
+  // outside the source's restore window.
+  string snapshot = 4;
+}
+
+message CaptureDatabaseSnapshotRequest {
+  string database_id = 1;
+  // 32 lowercase hex characters, chosen by the caller.
+  string name = 2;
+  google.protobuf.Timestamp point_in_time = 3;
+}
+
+message DatabaseSnapshotRef {
+  string database_id = 1;
+  string name = 2;
+}
+
+message DatabaseSnapshot {
+  string database_id = 1;
+  string name = 2;
+  google.protobuf.Timestamp point_in_time = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message DeleteDatabaseSnapshotResponse {}
+
+message SetDatabaseAlwaysOnRequest {
+  string database_id = 1;
+  bool always_on = 2;
+}
+
+message DatabaseRuntime {
+  string database_id = 1;
+  string node_id = 2;
+  // provisioning, parked, waking, running, parking, moving, upgrading,
+  // deleting or failed.
+  string state = 3;
+  bool bootstrapped = 4;
+  // Stable error code of the last failed transition.
+  string last_error = 5;
+  // vmmd dial target of the database's node; pgproxyd opens the session
+  // there.
+  string vmmd_target = 6;
+  // The VM shape the managed-Postgres driver derives the spec from.
+  int32 postgres_major = 7;
+  int32 vcpu_count = 8;
+  int32 mem_mib = 9;
+  int64 volume_bytes = 10;
+  bool always_on = 11;
+  int64 restore_window_seconds = 12;
+  // A restored database's lineage, recorded at placement.
+  string restore_source_id = 13;
+  google.protobuf.Timestamp restore_target = 14;
+  // The restore's last replayed commit: the target's, or earlier when the
+  // source's node was lost and its archive ended first.
+  google.protobuf.Timestamp restore_recovered_to = 15;
+  // A resize recorded but not yet applied: the VM still runs, or its
+  // volume still has, the old shape.
+  bool resize_pending = 16;
+  // A replicated database (production class): its standby's node and
+  // whether the standby holds every acknowledged commit.
+  bool replicated = 17;
+  string standby_node_id = 18;
+  bool standby_synced = 19;
+  // When the database was placed.
+  google.protobuf.Timestamp created_at = 20;
+  // The database's current or last in-place major upgrade; absent if it
+  // never had one.
+  DatabaseUpgrade upgrade = 21;
+  // Complete persisted major history, including an explicitly empty history.
+  // Older schedulers omit the completeness marker; an upgraded source then
+  // cannot safely resolve historical restore specifications through them.
+  repeated DatabaseMajorSpan major_history = 22;
+  bool major_history_complete = 23;
+}
+
+message DatabaseMajorSpan {
+  int32 postgres_major = 1;
+  google.protobuf.Timestamp until = 2;
+}
+
+message UpgradeDatabaseRequest {
+  string database_id = 1;
+  int32 postgres_major = 2;
+  // The upgrade's name, a lowercase UUID: the managed-Postgres driver
+  // derives it from apid's journaled request.
+  string operation_id = 3;
+}
+
+message DatabaseUpgrade {
+  string operation_id = 1;
+  int32 from_major = 2;
+  int32 to_major = 3;
+  // running, ok, refused (pg_upgrade's check refused the cluster, which
+  // stays on from_major) or failed (the database needs a point-in-time
+  // restore).
+  string state = 4;
+}
+
+// ImportDatabaseRequest names the source: its endpoint (a public address
+// serving TLS for host), login and database, and the target database and
+// owner role here. Sensitive (password): never logged.
+message ImportDatabaseRequest {
+  string database_id = 1;
+  string host = 2;
+  int32 port = 3;
+  string source_database = 4;
+  string user = 5;
+  string password = 6;
+  string target_database = 7;
+  string owner = 8;
+  repeated string skip_extensions = 9;
+  // The import's name (a lowercase UUID; ADR-1370's copy_operation_id).
+  string operation_id = 10;
+}
+
+message DatabaseImportProgress {
+  // none, running, done or failed.
+  string state = 1;
+  string error_code = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  int32 source_major = 5;
+  // The import this progress describes.
+  string operation_id = 6;
+  // For extension_unavailable: the source extensions the target cannot
+  // create (plain identifiers, at most 16).
+  repeated string missing_extensions = 7;
+  // For target_too_small: the volume size the copy needs, zero when free
+  // space ran out during the copy.
+  int64 required_volume_bytes = 8;
+}
+
+message ResizeDatabaseRequest {
+  string database_id = 1;
+  int32 vcpu_count = 2;
+  int32 mem_mib = 3;
+  int64 volume_bytes = 4;
+  // Whether the database keeps a synchronous standby; unset keeps the
+  // current setting.
+  optional bool replicated = 5;
+}
+
+// TouchDatabaseRequest keeps field 1 of DatabaseRef, so a DatabaseRef is
+// a valid touch without egress.
+message TouchDatabaseRequest {
+  string database_id = 1;
+  // Bytes pgproxyd sent the database's clients since its last touch.
+  // Reported at most once: pgproxyd does not resend them on an error.
+  int64 egress_bytes = 2;
+}
+
+message TouchDatabaseResponse {}
+
+message DatabaseUsageRequest {
+  string database_id = 1;
+  google.protobuf.Timestamp from = 2;
+  google.protobuf.Timestamp to = 3;
+}
+
+message DatabaseUsageResponse {
+  int64 active_seconds = 1;
+  int64 compute_unit_seconds = 2;
+  int64 storage_byte_seconds = 3;
+  int64 history_byte_seconds = 4;
+  int64 egress_bytes = 5;
+}
+
+message DatabaseAdminRequest {
+  string database_id = 1;
+  string sql = 2;
+}
+
+message DatabaseAdminResponse {
+  string error_code = 1;
+  string sqlstate = 2;
+}
+
+message DeleteDatabaseResponse {}

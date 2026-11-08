@@ -4,13 +4,12 @@ package gateway
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // RequestIDMiddleware stamps a request id before a public edge handler runs.
@@ -21,8 +20,11 @@ import (
 func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rid := r.Header.Get(api.RequestIDHeader)
-		if rid == "" {
+		if rid == "" || len(rid) > 128 {
 			rid = newRequestID()
+			// Propagate the replacement to downstream audit and application
+			// handlers, not just to the response and request context.
+			r.Header.Set(api.RequestIDHeader, rid)
 		}
 		w.Header().Set(api.RequestIDHeader, rid)
 		r = r.WithContext(WithRequestID(r.Context(), rid)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
@@ -104,16 +106,10 @@ func requestIDFrom(r *http.Request) string {
 	return newRequestID()
 }
 
-// newRequestID returns a 128-bit random hex (uuid-like without the dashes).
-// crypto/rand so we don't pull google/uuid as a dep just for this.
+// newRequestID mints a request ID in wire.NewRequestID's time-prefixed layout,
+// so the edge and the gateway mint the same shape (ADR-20261101085552).
 func newRequestID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// Extremely unlikely (rand.Read failure is fatal-grade); emit zero
-		// rather than panicking in the request hot path.
-		return "00000000000000000000000000000000"
-	}
-	return hex.EncodeToString(b[:])
+	return wire.NewRequestID()
 }
 
 // startTimeKey is the context key for the request-received timestamp.

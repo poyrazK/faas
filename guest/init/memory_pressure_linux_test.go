@@ -40,7 +40,9 @@ func TestMemoryPressureStateFiresOncePerEpisode(t *testing.T) {
 	}
 }
 
-func TestWatchMemoryPressureReportsOnlyWithCollectors(t *testing.T) {
+// Every episode is reported; the report says whether a profile collector was
+// active, so a heap capture is queued only then (ADR-20261102124306).
+func TestWatchMemoryPressureReportsEveryEpisode(t *testing.T) {
 	old := memoryPressurePollInterval
 	memoryPressurePollInterval = 10 * time.Millisecond
 	defer func() { memoryPressurePollInterval = old }()
@@ -67,12 +69,12 @@ func TestWatchMemoryPressureReportsOnlyWithCollectors(t *testing.T) {
 	}()
 	time.Sleep(60 * time.Millisecond)
 	mu.Lock()
-	if len(reports) != 0 {
+	if len(reports) != 1 || reports[0].Profiling {
 		mu.Unlock()
-		t.Fatal("reported without a registered collector")
+		t.Fatalf("an episode without a collector = %+v; want one report without profiling", reports)
 	}
 	mu.Unlock()
-	// The uninstrumented episode was consumed; recover, then press again.
+	// Recover, then press again with a collector registered.
 	write(102400)
 	time.Sleep(40 * time.Millisecond)
 	mu.Lock()
@@ -84,8 +86,8 @@ func TestWatchMemoryPressureReportsOnlyWithCollectors(t *testing.T) {
 	<-done
 	mu.Lock()
 	defer mu.Unlock()
-	if len(reports) != 1 || reports[0].AvailableMB != 20 || reports[0].TotalMB != 200 || reports[0].AnonMB != 150 {
-		t.Fatalf("reports = %+v; want one 20/200 MiB report", reports)
+	if len(reports) != 2 || !reports[1].Profiling || reports[1].AvailableMB != 20 || reports[1].TotalMB != 200 || reports[1].AnonMB != 150 {
+		t.Fatalf("reports = %+v; want a second 20/200 MiB report with profiling", reports)
 	}
 }
 

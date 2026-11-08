@@ -44,6 +44,11 @@ func validateRealtimeCallbackURL(raw string) *api.Problem {
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return api.ErrRealtimeInvalid("callback_url must be an absolute http:// or https:// URL")
 	}
+	// The URL is stored and returned as plain text; credentials belong in
+	// the sealed callback_auth_token. A fragment never reaches the app.
+	if u.User != nil || u.Fragment != "" {
+		return api.ErrRealtimeInvalid("callback_url must not contain credentials or a fragment; send credentials as callback_auth_token")
+	}
 	return nil
 }
 
@@ -278,7 +283,7 @@ func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID 
 	if !s.FairUseEnabled {
 		return 0, nil
 	}
-	acct, err := s.Host.Store().AccountByID(ctx, accountID)
+	acct, err := s.realtimeAccount(ctx, accountID)
 	if err != nil {
 		return 0, fmt.Errorf("realtime account %s plan: %w", accountID, err)
 	}
@@ -290,7 +295,8 @@ func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID 
 }
 
 // SyncAppEndpoints registers an app's endpoints again, so a change to its
-// live routes reaches realtimed without waiting for reconciliation.
+// live routes reaches realtimed without waiting for reconciliation. It
+// withdraws an endpoint whose owner no longer serves, as reconciliation does.
 func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
 	store, ok := realtimeEndpointStore(s)
 	if !ok || s.Registrar == nil {
@@ -301,8 +307,9 @@ func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
 		return fmt.Errorf("list realtime endpoints for app %s: %w", appID, err)
 	}
 	var errs []error
+	ctx = withEndpointPass(ctx)
 	for _, row := range rows {
-		if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
+		if err := s.reconcileManagedRealtimeEndpoint(ctx, row); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -313,6 +320,9 @@ func (s *Service) unsealRealtimeCredential(ctx context.Context, sealed []byte) (
 	if len(sealed) == 0 {
 		return nil, nil
 	}
+	if plaintext, ok := s.unsealed.get(sealed); ok {
+		return plaintext, nil
+	}
 	identities := s.Host.HostIdentitiesForUnseal(ctx)
 	if len(identities) == 0 {
 		return nil, errors.New("realtime credential identity unavailable")
@@ -321,6 +331,7 @@ func (s *Service) unsealRealtimeCredential(ctx context.Context, sealed []byte) (
 	if err != nil {
 		return nil, fmt.Errorf("realtime credential unseal: %w", err)
 	}
+	s.unsealed.put(sealed, plaintext)
 	return plaintext, nil
 }
 

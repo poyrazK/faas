@@ -30,7 +30,9 @@ func cmdEdgeRuleLists(args []string) int {
 		return cmdEdgeRuleListsCreate(args[1:])
 	case subUpdate:
 		return cmdEdgeRuleListsUpdate(args[1:])
-	case subRm:
+	case subRm, "delete":
+		// The reference and usage document `delete` (the command tree's verb);
+		// `rm` stays for existing scripts (ChronoLake finding 35).
 		return cmdEdgeRuleListsRm(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown edge-rule-lists subcommand %q\n", args[0])
@@ -39,6 +41,7 @@ func cmdEdgeRuleLists(args []string) int {
 
 func cmdEdgeRuleListsList(args []string) int {
 	fs := newFlagSet("edge-rule-lists list", flag.ContinueOnError)
+	app := edgeRuleListAppFlag(fs)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
@@ -46,7 +49,7 @@ func cmdEdgeRuleListsList(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	out, err := client.ListEdgeRuleLists(context.Background())
+	out, err := client.ListEdgeRuleLists(context.Background(), *app)
 	if err != nil {
 		return printErr("List failed", err)
 	}
@@ -87,6 +90,7 @@ func printEdgeRuleList(l api.EdgeRuleListResponse) int {
 
 func cmdEdgeRuleListsGet(args []string) int {
 	fs := newFlagSet("edge-rule-lists get", flag.ContinueOnError)
+	app := edgeRuleListAppFlag(fs)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
@@ -98,7 +102,7 @@ func cmdEdgeRuleListsGet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	l, err := client.GetEdgeRuleList(context.Background(), name)
+	l, err := client.GetEdgeRuleList(context.Background(), name, *app)
 	if err != nil {
 		return printErr("Get failed", err)
 	}
@@ -130,6 +134,7 @@ func readEdgeRuleListItems(path string) ([]string, error) {
 
 func cmdEdgeRuleListsCreate(args []string) int {
 	fs := newFlagSet("edge-rule-lists create", flag.ContinueOnError)
+	app := edgeRuleListAppFlag(fs)
 	kind := fs.String("kind", "", "list kind: ip, country, host, string or asn (required)")
 	description := fs.String("description", "", "free-text description")
 	var items multiFlag
@@ -160,7 +165,7 @@ func cmdEdgeRuleListsCreate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	l, err := client.CreateEdgeRuleList(context.Background(), req)
+	l, err := client.CreateEdgeRuleList(context.Background(), req, *app)
 	if err != nil {
 		return printErr("Could not create edge rule list", err)
 	}
@@ -169,6 +174,7 @@ func cmdEdgeRuleListsCreate(args []string) int {
 
 func cmdEdgeRuleListsUpdate(args []string) int {
 	fs := newFlagSet("edge-rule-lists update", flag.ContinueOnError)
+	app := edgeRuleListAppFlag(fs)
 	description := fs.String("description", "", "new description")
 	var add, remove multiFlag
 	fs.Var(&add, "add", "item to add (repeat)")
@@ -197,7 +203,7 @@ func cmdEdgeRuleListsUpdate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	l, err := client.UpdateEdgeRuleList(context.Background(), name, req)
+	l, err := client.UpdateEdgeRuleList(context.Background(), name, req, *app)
 	if err != nil {
 		return printErr("Could not update edge rule list", err)
 	}
@@ -206,6 +212,7 @@ func cmdEdgeRuleListsUpdate(args []string) int {
 
 func cmdEdgeRuleListsRm(args []string) int {
 	fs := newFlagSet("edge-rule-lists rm", flag.ContinueOnError)
+	app := edgeRuleListAppFlag(fs)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
@@ -218,11 +225,18 @@ func cmdEdgeRuleListsRm(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if err := client.DeleteEdgeRuleList(context.Background(), name); err != nil {
+	if err := client.DeleteEdgeRuleList(context.Background(), name, *app); err != nil {
 		return printErr("Could not delete edge rule list", err)
 	}
 	if !jsonOutput {
 		_, _ = fmt.Fprintf(osStdout, "Deleted edge rule list %s\n", name)
 	}
 	return 0
+}
+
+// edgeRuleListAppFlag is --app: manage a company app's organization lists
+// with the caller's organization role on that app, instead of the caller's
+// personal lists (ADR-091 amendment 2026-11-03).
+func edgeRuleListAppFlag(fs *flag.FlagSet) *string {
+	return fs.String("app", "", "manage the lists of this company app's organization instead of your personal lists")
 }

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/overlaymetadata"
@@ -72,6 +73,16 @@ const (
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
 // reboots it), which schedd observes as a failed wake.
 func main() {
+	// PostgreSQL's archive_command and restore_command run guest-init as an
+	// ordinary process (ADR-1027); only PID 1 boots.
+	if os.Getpid() != 1 && len(os.Args) > 1 && os.Args[1] == "archive-wal" {
+		os.Exit(runArchiveWAL(os.Args[2:]))
+	}
+	// A primary's replication bridge runs guest-init as the replication OS
+	// user, one process per standby stream.
+	if os.Getpid() != 1 && len(os.Args) == 2 && os.Args[1] == replicationBridgeCommand {
+		os.Exit(runReplicationBridge())
+	}
 	if os.Getenv(dependencyInputsHelperEnv) == publicBuildURLsHelperValue && os.Getpid() != 1 {
 		os.Exit(runPublicBuildURLs(os.Args[1:]))
 	}
@@ -95,6 +106,47 @@ func boot() error {
 		return fmt.Errorf("mount basics: %w", err)
 	}
 	guestStage("mount-basics")
+	// ADR-1027: a database VM's drive1 is its persistent volume, never an
+	// overlay upper, so database mode is decided before overlay assembly.
+	if cmdline, readErr := os.ReadFile("/proc/cmdline"); readErr == nil {
+		database, major, parseErr := dbguest.ParseCmdline(string(cmdline))
+		if parseErr != nil {
+			_ = poweroffDatabase()
+			return fmt.Errorf("database mode: %w", parseErr)
+		}
+		if database {
+			guestStage("mode-database")
+			target, restoring, targetErr := dbguest.RestoreTarget(string(cmdline))
+			if targetErr == nil && restoring && !dbguest.ArchiveEnabled(string(cmdline)) {
+				targetErr = errors.New("restore needs the archive relay")
+			}
+			if targetErr != nil {
+				_ = poweroffDatabase()
+				return fmt.Errorf("database restore mode: %w", targetErr)
+			}
+			upgradeFrom, upgradeErr := dbguest.UpgradeFrom(string(cmdline), major)
+			if upgradeErr != nil {
+				_ = poweroffDatabase()
+				return fmt.Errorf("database upgrade mode: %w", upgradeErr)
+			}
+			boot := databaseBoot{major: major, archive: dbguest.ArchiveEnabled(string(cmdline)), restoreTarget: target,
+				restoreUntilEnd: dbguest.RestoreUntilEnd(string(cmdline)), spare: dbguest.Spare(string(cmdline)), standby: dbguest.Standby(string(cmdline)),
+				promote: dbguest.Promote(string(cmdline)), upgradeFrom: upgradeFrom}
+			if upgradeFrom != 0 && (boot.spare || boot.standby || restoring) {
+				_ = poweroffDatabase()
+				return errors.New("database mode: an upgrade boot is neither a spare, a standby nor a restore")
+			}
+			if boot.spare && (restoring || boot.standby) {
+				_ = poweroffDatabase()
+				return errors.New("database mode: a spare boots neither a restore nor a standby")
+			}
+			if (boot.standby && restoring) || (boot.promote && !boot.standby) {
+				_ = poweroffDatabase()
+				return errors.New("database mode: a standby cannot boot a restore, and only a standby promotes at boot")
+			}
+			return runDatabaseGuest(slog.Default(), boot)
+		}
+	}
 	root, err := assembleOverlay()
 	if err != nil {
 		return fmt.Errorf("assemble overlay: %w", err)
@@ -320,7 +372,11 @@ func boot() error {
 	if err != nil {
 		return err
 	}
-	if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
+	if manifest.EffectivePort() == api.ProfileBridgePort() {
+		// The bridge would take the app's own port; an older imaged may
+		// still have stamped collectors for it (ADR-1155).
+		slog.Default().Warn("profile bridge skipped: the app listens on its port", "port", manifest.EffectivePort())
+	} else if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
 		slog.Default().Warn("profile bridge unavailable", "err", err)
 	}
 	if err := startTraceBridge(manifest.Tracing, slog.Default()); err != nil {
@@ -424,6 +480,11 @@ func boot() error {
 	if qualificationReceiptToken != "" {
 		emitQualificationConfigReceipt(slog.Default(), "main", qualificationReceiptToken, qualificationReceiptMACKey, apiEnv, secrets, nil)
 		clear(qualificationReceiptMACKey)
+		// A native qualification restore of this guest re-attests the same
+		// configuration under a fresh token (ADR 20261023093000).
+		if err := rememberQualificationRestoreBasis(apiEnv, secrets); err != nil {
+			slog.Default().Warn("qualification restore receipt basis unavailable", "err", err)
+		}
 	}
 
 	// ADR-051 Phase 4: Supervisor holds atomic.Pointer (Run is a
@@ -567,7 +628,10 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
-	env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	if m.EffectivePort() != api.ProfileBridgePort() {
+		// Collectors would poll the app's own port where the bridge belongs.
+		env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	}
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
@@ -727,14 +791,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		}
 		sup.markHealthy()
 	}
-	// ADR-1155: report memory pressure so the control plane can capture the
-	// heap before an OOM kill. Only deployments with on-demand profiling
-	// have collectors to capture from.
-	if m.ProfilingOnDemand {
-		pressureCtx, pressureCancel := context.WithCancel(context.Background())
-		go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
-		defer pressureCancel()
-	}
+	// Report memory pressure on every app so app health can warn before an
+	// OOM kill (ADR-20261102124306); a report made while a profile collector
+	// is active also lets the control plane capture the heap (ADR-1155).
+	pressureCtx, pressureCancel := context.WithCancel(context.Background())
+	go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
+	defer pressureCancel()
 	// ADR-1155: a Go application serving net/http/pprof is profiled through
 	// that endpoint, labelled with this run's process, when the deployment
 	// names its port and the profile bridge is running.
@@ -1391,6 +1453,11 @@ func runBuildOnce(m api.BuildManifest) error {
 		err = context.DeadlineExceeded
 	}
 	clock.finishBuild(time.Since(buildStarted), buf.Bytes())
+	// A failure to reach the registry for a platform-owned image is the
+	// platform's, not the customer's (H105).
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && platformPullFailure(buf.Bytes(), m.RuntimeBaseRef) {
+		err = builderNetworkError{fmt.Errorf("pull platform image: %w", err)}
+	}
 	// A deferred stop runs after writeAndPoweroff, which never returns on a
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.
@@ -1994,8 +2061,9 @@ func buildArgv(m api.BuildManifest) []string {
 	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
 }
 
-// buildkitSnapshotter returns BuildKit's worker snapshotter. fuse-overlayfs
-// is the default. With BuildKitSnapshotterAuto (ADR-20261029105325) rootless
+// buildkitSnapshotter returns BuildKit's worker snapshotter: fuse-overlayfs
+// when the manifest names none. With BuildKitSnapshotterAuto, which builderd
+// sends by default (ADR-20261029105325), rootless
 // BuildKit prefers kernel overlayfs, whose layer diffs read only the overlay
 // upper directory, and falls back to fuse-overlayfs, then native, when the
 // kernel refuses an unprivileged overlay mount. A FUSE snapshotter sends every

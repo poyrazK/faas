@@ -9,8 +9,10 @@ import (
 // Routes are individually reviewed. Unlisted GitOps, data-service, full clone
 // and browser-approval operations remain outside shared project administration.
 var routeActions = map[string]authz.OrgAction{
-	"GET /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": authz.OrgActionReadQueues,
-	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": authz.OrgActionConfigureQueues,
+	"GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}": authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}":                       authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings":                   authz.OrgActionReadQueues,
+	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings":                   authz.OrgActionConfigureQueues,
 	"GET /v1/projects":                                                               authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}":                                                        authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments":                                           authz.OrgActionReadProject,
@@ -54,8 +56,38 @@ var routeActions = map[string]authz.OrgAction{
 	"PATCH /v1/projects/{slug}/environments/{environment}":                             authz.OrgActionManageProjectSecurity,
 	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies": authz.OrgActionManageProjectSecurity,
 	"POST /v1/projects/{slug}/environments/{environment}/approvals":                    authz.OrgActionApproveProjectEnvironment,
-	"DELETE /v1/projects/{slug}":                                                       authz.OrgActionDeleteProject,
-	"DELETE /v1/projects/{slug}/environments/{environment}":                            authz.OrgActionDeleteProject,
+	// Reviewed in bug hunt 37: flags, release-set activation, staging and
+	// verification, and release secrets are neither GitOps, data services,
+	// full clones nor browser approvals, and were refused to every member.
+	"GET /v1/projects/{slug}/environments/{environment}/flags":                                            authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":                                   authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes":                             authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests":                             authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":                             authz.OrgActionReadProject,
+	"PUT /v1/projects/{slug}/environments/{environment}/flags":                                            authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":                                  authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote":                     authz.OrgActionDeployProject,
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}":                     authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs":                   authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}":             authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/diagnostics": authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/activate":                           authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/deactivate":                         authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare":                            authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare-deactivation":               authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare-rollback":                   authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/rollback":                           authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/staging":                            authz.OrgActionDeployProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}":                  authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs":                  authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/review":           authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/complete":   authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/resume":     authz.OrgActionDeployProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}":          authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/release-secrets":                                                            authz.OrgActionManageProjectSecrets,
+	"POST /v1/projects/{slug}/deployment-readiness":                                                       authz.OrgActionReadProject,
+	"DELETE /v1/projects/{slug}":                            authz.OrgActionDeleteProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}": authz.OrgActionDeleteProject,
 }
 
 // preCreationRoutes may name a personal project that its first deploy will

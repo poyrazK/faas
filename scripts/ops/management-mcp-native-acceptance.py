@@ -26,7 +26,7 @@ PLANS = {
 }
 ENV_PLAN = "gregale_plan_environment_promotion"
 ACTIONS = {"human_review", "restart_bridge"}
-READS = {"gregale_get_route_budgets","gregale_preflight", "gregale_watch_rollout", "gregale_get_environment_promotion", "gregale_wait_deployment", "gregale_get_rollout", "gregale_get_health", "gregale_get_routes", "gregale_get_operational_summary"}
+READS = {"gregale_get_plan", "gregale_verify_plan", "gregale_get_route_budgets","gregale_preflight", "gregale_watch_rollout", "gregale_get_environment_promotion", "gregale_wait_deployment", "gregale_get_rollout", "gregale_get_health", "gregale_get_routes", "gregale_get_operational_summary"}
 WRITES = set(PLANS.values()) | {"gregale_promote_deployment"}
 
 
@@ -97,7 +97,14 @@ def validate(config):
         validate_references(step.get("arguments", {}), seen)
         validate_references(step.get("expect", {}), seen)
         args = step.get("arguments", {})
-        if tool in WRITES:
+        if tool in {"gregale_get_plan", "gregale_verify_plan"}:
+            reference = args.get("plan_id", {})
+            if set(args) != {"plan_id"} or not isinstance(reference, dict) or set(reference) != {"ref"}:
+                raise ValueError("verification must reference a previously reviewed plan")
+            origin, path = reference["ref"].split(".", 1)
+            if path != "plan_id" or seen.get(origin) not in PLANS:
+                raise ValueError("verification target must come from a reviewed plan")
+        elif tool in WRITES:
             reference = args.get("plan_id", {})
             if set(args) != {"plan_id"} or not isinstance(reference, dict) or set(reference) != {"ref"}:
                 raise ValueError("write must reference a previously reviewed plan")
@@ -246,7 +253,7 @@ def main():
             raise ValueError("remote bridge must use an HTTPS /mcp URL")
         if not args.codex_config_dir:
             raise ValueError("remote recovery needs the existing OAuth client profile")
-    command = ["--non-interactive"] + (["--profile", args.profile] if args.profile else []) + ["mcp", "serve", "--allow-writes"]
+    command = ["--non-interactive"] + (["--profile", args.profile] if args.profile else []) + ["mcp", "serve", "--allow-writes", "--tools", "all"]
     settings = "mcp_servers={gregale={command=" + json.dumps(str(Path(args.gregale_binary).resolve())) + ",args=" + json.dumps(command) + ',env_vars=["FAAS_TOKEN","FAAS_API","XDG_CONFIG_HOME"],tool_timeout_sec=60}}'
     if args.remote_url:
         settings = "mcp_servers={gregale={url=" + json.dumps(args.remote_url) + ",tool_timeout_sec=60}}"

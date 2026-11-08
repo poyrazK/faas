@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -31,6 +31,14 @@ GO_BUILD_FLAGS := -trimpath -buildvcs=false
 # serves the pages or sets grpc.EnableTracing
 # (docs/adr/20261020160744-daemon-blast-radius.md). Comma-separated.
 DAEMON_TAGS := metal,grpcnotrace
+# Build tags of the release's guest-init (PID 1 of every microVM). Every
+# runtime base embeds it and ADR-510 refuses a snapshot whose base changed, so
+# its code should change only when it must. guest/init links gRPC, whose trace
+# package keeps every exported method of every type it converts to an
+# interface (all of pkg/api's), so a change to the body of any of their methods
+# changed PID 1. Comma-separated; scripts/ci/daemon_deps.json forbids the
+# template packages (docs/adr/20261105150000-guest-init-reuse-keeps-bases-and-snapshots.md).
+GUEST_TAGS := grpcnotrace
 # Keep the build target's cgo setting separate from the test environment.
 # `make test` needs the host default for race-enabled tests, while release
 # binaries are always static.
@@ -175,7 +183,7 @@ build: guest-runners ## Build every daemon + CLIs + guest init + function runner
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$c ./cmd/$$c || exit 1; \
 	done
 	@echo "building init (guest PID 1)"
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o $(BINDIR)/init ./guest/init
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags $(GUEST_TAGS) -o $(BINDIR)/init ./guest/init
 	@install -m 0755 scripts/schedd-brokerq-apply $(BINDIR)/schedd-brokerq-apply
 
 # Function-runner shims live in the guest at /usr/local/bin/faas-runner and
@@ -214,7 +222,7 @@ build-release-batch: ## Build the complete static release binary set in batched 
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/ $(addprefix ./cmd/,$(CLIS))
 	@echo "building init (guest PID 1)"
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build \
-	  $(GO_BUILD_FLAGS) -o $(BINDIR)/init ./guest/init
+	  $(GO_BUILD_FLAGS) -tags $(GUEST_TAGS) -o $(BINDIR)/init ./guest/init
 	@echo "building function runners (batched)"
 	@runner_out=$$(mktemp -d); \
 	  trap 'rm -rf "$$runner_out"' EXIT; \
@@ -353,6 +361,10 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 	# kept generous for slow runners. Memory: cmd-e2e-coverage-timeout-edge.md
 	$(GO_TEST) -race -count=1 -timeout=18m $(PKGS)
 
+.PHONY: test-mcp-agent-workflows
+test-mcp-agent-workflows: ## Evaluate MCP discovery and recovery workflows against local native API fixtures
+	$(GO_TEST) -count=1 -run 'Test(AgentWorkflow|RecoveryContracts|VerificationContracts|FocusedCatalog|CoreCatalogStaysSmall)' ./pkg/mcpmanagement
+
 .PHONY: test-apid
 test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
@@ -402,6 +414,10 @@ coverage-checker-test: ## Exercise coverage block union and exact-package gates 
 daemon-deps-check: ## Fail when a release binary links a package scripts/ci/daemon_deps.json forbids (ADR-1650 unit blast radius)
 	python3 scripts/ci/check_daemon_deps.py
 
+.PHONY: guest-init-stability-check
+guest-init-stability-check: ## Build guest-init at HEAD with and without an unreferenced pkg/api file; fail if its code differs (ADR-20261105150000; two builds)
+	python3 scripts/ci/guest_init_stability.py
+
 .PHONY: memstore-stubs-check
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
 	bash scripts/ci/check_memstore_stubs.sh
@@ -437,6 +453,14 @@ adr-number-uniqueness-check: ## Reject a NEWLY duplicated ADR number (ratchet ov
 .PHONY: adr-number-uniqueness-check-test
 adr-number-uniqueness-check-test: ## Exercise the ADR-number gate against synthetic ADR trees in both directions
 	bash scripts/ci/check_adr_number_uniqueness_test.sh
+
+.PHONY: cloudflare-ranges-check
+cloudflare-ranges-check: ## Compare the pinned Cloudflare ranges with Cloudflare's published lists (network; ADR-20261102081618)
+	bash scripts/ci/check_cloudflare_ranges.sh "$(CURDIR)"
+
+.PHONY: cloudflare-ranges-check-test
+cloudflare-ranges-check-test: ## Exercise the Cloudflare range check offline
+	bash scripts/ci/check_cloudflare_ranges_test.sh
 
 .PHONY: migration-version-hygiene-check
 migration-version-hygiene-check: ## Reject hand-typed migration versions and versions already claimed by an open PR
@@ -495,6 +519,11 @@ deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip
 .PHONY: verify-action-ref-contents-check
 verify-action-ref-contents-check: ## Verify release.yml's Contents API check accepts a pinned ref that vendors the bare CLI
 	@bash scripts/ci/verify-action-ref-contents_test.sh
+
+.PHONY: release-scripts-check
+release-scripts-check: ## Verify release.yml's moving Action tag (stable tags, forward only) and rendered release notes
+	@bash scripts/ci/advance-action-major-tag_test.sh
+	@bash scripts/ci/render-release-notes_test.sh
 
 .PHONY: environment-preflight-action-check
 environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action
@@ -623,6 +652,15 @@ hobby-route-audit: ## Tier A (ADR-093): Hobby-tier app audit. Read-only harness 
 .PHONY: test-load
 test-load: ## Hot-path load test (1k rps, //go:build load) — spec §14 M4 row 2. Needs ≥ 2 vCPU.
 	$(GO) test -tags=load -race -count=1 -v -timeout=10m ./pkg/gateway/...
+
+.PHONY: test-outbound-resilience
+test-outbound-resilience: ## Deadline, pool saturation/recovery and retry regressions; optional DATABASE_URL for Postgres
+	$(GO_TEST) -race -p=1 -count=1 -timeout=10m -run 'Test(Arch_ApidWarmsPoolBeforeBgBefore|BoundedPool|PoolConfig|PoolCollector|DaemonMinConnections|ConnectionWarmup|CanceledAcquires|OutboundRedisPool|ClientDeadline|RemoteCompilerDeadline|AMQPCallInterruptsStalledBroker|Delay|Cancellation|AcquireDeadline|QueryDeadline)' ./pkg/db ./pkg/pgpoolbounds ./pkg/gateway ./pkg/outbound ./pkg/livequery ./pkg/retry ./pkg/sched
+
+.PHONY: test-outbound-resilience-load
+test-outbound-resilience-load: ## Explicit Postgres/Redis fixtures: concurrency, latency, pool recovery and retry accounting
+	@test -n "$$FAAS_RESILIENCE_DATABASE_URL" -a -n "$$FAAS_RESILIENCE_REDIS_URL" || (echo 'Set FAAS_RESILIENCE_DATABASE_URL and FAAS_RESILIENCE_REDIS_URL to isolated test services'; exit 1)
+	$(GO_TEST) -race -p=1 -tags=load -count=1 -timeout=3m -v ./tests/outboundresilience
 
 .PHONY: gateway-bench
 gateway-bench: ## Bench gatewayd-internal cold/hot/concurrent paths with -race; emits ns/op + allocs/op
@@ -780,7 +818,11 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-check-compute-edges_test.sh
 	bash deploy/scripts/faas-app-edge-pilot-check_test.sh
 	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
+	bash deploy/scripts/cloudflare-s3-tunnel_test.sh
+	bash tests/load/s3-gateway/run_test.sh
 	bash deploy/scripts/cloudflare-app-dns_test.sh
+	bash deploy/scripts/cloudflare-origin-pull_test.sh
+	bash deploy/scripts/gcp-compute-edge-address_test.sh
 	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
 .PHONY: m8-evidence-check
@@ -1094,6 +1136,7 @@ gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM
 	python3 scripts/ops/gcp_public_beta_iam_test.py
 	python3 deploy/scripts/faas-rclone-backup-identity_test.py
 	bash -n scripts/ops/gcp_public_beta_converge.sh
+	bash scripts/ops/gcp_custom_domain_tls_test.sh
 	bash scripts/ops/gcp_provision_compute_test.sh
 	bash -n scripts/ops/gcp_retire_compute.sh
 
@@ -1136,6 +1179,10 @@ bootstrap-control-plane: ansible-preflight ## Bootstrap the control-plane group.
 bootstrap-compute: ansible-preflight ## Bootstrap the compute-nodes group. Honors $ANSIBLE_LIMIT (default compute_nodes).
 	@test -f deploy/ansible/bootstrap.yml || (echo "deploy/ansible/bootstrap.yml missing — run on the control-plane / compute node, not the dev box"; exit 1)
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/bootstrap.yml --limit $${ANSIBLE_LIMIT:-compute_nodes}
+
+.PHONY: bootstrap-database-nodes
+bootstrap-database-nodes: ansible-preflight ## ADR-1027: authorize pgproxyd on the control plane, then converge every database node (firewall + pgproxyd).
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/database_node.yml
 
 .PHONY: bootstrap-tenant-egress-gateway
 bootstrap-tenant-egress-gateway: ansible-preflight ## ADR-372: converge the tenant egress gateway, then register every compute node with it.
@@ -1406,7 +1453,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/mcpmanagement/statepg/queries.sql pkg/mcpmanagement/statepg/schema.sql "$$tmp/pkg/mcpmanagement/statepg/"; \
 	  mkdir -p "$$tmp/pkg/ci/db"; \
 	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
-	  for source_package in pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
+	  for source_package in pkg/edgecert/certpg pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
 	    mkdir -p "$$tmp/$$source_package"; \
 	    cp "$$source_package/queries.sql" "$$source_package/schema.sql" "$$tmp/$$source_package/"; \
 	  done; \
@@ -1425,7 +1472,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  mkdir -p "$$tmp/pkg/managedpostgres/connectioncapacity"; \
 	  cp pkg/managedpostgres/connectioncapacity/queries.sql pkg/managedpostgres/connectioncapacity/schema.sql "$$tmp/pkg/managedpostgres/connectioncapacity/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/apid/mailoutbox/sqlc pkg/releasehistory/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/mcpmanagement/statepg/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/agents/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
+	  for package in pkg/edgecert/certpg/sqlc pkg/apid/mailoutbox/sqlc pkg/releasehistory/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/mcpmanagement/statepg/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/agents/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done
@@ -1977,4 +2024,4 @@ check-binding-runner-sync:
 	python3 scripts/sync_binding_runner.py --check
 .PHONY: test-data-pipeline
 test-data-pipeline: ## Real TLS Postgres replication and signed HTTP acceptance (Docker, Node, Go)
-	@bash scripts/test-data-pipeline.sh
+	@$(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) bash scripts/test-data-pipeline.sh

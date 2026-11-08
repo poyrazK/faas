@@ -165,11 +165,13 @@ export {
   currentGregaleRelease,
   currentGregaleRequestDeadline,
   gregaleReleaseMetaTag,
+  gregaleRequestTimeRemainingMs,
   withGregaleReleaseContext,
   withGregaleRequestContext,
   GREGALE_RELEASE_HEADER,
   GREGALE_REVISION_HEADER,
   GREGALE_REQUEST_DEADLINE_HEADER,
+  GREGALE_DEADLINE_MS_HEADER,
 } from './release-context.js';
 export { captureCrashSnapshot, CRASH_SNAPSHOT_ENDPOINT } from './crash-snapshots.js';
 export type { CrashSnapshotOptions, CrashSnapshotResult, CrashSnapshotStatus } from './crash-snapshots.js';
@@ -190,6 +192,7 @@ export {
   verifyWebhook,
   WebhookVerificationError,
   WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_PREVIOUS_SIGNATURE_HEADER,
   WEBHOOK_TIMESTAMP_HEADER,
   WEBHOOK_DELIVERY_ID_HEADER,
   DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE_MS,
@@ -203,13 +206,18 @@ export {
 export {
   AI_SESSION_HEADER,
   AI_USER_HEADER,
+  AI_TAGS_HEADER,
+  AI_TRACE_HEADER,
+  AI_CALL_HEADER,
   AIGatewayError,
+  aiGatewayFeedback,
   aiGatewayHeaders,
   aiGatewayURL,
   isValidAIUserId,
   opaqueAIUserId,
   withAIGatewayHeaders,
   type AIGatewayCaller,
+  type AIGatewayFeedback,
   type AIGatewayTarget,
   type AIGatewayURLOptions,
 } from './ai-gateway.js';

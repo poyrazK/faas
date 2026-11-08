@@ -140,3 +140,96 @@ tests:
     alert_rule_test:
       - eval_time: 25m
         alertname: FaasAIGatewayBatchesSettledUnknown
+
+  - interval: 1m
+    name: "most online evaluations failing warns"
+    input_series:
+      - series: 'outbound_ai_online_evaluations_total{job="outboundd",instance="cp-a:9112",result="judge_error"}'
+        values: '0+3x90'
+      - series: 'outbound_ai_online_evaluations_total{job="outboundd",instance="cp-a:9112",result="scored"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: FaasAIGatewayOnlineEvaluationsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: outboundd
+              family: ai_gateway
+            exp_annotations:
+              summary: "Most AI gateway online evaluations are failing"
+              description: "More than half of online evaluations got no score from their judge model for 30m, so quality scores and drift alerts lack data. Check whether one account's judge integration carries the traffic before suspecting outboundd."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+  - interval: 1m
+    name: "occasional online evaluation failures stay quiet"
+    input_series:
+      - series: 'outbound_ai_online_evaluations_total{job="outboundd",instance="cp-a:9112",result="judge_error"}'
+        values: '0+1x90'
+      - series: 'outbound_ai_online_evaluations_total{job="outboundd",instance="cp-a:9112",result="scored"}'
+        values: '0+9x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: FaasAIGatewayOnlineEvaluationsFailing
+
+  - interval: 30s
+    name: "failing access-token lookups warn"
+    input_series:
+      - series: 'outbound_ai_access_token_lookups_total{job="outboundd",instance="cp-a:9112",result="busy"}'
+        values: '0+20x60'
+      - series: 'outbound_ai_access_token_lookups_total{job="outboundd",instance="cp-a:9112",result="found"}'
+        values: '0+20x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasAIGatewayAccessTokenLookupsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: outboundd
+              family: ai_gateway
+            exp_annotations:
+              summary: "AI gateway access-token lookups are failing"
+              description: "More than a fifth of public listener access-token lookups failed or found the lookups saturated for 10m; those callers get 503 outbound_access_token_unavailable. A flood of unknown tokens shows as busy; database trouble shows as error."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+  - interval: 30s
+    name: "unknown access tokens alone stay quiet"
+    input_series:
+      - series: 'outbound_ai_access_token_lookups_total{job="outboundd",instance="cp-a:9112",result="unknown"}'
+        values: '0+20x60'
+      - series: 'outbound_ai_access_token_lookups_total{job="outboundd",instance="cp-a:9112",result="found"}'
+        values: '0+20x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasAIGatewayAccessTokenLookupsFailing
+
+  - interval: 5m
+    name: "many unpriced calls warn"
+    input_series:
+      - series: 'outbound_ai_unpriced_calls_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed"}'
+        values: '0+30x40'
+      - series: 'outbound_ai_requests_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",outcome="known"}'
+        values: '0+100x40'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: FaasAIGatewayUnpricedCalls
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: outboundd
+              family: ai_gateway
+            exp_annotations:
+              summary: "Many AI gateway calls have no price"
+              description: "More than a tenth of settled AI calls cost zero for 1h because their model has no price, so usage reports undercount and cost caps refuse those models. Refresh the built-in price catalog, or check whether one account calls an unlisted model."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+  - interval: 5m
+    name: "a few unpriced calls stay quiet"
+    input_series:
+      - series: 'outbound_ai_unpriced_calls_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed"}'
+        values: '0+2x40'
+      - series: 'outbound_ai_requests_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",outcome="known"}'
+        values: '0+100x40'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: FaasAIGatewayUnpricedCalls

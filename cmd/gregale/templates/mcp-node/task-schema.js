@@ -3,6 +3,7 @@ export const MCP_TASK_SCHEMA_VERSION = 1;
 export const MCP_TASK_DATABASE_PROFILES = Object.freeze({
   runtime: {
     gregale_mcp_tasks: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+    gregale_mcp_task_owners: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
     gregale_mcp_task_fairness: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
     gregale_mcp_task_workers: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
     gregale_mcp_task_worker_handlers: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
@@ -12,6 +13,7 @@ export const MCP_TASK_DATABASE_PROFILES = Object.freeze({
     gregale_mcp_task_schema: ['SELECT'],
   },
   observer: {
+    gregale_mcp_task_owners: ['SELECT'],
     gregale_mcp_tasks: ['SELECT'], gregale_mcp_task_workers: ['SELECT'],
     gregale_mcp_task_worker_handlers: ['SELECT'],
     gregale_mcp_task_schema: ['SELECT'], gregale_mcp_task_admission_namespaces: ['SELECT'],
@@ -58,7 +60,8 @@ export async function checkMcpTaskSchema({ pool, namespace, role = 'runtime', in
     const allowed = await pool.query("SELECT has_sequence_privilege(current_user, 'gregale_mcp_task_claim_order_seq', 'USAGE') AS allowed");
     if (!allowed.rows[0]?.allowed) throw new Error('MCP Task runtime sequence privileges are incomplete');
   }
-  await pool.query('SELECT namespace, task_id, owner_hash, tool_name, handler_version, arguments_encrypted, result_encrypted, error_encrypted, input_state_encrypted, status, created_at, updated_at, expires_at, attempt_count, resume_pending, next_attempt_at, lease_token, lease_expires_at, cancel_requested_at, input_methods FROM gregale_mcp_tasks LIMIT 0');
+  await pool.query('SELECT namespace, task_id, owner_hash, tool_name, handler_version, arguments_encrypted, result_encrypted, error_encrypted, input_state_encrypted, output_schema, status, created_at, updated_at, expires_at, attempt_count, resume_pending, next_attempt_at, lease_token, lease_expires_at, cancel_requested_at, input_methods FROM gregale_mcp_tasks LIMIT 0');
+  if (role !== 'operator') await pool.query('SELECT namespace,owner_hash,owner_group FROM gregale_mcp_task_owners LIMIT 0');
   const routines = await pool.query(`SELECT COUNT(*)::text AS count FROM pg_proc AS routine JOIN pg_namespace AS schema ON schema.oid = routine.pronamespace
     WHERE schema.nspname = current_schema() AND routine.proname IN ('gregale_mcp_task_check_admission', 'gregale_mcp_task_audit_admission')
       AND routine.pronargs = 0 AND routine.prorettype = 'trigger'::regtype AND routine.prosecdef

@@ -29,6 +29,9 @@ type activeComputeNodeSource interface {
 
 type gatewayUsageEventStore interface {
 	AppendGatewayUsageEvent(context.Context, string, string, string, time.Time, int64, int64, int32) error
+	// AppendGatewayEdgeUsageEvent persists an edge frame: bytes a gateway
+	// served for an app without an instance (ADR-20261104132753).
+	AppendGatewayEdgeUsageEvent(ctx context.Context, nodeID, eventID, appID string, minute time.Time, txBytes int64) error
 }
 
 type fleetEgressMetrics struct {
@@ -162,10 +165,16 @@ func (a *fleetGatewayEgressAdapter) reconcile(ctx context.Context) {
 		}
 		if a.store != nil {
 			adapter.persistFrame = func(persistCtx context.Context, frame *egresspb.BytesFrame) error {
-				err := a.store.AppendGatewayUsageEvent(
-					persistCtx, nodeID, frame.GetEventId(), frame.GetInstanceId(), frame.GetMinute().AsTime(),
-					int64(frame.GetRequests()), int64(frame.GetBytes()), int32(frame.GetColdBoots()),
-				)
+				var err error
+				if frame.GetAppId() != "" {
+					err = a.store.AppendGatewayEdgeUsageEvent(
+						persistCtx, nodeID, frame.GetEventId(), frame.GetAppId(), frame.GetMinute().AsTime(), int64(frame.GetBytes()))
+				} else {
+					err = a.store.AppendGatewayUsageEvent(
+						persistCtx, nodeID, frame.GetEventId(), frame.GetInstanceId(), frame.GetMinute().AsTime(),
+						int64(frame.GetRequests()), int64(frame.GetBytes()), int32(frame.GetColdBoots()),
+					)
+				}
 				if err != nil {
 					a.metrics.failures.WithLabelValues("persist").Inc()
 				}

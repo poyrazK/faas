@@ -53,6 +53,13 @@ type Reconciler struct {
 	includeProvisioning func() bool
 	observe             func(ReconcileObservation)
 	logger              *slog.Logger
+	restoreSlots        *RestoreSlotSweeper
+}
+
+// SetRestoreSlots makes every sweep also release and end restore slots
+// (ADR-20261031123259). apid sets it once the binding service exists.
+func (r *Reconciler) SetRestoreSlots(sweeper *RestoreSlotSweeper) {
+	r.restoreSlots = sweeper
 }
 
 func NewReconciler(service *Service, options ReconcilerOptions) (*Reconciler, error) {
@@ -108,7 +115,11 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 		var result Database
 		if database.State == StateDeleting {
 			operation = StateDeleting
-			result, err = r.service.Delete(ctx, database.AccountID, database.ID)
+			if database.Restorable(r.now()) {
+				result, err = r.service.reconcileScheduledDelete(ctx, database)
+			} else {
+				result, err = r.service.Delete(ctx, database.AccountID, database.ID)
+			}
 		} else {
 			result, err = r.service.Reconcile(ctx, database.AccountID, database.ID)
 		}
@@ -138,6 +149,11 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 		}
 		if r.observe != nil {
 			r.observe(ReconcileObservation{DatabaseID: database.ID, Operation: operation, Outcome: outcome, Duration: r.now().Sub(started)})
+		}
+	}
+	if r.restoreSlots != nil {
+		if _, err := r.restoreSlots.Sweep(ctx); err != nil {
+			sweepErrors = append(sweepErrors, err)
 		}
 	}
 	return summary, errors.Join(sweepErrors...)

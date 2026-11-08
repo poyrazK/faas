@@ -15,9 +15,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +29,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -34,6 +37,15 @@ const (
 	// realtime endpoints. gatewayd-internal routes this prefix before VM
 	// admission, so an open managed connection never pins an application VM.
 	ManagedPathPrefix = "/__gregale/realtime/"
+
+	// HostAccountHeader carries the account of the app the request's host is
+	// routed to. gatewayd-internal resolves the host before it dispatches the
+	// managed namespace, replaces any client copy of this header, and
+	// realtimed refuses an endpoint of another account, so one tenant's
+	// endpoints are not served on another tenant's hosts (ADR-156, amendment
+	// of 2026-11-02). A request without it comes from an older gateway and
+	// keeps the host-independent behavior.
+	HostAccountHeader = "X-Gregale-Realtime-Host-Account"
 
 	defaultMaxMessageSize     = 1 << 20 // 1 MiB
 	defaultOutboundQueue      = 64
@@ -315,6 +327,10 @@ type Config struct {
 	ResumePreview      bool
 	HistoryReader      ManagedRealtimeHistoryReader
 	ResumePollInterval time.Duration
+	// ResumeHistoryOutageMax is how long a resume or inbox subscription
+	// retries failed history reads before closing its connection with 1013.
+	// Zero is realtimeHistoryOutageMax.
+	ResumeHistoryOutageMax time.Duration
 	// ChannelRouteReporter updates the shared apid route directory promptly
 	// when a resumable route appears or disappears. Snapshot reconciliation
 	// repairs failed reports.
@@ -326,6 +342,10 @@ type Config struct {
 	PresenceSyncInterval       time.Duration
 	PresenceLeaseRenewInterval time.Duration
 	FleetReportFailure         func(error)
+	// EndpointsChanged is called after an endpoint is registered or
+	// removed, so the process can save its registrations for the process
+	// that replaces it (EndpointSnapshot, RestoreEndpoints).
+	EndpointsChanged func()
 	// UsageReporter records per-endpoint usage with the control plane
 	// (ADR-1323). Nil disables usage recording.
 	UsageReporter       UsageReporter
@@ -392,6 +412,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.ResumePollInterval <= 0 {
 		c.ResumePollInterval = 5 * time.Second
+	}
+	if c.ResumeHistoryOutageMax <= 0 {
+		c.ResumeHistoryOutageMax = realtimeHistoryOutageMax
 	}
 	if c.PresenceSyncInterval <= 0 {
 		c.PresenceSyncInterval = 5 * time.Second
@@ -483,6 +506,11 @@ type Stats struct {
 	OutboundShedDisconnects            uint64  `json:"outbound_shed_disconnects"`
 	CallbackErrors                     uint64  `json:"callback_errors"`
 	CallbackOutboxFull                 uint64  `json:"callback_outbox_full"`
+	ClientMessagesPaced                uint64  `json:"client_messages_paced"`
+	ClientMessagesThrottled            uint64  `json:"client_messages_throttled"`
+	EphemeralRelaysThrottled           uint64  `json:"ephemeral_relays_throttled,omitempty"`
+	LiveFramesThrottled                uint64  `json:"live_frames_throttled,omitempty"`
+	HandshakesThrottled                uint64  `json:"handshakes_throttled,omitempty"`
 	CallbackOutboxAdmissionErrors      uint64  `json:"callback_outbox_admission_errors"`
 	CallbackUnpersistedFailures        uint64  `json:"callback_unpersisted_failures"`
 	CallbackPending                    uint64  `json:"callback_pending"`
@@ -511,6 +539,7 @@ type Stats struct {
 }
 
 type connection struct {
+	readerKey     readerKey // set before the connection is indexed
 	identity      *connectionIdentity
 	issuedAt      time.Time
 	ticketToken   string
@@ -568,6 +597,16 @@ type connection struct {
 	signalCount             int
 	presenceWindow          time.Time
 	presenceCount           int
+	commands                *rate.Limiter
+	// clientMessages paces a plain connection's messages to its callback;
+	// only the connection's read loop uses it.
+	clientMessages *rate.Limiter
+	// liveFrames paces the connection's live query frames; only its read
+	// loop uses it.
+	liveFrames *rate.Limiter
+	// admission is the credential and origin the connection was admitted
+	// with; an endpoint update that no longer accepts them closes it.
+	admission connectionAdmission
 }
 
 type callbackAuthSnapshot struct {
@@ -590,6 +629,8 @@ type endpointState struct {
 	usage *usageCounters
 	// account counts the endpoint's account's connections on this node.
 	account *accountConnections
+	// relays is the endpoint's share of the node's ephemeral relays.
+	relays relayBudget
 }
 
 // Manager is the owner of managed realtime sockets for one process/node.
@@ -603,14 +644,33 @@ type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	// accessCache keeps access and ticket decisions per node (access_cache.go).
+	accessCache *realtimeAccessCache
+	// historyReads shares channel history reads per node (history_reads.go).
+	historyReads historyReads
+	// clientMessages bounds the client messages the node writes to its
+	// callback spool (api.RealtimeNodeClientMessagesPerSecond).
+	clientMessages *rate.Limiter
+	// ephemeralRelays and liveFrames bound the node's relays through apid
+	// and its live hub frames (ADR-1323, amendment of 2026-11-03).
+	ephemeralRelays *rate.Limiter
+	liveFrames      *rate.Limiter
+	// handshakes bounds new connections per second on the node, so the
+	// reconnects after a restart arrive spread out (ADR-1323, amendment of
+	// 2026-11-03).
+	handshakes *rate.Limiter
+
 	endpoints   sync.Map // map[string]*endpointState
 	endpointsMu sync.Mutex
 	// mu protects connection indexes, subscribers, and route revision.
 	// Subscription changes also take connection.mu after mu so snapshots see
 	// consistent channel membership.
-	mu                      sync.RWMutex
-	conns                   map[string]*connection
-	endpointConns           map[string]map[string]*connection
+	mu    sync.RWMutex
+	conns map[string]*connection
+	// readerConns indexes connections by endpoint and read principal key,
+	// so an inbox read receipt reaches its reader's connections without a
+	// scan of the node (ADR-1323, amendment of 2026-11-03).
+	readerConns             map[readerKey]map[*connection]struct{}
 	subscribers             map[channelKey]map[string]struct{}
 	resumeSubscribers       map[channelKey]map[string]struct{}
 	presenceMembers         map[channelKey]map[string]*presenceMember
@@ -618,7 +678,8 @@ type Manager struct {
 	fleetPresenceTombstones map[channelKey]map[string]time.Time
 	fleetPresenceLastSync   map[channelKey]time.Time
 	resumeSignalRates       map[channelKey]*resumeSignalRate
-	routeReportMu           sync.Mutex
+	routeReportMu           sync.Mutex // guards routeReportLocks only
+	routeReportLocks        map[channelKey]*routeReportLock
 	channelRouteInstance    string
 	channelRouteRevision    uint64
 	reserved                atomic.Int64
@@ -643,27 +704,35 @@ type Manager struct {
 	usageDroppedHours   atomic.Uint64
 	usageHeldHours      atomic.Int64
 
-	acceptedConnections           atomic.Uint64
-	rejectedConnections           atomic.Uint64
-	receivedMessages              atomic.Uint64
-	receivedBytes                 atomic.Uint64
-	sentMessages                  atomic.Uint64
-	sentBytes                     atomic.Uint64
-	droppedMessages               atomic.Uint64
-	expiredWebSocketCheckpoints   atomic.Uint64
-	expiredInboxCheckpoints       atomic.Uint64
-	expiredSSECheckpoints         atomic.Uint64
-	expiredOutboundDrops          atomic.Uint64
-	outboundPendingBytes          atomic.Int64
-	outboundQueueCountDrops       atomic.Uint64
-	outboundQueueByteDrops        atomic.Uint64
-	outboundNodeBudgetDrops       atomic.Uint64
-	outboundShedDisconnects       atomic.Uint64
-	outboundShed                  chan struct{}
-	occupancy                     occupancyIndex
-	occupancyLive                 occupancyLive
-	callbackErrors                atomic.Uint64
-	callbackOutboxFull            atomic.Uint64
+	acceptedConnections         atomic.Uint64
+	rejectedConnections         atomic.Uint64
+	receivedMessages            atomic.Uint64
+	receivedBytes               atomic.Uint64
+	sentMessages                atomic.Uint64
+	sentBytes                   atomic.Uint64
+	droppedMessages             atomic.Uint64
+	expiredWebSocketCheckpoints atomic.Uint64
+	expiredInboxCheckpoints     atomic.Uint64
+	expiredSSECheckpoints       atomic.Uint64
+	expiredOutboundDrops        atomic.Uint64
+	outboundPendingBytes        atomic.Int64
+	outboundQueueCountDrops     atomic.Uint64
+	outboundQueueByteDrops      atomic.Uint64
+	outboundNodeBudgetDrops     atomic.Uint64
+	outboundShedDisconnects     atomic.Uint64
+	outboundShed                chan struct{}
+	occupancy                   occupancyIndex
+	occupancyLive               occupancyLive
+	callbackErrors              atomic.Uint64
+	callbackOutboxFull          atomic.Uint64
+	clientMessagesPaced         atomic.Uint64
+	clientMessagesThrottled     atomic.Uint64
+	ephemeralRelaysThrottled    atomic.Uint64
+	// presenceRenewUnsupported is set once apid answers that it has no
+	// presence renewals; renewals then upsert.
+	presenceRenewUnsupported      atomic.Bool
+	liveFramesThrottled           atomic.Uint64
+	handshakesThrottled           atomic.Uint64
 	callbackOutboxAdmissionErrors atomic.Uint64
 	callbackUnpersistedFailures   atomic.Uint64
 	authOutcomes                  authOutcomeCounters
@@ -682,8 +751,13 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 		hooks:                   hooks,
 		ctx:                     ctx,
 		cancel:                  cancel,
+		accessCache:             newRealtimeAccessCache(),
+		clientMessages:          rate.NewLimiter(rate.Limit(api.RealtimeNodeClientMessagesPerSecond), api.RealtimeNodeClientMessageBurst),
+		ephemeralRelays:         rate.NewLimiter(rate.Limit(api.RealtimeNodeEphemeralRelaysPerSecond), api.RealtimeNodeEphemeralRelayBurst),
+		liveFrames:              rate.NewLimiter(rate.Limit(api.RealtimeNodeLiveFramesPerSecond), api.RealtimeNodeLiveFrameBurst),
+		handshakes:              rate.NewLimiter(rate.Limit(api.RealtimeNodeHandshakesPerSecond), api.RealtimeNodeHandshakeBurst),
 		conns:                   make(map[string]*connection),
-		endpointConns:           make(map[string]map[string]*connection),
+		readerConns:             make(map[readerKey]map[*connection]struct{}),
 		subscribers:             make(map[channelKey]map[string]struct{}),
 		resumeSubscribers:       make(map[channelKey]map[string]struct{}),
 		presenceMembers:         make(map[channelKey]map[string]*presenceMember),
@@ -702,6 +776,7 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 		},
 	}
 	m.startUsageRecorder()
+	m.startAccessFeed()
 	m.startConnectionSync()
 	m.startOutboundShed()
 	m.occupancy.changed = m.occupancyChanged
@@ -711,6 +786,14 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 
 // RegisterEndpoint publishes an endpoint to the local ingress route.
 func (m *Manager) RegisterEndpoint(e Endpoint) error {
+	err := m.registerEndpoint(e)
+	if err == nil {
+		m.endpointsChanged()
+	}
+	return err
+}
+
+func (m *Manager) registerEndpoint(e Endpoint) error {
 	if m == nil || m.closed.Load() {
 		return ErrConnectionClosed
 	}
@@ -825,6 +908,7 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 			}
 			m.mu.RUnlock()
 		}
+		m.closeConnectionsNoLongerAdmitted(state, &e)
 		return nil
 	}
 	if canUpdateCallbacks {
@@ -844,6 +928,7 @@ func (m *Manager) RemoveEndpoint(id string) {
 	if m == nil {
 		return
 	}
+	defer m.endpointsChanged()
 	m.endpointsMu.Lock()
 	value, ok := m.endpoints.Load(id)
 	if ok {
@@ -865,13 +950,25 @@ func (m *Manager) RemoveEndpoint(id string) {
 		}
 	}
 	m.mu.RUnlock()
+	// Each client is told why (1008 "endpoint removed") so it does not
+	// reconnect as it would after a network drop. The close frames are
+	// written in parallel under one short deadline: revocation must not wait
+	// on a slow client, and closing the transport afterwards unblocks the read
+	// pump and persists its disconnect callback through the normal path.
+	var wg sync.WaitGroup
 	for _, c := range connections {
-		// Revocation must not wait for a slow client's control-frame write.
-		// Closing the transport unblocks the read pump and persists its
-		// disconnect callback through the normal lifecycle path.
-		c.terminate(websocket.ClosePolicyViolation, "endpoint removed")
+		wg.Add(1)
+		go func(c *connection) {
+			defer wg.Done()
+			c.closeWithin(websocket.ClosePolicyViolation, "endpoint removed", endpointRemovalCloseWait)
+		}(c)
 	}
+	wg.Wait()
 }
+
+// endpointRemovalCloseWait bounds the close-frame write to each client of a
+// removed endpoint.
+const endpointRemovalCloseWait = 250 * time.Millisecond
 
 // EndpointIDs returns the node-local registration inventory without exposing
 // credentials or policy. The control plane compares it to durable intent.
@@ -898,6 +995,11 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "realtime service unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if !m.allowHandshake() {
+		w.Header().Set("Retry-After", strconv.Itoa(1+rand.IntN(5)))
+		http.Error(w, "realtime node busy", http.StatusServiceUnavailable)
+		return
+	}
 	if r.URL.Query().Get("transport") == "sse" {
 		m.serveSSE(w, r)
 		return
@@ -912,7 +1014,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value, ok := m.endpoints.Load(endpointID)
-	if !ok {
+	if !ok || !servedOnHost(value.(*endpointState), r) {
 		m.rejectedConnections.Add(1)
 		http.NotFound(w, r)
 		return
@@ -984,6 +1086,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	authMetricMode := authMetricModeForEndpoint(endpoint)
+	admittedToken := ""
 	principal := ""
 	var issuedAt time.Time
 	var identity JWTIdentity
@@ -991,9 +1094,9 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var tokenExpiry time.Time
 	identityAt := time.Now()
 	if usesTicket {
-		claims, err := m.readTicket(r.Context(), endpoint.ID, ticketToken)
+		claims, err := m.cachedTicket(r.Context(), endpoint.ID, ticketToken, true)
 		if err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeTicketRefusal(w, err)
 			return
 		}
 		principal, issuedAt = claims.Principal, claims.IssuedAt
@@ -1012,6 +1115,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+			admittedToken = token
 			principal = "token"
 		case AuthModeOIDCJWT:
 			token, ok := bearerToken(r)
@@ -1033,6 +1137,12 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				// v1 sockets never re-check the token, so they end when it
 				// expires instead of living out MaxConnectionAge on it.
 				tokenExpiry = verifiedTokenExpiry(token)
+				// The verifier allows clock-skew leeway past exp, but such a
+				// socket would end the moment it opened, after the app's
+				// connect callback had admitted an expired identity. Refuse it.
+				if err == nil && !tokenExpiry.IsZero() && !time.Now().Before(tokenExpiry) {
+					err = ErrUnauthorized
+				}
 			}
 			if err != nil || strings.TrimSpace(principal) == "" {
 				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
@@ -1077,9 +1187,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "realtime access unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		accessCtx, cancel := context.WithTimeout(r.Context(), realtimeAccessReadTimeout)
-		access, err := m.cfg.AccessReader.ReadRealtimeAccess(accessCtx, endpoint.ID, principal)
-		cancel()
+		access, err := m.cachedAccess(r.Context(), endpoint.ID, principal)
 		if err != nil {
 			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 			m.rejectedConnections.Add(1)
@@ -1138,6 +1246,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		conn.mu.Unlock()
 	}
+	conn.admission = newConnectionAdmission(endpoint, usesTicket, browserCredential, admittedToken, r.Header.Get("Origin"))
 	state.gate.Unlock()
 	conn.browser = r.Header.Get("Origin") != ""
 	conn.liveOnly = liveOnly
@@ -1230,6 +1339,17 @@ func checkAllowedOrigins(allowed []string) func(*http.Request) bool {
 	}
 }
 
+// servedOnHost reports whether the endpoint may answer on the request's host:
+// the gateway names the host's account in HostAccountHeader. An endpoint of
+// another account answers 404, as if it did not exist.
+func servedOnHost(state *endpointState, r *http.Request) bool {
+	values := r.Header.Values(HostAccountHeader)
+	if len(values) == 0 {
+		return true
+	}
+	return len(values) == 1 && values[0] != "" && values[0] == state.config.Load().AccountID
+}
+
 func endpointIDFromPath(path string) (string, bool) {
 	if !strings.HasPrefix(path, ManagedPathPrefix) {
 		return "", false
@@ -1286,8 +1406,10 @@ func (m *Manager) addAuthenticatedConnection(state *endpointState, endpoint Endp
 	if current := state.config.Load(); current != nil {
 		conn.callbackAuth.Store(&callbackAuthSnapshot{token: current.CallbackAuthToken})
 	}
+	conn.readerKey = readerKeyFor(conn.info.EndpointID, conn.info.Principal)
 	m.mu.Lock()
 	m.conns[id] = conn
+	m.indexReaderLocked(conn)
 	m.mu.Unlock()
 	m.acceptedConnections.Add(1)
 	return conn
@@ -1373,6 +1495,9 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 			return
 		}
 		if !c.accessAllows(ctx, "") {
+			return
+		}
+		if !m.paceClientMessage(ctx, c) {
 			return
 		}
 		lastSeen := time.Now().UTC()
@@ -1567,6 +1692,7 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 		c.releaseChannelsLocked()
 		c.mu.Unlock()
 		delete(m.conns, c.info.ID)
+		m.unindexReaderLocked(c)
 	}
 	callbackAuthToken := c.currentCallbackAuthToken()
 	m.mu.Unlock()
@@ -1646,6 +1772,17 @@ func (c *connection) close(code int, reason string) error {
 		}
 	})
 	return err
+}
+
+// closeWithin is close with its control-frame write bounded by wait rather
+// than the connection's WriteWait.
+func (c *connection) closeWithin(code int, reason string, wait time.Duration) {
+	c.closeOne.Do(func() {
+		c.recordClose(code, reason)
+		c.closeOutboundQueue()
+		_ = c.ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(wait))
+		_ = c.ws.Close()
+	})
 }
 
 func (c *connection) terminate(code int, reason string) {
@@ -2316,6 +2453,11 @@ func (m *Manager) Stats() Stats {
 		OutboundShedDisconnects:       m.outboundShedDisconnects.Load(),
 		CallbackErrors:                m.callbackErrors.Load(),
 		CallbackOutboxFull:            m.callbackOutboxFull.Load(),
+		ClientMessagesPaced:           m.clientMessagesPaced.Load(),
+		ClientMessagesThrottled:       m.clientMessagesThrottled.Load(),
+		EphemeralRelaysThrottled:      m.ephemeralRelaysThrottled.Load(),
+		LiveFramesThrottled:           m.liveFramesThrottled.Load(),
+		HandshakesThrottled:           m.handshakesThrottled.Load(),
 		CallbackOutboxAdmissionErrors: m.callbackOutboxAdmissionErrors.Load(),
 		CallbackUnpersistedFailures:   m.callbackUnpersistedFailures.Load(),
 		UsageReports:                  m.usageReports.Load(),
@@ -2375,7 +2517,7 @@ func (m *Manager) Close() error {
 	}
 	m.mu.RUnlock()
 	for _, c := range connections {
-		_ = c.close(websocket.CloseGoingAway, "service shutdown")
+		_ = c.close(websocket.CloseServiceRestart, "service restart")
 	}
 	if m.usage != nil {
 		// Give the recorder its final report, bounded by its own timeout.
@@ -2385,4 +2527,45 @@ func (m *Manager) Close() error {
 		}
 	}
 	return nil
+}
+
+// clientMessageMaxWait is the longest a plain connection's next message waits
+// for the message rate before the connection is closed with 1013.
+const clientMessageMaxWait = 5 * time.Second
+
+// paceClientMessage waits until the connection and the node may write one
+// more client message to the callback spool. Not reading meanwhile lets TCP
+// slow the client; nothing is dropped (api.RealtimeClientMessagesPerSecond).
+func (m *Manager) paceClientMessage(ctx context.Context, c *connection) bool {
+	if c.clientMessages == nil {
+		c.clientMessages = rate.NewLimiter(rate.Limit(api.RealtimeClientMessagesPerSecond), api.RealtimeClientMessageBurst)
+	}
+	nodeLimiter := m.clientMessages
+	if nodeLimiter == nil {
+		nodeLimiter = rate.NewLimiter(rate.Inf, 0)
+	}
+	now := time.Now()
+	own := c.clientMessages.ReserveN(now, 1)
+	node := nodeLimiter.ReserveN(now, 1)
+	delay := max(own.DelayFrom(now), node.DelayFrom(now))
+	if !own.OK() || !node.OK() || delay > clientMessageMaxWait {
+		own.CancelAt(now)
+		node.CancelAt(now)
+		m.clientMessagesThrottled.Add(1)
+		_ = c.close(websocket.CloseTryAgainLater, "message rate exceeded")
+		return false
+	}
+	if delay <= 0 {
+		return true
+	}
+	m.clientMessagesPaced.Add(1)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+	case <-c.done:
+	}
+	return false
 }

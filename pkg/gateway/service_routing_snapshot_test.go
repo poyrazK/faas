@@ -146,7 +146,7 @@ func TestServiceSnapshotAffinityMatchesLivePickerAndProofOmitsRandomSelection(t 
 	for _, key := range []string{"one", "two"} {
 		r := httptest.NewRequest(http.MethodGet, "http://orders.internal/health", nil)
 		r = r.WithContext(WithServicePolicyRoutingInputs(r.Context(), ServicePolicyRoutingInputs{ReleaseValid: true, SelectionKey: key}))
-		if proxy.pinServicePolicy(httptest.NewRecorder(), r, "client", "orders", true) {
+		if proxy.pinServicePolicy(httptest.NewRecorder(), r, "client", "orders", true, nil) {
 			t.Fatal("pin failed")
 		}
 		if got := TrafficPolicyRevision(r.Context()); proof == "" {
@@ -166,6 +166,9 @@ func TestServiceRoutingSnapshotRefusesBeforeWakeWithCompatibleStatus(t *testing.
 		{"missing source", http.StatusForbidden}, {"invalid override", http.StatusBadRequest},
 		{"override conflicts with release", http.StatusConflict}, {"foreign override", http.StatusUnprocessableEntity},
 		{"no deployment", http.StatusServiceUnavailable}, {"missing routing snapshot", http.StatusServiceUnavailable},
+		// A stage never falls back to production when its target has no
+		// deployment in that stage.
+		{"stage has no deployment", http.StatusForbidden},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			source, deployment, release := uuid.NewString(), uuid.NewString(), uuid.NewString()
@@ -194,6 +197,8 @@ func TestServiceRoutingSnapshotRefusesBeforeWakeWithCompatibleStatus(t *testing.
 				policy.Routing.OverrideChecked, policy.Routing.OverrideDeploymentID = true, deployment
 			case "missing routing snapshot":
 				policy.Routing = nil
+			case "stage has no deployment":
+				policy.Routing.CallerEnvironment = "staging"
 			}
 			provider := &serviceProxyProvider{}
 			proxy := NewServiceProxy(ServiceProxyConfig{Provider: provider,

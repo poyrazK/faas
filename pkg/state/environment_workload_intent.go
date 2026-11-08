@@ -49,6 +49,7 @@ type gitOpsSourceBaseline struct {
 	SourceRoot string                              `json:"source_root"`
 	Inputs     EnvironmentWorkloadDeploymentInputs `json:"inputs"`
 	Managed    bool                                `json:"managed,omitempty"`
+	PlanHash   string                              `json:"plan_hash,omitempty"`
 }
 
 func cloneWorkloadIntent(row EnvironmentWorkloadIntent) EnvironmentWorkloadIntent {

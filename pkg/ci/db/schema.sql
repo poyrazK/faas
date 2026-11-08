@@ -199,7 +199,7 @@ CREATE INDEX ci_job_attempts_account_execution_idx ON ci_job_attempts(account_id
 CREATE TABLE ci_job_runtime (
  attempt_id uuid PRIMARY KEY REFERENCES ci_job_attempts(attempt_id) ON DELETE CASCADE,
  instance_id uuid NOT NULL REFERENCES instances(id),
- capability_hash bytea NOT NULL CHECK (octet_length(capability_hash) = 32),
+ capability_hash bytea NOT NULL CHECK (octet_length(capability_hash) IN (32, 33)),
  expires_at timestamptz NOT NULL,
  cancelled_at timestamptz,
  result jsonb CHECK (result IS NULL OR (jsonb_typeof(result) = 'object' AND octet_length(result::text) <= 32768)),

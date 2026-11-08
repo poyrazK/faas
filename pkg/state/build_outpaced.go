@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -70,7 +72,7 @@ func (s *PgStore) SupersedeOutpacedBuild(ctx context.Context, claim Build) (bool
 	if tag.RowsAffected() != 1 {
 		return false, nil
 	}
-	if _, err := tx.Exec(ctx, `update deployments set status = 'superseded', traffic_percent = 0 where id = $1 and status <> 'superseded'`, claim.DeploymentID); err != nil {
+	if err := supersedeOutpacedDeploymentTx(ctx, tx, claim.DeploymentID); err != nil {
 		return false, fmt.Errorf("state: supersede outpaced deployment: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -91,7 +93,7 @@ func (m *MemStore) SupersedeOutpacedBuild(_ context.Context, claim Build) (bool,
 	}
 	newer := false
 	for _, other := range m.deployments {
-		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Revision > d.Revision {
+		if outpaces(other, d) {
 			newer = true
 			break
 		}
@@ -106,7 +108,53 @@ func (m *MemStore) SupersedeOutpacedBuild(_ context.Context, claim Build) (bool,
 	now := time.Now()
 	b.Status, b.CancelledAt, b.FinishedAt = BuildCancelled, &now, now
 	m.builds[b.ID] = b
-	d.Status, d.TrafficPercent = DeploySuperseded, 0
-	m.putDeploymentLocked(d.ID, d)
+	m.putDeploymentLocked(d.ID, m.supersedeOutpacedDeploymentLocked(d))
 	return true, nil
+}
+
+// DeploymentSupersededCode is the error code a deployment carries when a newer
+// revision overtook it before it went live (Hunt 31 H31-3).
+const DeploymentSupersededCode = "deployment_superseded"
+
+// supersedeOutpacedDeploymentTx retires a deployment a newer revision
+// overtook, naming that revision and ending an in-flight canary rollout. The
+// caller has already seen the newer revision in this transaction; the plain
+// update is the fallback should it not be found.
+func supersedeOutpacedDeploymentTx(ctx context.Context, tx pgx.Tx, id string) error {
+	depID, err := parsePgUUID(id)
+	if err != nil {
+		return err
+	}
+	n, err := sqlc.New().SupersedeOutpacedDeployment(ctx, tx, depID)
+	if err != nil || n > 0 {
+		return err
+	}
+	_, err = tx.Exec(ctx, `update deployments set status = 'superseded', traffic_percent = 0 where id = $1 and status <> 'superseded'`, depID)
+	return err
+}
+
+// supersedeOutpacedDeploymentLocked mirrors supersedeOutpacedDeploymentTx.
+func (m *MemStore) supersedeOutpacedDeploymentLocked(d Deployment) Deployment {
+	newer := Deployment{}
+	for _, other := range m.deployments {
+		if outpaces(other, d) && other.Revision > newer.Revision {
+			newer = other
+		}
+	}
+	before := d
+	d.Status = DeploySuperseded
+	d.TrafficPercent = 0
+	if newer.ID == "" {
+		return d
+	}
+	d.ErrorCode = DeploymentSupersededCode
+	d.Error = "deployment " + newer.ID + " was deployed after this one, so this one did not go live"
+	state := NormalizeRolloutState(before.RolloutState)
+	if before.CanaryTotalSteps > 0 && (state == "pending" || state == "rolling_out") {
+		now := time.Now().UTC()
+		d.RolloutState = "aborted"
+		d.RolloutAbortedAt = &now
+		d.RolloutAbortedReason = "superseded by deployment " + newer.ID
+	}
+	return d
 }

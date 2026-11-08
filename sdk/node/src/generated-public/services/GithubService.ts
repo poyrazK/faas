@@ -2,7 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { GitHubAccountConnections } from '../models/GitHubAccountConnections.js';
 import type { GitHubActivityRetryResponse } from '../models/GitHubActivityRetryResponse.js';
+import type { GitHubConnectionManageRequest } from '../models/GitHubConnectionManageRequest.js';
+import type { GitHubConnectionVerification } from '../models/GitHubConnectionVerification.js';
 import type { GitHubDeploymentPolicy } from '../models/GitHubDeploymentPolicy.js';
 import type { GitHubDeploymentPolicyPatch } from '../models/GitHubDeploymentPolicyPatch.js';
 import type { GitHubInstallMutationRequest } from '../models/GitHubInstallMutationRequest.js';
@@ -14,6 +17,75 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class GithubService {
+  /**
+   * List this account's GitHub deployment connections.
+   * @returns GitHubAccountConnections Deployment installations and a fresh management CSRF token; credentials are never returned.
+   * @throws ApiError
+   */
+  public static listGitHubAccountConnections(): CancelablePromise<GitHubAccountConnections> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/install/connections',
+    });
+  }
+  /**
+   * Remove only this account's deployment access and bindings. Preserve login and other accounts.
+   * @returns void
+   * @throws ApiError
+   */
+  public static disconnectGitHubAccountConnection({
+    installationId,
+    requestBody,
+  }: {
+    /**
+     * GitHub installation whose deployment connection should be removed from this account.
+     */
+    installationId: number,
+    requestBody: GitHubConnectionManageRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/install/connections/{installationID}',
+      path: {
+        'installationID': installationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Missing or invalid management CSRF token.`,
+      },
+    });
+  }
+  /**
+   * Verify live GitHub repository access and installation permissions.
+   * @returns GitHubConnectionVerification Current access granted on GitHub.
+   * @throws ApiError
+   */
+  public static verifyGitHubAccountConnection({
+    installationId,
+    requestBody,
+  }: {
+    /**
+     * Connected GitHub installation whose current access should be verified for this account.
+     */
+    installationId: number,
+    requestBody: GitHubConnectionManageRequest,
+  }): CancelablePromise<GitHubConnectionVerification> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/install/connections/{installationID}/verify',
+      path: {
+        'installationID': installationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Verification requires a valid management CSRF token and installation identifier.`,
+        404: `Installation not connected to this account.`,
+        503: `GitHub verification temporarily unavailable.`,
+      },
+    });
+  }
   /**
    * List repos the user's GitHub App installation can see.
    * Cookie-session-authenticated (NOT API-key). Hydrates the
@@ -54,22 +126,35 @@ export class GithubService {
   /**
    * List repositories visible to the account's GitHub App installation.
    * Bearer API-key surface for customer automation. Requires the
-   * dedicated `github:manage` scope. The account's durable GitHub App
-   * installation is resolved server-side, so callers do not need to
-   * copy or provide an installation id. Installation credentials are
-   * never returned.
+   * dedicated `github:manage` scope. `installation_id` names one of
+   * the account's connected installations; without it the account's
+   * only installation is used, and an account with several gets a 409
+   * `github_installation_required` naming them. Installation
+   * credentials are never returned.
    *
    * @returns RepoResponse Repositories currently visible to the account's GitHub App installation.
    * @throws ApiError
    */
-  public static listGitHubRepositories(): CancelablePromise<Array<RepoResponse>> {
+  public static listGitHubRepositories({
+    installationId,
+  }: {
+    /**
+     * A GitHub App installation connected to the account.
+     */
+    installationId?: number,
+  }): CancelablePromise<Array<RepoResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/github/repos',
+      query: {
+        'installation_id': installationId,
+      },
       errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `The account has not completed GitHub App installation.`,
+        409: `The account has several connected installations and none was named.`,
         502: `GitHub could not be reached while listing repositories.`,
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -163,6 +248,9 @@ export class GithubService {
    * calls. A missing policy row resolves to the safe defaults for a new
    * project. Legacy allow_marked compatibility rows are migrated to deny;
    * customers can explicitly opt back in when production calls are safe.
+   * An app without a project reports the defaults with an empty
+   * `project_id` and its own `production_trigger` and
+   * `preview_enabled`.
    *
    * @returns GitHubDeploymentPolicy Current GitHub deployment policy.
    * @throws ApiError
@@ -197,7 +285,9 @@ export class GithubService {
    * trailing `**` directory patterns. `preview_service_policy=deny`
    * rejects preview calls to production dependencies before discovery or
    * wake-up; `allow_marked` preserves the marked-call compatibility mode.
-   * Mutations require MFA.
+   * An app without a project can set only `production_trigger` and
+   * `preview_enabled`, once it is bound to a repository; other fields
+   * answer 409 `project_required`. Mutations require MFA.
    *
    * @returns GitHubDeploymentPolicy Updated GitHub deployment policy.
    * @throws ApiError

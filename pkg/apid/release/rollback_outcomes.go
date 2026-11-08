@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,16 +34,22 @@ type OutcomeMetrics interface {
 // target's state. Audit and Metrics may be nil; a Store without
 // state.RollbackOutcomeStore records nothing.
 type Rollbacks struct {
+	sweepMu sync.Mutex
+	cursor  state.RollbackOutcomeCursor
 	Store   state.Store
 	Log     *slog.Logger
 	Audit   Auditor
 	Metrics OutcomeMetrics
+	// AutomaticFailed, when set, runs after an automatic rollback (any
+	// trigger but manual) failed: the release it meant to replace still
+	// serves (ADR-1445 amendment 4).
+	AutomaticFailed func(ctx context.Context, r state.RollbackRecord)
 }
 
 // Record opens the ledger row for a plain rollback. A failed write is logged
 // and returns nil: the rollback is already queued, and only its receipt is
 // missing.
-func (s Rollbacks) Record(ctx context.Context, acct state.Account, app state.App, target state.Deployment, fromID, trigger string) *api.RollbackOperation {
+func (s *Rollbacks) Record(ctx context.Context, acct state.Account, app state.App, target state.Deployment, fromID, trigger string) *api.RollbackOperation {
 	store, ok := s.Store.(state.RollbackOutcomeStore)
 	if !ok {
 		return nil
@@ -87,7 +94,7 @@ func RecordOperation(r state.RollbackRecord) api.RollbackOperation {
 
 // Operation reads one plain rollback receipt; ok is false when the ledger has
 // no such row for the account and app.
-func (s Rollbacks) Operation(ctx context.Context, accountID, appID, id string) (api.RollbackOperation, bool) {
+func (s *Rollbacks) Operation(ctx context.Context, accountID, appID, id string) (api.RollbackOperation, bool) {
 	store, ok := s.Store.(state.RollbackOutcomeStore)
 	if !ok {
 		return api.RollbackOperation{}, false
@@ -122,13 +129,12 @@ func decideRollbackOutcome(r state.RollbackRecord, target state.Deployment, targ
 		return rollbackVerdict{done: true, status: state.RollbackStatusFailed, finished: now,
 			errorCode: "rollback_target_missing", errorText: "the rollback target deployment no longer exists"}
 	}
-	if done := target.RolloutCompletedAt; done != nil && !done.Before(r.RequestedAt.Add(-time.Second)) &&
-		(target.Status == state.DeployLive || target.Status == state.DeploySuperseded) {
+	if done, ok := state.RollbackCompletedAt(r.RequestedAt, target); ok {
 		recovery := done.Sub(r.RequestedAt)
 		if recovery < 0 {
 			recovery = 0
 		}
-		return rollbackVerdict{done: true, status: state.RollbackStatusComplete, recovery: recovery, finished: *done}
+		return rollbackVerdict{done: true, status: state.RollbackStatusComplete, recovery: recovery, finished: done}
 	}
 	switch target.Status {
 	case state.DeployFailed, state.DeployCancelled, state.DeploySuperseded:
@@ -150,7 +156,7 @@ func decideRollbackOutcome(r state.RollbackRecord, target state.Deployment, targ
 
 // Run resolves preparing rollbacks every RollbackOutcomeCheckInterval until
 // ctx ends.
-func (s Rollbacks) Run(ctx context.Context) {
+func (s *Rollbacks) Run(ctx context.Context) {
 	ticker := time.NewTicker(api.RollbackOutcomeCheckInterval)
 	defer ticker.Stop()
 	for {
@@ -169,16 +175,29 @@ func (s Rollbacks) Run(ctx context.Context) {
 
 // Sweep resolves every preparing rollback whose target has served, failed, or
 // run out of time.
-func (s Rollbacks) Sweep(ctx context.Context, now time.Time) error {
+func (s *Rollbacks) Sweep(ctx context.Context, now time.Time) error {
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
 	store, ok := s.Store.(state.RollbackOutcomeStore)
 	if !ok {
 		return nil
 	}
-	rows, err := store.PreparingRollbacks(ctx, api.RollbackOutcomeBatchSize)
+	rows, err := store.PreparingRollbacks(state.WithRollbackOutcomeCursor(ctx, s.cursor), api.RollbackOutcomeBatchSize)
 	if err != nil {
 		return err
 	}
+	if len(rows) == 0 && s.cursor.ID != "" {
+		s.cursor = state.RollbackOutcomeCursor{}
+		rows, err = store.PreparingRollbacks(ctx, api.RollbackOutcomeBatchSize)
+		if err != nil {
+			return err
+		}
+	}
 	for _, r := range rows {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		s.cursor = state.RollbackOutcomeCursor{RequestedAt: r.RequestedAt, ID: r.ID}
 		if err := s.resolve(ctx, store, r, now); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -189,7 +208,7 @@ func (s Rollbacks) Sweep(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-func (s Rollbacks) resolve(ctx context.Context, store state.RollbackOutcomeStore, r state.RollbackRecord, now time.Time) error {
+func (s *Rollbacks) resolve(ctx context.Context, store state.RollbackOutcomeStore, r state.RollbackRecord, now time.Time) error {
 	target, err := s.Store.DeploymentByID(ctx, r.TargetDeploymentID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
 		return fmt.Errorf("load rollback target: %w", err)
@@ -231,10 +250,13 @@ func (s Rollbacks) resolve(ctx context.Context, store state.RollbackOutcomeStore
 	// auto-rollback failure means a known-bad release is still live.
 	s.Log.Error("rollback outcome: previous release NOT restored", "app", r.AppID, "rollback", r.ID,
 		"target", r.TargetDeploymentID, "trigger", r.Trigger, "error_code", record.ErrorCode, "error", record.Error)
+	if r.Trigger != state.RollbackTriggerManual && s.AutomaticFailed != nil {
+		s.AutomaticFailed(ctx, record)
+	}
 	return nil
 }
 
-func (s Rollbacks) emit(ctx context.Context, kind, accountID string, fields map[string]any) {
+func (s *Rollbacks) emit(ctx context.Context, kind, accountID string, fields map[string]any) {
 	if s.Audit != nil {
 		s.Audit.Emit(ctx, kind, &accountID, fields)
 	}

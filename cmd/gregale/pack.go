@@ -839,6 +839,19 @@ func inferFunctionRuntime(srcDir string) (runtime, handler string, ok bool) {
 // plan is unknown.
 const defaultZeroConfigSourceCapMB = 100
 
+// largestSourceTarballMB is the largest source upload any plan accepts. A
+// deploy credential that may not read its account's plan packs up to it and
+// leaves the account's own cap to apid.
+func largestSourceTarballMB() int {
+	largest := defaultZeroConfigSourceCapMB
+	for _, plan := range api.Plans {
+		if limits, ok := api.LimitsFor(plan); ok && limits.SourceTarballMaxMB > largest {
+			largest = limits.SourceTarballMaxMB
+		}
+	}
+	return largest
+}
+
 // packDirToTarGz walks srcDir and writes a gzipped tar archive to destPath. The
 // archive's single top-level directory is filepath.Base(srcDir), preserving the
 // invariant apid's validateTarballShape depends on (one project root). Symlinks,
@@ -1087,8 +1100,16 @@ func packWriteError(capMB int, name string, err error) error {
 	return fmt.Errorf("write %s: %w", name, err)
 }
 
+// sourceUploadLimitErr is a packed source over the upload cap the CLI packed
+// against. resolveSourceUploadCap explains a cap it could not verify.
+type sourceUploadLimitErr struct{ capMB int }
+
+func (e *sourceUploadLimitErr) Error() string {
+	return fmt.Sprintf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", e.capMB)
+}
+
 func sourceUploadLimitError(capMB int) error {
-	return fmt.Errorf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", capMB)
+	return &sourceUploadLimitErr{capMB: capMB}
 }
 
 func sourceExpandedLimitError() error {

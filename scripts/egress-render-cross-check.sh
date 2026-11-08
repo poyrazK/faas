@@ -38,14 +38,20 @@ render_go() {
   local tenant="${5:-}"
   local svc_bridge="${6:-}"
   local svc_https="${7:-}"
+  local db_bridge="${8:-}"
   local -a render_flags=()
-  if [[ "${8:-}" == "1" ]]; then render_flags+=(--public-forwarding); fi
+  if [[ "${9:-}" == "1" ]]; then render_flags+=(--public-forwarding); fi
+  if [[ "${10:-}" == "1" ]]; then
+    render_flags+=(--public-ingress-cidrs "$(cat "$SRC_ROOT/deploy/ansible/roles/nftables/files/cloudflare-ips-v4.txt" "$SRC_ROOT/deploy/ansible/roles/nftables/files/cloudflare-ips-v6.txt" | paste -sd, -)")
+  fi
+  if [[ -n "${11:-}" ]]; then render_flags+=(--public-entry-addrs "${11}"); fi
   local out
   out=$(cd "$SRC_ROOT" && FAAS_PUBLIC_IFACE="$iface" FAAS_MASQUERADE_CIDR="$cidr" \
         FAAS_OVERLAY_CIDRS="$overlay" FAAS_MASQUERADE_CIDR_V6="$v6" \
         FAAS_TENANT_EGRESS_IFACE="$tenant" \
         FAAS_SERVICE_TCP_BRIDGE_IP="$svc_bridge" FAAS_SERVICE_TCP_HTTPS="$svc_https" \
-        go run ./cmd/faas-nft-render "${render_flags[@]}" 2>/dev/null)
+        FAAS_DATABASE_ROUTE_BRIDGE_IP="$db_bridge" \
+        go run ./cmd/faas-nft-render ${render_flags[@]+"${render_flags[@]}"} 2>/dev/null)
   # Normalize trailing newline so the per-row diff is whitespace-
   # insensitive (Go's pkg/netns.Render emits a final \n; the python
   # `print(..., end="")` does not).
@@ -66,21 +72,34 @@ render_jinja() {
   local tenant="${5:-}"
   local svc_bridge="${6:-}"
   local svc_https="${7:-}"
-  local public_forwarding="${8:-}"
+  local db_bridge="${8:-}"
+  local public_forwarding="${9:-}"
+  local cloudflare_origin="${10:-}"
+  local entry_addrs="${11:-}"
   python3 -c "
 from jinja2 import Template
 overlay = '$overlay'
 o_list = [c.strip() for c in overlay.split(',')] if overlay else []
+cf = '$cloudflare_origin' == '1'
+entry = '$entry_addrs'
+roles = '$SRC_ROOT/deploy/ansible/roles/nftables/files/'
+cf_v4 = open(roles + 'cloudflare-ips-v4.txt').read().splitlines() if cf else []
+cf_v6 = open(roles + 'cloudflare-ips-v6.txt').read().splitlines() if cf else []
 print(Template(open('$JINJA2').read(), trim_blocks=True).render(
     public_iface='$iface',
     masquerade_cidr='$cidr',
     overlay_cidrs=o_list,
     masquerade_cidr_v6='$v6',
     tenant_egress_iface='$tenant',
-    bridge_cidr='$svc_bridge/16',
+    bridge_cidr='${svc_bridge:-$db_bridge}/16',
     faas_service_tcp_enabled=bool('$svc_bridge'),
     faas_service_tcp_https_enabled='$svc_https' == '1',
+    faas_database_route_enabled=bool('$db_bridge'),
     faas_public_forwarding='$public_forwarding' == '1',
+    faas_cloudflare_origin_only=cf,
+    faas_cloudflare_ipv4_cidrs=cf_v4,
+    faas_cloudflare_ipv6_cidrs=cf_v6,
+    faas_public_entry_addrs=[a.strip() for a in entry.split(',')] if entry else [],
 ), end='')
 " 2>/dev/null | python3 -c "import sys; sys.stdout.write(sys.stdin.read().rstrip('\n') + '\n')"
 }
@@ -133,6 +152,34 @@ PY
   echo "egress-render: OK cloudflare-origin"
 }
 
+# check_public_entry_ingress: an edge with no proxy in front opens 443 on its
+# entry addresses only, behind a per-source connection limit, drops
+# everything else sent to them before sshd's accept, and keeps 80 closed
+# (ADR-20261103163954 §2, §4).
+check_public_entry_ingress() {
+  local rendered
+  rendered=$(render_go eth0 10.100.0.0/16 "" "" "" "" "" "" "" "" "203.0.113.10,2001:db8::10")
+  if grep -Fq 'tcp dport { 22,80,443 } accept' <<<"$rendered"; then
+    echo "egress-render: DIVERGE public-entry retained broad public ingress"
+    return 1
+  fi
+  local limit accept drop ssh
+  limit=$(grep -n 'ip daddr 203.0.113.10 tcp dport 443 ct state new add @public_entry_conns_v4 { ip saddr ct count over' <<<"$rendered" | cut -d: -f1 || true)
+  accept=$(grep -n 'ip daddr 203.0.113.10 tcp dport 443 accept' <<<"$rendered" | cut -d: -f1)
+  drop=$(grep -n 'ip6 daddr 2001:db8::10 drop' <<<"$rendered" | cut -d: -f1)
+  ssh=$(grep -n 'tcp dport 22 accept' <<<"$rendered" | head -1 | cut -d: -f1)
+  if [[ -z "$accept" || -z "$drop" || -z "$ssh" ]] || (( accept > drop || drop > ssh )); then
+    echo "egress-render: DIVERGE public-entry rules missing or out of order (443 accept, drop, then sshd)"
+    return 1
+  fi
+  # The kernel's per-source backstop drops before the 443 accept.
+  if [[ -z "$limit" ]] || (( limit > accept )); then
+    echo "egress-render: DIVERGE public-entry per-source limit missing or after the 443 accept"
+    return 1
+  fi
+  echo "egress-render: OK public-entry"
+}
+
 main() {
   local status=0
   # row format: "label|iface|cidr|overlay|v6"
@@ -170,7 +217,20 @@ main() {
         "tenant-gateway|eth0|10.100.0.0/16|203.0.113.0/24|fc00::/7|wg-tenant"
         "service-tcp|eth0|10.100.0.0/16||||10.100.0.1|"
         "service-tcp-https|ens5|10.101.0.0/16|203.0.113.0/24|||10.101.0.1|1"
-        "public-forwarding|eth0|10.100.0.0/16||||||1"
+        # ADR-1027: the managed-database route, alone and beside ADR-576.
+        "database-route|eth0|10.100.0.0/16||||||10.100.0.1|"
+        "service-tcp-database-route|ens5|10.101.0.0/16|203.0.113.0/24|||10.101.0.1|1|10.101.0.1|"
+        "public-forwarding|eth0|10.100.0.0/16|||||||1"
+        # ADR-20261102081618: a compute edge Cloudflare reaches directly
+        # keeps 80/443 Cloudflare-only across vmmd's runtime rebuilds.
+        "cloudflare-origin|eth0|10.100.0.0/16||||||||1"
+        # ADR-20261103163954: a compute edge with no proxy in front takes 443
+        # from everyone on its entry addresses and nothing else on them.
+        "public-entry|eth0|10.100.0.0/16|||||||||203.0.113.10"
+        "public-entry-dual-stack|ens5|10.101.0.0/16|203.0.113.0/24|fc00::/7||10.101.0.1|1|10.101.0.1|1||198.51.100.7,2001:db8::10"
+        # The vmmd drop-in sends Cloudflare's ranges beside the entry
+        # addresses (for a vmmd that predates them); the entry rules win.
+        "public-entry-over-cloudflare|eth0|10.100.0.0/16||||||||1|203.0.113.10"
       )
       ;;
     *)
@@ -179,15 +239,18 @@ main() {
       ;;
   esac
   for row in "${rows[@]}"; do
-    IFS='|' read -r label iface cidr overlay v6 tenant svc_bridge svc_https public_forwarding <<< "$row"
+    IFS='|' read -r label iface cidr overlay v6 tenant svc_bridge svc_https db_bridge public_forwarding cloudflare_origin entry_addrs <<< "$row"
     local go_out jinja_out
-    go_out=$(render_go "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$public_forwarding")
-    jinja_out=$(render_jinja "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$public_forwarding")
+    go_out=$(render_go "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$db_bridge" "$public_forwarding" "$cloudflare_origin" "$entry_addrs")
+    jinja_out=$(render_jinja "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$db_bridge" "$public_forwarding" "$cloudflare_origin" "$entry_addrs")
     if ! compare "$label" "$go_out" "$jinja_out"; then
       status=1
     fi
   done
   if ! check_cloudflare_origin_ingress; then
+    status=1
+  fi
+  if ! check_public_entry_ingress; then
     status=1
   fi
   return $status

@@ -234,6 +234,16 @@ var routeExclude = map[string]bool{
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
 	"POST /v1/runtime/data-api/usage":                   true,
+	"POST /v1/runtime/data-api/events":                  true,
+	"POST /v1/runtime/data-api/change-status":           true,
+
+	// ADR-1027 in-place major upgrades: a preview gated by
+	// FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS and answering like unregistered
+	// routes outside it, so it stays out of the public OpenAPI spec and
+	// generated SDKs until launch. pkg/api keeps its client for the CLI.
+	// Mirror across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
+	"POST /v1/postgres/databases/{id}/upgrade":              true,
+	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -286,6 +296,12 @@ var routeExclude = map[string]bool{
 	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
 	// across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 	"POST /v1/agents":                                 true,
+	"POST /v1/agent-callbacks":                        true,
+	"POST /v1/agent-callbacks/{token}":                true,
+	"POST /v1/agent-callbacks/revocations":            true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
+	"POST /v1/agent-tools/invoke":                     true,
+	"POST /v1/agent-tools/close_thread":               true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,
@@ -346,38 +362,39 @@ var routeExclude = map[string]bool{
 	// Mirror the exclusion across BOTH this list AND
 	// cmd/apid/spec_compliance_test.go::routeExclude; the two
 	// lists must move together.
-	"POST /v1/admin/instances/{id}/force-park":           true, // PR #1099 P2a — operator-only recovery primitive
-	"POST /v1/admin/apps/{slug}/force-cold-boot":         true, // PR #1099 P2b — operator-only recovery primitive
-	"POST /v1/admin/instances/{id}/force-restart":        true, // PR #1105 P2d — operator-only recovery primitive
-	"POST /v1/admin/builds/sweep-stuck":                  true, // PR #1099 P2c — operator-only recovery primitive
-	"GET /v1/admin/ops/jobs/runs":                        true, // operator-only active job-run projection
-	"GET /v1/admin/ops/data-repairs":                     true, // operator-only repair health projection
-	"GET /v1/admin/ops/jobs/runs/{id}":                   true, // operator-only job-run inspection
-	"POST /v1/admin/ops/jobs/runs/{id}/cancel":           true, // operator-only job-run cancellation
-	"GET /v1/admin/ops/deployments":                      true, // operator-only deployment incident projection
-	"GET /v1/admin/ops/deployments/{id}":                 true, // operator-only deployment inspection
-	"POST /v1/admin/ops/deployments/{id}/cancel":         true, // operator-only deployment cancellation
-	"POST /v1/admin/ops/deployments/{id}/retry":          true, // operator-only deployment retry
-	"GET /v1/admin/ops/github/recovery":                  true, // operator-only githubd queue projection
-	"POST /v1/admin/ops/github/deliveries/{id}/retry":    true, // operator-only githubd delivery recovery
-	"POST /v1/admin/ops/github/check-updates/{id}/retry": true, // operator-only githubd Check Run recovery
-	"POST /v1/admin/ops/accounts/{id}/suspend":           true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/restore":           true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":   true, // operator-only tenant security control
-	"POST /v1/admin/ops/nodes/{name}/drain":              true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/force-drain":        true, // operator-only destructive node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/activate":           true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/retire":             true, // operator-only terminal node lifecycle control
-	"GET /v1/admin/operator-intents/{id}":                true, // PR #1099 P2.3 — operator-only intent polling endpoint
-	"GET /v1/admin/config":                               true, // operator-only runtime configuration catalog
-	"PATCH /v1/admin/config/{key}":                       true, // operator-only runtime configuration write
-	"GET /v1/admin/config-operations/{id}":               true, // operator-only runtime configuration operation polling
-	"GET /v1/admin/config/{key}/revisions":               true, // operator-only runtime configuration history
-	"GET /v1/admin/flags":                                true, // ADR-1700 operator-only platform flag catalog
-	"GET /v1/admin/flags/{key}":                          true, // ADR-1700 operator-only platform flag detail
-	"GET /v1/admin/flags/{key}/decision":                 true, // ADR-1700 operator-only platform flag inspector
-	"GET /v1/admin/accounts/{id}/flags":                  true, // ADR-1700 operator-only per-account platform flags
-	"GET /v1/admin/managed-postgres/usage/{account_id}":  true, // operator-only COGS/capacity view; public SDK is customer-scoped
+	"POST /v1/admin/instances/{id}/force-park":                true, // PR #1099 P2a — operator-only recovery primitive
+	"POST /v1/admin/apps/{slug}/force-cold-boot":              true, // PR #1099 P2b — operator-only recovery primitive
+	"POST /v1/admin/instances/{id}/force-restart":             true, // PR #1105 P2d — operator-only recovery primitive
+	"POST /v1/admin/builds/sweep-stuck":                       true, // PR #1099 P2c — operator-only recovery primitive
+	"GET /v1/admin/ops/jobs/runs":                             true, // operator-only active job-run projection
+	"GET /v1/admin/ops/data-repairs":                          true, // operator-only repair health projection
+	"GET /v1/admin/ops/jobs/runs/{id}":                        true, // operator-only job-run inspection
+	"POST /v1/admin/ops/jobs/runs/{id}/cancel":                true, // operator-only job-run cancellation
+	"GET /v1/admin/ops/deployments":                           true, // operator-only deployment incident projection
+	"GET /v1/admin/ops/deployments/{id}":                      true, // operator-only deployment inspection
+	"POST /v1/admin/ops/deployments/{id}/cancel":              true, // operator-only deployment cancellation
+	"POST /v1/admin/ops/deployments/{id}/retry":               true, // operator-only deployment retry
+	"GET /v1/admin/ops/github/recovery":                       true, // operator-only githubd queue projection
+	"POST /v1/admin/ops/github/deliveries/{id}/retry":         true, // operator-only githubd delivery recovery
+	"POST /v1/admin/ops/github/check-updates/{id}/retry":      true, // operator-only githubd Check Run recovery
+	"POST /v1/admin/ops/accounts/{id}/suspend":                true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/restore":                true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":        true, // operator-only tenant security control
+	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling": true, // operator-only support grant (ADR-20261101214152)
+	"POST /v1/admin/ops/nodes/{name}/drain":                   true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/force-drain":             true, // operator-only destructive node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/activate":                true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/retire":                  true, // operator-only terminal node lifecycle control
+	"GET /v1/admin/operator-intents/{id}":                     true, // PR #1099 P2.3 — operator-only intent polling endpoint
+	"GET /v1/admin/config":                                    true, // operator-only runtime configuration catalog
+	"PATCH /v1/admin/config/{key}":                            true, // operator-only runtime configuration write
+	"GET /v1/admin/config-operations/{id}":                    true, // operator-only runtime configuration operation polling
+	"GET /v1/admin/config/{key}/revisions":                    true, // operator-only runtime configuration history
+	"GET /v1/admin/flags":                                     true, // ADR-1700 operator-only platform flag catalog
+	"GET /v1/admin/flags/{key}":                               true, // ADR-1700 operator-only platform flag detail
+	"GET /v1/admin/flags/{key}/decision":                      true, // ADR-1700 operator-only platform flag inspector
+	"GET /v1/admin/accounts/{id}/flags":                       true, // ADR-1700 operator-only per-account platform flags
+	"GET /v1/admin/managed-postgres/usage/{account_id}":       true, // operator-only COGS/capacity view; public SDK is customer-scoped
 
 	// Dashboard auth (issue #165 PR #2, ADR-032). The SDK uses the
 	// device-code flow for programmatic auth; the dashboard cookie
@@ -391,6 +408,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/auth/github":          true, // 302 to GitHub consent (browser-only)
 	"GET /v1/auth/github/callback": true, // 302 to dashboard (browser-only)
 	"GET /v1/auth/verify-email":    true, // HTML email-confirmation landing page (browser-only)
+	"POST /v1/auth/verify-email":   true, // the landing page's confirmation form post (browser-only)
 	"GET /auth/reset":              true, // HTML form render (browser-only)
 	"POST /logout":                 true, // dashboard form post (browser-only); SDK's Logout wraps the same handler as a convenience
 
@@ -414,7 +432,12 @@ var routeExclude = map[string]bool{
 	// is GitHub-side state — programmatic consumers shouldn't bind
 	// apps via API. Mirrors the "browser-only dashboard routes"
 	// exclusion above.
+	"POST /v1/account/email":                                     true, // email change; session-cookie + named CSRF-only (ADR-20261107103000)
+	"POST /v1/account/mfa/recovery-codes":                        true, // recovery codes; browser session + strict step-up only (ADR-20261107103000)
 	"POST /v1/install/repos/list":                                true, // bind picker hydrates from this; browser-only
+	"GET /v1/install/connections":                                true, // account connection manager; session-cookie-only
+	"DELETE /v1/install/connections/{installationID}":            true, // account disconnect; session-cookie + named CSRF-only
+	"POST /v1/install/connections/{installationID}/verify":       true, // account access verification; session-cookie + named CSRF-only
 	"POST /v1/apps/{slug}/install/bind":                          true, // bind picker writes through this; browser-only
 	"GET /v1/apps/{slug}/install/bind":                           true, // dashboard connection status; session-cookie-only
 	"GET /v1/apps/{slug}/install":                                true, // canonical dashboard connection status; session-cookie-only
@@ -537,6 +560,17 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
 	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
 	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
+	"GET /v1/orgs/{slug}/egress-overage":                                                                               "GetOrgEgressOverage", // ADR-20261104204500
+	"PUT /v1/orgs/{slug}/egress-overage":                                                                               "SetOrgEgressOverage",
+	"PUT /v1/orgs/{slug}/billing/email":                                                                                "SetOrgBillingEmail",   // ADR-20261103131742
+	"GET /v1/orgs/{slug}/billing/costs":                                                                                "GetOrgFinancialCosts", // ADR-20261031211500
+	"POST /v1/orgs/{slug}/billing/budgets/preview":                                                                     "PreviewOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets":                                                                              "ListOrgFinancialBudgets",
+	"POST /v1/orgs/{slug}/billing/budgets":                                                                             "CreateOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "GetOrgFinancialBudget",
+	"PUT /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "UpdateOrgFinancialBudget",
+	"DELETE /v1/orgs/{slug}/billing/budgets/{id}":                                                                      "DeleteOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}/revisions":                                                               "ListOrgFinancialBudgetRevisions",
 	"GET /v1/orgs/{organization}/projects":                                                                             "ListOrgProjects",
 	"GET /v1/orgs/{organization}/projects/{slug}":                                                                      "GetOrgProject",
 	"PATCH /v1/orgs/{organization}/projects/{slug}":                                                                    "UpdateOrgProject",
@@ -581,6 +615,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings":       "GetOrgProjectEnvironmentQueueBindings",
 	"PUT /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings":       "ReplaceOrgProjectEnvironmentQueueBindings",
 	"POST /v1/orgs/{organization}/apps/{slug}/queues/send":                                                             "SendOrgQueueMessage",
+	"POST /v1/orgs/{organization}/apps/{slug}/queues/send-batch":                                                       "SendOrgQueueMessageBatch",
 	"GET /v1/orgs/{organization}/apps/{slug}/queue-bindings":                                                           "ListOrgQueueBindings",
 	"POST /v1/orgs/{organization}/apps/{slug}/queue-bindings":                                                          "CreateOrgQueueBinding",
 	"GET /v1/orgs/{organization}/apps/{slug}/queue-bindings/{id}":                                                      "GetOrgQueueBinding",
@@ -660,8 +695,18 @@ var methodRouteMap = map[string]string{
 	"POST /v1/orgs/{slug}/application-standard-publishers":                           "CreateApplicationStandardPublisher",
 	"GET /v1/orgs/{slug}/application-standard-publishers/{resource}":                 "GetApplicationStandardPublisher",
 	"GET /v1/apps/{slug}/release-review":                                             "GetAppReleaseReview",
+	"GET /v1/apps/{slug}/resource-inventory":                                         "GetAppResourceInventory",
+	"GET /v1/apps/{slug}/operation-preview":                                          "GetAppOperationPreview",
+	"GET /v1/apps/{slug}/costs":                                                      "GetAppCosts",
+	"GET /v1/apps/{slug}/scaling":                                                    "GetAppScaling",
+	"POST /v1/apps/{slug}/scaling":                                                   "ApplyAppScaling",
+	"GET /v1/apps/{slug}/scaling/requests/{request_id}":                              "GetAppScalingReceipt",
+	"POST /v1/apps/{slug}/env/batch":                                                 "ApplyEnvBatch",
+	"GET /v1/apps/{slug}/env/batch/requests/{request_id}":                            "GetEnvBatchReceipt",
+	"GET /v1/apps/{slug}/config/rollback/requests/{request_id}":                      "GetConfigRollbackReceipt",
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                  "GetWorkerRolloutObservation",
 	"GET /v1/apps/{slug}/route-budgets":                                              "GetEnvironmentRouteBudgets",
+	"GET /v1/apps/{slug}/route-budgets/receipts/{request_id}":                        "GetEnvironmentRouteBudgetReceipt",
 	"PUT /v1/apps/{slug}/route-budgets":                                              "SetEnvironmentRouteBudgets",
 	"POST /v1/apps/{slug}/source-review":                                             "ReviewSourceRef",
 	"POST /v1/projects/{slug}/environments/{environment}/approval-requests":          "RequestBrowserPromotionApproval",
@@ -878,6 +923,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"DELETE /v1/apps/{slug}/issues/{issue_id}":                                 "DeleteIssue",
 	"GET /v1/apps/{slug}/issue-compound-alert-policy":                          "GetIssueCompoundAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-compound-alert-policy":                          "SetIssueCompoundAlertPolicy",
 	"POST /v1/apps/{slug}/issue-compound-alert-policy/preview":                 "PreviewIssueCompoundAlert",
@@ -1201,6 +1247,20 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/orgs/{slug}/invitations/{invitation_id}":                                         "RevokeInvitation",
 	"GET /v1/github/repos":                                                                       "ListGitHubRepositories",
 	"DELETE /v1/keys/{id}":                                                                       "DeleteKey",
+	"GET /v1/agent-connections":                                                                  "ListAgentConnections",
+	"GET /v1/agent-approvals":                                                                    "ListAgentApprovals",
+	"GET /v1/agent-approvals/{id}":                                                               "GetAgentApproval",
+	"GET /v1/agent-approvals/channels":                                                           "GetAgentApprovalChannels",
+	"PUT /v1/agent-approvals/channels":                                                           "SetAgentApprovalChannels",
+	"DELETE /v1/agent-connections/{id}":                                                          "RevokeAgentConnection",
+	"POST /v1/agent-connections/revoke_all":                                                      "RevokeAllAgentConnections",
+	"PUT /v1/agent-connections/self":                                                             "NameAgentClient",
+	"DELETE /v1/agent-connections/self":                                                          "DisconnectAgent",
+	"GET /v1/orgs/{slug}/agent-connections":                                                      "ListOrgAgentConnections",
+	"DELETE /v1/orgs/{slug}/agent-connections/{id}":                                              "RevokeOrgAgentConnection",
+	"POST /v1/orgs/{slug}/agent-connections/revoke_all":                                          "RevokeAllOrgAgentConnections",
+	"GET /v1/orgs/{slug}/agent-policy":                                                           "GetOrgAgentPolicy",
+	"PUT /v1/orgs/{slug}/agent-policy":                                                           "SetOrgAgentPolicy",
 	"POST /v1/keys/{id}/rotate":                                                                  "RotateKey",
 	"PATCH /v1/account/keys/grace_window_days":                                                   "SetGraceWindow",
 	"GET /v1/account/keys/grace_window_days":                                                     "GetGraceWindow",
@@ -1236,7 +1296,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/release-approvals":                                                      "ListReleaseApprovals",
 	"GET /v1/deployments/{id}/approvals":                                                         "GetReleaseApproval",
 	"POST /v1/deployments/{id}/approvals":                                                        "DecideReleaseApproval",
+	"POST /v1/deployments/{id}/release-outcome":                                                  "RecordReleaseOutcomeCheck",
 	"GET /v1/deployments/{id}/diff":                                                              "GetReleaseDiff",
+	"GET /v1/deployments/{id}/timeline":                                                          "GetReleaseTimeline",
 	"GET /v1/scheduled-releases":                                                                 "ListScheduledReleases",
 	"GET /v1/deployments/{id}/schedule":                                                          "GetDeploymentSchedule",
 	"PUT /v1/deployments/{id}/schedule":                                                          "ScheduleDeployment",
@@ -1385,23 +1447,31 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/tasks/{id}":                             "GetAppTask",
 	"DELETE /v1/apps/{slug}/tasks/{id}":                          "CancelAppTask",
 	"POST /v1/account/restore":                                   "RestoreAccount",
-	"GET /v1/account/overage-cap":                                "GetOverageCap",   // saved monthly spend cap
-	"POST /v1/account/overage-cap":                               "RaiseOverageCap", // issue #561 spend cap
+	"GET /v1/account/overage-cap":                                "GetOverageCap",    // saved monthly spend cap
+	"POST /v1/account/overage-cap":                               "RaiseOverageCap",  // issue #561 spend cap
+	"GET /v1/account/egress-overage":                             "GetEgressOverage", // ADR-20261104204500
+	"PUT /v1/account/egress-overage":                             "SetEgressOverage",
 	"POST /v1/account/mfa/disable-email":                         "PostAccountMfaDisableEmail",
 	"POST /v1/account/mfa/disable-email/confirm":                 "PostAccountMfaDisableEmailConfirm",
-	"GET /v1/apps/{slug}/forks":                                  "ListAppForks",
-	"POST /v1/apps/{slug}/forks":                                 "CreateAppFork",
-	"GET /v1/apps/{slug}/forks/{id}":                             "GetAppFork",
-	"DELETE /v1/apps/{slug}/forks/{id}":                          "CancelAppFork",
-	"POST /v1/apps/{slug}/forks/{id}/execs":                      "CreateAppForkExec",
-	"GET /v1/apps/{slug}/forks/{id}/execs":                       "ListAppForkExecs",
-	"GET /v1/apps/{slug}/forks/{id}/execs/{exec_id}":             "GetAppForkExec",
-	"GET /v1/apps/{slug}/crash-snapshots/settings":               "GetCrashSnapshotSettings",
-	"PUT /v1/apps/{slug}/crash-snapshots/settings":               "PutCrashSnapshotSettings",
-	"GET /v1/apps/{slug}/crash-snapshots":                        "ListCrashSnapshots",
-	"POST /v1/apps/{slug}/crash-snapshots":                       "CreateCrashSnapshot",
-	"GET /v1/apps/{slug}/crash-snapshots/{id}":                   "GetCrashSnapshot",
-	"POST /v1/apps/{slug}/crash-snapshots/{id}/fork":             "ForkCrashSnapshot",
+	// ADR-20261107103000 account flow routes.
+	"PATCH /v1/account":                              "SetDisplayName",
+	"GET /v1/account/sign-in-methods":                "SignInMethods",
+	"DELETE /v1/account/sign-in-methods/{provider}":  "UnlinkSignInMethod",
+	"POST /v1/auth/verify-email/resend":              "ResendEmailVerification",
+	"POST /v1/orgs/{slug}/leave":                     "LeaveOrg",
+	"GET /v1/apps/{slug}/forks":                      "ListAppForks",
+	"POST /v1/apps/{slug}/forks":                     "CreateAppFork",
+	"GET /v1/apps/{slug}/forks/{id}":                 "GetAppFork",
+	"DELETE /v1/apps/{slug}/forks/{id}":              "CancelAppFork",
+	"POST /v1/apps/{slug}/forks/{id}/execs":          "CreateAppForkExec",
+	"GET /v1/apps/{slug}/forks/{id}/execs":           "ListAppForkExecs",
+	"GET /v1/apps/{slug}/forks/{id}/execs/{exec_id}": "GetAppForkExec",
+	"GET /v1/apps/{slug}/crash-snapshots/settings":   "GetCrashSnapshotSettings",
+	"PUT /v1/apps/{slug}/crash-snapshots/settings":   "PutCrashSnapshotSettings",
+	"GET /v1/apps/{slug}/crash-snapshots":            "ListCrashSnapshots",
+	"POST /v1/apps/{slug}/crash-snapshots":           "CreateCrashSnapshot",
+	"GET /v1/apps/{slug}/crash-snapshots/{id}":       "GetCrashSnapshot",
+	"POST /v1/apps/{slug}/crash-snapshots/{id}/fork": "ForkCrashSnapshot",
 	// Issue #679 / PR-B / ADR-082 — per-account additive budget on
 	// top of the plan's apps.egress_allowlist cap. The auto-derivation
 	// would concat "Account" + "Egress_allowlist_extra" (the literal
@@ -1456,6 +1526,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/data-api/usage":                                              "GetAppDataAPIUsage",
 	"POST /v1/apps/{slug}/data-api/contract-tasks":                                    "CreateDataAPIContractTask",
 	"GET /v1/apps/{slug}/data-api/contract-tasks/{id}":                                "GetDataAPIContractTask",
+	"GET /v1/apps/{slug}/data-api/runtime":                                            "GetDataAPIRuntime",
+	"GET /v1/apps/{slug}/data-api/status":                                             "GetDataAPIStatus",
+	"GET /v1/apps/{slug}/postgres-bindings":                                           "ListAppPostgresBindings",
 	"POST /v1/postgres/cutovers/{id}/verify":                                          "VerifyManagedPostgresCutover",
 	"POST /v1/postgres/cutovers/{id}/cancel":                                          "CancelManagedPostgresCutover",
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",
@@ -2134,6 +2207,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/commit-sources/{source}/blocked-events":                         "ListCommitBlockedEvents",
 	"POST /v1/commit-sources/{source}/events/{event}/replay":                 "ReplayCommitBlockedEvent",
 	"POST /v1/apps/{slug}/queues/send":                                       "QueueSend",
+	"POST /v1/apps/{slug}/queues/send-batch":                                 "QueueSendBatch",
 	"POST /v1/apps/{slug}/queues/receive":                                    "QueueReceive",
 	"POST /v1/apps/{slug}/queues/{id}/ack":                                   "AckQueueRow",
 	"POST /v1/apps/{slug}/queues/{queue}/leases":                             "LeaseQueueMessages",
@@ -2362,20 +2436,26 @@ var methodRouteMap = map[string]string{
 
 	// Deployment intent and promotion helpers use action names rather than
 	// names derived from hyphenated route segments.
-	"GET /v1/apps/{slug}/deployment-cron-staging":                                                  "GetDeploymentCronStagingSnapshot",
-	"GET /v1/apps/{slug}/deployment-staging":                                                       "GetDeploymentStagingSnapshot",
-	"GET /v1/apps/{slug}/deployment-submissions/{attempt_id}":                                      "GetDeploymentSubmission",
-	"GET /v1/project-submissions/{attempt_id}":                                                     "GetProjectSubmission",
-	"POST /v1/apps/{slug}/deployment-cron-staging":                                                 "ApplyDeploymentCronStaging",
-	"POST /v1/apps/{slug}/deployment-staging":                                                      "ApplyDeploymentStaging",
-	"POST /v1/project-submissions/{attempt_id}/{action}":                                           "ControlProjectRelease",
-	"POST /v1/projects/safe-deploy":                                                                "ApplyProjectPlan",
-	"POST /v1/projects/{slug}/deployment-readiness":                                                "CheckProjectDeployment",
-	"POST /v1/projects/{slug}/environments/{environment}/promotion-preview":                        "PreviewProjectEnvironmentPromotionSecrets",
-	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/abort":             "ControlProjectEnvironmentPromotion",
-	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover":           "ControlProjectEnvironmentPromotion",
-	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration": "RecoverProjectEnvironmentPromotionMigration",
-	"POST /v1/projects/{slug}/release-secrets":                                                     "StageProjectReleaseSecrets",
+	"GET /v1/apps/{slug}/deployment-cron-staging":                                                                                  "GetDeploymentCronStagingSnapshot",
+	"GET /v1/apps/{slug}/deployment-staging":                                                                                       "GetDeploymentStagingSnapshot",
+	"GET /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}":                                           "GetEnvironmentPromotionReceipt",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}":                       "GetOrgEnvironmentPromotionReceipt",
+	"GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}":                     "GetEnvironmentRollbackReceipt",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}": "GetOrgEnvironmentRollbackReceipt",
+	"GET /v1/apps/{slug}/service-aborts/{attempt_id}":                                                                              "GetServiceAbortReceipt",
+	"GET /v1/apps/{slug}/deployment-promotions/{attempt_id}":                                                                       "GetDeploymentPromotionReceipt",
+	"GET /v1/apps/{slug}/deployment-submissions/{attempt_id}":                                                                      "GetDeploymentSubmission",
+	"GET /v1/project-submissions/{attempt_id}":                                                                                     "GetProjectSubmission",
+	"POST /v1/apps/{slug}/deployment-cron-staging":                                                                                 "ApplyDeploymentCronStaging",
+	"POST /v1/apps/{slug}/deployment-staging":                                                                                      "ApplyDeploymentStaging",
+	"POST /v1/project-submissions/{attempt_id}/{action}":                                                                           "ControlProjectRelease",
+	"POST /v1/projects/safe-deploy":                                                                                                "ApplyProjectPlan",
+	"POST /v1/projects/{slug}/deployment-readiness":                                                                                "CheckProjectDeployment",
+	"POST /v1/projects/{slug}/environments/{environment}/promotion-preview":                                                        "PreviewProjectEnvironmentPromotionSecrets",
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/abort":                                             "ControlProjectEnvironmentPromotion",
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover":                                           "ControlProjectEnvironmentPromotion",
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration":                                 "RecoverProjectEnvironmentPromotionMigration",
+	"POST /v1/projects/{slug}/release-secrets":                                                                                     "StageProjectReleaseSecrets",
 
 	// ADR-124 follow-up #3 — persistent --exclude history. The
 	// auto-derivation would produce "DeleteProjectsSlugExclusionsSlug2"
@@ -2430,6 +2510,10 @@ var methodRouteMap = map[string]string{
 	// (GetApp, ListApps) — drop the slug placeholder from the verb.
 	"GET /v1/apps/{slug}/health":                "GetAppHealth",
 	"GET /v1/apps/{slug}/status":                "GetAppStatus",
+	"PATCH /v1/apps/{slug}/labels":              "UpdateAppLabels",
+	"PATCH /v1/postgres/databases/{id}/labels":  "UpdateDatabaseLabels",
+	"PATCH /v1/crons/{id}/labels":               "UpdateCronLabels",
+	"PATCH /v1/jobs/{name}/labels":              "UpdateJobLabels",
 	"GET /v1/apps/{slug}/health/history":        "ListAppHealthHistory",
 	"GET /v1/apps/{slug}/metrics":               "GetAppMetrics",
 	"GET /v1/apps/{slug}/pre-auth-observations": "GetAppPreAuthObservations",
@@ -2712,9 +2796,14 @@ var methodRouteMap = map[string]string{
 	// family (GetApp, GetDeployment, GetUsage).
 	"POST /v1/apps/{slug}/deployments/source-tarball": "DeployFromSourceTarball",
 	"GET /v1/domains/{domain}":                        "GetDomain",
+	"POST /v1/domains/plan":                           "PlanDomains",
+	"POST /v1/domains/apply":                          "ApplyDomains",
 	"GET /v1/domains/{domain}/status":                 "GetDomainStatus", // ADR-20261030151810
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
+	"GET /v1/domains/{domain}/hosts":                  "GetDomainHosts",   // ADR-520 amendment 2
+	"PUT /v1/domains/{domain}/hosts":                  "SetDomainHosts",   // ADR-520 amendment 2
+	"DELETE /v1/domains/{domain}/hosts":               "ClearDomainHosts", // ADR-520 amendment 2
 
 	"POST /v1/apps/{slug}/github/activity/retry":                                                    "RetryGitHubActivity",
 	"PATCH /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":          "UpdateAccountWorkflowReadinessNotification",
@@ -2797,7 +2886,11 @@ func (r *reportT) print() {
 // Convenience aliases share a route with its checked path-shaped method.
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
-	"UpsertDevSession": "PUT /v1/dev/sessions/{project}",
+	"UpsertDevSession":                     "PUT /v1/dev/sessions/{project}",
+	"ListAppsSelected":                     "GET /v1/apps",
+	"ListManagedPostgresDatabasesSelected": "GET /v1/postgres/databases",
+	"ListCronsSelected":                    "GET /v1/crons",
+	"ListJobsSelected":                     "GET /v1/jobs",
 }
 
 func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {

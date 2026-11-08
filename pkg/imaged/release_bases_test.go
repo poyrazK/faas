@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
@@ -230,6 +231,8 @@ func TestRebuildPublishesTheScanCommitMarkerLast(t *testing.T) {
 				if err := os.WriteFile(h.guestInitPath, []byte("NEWER INIT"), 0o755); err != nil {
 					t.Fatal(err)
 				}
+				// The upgraded imaged starts after the old release published.
+				h.servingSince = time.Now().UTC()
 			}
 			be, err := h.storageFor()
 			if err != nil {

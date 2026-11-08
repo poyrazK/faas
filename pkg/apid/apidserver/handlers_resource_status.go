@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/conditions"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -65,7 +66,7 @@ func (s *server) getDomainStatus(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, conditions.Domain(domainResponse(d), time.Now()))
+	writeJSON(w, http.StatusOK, conditions.Domain(s.domainResponseWithDefault(r.Context(), d), time.Now()))
 }
 
 // getCronStatus is GET /v1/crons/{id}/status: the cron's conditions from its
@@ -87,8 +88,17 @@ func (s *server) getCronStatus(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("read cron runs"))
 		return
 	}
+	paused := ""
+	if store, ok := s.store.(cronrun.Store); ok {
+		paused = cronrun.Paused(r.Context(), store, app, c)
+	}
+	// The sweep skips crons on an app a compute budget holds (crons audit
+	// 2026-11-03); status said the cron fired on schedule.
+	if paused == "" && c.Enabled && c.SuspendedReason == "" && cronrun.BudgetHeld(r.Context(), s.store, app, time.Now().UTC()) {
+		paused = cronrun.PausedBudgetHeld
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, conditions.Cron(cronResponse(c), last, time.Now()))
+	writeJSON(w, http.StatusOK, conditions.Cron(cronResponse(c), last, time.Now(), paused))
 }
 
 func (s *server) newestCronRun(ctx context.Context, c state.Cron) (*api.CronRun, error) {

@@ -20,7 +20,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
-	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -221,12 +220,15 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, api.ErrSourceInvalid("source_root is too long"))
 				return
 			}
-			storedRoot, rootErr := sourcecontext.StorageRoot(string(b))
+			normalizedRoot, rootErr := sourcecontext.Normalize(string(b))
 			if rootErr != nil {
 				api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+rootErr.Error()))
 				return
 			}
-			sourceRoot = storedRoot
+			sourceRoot = strings.TrimSpace(string(b))
+			if sourceRoot != "" {
+				sourceRoot = normalizedRoot
+			}
 		case "source_url":
 			b, readErr := io.ReadAll(io.LimitReader(part, 1025))
 			if readErr != nil || len(b) > 1024 {
@@ -403,11 +405,16 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			"Source required", "multipart deploys require a 'source' file field"))
 		return
 	}
+	sourceRoot, err = sourcecontext.DeploymentRoot(sourceRoot, app.RootDir)
+	if err != nil {
+		api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+err.Error()))
+		return
+	}
 	if prob := validateSourceProvenance(sourceURL, commitSHA); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, OverrideFreeze: overrideFreeze, ReleaseAt: releaseAt, ReleaseNotify: releaseNotify, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, OverrideFreeze: overrideFreeze, ReleaseAt: releaseAt, ReleaseNotify: releaseNotify, Sidecars: sidecars, Workflows: workflows}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(healthcheck)
 	if len(overrideEnv) > 0 {
 		if rolloutReq.Overrides == nil {
@@ -415,7 +422,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		}
 		rolloutReq.Overrides.Env = overrideEnv
 	}
-	deploymentOverrides, overrideProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	_, overrideProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if overrideProblem != nil {
 		api.WriteProblem(w, overrideProblem)
 		return
@@ -430,35 +437,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	sched, prob := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
-	if prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
-	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
-		api.WriteProblem(w, ap)
-		return
-	}
-	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	if prob := s.validateAndPlanSidecars(rolloutReq, acct, limits); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
 	if prob := validateAnnotationForm(ann); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	sched.park(rolloutReq)
-	rollout, prob := buildDeploymentForInsert(app, rolloutReq, deploymentOverrides, limits, acct.Plan)
-	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -515,9 +494,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	manifestApp := app
-	if sourceRoot != "" {
-		manifestApp.RootDir = sourceRoot
-	}
+	manifestApp.RootDir = sourceRoot
 	manifest, manifestProblem := loadSourceRefManifest(sourcePath, manifestApp, acct.Plan, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -531,7 +508,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	if hasSourceBuild {
 		kind, dockerfile = state.DeploymentKindDockerfile, true
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(sourcePath, manifestApp, manifest)
+	rollout, sched, prob := s.prepareSourceDeploymentRollout(r, acct, app, manifest, rolloutReq)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(sourcePath, manifestApp, manifest, s.releasePhaseOff)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
 		return
@@ -542,6 +524,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !noTriggers)
 	if stagedManifest.cronIntent != nil {
 		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
+	// Guarded like the cron intent above: contextcheck follows the request
+	// through the branch, not through an unconditional WithContext.
+	if stagedManifest.eventSubscriptionIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentEventSubscriptions(r.Context(), stagedManifest.eventSubscriptionIntent))
 	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -613,7 +600,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			ActorUserID:               actorAccount(r, acct).ID,
 			ActorVia:                  routeKindForRequest(r),
 			ActorFromIP:               middleware.ClientIP(r),
-			Workflows:                 marshalWorkflowDefinitions(workflows),
+			Workflows:                 append(json.RawMessage(nil), rollout.Workflows...),
 			Sidecars:                  append(json.RawMessage(nil), rollout.Sidecars...),
 			Reason:                    ann.Reason,
 			Tag:                       ann.Tag,
@@ -625,6 +612,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			DisableStartupCPUBoost:    rollout.DisableStartupCPUBoost,
 			OverrideHealthcheck:       append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
 			OverrideEnv:               append(json.RawMessage(nil), rollout.OverrideEnv...),
+			OverrideMainDependsOn:     append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 			MCPTaskMigrationOverride:  rollout.MCPTaskMigrationOverride,
 			CanaryPreset:              rollout.CanaryPreset,
 			CanaryStep:                rollout.CanaryStep,
@@ -635,7 +623,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			ReleaseCommandShell:       releaseCommand.shell,
 			HostingObserver:           s.ops,
 			HostingFlow:               hostingFlow,
-			ServiceRollout:            app.Manifest.ExecutionMode == api.ExecutionModeService && trafficPercent == nil && canarySpec == nil,
+			ServiceRollout:            state.IsServiceRollout(rollout),
 		})
 		if err != nil {
 			s.writeDeploymentCreateError(w, err)

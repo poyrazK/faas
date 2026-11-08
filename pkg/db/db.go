@@ -18,8 +18,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/time/rate"
 
+	"github.com/onebox-faas/faas/pkg/pgpoolbounds"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
@@ -44,7 +47,7 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 // generation plus operator headroom before node admission. Because the role
 // multiplies these numbers across the control plane and every compute node,
 // a single entry here sets the RAM requirement of the database host for the
-// whole fleet: a 12-node fleet already derives 620 connections.
+// whole fleet: a 12-node fleet already derives 630 connections.
 //
 // Sizing rule. With the hub on, a daemon parks exactly ONE connection for
 // notifications no matter how many channels it subscribes to, so an entry
@@ -55,8 +58,13 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 // The precondition is recorded in docs/runbooks/FaasDBPoolStarved.md: a
 // flat-zero <daemon>_db_pool_canceled_acquires_total on a busy daemon.
 var DaemonMaxConnections = map[string]int32{
-	"bridged":           2,
-	"apid":              12,
+	"bridged": 2,
+	"apid":    12,
+	// apid's periodic loops, reconcilers and sweeps (state.WithBackgroundWork).
+	// On the shared 12 they made ~29 acquires/s on an idle control plane and
+	// emptied the pool ~4,500 times an hour; requests queued behind them
+	// (Hunt 31). No LISTEN: session-scoped work stays on apid's pool.
+	"apid-background":   6,
 	"apid-clone-worker": 4,
 	"schedd":            16,
 	"gatewayd-internal": 8,
@@ -71,10 +79,23 @@ var DaemonMaxConnections = map[string]int32{
 	"meterd": 5,
 	// One connection is the notify hub's LISTEN; with 2, every claim-loop
 	// query ran at the cap and 12% of acquires waited on prod (H10-83).
-	"githubd":     3,
-	"outboundd":   2,
-	"s3-gatewayd": 2,
+	"githubd":   3,
+	"outboundd": 2,
+	// One connection is the notify hub's LISTEN (the runtime-config
+	// watcher). The rest carry every PUT's and part's four to five short
+	// transactions for the default four upload slots
+	// (api.DefaultObjectConcurrentUploads), plus the read-usage flush and
+	// admission refresh. With 2, all of that queued on one connection, and on
+	// a compute node every transaction also pays the round trip to the
+	// control plane (ADR-20261031122757). postgres_capacity counts this entry
+	// on the control plane and, through
+	// faas_postgres_per_compute_object_gateway_pool_budget, on every compute
+	// node that runs the gateway.
+	"s3-gatewayd": 6,
 	"maild":       2,
+	// pgproxyd on each database node (ADR-1027) reads role verifiers
+	// and holds no LISTEN; postgres_capacity counts it per database node.
+	"pgproxyd": 4,
 	// The hosted management MCP bridge (ADR-20261026195952): lease renewal
 	// and state writes; it subscribes to nothing.
 	"mcp-bridge": 2,
@@ -121,11 +142,15 @@ var DaemonMaxConnectionsNotifyHubDisabled = map[string]int32{
 	"meterd": 5,
 	// Never below the hub-on budget: githubd's one subscriber parks a
 	// connection on this path too.
-	"githubd":     3,
-	"outboundd":   2,
-	"s3-gatewayd": 2,
+	"githubd":   3,
+	"outboundd": 2,
+	// Never below the hub-on budget.
+	"s3-gatewayd": 6,
 	"maild":       2,
-	"mcp-bridge":  2,
+	// pgproxyd on each database node (ADR-1027) reads role verifiers
+	// and holds no LISTEN; postgres_capacity counts it per database node.
+	"pgproxyd":   4,
+	"mcp-bridge": 2,
 }
 
 const defaultMaxConnections int32 = 4
@@ -142,10 +167,18 @@ const defaultMaxConnections int32 = 4
 // minute ran on new backends. pgxpool hands out the most recently released
 // idle connection, so a small floor keeps the connections wakes reuse warm.
 //
+// gatewayd-internal answers a host that misses its route cache with a store
+// read bounded by api.TrafficPublicHostReadTimeout (250 ms, ADR-570), and a
+// read that runs out of time refuses the request (traffic_policy_unavailable).
+// On PostgreSQL 16 that read took 6-15 ms on a freshly dialed backend and
+// about 1 ms on a warm one; dialing and warming a backend under that budget
+// took 348 ms on a loaded node and refused a deployment's first request.
+//
 // A floor never exceeds the daemon's maximum, which postgres_capacity already
 // provisions: it keeps sessions idle but needs no extra capacity.
 var DaemonMinConnections = map[string]int32{
-	"schedd": 4,
+	"schedd":            4,
+	"gatewayd-internal": 2,
 }
 
 // warmFloorLifetimeJitter spreads the replacement of a floor's connections.
@@ -159,10 +192,108 @@ func daemonMinConnections(appName string) int32 {
 	return min(DaemonMinConnections[name], daemonMaxConnections(appName))
 }
 
+// DaemonConnectionWarmups is a statement each new connection of a daemon's
+// ordinary pool runs before the pool hands it out. Most of a new backend's
+// first-use cost is loading the catalog of the tables a read touches; one
+// statement over those tables pays it outside the request that would
+// otherwise wait for it. A floor's connections open in the background, so
+// their warm-up never runs on a request path.
+//
+// gatewayd-internal's statement covers the tables its public host policy read
+// touches (cmd/gatewayd-internal pgRouter.resolveHost): on PostgreSQL 16 the
+// first resolution on a dialed backend fell from 6-15 ms to 2-3 ms once they
+// were touched. A table missing here only leaves that read cold.
+var DaemonConnectionWarmups = map[string]string{
+	"gatewayd-internal": `select
+		(select 1 from apps limit 0),
+		(select 1 from accounts limit 0),
+		(select 1 from orgs limit 0),
+		(select 1 from resource_namespaces limit 0),
+		(select 1 from deployments limit 0),
+		(select 1 from deployment_aliases limit 0),
+		(select 1 from custom_domains limit 0),
+		(select 1 from tenant_surfaces limit 0),
+		(select 1 from tenant_hostnames limit 0),
+		(select 1 from project_environments limit 0)`,
+}
+
+// connectionWarmupTimeout bounds a warm-up so a slow database cannot hold a
+// new connection out of the pool.
+const connectionWarmupTimeout = 2 * time.Second
+
+// connectionWarmupGrace is how much longer than the server's own bound the
+// client waits before it gives up on the warm-up and the connection with it.
+const connectionWarmupGrace = time.Second
+
+// warmConnection returns the AfterConnect hook for appName's warm-up, or nil.
+// A warm-up is best effort: when it fails the connection joins the pool cold,
+// unless the failure closed it.
+func warmConnection(appName string) func(context.Context, *pgx.Conn) error {
+	statement := DaemonConnectionWarmups[strings.TrimPrefix(strings.TrimSpace(appName), "faas-")]
+	if statement == "" {
+		return nil
+	}
+	return runWarmup(statement, connectionWarmupTimeout)
+}
+
+// runWarmup bounds the warm-up on the server. pgx answers an expired context
+// by closing the connection, so a client-side bound threw away every new
+// connection whose warm-up ran long, and the next request dialed another one
+// into the same slow database (2026-11-05 17:29). The server's
+// statement_timeout fails the warm-up and keeps the session. A one-message
+// query runs as one implicit transaction, so SET LOCAL ends with it.
+func runWarmup(statement string, timeout time.Duration) func(context.Context, *pgx.Conn) error {
+	bounded := fmt.Sprintf("SET LOCAL statement_timeout = %d; %s", timeout.Milliseconds(), statement)
+	return func(ctx context.Context, conn *pgx.Conn) error {
+		warmCtx, cancel := context.WithTimeout(ctx, timeout+connectionWarmupGrace)
+		defer cancel()
+		if _, err := conn.Exec(warmCtx, bounded); err != nil && conn.IsClosed() {
+			return fmt.Errorf("db: warm connection: %w", err)
+		}
+		return nil
+	}
+}
+
+// connectionDialsPerSecond paces how fast a pool dials once it has spent its
+// burst. pgx answers a cancelled context by closing the connection, so when a
+// stall makes callers give up, every cancelled query costs the pool a
+// connection, and every acquire behind it dials a replacement: TLS, SCRAM and
+// a new backend each, on a database that is already behind. On 2026-11-05 at
+// 17:29 both gateways rebuilt their pools at once and the 2-vCPU control plane
+// reached a load average of 34.
+//
+// A pool may still open its whole budget at once (the burst is MaxConns), so
+// startup and a pool emptied by a quiet minute are not slowed; past that it
+// refills at this rate. pgxpool dials on a context detached from the acquire,
+// so an acquire that cannot wait fails with its own context error, as it would
+// have once the database stalled, and the paced dial still joins the pool.
+const connectionDialsPerSecond = 2
+
+// paceDials limits how fast cfg's pool dials, keeping any BeforeConnect hook.
+func paceDials(cfg *pgxpool.Config) {
+	limiter := rate.NewLimiter(connectionDialsPerSecond, max(int(cfg.MaxConns), 1))
+	next := cfg.BeforeConnect
+	cfg.BeforeConnect = func(ctx context.Context, conn *pgx.ConnConfig) error {
+		if err := limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("db: pace connection dial: %w", err)
+		}
+		if next != nil {
+			return next(ctx, conn)
+		}
+		return nil
+	}
+}
+
 // Shared with direct.go so both pools age and probe identically.
 const (
 	healthCheckPeriod = 30 * time.Second
 	pingTimeout       = 5 * time.Second
+	// Bound every new connection, including background replenishment after
+	// startup. A Ping deadline alone does not cover those later dials.
+	ConnectTimeout = pgpoolbounds.ConnectTimeout
+	// Pool contention must fail within a bounded interval even for background
+	// callers using a process-lifetime context. Request deadlines may be shorter.
+	AcquireTimeout = pgpoolbounds.AcquireTimeout
 )
 
 // OpenWithAppName is Open plus an application_name tag set on every
@@ -225,7 +356,7 @@ func open(ctx context.Context, dsnOverride, appName string, readOnly ...bool) (*
 	}
 	// Under a Type=notify unit, wait for an unreachable database instead of
 	// exiting into the restart limit (ADR-1344 §5 rule 6, boot_wait.go).
-	if err := defaultBootWaiter().ping(ctx, func(ctx context.Context) error {
+	if err := defaultBootWaiter(ctx).ping(ctx, func(ctx context.Context) error {
 		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
 		defer cancel()
 		return pool.Ping(pingCtx)
@@ -264,7 +395,7 @@ const (
 // either setting keeps its own value. LISTEN and session advisory locks are
 // idle outside a transaction, so neither bound touches them.
 const (
-	DaemonStatementTimeout                = 5 * time.Minute
+	DaemonStatementTimeout                = pgpoolbounds.StatementTimeout
 	DaemonIdleInTransactionSessionTimeout = 2 * time.Minute
 )
 
@@ -285,6 +416,7 @@ func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 	if err := applyRuntimeRole(cfg.ConnConfig); err != nil {
 		return nil, err
 	}
+	ConfigureTimeouts(cfg)
 	// Direct pools have per-daemon budgets. Connections above the daemon's
 	// warm floor close after a quiet minute, so burst capacity never becomes
 	// permanent idle ClientRead sessions; LISTEN subscribers naturally retain
@@ -296,6 +428,7 @@ func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 	}
 	cfg.MaxConnIdleTime = time.Minute
 	cfg.HealthCheckPeriod = healthCheckPeriod
+	cfg.AfterConnect = warmConnection(appName)
 	if appName != "" {
 		cfg.ConnConfig.RuntimeParams["application_name"] = appName
 	}
@@ -315,7 +448,7 @@ func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 	}
 	// Safe under a transaction-mode pooler; a no-op without one.
 	applyPooledExecMode(cfg, dsn)
-	instrumentAcquires(cfg)
+	paceDials(cfg)
 	return cfg, nil
 }
 

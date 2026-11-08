@@ -232,6 +232,18 @@ func (c *RegistryClient) resolveHTTPClient() {
 		// Never leave a registry client without a deadline.
 		c.hc.Timeout = time.Duration(api.OCIPullTimeoutSeconds) * time.Second
 	}
+	transport := c.hc.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	if base, ok := transport.(*http.Transport); ok {
+		clone := base.Clone()
+		// Retain at least one idle socket per parallel setup slot. Active
+		// blob bodies have a separate stall budget and may outlive these slots.
+		clone.MaxIdleConnsPerHost = max(clone.MaxIdleConnsPerHost, cap(c.pullSlots))
+		clone.MaxIdleConns = max(clone.MaxIdleConns, clone.MaxIdleConnsPerHost)
+		c.hc.Transport = clone
+	}
 	c.stallTimeout = c.hc.Timeout
 	c.blobHC = blobClient(c.hc)
 }
@@ -253,10 +265,10 @@ func blobClient(hc *http.Client) *http.Client {
 	default:
 		return nil
 	}
-	if tr.ResponseHeaderTimeout == 0 {
+	if tr.ResponseHeaderTimeout <= 0 || tr.ResponseHeaderTimeout > hc.Timeout {
 		tr.ResponseHeaderTimeout = hc.Timeout
 	}
-	if tr.TLSHandshakeTimeout == 0 {
+	if tr.TLSHandshakeTimeout <= 0 || tr.TLSHandshakeTimeout > hc.Timeout {
 		tr.TLSHandshakeTimeout = hc.Timeout
 	}
 	clone := *hc
@@ -593,10 +605,22 @@ func (c *RegistryClient) openBlobWithAuth(ctx context.Context, r Reference, dige
 		}
 		c.blobGrants.Store(grant, struct{}{})
 	}
-	rc, err := c.blobCache.Open(ctx, digest, func(fetchCtx context.Context) (io.ReadCloser, error) {
+	fetch := func(fetchCtx context.Context) (io.ReadCloser, error) {
 		_, body, err := c.openBlobNetworkWithAuth(fetchCtx, r, digest, auth)
 		return body, err
-	})
+	}
+	// The HEAD above proves nothing against a registry the requester runs:
+	// it can answer 200 for any digest. So bytes pulled with credentials
+	// stay under this registry and repository and never enter the shared
+	// pool another tenant's manifest could name (H77). Only anonymous pulls
+	// fill the shared pool.
+	var rc io.ReadCloser
+	var err error
+	if auth != nil && (auth.Username != "" || auth.Password != "") {
+		rc, err = c.blobCache.OpenScoped(ctx, c.baseURL(r)+"/"+r.Repository, digest, fetch)
+	} else {
+		rc, err = c.blobCache.Open(ctx, digest, fetch)
+	}
 	if err != nil {
 		return "", nil, err
 	}

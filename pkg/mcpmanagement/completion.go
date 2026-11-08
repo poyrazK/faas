@@ -34,16 +34,9 @@ func (m *management) completeArgument(ctx context.Context, req *mcp.CompleteRequ
 	if !fields[p.Argument.Name] || !completionPrefix(p.Argument.Value) {
 		return nil, m.contextError(invalid("invalid_argument", "invalid completion argument or prefix"))
 	}
-	args := map[string]string{}
-	if p.Context != nil {
-		for key, value := range p.Context.Arguments {
-			if !fields[key] || len(value) > 200 || (value != "" && validateSegment(value, key) != nil) {
-				return nil, m.contextError(invalid("invalid_argument", "invalid completion context"))
-			}
-			if key != p.Argument.Name {
-				args[key] = value
-			}
-		}
+	args, err := completionArguments(p, fields)
+	if err != nil {
+		return nil, m.contextError(err)
 	}
 	if p.Ref.Type == "ref/resource" && strings.HasPrefix(p.Ref.URI, "gregale://projects/") && p.Argument.Name == "app" && (args["project"] == "" || args["environment"] == "") {
 		return &mcp.CompleteResult{Completion: mcp.CompletionResultDetails{Values: []string{}}}, nil
@@ -64,6 +57,24 @@ func (m *management) completeArgument(ctx context.Context, req *mcp.CompleteRequ
 		return nil, m.contextError(err)
 	}
 	return result, nil
+}
+
+func completionArguments(p *mcp.CompleteParams, fields map[string]bool) (map[string]string, error) {
+	args := map[string]string{}
+	if p.Context != nil {
+		for key, value := range p.Context.Arguments {
+			if key == "plan_id" && value != "" && !validActionID(value) {
+				return nil, invalid("invalid_argument", "invalid saved plan ID in completion context")
+			}
+			if !fields[key] || len(value) > 200 || (value != "" && validateSegment(value, key) != nil) {
+				return nil, invalid("invalid_argument", "invalid completion context")
+			}
+			if key != p.Argument.Name {
+				args[key] = value
+			}
+		}
+	}
+	return args, nil
 }
 
 func completionResult(values []string, prefix string, more bool) (*mcp.CompleteResult, error) {
@@ -108,6 +119,10 @@ func completionFields(ref *mcp.CompleteReference) (map[string]bool, error) {
 	fields := map[string]bool{}
 	if ref != nil && ref.Type == "ref/prompt" {
 		switch ref.Name {
+		case "gregale_environment_plan_review":
+			return map[string]bool{"project": true, "environment": true, "plan_id": true}, nil
+		case "gregale_saved_plan_review":
+			fields["plan_id"] = true
 		case "gregale_deployment_review":
 		case "gregale_rollout_diagnosis", "gregale_rollback_review":
 			fields["deployment_id"] = true
@@ -118,6 +133,9 @@ func completionFields(ref *mcp.CompleteReference) (map[string]bool, error) {
 		return fields, nil
 	}
 	if ref != nil && ref.Type == "ref/resource" {
+		if fields := savedPlanResourceCompletionFields(ref.URI); fields != nil {
+			return fields, nil
+		}
 		if ref.URI == regressionResourceTemplate {
 			return map[string]bool{"app": true}, nil
 		}
@@ -138,6 +156,9 @@ func completionFields(ref *mcp.CompleteReference) (map[string]bool, error) {
 
 func (m *management) completionCandidates(ctx context.Context, field string, args map[string]string) ([]string, bool, error) {
 	switch field {
+	case "plan_id":
+		// Exact private plan IDs come from consented history, never completion.
+		return []string{}, false, nil
 	case "project", "environment":
 		return m.completeEnvironment(ctx, field, args)
 	case "app":
@@ -159,7 +180,7 @@ func (m *management) completeEnvironment(ctx context.Context, field string, args
 		}
 	} else {
 		var err error
-		grants, err = discoverEnvironments(ctx, m.client)
+		grants, err = discoverEnvironments(ctx, m.client, m.opts.Org)
 		if err != nil {
 			return nil, false, err
 		}
@@ -238,7 +259,7 @@ func (m *management) completeApps(ctx context.Context, args map[string]string) (
 			return nil, false, invalid("identity_changed", "completion environment identity changed")
 		}
 	} else {
-		apps, err := m.client.ListApps(ctx)
+		apps, err := listApps(ctx, m.client, m.opts.Org)
 		if err != nil {
 			return nil, false, err
 		}

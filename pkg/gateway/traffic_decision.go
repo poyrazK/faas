@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -81,6 +82,9 @@ type trafficDecisionSnapshot struct {
 	durations      [trafficPhaseCount]int64
 	streamDetached bool
 	edgeResponse   bool
+	// deploymentPinned: the request named its deployment (a deployment
+	// preview or alias URL, or a revision pin), not production routing.
+	deploymentPinned bool
 }
 
 type trafficDecision struct {
@@ -178,6 +182,12 @@ func recordTrafficAttempt(ctx context.Context) {
 			value.attempts++
 		}
 	})
+}
+
+// recordTrafficDeploymentPinned marks a request that named its deployment, so
+// route evidence leaves it out (ADR-20261028110044 amendment 5).
+func recordTrafficDeploymentPinned(ctx context.Context) {
+	mutateTrafficDecision(ctx, func(value *trafficDecisionSnapshot) { value.deploymentPinned = true })
 }
 
 func recordTrafficStreamDetached(ctx context.Context) {
@@ -309,6 +319,23 @@ func trafficDecisionEvidence(ctx context.Context, status int, seal bool) traffic
 	return result
 }
 
+// platformRefusal reports a 5xx the gateway returned because a Gregale
+// dependency could not admit the request: node admission, traffic policy,
+// rate-limit or revocation state was unavailable. Neither deployment caused
+// it, so route evidence skips it (ADR-20261028110044 amendment 3). Deadlines,
+// open circuits, capacity and wake or boot failures still count: a candidate
+// can cause each of them.
+func (value trafficDecisionSnapshot) platformRefusal(status int) bool {
+	if status < http.StatusInternalServerError || value.outcome != "refused" {
+		return false
+	}
+	switch value.refusal {
+	case "node_admission_unavailable", "policy_unavailable", "rate_limit_unavailable", "security_unavailable":
+		return true
+	}
+	return false
+}
+
 func trafficSecurityDecision(err error) string {
 	if errors.Is(err, trafficrevocation.ErrRevoked) {
 		return "security_revoked"
@@ -320,7 +347,16 @@ func (value trafficDecisionSnapshot) attributes() []attribute.KeyValue {
 	if value.path == "" {
 		return nil
 	}
-	attributes := []attribute.KeyValue{
+	return value.appendAttributes(make([]attribute.KeyValue, 0, 18))
+}
+
+// appendAttributes appends the decision's span attributes to dst; a decision
+// without a path adds none.
+func (value trafficDecisionSnapshot) appendAttributes(dst []attribute.KeyValue) []attribute.KeyValue {
+	if value.path == "" {
+		return dst
+	}
+	attributes := append(dst,
 		attribute.String("gregale.traffic.decision_version", "v1"),
 		attribute.String("gregale.traffic.path", value.path),
 		attribute.String("gregale.traffic.phase", value.phase.String()),
@@ -338,7 +374,7 @@ func (value trafficDecisionSnapshot) attributes() []attribute.KeyValue {
 		attribute.Int64("gregale.traffic.wake_admission_ms", value.durations[trafficWake]/int64(time.Millisecond)),
 		attribute.Int64("gregale.traffic.capacity_wait_ms", value.durations[trafficCapacity]/int64(time.Millisecond)),
 		attribute.Int64("gregale.traffic.retry_backoff_ms", value.durations[trafficBackoff]/int64(time.Millisecond)),
-	}
+	)
 	if value.policyStage != "" {
 		attributes = append(attributes, attribute.String("gregale.traffic.policy_stage", value.policyStage))
 	}

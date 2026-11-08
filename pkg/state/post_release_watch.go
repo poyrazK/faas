@@ -25,6 +25,7 @@ type PostReleaseWatchCandidate struct {
 // explained decision on a release.
 type PostReleaseWatchStore interface {
 	ListPostReleaseWatchCandidates(ctx context.Context, window time.Duration, limit int) ([]PostReleaseWatchCandidate, error)
+	ListPostReleaseWatchCandidatesPage(ctx context.Context, window time.Duration, limit int, cursor ReleaseScanCursor) ([]PostReleaseWatchCandidate, error)
 	RecordPostReleaseRolloutDecision(ctx context.Context, deploymentID string, decision json.RawMessage) error
 }
 
@@ -34,8 +35,19 @@ var (
 )
 
 func (s *PgStore) ListPostReleaseWatchCandidates(ctx context.Context, window time.Duration, limit int) ([]PostReleaseWatchCandidate, error) {
+	return s.ListPostReleaseWatchCandidatesPage(ctx, window, limit, ReleaseScanCursor{})
+}
+
+func (s *PgStore) ListPostReleaseWatchCandidatesPage(ctx context.Context, window time.Duration, limit int, cursor ReleaseScanCursor) ([]PostReleaseWatchCandidate, error) {
+	afterAt, afterID, err := cursor.parameters()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
 	rows, err := sqlc.New().ListPostReleaseWatchCandidates(ctx, s.pool, sqlc.ListPostReleaseWatchCandidatesParams{
-		WindowSeconds: int32(window / time.Second), RowLimit: int32(limit)}) //nolint:gosec // bounded by api limits
+		WindowSeconds: int32(window / time.Second), RowLimit: int32(limit), AfterCompletedAt: afterAt, AfterID: afterID}) //nolint:gosec // bounded by api limits
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -64,14 +76,28 @@ func (s *PgStore) RecordPostReleaseRolloutDecision(ctx context.Context, deployme
 	return nil
 }
 
-func (m *MemStore) ListPostReleaseWatchCandidates(_ context.Context, window time.Duration, limit int) ([]PostReleaseWatchCandidate, error) {
+func (m *MemStore) ListPostReleaseWatchCandidates(ctx context.Context, window time.Duration, limit int) ([]PostReleaseWatchCandidate, error) {
+	return m.ListPostReleaseWatchCandidatesPage(ctx, window, limit, ReleaseScanCursor{})
+}
+
+func (m *MemStore) ListPostReleaseWatchCandidatesPage(_ context.Context, window time.Duration, limit int, cursor ReleaseScanCursor) ([]PostReleaseWatchCandidate, error) {
+	if _, _, err := cursor.parameters(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cutoff := time.Now().Add(-window)
 	var out []PostReleaseWatchCandidate
 	for _, d := range m.deployments {
 		if d.Status != DeployLive || !d.RollbackOn5xx || d.LastAutoRollbackReason != "" || d.TrafficPercent != 100 ||
-			d.RolloutState != "complete" || d.RolloutCompletedAt == nil || !d.RolloutCompletedAt.After(cutoff) {
+			d.RolloutState != "complete" || d.RolloutCompletedAt == nil || !d.RolloutCompletedAt.After(cutoff) ||
+			postReleaseRollbackSkipped(d.RolloutDecision) {
+			continue
+		}
+		if !cursor.includes(*d.RolloutCompletedAt, d.ID) {
 			continue
 		}
 		scope := normalizedDeploymentScope(d.Scope)
@@ -81,7 +107,11 @@ func (m *MemStore) ListPostReleaseWatchCandidates(_ context.Context, window time
 			if other.AppID != d.AppID || normalizedDeploymentScope(other.Scope) != scope || other.ID == d.ID {
 				continue
 			}
-			if other.CreatedAt.After(d.CreatedAt) && other.Status != DeployFailed && other.Status != DeployCancelled {
+			// Only a newer release that served makes d a rollback target; one
+			// staged with no traffic, parked for its schedule or still
+			// building does not stop the watch (ADR-1445 amendment 5).
+			if other.CreatedAt.After(d.CreatedAt) && other.Status != DeployFailed && other.Status != DeployCancelled &&
+				(deploymentServing(other) || m.deploymentServedLocked(other.ID)) {
 				newest = false
 			}
 			// The release a plain rollback returns to: the most recently
@@ -112,6 +142,16 @@ func (m *MemStore) ListPostReleaseWatchCandidates(_ context.Context, window time
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// postReleaseRollbackSkipped reports whether the watch already found a
+// regression it could not roll back (rollout_decision.rollback_skipped):
+// the release keeps serving, a person decides, and it is not judged again.
+func postReleaseRollbackSkipped(decision json.RawMessage) bool {
+	var d struct {
+		RollbackSkipped string `json:"rollback_skipped"`
+	}
+	return len(decision) > 0 && json.Unmarshal(decision, &d) == nil && d.RollbackSkipped != ""
 }
 
 func (m *MemStore) RecordPostReleaseRolloutDecision(_ context.Context, deploymentID string, decision json.RawMessage) error {

@@ -559,19 +559,27 @@ func (s *Spool) CompleteUpload(path string) error {
 		return fmt.Errorf("logarchive: remove completed upload %s: %w", path, err)
 	}
 	if info != nil {
-		s.written -= info.Size()
-		if s.written < 0 {
-			s.written = 0
-		}
-		if instance := s.instanceOf(path); instance != "" {
-			if left := s.perInstance[instance] - info.Size(); left > 0 {
-				s.perInstance[instance] = left
-			} else {
-				delete(s.perInstance, instance)
-			}
-		}
+		s.releaseLocked(path, info.Size())
 	}
 	return nil
+}
+
+// releaseLocked takes a shipped upload's bytes off the local-size tally and
+// off its instance's share. Both upload modes call it once the bucket holds
+// the bytes; without the share release an instance that ever spooled its
+// share kept failing with ErrSpoolFull for the rest of the process.
+func (s *Spool) releaseLocked(path string, size int64) {
+	s.written -= size
+	if s.written < 0 {
+		s.written = 0
+	}
+	if instance := s.instanceOf(path); instance != "" {
+		if left := s.perInstance[instance] - size; left > 0 {
+			s.perInstance[instance] = left
+		} else {
+			delete(s.perInstance, instance)
+		}
+	}
 }
 
 // instanceOf is the instance directory a spool path sits under

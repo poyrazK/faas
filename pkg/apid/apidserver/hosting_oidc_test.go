@@ -45,7 +45,7 @@ func TestHostingOIDCRuntimeAndTrustRoutes(t *testing.T) {
 	}
 	root := "/v1/internal/hosting/sites/" + site.ID
 	rules := api.HostingOIDCTrustRules{RepositoryOwnerID: "123", RepositoryID: "456", Repository: "org/site", Ref: "refs/heads/main", WorkflowRef: "org/site/.github/workflows/preview.yml@refs/heads/main", EventName: "push"}
-	response := env.Do(t, "POST", root+"/oidc-trusts", rules, map[string]string{"Idempotency-Key": "never-store-identity"})
+	response := env.DoOperator(t, "POST", root+"/oidc-trusts", rules, map[string]string{"Idempotency-Key": "never-store-identity"})
 	var trust api.HostingOIDCTrust
 	if response.Code != 201 || json.Unmarshal(response.Body.Bytes(), &trust) != nil || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal(response.Code, response.Body)
@@ -95,7 +95,7 @@ func TestHostingOIDCRuntimeAndTrustRoutes(t *testing.T) {
 	if got := env.Do(t, "POST", "/v1/internal/hosting/oidc/exchange", api.HostingOIDCExchangeRequest{}, nil); got.Code != 401 {
 		t.Fatal("anonymous exchange validation", got.Code, got.Body)
 	}
-	if got := env.Do(t, "DELETE", root+"/oidc-trusts/"+trust.ID, nil, nil); got.Code != 204 {
+	if got := env.DoOperator(t, "DELETE", root+"/oidc-trusts/"+trust.ID, nil, nil); got.Code != 204 {
 		t.Fatal(got.Code, got.Body)
 	}
 	if got := env.Do(t, "GET", root, nil, headers); got.Code != 401 {

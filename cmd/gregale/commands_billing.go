@@ -63,6 +63,8 @@ func cmdBilling(args []string) int {
 		return cmdBillingPaymentMethod(args[1:])
 	case billingSubStatus:
 		return cmdBillingStatus(args[1:])
+	case "egress-overage":
+		return cmdBillingEgressOverage(args[1:])
 	case "costs", "forecast":
 		return cmdBillingFinancial(args[0], args[1:])
 	case "budget-preview":
@@ -87,6 +89,9 @@ func cmdBilling(args []string) int {
 		printBillingUsage(osStdout)
 		return 0
 	default:
+		if jsonOutput {
+			return printUnknownSubcommand(os.Stderr, "billing", parent, args[0])
+		}
 		sug, _ := suggestSubcommand(args[0], parent)
 		fmt.Fprintf(os.Stderr, "gregale billing: unknown subcommand %q\n\n", args[0])
 		printBillingUsage(os.Stderr)
@@ -110,6 +115,8 @@ const billingUsage = "usage: gregale billing <subcommand>\n\n" +
 	"                      y/N confirm (--yes for non-interactive shells)\n" +
 	"  status              show your provider-independent billing status\n" +
 	"                      (--watch N  re-poll every 5 s for N seconds; --json  emit JSON)\n" +
+	"  egress-overage      show, or turn on|off, paying for egress above the plan's\n" +
+	"                      monthly allowance instead of stopping (--org SLUG)\n" +
 	"  costs               explain retained usage costs (--month YYYY-MM --json)\n" +
 	"  forecast            show cost projections and coverage (--month YYYY-MM --json)\n" +
 	"  budget-preview      preview a budget's cost and consequences (--file PATH --json)\n" +

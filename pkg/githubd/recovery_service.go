@@ -24,6 +24,14 @@ func (s *RecoveryService) GetCIPullRequest(ctx context.Context, account string, 
 	return service.GetCIPullRequest(ctx, account, installation, repository, number)
 }
 
+func (s *RecoveryService) GetInstallationRepository(ctx context.Context, accountID string, installationID int64, repoFullName string) (githubdgrpc.InstallationRepository, bool, error) {
+	service, ok := s.Service.(githubdgrpc.InstallationRepositoryService)
+	if !ok {
+		return githubdgrpc.InstallationRepository{}, false, status.Error(codes.Unimplemented, "githubd: installation repository lookup is not configured")
+	}
+	return service.GetInstallationRepository(ctx, accountID, installationID, repoFullName)
+}
+
 func (s *RecoveryService) GetCIChangedFiles(ctx context.Context, account string, installation int64, repository, base, head string) (githubdgrpc.CIChangedFiles, error) {
 	service, ok := s.Service.(githubdgrpc.CIChangedFilesService)
 	if !ok {
@@ -142,6 +150,7 @@ func (s *RecoveryService) GetAppActivity(ctx context.Context, accountID, appID s
 		out.Webhooks = append(out.Webhooks, githubdgrpc.WebhookActivity{
 			EventType: item.EventType, Status: item.Status, CommitSHA: item.CommitSHA,
 			ReceivedAt: item.ReceivedAt, ProcessedAt: item.ProcessedAt, UpdatedAt: item.UpdatedAt,
+			SkipReason: item.SkipReason,
 		})
 	}
 	for _, item := range checkUpdates {
@@ -151,4 +160,14 @@ func (s *RecoveryService) GetAppActivity(ctx context.Context, accountID, appID s
 		})
 	}
 	return out, nil
+}
+
+func (s *RecoveryService) GetInstallationAccess(ctx context.Context, accountID string, installID int64) (githubdgrpc.InstallationAccess, error) {
+	service, ok := s.Service.(interface {
+		GetInstallationAccess(context.Context, string, int64) (githubdgrpc.InstallationAccess, error)
+	})
+	if !ok {
+		return githubdgrpc.InstallationAccess{}, status.Error(codes.Unimplemented, "GitHub verification unavailable")
+	}
+	return service.GetInstallationAccess(ctx, accountID, installID)
 }

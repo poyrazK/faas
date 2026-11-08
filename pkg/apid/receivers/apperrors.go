@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,9 +27,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -70,15 +73,27 @@ type AppErrorsStore interface {
 // false; PR-B flips it to true.
 type appErrorsReceiver struct {
 	apidpb.UnimplementedAppErrorsServer
-	store   AppErrorsStore
-	ops     *wire.OpsMetrics
-	enabled bool
-	gate    IngestGate
+	store              AppErrorsStore
+	ops                *wire.OpsMetrics
+	enabled            bool
+	gate               IngestGate
+	issueAppMu         sync.Mutex
+	issueAppGates      map[string]*issueAppGate
+	issueRetryMu       sync.Mutex
+	issueRetryCount    int
+	issueRetryApps     map[string]int
+	issueRetryWaiting  int
+	issueRetryWaitApps map[string]int
+	issueRetryChanged  chan struct{}
+	issueAttemptCount  int
+	issueAttemptApps   map[string]int
+	issuePending       []*apidpb.IncrementAppErrorRequest
+	issuePendingApps   map[string]int
 }
 
 // NewAppErrorsReceiver wires a production receiver.
 func NewAppErrorsReceiver(store AppErrorsStore, ops *wire.OpsMetrics, enabled bool) *appErrorsReceiver {
-	return &appErrorsReceiver{store: store, ops: ops, enabled: enabled}
+	return &appErrorsReceiver{store: store, ops: ops, enabled: enabled, issueAppGates: make(map[string]*issueAppGate), issueRetryApps: make(map[string]int), issueRetryWaitApps: make(map[string]int), issueRetryChanged: make(chan struct{}), issueAttemptApps: make(map[string]int), issuePendingApps: make(map[string]int)}
 }
 
 // IncrementAppError streams per-record error records from the
@@ -127,6 +142,7 @@ func (a *appErrorsReceiver) IncrementAppError(stream apidpb.AppErrors_IncrementA
 // Returns a non-nil IncrementAppErrorResponse for every record;
 // callers must Send() unconditionally.
 func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.IncrementAppErrorRequest) *apidpb.IncrementAppErrorResponse {
+	req = normalizeAppErrorSample(req)
 	out := &apidpb.IncrementAppErrorResponse{Fingerprint: req.GetFingerprint()}
 
 	// ---- 1. Validate ----
@@ -139,6 +155,30 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 		return out
 	}
 
+	return a.handleValidatedAppError(ctx, req, out)
+}
+
+func normalizeAppErrorSample(req *apidpb.IncrementAppErrorRequest) *apidpb.IncrementAppErrorRequest {
+	// Older gateways can send a redacted sample larger than the wire cap.
+	// Preserve those bounded records and reserve the PostgreSQL text header.
+	if req != nil && len(req.GetSampleMessage()) > api.AppErrorsSampleMessageCapBytes-4 && len(req.GetSampleMessage()) <= 8*1024 {
+		req = proto.Clone(req).(*apidpb.IncrementAppErrorRequest)
+		req.SampleMessage = safetext.Truncate(req.SampleMessage, api.AppErrorsSampleMessageCapBytes-4)
+		found := false
+		for _, name := range req.RedactionsApplied {
+			if name == "truncated" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			req.RedactionsApplied = append(req.RedactionsApplied, "truncated")
+		}
+	}
+	return req
+}
+
+func (a *appErrorsReceiver) handleValidatedAppError(ctx context.Context, req *apidpb.IncrementAppErrorRequest, out *apidpb.IncrementAppErrorResponse) *apidpb.IncrementAppErrorResponse {
 	// ---- 2. Resolve UUIDs ----
 	accountID, err := uuid.Parse(req.GetAccountId())
 	if err != nil {
@@ -171,6 +211,10 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 		requestID = parsed
 	}
 
+	// Issues have their own retention and quotas. Do not gate them on the
+	// legacy aggregate or its optional per-request detail row.
+	out.IssueHandoff = a.enqueueHTTPIssue(req) //nolint:contextcheck // Bounded issue delivery must outlive the request stream.
+
 	// ---- 4. IncrementAppError (dedupe-merge INSERT) ----
 	//
 	// The SQL handles count + last_seen_at via ON CONFLICT DO
@@ -184,7 +228,15 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 	// The wire-side outcome distinguishes "inserted" from
 	// "merged" so the gateway can update its in-process LRU
 	// freshness on the merge path.
+	// A gateway folds an app's repeats of one error into a few records per
+	// flush; count says how many requests this one stands for. An older
+	// gateway sends 0 for its one request (bug hunt 2026-10-28 H41).
+	count := req.GetCount()
+	if count < 1 {
+		count = 1
+	}
 	inserted, incErr := a.store.IncrementAppError(ctx, sqlc.IncrementAppErrorParams{
+		Count:                   count,
 		ID:                      state.NewPgtypeUUID(newRowID()),
 		AccountID:               state.NewPgtypeUUID(accountID),
 		AppID:                   state.NewPgtypeUUID(appID),
@@ -232,6 +284,11 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 	// empty proto repeated field decodes to nil, which pgx sends as NULL:
 	// every error without a redaction (nearly all of them) failed this
 	// insert, so the customer drill-down stayed empty.
+	// A count-only record, or an error group already holding the plan's
+	// request rows, stores no request row (bug hunt 2026-10-28 H41).
+	if req.GetRequestRowOmitted() || a.requestRowsFull(ctx, accountID, appID, req.GetFingerprint()) {
+		return a.finish(out, inserted)
+	}
 	redactions := req.GetRedactionsApplied()
 	if redactions == nil {
 		redactions = []string{}
@@ -267,11 +324,37 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 		return out
 	}
 
-	if err := RecordHTTPIssue(ctx, a.store, req); err != nil {
-		// Preserve legacy publication and record a separate issue-ingest failure.
-		a.ops.ObserveIssueEvent("db_error")
-	}
+	return a.finish(out, inserted)
+}
 
+// requestRowsFull reports whether an error group already keeps the account
+// plan's AppErrorsMaxRequestRowsPerFingerprint request rows. The cap was
+// declared but never read, so each erroring request added a row for the
+// retention window (bug hunt 2026-10-28 H41). A store that cannot count, or
+// a failed read, keeps the row.
+func (a *appErrorsReceiver) requestRowsFull(ctx context.Context, accountID, appID uuid.UUID, fingerprint string) bool {
+	counter, ok := a.store.(state.AppErrorRequestCounter)
+	if !ok {
+		return false
+	}
+	accounts, ok := a.store.(interface {
+		AccountByID(context.Context, string) (state.Account, error)
+	})
+	if !ok {
+		return false
+	}
+	acct, err := accounts.AccountByID(ctx, accountID.String())
+	if err != nil {
+		return false
+	}
+	rows, err := counter.CountAppErrorRequestsForFingerprint(ctx, sqlc.CountAppErrorRequestsForFingerprintParams{
+		AccountID: state.NewPgtypeUUID(accountID), AppID: state.NewPgtypeUUID(appID), Fingerprint: fingerprint,
+	})
+	return err == nil && rows >= int64(acct.Plan.AppErrorsMaxRequestRowsPerFingerprint())
+}
+
+// finish records a written record's outcome.
+func (a *appErrorsReceiver) finish(out *apidpb.IncrementAppErrorResponse, inserted bool) *apidpb.IncrementAppErrorResponse {
 	a.observe("ok")
 	if inserted {
 		out.Outcome = OutcomeInserted
@@ -337,6 +420,9 @@ func validateIncrementRequest(req *apidpb.IncrementAppErrorRequest) error {
 	}
 	if len(req.GetFingerprint()) != 64 {
 		return status.Errorf(codes.InvalidArgument, "fingerprint must be 64 hex chars, got %d", len(req.GetFingerprint()))
+	}
+	if n := len(req.GetIssueTimeBuckets()); n != 0 && n != 1000 {
+		return status.Error(codes.InvalidArgument, "HTTP time buckets must contain exactly 1,000 millisecond counters")
 	}
 	// sample_message cap matches limits.AppErrorsSampleMessageCapBytes.
 	if len(req.GetSampleMessage()) > api.AppErrorsSampleMessageCapBytes {

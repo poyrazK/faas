@@ -39,7 +39,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
-	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -113,30 +112,12 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(req.Healthcheck)
-	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	_, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
 		api.WriteProblem(w, healthProblem)
 		return
 	}
 	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); p != nil {
-		api.WriteProblem(w, p)
-		return
-	}
-	sched, p := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
-	if p != nil {
-		api.WriteProblem(w, p)
-		return
-	}
-	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
-	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
-		api.WriteProblem(w, ap)
-		return
-	}
-	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
-		api.WriteProblem(w, p)
-		return
-	}
-	if p := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
@@ -151,12 +132,6 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 	if req.NativeRollout != "" && app.Manifest.ExecutionMode != req.NativeRollout {
 		api.WriteProblem(w, api.ErrValidation("native_rollout must match the reviewed workload mode"))
-		return
-	}
-	sched.park(rolloutReq)
-	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
-	if rolloutProblem != nil {
-		api.WriteProblem(w, rolloutProblem)
 		return
 	}
 
@@ -277,7 +252,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, buildProblem)
 		return
 	}
-	releaseCommand, releaseProblem := reviewedSourceReleaseCommand(spoolPath, app, manifest, req.ExpectedSource != nil)
+	releaseCommand, releaseProblem := reviewedSourceReleaseCommand(spoolPath, app, manifest, req.ExpectedSource != nil, s.releasePhaseOff)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
 		return
@@ -294,18 +269,12 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 	if manifest != nil {
 		workflowDefs = manifest.Workflows
-		overrides, applied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
-		if workloadProblem != nil {
-			api.WriteProblem(w, workloadProblem)
-			return
-		}
-		if applied {
-			rollout, rolloutProblem = buildDeploymentForInsert(app, rolloutReq, overrides, limits, acct.Plan)
-			if rolloutProblem != nil {
-				api.WriteProblem(w, rolloutProblem)
-				return
-			}
-		}
+	}
+	rolloutReq.Workflows = workflowDefs
+	rollout, sched, rolloutProblem := s.prepareSourceDeploymentRollout(r, acct, app, manifest, rolloutReq)
+	if rolloutProblem != nil {
+		api.WriteProblem(w, rolloutProblem)
+		return
 	}
 	if !s.admitCanaryDeployment(w, r, rollout) {
 		return
@@ -323,6 +292,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !req.NoTriggers)
 	if stagedManifest.cronIntent != nil {
 		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
+	// Guarded like the cron intent above: contextcheck follows the request
+	// through the branch, not through an unconditional WithContext.
+	if stagedManifest.eventSubscriptionIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentEventSubscriptions(r.Context(), stagedManifest.eventSubscriptionIntent))
 	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -386,26 +360,27 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		// Issue #977 / ADR-116: annotation surface forwarded onto
 		// the deployment row from the request's annotationForm.
 		// nil/zero values are dropped by EnqueueParams handling.
-		Reason:                 ann.Reason,
-		Tag:                    ann.Tag,
-		DeployedBy:             ann.DeployedBy,
-		PRNumber:               ann.PRNumber,
-		TrafficPercent:         rollout.TrafficPercent,
-		TrafficPercentExplicit: rollout.TrafficPercentExplicit,
-		RollbackOn5xx:          rollout.RollbackOn5xx,
-		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
-		CanaryPreset:           rollout.CanaryPreset,
-		CanaryStep:             rollout.CanaryStep,
-		CanaryTotalSteps:       rollout.CanaryTotalSteps,
-		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
-		CanaryStages:           rollout.CanaryStages,
-		ReleaseCommand:         releaseCommand.command,
-		ReleaseCommandShell:    releaseCommand.shell,
-		Workflows:              marshalWorkflowDefinitions(workflowDefs),
-		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
-		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
-		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
-		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
+		Reason:                   ann.Reason,
+		Tag:                      ann.Tag,
+		DeployedBy:               ann.DeployedBy,
+		PRNumber:                 ann.PRNumber,
+		TrafficPercent:           rollout.TrafficPercent,
+		TrafficPercentExplicit:   rollout.TrafficPercentExplicit,
+		RollbackOn5xx:            rollout.RollbackOn5xx,
+		DisableStartupCPUBoost:   rollout.DisableStartupCPUBoost,
+		MCPTaskMigrationOverride: rollout.MCPTaskMigrationOverride,
+		CanaryPreset:             rollout.CanaryPreset,
+		CanaryStep:               rollout.CanaryStep,
+		CanaryTotalSteps:         rollout.CanaryTotalSteps,
+		CanaryStepStartedAt:      rollout.CanaryStepStartedAt,
+		CanaryStages:             rollout.CanaryStages,
+		ReleaseCommand:           releaseCommand.command,
+		ReleaseCommandShell:      releaseCommand.shell,
+		Workflows:                append(json.RawMessage(nil), rollout.Workflows...),
+		Sidecars:                 append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:      append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideMainDependsOn:    append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
+		ServiceRollout:           state.IsServiceRollout(rollout),
 	})
 	if err != nil {
 		// A queued source build may have committed even when its reply was

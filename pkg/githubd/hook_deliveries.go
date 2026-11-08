@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,9 +70,13 @@ type HookDeliveryMonitor struct {
 	BaseURL string
 	Window  time.Duration
 	Metrics *HookDeliveryMetrics
-	Log     *slog.Logger
-	Now     func() time.Time
+	// AppConfigMetrics, when set, also checks the App's events and
+	// permissions on every poll (app_config.go).
+	AppConfigMetrics *AppConfigMetrics
+	Log              *slog.Logger
+	Now              func() time.Time
 
+	Recovery     TransportRecoveryStore
 	lastLoggedID int64
 }
 
@@ -79,6 +85,7 @@ var errHookDeliveriesUnavailable = errors.New("githubd: app hook deliveries unav
 // PollOnce fetches the newest page of deliveries, records the summary and
 // logs failed deliveries it has not logged before.
 func (m *HookDeliveryMonitor) PollOnce(ctx context.Context) (HookDeliverySummary, error) {
+	m.checkAppConfig(ctx)
 	deliveries, err := m.fetch(ctx)
 	if err != nil {
 		m.Metrics.observeFailure()
@@ -95,9 +102,10 @@ func (m *HookDeliveryMonitor) PollOnce(ctx context.Context) (HookDeliverySummary
 	summary := summarizeHookDeliveries(deliveries, now.Add(-window))
 	m.Metrics.observe(summary, now)
 	m.logNewFailures(deliveries, now.Add(-window))
-	return summary, nil
+	return summary, m.repair(ctx, deliveries, now)
 }
 
+// Scan at most 500 recent attempts, following only same-origin GitHub links.
 func (m *HookDeliveryMonitor) fetch(ctx context.Context) ([]HookDelivery, error) {
 	if m.MintJWT == nil {
 		return nil, fmt.Errorf("%w: no App JWT", errHookDeliveriesUnavailable)
@@ -110,32 +118,53 @@ func (m *HookDeliveryMonitor) fetch(ctx context.Context) ([]HookDelivery, error)
 	if base == "" {
 		base = GitHubAPI
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/app/hook/deliveries?per_page=%d", base, hookDeliveryPageSize), nil)
+	origin, err := url.Parse(base)
 	if err != nil {
-		return nil, fmt.Errorf("%w: request: %w", errHookDeliveriesUnavailable, err)
+		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "faas-githubd/1.0")
+	endpoint := fmt.Sprintf("%s/app/hook/deliveries?per_page=%d", base, hookDeliveryPageSize)
 	client := m.Client
 	if client == nil {
 		client = NewHTTPClient()
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: request: %w", errHookDeliveriesUnavailable, err)
+	now := time.Now()
+	if m.Now != nil {
+		now = m.Now()
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: GitHub status %d", errHookDeliveriesUnavailable, resp.StatusCode)
+	var all []HookDelivery
+	for page := 0; endpoint != "" && page < 5; page++ {
+		target, err := url.Parse(endpoint)
+		if err != nil || target.Scheme != origin.Scheme || target.Host != origin.Host || target.Path != "/app/hook/deliveries" || target.User != nil {
+			return nil, fmt.Errorf("%w: invalid pagination", errHookDeliveriesUnavailable)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+jwt)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		req.Header.Set("User-Agent", "faas-githubd/1.0")
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("%w: request: %w", errHookDeliveriesUnavailable, err)
+		}
+		var rows []HookDelivery
+		err = decodeGitHubJSON(resp.Body, &rows)
+		_ = resp.Body.Close() // response body is not needed
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("%w: GitHub status %d", errHookDeliveriesUnavailable, resp.StatusCode)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%w: decode: %w", errHookDeliveriesUnavailable, err)
+		}
+		all = append(all, rows...)
+		endpoint = nextLink(strings.Join(resp.Header.Values("Link"), ","))
+		if len(rows) == 0 || rows[len(rows)-1].DeliveredAt.Before(now.Add(-m.window())) {
+			break
+		}
 	}
-	var deliveries []HookDelivery
-	if err := decodeGitHubJSON(resp.Body, &deliveries); err != nil {
-		return nil, fmt.Errorf("%w: decode: %w", errHookDeliveriesUnavailable, err)
-	}
-	return deliveries, nil
+	return all, nil
 }
 
 // summarizeHookDeliveries counts deliveries since the cutoff and reads the

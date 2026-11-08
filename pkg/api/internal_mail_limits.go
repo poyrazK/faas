@@ -198,4 +198,13 @@ const (
 	InternalMailPasswordChangedAlertMaxBytes  = 512
 	InternalMailMFADisabledAlertTTL           = 24 * time.Hour
 	InternalMailMFADisabledAlertMaxBytes      = 512
+
+	// A restore slot notice is useful for a day; an 'ending' notice no later
+	// than the slot's end (ADR-20261031123259).
+	InternalMailManagedPostgresRestoreSlotTTL      = 24 * time.Hour
+	InternalMailManagedPostgresRestoreSlotMaxBytes = 512
+
+	// A plan excess notice is useful for a day (ADR-20261102125208).
+	InternalMailManagedPostgresPlanExcessTTL      = 24 * time.Hour
+	InternalMailManagedPostgresPlanExcessMaxBytes = 512
 )

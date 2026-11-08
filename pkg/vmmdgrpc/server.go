@@ -272,6 +272,9 @@ type Server struct {
 	// appTaskAttach pairs interactive app tasks with their attached client
 	// (ADR-1037). The zero value is ready to use.
 	appTaskAttach appTaskAttachRegistry
+	// resolvedEgressRefusals rate-limits the refused DNS grant log
+	// (ADR-373). The zero value is ready to use.
+	resolvedEgressRefusals refusalLog
 	// hostCPU is the host CPU busy window Stats reports (ADR 20261030100950).
 	// The zero value is ready to use.
 	hostCPU hostCPUSampler
@@ -385,6 +388,12 @@ type Server struct {
 	// forwardSessions lets instance teardown end the instance's open
 	// WebSocket and private TCP forward streams (H9-129).
 	forwardSessions forwardSessions
+	// databases runs database VMs on database nodes (ADR-1027). nil keeps
+	// the database RPCs UNIMPLEMENTED.
+	databases DatabaseRuntime
+	// databasePeers carries standbys' replication streams between
+	// database nodes (database_replication.go).
+	databasePeers databasePeers
 }
 
 // New wires the server. ops may be nil (noop metrics), log may be nil
@@ -1108,6 +1117,10 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	if err := s.snapshotKeysOwned(req.GetInstance(), req.GetStorageKey(), req.GetVmstateStorageKey()); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
+	}
 	if s.diverged.Has(req.GetInstance()) {
 		// The caller expects the VM to be gone after PauseAndSnapshot; destroy
 		// it instead of capturing a snapshot of patched, non-artifact source.
@@ -1168,6 +1181,10 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 			WithDocs(wire.DocsBaseURL + "/vmmd#warm-snapshot")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
+	}
+	if err := s.snapshotKeysOwned(req.GetInstance(), req.GetStorageKey(), req.GetVmstateStorageKey()); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
 	}
 	if s.diverged.Has(req.GetInstance()) {
 		// Refuse before pausing. The scheduler's warm-capture failure path
@@ -1883,9 +1900,9 @@ func (s *Server) UpdateAppCPULimit(ctx context.Context, req *vmmdpb.UpdateAppCPU
 		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing app_id", "app_id is required").WithDocs(wire.DocsBaseURL + "/vmmd#update-app-cpu-limit")))
 	}
-	if !api.ValidAppCPUMillicores(int(req.GetCpuMillicores())) {
+	if !api.ValidAnyAppCPUCeilingMillicores(int(req.GetCpuMillicores())) {
 		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
-			"Invalid CPU limit", "cpu_millicores must be 250, 500, or 1000").WithDocs(wire.DocsBaseURL + "/vmmd#update-app-cpu-limit")))
+			"Invalid CPU limit", "cpu_millicores must be 250, 500, or a whole number of cores up to a plan's burst ceiling").WithDocs(wire.DocsBaseURL + "/vmmd#update-app-cpu-limit")))
 	}
 	if req.GetRevision() <= 0 {
 		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
@@ -1921,7 +1938,7 @@ func (s *Server) UpdatePrivateNetwork(ctx context.Context, req *vmmdpb.UpdatePri
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	firewallRules, firewallErr := toPrivateNetworkFirewallRules(req.GetPrivateNetworkFirewallRules(), cidrs)
+	firewallRules, firewallErr := toPrivateNetworkFirewallRules(req.GetPrivateNetworkFirewallRules(), cidrs, req.GetPrivateNetworkAddress())
 	if firewallErr != nil {
 		return nil, grpcerr.ToStatus(toProblem(firewallErr))
 	}

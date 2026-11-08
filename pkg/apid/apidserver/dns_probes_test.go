@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // withSeams saves and restores the four test seams the
@@ -152,15 +154,18 @@ func TestCheckPointsToGregale_Mismatch(t *testing.T) {
 }
 
 func TestCheckPointsToGregale_NoCNAME(t *testing.T) {
-	withSeams(t, nil, nil, nil, "edge.gregale.dev")
+	missing := func(context.Context, string) ([]string, error) {
+		return nil, &net.DNSError{IsNotFound: true}
+	}
+	withSeams(t, missing, missing, nil, "edge.gregale.dev")
 	prevCNAME := cnameLookupFunc
 	t.Cleanup(func() { cnameLookupFunc = prevCNAME })
 	cnameLookupFunc = func(_ context.Context, _ string) (string, error) {
 		return "", &net.DNSError{Err: "no such host", IsNotFound: true}
 	}
 	res := checkPointsToGregale(context.Background(), "api.example.com")
-	if res.Status != probeNA {
-		t.Fatalf("status = %q, want na", res.Status)
+	if res.Status != probeFail {
+		t.Fatalf("status = %q, want fail for missing CNAME and addresses", res.Status)
 	}
 }
 
@@ -223,6 +228,7 @@ func TestCheckAAAAConflict_OK(t *testing.T) {
 }
 
 func TestCheckAAAAConflict_StrayAAAA(t *testing.T) {
+	t.Setenv("FAAS_CUSTOM_DOMAIN_ADDRESSES", "2001:db8::2")
 	withSeams(t, nil,
 		func(_ context.Context, _ string) ([]string, error) { return []string{"2001:db8::1"}, nil },
 		nil, "")
@@ -238,6 +244,48 @@ func TestCheckAAAAConflict_StrayAAAA(t *testing.T) {
 	}
 }
 
+func TestCheckAAAAConflictWithoutConfiguredAddressesIsPending(t *testing.T) {
+	t.Setenv("FAAS_CUSTOM_DOMAIN_ADDRESSES", "")
+	withSeams(t, nil, staticLookup("2001:db8::1"), nil, "gregale.dev")
+	if got := checkAAAAConflict(t.Context(), "api.example.com"); got.Status != probePending || got.Remediation != "" {
+		t.Fatalf("unconfigured edge address: %+v", got)
+	}
+}
+
+func TestWildcardRoutingRetriesFixedProbeOverride(t *testing.T) {
+	t.Setenv("FAAS_CUSTOM_DOMAIN_TARGET", "edge.gregale.dev")
+	t.Setenv("FAAS_CUSTOM_DOMAIN_ADDRESSES", "")
+	fixed := "gregale-wildcard-check.example.com"
+	previous := cnameLookupFunc
+	t.Cleanup(func() { cnameLookupFunc = previous })
+	cnameLookupFunc = func(_ context.Context, name string) (string, error) {
+		if name == fixed {
+			return "elsewhere.example.", nil
+		}
+		return "edge.gregale.dev.", nil
+	}
+	result, host := checkDomainRouting(t.Context(), "*.example.com")
+	if result.Status != probeOK || host == fixed || !strings.HasSuffix(host, ".example.com") {
+		t.Fatalf("wildcard DNS retry: result=%+v host=%q", result, host)
+	}
+	cnameLookupFunc = func(context.Context, string) (string, error) { return "elsewhere.example.", nil }
+	if result, _ := checkDomainRouting(t.Context(), "*.example.com"); result.Status != probeFail {
+		t.Fatalf("actual wildcard mismatch: %+v", result)
+	}
+}
+
+func TestDoctorPendingDNSDoesNotRecommendChanges(t *testing.T) {
+	obs := state.DomainDoctorObservation{ObservedAt: time.Now(), CertState: "issued"}
+	report := doctorReportFromObs(state.CustomDomain{Domain: "example.com"}, obs, false)
+	for _, check := range report.Checks {
+		if check.Name == "dns_record" || check.Name == "points_to_gregale" || check.Name == "ipv6_conflict" {
+			if check.Status != "pending" || check.Remediation != "" {
+				t.Fatalf("inconclusive DNS check: %+v", check)
+			}
+		}
+	}
+}
+
 func TestParseCAARecords(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -249,9 +297,9 @@ func TestParseCAARecords(t *testing.T) {
 		{"deny all wins", []string{`0 issue ";"`}, false, `0 issue ";"`},
 		{"issuewild permitted", []string{`0 issuewild "letsencrypt.org"`}, true, `0 issuewild "letsencrypt.org"`},
 		{"empty value is no-op", []string{`0 issue ""`}, false, `0 issue ""`},
-		{"non-recognised tag", []string{`0 iodef "mailto:sec@example.com"`}, false, `0 iodef "mailto:sec@example.com"`},
+		{"reporting does not restrict issuance", []string{`0 iodef "mailto:sec@example.com"`}, true, `0 iodef "mailto:sec@example.com"`},
 		{"quoted with whitespace", []string{`  0   issue    "letsencrypt.org"  `}, true, `0   issue    "letsencrypt.org"`},
-		{"unrelated CAA wins on empty value", []string{`0 issue ";"`, `0 issuewild "letsencrypt.org"`}, true, ""}, // issuewild permits despite issue deny
+		{"issuewild cannot permit a concrete host", []string{`0 issue ";"`, `0 issuewild "letsencrypt.org"`}, false, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -292,7 +340,7 @@ func TestRunProbesParallel_FanOut(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	dnsFound, pointsToG, caa, aaaa := runProbesParallel(ctx, "api.example.com")
+	dnsFound, pointsToG, caa, aaaa, _ := runProbesParallel(ctx, "api.example.com")
 	if dnsFound.Status != probeOK {
 		t.Errorf("dnsFound.status = %q, want ok", dnsFound.Status)
 	}

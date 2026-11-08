@@ -13,9 +13,12 @@ import (
 )
 
 type BindingServiceOptions struct {
-	LeaseDuration       time.Duration
-	ProviderTimeout     time.Duration
-	RetryInterval       time.Duration
+	LeaseDuration   time.Duration
+	ProviderTimeout time.Duration
+	RetryInterval   time.Duration
+	// ProvisioningEnabled gates every binding operation. A binding works on a
+	// database that already exists, so production passes the operations gate
+	// here, not the new-database gate (ADR-20261103091657).
 	ProvisioningEnabled func() bool
 	// ProvisioningAllowed optionally narrows an enabled rollout to specific
 	// accounts. It is intended for staging canaries; deletion remains
@@ -192,6 +195,11 @@ func (s *BindingService) Rotate(ctx context.Context, accountID, bindingID string
 	if err != nil {
 		return Binding{}, err
 	}
+	if binding.Access != CredentialMigration {
+		if _, ok := s.bindings.(BindingRotationRefreshStore); !ok {
+			return Binding{}, ErrUnsupported
+		}
+	}
 	if binding.RotationPreviousGeneration == 0 {
 		if binding.State != BindingStateReady {
 			return Binding{}, ErrConflict
@@ -208,7 +216,7 @@ func (s *BindingService) Rotate(ctx context.Context, accountID, bindingID string
 	case BindingStateProvisioning, BindingStateFailed:
 		return s.Reconcile(ctx, accountID, bindingID)
 	case BindingStateReady, BindingStateRetiring:
-		return binding, nil
+		return s.reconcileRotationRefresh(ctx, binding)
 	default:
 		return Binding{}, ErrConflict
 	}
@@ -294,11 +302,50 @@ func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string
 	if err != nil {
 		return Binding{}, err
 	}
+	return s.deleteBinding(ctx, accountID, binding)
+}
+
+// DeleteEnvironmentCloneTargetBinding revokes a binding on a database a full
+// environment clone restored for its stage (ADR-20261024224230). Once that
+// stage is deleted the database is no longer customer-visible, so the clone's
+// operation names it instead.
+func (s *BindingService) DeleteEnvironmentCloneTargetBinding(ctx context.Context, accountID, bindingID, operationID string) (Binding, error) {
+	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
+	if err != nil {
+		return Binding{}, err
+	}
+	database, err := s.databases.Get(ctx, binding.DatabaseNamespace(), binding.DatabaseID)
+	if err != nil {
+		return Binding{}, err
+	}
+	if operationID == "" || database.EnvironmentCloneOperationID != operationID {
+		return Binding{}, ErrConflict
+	}
+	return s.deleteBinding(ctx, accountID, binding)
+}
+
+// ListEnvironmentCloneTargetBindings lists every binding of a database a full
+// environment clone restored, whether or not its stage still exists.
+func (s *BindingService) ListEnvironmentCloneTargetBindings(ctx context.Context, accountID, databaseID, operationID string) ([]Binding, error) {
+	if accountID == "" || databaseID == "" {
+		return nil, ErrInvalid
+	}
+	database, err := s.databases.Get(ctx, accountID, databaseID)
+	if err != nil {
+		return nil, err
+	}
+	if operationID == "" || database.EnvironmentCloneOperationID != operationID {
+		return nil, ErrConflict
+	}
+	return s.bindings.ListBindings(ctx, accountID, databaseID)
+}
+
+func (s *BindingService) deleteBinding(ctx context.Context, accountID string, binding Binding) (Binding, error) {
 	if binding.State == BindingStateDeleted {
 		return binding, nil
 	}
 	now := s.now()
-	binding, err = s.bindings.ClaimBinding(ctx, accountID, bindingID, s.newLeaseToken(), BindingStateDeleting, now, now.Add(s.leaseDuration))
+	binding, err := s.bindings.ClaimBinding(ctx, accountID, binding.ID, s.newLeaseToken(), BindingStateDeleting, now, now.Add(s.leaseDuration))
 	if err != nil {
 		return Binding{}, err
 	}

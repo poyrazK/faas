@@ -165,6 +165,8 @@ touch them. The tables below map each earlier name.
 | `gregale ai content-policy` | `gregale ai content-policy get` |
 | `gregale ai content-policy` | `gregale ai content-policy set` |
 | `gregale ai quality-alerts` | `gregale ai quality-alert list` |
+| `gregale ai request-policy` | `gregale ai request-policy get` |
+| `gregale ai request-policy` | `gregale ai request-policy set` |
 | `gregale ai tag-limits` | `gregale ai tag-limit get` |
 | `gregale ai tag-limits` | `gregale ai tag-limit set` |
 | `gregale alerts rotate-secret` | `gregale alert secret rotate` |
@@ -205,6 +207,8 @@ touch them. The tables below map each earlier name.
 | `gregale automations recovery-start` | `gregale automation recovery create` |
 | `gregale automations recovery-suppress` | `gregale automation recovery suppress` |
 | `gregale billing budget-preview` | `gregale billing budgets create --dry-run` |
+| `gregale billing egress-overage` | `gregale billing egress-overage get` |
+| `gregale billing egress-overage` | `gregale billing egress-overage set` |
 | `gregale billing payment-method` | `gregale billing payment-method get` |
 | `gregale billing portal` | `gregale billing portal open` |
 | `gregale bindings probe-policy` | `gregale app binding probe-policy set` |
@@ -277,6 +281,7 @@ touch them. The tables below map each earlier name.
 | `gregale customer-operations retry-delivery` | `gregale operation delivery retry` |
 | `gregale data-api dev` | `gregale data-api serve` |
 | `gregale data-api fixture build` | `gregale data-api fixture export` |
+| `gregale data-api hooks sql` | `gregale data-api hooks export` |
 | `gregale data-api migration guide` | `gregale data-api migration explain` |
 | `gregale data-api migration preview` | `gregale data-api migration check` |
 | `gregale data-api rotation preflight` | `gregale data-api rotation check` |
@@ -297,9 +302,11 @@ touch them. The tables below map each earlier name.
 | `gregale deploy retry` | `gregale release attempt retry` |
 | `gregale deploy status` | `gregale release attempt get` |
 | `gregale deployment diff` | `gregale release diff` |
+| `gregale deployment resolve` | `gregale release resolve` |
 | `gregale deployment runtime` | `gregale release runtime` |
 | `gregale deployment status` | `gregale release status` |
 | `gregale deployment summary` | `gregale release summary` |
+| `gregale deployment timeline` | `gregale release timeline` |
 | `gregale deployment wait` | `gregale release wait` |
 | `gregale deployments alias` | `gregale release alias` |
 | `gregale deploys cancel` | `gregale release cancel` |
@@ -410,18 +417,25 @@ touch them. The tables below map each earlier name.
 | `gregale invitations peek` | `gregale org invitation peek` |
 | `gregale issues bulk` | `gregale debug issue update --issues <ISSUES>` |
 | `gregale issues compare-releases` | `gregale debug issue releases compare` |
-| `gregale issues compound-alerts` | `gregale debug issue compound-alert get` |
-| `gregale issues compound-alerts` | `gregale debug issue compound-alert set` |
+| `gregale issues compound-alerts get` | `gregale debug issue compound-alert get` |
+| `gregale issues compound-alerts preview` | `gregale debug issue compound-alert set --dry-run` |
+| `gregale issues compound-alerts remove` | `gregale debug issue compound-alert delete` |
+| `gregale issues compound-alerts save` | `gregale debug issue compound-alert set` |
+| `gregale issues compound-alerts` | `gregale debug issue compound-alert` |
 | `gregale issues create-token` | `gregale debug issue token create` |
 | `gregale issues impact-alert` | `gregale debug issue impact-alert get` |
 | `gregale issues impact-alert` | `gregale debug issue impact-alert set` |
-| `gregale issues lifecycle-alerts` | `gregale debug issue lifecycle-alert get` |
-| `gregale issues lifecycle-alerts` | `gregale debug issue lifecycle-alert set` |
+| `gregale issues lifecycle-alerts get` | `gregale debug issue lifecycle-alert get` |
+| `gregale issues lifecycle-alerts preview` | `gregale debug issue lifecycle-alert set --dry-run` |
+| `gregale issues lifecycle-alerts save` | `gregale debug issue lifecycle-alert set` |
+| `gregale issues lifecycle-alerts` | `gregale debug issue lifecycle-alert` |
 | `gregale issues ownership-rules` | `gregale debug issue ownership-rule get` |
 | `gregale issues ownership-rules` | `gregale debug issue ownership-rule set` |
 | `gregale issues revoke-token` | `gregale debug issue token revoke` |
-| `gregale issues source-maps` | `gregale debug issue source-map get` |
-| `gregale issues source-maps` | `gregale debug issue source-map publish` |
+| `gregale issues source-maps publish` | `gregale debug issue source-map publish` |
+| `gregale issues source-maps retire` | `gregale debug issue source-map retire` |
+| `gregale issues source-maps status` | `gregale debug issue source-map get` |
+| `gregale issues source-maps` | `gregale debug issue source-map` |
 | `gregale jobs artifact-download` | `gregale job artifact download` |
 | `gregale jobs artifact-url` | `gregale job artifact get` |
 | `gregale jobs next` | `gregale job get --next` |
@@ -459,6 +473,7 @@ touch them. The tables below map each earlier name.
 | `gregale operations policy list` | `gregale job lock-policy list` |
 | `gregale operations policy retire` | `gregale job lock-policy delete` |
 | `gregale operations policy upsert` | `gregale job lock-policy set` |
+| `gregale orgs agent-policy` | `gregale org agent policy` |
 | `gregale orgs invitations list-all` | `gregale org invitation list --all` |
 | `gregale orgs invitations` | `gregale org invitation` |
 | `gregale orgs members change-role` | `gregale org members update` |
@@ -497,6 +512,11 @@ touch them. The tables below map each earlier name.
 | `gregale platform-tenants trial-end` | `gregale api tenant trial end` |
 | `gregale platform-tenants trial-set` | `gregale api tenant trial set` |
 | `gregale platform-tenants trial` | `gregale api tenant trial get` |
+| `gregale postgres compute-policy-status` | `gregale postgres compute-policy status` |
+| `gregale postgres compute-policy` | `gregale postgres compute-policy set` |
+| `gregale postgres overage` | `gregale postgres overage get` |
+| `gregale postgres overage` | `gregale postgres overage set` |
+| `gregale postgres resize-status` | `gregale postgres resize status` |
 | `gregale previews join` | `gregale feature join` |
 | `gregale previews leave` | `gregale feature leave` |
 | `gregale projects environments abort` | `gregale environment cancel` |
@@ -516,6 +536,7 @@ touch them. The tables below map each earlier name.
 | `gregale projects environments release-sets stage` | `gregale environment release-sets stage create` |
 | `gregale projects environments release-sets verification-runs` | `gregale environment release-sets verification` |
 | `gregale projects environments` | `gregale environment` |
+| `gregale projects preview-secrets` | `gregale project preview secret` |
 | `gregale queue dead-letter` | `gregale queue dlq list` |
 | `gregale queue tail` | `gregale queue watch` |
 | `gregale realtime drain-status` | `gregale realtime drain status` |

@@ -253,6 +253,105 @@ func (x *MatchCredentialResponse) GetMatch() bool {
 	return false
 }
 
+type VerifySessionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// cookie is the session cookie's value as the browser sent it.
+	Cookie        string `protobuf:"bytes,1,opt,name=cookie,proto3" json:"cookie,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifySessionRequest) Reset() {
+	*x = VerifySessionRequest{}
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifySessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifySessionRequest) ProtoMessage() {}
+
+func (x *VerifySessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifySessionRequest.ProtoReflect.Descriptor instead.
+func (*VerifySessionRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_auth_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *VerifySessionRequest) GetCookie() string {
+	if x != nil {
+		return x.Cookie
+	}
+	return ""
+}
+
+type VerifySessionResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Valid bool                   `protobuf:"varint,1,opt,name=valid,proto3" json:"valid,omitempty"`
+	// envelope is the session envelope's JSON (pkg/session.Envelope), set
+	// when valid. JSON keeps new envelope fields off this message.
+	Envelope      []byte `protobuf:"bytes,2,opt,name=envelope,proto3" json:"envelope,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifySessionResponse) Reset() {
+	*x = VerifySessionResponse{}
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifySessionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifySessionResponse) ProtoMessage() {}
+
+func (x *VerifySessionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifySessionResponse.ProtoReflect.Descriptor instead.
+func (*VerifySessionResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_auth_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *VerifySessionResponse) GetValid() bool {
+	if x != nil {
+		return x.Valid
+	}
+	return false
+}
+
+func (x *VerifySessionResponse) GetEnvelope() []byte {
+	if x != nil {
+		return x.Envelope
+	}
+	return nil
+}
+
 type AuthenticateCredentialRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Kind  CredentialKind         `protobuf:"varint,1,opt,name=kind,proto3,enum=onebox.faas.apid.v1.CredentialKind" json:"kind,omitempty"`
@@ -265,7 +364,7 @@ type AuthenticateCredentialRequest struct {
 
 func (x *AuthenticateCredentialRequest) Reset() {
 	*x = AuthenticateCredentialRequest{}
-	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[2]
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -277,7 +376,7 @@ func (x *AuthenticateCredentialRequest) String() string {
 func (*AuthenticateCredentialRequest) ProtoMessage() {}
 
 func (x *AuthenticateCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[2]
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -290,7 +389,7 @@ func (x *AuthenticateCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthenticateCredentialRequest.ProtoReflect.Descriptor instead.
 func (*AuthenticateCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_auth_proto_rawDescGZIP(), []int{2}
+	return file_onebox_faas_apid_v1_auth_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *AuthenticateCredentialRequest) GetKind() CredentialKind {
@@ -322,7 +421,7 @@ type AuthenticateCredentialResponse struct {
 
 func (x *AuthenticateCredentialResponse) Reset() {
 	*x = AuthenticateCredentialResponse{}
-	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[3]
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -334,7 +433,7 @@ func (x *AuthenticateCredentialResponse) String() string {
 func (*AuthenticateCredentialResponse) ProtoMessage() {}
 
 func (x *AuthenticateCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[3]
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -347,7 +446,7 @@ func (x *AuthenticateCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthenticateCredentialResponse.ProtoReflect.Descriptor instead.
 func (*AuthenticateCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_auth_proto_rawDescGZIP(), []int{3}
+	return file_onebox_faas_apid_v1_auth_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *AuthenticateCredentialResponse) GetOutcome() CredentialOutcome {
@@ -389,7 +488,7 @@ type AuthenticateKeyRequest struct {
 
 func (x *AuthenticateKeyRequest) Reset() {
 	*x = AuthenticateKeyRequest{}
-	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[4]
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -401,7 +500,7 @@ func (x *AuthenticateKeyRequest) String() string {
 func (*AuthenticateKeyRequest) ProtoMessage() {}
 
 func (x *AuthenticateKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[4]
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -414,7 +513,7 @@ func (x *AuthenticateKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthenticateKeyRequest.ProtoReflect.Descriptor instead.
 func (*AuthenticateKeyRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_auth_proto_rawDescGZIP(), []int{4}
+	return file_onebox_faas_apid_v1_auth_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *AuthenticateKeyRequest) GetToken() string {
@@ -435,15 +534,23 @@ type AuthenticateKeyResponse struct {
 	// "unknown customer" and drops the batch).
 	AccountId string `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
 	// plan — api.Plan string ("free"/"hobby"/"pro"/"scale").
-	// Empty when outcome != "ok".
-	Plan          string `protobuf:"bytes,2,opt,name=plan,proto3" json:"plan,omitempty"`
+	// Empty when outcome != "ok". For a key bound to a company
+	// organization that owns its resources, the organization's plan.
+	Plan string `protobuf:"bytes,2,opt,name=plan,proto3" json:"plan,omitempty"`
+	// app_id — set when the credential is bound to one app: its spans
+	// merge only into that app's request rows.
+	AppId string `protobuf:"bytes,3,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	// org_id — set when the key is bound to a company organization: its
+	// spans merge into rows of that organization's apps, whoever created
+	// them, instead of rows of the holder's own apps.
+	OrgId         string `protobuf:"bytes,4,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AuthenticateKeyResponse) Reset() {
 	*x = AuthenticateKeyResponse{}
-	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[5]
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -455,7 +562,7 @@ func (x *AuthenticateKeyResponse) String() string {
 func (*AuthenticateKeyResponse) ProtoMessage() {}
 
 func (x *AuthenticateKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[5]
+	mi := &file_onebox_faas_apid_v1_auth_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -468,7 +575,7 @@ func (x *AuthenticateKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthenticateKeyResponse.ProtoReflect.Descriptor instead.
 func (*AuthenticateKeyResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_auth_proto_rawDescGZIP(), []int{5}
+	return file_onebox_faas_apid_v1_auth_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AuthenticateKeyResponse) GetAccountId() string {
@@ -485,6 +592,20 @@ func (x *AuthenticateKeyResponse) GetPlan() string {
 	return ""
 }
 
+func (x *AuthenticateKeyResponse) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *AuthenticateKeyResponse) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
 var File_onebox_faas_apid_v1_auth_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_auth_proto_rawDesc = "" +
@@ -495,7 +616,12 @@ const file_onebox_faas_apid_v1_auth_proto_rawDesc = "" +
 	"\x06stored\x18\x02 \x01(\fR\x06stored\x12\x16\n" +
 	"\x06sha256\x18\x03 \x01(\fR\x06sha256\"/\n" +
 	"\x17MatchCredentialResponse\x12\x14\n" +
-	"\x05match\x18\x01 \x01(\bR\x05match\"p\n" +
+	"\x05match\x18\x01 \x01(\bR\x05match\".\n" +
+	"\x14VerifySessionRequest\x12\x16\n" +
+	"\x06cookie\x18\x01 \x01(\tR\x06cookie\"I\n" +
+	"\x15VerifySessionResponse\x12\x14\n" +
+	"\x05valid\x18\x01 \x01(\bR\x05valid\x12\x1a\n" +
+	"\benvelope\x18\x02 \x01(\fR\benvelope\"p\n" +
 	"\x1dAuthenticateCredentialRequest\x127\n" +
 	"\x04kind\x18\x01 \x01(\x0e2#.onebox.faas.apid.v1.CredentialKindR\x04kind\x12\x16\n" +
 	"\x06sha256\x18\x02 \x01(\fR\x06sha256\"\xa0\x01\n" +
@@ -504,11 +630,13 @@ const file_onebox_faas_apid_v1_auth_proto_rawDesc = "" +
 	"\faccount_json\x18\x02 \x01(\fR\vaccountJson\x12\x19\n" +
 	"\bkey_json\x18\x03 \x01(\fR\akeyJson\".\n" +
 	"\x16AuthenticateKeyRequest\x12\x14\n" +
-	"\x05token\x18\x01 \x01(\tR\x05token\"L\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\"z\n" +
 	"\x17AuthenticateKeyResponse\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x12\n" +
-	"\x04plan\x18\x02 \x01(\tR\x04plan*o\n" +
+	"\x04plan\x18\x02 \x01(\tR\x04plan\x12\x15\n" +
+	"\x06app_id\x18\x03 \x01(\tR\x05appId\x12\x15\n" +
+	"\x06org_id\x18\x04 \x01(\tR\x05orgId*o\n" +
 	"\x0eCredentialKind\x12\x1f\n" +
 	"\x1bCREDENTIAL_KIND_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17CREDENTIAL_KIND_API_KEY\x10\x01\x12\x1f\n" +
@@ -518,11 +646,12 @@ const file_onebox_faas_apid_v1_auth_proto_rawDesc = "" +
 	"\x15CREDENTIAL_OUTCOME_OK\x10\x01\x12 \n" +
 	"\x1cCREDENTIAL_OUTCOME_NOT_FOUND\x10\x02\x12\x1e\n" +
 	"\x1aCREDENTIAL_OUTCOME_EXPIRED\x10\x03\x12\x1e\n" +
-	"\x1aCREDENTIAL_OUTCOME_REVOKED\x10\x042\xe6\x02\n" +
+	"\x1aCREDENTIAL_OUTCOME_REVOKED\x10\x042\xce\x03\n" +
 	"\x04Auth\x12l\n" +
 	"\x0fAuthenticateKey\x12+.onebox.faas.apid.v1.AuthenticateKeyRequest\x1a,.onebox.faas.apid.v1.AuthenticateKeyResponse\x12\x81\x01\n" +
 	"\x16AuthenticateCredential\x122.onebox.faas.apid.v1.AuthenticateCredentialRequest\x1a3.onebox.faas.apid.v1.AuthenticateCredentialResponse\x12l\n" +
-	"\x0fMatchCredential\x12+.onebox.faas.apid.v1.MatchCredentialRequest\x1a,.onebox.faas.apid.v1.MatchCredentialResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
+	"\x0fMatchCredential\x12+.onebox.faas.apid.v1.MatchCredentialRequest\x1a,.onebox.faas.apid.v1.MatchCredentialResponse\x12f\n" +
+	"\rVerifySession\x12).onebox.faas.apid.v1.VerifySessionRequest\x1a*.onebox.faas.apid.v1.VerifySessionResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
 
 var (
 	file_onebox_faas_apid_v1_auth_proto_rawDescOnce sync.Once
@@ -537,28 +666,32 @@ func file_onebox_faas_apid_v1_auth_proto_rawDescGZIP() []byte {
 }
 
 var file_onebox_faas_apid_v1_auth_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_onebox_faas_apid_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_onebox_faas_apid_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_onebox_faas_apid_v1_auth_proto_goTypes = []any{
 	(CredentialKind)(0),                    // 0: onebox.faas.apid.v1.CredentialKind
 	(CredentialOutcome)(0),                 // 1: onebox.faas.apid.v1.CredentialOutcome
 	(*MatchCredentialRequest)(nil),         // 2: onebox.faas.apid.v1.MatchCredentialRequest
 	(*MatchCredentialResponse)(nil),        // 3: onebox.faas.apid.v1.MatchCredentialResponse
-	(*AuthenticateCredentialRequest)(nil),  // 4: onebox.faas.apid.v1.AuthenticateCredentialRequest
-	(*AuthenticateCredentialResponse)(nil), // 5: onebox.faas.apid.v1.AuthenticateCredentialResponse
-	(*AuthenticateKeyRequest)(nil),         // 6: onebox.faas.apid.v1.AuthenticateKeyRequest
-	(*AuthenticateKeyResponse)(nil),        // 7: onebox.faas.apid.v1.AuthenticateKeyResponse
+	(*VerifySessionRequest)(nil),           // 4: onebox.faas.apid.v1.VerifySessionRequest
+	(*VerifySessionResponse)(nil),          // 5: onebox.faas.apid.v1.VerifySessionResponse
+	(*AuthenticateCredentialRequest)(nil),  // 6: onebox.faas.apid.v1.AuthenticateCredentialRequest
+	(*AuthenticateCredentialResponse)(nil), // 7: onebox.faas.apid.v1.AuthenticateCredentialResponse
+	(*AuthenticateKeyRequest)(nil),         // 8: onebox.faas.apid.v1.AuthenticateKeyRequest
+	(*AuthenticateKeyResponse)(nil),        // 9: onebox.faas.apid.v1.AuthenticateKeyResponse
 }
 var file_onebox_faas_apid_v1_auth_proto_depIdxs = []int32{
 	0, // 0: onebox.faas.apid.v1.AuthenticateCredentialRequest.kind:type_name -> onebox.faas.apid.v1.CredentialKind
 	1, // 1: onebox.faas.apid.v1.AuthenticateCredentialResponse.outcome:type_name -> onebox.faas.apid.v1.CredentialOutcome
-	6, // 2: onebox.faas.apid.v1.Auth.AuthenticateKey:input_type -> onebox.faas.apid.v1.AuthenticateKeyRequest
-	4, // 3: onebox.faas.apid.v1.Auth.AuthenticateCredential:input_type -> onebox.faas.apid.v1.AuthenticateCredentialRequest
+	8, // 2: onebox.faas.apid.v1.Auth.AuthenticateKey:input_type -> onebox.faas.apid.v1.AuthenticateKeyRequest
+	6, // 3: onebox.faas.apid.v1.Auth.AuthenticateCredential:input_type -> onebox.faas.apid.v1.AuthenticateCredentialRequest
 	2, // 4: onebox.faas.apid.v1.Auth.MatchCredential:input_type -> onebox.faas.apid.v1.MatchCredentialRequest
-	7, // 5: onebox.faas.apid.v1.Auth.AuthenticateKey:output_type -> onebox.faas.apid.v1.AuthenticateKeyResponse
-	5, // 6: onebox.faas.apid.v1.Auth.AuthenticateCredential:output_type -> onebox.faas.apid.v1.AuthenticateCredentialResponse
-	3, // 7: onebox.faas.apid.v1.Auth.MatchCredential:output_type -> onebox.faas.apid.v1.MatchCredentialResponse
-	5, // [5:8] is the sub-list for method output_type
-	2, // [2:5] is the sub-list for method input_type
+	4, // 5: onebox.faas.apid.v1.Auth.VerifySession:input_type -> onebox.faas.apid.v1.VerifySessionRequest
+	9, // 6: onebox.faas.apid.v1.Auth.AuthenticateKey:output_type -> onebox.faas.apid.v1.AuthenticateKeyResponse
+	7, // 7: onebox.faas.apid.v1.Auth.AuthenticateCredential:output_type -> onebox.faas.apid.v1.AuthenticateCredentialResponse
+	3, // 8: onebox.faas.apid.v1.Auth.MatchCredential:output_type -> onebox.faas.apid.v1.MatchCredentialResponse
+	5, // 9: onebox.faas.apid.v1.Auth.VerifySession:output_type -> onebox.faas.apid.v1.VerifySessionResponse
+	6, // [6:10] is the sub-list for method output_type
+	2, // [2:6] is the sub-list for method input_type
 	2, // [2:2] is the sub-list for extension type_name
 	2, // [2:2] is the sub-list for extension extendee
 	0, // [0:2] is the sub-list for field type_name
@@ -575,7 +708,7 @@ func file_onebox_faas_apid_v1_auth_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_apid_v1_auth_proto_rawDesc), len(file_onebox_faas_apid_v1_auth_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

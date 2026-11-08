@@ -52,7 +52,7 @@ func newCreditRefundPolar(t *testing.T) (*httptest.Server, func() int) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/":
-			_, _ = w.Write([]byte(`{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false}}]}`))
+			_, _ = w.Write([]byte(`{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"},"customer_portal_settings":{"subscription":{"update_plan":false}}}]}`))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/products/"):
 			id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
 			plan, ok := map[string]api.Plan{"hobby-product": api.PlanHobby, "pro-product": api.PlanPro, "scale-product": api.PlanScale}[id]
@@ -61,7 +61,7 @@ func newCreditRefundPolar(t *testing.T) (*httptest.Server, func() int) {
 				return
 			}
 			fixedCents := api.MustLimitsFor(plan).PriceMillicents / 1000
-			_, _ = fmt.Fprintf(w, `{"id":%q,"recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":%q,"price_amount":%d,"is_archived":false},{"amount_type":"metered_unit","price_currency":%q,"unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`, id, api.BillingCurrencyLower, fixedCents, api.BillingCurrencyLower)
+			_, _ = fmt.Fprintf(w, `{"id":%q,"recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":%q,"price_amount":%d,"is_archived":false},{"amount_type":"metered_unit","price_currency":%q,"unit_amount":"5","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`, id, api.BillingCurrencyLower, fixedCents, api.BillingCurrencyLower)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/meters/meter-1":
 			_, _ = fmt.Fprint(w, `{"id":"meter-1","unit":"scalar","archived_at":null,"filter":{"conjunction":"and","clauses":[{"property":"name","operator":"eq","value":"ram_usage"}]},"aggregation":{"func":"sum","property":"gb_ram_hours"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/refunds":

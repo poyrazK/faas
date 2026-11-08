@@ -2,13 +2,14 @@ package api
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var operationWorkflowName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+var operationWorkflowName = lazyregexp.New(`^[a-z][a-z0-9-]{0,62}$`)
 
 // OperationWorkflowStateStaleAfterMaxSeconds bounds app-declared state age
 // thresholds while allowing long-running business workflows.
@@ -57,7 +58,7 @@ type OperationWorkflowTransition struct {
 	RequiredMilestones             []string                                             `json:"required_milestones,omitempty"`
 }
 
-var operationWorkflowStateName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+var operationWorkflowStateName = lazyregexp.New(`^[a-z][a-z0-9-]{0,63}$`)
 
 func ValidateOperationWorkflowName(value string) error {
 	if len(value) == 0 || len(value) > OperationWorkflowNameMaxBytes || !operationWorkflowName.MatchString(value) {

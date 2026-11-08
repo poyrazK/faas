@@ -14,12 +14,14 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -51,10 +53,15 @@ type Config struct {
 	OpenSecret     func([]byte) (string, error)
 	HTTPClient     *http.Client
 	Enabled        func() bool
-	Host           string
-	Region         string
-	SpoolDir       string
-	MaxPutBytes    int64
+	// Fenced reports a closed object storage restore fence
+	// (ADR-20261025111015): the database was restored, so keys it revoked
+	// may be valid again. Every request is refused while it is closed,
+	// including the deletes Enabled leaves open (bug hunt 33).
+	Fenced      func() bool
+	Host        string
+	Region      string
+	SpoolDir    string
+	MaxPutBytes int64
 	// UploadGrants serves ?gregale-upload= grant uploads. Nothing issues
 	// grants yet, so the path stays off: an unauthenticated request then never
 	// reaches the grant store, and a stray grant row authorizes nothing.
@@ -80,6 +87,10 @@ type Config struct {
 	OrgAccess      *objectstorage.OrgAccessCache
 	AccountLimiter *objectstorage.AccountRequestLimiter
 	Credentials    *CredentialCache
+	// Transfers paces request and object response bodies to the gateway's
+	// share of its node's port; nil leaves them unpaced
+	// (ADR-20261031122757 §3).
+	Transfers *objectstorage.TransferLimiter
 }
 
 type Handler struct {
@@ -91,9 +102,11 @@ type Handler struct {
 	orgAccess       *objectstorage.OrgAccessCache
 	credentials     *CredentialCache
 	accountLimiter  *objectstorage.AccountRequestLimiter
+	transfers       *objectstorage.TransferLimiter
 	openSecret      func([]byte) (string, error)
 	client          *http.Client
 	enabled         func() bool
+	fenced          func() bool
 	host            string
 	region          string
 	spoolDir        string
@@ -102,6 +115,7 @@ type Handler struct {
 	putSlots        chan struct{}
 	slotMu          sync.Mutex
 	accountSlots    map[string]int
+	slotFreed       chan struct{}
 	maxSpoolBytes   int64
 	minSpoolFree    int64
 	transferTimeout time.Duration
@@ -183,6 +197,9 @@ func New(c Config) (*Handler, error) {
 	if c.Enabled == nil {
 		c.Enabled = func() bool { return true }
 	}
+	if c.Fenced == nil {
+		c.Fenced = func() bool { return false }
+	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
 	}
@@ -190,9 +207,9 @@ func New(c Config) (*Handler, error) {
 		c.Log = slog.Default()
 	}
 	return &Handler{
-		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, orgAccess: c.OrgAccess, credentials: c.Credentials, accountLimiter: c.AccountLimiter, openSecret: c.OpenSecret, client: c.HTTPClient,
+		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, orgAccess: c.OrgAccess, credentials: c.Credentials, accountLimiter: c.AccountLimiter, transfers: c.Transfers, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
-		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
+		enabled:        c.Enabled, fenced: c.Fenced, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
 		maxSpoolBytes: c.MaxSpoolBytes, minSpoolFree: c.MinSpoolFreeBytes,
 		transferTimeout: c.Registry.TransferTimeout(),
@@ -272,13 +289,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.setTransferDeadlines(w, ctx)
 	if r.Body != nil && r.Body != http.NoBody {
 		deadline, _ := ctx.Deadline()
-		r.Body = newProgressBody(w, r.Body, deadline)
+		r.Body = newProgressBody(w, h.transfers.ReadCloser(ctx, r.Body, objectstorage.TransferUpload), deadline)
 	}
 	requestID := strings.ReplaceAll(uuid.NewString(), "-", "")
 	w.Header().Set("Server", "Gregale")
 	w.Header().Set("x-amz-request-id", requestID)
+	// Every answer here is per credential or per signed URL. Cloudflare reads
+	// this header and clients do not, so an object's own Cache-Control still
+	// reaches the client while the edge never keeps a private response past
+	// its URL's expiry or the object's deletion.
+	w.Header().Set("Cloudflare-CDN-Cache-Control", "no-store")
 	if strings.ToLower(r.Host) != h.host {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Use the configured Gregale S3 endpoint with path-style addressing.", r.URL.Path, requestID)
+		return
+	}
+	// A closed restore fence refuses everything, before CORS, signatures and
+	// the pre-routes: a key the restore un-revoked must not delete objects
+	// or versions the restored database cannot bring back.
+	if h.fenced() {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale Object Storage is temporarily unavailable.", r.URL.Path, requestID)
 		return
 	}
 	if h.handleCORS(w, r, requestID) {
@@ -327,11 +356,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
+	if presigned && applyPresignedObjectHeaders(r) != nil {
+		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "The signed object request fields are invalid or ambiguous.", r.URL.Path, requestID)
+		return
+	}
 	if h.accountLimiter != nil && !h.accountLimiter.Allow(bucket) {
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, requestID)
 		return
 	}
 	if !h.applyBucketCORS(w, r, bucket, requestID) || !h.boundURLRequest(w, r, credential, bucket, requestID) {
+		return
+	}
+	// A key-scoped binding is checked before every route (ADR-20261106114500).
+	if !keyScopeAllows(r, credential, bucket) {
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access Denied.", r.URL.Path, requestID)
 		return
 	}
 	if h.routeWriteReceipt(w, r, requestContext{requestID: requestID, credential: credential, bucket: bucket, signature: parsed}) {
@@ -386,6 +424,10 @@ func (h *Handler) touchCredential(ctx context.Context, credentialID string) {
 	}
 	h.lastTouch[credentialID] = now
 	h.touchMu.Unlock()
+	// The request's own deadline is the whole transfer budget; a stalled
+	// database must not hold the request that long for a last-used stamp.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ObjectCredentialTouchTimeout)
+	defer cancel()
 	if err := h.store.TouchObjectS3Credential(ctx, credentialID, now); err != nil {
 		h.log.Warn("S3 credential last-used update failed", "credential_id", credentialID)
 	}
@@ -414,6 +456,12 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, req requestConte
 	}
 	if !hasBucket {
 		if r.Method == http.MethodGet && len(query) == 0 && h.can(req.credential, state.ObjectBucketPermissionRead) {
+			// Bucket-level reads are admitted like listings: over the monthly
+			// limits, or behind a revoked organization fence, they are refused
+			// as every other non-delete request is (bug hunt 33).
+			if !h.admit(w, r, req, "__list__", 0, false) {
+				return
+			}
 			writeS3XML(w, http.StatusOK, req.requestID, listAllMyBucketsResult{XMLNS: s3XMLNamespace, Buckets: listBucketsBody{Buckets: []listBucket{{Name: req.bucket.Name, CreationDate: req.bucket.CreatedAt.UTC().Format(time.RFC3339)}}}})
 			return
 		}
@@ -492,14 +540,14 @@ func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req reques
 		return
 	}
 	if r.Method == http.MethodHead && len(query) == 0 {
-		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
+		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.admit(w, r, req, "__list__", 0, false) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	if r.Method == http.MethodGet && query.Has("location") {
-		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
+		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.admit(w, r, req, "__list__", 0, false) {
 			return
 		}
 		writeS3XML(w, http.StatusOK, req.requestID, struct {
@@ -681,7 +729,10 @@ const bucketSettingsPermission = "bucket_settings"
 
 func (h *Handler) can(credential state.ObjectS3Credential, permission string) bool {
 	if permission == bucketSettingsPermission {
-		return credential.Permission == state.ObjectBucketPermissionReadWrite && credential.ManagedAppID == ""
+		// A rotation stage keeps a compute binding's previous key without
+		// the binding's app ID; it is still a compute key.
+		return credential.Permission == state.ObjectBucketPermissionReadWrite && credential.ManagedAppID == "" &&
+			credential.RotationParentID == "" && credential.KeyPrefix == ""
 	}
 	return credential.Permission == permission || credential.Permission == state.ObjectBucketPermissionReadWrite
 }
@@ -735,7 +786,10 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 		if errors.Is(err, state.ErrOrgAccessRevoked) {
 			status, code, message = http.StatusForbidden, "AccessDenied", "The storage credential is no longer authorized."
 		} else if errors.Is(err, state.ErrObjectBudget) {
-			status, code, message = http.StatusPaymentRequired, "AccountProblem", "The object storage safety budget has been reached."
+			status, code, message = http.StatusPaymentRequired, "AccountProblem", objectBudgetMessage(err)
+		} else if limit := (*state.ObjectStorageLimitError)(nil); errors.As(err, &limit) && limit.Kind == "account_bytes" && errors.Is(err, state.ErrObjectCapacity) {
+			// ADR-20261101214152: the account's ceiling, which support can raise.
+			status, code, message = http.StatusConflict, "OperationAborted", fmt.Sprintf("The account would store more than its object storage ceiling: limit %d bytes, observed %d. Delete objects, or ask support for a higher ceiling. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 		} else if errors.Is(err, state.ErrObjectCapacity) {
 			status, code, message = http.StatusConflict, "OperationAborted", "The object storage capacity reservation would be exceeded."
 		} else if errors.Is(err, state.ErrConflict) {
@@ -745,6 +799,21 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 		return false
 	}
 	return true
+}
+
+// objectBudgetMessage names the monthly limit an account reached, its value
+// and the usage that reached it, as every limit error must.
+func objectBudgetMessage(err error) string {
+	var limit *state.ObjectStorageLimitError
+	if !errors.As(err, &limit) {
+		return "The object storage safety budget has been reached."
+	}
+	if limit.Kind == "account_bytes" {
+		// ADR-20261101214152: downloads stop while the account stores more
+		// than its plan's ceiling; listing, HEAD and DELETE still work.
+		return fmt.Sprintf("The account stores more than its object storage ceiling: limit %d bytes, observed %d. Delete objects to download again, or ask support for a higher ceiling. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
+	}
+	return fmt.Sprintf("The account reached its object storage %s limit for the month: limit %d, observed %d. See %s.", limit.Kind, limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 }
 
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
@@ -790,6 +859,13 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requ
 	}
 	request, ok := h.readDeleteObjects(w, r, req)
 	if !ok {
+		return
+	}
+	// The operator kill switch leaves cleanup deletes open, but not a
+	// permanent version delete: DELETE ?versionId is refused, and a bulk
+	// delete that names versions is refused the same way (bug hunt 33).
+	if !h.enabled() && slices.ContainsFunc(request.Objects, func(o deleteObjectTarget) bool { return o.VersionID != "" }) {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale Object Storage is temporarily disabled.", r.URL.Path, req.requestID)
 		return
 	}
 
@@ -1000,16 +1076,27 @@ func hasUnsupportedS3Semantics(r *http.Request) bool {
 		return true
 	}
 	for name := range r.Header {
-		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) && !supportedMultipartChecksumHeader(r, name) {
+		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) && !supportedMultipartChecksumHeader(r, name) && !privateCannedACL(r, name, r.Header.Values(name)) {
 			return true
 		}
 	}
-	for name := range r.URL.Query() {
-		if unsupportedS3SemanticName(name) {
+	for name, values := range r.URL.Query() {
+		if unsupportedS3SemanticName(name) && !privateCannedACL(r, name, values) {
 			return true
 		}
 	}
 	return false
+}
+
+// privateCannedACL reports an x-amz-acl on a write that asks for what every
+// Gregale object already is: readable only through its bucket's own
+// credentials. Upload libraries send it by default, so it is accepted and
+// ignored; any other canned ACL, and grants, still answer NotImplemented.
+func privateCannedACL(r *http.Request, name string, values []string) bool {
+	if !strings.EqualFold(name, "x-amz-acl") || r.Method != http.MethodPut && r.Method != http.MethodPost || len(values) != 1 {
+		return false
+	}
+	return values[0] == "private" || values[0] == "bucket-owner-full-control"
 }
 
 func unsupportedS3SemanticName(name string) bool {
@@ -1259,7 +1346,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)
 	if r.Method == http.MethodGet {
-		body := io.Reader(response.Body)
+		body := h.transfers.Reader(r.Context(), response.Body, objectstorage.TransferDownload)
 		if h.registry.Accounting.GatewaySafety() {
 			body = io.LimitReader(body, response.ContentLength)
 		}

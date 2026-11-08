@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/agentconnections"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -76,7 +77,8 @@ type cliAuthHandlers struct {
 // shape as a fresh code. The only 4xx is 429 from the cliAuthLimiter
 // (cliAuthChain, server.go).
 func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request) {
-	code, hash, device, err := mintBrowserAuthCode(r)
+	_, deviceCodes := h.srv.store.(state.CliAuthDeviceCodeStore)
+	code, hash, device, err := mintBrowserAuthCode(r, deviceCodes)
 	if errors.Is(err, errBrowserAuthInput) {
 		api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Invalid authorization", "purpose must be empty, mcp-read, or mcp-write"))
 		return
@@ -105,12 +107,15 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 // issueCliAuthCode persists a minted code. With device, it also mints a
 // 32-byte device code, stores only its hash, and returns it: the row can
 // then be exchanged only with that device code, never with the short code
-// the user types (bug hunt 2026-10-28 H67). A store without device codes
-// keeps the code-only exchange.
+// the user types (bug hunt 2026-10-28 H67). Without device, the code was
+// minted long enough to exchange by itself (mintBrowserAuthCode).
 func (h *cliAuthHandlers) issueCliAuthCode(r *http.Request, hash []byte, device bool, expiresAt time.Time) (string, error) {
-	devices, ok := h.srv.store.(state.CliAuthDeviceCodeStore)
-	if !device || !ok {
+	if !device {
 		return "", h.srv.store.IssueCliAuthCode(r.Context(), hash, expiresAt)
+	}
+	devices, ok := h.srv.store.(state.CliAuthDeviceCodeStore)
+	if !ok {
+		return "", errors.New("store cannot bind device codes")
 	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -138,6 +143,11 @@ func (h *cliAuthHandlers) consumeCliAuthExchange(r *http.Request, req api.CliAut
 	hash, ok := normalizeCliAuthCode(req.Code)
 	if !ok {
 		return "", "", false, nil
+	}
+	// A short code is minted only bound to a device code, so it never
+	// exchanges alone: answer as for an unknown code without a lookup.
+	if isShortCliAuthCode(req.Code) {
+		return api.CliAuthStatusExpired, "", true, state.ErrNotFound
 	}
 	status, accountID, err = h.srv.store.ConsumeCliAuthCode(r.Context(), hash)
 	return status, accountID, true, err
@@ -173,7 +183,7 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 	status, accountID, ok, err := h.consumeCliAuthExchange(r, req)
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid code", "code must be 8 alphanumeric characters (XXXX-NNNN), or device_code 64 hex characters"))
+			"Invalid code", "code must be 16 hex characters (XXXX-XXXX-XXXX-XXXX), or device_code 64 hex characters"))
 		return
 	}
 	if err != nil {
@@ -201,13 +211,9 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 	}
 	label, scopes, ttl := browserAuthCredential(req.Code)
 	expiresAt := time.Now().UTC().Add(ttl)
-	k, err := h.srv.store.CreateAPIKeyWithExpiryAndProvenance(
-		r.Context(), accountID, keyHash, label, scopes,
-		&expiresAt, clientIPFromRequest(r), logsanitize.Field(r.UserAgent()), nil,
-	)
-	if err != nil {
-		h.log.Error("cli_auth.create_key", "err", err)
-		api.WriteProblem(w, api.ErrCapacity("could not persist key"))
+	k, scopes, p := h.mintBrowserAuthKey(r, req, accountID, keyHash, label, scopes, expiresAt)
+	if p != nil {
+		api.WriteProblem(w, p)
 		return
 	}
 	h.srv.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
@@ -243,6 +249,59 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// createBrowserAuthKey mints the exchanged key. A hosted MCP sign-in bound to
+// a shared organization at approval gets that organization's key, holding
+// only the scopes the organization's agent policy allows
+// (ADR-20261101225122).
+func (h *cliAuthHandlers) createBrowserAuthKey(r *http.Request, req api.CliAuthExchangeRequest, accountID string, keyHash []byte, label string, scopes []string, expiresAt time.Time) (state.APIKey, []string, *api.Problem) {
+	ip, ua := clientIPFromRequest(r), logsanitize.Field(r.UserAgent())
+	orgID, err := h.browserAuthOrg(r, req)
+	if err != nil {
+		h.log.Error("cli_auth.code_org", "err", err)
+		return state.APIKey{}, nil, api.ErrCapacity("could not read the sign-in's organization")
+	}
+	if orgID == "" {
+		k, err := h.srv.store.CreateAPIKeyWithExpiryAndProvenance(r.Context(), accountID, keyHash, label, scopes, &expiresAt, ip, ua, nil)
+		if err != nil {
+			h.log.Error("cli_auth.create_key", "err", err)
+			return state.APIKey{}, nil, api.ErrCapacity("could not persist key")
+		}
+		return k, scopes, nil
+	}
+	policy, err := agentconnections.PolicyFor(r.Context(), h.srv.store, orgID, accountID)
+	if errors.Is(err, agentconnections.ErrNotAgentMember) || errors.Is(err, agentconnections.ErrAgentsNotAllowed) {
+		return state.APIKey{}, nil, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Agents can't act in this organization", err.Error()+"; connect the agent again and choose another organization")
+	}
+	acct, aerr := h.srv.store.AccountByID(r.Context(), accountID)
+	if err != nil || aerr != nil {
+		h.log.Error("cli_auth.org_policy", "err", errors.Join(err, aerr))
+		return state.APIKey{}, nil, api.ErrCapacity("could not check the organization's agent policy")
+	}
+	scopes = agentconnections.CapScopes(policy, scopes)
+	activity := newOrgAPIKeyActivity(r, acct, orgID, "api_key.created", map[string]any{"scopes": scopes, "reason": "mcp_sign_in"})
+	k, err := h.srv.createOrgAPIKeyWithActivity(r.Context(), acct, orgID, keyHash, label, scopes, &expiresAt, ip, ua, nil, activity)
+	if err != nil {
+		h.log.Error("cli_auth.create_org_key", "err", err)
+		return state.APIKey{}, nil, api.ErrCapacity("could not persist key")
+	}
+	return k, scopes, nil
+}
+
+// browserAuthOrg is the shared organization a hosted MCP sign-in's code was
+// bound to at approval, or "" for the personal one.
+func (h *cliAuthHandlers) browserAuthOrg(r *http.Request, req api.CliAuthExchangeRequest) (string, error) {
+	store, ok := h.srv.store.(state.OrgAgentStore)
+	hash, valid := normalizeCliAuthCode(req.Code)
+	if !ok || !valid || !isMCPAuthCode(req.Code) {
+		return "", nil
+	}
+	orgID, err := store.CliAuthCodeOrg(r.Context(), hash)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", nil
+	}
+	return orgID, err
+}
+
 // renderCliAuthPage handles GET /cli-auth?code=…. The route is mounted
 // behind sessionAuth, so only a signed-in dashboard session reaches this
 // function. It renders the authorization page without accepting an email
@@ -262,13 +321,17 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		h.renderPromotionApprovalPage(w, r)
 		return
 	}
+	if r.URL.Query().Has("agent_approval") {
+		h.renderAgentApprovalPage(w, r)
+		return
+	}
 	if r.URL.Query().Has("secret") {
 		h.renderSecretEntryPage(w, r)
 		return
 	}
 	hash, ok := normalizeCliAuthCode(r.URL.Query().Get("code"))
 	if !ok {
-		h.renderCliAuthError(w, r, "Code looks malformed", "Codes are 8 characters, like ABCD-1234.")
+		h.renderCliAuthError(w, r, "Code looks malformed", "Use the code your terminal shows, like ABCD-1234.")
 		return
 	}
 	status, _, err := h.srv.store.PeekCliAuthCode(r.Context(), hash)
@@ -313,6 +376,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		title = "Authorize MCP connection"
 		shownCode = raw
 	}
+	orgs := h.mcpOrgChoices(r, acct.ID, raw)
 	page := dashboard.Page{
 		Title:   title,
 		Body:    "cli_auth",
@@ -323,6 +387,8 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 			"AccountEmail":    acct.Email,
 			"MCP":             isMCPAuthCode(raw),
 			"MCPCapabilities": mcpCapabilities(raw),
+			"MCPOrgs":         orgs,
+			"MCPProjects":     h.mcpProjectChoices(r, acct.ID, raw, orgs),
 			// The hosted bridge asks to have the browser back (ADR-20261028205920).
 			"ReturnMCP": isMCPAuthCode(raw) && r.URL.Query().Get("return") == "mcp" && h.srv.hostedMCPContinueURL() != "",
 		},
@@ -359,6 +425,10 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 		h.postPromotionApprovalPage(w, r)
 		return
 	}
+	if r.PostForm.Has("agent_approval") {
+		h.postAgentApprovalPage(w, r)
+		return
+	}
 	if r.PostForm.Has("secret") {
 		h.postSecretEntryPage(w, r)
 		return
@@ -383,6 +453,9 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if !h.bindMCPOrg(w, r, acct.ID, rawCode, hash) || !h.bindMCPProjects(w, r, acct.ID, rawCode, hash) {
+		return
+	}
 	// Atomically claim the code for this account. ClaimCliAuthCode
 	// transitions pending → consumed + account_id in one SQL.
 	if err := h.srv.store.ClaimCliAuthCode(r.Context(), hash, acct.ID); err != nil {
@@ -437,11 +510,11 @@ func (h *cliAuthHandlers) renderCliAuthError(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// mintCliAuthCodeRaw returns (human-readable "XXXX-NNNN", sha256 hash).
-// 4 bytes of crypto/rand → 8 hex chars → formatted with a dash after
-// the first 4 chars. 32 bits of entropy is fine: the consume path is
-// rate-limited to 10/min/IP (cliAuthChain) and the TTL is 5 min, so
-// brute-force on the code space is not realistic.
+// mintCliAuthCodeRaw returns (human-readable "XXXX-NNNN", sha256 hash) for a
+// login code bound to a device code. 4 bytes of crypto/rand → 8 hex chars →
+// a dash after the first 4. 32 bits suits a code a person types because the
+// short code never exchanges alone: only the 32-byte device code does (H67,
+// isShortCliAuthCode).
 func mintCliAuthCodeRaw() (string, []byte, error) {
 	raw := make([]byte, 4)
 	if _, err := rand.Read(raw); err != nil {
@@ -451,19 +524,42 @@ func mintCliAuthCodeRaw() (string, []byte, error) {
 	return hexStr[:4] + "-" + hexStr[4:], api.HashToken(raw), nil
 }
 
+// mintCodeOnlyCliAuthCode returns ("XXXX-XXXX-XXXX-XXXX", sha256 hash) for a
+// login code with no device code, which the CLI exchanges by the code alone
+// (CLIs before v0.1.18). 64 bits keeps guessing at the exchange worthless
+// even from many addresses, where 32 bits behind a per-IP limit was not.
+func mintCodeOnlyCliAuthCode() (string, []byte, error) {
+	raw := make([]byte, 8)
+	if _, err := rand.Read(raw); err != nil {
+		return "", nil, err
+	}
+	hexStr := hex.EncodeToString(raw) // 16 hex chars
+	return hexStr[:4] + "-" + hexStr[4:8] + "-" + hexStr[8:12] + "-" + hexStr[12:], api.HashToken(raw), nil
+}
+
+// isShortCliAuthCode reports whether raw is a device-bound 8-character login
+// code (mintCliAuthCodeRaw).
+func isShortCliAuthCode(raw string) bool {
+	return len(strings.ReplaceAll(strings.TrimSpace(raw), "-", "")) == 8
+}
+
 // normalizeCliAuthCode strips whitespace + dashes, uppercases, and
-// returns the 4-byte hash if the result is a valid 8-hex-char code.
-// Returns ok=false on any shape mismatch.
+// returns the code's hash if the result is an MCP code or an 8- or
+// 16-hex-char login code. Returns ok=false on any shape mismatch.
 func normalizeCliAuthCode(raw string) ([]byte, bool) {
 	normalized := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(raw), "-", ""))
 	if isMCPAuthCode(normalized) {
-		decoded, err := hex.DecodeString(normalized[4:])
+		prefixLen := 4
+		if strings.HasPrefix(normalized, "MC2") {
+			prefixLen = 5
+		}
+		decoded, err := hex.DecodeString(normalized[prefixLen:])
 		if err != nil || len(decoded) != 32 {
 			return nil, false
 		}
-		return api.HashToken(append([]byte(normalized[:4]+":"), decoded...)), true
+		return api.HashToken(append([]byte(normalized[:prefixLen]+":"), decoded...)), true
 	}
-	if len(normalized) != 8 {
+	if len(normalized) != 8 && len(normalized) != 16 {
 		return nil, false
 	}
 	decoded, err := hex.DecodeString(normalized)

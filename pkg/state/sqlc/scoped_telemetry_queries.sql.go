@@ -65,6 +65,7 @@ SELECT (o.payload::jsonb->>'wake_id')::text AS wake_id,
  WHEN position('reason=telemetry_missing' in o.last_error)>0 THEN 'telemetry_missing'
  WHEN position('reason=requests_active' in o.last_error)>0 THEN 'requests_active'
  WHEN position('reason=quiet_period_not_elapsed' in o.last_error)>0 THEN 'quiet_period_not_elapsed'
+ WHEN position('app_startup_crash' in o.last_error) > 0 THEN 'app_startup_crash'
  ELSE 'restart_attempt_failed' END::text AS failure_reason,
  o.created_at AS requested_at,o.delivered_at AS completed_at
 FROM notification_outbox o JOIN apps a ON a.id=$1 AND a.account_id=$2 AND a.status<>'deleted'
@@ -234,6 +235,30 @@ func (q *Queries) ReadEnvironmentBudgetReceipt(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const readEnvironmentBudgetReceiptForApp = `-- name: ReadEnvironmentBudgetReceiptForApp :one
+SELECT request_hash,response FROM environment_route_budget_receipts
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+AND request_id=$3::uuid
+`
+
+type ReadEnvironmentBudgetReceiptForAppParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	RequestID pgtype.UUID
+}
+
+type ReadEnvironmentBudgetReceiptForAppRow struct {
+	RequestHash string
+	Response    []byte
+}
+
+func (q *Queries) ReadEnvironmentBudgetReceiptForApp(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetReceiptForAppParams) (ReadEnvironmentBudgetReceiptForAppRow, error) {
+	row := db.QueryRow(ctx, readEnvironmentBudgetReceiptForApp, arg.AccountID, arg.AppID, arg.RequestID)
+	var i ReadEnvironmentBudgetReceiptForAppRow
+	err := row.Scan(&i.RequestHash, &i.Response)
+	return i, err
+}
+
 const readEnvironmentRouteBudgets = `-- name: ReadEnvironmentRouteBudgets :one
 SELECT to_jsonb(b) FROM app_environment_route_budgets b
 WHERE b.app_id=$1::uuid AND b.account_id=$2::uuid AND b.scope=$3::text
@@ -346,7 +371,7 @@ func (q *Queries) ScopedOpenMonitorIncident(ctx context.Context, db DBTX, arg Sc
 }
 
 const scopedRouteMonitorServingDeployments = `-- name: ScopedRouteMonitorServingDeployments :many
-SELECT d.id::text AS id,d.commit_sha,d.source_url,d.source_root,d.created_at,d.canary_step_started_at,d.rollout_completed_at,d.traffic_percent,d.canary_step,d.canary_total_steps
+SELECT d.id::text AS id,d.commit_sha,d.source_url,d.source_root,d.created_at,d.canary_step_started_at,d.rollout_completed_at,d.traffic_percent,d.canary_step,d.canary_total_steps,d.promoted_at
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE a.id=$1::text::uuid AND a.account_id=$2::text::uuid AND a.status<>'deleted'
 AND d.status='live' AND d.deleted_at IS NULL AND d.traffic_percent>0
@@ -377,6 +402,7 @@ type ScopedRouteMonitorServingDeploymentsRow struct {
 	TrafficPercent      int32
 	CanaryStep          int32
 	CanaryTotalSteps    int32
+	PromotedAt          pgtype.Timestamptz
 }
 
 func (q *Queries) ScopedRouteMonitorServingDeployments(ctx context.Context, db DBTX, arg ScopedRouteMonitorServingDeploymentsParams) ([]ScopedRouteMonitorServingDeploymentsRow, error) {
@@ -399,6 +425,7 @@ func (q *Queries) ScopedRouteMonitorServingDeployments(ctx context.Context, db D
 			&i.TrafficPercent,
 			&i.CanaryStep,
 			&i.CanaryTotalSteps,
+			&i.PromotedAt,
 		); err != nil {
 			return nil, err
 		}

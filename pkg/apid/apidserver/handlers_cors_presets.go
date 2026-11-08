@@ -74,6 +74,11 @@ func (s *server) createCorsPreset(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
+	var prob *api.Problem
+	if req.AppID, prob = scopeCorsPresetAppID(r, req.AppID); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := corsPresetWithinPlan(acct.Plan, limits, req.AllowOrigins, req.AllowMethods); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -108,6 +113,11 @@ func (s *server) listCorsPresets(w http.ResponseWriter, r *http.Request, acct st
 		id := v
 		filter.AppID = &id
 	}
+	var prob *api.Problem
+	if filter.AppID, prob = scopeCorsPresetAppID(r, filter.AppID); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if filter.AppID != nil {
 		if prob := s.gateCorsPresetApp(r, acct, filter.AppID); prob != nil {
 			api.WriteProblem(w, prob)
@@ -129,7 +139,7 @@ func (s *server) listCorsPresets(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	writeJSON(w, http.StatusOK, api.CorsPresetListResponse{
-		Presets: corsPresetResponsesFromRows(rows),
+		Presets: corsPresetResponsesFromRows(s.visibleCorsPresets(r, acct, rows)),
 	})
 }
 
@@ -137,14 +147,8 @@ func (s *server) listCorsPresets(w http.ResponseWriter, r *http.Request, acct st
 // reads collapse to ErrNotFound (the pgstore WHERE clause pins
 // account_id; the memstore mirror checks AccountID explicitly).
 func (s *server) getCorsPreset(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	id := r.PathValue("id")
-	row, err := s.store.GetCorsPresetByID(r.Context(), acct.ID, id)
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such cors preset", "no cors preset with that id is visible to this account"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not load cors preset"))
+	row, ok := s.loadScopedCorsPreset(w, r, acct)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, corsPresetResponseFromRow(row))
@@ -177,18 +181,18 @@ func (s *server) patchCorsPreset(w http.ResponseWriter, r *http.Request, acct st
 	// is required to compute the post-update name+app_id
 	// tuple for the *+credentials re-validation against the
 	// post-update shape.
-	existing, err := s.store.GetCorsPresetByID(r.Context(), acct.ID, id)
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such cors preset", "no cors preset with that id is visible to this account"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not load cors preset"))
+	existing, ok := s.loadScopedCorsPreset(w, r, acct)
+	if !ok {
 		return
 	}
 	merged, prob := mergeCorsPresetUpdate(existing, req)
 	if prob != nil {
 		api.WriteProblem(w, prob)
+		return
+	}
+	if !corsPresetInScope(r, merged.AppID) {
+		// A company app's request cannot move its preset to another scope.
+		api.WriteProblem(w, errNoSuchCorsPresetApp())
 		return
 	}
 	// Check only the lists this PATCH replaces, so a preset created
@@ -250,16 +254,18 @@ func (s *server) deleteCorsPreset(w http.ResponseWriter, r *http.Request, acct s
 	id := r.PathValue("id")
 	// Load first so the audit event can carry the (name, app_id)
 	// tuple — after DELETE the row is gone.
-	existing, err := s.store.GetCorsPresetByID(r.Context(), acct.ID, id)
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such cors preset", "no cors preset with that id is visible to this account"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not load cors preset"))
+	existing, ok := s.loadScopedCorsPreset(w, r, acct)
+	if !ok {
 		return
 	}
 	if !s.corsPresetMutation(w, r, acct, id, "cors_preset_deleted", func(ctx context.Context) bool {
+		// A preset rules use is refused, as a list is: deleting it left
+		// those rules naming a missing preset, and the gateway refuses
+		// every request to their hosts (ADR-091 amendment 2026-11-04).
+		if prob := s.corsPresetInUseProblem(ctx, acct.ID, id); prob != nil {
+			api.WriteProblem(w, prob)
+			return false
+		}
 		err := s.store.DeleteCorsPreset(ctx, acct.ID, id)
 		switch {
 		case errors.Is(err, state.ErrNotFound):

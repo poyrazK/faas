@@ -286,6 +286,13 @@ var ErrInvalidPreviewPrState = errors.New("state: invalid preview_pr_state")
 // api.ErrTrafficPercentSumInvalid (409 Conflict).
 var ErrTrafficPercentSumInvalid = errors.New("state: traffic_percent sum != 100")
 
+// ErrTrafficResidualUnassigned refuses a manual traffic change whose remaining
+// weight has no recipient but aborted canary candidates or releases that have
+// never served, which receive traffic only when named
+// (RedistributeManualTraffic). It wraps ErrTrafficPercentSumInvalid: applied,
+// the change would leave Σ below 100.
+var ErrTrafficResidualUnassigned = fmt.Errorf("%w: only an aborted canary or a release that never served could take the remaining traffic", ErrTrafficPercentSumInvalid)
+
 // ErrInvalidMirrorPercent is returned by CreateMirrorRule /
 // UpdateMirrorRule when the requested percent falls outside
 // [0, 100]. The CHECK constraint on mirror_rules.percent
@@ -3761,8 +3768,11 @@ type Store interface {
 	TriggerRecordIDByItemIdentifier(ctx context.Context, triggerID, itemIdentifier string) (string, error)
 	ListTriggerDeadLetter(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerDeadLetter, error)
 	ListTriggerRecordsForTrigger(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error)
-	RetryTriggerRecordByOperator(ctx context.Context, id string) error
-	DropTriggerRecordByOperator(ctx context.Context, id string) error
+	// RetryTriggerRecordByOperator and DropTriggerRecordByOperator act on
+	// one record of triggerID, a trigger of appID. A record of another
+	// trigger or app answers ErrNotFound, as a missing one does.
+	RetryTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error
+	DropTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error
 
 	// Fire-now request queue (ADR-090 PR-C / migrations/00193).
 	// apid inserts on POST /v1/crons/{id}/run; schedd claims +
@@ -4467,6 +4477,10 @@ type Store interface {
 	// each count stops at limit and the oldest pending message comes from
 	// the lease indexes (ADR-20261018101500 amendment 2026-10-27).
 	QueueBindingTelemetry(ctx context.Context, appID, bindingID string, limit int) (QueueStats, error)
+	// QueueAppTelemetry is QueueState with each count stopping at limit, for
+	// status reads a customer can poll (ADR-20261018101500 amendment
+	// 2026-10-31).
+	QueueAppTelemetry(ctx context.Context, appID string, limit int) (QueueStats, error)
 	WorkerPoolHistory(ctx context.Context, appID, deploymentID string) (WorkerPoolHistory, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by
@@ -5753,7 +5767,7 @@ type Store interface {
 	// CurrentMonthOverageCents returns the account's derived compute overage
 	// in integer cents for the current UTC month. The account plan's
 	// included calendar-month allowance is subtracted before the
-	// $0.01/GB-h conversion (CLAUDE.md: integer cents only, never float).
+	// OverageMillicentsPerGBHour conversion (CLAUDE.md: integer cents only, never float).
 	// meterd consults this on every quota tick to decide whether the
 	// overage row should be capped. The PgStore implementation sums
 	// usage_minutes.mb_seconds since the UTC month start and converts
@@ -6428,7 +6442,15 @@ type Store interface {
 	UpdateAppLogDrain(ctx context.Context, id string, params UpdateAppLogDrainParams) (AppLogDrain, error)
 	DeleteAppLogDrain(ctx context.Context, id string) error
 	ListAppLogDrainsForApp(ctx context.Context, appID string) ([]AppLogDrain, error)
+	// ListEnabledAppLogDrains is the drains log delivery runs: enabled, not on
+	// a rehearsal-enrolled app, and covered by the plan of the account the
+	// app's resources belong to. A plan covers the oldest enabled drains up
+	// to its per-app and account-wide allowances; drains an organization's
+	// application standard installed are outside those allowances.
 	ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, error)
+	// ListAppLogDrainsPausedByPlan names appID's enabled drains that
+	// ListEnabledAppLogDrains leaves out because the plan does not cover them.
+	ListAppLogDrainsPausedByPlan(ctx context.Context, appID string) ([]string, error)
 	UpsertAppLogDrainHealth(ctx context.Context, health AppLogDrainHealth) error
 	AppLogDrainHealthByDrainID(ctx context.Context, drainID string) (AppLogDrainHealth, error)
 	ListAppLogDrainHealthForApp(ctx context.Context, appID string) ([]AppLogDrainHealth, error)
@@ -6614,13 +6636,15 @@ type Store interface {
 	// concurrent UPDATEs is acceptable. summary is the raw JSON
 	// bytes (the caller has already validated json.Valid).
 	//
-	// accountID is REQUIRED — PR-D code-review #1 pins the
+	// target.AccountID is REQUIRED — PR-D code-review #1 pins the
 	// WHERE clause on (trace_id, account_id) so a buggy upstream
 	// caller can't overwrite a different customer's row. The
-	// gateway-side accumulator already rejects
-	// trace_id/account_id collisions (ErrAccountMismatch); this
-	// is the SQL-side defense in depth.
-	UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte) error
+	// gateway-side accumulator buffers each target and trace
+	// separately and maxSpans bounds the row to the plan; this
+	// is the SQL-side defense in depth. target's optional app,
+	// organization and customer-credential fields narrow the rows
+	// further (SpansSummaryTarget).
+	UpdateSpansSummary(ctx context.Context, target SpansSummaryTarget, summary []byte, maxSpans int) error
 
 	// ListRequestTelemetryByApp backs GET /v1/apps/{slug}/debug/requests.
 	// Time-windowed (since, until) with hard limit; cursor pagination

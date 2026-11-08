@@ -85,16 +85,19 @@ function handle(request: Request) {
 For ASGI Python, `GregaleReleaseMiddleware` captures both release and deadline
 context. Use `AsyncGregaleReleaseTransport` with HTTPX inside the handler. A
 synchronous handler can use `with_gregale_request_context(dict(request.headers))`
-with `GregaleReleaseTransport`. Both SDKs support `.svc.gregale` and declared
-`.internal` aliases, isolate concurrent context and remove deadline carriers
-from external calls. The current request's deadline wins over an explicit
-downstream override. Node returns redirects from signed calls for the app to
-follow through the helper; HTTPX reapplies its transport guard at each redirect.
+with `GregaleReleaseTransport`. For Go, wrap the handler in
+`faas.GregaleReleaseMiddleware` and make calls with the request's context
+through an `http.Client` using `faas.NewGregaleReleaseTransport`. All three
+SDKs support `.svc.gregale` and declared `.internal` aliases, isolate
+concurrent context and remove deadline carriers from external calls. The
+current request's deadline wins over an explicit downstream override. Node
+returns redirects from signed calls for the app to follow through the helper;
+HTTPX and Go's `http.Client` reapply the transport guard at each redirect.
 
-Participating gateways require the same operator-provisioned 32-byte
-`FAAS_SESSION_KEY`; a purpose-derived MAC key keeps this token protocol separate
-from session cookies. Development's ephemeral session fallback cannot protect
-a managed chain. A configured total policy or binding timeout with unavailable
+Participating gateways require the same 32-byte gateway fleet key
+(`FAAS_GATEWAY_FLEET_KEY_FILE`, ADR-20261102191500); a purpose-derived MAC key
+keeps this token protocol separate from edge challenges. gatewayd-internal
+refuses to start without the key. A configured total policy or binding timeout with unavailable
 material returns 503 `traffic_deadline_unavailable`. Invalid, ambiguous or
 wrong-app/account carriers return 400 `traffic_deadline_invalid`; an authentic
 expired carrier returns 504 `request_budget_exceeded`. No unsigned fallback is

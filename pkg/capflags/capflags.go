@@ -117,6 +117,26 @@ func (d *Decider) Released(capability string) bool {
 	return true
 }
 
+// EnabledByRule reports whether one of the capability's own flag rules, or a
+// self-serve opt-in, enables it for subject, and every ancestor is enabled.
+// The flag's default and the catalog tier do not count: an operator named the
+// subject, or the subject opted in.
+func (d *Decider) EnabledByRule(capability string, subject platformflags.Subject) bool {
+	if d == nil || !d.Enabled(capability, subject) {
+		return false
+	}
+	key, flagged := d.flagKey[capability]
+	if !flagged {
+		return false
+	}
+	snapshot := d.snapshot()
+	if _, _, ok := snapshot.Definition(key); !ok {
+		return false
+	}
+	decision := snapshot.Evaluate(key, subject)
+	return decision.Enabled && (decision.Reason == platformflags.ReasonRuleMatch || decision.Reason == platformflags.ReasonOptIn)
+}
+
 // ReleasedByDefault reports whether a capability, and every ancestor, is on
 // for an account no rule names: its kill switch and default are on. The
 // anonymous spec and the SDK spec publish these (ADR-20261023115741).
@@ -135,6 +155,31 @@ func (d *Decider) ReleasedByDefault(capability string) bool {
 			def = d.fallback[id]
 		}
 		if !def.Enabled || !def.Default {
+			return false
+		}
+	}
+	return true
+}
+
+// EveryAccount reports whether a capability and its ancestors are enabled for
+// every subject, including the absence of account or organization deny rules.
+func (d *Decider) EveryAccount(capability string) bool {
+	if d == nil {
+		return true
+	}
+	snapshot := d.snapshot()
+	for id, depth := capability, 0; id != "" && depth < maxDepth; id, depth = d.parent[id], depth+1 {
+		key, flagged := d.flagKey[id]
+		if !flagged {
+			continue
+		}
+		if _, _, ok := snapshot.Definition(key); ok {
+			if !snapshot.EveryAccount(key) {
+				return false
+			}
+			continue
+		}
+		if def := d.fallback[id]; !def.Enabled || !def.Default {
 			return false
 		}
 	}

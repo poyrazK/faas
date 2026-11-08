@@ -234,7 +234,8 @@ func TestIdempotencyReplayable(t *testing.T) {
 }
 
 func TestIdempotencyBindingRefusalsAreRetryable(t *testing.T) {
-	for _, code := range []string{"bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged} {
+	for _, code := range []string{"bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged,
+		api.CodeFullEnvironmentCloneUnavailable} {
 		if apidserver.IdempotencyResponseReplayable(http.StatusConflict, []byte(`{"code":"`+code+`"}`)) {
 			t.Errorf("binding refusal %s would freeze the retry key", code)
 		}
@@ -246,6 +247,20 @@ func TestIdempotencyBindingRefusalsAreRetryable(t *testing.T) {
 	}
 	if !apidserver.IdempotencyResponseReplayable(http.StatusOK, []byte(`{"code":"bindings_check_failed"}`)) {
 		t.Fatal("successful responses must remain replayable")
+	}
+}
+
+// A deploy refused while release commands were off kept replaying that 422
+// for 24 h after the operator enabled them, because the CLI derives the key
+// from the source. The gate clears like a 501; other 422s still replay.
+func TestIdempotencyReleasePhaseRefusalIsRetryable(t *testing.T) {
+	if apidserver.IdempotencyResponseReplayable(http.StatusUnprocessableEntity, []byte(`{"code":"`+api.CodeReleasePhaseUnavailable+`"}`)) {
+		t.Fatal("release_phase_unavailable would freeze the deploy key")
+	}
+	for _, body := range []string{`{"code":"validation_failed"}`, `{"code":"app_manifest_invalid"}`, `not-json`} {
+		if !apidserver.IdempotencyResponseReplayable(http.StatusUnprocessableEntity, []byte(body)) {
+			t.Errorf("unrelated 422 lost replay behavior: %s", body)
+		}
 	}
 }
 

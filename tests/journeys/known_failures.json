@@ -21,7 +21,7 @@
   },
   {
     "step": "TestGitHubDeploys/push_to_deploy",
-    "bug": "a push to the production branch of an app bound with gregale github bind created no deployment within 25 min (three runs); github status reports the binding healthy",
+    "bug": "a push to the production branch of an app bound with gregale github bind created no deployment within 25 min (three runs); github status reports the binding healthy. Root cause: githubd deployed only through a project bound to the repository, which an app bind never creates (ADR-20261101160300); known until that fix is released",
     "since": "2026-10-27"
   },
   {
@@ -55,13 +55,8 @@
     "since": "2026-10-30"
   },
   {
-    "step": "TestTrafficSplitAndRollback/production_wakes_v1_while_staged",
-    "bug": "#6121: after deploy --no-traffic, a parked or frozen serving release cannot wake beside the staged release's instance: production answers 429 app_concurrency_reached until that instance idles out (the gateway grants ADR-199's rollout slot only for a positive-weight sibling)",
-    "since": "2026-10-31"
-  },
-  {
-    "step": "TestEdgeTrafficPolicies/route",
-    "bug": "#6148: a route rule on an app's own URL never applies on production (edge rule trace says it routes, edge rule stats records no match); the slug-resolved public host source never sets CanSubstitute",
+    "step": "TestDataAPI/data_api_enabled",
+    "bug": "managed PostgreSQL and the Data API (GA rows 109 and 110) are preview and not released to production accounts: production provisioning waits on the operator approval pin (ADR-20261028103115), and the later steps report blocked; remove once the e2e account is released",
     "since": "2026-10-31"
   }
 ]

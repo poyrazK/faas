@@ -87,7 +87,7 @@ func TestSavedSearchQuotaAndGate(t *testing.T) {
 		t.Fatalf("past the cap = %d %s, want 409 log_saved_search_quota_exceeded", w.Code, w.Body.String())
 	}
 	off, acct := newService(t, false)
-	if w := serveSaved(t, off.PutSaved, acct, http.MethodPut, "x", `{"query":"level=error"}`); w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("disabled put = %d, want 503", w.Code)
+	if w := serveSaved(t, off.PutSaved, acct, http.MethodPut, "x", `{"query":"level=error"}`); w.Code != http.StatusForbidden {
+		t.Fatalf("disabled put = %d, want 403", w.Code)
 	}
 }

@@ -1,6 +1,7 @@
 package objectstorage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -55,17 +56,21 @@ func readUsageReports(path string) ([]api.ObjectStorageUsageReport, error) {
 	}
 	defer f.Close() //nolint:errcheck
 	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 {
+	if err != nil || !info.Mode().IsRegular() || info.Size() > api.MaxObjectStorageUsageReportBytes {
 		return nil, ErrInvalid
 	}
-	dec := json.NewDecoder(io.LimitReader(f, (4<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(f, api.MaxObjectStorageUsageReportBytes+1))
+	if err != nil || len(data) > api.MaxObjectStorageUsageReportBytes {
+		return nil, ErrInvalid
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var reports []api.ObjectStorageUsageReport
 	if err := dec.Decode(&reports); err != nil {
 		return nil, ErrInvalid
 	}
 	var extra any
-	if dec.Decode(&extra) != io.EOF || len(reports) > 10000 {
+	if dec.Decode(&extra) != io.EOF || len(reports) > api.MaxObjectStorageUsageReportRows {
 		return nil, ErrInvalid
 	}
 	return reports, nil

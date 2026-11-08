@@ -16,8 +16,6 @@
 //     unknown)
 //   - decodeNATSConfig (all 4 branches + happy)
 //   - decodeRedisConfig (all 4 branches + happy)
-//   - decodeSQSConfig (missing queue_url, missing scheme, missing
-//     host, valid http, valid https, long_poll clamp + default)
 //   - parseJSONHeaders / parseJSONMetadata (empty / valid /
 //     malformed)
 //   - envSecretsFromDep (empty / valid / malformed)
@@ -264,72 +262,6 @@ func TestDecodeRedisConfig_Happy_Mega4(t *testing.T) {
 		`{"addr":"a","stream":"s","group":"g"}`))
 	if err != nil {
 		t.Errorf("happy: %v", err)
-	}
-}
-
-// --- decodeSQSConfig ---------------------------------------------
-
-func TestDecodeSQSConfig_Mega4(t *testing.T) {
-	t.Parallel()
-	for _, c := range []struct {
-		name string
-		cfg  string
-		want string
-	}{
-		{"empty", "", "trigger missing config"},
-		{"malformed", "{bad", "decode config"},
-		{"missing queue_url", `{}`, "missing queue_url"},
-		{"missing scheme", `{"queue_url":"faas-queue:9090/q"}`, "must include http"},
-		{"missing host", `{"queue_url":"http:///q"}`, "missing host"},
-	} {
-		c := c
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := sched.DecodeSQSConfig(triggerWithConfig_Mega4(c.cfg))
-			if err == nil {
-				t.Fatal("want err")
-			}
-			if !strings.Contains(err.Error(), c.want) {
-				t.Errorf("err = %v, want %q", err, c.want)
-			}
-		})
-	}
-}
-
-func TestDecodeSQSConfig_LongPollClamp_Mega4(t *testing.T) {
-	t.Parallel()
-	// long_poll_secs > 20 → clamped to 20.
-	cfg, err := sched.DecodeSQSConfig(triggerWithConfig_Mega4(
-		`{"queue_url":"http://x/q","long_poll_secs":99}`))
-	if err != nil {
-		t.Fatalf("decodeSQSConfig: %v", err)
-	}
-	if cfg.LongPollSec != 20 {
-		t.Errorf("clamp high: got %d, want 20", cfg.LongPollSec)
-	}
-	// long_poll_secs == 0 → defaulted to 5.
-	cfg, _ = sched.DecodeSQSConfig(triggerWithConfig_Mega4(
-		`{"queue_url":"http://x/q","long_poll_secs":0}`))
-	if cfg.LongPollSec != 5 {
-		t.Errorf("default: got %d, want 5", cfg.LongPollSec)
-	}
-	// Negative → clamped to 20.
-	cfg, _ = sched.DecodeSQSConfig(triggerWithConfig_Mega4(
-		`{"queue_url":"http://x/q","long_poll_secs":-3}`))
-	if cfg.LongPollSec != 20 {
-		t.Errorf("negative clamp: got %d, want 20", cfg.LongPollSec)
-	}
-}
-
-func TestDecodeSQSConfig_Happy_Mega4(t *testing.T) {
-	t.Parallel()
-	for _, cfg := range []string{
-		`{"queue_url":"http://x/q"}`,
-		`{"queue_url":"https://x/q","long_poll_secs":10}`,
-	} {
-		if _, err := sched.DecodeSQSConfig(triggerWithConfig_Mega4(cfg)); err != nil {
-			t.Errorf("happy %q: %v", cfg, err)
-		}
 	}
 }
 

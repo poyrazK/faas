@@ -10,10 +10,12 @@ import (
 // adr: 20261016151947 — Data API live reads are a customer feature
 // (`gregale data-api live`); sealed live queries stay an operator preview:
 // `gregale postgres live` stays callable but out of customer help,
-// completions and the published CLI reference.
+// completions and the published CLI reference. `postgres` itself is a
+// customer command since ADR-20261031091607; the command tree keeps `live`
+// under the hidden admin command.
 func TestLiveQueriesHiddenFromCustomerDiscovery(t *testing.T) {
 	dataAPILive := false
-	for _, command := range main.CustomerCliCommands() {
+	for _, command := range main.CliTreeManifest(main.CustomerCliCommands()) {
 		for _, sub := range command.Subcommands {
 			switch {
 			case command.Name == "postgres" && sub.Name == "live":
@@ -30,10 +32,12 @@ func TestLiveQueriesHiddenFromCustomerDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The published reference lists GA and beta commands only; live queries
+	// (preview) appear under neither name there.
 	if strings.Contains(string(reference), "postgres live") {
 		t.Error("the published CLI reference documents `postgres live`")
 	}
-	if !strings.Contains(string(reference), "gregale data-api live enable") {
-		t.Error("the published CLI reference does not document `data-api live enable`")
+	if strings.Contains(string(reference), "gregale data-api live enable") {
+		t.Error("the published CLI reference documents the preview `data-api live enable`")
 	}
 }

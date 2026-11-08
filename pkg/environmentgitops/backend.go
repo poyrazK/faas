@@ -26,5 +26,11 @@ func (b IntentBackend) Apply(ctx context.Context, lease state.EnvironmentGitOpsL
 			return steps, err
 		}
 	}
+	if jobs, ok := b.Store.(state.EnvironmentGitOpsJobUpdateStore); ok {
+		steps, err := jobs.PrepareEnvironmentGitOpsJobUpdates(ctx, lease, plan)
+		if err != nil || len(steps) > 0 {
+			return steps, err
+		}
+	}
 	return b.Store.ApplyEnvironmentGitOps(ctx, lease, plan)
 }

@@ -351,7 +351,7 @@ func cmdDeploymentsExcludeClear(args []string) int {
 // cmdDeployment dispatches deployment inspection and lifecycle commands.
 func cmdDeployment(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale release runtime <id> [--target RELEASE_ID] | gregale release summary <id> --app SLUG | gregale release diff <id> [--against <id>] | gregale release wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale release runtime <id> [--target RELEASE_ID] | gregale release summary <id> --app SLUG | gregale release diff <id> [--against <id>] | gregale release timeline <id> | gregale release wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}
 	switch args[0] {
@@ -367,6 +367,10 @@ func cmdDeployment(args []string) int {
 		return cmdDeploymentSummary(args[1:])
 	case "diff":
 		return cmdDeploymentDiff(args[1:])
+	case "timeline":
+		return cmdDeploymentTimeline(args[1:])
+	case "resolve":
+		return cmdDeploymentResolve(args[1:])
 	case "wait":
 		return cmdDeploymentWait(args[1:])
 	case subStatus:
@@ -464,7 +468,7 @@ func cmdDeploymentWait(args []string) int {
 				}
 				return printErr("Deployment did not become live", fmt.Errorf("deployment %s reached terminal status %s: %s", d.ID, d.Status, d.Error))
 			}
-			if *rollout && d.CanaryTotalSteps > 0 && d.RolloutState == rolloutStateAborted {
+			if *rollout && d.RolloutState == rolloutStateAborted {
 				if jsonOutput {
 					_ = writeJSON(d)
 				}

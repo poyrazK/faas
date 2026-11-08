@@ -2,10 +2,12 @@ package objectstorage
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -20,10 +22,16 @@ type ReadAdmitter struct {
 	policy api.ObjectStoragePolicy
 	now    func() time.Time
 	group  singleflight.Group
+	// Cold decision snapshots may run together, but never overlap a flush.
+	// A bounded acquisition lets refreshes fall back to stale decisions while
+	// a database write stalls; cached admissions do not take this gate.
+	storeGate *semaphore.Weighted
 
-	mu      sync.Mutex
-	entries map[string]*readDecision
-	pending map[readUsageKey]*state.ObjectReadUsage
+	mu               sync.Mutex
+	entries          map[string]*readDecision
+	pending          map[readUsageKey]*pendingReadUsage
+	owners           map[readOwnerKey]*readOwnerUsage
+	lastOwnerCleanup time.Time
 
 	decisions *prometheus.CounterVec
 	flushes   *prometheus.CounterVec
@@ -32,11 +40,13 @@ type ReadAdmitter struct {
 type readDecision struct {
 	state.ObjectReadAdmission
 	fetchedAt time.Time
+	owner     *readOwnerUsage
 }
 
 type readUsageKey struct {
 	bucket string
 	period time.Time
+	owner  string
 }
 
 // NewReadAdmitter is s3-gatewayd's admitter; its metrics are s3_gateway_*.
@@ -52,7 +62,8 @@ func NewNamedReadAdmitter(store state.ObjectReadAdmissionStore, policy api.Objec
 	}
 	return &ReadAdmitter{
 		store: store, policy: policy, now: now,
-		entries: map[string]*readDecision{}, pending: map[readUsageKey]*state.ObjectReadUsage{},
+		storeGate: semaphore.NewWeighted(math.MaxInt64),
+		entries:   map[string]*readDecision{}, pending: map[readUsageKey]*pendingReadUsage{}, owners: map[readOwnerKey]*readOwnerUsage{},
 		decisions: prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_read_admission_decisions_total", Help: "Read admission decisions by source: cached, refreshed, stale (served while the database is unreachable) or failed."}, []string{"source"}),
 		flushes:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_read_usage_flushes_total", Help: "Batched read count writes by outcome."}, []string{"outcome"}),
 	}
@@ -65,9 +76,12 @@ func (a *ReadAdmitter) Collectors() []prometheus.Collector {
 
 // AdmittedRead is a read AdmitRead let through, for its egress reservation.
 type AdmittedRead struct {
-	bucket            string
-	period            time.Time
-	egress, maxEgress int64
+	bucket    string
+	period    time.Time
+	owner     *readOwnerUsage
+	maxEgress int64
+	// downloadErr refuses a body (ADR-20261101214152).
+	downloadErr error
 }
 
 // AdmitRead admits one GET or HEAD of b and counts its request and
@@ -79,53 +93,65 @@ func (a *ReadAdmitter) AdmitRead(ctx context.Context, b state.ObjectBucket) (Adm
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	p := a.pendingLocked(b.ID, d.Period)
+	u := d.owner
+	if a.owners[u.key] != u {
+		return AdmittedRead{}, state.ErrObjectUsageStale
+	}
+	u.lastUsed = a.now().UTC()
 	for _, limit := range []struct {
 		kind          string
 		observed, max int64
 	}{
-		{"requests", d.Requests + p.Requests, d.MaxRequests},
-		{"egress_bytes", d.EgressBytes + p.EgressBytes, d.MaxEgressBytes},
-		{"authorizations", d.Authorizations + p.Authorizations, d.MaxAuthorizations},
+		{"requests", u.recorded.Requests + u.unwritten.Requests, d.MaxRequests},
+		{"egress_bytes", u.recorded.EgressBytes + u.unwritten.EgressBytes, d.MaxEgressBytes},
+		{"authorizations", u.recorded.Authorizations + u.unwritten.Authorizations, d.MaxAuthorizations},
 	} {
 		if limit.observed >= limit.max {
 			return AdmittedRead{}, &state.ObjectStorageLimitError{Kind: limit.kind, Observed: limit.observed, Limit: limit.max, Cause: state.ErrObjectBudget}
 		}
 	}
+	p := a.pendingLocked(b.ID, d.Period, u)
 	p.Requests++
 	p.Authorizations++
-	return AdmittedRead{bucket: b.ID, period: d.Period, egress: d.EgressBytes, maxEgress: d.MaxEgressBytes}, nil
+	u.unwritten.Requests++
+	u.unwritten.Authorizations++
+	return AdmittedRead{bucket: b.ID, period: d.Period, owner: u, maxEgress: d.MaxEgressBytes, downloadErr: d.DownloadErr}, nil
 }
 
 // ReserveEgress counts an admitted GET's body of bytes against its bucket's
 // egress ceiling before it is sent. An unknown length fails closed.
 func (a *ReadAdmitter) ReserveEgress(r AdmittedRead, bytes int64) error {
-	if bytes < 0 || r.bucket == "" {
+	if bytes < 0 || r.bucket == "" || r.owner == nil {
 		return state.ErrObjectUsageStale
+	}
+	if bytes > 0 && r.downloadErr != nil {
+		return r.downloadErr
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	// A flush since admission moved counts from pending into the cached
-	// decision; count them from there.
-	written := r.egress
-	if entry := a.entries[r.bucket]; entry != nil && entry.Period.Equal(r.period) {
-		written = max(written, entry.EgressBytes)
+	u := r.owner
+	if a.owners[u.key] != u {
+		// A transfer older than the maximum transfer lifetime cannot revive
+		// an expired owner's counters.
+		return state.ErrObjectUsageStale
 	}
-	p := a.pendingLocked(r.bucket, r.period)
-	if observed := written + p.EgressBytes + bytes; observed > r.maxEgress {
+	if observed := u.recorded.EgressBytes + u.unwritten.EgressBytes + bytes; observed > r.maxEgress {
 		return &state.ObjectStorageLimitError{Kind: "egress_bytes", Observed: observed, Limit: r.maxEgress, Cause: state.ErrObjectBudget}
 	}
+	u.lastUsed = a.now().UTC()
+	p := a.pendingLocked(r.bucket, r.period, u)
 	p.EgressBytes += bytes
+	u.unwritten.EgressBytes += bytes
 	return nil
 }
 
 // decision returns b's admitting decision: cached while fresh, otherwise read
 // once for every concurrent caller. A failed read keeps serving an admitting
 // decision until ObjectReadAdmissionMaxStale, then fails closed.
-func (a *ReadAdmitter) decision(ctx context.Context, b state.ObjectBucket) (state.ObjectReadAdmission, error) {
+func (a *ReadAdmitter) decision(ctx context.Context, b state.ObjectBucket) (readDecision, error) {
 	now := a.now().UTC()
 	period := state.ObjectStoragePeriod(now)
-	// Copy under the lock: Flush updates cached decisions in place.
+	// Copy under the lock: another refresh may replace the cached decision.
 	var entry *readDecision
 	a.mu.Lock()
 	if cached := a.entries[b.ID]; cached != nil {
@@ -152,13 +178,24 @@ func (a *ReadAdmitter) decision(ctx context.Context, b state.ObjectBucket) (stat
 		// the gateway checks each credential's fence itself (step 3).
 		readCtx, cancel := context.WithTimeout(state.WithoutOrgAccessFence(context.WithoutCancel(ctx)), api.ObjectReadAdmissionTimeout)
 		defer cancel()
+		if err := a.storeGate.Acquire(readCtx, 1); err != nil {
+			return nil, err
+		}
+		defer a.storeGate.Release(1)
 		d, err := a.store.ObjectReadAdmission(readCtx, b.AccountID, b.ID, now, a.policy)
 		if err != nil {
 			return nil, err
 		}
+		if d.Err == nil && d.SubjectID == "" {
+			return nil, state.ErrObjectUsageStale
+		}
 		fresh := readDecision{ObjectReadAdmission: d, fetchedAt: now}
 		cached := fresh
 		a.mu.Lock()
+		if d.Err == nil {
+			fresh.owner = a.observeOwnerLocked(d, now)
+			cached.owner = fresh.owner
+		}
 		a.storeLocked(b.ID, &cached, now)
 		a.mu.Unlock()
 		return fresh, nil
@@ -166,21 +203,21 @@ func (a *ReadAdmitter) decision(ctx context.Context, b state.ObjectBucket) (stat
 	if err != nil {
 		if entry != nil && entry.Err == nil && entry.Period.Equal(period) && now.Sub(entry.fetchedAt) < api.ObjectReadAdmissionMaxStale {
 			a.decisions.WithLabelValues("stale").Inc()
-			return entry.ObjectReadAdmission, nil
+			return *entry, nil
 		}
 		a.decisions.WithLabelValues("failed").Inc()
-		return state.ObjectReadAdmission{}, state.ErrObjectUsageStale
+		return readDecision{}, state.ErrObjectUsageStale
 	}
 	a.decisions.WithLabelValues("refreshed").Inc()
 	fresh := v.(readDecision)
 	return fresh.admitted()
 }
 
-func (d *readDecision) admitted() (state.ObjectReadAdmission, error) {
+func (d *readDecision) admitted() (readDecision, error) {
 	if d.Err != nil {
-		return state.ObjectReadAdmission{}, d.Err
+		return readDecision{}, d.Err
 	}
-	return d.ObjectReadAdmission, nil
+	return *d, nil
 }
 
 // storeLocked caches a decision, first dropping expired ones when the cache
@@ -199,28 +236,34 @@ func (a *ReadAdmitter) storeLocked(bucket string, d *readDecision, now time.Time
 	a.entries[bucket] = d
 }
 
-func (a *ReadAdmitter) pendingLocked(bucket string, period time.Time) *state.ObjectReadUsage {
-	key := readUsageKey{bucket: bucket, period: period}
+func (a *ReadAdmitter) pendingLocked(bucket string, period time.Time, owner *readOwnerUsage) *pendingReadUsage {
+	key := readUsageKey{bucket: bucket, period: period, owner: owner.key.owner}
 	p := a.pending[key]
 	if p == nil {
-		p = &state.ObjectReadUsage{BucketID: bucket, Period: period}
+		p = &pendingReadUsage{ObjectReadUsage: state.ObjectReadUsage{BucketID: bucket, Period: period}, owner: owner}
 		a.pending[key] = p
 	}
 	return p
 }
 
 // Flush writes the counts admitted since the last flush. On failure they stay
-// pending for the next one. Written counts are added to the cached decisions,
-// so ceilings stay tight until the next refresh reads them back.
+// pending for the next one. Owners' unwritten totals include the in-flight
+// batch until commit, so admissions continue against the full usage.
 func (a *ReadAdmitter) Flush(ctx context.Context) error {
+	if err := a.storeGate.Acquire(ctx, math.MaxInt64); err != nil {
+		return err
+	}
+	defer a.storeGate.Release(math.MaxInt64)
 	a.mu.Lock()
+	a.pruneOwnersLocked(a.now().UTC())
+	pending := a.pending
 	batch := make([]state.ObjectReadUsage, 0, len(a.pending))
 	for _, p := range a.pending {
 		if p.Requests != 0 || p.Authorizations != 0 || p.EgressBytes != 0 {
-			batch = append(batch, *p)
+			batch = append(batch, p.ObjectReadUsage)
 		}
 	}
-	a.pending = map[readUsageKey]*state.ObjectReadUsage{}
+	a.pending = map[readUsageKey]*pendingReadUsage{}
 	a.mu.Unlock()
 	if len(batch) == 0 {
 		return nil
@@ -228,19 +271,15 @@ func (a *ReadAdmitter) Flush(ctx context.Context) error {
 	err := a.store.RecordObjectReadUsage(ctx, batch)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for _, u := range batch {
+	for _, u := range pending {
 		if err != nil {
-			p := a.pendingLocked(u.BucketID, u.Period)
+			p := a.pendingLocked(u.BucketID, u.Period, u.owner)
 			p.Requests += u.Requests
 			p.Authorizations += u.Authorizations
 			p.EgressBytes += u.EgressBytes
 			continue
 		}
-		if entry := a.entries[u.BucketID]; entry != nil && entry.Period.Equal(u.Period) {
-			entry.Requests += u.Requests
-			entry.Authorizations += u.Authorizations
-			entry.EgressBytes += u.EgressBytes
-		}
+		u.owner.commit(u.ObjectReadUsage)
 	}
 	if err != nil {
 		a.flushes.WithLabelValues("failed").Inc()

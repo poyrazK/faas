@@ -22,9 +22,11 @@ func checkTaskSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	for _, query := range []string{
 		`SELECT namespace,task_id,owner_hash,tool_name,handler_version,arguments_encrypted,status,
-		result_encrypted,error_encrypted,input_state_encrypted,input_methods,created_at,updated_at,
-		expires_at,attempt_count,resume_pending,lease_token,lease_expires_at,cancel_requested_at FROM gregale_mcp_tasks LIMIT 0`,
+		result_encrypted,error_encrypted,input_state_encrypted,output_schema,input_methods,created_at,updated_at,
+		expires_at,attempt_count,resume_pending,next_attempt_at,lease_token,lease_expires_at,cancel_requested_at FROM gregale_mcp_tasks LIMIT 0`,
+		`SELECT namespace,owner_hash,owner_group FROM gregale_mcp_task_owners LIMIT 0`,
 		`SELECT namespace,worker_id,tool_name,handler_version,deployment_id,heartbeat_at FROM gregale_mcp_task_worker_handlers LIMIT 0`,
+		`SELECT namespace,worker_id,handlers,draining,heartbeat_at,expires_at FROM gregale_mcp_task_workers LIMIT 0`,
 	} {
 		rows, err := pool.Query(ctx, query)
 		if err != nil {

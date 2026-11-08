@@ -42,3 +42,30 @@ func TestSignupCapsAccountsPerAddress(t *testing.T) {
 		t.Fatalf("sign-up from another network: %d, want 200", code)
 	}
 }
+
+// H97: past the network cap, /v1/auth/signup answers the same 429 for a
+// bound email as for an unbound one. Checked only on the unbound branch, the
+// cap's 429 meant "no account" and the bound branch's 401 "account".
+func TestCappedSignupAnswersBoundAndUnboundEmailsAlike(t *testing.T) {
+	store := state.NewMemStore()
+	h := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).Handler()
+	signup := func(email, password string) int {
+		body, _ := json.Marshal(api.PasswordLoginRequest{Email: email, Password: password})
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/signup", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "203.0.113.9:4000"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for i := range api.SignupAccountsPerAddressPerDay {
+		if code := signup(fmt.Sprintf("farm-%d@example.com", i), "farm-horse-battery-staple"); code != http.StatusOK {
+			t.Fatalf("sign-up %d: %d", i, code)
+		}
+	}
+	unbound := signup("nobody-yet@example.com", "probe-horse-battery-staple")
+	bound := signup("farm-0@example.com", "probe-horse-battery-staple")
+	if unbound != http.StatusTooManyRequests || bound != unbound {
+		t.Fatalf("capped sign-up: unbound email %d, bound email %d; want the same 429 for both", unbound, bound)
+	}
+}

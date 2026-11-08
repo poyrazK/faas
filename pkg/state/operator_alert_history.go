@@ -4,12 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"regexp"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 type OperatorAlertEpisode struct {
@@ -68,9 +68,9 @@ type OperatorAlertHistoryStore interface {
 	PruneOperatorAlertHistory(context.Context, time.Time, int) (int, error)
 }
 
-var operatorAlertHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
-var operatorAlertName = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*$`)
-var operatorAlertComponent = regexp.MustCompile(`^[a-zA-Z0-9_.:-]*$`)
+var operatorAlertHash = lazyregexp.New(`^[0-9a-f]{64}$`)
+var operatorAlertName = lazyregexp.New(`^[a-zA-Z_:][a-zA-Z0-9_:]*$`)
+var operatorAlertComponent = lazyregexp.New(`^[a-zA-Z0-9_.:-]*$`)
 
 func OperatorAlertEpisodeID(ruleKey, seriesID string, started time.Time) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(ruleKey+":"+seriesID+":"+started.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano))))

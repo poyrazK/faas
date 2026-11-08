@@ -1,6 +1,7 @@
 package apidserver_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -53,7 +54,7 @@ func TestDevBridgeCreationInspectionRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !errors.Is(session.AuthorizeAttachment(time.Now(), out.Credentials.AttachmentToken), devbridge.ErrUnauthorized) {
+	if !errors.Is(session.AuthorizeAttachment(context.Background(), time.Now(), out.Credentials.AttachmentToken), devbridge.ErrUnauthorized) {
 		t.Fatal("revoked attachment accepted")
 	}
 	other, err := (*e.Store()).CreateAccount(t.Context(), "other-bridge@example.com", api.PlanPro)
@@ -92,7 +93,8 @@ func TestDevBridgeRejectsProductionAndProtectedEnvironments(t *testing.T) {
 		}
 	}
 	(*(*e.S()).DevBridgeEnabled()) = false
-	if response := e.Do(t, "POST", "/v1/dev/bridges", nil, nil); response.Code != 503 {
+	// A disabled preview is permanent, not retryable (ChronoLake finding 33).
+	if response := e.Do(t, "POST", "/v1/dev/bridges", nil, nil); response.Code != 403 {
 		t.Fatalf("disabled: %d", response.Code)
 	}
 }

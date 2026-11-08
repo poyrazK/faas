@@ -446,11 +446,8 @@ func TestPublicEdgePolicyPostgresBoundsOutageAndCleanup(t *testing.T) {
 
 func TestPublicEdgePolicyPostgresEnvironmentOverlayRepairsWithoutNotify(t *testing.T) {
 	f := newPublicRoutingPGFixture(t)
+	environment := f.environment(t, "staging")
 	deployment := f.deployment(t, "staging", "sha256:edge-environment")
-	environment, err := f.store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: f.app.AccountID, ProjectID: f.project.ID, Slug: "staging"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	host := gateway.BuildEnvironmentHost(".gregale.dev", environment.ID, f.app.ID)
 	f.edgeRule(t, host, state.EdgeRuleAction{Kind: state.EdgeRuleKindHeaders, Headers: &state.EdgeRuleHeadersAction{
 		ResponseHeaders: []state.EdgeRuleHeaderOp{{Name: "X-Environment", Action: "set", Value: "global"}}}})
@@ -497,5 +494,26 @@ func TestPublicEdgePolicyPostgresEnvironmentOverlayRepairsWithoutNotify(t *testi
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// adr: 20261101141123 — a pending edge-rule change does not refuse the owner's
+// authoritative pin: apid commits between prepare and apply, and the one
+// snapshot read sees the committed rules whole.
+func TestPublicEdgePolicyPostgresServesDuringConvergence(t *testing.T) {
+	f := newPublicRoutingPGFixture(t)
+	f.deployment(t, "production", "sha256:edge-converging")
+	host := f.app.Slug + ".apps.gregale.dev"
+	preset := f.corsPreset(t, "https://old.example.test")
+	f.edgeRule(t, host, state.EdgeRuleAction{Kind: state.EdgeRuleKindCORSA, CORS: &state.EdgeRuleCORSAction{CorsPresetID: &preset.ID}})
+	g := newGatewaydEdgeRules(f.store, nil, nil, nil)
+	g.BeginConvergence(f.app.AccountID, f.app.ID, []string{host}, 1)
+	preset.AllowOrigins = []string{"https://new.example.test"}
+	if _, err := f.store.UpdateCorsPreset(t.Context(), f.app.AccountID, preset.ID, preset); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ := f.compiledApp(t, g, host) // Fails the test if the pin refuses.
+	if got := g.MatchCORS(ctx, host, "/", "GET"); got == nil || got.AllowOrigins[0] != "https://new.example.test" {
+		t.Fatalf("pin during convergence: %+v", got)
 	}
 }

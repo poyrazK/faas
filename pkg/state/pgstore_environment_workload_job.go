@@ -98,8 +98,8 @@ func activateEnvironmentGitOpsScheduledJobsTx(ctx context.Context, tx pgx.Tx, gr
 		if member.ExecutionMode != api.ExecutionModeJob || !member.ScheduleConfigured {
 			continue
 		}
-		tag, err := tx.Exec(ctx, `UPDATE jobs SET status='active',updated_at=clock_timestamp()
-			WHERE id=$1::uuid AND status='paused'`, member.JobID)
+		tag, err := tx.Exec(ctx, `UPDATE jobs SET status='active',environment_git_source_id=$2::uuid,updated_at=clock_timestamp()
+			WHERE id=$1::uuid AND status='paused'`, member.JobID, graph.SourceID)
 		if err != nil {
 			return mapErr(err)
 		}
@@ -112,7 +112,7 @@ func activateEnvironmentGitOpsScheduledJobsTx(ctx context.Context, tx pgx.Tx, gr
 
 func environmentGitOpsScheduledJobAcksTx(ctx context.Context, tx sqlc.DBTX, graphID, releaseID string) ([]EnvironmentWorkloadServingScheduledJobAck, error) {
 	rows, err := tx.Query(ctx, `SELECT app_id,job_id,job_run_id,occurrence_id,acknowledged_at,service_bindings
-		FROM public.environment_workload_scheduled_job_acks($1::uuid,$2::uuid) ORDER BY app_id`, graphID, releaseID)
+		FROM environment_workload_scheduled_job_acks($1::uuid,$2::uuid) ORDER BY app_id`, graphID, releaseID)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -136,7 +136,7 @@ func environmentGitOpsScheduledJobAcksTx(ctx context.Context, tx sqlc.DBTX, grap
 // Job identity. It always creates or updates the Job paused; qualification and
 // activation are a later, separate transition.
 func syncEnvironmentGitOpsJobTx(ctx context.Context, tx pgx.Tx, source EnvironmentGitSource, app gitOpsIntentApp,
-	intent EnvironmentWorkloadIntent, workload api.EnvironmentWorkload, plan api.Plan) (EnvironmentWorkloadIntent, error) {
+	intent EnvironmentWorkloadIntent, workload api.EnvironmentWorkload, plan api.Plan, attributeSource bool) (EnvironmentWorkloadIntent, error) {
 	if maps.Equal(app.Variables, workload.Variables) {
 		intent.Variables = maps.Clone(workload.Variables)
 	}
@@ -183,8 +183,21 @@ func syncEnvironmentGitOpsJobTx(ctx context.Context, tx pgx.Tx, source Environme
 	if !plan.JobsAllowed() || api.JobMaxPerAccount[index] <= 0 || api.JobRAMMB[index] <= 0 || api.JobTaskTimeoutSec[index] <= 0 || api.JobMaxParallelismPerRun[index] <= 0 {
 		return intent, ErrConflict
 	}
+	var ownerID any
+	if attributeSource {
+		ownerID = source.ID
+	}
 	jobName := environmentGitOpsJobName(source.EnvironmentID, app.ID)
 	envOverrides := json.RawMessage(variables)
+	if intent.JobID != "" {
+		replace, err := sqlc.New().DetachedEnvironmentJobWasDeleted(ctx, tx, mustPgUUID(intent.JobID))
+		if err != nil {
+			return intent, mapErr(err)
+		}
+		if replace {
+			intent.JobID = ""
+		}
+	}
 	if intent.JobID == "" {
 		if err := financialComputeJobCreationAllowed(ctx, tx, source.AccountID); err != nil {
 			return intent, err
@@ -198,11 +211,11 @@ func syncEnvironmentGitOpsJobTx(ctx context.Context, tx pgx.Tx, source Environme
 			return intent, &JobQuotaError{Scope: JobQuotaScopePerAccount, Limit: limit, Observed: count}
 		}
 		row := tx.QueryRow(ctx, `INSERT INTO jobs(account_id,kind,name,image_ref,ram_mb,task_timeout_s,max_parallelism,
-			retry_max,env_overrides,status,command,cron_schedule,cron_timezone,schedule_policy,failure_rules)
-			VALUES($1::uuid,'recurring',$2,$3,$4,$5,1,0,$6::jsonb,'paused',$11::text[],$7,$8,$9::jsonb,$10::jsonb)
+			retry_max,env_overrides,status,command,cron_schedule,cron_timezone,schedule_policy,failure_rules,environment_git_source_id)
+			VALUES($1::uuid,'recurring',$2,$3,$4,$5,1,0,$6::jsonb,'paused',$11::text[],$7,$8,$9::jsonb,$10::jsonb,$12::uuid)
 			RETURNING `+jobSelectCols,
 			source.AccountID, jobName, sourceRef, api.JobRAMMB[index], api.JobTaskTimeoutSec[index], []byte(envOverrides),
-			intent.Schedule.Cron, intent.Schedule.Timezone, policyJSON(intent.Schedule.SchedulePolicy), policyJSON(intent.Schedule.FailureRules), command)
+			intent.Schedule.Cron, intent.Schedule.Timezone, policyJSON(intent.Schedule.SchedulePolicy), policyJSON(intent.Schedule.FailureRules), command, ownerID)
 		created, err := scanJob(row)
 		if err != nil {
 			return intent, mapErr(err)
@@ -231,12 +244,12 @@ func syncEnvironmentGitOpsJobTx(ctx context.Context, tx pgx.Tx, source Environme
 		image_materialization_lease_until=CASE WHEN image_ref IS DISTINCT FROM $3 THEN NULL ELSE image_materialization_lease_until END,
 		name=$2,image_ref=$3,ram_mb=$4,task_timeout_s=$5,max_parallelism=1,retry_max=0,
 		env_overrides=$6::jsonb,status='paused',command=$12::text[],cron_schedule=$7,cron_timezone=$8,
-		schedule_policy=$9::jsonb,failure_rules=$10::jsonb,updated_at=now()
+		schedule_policy=$9::jsonb,failure_rules=$10::jsonb,environment_git_source_id=coalesce($13::uuid,environment_git_source_id),updated_at=now()
 		WHERE id=$1::uuid AND account_id=$11::uuid AND status<>'deleted'
 		RETURNING `+jobSelectCols,
 		intent.JobID, jobName, sourceRef, api.JobRAMMB[index], api.JobTaskTimeoutSec[index], []byte(envOverrides),
 		intent.Schedule.Cron, intent.Schedule.Timezone, policyJSON(intent.Schedule.SchedulePolicy),
-		policyJSON(intent.Schedule.FailureRules), source.AccountID, command)
+		policyJSON(intent.Schedule.FailureRules), source.AccountID, command, ownerID)
 	if _, err := scanJob(row); err != nil {
 		return intent, mapErr(err)
 	}

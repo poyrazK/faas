@@ -60,6 +60,7 @@ func TestMagicLinkFromSignupEndpointSignsIn(t *testing.T) {
 		t.Fatalf("magic-link request = %d", rec.Code)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/auth/verify?token="+lastMailToken(t, mailer, magicLinkTokenPattern), nil)
+	req.Header.Set("Sec-Fetch-Site", "none")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusFound || rec.Header().Get("Set-Cookie") == "" {
@@ -83,6 +84,7 @@ func TestEmailOwnershipClaimRevokesPreVerificationCredentials(t *testing.T) {
 		t.Fatalf("magic-link request = %d", rec.Code)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/auth/verify?token="+lastMailToken(t, mailer, magicLinkTokenPattern), nil)
+	req.Header.Set("Sec-Fetch-Site", "none")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusFound {
@@ -150,7 +152,8 @@ func TestVerifyEmailLinkKeepsSignupCredentials(t *testing.T) {
 	srv, mailer, _ := v1AuthTestHarness(t)
 	h := srv.handler()
 	key := signupWithPassword(t, h, "owner@example.com", "owner-password-123!")
-	req := httptest.NewRequest(http.MethodGet, "/v1/auth/verify-email?token="+lastMailToken(t, mailer, verifyEmailTokenPattern), nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/verify-email", strings.NewReader("token="+lastMailToken(t, mailer, verifyEmailTokenPattern)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code >= 400 {
@@ -207,5 +210,31 @@ func TestMagicLinkFromAnotherSiteNeedsAConfirmFromGregale(t *testing.T) {
 	h.ServeHTTP(rec, logout)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("logout posted from a sibling app host = %d, want 403", rec.Code)
+	}
+}
+
+// A mail scanner or link preview fetches the link without Sec-Fetch-Site. It
+// gets the confirm page, and the token still signs the customer in when they
+// open the link themselves (bug hunt H19).
+func TestMagicLinkPrefetchWithoutFetchMetadataKeepsTheToken(t *testing.T) {
+	srv, mailer, _ := v1AuthTestHarness(t)
+	h := srv.handler()
+	if rec := v1AuthJSONRequest(t, h, "/v1/auth/signup/magic-link", `{"email":"magic-scanner@example.com"}`); rec.Code != http.StatusOK {
+		t.Fatalf("magic-link request = %d", rec.Code)
+	}
+	token := lastMailToken(t, mailer, magicLinkTokenPattern)
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/verify?token="+token, nil))
+		if rec.Code != http.StatusOK || rec.Header().Get("Set-Cookie") != "" || !strings.Contains(rec.Body.String(), `action="/auth/verify"`) {
+			t.Fatalf("prefetch %d = %d (Set-Cookie %q), want the confirm page: %s", i, rec.Code, rec.Header().Get("Set-Cookie"), rec.Body.String())
+		}
+	}
+	open := httptest.NewRequest(http.MethodGet, "/auth/verify?token="+token, nil)
+	open.Header.Set("Sec-Fetch-Site", "none")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, open)
+	if rec.Code != http.StatusFound || rec.Header().Get("Set-Cookie") == "" {
+		t.Fatalf("link opened after prefetch = %d, want a signed-in redirect: %s", rec.Code, rec.Body.String())
 	}
 }

@@ -5,7 +5,7 @@ Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`, group
 Alerts: `FaasEdgeChallengeSolveRateLow`, `FaasEdgeChallengeSolutionsRefused`,
 `FaasEdgeChallengeKeyMismatch`.
 Metric: `gateway_edge_challenge_total{app,outcome}` (issued, solved, passed,
-bypassed, rejected, invalid, expired),
+bypassed, rejected, invalid, expired, preflight),
 `gateway_edge_challenge_raised_total{app}` and
 `gateway_edge_challenge_key_info{key_id,source}`.
 Design: ADR-831 amendments 7, 8 and 17.
@@ -62,10 +62,11 @@ gregale edge-rules events --app <slug> --outcome failed --since 1h
   served the page. `expired` points at clock skew (check `timedatectl` and
   `FaasHostClock`); `invalid` at a challenge key that differs between
   gateways (`KeyMismatch` fires too).
-- **Key mismatch**: a gateway with `source="session"` signs with its own
-  host's session key, which `gregalectl secrets init` makes per host, so two
-  such gateways never agree. A gateway with `source="fleet"` but its own
-  `key_id` was given another `gatewayd_edge_challenge_key`.
+- **Key mismatch**: a gateway with its own `key_id` was given another
+  `gatewayd_edge_challenge_key`, or got a host-local key because CD staged
+  none (ADR-20261102191500; a release before it reported
+  `source="session"` for a gateway signing with its host's session key).
+  Check the environment's `GATEWAYD_EDGE_CHALLENGE_KEY` secret and redeploy.
 
 ## Silence
 

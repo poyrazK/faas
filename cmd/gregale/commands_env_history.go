@@ -142,7 +142,9 @@ func envRollback(args []string) int {
 	if !configTarget(app, scope, usage) {
 		return 1
 	}
-	if code := requireAutomationConfirmation(*yes, "--yes"); code != 0 {
+	// JSON mode used to skip the typed confirmation and roll back (CLI
+	// audit 2026-10-31); it now needs --yes like --non-interactive.
+	if code := requireConfirmationFlag(*yes, "--yes", "env rollback"); code != 0 {
 		return code
 	}
 	client, err := authedClient()
@@ -150,7 +152,7 @@ func envRollback(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
-	if !*yes && !jsonOutput {
+	if !*yes {
 		target, err := client.GetConfigRevision(ctx, *app, *scope, revision)
 		if err != nil {
 			return printErr("Could not read revision", err)

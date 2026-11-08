@@ -164,7 +164,7 @@ const (
 	queueTelemetryInterval = 30 * time.Second
 	// queueTelemetryLimit bounds each gauge count; a larger backlog reports
 	// the limit.
-	queueTelemetryLimit = 100_000
+	queueTelemetryLimit = api.QueueStatusCountLimit
 )
 
 // BrokerLagReader supplies broker-reported consumer lag / queue depth for an app.
@@ -714,6 +714,25 @@ func (t *Trigger) queueTelemetryDue(appID string, now time.Time) bool {
 	return true
 }
 
+// forgetQueueTelemetry drops the gauges of apps this trigger published queue
+// telemetry for but no longer keeps: another schedd owns them now, or they
+// stopped being workers or queue-scaled. Their frozen last values would keep
+// a backlog alert firing (ADR-20261018101500 amendment 2026-10-31).
+func (t *Trigger) forgetQueueTelemetry(keep map[string]bool) {
+	t.queueSampleMu.Lock()
+	var gone []string
+	for id := range t.queueSampledAt {
+		if !keep[id] {
+			gone = append(gone, id)
+			delete(t.queueSampledAt, id)
+		}
+	}
+	t.queueSampleMu.Unlock()
+	for _, id := range gone {
+		t.metrics.ForgetQueueApp(id)
+	}
+}
+
 // sampleQueueTelemetry refreshes app's queue gauges at most once per
 // queueTelemetryInterval with bounded counts, so every worker's backlog is
 // visible and alertable without a backlog-sized read each tick
@@ -818,9 +837,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 	}
 	var workerPools workerPoolRuns
 	workerApps := map[string]state.App{}
+	queueApps := map[string]bool{}
 	defer func() {
 		t.rememberWorkerPoolApps(workerApps)
 		t.startWorkerPoolRuns(ctx, workerPools)
+		t.forgetQueueTelemetry(queueApps)
 	}()
 	for _, app := range apps {
 		// A parked or suspended app is not scaled: the reaper parks whatever
@@ -838,6 +859,9 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		queueTarget, haveQueueTarget := policy.TargetFor(api.ScalingMetricQueueDepth)
 		queueLagTarget, haveQueueLagTarget := policy.TargetFor(api.ScalingMetricQueueLag)
 		workerWorkload := app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
+		if workerWorkload || haveQueueTarget || haveQueueLagTarget {
+			queueApps[app.ID] = true
+		}
 		// Every worker's queue gauges refresh here, whatever it scales on,
 		// unless the queue-scaling read below publishes them.
 		if _, scoped := t.engine.(ScopedWorkerPoolEngine); workerWorkload && (scoped || !haveQueueTarget && !haveQueueLagTarget) {
@@ -1063,13 +1087,32 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// ADR-194 only the queue path applied it, because it was the only
 		// path that had loaded it; a concurrent_requests app's
 		// max_instances was silently ignored by this trigger.
-		dec = decideTargets(limits{
-			MaxConcurrency:    maxInstances,
-			Concurrency:       conc,
-			LastScaleOutAt:    lastScaleOut,
-			ScaleOutCooldownS: policy.ScaleOutCooldownS,
-			Now:               now,
-		}, obs)
+		decideNow := func() Decision {
+			return decideTargets(limits{
+				MaxConcurrency:    maxInstances,
+				Concurrency:       conc,
+				LastScaleOutAt:    lastScaleOut,
+				ScaleOutCooldownS: policy.ScaleOutCooldownS,
+				Now:               now,
+			}, obs)
+		}
+		dec = decideNow()
+		// ADR 20261103094355: the app list can carry an older scale-out
+		// stamp than the row, which would end a cooldown early. Before an
+		// admission the cooldown could have held, read the stamp itself.
+		if conc > 0 && policy.ScaleOutCooldownS > 0 && dec.Outcome != OutcomeCooldownHeld && (dec.ShouldAdmit || workerQueuePath) {
+			if stamps, ok := t.appStore.(state.AppScaleOutStampReader); ok {
+				stamp, err := stamps.AppScaleOutStamp(ctx, app.ID)
+				if err != nil {
+					t.log.Warn("targets: read scale-out stamp", "app_id", app.ID, "err", err)
+					continue
+				}
+				if stamp != nil && stamp.After(lastScaleOut) {
+					lastScaleOut = *stamp
+					dec = decideNow()
+				}
+			}
+		}
 		// Always emit the decision metric so the rate of
 		// no_signal vs admit vs cooldown_held is observable.
 		if t.metrics != nil {

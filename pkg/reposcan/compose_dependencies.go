@@ -42,7 +42,16 @@ func composeDependencyConditions(value any) (map[string]string, error) {
 		}
 		conditions[key] = condition
 	}
-	if err := api.ValidateComposeDependencyConditions(conditions, dependencyNames(value)); err != nil {
+	// A completion condition is folded into a release command after the
+	// whole file is read (foldComposeReleaseServices); the rest are checked
+	// as stored app conditions.
+	gates := make(map[string]string, len(conditions))
+	for name, condition := range conditions {
+		if condition != api.ComposeDependencyCompleted {
+			gates[name] = condition
+		}
+	}
+	if err := api.ValidateComposeDependencyConditions(gates, dependencyNames(value)); err != nil {
 		return nil, err
 	}
 	return conditions, nil

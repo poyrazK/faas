@@ -248,10 +248,10 @@ func TestPlatformDetailAndGate(t *testing.T) {
 		t.Fatalf("platform detail = %+v", detail)
 	}
 	f.svc.Enabled = false
-	if code := get(t, f.svc.List, f.acct, "/v1/incidents", "", nil); code != http.StatusServiceUnavailable {
-		t.Fatalf("gated list = %d, want 503", code)
+	if code := get(t, f.svc.List, f.acct, "/v1/incidents", "", nil); code != http.StatusForbidden {
+		t.Fatalf("gated list = %d, want 403", code)
 	}
-	if code := get(t, f.svc.Get, f.acct, "/v1/incidents/x", "platform-"+ev.PublicID, nil); code != http.StatusServiceUnavailable {
-		t.Fatalf("gated detail = %d, want 503", code)
+	if code := get(t, f.svc.Get, f.acct, "/v1/incidents/x", "platform-"+ev.PublicID, nil); code != http.StatusForbidden {
+		t.Fatalf("gated detail = %d, want 403", code)
 	}
 }

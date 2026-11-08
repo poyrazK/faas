@@ -22,6 +22,8 @@ const ProducerOutboxQuotaWarningTemplate = "quota_warning"
 const ProducerOutboxNonpaymentDeletionTemplate = "nonpayment_deletion"
 const ProducerOutboxAccountSuspendedTemplate = "account_suspended"
 const ProducerOutboxManagedPostgresCapTemplate = "managed_postgres_cap"
+const ProducerOutboxManagedPostgresRestoreSlotTemplate = "managed_postgres_restore_slot"
+const ProducerOutboxManagedPostgresPlanExcessTemplate = "managed_postgres_plan_excess"
 const ProducerOutboxAccountRestoredTemplate = "account_restored"
 const ProducerOutboxPaymentFailedTemplate = "payment_failed"
 const ProducerOutboxMFAEnabledAlertTemplate = "mfa_enabled"
@@ -54,6 +56,14 @@ func (s *Service) accountSuspendedOutboxEnabled() bool {
 
 func (s *Service) managedPostgresCapOutboxEnabled() bool {
 	return s.producerOutboxEnabled() && s.ManagedPostgresCapOutboxEnabled != nil && s.ManagedPostgresCapOutboxEnabled()
+}
+
+func (s *Service) managedPostgresRestoreSlotOutboxEnabled() bool {
+	return s.producerOutboxEnabled() && s.ManagedPostgresRestoreSlotOutboxEnabled != nil && s.ManagedPostgresRestoreSlotOutboxEnabled()
+}
+
+func (s *Service) managedPostgresPlanExcessOutboxEnabled() bool {
+	return s.producerOutboxEnabled() && s.ManagedPostgresPlanExcessOutboxEnabled != nil && s.ManagedPostgresPlanExcessOutboxEnabled()
 }
 
 func (s *Service) accountRestoredOutboxEnabled() bool {
@@ -117,6 +127,10 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 			gate = s.accountSuspendedOutboxEnabled
 		case ProducerOutboxManagedPostgresCapTemplate:
 			gate = s.managedPostgresCapOutboxEnabled
+		case ProducerOutboxManagedPostgresRestoreSlotTemplate:
+			gate = s.managedPostgresRestoreSlotOutboxEnabled
+		case ProducerOutboxManagedPostgresPlanExcessTemplate:
+			gate = s.managedPostgresPlanExcessOutboxEnabled
 		case ProducerOutboxAccountRestoredTemplate:
 			gate = s.accountRestoredOutboxEnabled
 		case ProducerOutboxPaymentFailedTemplate:
@@ -130,7 +144,7 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 		case ProducerOutboxMFARecoveryAlertTemplate:
 			gate = s.mfaRecoveryAlertOutboxEnabled
 		default:
-			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() && !s.mfaEnabledAlertOutboxEnabled() && !s.paymentFailedOutboxEnabled() && !s.accountRestoredOutboxEnabled() && !s.accountSuspendedOutboxEnabled() && !s.nonpaymentDeletionOutboxEnabled() && !s.quotaWarningOutboxEnabled() && !s.subscriptionEndedOutboxEnabled() && !s.deploymentFailedOutboxEnabled() && !s.managedPostgresCapOutboxEnabled() && !s.agentRunDeliveredOutboxEnabled() {
+			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() && !s.mfaEnabledAlertOutboxEnabled() && !s.paymentFailedOutboxEnabled() && !s.accountRestoredOutboxEnabled() && !s.accountSuspendedOutboxEnabled() && !s.nonpaymentDeletionOutboxEnabled() && !s.quotaWarningOutboxEnabled() && !s.subscriptionEndedOutboxEnabled() && !s.deploymentFailedOutboxEnabled() && !s.managedPostgresCapOutboxEnabled() && !s.managedPostgresRestoreSlotOutboxEnabled() && !s.managedPostgresPlanExcessOutboxEnabled() && !s.agentRunDeliveredOutboxEnabled() {
 				return ctx, ErrDisabled
 			}
 			return ctx, ErrInvalid

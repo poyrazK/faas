@@ -44,7 +44,9 @@ rate-limited per plan.
 
 Enable WebSockets on an app with `gregale app APP_SLUG --websocket-enabled`.
 An open WebSocket counts as an in-flight request, so its instance stays
-running past the idle timeout for as long as the connection is open.
+running past the idle timeout for as long as the connection is open. For long
+connections with sparse messages, [managed realtime](realtime.md#long-lived-connections-and-scale-to-zero)
+holds the socket instead, so the app can park between messages.
 
 The public edge closes a WebSocket that carries no frames for about 100
 seconds. Send a ping or an application heartbeat at least every 60 seconds,
@@ -1021,9 +1023,12 @@ outright.
 
 ### Verifying the caller (preview)
 
-By default a service learns who called it from platform-set headers. Signed
-caller assertions let the target verify that claim itself. They are a preview
-and are not enabled on every installation.
+The platform authorizes every internal call before forwarding it, but by
+default the target is not told which service called: the gateway's caller
+header stays on the node and is removed before the request reaches your code.
+Only the preview markers above reach the target. Signed caller assertions let
+the target learn and verify the caller itself. They are a preview and are not
+enabled on every installation.
 
 Every internal call then carries `X-Faas-Caller-Assertion`: a short-lived
 (30 s) EdDSA JWT stating `sub` = calling app id, `aud` = receiving app id,
@@ -1353,9 +1358,16 @@ See [ADR-601](adr/601-binding-checked-historical-rollback.md) for transaction bo
 
 ## Private TCP between services
 
-Same-account services can also talk over plain TCP, which covers protocols
-such as PostgreSQL, Redis, MQTT, AMQP and custom binary protocols. Dial the
-service name on its own port:
+Private TCP is off unless your Gregale operator has turned it on for the
+nodes your services run on. Until then, `*.svc.gregale` answers with the
+HTTP-only address and only HTTP calls on port 10081 reach a service; raw TCP
+connections to other ports are refused. Ask your operator before you rely on
+it, and keep a datastore your services share outside Gregale or behind an HTTP
+API until it is on.
+
+Where it is on, same-account services can also talk over plain TCP, which
+covers protocols such as PostgreSQL, Redis, MQTT, AMQP and custom binary
+protocols. Dial the service name on its own port:
 
 ```text
 redis://cache.svc.gregale:6379
@@ -1428,6 +1440,11 @@ caller.
 Private TCP addresses are a node-level rollout. Until your node has it
 enabled, `*.svc.gregale` keeps answering with the HTTP-only address, and HTTP
 service calls work as before.
+
+gRPC between services does not need private TCP: it runs over the HTTP
+service mesh. Mark a gRPC service with `x-gregale-app-protocol: grpc` in
+Compose (or `gregale app update <app> --app-protocol grpc`) so the platform
+reaches it over HTTP/2.
 
 ### Qualify and activate a project release graph
 

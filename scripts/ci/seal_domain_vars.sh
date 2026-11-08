@@ -11,7 +11,11 @@
 #                  alerting, storage, control, delivery, account)
 #                  and the recipient of every domain (apid seals to it)
 #   compute        identities of the domains read there (runtime, build, edge,
-#                  control, delivery)
+#                  edge_tls, control, delivery), and storage's when the S3 gateway runs
+#                  on the compute nodes (SEAL_DOMAIN_STORAGE_ON_COMPUTE=true,
+#                  ADR-20261031122757)
+#
+# The edge-tls domain is edge_tls here, as in its variables and secrets.
 #
 # Secrets, per domain: SEAL_DOMAIN_<DOMAIN>_AGE_KEY and
 # SEAL_DOMAIN_<DOMAIN>_AGE_RECIPIENT, from `gregalectl seal-domain init`. Set
@@ -28,7 +32,7 @@ usage() {
 role=$1 out=$2 vars=$3
 case "$role" in control-plane | compute) ;; *) usage ;; esac
 
-if [[ -f "$vars" ]] && grep -qE '^(faas_seal_domains_managed|faas_seal_domain_[a-z]+_(identity|recipient)_src):' "$vars"; then
+if [[ -f "$vars" ]] && grep -qE '^(faas_seal_domains_managed|faas_seal_domain_[a-z_]+_(identity|recipient)_src):' "$vars"; then
   echo "::error::$vars sets seal-domain key variables; CD stages them from the SEAL_DOMAIN_* secrets, so remove them from the environment's Ansible variables" >&2
   exit 1
 fi
@@ -55,7 +59,7 @@ stage() { # KIND DOMAIN VALUE
   added+="faas_seal_domain_${domain}_${kind}_src: \"$file\""$'\n'
 }
 
-for domain in outbound source alerting storage control delivery account runtime build edge; do
+for domain in outbound source alerting storage control delivery account runtime build edge edge_tls; do
   upper=$(printf '%s' "$domain" | tr '[:lower:]' '[:upper:]')
   key_var="SEAL_DOMAIN_${upper}_AGE_KEY"
   pub_var="SEAL_DOMAIN_${upper}_AGE_RECIPIENT"
@@ -73,11 +77,16 @@ for domain in outbound source alerting storage control delivery account runtime 
       stage identity "$domain" "$key"
       stage recipient "$domain" "$pub"
       ;;
-    control-plane/runtime | control-plane/build | control-plane/edge)
+    control-plane/runtime | control-plane/build | control-plane/edge | control-plane/edge_tls)
       stage recipient "$domain" "$pub"
       ;;
-    compute/runtime | compute/build | compute/edge | compute/control | compute/delivery | control-plane/control | control-plane/account)
+    compute/runtime | compute/build | compute/edge | compute/edge_tls | compute/control | compute/delivery | control-plane/control | control-plane/account)
       stage identity "$domain" "$key"
+      ;;
+    compute/storage)
+      if [[ "${SEAL_DOMAIN_STORAGE_ON_COMPUTE:-}" == true ]]; then
+        stage identity "$domain" "$key"
+      fi
       ;;
   esac
   recipients+="# $domain recipient: $pub"$'\n'

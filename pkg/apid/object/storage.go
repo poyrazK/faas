@@ -174,14 +174,23 @@ func (s *Service) providerRefusingCredentials() bool {
 			backends = append(backends, backend.ID)
 		}
 	}
-	return s.health.anyFailing(backends)
+	return s.health.anyFailing(backends, time.Now())
 }
 
 // BucketView deliberately excludes operator placement, credentials and leases.
 type BucketView = api.ObjectBucket
 
 func viewBucket(b state.ObjectBucket) BucketView {
-	return BucketView{ID: b.ID, Name: b.Name, Scope: b.Scope, Region: b.Region, State: b.State, Public: b.PublicRead, ServeAt: b.ServeAt, CreatedAt: b.CreatedAt}
+	return BucketView{ID: b.ID, Name: b.Name, Scope: b.Scope, Region: b.Region, State: b.State, Public: b.PublicRead, ServeAt: b.ServeAt, CreatedAt: b.CreatedAt, Retry: bucketRetry(b)}
+}
+
+// bucketRetry explains a create or delete that failed and is being retried.
+// A fresh claim clears last_error_code, so only a recorded failure shows.
+func bucketRetry(b state.ObjectBucket) *api.ObjectBucketRetry {
+	if b.State != "provisioning" && b.State != "deleting" || b.LastErrorCode == "" {
+		return nil
+	}
+	return &api.ObjectBucketRetry{Reason: b.LastErrorCode, Detail: api.ObjectBucketRetryDetail(b.LastErrorCode), Attempts: b.AttemptCount, RetryAt: b.RetryAt.UTC()}
 }
 
 // ErrObjectStorageDisabled marks the operator gate: the installation has
@@ -235,7 +244,7 @@ func BucketProblem(w http.ResponseWriter, err error) {
 	if errors.As(err, &limit) {
 		problem.Limit, problem.Observed = &limit.Limit, &limit.Observed
 		problem.Detail = detail + " Limit: " + limit.Kind + "."
-		problem.DocsURL = "https://github.com/poyrazK/faas/blob/main/docs/object-storage.md#limits"
+		problem.DocsURL = api.ObjectStorageLimitsDocsURL
 	}
 	api.WriteProblem(w, problem)
 }
@@ -391,7 +400,9 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 		return state.ObjectBucket{}, err
 	}
 	for _, old := range items {
-		if old.Name == req.Name && old.Scope == req.Scope {
+		// A deleted bucket frees its name (object_buckets_name_idx skips
+		// deleted rows); matching it refused every re-create with a conflict.
+		if old.Name == req.Name && old.Scope == req.Scope && old.State != "deleted" {
 			if req.Region != "" && old.Region != req.Region {
 				return old, state.ErrConflict
 			}
@@ -400,6 +411,11 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 			}
 			return old, nil
 		}
+	}
+	// The reservation enforces the limit under its lock; checking here first
+	// names the limit instead of a bare conflict.
+	if live := liveBucketCount(items); live >= s.Host.ObjectStorage().MaxBucketsPerApp {
+		return state.ObjectBucket{}, &state.ObjectStorageLimitError{Kind: "max_buckets_per_app", Limit: int64(s.Host.ObjectStorage().MaxBucketsPerApp), Observed: int64(live) + 1, Cause: state.ErrConflict}
 	}
 	if req.Region == "" {
 		req.Region = s.Host.ObjectStorage().DefaultRegion
@@ -507,36 +523,6 @@ func (s *Service) DeleteBucket(w http.ResponseWriter, r *http.Request, acct stat
 		BucketProblem(w, err)
 		return
 	}
-	var bindingsToRevoke []state.ObjectS3Credential
-	if bindings, ok := s.Host.Store().(state.ObjectS3CredentialBindingStore); ok {
-		credentials, err := bindings.ListObjectS3Credentials(r.Context(), acct.ID, b.ID)
-		if err != nil {
-			BucketProblem(w, err)
-			return
-		}
-		for _, credential := range credentials {
-			if credential.ManagedAppID == b.AppID {
-				bindingsToRevoke = append(bindingsToRevoke, credential)
-			}
-		}
-	}
-	if len(bindingsToRevoke) > 0 {
-		bindings, ok := s.Host.Store().(state.ObjectS3CredentialBindingStore)
-		if !ok {
-			BucketProblem(w, objectstorage.ErrUnavailable)
-			return
-		}
-		for _, credential := range bindingsToRevoke {
-			changed, err := bindings.RevokeObjectS3ComputeBinding(r.Context(), acct.ID, b.ID, credential.ID)
-			if err != nil {
-				BucketProblem(w, err)
-				return
-			}
-			if changed {
-				s.Host.NotifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, state.App{ID: credential.ManagedAppID}, "binding_revoked", credential.ManagedScope, "")
-			}
-		}
-	}
 	token := uuid.NewString()
 	b, err := st.ClaimObjectBucket(r.Context(), b.AccountID, b.AppID, b.ID, token, "deleting")
 	if err != nil {
@@ -551,11 +537,40 @@ func (s *Service) DeleteBucket(w http.ResponseWriter, r *http.Request, acct stat
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// revokeDeletedBucketBindings revokes the owning app's compute bindings once
+// the provider has deleted the bucket. Deletion used to revoke them before the
+// claim; a claim refused for an open multipart upload, a pending write or a
+// fence then left a ready bucket whose app had lost its credentials. Running
+// it here, after the provider proved the bucket gone, means a refused or
+// retried deletion never strands the app, and every retry repeats it.
+func (s *Service) revokeDeletedBucketBindings(ctx context.Context, b state.ObjectBucket) error {
+	bindings, ok := s.Host.Store().(state.ObjectS3CredentialBindingStore)
+	if !ok {
+		return nil
+	}
+	credentials, err := bindings.ListObjectS3Credentials(ctx, b.AccountID, b.ID)
+	if err != nil {
+		return err
+	}
+	for _, credential := range credentials {
+		if credential.ManagedAppID != b.AppID {
+			continue
+		}
+		changed, err := bindings.RevokeObjectS3ComputeBinding(ctx, b.AccountID, b.ID, credential.ID)
+		if err != nil {
+			return err
+		}
+		if changed {
+			s.Host.NotifyRuntimeConfigChange(ctx, db.NotifySecretRotated, state.Account{ID: b.AccountID}, state.App{ID: credential.ManagedAppID}, "binding_revoked", credential.ManagedScope, "")
+		}
+	}
+	return nil
+}
+
 // customerBucketHasData reports whether a bucket the customer must empty
 // still holds objects or retained versions. Deletion revokes the app's compute
-// bindings before the provider is asked; when the provider then refused a
-// non-empty bucket, the bucket returned to ready with its bindings gone and the
-// app lost access to data that still existed (hunt #9). Owned buckets are
+// bindings once the provider deletes the bucket; checking first keeps a
+// non-empty bucket from being claimed at all (hunt #9). Owned buckets are
 // emptied by the deletion itself and are not checked.
 func (s *Service) customerBucketHasData(ctx context.Context, b state.ObjectBucket) (bool, error) {
 	if b.State != "ready" {
@@ -780,4 +795,16 @@ func (s *Service) DeleteBucketAccessGrant(w http.ResponseWriter, r *http.Request
 		"app_id": bucket.AppID, "bucket_id": bucket.ID, "key_id": keyID,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// liveBucketCount counts the buckets toward max_buckets_per_app, as the
+// reservation does: every bucket not yet deleted.
+func liveBucketCount(items []state.ObjectBucket) int {
+	n := 0
+	for _, b := range items {
+		if b.State != "deleted" {
+			n++
+		}
+	}
+	return n
 }

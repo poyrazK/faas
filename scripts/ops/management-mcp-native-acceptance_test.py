@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import unittest
 
@@ -28,6 +29,18 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             m.run(self.config, call)
         self.assertEqual(calls, ['gregale_plan_workload_rollout'])
+
+    def test_verification_is_read_only_and_references_a_reviewed_plan(self):
+        scenario = copy.deepcopy(self.config)
+        scenario['steps'].append({'id': 'verify', 'tool': 'gregale_verify_plan',
+                                 'arguments': {'plan_id': {'ref': 'plan.plan_id'}},
+                                 'poll': True, 'expect': {'verification.status': 'verified'}})
+        m.validate(scenario)
+        for reference in ('apply.plan_id', 'plan.deployment.id'):
+            invalid = copy.deepcopy(scenario)
+            invalid['steps'][-1]['arguments']['plan_id']['ref'] = reference
+            with self.assertRaises(ValueError):
+                m.validate(invalid)
 
     def test_replay_and_convergence(self):
         plan = dict(self.config['target'], account_id=self.config['account_id'], plan_id='p', rollout_mode='worker')
@@ -135,6 +148,45 @@ class ProtectedRecoveryTests(unittest.TestCase):
             return {'status':'approval_pending'}
         with self.assertRaises(RuntimeError):
             m.run(self.config,call)
+
+
+class OutputReaderTests(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location(
+            'metrics', Path(__file__).with_name('management-mcp-metrics-acceptance.py'))
+        self.metrics = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.metrics)
+
+    def pipe(self, binary=False):
+        reader, writer = os.pipe()
+        stream = os.fdopen(reader, 'rb') if binary else os.fdopen(reader, 'r', encoding='utf-8')
+        output = os.fdopen(writer, 'wb', buffering=0)
+        self.addCleanup(stream.close)
+        self.addCleanup(output.close)
+        return stream, output
+
+    def test_coalesced_notices_are_read_without_waiting_for_more_output(self):
+        for binary in (False, True):
+            with self.subTest(binary=binary):
+                stream, output = self.pipe(binary)
+                output.write(b'metrics listening\nMCP listening\n')
+                for expected in (b'metrics listening\n', b'MCP listening\n'):
+                    self.assertEqual(self.metrics.read_line(stream, timeout=0.5),
+                                     expected if binary else expected.decode())
+
+    def test_partial_line_has_a_deadline(self):
+        stream, output = self.pipe()
+        output.write(b'partial notice')
+        with self.assertRaisesRegex(RuntimeError, 'CLI output timed out'):
+            self.metrics.read_line(stream, timeout=0.02)
+
+    def test_final_partial_line_and_eof(self):
+        stream, output = self.pipe()
+        output.write(b'last notice')
+        output.close()
+        self.assertEqual(self.metrics.read_line(stream, timeout=0.5), 'last notice')
+        with self.assertRaisesRegex(RuntimeError, 'CLI ended early'):
+            self.metrics.read_line(stream, timeout=0.5)
 
 
 if __name__ == '__main__':

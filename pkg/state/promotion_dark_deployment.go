@@ -45,13 +45,19 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if dep.DeletedAt != nil {
+		return ErrInvalidStateTransition
+	}
+	if err := lockProjectDeploymentEnvironment(ctx, tx, dep.AppID, normalizedDeploymentScope(dep.Scope)); err != nil {
+		return err
+	}
 	// Graph activation owns deployment promotion for every managed workload in
 	// the scope, including after the temporary hold has been lifted.
 	managed, err := environmentGitOpsManagedForScopeTx(ctx, tx, dep.AppID, dep.Scope)
 	if err != nil {
 		return fmt.Errorf("state: check managed workload before dark promotion: %w", err)
 	}
-	if managed {
+	if dep.EnvironmentWorkloadManaged() || managed {
 		return ErrConflict
 	}
 	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
@@ -97,6 +103,12 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 	if !ok {
 		return ErrNotFound
 	}
+	if dep.DeletedAt != nil {
+		return ErrInvalidStateTransition
+	}
+	if err := m.checkProjectDeploymentEnvironmentLocked(m.apps[dep.AppID], normalizedDeploymentScope(dep.Scope)); err != nil {
+		return err
+	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(dep)); err != nil {
 		return err
 	}
@@ -116,7 +128,7 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 			}
 		}
 	}()
-	if m.environmentGitOpsManagedForScopeLocked(dep.AppID, dep.Scope) {
+	if dep.EnvironmentWorkloadManaged() || m.environmentGitOpsManagedForScopeLocked(dep.AppID, dep.Scope) {
 		return ErrConflict
 	}
 	if dep.Status == DeployLive && dep.TrafficPercent == 0 && dep.TrafficPercentExplicit {

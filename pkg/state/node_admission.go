@@ -23,6 +23,18 @@ type NodeAdmission struct {
 	// and CPU budgets, checked under the same lock as the RAM reservation
 	// (ADR-20261027220445). The zero value skips that check.
 	Compute NodeCompute
+	// ReservationDiscountMB is the RAM the scheduler left out of the node's
+	// reservations when it chose the node: the reservations of instances vmmd
+	// holds at the idle ladder's freeze level, which measured admission books
+	// at their measured memory (ADR-20261107122928). The guard applies it only
+	// with a measured allowance (ReservationPercent above 100) and bounds it
+	// at api.IdleLadderReservationDiscountMaxPercent of the ceiling.
+	ReservationDiscountMB int
+	// BookedCPUMillicores, when positive, is stored on the admitted instance
+	// as what it books against the node's CPU budget once its startup boost
+	// ends, in place of its app's cpu_millicores (ADR-20261101160231 step
+	// 5b). Zero keeps the app's value.
+	BookedCPUMillicores int
 }
 
 // NodeCompute is an admission's guest vCPUs and sustained CPU millicores, and
@@ -54,6 +66,62 @@ func nodeAdmissionExpectation(ctx context.Context, nodeID string) (NodeAdmission
 		return NodeAdmission{}, false, ErrInvalidArgument
 	}
 	return expected, present, nil
+}
+
+type thawAdmissionKey struct{}
+
+// WithThawAdmission binds what a frozen VM's return to service books on its
+// node: the reservation allowance and the vCPU and CPU, with the scheduler's
+// discounts, as WithNodeAdmission does for a new instance. A thaw keeps its
+// node, so no placement generation binds it. The thaw's publication checks
+// the node against them under the durable guard's lock, since a frozen row is
+// outside the node's bookings until it runs again (ADR 20261102072403).
+func WithThawAdmission(ctx context.Context, admission NodeAdmission) context.Context {
+	return context.WithValue(ctx, thawAdmissionKey{}, admission)
+}
+
+// thawAdmission is ctx's thaw binding for nodeID, clamped as a placement
+// binding is; without one a thaw books 100%, no compute and no discount.
+func thawAdmission(ctx context.Context, nodeID string) (percent int, compute NodeCompute, discountMB int) {
+	a, ok := ctx.Value(thawAdmissionKey{}).(NodeAdmission)
+	if !ok || a.NodeID != nodeID {
+		return 100, NodeCompute{}, 0
+	}
+	c := a.Compute
+	return min(max(a.ReservationPercent, 100), api.MeasuredAdmissionMaxOvercommitPercent), NodeCompute{
+		VCPU: max(c.VCPU, 0), CPUMillicores: max(c.CPUMillicores, 0),
+		QuietVCPU: max(c.QuietVCPU, 0), QuietCPUMillicores: max(c.QuietCPUMillicores, 0),
+	}, max(a.ReservationDiscountMB, 0)
+}
+
+// nodeReservationDiscountMB is the RAM ctx's placement binding for nodeID
+// leaves out of the node's reservations, before the guard's bound.
+func nodeReservationDiscountMB(ctx context.Context, nodeID string) int {
+	expected, present := ctx.Value(nodeAdmissionKey{}).(NodeAdmission)
+	if !present || expected.NodeID != nodeID {
+		return 0
+	}
+	return max(expected.ReservationDiscountMB, 0)
+}
+
+// reservationDiscountMB is the discount the guard applies: only with a
+// measured allowance (percent above 100), at most
+// api.IdleLadderReservationDiscountMaxPercent of the ceiling.
+func reservationDiscountMB(discountMB, percent int, ceilingMB int64) int64 {
+	if percent <= 100 || discountMB <= 0 || ceilingMB <= 0 {
+		return 0
+	}
+	return min(int64(discountMB), ceilingMB*api.IdleLadderReservationDiscountMaxPercent/100)
+}
+
+// nodeBookedCPUMillicores is the CPU booking ctx's placement binding stamps
+// on an instance admitted to nodeID; zero when there is none.
+func nodeBookedCPUMillicores(ctx context.Context, nodeID string) int {
+	expected, present := ctx.Value(nodeAdmissionKey{}).(NodeAdmission)
+	if !present || expected.NodeID != nodeID {
+		return 0
+	}
+	return min(max(expected.BookedCPUMillicores, 0), api.AppCPUBookingMaxMillicores)
 }
 
 // nodeReservationPercent is the reservation allowance ctx grants an admission

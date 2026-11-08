@@ -136,6 +136,34 @@
 # Default: false
 # quiet_pause_observe = false
 
+# idle_ladder: the idle ladder (ADR-20261107122928, proposed). "observe"
+# measures, for every request-serving instance whatever its declared pause,
+# the ladder level its idle time reaches (quiet pause at 1 s, freeze at 10 s,
+# cold compression at 1 and 3 min, snapshot at 10 min), the VM memory held at
+# each level, the level each request wakes from and the billed MB-seconds the
+# unbilled levels would not bill (vmmd_idle_ladder_observed_*). For apps
+# quiet_pause does not pause, its activity guard also records the pauses it
+# would make (no request, VM CPU <= 10 ms and veth <= 512 B each way over the
+# last 1 s) and what would end them (vmmd_idle_ladder_guard_observed_*). It
+# pauses nothing and runs beside quiet_pause. "on" measures the same and also
+# applies the first two levels to the instances quiet_pause pauses: it pauses
+# them after 1 s instead of 2 s, and reports those quiet for 10 s at level 2
+# (InstanceStats.idle_ladder_level), whose memory schedd's measured admission
+# charges with the frozen floor (8 MB, not 64). "on" needs quiet_pause on.
+# FAAS_IDLE_LADDER overrides.
+# Default: "off"
+# idle_ladder = "observe"
+
+# idle_ladder_apps: with idle_ladder = "on", also quiet-pause apps that
+# declared no pause (ADR-20261107122928 §6), only when the activity guard
+# sees them idle: no request for 1 s and, over that second, VM CPU <= 10 ms
+# and veth <= 512 bytes each way. Any inbound byte on a paused app's veth
+# resumes it (within ~0.5 s); a request resumes it as quiet pause always did.
+# Apps that declared when_idle or never are left alone. FAAS_IDLE_LADDER_APPS
+# overrides.
+# Default: false
+# idle_ladder_apps = true
+
 # agent_wait_pause: pause an agent run VM while its harness waits on a model
 # call through the outbound relay and does nothing else, and resume it when
 # the relay's next bytes arrive (ADR-20261027090012). It needs an open relay
@@ -251,3 +279,4 @@
 # overlay_cidr = "100.64.0.0/10"       # overlay subnet the detector prefers
 # overlay_interface = "tailscale0"     # optional NIC pin (Gap #5)
 # service_tcp_enabled = false          # ADR-576 private TCP service addresses; FAAS_SERVICE_TCP_ENABLED wins. Pair with the nftables role's faas_service_tcp_enabled.
+# database_route_enabled = false       # ADR-1027 app route to managed databases (198.18.0.1:5432). Pair with the nftables role's faas_database_route_enabled and gatewayd-internal database_route_listen.

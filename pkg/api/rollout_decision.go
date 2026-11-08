@@ -89,6 +89,21 @@ var rolloutDecisionRules = map[string]string{
 	RolloutRuleAbortRouteHealthTimeout: RolloutDecisionAbort,
 }
 
+// RollbackSkippedFailed marks a post-release decision whose automatic
+// rollback ran and did not restore the previous release (ADR-1445
+// amendment 4).
+const RollbackSkippedFailed = "rollback_failed"
+
+// PostReleaseRolloutRule reports whether rule is a post-release watch
+// decision (ADR-1445): a regression found after the rollout completed.
+func PostReleaseRolloutRule(rule string) bool {
+	switch rule {
+	case RolloutRuleAbortPostRelease5xx, RolloutRuleAbortPostReleaseP95, RolloutRuleAbortPostReleaseGate:
+		return true
+	}
+	return false
+}
+
 // RolloutDecision is the evidence behind one decision about a rollout
 // (ADR-1447): why a canary stage advanced, why it is held, or why it was
 // aborted. It carries only metric names and aggregates; no request payload,
@@ -113,8 +128,15 @@ type RolloutDecision struct {
 	Signals *RolloutDecisionSignals `json:"signals,omitempty"`
 	// Gates are the release gates judged with this decision
 	// (ADR-20261019071734).
-	Gates     []ReleaseGateResult `json:"gates,omitempty"`
-	DecidedAt string              `json:"decided_at"`
+	Gates []ReleaseGateResult `json:"gates,omitempty"`
+	// RollbackSkipped says why an automatic rollback after the rollout did
+	// not take the release off: the problem code that refused it, such as
+	// rollback_crosses_release (ADR-1448), or RollbackSkippedFailed when it
+	// ran and did not restore the previous release (ADR-1445 amendment 4).
+	// The regression was found, the release keeps serving and a person
+	// decides.
+	RollbackSkipped string `json:"rollback_skipped,omitempty"`
+	DecidedAt       string `json:"decided_at"`
 }
 
 // RolloutDecisionSample is one side's aggregates over the window. Request
@@ -172,6 +194,9 @@ func (d RolloutDecision) Validate() error {
 	}
 	if d.Kind != kind {
 		return fmt.Errorf("rollout decision rule %q is not a %q decision", d.Rule, d.Kind)
+	}
+	if d.RollbackSkipped != "" && !PostReleaseRolloutRule(d.Rule) {
+		return fmt.Errorf("rollout decision rule %q cannot skip a post-release rollback", d.Rule)
 	}
 	if len(d.Summary) > RolloutDecisionSummaryMaxBytes {
 		return fmt.Errorf("rollout decision summary exceeds %d bytes", RolloutDecisionSummaryMaxBytes)

@@ -80,17 +80,25 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	tools, err := session.ListTools(ctx, nil)
-	// 49 read tools, the local deploy and env plans (ADR-20261026141841), and
-	// the provisioning plans and domain check (ADR-20261026174727).
-	if err != nil || len(tools.Tools) != 56 || requests.Load() != 0 {
-		t.Fatalf("discovery=%+v error=%v requests=%d", tools, err, requests.Load())
+	if err != nil || len(tools.Tools) != 23 || requests.Load() != 0 {
+		t.Fatalf("discovery count=%d discovery=%+v error=%v requests=%d", len(tools.Tools), tools, err, requests.Load())
 	}
 	listed := map[string]bool{}
 	for _, tool := range tools.Tools {
 		listed[tool.Name] = true
+		if strings.HasPrefix(tool.Name, "gregale_apply_") || tool.Name == "gregale_cancel_provision" {
+			t.Errorf("read-only stdio connection lists mutation %s", tool.Name)
+		}
 	}
-	if !listed["gregale_plan_local_deploy"] || !listed["gregale_plan_env_change"] {
-		t.Fatal("a local stdio connection did not list the local deploy and env plans")
+	for _, name := range []string{"gregale_plan_local_deploy", "gregale_plan_env_change", "gregale_get_plan", "gregale_get_saved_plan", "gregale_check_plan", "gregale_list_actions", "gregale_get_action", "gregale_get_action_outcome"} {
+		if !listed[name] {
+			t.Errorf("local stdio connection omitted %s", name)
+		}
+	}
+	for _, name := range []string{"gregale_get_config", "gregale_plan_scale", "gregale_plan_deploy", "gregale_get_trace"} {
+		if listed[name] {
+			t.Errorf("default core connection lists optional tool %s", name)
+		}
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "gregale_context", Arguments: map[string]any{}})
 	if err != nil || result.IsError {

@@ -58,6 +58,10 @@ per tick, so `queue_depth` counts what Gregale has **already pulled** while
 million-message Kafka backlog with a batch size of 64 shows a queue depth of
 64. Scale a broker-backed consumer on `queue_lag`.
 
+For Kafka, `queue_lag` is the topic's high watermark less the consumer
+group's committed offset, summed over partitions, so a partition whose
+commit is held by a retried record shows its whole backlog.
+
 `queue_lag` reports no signal at all when no broker answers (the trigger is
 disabled, the broker is unreachable, or the source does not report lag). It
 does not fall back to the local queue depth, so an app declaring only

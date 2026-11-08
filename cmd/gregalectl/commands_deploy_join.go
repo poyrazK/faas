@@ -56,6 +56,7 @@ type deployJoinOptions struct {
 	SignKeySource           string
 	VerifyKeySource         string
 	ComputeDBEnvSource      string
+	ComputeDBRolesSource    string
 	StorageEnvSource        string
 	ImagedStorageEnvSource  string
 	RuntimeBasesEnvSource   string
@@ -185,6 +186,7 @@ func cmdDeployJoinNode(args []string) int {
 	signKey := fs.String("sign-key", "", "image-signing private key (required for apply)")
 	verifyKey := fs.String("verify-key", "", "image-signing public key (required for apply)")
 	computeDBEnv := fs.String("compute-db-env", "", "root-only compute-db.env source (required for apply)")
+	computeDBRoles := fs.String("compute-db-roles", "", "optional per-daemon compute database logins, <unit>=<dsn> lines (artifact-dir convention: compute-db-roles.env)")
 	storageEnv := fs.String("storage-env", "", "shared remote storage.env source (required for multi-box apply)")
 	imagedStorageEnv := fs.String("imaged-storage-env", "", "imaged-only migration lifecycle credential source (required for multi-box apply)")
 	runtimeBasesEnv := fs.String("runtime-bases-env", "", "release-bound digest-pinned runtime base refs (required for apply)")
@@ -245,6 +247,7 @@ func cmdDeployJoinNode(args []string) int {
 		SignKeySource:           *signKey,
 		VerifyKeySource:         *verifyKey,
 		ComputeDBEnvSource:      *computeDBEnv,
+		ComputeDBRolesSource:    *computeDBRoles,
 		StorageEnvSource:        *storageEnv,
 		ImagedStorageEnvSource:  *imagedStorageEnv,
 		RuntimeBasesEnvSource:   *runtimeBasesEnv,
@@ -470,6 +473,19 @@ func normalizedJoinRolloutPhase(phase string) (string, error) {
 	}
 }
 
+// runFleetPreflightPlaybook gathers and caches every fleet host's facts, including
+// the private addresses role convergence resolves peers from.
+func runFleetPreflightPlaybook(ctx context.Context, ansibleDir string, common []string, report *deployJoinReport) error {
+	preflightArgs := append(append([]string{}, common...), filepath.Join(ansibleDir, "preflight.yml"))
+	phaseStarted := time.Now()
+	err := ansiblePlaybookRunner(ctx, ansibleDir, preflightArgs)
+	report.Timings = append(report.Timings, joinTiming{Phase: "preflight", DurationMS: time.Since(phaseStarted).Milliseconds()})
+	if err != nil {
+		return fmt.Errorf("fleet preflight: %w", err)
+	}
+	return nil
+}
+
 func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	rolloutPhase, err := normalizedJoinRolloutPhase(opts.RolloutPhase)
 	if err != nil {
@@ -623,6 +639,7 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	}
 	for name, path := range map[string]string{
 		"box-age-key":            opts.BoxAgeKeySource,
+		"compute-db-roles":       opts.ComputeDBRolesSource,
 		"rclone-envelope":        opts.RcloneEnvelope,
 		"archive-creds-envelope": opts.ArchiveEnvelope,
 	} {
@@ -877,6 +894,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_sign_key_source":            opts.SignKeySource,
 		"faas_join_verify_key_source":          opts.VerifyKeySource,
 		"faas_join_compute_db_env_source":      opts.ComputeDBEnvSource,
+		"faas_join_compute_db_roles_source":    opts.ComputeDBRolesSource,
 		"faas_join_storage_env_source":         opts.StorageEnvSource,
 		"faas_join_imaged_storage_env_source":  opts.ImagedStorageEnvSource,
 		"faas_join_runtime_bases_env_source":   opts.RuntimeBasesEnvSource,
@@ -929,12 +947,8 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 				return 3, fmt.Errorf("record preflight phase: %w", err)
 			}
 		}
-		preflightArgs := append(append([]string{}, common...), filepath.Join(ansibleDir, "preflight.yml"))
-		phaseStarted := time.Now()
-		preflightErr := ansiblePlaybookRunner(ctx, ansibleDir, preflightArgs)
-		report.Timings = append(report.Timings, joinTiming{Phase: "preflight", DurationMS: time.Since(phaseStarted).Milliseconds()})
-		if preflightErr != nil {
-			return 3, fmt.Errorf("fleet preflight: %w", preflightErr)
+		if err := runFleetPreflightPlaybook(ctx, ansibleDir, common, report); err != nil {
+			return 3, err
 		}
 	}
 	if progress != nil {
@@ -967,6 +981,14 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		if current {
 			joinArgs = append(joinArgs, "--start-at-task", "Verify the prepared rollout marker")
 		} else {
+			// Role convergence reads every peer's private address from the
+			// fleet preflight's cached facts, which this activation job never
+			// gathered: the rc.314 overlay role refused fsn-1 and fsn-3.
+			if !opts.SkipFleetPreflight {
+				if err := runFleetPreflightPlaybook(ctx, ansibleDir, common, report); err != nil {
+					return 3, err
+				}
+			}
 			report.RolesConverged = true
 		}
 	}
@@ -1634,6 +1656,7 @@ func resolveJoinArtifacts(opts *deployJoinOptions) {
 	resolve(&opts.ImagedStorageEnvSource, "imaged-storage.env")
 	resolve(&opts.RuntimeBasesEnvSource, "runtime-bases.env")
 	resolveIfPresent(&opts.BoxAgeKeySource, "box-age-key")
+	resolveIfPresent(&opts.ComputeDBRolesSource, "compute-db-roles.env")
 	resolve(&opts.FleetAgeKeySource, "fleet.age")
 	resolve(&opts.FleetAgeRecipientSource, "fleet.age.pub")
 	resolveIfPresent(&opts.RcloneEnvelope, "rclone.conf.age")

@@ -3,8 +3,11 @@
 -- name: ListPostReleaseWatchCandidates :many
 -- Completed live releases that kept automatic rollback, finished within the
 -- watch window (plus telemetry grace), are the newest deployment in their
--- scope, and have a superseded predecessor created before them. Being the
--- newest excludes rollback targets, which are older than what they replaced.
+-- scope to have served, and have a superseded predecessor created before them.
+-- Being the newest to have served excludes rollback targets, which are older
+-- than what they replaced. A newer release that never served (staged with no
+-- traffic, parked for its schedule, or still building) leaves the serving
+-- release watched (ADR-1445 amendment 5); before, it silenced the watch.
 -- An immediate release may not stamp rollout_started_at; its baseline then
 -- ends when it completed.
 -- The predecessor is the release a plain rollback returns to
@@ -28,16 +31,21 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
  WHERE d.status = 'live'
    AND d.rollback_on_5xx
    AND d.last_auto_rollback_reason IS NULL
+   -- A regression the watch could not roll back is judged once.
+   AND COALESCE(d.rollout_decision->>'rollback_skipped', '') = ''
    AND d.traffic_percent = 100
    AND d.rollout_state = 'complete'
    AND d.rollout_completed_at IS NOT NULL
    AND d.rollout_completed_at > now() - make_interval(secs => sqlc.arg('window_seconds')::int)
+   AND (sqlc.narg(after_completed_at)::timestamptz IS NULL OR
+        (d.rollout_completed_at, d.id) > (sqlc.narg(after_completed_at)::timestamptz, sqlc.narg(after_id)::uuid))
    AND NOT EXISTS (
         SELECT 1 FROM deployments AS n
          WHERE n.app_id = d.app_id
            AND COALESCE(NULLIF(n.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
            AND n.created_at > d.created_at
-           AND n.status NOT IN ('failed', 'cancelled'))
+           AND n.status NOT IN ('failed', 'cancelled')
+           AND (n.serving_ended_at IS NOT NULL OR (n.status = 'live' AND n.traffic_percent > 0)))
  ORDER BY d.rollout_completed_at, d.id
  LIMIT sqlc.arg('row_limit')::int;
 

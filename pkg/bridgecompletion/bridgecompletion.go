@@ -23,6 +23,12 @@ const (
 	// retains its completion. The guest never sees the exchange ID, so it
 	// cannot forge the echo.
 	RetainedHeader = "X-Faas-Bridge-Exchange-Retained"
+	// RefusedHeader echoes the exchange ID on the 503 the bridge answers when
+	// it refuses an exchange: TrafficBridgeCompletionMaxEntries exchanges are
+	// already open, or the ID is invalid or in use. A refused exchange never
+	// reached the guest and has no completion to wait for, so the caller
+	// fails only that request instead of fencing the bridge.
+	RefusedHeader = "X-Faas-Bridge-Exchange-Refused"
 )
 
 // exchange is one tracked exchange; done closes when the handler returns.
@@ -35,8 +41,9 @@ type tracker struct {
 	mu      sync.Mutex
 	entries map[string]*exchange
 	// open counts exchanges whose handler has not returned. Only they are
-	// bounded by TrafficBridgeCompletionMaxEntries.
-	open int
+	// bounded, by maxOpen (TrafficBridgeCompletionMaxEntries).
+	open    int
+	maxOpen int
 	// retained holds the most recent completions; the oldest is forgotten
 	// when a new one arrives, so an exchange nobody waits for cannot leak.
 	retained []*exchange
@@ -52,9 +59,16 @@ type tracker struct {
 // a caller that read a retained exchange's response to a clean end of stream
 // already knows it completed and need not wait.
 func Wrap(next http.Handler) http.Handler {
+	return WrapLimit(next, api.TrafficBridgeCompletionMaxEntries)
+}
+
+// WrapLimit is Wrap with at most maxOpen open exchanges. Tests use a small
+// limit; production bridges use Wrap.
+func WrapLimit(next http.Handler, maxOpen int) http.Handler {
 	t := &tracker{
 		entries:  make(map[string]*exchange),
 		retained: make([]*exchange, api.TrafficBridgeCompletionRetained),
+		maxOpen:  maxOpen,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if id := r.Header.Get(WaitHeader); id != "" {
@@ -68,6 +82,7 @@ func Wrap(next http.Handler) http.Handler {
 		}
 		ex, ok := t.begin(id)
 		if !ok {
+			w.Header().Set(RefusedHeader, id)
 			http.Error(w, "invalid bridge exchange", http.StatusServiceUnavailable)
 			return
 		}
@@ -85,7 +100,7 @@ func (t *tracker) begin(id string) (*exchange, bool) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, exists := t.entries[id]; exists || t.open >= api.TrafficBridgeCompletionMaxEntries {
+	if _, exists := t.entries[id]; exists || t.open >= t.maxOpen {
 		return nil, false
 	}
 	ex := &exchange{id: id, done: make(chan struct{})}

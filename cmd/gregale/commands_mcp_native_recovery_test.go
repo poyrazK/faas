@@ -19,6 +19,7 @@ import (
 )
 
 func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
+	t.Setenv("MCP_TASK_NAMESPACE", mcpNativeTestNamespace)
 	original := (*main.McpNativeCheckWorkers)
 	defer func() { (*main.McpNativeCheckWorkers) = original }()
 	for _, tc := range []struct {
@@ -70,9 +71,17 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				}
 				json.NewDecoder(r.Body).Decode(&request)
 				w.Header().Set("Content-Type", "application/json")
-				if request.Method == "server/discover" {
+				w.Header().Set("MCP-Protocol-Version", mcphosting.ProtocolVersion)
+				switch request.Method {
+				case "initialize":
+					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":%q,"capabilities":{"tools":{}}}}`, request.ID, mcphosting.ProtocolVersion)
+				case "notifications/initialized":
+					w.WriteHeader(http.StatusAccepted)
+				case "ping":
+					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{}}`, request.ID)
+				case "server/discover":
 					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":["%s"],"capabilities":{"tools":{}}}}`, request.ID, mcphosting.ProtocolVersion)
-				} else {
+				default:
 					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[]}}`, request.ID)
 				}
 			}))
@@ -84,7 +93,11 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				case "/v1/apps/web/deployments":
 					json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{{ID: current, AppID: "web-id", Status: main.StatusLive, TrafficPercent: 100}}})
 				case "/v1/apps/web":
-					json.NewEncoder(w).Encode(api.AppResponse{ID: "web-id", Slug: "web", URL: endpoint.URL, StreamingEnabled: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeOpen}})
+					json.NewEncoder(w).Encode(api.AppResponse{ID: "web-id", Slug: "web", URL: endpoint.URL, StreamingEnabled: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeOpen}, Manifest: api.AppManifest{Env: map[string]string{"MCP_TASKS_ROLE": "web", "MCP_TASK_NAMESPACE": mcpNativeTestNamespace}}})
+				case "/v1/apps/web/instances":
+					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "stable-instance", DeploymentID: "stable", State: "running"}})
+				case "/v1/apps/web/deployments/stable/instances/stable-instance/mcp-probe":
+					writeMCPVerificationProbe(t, w, r, "web-id", "stable", "stable-instance")
 				case "/v1/deployments/stable":
 					traffic := 0
 					if current == "stable" {
@@ -94,7 +107,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				case "/v1/deployments/stable/url":
 					json.NewEncoder(w).Encode(api.DeploymentPreviewURL{Alive: true, URL: endpoint.URL})
 				case "/v1/apps/observer":
-					json.NewEncoder(w).Encode(api.AppResponse{ID: "obs", WorkloadClass: "worker", Manifest: api.AppManifest{WorkerReplicas: &api.WorkerScaling{Min: 1}}})
+					json.NewEncoder(w).Encode(api.AppResponse{ID: "obs", WorkloadClass: "worker", Manifest: api.AppManifest{WorkerReplicas: &api.WorkerScaling{Min: 1}, Env: mcpNativeObserverFixtureEnv()}})
 				case "/v1/apps/observer/instances":
 					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "observer", State: "running"}})
 				case "/v1/apps/metrics/custom-metrics":
@@ -104,7 +117,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				case "/v1/apps/previous/instances":
 					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "old-instance", DeploymentID: "old", State: "running"}})
 				case "/v1/apps/previous/logs":
-					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"old-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
+					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"old-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"shutdownTimeoutMs\\\":10000,\\\"claimFence\\\":true,\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
 				case "/v1/apps/candidate-worker":
 					json.NewEncoder(w).Encode(api.AppResponse{ID: "candidate-worker-id", WorkloadClass: "worker", Manifest: api.AppManifest{StopGracePeriod: 45 * time.Second}})
 				case "/v1/apps/candidate-worker/deployments/latest":
@@ -120,7 +133,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 					}
 					json.NewEncoder(w).Encode(instances)
 				case "/v1/apps/candidate-worker/logs":
-					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"candidate-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"claimFence\\\":true,\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
+					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"candidate-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"shutdownTimeoutMs\\\":10000,\\\"claimFence\\\":true,\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
 				case "/v1/apps/candidate-worker/park/conditional":
 					var body map[string]string
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["expected_deployment_id"] != "worker-candidate" {

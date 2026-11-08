@@ -104,6 +104,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -130,7 +131,10 @@ type Metrics struct {
 	// requestTelemetry* are gateway-side data-plane health counters. They
 	// deliberately have no app/route labels: per-tenant detail belongs to
 	// apid's ingest outcome metric.
-	requestTelemetryDropped     prometheus.Counter
+	requestTelemetryDropped prometheus.Counter
+	// requestIDJournalEvicted counts node-local journal records removed to fit
+	// the disk budget before they expired (ADR-20261101085552).
+	requestIDJournalEvicted     prometheus.Counter
 	requestTelemetryShipped     prometheus.Counter
 	requestTelemetryOverwritten prometheus.Counter
 	requestIDJournalWrites      *prometheus.CounterVec
@@ -143,6 +147,10 @@ type Metrics struct {
 	usageDeliveryFailures       prometheus.Counter
 	usageQuarantined            prometheus.Counter
 	wakeLatency                 prometheus.Histogram
+	// wakeRequestLatency is wakeLatency's per-request sibling: every request
+	// that waited on a wake, including those that joined another request's
+	// wake. wakeLatency keeps one sample per admitted wake.
+	wakeRequestLatency prometheus.Histogram
 	// platformWakeLatency is the public-beta restore gate: gateway
 	// capacity-admission start through the first upstream byte. It excludes
 	// request routing/auth work before admission and every public edge/client
@@ -166,6 +174,12 @@ type Metrics struct {
 	// non-zero rate means Postgres is unreachable from this gateway
 	// and the data plane is coasting on cached routes.
 	routeLookupStaleServed prometheus.Counter
+	// routeLookupUnknownHost (ADR-20261103163954 §4) counts host lookups
+	// answered without a store read by the route miss guard, by outcome:
+	// remembered_miss (404 from a remembered miss) or shed (503, the
+	// new-host budget was spent). A sustained shed rate is a flood of names
+	// that route nowhere.
+	routeLookupUnknownHost *prometheus.CounterVec
 	// inflightRequests (issue #587 / PR-A) is the per-daemon
 	// drain.Tracker in-flight gauge (see SetInflightRequests).
 	inflightRequests *prometheus.GaugeVec
@@ -295,8 +309,9 @@ type Metrics struct {
 	// edgeRuleLoadedGeneration is the latest durable policy generation this
 	// gateway acknowledged. Prometheus's scrape target identifies the node.
 	edgeRuleLoadedGeneration prometheus.Gauge
-	// edgeRuleConvergingHosts is the number of hostnames temporarily fenced
-	// while a two-phase policy mutation crosses the serving fleet.
+	// edgeRuleConvergingHosts is the number of hostnames with a prepared,
+	// not yet applied, two-phase policy mutation (ADR-20261101141123: they
+	// keep serving their current rules meanwhile).
 	edgeRuleConvergingHosts prometheus.Gauge
 	// edgeRuleGenerationLag is the distance from the newest prepared policy
 	// generation to the last applied generation on this gateway.
@@ -536,14 +551,15 @@ type Metrics struct {
 	// "no data" for a quiet daemon). See ObserveStreamStart /
 	// ObserveStreamEnd below.
 	streamActive *prometheus.GaugeVec
-	// geoipDBAgeSeconds: ADR-091 D21. Gauge labelled by the
-	// geoip.Source (dbip | maxmind). The reader's pkg/geoip
-	// BootAt() is read at scrape time; the gauge is the
-	// operator's "is the DB stale?" tripwire. A scrape value
-	// > 30 days = the auto-refresh is failing AND the operator
-	// hasn't replaced the file manually; the dashboard panel
-	// flags red.
-	geoipDBAgeSeconds *prometheus.GaugeVec
+	// geoipDBBuildTime is geoip_db_build_timestamp_seconds: when the
+	// loaded country database was built, read at scrape time from the
+	// function TrackGeoIPDatabase installs (so a watcher reload shows).
+	// FaasGeoIPDatabaseStale alerts on its age (ADR-091 amendment
+	// 2026-11-02, later). It replaced geoip_db_age_seconds, which was
+	// registered but never set.
+	geoipDBBuildTime prometheus.GaugeFunc
+	geoipDBBuiltAtMu sync.RWMutex
+	geoipDBBuiltAtFn func() time.Time
 	// accountRateLimited backs the per-account throttling introduced by
 	// ADR-040 (issue #292). Labels: account_id, plan. Pre-instantiates
 	// the four plan rows under the `__other__` placeholder so the §12
@@ -1036,6 +1052,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_log_drain_last_failure_timestamp_seconds",
 			Help: "Unix timestamp of the most recent terminal customer log-drain delivery failure.",
 		}, []string{"app", "kind"}),
+		requestIDJournalEvicted: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_request_id_journal_evicted_total",
+			Help: "Node-local request-ID journal records removed to fit the per-node disk budget before their retention ended (ADR-20261101085552). Their request IDs no longer resolve.",
+		}),
 		requestTelemetryDropped: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gateway_request_telemetry_dropped_total",
 			Help: "Original requests represented by telemetry rows dropped after publisher retries or an unavailable apid client.",
@@ -1077,7 +1097,7 @@ func NewMetrics() *Metrics {
 		}),
 		edgeRuleConvergingHosts: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "gateway_edge_rule_converging_hosts",
-			Help: "Hostnames temporarily fail-closed while an edge-rule generation converges.",
+			Help: "Hostnames with a prepared edge-rule change this gateway has not applied yet.",
 		}),
 		edgeRuleGenerationLag: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "gateway_edge_rule_generation_lag",
@@ -1301,14 +1321,16 @@ func NewMetrics() *Metrics {
 			Name: "gateway_request_failures_by_route_total",
 			Help: "Per-route failures counter (ADR-093). Increments on status ≥ 400; the dashboard computes error_rate_pct directly from the ratio to gateway_requests_total. Same route admission as gateway_requests_by_route_total above.",
 		}, []string{"app", "plan", "route", "code"}),
-		geoipDBAgeSeconds: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "geoip_db_age_seconds",
-			Help: "Seconds since the geoip DB was last (re)loaded. ADR-091 D21; the operator's 'is the DB stale?' tripwire.",
-		}, []string{"source"}),
 		wakeLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name: "gateway_wake_latency_seconds",
-			Help: "End-to-end latency from request received to first upstream byte after a cold wake.",
+			Help: "End-to-end latency from request received to first upstream byte, one sample per admitted wake (the request that admitted it). Requests that joined a wake in flight are in gateway_wake_request_latency_seconds.",
 			// Buckets target the §12 SLO: p50 ≤ 0.35 s, p95 ≤ 0.8 s, page > 1.5 s.
+			Buckets: wakeLatencyBuckets(),
+		}),
+		wakeRequestLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name: "gateway_wake_request_latency_seconds",
+			Help: "Latency from request received to first upstream byte for every request that waited on a wake, including requests that joined another request's wake: what callers see during a wake. gateway_wake_latency_seconds keeps one sample per admitted wake for the §12 SLO.",
+			// The SLO histogram's buckets, so the two overlay on one panel.
 			Buckets: wakeLatencyBuckets(),
 		}),
 		platformWakeLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -1458,7 +1480,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "outcome"}),
 		edgeChallenge: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_challenge_total",
-			Help: "kind=challenge decisions (ADR-831 amendment 7), by app and outcome: passed (valid pass), bypassed (verified credential), issued (challenge page served), rejected (403 challenge_required), solved (pass set), invalid (bad solution), expired (solution after the token expired).",
+			Help: "kind=challenge decisions (ADR-831 amendment 7), by app and outcome: passed (valid pass), bypassed (verified credential), issued (challenge page served), rejected (403 challenge_required), solved (pass set), invalid (bad solution), expired (solution after the token expired), preflight (CORS preflight answered at the edge, ADR-831 amendment 18).",
 		}, []string{"app", "outcome"}),
 		aiCrawlerRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ai_crawler_requests_total",
@@ -2190,7 +2212,11 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{"recorded", "failed"} {
 		m.requestIDJournalWrites.WithLabelValues(result)
 	}
-	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	m.geoipDBBuildTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "geoip_db_build_timestamp_seconds",
+		Help: "Unix time the loaded geoip country database was built (its build_epoch); NaN when none is loaded. time() minus it is the database's age (ADR-091 amendment 2026-11-02, later).",
+	}, m.geoipDBBuildTimestamp)
+	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestIDJournalEvicted, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.wakeRequestLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBBuildTime, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
@@ -2253,8 +2279,14 @@ func NewMetrics() *Metrics {
 		Name: "gateway_route_lookup_stale_served_total",
 		Help: "Requests routed from the last-known-good route tier because the authoritative route lookup errored (ADR-190). Bounded by FAAS_GATEWAY_ROUTE_STALE_TTL; a sustained rate means Postgres is unreachable from this gateway.",
 	})
+	m.routeLookupUnknownHost = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "gateway_route_lookup_unknown_host_total",
+		Help: "Host lookups answered without a store read (ADR-20261103163954 §4): outcome=remembered_miss is a 404 from a recent store answer that the host routes nowhere; outcome=shed is a 503 because this gateway spent its budget of reads for hosts it has never seen route. A sustained shed rate means a flood of names that route nowhere.",
+	}, []string{"outcome"})
+	m.routeLookupUnknownHost.WithLabelValues("remembered_miss")
+	m.routeLookupUnknownHost.WithLabelValues("shed")
 	m.initMCPMetrics(reg)
-	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed)
+	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed, m.routeLookupUnknownHost)
 	return m
 }
 
@@ -2300,6 +2332,15 @@ func (m *Metrics) ObserveRouteLookupStaleServed() {
 		return
 	}
 	m.routeLookupStaleServed.Inc()
+}
+
+// ObserveRouteLookupUnknownHost increments
+// gateway_route_lookup_unknown_host_total{outcome}. Nil-safe.
+func (m *Metrics) ObserveRouteLookupUnknownHost(outcome string) {
+	if m == nil || m.routeLookupUnknownHost == nil {
+		return
+	}
+	m.routeLookupUnknownHost.WithLabelValues(outcome).Inc()
 }
 
 // ObserveDrainWait (issue #587 / PR-A) records the wall-clock
@@ -2488,6 +2529,17 @@ func (m *Metrics) RequestCountHandler() http.Handler {
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(m.requests, m.appInflight)
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{Registry: registry})
+}
+
+// ForgetAppRequestCounts drops a deleted app's request counters. Their
+// series stayed for the gateway's lifetime, one per status code, and
+// schedd reads them every second (ADR 20261104091530). The in-flight gauge
+// stays: a request still finishing would bring it back below zero.
+func (m *Metrics) ForgetAppRequestCounts(appID string) {
+	if m == nil || appID == "" {
+		return
+	}
+	m.requests.DeletePartialMatch(prometheus.Labels{"app": appID})
 }
 
 // AdjustAppInflight moves appID's in-flight request gauge by delta.
@@ -3186,6 +3238,16 @@ func (m *Metrics) ObserveColdBootWithTrace(appID string, latency time.Duration, 
 	observeWithTraceExemplar(m.wakeLatencyByNode.WithLabelValues(label), latency.Seconds(), traceID)
 }
 
+// ObserveWakeRequestLatencyWithTrace records how long one caller waited from
+// ingress to the first upstream byte when its request needed a wake, whether
+// it admitted the wake or joined one already in flight.
+func (m *Metrics) ObserveWakeRequestLatencyWithTrace(latency time.Duration, traceID string) {
+	if m == nil || m.wakeRequestLatency == nil || latency < 0 {
+		return
+	}
+	observeWithTraceExemplar(m.wakeRequestLatency, latency.Seconds(), traceID)
+}
+
 // ObservePlatformWakeWithTrace records the stricter public-beta boundary that
 // starts when the gateway begins capacity admission. The legacy wake histogram
 // intentionally keeps its ingress-to-first-byte contract for compatibility.
@@ -3415,7 +3477,7 @@ func (m *Metrics) SetEdgeRuleLoadedGeneration(generation int64) {
 	m.edgeRuleLoadedGeneration.Set(float64(generation))
 }
 
-// SetEdgeRuleConvergingHosts exposes the size of the local fail-closed fence.
+// SetEdgeRuleConvergingHosts exposes how many hostnames have a pending change.
 func (m *Metrics) SetEdgeRuleConvergingHosts(count int) {
 	if m == nil || m.edgeRuleConvergingHosts == nil {
 		return
@@ -3820,6 +3882,32 @@ func (m *Metrics) ObserveTenantSurfaceCert(result, kind string) {
 // false (so the alert is silent pre-first-mint). Refreshed every 5 min
 // by StartCertExpiryRefresher (see pkg/gateway/cert_expiry.go). Safe
 // on a nil receiver.
+// TrackGeoIPDatabase installs the function geoip_db_build_timestamp_seconds
+// reads at scrape time: the loaded country database's build time, zero when
+// none is loaded.
+func (m *Metrics) TrackGeoIPDatabase(builtAt func() time.Time) {
+	if m == nil {
+		return
+	}
+	m.geoipDBBuiltAtMu.Lock()
+	m.geoipDBBuiltAtFn = builtAt
+	m.geoipDBBuiltAtMu.Unlock()
+}
+
+func (m *Metrics) geoipDBBuildTimestamp() float64 {
+	m.geoipDBBuiltAtMu.RLock()
+	builtAt := m.geoipDBBuiltAtFn
+	m.geoipDBBuiltAtMu.RUnlock()
+	if builtAt == nil {
+		return math.NaN()
+	}
+	t := builtAt()
+	if t.IsZero() {
+		return math.NaN()
+	}
+	return float64(t.Unix())
+}
+
 func (m *Metrics) SetTLSCertExpiry(d time.Duration) {
 	if m == nil {
 		return
@@ -3917,12 +4005,20 @@ func (l *requestLogger) Log(appID, code string, latency time.Duration, cold bool
 		"cold", cold,
 		"request_id", logsanitize.Field(requestID),
 	}
-	hotSuccess := len(code) == 3 && code[0] == '2'
-	if cold || !hotSuccess {
+	if requestLogLevel(code, cold) == slog.LevelInfo {
 		l.log.Info("gateway_request", fields...)
 		return
 	}
 	l.log.Debug("gateway_request", fields...)
+}
+
+// requestLogLevel is the level requestLogger.Log writes a request at: a warm
+// 2xx at Debug, anything else at Info.
+func requestLogLevel(code string, cold bool) slog.Level {
+	if cold || len(code) != 3 || code[0] != '2' {
+		return slog.LevelInfo
+	}
+	return slog.LevelDebug
 }
 
 // Issue #676 / ADR-080 follow-up, PR-B: closed-set label constants
@@ -4084,6 +4180,9 @@ const (
 	ServiceCallOverrideRejected ServiceCallOutcome = "override_rejected"
 	// ServiceCallOverrideUnavailable — no validator or a failed live-set read.
 	ServiceCallOverrideUnavailable ServiceCallOutcome = "override_unavailable"
+	// ServiceCallEnvironmentDenied — a stage caller's target has no
+	// deployment in that stage; stages never reach production services.
+	ServiceCallEnvironmentDenied ServiceCallOutcome = "environment_denied"
 )
 
 // ServiceCallOutcomes is the full closed set, used to pre-instantiate every
@@ -4093,7 +4192,7 @@ var ServiceCallOutcomes = []ServiceCallOutcome{
 	ServiceCallRegistryUnavailable, ServiceCallWakeFailed, ServiceCallWakeQueueFull,
 	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallTransportDenied, ServiceCallBindingDenied, ServiceCallCallerDenied, ServiceCallScopeDenied,
 	ServiceCallNotFound, ServiceCallUpgradeRejected, ServiceCallPreviewDenied,
-	ServiceCallOverrideRejected, ServiceCallOverrideUnavailable,
+	ServiceCallOverrideRejected, ServiceCallOverrideUnavailable, ServiceCallEnvironmentDenied,
 }
 
 // IncServiceCall bumps gateway_service_call_total for one outcome.
@@ -4377,6 +4476,14 @@ func (m *Metrics) IncRequestTelemetryOverwritten() {
 
 // AddRequestTelemetryDropped records original requests lost after a drained
 // batch could not be handed to apid. Unlabelled by design.
+// AddRequestIDJournalEvicted counts journal records evicted for disk.
+func (m *Metrics) AddRequestIDJournalEvicted(n int64) {
+	if m == nil || m.requestIDJournalEvicted == nil || n <= 0 {
+		return
+	}
+	m.requestIDJournalEvicted.Add(float64(n))
+}
+
 func (m *Metrics) AddRequestTelemetryDropped(n int64) {
 	if m == nil || m.requestTelemetryDropped == nil || n <= 0 {
 		return

@@ -19,6 +19,9 @@ import (
 // node does not stay stale for longer than a normal control-plane window.
 const managedRealtimeEndpointReconcileInterval = 30 * time.Second
 
+// managedRealtimeEndpointReconcileWorkers sync endpoints in parallel.
+const managedRealtimeEndpointReconcileWorkers = 8
+
 const (
 	managedRealtimeOwnerReapInterval             = time.Minute
 	managedRealtimeOwnerReapBatch                = 1000
@@ -499,29 +502,40 @@ func (s *Service) ReconcileManagedRealtimeEndpoints(ctx context.Context) error {
 	}
 
 	desired := make(map[string]struct{}, len(rows))
-	accountServing := make(map[string]bool)
 	for _, row := range rows {
 		desired[row.ID] = struct{}{}
-		serving, err := s.realtimeEndpointOwnerServing(ctx, row, accountServing)
-		if err != nil {
-			// Keep the current registration; a transient lookup failure
-			// must not disconnect a healthy customer's sockets.
-			errs = append(errs, fmt.Errorf("endpoint %s owner: %w", row.ID, err))
-			if ctx.Err() != nil {
-				break
+	}
+	// Endpoints sync managedRealtimeEndpointReconcileWorkers at a time with
+	// one account lookup each per pass; one after another the pass outgrew
+	// its 30 seconds at a few thousand endpoints (ADR-1323, amendment of
+	// 2026-11-03).
+	ctx = withEndpointPass(ctx)
+	var errMu sync.Mutex
+	work := make(chan state.ManagedRealtimeEndpoint)
+	var workers sync.WaitGroup
+	for range min(managedRealtimeEndpointReconcileWorkers, max(len(rows), 1)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for row := range work {
+				if err := s.reconcileManagedRealtimeEndpoint(ctx, row); err != nil {
+					errMu.Lock()
+					errs = append(errs, err)
+					errMu.Unlock()
+				}
 			}
-			continue
-		}
-		if !serving {
-			row.Enabled = false
-		}
-		if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
-			errs = append(errs, fmt.Errorf("endpoint %s: %w", row.ID, err))
-			if ctx.Err() != nil {
-				break
-			}
+		}()
+	}
+dispatch:
+	for _, row := range rows {
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case work <- row:
 		}
 	}
+	close(work)
+	workers.Wait()
 	for _, id := range inventory.IDs {
 		if _, ok := desired[id]; ok {
 			continue
@@ -533,14 +547,33 @@ func (s *Service) ReconcileManagedRealtimeEndpoints(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+// reconcileManagedRealtimeEndpoint syncs one endpoint row to the nodes.
+func (s *Service) reconcileManagedRealtimeEndpoint(ctx context.Context, row state.ManagedRealtimeEndpoint) error {
+	serving, err := s.realtimeEndpointOwnerServing(ctx, row)
+	if err != nil {
+		// Keep the current registration; a transient lookup failure
+		// must not disconnect a healthy customer's sockets.
+		return fmt.Errorf("endpoint %s owner: %w", row.ID, err)
+	}
+	if !serving {
+		row.Enabled = false
+	}
+	if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
+		return fmt.Errorf("endpoint %s: %w", row.ID, err)
+	}
+	return nil
+}
+
 // realtimeEndpointOwnerServing reports whether an endpoint's app and account
 // may still accept managed connections. The gateway dispatches
 // /__gregale/realtime/ before hostname lookup (ADR-156), so it never sees the
 // app's lifecycle: without this gate a deleted app, or a suspended account
 // whose apps are parked, kept serving WebSockets and relaying callbacks.
-// past_due keeps serving because its apps keep running (spec §4.7).
-// accountServing memoizes account lookups across one pass.
-func (s *Service) realtimeEndpointOwnerServing(ctx context.Context, row state.ManagedRealtimeEndpoint, accountServing map[string]bool) (bool, error) {
+// past_due keeps serving because its apps keep running (spec §4.7). A plan
+// without realtime (Free, where a cancelled subscription lands) stops serving
+// too: its limits are zero, which realtimed reads as no account cap.
+// The account is read once per endpoint pass (realtimeAccount).
+func (s *Service) realtimeEndpointOwnerServing(ctx context.Context, row state.ManagedRealtimeEndpoint) (bool, error) {
 	app, err := s.Host.Store().AppByID(ctx, row.AppID)
 	if errors.Is(err, state.ErrNotFound) {
 		return false, nil
@@ -551,21 +584,15 @@ func (s *Service) realtimeEndpointOwnerServing(ctx context.Context, row state.Ma
 	if app.Status == state.AppDeleted {
 		return false, nil
 	}
-	if serving, ok := accountServing[row.AccountID]; ok {
-		return serving, nil
-	}
-	acct, err := s.Host.Store().AccountByID(ctx, row.AccountID)
-	var serving bool
+	acct, err := s.realtimeAccount(ctx, row.AccountID)
 	switch {
 	case errors.Is(err, state.ErrNotFound):
-		serving = false
+		return false, nil
 	case err != nil:
 		return false, err
-	default:
-		serving = acct.Active()
 	}
-	accountServing[row.AccountID] = serving
-	return serving, nil
+	_, planAllows := s.realtimePlanLimits(acct)
+	return acct.Active() && planAllows, nil
 }
 
 // runManagedRealtimeEndpointReconciler keeps endpoint configuration repaired
@@ -679,6 +706,14 @@ func (s *Service) RunManagedRealtimeHistoryReaper(ctx context.Context) {
 				log.Warn("managed realtime durable cursor reaper pass failed", "err", err)
 			} else if removed > 0 {
 				log.Info("managed realtime durable cursor reaper pass complete", "removed", removed)
+			}
+		}
+		if markerReaper, ok := s.Host.Store().(state.ManagedRealtimeReadMarkerReaper); ok && ctx.Err() == nil {
+			removed, err := markerReaper.PruneExpiredManagedRealtimeReadMarkers(ctx, managedRealtimeHistoryReapBatch)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				log.Warn("managed realtime read marker reaper pass failed", "err", err)
+			} else if removed > 0 {
+				log.Info("managed realtime read marker reaper pass complete", "removed", removed)
 			}
 		}
 		if presenceReaper, ok := s.Host.Store().(state.ManagedRealtimePresenceReaper); ok && ctx.Err() == nil {

@@ -3,11 +3,11 @@ package state
 
 import (
 	"context"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 var _ OperatorRecoverySubmissionStore = (*MemStore)(nil)
@@ -17,7 +17,7 @@ type operatorRecoverySubmissionRow struct {
 	digest  string
 }
 
-var operatorRecoveryLegacyPath = regexp.MustCompile(`^POST /v1/admin/(instances/[^/]+/force-(park|restart)|apps/[^/]+/force-cold-boot)$`)
+var operatorRecoveryLegacyPath = lazyregexp.New(`^POST /v1/admin/(instances/[^/]+/force-(park|restart)|apps/[^/]+/force-cold-boot)$`)
 
 func (m *MemStore) SubmitOperatorRecovery(ctx context.Context, in OperatorRecoverySubmission) (OperatorRecoveryReceipt, error) {
 	in, err := NormalizeOperatorRecovery(in)

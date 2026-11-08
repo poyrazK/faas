@@ -76,9 +76,9 @@ const CliAuthPurposeMCPWrite = "mcp-write"
 const CliAuthPurposeMCP = "mcp"
 
 // MCPGrantableScopes are the scopes an MCP consent may add to apps:read, in
-// the bit order of the code's scope digit. postgres:manage brings
+// the bit order of the code's scope hex field. postgres:manage brings
 // postgres:read with it.
-var MCPGrantableScopes = []string{ScopeDeployWrite, ScopeSecretsRequest, ScopeStorageManage, ScopeManagedPostgresManage}
+var MCPGrantableScopes = []string{ScopeDeployWrite, ScopeSecretsRequest, ScopeStorageManage, ScopeManagedPostgresManage, ScopeEnvWrite, ScopeUsageRead}
 
 // MintScopedMCPAuthCode mints a browser code for apps:read plus scopes, each
 // one of MCPGrantableScopes.

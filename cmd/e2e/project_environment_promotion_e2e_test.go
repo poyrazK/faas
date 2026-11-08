@@ -32,6 +32,7 @@ type projectEnvironmentPromotionFixture struct {
 	h            *e2etest.Harness
 	store        *state.PgStore
 	key          string
+	approverKey  string // a person's sign-in key: only a person approves (H70, #6688)
 	project      state.Project
 	apiApp       state.App
 	workerApp    state.App
@@ -56,6 +57,13 @@ func newProjectEnvironmentPromotionFixture(t *testing.T, label string) *projectE
 	account, err := store.AccountByEmail(ctx, "e2e+pro+"+label+"@test.example")
 	if err != nil {
 		t.Fatalf("load seeded account: %v", err)
+	}
+	approverPlain, approverHash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CreateAPIKey(ctx, account.ID, approverHash, "cli-login", api.ScopesAdminOnly); err != nil {
+		t.Fatalf("create approver key: %v", err)
 	}
 	project, err := store.CreateProject(ctx, state.Project{
 		AccountID:        account.ID,
@@ -87,7 +95,7 @@ func newProjectEnvironmentPromotionFixture(t *testing.T, label string) *projectE
 	}
 
 	return &projectEnvironmentPromotionFixture{
-		h: h, store: store, key: key, project: project,
+		h: h, store: store, key: key, approverKey: approverPlain, project: project,
 		apiApp: apiApp, workerApp: workerApp,
 		apiSource: apiSource, workerSource: workerSource, apiTarget: apiTarget,
 	}
@@ -245,7 +253,7 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 	assertPromotionProblem(t, f.h, f.key, http.MethodPost, promotePath, promoteRequest,
 		"promotion-route-no-approval", http.StatusConflict, api.CodeProjectEnvironmentApprovalRequired)
 
-	raw, status = doReq(t, f.h, f.key, http.MethodPost,
+	raw, status = doReq(t, f.h, f.approverKey, http.MethodPost,
 		"/v1/projects/"+f.project.Slug+"/environments/production/approvals",
 		api.CreateProjectEnvironmentApprovalRequest{PromotionToken: preview.PromotionToken},
 		map[string]string{"Idempotency-Key": "promotion-route-approval"})

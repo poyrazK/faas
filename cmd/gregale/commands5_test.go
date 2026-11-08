@@ -934,7 +934,7 @@ func TestCmdAppScale_Min1_EchoesResidentCost(t *testing.T) {
 		"✓ Updated",
 		"1 instance of 512 MB kept warm",
 		"~365.6 GB-h/mo",
-		"1000 millicent/GB-h overage",
+		"5000 millicent/GB-h overage",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q\nfull: %s", want, out)
@@ -1539,8 +1539,9 @@ func TestCmdPlan_DispatchesKnownPlans(t *testing.T) {
 			var gotBody []byte
 			sink := &multiSink{
 				onAccount: func(method string) (int, any) {
-					// Same-plan current → no downgrade prompt
-					return http.StatusOK, api.AccountResponse{Email: "a@b.c", Plan: c.plan}
+					// No current plan → no downgrade prompt, and no
+					// "already on" answer for the current plan.
+					return http.StatusOK, api.AccountResponse{Email: "a@b.c"}
 				},
 				onPlan: func(body []byte) (int, any) {
 					gotBody = body
@@ -1567,13 +1568,17 @@ func TestCmdPlan_DispatchesKnownPlans(t *testing.T) {
 }
 
 func TestCmdPlan_DowngradeConfirmation(t *testing.T) {
-	// Pipe "n" to stdin so the y/N prompt refuses the downgrade.
+	// Pipe "n" to a terminal stdin so the y/N prompt refuses the downgrade.
 	old := osStdin
 	defer func() { osStdin = old }()
 	pr, pw, _ := os.Pipe()
 	osStdin = pr
 	_, _ = pw.WriteString("n\n")
 	_ = pw.Close()
+	tty := true
+	oldTTY := testOnlyTTY
+	testOnlyTTY = &tty
+	defer func() { testOnlyTTY = oldTTY }()
 
 	sink := &multiSink{
 		onAccount: func(string) (int, any) {
@@ -1589,8 +1594,10 @@ func TestCmdPlan_DowngradeConfirmation(t *testing.T) {
 	if code := cmdPlan([]string{"free"}); code != 1 {
 		t.Errorf("cmdPlan downgrade with 'n' = %d, want 1", code)
 	}
-	if !strings.Contains(stdout.String(), "aborted") {
-		t.Errorf("refusal should print 'aborted': %q", stdout.String())
+	// The refusal is a Problem on stderr, never prose on stdout (CLI audit
+	// 2026-10-31).
+	if stdout.String() != "" {
+		t.Errorf("refusal wrote to stdout: %q", stdout.String())
 	}
 }
 

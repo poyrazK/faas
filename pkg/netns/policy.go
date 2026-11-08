@@ -29,7 +29,13 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// StaticEgressRoutingMark is set only on bridged traffic from live pinned
+// sources. A host policy-routing rule uses it to bypass the shared gateway.
+const StaticEgressRoutingMark = uint32(0x40000000)
 
 // HostPolicy is the parameter set for rendering the host nftables ruleset.
 // Fields map 1:1 to spec §11 + §7 concepts. The export is on this type (not a
@@ -50,6 +56,9 @@ import (
 // substitution individually so the per-host rendering can't regress
 // to a hard-coded default.
 type HostPolicy struct {
+	// A revoked operator grant cannot implicitly unpin a production app.
+	// Block its outbound originals until provisioning or customer intent recovers.
+	StaticEgressBlockedSources []netip.Addr
 	// PublicForwarding retains the native-recovery socket generation guard
 	// across host-policy reloads. Legacy nodes keep their original ruleset.
 	PublicForwarding bool
@@ -68,8 +77,7 @@ type HostPolicy struct {
 	// interface (a WireGuard tunnel to the egress gateway), masqueraded to
 	// the node's tunnel address, with TCP MSS clamped to the tunnel MTU.
 	// Tenant IPv6 has no path through the IPv4 gateway and is dropped.
-	// Static-egress-IP VMs (ADR-119, outside MasqueradeCIDR) keep
-	// PublicIface. Empty keeps the direct path.
+	// Static-egress-IP VMs use a marked exception to keep PublicIface. Empty keeps the direct path.
 	TenantEgressIface string
 
 	// DenySet is the typed egress denylist (spec §11 + ADR-023 + ADR-034).
@@ -88,6 +96,28 @@ type HostPolicy struct {
 	// single-box installs. Runtime renders must retain these rules or the first
 	// VM cache mutation will cut new schedd/gateway connections off from vmmd.
 	PrivateInputAllowRules []PrivateInputAllowRule
+	// PrivateNetworkBridges permits L2 forwarding only within each dedicated
+	// Gregale bridge when br_netfilter invokes the host forward hook. Routed
+	// peering stays in its account namespace; no cross-bridge allow is emitted.
+	PrivateNetworkBridges []string
+
+	// PublicInputSourceCIDRs, when set, admits 80 and 443 only from these
+	// sources (Cloudflare's published ranges) instead of from anywhere, and
+	// leaves 22 to the provider firewall. It mirrors the nftables role's
+	// faas_cloudflare_origin_only branch, so a runtime rebuild keeps a
+	// compute edge that Cloudflare reaches directly Cloudflare-only
+	// (ADR-20261102081618 §2).
+	PublicInputSourceCIDRs []netip.Prefix
+
+	// PublicEntryAddrs, when set, are a compute edge's public entry
+	// addresses with no proxy in front (ADR-20261103163954 §2): 443 is
+	// admitted from anywhere to them only, everything else sent to them is
+	// dropped, and sshd stays on the node's other addresses behind the
+	// provider firewall, never on an address that public DNS names. It
+	// replaces the open web ports and takes precedence over
+	// PublicInputSourceCIDRs, which the vmmd drop-in sends beside it so that
+	// a vmmd without this field stays Cloudflare-only rather than open.
+	PublicEntryAddrs []netip.Addr
 
 	// MasqueradeCIDR is the source-address set the postrouting nat chain
 	// MASQUERADEs to the host's public IP on its way out PublicIface. Must be
@@ -188,6 +218,53 @@ type HostPolicy struct {
 	// ServiceTCP renders the host half of private TCP service addressing
 	// (ADR-576). Nil renders nothing, keeping the pre-ADR-576 ruleset.
 	ServiceTCP *ServiceTCPHostPolicy
+
+	// DatabaseRoute renders the host half of the managed-database route
+	// (ADR-1027). Nil renders nothing.
+	DatabaseRoute *DatabaseRouteHostPolicy
+}
+
+// DatabaseRouteHostPolicy is the host side of the managed-database route
+// (ADR-1027). Guest TCP to Address on DatabaseRoutePort reaches the bridge
+// already masqueraded to the instance's host IP; the nat prerouting chain
+// sends it to the forwarder on the bridge, which relays it to pgproxyd. The
+// forward chain drops anything else addressed to Address so it never leaves
+// the host.
+type DatabaseRouteHostPolicy struct {
+	Address netip.Addr
+	// BridgeIP is the tenant-bridge address the forwarder binds.
+	BridgeIP netip.Addr
+	// ProxyPort is the forwarder's reserved bridge port.
+	ProxyPort int
+}
+
+// NewDatabaseRouteHostPolicy returns the host policy for one tenant bridge.
+func NewDatabaseRouteHostPolicy(address, bridgeIP netip.Addr, proxyPort int) *DatabaseRouteHostPolicy {
+	return &DatabaseRouteHostPolicy{Address: address, BridgeIP: bridgeIP, ProxyPort: proxyPort}
+}
+
+// validate panics on a policy that would capture or leak traffic.
+func (p *DatabaseRouteHostPolicy) validate(masquerade netip.Prefix, overlays []string, service *ServiceTCPHostPolicy) {
+	if !p.Address.Is4() || masquerade.Contains(p.Address) {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute.Address %s must be IPv4 outside MasqueradeCIDR %s", p.Address, masquerade))
+	}
+	if !p.BridgeIP.Is4() || !masquerade.Contains(p.BridgeIP) {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute.BridgeIP %s is not inside MasqueradeCIDR %s", p.BridgeIP, masquerade))
+	}
+	for _, raw := range overlays {
+		if overlay, err := netip.ParsePrefix(strings.TrimSpace(raw)); err == nil && overlay.Contains(p.Address) {
+			panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute.Address %s is inside overlay %s", p.Address, overlay))
+		}
+	}
+	if service != nil && service.AddressCIDR.Contains(p.Address) {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute.Address %s is inside the service block %s", p.Address, service.AddressCIDR))
+	}
+	if p.ProxyPort < 1 || p.ProxyPort > 65535 || p.ProxyPort == DatabaseRoutePort {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute has invalid proxy port %d", p.ProxyPort))
+	}
+	if service != nil && (p.ProxyPort == service.ProxyPort || slices.Contains(service.HTTPPorts, p.ProxyPort)) {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute.ProxyPort %d collides with a service listener", p.ProxyPort))
+	}
 }
 
 // ServiceTCPHostPolicy is the host side of private TCP service addressing
@@ -254,20 +331,10 @@ func (p *ServiceTCPHostPolicy) validate(masquerade netip.Prefix, overlays []stri
 // customer IP) SNAT tuple the host renderer emits in
 // `chain postrouting` BEFORE the broad MASQUERADE rule.
 //
-// PerVMHostIP is the per-VM veth host-side address of one live
-// microVM (allocated from the dedicated static-egress pool at
-// 10.200.x.y/16 — see pkg/fcvm/alloc.go::AcquireStaticEgressIP).
-// The customer's IP is the CustomerIP, which is aliased on
-// br-tenants by vmmd's SetStaticEgressIPAliases at startup +
-// SIGHUP. The kernel uses PerVMHostIP for the `ip saddr` match
-// (the bridged packet's source on its way out PublicIface) and
-// CustomerIP for the `snat to` rewrite target.
-//
-// Multiple rules can share the same CustomerIP (multiple live
-// VMs of one app — each instance wakes its own per-VM host IP,
-// and the SNAT rule list grows by one per live VM). Each rule's
-// PerVMHostIP must be unique (the per-VM host IPs are slotted
-// from a fixed range by the pool allocator).
+// PerVMHostIP is the live instance's namespace veth address: the source
+// produced by its guest MASQUERADE. CustomerIP is the operator-provisioned
+// public address. Concurrent instances have separate sources and share the
+// app's CustomerIP. Specific SNAT matches precede the subnet MASQUERADE.
 //
 // AccountID and AppID are metadata written to the rule's
 // trailing comment so `nft list ruleset` is self-documenting
@@ -532,29 +599,15 @@ func (h HostPolicy) Render() string {
 		panic(fmt.Sprintf("netns: HostPolicy.Render: %v", err))
 	}
 
-	// ADR-119 redesign panic gate: reject StaticEgressRule entries
-	// whose PerVMHostIP sits inside the MasqueradeCIDR. The
-	// SNAT rule emits `ip saddr <PerVMHostIP>` — if PerVMHostIP
-	// is inside the bridge /16, the broad MASQUERADE on
-	// `ip saddr <MasqueradeCIDR>` masks the specific SNAT, and
-	// the customer's IP would never be reached. The legacy
-	// per-VM SNAT bug (PR-997 blocker #1) had the same root
-	// cause; this gate prevents a future maintainer from
-	// re-introducing it via misconfigured per-VM host IPs.
-	// Renders on every SIGHUP-driven EgressPolicyChanged
-	// reload, so the panic surfaces at the failure site
-	// instead of silently shipping a broken ruleset.
+	// Static rules match the real per-instance source. They deliberately
+	// overlap the broad masquerade prefix and precede that fallback rule.
 	masqPrefix, masqErr := netip.ParsePrefix(h.MasqueradeCIDR)
 	if masqErr != nil {
 		panic(fmt.Sprintf("netns: HostPolicy.Render: MasqueradeCIDR %q unparseable: %v", h.MasqueradeCIDR, masqErr))
 	}
 	for _, r := range h.StaticEgressRules {
-		if !r.PerVMHostIP.IsValid() {
+		if !r.PerVMHostIP.Is4() || !r.CustomerIP.Is4() {
 			panic(fmt.Sprintf("netns: HostPolicy.Render: StaticEgressRules has invalid PerVMHostIP for app=%s account=%s", r.AppID, r.AccountID))
-		}
-		if masqPrefix.Contains(r.PerVMHostIP) {
-			panic(fmt.Sprintf("netns: HostPolicy.Render: StaticEgressRules[%s/%s] PerVMHostIP %s is inside MasqueradeCIDR %s — the broad MASQUERADE would shadow the specific SNAT. Use a per-VM host IP outside the bridge /16 (the 10.200.x.y/16 static-egress pool)",
-				r.AccountID, r.AppID, r.PerVMHostIP, h.MasqueradeCIDR))
 		}
 	}
 	for _, r := range h.SMTPAllowlistRules {
@@ -565,6 +618,16 @@ func (h HostPolicy) Render() string {
 			if !p.IsValid() || !p.Addr().Is4() || p.Bits() == 0 {
 				panic(fmt.Sprintf("netns: HostPolicy.Render: SMTPAllowlistRules has invalid destination %s for app=%s account=%s", p, r.AppID, r.AccountID))
 			}
+		}
+	}
+	for _, p := range h.PublicInputSourceCIDRs {
+		if !p.IsValid() {
+			panic("netns: HostPolicy.Render: PublicInputSourceCIDRs has invalid source prefix")
+		}
+	}
+	for _, a := range h.PublicEntryAddrs {
+		if !a.IsValid() || a.Zone() != "" || a.Is4In6() {
+			panic("netns: HostPolicy.Render: PublicEntryAddrs has an invalid, zoned or IPv4-mapped address")
 		}
 	}
 	for _, r := range h.PrivateInputAllowRules {
@@ -583,6 +646,9 @@ func (h HostPolicy) Render() string {
 
 	if h.ServiceTCP != nil {
 		h.ServiceTCP.validate(masqPrefix, h.OverlayCIDRs)
+	}
+	if h.DatabaseRoute != nil {
+		h.DatabaseRoute.validate(masqPrefix, h.OverlayCIDRs, h.ServiceTCP)
 	}
 
 	denyPorts := h.DenySet.SMTPPortsCommaSet()
@@ -610,8 +676,37 @@ func (h HostPolicy) Render() string {
 	for _, e := range h.DenySet.Entries {
 		fmt.Fprintf(&b, "  counter %s {}\n", e.CounterName)
 	}
+	for _, family := range publicEntryFamilies(h.PublicEntryAddrs) {
+		writePublicEntrySets(&b, family, publicEntryProxies(h.PublicInputSourceCIDRs, family))
+	}
+	if h.TenantEgressIface != "" && len(h.StaticEgressRules) > 0 {
+		b.WriteString("  chain static_egress_route {\n")
+		b.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")
+		for _, r := range h.StaticEgressRules {
+			fmt.Fprintf(&b, "    iifname %q ip saddr %s meta mark set meta mark | %#x\n", h.BridgeName, r.PerVMHostIP, StaticEgressRoutingMark)
+		}
+		b.WriteString("  }\n")
+	}
+	if len(h.PrivateNetworkBridges) > 0 {
+		// br_netfilter can pass bridged IPv4 through the root conntrack
+		// domain. Keep overlapping account tuples out of that shared domain;
+		// per-VM and account-router namespaces enforce their own policies.
+		b.WriteString("  chain private_fabric_raw {\n")
+		b.WriteString("    type filter hook prerouting priority raw; policy accept;\n")
+		for _, bridge := range h.PrivateNetworkBridges {
+			fmt.Fprintf(&b, "    iifname %q notrack\n", bridge)
+		}
+		b.WriteString("  }\n")
+	}
 	b.WriteString("  chain input {\n")
 	b.WriteString("    type filter hook input priority 0; policy drop;\n")
+	// A blocked source is cut off on the entry addresses before the
+	// established accept, so its open connections stop too.
+	for _, a := range h.PublicEntryAddrs {
+		family := addrFamily(a)
+		fmt.Fprintf(&b, "    %s daddr %s %s saddr @public_block_%s counter drop comment %q\n",
+			family, a, family, publicEntrySetSuffix(family), "public entry block list")
+	}
 	b.WriteString("    ct state established,related accept\n")
 	b.WriteString("    iif lo accept\n")
 	// A guest reaches the host only where platform services listen: the
@@ -623,7 +718,29 @@ func (h HostPolicy) Render() string {
 	fmt.Fprintf(&b, "    iifname %q tcp dport { %s } accept\n", h.BridgeName, joinInts(tenantHairpinTCPPorts, ","))
 	fmt.Fprintf(&b, "    iifname %q meta l4proto { icmp, ipv6-icmp } accept\n", h.BridgeName)
 	fmt.Fprintf(&b, "    iifname %q drop\n", h.BridgeName)
-	fmt.Fprintf(&b, "    tcp dport { %s } accept     # sshd + gatewayd-public public listener\n", allowPorts)
+	switch {
+	case len(h.PublicEntryAddrs) > 0:
+		// The drops come before sshd's accept, so the entry addresses carry
+		// 443 and nothing else.
+		for _, a := range h.PublicEntryAddrs {
+			writePublicEntryAccept(&b, a, len(publicEntryProxies(h.PublicInputSourceCIDRs, addrFamily(a))) > 0)
+		}
+		for _, a := range h.PublicEntryAddrs {
+			fmt.Fprintf(&b, "    %s daddr %s drop comment %q\n", addrFamily(a), a, "public entry carries 443 only")
+		}
+		b.WriteString("    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary\n")
+	case len(h.PublicInputSourceCIDRs) > 0:
+		b.WriteString("    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary\n")
+		for _, p := range h.PublicInputSourceCIDRs {
+			family := "ip"
+			if p.Addr().Is6() {
+				family = "ip6"
+			}
+			fmt.Fprintf(&b, "    %s saddr %s tcp dport { 80,443 } accept comment %q\n", family, p, "gateway via Cloudflare")
+		}
+	default:
+		fmt.Fprintf(&b, "    tcp dport { %s } accept     # sshd + gatewayd-public public listener\n", allowPorts)
+	}
 	for _, r := range h.PrivateInputAllowRules {
 		family := "ip"
 		if r.Source.Addr().Is6() {
@@ -636,7 +753,16 @@ func (h HostPolicy) Render() string {
 	b.WriteString("\n")
 	b.WriteString("  chain forward {\n")
 	b.WriteString("    type filter hook forward priority 0; policy drop;\n")
+	for _, source := range h.StaticEgressBlockedSources {
+		if !source.Is4() {
+			panic("netns: invalid blocked static-egress source")
+		}
+		fmt.Fprintf(&b, "    iifname %q ip saddr %s ct direction original drop comment %q\n", h.BridgeName, source, "faas static egress unprovisioned")
+	}
 	b.WriteString("    ct state established,related accept\n")
+	for _, bridge := range h.PrivateNetworkBridges {
+		fmt.Fprintf(&b, "    iifname %q oifname %q accept comment %q\n", bridge, bridge, "faas private fabric L2")
+	}
 	b.WriteString("\n")
 	// PR scale-out tier-1 residual (Gap #4): per-exception accept
 	// rules emitted BEFORE the per-CIDR deny block — nftables is
@@ -679,6 +805,9 @@ func (h HostPolicy) Render() string {
 	if h.ServiceTCP != nil {
 		fmt.Fprintf(&b, "    ip daddr %s drop     # ADR-576: service addresses never leave the host\n", h.ServiceTCP.AddressCIDR)
 	}
+	if h.DatabaseRoute != nil {
+		fmt.Fprintf(&b, "    ip daddr %s drop     # ADR-1027: the database route never leaves the host\n", h.DatabaseRoute.Address)
+	}
 	// Hobby+ SMTP exception: explicit per-app destination CIDRs may use
 	// authenticated submission ports. These rules intentionally follow
 	// the internal/private deny block and precede the universal SMTP drop.
@@ -715,6 +844,9 @@ func (h HostPolicy) Render() string {
 		fmt.Fprintf(&b, "    ip saddr %s accept\n", overlayStr)
 	}
 	if h.TenantEgressIface != "" {
+		for _, r := range h.StaticEgressRules {
+			fmt.Fprintf(&b, "    iifname %q ip saddr %s oifname %q accept\n", h.BridgeName, r.PerVMHostIP, h.PublicIface)
+		}
 		fmt.Fprintf(&b, "    iifname %q oifname %q tcp flags syn tcp option maxseg size set rt mtu\n", h.BridgeName, h.TenantEgressIface)
 		fmt.Fprintf(&b, "    iifname %q ip saddr %s oifname %q accept\n", h.BridgeName, h.MasqueradeCIDR, h.TenantEgressIface)
 		fmt.Fprintf(&b, "    iifname %q ip saddr != %s oifname %q accept\n", h.BridgeName, h.MasqueradeCIDR, h.PublicIface)
@@ -727,15 +859,21 @@ func (h HostPolicy) Render() string {
 	b.WriteString("    type filter hook output priority 0; policy accept;\n")
 	b.WriteString("  }\n")
 	b.WriteString("\n")
-	if p := h.ServiceTCP; p != nil {
-		ports := slices.Clone(p.HTTPPorts)
-		slices.Sort(ports)
+	if h.ServiceTCP != nil || h.DatabaseRoute != nil {
 		b.WriteString("  chain prerouting {\n")
 		b.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
-		fmt.Fprintf(&b, "    iifname %q ip daddr %s tcp dport { %s } dnat ip to %s\n",
-			h.BridgeName, p.AddressCIDR, joinInts(ports, ", "), p.BridgeIP)
-		fmt.Fprintf(&b, "    iifname %q ip daddr %s meta l4proto tcp dnat ip to %s:%d\n",
-			h.BridgeName, p.AddressCIDR, p.BridgeIP, p.ProxyPort)
+		if p := h.ServiceTCP; p != nil {
+			ports := slices.Clone(p.HTTPPorts)
+			slices.Sort(ports)
+			fmt.Fprintf(&b, "    iifname %q ip daddr %s tcp dport { %s } dnat ip to %s\n",
+				h.BridgeName, p.AddressCIDR, joinInts(ports, ", "), p.BridgeIP)
+			fmt.Fprintf(&b, "    iifname %q ip daddr %s meta l4proto tcp dnat ip to %s:%d\n",
+				h.BridgeName, p.AddressCIDR, p.BridgeIP, p.ProxyPort)
+		}
+		if p := h.DatabaseRoute; p != nil {
+			fmt.Fprintf(&b, "    iifname %q ip daddr %s tcp dport %d dnat ip to %s:%d\n",
+				h.BridgeName, p.Address, DatabaseRoutePort, p.BridgeIP, p.ProxyPort)
+		}
 		b.WriteString("  }\n")
 		b.WriteString("\n")
 	}
@@ -752,12 +890,7 @@ func (h HostPolicy) Render() string {
 	// includes the account_id and app_id so `nft list ruleset`
 	// is self-documenting for operators.
 	//
-	// The PerVMHostIP is allocated from the dedicated static-
-	// egress pool (10.200.x.y/16, see pkg/fcvm/alloc.go::
-	// AcquireStaticEgressIP) — the panic gate above ensures
-	// Renders fail-closed if a PerVMHostIP accidentally sits
-	// inside MasqueradeCIDR (which would re-introduce the
-	// PR-997 BLOCKING bug).
+	// Match the same lease source that the per-netns MASQUERADE produces.
 	for _, r := range h.StaticEgressRules {
 		comment := ""
 		if r.AccountID != "" || r.AppID != "" {
@@ -799,6 +932,118 @@ func (h HostPolicy) Render() string {
 
 // joinInts renders a port slice as comma-joined digits: "25,465,587". The
 // nftables tcp-dport set syntax is `{ 25,465,587 } drop`.
+// addrFamily is the nftables address family keyword for a.
+// publicEntryFamilies lists the address families of addrs, IPv4 first, each
+// once.
+func publicEntryFamilies(addrs []netip.Addr) []string {
+	var has4, has6 bool
+	for _, a := range addrs {
+		has4 = has4 || a.Is4()
+		has6 = has6 || a.Is6()
+	}
+	var out []string
+	if has4 {
+		out = append(out, "ip")
+	}
+	if has6 {
+		out = append(out, "ip6")
+	}
+	return out
+}
+
+// publicEntrySetSuffix names a family's public-entry sets.
+func publicEntrySetSuffix(family string) string {
+	if family == "ip" {
+		return "v4"
+	}
+	return "v6"
+}
+
+// publicEntryProxies is the part of the Cloudflare source list in family.
+func publicEntryProxies(sources []netip.Prefix, family string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, p := range sources {
+		if (family == "ip") == p.Addr().Is4() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// writePublicEntrySets declares the sources the firewall counts on the
+// public entry addresses of one family (ADR-20261103163954 §4): their new
+// connections per second, and their open connections. proxies, Cloudflare's
+// ranges when the node keeps them, are exempt: a host moved back behind
+// Cloudflare reaches the edge from a few of its addresses, each carrying many
+// clients, and the edge limits those clients by CF-Connecting-IP instead.
+func writePublicEntrySets(b *strings.Builder, family string, proxies []netip.Prefix) {
+	suffix, keyType := publicEntrySetSuffix(family), "ipv4_addr"
+	if family == "ip6" {
+		keyType = "ipv6_addr"
+	}
+	fmt.Fprintf(b, "  set public_entry_rate_%s {\n    type %s\n    size %d\n    flags dynamic,timeout\n    timeout 1m\n  }\n",
+		suffix, keyType, api.PublicEntryTrackedSourcesMax)
+	fmt.Fprintf(b, "  set public_entry_conns_%s {\n    type %s\n    size %d\n    flags dynamic\n  }\n",
+		suffix, keyType, api.PublicEntryTrackedSourcesMax)
+	// The operator's block list: vmmd adds the elements, each with its own
+	// timeout, after every reload (public_block.go).
+	fmt.Fprintf(b, "  set public_block_%s {\n    type %s\n    flags interval,timeout\n  }\n", suffix, keyType)
+	if len(proxies) == 0 {
+		return
+	}
+	elements := make([]string, len(proxies))
+	for i, p := range proxies {
+		elements[i] = p.String()
+	}
+	fmt.Fprintf(b, "  set public_entry_proxy_%s {\n    type %s\n    flags interval\n    auto-merge\n    elements = { %s }\n  }\n",
+		suffix, keyType, strings.Join(elements, ", "))
+}
+
+// writePublicEntryAccept admits 443 on a public entry address, after dropping
+// a source's new connections past the kernel backstop: the edge's own
+// per-address limits act only on connections the kernel already accepted.
+// With exempt, Cloudflare's ranges get a higher backstop rather than none:
+// those ranges also carry every other Cloudflare customer's zone, so an
+// address in them is not proof of a proxy we trust (ADR-20261104221012).
+func writePublicEntryAccept(b *strings.Builder, a netip.Addr, exempt bool) {
+	family := addrFamily(a)
+	suffix := publicEntrySetSuffix(family)
+	source := publicEntrySourceKey(family)
+	match := fmt.Sprintf("%s daddr %s tcp dport 443", family, a)
+	if exempt {
+		proxy := match + fmt.Sprintf(" %s saddr @public_entry_proxy_%s", family, suffix)
+		fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s limit rate over %d/second burst %d packets } counter drop comment %q\n",
+			proxy, suffix, source, api.PublicEntryProxyNewConnsPerSecondPerSource, api.PublicEntryProxyNewConnsBurstPerSource, "public entry new connections per proxy source")
+		fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s ct count over %d } counter drop comment %q\n",
+			proxy, suffix, source, api.PublicEntryProxyConnsPerSourceMax, "public entry connections per proxy source")
+		match += fmt.Sprintf(" %s saddr != @public_entry_proxy_%s", family, suffix)
+	}
+	fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s limit rate over %d/second burst %d packets } counter drop comment %q\n",
+		match, suffix, source, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource, "public entry new connections per source")
+	fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s ct count over %d } counter drop comment %q\n",
+		match, suffix, source, api.PublicEntryConnsPerSourceMax, "public entry connections per source")
+	fmt.Fprintf(b, "    %s daddr %s tcp dport 443 accept comment %q\n", family, a, "public entry")
+}
+
+// publicEntrySourceKey is what the entry sets count a source by: an IPv4
+// address, or the /64 an IPv6 address sits in, as the edge's own limits do
+// (clientlimit.Key). Counted per IPv6 address, one client holding a /64
+// would never meet the backstop and would fill the sets, past which no new
+// source is limited by the kernel (ADR-20261107180000).
+func publicEntrySourceKey(family string) string {
+	if family == "ip6" {
+		return "ip6 saddr and ffff:ffff:ffff:ffff::"
+	}
+	return "ip saddr"
+}
+
+func addrFamily(a netip.Addr) string {
+	if a.Is4() {
+		return "ip"
+	}
+	return "ip6"
+}
+
 func joinInts(in []int, sep string) string {
 	parts := make([]string, len(in))
 	for i, n := range in {

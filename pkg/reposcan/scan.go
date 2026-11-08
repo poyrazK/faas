@@ -143,6 +143,12 @@ type Workload struct {
 	// multi-process project does not run the same migration more than once.
 	ReleaseCommand      []string
 	ReleaseCommandShell bool
+	// ReleaseService names the Compose service whose command is
+	// ReleaseCommand: a service this one waits for with
+	// service_completed_successfully, which is not deployed as an app
+	// (ADR-20261102192943). Empty for a Procfile release command. Reconcile
+	// keeps such a command on the app, so every deploy path runs it.
+	ReleaseService string `json:",omitempty"`
 	// SourceSHA256 identifies the selected workload subtree. It is internal
 	// reconciliation metadata; the signed archive hash still binds the full
 	// project request.
@@ -165,6 +171,10 @@ type Workload struct {
 	// PreviewServiceCallsPolicy controls whether this workload, as a
 	// production target, accepts internal calls from preview apps.
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy
+	// AppProtocol is the wire protocol a Compose service declares with
+	// x-gregale-app-protocol (http1, http2 or grpc); empty keeps the app's
+	// (ADR-20261105095300).
+	AppProtocol string `json:"app_protocol,omitempty"`
 	// AllowedServiceCallers is the target-side service policy. Nil permits
 	// legacy same-account callers; a non-nil empty list denies every caller.
 	AllowedServiceCallers *[]string
@@ -182,6 +192,10 @@ type Workload struct {
 	// not publish, or a service .gregale/project.yaml declares internal. A new
 	// app for it is internal (ADR-20261022131852, ADR-20261025093331).
 	Unpublished bool
+	// Labels are the source's labels for the app reconcile creates: a
+	// Kubernetes object's metadata.labels, without gregale.dev/ keys or
+	// invalid ones (ADR-20261031100025 §7). Nil declares none.
+	Labels map[string]string `json:",omitempty"`
 	// InternalPorts are internal-only TCP listeners from compose expose:
 	// (ADR-576). Nil means the source declares none, so reconcile keeps the
 	// app's existing internal listeners; non-nil replaces them.
@@ -377,6 +391,10 @@ type ScanOptions struct {
 	// private-service-https capability is off (ADR-20261029230000). The zero
 	// value keeps the transport, so an offline scan is unchanged.
 	HTTPSTransportUnavailable bool
+	// ResourceLabels carries a Kubernetes Deployment's and CronJob's
+	// metadata.labels to its workload (ADR-20261031100025 §7, the
+	// resource-labels capability). The zero value drops them, as before.
+	ResourceLabels bool
 }
 
 // ScanWithOptions is Scan with opts. Every caller that scans a project for
@@ -473,7 +491,11 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 		highestTier = TierSingle
 	}
 
-	workloads := mergeByKey(dropShadowedGoCommands(seeds))
+	workloads, releaseWarnings, err := foldComposeReleaseServices(mergeByKey(foldCoveredRoots(dropShadowedGoCommands(seeds))))
+	if err != nil {
+		return Result{}, err
+	}
+	warnings = append(warnings, releaseWarnings...)
 	if err := attachProcfileReleaseCommand(fsys, workloads); err != nil {
 		return Result{}, err
 	}
@@ -490,8 +512,9 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 	warnings = append(warnings, classifyCalledComposeServices(fsys, workloads, opts.ImageListening)...)
 	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)
 	sortDetectionWarnings(detectionWarnings)
+	sourceTrees := make(map[string]string)
 	for i := range workloads {
-		digest, err := hashWorkloadSource(fsys, workloads[i])
+		digest, err := hashWorkloadSourceWithCache(fsys, workloads[i], sourceTrees)
 		if err != nil {
 			return Result{}, fmt.Errorf("reposcan: hash workload %q source: %w", workloads[i].Name, err)
 		}
@@ -531,24 +554,48 @@ func attachProcfileReleaseCommand(fsys fs.FS, workloads []Workload) error {
 			owner = i
 		}
 	}
+	// Two declarations of the migration would run it twice.
+	for _, w := range workloads {
+		if w.ReleaseService != "" {
+			return fmt.Errorf("reposcan: %s: release: %s already runs Compose service %s as its release command; keep one of them", src, w.Name, w.ReleaseService)
+		}
+	}
 	workloads[owner].ReleaseCommand = []string{command}
 	workloads[owner].ReleaseCommandShell = true
 	return nil
 }
 
 func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
+	return hashWorkloadSourceWithCache(fsys, workload, make(map[string]string))
+}
+
+func hashWorkloadSourceWithCache(fsys fs.FS, workload Workload, sourceTrees map[string]string) (string, error) {
 	root := workload.RootDir
 	cleanRoot := path.Clean(root)
 	if root != "" && root != "." && (!fs.ValidPath(root) || cleanRoot != root) {
 		return "", fmt.Errorf("invalid source root %q", root)
 	}
-	walkRoot := cleanRoot
-	if walkRoot == "" {
-		walkRoot = "."
+	// Workspace, convention and Railpack builds receive the repository, so
+	// root lockfiles and sibling packages are build inputs too. Only a Compose
+	// Dockerfile build narrows the staged archive to its declared context.
+	walkRoot := "."
+	if workload.DetectedBy.Detector == DetectorCompose && workload.Image == "" && cleanRoot != "." {
+		dockerfile := workload.Dockerfile
+		if dockerfile == "" {
+			dockerfile = "Dockerfile"
+		}
+		if info, err := fs.Stat(fsys, path.Join(cleanRoot, dockerfile)); err == nil && !info.IsDir() {
+			walkRoot = cleanRoot
+		}
 	}
-	relRoot := cleanRoot
-	if relRoot == "." {
-		relRoot = ""
+	tree, ok := sourceTrees[walkRoot]
+	if !ok {
+		var err error
+		tree, err = hashSourceTree(fsys, walkRoot)
+		if err != nil {
+			return "", err
+		}
+		sourceTrees[walkRoot] = tree
 	}
 	h := sha256.New()
 	// The accepted digest is also the retry checkpoint for build-affecting
@@ -568,7 +615,17 @@ func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
 	for _, arg := range workload.ReleaseCommand {
 		_, _ = fmt.Fprintf(h, "release_arg=%d:%s\x00", len(arg), arg)
 	}
-	err := fs.WalkDir(fsys, walkRoot, func(name string, entry fs.DirEntry, walkErr error) error {
+	_, _ = fmt.Fprintf(h, "context=%s\x00tree=%s\x00", walkRoot, tree)
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func hashSourceTree(fsys fs.FS, root string) (string, error) {
+	h := sha256.New()
+	relRoot := root
+	if root == "." {
+		relRoot = ""
+	}
+	err := fs.WalkDir(fsys, root, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}

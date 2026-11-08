@@ -37,7 +37,7 @@ func resolveStartupCPUProfile(plan api.Plan, configuredMillicores int) (startupC
 	if quota <= 0 || period <= 0 {
 		return startupCPUProfile{}, fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max (%d/%d)", plan, quota, period)
 	}
-	if configuredMillicores != 0 && !api.ValidAppCPUMillicores(configuredMillicores) {
+	if configuredMillicores != 0 && !api.ValidAppCPUCeilingMillicores(plan, configuredMillicores) {
 		return startupCPUProfile{}, fmt.Errorf("fcvm: cgroup: invalid cpu_millicores %d", configuredMillicores)
 	}
 
@@ -46,10 +46,13 @@ func resolveStartupCPUProfile(plan api.Plan, configuredMillicores int) (startupC
 	if configured == 0 {
 		configured = planCeiling
 	}
-	if configured > planCeiling {
+	// A ceiling above the plan's cpu.max is a whole-core burst ceiling the
+	// plan allows (ADR-20261101160231), already checked above.
+	if configured > planCeiling && configured <= api.DefaultAppCPUMillicores {
 		return startupCPUProfile{}, fmt.Errorf("fcvm: cgroup: configured cpu_millicores %d exceeds plan %q ceiling %d", configured, plan, planCeiling)
 	}
-	startup := min(api.DefaultAppCPUMillicores, planCeiling)
+	// The startup boost never lowers an instance below its sustained ceiling.
+	startup := max(min(api.DefaultAppCPUMillicores, planCeiling), configured)
 	return startupCPUProfile{StartupMillicores: startup, ConfiguredMillicores: configured}, nil
 }
 
@@ -179,6 +182,14 @@ func ensureSubtreeControllers(parentAbs string, want []string) error {
 		}
 	}
 	return nil
+}
+
+// EnsureCgroupParentControllers enables the per-VM controllers (memory, cpu,
+// pids) on parent, a path relative to the cgroup v2 mount, so the scopes
+// jailer creates under it get memory.max. Database VMs use their own parent
+// slice and call this before their first boot (ADR-1027).
+func EnsureCgroupParentControllers(parent string) error {
+	return ensureSubtreeControllers(filepath.Join(cgroupRoot, parent), perInstanceControllers)
 }
 
 // readCgroupSet reads a whitespace-separated cgroup pseudo-file into a set.
@@ -337,7 +348,7 @@ func appCPUMax(plan api.Plan, cpuMillicores int) (string, error) {
 		return "", fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max (%d/%d)", plan, quota, period)
 	}
 	if cpuMillicores > 0 {
-		if !api.ValidAppCPUMillicores(cpuMillicores) {
+		if !api.ValidAppCPUCeilingMillicores(plan, cpuMillicores) {
 			return "", fmt.Errorf("fcvm: cgroup: invalid cpu_millicores %d", cpuMillicores)
 		}
 		quota = cpuMillicores * period / 1000
@@ -445,7 +456,7 @@ func writeWorkloadCgroup(parentScope, workloadName string, ramMB int, cpuMillico
 	if len(cpuMillicoresOpt) > 0 {
 		cpuMillicores = cpuMillicoresOpt[0]
 	}
-	if cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAppCPUMillicores(cpuMillicores)) {
+	if cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAnyAppCPUCeilingMillicores(cpuMillicores)) {
 		return fmt.Errorf("fcvm: cgroup: workload %q invalid cpu_millicores %d", workloadName, cpuMillicores)
 	}
 	if ramMB == 0 && cpuMillicores == 0 {

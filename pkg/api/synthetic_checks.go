@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Stable problem codes for the ADR-748 synthetic check endpoints.
@@ -16,11 +17,11 @@ const (
 )
 
 var (
-	syntheticCheckNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+	syntheticCheckNamePattern = lazyregexp.New(`^[a-z][a-z0-9_-]{0,62}$`)
 	// syntheticCheckPathPattern mirrors synthetic_checks_path_chk: an
 	// origin-relative path ("/" or "/x…"), never "//host", no whitespace
 	// or backslashes, so the request can only reach the app's own host.
-	syntheticCheckPathPattern = regexp.MustCompile(`^/([^/\s\\][^\s\\]*)?$`)
+	syntheticCheckPathPattern = lazyregexp.New(`^/([^/\s\\][^\s\\]*)?$`)
 )
 
 // CreateSyntheticCheckRequest is the POST /v1/apps/{slug}/synthetics body.

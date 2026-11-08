@@ -133,3 +133,41 @@ Connection-owner leases are ephemeral routing hints. A separate apid cleanup
 loop deletes expired rows in bounded batches (immediately at boot and every
 minute), so crashes cannot grow `managed_realtime_connection_owners` without
 limit. Live leases are never touched.
+
+## Amendment (2026-11-02): an endpoint answers only on its account's hosts
+
+Dispatching the namespace before hostname lookup also made it host-blind:
+`/__gregale/realtime/{endpoint_id}` answered on every host the gateway
+serves, so one tenant's endpoint was reachable on another tenant's app hosts
+and custom domains, inside that site's origin and `connect-src` policy.
+
+- `gatewayd-internal` now resolves the request's host to its app with the
+  ordinary cached host lookup before it dispatches the namespace, and sends
+  the app's account to `realtimed` in `X-Gregale-Realtime-Host-Account`,
+  replacing any client copy. A host no app is routed to gets 404; a failed
+  lookup gets 503 `realtime_unavailable`.
+- `realtimed` answers 404, as for an unknown endpoint, when the header names
+  another account than the endpoint's, for WebSocket and SSE alike.
+- The binding is per account, not per app, so an account's previews,
+  environments, route targets and custom domains keep reaching its
+  endpoints.
+- Wake, VM admission, edge rules and the drain tracker are still skipped:
+  the lookup holds nothing for the life of a socket. Edge rules stay out of
+  the namespace as `docs/edge-rules.md` documents.
+- Release skew: a request without the header (an older gateway) keeps the
+  host-independent behavior, and an older `realtimed` ignores it.
+
+## Amendment (2026-11-02): shared history reads, and polls that survive an outage
+
+- A retained publish wakes every resume subscriber of its channel on a node,
+  and each read the channel's history from the control plane: N reads per
+  publish per node. SSE streams polled every second each. Reads of one
+  (endpoint, channel, position) on a node now share one control-plane read and
+  its page for a second. The key includes the channel's publish generation on
+  the node, bumped before subscribers are woken, so a woken reader never gets
+  a page read before the publish. At most 16 MiB of pages are kept.
+- A failed history poll closed the connection with 1013 at once, so an apid
+  restart or a database blip disconnected every subscriber of the fleet and
+  they reconnected together, each with connect callbacks (waking apps) and
+  fresh reads. Resume and inbox polls now retry with jittered backoff (1 s
+  doubling to 15 s) and close with 1013 only after two minutes of failures.

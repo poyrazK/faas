@@ -550,3 +550,54 @@ func TestRetryRoundTripper_TimedOutPolicyCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestTransportBackoffCannotOverflowOrSpin(t *testing.T) {
+	next := roundTripperFunc(func(req *http.Request) (*http.Response, error) { return nil, nil })
+	for _, base := range []time.Duration{0, -1, time.Duration(1<<63 - 1)} {
+		rt := newRetryRoundTripper(next, 1000, base).(*retryRoundTripper)
+		if rt.max != 8 || rt.backoff <= 0 {
+			t.Fatalf("unbounded retry policy: %+v", rt)
+		}
+		for _, attempt := range []int{1, 2, 63, 1000000} {
+			delay := transportRetryDelay(rt.backoff, attempt)
+			if delay <= 0 || delay > 8*time.Second {
+				t.Fatalf("invalid delay %s on retry %d", delay, attempt)
+			}
+		}
+	}
+}
+
+func TestTransportRetryAfterStopsAtCallerDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	calls := 0
+	next := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": {"3600"}}, Body: io.NopCloser(strings.NewReader("unavailable"))}, nil
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.example.test/v1/apps", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = newRetryRoundTripper(next, 8, time.Millisecond).RoundTrip(req)
+	if !errors.Is(err, context.DeadlineExceeded) || calls != 1 {
+		t.Fatalf("Retry-After wait: calls=%d, err=%v", calls, err)
+	}
+}
+
+func TestTransportDoesNotReplayOneShotBody(t *testing.T) {
+	calls := 0
+	next := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 503, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("unavailable"))}, nil
+	})
+	req, err := http.NewRequest(http.MethodPost, "https://api.example.test/v1/upload", io.NopCloser(strings.NewReader("payload")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := newRetryRoundTripper(next, 8, time.Millisecond).RoundTrip(req)
+	if err != nil || calls != 1 || resp.StatusCode != 503 {
+		t.Fatalf("one-shot body: calls=%d, response=%v, err=%v", calls, resp, err)
+	}
+	_ = resp.Body.Close()
+}

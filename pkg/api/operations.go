@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -338,8 +337,7 @@ func OperationLimitProblem(err error) *Problem {
 // IsReservedOperationHeader covers customer and managed execution context.
 // Public ingress strips the complete namespace, including future adapters.
 func IsReservedOperationHeader(name string) bool {
-	lower := strings.ToLower(name)
-	return strings.HasPrefix(lower, "x-gregale-operation-") || strings.HasPrefix(lower, "x-gregale-customer-operation-")
+	return HasLowerPrefix(name, "x-gregale-operation-") || HasLowerPrefix(name, "x-gregale-customer-operation-")
 }
 
 // OperationArtifactUploadResponse is a verified private file receipt, not a

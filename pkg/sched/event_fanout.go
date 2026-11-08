@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -181,8 +182,12 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
 			continue
 		}
-		if l.eventsHeld(ctx, recipient, work.Payload) {
+		workflowHeld := l.workflowEventHeld(ctx, recipient)
+		if l.eventsHeld(ctx, recipient, work.Payload) || workflowHeld {
 			wait := state.EventCapabilityWaitProgress(previous, previous.Attempts+1, now.Add(capabilityDeferral))
+			if workflowHeld {
+				wait = state.EventWorkflowWaitProgress(previous, previous.Attempts+1, state.EventWorkflowCapabilityWaitReason, now.Add(capabilityDeferral))
+			}
 			if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, wait); err != nil {
 				return err
 			}
@@ -216,6 +221,15 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		var routeErr error
 		if len(recipient.Workflow) != 0 {
 			matched, routeErr = l.routeWorkflowEvent(ctx, work, envelope, recipient)
+			if errors.Is(routeErr, state.ErrWorkflowEventPlanIneligible) {
+				wait := state.EventWorkflowWaitProgress(previous, previous.Attempts+1, state.EventWorkflowPlanWaitReason, now.Add(capabilityDeferral))
+				if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, wait); err != nil {
+					return err
+				}
+				work.RecipientProgress[recipient.ID] = wait
+				routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+				continue
+			}
 			if errors.Is(routeErr, state.ErrWorkflowRunQuotaExceeded) {
 				// The app's run limit is capacity: wait without spending a
 				// routing attempt, as the recipient-claim path does.
@@ -225,6 +239,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 				}
 				work.RecipientProgress[recipient.ID] = wait
 				l.ops.ObserveEventDeliveryCapacityDeferral(wait.CapacityScope)
+				l.ops.ObserveEventRoutingOutcome(wire.EventRoutingWaiting)
 				routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
 				continue
 			}
@@ -235,6 +250,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			if err == nil {
 				work.RecipientProgress[recipient.ID] = result.Progress
 				work.Delivered = result.ReceiptSettled
+				l.ops.ObserveEventRoutingOutcome(eventRoutingOutcome(result.Progress))
 				if result.Progress.State == state.PublishedEventRecipientPending {
 					routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
 				}
@@ -258,6 +274,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, outcome); err != nil {
 			return fmt.Errorf("sched: record event recipient %s progress: %w", recipient.ID, err)
 		}
+		l.ops.ObserveEventRoutingOutcome(eventRoutingOutcome(outcome))
 		work.RecipientProgress[recipient.ID] = outcome
 		if outcome.State == state.PublishedEventRecipientFailed && l.log != nil {
 			l.log.Error("sched: event recipient fanout permanently failed", "event_id", envelope.ID,
@@ -579,6 +596,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			}
 		}
 		if err != nil {
+			l.ops.ObserveEventRoutingOutcome(wire.EventRoutingClaimError)
 			if l.log != nil {
 				l.log.Warn("sched: claim event fanout failed", "error_class", dispatchErrorClass(err))
 			}
@@ -733,6 +751,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 			}
 		}
 		if err != nil {
+			l.ops.ObserveEventRoutingOutcome(wire.EventRoutingClaimError)
 			if l.log != nil {
 				l.log.Error("sched: claim event recipient failed", "error_class", dispatchErrorClass(err))
 			}
@@ -801,9 +820,13 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 		}
 		return
 	}
-	if l.eventsHeld(ctx, work.Recipient, work.Payload) {
+	workflowHeld := l.workflowEventHeld(ctx, work.Recipient)
+	if l.eventsHeld(ctx, work.Recipient, work.Payload) || workflowHeld {
 		next := now.Add(capabilityDeferral)
 		wait := state.EventCapabilityWaitProgress(work.PreviousProgress, work.TotalAttempts, next)
+		if workflowHeld {
+			wait = state.EventWorkflowWaitProgress(work.PreviousProgress, work.TotalAttempts, state.EventWorkflowCapabilityWaitReason, next)
+		}
 		if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
 			l.log.Error("sched: hold event recipient while events is off", "err", err)
 		}
@@ -851,6 +874,7 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 					if result.CapacityDeferred {
 						l.ops.ObserveEventDeliveryCapacityDeferral(result.Progress.CapacityScope)
 					}
+					l.ops.ObserveEventRoutingOutcome(eventRoutingOutcome(result.Progress))
 					return
 				}
 				matched, routeErr = result.Matched, err
@@ -861,6 +885,7 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 				ClaimToken: work.ClaimToken, Generation: work.Generation, BackfillJobID: work.BackfillJobID,
 			})
 			if err == nil {
+				l.ops.ObserveEventRoutingOutcome(eventRoutingOutcome(result.Progress))
 				return
 			}
 			matched, routeErr = result.Matched, err
@@ -868,12 +893,21 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true, work.OutboxID)
 		}
 	}
+	if errors.Is(routeErr, state.ErrWorkflowEventPlanIneligible) {
+		next := now.Add(capabilityDeferral)
+		wait := state.EventWorkflowWaitProgress(work.PreviousProgress, work.TotalAttempts, state.EventWorkflowPlanWaitReason, next)
+		if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
+			l.log.Error("sched: hold workflow recipient for plan", "err", err)
+		}
+		return
+	}
 	finishedAt := l.eventFanoutNow()
 	progress, next := eventRoutingRetryOutcome(work.Recipient, work.PreviousProgress, work.TotalAttempts, work.Attempts-work.GenerationCapacityDeferrals, work.CapacityDeferrals, work.Generation, matched, routeErr, finishedAt, time.Since(startedAt), eventRoutingRetrySeed(work.OutboxID, work.Recipient.ID, work.Generation, work.Attempts-work.GenerationCapacityDeferrals))
 	if len(progress.LastError) > 1024 {
 		progress.LastError = progress.LastError[:1024]
 	}
 
+	l.ops.ObserveEventRoutingOutcome(eventRoutingOutcome(progress))
 	if err := store.FinishPublishedEventRecipient(ctx, work, progress, next); err != nil && l.log != nil {
 		l.log.Error("sched: finish event recipient failed", "outbox_id", work.OutboxID,
 			"subscription_id", work.Recipient.ID, "error_class", dispatchErrorClass(err))
@@ -881,6 +915,23 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 		l.log.Error("sched: event recipient routing failed", "outbox_id", work.OutboxID,
 			"subscription_id", work.Recipient.ID, "failure_code", progress.FailureCode,
 			"retryable", progress.Retryable, "error_class", dispatchErrorClass(routeErr))
+	}
+}
+
+// eventRoutingOutcome labels a recipient's routing result for
+// schedd_event_routing_outcomes_total: routed when it settled, waiting when it
+// holds for delivery capacity, retry when it failed and is due again, failed
+// when its routing ended for good.
+func eventRoutingOutcome(progress state.PublishedEventRecipientProgress) string {
+	switch {
+	case progress.State == state.PublishedEventRecipientFailed:
+		return wire.EventRoutingFailed
+	case progress.State != state.PublishedEventRecipientPending:
+		return wire.EventRoutingRouted
+	case progress.CapacityScope != "":
+		return wire.EventRoutingWaiting
+	default:
+		return wire.EventRoutingRetry
 	}
 }
 
@@ -975,6 +1026,18 @@ func (l *Loop) eventsHeld(ctx context.Context, recipient state.PublishedEventRec
 		return false
 	}
 	return !l.engine.appEventsAllowed(ctx, recipient.AppID)
+}
+
+// workflowEventHeld applies the workflows switch only to workflow recipients;
+// ordinary event subscriptions remain independently routable.
+func (l *Loop) workflowEventHeld(ctx context.Context, recipient state.PublishedEventRecipient) bool {
+	if len(recipient.Workflow) == 0 || l == nil || l.engine == nil {
+		return false
+	}
+	if l.engine.capabilities != nil && !l.engine.capabilities.Released("workflows") {
+		return true
+	}
+	return !l.workflowCapabilityAllowed(ctx, recipient.AppID)
 }
 
 // observeEventRoutingPause logs when the platform-wide events switch stops or

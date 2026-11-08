@@ -50,29 +50,40 @@ type IssueFrame struct {
 }
 
 type Issue struct {
-	SplitSourceIssueID       string     `json:"split_source_issue_id,omitempty"`
-	ID                       string     `json:"id"`
-	AppID                    string     `json:"app_id"`
-	Environment              string     `json:"environment"`
-	Fingerprint              string     `json:"fingerprint"`
-	GroupingVersion          int        `json:"grouping_version"`
-	Title                    string     `json:"title"`
-	State                    string     `json:"state"`
-	AssigneeTeamID           string     `json:"assignee_team_id,omitempty"`
-	AssigneeAccountID        string     `json:"assignee_account_id,omitempty"`
-	FirstSeenAt              time.Time  `json:"first_seen_at"`
-	LastSeenAt               time.Time  `json:"last_seen_at"`
-	EventCount               int64      `json:"event_count"`
-	RegressionCount          int64      `json:"regression_count"`
-	ResolvedAt               *time.Time `json:"resolved_at,omitempty"`
-	FixedDeploymentCreatedAt *time.Time `json:"fixed_deployment_created_at,omitempty"`
-	FixedDeploymentID        string     `json:"fixed_deployment_id,omitempty"`
-	IgnoredUntil             *time.Time `json:"ignored_until,omitempty"`
+	SplitSourceIssueID       string              `json:"split_source_issue_id,omitempty"`
+	ID                       string              `json:"id"`
+	AppID                    string              `json:"app_id"`
+	Environment              string              `json:"environment"`
+	Fingerprint              string              `json:"fingerprint"`
+	GroupingVersion          int                 `json:"grouping_version"`
+	Title                    string              `json:"title"`
+	State                    string              `json:"state"`
+	AssigneeTeamID           string              `json:"assignee_team_id,omitempty"`
+	AssigneeAccountID        string              `json:"assignee_account_id,omitempty"`
+	FirstSeenAt              time.Time           `json:"first_seen_at"`
+	LastSeenAt               time.Time           `json:"last_seen_at"`
+	EventCount               int64               `json:"event_count"`
+	RegressionCount          int64               `json:"regression_count"`
+	Impact24h                *IssueImpactSummary `json:"impact_24h,omitempty"`
+	ResolvedAt               *time.Time          `json:"resolved_at,omitempty"`
+	FixedDeploymentCreatedAt *time.Time          `json:"fixed_deployment_created_at,omitempty"`
+	FixedDeploymentID        string              `json:"fixed_deployment_id,omitempty"`
+	IgnoredUntil             *time.Time          `json:"ignored_until,omitempty"`
+}
+
+// IssueImpactSummary reports observed retained events in the standard 24-hour window.
+type IssueImpactSummary struct {
+	IdentifiedCustomers int64 `json:"identified_customers"`
+	ObservedEvents      int64 `json:"observed_events"`
+	UnattributedEvents  int64 `json:"unattributed_events"`
+	UnknownHTTPBatches  int64 `json:"unknown_http_batches,omitempty"`
 }
 
 type IssueOccurrence struct {
-	ID              string `json:"id"`
-	OriginalIssueID string `json:"original_issue_id,omitempty"`
+	ID                   string `json:"id"`
+	OriginalIssueID      string `json:"original_issue_id,omitempty"`
+	OccurrenceCount      int64  `json:"occurrence_count"`
+	OccurrenceCountExact bool   `json:"occurrence_count_exact"`
 	IssueEvent
 	DeploymentID             string                    `json:"deployment_id"`
 	ReceivedAt               time.Time                 `json:"received_at"`
@@ -131,6 +142,7 @@ type IssueImpact struct {
 	IdentifiedCustomers int64     `json:"identified_customers"`
 	ObservedEvents      int64     `json:"observed_events"`
 	UnattributedEvents  int64     `json:"unattributed_events"`
+	UnknownHTTPBatches  int64     `json:"unknown_http_batches,omitempty"`
 	Coverage            string    `json:"coverage"`
 }
 

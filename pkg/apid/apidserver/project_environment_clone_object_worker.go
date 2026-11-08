@@ -144,6 +144,31 @@ func validateCapturedProjectEnvironmentObjectResources(plans []capturedProjectEn
 	return indices, point, nil
 }
 
+// cloneQualifiedObjectProvider reports whether a clone may copy buckets on
+// this backend. Only S3-compatible backends are qualified (ADR-20261103160000):
+// they list versions as of a point and copy and verify a pinned version.
+func cloneQualifiedObjectProvider(provider objectstorage.Provider) bool {
+	qualified, ok := provider.(objectstorage.EnvironmentCloneQualifiedProvider)
+	if !ok || !qualified.QualifiedForEnvironmentClones() {
+		return false
+	}
+	_, lists := provider.(objectstorage.VersionedObjectLister)
+	_, copies := provider.(objectstorage.ObjectSnapshotCopier)
+	return lists && copies
+}
+
+// cloneQualifiedObjectBackends names the configured backends whose buckets
+// clone admission accepts.
+func (s *server) cloneQualifiedObjectBackends() []string {
+	var qualified []string
+	for _, backend := range s.objectStorage.Backends() {
+		if cloneQualifiedObjectProvider(backend.Provider) {
+			qualified = append(qualified, backend.ID)
+		}
+	}
+	return qualified
+}
+
 func (s *server) capturedCloneObjectProvider(plan capturedProjectEnvironmentObjectPlan) (objectstorage.Provider, error) {
 	if !s.object.ObjectStorageEnabled() {
 		return nil, objectstorage.ErrUnavailable
@@ -152,14 +177,8 @@ func (s *server) capturedCloneObjectProvider(plan capturedProjectEnvironmentObje
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := backend.Provider.(objectstorage.VersionedObjectLister); !ok {
+	if !cloneQualifiedObjectProvider(backend.Provider) {
 		return nil, objectstorage.ErrUnsupported
-	}
-	if _, ok := backend.Provider.(objectstorage.ObjectSnapshotCopier); !ok {
-		return nil, objectstorage.ErrUnsupported
-	}
-	if _, ok := backend.Provider.(objectstorage.ObjectVersionRetentionObserver); !ok {
-		return nil, objectstorage.ErrObjectSnapshotRetentionUnavailable
 	}
 	return backend.Provider, nil
 }
@@ -288,6 +307,7 @@ func (s *server) prepareProjectEnvironmentCloneObjects(ctx context.Context, leas
 	if err != nil {
 		return lease, false, err
 	}
+	ready := true
 	for _, plan := range plans {
 		lease, err = renewCloneObjectWorkerLease(ctx, store, lease, state.CloneOperationCopying)
 		if err != nil {
@@ -301,6 +321,21 @@ func (s *server) prepareProjectEnvironmentCloneObjects(ctx context.Context, leas
 		}
 		if bucket.State != "ready" {
 			return lease, false, state.ErrConflict
+		}
+		if resource.Status == "ready" {
+			continue
+		}
+		ensure := s.ensureCloneTargetVersioning
+		if s.cloneTargetVersioning != nil {
+			ensure = s.cloneTargetVersioning
+		}
+		versioned, err := ensure(ctx, bucket)
+		if err != nil {
+			return lease, false, err
+		}
+		if !versioned {
+			ready = false
+			continue
 		}
 		manifest, err := store.ProjectEnvironmentCloneObjectManifest(ctx, lease.Operation.AccountID, lease.Operation.ProjectID, lease.Operation.ID, plan.source.ID)
 		if err != nil {
@@ -316,7 +351,7 @@ func (s *server) prepareProjectEnvironmentCloneObjects(ctx context.Context, leas
 		copied, err := copyProjectEnvironmentObjectStorageSnapshotForLease(ctx, store, provider, lease,
 			plan.source.ID, bucket.ID, plan.source.PhysicalName, bucket.PhysicalName)
 		if err != nil {
-			return lease, false, fmt.Errorf("copy captured object bucket: %w", err)
+			return lease, false, fmt.Errorf("copy captured object bucket: %w", cloneObjectCopyFailure(err))
 		}
 		if copied != len(manifest.Objects) {
 			return lease, false, state.ErrConflict
@@ -327,5 +362,5 @@ func (s *server) prepareProjectEnvironmentCloneObjects(ctx context.Context, leas
 			return lease, false, err
 		}
 	}
-	return lease, true, nil
+	return lease, ready, nil
 }

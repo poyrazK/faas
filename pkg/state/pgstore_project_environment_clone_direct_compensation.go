@@ -42,12 +42,13 @@ type ProjectEnvironmentCloneDirectCompensationStore interface {
 
 // ProjectEnvironmentCloneIsDirectlyCompensable reports whether an operation's
 // inventory holds nothing that needs data-checkpoint retirement: no
-// checkpoint, object copy or unmanaged PostgreSQL resource. Managed databases
-// restored at the capture point are deleted directly.
+// checkpoint or unmanaged PostgreSQL resource. Managed databases restored at
+// the capture point and buckets copied at it (ADR-20261103160000) are deleted
+// directly; a checkpoint clone's object copies are not.
 func ProjectEnvironmentCloneIsDirectlyCompensable(op ProjectEnvironmentCloneOperation) bool {
 	for _, resource := range op.Resources {
 		switch {
-		case strings.HasPrefix(resource.Kind, "data_checkpoint"), resource.Kind == "postgres", resource.Kind == "object_storage":
+		case strings.HasPrefix(resource.Kind, "data_checkpoint"), resource.Kind == "postgres":
 			return false
 		}
 	}
@@ -63,13 +64,17 @@ const (
 	CloneFailureTargetDatabase   = "target_database_failed"
 	CloneFailureSourceChanged    = "source_changed_during_capture"
 	CloneFailureDeadline         = "clone_deadline_exceeded"
+	// The copied buckets would take the account past its object storage
+	// limits (ADR-20261103160000).
+	CloneFailureObjectCapacity = "object_storage_capacity_exceeded"
+	CloneFailureObjectCopySize = "object_storage_copy_size_unsupported"
 )
 
 // ProjectEnvironmentCloneFailedDirectly reports whether the coordinator ended
 // this directly compensable clone itself.
 func ProjectEnvironmentCloneFailedDirectly(op ProjectEnvironmentCloneOperation) bool {
 	switch op.ErrorCode {
-	case CloneFailureTargetDeployment, CloneFailureTargetDatabase, CloneFailureSourceChanged, CloneFailureDeadline:
+	case CloneFailureTargetDeployment, CloneFailureTargetDatabase, CloneFailureSourceChanged, CloneFailureDeadline, CloneFailureObjectCapacity, CloneFailureObjectCopySize:
 		return ProjectEnvironmentCloneIsDirectlyCompensable(op)
 	}
 	return false

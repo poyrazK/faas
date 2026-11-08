@@ -7,10 +7,10 @@
  */
 export type ReleaseGateResult = {
   name: string;
-  kind: 'slo' | 'new_errors' | 'custom_metric' | 'ai';
+  kind: 'slo' | 'new_errors' | 'custom_metric' | 'ai' | 'synthetic' | 'metric_change';
   passed: boolean;
   /**
-   * The burn rate, new error groups, metric average, or the release's AI metric.
+   * The burn rate, new error groups, metric average, the release's AI metric, failed-probe percentage, or signed change in percent.
    */
   observed: number;
   /**
@@ -18,13 +18,17 @@ export type ReleaseGateResult = {
    */
   bound: number;
   /**
-   * The release's requests, new-error events, metric values or AI calls.
+   * The release's requests, new-error events, probes, metric values or AI calls.
    */
   samples: number;
   /**
    * slo gates: the predecessor's bad fraction.
    */
   baseline_bad_fraction?: number;
+  /**
+   * synthetic gates: the stable revision's failed-probe percentage; metric_change gates: the metric's average before the rollout.
+   */
+  baseline?: number;
   /**
    * new_errors gates: the new groups' error classes.
    */

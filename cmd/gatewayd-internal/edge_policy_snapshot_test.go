@@ -62,8 +62,14 @@ func TestPinnedHostPolicyRefusesInvalidationBetweenSelectorHostsAndCompileErrors
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := gateway.ValidatePinnedHostPolicies(broken, "acc_test"); err == nil {
+	err = gateway.ValidatePinnedHostPolicies(broken, "acc_test")
+	if err == nil {
 		t.Fatal("owner compile failure admitted an empty protection policy")
+	}
+	// The refusal names the broken rule (ADR-091 amendment 2026-11-03).
+	var unenforceable *gateway.UnenforceableEdgeRuleError
+	if !errors.As(err, &unenforceable) || unenforceable.RuleID != "invalid" {
+		t.Fatalf("compile failure error = %v, want it to name rule invalid", err)
 	}
 	if err := gateway.ValidatePinnedHostPolicies(broken, "another-owner"); err != nil {
 		t.Fatalf("foreign broken policy blocked another tenant: %v", err)
@@ -128,23 +134,27 @@ func (s *pinRaceEdgeRuleStore) MatchEdgeRulesForHost(ctx context.Context, host s
 	return rules, err
 }
 
-// An invalidation for an unrelated host advances the shared generation; the
-// first host pin of a request re-reads instead of refusing the request.
-func TestPinnedHostPolicyRereadsAfterUnrelatedInvalidation(t *testing.T) {
+// Every invalidation advances the shared generation. One for another host
+// leaves the pinned set as it was, so the pin needs no re-read; one for the
+// host itself makes the first pin of a request re-read instead of refusing it,
+// until the read keeps changing (ADR-570).
+func TestPinnedHostPolicyRereadsOnlyAfterItsOwnHostChanges(t *testing.T) {
 	const host = "app.example.test"
 	for _, tc := range []struct {
+		invalidated   string
 		invalidations int
 		wantErr       bool
 	}{
-		{invalidations: 1},
-		{invalidations: hostPolicyPinAttempts - 1},
-		{invalidations: -1, wantErr: true},
+		{invalidated: "other.example.test", invalidations: -1},
+		{invalidated: host, invalidations: 1},
+		{invalidated: host, invalidations: hostPolicyPinAttempts - 1},
+		{invalidated: host, invalidations: -1, wantErr: true},
 	} {
 		store := &pinRaceEdgeRuleStore{fakeEdgeRuleStore: &fakeEdgeRuleStore{rules: map[string][]state.EdgeRule{host: {
 			sampleRouteRule("route", 1, host, "/*", nil, "app"),
 		}}}, invalidations: tc.invalidations}
 		g := newGatewaydEdgeRules(store, nil, nil, nil)
-		store.invalidate = func() { g.InvalidateHosts([]string{"other.example.test"}) }
+		store.invalidate = func() { g.InvalidateHosts([]string{tc.invalidated}) }
 		ctx, err := g.PinHostPolicy(t.Context(), host)
 		if tc.wantErr {
 			if err == nil {
@@ -153,7 +163,7 @@ func TestPinnedHostPolicyRereadsAfterUnrelatedInvalidation(t *testing.T) {
 			continue
 		}
 		if err != nil {
-			t.Fatalf("%d invalidations refused the pin: %v", tc.invalidations, err)
+			t.Fatalf("%d invalidations of %s refused the pin: %v", tc.invalidations, tc.invalidated, err)
 		}
 		if route := g.MatchRoute(ctx, host, "/", "GET"); route == nil || route.TargetAppSlug != "app" {
 			t.Fatalf("pinned route = %+v", route)

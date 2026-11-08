@@ -17,9 +17,6 @@ var cliTreeVerbs = []string{
 	"pause", "resume", "cancel", "retry", "wait", "watch", "logs", "diff", "doctor", "status",
 	"promote", "rollback", "purge", "rotate", "approve", "reject", "join", "leave", "explain",
 	"replay", "recover", "scale", "park", "wake", "wake-ahead", "restart", "rename", "restore",
-	// undelete: bring a deleted database back inside its delete window, where
-	// `postgres restore` already means point-in-time restore.
-	"undelete",
 	"exec", "cp", "port-forward", "run", "publish", "send", "deliver", "receive", "peek", "ack",
 	"apply", "check", "verify", "setup", "sync", "connect", "disconnect", "link", "advance",
 	"simulate", "hide", "prune", "reorder", "serve", "call", "complete", "read", "render",
@@ -34,7 +31,9 @@ var cliTreeVerbs = []string{
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
 	"unsubscribe", "suggest", "suspend", "test", "track", "use", "validate", "override", "advise",
 	"reset", "pull", "push", "signal", "generate", "void", "draft", "handoff", "end",
-	"open", "fail", "undelete",
+	"open", "fail", "move",
+	// `bucket sign` mints a signed URL (ADR-20261106114500).
+	"sign",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -62,8 +61,8 @@ var cliTreeCompoundWords = []string{
 	"subscription-capacity", "lock-policy", "deploy-token",
 	"billing-run", "billing-policy", "rate-card", "overdue-hold", "event-recovery", "failure-recovery", "recovery-policy", "recovery-response", "deadline-alert", "notification-retry", "recovery-notification", "release-sets", "compute-policy",
 	"quality-alert", "probe-policy", "release-policy", "object-storage", "copy-source", "attack-mode",
-	"grace-window", "payment-method", "server-key",
-	"ack-sync", "billing-connection", "content-policy", "tag-limit", "app-limit", "legal-hold",
+	"grace-window", "payment-method", "server-key", "egress-overage",
+	"ack-sync", "billing-connection", "content-policy", "tag-limit", "app-limit", "request-policy", "legal-hold",
 	"event-hold", "impact-alert", "lifecycle-alert", "ownership-rule", "compound-alert", "source-map",
 }
 
@@ -568,6 +567,55 @@ func TestCliTreeEveryAliasRunsItsCommand(t *testing.T) {
 		if err != nil || !slices.Equal(got, want) {
 			t.Errorf("%q rewrites to %q (err %v), want %q", alias.New, got, err, want)
 		}
+	}
+}
+
+// Every verb path the reference documents runs one of today's commands. The
+// reference spells today's verbs in their standard form at every depth, so
+// dispatch must map each back (CLI audit 2026-10-31: `account billing-run
+// get` and `org members delete` printed usage errors).
+func TestCliTreeReferencePathsRunTheirCommand(t *testing.T) {
+	enableEveryCLIFeature(t)
+	foldOnly := map[string]bool{}
+	for _, fold := range *main.CliTreeFlagFolds {
+		if fold.Only {
+			foldOnly[fold.New] = true
+		}
+	}
+	var walk func(path []string, subs []main.CliSub)
+	walk = func(path []string, subs []main.CliSub) {
+		for _, sub := range subs {
+			words := append(slices.Clone(path), sub.Name)
+			if foldOnly[strings.Join(words, " ")] {
+				continue // runs only with its flag (TestCliTreeFlagFoldsRunTheirCommand)
+			}
+			// A subnoun that groups verbs (`api consumer credit`) runs nothing
+			// itself; its verbs are checked.
+			if len(sub.Subcommands) > 0 {
+				if !sub.SubcommandsAfterPositionals {
+					walk(words, sub.Subcommands)
+				}
+				continue
+			}
+			got, err := main.RewriteCliTree(append(slices.Clone(words), "--json"))
+			if err != nil {
+				t.Errorf("%q does not rewrite: %v", strings.Join(words, " "), err)
+				continue
+			}
+			for len(got) > 0 && strings.HasPrefix(got[len(got)-1], "-") {
+				got = got[:len(got)-1]
+			}
+			if depth := main.OldPathDepth(got); depth < len(got) {
+				t.Errorf("%q runs %q; today's commands stop at %q", strings.Join(words, " "), got, got[:depth])
+			}
+		}
+	}
+	for _, command := range main.CliTreeManifest(main.VisibleCliCommands()) {
+		// `app <verb> <app>` needs an app; the app tests cover it.
+		if command.Name == "app" || command.SubcommandsAfterPositionals {
+			continue
+		}
+		walk([]string{command.Name}, command.Subcommands)
 	}
 }
 

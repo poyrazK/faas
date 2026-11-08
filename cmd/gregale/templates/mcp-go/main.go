@@ -114,8 +114,8 @@ func main() {
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// Response handlers install a bounded write deadline; task subscriptions
-		// clear it and remain open until disconnect or token expiry.
+		// Response handlers install bounded write deadlines. Subscriptions
+		// refresh the deadline for each write and remain open while idle.
 		WriteTimeout: 0,
 		IdleTimeout:  60 * time.Second,
 	}
@@ -181,7 +181,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 			status = "degraded"
 		}
 		writeJSON(w, statusCode, map[string]any{
-			"ok": ready, "status": status, "instance_id": strings.TrimSpace(os.Getenv("FAAS_INSTANCE_ID")),
+			"ok": ready, "status": status, "instance_id": strings.TrimSpace(r.Header.Get("X-Faas-Instance-Id")),
 			"catalog_revision": revision, "catalog_sha256": digest,
 		})
 		return
@@ -222,6 +222,18 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 	var request rpcRequest
 	if err := json.Unmarshal(body, &request); err != nil || request.JSONRPC != "2.0" || request.Method == "" {
 		writeRPCError(w, json.RawMessage("null"), -32600, "invalid JSON-RPC request", http.StatusBadRequest)
+		return
+	}
+	version := r.Header.Get("MCP-Protocol-Version")
+	if version == "" {
+		version = currentProtocol
+	}
+	if len(r.Header.Values("MCP-Protocol-Version")) > 1 || (version != currentProtocol && (version != legacyProtocol || !config.Legacy)) {
+		writeRPCError(w, request.ID, -32600, "unsupported MCP protocol version", http.StatusBadRequest)
+		return
+	}
+	if err := validateMCPHeaders(r.Header, request, version); err != nil {
+		writeRPCError(w, request.ID, -32020, "MCP headers do not match the request", http.StatusBadRequest)
 		return
 	}
 	if len(request.ID) > 0 {
@@ -293,14 +305,6 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 		writeRPCError(w, json.RawMessage("null"), -32600, "invalid JSON-RPC request ID", http.StatusBadRequest)
 		return
 	}
-	version := r.Header.Get("MCP-Protocol-Version")
-	if version == "" {
-		version = currentProtocol
-	}
-	if version != currentProtocol && version != legacyProtocol {
-		writeRPCError(w, request.ID, -32600, "unsupported MCP protocol version", http.StatusBadRequest)
-		return
-	}
 	w.Header().Set("MCP-Protocol-Version", version)
 	if request.Method == "subscriptions/listen" {
 		serveTaskSubscription(w, r, request.ID, request.Params, version, auth, identity, tasks)
@@ -314,7 +318,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 			return
 		}
 		writeRPCResult(w, request.ID, map[string]any{
-			"supportedVersions": []string{currentProtocol, legacyProtocol},
+			"supportedVersions": supportedMCPVersions(config.Legacy),
 			"capabilities":      serverCapabilities(tasks, true),
 		})
 	case "initialize":
@@ -322,7 +326,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 			ProtocolVersion string `json:"protocolVersion"`
 		}
 		_ = json.Unmarshal(request.Params, &params)
-		if params.ProtocolVersion != currentProtocol && params.ProtocolVersion != legacyProtocol {
+		if params.ProtocolVersion != currentProtocol && (params.ProtocolVersion != legacyProtocol || !config.Legacy) {
 			writeRPCError(w, request.ID, -32602, "unsupported protocol version", http.StatusBadRequest)
 			return
 		}
@@ -484,13 +488,18 @@ func callTool(w http.ResponseWriter, r *http.Request, id, rawParams json.RawMess
 	if params.Arguments == nil {
 		params.Arguments = map[string]any{}
 	}
+	if entry.inputSchema != nil && entry.inputSchema.Validate(params.Arguments) != nil {
+		writeToolError(w, id, "tool arguments do not match inputSchema")
+		return
+	}
 	if tasks != nil && protocol == currentProtocol && clientSupportsMcpTasks(params.Meta.ClientCapabilities) {
 		if _, registered := tasks.taskHandlers[params.Name]; registered {
 			if params.Name == "build_report" && params.Arguments["request_approval"] == true && !containsString(taskInputMethodsFor(params.Meta.ClientCapabilities), "elicitation/create:form") {
 				writeToolError(w, id, "request_approval requires client support for elicitation form requests")
 				return
 			}
-			result, err := tasks.create(r.Context(), params.Name, params.Arguments, identity, params.Meta.ClientCapabilities)
+			outputSchema, _ := entry.definition["outputSchema"].(map[string]any)
+			result, err := tasks.create(r.Context(), params.Name, params.Arguments, identity, params.Meta.ClientCapabilities, outputSchema)
 			if err != nil {
 				writeToolError(w, id, "invalid task arguments or task queue unavailable")
 				return
@@ -505,8 +514,13 @@ func callTool(w http.ResponseWriter, r *http.Request, id, rawParams json.RawMess
 			writeToolError(w, id, "tool execution failed")
 			return
 		}
-		if _, err := json.Marshal(result); err != nil {
+		encoded, err := json.Marshal(result)
+		if err != nil {
 			writeToolError(w, id, "tool handler returned an invalid result")
+			return
+		}
+		if validateMCPToolOutput(entry.outputSchema, encoded) != nil {
+			writeToolError(w, id, "tool output does not match outputSchema")
 			return
 		}
 		writeRPCResult(w, id, result)

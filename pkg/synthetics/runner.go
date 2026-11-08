@@ -71,6 +71,7 @@ func NewClient() *http.Client {
 			DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
 			TLSHandshakeTimeout: 10 * time.Second,
 			MaxIdleConns:        16,
+			MaxIdleConnsPerHost: 16,
 			IdleConnTimeout:     30 * time.Second,
 			ForceAttemptHTTP2:   true,
 		},

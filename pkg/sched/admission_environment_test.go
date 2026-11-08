@@ -265,6 +265,37 @@ func TestSeedLedgerDoesNotDowngradeTransientOwnershipFailure(t *testing.T) {
 	}
 }
 
+func TestDeletedEnvironmentParkRetainsCapacityUntilDestroyConfirmed(t *testing.T) {
+	f := sched.SeedStageSnapshotPolicy(t, 0, false)
+	ins, err := (*f.Store()).CreateInstance(t.Context(), (*f.App()).ID, (*f.Stage()).ID, string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	destroyErr := errors.New("vmmd retirement unconfirmed")
+	vmm := &sched.FakeVMM{}
+	*vmm.DestroyErr() = destroyErr
+	engine := sched.XNewEngine(t, (*f.Store()), vmm, &sched.FakeNotifier{}, "1.10.0")
+	if err := engine.SeedLedger(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.RecreateStage(t.Context(), t)
+	if err := engine.Park(t.Context(), ins.ID); !errors.Is(err, destroyErr) {
+		t.Fatalf("park hid uncertain retirement: %v", err)
+	}
+	current, err := (*f.Store()).InstanceByID(t.Context(), ins.ID)
+	if err != nil || !state.IsLive(current.State) || (*engine.XLedger()).ResidentRAM() != 256+api.PerVMOverheadMB {
+		t.Fatalf("uncertain retirement released live capacity: %+v %v", current, err)
+	}
+	*vmm.DestroyErr() = nil
+	if err := engine.Park(t.Context(), ins.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, err = (*f.Store()).InstanceByID(t.Context(), ins.ID)
+	if err != nil || state.IsLive(current.State) || (*engine.XLedger()).ResidentRAM() != 0 {
+		t.Fatalf("confirmed retirement retained capacity: %+v %v", current, err)
+	}
+}
+
 func TestEnvironmentLedgerRecoveryRecordsOverCapServingRows(t *testing.T) {
 	ledger := sched.NewNodeLedger()
 	for i, id := range []string{"first", "second", "third"} {
@@ -284,15 +315,27 @@ func TestEnvironmentLedgerRecoveryRecordsOverCapServingRows(t *testing.T) {
 	}
 }
 
-func TestReaperRejectsScalingHistoryFromDifferentEnvironmentLifetime(t *testing.T) {
+type foreignScalingOwnerStore struct{ MemStore *state.MemStore }
+
+func (s foreignScalingOwnerStore) RuntimeScalingStateForDeployment(ctx context.Context, accountID, appID, deploymentID string) (state.RuntimeScalingState, error) {
+	row, err := s.MemStore.RuntimeScalingStateForDeployment(ctx, accountID, appID, deploymentID)
+	row.DeploymentID = "another-deployment"
+	return row, err
+}
+
+// The reaper takes a deployment's environment and scale clocks from its
+// scaling state alone (ADR 20261102205122), so a scaling state that names
+// another owner must leave the row's policy unavailable rather than reap it
+// on that owner's clock.
+func TestReaperRejectsScalingStateOfAnotherOwner(t *testing.T) {
 	f := sched.SeedStageSnapshotPolicy(t, 0, false)
-	store := foreignScalingEnvironmentStore{(*f.Store())}
+	store := foreignScalingOwnerStore{(*f.Store())}
 	loop := sched.NewLoop(nil, sched.XNewEngine(t, statetest.NewMem(store), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0"), sched.TestLog())
 	now := time.Now()
 	rows := []sched.InstanceInfo{{Instance: "stage", AppID: (*f.App()).ID, DeploymentID: (*f.Stage()).ID, State: state.StateRunning, Plan: api.PlanPro, Started: now.Add(-time.Hour), LastRequest: now.Add(-time.Hour)}}
 	loop.EnrichReaperEnvironmentPolicies(t.Context(), []state.App{(*f.App())}, rows, nil)
 	if !rows[0].PolicyUnavailable || len(sched.ReapIdle(now, rows, nil, nil)) != 0 {
-		t.Fatalf("different lifetime's clock authorized reaping: %+v", rows)
+		t.Fatalf("another owner's scaling state authorized reaping: %+v", rows)
 	}
 }
 

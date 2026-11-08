@@ -83,6 +83,8 @@ var cliTreeFlagFolds = []cliTreeFlagFold{
 	{New: "environment release-sets rollback", Flag: "prepare", Old: "projects environments release-sets prepare-rollback", Short: "select a retained graph and freeze current routing and policies"},
 	{New: "api route health check", Flag: "review", Only: true, Old: "routes health review-release", Short: "gate an aggregate preview review on canary route health"},
 	{New: "debug issue update", Flag: "issues", Keep: true, Only: true, Old: "issues bulk", Short: "triage up to 50 selected issue groups at once (with --action)"},
+	{New: "debug issue lifecycle-alert set", Flag: "dry-run", Old: "issues lifecycle-alerts preview", Short: "show the alerts the draft filters would send without saving them"},
+	{New: "debug issue compound-alert set", Flag: "dry-run", Old: "issues compound-alerts preview", Short: "preview the rule against retained events without saving it"},
 	{New: "org standards reviews approve", Flag: "dry-run", Old: "orgs standards reviews preview", Short: "save affected applications and blockers without activating a change"},
 }
 
@@ -128,6 +130,32 @@ func rewriteFlagFold(args []string) ([]string, bool) {
 	}
 	return nil, false
 }
+
+// onlyFoldPath reports args that start with a path existing only through
+// its folds (`edge cache set`) but set none of their flags, with the flag
+// spellings that would run it.
+func onlyFoldPath(args []string) (string, []string, bool) {
+	words := leadingTreeWords(args)
+	var path string
+	var flags []string
+	for _, fold := range cliTreeFlagFolds {
+		fields := strings.Fields(fold.New)
+		if !fold.Only || len(fields) > len(words) || !slices.Equal(fields, words[:len(fields)]) {
+			continue
+		}
+		path = fold.New
+		flag := strings.TrimPrefix(fold.spelling(), fold.New+" ")
+		if !slices.Contains(flags, flag) {
+			flags = append(flags, flag)
+		}
+	}
+	return path, flags, path != ""
+}
+
+// errFoldFlagRequired is a fold-only path run without the flag it needs.
+type errFoldFlagRequired struct{ error }
+
+func (e errFoldFlagRequired) Unwrap() error { return e.error }
 
 type foldFlagSpan struct{ start, end int }
 
@@ -215,7 +243,9 @@ func (d cliTreeDiscovery) foldFlags(path string, own []cliFlag) []cliFlag {
 			}
 			continue
 		}
-		flag := cliFlag{Name: name, Short: short}
+		// A path that exists only through its folds runs nothing without
+		// the flag, so the flag is required there.
+		flag := cliFlag{Name: name, Short: short, Req: fold.Only, Bool: !valued && cliTreeFoldBoolean[name]}
 		switch {
 		case valued:
 			flag.Value, flag.Short = value, value+": "+short

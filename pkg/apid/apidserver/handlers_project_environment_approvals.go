@@ -26,9 +26,8 @@ func (s *server) approveProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
-	if !protected {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
-			"Environment is not protected", "approvals are only required for protected project environments"))
+	if problem := approvalTargetProblem(r, protected); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	var req api.CreateProjectEnvironmentApprovalRequest
@@ -49,6 +48,10 @@ func (s *server) approveProjectEnvironment(w http.ResponseWriter, r *http.Reques
 				return
 			}
 		}
+		if problem := s.promotionApprovalByKeyProblem(r, acct, projectSlug, environment, promotionToken); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		approvalToken, approval, problem := s.issueProjectEnvironmentPromotionApproval(r.Context(), acct, projectSlug, environment, promotionToken)
 		if problem != nil {
 			api.WriteProblem(w, problem)
@@ -63,6 +66,16 @@ func (s *server) approveProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusCreated, projectEnvironmentApprovalResponse(approvalToken, approval))
+}
+
+// approvalTargetProblem refuses an approval of an unprotected environment,
+// which needs none, and one from an automation credential (bug hunt H70).
+func approvalTargetProblem(r *http.Request, protected bool) *api.Problem {
+	if !protected {
+		return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+			"Environment is not protected", "approvals are only required for protected project environments")
+	}
+	return humanApprovalProblem(r)
 }
 
 func (s *server) getProjectEnvironmentApprovalStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -88,6 +101,21 @@ func (s *server) getProjectEnvironmentApprovalStatus(w http.ResponseWriter, r *h
 		response.ConsumedAt = approval.ConsumedAt.UTC().Format(time.RFC3339)
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// promotionApprovalByKeyProblem refuses an API key or token's approval of a
+// protected production promotion that stands in for an app's release
+// approval policy (ADR-20261020085706 amendment 9). A person's approval is
+// unaffected, and so is a key's when no promoted app has a policy.
+func (s *server) promotionApprovalByKeyProblem(r *http.Request, acct state.Account, projectSlug, environment, promotionToken string) *api.Problem {
+	if p, ok := principalFrom(r); !ok || p.Key == nil {
+		return nil
+	}
+	plan, problem := s.validateProjectEnvironmentPromotionApproval(r.Context(), acct, projectSlug, environment, promotionToken)
+	if problem != nil {
+		return problem
+	}
+	return s.promotionApprovalKeyProblem(r, plan, environment)
 }
 
 func (s *server) issueProjectEnvironmentPromotionApproval(ctx context.Context, acct state.Account, projectSlug, environment, promotionToken string) (string, state.ProjectEnvironmentApproval, *api.Problem) {
@@ -126,11 +154,28 @@ func (s *server) validateProjectEnvironmentPromotionApproval(ctx context.Context
 
 func (s *server) issueProjectEnvironmentApproval(ctx context.Context, acct state.Account, projectSlug, environment, planToken string) (string, state.ProjectEnvironmentApproval, *api.Problem) {
 	pt, err := decodePlanToken(planToken)
-	if err != nil || pt.AccountID != acct.ID || pt.Slug != projectSlug || pt.Environment != environment {
+	if err != nil || pt.AccountID != acct.ID || pt.Slug != projectSlug || pt.Environment != environment || pt.Selection == nil {
 		return "", state.ProjectEnvironmentApproval{}, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 			"Plan token does not match", "approve the exact plan generated for this project and environment")
 	}
 	return s.createProjectEnvironmentApproval(ctx, acct, projectSlug, environment, planToken, "plan")
+}
+
+func (s *server) consumeProjectPlanApproval(ctx context.Context, acct state.Account, req *scanPlanRequest, planToken string) *api.Problem {
+	approval, err := s.store.ConsumeProjectEnvironmentApproval(ctx, acct.ID, req.ProjectSlug, req.Environment,
+		hashProjectEnvironmentApprovalMaterial(planToken), hashProjectEnvironmentApprovalMaterial(req.ApprovalToken), time.Now().UTC())
+	if err != nil {
+		return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+			"Invalid environment approval", "the approval is expired or does not match this exact plan and environment")
+	}
+	s.audit.Emit(ctx, "project.environment.approval.consumed", &acct.ID, map[string]any{
+		"project_slug": req.ProjectSlug,
+		"environment":  req.Environment,
+		"approval_id":  approval.ID,
+		"token_kind":   approval.TokenKind,
+		"consumed_at":  approval.ConsumedAt.UTC().Format(time.RFC3339),
+	})
+	return nil
 }
 
 func (s *server) createProjectEnvironmentApproval(ctx context.Context, acct state.Account, projectSlug, environment, token, tokenKind string) (string, state.ProjectEnvironmentApproval, *api.Problem) {
@@ -146,6 +191,7 @@ func (s *server) createProjectEnvironmentApproval(ctx context.Context, acct stat
 	}
 	approval, err := s.store.CreateProjectEnvironmentApproval(ctx, state.ProjectEnvironmentApproval{
 		ApprovedByAccountID: approver,
+		ApprovedByPrincipal: approvalPrincipal(ctx),
 		AccountID:           acct.ID,
 		ProjectSlug:         projectSlug,
 		EnvironmentSlug:     environment,
@@ -165,6 +211,7 @@ func (s *server) createProjectEnvironmentApproval(ctx context.Context, acct stat
 		"plan_token_hash": approval.PlanTokenHash,
 		"token_kind":      tokenKind,
 		"expires_at":      approval.ExpiresAt.UTC().Format(time.RFC3339),
+		"approved_by":     approval.ApprovedByPrincipal,
 	})
 	return approvalToken, approval, nil
 }
