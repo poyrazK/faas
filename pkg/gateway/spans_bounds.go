@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+
 	"github.com/onebox-faas/faas/pkg/debugger"
 )
 
@@ -38,12 +40,62 @@ func boundSpan(sp summarizedSpan) summarizedSpan {
 	for _, key := range statementAttributes {
 		delete(sp.Attributes, key)
 	}
-	sp.Attributes = boundAttributes(sp.Attributes)
+	sp.Attributes = boundAttributes(mergeResourceAttributes(sp.Attributes, sp.resource))
+	sp.resource = nil
 	return sp
 }
 
-// boundAttributes keeps at most spanMaxAttributes attributes (by key order,
-// so the choice is stable across POSTs) with bounded keys and values.
+// spanResourceKeys are the OTLP resource attributes kept on every span of
+// the resource, so a span says which service, version and environment
+// produced it (the debugger previously dropped resources entirely). The
+// list is fixed and short: these keys take priority within
+// spanMaxAttributes, and arbitrary resource attributes (host names,
+// process command lines) are not retained.
+var spanResourceKeys = map[string]bool{
+	"deployment.environment.name": true,
+	"service.instance.id":         true,
+	"service.name":                true,
+	"service.namespace":           true,
+	"service.version":             true,
+	"telemetry.sdk.language":      true,
+}
+
+// spanResourceAttributes returns the allowlisted attributes of an OTLP
+// resource, or nil when it has none.
+func spanResourceAttributes(kvs []*commonpb.KeyValue) map[string]string {
+	var out map[string]string
+	for _, kv := range kvs {
+		if !spanResourceKeys[kv.GetKey()] {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, len(spanResourceKeys))
+		}
+		out[kv.GetKey()] = attrAnyToString(kv.GetValue())
+	}
+	return out
+}
+
+// mergeResourceAttributes adds the resource's allowlisted attributes to a
+// span's own; a key the span sets itself keeps the span's value.
+func mergeResourceAttributes(attrs, resource map[string]string) map[string]string {
+	if len(resource) == 0 {
+		return attrs
+	}
+	if attrs == nil {
+		attrs = make(map[string]string, len(resource))
+	}
+	for key, value := range resource {
+		if _, set := attrs[key]; !set {
+			attrs[key] = value
+		}
+	}
+	return attrs
+}
+
+// boundAttributes keeps at most spanMaxAttributes attributes with bounded
+// keys and values. The allowlisted resource keys are kept first, then the
+// rest by key order, so the choice is stable across POSTs.
 func boundAttributes(attrs map[string]string) map[string]string {
 	if len(attrs) == 0 {
 		return attrs
@@ -52,7 +104,12 @@ func boundAttributes(attrs map[string]string) map[string]string {
 	for key := range attrs {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	sort.Slice(keys, func(i, j int) bool {
+		if ri, rj := spanResourceKeys[keys[i]], spanResourceKeys[keys[j]]; ri != rj {
+			return ri
+		}
+		return keys[i] < keys[j]
+	})
 	if len(keys) > spanMaxAttributes {
 		keys = keys[:spanMaxAttributes]
 	}
