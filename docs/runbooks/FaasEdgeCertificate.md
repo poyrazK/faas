@@ -118,8 +118,9 @@ Decide what it is:
 
 - **A single app host** (`h1.gregale.dev`) from any CA: what a compromised
   compute node could get by answering a CA's TLS-ALPN challenge for a host it
-  serves. Treat the node as compromised: follow "A lost or exposed key"
-  below, and revoke that certificate too (its CA's problem-reporting address
+  serves. Treat the node as compromised
+  ([compute-node-compromise.md](compute-node-compromise.md)): follow "A lost
+  or exposed key" below, and revoke that certificate too (its CA's problem-reporting address
   is in the issuance's `problem_reporting`).
 - **A wildcard** or the apex: needs control of the zone's DNS. Check
   Cloudflare's audit log for TXT records edgednsd did not write, rotate the

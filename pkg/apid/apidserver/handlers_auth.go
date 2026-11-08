@@ -98,8 +98,9 @@ func (a *authHandlers) renderLogin(w http.ResponseWriter, r *http.Request, statu
 		// SignInConfig is read here — not at request time — so
 		// there is no per-request os.Getenv cost.
 		Auth: &dashboard.AuthCapabilitiesView{
-			GoogleEnabled: a.srv.oauthConfig.Google.Enabled(),
-			GitHubEnabled: a.srv.oauthConfig.GitHub.Enabled(),
+			GoogleEnabled:  a.srv.oauthConfig.Google.Enabled(),
+			GitHubEnabled:  a.srv.oauthConfig.GitHub.Enabled(),
+			TermsPublished: termsPublished(),
 		},
 		Data: map[string]any{
 			"Error":     isError,

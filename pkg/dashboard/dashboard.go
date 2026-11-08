@@ -3775,6 +3775,10 @@ type ManagedPostgresBindingItem struct {
 type AuthCapabilitiesView struct {
 	GoogleEnabled bool
 	GitHubEnabled bool
+	// TermsPublished shows the "by continuing you agree" notice linking
+	// /terms and /privacy (pkg/legal). Continuing with Google or GitHub
+	// creates an account, which records the Terms version it accepted.
+	TermsPublished bool
 }
 
 // AdminData carries operator-only repair health and durable TLS cutover state.
