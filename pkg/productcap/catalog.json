@@ -920,8 +920,8 @@
       "id": "budgets",
       "name": "Budgets",
       "category": "billing",
-      "description": "Set budgets with projections, alerts and automatic stops.",
-      "maturity": "beta",
+      "description": "Set account, organization, project, environment, app and job budgets with projected overruns, threshold alerts to email, Slack and PagerDuty, and automatic preview stops.",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -5653,6 +5653,22 @@
         "/dashboard/apps/{}/streaming-cap",
         "/v1/apps/{}/streaming-cap"
       ]
+    },
+    {
+      "id": "strict-budgets",
+      "name": "Strict budgets",
+      "category": "billing",
+      "description": "Cap compute and egress spending with budgets that stop workloads before they spend past the limit.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/billing",
+      "acceptance_test": "pkg/state/financialtest/financial_compute_account_test.go::TestFinancialComputeAccountReservations",
+      "parent": "budgets"
     },
     {
       "id": "synthetic-checks",
