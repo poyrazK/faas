@@ -3163,7 +3163,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// single-function deploy per entry, before any app or upload exists.
 	if !existingApp && developerSync == nil && !projectRequested && !deployFunction && !deployApp &&
 		*image == "" && *tarball == "" && *templateName == "" && *repo == "" {
-		fnManifest, isFunctionSet, fnErr := functionSetManifest(sourceDir)
+		fnManifest, fnFromCode, isFunctionSet, fnErr := functionSetManifestFromCode(sourceDir)
 		if fnErr != nil {
 			return printErr("Invalid deploy manifest", fnErr)
 		}
@@ -3182,10 +3182,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// --plan/--preview stays local: the fan-out reserved each app
 			// before its child plan refused --runtime (rc.318 field report).
 			if *simplePlan {
-				return functionSetDeploy{cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest, out: osStdout}.printPlan()
+				return functionSetDeploy{cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest, fromCode: fnFromCode, out: osStdout}.printPlan()
 			}
 			return deployFunctionSet(ctx, functionSetDeploy{
-				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest,
+				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest, fromCode: fnFromCode,
 				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,
 				noTriggers: *noTriggers,
 			})

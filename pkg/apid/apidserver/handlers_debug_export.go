@@ -63,6 +63,13 @@ func (s *server) debugTelemetryExportHandler(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrValidation("route must be at most 256 characters"))
 		return
 	}
+	// The list's filters apply to the export too (ADR-127 amendment
+	// 2026-11-05), so an export is the list a customer was looking at.
+	filters, err := parseDebugTelemetryFilters(r.URL.Query())
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
 	if format == "" {
@@ -84,10 +91,15 @@ func (s *server) debugTelemetryExportHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	now := time.Now().UTC()
-	rows, err := s.loadDebugTelemetryExportRows(r, app.ID, now.Add(-since), now, route, limit)
+	// One row past the limit tells a capped export from a complete one.
+	rows, err := s.loadDebugTelemetryExportRows(r, app.ID, now.Add(-since), now, route, filters, limit+1)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("export request telemetry"))
 		return
+	}
+	truncated := len(rows) > limit
+	if truncated {
+		rows = rows[:limit]
 	}
 
 	ext := "ndjson"
@@ -104,6 +116,7 @@ func (s *server) debugTelemetryExportHandler(w http.ResponseWriter, r *http.Requ
 	// save an export without also retaining the original query string.
 	w.Header().Set("X-Faas-Request-Log-Window", since.String())
 	w.Header().Set("X-Faas-Request-Log-Retention-Clamped", strconv.FormatBool(retentionClamped))
+	w.Header().Set("X-Faas-Request-Log-Truncated", strconv.FormatBool(truncated))
 	w.WriteHeader(http.StatusOK)
 
 	if format == "csv" {
@@ -116,23 +129,26 @@ func (s *server) debugTelemetryExportHandler(w http.ResponseWriter, r *http.Requ
 // loadDebugTelemetryExportRows walks the same stable (received_at DESC, id
 // DESC) ordering used by the list endpoint, but keeps the cursor internal so
 // the exported artifact is a single bounded document.
-func (s *server) loadDebugTelemetryExportRows(r *http.Request, appID string, from, until time.Time, route string, limit int) ([]sqlc.ListRequestTelemetryByAppRow, error) {
+func (s *server) loadDebugTelemetryExportRows(r *http.Request, appID string, from, until time.Time, route string, filters debugTelemetryFilters, limit int) ([]sqlc.ListRequestTelemetryByAppRow, error) {
 	rows := make([]sqlc.ListRequestTelemetryByAppRow, 0, minInt(limit, debugTelemetryExportBatchSize))
 	cursorReceivedAt := pgtype.Timestamptz{}
 	cursorID := pgtype.UUID{}
 	for len(rows) < limit {
 		batchLimit := minInt(limit-len(rows), debugTelemetryExportBatchSize)
 		batch, err := s.store.ListRequestTelemetryByApp(r.Context(), sqlc.ListRequestTelemetryByAppParams{
-			AppID:            stringToPgUUID(appID),
-			ReceivedAt:       pgtype.Timestamptz{Time: from.UTC(), Valid: true},
-			ReceivedAt_2:     pgtype.Timestamptz{Time: until.UTC(), Valid: true},
-			CursorReceivedAt: cursorReceivedAt,
-			CursorID:         cursorID,
-			Route:            route,
-			// The export has no cold-boot filter of its own. Use the
-			// query sentinel so both warm and cold requests are included.
-			ColdBootFilter: -1,
-			Limit:          int32(batchLimit),
+			AppID:             stringToPgUUID(appID),
+			ReceivedAt:        pgtype.Timestamptz{Time: from.UTC(), Valid: true},
+			ReceivedAt_2:      pgtype.Timestamptz{Time: until.UTC(), Valid: true},
+			CursorReceivedAt:  cursorReceivedAt,
+			CursorID:          cursorID,
+			Route:             route,
+			DeploymentID:      filters.DeploymentID,
+			StatusFilter:      int32(filters.Status),
+			ColdBootFilter:    filters.sqlColdBootFilter(),
+			ConsumerID:        filters.sqlConsumerID(),
+			ConsumerAnonymous: filters.sqlConsumerAnonymous(),
+			MinLatencyMs:      int32(filters.MinLatencyMS),
+			Limit:             int32(batchLimit),
 		})
 		if err != nil {
 			return nil, err
@@ -186,15 +202,30 @@ func writeDebugTelemetryCSV(w http.ResponseWriter, rows []sqlc.ListRequestTeleme
 		if item.TraceID != nil {
 			traceID = *item.TraceID
 		}
-		_ = writer.Write([]string{
+		record := []string{
 			item.ID, item.DeploymentID, item.Route, item.Method,
 			strconv.Itoa(item.Status), strconv.Itoa(item.LatencyMS), strconv.Itoa(item.Count),
 			strconv.FormatBool(item.ColdBoot), traceID, item.ReceivedAt, item.WakeID,
 			item.InstanceID, item.ConsumerID, guestRuntime, guestDuration, guestOutcome,
 			guestErrorClass,
-		})
+		}
+		for i := range record {
+			record[i] = csvSafeCell(record[i])
+		}
+		_ = writer.Write(record)
 	}
 	writer.Flush()
+}
+
+// csvSafeCell keeps a spreadsheet from running a cell as a formula. Route
+// labels and guest error classes come from the app's own traffic, so a value
+// that starts with =, +, -, @, a tab or a carriage return is written with a
+// leading apostrophe (OWASP CSV injection guidance).
+func csvSafeCell(value string) string {
+	if value != "" && strings.ContainsRune("=+-@\t\r", rune(value[0])) {
+		return "'" + value
+	}
+	return value
 }
 
 func debugTelemetryExportFilename(slug, ext string) string {

@@ -1,5 +1,9 @@
 # Functions and runtimes
 
+Everything a handler receives and can use (request, `ctx`, responses,
+platform headers, limits, secrets, databases) is on one page:
+[handler API](handler-api.md).
+
 Functions are request handlers packaged with a supported runtime. Explicit
 runtime and handler flags make the contract unambiguous:
 
@@ -24,8 +28,10 @@ loaded between requests. Node and Python handlers are also captured warm in
 the init snapshot; a Go or `binary` handler is restarted after a snapshot restore. For ordinary framework APIs, omit `--function`
 and let source detection select the app profile.
 
-A function request must start its response within 3 seconds by default.
-For slower work, raise the function's request timeout:
+A function request must start its response within 30 seconds by default
+([ADR-20261107190000](adr/20261107190000-function-request-default-30s.md)).
+Set a shorter timeout when callers need a fast failure, or a longer one for
+slower work:
 `gregale app APP --request-timeout SECONDS`, up to 30 s on Free, 1 min on
 Hobby, 5 min on Pro and 15 min on Scale (ADR-1150). The whole invocation,
 a streamed response included, may run for the longer of that timeout and
@@ -105,6 +111,64 @@ or the directory's name. Functions deploy in the order listed. If one fails,
 the rest are not attempted and the summary says which functions are live; run
 the deploy again once it is fixed. Inside a monorepo workspace, a function's
 build includes the workspace, so functions can share packages.
+
+### Config in code
+
+A Node or Python handler can declare its own settings, so a new function is
+one file. `gregale deploy` reads the config without running your code
+([ADR-20261107193000](adr/20261107193000-function-config-in-code.md)):
+
+```js
+// functions/digest/handler.js
+export const config = { cron: "0 8 * * *", ramMb: 512 };
+
+export default {
+  async fetch(request) {
+    return Response.json({ sent: true });
+  },
+};
+```
+
+```python
+# functions/thumbs/handler.py
+config = {"queue": "thumbs", "request_timeout_s": 60}
+
+def handler(event, ctx):
+    return {"status": 200, "body": {"ok": True}}
+```
+
+`gregale add function NAME --trigger http|cron|queue|bucket|webhook`
+writes such a directory for you, with a handler, a test beside it and, for
+Node, a `package.json`; `--lang python` picks Python. Nothing is created
+remotely until you deploy:
+
+```bash
+gregale add function digest --trigger cron --schedule "0 8 * * *"
+node --test functions/digest/handler.test.js
+gregale deploy
+```
+
+With the SDK installed you can use the typed helpers instead:
+`export const config = defineConfig({...})` from `@gregale/sdk-node`, or
+`@function(cron="0 8 * * *")` from `faas_sdk` on `handler`.
+
+- **Keys** are the `functions:` entry fields above, in snake_case or
+  camelCase, plus two shorthands: `cron` (a schedule or list, called on
+  path `/`) and `queue` (a queue name or list, pushed to the function).
+  `name`, `root` and `handler` come from where the file is.
+- **Literals only**: strings, numbers, booleans, null, lists and objects.
+  A variable or `process.env.X` is an error naming the file and line; put
+  values that change between deploys in `env` or secrets.
+- **Discovery**: with no `functions:` key in `gregale.yaml` (or no
+  `gregale.yaml`), every `functions/<name>/` directory whose `handler.js`,
+  `handler.mjs` or `handler.py` declares a config deploys as function
+  `<name>`. Directories without a config are left alone.
+- **gregale.yaml wins**: for a function listed in `functions:`, each field
+  the entry sets is kept and the code fills only the rest. Any cron trigger
+  for the function in `triggers:` replaces the code's `cron`.
+- `gregale deploy --plan` and every deploy list the settings that came from
+  code. Repository deploys connected through GitHub do not read config in
+  code yet.
 
 ### Functions sharing one source tree
 

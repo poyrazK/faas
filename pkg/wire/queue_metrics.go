@@ -148,3 +148,21 @@ func (m *OpsMetrics) ObserveQueueBindingConcurrencyThrottled(app, binding string
 	}
 	m.queue.observeBindingThrottled(appLabel, m.queueLabels.admit(binding))
 }
+
+// ForgetQueueApp deletes app's durable queue gauges. The schedd that sampled
+// them no longer manages the app, and a value frozen here would keep a
+// backlog alert firing after the queue drained under the app's new owner
+// (ADR-20261018101500 amendment 2026-10-31). An app that overflowed into the
+// shared label has no series of its own and keeps the shared one.
+func (m *OpsMetrics) ForgetQueueApp(app string) {
+	if m == nil || m.queue == nil || m.appLabels == nil || !m.appLabels.has(app) {
+		return
+	}
+	q := m.queue
+	for _, vec := range []*prometheus.GaugeVec{q.depth, q.inFlight, q.oldestAge, q.deadLetter} {
+		vec.DeleteLabelValues(app)
+	}
+	for _, vec := range []*prometheus.GaugeVec{q.bindingDepth, q.bindingInFlight, q.bindingLagSeconds, q.bindingDeadLetter, q.bindingWorkerDemand} {
+		vec.DeletePartialMatch(prometheus.Labels{"app": app})
+	}
+}

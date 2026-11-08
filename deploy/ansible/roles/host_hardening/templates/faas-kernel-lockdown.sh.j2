@@ -1,0 +1,49 @@
+#!/bin/sh
+# faas-kernel-lockdown — ADR-20261107220000, rendered by host_hardening.
+# Raises kernel lockdown, then optionally loads the platform's modules and
+# turns module loading off. Both are one-way until reboot. Safe to run again:
+# a level already reached, or a lock already set, is left as it is.
+set -eu
+
+want="{{ faas_hardening_kernel_lockdown }}"
+lockdown=/sys/kernel/security/lockdown
+
+rank() {
+	case "$1" in
+	none) echo 0 ;;
+	integrity) echo 1 ;;
+	confidentiality) echo 2 ;;
+	*) echo "faas-kernel-lockdown: unknown lockdown level '$1'" >&2; exit 1 ;;
+	esac
+}
+
+if [ -n "$want" ]; then
+	# The active level is the bracketed word: "none [integrity] confidentiality".
+	current=$(sed -n 's/.*\[\([a-z]*\)\].*/\1/p' "$lockdown")
+	if [ "$(rank "$current")" -lt "$(rank "$want")" ]; then
+		echo "$want" > "$lockdown"
+		echo "faas-kernel-lockdown: lockdown raised from $current to $want"
+	else
+		echo "faas-kernel-lockdown: lockdown already $current"
+	fi
+fi
+
+{% if faas_hardening_modules_lock | bool %}
+if [ "$(cat /proc/sys/kernel/modules_disabled)" = 1 ]; then
+	echo "faas-kernel-lockdown: module loading already off"
+	exit 0
+fi
+missing=""
+for m in {{ faas_hardening_modules_preload | join(' ') }}; do
+	# A module this kernel does not have (kvm_amd on Intel, a built-in) is
+	# skipped; anything else that fails to load is reported before the lock.
+	if modinfo "$m" >/dev/null 2>&1; then
+		modprobe "$m" 2>/dev/null || missing="$missing $m"
+	fi
+done
+if [ -n "$missing" ]; then
+	echo "faas-kernel-lockdown: could not load:$missing" >&2
+fi
+echo 1 > /proc/sys/kernel/modules_disabled
+echo "faas-kernel-lockdown: module loading off"
+{% endif %}

@@ -1552,8 +1552,11 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 		},
 	}
 	if !acct.EmailVerified() {
-		graceEnds := acct.CreatedAt.Add(emailVerificationGrace)
+		graceEnds := verificationDeadline(acct)
 		resp.EmailVerificationGraceEndsAt = &graceEnds
+	}
+	if flow, ok := s.store.(state.AccountFlowStore); ok {
+		resp.DisplayName, _ = flow.AccountDisplayName(ctx, acct.ID)
 	}
 	if inst, err := s.store.GitHubInstallForAccount(ctx, acct.ID); err == nil {
 		resp.GitHubInstall = strconv.FormatInt(inst.InstallationID, 10)
