@@ -90,7 +90,12 @@ func (s *server) storeOTLPPoints(ctx context.Context, store state.CustomMetricKi
 			}
 			room--
 		}
-		err := store.PutCustomMetricOfKind(ctx, appID, p.Name, p.Kind, p.Value, p.ObservedAt, api.MaxCustomMetricsPerApp)
+		var err error
+		if p.Delta {
+			err = store.AddCustomMetricCounter(ctx, appID, p.Name, p.Value, p.ObservedAt, api.MaxCustomMetricsPerApp)
+		} else {
+			err = store.PutCustomMetricOfKind(ctx, appID, p.Name, p.Kind, p.Value, p.ObservedAt, api.MaxCustomMetricsPerApp)
+		}
 		switch {
 		case errors.Is(err, state.ErrCustomMetricLimit):
 			reject(p.Name)

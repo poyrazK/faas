@@ -353,10 +353,12 @@ export class ObservabilityService {
    * Resolves every widget for its window through the code behind the
    * per-app endpoints: request metrics, log search counts, pushed custom
    * metrics and SLO status. A widget that cannot be read carries `error`
-   * and no value; the rest still resolve.
+   * and no value; the rest still resolve. An account reads at most two
+   * dashboards at once; a third read is refused with 429
+   * `dashboard_data_busy` and `Retry-After`.
    *
    * @returns DashboardData The resolved widgets.
-   * @returns Problem No dashboard to read widgets for (dashboard_not_found), or the preview is disabled.
+   * @returns Problem No dashboard to read widgets for (dashboard_not_found), two reads of the account's dashboards already in progress (dashboard_data_busy), or the preview is disabled.
    * @throws ApiError
    */
   public static getDashboardData({

@@ -3150,6 +3150,7 @@ export type { UpdateManagedRealtimeEndpointRequest } from './models/UpdateManage
 export type { UpdateMirrorRuleRequest } from './models/UpdateMirrorRuleRequest.js';
 export type { UpdateNativeIssueTrackerStatusRequest } from './models/UpdateNativeIssueTrackerStatusRequest.js';
 export type { UpdateNativeLinearIssueTrackerStatusRequest } from './models/UpdateNativeLinearIssueTrackerStatusRequest.js';
+export type { UpdateNotificationChannelRequest } from './models/UpdateNotificationChannelRequest.js';
 export type { UpdateOutboundBindingPolicyRequest } from './models/UpdateOutboundBindingPolicyRequest.js';
 export type { UpdatePlatformTenantWebhookRequest } from './models/UpdatePlatformTenantWebhookRequest.js';
 export type { UpdatePrivateNetworkPolicyRequest } from './models/UpdatePrivateNetworkPolicyRequest.js';
