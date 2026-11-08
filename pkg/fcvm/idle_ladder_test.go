@@ -299,7 +299,7 @@ func TestIdleLadderLevelFollowsQuietPause(t *testing.T) {
 		t.Fatalf("level 10 s quiet = %v, want freeze", got)
 	}
 	if got := m.IdleLadderLevel("q", now.Add(time.Hour)); got != IdleFreeze {
-		t.Fatalf("level 1 h quiet = %v, want freeze: deeper levels are not built", got)
+		t.Fatalf("level 1 h quiet = %v, want freeze: deeper levels need compression", got)
 	}
 	if err := m.QuietResume(t.Context(), "q"); err != nil {
 		t.Fatal(err)

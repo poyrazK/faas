@@ -1550,6 +1550,38 @@ WHERE r.endpoint_id=$1 AND r.provider_event_id=$2;
 select id, at, actor, kind, subject, data
 from events where subject = $1 order by at desc limit $2;
 
+-- name: RequestAnalyticsCountedRequests :one
+-- Requests the analytics rollups counted for an app in whole minutes from
+-- bucket_from to bucket_until, and the first minute the rollups hold for it.
+-- The rollups count every row the plan keeps, including the rows the
+-- debugger's per-minute ingest cap turned away (ADR-20261103113952), so the
+-- debugger can say how many requests it did not keep (ADR-127 amendment
+-- 2026-11-05). Route rows carry every request once. retained is the
+-- debugger's own count over the same minutes.
+SELECT (SELECT c.covered_since FROM request_analytics_rollup_coverage c WHERE c.app_id = sqlc.arg(app_id)::uuid)::timestamptz AS covered_since,
+       COALESCE((SELECT SUM(m.requests)
+                   FROM request_analytics_minutes m
+                  WHERE m.app_id = sqlc.arg(app_id)::uuid
+                    AND m.dimension_kind = 'route'
+                    AND m.bucket_start >= sqlc.arg(bucket_from)::timestamptz
+                    AND m.bucket_start <  sqlc.arg(bucket_until)::timestamptz), 0)::bigint AS requests,
+       COALESCE((SELECT SUM(GREATEST(t.count, 1)::bigint)
+                   FROM request_telemetry t
+                  WHERE t.app_id = sqlc.arg(app_id)::uuid
+                    AND t.received_at >= sqlc.arg(bucket_from)::timestamptz
+                    AND t.received_at <  sqlc.arg(bucket_until)::timestamptz), 0)::bigint AS retained;
+
+-- name: ListEventsBySubjectKind :many
+-- One kind of a subject's events since a time, newest first: the debugger's
+-- "why is it running" history reads only the scheduler's observations, so
+-- other events about the app cannot push them out of a bounded read
+-- (ADR-127 amendment 2026-11-05). events_subject_idx (subject, at desc).
+select id, at, actor, kind, subject, data
+from events
+where subject = $1 and kind = $2 and at >= $3
+order by at desc
+limit $4;
+
 -- EPIC #1278 / Workstream B — durable internal event subscriptions.
 -- A subscription is app-owned but keeps account_id denormalized so scheduler
 -- fan-out can enforce tenant isolation without joining apps.
@@ -3686,12 +3718,17 @@ LIMIT sqlc.arg('limit')::int;
 -- pass an app id from another tenant; the app lookup remains the primary
 -- IDOR boundary. Evidence is newest-first within each route/deployment
 -- partition, then interleaved so one high-volume revision cannot crowd all
--- prior deployments out of the bounded comparison window.
+-- prior deployments out of the bounded comparison window. $6 splits each
+-- partition at the time the history compares across (the window's middle),
+-- so the older half keeps its share of a busy app's bounded read instead of
+-- losing all of it to the newest rows (ADR-127 amendment 2026-11-05); a
+-- caller that compares deployments rather than halves passes the window
+-- start.
 WITH ranked AS (
     SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
            deployment_id, commit_sha, deployment_tag, deployment_created_at,
            ROW_NUMBER() OVER (
-               PARTITION BY route, method, deployment_id
+               PARTITION BY route, method, deployment_id, (received_at >= $6::timestamptz)
                ORDER BY received_at DESC, id DESC
            ) AS evidence_rank
     FROM request_telemetry
@@ -3861,12 +3898,14 @@ ORDER BY app_id, received_at DESC;
 -- regression detector (PR-B). Includes the publisher's `count`
 -- weight so callers can report request totals rather than stored
 -- aggregate-row totals. Uses request_telemetry_app_dep_received_idx.
+-- $6 is the regression view (see RequestTelemetryBaselineP95ByRoute).
 SELECT id, route, method, status, latency_ms, count, cold_boot, trace_id, received_at
 FROM request_telemetry
 WHERE app_id = $1
   AND deployment_id = $2
   AND received_at >= $3
   AND received_at <  $4
+  AND (NOT $6::boolean OR (NOT platform_refusal AND NOT deployment_pinned AND NOT long_lived AND NOT cold_boot))
 ORDER BY received_at DESC
 LIMIT $5;
 
@@ -3949,6 +3988,10 @@ SELECT summary.requests,
 -- request. The rank/floor formulation below is equivalent to
 -- percentile_cont over the expanded multiset of bucket
 -- representatives, without materializing one row per request.
+-- $5 (regression view, ADR-127 amendment 2026-11-05) leaves out what is
+-- not the deployment's own warm latency, as the release gates do:
+-- platform refusals, requests pinned to a deployment, long-lived
+-- streams and cold boots. Other callers pass false.
 WITH weighted AS (
     SELECT route,
            latency_ms,
@@ -3958,6 +4001,7 @@ WITH weighted AS (
       AND deployment_id = $2
       AND received_at >= $3
       AND received_at <  $4
+      AND (NOT $5::boolean OR (NOT platform_refusal AND NOT deployment_pinned AND NOT long_lived AND NOT cold_boot))
     GROUP BY route, latency_ms
 ), ranked AS (
     SELECT route,
@@ -4656,7 +4700,9 @@ ORDER BY g.dimension ASC, g.method ASC, b.bucket_start ASC;
 -- deployment and window, weighted by the publisher's collapsed-row count.
 -- The regression detector compares the error share of the current and the
 -- previous deployment (ADR-127 amendment: error-rate regressions). Same
--- index as RequestTelemetryBaselineP95ByRoute.
+-- index as RequestTelemetryBaselineP95ByRoute. $5 is the regression view:
+-- the platform's own refusals and requests pinned to a deployment are not
+-- the deployment's errors.
 SELECT route,
        SUM(GREATEST(count, 1)::bigint)::bigint AS requests,
        COALESCE(SUM(GREATEST(count, 1)::bigint) FILTER (WHERE status >= 500), 0)::bigint AS error_requests
@@ -4665,6 +4711,7 @@ WHERE app_id = $1
   AND deployment_id = $2
   AND received_at >= $3
   AND received_at <  $4
+  AND (NOT $5::boolean OR (NOT platform_refusal AND NOT deployment_pinned))
 GROUP BY route;
 
 -- name: UpsertRegressionObservation :exec
@@ -4833,10 +4880,15 @@ RETURNING app_id, deployment_id, route,
 -- PR-B uses this to seed the dropdowns; the actual percentile
 -- comparison is two RequestTelemetryBaselineP95ByRoute calls in Go
 -- (PR-A ships that query; the regression cron uses the same shape).
+--
+-- deployment_created_at lets the regression detector order deployments by
+-- release rather than by who served the last request (ADR-127 amendment
+-- 2026-11-05).
 SELECT deployment_id,
        MIN(received_at) AS first_seen,
        MAX(received_at) AS last_seen,
-       COUNT(*)         AS row_count
+       COUNT(*)         AS row_count,
+       MAX(deployment_created_at)::text AS deployment_created_at
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at > now() - $2::interval
@@ -8335,6 +8387,51 @@ FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='
 -- name: CountProductionQueueDeadLetter :one
 SELECT count(*) FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state='dead_letter'
     AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text);
+
+-- name: TrimCompletedQueuePayloads :execrows
+-- A completed queue message keeps its payload for a day after its ack, then
+-- only its history; failures and dead letters keep theirs for replay
+-- (ADR-20261018101500 amendment 2026-10-31). Reads
+-- invocations_queue_completed_payload_idx in completion order.
+WITH due AS (
+    SELECT id FROM invocations
+    WHERE source='queue' AND state='completed' AND payload <> 'null'::jsonb
+      AND completed_at <= sqlc.arg(completed_before)::timestamptz
+    ORDER BY completed_at LIMIT sqlc.arg(row_limit)::integer
+    FOR UPDATE SKIP LOCKED)
+UPDATE invocations i SET payload='null'::jsonb FROM due WHERE i.id=due.id;
+
+-- name: ReadProductionQueueTelemetry :one
+-- ReadProductionQueueStateLive plus CountProductionQueueDeadLetter for the
+-- status reads a customer can poll: each count stops at row_limit, and the
+-- oldest pending message is the first one due under each of the app's queue
+-- names, found one name at a time (ADR-20261018101500 amendment 2026-10-31).
+WITH RECURSIVE names AS (
+    (SELECT w.queue_name FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending'
+     ORDER BY w.queue_name LIMIT 1)
+  UNION ALL
+    SELECT (SELECT w.queue_name FROM production_invocation_work w
+            WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending' AND w.queue_name>n.queue_name
+            ORDER BY w.queue_name LIMIT 1)
+    FROM names n WHERE n.queue_name IS NOT NULL
+)
+SELECT
+  (SELECT count(*) FROM (SELECT 1 FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state IN ('pending','dispatching')
+     LIMIT sqlc.arg(row_limit)::integer) live)::bigint AS depth,
+  (SELECT count(*) FROM (SELECT 1 FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='dispatching'
+       AND w.lease_expires_at IS NOT NULL AND w.lease_expires_at>now()
+     LIMIT sqlc.arg(row_limit)::integer) leased)::bigint AS in_flight,
+  (SELECT count(*) FROM (SELECT 1 FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='dead_letter'
+     LIMIT sqlc.arg(row_limit)::integer) dead)::bigint AS dead_letter,
+  (SELECT min(first.created_at) FROM names n CROSS JOIN LATERAL (
+     SELECT w.created_at FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending' AND w.queue_name=n.queue_name
+     ORDER BY w.due_at LIMIT 1) first
+   WHERE n.queue_name IS NOT NULL)::timestamptz AS oldest_pending_at;
 
 -- name: PeekProductionQueue :many
 WITH anchor AS (SELECT created_at,id FROM production_invocation_work WHERE id=sqlc.narg(cursor_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND source='queue')
@@ -18490,6 +18587,7 @@ SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
  WHEN position('reason=telemetry_missing' in o.last_error) > 0 THEN 'telemetry_missing'
  WHEN position('reason=requests_active' in o.last_error) > 0 THEN 'requests_active'
  WHEN position('reason=quiet_period_not_elapsed' in o.last_error) > 0 THEN 'quiet_period_not_elapsed'
+ WHEN position('app_startup_crash' in o.last_error) > 0 THEN 'app_startup_crash'
  ELSE 'restart_attempt_failed' END::text AS failure_reason,
  o.created_at AS requested_at, o.delivered_at AS completed_at
 FROM notification_outbox o
@@ -20683,6 +20781,7 @@ SELECT wake_id,
   WHEN position('reason=telemetry_missing' in last_error)>0 THEN 'telemetry_missing'
   WHEN position('reason=requests_active' in last_error)>0 THEN 'requests_active'
   WHEN position('reason=quiet_period_not_elapsed' in last_error)>0 THEN 'quiet_period_not_elapsed'
+  WHEN position('app_startup_crash' in o.last_error) > 0 THEN 'app_startup_crash'
   ELSE 'restart_attempt_failed' END::text AS failure_reason,
  created_at AS requested_at,delivered_at AS completed_at
 FROM latest WHERE state<>'delivered' ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(row_limit);

@@ -52,6 +52,10 @@ func TestComputePushReservesEarlierLiveEgressAgainstCap(t *testing.T) {
 	}
 }
 
+// halfCentOfCompute is the MB-seconds of overage that cost 500 millicents
+// at the overage rate (ADR-20261107192333).
+const halfCentOfCompute = 500 * api.SecondsPerGBHour / api.OverageMillicentsPerGBHour
+
 // Each meter is billed up to the cap less the other meter's month-to-date
 // billable cost (ADR-1162). Compute reserves the 1,000-millicent egress
 // overage and bills nothing; egress reserves the 500-millicent fractional
@@ -64,7 +68,7 @@ func TestEgressCapDoesNotRoundFractionalComputeDown(t *testing.T) {
 	store.SetOverageCapCentsForTest(acct.ID, 1)
 	start := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	// Half a cent of compute plus one cent of egress exceeds a one-cent cap.
-	if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start, api.IncludedMBSeconds(api.PlanHobby)+api.SecondsPerGBHour/2, 0, 0, 0, 3<<29, 0, 0, 0); err != nil {
+	if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start, api.IncludedMBSeconds(api.PlanHobby)+halfCentOfCompute, 0, 0, 0, 3<<29, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
@@ -89,7 +93,7 @@ func TestCombinedFractionalUsageCanExactlyFillCap(t *testing.T) {
 	store.SetOverageCapCentsForTest(acct.ID, 1)
 	start := time.Date(2026, 9, 30, 23, 0, 0, 0, time.UTC)
 	// Each meter costs half a cent. Do not round each one up independently.
-	if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start, api.IncludedMBSeconds(api.PlanHobby)+api.SecondsPerGBHour/2, 0, 0, 0, 5<<28, 0, 0, 0); err != nil {
+	if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start, api.IncludedMBSeconds(api.PlanHobby)+halfCentOfCompute, 0, 0, 0, 5<<28, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
@@ -99,7 +103,7 @@ func TestCombinedFractionalUsageCanExactlyFillCap(t *testing.T) {
 	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 2 {
 		t.Fatalf("PushPending = (%d, %v), want both half-cent windows even at month end", pushed, err)
 	}
-	if calls := provider.Calls(); len(calls) != 1 || calls[0].MBSeconds != api.SecondsPerGBHour/2 {
+	if calls := provider.Calls(); len(calls) != 1 || calls[0].MBSeconds != halfCentOfCompute {
 		t.Fatalf("compute calls = %+v", calls)
 	}
 	if calls := provider.MeterCalls(); len(calls) != 1 || calls[0].Quantity != 1<<28 {

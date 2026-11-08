@@ -133,6 +133,7 @@ func (m *MemStore) RotateOrgAPIKeyWithActivity(_ context.Context, orgID, oldKeyI
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
 	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
+	m.copyKeyProjectLimitLocked(old.ID, newKey.ID)
 	m.keys[old.ID] = old
 	m.keyByHash[hex.EncodeToString(old.Hash)] = old
 	return newKey, old, m.enqueueOrgActivityOutboxLocked(activity), nil
