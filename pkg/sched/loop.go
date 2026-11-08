@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
@@ -180,6 +181,7 @@ type Loop struct {
 	adoptionReports       *DeadNodeReconciler                     // vmmd restart adoption reports (adoption ADR §3); nil opts out
 	instStats             InstanceStatsPoller                     // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
 	instanceActivity      InstanceActivityReader                  // fresh per-instance request activity used by scale-in; nil opts out
+	idleLadderMetrics     *IdleLadderIdleOutMetrics               // ADR-20261107122928 idle-out series; nil records nothing
 	scaleup               *scaleup.Trigger                        // issue #169 / #172 reactive scale-up trigger; nil opts out
 	scaleupMu             sync.Mutex                              // serializes asynchronous scale-up ticks
 	scaleupRunning        bool                                    // true while one scale-up tick is in flight
@@ -551,6 +553,9 @@ type InstanceActivity struct {
 	LastRequest time.Time
 	// ResidentMB is the instance's cgroup memory; 0 when unmeasured.
 	ResidentMB int
+	// IdleLadderLevel is the idle ladder level vmmd reports
+	// (ADR-20261107122928); 0 is running.
+	IdleLadderLevel int
 }
 
 // InstanceActivityReader is the narrow reaper-facing view of VMMD activity.
@@ -2854,8 +2859,11 @@ func (l *Loop) runReaper(ctx context.Context) {
 	liveByApp := l.reaperLiveInstances(ctx, store, apps)
 	for _, a := range apps {
 		plan := api.Plan("")
+		ladderHold := false
 		if acct, err := accounts.forApp(ctx, a); err == nil {
 			plan = acct.Plan
+			// The subject meterd's quiet pause release decides with.
+			ladderHold = l.engine.idleLadderReleased(platformflags.Subject{AccountID: a.AccountID, Plan: string(acct.Plan), OrgID: a.OrgID})
 		}
 		instances := liveByApp[a.ID]
 		if liveByApp == nil {
@@ -2877,8 +2885,10 @@ func (l *Loop) runReaper(ctx context.Context) {
 			}
 			lastRequest := ins.LastRequestAt
 			var inflightRequests int64
+			ladderLevel := 0
 			if activity, ok := activityByInstance[ins.ID]; ok {
 				inflightRequests = activity.Inflight
+				ladderLevel = activity.IdleLadderLevel
 				if activity.LastRequest.After(lastRequest) {
 					lastRequest = activity.LastRequest
 				}
@@ -2960,7 +2970,9 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// 'normal' so this is a no-op for every existing
 				// customer until a mirror goroutine wakes a
 				// mode='mirror' VM via Engine.AdmitInstance.
-				Mode: ins.Mode,
+				Mode:            ins.Mode,
+				IdleLadderLevel: ladderLevel,
+				IdleLadderHold:  ladderHold,
 			})
 		}
 	}
@@ -3004,15 +3016,21 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// ADR-20261021215353: quiet between_requests instances freeze before
 	// their idle timeout; ReapIdle only selects instances past it.
 	l.earlyFreezeFromReaper(ctx, snapshot, now, func(id string) int { return activityByInstance[id].ResidentMB })
+	l.observeIdleLadderHeld(snapshot, now)
 	for _, id := range ReapIdle(now, snapshot, l.ops, cooldownHeldByApp) {
 		// ADR-1151: an eligible instance freezes in place instead of
-		// parking; anything else parks as before.
-		if !l.freezeFromReaper(ctx, id, activityByInstance[id].ResidentMB) {
+		// parking; anything else parks as before. An instance the idle
+		// ladder held reached L5 and parks (ADR-20261107122928).
+		ladderHeld := instanceInfoByID[id].idleLadderHeld()
+		if ladderHeld || !l.freezeFromReaper(ctx, id, activityByInstance[id].ResidentMB) {
 			if err := l.reaperShutdown(ctx, instanceInfoByID, id, false); err != nil {
 				if !errors.Is(err, ErrParkActivity) {
 					l.log.Warn("reaper: idle park", "instance", id, "err", err)
 				}
 				continue
+			}
+			if ladderHeld {
+				l.observeIdleLadderPark()
 			}
 		}
 		if instance, ok := instanceInfoByID[id]; ok {

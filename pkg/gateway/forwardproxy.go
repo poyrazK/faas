@@ -56,6 +56,13 @@ type syntheticInvocationContextKey struct{}
 
 type trustedServiceCallerAssertionContextKey struct{}
 
+// trustedServiceCallerEnvContextKey marks a request whose preview markers
+// (X-Faas-Caller-Env, X-Faas-Caller-Preview-Of) ServiceProxy set after
+// resolving the caller. They are documented for the target to read, so they
+// must cross the guest boundary; customer-authored copies never carry the
+// mark and stay stripped (ADR-20261107090000).
+type trustedServiceCallerEnvContextKey struct{}
+
 // WithSyntheticInvocation marks an internal scheduler-to-runner request.
 // Platform-owned invocation metadata may cross the vmmd HTTP bridge only for
 // this context; ordinary customer requests keep the x-faas-* strip policy.
@@ -75,7 +82,7 @@ func isSyntheticInvocation(ctx context.Context) bool {
 // remain internal. Dropping the workflow headers broke the documented
 // X-Faas-Workflow-Attempt contract (production-us hunt #5, H5-44).
 func guestReceivesFaasHeader(ctx context.Context, name string) bool {
-	return isTrustedServiceCallerAssertion(ctx, name) ||
+	return isTrustedServiceCallerAssertion(ctx, name) || isTrustedServiceCallerEnv(ctx, name) ||
 		strings.EqualFold(name, api.InvocationIDHeader) ||
 		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsInvocationAttemptHeader(name) || api.IsWorkflowStepHeader(name))) ||
 		api.IsGuestIdentityHeader(name) ||
@@ -106,6 +113,11 @@ func guestDeadlineHeader(ctx context.Context) (*vmmdpb.Header, bool) {
 // platform-authored assertion may cross it.
 func withTrustedServiceCallerAssertion(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), trustedServiceCallerAssertionContextKey{}, true))
+}
+
+func isTrustedServiceCallerEnv(ctx context.Context, header string) bool {
+	trusted, _ := ctx.Value(trustedServiceCallerEnvContextKey{}).(bool)
+	return trusted && (strings.EqualFold(header, ServiceCallerEnvHeader) || strings.EqualFold(header, ServiceCallerPreviewOfHeader))
 }
 
 func isTrustedServiceCallerAssertion(ctx context.Context, header string) bool {

@@ -17,7 +17,8 @@ package fcvm
 // InstanceStats, where measured admission charges its memory with the frozen
 // floor. The guest stays
 // quiet-paused and resumes on the next request as before; L2 changes only
-// how admission counts it. The deeper levels are not built yet.
+// how admission counts it. With compression on, L3 and L4 compress the cold
+// pages of an instance held paused (idle_compress.go); L5 is schedd's park.
 //
 // Lock order: m.mu is released before idleMu is taken; idleMu is a leaf.
 
@@ -109,6 +110,10 @@ type IdleLadderConfig struct {
 	// both it stays off.
 	CPU IdleLadderCPU
 	Net IdleLadderNet
+	// Compress applies L3 and L4: it compresses the cold pages of instances
+	// quiet pause holds paused (idle_compress.go). It needs On.
+	Compress        bool
+	CompressMetrics *IdleCompressMetrics
 }
 
 // WithIdleLadder enables the idle ladder. Without it RunIdleLadderObserve
@@ -118,6 +123,8 @@ func (m *Manager) WithIdleLadder(cfg IdleLadderConfig) *Manager {
 	m.idleMetrics = cfg.Metrics
 	m.idleLadderOn = cfg.On
 	m.idleAppsOn = cfg.On && cfg.Apps
+	m.idleCompressOn = cfg.On && cfg.Compress
+	m.idleCompressMetrics = cfg.CompressMetrics
 	m.idleCPU, m.idleNet = cfg.CPU, cfg.Net
 	m.idleTick = cfg.Tick
 	if m.idleTick <= 0 {
@@ -297,8 +304,9 @@ func (m *Manager) quietPauseAfter(inst *Instance) time.Duration {
 
 // IdleLadderLevel is the level vmmd holds an instance at while idle_ladder is
 // on: IdleQuietPause while quiet pause holds it paused, IdleFreeze once it
-// has also had nothing in flight for IdleLadderFreezeAfterSeconds. The deeper
-// levels are not built, so IdleFreeze is the most it reports. It is
+// has also had nothing in flight for IdleLadderFreezeAfterSeconds, and
+// IdleCold1 or IdleCold2 once compression took its cold pages in this pause
+// (idle_compress.go). It is
 // IdleRunning when the ladder is off and for an instance that is running, is
 // an agent run, or whose last pause failed (its state is unknown).
 func (m *Manager) IdleLadderLevel(instance string, now time.Time) IdleLevel {
@@ -314,6 +322,9 @@ func (m *Manager) IdleLadderLevel(instance string, now time.Time) IdleLevel {
 	st.mu.Unlock()
 	if !paused || since.IsZero() {
 		return IdleRunning
+	}
+	if level := st.coldLevel(); level >= IdleCold1 {
+		return level
 	}
 	from := st.seenAt
 	if _, last, ok := m.quietActivity.Quiet(instance); ok && last.After(from) {

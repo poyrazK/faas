@@ -1434,11 +1434,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// pause: their VM CPU and veth bytes.
 			CPU: agentWaitCPU{cache: cpuCache},
 			Net: idleLadderNet{cache: netCache},
+			// L3/L4: compress quiet-paused VMs' cold pages (LoadConfig
+			// refuses it without on).
+			Compress:        cfg.IdleLadderCompress,
+			CompressMetrics: fcvm.NewIdleCompressMetrics(ops.Registry()),
 		})
 		go mgr.RunIdleLadderObserve(ctx)
+		go mgr.RunIdleLadderCompress(ctx)
 		if on {
 			log.Info("idle ladder on (ADR-20261107122928): quiet pause at 1 s, L2 reported at 10 s quiet",
-				"guarded_app_pause", cfg.IdleLadderApps)
+				"guarded_app_pause", cfg.IdleLadderApps, "cold_compression", cfg.IdleLadderCompress)
 		} else {
 			log.Info("idle ladder observe mode enabled (ADR-20261107122928): measuring ladder levels, pausing nothing")
 		}
