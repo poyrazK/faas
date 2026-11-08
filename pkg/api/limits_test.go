@@ -128,16 +128,35 @@ func TestRequestBudgetForTypeDefaultsAndOverrides(t *testing.T) {
 }
 
 func TestRequestBudgetForTypeClampsToEffectiveCeiling(t *testing.T) {
-	limits := Limits{RequestBudgetMaxMs: 10_000}
-	if got, want := limits.RequestBudgetForType("app"), 10*time.Second; got != want {
-		t.Fatalf("app budget = %s, want %s", got, want)
+	// A ceiling below an explicit plan default is raised to that default.
+	limits := Limits{RequestBudgetMs: 60_000, RequestBudgetMaxMs: 45_000}
+	if got, want := limits.RequestBudgetMaxDuration(), 60*time.Second; got != want {
+		t.Fatalf("ceiling = %s, want %s (never below the plan default)", got, want)
 	}
 
 	// RequestBudgetMaxDuration preserves the established invariant that an
-	// invalid ceiling cannot undercut the legacy Function baseline.
-	limits.RequestBudgetMaxMs = 1_000
+	// invalid ceiling cannot undercut the Function baseline.
+	limits = Limits{RequestBudgetMaxMs: 1_000}
 	if got, want := limits.RequestBudgetForType("function"), RequestBudgetDefault; got != want {
 		t.Fatalf("function budget = %s, want %s", got, want)
+	}
+	if got, want := limits.RequestBudgetForType("app"), RequestBudgetAppDefault; got != want {
+		t.Fatalf("app budget = %s, want %s", got, want)
+	}
+}
+
+// adr: 20261107190000
+func TestFunctionRequestBudgetDefaultIs30Seconds(t *testing.T) {
+	if RequestBudgetDefault != 30*time.Second {
+		t.Fatalf("RequestBudgetDefault = %s, want 30s (ADR-20261107190000)", RequestBudgetDefault)
+	}
+	// The default must fit every plan's ceiling, Free's included, so no
+	// plan's default is silently raised past what it may ask for.
+	for _, plan := range Plans {
+		l := MustLimitsFor(plan)
+		if ceiling := time.Duration(l.RequestBudgetMaxMs) * time.Millisecond; ceiling > 0 && ceiling < RequestBudgetDefault {
+			t.Errorf("%s ceiling %s is below the function default %s", plan, ceiling, RequestBudgetDefault)
+		}
 	}
 }
 

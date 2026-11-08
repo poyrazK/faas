@@ -23,7 +23,7 @@ Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go)
 - **App egress / month** is the data your apps send each month. It is not charged; an account or organization that reaches its plan's egress stops serving until the month ends or it upgrades.
 - **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (Hobby $10, Pro $50, Scale $150); `gregale billing spend-cap` raises or clears it.
 - **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md). Functions default to 30s on every plan; any app or function can set its own value from 10s up to twice the plan default.
-- **Max request timeout** is the longest `request_timeout_s` an app or function may set (`gregale app APP --request-timeout SECONDS`). Without one, a function request must start its response within 3s and an app request within 30s; a function's whole invocation, a streamed response included, may then run for the longer of its timeout and 30s.
+- **Max request timeout** is the longest `request_timeout_s` an app or function may set (`gregale app APP --request-timeout SECONDS`). Without one, a function request must start its response within 30s and an app request within 30s; a function's whole invocation, a streamed response included, may then run for the longer of its timeout and 30s.
 
 ## Developer environments
 
