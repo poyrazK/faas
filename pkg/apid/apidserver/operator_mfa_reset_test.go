@@ -19,11 +19,11 @@ func TestObsAccountResetMFA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reset := func(id string) *http.Response {
+	reset := func(id string) int {
 		t.Helper()
-		return e.DoAdmin(t, http.MethodPost, "/v1/admin/ops/accounts/"+id+"/reset-mfa?confirm=true&reason=lost_factors", nil, nil).Result()
+		return e.DoAdmin(t, http.MethodPost, "/v1/admin/ops/accounts/"+id+"/reset-mfa?confirm=true&reason=lost_factors", nil, nil).Code
 	}
-	if got := reset(target.ID).StatusCode; got != http.StatusConflict {
+	if got := reset(target.ID); got != http.StatusConflict {
 		t.Fatalf("reset without a factor = %d, want 409", got)
 	}
 	if err := store.SetMFASecret(ctx, target.ID, []byte("sealed"), [][]byte{make([]byte, 32)}); err != nil {
@@ -35,7 +35,7 @@ func TestObsAccountResetMFA(t *testing.T) {
 	if _, err := store.CreateSession(ctx, "11111111-1111-1111-1111-111111111111", target.ID, "192.0.2.1", "ua"); err != nil {
 		t.Fatal(err)
 	}
-	if got := reset(target.ID).StatusCode; got != http.StatusOK {
+	if got := reset(target.ID); got != http.StatusOK {
 		t.Fatalf("reset = %d, want 200", got)
 	}
 	after, err := store.AccountByID(ctx, target.ID)
@@ -65,7 +65,7 @@ func TestObsAccountResetMFA(t *testing.T) {
 	if err := store.MarkMFAEnrolled(ctx, operator); err != nil {
 		t.Fatal(err)
 	}
-	if got := reset(operator).StatusCode; got != http.StatusConflict {
+	if got := reset(operator); got != http.StatusConflict {
 		t.Fatalf("reset of the calling operator = %d, want 409", got)
 	}
 }
