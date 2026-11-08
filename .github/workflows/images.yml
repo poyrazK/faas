@@ -423,6 +423,8 @@ jobs:
         env:
           GRYPE_VERSION: "0.116.0"
           GRYPE_SHA256: "40aff724297312f91ea390d003bed8d8651c74cc7f5b26732db80b3a408d2fc5"
+          # install-grype.sh falls back to the GitHub API with this token.
+          GH_TOKEN: ${{ github.token }}
         run: |
           bash scripts/ci/install-grype.sh "$RUNNER_TEMP/grype"
 
@@ -640,6 +642,8 @@ jobs:
         env:
           GRYPE_VERSION: "0.116.0"
           GRYPE_SHA256: "40aff724297312f91ea390d003bed8d8651c74cc7f5b26732db80b3a408d2fc5"
+          # install-grype.sh falls back to the GitHub API with this token.
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci/install-grype.sh "$RUNNER_TEMP/grype"
 
       - name: Update Grype vulnerability database
