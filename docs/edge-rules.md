@@ -361,6 +361,29 @@ value alongside it. For common security headers,
 [Security headers on your app](security#security-headers-on-your-app) sets a
 recommended rule.
 
+#### Credentials in request headers
+
+A request header that carries a credential, such as the token your origin
+expects, is stored encrypted and never shown again:
+
+```json
+{"name": "Authorization", "action": "set", "value": "Bearer <token>", "secret": true}
+```
+
+Only the gateway that applies the rule can read the value. Rules, versions,
+exports, the dashboard and agent tools show `"secret": true` and a
+`secret_id` instead of the value. `Authorization`, `Proxy-Authorization`,
+`Cookie` and any header whose name contains `token`, `secret`, `password`,
+`api-key`, `apikey`, `signature` or `credential` are kept this way without
+`secret`. To keep a stored value when you change a rule, send the op back with
+its `secret_id` and no `value`; to replace it, send a new `value`. Sealed
+values are at most 4096 bytes and work on request headers only, not with
+`template` or `remove`.
+
+A credential-named value saved before sealing arrived is shown with an empty
+`value` and `"redacted": true`. Sending that op back unchanged seals the
+stored value. Environment policies do not take sealed values yet.
+
 ### cors
 
 ```json
