@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/livequery"
@@ -155,7 +156,29 @@ func (h *Hub) compileREST(ctx context.Context, f liveproto.ClientFrame) (*rest.C
 	case err != nil:
 		return nil, &rlsRefusal{liveproto.CodeInternal, "read the catalog"}
 	}
+	if no := rowSecurityRefusal(f, compiled.Relations); no != nil {
+		return nil, no
+	}
 	return compiled, nil
+}
+
+// rowSecurityRefusal applies the Data API's row-security gate (ADR
+// 20261026140223) to a live read, which REST answers 403 rls_required: a
+// signed-in read reaches only row-secured relations or those the app exempts,
+// an anonymous one only row-secured relations (the public-read rule), and a
+// server key, a trusted backend, is not checked.
+func rowSecurityRefusal(f liveproto.ClientFrame, relations []rest.Relation) *rlsRefusal {
+	if f.Access == liveproto.AccessServer {
+		return nil
+	}
+	for _, r := range relations {
+		name := r.Schema + "." + r.Name
+		if r.RowSecured || (f.Access == "" && slices.Contains(f.AllowWithoutRLS, name)) {
+			continue
+		}
+		return &rlsRefusal{liveproto.CodeForbidden, "rls_required: " + name + " has no row-level security; enable it, or exempt it with gregale data-api configure --allow-without-rls"}
+	}
+	return nil
 }
 
 func rlsFingerprint(f liveproto.ClientFrame, s *livequery.Session) string {
