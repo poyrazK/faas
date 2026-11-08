@@ -38,6 +38,13 @@ func (c *Client) SetDisplayName(ctx context.Context, name string) error {
 	return c.do(ctx, "PATCH", "/v1/account", AccountProfileUpdate{DisplayName: name}, nil)
 }
 
+// SecurityActivity lists the account's sign-ins, credentials and security
+// changes of the last 90 days, newest first.
+func (c *Client) SecurityActivity(ctx context.Context) (SecurityActivityResponse, error) {
+	var out SecurityActivityResponse
+	return out, c.do(ctx, "GET", "/v1/account/security-activity", nil, &out)
+}
+
 // SignInMethods lists the account's password, MFA and linked providers.
 func (c *Client) SignInMethods(ctx context.Context) (SignInMethodsResponse, error) {
 	var out SignInMethodsResponse

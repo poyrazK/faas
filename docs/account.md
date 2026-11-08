@@ -46,13 +46,27 @@ operation still enforces its own authorization and admission checks.
   and two-factor authentication are set and which Google or GitHub identities
   are linked. Remove a linked provider from the account page or with an API
   key (`DELETE /v1/account/sign-in-methods/{provider}`); the last way to sign
-  in cannot be removed. A removed provider stays removed: "Continue with
-  Google" with the same email is refused until you press **Link Google** on
-  the account page while signed in. Linking a provider to an existing account
-  emails you.
+  in cannot be removed. **Link Google** / **Link GitHub** on the account page
+  links whichever provider account you sign in with, even if its email
+  differs from your Gregale email; it is also the only way to add back a
+  provider you removed ("Continue with Google" with the same email is refused
+  after a removal). Linking a provider emails you.
 - **Sessions:** `gregale account sessions list`, `gregale account sessions
   revoke SESSION_ID`, or `--all` to sign out every browser. A sign-in from a
   browser and network none of your recent sessions used sends an email.
+- **Remembered browsers:** with two-factor authentication on, tick **Remember
+  this browser for 30 days** when you enter the sign-in code, and that browser
+  skips the code at sign-in until then. Sensitive actions still ask for a
+  code. The account page lists remembered browsers (at most 10) with
+  **Forget** and **Forget all browsers**; changing your password or email, or
+  signing out everywhere, forgets them all.
+- **Security activity:** the account page's **Security activity** table and
+  `gregale account activity list` (`GET /v1/account/security-activity`, a
+  full-access key) show sign-ins, API keys, CLI and agent sign-ins, and
+  password, email, two-factor and sign-in method changes of the last 90 days.
+- **Credential emails:** creating or rotating an API key, a CLI or agent
+  (MCP) sign-in, and a password sign-in through the API each email you, so a
+  credential you did not create is noticed.
 - **Leaving an org:** `gregale org leave SLUG`. Owners transfer ownership first,
   billing contacts are replaced first, and a personal org cannot be left.
 

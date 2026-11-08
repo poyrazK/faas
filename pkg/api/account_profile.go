@@ -28,6 +28,24 @@ type EmailVerificationResendResponse struct {
 	Email  string `json:"email,omitempty"`
 }
 
+// SecurityActivityResponse is GET /v1/account/security-activity: the
+// account's security events of the last SecurityActivityLookback, newest
+// first.
+type SecurityActivityResponse struct {
+	Events []SecurityActivityEvent `json:"events"`
+}
+
+// SecurityActivityEvent is one sign-in, credential or account-security
+// change. Summary is a fixed English phrase chosen by Kind; IP and Detail
+// are present when the event recorded them.
+type SecurityActivityEvent struct {
+	At      string `json:"at"`
+	Kind    string `json:"kind"`
+	Summary string `json:"summary"`
+	IP      string `json:"ip,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+}
+
 // SignInMethodsResponse is GET /v1/account/sign-in-methods.
 type SignInMethodsResponse struct {
 	Password  bool           `json:"password"`
