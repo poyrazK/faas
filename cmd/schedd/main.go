@@ -522,7 +522,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	nodeInfos := make([]sched.ComputeNodeInfo, 0, len(nodes))
 	for _, n := range nodes {
-		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
+		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, Name: n.Name, TargetURL: n.TargetURL})
 	}
 	// The clone ownership recorders serve only full environment clones
 	// (ADR-590). They run while full_environment_clones_enabled is on, which
@@ -615,7 +615,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		row, err := store.ComputeNodeByID(rctx, nodeID)
 		switch {
 		case err == nil:
-			vmmRouter.Refresh(nodeID, row.TargetURL)
+			vmmRouter.RefreshNode(nodeID, row.Name, row.TargetURL)
 			nodeRegistry.Refresh(row)
 			warnCPUIdentities()
 			return nil
