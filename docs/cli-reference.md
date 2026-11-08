@@ -6675,7 +6675,7 @@ List signed-in browsers
 
 #### account sessions revoke
 
-Sign out one browser, or every browser with --all; API keys keep working
+Sign out one browser session, or all of them
 
 `gregale account sessions revoke [--all] [--yes] [SESSION_ID]`
 
@@ -6683,6 +6683,8 @@ Sign out one browser, or every browser with --all; API keys keep working
 |---|---|---|
 | `--all` | sign out every browser |  |
 | `--yes` | with --all, sign out without prompting |  |
+
+API keys keep working.
 
 ### account email
 
