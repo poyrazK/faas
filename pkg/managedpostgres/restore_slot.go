@@ -20,6 +20,9 @@ type RestoreSlotStore interface {
 	// RestoreSlots lists undeleted databases holding the restore slot,
 	// soonest end first, with the usage subject whose limit they are over.
 	RestoreSlots(ctx context.Context, limit int) ([]RestoreSlotHolder, error)
+	// RestoreSlotsPage advances past a stable (slot deadline, database ID)
+	// cursor, including when earlier holders are still waiting for deletion.
+	RestoreSlotsPage(ctx context.Context, after RestoreSlotCursor, limit int) ([]RestoreSlotHolder, error)
 	// CountSubjectDatabases counts what a reservation for subjectID counts:
 	// its undeleted databases and pending clone restores.
 	CountSubjectDatabases(ctx context.Context, subjectID string) (int64, error)
@@ -32,6 +35,11 @@ type RestoreSlotStore interface {
 type RestoreSlotHolder struct {
 	Database  Database
 	SubjectID string
+}
+
+type RestoreSlotCursor struct {
+	Until time.Time
+	ID    string
 }
 
 // RestoreSlotBindings revokes an expired copy's bindings before its delete is
@@ -110,28 +118,39 @@ func NewRestoreSlotSweeper(service *Service, bindings RestoreSlotBindings, optio
 func (w *RestoreSlotSweeper) Sweep(ctx context.Context) (RestoreSlotSummary, error) {
 	var summary RestoreSlotSummary
 	store := w.service.store.(RestoreSlotStore)
-	holders, err := store.RestoreSlots(ctx, w.batchSize)
-	if err != nil {
-		return summary, err
-	}
-	summary.Holders = len(holders)
 	var failures []error
-	for _, holder := range holders {
+	var after RestoreSlotCursor
+	for {
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		outcome, err := w.visit(ctx, store, holder, &summary)
-		switch {
-		case err != nil:
-			summary.Failed++
-			failures = append(failures, fmt.Errorf("restore slot %s: %w", holder.Database.ID, err))
-		case outcome == restoreSlotReleased:
-			summary.Released++
-		case outcome == restoreSlotExpired:
-			summary.Expired++
-		case outcome == restoreSlotWaiting:
-			summary.Waiting++
+		holders, err := store.RestoreSlotsPage(ctx, after, w.batchSize)
+		if err != nil {
+			return summary, errors.Join(append(failures, err)...)
 		}
+		summary.Holders += len(holders)
+		for _, holder := range holders {
+			if err := ctx.Err(); err != nil {
+				return summary, err
+			}
+			outcome, err := w.visit(ctx, store, holder, &summary)
+			switch {
+			case err != nil:
+				summary.Failed++
+				failures = append(failures, fmt.Errorf("restore slot %s: %w", holder.Database.ID, err))
+			case outcome == restoreSlotReleased:
+				summary.Released++
+			case outcome == restoreSlotExpired:
+				summary.Expired++
+			case outcome == restoreSlotWaiting:
+				summary.Waiting++
+			}
+		}
+		if len(holders) < w.batchSize {
+			break
+		}
+		last := holders[len(holders)-1].Database
+		after = RestoreSlotCursor{Until: last.RestoreSlotUntil, ID: last.ID}
 	}
 	w.mailNotices(ctx, &summary)
 	return summary, errors.Join(failures...)
@@ -148,11 +167,18 @@ const (
 
 func (w *RestoreSlotSweeper) visit(ctx context.Context, store RestoreSlotStore, holder RestoreSlotHolder, summary *RestoreSlotSummary) (restoreSlotOutcome, error) {
 	database := holder.Database
+	now := w.now()
+	// Repair expiries scheduled by an older worker before releasing a slot
+	// or skipping an already deleting copy. New claims record this atomically.
+	if notice, expired := restoreSlotExpiryNotice(database, now); expired {
+		if err := w.recordNotice(ctx, notice, summary); err != nil {
+			return restoreSlotHeld, err
+		}
+	}
 	room, err := w.service.restoreSlotRoom(ctx, store, holder.SubjectID)
 	if err != nil {
 		return restoreSlotHeld, err
 	}
-	now := w.now()
 	if room {
 		if _, err := store.ClearRestoreSlot(ctx, database.ID, now); err != nil {
 			return restoreSlotHeld, err
@@ -166,8 +192,10 @@ func (w *RestoreSlotSweeper) visit(ctx context.Context, store RestoreSlotStore, 
 	}
 	if now.Before(database.RestoreSlotUntil) {
 		if !now.Before(database.RestoreSlotUntil.Add(-api.ManagedPostgresRestoreSlotNoticeLead)) {
-			w.recordNotice(ctx, RestoreSlotNotice{DatabaseID: database.ID, Kind: RestoreSlotNoticeEnding,
-				SlotUntil: database.RestoreSlotUntil, RecordedAt: now}, summary)
+			if err := w.recordNotice(ctx, RestoreSlotNotice{DatabaseID: database.ID, Kind: RestoreSlotNoticeEnding,
+				SlotUntil: database.RestoreSlotUntil, RecordedAt: now}, summary); err != nil {
+				return restoreSlotHeld, err
+			}
 		}
 		return restoreSlotHeld, nil
 	}
@@ -189,27 +217,29 @@ func (w *RestoreSlotSweeper) visit(ctx context.Context, store RestoreSlotStore, 
 	if w.expired != nil {
 		w.expired(ctx, scheduled)
 	}
-	w.recordNotice(ctx, RestoreSlotNotice{DatabaseID: database.ID, Kind: RestoreSlotNoticeExpired,
-		SlotUntil: database.RestoreSlotUntil, RestorableUntil: scheduled.PurgeAfter, RecordedAt: now}, summary)
+	// ClaimScheduledDelete recorded the expiry notice with the schedule.
+	if _, expired := restoreSlotExpiryNotice(scheduled, now); expired {
+		summary.Noticed++
+	}
 	return restoreSlotExpired, nil
 }
 
-// recordNotice records a notice once. A failure is logged and does not undo
-// the slot decision: an 'ending' notice is retried by the next sweep, while an
-// 'expired' one is lost with its email, since the copy no longer expires.
-func (w *RestoreSlotSweeper) recordNotice(ctx context.Context, notice RestoreSlotNotice, summary *RestoreSlotSummary) {
+// recordNotice records a notice once. Returning a failed write keeps the
+// holder available for retry before its slot can be cleared.
+func (w *RestoreSlotSweeper) recordNotice(ctx context.Context, notice RestoreSlotNotice, summary *RestoreSlotSummary) error {
 	store, ok := w.service.store.(RestoreSlotNoticeStore)
 	if !ok {
-		return
+		return nil
 	}
 	recorded, err := store.RecordRestoreSlotNotice(ctx, notice)
 	if err != nil {
 		w.logger.Warn("managed postgres restore slot notice not recorded", "database", notice.DatabaseID, "kind", notice.Kind, "error", err)
-		return
+		return err
 	}
 	if recorded {
 		summary.Noticed++
 	}
+	return nil
 }
 
 // mailNotices queues the email for each notice still unmailed and under a

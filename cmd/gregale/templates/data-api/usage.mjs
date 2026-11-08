@@ -9,7 +9,13 @@ import { limits } from './config.mjs'
 // The access settings the platform applies to this app's live reads without a
 // user token (ADR 20261016151947): exposed schemas, the public-read allowlist and
 // server-key hashes with their permissions. Never a key.
-export function accessReport(config) {
+//
+// started_at is this process's start: the platform keeps the settings of the
+// newest process, so an older one (restored from an older snapshot, or still
+// running beside a fresh restart) cannot bring back a revoked key. Snapshot
+// copies keep their process's start. allow_without_rls lets live reads apply
+// the same row-security gate (ADR 20261026140223).
+export function accessReport(config, startedAt = new Date()) {
   const name = entry => `${entry.schema}.${entry.name ?? entry.relation}`
   const permissions = p => ({ access: p.access, ...(p.relations ? { relations: p.relations.map(name) } : {}),
     ...(p.rpcs ? { rpcs: p.rpcs.map(name) } : {}), subjects: p.subjects })
@@ -17,7 +23,9 @@ export function accessReport(config) {
     // Live reads verify user tokens against the same issuer (ADR-20261016151947).
     ...(config.auth ? { auth: { issuer: config.auth.issuer, jwks_url: config.auth.jwks.href, audience: config.auth.audience } } : {}),
     ...(config.publicRead ? { public_read: config.publicRead.map(name) } : {}),
-    ...(config.serverKeys ? { server_keys: config.serverKeys.map(k => ({ slot: k.slot, sha256: k.hash.toString('hex'), ...(k.permissions ? { permissions: permissions(k.permissions) } : {}) })) } : {}) }
+    ...(config.serverKeys ? { server_keys: config.serverKeys.map(k => ({ slot: k.slot, sha256: k.hash.toString('hex'), ...(k.permissions ? { permissions: permissions(k.permissions) } : {}) })) } : {}),
+    ...(config.allowWithoutRLS ? { allow_without_rls: config.allowWithoutRLS.map(name) } : {}),
+    started_at: startedAt.toISOString() }
 }
 
 const hourMs = 3600000
@@ -49,10 +57,16 @@ function instanceOf(token) {
 // A restore, seen as the wall clock jumping against the monotonic clock,
 // drops pending counts rather than reporting them once per instance. An
 // in-flight report keeps its id, which the platform applies once.
+//
+// Month-to-date totals survive a restore (amendment 2026-11-05): they only grow within
+// a month, so the last ones known are a floor that keeps a reached cap
+// enforced while the first report after a wake is on its way, or while the
+// platform cannot be reached. A platform that refuses this runtime for good
+// (403: a stage, preview or cloned environment) is not asked again.
 export function createUsage(config, { now = Date.now, monotonic = () => performance.now(), fetchImpl = fetch, nonce = randomUUID(), access = null } = {}) {
   if (!config) return null
   const pending = new Map()
-  let inflight = null, sequence = 0, totals = null, timer = null, busy = false, offset = now() - monotonic(), stopped = false
+  let inflight = null, sequence = 0, totals = null, timer = null, busy = false, offset = now() - monotonic(), stopped = false, refused = false
   // Access settings go out after start, after a restore and hourly, so the
   // platform's copy follows restarts with new settings.
   let accessSentAt = null
@@ -63,12 +77,11 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
     if (Math.abs(current - offset) <= limits.usageRestoreJumpMs) return false
     offset = current
     pending.clear()
-    totals = null
     accessSentAt = null
     return true
   }
   const schedule = delay => {
-    if (stopped || timer) return
+    if (stopped || refused || timer) return
     timer = setTimeout(() => { timer = null; void report() }, delay)
     timer.unref?.()
   }
@@ -96,6 +109,7 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
   }
 
   function record(entry) {
+    if (refused) return
     if (restored()) schedule(0)
     const counts = bucket(now())
     if (entry.capped) counts.capped_requests++
@@ -122,7 +136,7 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
   }
 
   async function report() {
-    if (busy || stopped) return
+    if (busy || stopped || refused) return
     busy = true
     try {
       restored()
@@ -151,8 +165,10 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
         if (mtd && typeof mtd.month === 'string' && Number.isSafeInteger(mtd.requests) && Number.isSafeInteger(mtd.anonymous_requests)) totals = { month: mtd.month, requests: mtd.requests, anonymous_requests: mtd.anonymous_requests }
       } else {
         await response.body?.cancel()
-        // A report the platform refuses cannot succeed on retry.
+        // A report the platform refuses cannot succeed on retry; a runtime it
+        // refuses (403) stops reporting.
         if (response.status >= 400 && response.status < 500 && response.status !== 401 && response.status !== 429) inflight = null
+        if (response.status === 403) { refused = true; pending.clear(); clearTimeout(timer); timer = null }
       }
     } catch { /* Usage is best effort: never log tokens or platform errors. */ } finally {
       busy = false
@@ -170,5 +186,14 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
 
   if (config.caps || access !== null) schedule(0)
   return Object.freeze({ start, capReached, report, stop: () => { stopped = true; clearTimeout(timer) },
-    flush: async () => { clearTimeout(timer); timer = null; await report() } })
+    // flush reports now, waiting at most waitMs when given; a report cut
+    // short keeps running, and one still in flight keeps its id.
+    flush: async waitMs => {
+      clearTimeout(timer); timer = null
+      const sent = report()
+      if (waitMs === undefined) return await sent
+      let bound
+      await Promise.race([sent, new Promise(resolve => { bound = setTimeout(resolve, Math.max(0, waitMs)); bound.unref?.() })])
+      clearTimeout(bound)
+    } })
 }

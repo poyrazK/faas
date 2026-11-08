@@ -97,7 +97,7 @@ RULES = [
     (r"grype|vuln|secret-scan|show-scan|scanview", "Deploy-time vulnerability scan"),
     (r"focus", "Plans, usage, invoices"),
     (r"release-command|release-config\.|^release$", "Release commands"),
-    (r"after-restore|before-checkpoint|lifecycle-config\.(after|before)", "Snapshot lifecycle hooks"),
+    (r"after-restore|before-checkpoint|lifecycle-config\.(after|before)|lifecycle-hooks", "Snapshot lifecycle hooks"),
     (r"scaling-schedule|scaling-target|scaling-config|worker-scale-spec", "Autoscaling and min instances"),
     (r"amqp|rabbitmq|kafka-config|nats-config|redis-streams-config|sqs-compat-config|sasl-config|tls-config\.|filter-criteria|filter-clause|retry-policy-config|function-bucket-event|function-webhook|^trigger\.|event-trigger", "Triggers and event sources"),
     (r"path-route|async-route\.", "Edge rules (incl"),
@@ -110,6 +110,7 @@ RULES = [
     (r"database-dependency", "Managed Postgres"),
     (r"bucket-dependency", "Object storage"),
     (r"function-spec|function-config", "Function runtimes"),
+    (r"fnadapter", "Function runtimes"),
     (r"worker-spec", "Worker pools"),
     (r"lifecycle-config|healthcheckproto", "Health probes"),
     (r"^manifest\.|release-config", "`gregale.yaml` deploy overrides"),
@@ -140,6 +141,9 @@ RULES = [
     # Compile-on-first-use regexps for package-level patterns
     # (ADR-20261101215228 measurement); no capability of its own.
     (r"^lazyregexp$", "INFRA"),
+    # Preloaded app hosts for the edge and gateway new-host lookup budgets
+    # (ADR-20261103163954 §4); edge plumbing, no capability of its own.
+    (r"^knownhosts$", "INFRA"),
     # Each family's ring and rollout switches (amendment 1).
     (r"^credential-(scheduler|outbound|uploads|attach|dev-bridge|data-api)-(keys-file|writes|plain-lookup)$", "INFRA"),
     # vmmd's instance bridge switches (connection-survival ADR): data-path plumbing.
@@ -307,7 +311,7 @@ RULES = [
     (r"wake-ahead", "Service wake-ahead"),
     (r"autoscal|scale-up|scaling|min-instance|max-instance|max-concurrency|concurrency", "Autoscaling and min instances"),
     (r"prewarm|park|wake", "Manual park / wake"),
-    (r"runner|runtime|function|node22|node24|python3|go124|binary", "Function runtimes"),
+    (r"runner|runtime|function|handler-api|node22|node24|python3|go124|binary", "Function runtimes"),
     (r"firecracker|jailer|isolation|vmm", "Firecracker isolation"),
     (r"scale-to-zero|idle|cold-wake|cold-boot|reaper", "Scale to zero"),
     # --- releases
@@ -321,7 +325,7 @@ RULES = [
     (r"release-gate|gate", "Release gates"),
     (r"preview", "Pull-request previews"),
     (r"alias", "Deployment aliases"),
-    (r"canary|rollout|progressive|safe-release|safedeploy|traffic-split|promotion", "Progressive rollouts"),
+    (r"canary|rollout|progressive|safe-release|safedeploy|traffic-split|promotion|service-aborts|service-abort-attempts", "Progressive rollouts"),
     (r"rollback", "Rollback to a named revision"),
     # --- deploy and build
     (r"queue-control|reorder|deploy-immediately|queued-deploy|cancel-ops|reorder-ops", "Deploy queue controls"),
@@ -345,7 +349,7 @@ RULES = [
     (r"oci|image|container", "Container / OCI image"),
     (r"build|railpack|buildkit", "Builds in builder"),
     (r"upload|tarball|source|deploy", "Source deploys:"),
-    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|^app-slug-holds$|apps-list|apps-new|app-detail", "Apps: create"),
+    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|^app-slug-holds$|^reserved-app-slugs$|apps-list|apps-new|app-detail", "Apps: create"),
 ]
 
 # Checked before everything else, for every source: names a broad rule or the

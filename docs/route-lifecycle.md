@@ -352,7 +352,11 @@ the removal policy itself also covers `default` and `production`.
 Traffic increases waive only the operation removals covered by a valid server
 approval under an **enforced** removal policy. Both captures must project to the
 exact compared canonical snapshots. Report mode and local approval files grant
-no exception. Historical rollback contract gates remain strict. The read-only contract diff
+no exception. Historical rollback contract gates remain strict, with one
+boundary: a target captured before the app declared any contract (its snapshot
+has no paths) never promised the routes it lacks, so rollback and traffic moves
+to it are compared as "no contract" rather than as removing every current route.
+The read-only contract diff
 continues to show the raw changes, including approved operation removals.
 
 The comparison uses the serving contract, or the removal policy's retained

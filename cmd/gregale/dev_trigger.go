@@ -75,6 +75,9 @@ func cmdDevInfo(args []string) int {
 // never collide with the delegated command's own flags (invoke has its own
 // --path for the URL path).
 func cmdDevTrigger(args []string) int {
+	if rest, isLocal := hasLocalFlag(args); isLocal {
+		return cmdDevTriggerLocal(rest)
+	}
 	fs := newFlagSet("dev trigger", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")

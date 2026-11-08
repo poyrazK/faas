@@ -6,10 +6,27 @@ import json
 import re
 import threading
 from urllib.parse import urlsplit
+from jsonschema import validators
+from referencing import Registry
 
 
 NAME_PATTERN = re.compile(r"^[\x21-\x7e]{1,128}$")
 VARIABLE_PATTERN = re.compile(r"\{([A-Za-z][A-Za-z0-9_.-]*)\}")
+
+
+def compile_tool_schema(definition, field):
+    if field not in definition:
+        return None
+    schema = definition[field]
+    if not isinstance(schema, dict):
+        raise ValueError(f"MCP tool {field} must be a JSON Schema object")
+    validator_class = validators.validator_for(schema, default=None) if "$schema" in schema else validators.Draft202012Validator
+    if validator_class is None:
+        raise ValueError(f"unsupported MCP tool {field} dialect")
+    validator_class.check_schema(schema)
+    # An empty registry rejects external retrieval. Local references resolve
+    # from the schema itself, without request-time network operations.
+    return validator_class(schema, registry=Registry())
 
 
 class RuntimeCatalog:
@@ -44,6 +61,8 @@ class RuntimeCatalog:
         name = catalog_definition.get("name")
         if not isinstance(name, str) or not NAME_PATTERN.fullmatch(name):
             raise ValueError("MCP catalog name must be 1 to 128 visible ASCII characters without whitespace")
+        input_validator = compile_tool_schema(catalog_definition, "inputSchema") if kind == "tool" else None
+        output_validator = compile_tool_schema(catalog_definition, "outputSchema") if kind == "tool" else None
         if kind == "resource":
             uri = catalog_definition.get("uri")
             template = catalog_definition.get("uriTemplate")
@@ -72,7 +91,8 @@ class RuntimeCatalog:
                         raise ValueError(f"MCP resource URI {uri_key!r} is already registered")
             if replace_name is not None and name != key:
                 del entries[key]
-            entries[name] = {"definition": catalog_definition, "handler": handler}
+            entries[name] = {"definition": catalog_definition, "handler": handler,
+                             "input_validator": input_validator, "output_validator": output_validator}
             self._revision += 1
         if notify:
             self._publish()
@@ -93,7 +113,8 @@ class RuntimeCatalog:
             entry = self._entries.get(kind, {}).get(name)
             if entry is None:
                 return None
-            return {"definition": deepcopy(entry["definition"]), "handler": entry["handler"]}
+            return {"definition": deepcopy(entry["definition"]), "handler": entry["handler"],
+                    "input_validator": entry.get("input_validator"), "output_validator": entry.get("output_validator")}
 
     def list(self, kind):
         with self._lock:

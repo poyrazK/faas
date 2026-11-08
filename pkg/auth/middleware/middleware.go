@@ -125,6 +125,13 @@ type DeploymentAppResolver interface {
 	DeploymentAppID(ctx context.Context, deploymentID string) (string, error)
 }
 
+// EdgeRuleAppResolver is the optional store seam that loads the edge rule an
+// agent approval addresses by id, to tell a production app's rule from a
+// preview's (ADR-091 amendment 2026-11-07).
+type EdgeRuleAppResolver interface {
+	GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error)
+}
+
 // deployTokenDeploymentReads are the routes outside /v1/apps/{slug} a deploy
 // token may read, for a deployment of its own app: the ones
 // api.ScopesDeploymentReadSurface admits for deploy:write, which every CLI
@@ -224,12 +231,18 @@ type AccountHandler func(w http.ResponseWriter, r *http.Request, acct state.Acco
 type Middleware struct {
 	HostingAutomationEnabled func() bool
 	HostingOIDCEnabled       func() bool
-	Authn                    Authenticator
-	Sessions                 Sessions
-	Lookups                  SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
-	Audit                    Auditor             // nil-safe; nil disables audit emit
-	Log                      *slog.Logger        // nil-safe; nil disables the Warn path
-	Limiter                  *middleware.Limiter // shared per-IP bucket for RequireLimited
+	// MandatoryMFA adds deployment policy such as the operator allowlist.
+	// When configured, a factor reset can also clear a stale pending cookie.
+	MandatoryMFA func(state.Account) bool
+	Authn        Authenticator
+	Sessions     Sessions
+	Lookups      SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
+	Audit        Auditor             // nil-safe; nil disables audit emit
+	Log          *slog.Logger        // nil-safe; nil disables the Warn path
+	Limiter      *middleware.Limiter // shared per-IP bucket for RequireLimited
+	// ApprovalReviewURL is the page where a person decides an agent's
+	// approval request (ADR-20261104140058).
+	ApprovalReviewURL func(id string) string
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -606,6 +619,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				if m.limitKeyToProjects(w, r, acct, &key) {
 					return
 				}
+				// ADR-20261104140058: an agent's risky request waits for a
+				// person's approval.
+				if m.requireAgentApproval(w, r, acct, key) {
+					return
+				}
 				*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
 				// TouchKeyLastUsed is observability, not auth —
 				// detached context + bounded timeout so a slow PG
@@ -831,7 +849,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						//nolint:contextcheck // same pointer-mutation contract: withPrincipal derives from r.Context() so the principal stamps into the OUTER r, not a captured local ctx.
 						*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: nil, Membership: nil}))
 						//nolint:contextcheck // same pointer-mutation contract: withMFAPending derives from r.Context() so the flag stamps into the OUTER r.
-						*r = *r.WithContext(withMFAPending(r.Context(), session.IsMFAPending(env)))
+						pending := session.IsMFAPending(env)
+						if m.MandatoryMFA != nil && !m.accountRequiresMFA(acct) {
+							pending = false
+						}
+						*r = *r.WithContext(withMFAPending(r.Context(), pending))
 						// IAM-hardening-mega-PR (logical change 6,
 						// ADR-077): stamp the step-up timestamp the
 						// /v1/account/mfa/verify handler last sealed
@@ -1276,7 +1298,11 @@ func isBillingRecoveryRoute(method, path string) bool {
 		"PATCH /v1/account/plan",
 		// Completing MFA is what clears an mfa_pending session and
 		// stamps the step-up that retry and plan change require.
-		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover", "GET /v1/auth/csrf":
+		"POST /v1/account/mfa/enroll", "POST /v1/account/mfa/confirm",
+		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover",
+		"POST /v1/account/mfa/disable", "POST /v1/account/mfa/disable-email",
+		"POST /v1/account/mfa/disable-email/confirm", "GET /auth/reset/mfa",
+		"HEAD /auth/reset/mfa", "GET /v1/auth/csrf":
 		return true
 	}
 	return false
@@ -1471,8 +1497,8 @@ const (
 //
 //	requireMFA → requireScope(admin) → requireStepUp(5m) → handler
 //
-// The new stamp is written by /v1/account/mfa/verify on every
-// success — see cmd/apid/handlers_mfa.go reissueSessionCookie.
+// Confirmation, authenticator verification and recovery all refresh the
+// stamp. Customer sessions without enabled or required MFA bypass this gate.
 //
 // RequireStepUpStrict is the opt-in for operations where a bearer must
 // never be enough proof. Invitation acceptance and provider-admin
@@ -1494,10 +1520,8 @@ func (m *Middleware) RequireStepUp(ttl time.Duration) func(AccountHandler) Accou
 // mutations use the same strict gate so bearer/API-key principals are
 // rejected consistently across the control plane.
 //
-// The cookie path is unchanged — the absence of a step-up stamp
-// on a session-cookie principal still fails-fast (the v1 cookie
-// branch already did, and the Envelope.StepUpAt omission is the
-// same condition).
+// Strict cookie sessions require a recent stamp even if the account has
+// not enrolled yet. This preserves mandatory operator verification.
 func (m *Middleware) RequireStepUpStrict(ttl time.Duration) func(AccountHandler) AccountHandler {
 	return m.requireStepUp(ttl, true)
 }
@@ -1512,6 +1536,15 @@ func (m *Middleware) requireStepUp(ttl time.Duration, strict bool) func(AccountH
 	}
 	return func(next AccountHandler) AccountHandler {
 		return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+			// Customer MFA is opt-in; strict provider operations keep their gate.
+			actor := acct
+			if principal, _, ok := AccountFromContext(r); ok {
+				actor = principal
+			}
+			if !strict && !m.accountRequiresMFA(actor) {
+				next(w, r, acct)
+				return
+			}
 			ts, has := StepUpFrom(r)
 			// Lax mode: bearer-key principal (no step-up stamp) bypasses.
 			// Pre-PR-077 cookie without step_up_at is also bypass-
@@ -1562,11 +1595,21 @@ func (m *Middleware) requireStepUp(ttl time.Duration, strict bool) func(AccountH
 // same bypass rules. The stamp is read off r.Context() the same
 // way RequireStepUp reads it via StepUpFrom.
 func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) http.Handler {
+	return m.RequireStepUpHandlerWithRedirect(ttl, nil)
+}
+
+// RequireStepUpHandlerWithRedirect lets browser forms visit a challenge.
+// An empty destination retains the structured API refusal.
+func (m *Middleware) RequireStepUpHandlerWithRedirect(ttl time.Duration, redirect func(*http.Request) string) func(http.Handler) http.Handler {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if acct, _, ok := AccountFromContext(r); ok && !m.accountRequiresMFA(acct) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			ts, has := StepUpFrom(r)
 			if !has {
 				next.ServeHTTP(w, r)
@@ -1580,7 +1623,6 @@ func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) 
 			if !ts.IsZero() {
 				reason = stepUpReasonExpired
 			}
-			api.WriteProblem(w, api.ErrStepUpRequired())
 			if m.Audit != nil {
 				// Dashboard routes don't carry a state.Account on
 				// the request context the way RequireSession's
@@ -1598,6 +1640,13 @@ func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) 
 					"ttl_sec": int(ttl.Seconds()),
 				})
 			}
+			if redirect != nil {
+				if target := redirect(r); target != "" {
+					http.Redirect(w, r, target, http.StatusSeeOther)
+					return
+				}
+			}
+			api.WriteProblem(w, api.ErrStepUpRequired())
 		})
 	}
 }

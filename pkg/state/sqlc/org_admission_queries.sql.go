@@ -25,9 +25,13 @@ func (q *Queries) CountActiveOrgMembers(ctx context.Context, db DBTX, orgID pgty
 const countOwnedFreeSharedOrgs = `-- name: CountOwnedFreeSharedOrgs :one
 SELECT count(*) FROM orgs o JOIN org_memberships m ON m.org_id=o.id
 WHERE m.account_id=$1 AND m.role='owner' AND m.removed_at IS NULL
-  AND NOT o.personal_org AND NOT o.deleted_pending AND o.plan='free'
+  AND NOT o.personal_org AND o.plan='free'
+  AND (NOT o.deleted_pending OR o.deletion_requested_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
 `
 
+// A Free organization deleted this UTC month still holds its slot until the
+// month ends (ADR-20261104211412): its Free allowance was already used for the
+// month, so deleting and recreating it must not grant a fresh one.
 func (q *Queries) CountOwnedFreeSharedOrgs(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, countOwnedFreeSharedOrgs, accountID)
 	var count int64
@@ -110,6 +114,24 @@ func (q *Queries) LockOrgInvitationTarget(ctx context.Context, db DBTX, id pgtyp
 		&i.DeletedPending,
 		&i.AbuseHoldAt,
 	)
+	return i, err
+}
+
+const lockOrgOwnershipTransferTarget = `-- name: LockOrgOwnershipTransferTarget :one
+SELECT plan,personal_org,deleted_pending FROM orgs WHERE id=$1 FOR NO KEY UPDATE
+`
+
+type LockOrgOwnershipTransferTargetRow struct {
+	Plan           string
+	PersonalOrg    bool
+	DeletedPending bool
+}
+
+// Pin the incoming plan while deciding whether a transfer consumes a Free slot.
+func (q *Queries) LockOrgOwnershipTransferTarget(ctx context.Context, db DBTX, id pgtype.UUID) (LockOrgOwnershipTransferTargetRow, error) {
+	row := db.QueryRow(ctx, lockOrgOwnershipTransferTarget, id)
+	var i LockOrgOwnershipTransferTargetRow
+	err := row.Scan(&i.Plan, &i.PersonalOrg, &i.DeletedPending)
 	return i, err
 }
 

@@ -22,6 +22,33 @@ Some features on this page are previews: they become available to your account
 when Gregale releases them to it. Until then their API routes answer 404 and
 their frames are ignored.
 
+## Long-lived connections and scale to zero
+
+Gregale's realtime service holds the client's WebSocket or SSE connection, not
+your app. A client can stay connected for hours while your app is parked, and
+you are billed for the app only while it runs ([billing](billing.md)).
+
+- **Idle connections cost your app nothing.** Gregale answers heartbeats and
+  keeps the socket open; it does not call your app.
+- **Client messages wake the app.** On the original protocol each client frame
+  is a `POST` to your `/realtime/message` callback (and connect and disconnect
+  are callbacks too). The app handles it and can park again after its idle
+  timeout.
+- **Your app broadcasts without holding connections.** Publish to a channel
+  from your backend with the SDK, the API, or
+  `gregale realtime publish <app> <endpoint-id> <channel> --data '…'`; send to
+  one connection with `gregale realtime send`. The publish is an ordinary
+  outbound request, so the app can park right after it.
+- **What still wakes the app:** callbacks (connect, message, disconnect,
+  `authorize-channel`), and channel re-authorization at most every 30 seconds
+  per subscription while messages are delivered on it. Use
+  [channel rules](#channel-rules) to authorize from the token instead.
+
+Compare an app that serves WebSockets itself (`gregale app <slug>
+--websocket-enabled`): there the socket ends inside your app, so the app stays
+running, and billed, for as long as any connection is open. Use managed
+realtime when connections are long and messages are sparse.
+
 ## Connect clients
 
 Create an endpoint on your app, then connect clients to
@@ -101,9 +128,11 @@ seconds and is checked again after that while the subscription stays open; a
 401 or 403 then removes the subscription with an `access_revoked` error, and
 any other failure of that check closes the connection with code 1013 so the
 client reconnects. Gregale retries a callback that times out or answers 408, 429 or
-5xx, up to three attempts. Callbacks wake a parked app and keep it running
-while subscriptions are active, so grant channels from the token with
-[channel rules](#channel-rules) where you can.
+5xx, up to three attempts. Callbacks wake a parked app. While messages are
+being delivered on a subscription, `authorize-channel` is called again at most
+every 30 seconds per subscription, which keeps the app awake through a busy
+channel; grant channels from the token with [channel rules](#channel-rules)
+where you can. An idle subscription calls nothing.
 
 To rotate the callback token, accept both tokens in your app, update the
 endpoint (`PATCH …/endpoints/{id}` with `callback_auth_token`), and keep
@@ -255,6 +284,9 @@ The same rules are `channel_rules` on `PATCH …/endpoints/{id}`; an endpoint
 holds up to 32.
 
 ## Fair-use limits
+
+Messages delivered to subscribers count toward the app's monthly egress,
+like the app's own traffic ([plans](plans.md#what-each-limit-means)).
 
 Realtime has no separate charge. Gregale bills compute, and realtime channels,
 consumer groups and delivery are included in every paid plan. Limits apply only

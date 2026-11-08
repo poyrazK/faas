@@ -55,7 +55,7 @@ func (s *server) forgetDataAPIAccess(ctx context.Context, accountID, appID strin
 
 // reportDataAPIUsage is the private runtime surface; workload identity only.
 func (s *server) reportDataAPIUsage(w http.ResponseWriter, r *http.Request) {
-	handler := dataapiusage.ReportHandler{Verifier: s.workloadVerifier}
+	handler := dataapiusage.ReportHandler{Verifier: s.workloadVerifier, Workloads: s.store}
 	if s.dataAPIUsage != nil {
 		handler.Store = s.dataAPIUsage
 	}

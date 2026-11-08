@@ -32,6 +32,9 @@ type Deps struct {
 	Revoke func(r *http.Request, acct state.Account, keyID string) error
 	// Audit records an audit event for the account.
 	Audit func(ctx context.Context, kind string, accountID string, data map[string]any)
+	// ReviewURL is the page where a person decides an agent's approval
+	// request (ADR-20261104140058).
+	ReviewURL func(id string) string
 }
 
 // Kind reports how a key connects an agent, or "" for any other key. An
@@ -95,6 +98,7 @@ func List(d Deps) httpkit.AccountHandler {
 		for _, k := range keys {
 			item := response(k, clients[k.ID], prefixes[k.ID])
 			item.Projects = d.projects(r.Context(), k.ID)
+			item.Approvals = d.approvals(r.Context(), k)
 			out.Items = append(out.Items, item)
 		}
 		httpkit.WriteJSON(w, http.StatusOK, out)

@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -14,9 +15,9 @@ import (
 // requestAnalyticsTotals returns the window's totals and its top groups.
 // When the app's rollups cover the window they answer the counts and
 // latencies (ADR-20261103113952), and the raw rows add only their sampled
-// measures, within RequestAnalyticsSampledMeasuresTimeout. Otherwise both
-// come from the raw rows.
-func (s *server) requestAnalyticsTotals(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow, groupBy string, params sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, []sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
+// measures, within RequestAnalyticsSampledMeasuresTimeout; sampled reports
+// whether they did. Otherwise both come from the raw rows.
+func (s *server) requestAnalyticsTotals(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow, groupBy string, params sqlc.RequestTelemetryAnalyticsSummaryParams) (summaryRow sqlc.RequestTelemetryAnalyticsSummaryRow, groupRows []sqlc.RequestTelemetryAnalyticsByDimensionRow, sampled bool, err error) {
 	byDimension := sqlc.RequestTelemetryAnalyticsByDimensionParams{
 		AppID: params.AppID, AccountID: params.AccountID,
 		ReceivedAt: params.ReceivedAt, ReceivedAt_2: params.ReceivedAt_2,
@@ -26,7 +27,7 @@ func (s *server) requestAnalyticsTotals(ctx context.Context, app state.App, acct
 		q := analyticsrollup.Query{AppID: app.ID, AccountID: acct.ID, From: window.From, Until: window.Until, GroupBy: groupBy, Limit: requestAnalyticsGroupLimit}
 		groups, err := analyticsrollup.Read(ctx, reader, q)
 		if err != nil {
-			return sqlc.RequestTelemetryAnalyticsSummaryRow{}, nil, err
+			return sqlc.RequestTelemetryAnalyticsSummaryRow{}, nil, false, err
 		}
 		totals := groups
 		if groupBy != "route" {
@@ -34,35 +35,107 @@ func (s *server) requestAnalyticsTotals(ctx context.Context, app state.App, acct
 			// into a single group are the window's totals.
 			q.GroupBy, q.Limit = "route", 0
 			if totals, err = analyticsrollup.Read(ctx, reader, q); err != nil {
-				return sqlc.RequestTelemetryAnalyticsSummaryRow{}, nil, err
+				return sqlc.RequestTelemetryAnalyticsSummaryRow{}, nil, false, err
 			}
 		}
 		summary := analyticsrollup.Summary(totals)
-		return summary, analyticsrollup.ByDimension(groups, s.requestAnalyticsSampledMeasures(ctx, byDimension)), nil
+		raw, ok := s.requestAnalyticsSampledMeasures(ctx, byDimension)
+		return summary, analyticsrollup.ByDimension(groups, raw), ok, nil
 	}
 	summary, err := s.store.RequestTelemetryAnalyticsSummary(ctx, params)
 	if err != nil {
-		return sqlc.RequestTelemetryAnalyticsSummaryRow{}, nil, err
+		return sqlc.RequestTelemetryAnalyticsSummaryRow{}, nil, false, err
 	}
 	rows, err := s.store.RequestTelemetryAnalyticsByDimension(ctx, byDimension)
-	return summary, rows, err
+	return summary, rows, true, err
+}
+
+// requestAnalyticsSampledRead runs a raw read that only adds sampled detail
+// (deployment metadata, CPU, latency of sampled rows) to an answer that is
+// already whole without it. A failed read leaves the detail out (ok false)
+// instead of failing the analytics; bounded caps it at
+// RequestAnalyticsSampledMeasuresTimeout, for when the rollups answer the
+// window and the raw read is the slow part. err is set only when the
+// request itself was cancelled.
+func requestAnalyticsSampledRead[T any](ctx context.Context, s *server, bounded bool, what string, read func(context.Context) (T, error)) (out T, ok bool, err error) {
+	readCtx := ctx
+	if bounded {
+		var cancel context.CancelFunc
+		readCtx, cancel = context.WithTimeout(ctx, api.RequestAnalyticsSampledMeasuresTimeout)
+		defer cancel()
+	}
+	out, err = read(readCtx)
+	if err == nil {
+		return out, true, nil
+	}
+	var zero T
+	if ctx.Err() != nil {
+		return zero, false, ctx.Err()
+	}
+	if s.log != nil {
+		s.log.Warn("request analytics sampled detail left out", "what", what,
+			"timed_out", errors.Is(err, context.DeadlineExceeded) || errors.Is(err, state.ErrRouteAnalyticsTimeout), "err", err)
+	}
+	return zero, false, nil
+}
+
+// requestAnalyticsRollupSplit holds the rollups' requests per route, method
+// and deployment when they answer the window; nil leaves the raw counts.
+type requestAnalyticsRollupSplit map[analyticsrollup.RouteDeploymentKey]int64
+
+func (s *server) requestAnalyticsRollupSplit(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow) (requestAnalyticsRollupSplit, error) {
+	reader, ok := analyticsrollup.Covers(ctx, s.store, app.ID, window.From)
+	if !ok {
+		return nil, nil
+	}
+	split, err := analyticsrollup.RouteDeployments(ctx, reader, app.ID, acct.ID, window.From, window.Until)
+	return requestAnalyticsRollupSplit(split), err
+}
+
+// deployments replaces the raw (ingest-capped) per-deployment counts with
+// the rollups', re-ranks them, and sets the window total to the rollup
+// total, so the "other" bucket holds only the unlisted deployments.
+func (split requestAnalyticsRollupSplit) deployments(rows []sqlc.RequestTelemetryAnalyticsByDeploymentRow, total int64) []sqlc.RequestTelemetryAnalyticsByDeploymentRow {
+	if split == nil {
+		return rows
+	}
+	byDeployment := map[string]int64{}
+	for k, n := range split {
+		byDeployment[k.DeploymentID] += n
+	}
+	for i := range rows {
+		rows[i].Requests = byDeployment[rows[i].DeploymentID]
+		rows[i].TotalRequests = total
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Requests > rows[j].Requests })
+	return rows
+}
+
+// routeDeployments replaces the raw per-route deployment counts with the
+// rollups'. The __other__ rows are left for the caller, which recomputes
+// them as each route's remainder.
+func (split requestAnalyticsRollupSplit) routeDeployments(rows []sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow) []sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow {
+	if split == nil {
+		return rows
+	}
+	for i := range rows {
+		if rows[i].DeploymentID == "__other__" {
+			continue
+		}
+		rows[i].Requests = split[analyticsrollup.RouteDeploymentKey{Route: rows[i].Route, Method: rows[i].Method, DeploymentID: rows[i].DeploymentID}]
+	}
+	return rows
 }
 
 // requestAnalyticsSampledMeasures reads the raw groups for the measures
 // only sampled rows carry. They are optional in the response, so a slow
-// read leaves them out instead of failing the analytics.
-func (s *server) requestAnalyticsSampledMeasures(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDimensionParams) []sqlc.RequestTelemetryAnalyticsByDimensionRow {
-	sampledCtx, cancel := context.WithTimeout(ctx, api.RequestAnalyticsSampledMeasuresTimeout)
-	defer cancel()
-	rows, err := s.store.RequestTelemetryAnalyticsByDimension(sampledCtx, arg)
-	if err != nil {
-		if ctx.Err() == nil && s.log != nil {
-			timedOut := errors.Is(err, context.DeadlineExceeded) || errors.Is(err, state.ErrRouteAnalyticsTimeout)
-			s.log.Warn("request analytics sampled measures left out", "timed_out", timedOut, "err", err)
-		}
-		return nil
-	}
-	return rows
+// read leaves them out instead of failing the analytics; ok reports
+// whether they were read.
+func (s *server) requestAnalyticsSampledMeasures(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, bool) {
+	rows, ok, _ := requestAnalyticsSampledRead(ctx, s, true, "sampled measures", func(ctx context.Context) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
+		return s.store.RequestTelemetryAnalyticsByDimension(ctx, arg)
+	})
+	return rows, ok
 }
 
 func (s *server) requestAnalyticsTimeseriesRows(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow, route, method string) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {

@@ -97,8 +97,9 @@ func (s *Store) SignLogin(ctx context.Context, login Sealed, sig []byte) (bool, 
 // LoginRef names a database and the account that owns it.
 type LoginRef struct{ AccountID, DatabaseID string }
 
-// DatabasesWithoutLogin lists up to limit databases that have an active live
-// key and no login, in database-ID order.
+// DatabasesWithoutLogin lists databases with an active live key and either
+// no login or a legacy login whose dataset authorization needs repair.
+// Untried databases go first, then the least recently attempted ones.
 func (s *Store) DatabasesWithoutLogin(ctx context.Context, limit int) ([]LoginRef, error) {
 	rows, err := s.q.LiveDatabasesWithoutLogin(ctx, s.pool, int32(limit)) //nolint:gosec // a page size, never near int32's range
 	if err != nil {
@@ -111,10 +112,19 @@ func (s *Store) DatabasesWithoutLogin(ctx context.Context, limit int) ([]LoginRe
 	return out, nil
 }
 
+// RecordLoginAttempt commits the attempt independently of login publication.
+// False means the database or its active key stopped being eligible.
+func (s *Store) RecordLoginAttempt(ctx context.Context, accountID, databaseID string) (bool, error) {
+	n, err := s.q.RecordLiveLoginAttempt(ctx, s.pool, sqlc.RecordLiveLoginAttemptParams{AccountID: accountID, DatabaseID: databaseID})
+	if err != nil {
+		return false, fmt.Errorf("livekeys: record login attempt: %w", err)
+	}
+	return n == 1, nil
+}
+
 // IssueMissingLogin stores the login issue returns for a database that, once
-// locked, still has an active key and no login; it reports whether it stored
-// one. issue runs under the lock, as in Enable, so the login stored is the
-// one issued last.
+// locked, still has an active key and needs a login or dataset repair. issue
+// runs under the lock, as in Enable, so the login stored is the one issued last.
 func (s *Store) IssueMissingLogin(ctx context.Context, accountID, databaseID string, issue func(context.Context) (*Login, error)) (bool, error) {
 	stored := false
 	err := s.locked(ctx, accountID, databaseID, func(tx pgx.Tx) error {
@@ -126,18 +136,24 @@ func (s *Store) IssueMissingLogin(ctx context.Context, accountID, databaseID str
 		if err != nil {
 			return fmt.Errorf("livekeys: read login: %w", err)
 		}
-		if !active || len(existing) > 0 {
+		if !active {
 			return nil
+		}
+		if len(existing) > 0 {
+			repair, err := s.q.LiveLoginNeedsDatasetRepair(ctx, tx, sqlc.LiveLoginNeedsDatasetRepairParams{DatabaseID: databaseID, AccountID: accountID})
+			if err != nil {
+				return fmt.Errorf("livekeys: check login dataset: %w", err)
+			}
+			if !repair {
+				return nil
+			}
 		}
 		login, err := issue(ctx)
 		if err != nil || login == nil {
 			return err
 		}
-		err = s.q.UpsertLiveLogin(ctx, tx, sqlc.UpsertLiveLoginParams{DatabaseID: databaseID, AccountID: accountID,
-			SealedLogin: login.Sealed, Recipient: login.Recipient, ProviderIdentityID: login.Identity, Slot: login.Slot, Awake: login.Awake,
-			SealedLoginSig: login.Signature})
-		if err != nil {
-			return fmt.Errorf("livekeys: store login: %w", err)
+		if err := s.storeLogin(ctx, tx, accountID, databaseID, login); err != nil {
+			return err
 		}
 		stored = true
 		return nil

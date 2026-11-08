@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -29,4 +30,31 @@ func terminalSafe(s string) string {
 
 func unsafeTerminalRune(r rune) bool {
 	return r != '\t' && (r < 0x20 || r == 0x7f || r >= 0x80 && r <= 0x9f)
+}
+
+// terminalSafeLines splits one build/deploy log entry into terminal-safe
+// lines. A guest build chunk can hold several lines ("[guest build
+// output]\nnode toolchain HTTPS preflight: …\n"), and terminalSafe turned
+// each line break into a literal \x0a that ran the whole explanation together
+// (CLI journey 2026-11-05, #6633). LF and CRLF line ends become line breaks;
+// every other control character is still escaped, and a literal backslash
+// sequence in the text is left alone.
+func terminalSafeLines(entry string) []string {
+	entry = strings.TrimRight(entry, "\r\n")
+	lines := strings.Split(entry, "\n")
+	for i, line := range lines {
+		lines[i] = terminalSafe(strings.TrimSuffix(line, "\r"))
+	}
+	return lines
+}
+
+// printTerminalSafeLines writes entry as terminal-safe lines, each preceded
+// by prefix.
+func printTerminalSafeLines(w io.Writer, prefix, entry string) error {
+	for _, line := range terminalSafeLines(entry) {
+		if _, err := fmt.Fprintln(w, prefix+line); err != nil {
+			return err
+		}
+	}
+	return nil
 }

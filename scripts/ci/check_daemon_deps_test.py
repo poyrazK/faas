@@ -66,6 +66,23 @@ class ViolationsTest(unittest.TestCase):
         got = cdd.violations([rule], {"apid": g, "vmmd": g, "imaged": g}, M, daemons=["apid", "vmmd", "imaged"])
         self.assertEqual(got, [(rule, "imaged", ["cmd/imaged", "pkg/page", "text/template"])])
 
+    def test_guest_init_is_a_release_binary_of_its_own(self):
+        # guest-init's main package is guest/init, not cmd/init, and its
+        # closure is checked like a daemon's.
+        g = graph({"guest/init": ["pkg/api"], "pkg/api": []})
+        g[f"{M}/pkg/api"]["imports"].add("golang.org/x/net/trace")
+        g["golang.org/x/net/trace"] = {"imports": set()}
+        rule = {"package": "golang.org/x/net/trace", "binaries": ["init"], "reason": "r"}
+        got = cdd.violations([rule], {"init": g}, M)
+        self.assertEqual(got, [(rule, "init", ["guest/init", "pkg/api", "golang.org/x/net/trace"])])
+        self.assertEqual(cdd.main_package(M, "init"), f"{M}/guest/init")
+        self.assertEqual(cdd.main_package(M, "vmmd"), f"{M}/cmd/vmmd")
+
+    def test_guest_tags(self):
+        self.assertEqual(cdd.guest_tags("A := 1\nGUEST_TAGS := grpcnotrace\n"), ["grpcnotrace"])
+        self.assertEqual(cdd.guest_tags("GUEST_TAGS := a,b\n"), ["a", "b"])
+        self.assertEqual(cdd.guest_tags("DAEMON_TAGS := metal\n"), [])
+
     def test_chain_ignores_packages_outside_the_graph(self):
         g = graph({"cmd/x": ["pkg/a"]})
         g[f"{M}/pkg/a"]["imports"].add("golang.org/x/sync/errgroup")
@@ -73,6 +90,21 @@ class ViolationsTest(unittest.TestCase):
 
 
 class RulesTest(unittest.TestCase):
+    def test_guest_pool_deadlines_do_not_allow_server_db_imports(self):
+        rules = cdd.load_rules(HERE / "daemon_deps.json")
+        rule = next(r for r in rules if r["package"] == "pkg/db" and r["binaries"] == ["init"])
+        graph = {
+            f"{M}/guest/init": {"imports": {f"{M}/pkg/datarepair/guest"}},
+            f"{M}/pkg/datarepair/guest": {"imports": {f"{M}/pkg/pgpoolbounds"}},
+            f"{M}/pkg/pgpoolbounds": {"imports": set()},
+        }
+        self.assertEqual(cdd.violations([rule], {"init": graph}, M), [])
+        graph[f"{M}/pkg/datarepair/guest"]["imports"].add(f"{M}/pkg/db")
+        graph[f"{M}/pkg/db"] = {"imports": set()}
+        self.assertEqual(cdd.violations([rule], {"init": graph}, M), [
+            (rule, "init", ["guest/init", "pkg/datarepair/guest", "pkg/db"]),
+        ])
+
     def test_rules_need_every_field(self):
         with tempfile.NamedTemporaryFile("w", suffix=".json") as fh:
             json.dump({"rules": [{"package": "pkg/sched", "binaries": ["vmmd"]}]}, fh)
@@ -82,7 +114,7 @@ class RulesTest(unittest.TestCase):
 
     def test_repository_rules_name_release_binaries(self):
         makefile = (REPO / "Makefile").read_text(encoding="utf-8")
-        binaries = set(au.makefile_list(makefile, "DAEMONS")) | set(au.makefile_list(makefile, "CLIS"))
+        binaries = set(au.makefile_list(makefile, "DAEMONS")) | set(au.makefile_list(makefile, "CLIS")) | set(cdd.GUEST_MAINS)
         goroot = subprocess.run(["go", "env", "GOROOT"], capture_output=True, text=True, check=True).stdout.strip()
         for rule in cdd.load_rules(cdd.DEFAULT_CONFIG):
             if "." not in rule["package"].split("/")[0]:
@@ -92,6 +124,14 @@ class RulesTest(unittest.TestCase):
             if rule["binaries"] != "DAEMONS":
                 self.assertLessEqual(set(rule["binaries"]), binaries, rule["package"])
             self.assertLessEqual(set(rule.get("except", ())), binaries, rule["package"])
+
+    def test_guest_init_stays_off_the_template_packages(self):
+        # The reason guest-init builds with grpcnotrace: these three reach
+        # reflect.Value.MethodByName (ADR-20261105150000).
+        forbidden = {r["package"] for r in cdd.load_rules(cdd.DEFAULT_CONFIG) if r["binaries"] == ["init"]}
+        self.assertEqual(forbidden, {"pkg/db", "golang.org/x/net/trace", "html/template", "text/template"})
+        makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("grpcnotrace", cdd.guest_tags(makefile))
 
 
 if __name__ == "__main__":

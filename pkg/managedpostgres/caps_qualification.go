@@ -21,32 +21,39 @@ import (
 // FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on requires.
 const CapQualificationPathEnv = "FAAS_MANAGED_POSTGRES_CAP_QUALIFICATION_PATH"
 
-// ComputeCapQualificationVersion is the artifact's schema version.
-const ComputeCapQualificationVersion = 1
+// ComputeCapQualificationVersion is the artifact's schema version. Version 2
+// checks what enforcement relies on since ADR-20261025094915 amendment
+// 2026-11-05: the consumption report and the hold, not the provider's quota.
+// A version 1 artifact no longer decodes.
+const ComputeCapQualificationVersion = 2
 
 // ComputeCapEvidence is what the staging probe observed.
 type ComputeCapEvidence struct {
 	// PeriodStartsAtUTCMonth: the provider's consumption period starts within
 	// an hour of the UTC month start, where the ledger's month starts.
 	PeriodStartsAtUTCMonth bool `json:"period_starts_at_utc_month"`
-	// CounterInComputeUnits: the provider's compute counter grew by the
-	// compute's size times the time it was active, so quotas and the ledger
-	// share a unit. ComputeUnitRatioPermille is that ratio in thousandths.
-	CounterInComputeUnits    bool  `json:"counter_in_compute_units"`
+	// ReportCurrent: the consumption report grew while the compute was
+	// active, read within minutes, the open hour included.
+	ReportCurrent bool `json:"report_current"`
+	// ReportInComputeUnits: it grew by the compute's size times the time it
+	// was active, so the sweep and the ledger share a unit.
+	// ComputeUnitRatioPermille is that ratio in thousandths.
+	ReportInComputeUnits     bool  `json:"report_in_compute_units"`
 	ComputeUnitRatioPermille int64 `json:"compute_unit_ratio_permille"`
-	// SuspendedAtQuota: a quota at the counter suspended the compute.
-	SuspendedAtQuota bool `json:"suspended_at_quota"`
-	// RefusedWhileSuspended: a connection failed while suspended.
-	RefusedWhileSuspended bool `json:"refused_while_suspended"`
-	// ResumedAfterRaise: raising the quota let the next connection wake it.
-	ResumedAfterRaise bool `json:"resumed_after_raise"`
-	// StorageLimitPreserved: the quota writes left the storage limit as it was.
+	// SuspendedWhileHeld, RefusedWhileHeld, ResumedAfterRelease: the hold
+	// the sweep places suspends the compute and refuses a connection, and
+	// releasing it lets the next connection wake it.
+	SuspendedWhileHeld  bool `json:"suspended_while_held"`
+	RefusedWhileHeld    bool `json:"refused_while_held"`
+	ResumedAfterRelease bool `json:"resumed_after_release"`
+	// StorageLimitPreserved: the backstop quota write left the storage
+	// limit as it was.
 	StorageLimitPreserved bool `json:"storage_limit_preserved"`
 }
 
 func (e ComputeCapEvidence) Validate() error {
-	if !e.PeriodStartsAtUTCMonth || !e.CounterInComputeUnits || !e.SuspendedAtQuota ||
-		!e.RefusedWhileSuspended || !e.ResumedAfterRaise || !e.StorageLimitPreserved {
+	if !e.PeriodStartsAtUTCMonth || !e.ReportCurrent || !e.ReportInComputeUnits || !e.SuspendedWhileHeld ||
+		!e.RefusedWhileHeld || !e.ResumedAfterRelease || !e.StorageLimitPreserved {
 		return ErrUnavailable
 	}
 	return nil
@@ -58,10 +65,10 @@ type ComputeCapProber interface {
 	ProbeComputeCap(ctx context.Context, providerResourceID string, material CredentialMaterial) (ComputeCapEvidence, error)
 }
 
-// ComputeUnitRatioAcceptable judges a counter-to-allocation ratio, in
-// thousandths: the counter grew by allocated compute units times active
-// seconds, between the compute's smallest and largest size, with a quarter
-// of slack for the provider's counter lag.
+// ComputeUnitRatioAcceptable judges a report-to-allocation ratio, in
+// thousandths: the consumption report grew by allocated compute units times
+// active seconds, between the compute's smallest and largest size, with a
+// quarter of slack for the report's delay.
 func ComputeUnitRatioAcceptable(ratioPermille int64, minimumCU, maximumCU float64) bool {
 	if minimumCU <= 0 || maximumCU < minimumCU {
 		return false
@@ -124,6 +131,9 @@ func (r *Registry) VerifyComputeCapQualification(artifact ComputeCapQualificatio
 	}
 	if _, ok := backend.Provider.(ComputeCapProvider); !ok {
 		return fmt.Errorf("backend %s cannot hold compute quotas: %w", backend.ID, ErrUnsupported)
+	}
+	if _, ok := backend.Provider.(ComputeHoldProvider); !ok {
+		return fmt.Errorf("backend %s cannot hold computes: %w", backend.ID, ErrUnsupported)
 	}
 	if len(artifact.Checks) == 0 {
 		return fmt.Errorf("compute cap qualification has no checks: %w", ErrInvalid)

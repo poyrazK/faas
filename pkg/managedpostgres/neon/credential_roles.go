@@ -20,6 +20,7 @@ type credentialRole struct {
 	connectionLimit                                                          int64
 	name, schemaOwner, authOwner, marker, scope, database, legacy, bindingID string
 	access                                                                   managedpostgres.CredentialAccess
+	liveLegacyScope                                                          string
 }
 
 type credentialRoleManager interface {

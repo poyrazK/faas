@@ -139,12 +139,18 @@ func (l edgeClientLimits) body(h http.Handler) http.Handler {
 	return clientlimit.BodyRate(h, api.EdgeClientBodyMinBytesPerWindow, api.EdgeClientBodyRateWindow, isGRPC, l.count)
 }
 
-// forwards caps the requests this edge forwards to the control plane at once.
-func (l edgeClientLimits) forwards(h http.Handler) http.Handler {
+// forwards caps the requests this edge forwards to the control plane at
+// once, and each client address's share of them (ADR-20261107180000).
+func (l edgeClientLimits) forwards(h http.Handler, trusted []netip.Prefix) http.Handler {
 	if !l.on || h == nil {
 		return h
 	}
-	return clientlimit.InFlight(h, api.EdgeControlPlaneForwardsInFlightMax, l.count)
+	clientAddr := func(r *http.Request) (netip.Addr, bool) {
+		ip, _ := gateway.CanonicalForwardingContext(r, trusted)
+		addr, err := netip.ParseAddr(ip)
+		return addr, err == nil
+	}
+	return clientlimit.InFlight(h, api.EdgeControlPlaneForwardsInFlightMax, api.EdgeControlPlaneForwardsInFlightPerAddrMax, clientAddr, l.count)
 }
 
 // isGRPC reports whether r is a gRPC call, whose client stream may idle.
@@ -167,6 +173,27 @@ func (l edgeClientLimits) tlsListener(ctx context.Context, raw net.Listener, cfg
 		TrackedAddrsMax: api.EdgeClientTrackedAddrsMax,
 		Exempt:          l.proxies,
 	}, l.count, nil)
+	// ADR-20261107180000: one address may hold only its share of the
+	// handshakes in progress, a proxy's address included, and a connection
+	// that sends no ClientHello gives its slot back quickly.
+	cfg = clientlimit.ExtendOnClientHello(cfg, api.EdgeTLSHandshakeTimeout)
 	return clientlimit.NewHandshakeGate(ctx, tls.NewListener(limited, cfg),
-		api.EdgeTLSHandshakesInFlightPerCPU*runtime.GOMAXPROCS(0), api.EdgeTLSHandshakeTimeout, l.count, failed)
+		api.EdgeTLSHandshakesInFlightPerCPU*runtime.GOMAXPROCS(0), api.EdgeTLSHandshakeTimeout, l.count, failed).
+		WithPerAddress(api.EdgeTLSHandshakesInFlightPerAddrMax, api.EdgeTLSHandshakesInFlightPerProxyAddrMax, l.proxies).
+		WithClientHelloTimeout(api.EdgeTLSClientHelloTimeout).
+		WithSettle(func(tc *tls.Conn) bool { return l.settle(limited, tc) })
+}
+
+// settle keeps a connection from Cloudflare's ranges exempt only when it
+// presented the zone's own client certificate. Every Cloudflare customer's
+// zone, Worker and WARP user connects from those ranges, so the address
+// alone proves nothing (ADR-20261104221012); without the certificate the
+// connection is counted against its address like any client's.
+func (l edgeClientLimits) settle(limited *clientlimit.Listener, tc *tls.Conn) bool {
+	vouched := len(tc.ConnectionState().VerifiedChains) > 0
+	reason, ok := limited.Settle(tc.NetConn(), vouched)
+	if !ok {
+		l.count(reason)
+	}
+	return ok
 }

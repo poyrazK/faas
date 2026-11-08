@@ -1,0 +1,14 @@
+schema_version: 1
+worker:
+  drain_timeout: 30s
+  scale:
+    min: 0
+    max: 1
+    metric: queue_depth
+    target: 5
+queue_bindings:
+  - name: jobs
+    queue_name: jobs
+    max_concurrency: 4
+    retry_policy:
+      max_attempts: 1

@@ -130,6 +130,7 @@ type workloadSeed struct {
 	serviceBindingTransport   ServiceBindingTransport
 	serviceReliability        map[string]api.ServiceReliabilityPolicy
 	previewServiceCallsPolicy PreviewServiceCallsPolicy
+	appProtocol               string
 	allowedServiceCallers     *[]string
 	allowedServiceCallScopes  *api.ServiceCallerScopes
 	platformTenantRequired    *bool

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -59,6 +60,12 @@ func (s *server) dashboardAccountPlan(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard/upgrade?plan="+url.QueryEscape(string(target)), http.StatusSeeOther)
 		return
 	}
+	s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.dashboardApplyAccountPlan(w, r, acct, target)
+	})).ServeHTTP(w, r)
+}
+
+func (s *server) dashboardApplyAccountPlan(w http.ResponseWriter, r *http.Request, acct state.Account, target api.Plan) {
 	// The customer portal no longer switches plans (ADR-20261103131742), so
 	// a downgrade is scheduled with the provider here, as the API does.
 	if flag, ok := s.dashboardScheduleDowngrade(r.Context(), acct, target); ok {

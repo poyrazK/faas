@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/retry"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -85,6 +87,9 @@ func (s *PgStore) CreateDevSourcePatch(ctx context.Context, patch DevSourcePatch
 		return DevSourcePatch{}, fmt.Errorf("state: prune developer patches: %w", err)
 	}
 	for attempt := 1; ; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt-1); err != nil {
+			return DevSourcePatch{}, err
+		}
 		row, err := q.InsertDevSourcePatch(ctx, s.pool, sqlc.InsertDevSourcePatchParams{
 			AppID: appID, BaseDeploymentID: baseID, ImageDir: patch.ImageDir, Archive: patch.Archive,
 			Deleted: deleted, Digest: patch.Digest, ExpiresAt: pgtype.Timestamptz{Time: patch.ExpiresAt, Valid: true},

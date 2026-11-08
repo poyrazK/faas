@@ -33,7 +33,7 @@ const insertMigrationSource = `-- name: InsertMigrationSource :one
 INSERT INTO migration_sources(lease_token,instance_id,source_node_id,source_wake_id,native_generation,physical_binding,ram_mb,cpu_millicores,vcpu)
 SELECT $1::text,i.id,$2::uuid,$3::uuid,$4::uuid,$5::text,
  greatest(i.capacity_ram_mb,i.ram_mb+p.overhead_mb),
- greatest(i.capacity_cpu_millicores,coalesce(nullif(a.cpu_millicores,0),p.startup_cpu)),
+ greatest(i.capacity_cpu_millicores,coalesce(i.booked_cpu_millicores,nullif(a.cpu_millicores,0),p.startup_cpu)),
  greatest(i.capacity_vcpu,CASE WHEN i.app_id IS NULL THEN 1 ELSE coalesce((p.plan_vcpus->>ac.plan)::integer,4) END)
 FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN accounts ac ON ac.id=a.account_id CROSS JOIN service_capacity_policy p
 WHERE p.singleton AND i.id=$6::uuid RETURNING lease_token, instance_id, source_node_id, source_wake_id, native_generation, physical_binding, ram_mb, cpu_millicores, vcpu, phase, proof, active_lease_token

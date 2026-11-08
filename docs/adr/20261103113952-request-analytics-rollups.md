@@ -146,3 +146,164 @@ match `(tableoid, ctid)`, as the raw sweep does.
   no view across nodes, and the plan gate lives in apid.
 - **Upsert rollups per row in the insert transaction.** Exact under replay,
   but five upserts per request is more write load than the raw insert.
+
+## Amendment 1 (2026-11-04): hardening after the first review
+
+A review of the shipped rollups found two faults in them and one in the
+telemetry path they read from:
+
+1. **One client could stop an apid's rollups.** The aggregator cut text
+   dimensions at 512 bytes, through a multi-byte rune when a value was
+   longer. A `Referer` host of 253 three-byte runes passes the gateway's
+   normalization, so any client could send one. Postgres refused the whole
+   flush (`invalid byte sequence for encoding "UTF8"`), the aggregator kept
+   the rows for retry, and every later flush on that apid failed, for every
+   app. Coverage was already recorded, so analytics under-reported silently.
+   Now text is cut on a rune boundary (invalid UTF-8 and NUL removed), a
+   flush that Postgres refuses for its data (SQLSTATE class 22 or 23) is split
+   until the refused rows stand alone and those are dropped, and only other
+   errors keep the rows for retry.
+2. **Lost rollups were invisible.** apid now records each app minute whose
+   rollups it lost (refused rows, or a full buffer) in
+   `request_analytics_rollup_gaps`. Analytics answered from rollups report a
+   window holding such a minute as incomplete with `telemetry_window_incomplete`.
+   meterd sweeps markers after 15 days.
+3. **The route deployment split mixed stores.** Each route's total came from
+   the rollups but its per-deployment counts from the capped raw rows, so
+   past the cap "other deployments" absorbed the missing requests and their
+   compute cost. Both deployment splits now take their counts from the
+   rollups (`RequestAnalyticsRollupRouteDeployments`) when rollups answer;
+   commit, tag and CPU still come from raw rows.
+4. **The busiest values were not the ones kept.** A flush kept the first 50
+   values per app minute and kind, so a busy consumer that arrived late went
+   to `__other__`. The buffer now holds up to 200 values and the flush keeps
+   the 50 with the most requests.
+
+The gateway publisher drained one 256-row batch per tick. Its wake hook
+re-arms only when a drain leaves the recorder under half full, so once rows
+arrived faster than one batch could ship, delivery fell to the 5 s ticker,
+256 rows per 5 s. At 1.25 times ship capacity 6% of rows were delivered. A
+tick now keeps draining while a full batch waits, bounded by one pass over
+the ring.
+
+## Amendment 2 (2026-11-05): an hourly tier, and sampled detail is best-effort
+
+A review of long windows found three more problems.
+
+1. **Long windows read too slowly.** A 7-day window of a busy app took 17 to
+   28 s on rollups. Reads summed every minute row (10,080 buckets per group)
+   through a PL/pgSQL histogram aggregate, inside a materialized CTE that
+   also held the histograms for the top-groups pass. Three changes:
+   - apid also adds every flush to `request_analytics_hours`, in the same
+     transaction as `request_analytics_minutes`. It has the same columns and
+     key at hour grain. Reads take the whole hours inside the window from it
+     and the partial edge hours from minutes, so 14 days read 336 buckets per
+     group instead of 20,160, and the answer is the same as minutes alone
+     give.
+   - `request_analytics_rollup_coverage.hours_covered_since` is the first
+     minute the hourly tier holds. The tier is read only from the hour after
+     that minute plus `RequestAnalyticsSettleLag`, so an app whose minutes
+     predate the tier reads minutes until whole hours exist. A flush sets it
+     the way it sets `covered_since`, so the first flush after the upgrade
+     sets it for an existing app. During a rolling upgrade an old apid replica
+     writes minutes but not hours. That is the same window as an old replica
+     not writing rollups at all, which the coverage section above already
+     accepts.
+   - The histogram is summed with native `SUM` per bucket, and the CTEs are
+     `NOT MATERIALIZED`. The top-groups pass ranks on requests without
+     carrying histograms.
+   meterd sweeps hourly rows on the same plan ladder, by `bucket_start`.
+   On a local Postgres 16 holding 7 days of 80 route and status groups
+   (806,400 minute rows), the 7-day route read took 32.5 s from minutes
+   alone and 1.3 to 1.9 s with the hourly tier (15,760 rows read).
+2. **Sampled measures went missing silently.** The raw read for CPU and the
+   latency of sampled rows is bounded by
+   `RequestAnalyticsSampledMeasuresTimeout`. Past it the measures were left
+   out, and nothing in the response said so. The response now has
+   `sampled_measures`: `included`, or `omitted` when any sampled-detail read
+   failed or ran out of time. Counts, error rates and percentiles never
+   depend on it.
+3. **Raw deployment reads were fatal.** The per-deployment cost read and the
+   per-route deployment read run on raw rows even when rollups answer. Either
+   one failing failed the whole analytics response. Both are now
+   best-effort. Beside rollups they share the sampled-measures time budget;
+   on raw-row windows they run unbounded. A failure leaves out
+   `deployment_costs` or the route deployment splits, logs a warning, and
+   sets `sampled_measures` to `omitted`. A cancelled request still fails.
+
+## Amendment 3 (2026-11-07): smaller rollups
+
+A size review found the minute tier holding about 2.8 GB a day for one app
+at 100 requests/s (689 bytes per row on Postgres 16, 2,840 rows a minute),
+so about 20 GB at Pro's 7-day retention and 39 GB at Scale's 14 days: about
+half the raw telemetry it was meant to replace. Two causes, both fixed:
+
+1. **Dimension rows were split by status and deployment.** Every
+   `country`, `referrer_host`, `ua_family` and `consumer_id` row carried the
+   request's HTTP status and deployment in its key, as route rows do. No
+   reader uses either for those kinds: `group_by=status` and the deployment
+   splits read route rows only, and error counts are a column. apid now
+   writes those rows with status `0` and the nil deployment, so a value is
+   one row per minute. Route rows keep their method, status and deployment.
+   Migration `20261107164340118` lets the status CHECK of both tiers accept
+   `0` on non-route rows (added `NOT VALID`, validated, then the old CHECK
+   dropped); the previous release writes rows it accepts and reads status on
+   route rows only. Rows written before the upgrade age out with retention;
+   readers merge old and new rows of a value as they already merge groups.
+2. **The top-N fold was per flush, not per minute.** Each 10-second flush
+   kept its own busiest `RequestAnalyticsRollupDimensionsMax` values, so a
+   minute stored up to six different sets (about 180 consumers instead of
+   50), and each minute row was upserted about six times. apid now writes a
+   minute once, at the first flush after it closed
+   `RequestAnalyticsRollupMinuteGrace` (30 s) ago, with one fold over the
+   whole minute; rows of a minute that arrive later are added by the next
+   flush. The grace covers gateways holding a minute until it closes, and
+   the minute is still inside `RequestAnalyticsSettleLag`, which readers
+   already report as arriving. A clean shutdown writes the open minutes too.
+   An apid crash now loses up to about 100 s of rollups instead of 10 s;
+   the debugger's raw rows are unaffected. The per-minute value buffer is
+   `RequestAnalyticsRollupDimensionsBufferMax` (now 500), as a value costs
+   one buffered row.
+
+With the same traffic mix, a minute is now 358 rows written once (538 with a
+canary's second deployment), against 2,840 rows from 6,952 upserts: about
+8x less storage and 19x fewer row writes, in both tiers. The hourly tier is
+derived from the same rows, so each hour row is now updated once a minute
+instead of every flush.
+
+Two more reductions follow in the same change:
+
+3. **Minutes are kept 48 hours.** The hourly tier already answers every
+   whole hour of a window, so minute rows matter only for a window's partial
+   edge hours. meterd now sweeps minute rows past
+   `RequestAnalyticsMinuteRetention` (48 h) on every plan, or sooner when the
+   plan's telemetry retention is shorter; hour rows keep the plan ladder.
+   An analytics window whose start or end lies past
+   `RequestAnalyticsMinuteReadHorizon` (47 h, an hour of margin for the
+   hourly sweep) is widened to whole UTC hours: its start moves back to the
+   hour, or forward when that hour precedes the plan's retention, and its
+   end moves forward to the next hour; ends inside the horizon stay as asked,
+   so a recent window still ends now. The response's `from` and `until` show
+   the window answered. Past the horizon the rollups answer only a start the
+   hourly tier holds (on the hour, at or after its coverage); otherwise the
+   read falls back to raw rows, as before coverage. For a 14-day Scale app
+   at 100 requests/s, the minute tier drops from about 5 GB to about 0.7 GB.
+   An apid of the previous release reading a long window during the rollout
+   finds its first partial hour's minutes swept and under-counts that hour.
+   A single cutoff for nearly every row also lets each sweep batch take the
+   oldest rows off the bucket index, instead of walking past Scale rows that
+   Pro and Hobby cutoffs leave behind.
+4. **Integer histograms, expand step.** `latency_hist` is 45 `bigint`s,
+   360 of a row's 689 bytes, but a bucket counts one app's requests in one
+   minute or hour. Migration `20261107175452204` adds the nullable
+   `latency_hist_int4 integer[]` to both tiers, makes `latency_hist`
+   nullable, and requires a row to hold at least one of them. Readers add the
+   two columns bucket by bucket, and this release's writer, adding to a row
+   whose `latency_hist` is NULL, starts from zeros. The writer still writes
+   `latency_hist`: a previous-release reader scans NULL histogram buckets as
+   errors, so a release that wrote integers alone would fail its analytics
+   reads during the rollout or after a rollback. The next release's writer
+   fills `latency_hist_int4` alone and folds a row's bigint histogram into it
+   when it updates the row (`request_analytics_hist_add_int4`); a later
+   contract migration drops `latency_hist`. That saves about 26% of every
+   rollup row.

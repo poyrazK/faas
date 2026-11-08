@@ -150,7 +150,10 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			close(fault.Cancelled)
-			return
+			// Returning normally would let net/http synthesize a 200 response
+			// that races the client's cancellation. Abort the response so a
+			// cancelled validation cannot look like a successful listing.
+			panic(http.ErrAbortHandler)
 		case <-timer.C:
 		}
 	}

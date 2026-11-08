@@ -117,6 +117,44 @@ has its own cap, with the same defaults. Its owner sets it with
 `GET /v1/orgs/{slug}/overage-cap`. The organization's apps stop at the
 organization's cap, not at the cap of the member who created them.
 
+## Egress overage
+
+Each plan includes a monthly allowance of application egress: Free 10 GiB,
+Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB. By default every plan stops at
+it: once the month's egress reaches the allowance, the account's apps are
+parked (`quota_exceeded_egress`) until the month ends or the plan grows
+(ADR-20261104090000).
+
+A paid account can instead elect to pay for egress above the allowance
+(ADR-20261104204500):
+
+```bash
+gregale billing egress-overage          # show the election
+gregale billing egress-overage on       # bill egress above the allowance
+gregale billing egress-overage off      # stop at the allowance again
+```
+
+`PUT /v1/account/egress-overage` with `{"enabled": true}` does the same, and
+`GET` reads it. Changing it needs the `admin` scope, like the spend cap; a
+dashboard session also needs a recent step-up. Free cannot elect it (HTTP 402
+`plan_egress_overage_not_allowed`).
+
+While the election is on and egress billing is live, egress above the
+allowance is billed per GiB (the response's `price_millicents_per_gib`) and
+counts toward the spend cap like compute overage. While egress billing is not
+live (`billing: off`), the allowance still holds and the saved election takes
+effect when billing starts.
+
+Only egress sent while the election is on is billed: egress above the
+allowance before you turned it on is never billed, and turning it off keeps
+the hours it covered billable, so turning it off cannot undo egress already
+sent. Turning it back on keeps the original start. The hour in which you turn
+it on is not billed.
+
+An organization that owns its resources elects for itself:
+`PUT /v1/orgs/{slug}/egress-overage` (owner) or
+`gregale billing egress-overage on --org SLUG`.
+
 ## Retained usage costs and forecasts
 
 This financial visibility preview reports supported usage costs and budget

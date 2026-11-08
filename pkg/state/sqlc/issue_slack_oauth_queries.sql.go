@@ -235,8 +235,8 @@ func (q *Queries) IssueSlackOAuthFlow(ctx context.Context, db DBTX, arg IssueSla
 const issueSlackOAuthFlowClaim = `-- name: IssueSlackOAuthFlowClaim :one
 UPDATE issue_slack_oauth_flows f SET phase='exchanging'
 WHERE f.state_hash=$1 AND f.account_id=$2 AND f.phase='authorizing' AND f.expires_at>clock_timestamp()
-AND EXISTS(SELECT 1 FROM apps a JOIN accounts owner ON owner.id=a.account_id
- WHERE a.id=f.app_id AND a.account_id=f.account_id AND a.deleted_at IS NULL AND owner.status='active' AND owner.abuse_hold_at IS NULL)
+AND EXISTS(SELECT 1 FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
+ WHERE a.id=f.app_id AND a.account_id=f.account_id AND a.deleted_at IS NULL AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)))
 RETURNING f.app_id, f.account_id, f.state_hash, f.expected_revision, f.phase, f.sealed, f.expires_at
 `
 
@@ -332,8 +332,8 @@ func (q *Queries) IssueSlackOAuthInteractionsDisable(ctx context.Context, db DBT
 }
 
 const issueSlackOAuthOwnerReady = `-- name: IssueSlackOAuthOwnerReady :one
-SELECT EXISTS(SELECT 1 FROM apps a JOIN accounts owner ON owner.id=a.account_id WHERE a.id=$1 AND a.account_id=$2
-AND a.deleted_at IS NULL AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY($3::text[]))
+SELECT EXISTS(SELECT 1 FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id WHERE a.id=$1 AND a.account_id=$2
+AND a.deleted_at IS NULL AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY($3::text[]))
 `
 
 type IssueSlackOAuthOwnerReadyParams struct {

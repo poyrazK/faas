@@ -137,6 +137,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	}
 	var req api.CreateOrgAPIKeyRequest
 	_ = decodeJSON(r, &req)
+	if problem := reservedKeyLabelProblem(req.Label); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	scopes, err := api.NormalizeCreateKeyScopes(req.Scopes)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -164,6 +168,11 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	projects, prob := s.keyProjects(r.Context(), acct, mem.OrgID, scopes, req.Projects)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	approvals, approvalsSet, prob := keyApprovalCategories(scopes, req.ApprovalCategories)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -207,6 +216,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.setKeyApprovalCategories(r.Context(), acct, k, approvals, approvalsSet); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"created","org":"`+mem.OrgID+`"}`)
 	s.log.Info("api key created", "key", k.ID, "account", acct.ID, "org", mem.OrgID)
@@ -226,6 +239,9 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	resp.Plaintext = plaintext
 	if len(projects) > 0 {
 		resp.Projects = projectSlugs(projects)
+	}
+	if approvalsSet {
+		resp.ApprovalCategories = &approvals
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -348,6 +364,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	}
 	var req api.RotateOrgAPIKeyRequest
 	_ = decodeJSON(r, &req)
+	if problem := reservedKeyLabelProblem(req.Label); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if p := authz.AuthorizeOrgAction(r.Context(), authz.OrgActionCreateApiKey, s.authzAuditForCurrentRequest()); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -404,6 +424,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		}
 		if errors.Is(err, state.ErrAPIKeyRevoked) {
 			s.notFound(w, "key already revoked")
+			return
+		}
+		if errors.Is(err, state.ErrAPIKeyExpired) {
+			api.WriteProblem(w, api.ErrAPIKeyExpired())
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not rotate key"))

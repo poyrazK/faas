@@ -184,6 +184,13 @@ type InstanceInfo struct {
 	// pkg/meter sampler also skips these rows so the customer is
 	// never billed for the shadow VM.
 	Mode string
+	// IdleLadderLevel is the idle ladder level vmmd reported for the
+	// instance in a fresh sample, 0 when none (ADR-20261107122928).
+	IdleLadderLevel int
+	// IdleLadderHold is true when schedd's idle_ladder_idle_out is on and
+	// the quiet_pause_unbilled flag releases the app's account: the ladder
+	// then owns the idle period of an instance vmmd holds paused.
+	IdleLadderHold bool
 }
 
 func (i InstanceInfo) admissionMB() int {
@@ -231,6 +238,10 @@ func ReapEarlyFreeze(now time.Time, instances []InstanceInfo, quiet time.Duratio
 			continue
 		}
 		if in.InflightRequests > 0 || in.OpenConns > 0 || in.TailCount > 0 {
+			continue
+		}
+		// ADR-20261107122928: the ladder owns this idle period in vmmd.
+		if in.idleLadderHeld() {
 			continue
 		}
 		if anchor := scaleInCooldownAnchor(in); anchor != nil && in.ScaleInCooldownS > 0 && now.Sub(*anchor) < time.Duration(in.ScaleInCooldownS)*time.Second {
@@ -432,7 +443,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		// customer's work and emits a false idle_timeout
 		// lifecycle_failure_reason.
 		switch state.InstanceMode(in.Mode) {
-		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob, state.InstanceModeFork:
+		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob, state.InstanceModeFork, state.InstanceModeRefresh:
 			continue
 		}
 		if in.State == state.StateRunning {
@@ -466,8 +477,8 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 			// this is safer than interpreting unknown age as stale.
 			continue
 		}
-		timeout := time.Duration(EffectiveIdleTimeoutS(in.Plan, in.AppType, in.IdleTimeoutS)) * time.Second
-		if now.Sub(lastActivity) > timeout {
+		// ADR-20261107122928: an instance the ladder holds parks at L5.
+		if now.Sub(lastActivity) > in.idleTimeout() {
 			if in.State == state.StateWarm {
 				g.warmCands = append(g.warmCands, in)
 			} else {
@@ -654,7 +665,7 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 		// job-mode runs are bounded by JobMaxRuntimeS, not the
 		// reaper; scale-in mid-job loses the customer's work.
 		switch state.InstanceMode(in.Mode) {
-		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob, state.InstanceModeFork:
+		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob, state.InstanceModeFork, state.InstanceModeRefresh:
 			continue
 		}
 		g, ok := byApp[groupKey]
@@ -887,7 +898,10 @@ func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo 
 	// through to the !reserved branch on both sides, preserving the
 	// historical LRU behaviour bit-for-bit.
 	sort.Slice(cands, func(a, b int) bool {
-		af, bf := cands[a].State == state.StateFrozen, cands[b].State == state.StateFrozen
+		// ADR-20261107122928: an instance the idle ladder holds past its
+		// idle timeout is idle residency like a frozen one, and goes with it.
+		af := cands[a].State == state.StateFrozen || cands[a].idleLadderSurplus(now)
+		bf := cands[b].State == state.StateFrozen || cands[b].idleLadderSurplus(now)
 		if af != bf {
 			return af // frozen first
 		}

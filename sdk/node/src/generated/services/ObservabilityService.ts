@@ -32,7 +32,7 @@ export class ObservabilityService {
   /**
    * Search an app's log events.
    * Internal preview, enabled by
-   * `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+   * `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 403 `log_search_unavailable`.
    * Requires apps:read or admin.
    *
    * Returns one newest-first page of the app's log ledger. Filters
@@ -881,7 +881,7 @@ export class ObservabilityService {
   /**
    * Account service map of caller → target app edges.
    * Internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
-   * otherwise 503 `service_map_unavailable`.
+   * otherwise 403 `service_map_unavailable`.
    *
    * Built from the unsampled service-proxy edge series. Both the
    * caller and the target are constrained to the account's apps.

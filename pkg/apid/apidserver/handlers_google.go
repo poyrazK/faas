@@ -307,6 +307,10 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		writeSignupNetworkCap(w)
 		return
 	}
+	if errors.Is(err, errOAuthProviderUnlinked) {
+		writeOAuthProviderUnlinked(w, r, "google")
+		return
+	}
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "complete Google sign-in",
 			"Gregale could not finish setting up your account.",
@@ -377,8 +381,8 @@ func (s *server) provisionOrFetchGoogleAccount(r *http.Request, info GoogleUserI
 		// returns ErrConflict on a different-account re-bind
 		// (handled by the sub-first lookup above), so this is
 		// safe.
-		if err := s.store.UpsertOAuthLink(ctx, acct.ID, "google", info.ID, email, info.VerifiedEmail); err != nil {
-			s.log.Error("google.upsert_link", "err", err)
+		if err := s.linkOAuthByEmail(r, acct, "google", info.ID, email, info.VerifiedEmail); err != nil {
+			return state.Account{}, err
 		}
 		return s.verifyOAuthAccountEmail(ctx, acct)
 	}

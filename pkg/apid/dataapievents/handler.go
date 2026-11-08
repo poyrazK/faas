@@ -9,11 +9,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
+	"github.com/onebox-faas/faas/pkg/apid/dataapiworkload"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -25,12 +25,7 @@ type Publisher interface {
 }
 
 // Store resolves the workload a token names.
-type Store interface {
-	state.AppOwnerReader
-	AppByID(ctx context.Context, id string) (state.App, error)
-	InstanceByID(ctx context.Context, id string) (state.Instance, error)
-	DeploymentByID(ctx context.Context, id string) (state.Deployment, error)
-}
+type Store = dataapiworkload.Store
 
 // Handler publishes a runtime's change events. Only a gregale:data-api:events
 // token from a live instance of an active app is accepted; events publish
@@ -51,8 +46,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	acct, app, err := h.workload(r)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required",
-			"a gregale:data-api:events workload token from a live instance of an active app is required"))
+		dataapiworkload.Refuse(w, err, "a gregale:data-api:events workload token from a live instance of an active app is required")
 		return
 	}
 	if h.Publisher == nil {
@@ -82,40 +76,12 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(api.DataAPIChangeEventBatchResponse{Source: source, Results: results})
 }
 
-// workload verifies the token and resolves its live app and account.
+// workload verifies the token and resolves its live app and account. Events
+// carry no deployment scope: a stage's changes would publish under the
+// production app's source, and a cloned environment copies the setting and
+// the change table, so only production publishes.
 func (h Handler) workload(r *http.Request) (state.Account, state.App, error) {
-	if h.Verifier == nil || h.Store == nil {
-		return state.Account{}, state.App{}, errors.New("workload trust is not configured")
-	}
-	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	claims, err := h.Verifier.Verify(token, workloadidentity.DataAPIEventsAudience, h.now())
-	if err != nil {
-		return state.Account{}, state.App{}, err
-	}
-	app, err := h.Store.AppByID(r.Context(), claims.AppID)
-	if err != nil || app.AccountID != claims.AccountID || app.Status == state.AppDeleted {
-		return state.Account{}, state.App{}, errors.New("token does not name this app")
-	}
-	acct, err := state.AppResourceAccount(r.Context(), h.Store, app)
-	if err != nil || !acct.Active() {
-		return state.Account{}, state.App{}, errors.New("account is not active")
-	}
-	instance, err := h.Store.InstanceByID(r.Context(), claims.InstanceID)
-	if err != nil || instance.AppID != app.ID || !state.State(instance.State).CountsForConcurrency() {
-		return state.Account{}, state.App{}, errors.New("instance is not live")
-	}
-	// Events carry no deployment scope: a stage's changes would publish
-	// under the production app's source, and a cloned environment copies
-	// the setting and the change table. Only production publishes, as only
-	// production leases queues (ADR-1141 amendment 2026-10-27, bug hunt 36).
-	if !state.ProductionDeploymentScope(claims.Environment) {
-		return state.Account{}, state.App{}, errors.New("token names a stage environment")
-	}
-	deployment, err := h.Store.DeploymentByID(r.Context(), instance.DeploymentID)
-	if err != nil || deployment.AppID != app.ID || !state.ProductionDeploymentScope(deployment.Scope) {
-		return state.Account{}, state.App{}, errors.New("instance does not run a production deployment")
-	}
-	return acct, app, nil
+	return dataapiworkload.Live(r, h.Verifier, workloadidentity.DataAPIEventsAudience, h.Store, h.now())
 }
 
 // publish publishes events in order. It stops at the first event that may

@@ -17,7 +17,7 @@ import (
 // The aggregator rounds to 6 decimal places so the test surface and the
 // financial-model cells line up without float drift. (Spec §4.7 says the
 // billable unit is integer mb-seconds; the float only exists at the quota
-// gate where $0.01/GB-h needs a unit.)
+// gate where the overage rate needs a unit.)
 func MonthlyUsageGB(usages []state.Usage) float64 {
 	var mbSec int64
 	for _, u := range usages {
@@ -44,19 +44,18 @@ func MonthlyEgressBytes(usages []state.Usage) int64 {
 }
 
 // EgressCeilingBytes is the month's application egress ceiling for plan: the
-// plan's monthly egress while the provider does not bill egress live for it,
-// and none (zero) once it does, when egress above the allowance is overage
-// under the spend cap instead (ADR-20261103131742). Free egress is never
-// billed, so Free always has the ceiling.
-func EgressCeilingBytes(provider billing.Provider, plan api.Plan) int64 {
+// plan's monthly egress, zero when the plan has none or the ceiling is lifted.
+// Live egress billing alone does not lift it (ADR-20261104090000, amending
+// ADR-20261103131742): egress above the allowance is billed only for a
+// subject whose egress overage election is on, on a plan that allows one,
+// while the provider bills that plan's egress live (ADR-20261104204500).
+func EgressCeilingBytes(provider billing.Provider, plan api.Plan, election state.EgressOverageElection, now time.Time) int64 {
 	limits, ok := api.LimitsFor(plan)
 	if !ok || limits.MonthlyEgressGiB <= 0 {
 		return 0
 	}
-	if policies, ok := provider.(billing.MeterUsagePolicyProvider); ok {
-		if policy, configured := policies.MeterUsagePolicy(plan, state.BillingMeterEgress); configured && policy.Mode == billing.MeterDeliveryLive {
-			return 0
-		}
+	if billing.EgressOverageLifted(provider, plan, election, now) {
+		return 0
 	}
 	return limits.MonthlyEgressGiB << 30
 }
@@ -79,7 +78,7 @@ type QuotaResult struct {
 // financial-model §1):
 //
 //	Free       — included GB-h/month (limits.go).  ≥100 % ⇒ hard stop.
-//	Hobby/Pro/Scale — included quotas; overage accrues at $0.01/GB-h.
+//	Hobby/Pro/Scale — included quotas; overage accrues at api.OverageMillicentsPerGBHour ($0.05/GB-h).
 //	                        ≥100 % ⇒ one warning event per UTC day (the
 //	                        caller de-duplicates; see EmitQuotaWarning).
 //
