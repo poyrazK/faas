@@ -415,7 +415,7 @@ registered as clone configuration.
 
 **Decision.**
 
-- `route_removal_route_observed` (migration `20261104141431423`) is the one
+- `route_removal_route_observed` (migration `20261108095332288`) is the one
   evidence check for approval and the cutover gate. A removed operation
   matches telemetry whose route fits its template (each `{parameter}` one
   segment, optional method prefix, optional trailing slash) for its method,
