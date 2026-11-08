@@ -103,6 +103,18 @@ if [[ -n "${KERNEL_FILE:-}" ]]; then
   install -m 0644 "$KERNEL_FILE" "$work_root/$git_sha/bin/vmlinux"
 fi
 
+# ADR-20261108170000: the patched Firecracker VMM (host-owned virtio-net
+# header) is built once by release CI and shipped as a support artifact.
+# The node_join playbook installs it under the upstream basename; the distinct
+# name here keeps it from shadowing `firecracker` on vmmd's PATH.
+if [[ -n "${FIRECRACKER_FILE:-}" ]]; then
+  [[ -f "$FIRECRACKER_FILE" && -r "$FIRECRACKER_FILE" ]] || {
+    echo "FIRECRACKER_FILE is missing or unreadable: $FIRECRACKER_FILE" >&2
+    exit 2
+  }
+  install -m 0755 "$FIRECRACKER_FILE" "$work_root/$git_sha/bin/firecracker-vmm"
+fi
+
 # imaged verifies platform base provenance offline against the Sigstore root
 # its own release shipped, and admits the frozen pre-attestation digests
 # (ADR-20261029155852). Both are support files hashed into tool_hashes.
