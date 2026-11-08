@@ -83,7 +83,7 @@ export type AppEffectiveLimits = {
    */
   idle_timeout_s?: number;
   /**
-   * When the platform may pause the VM (ADR-1151): the declared value or the default for the app's type. Apps on a private network are never paused.
+   * When the platform may pause the VM: the declared value or the default for the app's type. Apps on a private network are never paused.
    */
   pause?: 'between_requests' | 'when_idle' | 'never';
 };

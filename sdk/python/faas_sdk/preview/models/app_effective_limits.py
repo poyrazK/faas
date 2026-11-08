@@ -63,8 +63,8 @@ class AppEffectiveLimits:
     """Idle timeout the platform applies: the app's own setting or its type's default, within the plan bounds
     (seconds)."""
     pause: AppEffectiveLimitsPause | Unset = UNSET
-    """When the platform may pause the VM (ADR-1151): the declared value or the default for the app's type. Apps on
-    a private network are never paused."""
+    """When the platform may pause the VM: the declared value or the default for the app's type. Apps on a private
+    network are never paused."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
