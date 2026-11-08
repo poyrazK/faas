@@ -6,8 +6,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,7 +59,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" || os.Geteuid() != 0 {
 		t.Fatal("SQL guest acceptance requires root on x86_64 Linux")
 	}
-	for _, required := range []string{"DATABASE_URL", "FAAS_TEST_KERNEL", "FAAS_BUILDER_BASE_PATH", "FAAS_GUEST_INIT", "GREGALE_POSTGRES_NATIVE_SQL_IP", "GREGALE_POSTGRES_NATIVE_CA_PATH"} {
+	for _, required := range []string{"DATABASE_URL", "FAAS_TEST_KERNEL", "FAAS_BUILDER_BASE_PATH", "FAAS_GUEST_INIT", "GREGALE_POSTGRES_NATIVE_CA_PATH"} {
 		if os.Getenv(required) == "" {
 			t.Fatalf("missing native SQL prerequisite %s", required)
 		}
@@ -80,7 +80,12 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	if err := dbMigrateUp(t, pool); err != nil {
 		t.Fatal(err)
 	}
-	proxy := postgresfixture.OpenProxy(t, pool, os.Getenv("GREGALE_POSTGRES_NATIVE_SQL_IP"), 5432)
+	// Guests reach the disposable SQL proxy through the managed-database route
+	// (ADR-1027), as production apps reach pgproxyd: the host firewall drops
+	// guest traffic to any host-local address (spec §11).
+	proxy := postgresfixture.OpenProxy(t, pool, "127.0.0.1", 0)
+	proxyAddress := net.JoinHostPort(proxy.Host, strconv.Itoa(int(proxy.Port)))
+	routeHost, routePort := e2etest.DatabaseRouteEndpoint()
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(registry.Close)
 	builder, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
@@ -110,10 +115,11 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	if err := os.WriteFile(hmacPath, hmac, 0400); err != nil {
 		t.Fatal(err)
 	}
-	fixture := postgresfixture.New(t, pool, identity, hmac, proxy.Host, proxy.Port)
+	fixture := postgresfixture.New(t, pool, identity, hmac, routeHost, routePort)
 	if fixture == nil {
 		t.Fatal("customer SQL fixture missing")
 	}
+	fixture.HostAddress = proxyAddress
 	environment := []string{
 		"FAAS_HOST_HMAC_KEY_PATH=" + hmacPath,
 		"FAAS_RELEASE_PHASE_ENABLED=1",
@@ -126,6 +132,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		"FAAS_FLEET_AGE_RECIPIENT_PATH=" + public,
 	}
 	environment = append(environment, fixture.DaemonEnvironment(t)...)
+	environment = append(environment, e2etest.DatabaseRouteEnvironment(t, proxyAddress)...)
 	// The daemon harness deliberately inherits a narrow environment. Forward
 	// the isolated scanner configuration explicitly; all scans remain required.
 	for _, name := range []string{"GRYPE_DB_CACHE_DIR", "GRYPE_DB_AUTO_UPDATE"} {
@@ -207,23 +214,16 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		t.Fatalf("create SQL app: status=%d", status)
 	}
 	appID := mustGetAppID(t, h, key, slug)
-	ports := []int{5432}
-	// ADR-373 requires resolved DNS or an explicit customer CIDR for a
-	// literal endpoint. This isolated proxy uses only one benchmark IP.
-	proxyCIDR := netip.PrefixFrom(netip.MustParseAddr(proxy.Host), 32).String()
-	destinations := []string{proxyCIDR}
 	// Pro apps default to public_auth_mode=bearer (ADR-080) as well as
 	// require_authn; the SQL probe requests are anonymous, so open both gates.
 	openAuth := &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
 	// The starters' /healthz reads the database after a restore; while parked
 	// the gateway answers the health path itself unless it may wake (Pro+).
 	healthWakes := true
-	if status := statusOnly(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{EgressPorts: &ports, EgressAllowlist: &destinations, PublicAuth: openAuth, HealthPathWakes: &healthWakes}); status != http.StatusOK {
-		t.Fatalf("declare SQL destination and TCP port through app policy: status=%d", status)
-	}
-	app, err := store.AppByID(t.Context(), appID)
-	if err != nil || len(app.EgressAllowlist) != 1 || app.EgressAllowlist[0].String() != proxyCIDR || len(app.EgressPorts) != 1 || app.EgressPorts[0] != 5432 {
-		t.Fatal("public app policy did not persist the isolated SQL destination and port")
+	// The database route is a platform hop (ADR-1027): the app declares no
+	// egress destination or port for its own database.
+	if status := statusOnly(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{PublicAuth: openAuth, HealthPathWakes: &healthWakes}); status != http.StatusOK {
+		t.Fatalf("open SQL app auth: status=%d", status)
 	}
 	database, bindings := fixture.Create(t, account, appID)
 	uri := func(binding mp.Binding) string {

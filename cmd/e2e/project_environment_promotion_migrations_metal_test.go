@@ -57,9 +57,11 @@ func newPromotionMigrationNative(t *testing.T, mode string) *promotionMigrationN
 }
 func newPromotionMigrationNativeConfigured(t *testing.T, mode string, coordinated bool) *promotionMigrationNative {
 	t.Helper()
-	if os.Getenv("GREGALE_POSTGRES_NATIVE_SQL_IP") == "" {
-		t.Fatal("promotion migrations require the guarded isolated SQL proxy address")
-	}
+	// Guests reach the disposable SQL proxy through the managed-database route
+	// (ADR-1027); the proxy opens in the deploy hook, after Start, so its
+	// loopback address is reserved now and named as the route's upstream.
+	proxyAddress := e2etest.ReserveLoopbackAddress(t)
+	routeHost, routePort := e2etest.DatabaseRouteEndpoint()
 	identity, err := age.GenerateX25519Identity()
 	mustProjectWorkerNative(t, err)
 	keys := t.TempDir()
@@ -115,24 +117,23 @@ func newPromotionMigrationNativeConfigured(t *testing.T, mode string, coordinate
 		options.workloadValues = scoped
 		options.environment = append(options.environment, "FAAS_PROMOTION_SERVICE_GRAPH_ENABLED=1")
 	}
+	options.environment = append(options.environment, e2etest.DatabaseRouteEnvironment(t, proxyAddress)...)
 	options.beforeDeploy = func(f *projectWorkerNativeFixture) {
 		if coordinated {
 			configurePromotionGraphDestination(t, f)
 		}
-		proxy = postgresfixture.OpenProxyWithDeadline(t, f.h.Pool, os.Getenv("GREGALE_POSTGRES_NATIVE_SQL_IP"), 5432, 12*time.Minute)
+		proxy = postgresfixture.OpenProxyWithDeadline(t, f.h.Pool, "127.0.0.1", e2etest.LoopbackPort(t, proxyAddress), 12*time.Minute)
 		var err error
 		hmac, err = os.ReadFile(f.h.HostHMACKeyPath)
 		if err != nil {
 			t.Fatal("read isolated SQL signing key")
 		}
-		ports := []int{5432}
-		destinations := []string{netip.PrefixFrom(netip.MustParseAddr(proxy.Host), 32).String()}
-		_, err = f.owner.UpdateApp(t.Context(), f.apps[owner].Slug, api.UpdateAppRequest{EgressPorts: &ports, EgressAllowlist: &destinations})
-		mustProjectWorkerNative(t, err)
-		m.target = postgresfixture.New(t, f.h.Pool, identity, hmac, proxy.Host, proxy.Port)
+		// The database route is a platform hop: no egress destination or port.
+		m.target = postgresfixture.New(t, f.h.Pool, identity, hmac, routeHost, routePort)
 		if m.target == nil {
 			t.Fatal("destination SQL fixture unavailable")
 		}
+		m.target.HostAddress = proxyAddress
 		m.config = bind(f, "production", m.target, mode, false)
 		t.Cleanup(func() { f.cleanup(t) })
 	}
@@ -140,10 +141,11 @@ func newPromotionMigrationNativeConfigured(t *testing.T, mode string, coordinate
 		if coordinated {
 			configurePromotionGraphSource(t, f)
 		}
-		m.source = postgresfixture.New(t, f.h.Pool, identity, hmac, proxy.Host, proxy.Port)
+		m.source = postgresfixture.New(t, f.h.Pool, identity, hmac, routeHost, routePort)
 		if m.source == nil || m.source.Major != m.target.Major {
 			t.Fatal("source SQL fixture unavailable or version differs")
 		}
+		m.source.HostAddress = proxyAddress
 		bind(f, "staging", m.source, "success", true)
 		t.Cleanup(func() { f.cleanup(t) })
 	}

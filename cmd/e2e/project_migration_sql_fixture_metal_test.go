@@ -5,7 +5,6 @@ package e2e_test
 import (
 	"context"
 	"errors"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/e2etest/migrationprobe"
 	probesql "github.com/onebox-faas/faas/pkg/e2etest/migrationprobe/sqlc"
+	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/e2etest/postgresfixture"
 	mp "github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -37,9 +37,10 @@ type projectContractSQL struct {
 
 func newProjectContractSQLSetup(t *testing.T) projectContractSQLSetup {
 	t.Helper()
-	if os.Getenv("GREGALE_POSTGRES_NATIVE_SQL_IP") == "" {
-		t.Fatal("managed contract lane requires its isolated SQL proxy address")
-	}
+	// Guests reach the disposable SQL proxy through the managed-database route
+	// (ADR-1027); the proxy opens after Start, so reserve its address now.
+	proxyAddress := e2etest.ReserveLoopbackAddress(t)
+	routeHost, routePort := e2etest.DatabaseRouteEndpoint()
 	identity, err := age.GenerateX25519Identity()
 	mustProjectWorkerNative(t, err)
 	keys := t.TempDir()
@@ -48,21 +49,19 @@ func newProjectContractSQLSetup(t *testing.T) projectContractSQLSetup {
 	mustProjectWorkerNative(t, secretbox.WriteHostKeyAtPath(private, identity))
 	mustProjectWorkerNative(t, secretbox.WriteRecipientFile(public, identity))
 	setup := projectContractSQLSetup{Environment: []string{"FAAS_RELEASE_PHASE_ENABLED=1", "FAAS_APP_TASK_DISPATCH=1", "FAAS_HOST_KEY_PATH=" + private, "FAAS_HOST_AGE_IDENTITY_PATH=" + private, "FAAS_HOST_AGE_RECIPIENT_PATH=" + public, "FAAS_FLEET_AGE_RECIPIENT_PATH=" + public}}
+	setup.Environment = append(setup.Environment, e2etest.DatabaseRouteEnvironment(t, proxyAddress)...)
 	setup.BeforeDeploy = func(f *projectWorkerNativeFixture) {
-		proxy := postgresfixture.OpenProxyWithDeadline(t, f.h.Pool, os.Getenv("GREGALE_POSTGRES_NATIVE_SQL_IP"), 5432, 5*time.Minute)
+		_ = postgresfixture.OpenProxyWithDeadline(t, f.h.Pool, "127.0.0.1", e2etest.LoopbackPort(t, proxyAddress), 5*time.Minute)
 		hmac, err := os.ReadFile(f.h.HostHMACKeyPath)
 		if err != nil {
 			t.Fatal("read isolated signing key")
 		}
-		fixture := postgresfixture.New(t, f.h.Pool, identity, hmac, proxy.Host, proxy.Port)
+		fixture := postgresfixture.New(t, f.h.Pool, identity, hmac, routeHost, routePort)
 		if fixture == nil {
 			t.Fatal("managed SQL fixture unavailable")
 		}
+		fixture.HostAddress = proxyAddress
 		app := f.apps["frontend"]
-		ports := []int{5432}
-		destinations := []string{netip.PrefixFrom(netip.MustParseAddr(proxy.Host), 32).String()}
-		_, err = f.owner.UpdateApp(t.Context(), app.Slug, api.UpdateAppRequest{EgressPorts: &ports, EgressAllowlist: &destinations})
-		mustProjectWorkerNative(t, err)
 		_, bindings := fixture.CreateInScope(t, f.accountID, app.ID, "production")
 		config := migrationprobe.Config{RunID: uuid.NewString(), Major: fixture.Major}
 		for access, binding := range bindings {

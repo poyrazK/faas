@@ -41,3 +41,32 @@ func DatabaseRouteHostPort() string {
 	host, port := DatabaseRouteEndpoint()
 	return net.JoinHostPort(host, strconv.Itoa(int(port)))
 }
+
+// ReserveLoopbackAddress picks a free 127.0.0.1 port for a SQL proxy that
+// opens after Start (fixtures built in a deploy hook): the route's upstream
+// must be named before gatewayd-internal starts. The port is released before
+// returning; the proxy binds it moments later.
+func ReserveLoopbackAddress(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("e2etest: reserve loopback address: %v", err)
+	}
+	address := ln.Addr().String()
+	_ = ln.Close()
+	return address
+}
+
+// LoopbackPort is the port of a ReserveLoopbackAddress result.
+func LoopbackPort(t *testing.T, address string) uint16 {
+	t.Helper()
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatalf("e2etest: loopback address %q: %v", address, err)
+	}
+	value, err := strconv.ParseUint(port, 10, 16)
+	if err != nil {
+		t.Fatalf("e2etest: loopback port %q: %v", port, err)
+	}
+	return uint16(value)
+}

@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -33,6 +35,11 @@ type Fixture struct {
 	Major       int
 	Enabled     bool
 	Config      mp.Config
+	// HostAddress, when set, is the host:port the test process itself dials
+	// for a binding URI. Bindings published at the database route address
+	// (e2etest.DatabaseRouteEndpoint) are reachable only from guests; the
+	// fixture's own checks go straight to the proxy behind the route.
+	HostAddress string
 	remoteToken string
 }
 
@@ -285,6 +292,9 @@ func (f *Fixture) VerifyRevoked(ctx context.Context, uri string) error {
 	if err != nil || config.TLSConfig == nil {
 		return mp.ErrConflict
 	}
+	if err := f.dialFromHost(config); err != nil {
+		return mp.ErrConflict
+	}
 	config.TLSConfig.MinVersion = tls.VersionTLS12
 	config.Fallbacks = nil
 	clear(config.RuntimeParams)
@@ -297,5 +307,23 @@ func (f *Fixture) VerifyRevoked(ctx context.Context, uri string) error {
 	if !errors.As(err, &auth) || (auth.Code != "28000" && auth.Code != "28P01") {
 		return mp.ErrUnavailable
 	}
+	return nil
+}
+
+// dialFromHost points config at HostAddress when one is set. The URI's
+// credentials and TLS settings are kept; only the transport address changes.
+func (f *Fixture) dialFromHost(config *pgx.ConnConfig) error {
+	if f.HostAddress == "" {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(f.HostAddress)
+	if err != nil {
+		return err
+	}
+	value, err := strconv.ParseUint(port, 10, 16)
+	if err != nil {
+		return err
+	}
+	config.Host, config.Port, config.Fallbacks = host, uint16(value), nil
 	return nil
 }
