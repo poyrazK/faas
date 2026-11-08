@@ -130,7 +130,7 @@ func (s *Service) inspectWebhookReceipt(r *http.Request, scope Scope, data *dash
 		if _, failure := s.scopedRun(r, scope, data.Name, receipt.RunID); failure == nil {
 			view.RunURL = consoleURL(scope.Slug, data.Name, receipt.RunID)
 		} else {
-			view.ReceiptError = "The receipt's run could not be verified for this stored_workflow."
+			view.ReceiptError = "The receipt's run could not be verified for this stored workflow."
 		}
 	}
 	return nil

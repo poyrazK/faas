@@ -42,7 +42,7 @@ func (s *Service) inspectLive(r *http.Request, scope Scope, data *dashboard.Stor
 	var selected api.StoredWorkflowLiveVerification
 	response = s.Host.Request(r, scope, Operation{Kind: "live-get", Name: data.Name, RunID: data.LiveID})
 	if !read(response, &selected) {
-		data.LiveError = "This live verification is unavailable for the selected stored_workflow."
+		data.LiveError = "This live verification is unavailable for the selected stored workflow."
 		return
 	}
 	data.LiveSelected = &selected

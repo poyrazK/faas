@@ -62,7 +62,7 @@ func (s *Service) serveLiveProgress(w http.ResponseWriter, r *http.Request, chec
 		if status < http.StatusBadRequest || status > http.StatusServiceUnavailable {
 			status = http.StatusServiceUnavailable
 		}
-		api.WriteProblem(w, api.NewProblem(status, api.CodeCapacity, "Progress unavailable", "Live verification progress could not be refreshed. Use the manual result check or reopen the stored_workflow."))
+		api.WriteProblem(w, api.NewProblem(status, api.CodeCapacity, "Progress unavailable", "Live verification progress could not be refreshed. Use the manual result check or reopen the stored workflow."))
 		return
 	}
 	s.renderLiveProgress(w, scope, name, view)

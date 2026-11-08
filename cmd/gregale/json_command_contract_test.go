@@ -14,7 +14,7 @@ import (
 )
 
 // Exercise the public dispatcher and decode its entire output, so a human
-// heading or trailing status message cannot silently break stored_workflow.
+// heading or trailing status message cannot silently break automation.
 func TestJSONCommandReceipts(t *testing.T) {
 	for _, tc := range []struct {
 		args                          []string

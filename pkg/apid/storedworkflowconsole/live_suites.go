@@ -27,13 +27,13 @@ func (s *Service) inspectLiveSuites(r *http.Request, scope Scope, data *dashboar
 	}
 	parsed, err := uuid.Parse(id)
 	if err != nil || parsed == uuid.Nil {
-		data.LiveSuiteError = "Choose a retained suite for this stored_workflow."
+		data.LiveSuiteError = "Choose a retained suite for this stored workflow."
 		return
 	}
 	data.LiveSuiteID = parsed.String()
 	var selected api.StoredWorkflowLiveSuite
 	if !read(s.Host.Request(r, scope, Operation{Kind: "live-suite-get", Name: data.Name, RunID: parsed.String()}), &selected) || selected.ID != parsed.String() || selected.Name != data.Name {
-		data.LiveSuiteError = "This suite is unavailable for the selected stored_workflow."
+		data.LiveSuiteError = "This suite is unavailable for the selected stored workflow."
 		return
 	}
 	data.LiveSuite = &selected

@@ -247,7 +247,7 @@ func TestStoredWorkflowSimulationResolvesOutboundTargets(t *testing.T) {
 			{Name: "lookup", Run: "lookup"},
 			{Name: "read", DependsOn: []string{"lookup"}, Outbound: &api.WorkflowOutboundSpec{
 				IntegrationID: "00000000-0000-0000-0000-000000000001", Method: "GET",
-				Path: "/contacts/{{steps.lookup.output.id}}", Query: map[string]string{"email": "{{input.email}}", "source": "stored_workflow"},
+				Path: "/contacts/{{steps.lookup.output.id}}", Query: map[string]string{"email": "{{input.email}}", "source": "automation"},
 			}},
 		}},
 		Input:       json.RawMessage(`{"email":"a+b@example.com"}`),
@@ -256,7 +256,7 @@ func TestStoredWorkflowSimulationResolvesOutboundTargets(t *testing.T) {
 	before, _ := json.Marshal(request)
 	response := simulateTest(t, request)
 	row := simulationStep(t, response, "read")
-	if !response.Complete || row.State != "mocked" || row.Path != "/contacts/contact%2042" || row.RawQuery != "email=a%2Bb%40example.com&source=stored workflow" || len(row.Input) != 0 {
+	if !response.Complete || row.State != "mocked" || row.Path != "/contacts/contact%2042" || row.RawQuery != "email=a%2Bb%40example.com&source=automation" || len(row.Input) != 0 {
 		t.Fatalf("resolved outbound trace: %+v", response)
 	}
 	after, _ := json.Marshal(request)

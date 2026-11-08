@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Baseline names identify release tracks within an app and stored_workflow. They do
+// Baseline names identify release tracks within an app and stored workflow. They do
 // not change execution routing or grant access to another environment.
 func ValidStoredWorkflowLiveBaselineName(name string) bool {
 	if name == "" || len(name) > StoredWorkflowLiveBaselineNameMaxBytes || strings.Trim(name, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {

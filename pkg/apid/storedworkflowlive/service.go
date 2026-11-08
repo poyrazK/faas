@@ -87,7 +87,7 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 	switch {
 	case errors.Is(err, state.ErrNotFound), errors.Is(err, state.ErrWorkflowRunNotFound):
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "No such live verification or stored_workflow."))
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "No such live verification or stored workflow."))
 	case errors.Is(err, state.ErrStoredWorkflowVersionConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeStoredWorkflowVersionConflict, "Verification target changed", "Reload the saved case, published revision and deployment before starting verification."))
 	case errors.Is(err, state.ErrWorkflowRunIdempotencyConflict):

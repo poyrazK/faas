@@ -812,7 +812,7 @@ func TestCompletion_FishScriptIsSyntacticallyValid(t *testing.T) {
 // TestCompletion_PowershellScriptIsSyntacticallyValid parses the
 // rendered PowerShell completion via the PowerShell tokenizer.
 // We write the script to a temp file (pwsh parses by path), then
-// use [System.Management.stored_workflow.Language.Parser]::ParseFile
+// use [System.Management.Automation.Language.Parser]::ParseFile
 // which is the canonical parse-only entrypoint. Skips on hosts
 // without pwsh (rare; install via brew install --cask powershell).
 func TestCompletion_PowershellScriptIsSyntacticallyValid(t *testing.T) {
@@ -842,7 +842,7 @@ func TestCompletion_PowershellScriptIsSyntacticallyValid(t *testing.T) {
 	}
 	// Escape single quotes for the pwsh command-string context.
 	escaped := strings.ReplaceAll(tmp.Name(), "'", "''")
-	psCmd := fmt.Sprintf("$errors = $null; $null = [System.Management.stored_workflow.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$errors); if ($errors) { $errors | Out-String; exit 1 }", escaped)
+	psCmd := fmt.Sprintf("$errors = $null; $null = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$errors); if ($errors) { $errors | Out-String; exit 1 }", escaped)
 	c := exec.Command(pwsh, "-NoProfile", "-Command", psCmd)
 	if out, err := c.CombinedOutput(); err != nil {
 		t.Fatalf("pwsh parse failed: %v\noutput:\n%s", err, string(out))

@@ -15,7 +15,7 @@ func (s *Service) inspectLiveSuiteComparison(r *http.Request, scope Scope, data 
 	}
 	parsed, err := uuid.Parse(id)
 	if err != nil || parsed == uuid.Nil {
-		data.LiveSuiteComparisonError = "Choose a retained baseline suite for this stored_workflow."
+		data.LiveSuiteComparisonError = "Choose a retained baseline suite for this stored workflow."
 		return
 	}
 	data.LiveSuiteBaselineID = parsed.String()

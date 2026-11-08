@@ -142,7 +142,7 @@ account webhook to `agent.approval.requested`, `agent.approval.approved` and
 `agent.approval.denied`:
 
 ```sh
-gregale webhook account create --target-url https://example.com/approvals \
+gregale webhook account add --target-url https://example.com/approvals \
   --event agent.approval.requested --event agent.approval.denied
 ```
 

@@ -78,7 +78,7 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Register-ArgumentCompleter -Native -CommandName 'gregale' -ScriptBlock {")
 	_, _ = fmt.Fprintln(w, "  param($wordToComplete, $commandAst, $cursorPosition)")
 	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "  $tokens = @($commandAst.CommandElements | Where-Object { $_.Extent.StartOffset -lt $cursorPosition } | ForEach-Object { if ($_ -is [System.Management.stored_workflow.Language.StringConstantExpressionAst]) { $_.Value } else { $_.Extent.Text } })")
+	_, _ = fmt.Fprintln(w, "  $tokens = @($commandAst.CommandElements | Where-Object { $_.Extent.StartOffset -lt $cursorPosition } | ForEach-Object { if ($_ -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $_.Value } else { $_.Extent.Text } })")
 	_, _ = fmt.Fprintln(w, "  $previousToken = if ($tokens.Count -gt 1 -and $tokens[-1] -eq $wordToComplete) { $tokens[-2] } else { $tokens[-1] }")
 	_, _ = fmt.Fprintln(w, "  $contextTokens = @($tokens | Where-Object { $_ -ne '' })")
 	_, _ = fmt.Fprintln(w, "  if ($contextTokens.Count -gt 1 -and $contextTokens[-1] -eq $wordToComplete) { $contextTokens = @($contextTokens[0..($contextTokens.Count - 2)]) }")
@@ -101,7 +101,7 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    $prefix = ''; $value = $wordToComplete")
 	_, _ = fmt.Fprintln(w, "    if ($profileEquals) { $prefix = '--profile='; $value = $wordToComplete.Substring(10) }")
 	_, _ = fmt.Fprintln(w, "    foreach ($name in @(gregale completion profile-names 2>$null)) {")
-	_, _ = fmt.Fprintln(w, "      if ($name.StartsWith($value, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.stored_workflow.CompletionResult]::new($prefix + $name, $name, 'ParameterValue', $name) }")
+	_, _ = fmt.Fprintln(w, "      if ($name.StartsWith($value, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($prefix + $name, $name, 'ParameterValue', $name) }")
 	_, _ = fmt.Fprintln(w, "    }")
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
@@ -113,7 +113,7 @@ func renderPowershellHeader(w io.Writer) {
       if ($name -ne '') {
         $completionText = $name
         if ($name -match "[^a-zA-Z0-9_=./:-]") { $completionText = "'" + $name.Replace("'", "''") + "'" }
-        [System.Management.stored_workflow.CompletionResult]::new($completionText, $name, 'ParameterValue', $name)
+        [System.Management.Automation.CompletionResult]::new($completionText, $name, 'ParameterValue', $name)
       }
     }
     return
@@ -123,7 +123,7 @@ func renderPowershellHeader(w io.Writer) {
     $secretWords = @($normalizedContext | Select-Object -Skip 1) + @($wordToComplete)
     $secretNames = @(gregale @__gregaleProfileArgs completion secret-keys -- @secretWords 2>$null)
     if ($LASTEXITCODE -eq 0) {
-      foreach ($name in $secretNames) { if ($name -ne '') { [System.Management.stored_workflow.CompletionResult]::new($name, $name, 'ParameterValue', $name) } }
+      foreach ($name in $secretNames) { if ($name -ne '') { [System.Management.Automation.CompletionResult]::new($name, $name, 'ParameterValue', $name) } }
       return
     }
   }
@@ -131,21 +131,21 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  $appSlugPosition = __gregaleAppSlugPosition $normalizedContext")
 	_, _ = fmt.Fprintln(w, "  if ($appSlugPosition) {")
 	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleCacheSlugs 'apps') {")
-	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.stored_workflow.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
+	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
 	_, _ = fmt.Fprintln(w, "    }")
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
 	_, _ = fmt.Fprintln(w, "  $buildIDPosition = __gregaleBuildIDPosition $normalizedContext")
 	_, _ = fmt.Fprintln(w, "  if ($buildIDPosition) {")
 	_, _ = fmt.Fprintln(w, "    foreach ($id in __gregaleCacheIds 'builds') {")
-	_, _ = fmt.Fprintln(w, "      if ($id.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.stored_workflow.CompletionResult]::new($id, $id, 'ParameterValue', $id) }")
+	_, _ = fmt.Fprintln(w, "      if ($id.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($id, $id, 'ParameterValue', $id) }")
 	_, _ = fmt.Fprintln(w, "    }")
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
 	_, _ = fmt.Fprintln(w, "  $deploymentIDPosition = __gregaleDeploymentIDPosition $normalizedContext")
 	_, _ = fmt.Fprintln(w, "  if ($deploymentIDPosition) {")
 	_, _ = fmt.Fprintln(w, "    foreach ($id in __gregaleCacheIds 'deployments') {")
-	_, _ = fmt.Fprintln(w, "      if ($id.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.stored_workflow.CompletionResult]::new($id, $id, 'ParameterValue', $id) }")
+	_, _ = fmt.Fprintln(w, "      if ($id.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($id, $id, 'ParameterValue', $id) }")
 	_, _ = fmt.Fprintln(w, "    }")
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
@@ -155,43 +155,43 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    $valueToComplete = if ($inlineEnvironmentValue) { $wordToComplete.Substring($wordToComplete.IndexOf('=') + 1) } else { $wordToComplete }")
 	_, _ = fmt.Fprintln(w, "    $valuePrefix = if ($inlineEnvironmentValue) { $wordToComplete.Substring(0, $wordToComplete.IndexOf('=') + 1) } else { '' }")
 	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleProjectEnvironmentSlugs $environmentProject) {")
-	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($valueToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.stored_workflow.CompletionResult]::new(\"$valuePrefix$s\", $s, 'ParameterValue', $s) }")
+	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($valueToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new(\"$valuePrefix$s\", $s, 'ParameterValue', $s) }")
 	_, _ = fmt.Fprintln(w, "    }")
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
 	_, _ = fmt.Fprintln(w, "  $positionProject = __gregaleProjectEnvironmentPosition $normalizedContext")
 	_, _ = fmt.Fprintln(w, "  if ($positionProject) {")
 	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleProjectEnvironmentSlugs $positionProject) {")
-	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.stored_workflow.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
+	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
 	_, _ = fmt.Fprintln(w, "    }")
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
 	_, _ = fmt.Fprintln(w, "  $projectPosition = __gregaleProjectArgumentPosition $normalizedContext")
 	_, _ = fmt.Fprintln(w, "  if ($projectPosition) {")
 	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleCacheSlugs 'projects') {")
-	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.stored_workflow.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
+	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
 	_, _ = fmt.Fprintln(w, "    }")
 	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleProjectArgumentChoices $normalizedContext) {")
-	_, _ = fmt.Fprintln(w, "        if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.stored_workflow.CompletionResult]::new($s, $s, 'ParameterName', $s) }")
+	_, _ = fmt.Fprintln(w, "        if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterName', $s) }")
 	_, _ = fmt.Fprintln(w, "      }")
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
 	_, _ = fmt.Fprintln(w, "  if ($previousToken -eq '--app') {")
 	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleCacheSlugs 'apps') {")
-	_, _ = fmt.Fprintln(w, "      if ($s -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
+	_, _ = fmt.Fprintln(w, "      if ($s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
 	_, _ = fmt.Fprintln(w, "    }")
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
 	_, _ = fmt.Fprintln(w, "  if ($previousToken -eq '--org') {")
 	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleCacheSlugs 'orgs') {")
-	_, _ = fmt.Fprintln(w, "      if ($s -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
+	_, _ = fmt.Fprintln(w, "      if ($s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
 	_, _ = fmt.Fprintln(w, "    }")
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
 	_, _ = fmt.Fprintln(w, "  if ($tokens.Count -lt 2) {")
-	_, _ = fmt.Fprintln(w, "    if ('--non-interactive' -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new('--non-interactive', '--non-interactive', 'ParameterName', 'Disable prompts and browser launches') }")
+	_, _ = fmt.Fprintln(w, "    if ('--non-interactive' -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new('--non-interactive', '--non-interactive', 'ParameterName', 'Disable prompts and browser launches') }")
 	for _, c := range completionCliCommands() {
-		_, _ = fmt.Fprintf(w, "    if (%s -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
+		_, _ = fmt.Fprintf(w, "    if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
 			psLiteral(c.Name), psLiteral(c.Name), psLiteral(c.Name), psLiteral(c.Short))
 	}
 	_, _ = fmt.Fprintln(w, "    return")
@@ -329,7 +329,7 @@ func renderPowershellCommand(w io.Writer, c cliCommand) {
 		_, _ = fmt.Fprintf(w, "    if ($tokens.Count -eq %d) {\n", subcommandWord)
 		for _, s := range c.Subcommands {
 			for _, spelling := range s.completionSpellings() {
-				_, _ = fmt.Fprintf(w, "      if (%s -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
+				_, _ = fmt.Fprintf(w, "      if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
 					psLiteral(spelling), psLiteral(spelling), psLiteral(spelling), psLiteral(s.Short))
 			}
 		}
@@ -362,7 +362,7 @@ func renderPowershellCommand(w io.Writer, c cliCommand) {
 		_, _ = fmt.Fprintf(w, "    if ($tokens.Count -eq %d -and %s) {\n", childWord, powershellCompletionSubcommandMatch(subcommandWord, parent))
 		for _, child := range parent.Subcommands {
 			for _, spelling := range child.completionSpellings() {
-				_, _ = fmt.Fprintf(w, "      if (%s -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
+				_, _ = fmt.Fprintf(w, "      if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
 					psLiteral(spelling), psLiteral(spelling), psLiteral(spelling), psLiteral(child.Short))
 			}
 		}
@@ -385,7 +385,7 @@ func renderPowershellCommand(w io.Writer, c cliCommand) {
 	// positionals are emitted centrally from the manifest above.
 	if len(c.ClosedSet) > 0 {
 		for _, v := range c.ClosedSet {
-			_, _ = fmt.Fprintf(w, "    if (%s -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new(%s, %s, 'ParameterValue', %s) }\n",
+			_, _ = fmt.Fprintf(w, "    if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterValue', %s) }\n",
 				psLiteral(v), psLiteral(v), psLiteral(v), psLiteral(v))
 		}
 	}
@@ -410,24 +410,24 @@ func renderPowershellFlag(w io.Writer, f cliFlag) {
 			_, _ = fmt.Fprintln(w, "        }")
 			if len(f.ClosedSet) > 0 {
 				_, _ = fmt.Fprintf(w, "        foreach ($value in @(%s)) {\n", powershellStringArray(f.ClosedSet))
-				_, _ = fmt.Fprintln(w, "          if ($value.StartsWith($valueToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.stored_workflow.CompletionResult]::new(\"$valuePrefix$value\", $value, 'ParameterValue', $value) }")
+				_, _ = fmt.Fprintln(w, "          if ($value.StartsWith($valueToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new(\"$valuePrefix$value\", $value, 'ParameterValue', $value) }")
 				_, _ = fmt.Fprintln(w, "        }")
 			}
 			if cliFlagUsesEnvironmentValues(f) {
 				_, _ = fmt.Fprintln(w, "        foreach ($value in __gregaleCacheSlugs 'environments') {")
-				_, _ = fmt.Fprintln(w, "          if ($value.StartsWith($valueToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.stored_workflow.CompletionResult]::new(\"$valuePrefix$value\", $value, 'ParameterValue', $value) }")
+				_, _ = fmt.Fprintln(w, "          if ($value.StartsWith($valueToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new(\"$valuePrefix$value\", $value, 'ParameterValue', $value) }")
 				_, _ = fmt.Fprintln(w, "        }")
 			}
 			if cliFlagUsesFilePathValues(f) {
-				_, _ = fmt.Fprintln(w, "        foreach ($completion in [System.Management.stored_workflow.CompletionCompleters]::CompleteFilename($valueToComplete)) {")
+				_, _ = fmt.Fprintln(w, "        foreach ($completion in [System.Management.Automation.CompletionCompleters]::CompleteFilename($valueToComplete)) {")
 				_, _ = fmt.Fprintln(w, "          $completionText = \"$valuePrefix$($completion.CompletionText)\"")
-				_, _ = fmt.Fprintln(w, "          [System.Management.stored_workflow.CompletionResult]::new($completionText, $completion.ListItemText, $completion.ResultType, $completion.ToolTip)")
+				_, _ = fmt.Fprintln(w, "          [System.Management.Automation.CompletionResult]::new($completionText, $completion.ListItemText, $completion.ResultType, $completion.ToolTip)")
 				_, _ = fmt.Fprintln(w, "        }")
 			}
 			_, _ = fmt.Fprintln(w, "        return")
 			_, _ = fmt.Fprintln(w, "      }")
 		}
-		_, _ = fmt.Fprintf(w, "      if (%s -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
+		_, _ = fmt.Fprintf(w, "      if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
 			psLiteral(spelling), psLiteral(spelling), psLiteral(spelling), psLiteral(f.Short))
 	}
 }

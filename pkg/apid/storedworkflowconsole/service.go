@@ -168,7 +168,7 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, scope Scope, da
 	s.inspectLiveSuites(r, scope, &data)
 	s.inspectBaseline(r, scope, &data)
 	if failure := s.inspectIngress(r, scope, &data); failure != nil {
-		status, data.Error = failure.Status, "The selected webhook endpoint or receipt is unavailable for this stored_workflow."
+		status, data.Error = failure.Status, "The selected webhook endpoint or receipt is unavailable for this stored workflow."
 	}
 	data.BaseURL = "/dashboard/apps/" + url.PathEscape(scope.Slug) + "/workflows/stored"
 	setupLiveProgress(&data)

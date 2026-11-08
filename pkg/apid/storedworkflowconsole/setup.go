@@ -87,13 +87,13 @@ func unavailableDetail(reason string) string {
 	case "plan_not_allowed":
 		return "The account's plan does not allow workflow execution. Deployment readiness remains unverified."
 	case "workflows_not_released":
-		return "Workflows are unavailable for this account. Contact support before starting this stored_workflow."
+		return "Workflows are unavailable for this account. Contact support before starting this stored workflow."
 	case "maintenance":
 		return "The app is in maintenance. Deployment readiness remains unverified."
 	case "tenant_required":
 		return "This app requires a tenant-scoped workflow configuration."
 	case "deployment_unavailable":
-		return "No live default deployment is available. Deploy your handlers before running this stored_workflow."
+		return "No live default deployment is available. Deploy your handlers before running this stored workflow."
 	default:
 		return ""
 	}

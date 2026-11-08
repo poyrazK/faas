@@ -22,7 +22,7 @@ func seedWebhookWorkflow(t *testing.T, store Store) (App, InboundWebhookEndpoint
 	t.Helper()
 	ctx := context.Background()
 	app, _ := seedEventWorkflow(t, store)
-	endpoint, err := store.(InboundWebhookStore).CreateInboundWebhookEndpointIfUnderQuota(ctx, InboundWebhookEndpoint{AppID: app.ID, AccountID: app.AccountID, Name: "stored_workflow", Provider: InboundWebhookProviderStripe, DeliveryPath: "/", TokenHash: bytes.Repeat([]byte{1}, 32), SigningSecretSealed: []byte("sealed"), Enabled: true}, api.MustLimitsFor(api.PlanHobby))
+	endpoint, err := store.(InboundWebhookStore).CreateInboundWebhookEndpointIfUnderQuota(ctx, InboundWebhookEndpoint{AppID: app.ID, AccountID: app.AccountID, Name: "stored-workflow", Provider: InboundWebhookProviderStripe, DeliveryPath: "/", TokenHash: bytes.Repeat([]byte{1}, 32), SigningSecretSealed: []byte("sealed"), Enabled: true}, api.MustLimitsFor(api.PlanHobby))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -466,6 +466,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp server monitor check", "mcp monitor provider-check"},
 	{"mcp server retirements ack", "mcp retirements acknowledge-manual"},
 	{"mcp server tasks deploy", "mcp tasks release"},
+	{"mcp server approvals get", "mcp approval-channels"},
+	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},
 	{"environment check", "projects environments preflight"},
 	{"environment cancel", "projects environments abort"},

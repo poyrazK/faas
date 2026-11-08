@@ -14,7 +14,7 @@ import (
 
 // cmdDebugRunning renders the customer-facing answer to "why is this app
 // still running?". Human output emphasizes observed causes; --json keeps the
-// complete evidence shape for stored_workflow.
+// complete evidence shape for automation.
 func cmdDebugRunning(args []string) int {
 	fs := newFlagSet("debug running", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")

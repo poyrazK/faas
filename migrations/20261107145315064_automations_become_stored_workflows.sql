@@ -47,6 +47,11 @@ DECLARE
     def text;
     renamed text;
 BEGIN
+    -- A replay (the ledger row removed, its effects kept) finds the tables
+    -- already renamed and has nothing to do.
+    IF to_regclass(CASE WHEN forward THEN 'workflow_automation_definitions' ELSE 'stored_workflows' END) IS NULL THEN
+        RETURN;
+    END IF;
     -- Tables, then the constraints and indexes that carry the old table name.
     FOR i IN 1 .. array_length(pairs, 1) / 2 LOOP
         old_table := CASE WHEN forward THEN pairs[2*i-1] ELSE pairs[2*i] END;
@@ -192,6 +197,11 @@ DECLARE
     def text;
     renamed text;
 BEGIN
+    -- A replay (the ledger row removed, its effects kept) finds the tables
+    -- already renamed and has nothing to do.
+    IF to_regclass(CASE WHEN forward THEN 'workflow_automation_definitions' ELSE 'stored_workflows' END) IS NULL THEN
+        RETURN;
+    END IF;
     -- Tables, then the constraints and indexes that carry the old table name.
     FOR i IN 1 .. array_length(pairs, 1) / 2 LOOP
         old_table := CASE WHEN forward THEN pairs[2*i-1] ELSE pairs[2*i] END;

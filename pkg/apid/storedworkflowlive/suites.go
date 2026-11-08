@@ -78,13 +78,13 @@ func writeSuiteError(w http.ResponseWriter, err error) {
 	}
 	switch {
 	case errors.Is(err, state.ErrNotFound), errors.Is(err, state.ErrWorkflowRunNotFound):
-		problem = api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Suite unavailable", "No such retained suite, verification or stored_workflow.")
+		problem = api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Suite unavailable", "No such retained suite, verification or stored workflow.")
 	case errors.Is(err, state.ErrWorkflowRunIdempotencyConflict):
 		problem = api.NewProblem(http.StatusConflict, api.CodeConflict, "Suite identity already used", "The suite target, ordered selection and existing run links are immutable. Use a new suite UUID for a different selection.")
 	case errors.Is(err, state.ErrStoredWorkflowVersionConflict):
 		problem = api.NewProblem(http.StatusConflict, api.CodeStoredWorkflowVersionConflict, "Suite target changed", "Reload the saved stored workflow version, published revision and deployment before creating a shared suite.")
 	case errors.Is(err, state.ErrStoredWorkflowInvalid):
-		problem = api.ErrValidation("Select valid saved live cases for the published stored_workflow.")
+		problem = api.ErrValidation("Select valid saved live cases for the published stored workflow.")
 	default:
 		problem = api.ErrCapacity("Shared suite history is unavailable. Retry with the original suite UUID and selection.")
 	}

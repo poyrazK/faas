@@ -76,5 +76,5 @@ func cloneBaseline(receipt api.StoredWorkflowLiveBaseline) api.StoredWorkflowLiv
 }
 
 func baselineLimitError(observed int64) error {
-	return api.NewProblem(409, api.CodeConflict, "Named baseline limit reached", "Reuse an active baseline name or explicitly retire an unused name for this stored_workflow.").WithLimit(api.StoredWorkflowLiveBaselineLimit, observed).WithDocs("https://gregale.dev/docs/stored-workflows#baselines")
+	return api.NewProblem(409, api.CodeConflict, "Named baseline limit reached", "Reuse an active baseline name or explicitly retire an unused name for this stored workflow.").WithLimit(api.StoredWorkflowLiveBaselineLimit, observed).WithDocs("https://gregale.dev/docs/stored-workflows#baselines")
 }
