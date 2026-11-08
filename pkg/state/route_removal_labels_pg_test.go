@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -78,7 +79,7 @@ func TestRouteRemovalPGBaselineContractForGateway(t *testing.T) {
 	if err != nil || !strings.Contains(string(doc), `"/old"`) {
 		t.Fatalf("baseline contract: %s %v", doc, err)
 	}
-	if _, err := store.RouteRemovalBaselineOpenAPIDoc(ctx, app.ID, "00000000-0000-0000-0000-000000000000"); err != state.ErrNotFound {
+	if _, err := store.RouteRemovalBaselineOpenAPIDoc(ctx, app.ID, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign account read a baseline: %v", err)
 	}
 }
