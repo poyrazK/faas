@@ -150,6 +150,14 @@ type AccountEmailChange struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type AccountMailThrottle struct {
+	AccountID       pgtype.UUID
+	Kind            string
+	WindowStartedAt pgtype.Timestamptz
+	SentInWindow    int32
+	LastSentAt      pgtype.Timestamptz
+}
+
 type AccountOauthUnlink struct {
 	AccountID  pgtype.UUID
 	Provider   string

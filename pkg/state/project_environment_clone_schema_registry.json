@@ -469,6 +469,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_mail_throttle",
+    "columns": [
+      "account_id",
+      "kind",
+      "last_sent_at",
+      "sent_in_window",
+      "window_started_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "mfa_trusted_browsers",
     "columns": [
       "account_id",
