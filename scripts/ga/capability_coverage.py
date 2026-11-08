@@ -110,6 +110,7 @@ RULES = [
     (r"database-dependency", "Managed Postgres"),
     (r"bucket-dependency", "Object storage"),
     (r"function-spec|function-config", "Function runtimes"),
+    (r"fnadapter", "Function runtimes"),
     (r"worker-spec", "Worker pools"),
     (r"lifecycle-config|healthcheckproto", "Health probes"),
     (r"^manifest\.|release-config", "`gregale.yaml` deploy overrides"),
@@ -310,7 +311,7 @@ RULES = [
     (r"wake-ahead", "Service wake-ahead"),
     (r"autoscal|scale-up|scaling|min-instance|max-instance|max-concurrency|concurrency", "Autoscaling and min instances"),
     (r"prewarm|park|wake", "Manual park / wake"),
-    (r"runner|runtime|function|node22|node24|python3|go124|binary", "Function runtimes"),
+    (r"runner|runtime|function|handler-api|node22|node24|python3|go124|binary", "Function runtimes"),
     (r"firecracker|jailer|isolation|vmm", "Firecracker isolation"),
     (r"scale-to-zero|idle|cold-wake|cold-boot|reaper", "Scale to zero"),
     # --- releases
@@ -348,7 +349,7 @@ RULES = [
     (r"oci|image|container", "Container / OCI image"),
     (r"build|railpack|buildkit", "Builds in builder"),
     (r"upload|tarball|source|deploy", "Source deploys:"),
-    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|^app-slug-holds$|apps-list|apps-new|app-detail", "Apps: create"),
+    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|^app-slug-holds$|^reserved-app-slugs$|apps-list|apps-new|app-detail", "Apps: create"),
 ]
 
 # Checked before everything else, for every source: names a broad rule or the

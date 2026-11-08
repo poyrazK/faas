@@ -79,3 +79,36 @@ func TestHourRangeTakesWholeCoveredHoursOnly(t *testing.T) {
 		}
 	}
 }
+
+// Windows reaching past the minute read horizon start and end on whole
+// hours, which the hourly tier alone answers (amendment 3); recent ends stay.
+func TestAlignWindowUsesWholeHoursPastTheMinuteHorizon(t *testing.T) {
+	now := time.Date(2026, 11, 20, 12, 34, 56, 0, time.UTC)
+	week := 7 * 24 * time.Hour
+	at := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	for _, tc := range []struct {
+		name                string
+		from, until         time.Time
+		retention           time.Duration
+		wantFrom, wantUntil time.Time
+	}{
+		{"recent window unchanged", now.Add(-24 * time.Hour), now, week, now.Add(-24 * time.Hour), now},
+		{"7d from moves back to its hour, until stays now", now.Add(-week + time.Hour), now, week, at("2026-11-13T13:00:00Z"), now},
+		{"clamped at retention moves forward", now.Add(-week), now, week, at("2026-11-13T13:00:00Z"), now},
+		{"historical window widens both ends", at("2026-11-15T10:15:00Z"), at("2026-11-15T10:45:00Z"), week, at("2026-11-15T10:00:00Z"), at("2026-11-15T11:00:00Z")},
+		{"aligned historical window unchanged", at("2026-11-15T10:00:00Z"), at("2026-11-16T10:00:00Z"), week, at("2026-11-15T10:00:00Z"), at("2026-11-16T10:00:00Z")},
+		{"sub-hour window at the retention edge keeps an hour", now.Add(-week), now.Add(-week + 10*time.Minute), week, at("2026-11-13T13:00:00Z"), at("2026-11-13T14:00:00Z")},
+		{"just inside the horizon unchanged", now.Add(-api.RequestAnalyticsMinuteReadHorizon), now, week, now.Add(-api.RequestAnalyticsMinuteReadHorizon), now},
+	} {
+		gotFrom, gotUntil := analyticsrollup.AlignWindow(tc.from, tc.until, now, tc.retention)
+		if !gotFrom.Equal(tc.wantFrom) || !gotUntil.Equal(tc.wantUntil) {
+			t.Errorf("%s: got [%s, %s), want [%s, %s)", tc.name, gotFrom, gotUntil, tc.wantFrom, tc.wantUntil)
+		}
+	}
+}

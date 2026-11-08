@@ -28,6 +28,7 @@ SELECT (o.payload::jsonb->>'wake_id')::text AS wake_id,
  WHEN position('reason=telemetry_missing' in o.last_error)>0 THEN 'telemetry_missing'
  WHEN position('reason=requests_active' in o.last_error)>0 THEN 'requests_active'
  WHEN position('reason=quiet_period_not_elapsed' in o.last_error)>0 THEN 'quiet_period_not_elapsed'
+ WHEN position('app_startup_crash' in o.last_error) > 0 THEN 'app_startup_crash'
  ELSE 'restart_attempt_failed' END::text AS failure_reason,
  o.created_at AS requested_at,o.delivered_at AS completed_at
 FROM notification_outbox o JOIN apps a ON a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'

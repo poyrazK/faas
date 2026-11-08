@@ -30,6 +30,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	stdlog "log"
@@ -210,6 +211,9 @@ func (c edgeTLSConfig) serverConfig(appHost func(name string) bool, served *edge
 	if !clientCAs.AppendCertsFromPEM(caPEM) {
 		return nil, fmt.Errorf("gatewayd-public: edge TLS client CA %s holds no PEM certificate", c.clientCAFile)
 	}
+	if err := refuseSharedOriginPullCA(caPEM); err != nil {
+		return nil, fmt.Errorf("gatewayd-public: edge TLS client CA %s: %w", c.clientCAFile, err)
+	}
 	if c.direct() {
 		return &tls.Config{
 			MinVersion:     tls.VersionTLS12,
@@ -238,6 +242,39 @@ func (c edgeTLSConfig) serverConfig(appHost func(name string) bool, served *edge
 		// HTTP/2 to origin; this listener offers HTTP/1.1 only.
 		NextProtos: []string{"http/1.1"},
 	}, nil
+}
+
+// sharedOriginPullName names Cloudflare's shared origin-pull certificate and
+// its CA. Cloudflare presents that certificate for every customer's zone.
+const sharedOriginPullName = "origin-pull.cloudflare.net"
+
+// refuseSharedOriginPullCA fails when caPEM holds Cloudflare's shared
+// origin-pull CA. Trusting it lets any Cloudflare zone pass as ours, which
+// the client certificate exists to stop: the connection would be trusted
+// ingress (CF-Connecting-IP) and exempt from the per-address limits
+// (ADR-20261103172551, ADR-20261107180000). Cloudflare's documentation ships
+// that CA as origin-pull-ca.pem, the same file name as the zone's own.
+func refuseSharedOriginPullCA(caPEM []byte) error {
+	rest := caPEM
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			return nil
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return fmt.Errorf("parse a certificate: %w", err)
+		}
+		for _, name := range []string{cert.Subject.CommonName, cert.Issuer.CommonName} {
+			if strings.EqualFold(strings.TrimSpace(name), sharedOriginPullName) {
+				return fmt.Errorf("it is Cloudflare's shared origin-pull CA (%s), which every Cloudflare zone satisfies; install the zone's own origin-pull CA (docs/runbooks/EdgeDirectEntry.md)", sharedOriginPullName)
+			}
+		}
+	}
 }
 
 // openEdgeTLSListener claims the listener's TCP socket, which a hand-off

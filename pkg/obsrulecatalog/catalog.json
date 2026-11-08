@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "7b8434822f6c5c68df2fb55601cc14f1e801a2b33fc25c30db65b359e7a1057a",
+      "revision": "354c3ab5a140c0aaf2814efe3f332fd587db48f2c1336a68d7c4001ee067685d",
       "files": [
         "faas.rules.yml"
       ],
@@ -2446,11 +2446,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasGithubWebhookDeliveryDead",
           "definition": {
-            "expression_hash": "38c5c834004658c21c4be39f9b794a93d409e10df6cffc2d3e69c7101a9d9add",
+            "expression_hash": "e01d30e3a0d8af5bf60f6e47c2fde99a8e8738be75e612da9730e7b41b8024fd",
             "labels_hash": "b5856f030109c8ffc4f9dd260c19fa574f99320c956686647b2838faec2df0a3",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "ddf116fb75859ba7412c0586e1c578ac3acc217285ec3c5bdb39482c5aa2e660"
+            "fingerprint": "b525206fcd1f08a5c5533fe0af0e8b6202c91c77f867016ca22046e8ef4c7aae"
           }
         },
         {
@@ -5132,6 +5132,19 @@
           }
         },
         {
+          "id": "bc4c4e1022ff432e24ad7af3e5f75318e81547b39d07370ccee80644b06844ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdQuotaFailing",
+          "definition": {
+            "expression_hash": "aae9cdbcf38fd22ee3e30b42d4254dc19e988a36eacf65eff6fe06165b2465ca",
+            "labels_hash": "41744ed8c753a4d607177bef3c94a93d1203f21c1dab41927ce7106d825aee07",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b1395a3228601b77c4071acabb137906e75f137589d5bb1b9c4b2ce01e9a3abe"
+          }
+        },
+        {
           "id": "bdde46dc189fd1fef1555682b9138b7b267b5c6e11a741bb12cdcc9e0a1bc8a5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -6890,7 +6903,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "fc462c0608f31605cf929274605c6e6d152d5f2d09095290858706e0222f010b",
+      "revision": "d5cdc2d4619680b6a885466dfa76493afa5c58fb914c3ee9ece0c3ed7b74cb09",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -9427,11 +9440,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasGithubWebhookDeliveryDead",
           "definition": {
-            "expression_hash": "38c5c834004658c21c4be39f9b794a93d409e10df6cffc2d3e69c7101a9d9add",
+            "expression_hash": "e01d30e3a0d8af5bf60f6e47c2fde99a8e8738be75e612da9730e7b41b8024fd",
             "labels_hash": "b5856f030109c8ffc4f9dd260c19fa574f99320c956686647b2838faec2df0a3",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "ddf116fb75859ba7412c0586e1c578ac3acc217285ec3c5bdb39482c5aa2e660"
+            "fingerprint": "b525206fcd1f08a5c5533fe0af0e8b6202c91c77f867016ca22046e8ef4c7aae"
           }
         },
         {
@@ -12266,6 +12279,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f7b820bf7947161644546045d005d5fb1de86b5c80e1d47c16db5eb77acf38e5"
+          }
+        },
+        {
+          "id": "bc4c4e1022ff432e24ad7af3e5f75318e81547b39d07370ccee80644b06844ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdQuotaFailing",
+          "definition": {
+            "expression_hash": "aae9cdbcf38fd22ee3e30b42d4254dc19e988a36eacf65eff6fe06165b2465ca",
+            "labels_hash": "41744ed8c753a4d607177bef3c94a93d1203f21c1dab41927ce7106d825aee07",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b1395a3228601b77c4071acabb137906e75f137589d5bb1b9c4b2ce01e9a3abe"
           }
         },
         {

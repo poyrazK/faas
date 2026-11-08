@@ -4188,7 +4188,11 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubdPathFilterDegraded.md"
 
       - alert: FaasGithubWebhookDeliveryDead
-        expr: githubd_recovery_queue_items{queue="webhook_delivery",status="dead"} > 0
+        # A delivery died within the last day: the dead count is above its
+        # 24 h low. Dead rows stay retryable for 7 days and are then pruned;
+        # firing on any dead row held this alert on for stale rows and hid
+        # new failures behind them.
+        expr: githubd_recovery_queue_items{queue="webhook_delivery",status="dead"} > min_over_time(githubd_recovery_queue_items{queue="webhook_delivery",status="dead"}[24h])
         for: 5m
         labels:
           severity: warn
@@ -4413,6 +4417,18 @@ groups:
         annotations:
           summary: "meterd sample ticks keep failing"
           description: "At least five of meterd's one-minute sample ticks failed in 15 minutes, for 15 minutes. Usage rows, price capture or the compute-complete record are not being written; catch-up re-rolls the minutes once the cause clears, within 72 h."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasMeterdQuotaFailing
+        expr: increase(meterd_ops_total{op="quota",code="err"}[10m]) >= 3
+        for: 10m
+        labels:
+          severity: page
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "meterd quota sweeps keep failing"
+          description: "meterd's one-minute quota sweep failed at least three times in 10 minutes, for 10 minutes. This sweep stops Free accounts at their allowance, applies the egress ceiling and records the spend-cap holds schedd enforces; while it fails, those stops are not applied (holds already recorded stay). The tick error names the step: list accounts, spend caps, or an account's usage, hold or enforcement (ADR-20261104211412)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
       - alert: FaasMeterdBillingPushFailing
         expr: increase(meterd_ops_total{op="stripe",code="err"}[3h]) >= 2

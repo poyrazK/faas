@@ -110,6 +110,10 @@ func TestPushPendingDeliversHourOlderThanCatchUpWindow(t *testing.T) {
 	}
 }
 
+// overageCentsPerGBHour is what one GB-hour of overage costs in cents
+// (ADR-20261107192333); caps below are sized in GB-hours through it.
+const overageCentsPerGBHour = api.OverageMillicentsPerGBHour / api.MillicentsPerCent
+
 func TestPushPendingBillsUpToSpendCapAndNeverBackBills(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
@@ -123,9 +127,9 @@ func TestPushPendingBillsUpToSpendCapAndNeverBackBills(t *testing.T) {
 		}
 	}
 	usage(monthStart, int64(api.PlanHobby.PlanIncludedGBHours())) // the whole Hobby allowance
-	usage(monthStart.Add(time.Hour), 3)                           // crosses a 1-cent (1 GB-h) cap
+	usage(monthStart.Add(time.Hour), 3)                           // crosses a one-GB-h cap
 	usage(monthStart.Add(2*time.Hour), 2)                         // entirely above the cap
-	capCents := int64(1)
+	capCents := overageCentsPerGBHour                             // one GB-h
 	if err := store.UpdateAccountOverageCapCents(ctx, acct.ID, &capCents); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +208,8 @@ func TestPushPendingCapHoldsAcrossAnUpgrade(t *testing.T) {
 	monthStart := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	putComputeGrant(t, ctx, store, acct, api.PlanHobby, monthStart)
 	putComputeGrant(t, ctx, store, acct, api.PlanPro, monthStart.Add(time.Hour))
-	capCents := int64(10)
+	const capGBHours = 10
+	capCents := int64(capGBHours * overageCentsPerGBHour)
 	if err := store.UpdateAccountOverageCapCents(ctx, acct.ID, &capCents); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +236,7 @@ func TestPushPendingCapHoldsAcrossAnUpgrade(t *testing.T) {
 	for _, call := range provider.Calls() {
 		billed += call.MBSeconds
 	}
-	if billed != capCents*gbh {
-		t.Fatalf("billed %d mb_seconds across the upgrade, want exactly the %d-cent cap (%d)", billed, capCents, capCents*gbh)
+	if billed != capGBHours*gbh {
+		t.Fatalf("billed %d mb_seconds across the upgrade, want exactly the %d-cent cap (%d)", billed, capCents, capGBHours*gbh)
 	}
 }

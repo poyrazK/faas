@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -455,6 +456,9 @@ type Engine struct {
 	// capabilities holds a capability's background work while its platform
 	// flag is off for the owning account (ADR-20261023115741); nil allows all.
 	capabilities *capflags.Decider
+	// idleLadderRelease decides quiet_pause_unbilled for an app's account
+	// when idle_ladder_idle_out is on (ADR-20261107122928); nil holds none.
+	idleLadderRelease func(platformflags.Subject) bool
 	// profileCaptureMetrics records on-demand captures (ADR-1155); nil records nothing.
 	profileCaptureMetrics *wire.ProfileCaptureMetrics
 	capabilitySubjects    capabilitySubjects
@@ -525,6 +529,10 @@ type Engine struct {
 	// Wired via WithOwnerNodeID after NewEngine; nil-safe so
 	// pre-Phase-2 tests stay green.
 	ownerNodeID string
+
+	// publicAPIURL is this installation's public API, handed to workloads
+	// as GREGALE_API_URL (WithPublicAPIURL). Empty leaves the SDK default.
+	publicAPIURL string
 
 	// tracer is the OTel Tracer that emits sched.wake + vmmd.create_*
 	// spans (issue #555 PR-3). nil = no spans emitted (the OTel
@@ -1511,6 +1519,31 @@ func (e *Engine) WithOwnerNodeID(nodeID string) *Engine {
 	}
 	e.ownerNodeID = nodeID
 	return e
+}
+
+// WithPublicAPIURL sets the public API URL workloads receive as
+// GREGALE_API_URL. The SDK queue consumers otherwise call
+// https://api.gregale.dev, which does not accept another installation's
+// workload tokens (ADR-20261018101500 amendment 2026-10-31).
+func (e *Engine) WithPublicAPIURL(url string) *Engine {
+	if e != nil {
+		e.publicAPIURL = strings.TrimRight(strings.TrimSpace(url), "/")
+	}
+	return e
+}
+
+// withPublicAPIURL adds GREGALE_API_URL to a workload's platform env unless
+// the app sets it itself.
+func (e *Engine) withPublicAPIURL(env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
+	if e == nil || e.publicAPIURL == "" {
+		return env
+	}
+	for _, entry := range env {
+		if entry.Key == api.PublicAPIURLEnv {
+			return env
+		}
+	}
+	return append(env, fcvm.APIEnvEntry{Key: api.PublicAPIURLEnv, Value: e.publicAPIURL})
 }
 
 // WithRecoveryArbiter wires the single per-tick decision policy
@@ -3369,9 +3402,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// ADR-1162: explicit-deployment admissions (min-instance floors,
 		// service replicas, workers, per-deployment wakes) skip the request
 		// gates but not the account spend cap; otherwise always-on capacity
-		// keeps running past the cap. Deployment smoke verifies a release and
-		// mirror instances are never metered, so both stay exempt.
-		if !deploymentSmoke && mode != string(state.InstanceModeMirror) {
+		// keeps running past the cap. Deployment smoke verifies a release, so
+		// it stays exempt; mirror VMs bill (ADR-20261104145353) and stop at
+		// the cap like any other capacity.
+		if !deploymentSmoke {
 			if reached, observed, capped := e.admitSpendCap(ctx, &app); reached {
 				outcome, obsCents, capCents = wakeOverageCapReached, observed, capped
 			}
@@ -4059,10 +4093,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
-		APIEnv: appendPlatformIdentity(
+		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(
 			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
-		),
+		)),
 		// ADR-031: surface the per-app egress allowlist on the
 		// wake wire. vmmd translates the CIDRs into the per-netns
 		// forward chain. Empty slice = no allowlist rule (current
@@ -4073,6 +4107,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// old netns — same contract as RAMMB and MaxConcurrency.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:                 app.EgressPorts,
+		EgressRevision:              app.EgressAllowlistRevision,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
@@ -6179,7 +6214,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		MainDependsOn:          mainDependencies,
 		// ADR-590: plaintext and sealed inputs share one owned snapshot.
 		// A lookup failure aborts migration before booting incomplete config.
-		APIEnv: appendPlatformIdentity(
+		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(
 			runtimeValues.APIEnv,
 			app, dep, acct, ins.NodeID, ins.ID, func() string {
 				if node, err := e.store.ComputeNodeByID(ctx, ins.NodeID); err == nil {
@@ -6187,11 +6222,12 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 				}
 				return ""
 			}(),
-		),
+		)),
 		// ADR-031: per-app egress allowlist; same CIDR-string
 		// flattening as the Wake path.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:                 app.EgressPorts,
+		EgressRevision:              app.EgressAllowlistRevision,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,

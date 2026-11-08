@@ -2567,6 +2567,45 @@ export class OrgsService {
     });
   }
   /**
+   * Leave an org.
+   * Ends the caller's own membership. Any role except owner may leave;
+   * the owner transfers ownership first. A personal org cannot be left,
+   * and the org's billing contact must be replaced first
+   * (`billing_contact_member`).
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static leaveOrg({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/leave',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `The caller is not an active member.`,
+        409: `The caller is the owner (\`org_last_owner\`), the org is personal, or the caller is the billing contact.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Transfer ownership to another active member.
    * Atomically promotes `new_owner_account_id` to owner and
    * demotes the caller to admin via `Store.TransferOrgOwnership`

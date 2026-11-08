@@ -950,13 +950,25 @@ func (m *Manager) RemoveEndpoint(id string) {
 		}
 	}
 	m.mu.RUnlock()
+	// Each client is told why (1008 "endpoint removed") so it does not
+	// reconnect as it would after a network drop. The close frames are
+	// written in parallel under one short deadline: revocation must not wait
+	// on a slow client, and closing the transport afterwards unblocks the read
+	// pump and persists its disconnect callback through the normal path.
+	var wg sync.WaitGroup
 	for _, c := range connections {
-		// Revocation must not wait for a slow client's control-frame write.
-		// Closing the transport unblocks the read pump and persists its
-		// disconnect callback through the normal lifecycle path.
-		c.terminate(websocket.ClosePolicyViolation, "endpoint removed")
+		wg.Add(1)
+		go func(c *connection) {
+			defer wg.Done()
+			c.closeWithin(websocket.ClosePolicyViolation, "endpoint removed", endpointRemovalCloseWait)
+		}(c)
 	}
+	wg.Wait()
 }
+
+// endpointRemovalCloseWait bounds the close-frame write to each client of a
+// removed endpoint.
+const endpointRemovalCloseWait = 250 * time.Millisecond
 
 // EndpointIDs returns the node-local registration inventory without exposing
 // credentials or policy. The control plane compares it to durable intent.
@@ -1125,6 +1137,12 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				// v1 sockets never re-check the token, so they end when it
 				// expires instead of living out MaxConnectionAge on it.
 				tokenExpiry = verifiedTokenExpiry(token)
+				// The verifier allows clock-skew leeway past exp, but such a
+				// socket would end the moment it opened, after the app's
+				// connect callback had admitted an expired identity. Refuse it.
+				if err == nil && !tokenExpiry.IsZero() && !time.Now().Before(tokenExpiry) {
+					err = ErrUnauthorized
+				}
 			}
 			if err != nil || strings.TrimSpace(principal) == "" {
 				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
@@ -1754,6 +1772,17 @@ func (c *connection) close(code int, reason string) error {
 		}
 	})
 	return err
+}
+
+// closeWithin is close with its control-frame write bounded by wait rather
+// than the connection's WriteWait.
+func (c *connection) closeWithin(code int, reason string, wait time.Duration) {
+	c.closeOne.Do(func() {
+		c.recordClose(code, reason)
+		c.closeOutboundQueue()
+		_ = c.ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(wait))
+		_ = c.ws.Close()
+	})
 }
 
 func (c *connection) terminate(code int, reason string) {

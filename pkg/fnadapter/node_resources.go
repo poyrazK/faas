@@ -1,4 +1,4 @@
-package rootfs
+package fnadapter
 
 import (
 	"strconv"
@@ -10,7 +10,7 @@ import (
 
 // This bridge exists only when trusted runner wiring supplies the worker
 // argument. SDK copies share it without importing platform/control-plane code.
-var nodeFunctionResources = strings.NewReplacer(
+var NodeResources = strings.NewReplacer(
 	"__RESOURCE_ARGUMENT__", functionlifetime.NodeResourceArgument,
 	"__RESOURCE_MAX_POOLS__", strconv.Itoa(api.FunctionPostgresMaxPools),
 	"__RESOURCE_BEFORE_PATH__", functionlifetime.BeforeResourcePath,

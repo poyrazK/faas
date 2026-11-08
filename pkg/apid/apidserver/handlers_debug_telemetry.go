@@ -224,6 +224,7 @@ func (s *server) debugTelemetryCoverageHandler(w http.ResponseWriter, r *http.Re
 		GuestEvidence:       debugCoverageSignal(row.GuestEvidenceRows, row.GuestEvidenceRequests, row.RepresentedRequests),
 		OldestTelemetryAt:   debugCoverageTimestamp(row.OldestTelemetryAt),
 		LatestTelemetryAt:   debugCoverageTimestamp(row.LatestTelemetryAt),
+		RequestsNotRetained: s.debugRequestsNotRetained(r.Context(), app.ID, from, now),
 	})
 }
 
@@ -285,6 +286,8 @@ func (s *server) debugDependencyLatencyHandler(w http.ResponseWriter, r *http.Re
 		ReceivedAt:   pgtype.Timestamptz{Time: windowStart, Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
 		Limit:        debugDependencyHistoryMaxRows + 1,
+		// Both halves of the window keep a share of the bounded read.
+		Column6: pgtype.Timestamptz{Time: windowStart.Add(now.Sub(windowStart) / 2), Valid: true},
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("get debug dependency latency"))
@@ -349,6 +352,8 @@ func (s *server) debugCriticalPathHistoryHandler(w http.ResponseWriter, r *http.
 		ReceivedAt:   pgtype.Timestamptz{Time: windowStart, Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
 		Limit:        debugDependencyHistoryMaxRows + 1,
+		// Both halves of the window keep a share of the bounded read.
+		Column6: pgtype.Timestamptz{Time: windowStart.Add(now.Sub(windowStart) / 2), Valid: true},
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("get debug critical path history"))

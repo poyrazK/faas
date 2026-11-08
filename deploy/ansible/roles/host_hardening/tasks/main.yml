@@ -353,3 +353,55 @@
     state: present
   loop: "{{ faas_hardening_sysctl | dict2items }}"
   when: faas_hardening_sysctl_enabled | bool
+
+# --- kernel lockdown ----------------------------------------------------------
+
+# ADR-20261107220000. A unit, not a kernel argument: it works the same on
+# every image and bootloader (GCP's cloud images override GRUB_CMDLINE_LINUX),
+# and the kernel lets lockdown only rise until reboot, so starting it here
+# protects the running host at once.
+- name: host_hardening — install the kernel lockdown script
+  ansible.builtin.template:
+    src: faas-kernel-lockdown.sh.j2
+    dest: /usr/local/sbin/faas-kernel-lockdown
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_hardening_kernel_lockdown | length > 0 or faas_hardening_modules_lock | bool
+
+- name: host_hardening — install the kernel lockdown unit
+  ansible.builtin.template:
+    src: faas-kernel-lockdown.service.j2
+    dest: /etc/systemd/system/faas-kernel-lockdown.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: faas_hardening_lockdown_unit
+  when: faas_hardening_kernel_lockdown | length > 0 or faas_hardening_modules_lock | bool
+
+- name: host_hardening — enable and start kernel lockdown
+  ansible.builtin.systemd_service:
+    name: faas-kernel-lockdown.service
+    enabled: true
+    state: started
+    daemon_reload: "{{ faas_hardening_lockdown_unit is changed }}"
+  when: faas_hardening_kernel_lockdown | length > 0 or faas_hardening_modules_lock | bool
+
+- name: host_hardening — read the active lockdown level
+  ansible.builtin.slurp:
+    src: /sys/kernel/security/lockdown
+  register: faas_hardening_lockdown_state
+  when: faas_hardening_kernel_lockdown | length > 0
+
+- name: host_hardening — prove the kernel is locked down
+  ansible.builtin.assert:
+    that:
+      - >-
+        ('[' ~ faas_hardening_kernel_lockdown ~ ']') in (faas_hardening_lockdown_state.content | b64decode)
+        or (faas_hardening_kernel_lockdown == 'integrity' and '[confidentiality]' in (faas_hardening_lockdown_state.content | b64decode))
+    fail_msg: >-
+      /sys/kernel/security/lockdown reads
+      {{ faas_hardening_lockdown_state.content | b64decode | trim }}, not
+      {{ faas_hardening_kernel_lockdown }}. Check journalctl -u
+      faas-kernel-lockdown and that the kernel was built with the lockdown LSM.
+  when: faas_hardening_kernel_lockdown | length > 0

@@ -54,7 +54,7 @@ var orgSlugRe = regexp.MustCompile(api.OrgSlugPattern)
 func cmdOrgs(args []string) int {
 	parent, _ := lookupCliCommand("orgs")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs <list|create|info|activity|update|rm|members|invitations|keys|agent-policy|transfer-ownership|seat-usage> [args]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale orgs <list|create|info|activity|update|rm|members|invitations|keys|agent-policy|transfer-ownership|leave|seat-usage> [args]", "orgs")
 		return 1
 	}
 	switch args[0] {
@@ -87,6 +87,8 @@ func cmdOrgs(args []string) int {
 		return cmdOrgsAgentPolicy(args[1:])
 	case "transfer-ownership":
 		return cmdOrgsTransferOwnership(args[1:])
+	case "leave":
+		return cmdOrgsLeave(args[1:])
 	case "seat-usage":
 		return cmdOrgsSeatUsage(args[1:])
 	case "me":
@@ -415,7 +417,11 @@ func cmdOrgsMembersLs(args []string) int {
 		return jsonOut(writeNDJSON(resp.Members))
 	}
 	for _, m := range resp.Members {
-		fmt.Printf("%-36s %-32s %-12s %s\n", m.AccountID, m.Email, m.Role, m.JoinedAt)
+		name := m.DisplayName
+		if name == "" {
+			name = "-"
+		}
+		fmt.Printf("%-36s %-32s %-24s %-12s %s\n", m.AccountID, m.Email, name, m.Role, m.JoinedAt)
 	}
 	return 0
 }

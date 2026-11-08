@@ -81,6 +81,10 @@ func TestApplyEdgeRuleValidate_Parameters(t *testing.T) {
 		{name: "path below minimum", url: "/users/0/orders", tenant: "t-1", wantBlocked: true, wantField: "path/id"},
 		{name: "query over maximum", url: "/users/7/orders?limit=500", tenant: "t-1", wantBlocked: true, wantField: "query/limit"},
 		{name: "unknown query parameter", url: "/users/7/orders?debug=1", tenant: "t-1", wantBlocked: true, wantField: "query"},
+		// ADR-20261107190000: url.Query dropped pairs with ";",
+		// while the app reads ?limit=1%20OR%201=1;-- as the limit.
+		{name: "semicolon value is still checked", url: "/users/7/orders?limit=1%20OR%201=1;--", tenant: "t-1", wantBlocked: true, wantField: "query/limit"},
+		{name: "undecodable query escape", url: "/users/7/orders?limit=%zz", tenant: "t-1", wantBlocked: true, wantField: "query"},
 		{name: "missing header", url: "/users/7/orders", wantBlocked: true, wantField: "headers"},
 		{name: "bad header", url: "/users/7/orders", tenant: "x-1", wantBlocked: true, wantField: "headers/x-tenant"},
 	} {
