@@ -11,7 +11,7 @@ SET LOCAL lock_timeout = '5s';
 CREATE OR REPLACE FUNCTION route_removal_route_pattern(method text, path text) RETURNS text LANGUAGE sql IMMUTABLE AS $f$
  SELECT '^((' || CASE WHEN upper(method)='GET' THEN 'GET|HEAD' ELSE upper(method) END || ') )?'
   || regexp_replace(
-       regexp_replace(CASE WHEN path='/' THEN '/' ELSE rtrim(path,'/') END, '([][.^$*+?(){}|\\])', '\\\1', 'g'),
+       regexp_replace(CASE WHEN path='/' THEN '/' ELSE rtrim(path,'/') END, '([$^.*+?(){}|\\\[\]])', '\\\1', 'g'),
        '\\\{[^/}]*\\\}', '[^/]+', 'g')
   || CASE WHEN path='/' THEN '' ELSE '/?' END || '$'
 $f$;

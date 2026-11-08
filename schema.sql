@@ -26104,7 +26104,7 @@ CREATE FUNCTION public.route_removal_route_pattern(method text, path text) RETUR
     AS $_$
  SELECT '^((' || CASE WHEN upper(method)='GET' THEN 'GET|HEAD' ELSE upper(method) END || ') )?'
   || regexp_replace(
-       regexp_replace(CASE WHEN path='/' THEN '/' ELSE rtrim(path,'/') END, '([][.^$*+?(){}|\\])', '\\\1', 'g'),
+       regexp_replace(CASE WHEN path='/' THEN '/' ELSE rtrim(path,'/') END, '([$^.*+?(){}|\\\[\]])', '\\\1', 'g'),
        '\\\{[^/}]*\\\}', '[^/]+', 'g')
   || CASE WHEN path='/' THEN '' ELSE '/?' END || '$'
 $_$;
