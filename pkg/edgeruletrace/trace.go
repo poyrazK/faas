@@ -2337,10 +2337,6 @@ func previewValidateParameters(rule api.EdgeRuleResponse, action api.EdgeRuleVal
 	if prob := p.Validate(rule.MatchPath); prob != nil {
 		return "unavailable", "validation parameters are invalid; gateway compilation would reject the rule", true
 	}
-	query, err := api.ParseEdgeRuleQuery(input.Query)
-	if err != nil {
-		return "unavailable", "the request query string could not be parsed", true
-	}
 	for _, loc := range []struct {
 		name   string
 		schema json.RawMessage
@@ -2368,13 +2364,21 @@ func previewValidateParameters(rule api.EdgeRuleResponse, action api.EdgeRuleVal
 				values[name] = []string{v}
 			}
 		case "query":
+			query, err := api.ParseEdgeRuleQuery(input.Query)
+			if err != nil {
+				// Like the gateway, an undecodable escape is a query
+				// mismatch (HTTP 422 in enforce mode), checked only when
+				// the rule has a query schema.
+				preview.ValidationField = "query"
+				preview.ValidationKeyword = "query_string"
+				if outcome, reason, done := validateModeOutcome(rule, action, preview, "request query string has an undecodable percent-escape"); done {
+					return outcome, reason, true
+				}
+				continue
+			}
 			values = query
 		default:
-			for name := range kinds {
-				if raw := input.Headers.Values(name); len(raw) > 0 {
-					values[name] = raw
-				}
-			}
+			values = api.EdgeRuleHeaderParamValues(input.Headers, kinds)
 		}
 		instance, err := api.EdgeRuleParamInstance(kinds, values)
 		if err != nil {
