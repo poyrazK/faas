@@ -95,6 +95,28 @@ const (
 	SecurityMailTrackedAccountsMax = 100_000
 )
 
+// EmailVerificationEnforcedFrom is when the 30-day verification grace
+// started to restrict accounts (ADR 20261107103000). An account created
+// before it gets its 30 days from this date, so accounts that were
+// unverified when enforcement shipped are not cut off the day it deploys.
+var EmailVerificationEnforcedFrom = time.Date(2026, time.November, 16, 0, 0, 0, 0, time.UTC)
+
+// An unverified account active in the last EmailVerificationReminderWindow
+// before its deadline is mailed a fresh verification link, at most once per
+// EmailVerificationReminderInterval per apid.
+const (
+	EmailVerificationReminderWindow   = 7 * 24 * time.Hour
+	EmailVerificationReminderInterval = 24 * time.Hour
+)
+
+// Account profile and security notices (ADR 20261107103000). A display name
+// is at most DisplayNameMaxChars characters. A browser sign-in whose device
+// and network match no session of the last NewSignInLookback mails a notice.
+const (
+	DisplayNameMaxChars = 80
+	NewSignInLookback   = 90 * 24 * time.Hour
+)
+
 // Queue receive long-polls one account, and one apid in all, may hold at a
 // time; past them a receive answers 429. A receive waits on apid's shared
 // completion listener, not on a database connection, so the caps bound

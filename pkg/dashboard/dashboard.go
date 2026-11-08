@@ -3588,6 +3588,31 @@ type AccountData struct {
 	// a dedicated cookie name because the account page renders several
 	// independently action-bound forms at once.
 	PlanConfirmToken string
+	// VerifyResendConfirmToken backs the "send a new verification link"
+	// form shown while the account's address is unverified.
+	VerifyResendConfirmToken string
+	// EmailChangeConfirmToken backs the change-sign-in-email form;
+	// EmailChangeNeedsPassword asks for the current password when the
+	// account has one and no second factor.
+	EmailChangeConfirmToken  string
+	EmailChangeNeedsPassword bool
+	// DisplayName and DisplayNameConfirmToken back the profile name form.
+	DisplayName             string
+	DisplayNameConfirmToken string
+	// Sessions lists signed-in browsers; SessionRevokeConfirmToken backs
+	// their "Sign out" buttons.
+	Sessions                  []AccountSessionRow
+	SessionRevokeConfirmToken string
+	// Providers lists linked Google/GitHub sign-ins; HasPassword and
+	// ProviderUnlinkConfirmToken back their "Remove" buttons.
+	Providers                  []AccountProviderRow
+	HasPassword                bool
+	MFAEnabled                 bool
+	ProviderUnlinkConfirmToken string
+	// LinkProviders are the enabled providers not yet linked. Linking
+	// signs in with the provider from this signed-in browser, which is
+	// the only way to link one the owner removed.
+	LinkProviders []AccountLinkOption
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a
@@ -3615,6 +3640,29 @@ type AccountData struct {
 	// window-selector nav; AsOf is the pre-formatted
 	// timestamp.
 	SLODuration views.SLOStamp
+}
+
+// AccountSessionRow is one signed-in browser on the account page.
+type AccountSessionRow struct {
+	ID        string
+	IssuedAt  string
+	IssuedIP  string
+	IssuedUA  string
+	LastSeen  string
+	IsCurrent bool
+}
+
+// AccountProviderRow is one linked Google or GitHub sign-in.
+// AccountLinkOption is one "Link" button on the account page.
+type AccountLinkOption struct {
+	Name string // "Google"
+	URL  string // OAuth start path with next back to the account page
+}
+
+type AccountProviderRow struct {
+	Provider string
+	Email    string
+	LinkedAt string
 }
 
 // ManagedPostgresData is the customer-facing database overview payload.

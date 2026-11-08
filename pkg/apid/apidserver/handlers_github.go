@@ -284,6 +284,10 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 		writeSignupNetworkCap(w)
 		return
 	}
+	if errors.Is(err, errOAuthProviderUnlinked) {
+		writeOAuthProviderUnlinked(w, r, "github")
+		return
+	}
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "complete GitHub sign-in",
 			"Gregale could not finish setting up your account.",
@@ -468,8 +472,8 @@ func (s *server) provisionOrFetchOAuthAccount(r *http.Request, provider, sub, em
 	//    now signs in with OAuth").
 	acct, err := s.store.AccountByEmail(ctx, email)
 	if err == nil {
-		if err := s.store.UpsertOAuthLink(ctx, acct.ID, provider, sub, email, true); err != nil {
-			s.log.Error("oauth.upsert_link", "provider", provider, "err", err)
+		if err := s.linkOAuthByEmail(r, acct, provider, sub, email, true); err != nil {
+			return state.Account{}, err
 		}
 		return s.verifyOAuthAccountEmail(ctx, acct)
 	}

@@ -259,7 +259,7 @@ func (s *server) acceptInvitation(w http.ResponseWriter, r *http.Request, acct s
 		"invitation": inv.ID,
 	})
 
-	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberToRow(r.Context(), membership)))
+	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberRowWithName(r.Context(), membership)))
 }
 
 // revokeInvitation stamps revoked_at on a still-pending invitation

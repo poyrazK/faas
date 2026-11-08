@@ -42,6 +42,7 @@ loader pkg/apid/apidserver/project_environment_clone_worker.go 2
 loader pkg/apid/mailoutbox/verification_config.go 1
 loader pkg/datapipeline/config.go 2
 loader pkg/internalmail/keyring_config.go 2
+plain account_email_changes.token_hash
 plain accounts.mfa_recovery_codes_hash
 plain agent_approval_requests.body_sha256
 plain api_consumer_signups.claim_hash
