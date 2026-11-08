@@ -101,11 +101,16 @@ ARG RAILPACK_SOURCE_SHA256
 ARG CONTAINERD_VERSION
 ARG TARGETOS
 ARG TARGETARCH
+# Source archives come straight from codeload.github.com, which serves
+# github.com/<repo>/archive/refs/tags/<tag>.tar.gz behind a redirect: the
+# bytes, and so the SHA-256 pins, are the same. On 2026-11-08 the github.com
+# front end returned 502-504 for hours while codeload answered, and every
+# builder-base build failed here.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
       rm -rf /var/lib/apt/lists/* && \
       curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
         -o /tmp/railpack-source.tgz \
-        "https://github.com/railwayapp/railpack/archive/refs/tags/v${RAILPACK_VERSION}.tar.gz" && \
+        "https://codeload.github.com/railwayapp/railpack/tar.gz/refs/tags/v${RAILPACK_VERSION}" && \
       echo "${RAILPACK_SOURCE_SHA256}  /tmp/railpack-source.tgz" | sha256sum -c - && \
       tar -xzf /tmp/railpack-source.tgz --strip-components=1 -C /src/railpack && \
       rm /tmp/railpack-source.tgz && \
@@ -141,7 +146,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl libseccomp-dev && \
       rm -rf /var/lib/apt/lists/* && \
       curl -fsSL -o /tmp/runc-source.tgz \
-        "https://github.com/opencontainers/runc/archive/refs/tags/v${RUNC_VERSION}.tar.gz" && \
+        "https://codeload.github.com/opencontainers/runc/tar.gz/refs/tags/v${RUNC_VERSION}" && \
       echo "${RUNC_SOURCE_SHA256}  /tmp/runc-source.tgz" | sha256sum -c - && \
       tar -xzf /tmp/runc-source.tgz --strip-components=1 -C /src/runc && \
       rm /tmp/runc-source.tgz && \
@@ -186,7 +191,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       rm -rf /var/lib/apt/lists/* && \
       curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
         -o /tmp/buildkit-source.tgz \
-        "https://github.com/moby/buildkit/archive/refs/tags/v${BUILDKIT_VERSION}.tar.gz" && \
+        "https://codeload.github.com/moby/buildkit/tar.gz/refs/tags/v${BUILDKIT_VERSION}" && \
       echo "${BUILDKIT_SOURCE_SHA256}  /tmp/buildkit-source.tgz" | sha256sum -c - && \
       tar -xzf /tmp/buildkit-source.tgz --strip-components=1 -C /src/buildkit && \
       rm /tmp/buildkit-source.tgz && \
@@ -281,7 +286,7 @@ RUN case "${TARGETARCH}" in \
       *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
     esac && \
     mkdir -p /usr/local/lib/faas/mise /opt/mise && \
-    curl -fsSL -o /tmp/mise.tgz \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o /tmp/mise.tgz \
       "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${MISE_ARCH}-musl.tar.gz" && \
     case "${TARGETARCH}" in \
       amd64) MISE_SHA256="${MISE_SHA256_AMD64}" ;; \
