@@ -124,6 +124,38 @@ starting with the ones on compute nodes. (The audit log's append-only grant
 moved into step 1; tamper evidence against the owner role, such as hash
 anchors kept off the host, remains open.)
 
+#### Amendment (2026-11-07): step 3 on compute nodes
+
+Decided with the owner after the contract went live on production-us
+(2026-11-07):
+
+- **Grant source: observed and code.** A role's grant set is the union of the
+  tables production `pg_stat_statements` attributes to it and the tables named
+  by the queries its binary can reach. Production evidence alone misses rare
+  paths: the view keeps 5,000 statements and had already evicted entries.
+- **Split per daemon first.** All compute daemons shared `faas_compute`, so
+  narrowing it would give each of them the union of the others' tables. Each
+  compute daemon gets its own password role first: `faas_vmmd`,
+  `faas_node_schedd`, `faas_imaged`, `faas_builderd`, `faas_gatewayd_internal`
+  and `faas_gatewayd_edge`, all members of `faas_runtime` until narrowed.
+  `faas_compute` stays for operator tools on the node.
+  - One environment secret, `POSTGRES_COMPUTE_ROLE_KEY`, holds them all: each
+    password is `HMAC-SHA256(key, "gregale-db-role:" + role)`
+    (`scripts/ci/compute_db_roles.py`). The control-plane converge receives
+    only deterministic SCRAM verifiers and creates the roles; `cd-compute`
+    writes each node's per-daemon DSNs into the join artifacts.
+  - `node_join.yml` proves every login against the node's own row before any
+    unit uses one, all or none, then points each unit at its file through a
+    `zz-faas-db-role.conf` drop-in that overrides `compute-db.env`. Without
+    the artifact the drop-ins are removed and the daemons fall back to
+    `faas_compute`.
+  - Switch: the CD variable `POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED`, default
+    off. pgbouncer fleets stay out (one pool per user).
+- **Rollout: switch and alert.** Narrowed grants come behind their own switch,
+  with an alert on permission-denied (SQLSTATE 42501) per role and a
+  one-variable rollback to `faas_runtime` membership. That is a separate
+  change, made once the per-daemon roles have produced their own evidence.
+
 ## Consequences
 
 - Step 1 changes nothing until an operator opts in; the grants are additive.

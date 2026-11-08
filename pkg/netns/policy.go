@@ -1008,20 +1008,33 @@ func writePublicEntrySets(b *strings.Builder, family string, proxies []netip.Pre
 func writePublicEntryAccept(b *strings.Builder, a netip.Addr, exempt bool) {
 	family := addrFamily(a)
 	suffix := publicEntrySetSuffix(family)
+	source := publicEntrySourceKey(family)
 	match := fmt.Sprintf("%s daddr %s tcp dport 443", family, a)
 	if exempt {
 		proxy := match + fmt.Sprintf(" %s saddr @public_entry_proxy_%s", family, suffix)
-		fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s saddr limit rate over %d/second burst %d packets } counter drop comment %q\n",
-			proxy, suffix, family, api.PublicEntryProxyNewConnsPerSecondPerSource, api.PublicEntryProxyNewConnsBurstPerSource, "public entry new connections per proxy source")
-		fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s saddr ct count over %d } counter drop comment %q\n",
-			proxy, suffix, family, api.PublicEntryProxyConnsPerSourceMax, "public entry connections per proxy source")
+		fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s limit rate over %d/second burst %d packets } counter drop comment %q\n",
+			proxy, suffix, source, api.PublicEntryProxyNewConnsPerSecondPerSource, api.PublicEntryProxyNewConnsBurstPerSource, "public entry new connections per proxy source")
+		fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s ct count over %d } counter drop comment %q\n",
+			proxy, suffix, source, api.PublicEntryProxyConnsPerSourceMax, "public entry connections per proxy source")
 		match += fmt.Sprintf(" %s saddr != @public_entry_proxy_%s", family, suffix)
 	}
-	fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s saddr limit rate over %d/second burst %d packets } counter drop comment %q\n",
-		match, suffix, family, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource, "public entry new connections per source")
-	fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s saddr ct count over %d } counter drop comment %q\n",
-		match, suffix, family, api.PublicEntryConnsPerSourceMax, "public entry connections per source")
+	fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s limit rate over %d/second burst %d packets } counter drop comment %q\n",
+		match, suffix, source, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource, "public entry new connections per source")
+	fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s ct count over %d } counter drop comment %q\n",
+		match, suffix, source, api.PublicEntryConnsPerSourceMax, "public entry connections per source")
 	fmt.Fprintf(b, "    %s daddr %s tcp dport 443 accept comment %q\n", family, a, "public entry")
+}
+
+// publicEntrySourceKey is what the entry sets count a source by: an IPv4
+// address, or the /64 an IPv6 address sits in, as the edge's own limits do
+// (clientlimit.Key). Counted per IPv6 address, one client holding a /64
+// would never meet the backstop and would fill the sets, past which no new
+// source is limited by the kernel (ADR-20261107180000).
+func publicEntrySourceKey(family string) string {
+	if family == "ip6" {
+		return "ip6 saddr and ffff:ffff:ffff:ffff::"
+	}
+	return "ip saddr"
 }
 
 func addrFamily(a netip.Addr) string {

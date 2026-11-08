@@ -165,9 +165,17 @@ const (
 
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one
 // client address, and one network (IPv4 /24, IPv6 /48), may create per day.
+//
+// SignupAccountsPerDay caps the self-service accounts the whole platform
+// creates in any 24 hours (ADR-20261104145353). Each account carries a full
+// Free allowance, and the per-address and per-network caps reset with every
+// new address, so this bounds the Free compute, egress and storage a signup
+// farm can claim in a day. It counts every account created, so an operator-
+// or support-created account uses the same budget.
 const (
 	SignupAccountsPerAddressPerDay = 10
 	SignupAccountsPerNetworkPerDay = 50
+	SignupAccountsPerDay           = 2_000
 )
 
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
@@ -1321,6 +1329,12 @@ const (
 	InvocationRetentionBatchesPerPass = 20
 )
 
+// QueueCompletedPayloadRetention is how long a completed queue message keeps
+// its payload after its ack. Its history row stays for the plan's result
+// retention; failures and dead letters keep their payloads for replay
+// (ADR-20261018101500 amendment 2026-10-31).
+const QueueCompletedPayloadRetention = 24 * time.Hour
+
 // Event job lifecycle (ADR-20261028095548). A running backfill that makes no
 // progress for EventReplayBackfillIdleExpiry ends as expired. A recovery or
 // backfill job whose processing fails backs off from EventJobFailureBackoffMin
@@ -1775,6 +1789,20 @@ const (
 	// RealtimeUsageQueryMaxHours (31 days).
 	RealtimeUsageQueryDefaultHours = 24
 	RealtimeUsageQueryMaxHours     = 744
+)
+
+// QueueStatusCountLimit bounds every count a queue status read or gauge
+// makes: queue state, binding status, the dashboard and schedd's queue
+// gauges. A larger backlog reads as this many (ADR-20261018101500 amendments
+// 2026-10-27 and 2026-10-31).
+const QueueStatusCountLimit = 100_000
+
+// A batch send carries at most QueueSendBatchMaxMessages messages in at most
+// QueueSendBatchMaxBytes of request body; each message still meets its plan's
+// message size (ADR-20261018101500 amendment 2026-10-31).
+const (
+	QueueSendBatchMaxMessages = 100
+	QueueSendBatchMaxBytes    = 8 << 20
 )
 
 // Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
@@ -3982,7 +4010,12 @@ type ObjectStoragePlanLimits struct {
 	// Free 1 GiB, Hobby 2× its included storage, Pro and Scale 5×. Support can
 	// grant a paid account another (ObjectStorageLimitsFor), and the account's
 	// spend cap tightens it (WithSpendCap).
-	MaxAccountBytes       int64
+	MaxAccountBytes int64
+	// MaxMonthlyRequests is the requests the account may make each month
+	// (ADR-20261104145353): Free 50,000, Hobby 500,000, Pro 2,500,000, Scale
+	// 10,000,000. Requests are not billed, so this bounds the provider's
+	// per-request charge: even all writes stay below the plan's price. The
+	// operator policy still applies when it is tighter.
 	MaxMonthlyRequests    int64
 	MaxMonthlyEgressBytes int64
 	// IncludedBytes is average stored bytes over a billing month of
@@ -5903,7 +5936,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       20,
 		// ADR-1430: 1 GiB included and Free's hard stop; egress capped at
 		// ten times that (ADR-20261031122757).
-		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
+		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyRequests: 50_000, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
 		RateLimitRPS:                   5,
 		RateLimitBurst:                 20,
@@ -6320,7 +6353,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -6768,7 +6801,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -7181,7 +7214,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -7664,10 +7697,38 @@ const (
 	// most IdleLadderGuardNetMaxBytes in each direction.
 	IdleLadderGuardCPUMaxMillis = 10
 	IdleLadderGuardNetMaxBytes  = 512
+	// IdleLadderReservationDiscountMaxPercent bounds the RAM measured
+	// admission leaves out of a node's reservation cap for instances vmmd
+	// holds at the idle ladder's freeze level (ADR-20261107122928): at most
+	// this percent of the node's admission ceiling. With the ADR-909 cap of
+	// MeasuredAdmissionMaxOvercommitPercent, reservations including those
+	// instances reach at most 400% of the ceiling; the measured figure still
+	// bounds what the node holds.
+	IdleLadderReservationDiscountMaxPercent = 200
 	// IdleLadderFreezeLevel is the idle_ladder_level vmmd reports for L2: a
 	// quiet-paused instance quiet for IdleLadderFreezeAfterSeconds, which
 	// measured admission books like a frozen instance.
 	IdleLadderFreezeLevel = 2
+	// Cold-page compression (ADR-20261107122928 §1, §2). vmmd ages a quiet
+	// VM's memory at most once per IdleLadderColdAge1Seconds of wall time,
+	// after the guest ran, so each multi-gen LRU generation spans at least
+	// that long. L3 compresses every generation but the youngest
+	// IdleLadderCold1KeepGenerations, L4 every one but the youngest
+	// IdleLadderCold2KeepGenerations (2 is the fewest the kernel keeps). A
+	// wake from L3/L4 may add at most IdleLadderWakeBudgetMillis, or the
+	// instance's own snapshot restore time if that is shorter; vmmd counts
+	// IdleLadderFaultMicrosPerPage for each page the guest brings back
+	// (measured on nested production-us; re-measure on bare metal, Rollout
+	// step 1). An app whose wake exceeds the budget keeps one more
+	// generation at each level, up to IdleLadderMaxExtraKeepGenerations;
+	// IdleLadderCeilingRelaxWakes wakes in a row under half the budget give
+	// one back.
+	IdleLadderCold1KeepGenerations    = 3
+	IdleLadderCold2KeepGenerations    = 2
+	IdleLadderWakeBudgetMillis        = 100
+	IdleLadderFaultMicrosPerPage      = 21
+	IdleLadderMaxExtraKeepGenerations = 2
+	IdleLadderCeilingRelaxWakes       = 5
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
@@ -7844,7 +7905,7 @@ const (
 	VCPUSlots     = 160
 
 	// Metering (spec §1, §10).
-	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1430)
+	OverageMillicentsPerGBHour = 5_000 // $0.05 per GB-RAM-hour (ADR-20261107192333, amends ADR-1430)
 	// ObjectStorageMillicentsPerGiBMonth is the published rate for average
 	// stored bytes beyond a plan's ObjectStorage.IncludedBytes: $0.03 per
 	// GiB-month (ADR-1430). Requests and egress are free. The operator's
@@ -14982,26 +15043,44 @@ const RequestAnalyticsSettleLag = 2 * time.Minute
 
 // Request analytics rollups (ADR-20261103113952). apid adds every telemetry
 // row a plan keeps, before the debugger ingest cap, to per-minute rollups
-// and writes them every RequestAnalyticsRollupFlushInterval in statements of
-// at most RequestAnalyticsRollupFlushRowsMax rows. For each app, minute and
-// non-route dimension a flush keeps RequestAnalyticsRollupDimensionsMax
-// distinct values and folds the rest into "__other__". The aggregator counts
+// and, every RequestAnalyticsRollupFlushInterval, writes the minutes that
+// closed at least RequestAnalyticsRollupMinuteGrace ago (amendment 3), in
+// statements of at most RequestAnalyticsRollupFlushRowsMax rows. The grace
+// covers the gateways holding a minute until it closes and flushing every
+// few seconds, and stays inside RequestAnalyticsSettleLag. For each app,
+// minute and non-route dimension the write keeps
+// RequestAnalyticsRollupDimensionsMax distinct values and folds the rest
+// into "__other__". The aggregator counts
 // a replayed event ID once among the last RequestAnalyticsRollupSeenEventsMax
 // rows; a gateway replays a batch within seconds of the original. Past
 // RequestAnalyticsRollupPendingRowsMax buffered rollup rows, because
 // Postgres is failing, new rows are dropped and counted.
 const (
 	RequestAnalyticsRollupFlushInterval = 10 * time.Second
+	RequestAnalyticsRollupMinuteGrace   = 30 * time.Second
 	RequestAnalyticsRollupFlushRowsMax  = 1000
 	RequestAnalyticsRollupDimensionsMax = 50
 	// The buffer holds up to this many values of a kind per app minute
-	// before folding new ones into __other__; the flush keeps the
-	// RequestAnalyticsRollupDimensionsMax busiest of them.
-	RequestAnalyticsRollupDimensionsBufferMax = 4 * RequestAnalyticsRollupDimensionsMax
+	// before folding new ones into __other__; the minute's write keeps the
+	// RequestAnalyticsRollupDimensionsMax busiest of them. Non-route rows
+	// are keyed by value alone, so a value costs one buffered row.
+	RequestAnalyticsRollupDimensionsBufferMax = 10 * RequestAnalyticsRollupDimensionsMax
 	// App minutes whose lost rollups wait to be recorded as gaps.
 	RequestAnalyticsRollupPendingGapsMax = 100_000
 	RequestAnalyticsRollupSeenEventsMax  = 200_000
 	RequestAnalyticsRollupPendingRowsMax = 200_000
+)
+
+// The minute tier is kept RequestAnalyticsMinuteRetention, whatever the plan
+// (ADR-20261103113952 amendment 3); the hourly tier keeps the plan's
+// telemetry retention. An analytics window reaching further back than
+// RequestAnalyticsMinuteReadHorizon starts and ends on whole UTC hours, so
+// that part is read from the hourly tier alone. The hour between the two
+// keeps the minutes a window inside the horizon reads from a sweep that runs
+// once an hour.
+const (
+	RequestAnalyticsMinuteRetention   = 48 * time.Hour
+	RequestAnalyticsMinuteReadHorizon = RequestAnalyticsMinuteRetention - time.Hour
 )
 
 // RequestAnalyticsSampledMeasuresTimeout bounds the raw telemetry read that
@@ -18022,6 +18101,18 @@ const (
 	EdgeHostTrackedMax              = 100_000
 	EdgeTLSHandshakesInFlightPerCPU = 128
 	EdgeTLSHandshakeTimeout         = 10 * time.Second
+	// ADR-20261107180000: one client address (an IPv4 address or an IPv6
+	// /64) holds at most EdgeTLSHandshakesInFlightPerAddrMax of those
+	// handshakes at once, an address in Cloudflare's ranges
+	// EdgeTLSHandshakesInFlightPerProxyAddrMax (it carries many clients when
+	// a host is back behind Cloudflare, and the listener does not count it
+	// until its handshake settles), so one address cannot hold every slot
+	// with connections that never finish. A connection must send its
+	// ClientHello within EdgeTLSClientHelloTimeout; the rest of the
+	// handshake keeps EdgeTLSHandshakeTimeout.
+	EdgeTLSHandshakesInFlightPerAddrMax      = 32
+	EdgeTLSHandshakesInFlightPerProxyAddrMax = 64
+	EdgeTLSClientHelloTimeout                = 3 * time.Second
 	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
 	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
 	// the public server's read timeout is the whole request envelope.
@@ -18033,6 +18124,10 @@ const (
 	// (uploads, public reads, OTLP), so direct clients cannot push more at
 	// the control plane than Cloudflare let through.
 	EdgeControlPlaneForwardsInFlightMax = 256
+	// One client address holds at most
+	// EdgeControlPlaneForwardsInFlightPerAddrMax of them, so slow uploads
+	// from one client cannot hold every slot (ADR-20261107180000).
+	EdgeControlPlaneForwardsInFlightPerAddrMax = 16
 )
 
 // The host firewall's backstop for a compute edge's public entry address
@@ -18090,6 +18185,11 @@ const (
 	// EdgeCertificateListenRetry.
 	EdgeCertificateReloadInterval = 10 * time.Minute
 	EdgeCertificateListenRetry    = 5 * time.Second
+	// A reload reads at most EdgeCertificateLiveMax live certificates,
+	// newest first: every one is opened, so an unopenable newest row never
+	// hides an older good one (ADR-20261107180000). A cell holds one or two
+	// live certificates per set of names.
+	EdgeCertificateLiveMax = 32
 	// edgednsd's Certificate Transparency watch reads the apps domain's
 	// unexpired issuances from Cert Spotter every
 	// EdgeCertificateTransparencyInterval: without an API key Cert Spotter

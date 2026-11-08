@@ -1441,6 +1441,10 @@ const (
 	// CodePlanQueueBacklogBytes: the account's pending queue messages hold
 	// the plan's MaxQueueBacklogBytesPerAccount (ADR-20261022105723).
 	CodePlanQueueBacklogBytes = "plan_queue_backlog_bytes"
+	// CodePlanWorkerReplicas: a worker asks for more running workers than
+	// the plan's WorkerReplicasMax, or the plan runs none
+	// (ADR-20261018101500 amendment 2026-10-31).
+	CodePlanWorkerReplicas = "plan_worker_replicas"
 	// CodeCustomMetricLimit: a push of a NEW ADR-202 metric name by an app
 	// already at MaxCustomMetricsPerApp. A push to an EXISTING name never
 	// produces this — it is an upsert and cannot grow the count.
@@ -6882,6 +6886,19 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 		WithDocs(docsBase + "/plans#event-driven")
 }
 
+// ErrPlanWorkerReplicas refuses a worker that the plan cannot run: Free runs
+// no workers, and no plan runs more than WorkerReplicasMax at once
+// (ADR-20261018101500 amendment 2026-10-31).
+func ErrPlanWorkerReplicas(p Plan, limit, observed int) *Problem {
+	detail := fmt.Sprintf("the %s plan runs at most %d workers at once; this worker asks for up to %d. Lower worker.scale.max or upgrade.", p, limit, observed)
+	if limit == 0 {
+		detail = fmt.Sprintf("the %s plan doesn't run workers; upgrade to Hobby or higher to deploy one.", p)
+	}
+	return NewProblem(http.StatusForbidden, CodePlanWorkerReplicas, "Plan worker limit", detail).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/workers#limits")
+}
+
 // ErrPlanDelayedTasksCap is the variant surfaced when a delayed-task
 // schedule would push the per-app delayed-task count past the plan
 // cap. Distinct code so the dashboard can suggest "schedule later"
@@ -7215,7 +7232,7 @@ func ErrOrgMemberCapExceeded(limit, observed int) *Problem {
 func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 	return NewProblem(http.StatusForbidden, CodeOrgFreeLimitExceeded,
 		"Free organization limit reached",
-		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade or delete one to create another.",
+		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade one to create another; a Free organization deleted this month counts until the month ends.",
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/orgs#free-organizations")
@@ -7224,7 +7241,7 @@ func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 // ErrOrgFreeTransferLimitExceeded reports the recipient's ownership count.
 func ErrOrgFreeTransferLimitExceeded(limit, observed int) *Problem {
 	p := ErrOrgFreeLimitExceeded(limit, observed)
-	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade or delete one before accepting another.", observed, limit)
+	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade one before accepting another; a Free organization deleted this month counts until the month ends.", observed, limit)
 	return p
 }
 

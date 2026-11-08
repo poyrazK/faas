@@ -279,15 +279,11 @@ func TestSampler_SkipsFrozenInstances(t *testing.T) {
 	}
 }
 
-// TestSampler_SkipsMirrorInstances is the issue #72 / ADR-125 mirror
-// carve-out guard: a mirror instance (mode='mirror') must not
-// accrue mb_seconds in meterd. The customer-facing response is
-// always the source's response; the mirror never serves the
-// customer, so the model math (financial model §1) must exclude it.
-// The sampler shares the same loop body as the reaper
-// (mirror_count is a sub-case of "not customer-facing"), so a green
-// sampler test implies the reaper test will follow.
-func TestSampler_SkipsMirrorInstances(t *testing.T) {
+// TestSampler_BillsMirrorInstances pins ADR-20261104145353: a mirror VM
+// bills plan RAM + 8 MB per running second like any instance. ADR-124
+// told customers a mirror wake bills; skipping it made mirrors unbilled
+// capacity outside the spend cap.
+func TestSampler_BillsMirrorInstances(t *testing.T) {
 	t.Parallel()
 	s := state.NewMemStore()
 	ctx := context.Background()
@@ -296,8 +292,7 @@ func TestSampler_SkipsMirrorInstances(t *testing.T) {
 	acct := makeAccount(t, ctx, s, api.PlanPro)
 	app := newApp(t, ctx, s, acct.ID)
 	// Plant one RUNNING mirror instance and one RUNNING normal
-	// instance side-by-side. The normal one must appear in the
-	// output rows; the mirror one must not.
+	// instance side-by-side. Both bill.
 	mirrorIns, err := s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("create mirror instance: %v", err)
@@ -305,21 +300,26 @@ func TestSampler_SkipsMirrorInstances(t *testing.T) {
 	if err := s.SetInstanceMode(ctx, mirrorIns.ID, state.InstanceModeMirror); err != nil {
 		t.Fatalf("set instance mode: %v", err)
 	}
-	normalIns, err := s.CreateInstance(ctx, app.ID, "dep2", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
+	_, err = s.CreateInstance(ctx, app.ID, "dep2", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("create normal instance: %v", err)
 	}
-	_ = normalIns
 
 	rows, err := meter.NewSampler(s, nil, func() time.Time { return now }).SampleAndRoll(ctx)
 	if err != nil {
 		t.Fatalf("sample: %v", err)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d, want 1 (only the normal instance bills)", len(rows))
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 (the mirror instance bills too)", len(rows))
 	}
-	if rows[0].InstanceID == mirrorIns.ID {
-		t.Fatalf("mirror instance %s leaked into usage rows", mirrorIns.ID)
+	billed := false
+	for _, row := range rows {
+		if row.InstanceID == mirrorIns.ID && row.MBSeconds > 0 && row.Mode == string(state.InstanceModeMirror) {
+			billed = true
+		}
+	}
+	if !billed {
+		t.Fatalf("rows = %+v, want the mirror instance billed under mode=mirror", rows)
 	}
 }
 

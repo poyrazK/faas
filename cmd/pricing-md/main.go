@@ -32,7 +32,7 @@ func render() string {
 	var b strings.Builder
 	b.WriteString("# Plans and pricing\n\n")
 	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->\n\n")
-	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at $0.01 per GB-RAM-hour on paid plans.\n\n")
+	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at " + formatPrice(api.OverageMillicentsPerGBHour) + " per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
 	b.WriteString("| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App egress / month | App layer | Idle timeout | Max request timeout |\n")
 	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
@@ -111,8 +111,8 @@ func renderObjectStorage(b *strings.Builder) {
 	b.WriteString("\n## Object storage\n\n")
 	fmt.Fprintf(b, "Object storage bills the bytes it holds. Each plan includes an average amount of stored data per month; storage beyond it costs %s per GiB-month, up to the plan's storage ceiling. Requests and egress are not charged. Free stops at its included storage. Each plan limits the data you read out of your buckets each month to %d times its included storage.\n\n",
 		formatPrice(api.ObjectStorageMillicentsPerGiBMonth), api.ObjectStorageEgressPerIncludedByte)
-	b.WriteString("| Plan | Included storage | Beyond the included storage | Most stored | Egress each month |\n")
-	b.WriteString("|---|---:|---|---:|---:|\n")
+	b.WriteString("| Plan | Included storage | Beyond the included storage | Most stored | Egress each month | Requests each month |\n")
+	b.WriteString("|---|---:|---|---:|---:|---:|\n")
 	for _, plan := range api.Plans {
 		l, ok := api.LimitsFor(plan)
 		if !ok {
@@ -122,9 +122,9 @@ func renderObjectStorage(b *strings.Builder) {
 		if l.ObjectStorage.MaxAccountBytes > 0 && l.ObjectStorage.MaxAccountBytes <= l.ObjectStorage.IncludedBytes {
 			beyond = "stops at " + formatGiB(l.ObjectStorage.MaxAccountBytes)
 		}
-		fmt.Fprintf(b, "| **%s** | %s | %s | %s | %s |\n", titlePlan(plan), formatGiB(l.ObjectStorage.IncludedBytes), beyond, formatGiB(l.ObjectStorage.MaxAccountBytes), formatGiB(l.ObjectStorage.MaxMonthlyEgressBytes))
+		fmt.Fprintf(b, "| **%s** | %s | %s | %s | %s | %s |\n", titlePlan(plan), formatGiB(l.ObjectStorage.IncludedBytes), beyond, formatGiB(l.ObjectStorage.MaxAccountBytes), formatGiB(l.ObjectStorage.MaxMonthlyEgressBytes), formatThousands(l.ObjectStorage.MaxMonthlyRequests))
 	}
-	fmt.Fprintf(b, "\nIncluded storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. A lower spend cap lowers how much a paid plan stores: a $0 cap stops at the included storage. Need more than the plan stores? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused, and downloads stop while you store more than it until you delete objects. A downgrade waits until your data fits. Every plan stores up to %s objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends. See [object storage](object-storage.md#limits).\n",
+	fmt.Fprintf(b, "\nIncluded storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. A lower spend cap lowers how much a paid plan stores: a $0 cap stops at the included storage. Need more than the plan stores? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused, and downloads stop while you store more than it until you delete objects. A downgrade waits until your data fits. Every plan stores up to %s objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends; at the request limit, every request is refused until the month ends. See [object storage](object-storage.md#limits).\n",
 		formatCount(api.MaxObjectStorageAccountKeys))
 }
 

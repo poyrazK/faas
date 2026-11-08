@@ -227,7 +227,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		body += databases.hostVars(host, hostScheddTarget)
 		body += renderComputeEdgeVars(m.PublicEdge, host, postgresListenAddress, computeAllowedCIDRs)
 		if host.Role == roleControlPlane {
-			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts)
+			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts, m.DNS.AppsDomain)
 		}
 		body += renderComputeObjectGatewayVars(m.ObjectStorage, host)
 		body += renderLogArchiveVars(m.LogArchive)
@@ -820,12 +820,30 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, control
 	return b.String()
 }
 
+// managedHostSlugs returns the labels of the names one label under
+// appsDomain, sorted and without duplicates; wildcards are skipped.
+func managedHostSlugs(names []string, appsDomain string) []string {
+	domain := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(appsDomain), "."))
+	if domain == "" {
+		return nil
+	}
+	var slugs []string
+	for _, name := range names {
+		label, ok := strings.CutSuffix(strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), ".")), "."+domain)
+		if ok && label != "" && label != "*" && !strings.Contains(label, ".") && !slices.Contains(slugs, label) {
+			slugs = append(slugs, label)
+		}
+	}
+	slices.Sort(slugs)
+	return slugs
+}
+
 // renderEdgeDNSVars turns on edgednsd on the control plane
 // (ADR-20261102081618 §3) with the managed names and each compute host's
 // public address under the name it registers with. Under front: none the
 // names are DNS-only, apart from the proxied ones, and point at the entry
 // addresses (ADR-20261103163954 §1).
-func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host) string {
+func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host, appsDomain string) string {
 	if edge.DNS == nil || !edge.DirectEntry() {
 		return ""
 	}
@@ -846,7 +864,7 @@ func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host) string {
 			names = append(names, edge.DNS.ZoneID+":"+name)
 		}
 	}
-	var addresses []string
+	var addresses, private []string
 	for _, h := range hosts {
 		addr := h.PublicIPv4
 		if edge.NoFront() {
@@ -855,12 +873,23 @@ func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host) string {
 		if h.Role == roleComputeOnly && addr != "" {
 			addresses = append(addresses, canonicalComputeNodeName(h.Name, roleTemplating.Role(h.Role))+"="+addr)
 		}
+		// ADR-20261107180000: edgednsd probes each edge at the manifest's
+		// private address, not the registry's target_url.
+		if host, _, _ := manifest.ParseHostPort(h.Address); h.Role == roleComputeOnly && host != "" {
+			private = append(private, canonicalComputeNodeName(h.Name, roleTemplating.Role(h.Role))+"="+host)
+		}
 	}
 	var b strings.Builder
 	b.WriteString("faas_edgednsd_managed: true\n")
 	fmt.Fprintf(&b, "faas_edgednsd_names: [%s]\n", quotedYAMLList(names))
 	fmt.Fprintf(&b, "faas_edgednsd_node_addresses: [%s]\n", quotedYAMLList(addresses))
+	fmt.Fprintf(&b, "faas_edgednsd_node_private_addresses: [%s]\n", quotedYAMLList(private))
 	fmt.Fprintf(&b, "faas_edgednsd_dry_run: %t\n", !edge.DNS.Live)
+	// ADR-20261107180000: a managed host one label under the apps domain is
+	// the platform's; apid refuses that label as a new app's name.
+	if slugs := managedHostSlugs(append(slices.Clone(edge.DNS.Names), edge.DNS.Proxied...), appsDomain); len(slugs) > 0 {
+		fmt.Fprintf(&b, "faas_reserved_app_slugs: [%s]\n", quotedYAMLList(slugs))
+	}
 	// ADR-20261103163954 §3: edgednsd orders the apps domains' certificate
 	// with the DNS-01 challenge in the managed zone.
 	if cert := edge.DNS.Certificate; cert != nil {

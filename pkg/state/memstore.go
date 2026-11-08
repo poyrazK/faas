@@ -3322,6 +3322,7 @@ func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKe
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
 	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
+	m.copyKeyProjectLimitLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -3567,6 +3568,7 @@ func (m *MemStore) RotateAPIKey(_ context.Context, accountID, oldKeyID string, n
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
 	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
+	m.copyKeyProjectLimitLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -3772,6 +3774,7 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
 	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
+	m.copyKeyProjectLimitLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -19433,6 +19436,24 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 		// pointer is non-nil and equals the filter. The pre-fix
 		// && false made this branch dead; tests caught it.
 		if subj == nil || (e.Subject != nil && *e.Subject == *subj) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// ListEventsBySubjectKind mirrors PgStore.ListEventsBySubjectKind.
+func (m *MemStore) ListEventsBySubjectKind(_ context.Context, subject, kind string, since time.Time, limit int) ([]Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	subj := parseSubjectID(subject)
+	if subj == nil {
+		return nil, nil
+	}
+	var out []Event
+	for i := len(m.events) - 1; i >= 0 && (limit <= 0 || len(out) < limit); i-- {
+		e := m.events[i]
+		if e.Subject != nil && *e.Subject == *subj && e.Kind == kind && !e.At.Before(since) {
 			out = append(out, e)
 		}
 	}
