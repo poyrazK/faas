@@ -54,8 +54,11 @@ func MigrateEdge(ctx context.Context, store EdgeStore, domain *age.X25519Identit
 				continue
 			}
 			namespace, maxBytes := logDrainNamespace, api.AppLogDrainAuthHeaderMaxBytes
-			if c.Kind == state.EdgeSealedCredentialBasicAuth {
+			switch c.Kind {
+			case state.EdgeSealedCredentialBasicAuth:
 				namespace, maxBytes = api.AppPublicAuthBasicSealNamespace, api.AppPublicAuthBasicMaxBytes
+			case state.EdgeSealedCredentialHeaderSecret:
+				namespace, maxBytes = api.EdgeRuleHeaderSecretSealNamespace, api.EdgeRuleHeaderSecretMaxBytes
 			}
 			sealed, outcome, err := resealBlob(c.Sealed, namespace, maxBytes, domain, legacy)
 			if err != nil {

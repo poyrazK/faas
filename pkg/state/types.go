@@ -8497,6 +8497,13 @@ type EdgeRuleHeaderOp struct {
 	Value    string `json:"value,omitempty"`
 	Action   string `json:"action"`
 	Template bool   `json:"template,omitempty"` // ADR-968
+	// Secret and SecretID (ADR-20261108110000): the value is sealed in
+	// edge_rule_header_secrets row SecretID and Value is empty.
+	Secret   bool   `json:"secret,omitempty"`
+	SecretID string `json:"secret_id,omitempty"`
+	// Redacted is set only on a response copy whose credential-named value
+	// was stored before sealing; it is never stored.
+	Redacted bool `json:"redacted,omitempty"`
 }
 
 // EdgeRuleHeadersAction mutates request headers BEFORE auth and

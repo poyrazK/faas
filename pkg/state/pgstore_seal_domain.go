@@ -533,8 +533,9 @@ func (s *PgStore) ResealRegistryCredential(ctx context.Context, c RegistrySealed
 }
 
 // Edge credential kinds (ADR 20261022111812): an app's basic-auth credential,
-// a log drain's authentication header, and an application standard's log
-// destination header.
+// a log drain's authentication header, an application standard's log
+// destination header, and a sealed edge-rule request header value
+// (EdgeSealedCredentialHeaderSecret, ADR-20261108110000).
 const (
 	EdgeSealedCredentialBasicAuth      = "app_basic_auth"
 	EdgeSealedCredentialLogDrain       = "log_drain"
@@ -574,6 +575,9 @@ func (s *PgStore) ListEdgeSealedCredentials(ctx context.Context, afterKind, afte
 			SELECT 'log_destination', l.id::text, l.auth_header_sealed, true
 			  FROM application_standard_log_destinations l
 			 WHERE octet_length(l.auth_header_sealed) > 0
+			UNION ALL
+			SELECT 'edge_rule_header', h.id::text, h.ciphertext, false
+			  FROM edge_rule_header_secrets h
 		) credential
 		 WHERE (kind, id) > ($1, $2)
 		 ORDER BY kind, id
@@ -614,6 +618,11 @@ func (s *PgStore) ResealEdgeCredential(ctx context.Context, c EdgeSealedCredenti
 	case EdgeSealedCredentialLogDrain:
 		query = `UPDATE app_log_drains SET auth_header_sealed = $3
 		          WHERE id = $1::uuid AND auth_header_sealed = $2`
+	case EdgeSealedCredentialHeaderSecret:
+		// The value is unchanged, so re-sealing keeps the row's id that
+		// rules and rule-set versions reference (ADR-20261108110000).
+		query = `UPDATE edge_rule_header_secrets SET ciphertext = $3
+		          WHERE id = $1::uuid AND ciphertext = $2`
 	default:
 		return false, fmt.Errorf("state: reseal edge credential: kind %q cannot be re-sealed in place", c.Kind)
 	}
