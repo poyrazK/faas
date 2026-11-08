@@ -5169,6 +5169,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		s.audit.Emit(r.Context(), "api_key.created", &acct.ID, newPayload)
 	}
+	s.noticeCredentialCreated(r, acct, credentialAPIKey, k.Label)
 	resp := api.APIKeyResponse{
 		ID:        k.ID,
 		OrgID:     k.OrgID,
@@ -5421,6 +5422,7 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"created_ua":         bindUA,
 		"parent_key_id":      oldKey.ID,
 	})
+	s.noticeCredentialCreated(r, acct, credentialRotatedKey, newKey.Label)
 	s.log.Info("key rotated",
 		"old_key", oldKey.ID, "new_key", newKey.ID,
 		"account", acct.ID, "grace_window_days", graceWindowDays)

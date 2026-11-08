@@ -2831,6 +2831,8 @@ type Querier interface {
 	InsertMCPPagerDutyAcknowledgementEvent(ctx context.Context, db DBTX, arg InsertMCPPagerDutyAcknowledgementEventParams) error
 	InsertMCPReadinessReminder(ctx context.Context, db DBTX, arg InsertMCPReadinessReminderParams) error
 	InsertMCPRouteDelivery(ctx context.Context, db DBTX, arg InsertMCPRouteDeliveryParams) (pgtype.UUID, error)
+	// Remembered browsers for two-factor authentication (ADR 20261108150000).
+	InsertMFATrustedBrowser(ctx context.Context, db DBTX, arg InsertMFATrustedBrowserParams) (int64, error)
 	InsertManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg InsertManagedPostgresAccountingReconciliationParams) error
 	InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverParams) error
 	InsertManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverCredentialParams) (int64, error)
@@ -3901,6 +3903,7 @@ type Querier interface {
 	ListMCPOAuthRetirements(ctx context.Context, db DBTX, arg ListMCPOAuthRetirementsParams) ([][]byte, error)
 	ListMCPPagerDutyAcknowledgementEvents(ctx context.Context, db DBTX, arg ListMCPPagerDutyAcknowledgementEventsParams) ([][]byte, error)
 	ListMCPQueuedReminders(ctx context.Context, db DBTX, arg ListMCPQueuedRemindersParams) ([]ListMCPQueuedRemindersRow, error)
+	ListMFATrustedBrowsers(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListMFATrustedBrowsersRow, error)
 	// ADR-20261024150500: the live databases an account deletion must remove,
 	// exactly the ones guard_account_managed_postgres_databases counts. Newest
 	// first, so restore descendants are deleted before their sources.
@@ -7124,6 +7127,7 @@ type Querier interface {
 	RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, arg RetryQueueDeadLetterInvocationParams) (Invocation, error)
 	RetryQueueLeaseInvocation(ctx context.Context, db DBTX, arg RetryQueueLeaseInvocationParams) (int64, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)
+	RevokeAllMFATrustedBrowsers(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.
 	RevokeAllSessions(ctx context.Context, db DBTX, arg RevokeAllSessionsParams) ([]pgtype.UUID, error)
@@ -7131,6 +7135,7 @@ type Querier interface {
 	RevokeCloneCheckpointObjectPublicationCredential(ctx context.Context, db DBTX, arg RevokeCloneCheckpointObjectPublicationCredentialParams) (int64, error)
 	RevokeCustomerOperationWorkflowCustody(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	RevokeDevBridge(ctx context.Context, db DBTX, arg RevokeDevBridgeParams) (int64, error)
+	RevokeMFATrustedBrowser(ctx context.Context, db DBTX, arg RevokeMFATrustedBrowserParams) (int64, error)
 	RevokeManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg RevokeManagedPostgresCutoverCredentialParams) (int64, error)
 	RevokeRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RevokeRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error)
 	RevokeRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
@@ -7813,6 +7818,8 @@ type Querier interface {
 	// (ADR-20261018101500 amendment 2026-10-31). Reads
 	// invocations_queue_completed_payload_idx in completion order.
 	TrimCompletedQueuePayloads(ctx context.Context, db DBTX, arg TrimCompletedQueuePayloadsParams) (int64, error)
+	// Keep only the newest max_active remembered browsers per account.
+	TrimMFATrustedBrowsers(ctx context.Context, db DBTX, arg TrimMFATrustedBrowsersParams) (int64, error)
 	TryEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error)
 	TryEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	TryLockApplicationStandardApprovalArtifactChildren(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) (bool, error)
@@ -8020,6 +8027,9 @@ type Querier interface {
 	// One account's usage_minutes summed by UTC hour: compute MB-seconds and
 	// interface egress bytes, so the pusher can apply its hour rules to a month.
 	UsageMinutesHourly(ctx context.Context, db DBTX, arg UsageMinutesHourlyParams) ([]UsageMinutesHourlyRow, error)
+	// A browser remembered before the current enrollment (MFA turned off and
+	// set up again) is not trusted.
+	UseMFATrustedBrowser(ctx context.Context, db DBTX, arg UseMFATrustedBrowserParams) (int64, error)
 	ValidateApplicationStandardResourceRefs(ctx context.Context, db DBTX, arg ValidateApplicationStandardResourceRefsParams) (pgtype.Bool, error)
 	ValidateBoundQueueInvocationClaim(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
 	ValidateEnvironmentInvocationCleanup(ctx context.Context, db DBTX, environmentID pgtype.UUID) (ValidateEnvironmentInvocationCleanupRow, error)

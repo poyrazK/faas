@@ -117,6 +117,21 @@ const (
 	NewSignInLookback   = 90 * 24 * time.Hour
 )
 
+// The security activity view (ADR 20261108150000) shows at most
+// SecurityActivityMaxEvents events from the last SecurityActivityLookback.
+const (
+	SecurityActivityLookback  = 90 * 24 * time.Hour
+	SecurityActivityMaxEvents = 100
+)
+
+// A browser remembered at the authenticator check (ADR 20261108150000)
+// skips the code at sign-in for MFATrustedBrowserTTL; an account keeps at
+// most MFATrustedBrowsersMax, the oldest forgotten first.
+const (
+	MFATrustedBrowserTTL  = 30 * 24 * time.Hour
+	MFATrustedBrowsersMax = 10
+)
+
 // Queue receive long-polls one account, and one apid in all, may hold at a
 // time; past them a receive answers 429. A receive waits on apid's shared
 // completion listener, not on a database connection, so the caps bound
