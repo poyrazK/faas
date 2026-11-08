@@ -54209,19 +54209,11 @@ paths:
         made in the last 7 days, newest first. Only an agent key can call it;
         a person reads an agent's log by its connection id.
       parameters:
-      - name: before
-        in: query
-        required: false
-        description: The `next_before` value of an earlier page; omit it for the newest rows.
-        schema: { type: string }
-      - name: limit
-        in: query
-        required: false
-        description: Rows per page, 1 to 200. Default 50.
-        schema: { type: integer, minimum: 1, maximum: 200 }
+      - $ref: '#/components/parameters/AgentActivityBefore'
+      - $ref: '#/components/parameters/AgentActivityLimit'
       responses:
         '200':
-          description: One page of write requests, newest first.
+          description: One page of the calling agent's write requests, newest first.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AgentActivityResponse' }
@@ -54235,7 +54227,7 @@ paths:
       - name: id
         in: path
         required: true
-        description: The connected agent's API key id.
+        description: API key id of the connected agent whose activity to read.
         schema: { type: string }
     get:
       tags: [keys]
@@ -54247,19 +54239,11 @@ paths:
         approval request it went through on. Reads and requests the approval
         gate answered are not listed. An agent key may read only its own.
       parameters:
-      - name: before
-        in: query
-        required: false
-        description: The `next_before` value of an earlier page; omit it for the newest rows.
-        schema: { type: string }
-      - name: limit
-        in: query
-        required: false
-        description: Rows per page, 1 to 200. Default 50.
-        schema: { type: integer, minimum: 1, maximum: 200 }
+      - $ref: '#/components/parameters/AgentActivityBefore'
+      - $ref: '#/components/parameters/AgentActivityLimit'
       responses:
         '200':
-          description: One page of write requests, newest first.
+          description: One page of the connected agent's write requests, newest first.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AgentActivityResponse' }
@@ -54401,7 +54385,7 @@ paths:
       - name: id
         in: path
         required: true
-        description: The API key id of an agent acting in the organization.
+        description: API key id of the organization agent whose activity to read.
         schema: { type: string }
     get:
       tags: [orgs, keys]
@@ -54412,19 +54396,11 @@ paths:
         last 7 days, newest first. Owners and admins only; an id that is not
         one of the organization's agents is 404.
       parameters:
-      - name: before
-        in: query
-        required: false
-        description: The `next_before` value of an earlier page; omit it for the newest rows.
-        schema: { type: string }
-      - name: limit
-        in: query
-        required: false
-        description: Rows per page, 1 to 200. Default 50.
-        schema: { type: integer, minimum: 1, maximum: 200 }
+      - $ref: '#/components/parameters/AgentActivityBefore'
+      - $ref: '#/components/parameters/AgentActivityLimit'
       responses:
         '200':
-          description: One page of write requests, newest first.
+          description: One page of the organization agent's write requests, newest first.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AgentActivityResponse' }
@@ -69683,6 +69659,18 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    AgentActivityBefore:
+      name: before
+      in: query
+      required: false
+      description: The `next_before` value of an earlier activity page; omit it for the newest rows.
+      schema: { type: string }
+    AgentActivityLimit:
+      name: limit
+      in: query
+      required: false
+      description: Activity rows per page, 1 to 200. Default 50.
+      schema: { type: integer, minimum: 1, maximum: 200 }
     EnvironmentPromotionAttempt:
       name: attempt_id
       in: path

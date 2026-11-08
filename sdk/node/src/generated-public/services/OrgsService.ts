@@ -130,7 +130,7 @@ export class OrgsService {
    * last 7 days, newest first. Owners and admins only; an id that is not
    * one of the organization's agents is 404.
    *
-   * @returns AgentActivityResponse One page of write requests, newest first.
+   * @returns AgentActivityResponse One page of the organization agent's write requests, newest first.
    * @throws ApiError
    */
   public static orgAgentConnectionActivity({
@@ -144,15 +144,15 @@ export class OrgsService {
      */
     slug: string,
     /**
-     * The API key id of an agent acting in the organization.
+     * API key id of the organization agent whose activity to read.
      */
     id: string,
     /**
-     * The `next_before` value of an earlier page; omit it for the newest rows.
+     * The `next_before` value of an earlier activity page; omit it for the newest rows.
      */
     before?: string,
     /**
-     * Rows per page, 1 to 200. Default 50.
+     * Activity rows per page, 1 to 200. Default 50.
      */
     limit?: number,
   }): CancelablePromise<AgentActivityResponse> {

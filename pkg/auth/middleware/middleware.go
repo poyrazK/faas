@@ -651,7 +651,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				if activity != nil {
 					aw := &activityWriter{ResponseWriter: w}
 					next(aw, r, acct)
-					m.recordAgentActivity(r, acct, key, aw.status, activity)
+					m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
 					return
 				}
 				next(w, r, acct)

@@ -328,7 +328,7 @@ export class KeysService {
    * made in the last 7 days, newest first. Only an agent key can call it;
    * a person reads an agent's log by its connection id.
    *
-   * @returns AgentActivityResponse One page of write requests, newest first.
+   * @returns AgentActivityResponse One page of the calling agent's write requests, newest first.
    * @throws ApiError
    */
   public static agentConnectionSelfActivity({
@@ -336,11 +336,11 @@ export class KeysService {
     limit,
   }: {
     /**
-     * The `next_before` value of an earlier page; omit it for the newest rows.
+     * The `next_before` value of an earlier activity page; omit it for the newest rows.
      */
     before?: string,
     /**
-     * Rows per page, 1 to 200. Default 50.
+     * Activity rows per page, 1 to 200. Default 50.
      */
     limit?: number,
   }): CancelablePromise<AgentActivityResponse> {
@@ -370,7 +370,7 @@ export class KeysService {
    * approval request it went through on. Reads and requests the approval
    * gate answered are not listed. An agent key may read only its own.
    *
-   * @returns AgentActivityResponse One page of write requests, newest first.
+   * @returns AgentActivityResponse One page of the connected agent's write requests, newest first.
    * @throws ApiError
    */
   public static agentConnectionActivity({
@@ -379,15 +379,15 @@ export class KeysService {
     limit,
   }: {
     /**
-     * The connected agent's API key id.
+     * API key id of the connected agent whose activity to read.
      */
     id: string,
     /**
-     * The `next_before` value of an earlier page; omit it for the newest rows.
+     * The `next_before` value of an earlier activity page; omit it for the newest rows.
      */
     before?: string,
     /**
-     * Rows per page, 1 to 200. Default 50.
+     * Activity rows per page, 1 to 200. Default 50.
      */
     limit?: number,
   }): CancelablePromise<AgentActivityResponse> {
@@ -575,7 +575,7 @@ export class KeysService {
    * last 7 days, newest first. Owners and admins only; an id that is not
    * one of the organization's agents is 404.
    *
-   * @returns AgentActivityResponse One page of write requests, newest first.
+   * @returns AgentActivityResponse One page of the organization agent's write requests, newest first.
    * @throws ApiError
    */
   public static orgAgentConnectionActivity({
@@ -589,15 +589,15 @@ export class KeysService {
      */
     slug: string,
     /**
-     * The API key id of an agent acting in the organization.
+     * API key id of the organization agent whose activity to read.
      */
     id: string,
     /**
-     * The `next_before` value of an earlier page; omit it for the newest rows.
+     * The `next_before` value of an earlier activity page; omit it for the newest rows.
      */
     before?: string,
     /**
-     * Rows per page, 1 to 200. Default 50.
+     * Activity rows per page, 1 to 200. Default 50.
      */
     limit?: number,
   }): CancelablePromise<AgentActivityResponse> {

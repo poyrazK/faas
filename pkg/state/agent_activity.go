@@ -71,8 +71,8 @@ func (s *PgStore) RecordAgentActivity(ctx context.Context, row AgentActivity) er
 }
 
 func (s *PgStore) ListAgentActivity(ctx context.Context, keyID string, since time.Time, before AgentActivityCursor, limit int) ([]AgentActivity, error) {
-	if _, err := uuid.Parse(keyID); err != nil {
-		return []AgentActivity{}, nil
+	if uuid.Validate(keyID) != nil { // not a key id: no rows
+		return []AgentActivity{}, nil //nolint:nilerr // a malformed key id has no activity, not an error
 	}
 	at, id := before.bounds()
 	rows, err := sqlc.New().ListAgentActivity(ctx, s.pool, sqlc.ListAgentActivityParams{
