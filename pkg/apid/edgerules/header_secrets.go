@@ -128,7 +128,7 @@ func RedactHeaderSecrets(action state.EdgeRuleAction) state.EdgeRuleAction {
 	var ops []state.EdgeRuleHeaderOp
 	for i, op := range action.Headers.RequestHeaders {
 		if op.Value == "" || op.SecretID != "" || op.Template || op.Action == "remove" ||
-			!(op.Secret || api.EdgeRuleHeaderNameIsCredential(op.Name)) {
+			(!op.Secret && !api.EdgeRuleHeaderNameIsCredential(op.Name)) {
 			continue
 		}
 		if ops == nil {
