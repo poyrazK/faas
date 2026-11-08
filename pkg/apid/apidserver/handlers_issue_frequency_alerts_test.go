@@ -104,6 +104,9 @@ func TestIssueFrequencyAlertsPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Direct store calls must reject future evidence for alerting. Ingress
+		// normalization now clamps that clock, so retain it for this guard test.
+		normalized.OccurredAt = occurred
 		return state.RecordIssueParams{Credential: state.IssueCredential{AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID, Environment: "application"}, Event: normalized, Fingerprint: fp, Title: title, PayloadHash: issues.PayloadDigest(event), GroupingVersion: issues.GroupingVersionFor(normalized), Limits: api.PlanPro.IssueLimits(), Now: at}
 	}
 	capture := func(p state.RecordIssueParams) api.IssueEventResponse {

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -215,7 +217,7 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 		if ins.AppID == "" {
 			vcpu = 1
 		}
-		cost := capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(max(app.CPUMillicores, api.DefaultAppCPUMillicores)) + cpu, VCPU: vcpu}
+		cost := capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(m.instanceCapacityCPULocked(ins, app)) + cpu, VCPU: vcpu}
 		admitted := m.migrationResourceFloorLocked(ins, m.capacityInstanceResources[ins.ID])
 		cost.RAM = max(cost.RAM, admitted.RAM)
 		cost.CPU = max(cost.CPU, admitted.CPU)
@@ -466,5 +468,41 @@ func (m *MemStore) recordInstanceCapacityLocked(ins Instance) {
 	if ins.AppID == "" {
 		vcpu = 1
 	}
-	m.capacityInstanceResources[ins.ID] = capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(max(app.CPUMillicores, api.DefaultAppCPUMillicores)) + cpu, VCPU: vcpu}
+	m.capacityInstanceResources[ins.ID] = capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(m.instanceCapacityCPULocked(ins, app)) + cpu, VCPU: vcpu}
+}
+
+// instanceCapacityCPULocked mirrors capture_instance_capacity's main CPU:
+// the instance's stored booking, else its app's CPU floored at a core.
+func (m *MemStore) instanceCapacityCPULocked(ins Instance, app App) int {
+	if booked := m.instanceBookedCPU[ins.ID]; booked > 0 {
+		return booked
+	}
+	return max(app.CPUMillicores, api.DefaultAppCPUMillicores)
+}
+
+// recordInstanceBookedCPULocked mirrors capture_instance_capacity storing
+// ctx's placement booking on a live instance row (ADR-20261101160231 step
+// 5b). It runs before recordInstanceCapacityLocked.
+func (m *MemStore) recordInstanceBookedCPULocked(ctx context.Context, ins Instance) {
+	booked := nodeBookedCPUMillicores(ctx, ins.NodeID)
+	if booked <= 0 || !IsLive(strings.ToLower(ins.State)) {
+		return
+	}
+	if m.instanceBookedCPU == nil {
+		m.instanceBookedCPU = map[string]int{}
+	}
+	m.instanceBookedCPU[ins.ID] = booked
+}
+
+// instanceCPUBookingLocked is what a live instance books against its node's
+// CPU budget after its startup boost: its stored booking, else its app's
+// configured CPU (the node guard's and placement's sum).
+func (m *MemStore) instanceCPUBookingLocked(ins Instance, app App) int {
+	if booked := m.instanceBookedCPU[ins.ID]; booked > 0 {
+		return booked
+	}
+	if app.CPUMillicores > 0 {
+		return app.CPUMillicores
+	}
+	return api.DefaultAppCPUMillicores
 }

@@ -83,7 +83,7 @@ func (m *MemStore) RequestHTTPCrashCapture(_ context.Context, appID, instanceID 
 	ins, insOK := m.instances[instanceID]
 	settings := m.crashSettings[appID]
 	if !ok || app.Status == AppDeleted || !insOK || ins.AppID != appID || ins.State != string(StateRunning) ||
-		IsFork(ins.Mode) || !settings.Enabled || m.crashCaptureBlockedLocked(appID, cooldown, now) {
+		NeverServes(ins.Mode) || !settings.Enabled || m.crashCaptureBlockedLocked(appID, cooldown, now) {
 		return CrashCapture{}, ErrCrashCaptureRefused
 	}
 	code := statusCode
@@ -98,7 +98,7 @@ func (m *MemStore) RequestSDKCrashCapture(_ context.Context, appID, instanceID, 
 	ins, insOK := m.instances[instanceID]
 	settings := m.crashSettings[appID]
 	if !ok || app.Status == AppDeleted || !insOK || ins.AppID != appID || ins.State != string(StateRunning) ||
-		IsFork(ins.Mode) || !settings.Enabled || m.crashCaptureBlockedLocked(appID, cooldown, now) {
+		NeverServes(ins.Mode) || !settings.Enabled || m.crashCaptureBlockedLocked(appID, cooldown, now) {
 		return CrashCapture{}, ErrCrashCaptureRefused
 	}
 	c := m.insertCrashCaptureLocked(app, ins, CrashTriggerSDK, nil, route, now)
@@ -118,7 +118,7 @@ func (m *MemStore) RequestManualCrashCapture(_ context.Context, accountID, appID
 	var newest Instance
 	found := false
 	for _, ins := range m.instances {
-		if ins.AppID != appID || ins.State != string(StateRunning) || IsFork(ins.Mode) {
+		if ins.AppID != appID || ins.State != string(StateRunning) || NeverServes(ins.Mode) {
 			continue
 		}
 		if !found || ins.StartedAt.After(newest.StartedAt) {
@@ -457,7 +457,7 @@ func (m *MemStore) requestLiveForkCaptureLocked(app App, cooldown time.Duration,
 	var newest Instance
 	found := false
 	for _, ins := range m.instances {
-		if ins.AppID != app.ID || ins.State != string(StateRunning) || IsFork(ins.Mode) {
+		if ins.AppID != app.ID || ins.State != string(StateRunning) || NeverServes(ins.Mode) {
 			continue
 		}
 		if !found || ins.StartedAt.After(newest.StartedAt) {

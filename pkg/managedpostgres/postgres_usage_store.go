@@ -213,7 +213,9 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
 	for _, row := range rows {
-		progress := accountingCoverageFromRow(row).Progress
+		coverage := accountingCoverageFromRow(row)
+		progress := coverage.Progress
+		progress.DatabaseID = coverage.DatabaseID
 		if len(snapshot.Databases) == 0 || progress.ObservedAt.Before(snapshot.LastObservedAt) {
 			snapshot.LastObservedAt = progress.ObservedAt
 		}

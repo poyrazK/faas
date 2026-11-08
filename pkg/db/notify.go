@@ -499,7 +499,8 @@ func (p PoolNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wak
 //	                         "kind":"updated|parked|woken|restart|...", // required
 //	                         "wake_id":uuid           // restart correlation id
 //	                         "lifecycle_changed":bool} // lifecycle fields changed
-//	NotifyAppWake           {"app_id":uuid,"wake_id":uuid}
+//	NotifyAppWake           {"app_id":uuid,"wake_id":uuid,
+//	                         "instance_id":uuid} // optional: frozen VM to thaw
 //	                         apid → schedd: durable explicit pre-warm request.
 //	NotifyRuntimeConfigRestart {"app_id":uuid,"wake_id":uuid}
 //	                         apid → schedd: durable destroy-without-snapshot
@@ -599,7 +600,7 @@ func (p PoolNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wak
 //	                         "at":rfc3339nano}
 //	                         meterd → dashboard: paid-tier overage crossed
 //	                         100 %; apps keep running, overage accrues at
-//	                         $0.01/GB-h (spec §1, §10).
+//	                         $0.05/GB-h (spec §1, §10; ADR-20261107192333).
 //	NotifyMigrationsApplied {"version_id":int64}
 //	                         the leader's goose-up landed an applied migration
 //	                         ledger row (migration 20260904000000001 trigger).

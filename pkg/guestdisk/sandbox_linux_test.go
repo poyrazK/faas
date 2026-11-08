@@ -7,16 +7,58 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // TestMain lets the test binary stand in for vmmd-guestdisk: a sandboxed
-// run re-executes it with the helper's arguments.
+// run re-executes it with the helper's arguments. The helper first maps more
+// address space than the tool's cap, as a -race helper already has: the cap
+// must still be settable and the tool must still start.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "--uid" {
+		_, _ = unix.Mmap(-1, 0, sandboxAddressSize+(1<<30), unix.PROT_NONE, unix.MAP_PRIVATE|unix.MAP_ANONYMOUS|unix.MAP_NORESERVE)
 		os.Exit(SandboxMain(os.Args[1:]))
 	}
 	os.Exit(m.Run())
+}
+
+// TestSandboxToolRunsUnderLimits checks the tool starts, from a helper whose
+// address space is already past the cap, and still carries the limits.
+// Repeated execs exercise the race runtime's lazy sync allocations during the
+// limit-to-exec transition, including when this package has atomic coverage.
+// adr: 20261025090100 — guest drive tools retain their sandbox resource caps.
+func TestSandboxToolRunsUnderLimits(t *testing.T) {
+	sh := "/bin/sh"
+	if !fileExists(sh) {
+		t.Skip("no /bin/sh")
+	}
+	s := sandboxedSession(t, mkImage(t, nil))
+	for i := range 32 {
+		res, err := s.run(context.Background(), sh, []string{"-c", "ulimit -v; ulimit -Hv; ulimit -n; ulimit -c; ulimit -t"}, nil, runLimits{output: 4096})
+		if err != nil || res.exit != 0 {
+			t.Fatalf("sandboxed sh run %d: exit %d %v %s", i, res.exit, err, res.stderr)
+		}
+		if want := "2097152\n2097152\n64\n0\n60\n"; string(res.stdout) != want {
+			t.Fatalf("tool limits on run %d = %q, want %q", i, res.stdout, want)
+		}
+	}
+}
+
+// adr: 20261025090100 — failure to impose a resource cap must refuse exec.
+func TestAddressLimitFailureRefusesExec(t *testing.T) {
+	vec, err := newExecVectors("/guestdisk-must-not-exec", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A soft limit above the hard limit is rejected without changing the
+	// test process's limits. Reaching exec instead would return ENOENT.
+	limit := unix.Rlimit{Cur: 2, Max: 1}
+	if got := execWithAddressLimit(vec.path, &vec.argv[0], &vec.envv[0], &limit); got != syscall.EINVAL {
+		t.Fatalf("invalid address limit: %v, want EINVAL before exec", got)
+	}
 }
 
 func sandboxedSession(t *testing.T, img string) *Session {

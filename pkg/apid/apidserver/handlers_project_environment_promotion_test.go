@@ -1250,6 +1250,11 @@ func createProjectEnvironmentQualificationForTest(t *testing.T, store *state.Mem
 	if err != nil {
 		t.Fatal(err)
 	}
+	sharedRevision, err := store.ProjectEnvironmentSharedSecretRevision(ctx, acct.ID, project.ID, environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretRevisionHashes[api.ProjectSecretsRevisionKey] = sharedRevision.Hash
 	qualification, err := store.CreateProjectEnvironmentQualification(context.Background(), acct.ID, project.ID, environment, releaseSetID, configurationVersion, configurationHash,
 		secretRevisionHashes,
 		[]state.ProjectEnvironmentQualificationCheck{

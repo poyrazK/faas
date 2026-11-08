@@ -435,7 +435,6 @@ NodeListDrainable
 NodeListRecoverable
 NodeMarkDrainCompleted
 NodeMarkRecovered
-OAuthLinkByProviderSubject
 OldestDoctorObservation
 OperatorActionTraceCompleteness
 OperatorAuditTraceCoverage
@@ -450,7 +449,6 @@ PaddleOverageDedupeSchema
 PerAccountRateLimitAggregate
 Ping
 ProjectByID
-ProjectByRepo
 ProjectBySlug
 ProjectEnvironmentApprovalByID
 ProjectEnvironmentApprovalByToken
@@ -464,7 +462,6 @@ PutManagedObjectStorageSecret
 PutManagedPostgresSecret
 QueueDeadLetter
 QueuePeek
-QueueState
 ReadActiveInstanceForWakeID
 ReadMFASecret
 ReapExpiredUploadSessions
@@ -598,7 +595,6 @@ UpsertDeploymentSecretFindings
 UpsertDoctorObservation
 UpsertGithubWebhookSecret
 UpsertNodeKey
-UpsertOAuthLink
 UpsertRegressionObservation
 UpsertRuntimeConfig
 UsageByAccount

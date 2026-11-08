@@ -18,6 +18,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/edgecert/certpg/sqlc"
+	"github.com/onebox-faas/faas/pkg/retry"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
@@ -32,15 +35,15 @@ type Stored struct {
 	NotAfter  time.Time
 }
 
-// LiveStore returns, for each set of names, the newest certificate from ca
-// that is valid now.
+// LiveStore returns the certificates from ca that are valid now, newest
+// first, at most api.EdgeCertificateLiveMax of them.
 type LiveStore interface {
 	Live(ctx context.Context, ca string) ([]Stored, error)
 }
 
 // Live is the LiveStore over Postgres.
 func (s *PgStore) Live(ctx context.Context, ca string) ([]Stored, error) {
-	rows, err := s.q.LiveEdgeTLSCertificates(ctx, s.pool, ca)
+	rows, err := s.q.LiveEdgeTLSCertificates(ctx, s.pool, sqlc.LiveEdgeTLSCertificatesParams{Ca: ca, Max: api.EdgeCertificateLiveMax})
 	if err != nil {
 		return nil, fmt.Errorf("edgecert: read the live certificates: %w", err)
 	}
@@ -56,12 +59,21 @@ func (s *PgStore) Live(ctx context.Context, ca string) ([]Stored, error) {
 // keeps it in memory only, never in a file. A handshake reads only that
 // copy, so no request reads Postgres, and the edge keeps serving what it
 // has while Postgres is down.
+//
+// A row is not trusted for anything the certificate itself says
+// (ADR-20261107180000): the names served and the validity come from the
+// leaf, the leaf must be valid now, and a Let's Encrypt chain must verify
+// against the system roots. Every live row is loaded, so a newest row the
+// edge cannot open never hides an older one it can.
 type Served struct {
 	ca         string
 	identities []*age.X25519Identity
 	store      LiveStore
 	log        *slog.Logger
 	now        func() time.Time
+	// roots verifies a production chain; nil is the system roots. Staging
+	// chains end at a root no client trusts and are not verified.
+	roots *x509.CertPool
 
 	set   atomic.Pointer[servedSet]
 	loads *prometheus.CounterVec
@@ -96,6 +108,13 @@ func NewServed(ca string, identities []*age.X25519Identity, store LiveStore, log
 	}, nil
 }
 
+// WithRoots verifies production chains against roots instead of the system
+// roots. Call before the first Load.
+func (s *Served) WithRoots(roots *x509.CertPool) *Served {
+	s.roots = roots
+	return s
+}
+
 // Loaded reports whether the edge has a certificate to serve.
 func (s *Served) Loaded() bool {
 	set := s.set.Load()
@@ -114,13 +133,14 @@ func (s *Served) Load(ctx context.Context) (bool, error) {
 	}
 	next := &servedSet{}
 	var failed []string
+	now := s.now()
 	for _, row := range rows {
-		cert, err := s.open(row)
+		cert, err := s.open(row, now)
 		if err != nil {
 			failed = append(failed, fmt.Sprintf("certificate %d: %v", row.ID, err))
 			continue
 		}
-		next.certs = append(next.certs, servedCert{id: row.ID, names: row.Names, cert: cert, notAfter: row.NotAfter})
+		next.certs = append(next.certs, servedCert{id: row.ID, names: leafNames(cert.Leaf), cert: cert, notAfter: cert.Leaf.NotAfter})
 	}
 	if len(failed) > 0 {
 		s.log.Warn("edgecert: certificates the edge could not open", "ca", s.ca, "errors", strings.Join(failed, "; "))
@@ -145,8 +165,9 @@ func (s *Served) Load(ctx context.Context) (bool, error) {
 }
 
 // open builds the TLS certificate from row: its chain and its key, opened
-// in memory and checked against the leaf.
-func (s *Served) open(row Stored) (*tls.Certificate, error) {
+// in memory and checked against the leaf, which must be valid at now and,
+// for Let's Encrypt, chain to a trusted root.
+func (s *Served) open(row Stored, now time.Time) (*tls.Certificate, error) {
 	ns, der, err := secretbox.OpenBytesMulti(s.identities, row.KeySealed)
 	if err != nil {
 		return nil, fmt.Errorf("open the key: %w", err)
@@ -186,8 +207,40 @@ func (s *Served) open(row Stored) (*tls.Certificate, error) {
 	if pub, ok := leaf.PublicKey.(publicKey); !ok || !pub.Equal(signer.Public()) {
 		return nil, errors.New("the key does not match the leaf")
 	}
+	if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
+		return nil, fmt.Errorf("the leaf is valid %s to %s, not now", leaf.NotBefore.UTC().Format(time.RFC3339), leaf.NotAfter.UTC().Format(time.RFC3339))
+	}
+	if len(leafNames(leaf)) == 0 {
+		return nil, errors.New("the leaf names no host")
+	}
+	if s.ca == CALetsEncrypt {
+		intermediates := x509.NewCertPool()
+		for _, der := range cert.Certificate[1:] {
+			c, err := x509.ParseCertificate(der)
+			if err != nil {
+				return nil, fmt.Errorf("parse the chain: %w", err)
+			}
+			intermediates.AddCert(c)
+		}
+		if _, err := leaf.Verify(x509.VerifyOptions{Roots: s.roots, Intermediates: intermediates, CurrentTime: now,
+			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+			return nil, fmt.Errorf("the chain does not verify: %w", err)
+		}
+	}
 	cert.Leaf = leaf
 	return cert, nil
+}
+
+// leafNames are the leaf's DNS names, lowercased: what the edge serves it
+// for, whatever its row says.
+func leafNames(leaf *x509.Certificate) []string {
+	names := make([]string, 0, len(leaf.DNSNames))
+	for _, n := range leaf.DNSNames {
+		if n = strings.ToLower(strings.TrimSuffix(n, ".")); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
 }
 
 // GetCertificate is the listener's tls.Config.GetCertificate: the served
@@ -267,30 +320,21 @@ func (s *Served) Watch(ctx context.Context, pool *pgxpool.Pool, ready func(bool)
 }
 
 func (s *Served) listen(ctx context.Context, pool *pgxpool.Pool, notices chan<- struct{}) {
-	for ctx.Err() == nil {
+	for attempt := 0; ctx.Err() == nil; attempt++ {
+		if err := retry.Wait(ctx, api.EdgeCertificateListenRetry, 30*time.Second, attempt); err != nil {
+			return
+		}
 		if err := s.listenOnce(ctx, pool, notices); err != nil && ctx.Err() == nil {
 			s.log.Warn("edgecert: listen for new certificates", "err", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(api.EdgeCertificateListenRetry):
 		}
 	}
 }
 
 func (s *Served) listenOnce(ctx context.Context, pool *pgxpool.Pool, notices chan<- struct{}) error {
-	conn, err := pool.Acquire(ctx)
+	// The shared hub uses the direct session pool for LISTEN, leaving ordinary
+	// query slots free for requests. Resync covers lost notices.
+	changes, err := db.SubscribeWithResync(ctx, pool, []string{NotifyChannel}, s.log)
 	if err != nil {
-		return err
-	}
-	// LISTEN leaves session state behind; the connection is closed rather
-	// than returned to the pool.
-	defer func() {
-		_ = conn.Conn().Close(context.WithoutCancel(ctx))
-		conn.Release()
-	}()
-	if _, err := conn.Exec(ctx, "LISTEN "+NotifyChannel); err != nil {
 		return err
 	}
 	// A certificate stored while the edge was not listening.
@@ -298,15 +342,13 @@ func (s *Served) listenOnce(ctx context.Context, pool *pgxpool.Pool, notices cha
 	case notices <- struct{}{}:
 	default:
 	}
-	for {
-		if _, err := conn.Conn().WaitForNotification(ctx); err != nil {
-			return err
-		}
+	for range changes {
 		select {
 		case notices <- struct{}{}:
 		default:
 		}
 	}
+	return ctx.Err()
 }
 
 // Collectors are the edge's certificate series: the loads counter and

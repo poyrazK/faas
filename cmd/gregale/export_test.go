@@ -169,6 +169,7 @@ type InspectReleaseSummary = inspectReleaseSummary
 type InspectRuntimeSummary = inspectRuntimeSummary
 type InspectSummary = inspectSummary
 type InspectSummaryInputs = inspectSummaryInputs
+type InspectRecommendation = inspectRecommendation
 type InspectWatchEvent = inspectWatchEvent
 type IssueTicketSyncResult = issueTicketSyncResult
 type LocalAppLog = localAppLog
@@ -284,6 +285,7 @@ type TestChaosEvidence = testChaosEvidence
 type TestChaosRule = testChaosRule
 type TestChaosRuleEvidence = testChaosRuleEvidence
 type TestChaosSpec = testChaosSpec
+type TestCircuitBreakerSpec = testCircuitBreakerSpec
 type TestCommandExecutionSpec = testCommandExecutionSpec
 type TestComparisonGate = testComparisonGate
 type TestComparisonGateCheck = testComparisonGateCheck
@@ -300,8 +302,10 @@ type TestFaultPercentOverride = testFaultPercentOverride
 type TestFaultReplayOverrides = testFaultReplayOverrides
 type TestFaultRuleRef = testFaultRuleRef
 type TestHTTPExpect = testHTTPExpect
+type TestAssertionProfile = testAssertionProfile
 type TestHTTPRequest = testHTTPRequest
 type TestHTTPRequestEvidence = testHTTPRequestEvidence
+type TestRequestDeadlineSpec = testRequestDeadlineSpec
 type TestInvocationOutput = testInvocationOutput
 type TestJUnitSuite = testJUnitSuite
 type TestLoadChaosPhase = testLoadChaosPhase
@@ -319,6 +323,7 @@ type TestLoadRecoverySample = testLoadRecoverySample
 type TestLoadRecoverySpec = testLoadRecoverySpec
 type TestLoadRecoveryStabilityEvidence = testLoadRecoveryStabilityEvidence
 type TestLoadSpec = testLoadSpec
+type TestLoadStreamSpec = testLoadStreamSpec
 type TestLoadStageSpec = testLoadStageSpec
 type TestLoadStepThresholdConfig = testLoadStepThresholdConfig
 type TestLoadStepThresholdSpec = testLoadStepThresholdSpec
@@ -345,6 +350,9 @@ type TestReportComparisonStats = testReportComparisonStats
 type TestResilienceEvidence = testResilienceEvidence
 type TestResilienceSpec = testResilienceSpec
 type TestRestartEvidence = testRestartEvidence
+type TestRestartSpec = testRestartSpec
+type TestRestartInFlightSpec = testRestartInFlightSpec
+type TestRestartCheckpointSpec = testRestartCheckpointSpec
 type TestRestartInFlightEvidence = testRestartInFlightEvidence
 type TestRetryAmplificationEvidence = testRetryAmplificationEvidence
 type TestRetryPolicy = testRetryPolicy
@@ -510,6 +518,7 @@ const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
 var TerminalSafe = terminalSafe
+var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient
 var AuthAdminKeyID = &authAdminKeyID
 var AuthAdminKeyName = &authAdminKeyName
@@ -669,6 +678,7 @@ var CheckMCPConditionalParking = checkMCPConditionalParking
 var CheckMCPNativeRetirement = checkMCPNativeRetirement
 var CheckProfileConnection = checkProfileConnection
 var CheckRetainedHostingPlan = checkRetainedHostingPlan
+var CheckTestConnectionsAfterDrain = checkTestConnectionsAfterDrain
 var CheckTestPoolAfterDrain = checkTestPoolAfterDrain
 var ChooseMenuAction = chooseMenuAction
 var ClassifyDevRuntimeLog = classifyDevRuntimeLog
@@ -831,9 +841,19 @@ var CmdDataAPILive = cmdDataAPILive
 var CmdDataAPIStorage = cmdDataAPIStorage
 var CmdDataAPIHooks = cmdDataAPIHooks
 var DataAPIHooksSQL = dataAPIHooksSQL
+var DataAPIHooksUpgradeSQL = dataAPIHooksUpgradeSQL
+var DataAPIHooksBacklogFull = dataAPIHooksBacklogFull
 var EnableDataAPIHooks = enableDataAPIHooks
 var DisableDataAPIHooks = disableDataAPIHooks
 var DataAPIHooksStatus = dataAPIHooksStatus
+var DataAPIHooksDelivery = dataAPIHooksDelivery
+var ApplyDataAPIDrainSchedule = applyDataAPIDrainSchedule
+
+type DataAPIHooksReceipt = dataAPIHooksReceipt
+
+var DataAPIDrainSchedule = dataAPIDrainSchedule
+var DataAPIDrainEvery = dataAPIDrainEvery
+var CheckDataAPIReportSettings = checkDataAPIReportSettings
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
 var CmdDataAPIRefresh = cmdDataAPIRefresh
@@ -1271,6 +1291,7 @@ var DocsURLForCode = docsURLForCode
 var DocsURLForTemplate = docsURLForTemplate
 var DocsURLForTopic = docsURLForTopic
 var DoctorCheckDurableEntities = doctorCheckDurableEntities
+var DoctorCheckSecretReload = doctorCheckSecretReload
 var DoctorImageAccessError = doctorImageAccessError
 var DoctorImageContractCheck = doctorImageContractCheck
 var DoctorImageHealthcheck = doctorImageHealthcheck
@@ -1307,6 +1328,7 @@ var EvaluateTestCampaignRecoveryRegression = evaluateTestCampaignRecoveryRegress
 var EvaluateTestConnectionWindow = evaluateTestConnectionWindow
 var EvaluateTestLoadRecovery = evaluateTestLoadRecovery
 var EvaluateTestPoolPhase = evaluateTestPoolPhase
+var ExecuteTestRunPlan = executeTestRunPlan
 var ExecutableHeaderMismatch = executableHeaderMismatch
 var ExecuteAutomationLiveSuite = executeAutomationLiveSuite
 var ExecuteAutomationRecoveryPlan = executeAutomationRecoveryPlan
@@ -1454,6 +1476,8 @@ var MinimizationTestOptions = minimizationTestOptions
 var MinimizationTestReceipt = minimizationTestReceipt
 var MinimizationTestScenario = minimizationTestScenario
 var MinimizedTestReplay = minimizedTestReplay
+var MonitorTestConnectionLeaks = monitorTestConnectionLeaks
+var MonitorTestPoolExhaustion = monitorTestPoolExhaustion
 var MonitorTokenEnv = monitorTokenEnv
 var MustGit = mustGit
 var NewAuthSigningKey = newAuthSigningKey
@@ -1679,6 +1703,8 @@ var ReadSavedToken = readSavedToken
 var ReadSecretsFile = readSecretsFile
 var ReadStandardReviewCLI = readStandardReviewCLI
 var ReadTestBaselineReport = readTestBaselineReport
+var ReadScaffoldOpenAPIDocument = readScaffoldOpenAPIDocument
+var ReadTestCircuitCounter = readTestCircuitCounter
 var ReadTestComparisonBudget = readTestComparisonBudget
 var ReadTestConnections = readTestConnections
 var ReadTestData = readTestData
@@ -1882,6 +1908,7 @@ var RunTestHTTPRequests = runTestHTTPRequests
 var RunTestProfile = runTestProfile
 var RunTestRehearsal = runTestRehearsal
 var RunTestResilience = runTestResilience
+var RunTestRestart = runTestRestart
 var RunTestScenarioStepLoad = runTestScenarioStepLoad
 var RunTestScenarioSteps = runTestScenarioSteps
 var RunTestSuspendResume = runTestSuspendResume
@@ -1969,6 +1996,7 @@ var TestDiagnosticRedactions = testDiagnosticRedactions
 var TestExecutionCompleteForEvidence = testExecutionCompleteForEvidence
 var TestFaultCampaignDraw = testFaultCampaignDraw
 var TestFaultReplayVersion = testFaultReplayVersion
+var TestHTTPConsumerKeys = testHTTPConsumerKeys
 var TestLatencySelection = testLatencySelection
 var TestManagedWorkDigest = testManagedWorkDigest
 var TestPhaseRecoveryEvidence = testPhaseRecoveryEvidence
@@ -2057,6 +2085,10 @@ var ValidateTestCampaignCoverageBatch = validateTestCampaignCoverageBatch
 var ValidateTestCampaignGuidanceOptions = validateTestCampaignGuidanceOptions
 var ValidateTestCommandExecution = validateTestCommandExecution
 var ValidateTestHTTPRequests = validateTestHTTPRequests
+var ValidateTestAssertionProfiles = validateTestAssertionProfiles
+var PrepareTestRequestDeadline = prepareTestRequestDeadline
+var ExpandTestAssertionProfiles = expandTestAssertionProfiles
+var TestHTTPDataFields = testHTTPDataFields
 var ValidateTestLoadRecovery = validateTestLoadRecovery
 var ValidateTestLoadSpec = validateTestLoadSpec
 var ValidateTestManagedWork = validateTestManagedWork
@@ -2074,11 +2106,13 @@ var VerifyTestServiceHot = verifyTestServiceHot
 var VerifyTestServiceTCPHot = verifyTestServiceTCPHot
 var VerifyTestServiceWake = verifyTestServiceWake
 var VisibleCliCommands = visibleCliCommands
+var PublicReferenceCommands = publicReferenceCommands
 var WaitAlertRollback = waitAlertRollback
 var WaitCommitEvent = waitCommitEvent
 var WaitDataAPIRefresh = waitDataAPIRefresh
 var WaitDataAPIRestart = waitDataAPIRestart
 var WaitDataPipeline = waitDataPipeline
+var WaitPipelineConnectionCheck = waitConnectionCheck
 var WaitForAppWake = waitForAppWake
 var WaitForDeploymentReceiptUntil = waitForDeploymentReceiptUntil
 var WaitForDeploymentRollout = waitForDeploymentRollout
@@ -2163,6 +2197,7 @@ var UploadedSourceFiles = uploadedSourceFiles
 var UploadedServerHas = uploadedServerHas
 var ReadDataAPIRuntimeArchive = readDataAPIRuntimeArchive
 var AttachDataAPIRuntime = attachDataAPIRuntime
+var CurrentDataAPIRuntimeVersion = currentDataAPIRuntimeVersion
 
 type DataAPIHealthProbe = dataAPIHealthProbe
 
@@ -2511,6 +2546,8 @@ const UsageSynopsisLimit = usageSynopsisLimit
 var InvokedCommandPath = &invokedCommandPath
 
 var AppArgumentEnabled = &appArgumentEnabled
+var AppArgumentAsFlag = appArgumentAsFlag
+var AppFlagAsArgument = appFlagAsArgument
 
 // AppArgumentPaths lists every visible command path whose leaf takes the
 // app as its first argument.
@@ -2518,7 +2555,7 @@ func AppArgumentPaths() [][]string {
 	var paths [][]string
 	var walk func(path []string, flags []cliFlag, positionals []string, children []cliSub)
 	walk = func(path []string, flags []cliFlag, positionals []string, children []cliSub) {
-		if takesAppArgument(flags, positionals, children) {
+		if takesAppArgument(flags, positionals, children, "app") {
 			paths = append(paths, append([]string{}, path...))
 		}
 		for _, child := range children {
@@ -2634,6 +2671,8 @@ func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
 
 var NormalizeTreeFlags = normalizeTreeFlags
 
+var CronRunCommand = cronRunCommand
+
 // Bucket CORS CLI (ADR-20261025202805).
 var (
 	DecodeBucketCORSFile = decodeBucketCORSFile
@@ -2667,3 +2706,51 @@ var WithEntry = withEntry
 // GitHub connector commands (ADR-20261101160300).
 var CmdGithub = cmdGithub
 var CmdGithubSetup = cmdGithubSetup
+
+// DebugWatchPoll runs one debug requests watch poll against baseURL and
+// returns the request IDs it read and whether it reported a gap.
+func DebugWatchPoll(baseURL, slug string, limit int, seen map[string]string, follow bool) ([]string, bool, error) {
+	resp, missed, err := debugWatchPoll(context.Background(), api.NewClient(baseURL, "fp_test"), slug, api.DebugTelemetryListOptions{Limit: limit}, seen, follow)
+	ids := make([]string, 0, len(resp.Requests))
+	for _, request := range resp.Requests {
+		ids = append(ids, request.ID)
+	}
+	return ids, missed, err
+}
+
+const DebugWatchMaxPages = debugWatchMaxPages
+
+var McpNativeDrainBudget = mcpNativeDrainBudget
+var McpNativeDrainableWorkerIDs = mcpNativeDrainableWorkerIDs
+
+var McpNativeWorkerIDs = mcpNativeWorkerIDs
+
+// Rate comparison seams for boundary regression tests.
+type TestLoadMetrics = testLoadMetrics
+type TestLoadRelativeSpec = testLoadRelativeSpec
+
+var TestLoadThresholdEvidenceFor = testLoadThresholdEvidenceFor
+var CompareTestBaseline = compareTestBaseline
+var ResolveTestRegressionConfig = resolveTestRegressionConfig
+var CompareTestStagedLoadRelative = compareTestStagedLoadRelative
+var CompareTestGateErrorRate = compareTestGateErrorRate
+var CompareRepeatedTestGateErrorRate = compareRepeatedTestGateErrorRate
+
+// Profile warnings in doctor --strict and deploy --plan (#6640).
+var CmdDoctor = cmdDoctor
+var ResolveSimpleAppPlanWithWarnings = resolveSimpleAppPlanWithWarnings
+var RenderSimpleAppPlanWithWarnings = renderSimpleAppPlanWithWarnings
+
+// Deploy preflights (#6625, #6631).
+var PreflightDeploySessionStorage = preflightDeploySessionStorage
+var SourceCapLookupBudgets = &sourceCapLookupBudgets
+var SourceUploadLimitError = sourceUploadLimitError
+
+// ResolveSourceUploadCapForTest exposes resolveSourceUploadCap's result.
+func ResolveSourceUploadCapForTest(ctx context.Context, c *Client) (mb int, verified bool, warning string, explain func(error) error) {
+	got := resolveSourceUploadCap(ctx, c)
+	return got.mb, got.verified, got.warning(), got.explain
+}
+
+// ForwardAppTaskSession is the shared port-forward / postgres connect relay.
+var ForwardAppTaskSession = forwardAppTaskSession

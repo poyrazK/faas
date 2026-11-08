@@ -233,7 +233,7 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 		return WakeResult{}, false, nil
 	}
 	bookkeeping := e.publicationBookkeeping(frozen.ID, app.ID, frozen.WakeID, state.StateFrozen, state.StateRunning, "frozen_thaw")
-	publishCtx := e.thawAdmissionContext(ctx, frozen.NodeID, plan.limits.VCPU, effectiveAppCPUMillicores(plan.app))
+	publishCtx := e.thawAdmissionContext(ctx, frozen.NodeID, plan.limits.VCPU, e.appCPUBookingMillicores(plan.app, plan.limits))
 	fresh, publishErr := e.store.PublishOwnedInstanceRuntime(publishCtx, state.RuntimeInstancePublication{
 		AccountID: acct.ID, AppID: app.ID, InstanceID: frozen.ID, NodeID: frozen.NodeID, WakeID: frozen.WakeID,
 		ExpectedState: string(state.StateFrozen), Fence: captured.SecretFence, ConfigFence: captured,
@@ -257,7 +257,7 @@ func (e *Engine) readmitFrozenLocked(ctx context.Context, plan frozenThawPlan) b
 	if err := e.ledger.Admit(Request{
 		Instance: frozen.ID, AppID: plan.app.ID, DeploymentID: plan.dep.ID, DeploymentScope: plan.dep.Scope, Plan: plan.acct.Plan,
 		EnvironmentKey: plan.environmentKey, ProductionEnvironment: plan.production,
-		RAMMB: plan.app.RAMMB, VCPU: plan.limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(plan.app), MaxConcurrency: plan.app.MaxConcurrency,
+		RAMMB: plan.app.RAMMB, VCPU: e.guestVCPUs(plan.app, plan.limits), CPUMillicores: e.appCPUBookingMillicores(plan.app, plan.limits), MaxConcurrency: plan.app.MaxConcurrency,
 		NodeID: frozen.NodeID, NodeCeilingMB: plan.node.ceilingMB, VCPUBudget: plan.node.vcpuBudget,
 		CPUBudgetMillicores: plan.node.cpuBudgetMillicores,
 	}); err != nil {
@@ -318,7 +318,8 @@ func (e *Engine) thawAdmissionContext(ctx context.Context, nodeID string, vcpu, 
 	discountVCPU, discountCPU := e.ledger.CPUDiscount(nodeID)
 	return state.WithThawAdmission(ctx, state.NodeAdmission{
 		NodeID: nodeID, ReservationPercent: e.ledger.ReservationPercent(nodeID),
-		Compute: state.NodeCompute{VCPU: vcpu, CPUMillicores: cpuMillicores, QuietVCPU: discountVCPU, QuietCPUMillicores: discountCPU},
+		ReservationDiscountMB: e.ledger.ReservationDiscountMB(nodeID),
+		Compute:               state.NodeCompute{VCPU: vcpu, CPUMillicores: cpuMillicores, QuietVCPU: discountVCPU, QuietCPUMillicores: discountCPU},
 	})
 }
 

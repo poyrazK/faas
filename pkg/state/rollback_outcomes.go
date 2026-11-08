@@ -2,13 +2,17 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // Plain rollback outcome ledger (ADR-1446). A plain rollback — manual,
@@ -102,6 +106,25 @@ func (s *PgStore) RecordRollbackRequest(ctx context.Context, r RollbackRecord) (
 		return RollbackRecord{}, fmt.Errorf("state: record rollback begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockRollbackOutcomeApp(ctx, tx, r.AppID); err != nil {
+		return RollbackRecord{}, err
+	}
+	if _, err := sqlc.New().LockCheckedRollbackApp(ctx, tx, sqlc.LockCheckedRollbackAppParams{AppID: mustPgUUID(r.AppID), AccountID: mustPgUUID(r.AccountID)}); err != nil {
+		return RollbackRecord{}, mapErr(err)
+	}
+	if target, err := sqlc.New().LockRollbackOutcomeTarget(ctx, tx, mustPgUUID(r.TargetDeploymentID)); err == nil {
+		d := Deployment{ID: r.TargetDeploymentID, Status: DeploymentStatus(target.Status)}
+		if target.RolloutCompletedAt.Valid {
+			done := target.RolloutCompletedAt.Time
+			d.RolloutCompletedAt = &done
+		}
+		if err := preserveRollbackSuccessTx(ctx, tx, d); err != nil {
+			return RollbackRecord{}, err
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return RollbackRecord{}, err
+	}
+
 	if _, err := tx.Exec(ctx, `update deployment_rollbacks
 		   set status = 'failed', finished_at = clock_timestamp(),
 		       error_code = 'rollback_superseded', error = 'a newer rollback request replaced this one'
@@ -132,24 +155,20 @@ func (s *PgStore) PreparingRollbacks(ctx context.Context, limit int) ([]Rollback
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `select `+rollbackRecordColumns+`
-		  from deployment_rollbacks
-		 where status = 'preparing'
-		 order by requested_at, id
-		 limit $1`, limit)
+	cursor := rollbackOutcomeCursor(ctx)
+	rows, err := sqlc.New().ListPreparingRollbackOutcomes(ctx, s.pool, sqlc.ListPreparingRollbackOutcomesParams{AfterID: cursor.ID, AfterAt: pgtype.Timestamptz{Time: cursor.RequestedAt, Valid: true}, RowLimit: int32(min(limit, math.MaxInt32))})
 	if err != nil {
 		return nil, fmt.Errorf("state: list preparing rollbacks: %w", err)
 	}
-	defer rows.Close()
-	var out []RollbackRecord
-	for rows.Next() {
-		r, err := scanRollbackRecord(rows)
-		if err != nil {
-			return nil, fmt.Errorf("state: scan preparing rollback: %w", err)
+	out := make([]RollbackRecord, 0, len(rows))
+	for _, raw := range rows {
+		var r RollbackRecord
+		if err = json.Unmarshal(raw, &r); err != nil {
+			return nil, err
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *PgStore) FinishRollback(ctx context.Context, id string, o RollbackOutcome) (RollbackRecord, bool, error) {
@@ -161,6 +180,21 @@ func (s *PgStore) FinishRollback(ctx context.Context, id string, o RollbackOutco
 		return RollbackRecord{}, false, fmt.Errorf("state: finish rollback begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	appID, err := sqlc.New().ReadRollbackOutcomeApp(ctx, tx, mustPgUUID(id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RollbackRecord{}, false, nil
+		}
+		return RollbackRecord{}, false, err
+	}
+	// Match preparation's parent-before-app order before locking the receipt.
+	if err := lockRollbackOutcomeApp(ctx, tx, pgUUIDString(appID)); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return RollbackRecord{}, false, nil
+		}
+		return RollbackRecord{}, false, err
+	}
+
 	var targetID string
 	var requestedAt time.Time
 	if err := tx.QueryRow(ctx, `select target_deployment_id::text, requested_at from deployment_rollbacks where id = $1 and status = 'preparing' for update`, id).Scan(&targetID, &requestedAt); err != nil {
@@ -168,6 +202,16 @@ func (s *PgStore) FinishRollback(ctx context.Context, id string, o RollbackOutco
 			return RollbackRecord{}, false, nil
 		}
 		return RollbackRecord{}, false, fmt.Errorf("state: lock rollback: %w", err)
+	}
+	target, readErr := sqlc.New().LockRollbackOutcomeTarget(ctx, tx, mustPgUUID(targetID))
+	if readErr != nil && !errors.Is(readErr, pgx.ErrNoRows) {
+		return RollbackRecord{}, false, readErr
+	}
+	if o.Status == RollbackStatusFailed && readErr == nil && target.RolloutCompletedAt.Valid {
+		completed := target.RolloutCompletedAt.Time
+		if _, served := RollbackCompletedAt(requestedAt, Deployment{Status: DeploymentStatus(target.Status), RolloutCompletedAt: &completed}); served {
+			return RollbackRecord{}, false, nil
+		}
 	}
 	if o.Status == RollbackStatusFailed {
 		// A rollback reported failed (for example rollback_timeout) must not
@@ -240,6 +284,10 @@ func (m *MemStore) RecordRollbackRequest(_ context.Context, r RollbackRecord) (R
 	if m.rollbackRecords == nil {
 		m.rollbackRecords = map[string]RollbackRecord{}
 	}
+	if err := m.preserveRollbackSuccessLocked(m.deployments[r.TargetDeploymentID]); err != nil {
+		return RollbackRecord{}, err
+	}
+
 	now := time.Now().UTC()
 	for id, other := range m.rollbackRecords {
 		if other.TargetDeploymentID == r.TargetDeploymentID && other.Status == RollbackStatusPreparing {
@@ -257,12 +305,13 @@ func (m *MemStore) RecordRollbackRequest(_ context.Context, r RollbackRecord) (R
 	return r, nil
 }
 
-func (m *MemStore) PreparingRollbacks(_ context.Context, limit int) ([]RollbackRecord, error) {
+func (m *MemStore) PreparingRollbacks(ctx context.Context, limit int) ([]RollbackRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	cursor := rollbackOutcomeCursor(ctx)
 	var out []RollbackRecord
 	for _, r := range m.rollbackRecords {
-		if r.Status == RollbackStatusPreparing {
+		if r.Status == RollbackStatusPreparing && (cursor.ID == "" || r.RequestedAt.After(cursor.RequestedAt) || r.RequestedAt.Equal(cursor.RequestedAt) && r.ID > cursor.ID) {
 			out = append(out, r)
 		}
 	}
@@ -287,6 +336,13 @@ func (m *MemStore) FinishRollback(_ context.Context, id string, o RollbackOutcom
 	r, ok := m.rollbackRecords[id]
 	if !ok || r.Status != RollbackStatusPreparing {
 		return RollbackRecord{}, false, nil
+	}
+	if o.Status == RollbackStatusFailed {
+		if target, exists := m.deployments[r.TargetDeploymentID]; exists {
+			if _, served := RollbackCompletedAt(r.RequestedAt, target); served {
+				return RollbackRecord{}, false, nil
+			}
+		}
 	}
 	if o.Status == RollbackStatusFailed {
 		// Mirrors PgStore: a failed rollback never cuts over later.

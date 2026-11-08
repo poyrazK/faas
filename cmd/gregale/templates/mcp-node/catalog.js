@@ -3,6 +3,70 @@ import { createHash } from 'node:crypto';
 const NAME_PATTERN = /^[\x21-\x7e]{1,128}$/;
 const RESOURCE_VARIABLE_PATTERN = /\{([A-Za-z][A-Za-z0-9_.-]*)\}/g;
 
+// Keep the Standard Schema validator, but snapshot its JSON representations.
+// Zod's immutable structural APIs still retain mutable nested .meta() values.
+function snapshotSchema(value) {
+  const standard = value['~standard'];
+  if (typeof standard?.validate !== 'function' || !standard.jsonSchema) return undefined;
+  const jsonSchema = {};
+  for (const io of ['input', 'output']) {
+    let converted;
+    try { converted = standard.jsonSchema[io]({ target: 'draft-2020-12' }); }
+    catch (error) {
+      // Some validators support conversion in only one direction (transforms,
+      // for example). Preserve that error for consumers of that direction.
+      jsonSchema[io] = () => { throw error; };
+      continue;
+    }
+    // Capture the actual wire JSON, including values with toJSON (such as Date
+    // examples). Zod's non-enumerable ~standard decoration is excluded too.
+    const snapshot = JSON.parse(JSON.stringify(converted));
+    jsonSchema[io] = () => snapshotMetadata(snapshot, new Set(), false);
+  }
+  const result = { '~standard': Object.freeze({
+    version: standard.version, vendor: standard.vendor,
+    validate: standard.validate.bind(standard), jsonSchema: Object.freeze(jsonSchema),
+  }) };
+  // Preserve these convenient validation methods for catalog readers. The SDK
+  // uses ~standard.validate, including its asynchronous validation semantics.
+  for (const method of ['safeParse', 'safeParseAsync', 'parse', 'parseAsync']) {
+    if (typeof value[method] === 'function') result[method] = value[method].bind(value);
+  }
+  // The SDK inspects Zod object fields for prompt completions. Retain only the
+  // callbacks it needs, without exposing the original field schemas/metadata.
+  if (value.shape && typeof value.shape === 'object') {
+    const symbol = Symbol.for('mcp.completable');
+    result.shape = Object.freeze(Object.fromEntries(Object.entries(value.shape).map(([name, field]) => {
+      const inner = field.type === 'optional' ? field.def?.innerType ?? field : field;
+      const complete = inner[symbol]?.complete;
+      return [name, Object.freeze(typeof complete === 'function' ? { [symbol]: Object.freeze({ complete }) } : {})];
+    })));
+  }
+  return Object.freeze(result);
+}
+
+// Copy plain metadata and JSON schemas so application and SDK consumers own no
+// mutable metadata references into the stored catalog.
+function snapshotMetadata(value, parents = new Set(), adaptSchemas = true) {
+  if (value === null || typeof value !== 'object') return value;
+  const schema = adaptSchemas && snapshotSchema(value);
+  if (schema) return schema;
+  const prototype = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return value;
+  if (parents.has(value)) throw new TypeError('MCP catalog metadata must not contain cycles');
+  parents.add(value);
+  const result = Array.isArray(value) ? new Array(value.length) : Object.create(prototype);
+  for (const [key, item] of Object.entries(value)) {
+    Object.defineProperty(result, key, { value: snapshotMetadata(item, parents, adaptSchemas), enumerable: true, writable: true, configurable: true });
+  }
+  parents.delete(value);
+  return result;
+}
+
+function snapshotEntry(entry) {
+  return { ...entry, definition: snapshotMetadata(entry.definition) };
+}
+
 function canonicalJSON(value) {
   if (value === null || typeof value !== 'object') {
     if (typeof value === 'function' || typeof value === 'bigint' || value === undefined) {
@@ -63,9 +127,9 @@ export function createRuntimeCatalog({ normalizeDefinition = definition => defin
         if (otherName !== name && existing.policyKey === entry.policyKey) throw new Error(`MCP resource URI ${entry.policyKey} is already registered`);
       }
     }
+    const stored = snapshotEntry(entry);
     revision += 1;
-    catalog.set(name, { ...entry, name, revision,
-      ...(entry.definition ? { definition: { ...entry.definition } } : {}) });
+    catalog.set(name, { ...stored, name, revision });
     for (const listener of [...listeners]) {
       try { listener(kind, revision); } catch { /* A listener must not block a catalog mutation. */ }
     }
@@ -121,9 +185,9 @@ export function createRuntimeCatalog({ normalizeDefinition = definition => defin
     registerPrompt,
     replacePrompt,
     removePrompt: name => remove('prompts', name),
-    tools: () => [...entries.tools.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    resources: () => [...entries.resources.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    prompts: () => [...entries.prompts.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    tools: () => [...entries.tools.values()].map(snapshotEntry).sort((a, b) => a.name.localeCompare(b.name)),
+    resources: () => [...entries.resources.values()].map(snapshotEntry).sort((a, b) => a.name.localeCompare(b.name)),
+    prompts: () => [...entries.prompts.values()].map(snapshotEntry).sort((a, b) => a.name.localeCompare(b.name)),
     resourcePatterns: () => [...entries.resources.values()].map(entry => entry.policyKey),
     subscribe(listener) {
       if (typeof listener !== 'function') throw new TypeError('MCP catalog listener must be a function');
@@ -142,7 +206,7 @@ export function createRuntimeCatalog({ normalizeDefinition = definition => defin
         contract[kind] = [...entries[kind].values()]
           .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
           .map(entry => {
-            const definition = normalizeDefinition(entry.definition, singular);
+            const definition = normalizeDefinition(snapshotMetadata(entry.definition), singular);
             if (singular === 'resource') {
               const field = typeof entry.uriOrTemplate === 'string' ? 'uri' : 'uriTemplate';
               return { ...definition, name: entry.name, [field]: entry.policyKey };
@@ -156,7 +220,7 @@ export function createRuntimeCatalog({ normalizeDefinition = definition => defin
       const catalog = entries[kind];
       if (!catalog) throw new TypeError('unknown MCP catalog kind');
       return JSON.stringify([...catalog.values()]
-        .filter(entry => canAccess(kind, entry))
+        .filter(entry => canAccess(kind, snapshotEntry(entry)))
         .map(entry => [entry.name, entry.revision]));
     },
   };

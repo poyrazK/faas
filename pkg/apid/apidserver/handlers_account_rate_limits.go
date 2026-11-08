@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -88,6 +89,25 @@ func (s *server) admitAccountDeploy(w http.ResponseWriter, r *http.Request, acct
 		return false
 	}
 	return true
+}
+
+// projectDeployRateShortfall reports, as a customer message, that a project
+// deploy of need services does not fit the account's remaining hourly
+// deploys; empty when it fits or the budget cannot be read (each service's
+// own admission still applies). Every service takes one deploy, and admitting
+// them one by one deployed a project partly and left it on mixed releases
+// (ADR-20261105095300).
+func (s *server) projectDeployRateShortfall(ctx context.Context, acct state.Account, need int, now time.Time) string {
+	store, ok := s.accountDeployRateStore()
+	if !ok || need <= 1 {
+		return ""
+	}
+	snapshot, err := store.ReadAccountDeployRate(ctx, acct.ResourceOwnerID(), acct.Plan.DeploysPerHour(), now)
+	if err != nil || snapshot.Remaining >= need {
+		return ""
+	}
+	return fmt.Sprintf("not deployed: this deploy needs %d deploys for its services and the account has %d of %d left this hour (resets at %s); deploy again then, or deploy fewer services with --only",
+		need, snapshot.Remaining, snapshot.Limit, snapshot.WindowResetsAt.UTC().Format(time.RFC3339))
 }
 
 func (s *server) consumeAccountDeployRate(ctx context.Context, acct state.Account, now time.Time) (state.AccountDeployRateSnapshot, error) {

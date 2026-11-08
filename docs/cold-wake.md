@@ -80,6 +80,43 @@ instance restored from that snapshot. Refresh values that must be unique or
 current after restore. Gregale repairs the guest clock and kernel entropy
 before running `after_restore`, but cannot refresh application-held values.
 
+### SDK helpers for the hooks
+
+The Go, Node and Python SDKs serve both hooks for you. They answer only
+loopback `POST`s with the marker header, run your callbacks in order within
+1.5 s (under the 2-second limit), and run overlapping deliveries once
+([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)).
+Each has a helper that closes a pool's idle connections on both hooks. Those
+sockets point at connections the database closed while the instance was
+parked or frozen; closing them is local and fast, and the pool opens fresh
+ones on demand. A full reconnect inside `after_restore` can take longer than
+the limit.
+
+```go
+hooks := faas.NewLifecycleHooks()
+hooks.RecycleIdleConnections(db, 10) // *sql.DB and its usual idle size
+http.ListenAndServe(":"+os.Getenv("PORT"), hooks.Middleware(mux))
+```
+
+```js
+import {LifecycleHooks} from '@gregale/sdk-node/lifecycle/runtime';
+const hooks = new LifecycleHooks();
+hooks.onAfterRestore(() => cache.clear());
+app.use(hooks.middleware()); // or: hooks.handle(req, res) in a plain http server
+```
+
+```python
+from faas_sdk.lifecycle_runtime import LifecycleHooks
+hooks = LifecycleHooks()
+hooks.recycle_sqlalchemy(engine)  # or hooks.expire_asyncpg(pool)
+app = hooks.asgi(app)             # hooks.wsgi(app) for Flask or Django
+```
+
+The helpers use `/internal/before-checkpoint` and `/internal/after-restore`;
+pass other paths if your `gregale.yaml` names others. Secret rotation keeps its
+own path through `SecretReloadCoordinator`
+([pool runtime guide](postgres-pool-runtime.md)); do not reload secrets in a hook.
+
 You can detect the wake tier on every routed response:
 
 - `x-faas-wake: hot` means an already-running instance served the request.

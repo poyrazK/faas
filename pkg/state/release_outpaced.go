@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -17,7 +18,9 @@ import (
 // approving it ran the older migration against the newer schema.
 // SupersedeOutpacedRelease applies the fence's own test first: when a newer
 // revision of the app and scope exists, the release is superseded and its
-// command never runs. It reports whether it did so.
+// command never runs. A command still queued is cancelled with it (ADR-1448
+// amendment 1); one a worker already claimed keeps its release. It reports
+// whether it superseded the release.
 type OutpacedReleaseStore interface {
 	SupersedeOutpacedRelease(ctx context.Context, deploymentID string) (bool, error)
 }
@@ -26,6 +29,15 @@ var (
 	_ OutpacedReleaseStore = (*PgStore)(nil)
 	_ OutpacedReleaseStore = (*MemStore)(nil)
 )
+
+// outpaces reports whether other is a newer revision of d's app and scope
+// that can still ship, mirroring HasNewerDeploymentRevision. A newer revision
+// that failed or was cancelled ships nothing, so it does not outpace d
+// (ADR-20261020085706 amendment 14).
+func outpaces(other, d Deployment) bool {
+	return other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) &&
+		other.Revision > d.Revision && other.Status != DeployFailed && other.Status != DeployCancelled
+}
 
 // releaseOutpaceEligible reports whether d is a latest-revision release in
 // its release phase that the promotion fence would supersede. A prepared
@@ -53,7 +65,7 @@ func (s *PgStore) SupersedeOutpacedRelease(ctx context.Context, deploymentID str
 		return false, mapErr(err)
 	}
 	d.Status, d.Kind = DeploymentStatus(status), DeploymentKind(kind)
-	if admitted || !releaseOutpaceEligible(d, prepared) {
+	if !releaseOutpaceEligible(d, prepared) {
 		return false, nil
 	}
 	newer, err := sqlc.New().HasNewerDeploymentRevision(ctx, tx, sqlc.HasNewerDeploymentRevisionParams{
@@ -64,6 +76,20 @@ func (s *PgStore) SupersedeOutpacedRelease(ctx context.Context, deploymentID str
 	}
 	if !newer {
 		return false, nil
+	}
+	if admitted {
+		// ADR-1448 amendment 1: a release command still queued has not
+		// started, so it is cancelled with its release. The status guard
+		// loses to a claim that already took the row.
+		tag, err := tx.Exec(ctx,
+			`update app_tasks set status = 'cancelled', retry_at = null, finished_at = clock_timestamp(), updated_at = clock_timestamp()
+			  where deployment_id = $1 and kind = 'release' and status = 'queued' and cancel_requested_at is null`, deploymentID)
+		if err != nil {
+			return false, fmt.Errorf("state: cancel outpaced release task: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return false, nil
+		}
 	}
 	if err := supersedeOutpacedDeploymentTx(ctx, tx, deploymentID); err != nil {
 		return false, fmt.Errorf("state: supersede outpaced release: %w", err)
@@ -87,7 +113,7 @@ func (m *MemStore) SupersedeOutpacedRelease(_ context.Context, deploymentID stri
 	}
 	newer := false
 	for _, other := range m.deployments {
-		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Revision > d.Revision {
+		if outpaces(other, d) {
 			newer = true
 			break
 		}
@@ -95,10 +121,21 @@ func (m *MemStore) SupersedeOutpacedRelease(_ context.Context, deploymentID stri
 	if !newer {
 		return false, nil
 	}
-	for _, task := range m.appTasks {
-		if task.DeploymentID == deploymentID && task.Kind == AppTaskKindRelease {
+	queued := ""
+	for id, task := range m.appTasks {
+		if task.DeploymentID != deploymentID || task.Kind != AppTaskKindRelease {
+			continue
+		}
+		if task.Status != AppTaskQueued || task.CancelRequested != nil {
 			return false, nil
 		}
+		queued = id
+	}
+	if queued != "" {
+		now := time.Now().UTC()
+		task := m.appTasks[queued]
+		task.Status, task.RetryAt, task.FinishedAt, task.UpdatedAt = AppTaskCancelled, nil, appTaskTimePtr(now), now
+		m.appTasks[queued] = task
 	}
 	m.putDeploymentLocked(d.ID, m.supersedeOutpacedDeploymentLocked(d))
 	return true, nil

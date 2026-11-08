@@ -161,7 +161,7 @@ func (q *Queries) IssuePutTeam(ctx context.Context, db DBTX, arg IssuePutTeamPar
 
 const issueTeamAllowed = `-- name: IssueTeamAllowed :one
 SELECT EXISTS(SELECT 1 FROM app_issue_teams t JOIN apps a ON a.id=t.app_id JOIN app_issue_team_members tm ON tm.team_id=t.id
-WHERE t.app_id=$1 AND t.id=$2 AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL)))
+WHERE t.app_id=$1 AND t.id=$2 AND issue_actor_current_member(a.id,tm.account_id))
 `
 
 type IssueTeamAllowedParams struct {

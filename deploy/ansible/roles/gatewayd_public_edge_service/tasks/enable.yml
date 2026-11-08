@@ -137,6 +137,29 @@
       (ADR-20261102081618 §2, ADR-20261103163954 §2, §3).
   when: faas_edge_entry == 'both'
 
+# ADR-20261107180000: Cloudflare's shared origin-pull certificate is presented
+# for every Cloudflare customer's zone, and Cloudflare ships its CA under the
+# same file name as the zone's own. gatewayd-public refuses it too; this
+# fails the release before the unit restarts.
+- name: gatewayd_public_edge_service — read the origin-pull CA's subject and issuer
+  ansible.builtin.command:
+    argv: [openssl, x509, -in, "{{ faas_edge_public_tls_client_ca }}", -noout, -subject, -issuer]
+  register: faas_edge_public_tls_client_ca_names
+  changed_when: false
+  check_mode: false
+  when: faas_edge_entry == 'both'
+
+- name: gatewayd_public_edge_service — refuse Cloudflare's shared origin-pull CA
+  ansible.builtin.assert:
+    that:
+      - "'origin-pull.cloudflare.net' not in (faas_edge_public_tls_client_ca_names.stdout | lower)"
+    fail_msg: >-
+      {{ faas_edge_public_tls_client_ca }} is Cloudflare's shared origin-pull
+      CA, which every Cloudflare zone's requests satisfy. Install the zone's own
+      origin-pull CA (origin-pull-ca.pem from deploy/scripts/cloudflare-origin-pull.sh
+      ca, docs/runbooks/EdgeDirectEntry.md step 1).
+  when: faas_edge_entry == 'both'
+
 # ADR-20261103163954 §4: the same pinned Cloudflare ranges as the host
 # firewall, read here so this role does not depend on the nftables role
 # having run earlier in the play.
@@ -166,6 +189,18 @@
   notify: restart faas-gatewayd-public-edge
   ansible.builtin.file:
     path: /etc/systemd/system/faas-gatewayd-public-edge.service.d/60-faas-edge-placement.conf
+    state: absent
+
+# ADR-20261102081618: direct entry was first turned on by hand, with
+# 60-faas-edge-direct.conf naming the Origin CA certificate files.
+# 99-faas-edge.conf now carries the listener, so the hand-made drop-in goes.
+# Left behind, its certificate files would stop the edge from starting once
+# the certificate comes from the database (ADR-20261103163954 §3: that source
+# takes no files), and the app tunnel reaches apps through this edge.
+- name: gatewayd_public_edge_service — remove the hand-made direct-entry drop-in
+  notify: restart faas-gatewayd-public-edge
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-public-edge.service.d/60-faas-edge-direct.conf
     state: absent
 
 - name: gatewayd_public_edge_service — install domain layout drop-in (ADR-20261026100000)

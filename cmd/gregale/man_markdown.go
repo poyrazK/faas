@@ -114,7 +114,7 @@ func mdSubSynopsis(command cliCommand, names, positionals []string, flags []cliF
 	}
 	parts := []string{path}
 	if found && len(terminal.Subcommands) > 0 && !terminal.SubcommandsAfterPositionals {
-		parts = append(parts, "<"+terminal.subcommandChoice()+">")
+		parts = append(parts, terminal.subcommandSynopsis())
 	}
 	appendPositionals := !found || !terminal.SubcommandsAfterPositionals
 	if appendPositionals && found && terminal.FlagsAfterPositionals {

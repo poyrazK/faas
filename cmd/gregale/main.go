@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -144,6 +145,9 @@ func run(args []string) (status int) {
 	typed := args
 	args, err := rewriteCliTree(args)
 	if err != nil {
+		if errors.As(err, new(errFoldFlagRequired)) {
+			return printErr("Missing required flag", err)
+		}
 		return printErr("Invalid app target", err)
 	}
 	if slices.Equal(typed, args) {
@@ -231,6 +235,11 @@ func run(args []string) (status int) {
 	// A command that names its app only with --app also takes the app as the
 	// first argument after its verb.
 	rewritten, err := appArgumentAsFlag(args)
+	if err == nil {
+		// …and a command that takes the app only as its first argument also
+		// takes --app.
+		rewritten, err = appFlagAsArgument(rewritten)
+	}
 	if err != nil {
 		return printErr("Invalid app target", err)
 	}
@@ -799,7 +808,7 @@ func run(args []string) (status int) {
 		// requires an authenticated session + 5-min step-up.
 		return cmdInvitations(args[1:])
 	case "overage-cap":
-		// Tier B audit gap: per-account overage cap ($0.01/GB-h
+		// Tier B audit gap: per-account overage cap ($0.05/GB-h
 		// above the plan's included GB-h). schedd refuses new wakes
 		// once the cap is hit.
 		return cmdOverageCap(args[1:])
@@ -1061,7 +1070,7 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []string) {
 	usage := localHelpSubcommandPath(command, names)
 	if len(sub.Subcommands) > 0 {
-		usage += " <" + sub.subcommandChoice() + ">"
+		usage += " " + sub.subcommandSynopsis()
 	}
 	if sub.SubcommandsAfterPositionals {
 		usage = localHelpArguments(usage, nil, sub.Flags, false)
@@ -1081,7 +1090,7 @@ func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []str
 		printCLIExamples(w, sub.Examples)
 	}
 	printHelpNotes(w, sub.Notes)
-	if takesAppArgument(sub.Flags, sub.Positionals, sub.Subcommands) {
+	if takesAppArgument(sub.Flags, sub.Positionals, sub.Subcommands, "app") {
 		_, _ = fmt.Fprintf(w, "\nThe app can also be the first argument: %s my-api\n", localHelpSubcommandPath(command, names))
 	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))

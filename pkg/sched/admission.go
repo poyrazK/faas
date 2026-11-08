@@ -54,6 +54,10 @@ type NodeLedger struct {
 	// quietPaused, when set, lets the vCPU and CPU gates count only active
 	// instances (ADR-1151, admission_cpu_discount.go).
 	quietPaused QuietPaused
+	// idleLadderFrozen, when set, leaves instances vmmd holds at the idle
+	// ladder's freeze level out of measured admission's cap on reservations
+	// (ADR-20261107122928, admission_idle_ladder.go).
+	idleLadderFrozen IdleLadderFrozen
 	// measuredCPU, when set, charges measured instances their measured CPU
 	// at the vCPU and CPU gates (ADR 20261029151111, admission_cpu_discount.go).
 	measuredCPU MeasuredCPU
@@ -278,7 +282,12 @@ type Request struct {
 	// the reservation and is durable so SeedLedger can reconstruct it.
 	CPUStartupBoostMillicores int
 	CPUStartupBoostUntil      time.Time
-	MaxConcurrency            int // the selected environment's deployed max (validated ≤ plan cap)
+	// BookedCPUMillicores, when positive, is stamped on the admitted
+	// instance's row as what it books once its startup boost ends, in place
+	// of its app's configured CPU (ADR-20261101160231 step 5b). Only apps on
+	// the guest_vcpu_from_cpu_apps list set it.
+	BookedCPUMillicores int
+	MaxConcurrency      int // the selected environment's deployed max (validated ≤ plan cap)
 	// AllowConcurrencyOverlap permits exactly one counted serving instance
 	// above the environment and shared plan ceilings. A candidate must overlap
 	// a serving revision of that same environment; node RAM/vCPU limits and
@@ -1023,7 +1032,7 @@ func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceili
 	// Frozen reservations already book measured memory, so the cap on
 	// reservations leaves them out (ADR-1151).
 	overcommit := ceiling * (api.MeasuredAdmissionMaxOvercommitPercent - 100) / 100
-	if capped := reserved - frozen - overcommit; capped > used {
+	if capped := reserved - frozen - l.idleLadderDiscountMB_locked(nodeID, ceiling) - overcommit; capped > used {
 		return capped, "reservations beyond the overcommit allowance"
 	}
 	return used, "measured"

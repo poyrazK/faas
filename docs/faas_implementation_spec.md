@@ -34,7 +34,7 @@ These numbers come from the financial model and are **not negotiable at implemen
 | Expected resident concurrency (planning) | 0.02 / 0.15 / 0.60 / 3.00 | telemetry comparison only |
 | Continuous app ownership recovery (ADR-421) | `OwnershipRecoveryIntervalSeconds=5`, `OwnershipRecoveryTimeoutSeconds=30`, `OwnershipRecoveryStoreTimeoutSeconds=5`; existing rebalance cooldown 60 s and batch limit 50 | `schedd` startup and periodic scan, fair app-ID pages, node-health-fenced ownership transfer, existing routing invalidation and durable service recovery |
 | Bare-metal service recovery capacity (ADR-422) | `ServiceCapacityMinimumHosts=2`; existing VM overhead, startup CPU, plan guest vCPU and CPU overcommit; heartbeat freshness 90 s | Atomic fleet policy and desired-intent reservations; conservative slots preserve one-host recovery; existing declared replicas may recover while degraded |
-| Overage meter | $0.01 per GB-RAM-hour (USD, ADR-1430) | `meterd` → the selected `billing.Provider` (Polar by default) |
+| Overage meter | $0.05 per GB-RAM-hour (USD, ADR-20261107192333) | `meterd` → the selected `billing.Provider` (Polar by default) |
 | Build cost envelope | builds fit inside control-plane + headroom, never tenant RAM | `builderd` admission §9 |
 
 **Three numbers the business is fragile to** (founding doc §5): fleet snapshot size, resident concurrency per customer, churn. The first two are produced by this system — §12 makes them first-class metrics from day one.
@@ -474,7 +474,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - Sample loop (1 s): for each RUNNING instance read cgroup `memory.current` (host truth, includes VMM) → accumulate `mb_seconds`. Flush app rows to `usage_minutes(account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes)`; job-task rows use the migration-00257 widening (`app_id=NULL, job_id=<jobs.id>, meter_kind='job'`). The daily rollup retains `app_id=<job id>` for its legacy primary key and records `meter_kind='job'`. `cpu_usec` is the cumulative host-cgroup CPU-µs delta (ADR-039, additive on `(instance_id, minute)`); `tx_bytes` is the cumulative HTTP response bytes the gateway forwarded for this instance in this minute (ADR-046, additive); `net_tx_bytes` is the cumulative byte delta on root-side `vethHost.rx_bytes` for this instance in this minute (ADR-046, additive). The first three columns are billable-floor or telemetry; `tx_bytes` and `net_tx_bytes` are telemetry only — no provider push in this PR. On the streaming path (ADR-047), `tx_bytes` is attributed per-flush via `statusRecorder.doFlush`'s `onFlush` callback (the residual after the last flush boundary is captured at `finalFlush` so a response that ends mid-chunk is not silently lost).
 - GB-RAM-hour = `Σ mb_seconds / 1024 / 3600`, computed on **plan RAM size + 8 MB overhead**, not sampled RSS, for billing (predictable for customers; matches the financial model's math). Samples are kept for capacity telemetry.
 - **Quiet-paused seconds are not billed** (ADR-20261023171905). A running second in which vmmd holds the instance quiet-paused (ADR-1151, `between_requests` workloads) is not a running second, as a frozen second is not. schedd records each node's pauses in the pause ledger (`instance_quiet_pauses`, per-node watermark `quiet_pause_watermarks`) behind `quiet_pause_ledger`, and meterd subtracts the paused seconds the ledger proves from each closed minute's residency behind `[meter] quiet_pause_unbilled` (`off` / `shadow` / `on`, default off). A closed pause counts exactly and an open one only up to its node's watermark, so anything unproven is billed; the subtraction runs before compute funding and the ADR-060 floor fill, so a floor keeps billing its paused capacity. What a minute did not bill, net of that floor fill, is recorded in `usage_minutes.paused_mb_seconds`, and the usage summary shows the month's total as `quiet_paused_gb_hours`, beside the billed GB-hours and not part of them.
-- Quota ladder per account per month: 0–100 % of included GB-h: nothing; 100 %: email; Free tier at 100 %: hard stop (park, don't wake, `402` page); paid tiers: overage accrues at €0.01/GB-h, pushed hourly as provider usage records through the adapter interface.
+- Quota ladder per account per month: 0–100 % of included GB-h: nothing; 100 %: email; Free tier at 100 %: hard stop (park, don't wake, `402` page); paid tiers: overage accrues at $0.05/GB-h (ADR-20261107192333), pushed hourly as provider usage records through the adapter interface.
 - Provider catalog: one product and monthly price per plan, one metered price (`gb_ram_hour`), and one customer plus subscription per account. The public-release provider is Polar; Paddle and Stripe webhooks remain compatibility paths and are selected explicitly with `FAAS_BILLING_PROVIDER`.
 - Dunning: `payment_failed` → account `past_due` (apps run, deploys blocked) → 7 days → `suspended` (apps parked, wake returns `402` page) → 21 days → `deleted_pending` (30-day snapshot retention, then GC). All transitions emailed. Subscription end (`subscription.revoked` / provider equivalent) → plan `free` + subscription binding cleared, status untouched: a voluntary cancel stays `active` (one "subscription ended" email), a non-payment revocation keeps its dunning stamp. Free → paid is a hosted-checkout hand-off — `PATCH /v1/account/plan` 402 `checkout_url`, `/dashboard/upgrade`, `gregale plan` — and the plan flips only on the provider webhook. A subscription webhook moves the account only as far as the provider's current subscription allows: a payment failure for a subscription that is active again is ignored, and the plan is the subscription's current product (ADR-20261026180850). Deleting an account or organization cancels its subscription at period end before the deletion is recorded; the grace hard delete repeats it before erasure.
 
@@ -483,7 +483,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 Two operator-side addenda on top of the §4.7 quota ladder:
 
 - **`POST /v1/admin/accounts/{id}/credits`** (admin scope + `FAAS_ADMIN_EMAILS` allowlist, idempotent via the `Idempotency-Key` header) inserts one row in `account_credits` and one immutable row in `credit_ledger`, then emits a `credit.issued` audit event. Reason is `3..500` chars (CHECK at the column + handler 400). Migration `00054_account_credits.sql` adds both tables with `ON DELETE CASCADE` on `account_id` so GDPR delete is a single transaction (slot walked past 00050 → 00051 → 00053 → 00054 to dodge collisions with PR #325 / #322 / #341 / #340; memory: `migration-slot-collisions-across-prs.md`). Credits are surfaced in `usageSummary` as `credits_remaining_cents` but are **not** applied at the per-minute derivation.
-- **`POST /v1/invoices/{id}/consume-credits`** (issue #279 PR-C; admin scope + `FAAS_ADMIN_EMAILS` allowlist + MFA-gated, idempotent via the `Idempotency-Key` header) is the operator trigger for the credit consumption reducer. The reducer reads `usage_minutes.mb_seconds` for the invoice's billing period `[period_start, period_end)`, converts to integer cents via `floor(mb_seconds × 100 / 3600)` at `OverageMillicentsPerGBHour` (€0.01/GB-h, floored; same formula as `pgstore.CurrentMonthOverageCents`), and drains the account's active credits FIFO (`created_at ASC`) against the overage. `cents_remaining` never goes negative: each credit decrement is `UPDATE … WHERE cents_remaining >= $amt RETURNING cents_remaining`, conditional inside a single PgStore transaction. The `consume_credits` loop is the same reducer that a future `meterd` cron and the PR-B `UpsertInvoice` webhook Tx both call — the HTTP endpoint is just one trigger. Idempotent under webhook redelivery via the `UNIQUE (provider, provider_invoice_id, credit_id) WHERE provider_invoice_id IS NOT NULL AND delta_cents < 0` partial index on `credit_ledger` (ADR-220); a second reducer call for the same account, provider and `provider_invoice_id` returns `already_consumed_for_invoice=true` with the same `consumed_cents` and writes no new ledger rows. Migration `00058` adds the invoice ID and initial partial unique index; ADR-220 and migration `20260922183947369` qualify the receipt by provider and fail closed on legacy rows whose provider cannot be resolved safely. Issuance rows leave `provider_invoice_id` NULL so the partial constraint does not apply.
+- **`POST /v1/invoices/{id}/consume-credits`** (issue #279 PR-C; admin scope + `FAAS_ADMIN_EMAILS` allowlist + MFA-gated, idempotent via the `Idempotency-Key` header) is the operator trigger for the credit consumption reducer. The reducer reads `usage_minutes.mb_seconds` for the invoice's billing period `[period_start, period_end)`, converts to integer cents via `floor(mb_seconds × 100 / 3600)` at `OverageMillicentsPerGBHour` ($0.05/GB-h, floored; same formula as `pgstore.CurrentMonthOverageCents`), and drains the account's active credits FIFO (`created_at ASC`) against the overage. `cents_remaining` never goes negative: each credit decrement is `UPDATE … WHERE cents_remaining >= $amt RETURNING cents_remaining`, conditional inside a single PgStore transaction. The `consume_credits` loop is the same reducer that a future `meterd` cron and the PR-B `UpsertInvoice` webhook Tx both call — the HTTP endpoint is just one trigger. Idempotent under webhook redelivery via the `UNIQUE (provider, provider_invoice_id, credit_id) WHERE provider_invoice_id IS NOT NULL AND delta_cents < 0` partial index on `credit_ledger` (ADR-220); a second reducer call for the same account, provider and `provider_invoice_id` returns `already_consumed_for_invoice=true` with the same `consumed_cents` and writes no new ledger rows. Migration `00058` adds the invoice ID and initial partial unique index; ADR-220 and migration `20260922183947369` qualify the receipt by provider and fail closed on legacy rows whose provider cannot be resolved safely. Issuance rows leave `provider_invoice_id` NULL so the partial constraint does not apply.
 - **`accounts.overage_cap_cents`** (nullable `bigint`, optional per-account ceiling; zero is a valid cap) is read by `meterd`'s quota tick once per account per cycle. The tick computes the current-month derived overage (`SUM(usage_minutes.mb_seconds) since date_trunc('month', now()) at UTC`, net of the month's largest recorded plan grant, ADR-1162) and skips the overage-row insert when `month_cents >= cap_cents`. The provider pusher bills an hour that crosses the cap exactly up to it and settles it; capped usage is never back-billed when the cap is raised, and schedd parks the account's workloads while the cap holds (ADR-1162). The Free hard-stop / paid warning ladder is unchanged — the cap is layered on top of in-budget usage. Per-hit increments of `meterd_billing_cap_exceeded_total{plan=…}` (cardinality 4) provide the alert signal. **Race scope**: meterd is the sole writer to `usage_minutes` today (spec §6.1), so the cap check + overage-row insert is serialised by the single-writer invariant. A future meterd-replica deploy would need a per-account `SELECT … FOR UPDATE` on `accounts` around the cap check + insert decision — that locking is the obvious follow-up; until then, the worst-case is one minute's overage-row insertion past the cap.
 - **Provider refund seam**: `billing.Provider.Refund(ctx, chargeID, amountCents)` is on the interface. The operator route `POST /v1/admin/accounts/{id}/refunds` currently supports Polar order IDs, binds the provider order to a paid local invoice, requires MFA for session principals plus the admin allowlist, and forwards the explicit `Idempotency-Key` through the provider context. Polar ignores the `Idempotency-Key` request header, so the Polar adapter stamps the key into refund metadata, lists the order's refunds before writing, sends the refund POST exactly once (no transport retry), and re-lists on an ambiguous failure to recover a committed refund — a redelivered operator request with the same key never moves money twice. Stripe and Paddle retain their adapter implementations for compatibility deployments; a provider without `CapRefund` returns 501. Provider refund webhooks remain observational and emit a `refund.processed` audit row after verification.
 
@@ -563,7 +563,7 @@ Resume path (post-restore, triggered by host signal via vsock): re-seed `/dev/ur
 
 `runner-node22`, `runner-node24`, `runner-python312`, `runner-python313`, `runner-go124`, `runner-go124-alpine`: a 15-line HTTP host on `:8080` that loads the customer handler and adapts request/response.
 
-Contract (identical across languages): handler receives `{method, path, headers, query, body_b64}`; returns `{status, headers, body_b64}` or a plain body. Node: `export default async function handler(event, ctx)` or a Fetch API object, `export default { fetch(request, env, ctx) }`; Fetch API requests and responses are translated to and from the envelope by the generated adapter. Python: `def handler(request) -> Response | dict | str`.
+Contract (identical across languages): handler receives `{method, path, headers, query, body_b64}`; returns `{status, headers, body_b64}` or a plain body. Node: `export default async function handler(event, ctx)` or a Fetch API object, `export default { fetch(request, env, ctx) }`; Fetch API requests and responses are translated to and from the envelope by the generated adapter. Python: `def handler(event, ctx)` (sync or `async`) returning a dict (`status`/`statusCode`, `headers`, `body`; a non-string body is JSON-encoded), a `str` or `bytes`.
 A response header value may be a string or a list of strings, one header line per element; a repeated request header arrives joined with `", "` (`"; "` for `Cookie`). Streamed responses (ADR-999): instead of one response line, a handler may send a `{"frame":"head",status,headers}` line, `{"frame":"chunk",body_b64}` lines and a final `{"frame":"end"}` (or `{"frame":"error",message}` to abort); the runner sends the head at once and flushes each chunk, and the gateway's ADR-102 path carries the stream to the client. Node Fetch bodies still being produced, async-iterable bodies, Python generator bodies and Go handlers that `Flush` stream; every other response is sent whole as before. All runners share `guest/runners/internal.Serve`. Request timeouts (ADR-1150): the gateway appends `X-Faas-Deadline-Ms`, the request budget left at dispatch, to every guest request, and the runner bounds an invocation, a stream included, by the longer of that and 30 s, capped at 15 min; per-plan ceilings on `request_timeout_s` are Free 30 s, Hobby 60 s, Pro 5 min, Scale 15 min. Async, queue, cron and replay invocations get the same timeout, never less than 30 s (ADR-1180): gatewayd-internal sends it as their deadline, and schedd sizes their leases and delivers long ones off the drain tick and the cron loop. Websockets: not for functions (fine for Apps — `gatewayd-internal` proxies them transparently).
 Adding a runtime is a 7-layer procedure (migrations, schema, apid handler whitelist, openapi enums, runner shim, imaged handler surfaces, base Dockerfile + auto-stage wiring) — see ADR-052 for the canonical touch-list. The worked example for `node24` and `python313` is Tier 1 PR 1 + PR 2.
 
@@ -909,7 +909,7 @@ The list below covers **all** customer-facing kinds as of PR #291. Prior kinds (
 | `app.rolled_back` | apid `handlers_ext.go::rollbackApp` | `{app_id, from: deployment_id, to: deployment_id}` |
 | `domain.added` | apid `handlers_ext.go::createDomain` | `{app_id, domain}` — `domain` is the canonical lowercased form stored on the row |
 | `domain.removed` | apid `handlers_ext.go::deleteDomain` | `{app_id, domain}` |
-| `domain.drifted` | apid `dns_poller.go::runDoctorForDomain` | `{app_id, domain, observed_target, checked_at, reason}` — emitted once when a verified domain's CNAME leaves Gregale and verification is revoked |
+| `domain.drifted` | apid `dns_poller.go::runDoctorForDomain` | `{app_id, domain, observed_target, checked_at, reason}` — emitted once after two consecutive conclusive routing failures revoke verification (ADR-20261106200000) |
 | `cron.created` | apid `handlers_ext.go::createCron` | `{cron_id, app_id, schedule, path, enabled}` — only emitted on the success path; the PR #340 plan-tier gate (402) suppresses this row for Free accounts |
 | `cron.updated` | apid `handlers_ext.go::updateCron` | `{cron_id, app_id, old, new}` |
 | `cron.deleted` | apid `handlers_ext.go::deleteCron` | `{cron_id, app_id}` |
@@ -1483,6 +1483,13 @@ maximum-age deadline. See [ADR-376](adr/376-platform-tenant-async-invocations.md
   IPv6 conflict) with per-check remediation lines; backed by the persisted
   `domain_doctor_observations` table the `dns_poller` writes every 30s. See
   [`docs/domains/doctor.md`](../domains/doctor.md).
+  **Binding changes (ADR-20261107010000):** explicit domain manifests support
+  read-only plan and atomic apply. Verified domains can move between serving
+  apps/environments within the same account namespace and organization without
+  deleting TXT proof, TLS state or wildcard issuance budgets. Reviewed digests
+  fence claim/release changes and intervening moves. Omitted bindings stay;
+  moved source defaults are cleared. Public smoke tests remain owned by guided
+  production cutover. See [`docs/domains.md`](domains.md).
 
 ---
 
@@ -1539,7 +1546,7 @@ The §9.A payoff multiplies with each compute box added at M9. On a single-node 
 ## 10. Metering and billing detail
 
 - Unit: GB-RAM-hour, billed on provisioned `ram_mb + 8` per running second (§4.7). Definition published verbatim in docs — no surprise-RSS billing.
-- Included quotas per plan per calendar month (UTC): 20 / 200 / 1,000 / 3,000 GB-h (ADR-1430). Overage $0.01/GB-h, metered in USD millicents, provider usage records hourly, idempotent by `(subscription_item, hour)`. An hour is delivered only once every minute up to its end is final — recorded compute-complete or older than `MeterUsageFinalAfter` — so a late catch-up row never lands in a delivered hour (ADR-1162). Deleting an app keeps its usage rows; they are the month's billing evidence.
+- Included quotas per plan per calendar month (UTC): 20 / 200 / 1,000 / 3,000 GB-h (ADR-1430). Overage $0.05/GB-h (ADR-20261107192333), metered in USD millicents, provider usage records hourly, idempotent by `(subscription_item, hour)`. An hour is delivered only once every minute up to its end is final — recorded compute-complete or older than `MeterUsageFinalAfter` — so a late catch-up row never lands in a delivered hour (ADR-1162). Deleting an app keeps its usage rows; they are the month's billing evidence.
 - When the plan changes mid-month, the month's allowance for usage up to an instant is the largest plan grant recorded before it (financial price activations): a downgrade never shrinks the month's allowance, an upgrade applies from its activation and does not refund overage already billed (ADR-1162).
 - Requests are counted but not billed (v1). Canonical customer egress is `usage_minutes.net_tx_bytes`; gateway `tx_bytes` remains a diagnostic subset and is never added. Polar egress billing is independently gated `off` (default) / `shadow` / `live`, with explicit per-plan monthly GiB allowances and a whole-cent per-GiB price. Shadow records local, non-retroactive receipts and sends no provider events. Live uses a separate Polar meter. Stripe/Paddle remain compute-only. The host uplink and per-plan shaping (10/25/100/250 Mbit, §7) are unchanged.
 - Plan changes: upgrade immediate with provider-managed proration (Polar schedules paid-to-paid changes for the subscription period end; the local plan flips on its webhook); downgrade at period end; quota checks (deployed count, RAM sizes) run pre-downgrade and block with a task list ("delete 3 apps or reduce RAM…").
@@ -1657,8 +1664,8 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `<daemon>_loop_last_beat_age_seconds{loop}` gauge | ≪ loop budget | none (ADR-190 diagnostic; pairs with the stalled gauge) |
 | `<daemon>_grpc_client_calls_without_deadline_total{method}` rate | 0 | none — every labelled method is a call site still relying on `FAAS_GRPC_DEFAULT_DEADLINE` (ADR-190 §1); fix the site, not the alert |
 | `gateway_route_lookup_stale_served_total` rate | 0 | > 0 / 5 m warn (ADR-190 §3 — Postgres route lookups are erroring and the edge is coasting on last-known-good routes bounded by `FAAS_GATEWAY_ROUTE_STALE_TTL`) |
-| `gateway_route_lookup_unknown_host_total{outcome}` rate | `shed` 0 | none yet (ADR-20261103163954 §4 — host lookups answered without a store read: `remembered_miss` is a 404 from a recent answer that the host routes nowhere, normal for scanners and typos; `shed` is a 503 because the gateway spent its budget of reads for hosts it has never seen route, `GatewayNewHostLookupsPerSecond` in `pkg/api/limits.go`, and means a flood of names that route nowhere) |
-| `gatewayd_public_object_host_lookups_shed_total` rate | 0 | none yet (ADR-20261103163954 §4 — the public-read matcher, which runs in front of every GET and HEAD on an edge before the gateway, refused a host lookup with 503 because the edge spent its budget of store reads for hostnames it has never seen name an app, `PublicReadNewHostLookupsPerSecond` in `pkg/api/limits.go`; a non-zero rate means a flood of names that name no app) |
+| `gateway_route_lookup_unknown_host_total{outcome}` rate | `shed` 0 | none yet (ADR-20261103163954 §4 — host lookups answered without a store read: `remembered_miss` is a 404 from a recent answer that the host routes nowhere, normal for scanners and typos; `shed` is a 503 because the gateway spent its budget of reads for hosts it has never seen route, `GatewayNewHostLookupsPerSecond` in `pkg/api/limits.go`, and means a flood of names that route nowhere. Every app slug and verified non-wildcard custom domain is preloaded (`KnownRouteHosts*`, refreshed each minute) and never spends the budget, so a shed request is for a name no app holds, or a wildcard, environment or preview host.) |
+| `gatewayd_public_object_host_lookups_shed_total` rate | 0 | none yet (ADR-20261103163954 §4 — the public-read matcher, which runs in front of every GET and HEAD on an edge before the gateway, refused a host lookup with 503 because the edge spent its budget of store reads for hostnames it has never seen name an app, `PublicReadNewHostLookupsPerSecond` in `pkg/api/limits.go`; a non-zero rate means a flood of names that name no app. Every app slug and verified non-wildcard custom domain is preloaded (`KnownRouteHosts*`, refreshed each minute) and never spends the budget, so a shed request is for a name no app holds, or a wildcard, environment or preview host.) |
 | `gateway_route_metrics_rejected_total` rate | 0 | > 0 sustained 15 m warn via `GatewayRouteMetricsBudgetExhausted` (ADR-20261024154324 — the gateway holds `gateway_route_metrics_budget_routes` live (app, route) pairs and declines new per-route series; `gateway_route_metrics_routes` and `gateway_route_metrics_evictions_total` are the live count and idle-app evictions) |
 | `apid_route_insights_last_success_timestamp_seconds` gauge | within the 6 h interval | no successful run in 13 h, warn via `FaasRouteInsightsStalled`; `apid_route_insights_runs_total{outcome}` / `apid_route_insights_apps_total{outcome}` failures warn via `FaasRouteInsightsFailing` (ADR-20261024154324) |
 | `apid_route_monitor_lag_seconds` gauge | < 60 s | > 300 s for 10 m warn via `FaasRouteMonitorLagging` (ADR-20261024154324 — production route monitors are overdue, so budget incidents and opt-in rollbacks are late) |
@@ -1668,7 +1675,8 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `<daemon>_db_notify_hub_dropped_total{channel}` rate | 0 | > 0 sustained 15 m warn (ADR-190 §4 — a subscriber is not draining its fan-out buffer; the durable table + safety tick recover the work, but the consumer is falling behind) |
 | `vmmd_snapshot_materialize_seconds{artifact,source}` p95 | `source="materialized"` rare; local sources ≪ 10 ms | `histogram_quantile(0.95, sum by (le) (rate(vmmd_snapshot_materialize_seconds_bucket{artifact="mem",source="materialized"}[5m]))) > 0.2` for 15 m warn — wakes are fetching the memory blob across the network. At the 130 MB fleet snapshot target one fetch can exceed the whole §6.3 wake budget, so a sustained rate means placement is landing away from snapshot replicas (ADR-063). Compare against the local-source quantile to price locality |
 | `vmmd_snapshot_materialize_bytes_total{artifact,source}` rate | n/a | none — diagnostic. Divided by the histogram it gives effective fetch throughput, which separates "the object is large" from "the fetch was slow". The `source="materialized"` series is the fleet's remote snapshot read volume |
-| `vmmd_restore_phase_duration_seconds{phase}` p50/p95 | quiet-node floor per phase (metal harness: stage_drives/stage_snapshot ≈ 0, resume_hook ≈ 33 ms) | none — diagnostic, operator-only. Splits the restore window, including the sub-phases the customer `wake.restore_breakdown` event omits (`stage_writable`, `pre_boot_join_wait`, `network_wait`, and the wake's ADR-473 resource-journal `journal_sync` fsyncs and `journal_lock_wait`, which overlap the staging phases), so a regression in one phase is attributable without Debug logs (hunt #9) |
+| `vmmd_restore_phase_duration_seconds{phase}` p50/p95 | quiet-node floor per phase (metal harness: stage_drives/stage_snapshot ≈ 0, resume_hook ≈ 33 ms) | none — diagnostic, operator-only. Splits the restore window, including the sub-phases the customer `wake.restore_breakdown` event omits (`stage_writable`, `pre_boot_join_wait`, `network_wait`, and the wake's ADR-473 resource-journal `journal_sync` fsyncs and `journal_lock_wait`, which overlap the staging phases), so a regression in one phase is attributable without Debug logs (hunt #9). `bind_tun` is partitioned by `tun_journal_checks`, `tun_wait_mntns`, `tun_wait_chroot`, `tun_setup_jail` and `cgroup_fence` (ADR-20261105100000; never sum across the phase labels): a first restore after a quiet spell that stalls in `bind_tun` shows whether the jailer (the two waits), the native journal (`tun_journal_checks`) or the device-setup helper (`tun_setup_jail`) was slow |
+| `vmmd_resident_exec_stages_total{binary,outcome}` rate | `staged` 1 per binary per vmmd start; `fallback` 0 | > 0 `fallback` is a launch that read the installed jailer or firecracker from disk because the verified tmpfs copy could not be made (ADR-20261105100000) — diagnostic, no alert; the vmmd log names the cause once |
 | `vmmd_resume_guest_stage_duration_seconds{stage}` p50/p95 | Go guest `total` ≪ `resume_hook`; Node/Python dominated by `userspace_reseed` | none — diagnostic, operator-only. The guest's own split of `resume_hook` from the ADR-022 timing frame: kernel reseed (`entropy`, `hwrng`), `clock`, `uuid_marker`, the ADR-687 `userspace_reseed` barrier, `after_restore`, the guest `total`, and `outside_guest` (the host's ack wait minus `total`: vsock transport plus the time before guest-init's handler ran). Guests captured before the frame shipped are not observed |
 | `vmmd_restore_journal_commits_total` rate | ~26 per restore (production-us bpftrace, rc.285) | none — diagnostic. Divided by the restore count (`vmmd_restore_phase_duration_seconds_count{phase="journal_sync"}`) it is the resource-journal commits per restore; with the `journal_sync` phase it gives the cost per commit |
 | `vmmd_restore_pre_boot_files_total{outcome}` ratio | `skipped` dominates once captures are learned (#3490) | none — diagnostic. A `written` share near 100 % means the learned pre-boot skip is not firing |
@@ -3119,3 +3127,350 @@ settling historical handoffs, preserve journals and receipts, and qualify native
 migration/process-death/leak behavior before deployment. See
 [ADR-1530](adr/1530-durable-migration-source-retirement.md) and the
 [source retirement guide](ops/migration-source-retirement.md).
+
+## Management MCP action history (ADR-20261022161757)
+
+The management bridge exposes read-only, connection-local listing and inspection
+of reviewed deploy/rollback, service/worker rollout, service abort, route-budget and
+regression-triage attempts and redacted receipts.
+History and replay payloads commit in the same encrypted, fsynced snapshot before
+native mutation and after its receipt. Acceptance is distinct from completion;
+uncertain outcomes remain unknown until an existing guarded retry recovers a
+receipt. Metadata never recreates or extends an expired plan's write authority.
+
+History retains at most 256 records per connection through 24 hours after the
+original plan expiry, prioritizing active supported plans. Pages contain 1–50
+records (default 20) with context-bound keyset continuation; cursor input is at
+most 1024 bytes. Current account/app/environment identities are checked before
+and after reads, with separate diagnostic consent for regression records. OAuth
+refresh preserves a grant's history; revocation removes it. Coverage is bounded
+and connection-local, not a complete account audit trail. See
+[ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md) and
+[MCP recovery](mcp.md#recover-reviewed-actions).
+
+Workload history includes reviewed mode and exact deployment/pair references,
+accepted reverse-handoff request IDs and native handoff generations when supplied.
+Explicit observation arguments select the existing scoped rollout tool; history
+does not observe completion or infer worker queue processing. A companion journal
+namespace preserves N-1 readers, sharing the same atomic commit and combined
+256-record bound. See
+[ADR-20261022183756](adr/20261022183756-management-mcp-workload-action-history.md).
+
+Project/environment action history also covers promotions and rollbacks through
+separate read-only listing/detail tools. Current consent must cover source and
+target identities and every project workload. Recorded human approval pending,
+native outcome unknown and accepted references remain separate; credentials,
+review links and workload payloads are excluded. All replay/history namespaces
+commit atomically and share the 256-record bound. Reads never approve, apply or
+observe native completion. See
+[ADR-20261022192200](adr/20261022192200-management-mcp-environment-action-history.md).
+
+Route-budget history extends the app/environment listing and detail with reviewed
+overrides and inheritance resets. Redacted metadata binds both policy revisions;
+validated committed receipts expose the resulting revision and source, including
+zero parent revisions. Same-plan retry retains native CAS/idempotency and current
+consent/expiry guards. Exact observation arguments select current policy without
+claiming improved performance or completed windows. An additive budget journal
+shares atomic persistence, retention, the connection bound and OAuth cleanup;
+no native API, schema or catalog count changes. See
+[ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
+
+
+## Management MCP named service-abort outcomes (ADR-20261104173000)
+
+Exact reviewed service aborts in named environments use the same opaque attempt
+and immutable audit receipt as default-scope aborts. Named evidence includes the
+original project/environment UUIDs. Fresh intents still require the current full
+release review and unprotected environment admission. Receipt reads require the
+retained app/candidate and current matching project/environment identities; a
+same-slug replacement or project move cannot retarget historical evidence. A
+protection change alone does not erase acceptance. Duplicate-attempt detection
+uses the retained audit acceptance independently of mutable environment identity,
+so unavailable scoped evidence cannot permit reexecution of accepted intent.
+
+The existing MCP action-outcome tool, history, resources and prompt preserve the
+original named selectors through restart/expiry, with writes disabled. Read
+consent and immutable identities are rechecked before release. The rollout
+observation call includes the project/environment; acceptance remains separate
+from gateway ACK, drain and completion. Legacy attempted plans gain no identity.
+No new migration, tool, prompt, template or quota is needed. Service rollback
+outcome recovery remains separate. See
+[ADR-20261104173000](adr/20261104173000-management-mcp-named-service-abort-outcomes.md).
+
+## Management MCP service-abort outcomes (ADR-20261104144000)
+
+Exact reviewed default-scope service aborts accept a stable opaque
+`Service-Abort-Attempt-ID`. The existing intent audit row atomically records the
+original request fingerprint, exact app/candidate/predecessor and native reverse
+handoff request ID. A concurrent unique audit index and the ordinary route/app
+locks prevent accepted attempts from queuing a second handoff. Accepted and
+conflicting repeats are distinguished before mutable review checks. Fresh intents
+retain all existing admission guards. Owned deployment-read lookup returns only
+retained evidence, independently of current traffic or handoff changes.
+
+The bridge atomically saves the encrypted lookup before POST. The default apply
+outcome verifies acceptance after expiry/restart, including with writes disabled,
+and returns the exact rollout observation call. Compare the recovered request ID
+with current handoff evidence; acceptance does not prove gateway ACK, request drain
+or completion. History/resources/prompts offer passive discovery without renewed
+write authority. Legacy attempted plans are never backfilled. Missing evidence
+remains unresolved. Retention, consent, immutable identities and storage are
+rechecked before release. No MCP tools or quotas are added. Named service aborts are extended by
+ADR-20261104173000 above; service rollback remains separate. See
+[ADR-20261104144000](adr/20261104144000-management-mcp-service-abort-outcomes.md).
+
+## Management MCP service rollback acceptance recovery (ADR-20261105082446)
+
+Exact default-environment service rollbacks can retain the original native
+operation identity before submission. The optional `Rollback-Attempt-ID` commits
+as that operation's UUID under the app lock. Matching accepted attempts cannot
+start another readiness/handoff cycle, including after terminal failure;
+conflicting original pairs or reasons are rejected. Existing serving CAS,
+artifact, approval, release and binding guards still apply. Workers, named
+scopes, database restoration and release acknowledgement are excluded.
+
+After a lost response, encrypted bridge restart or plan expiry, follow retained
+history to `gregale_get_action_outcome`. It verifies the exact original service
+operation and returns redacted historical acceptance. `observation` reads the
+operation, `rollout_observation` inspects target handoff/drain and
+`health_observation` reads current app health. Invoke them separately: acceptance
+does not prove ACKs, drain completion, current serving traffic or health.
+
+Service references use an independent encrypted namespace with a tagged binding,
+shared history retention and grant cleanup. N-1 journal writes preserve it;
+legacy attempted plans never gain new identities. Missing evidence remains
+unresolved. Reads, prompts and resources work with writes disabled, recheck
+consent/identity/retention/storage, and never replay, modify history or renew
+expired authority. The existing tools, prompts and resource templates suffice.
+See [ADR-20261105082446](adr/20261105082446-management-mcp-service-rollback-outcomes.md).
+
+## Management MCP request rollback outcomes (ADR-20261105000513)
+
+An exact default-scope manual request rollback may carry a 32-character lowercase
+hexadecimal `Rollback-Attempt-ID`; its UUID representation identifies the existing
+checked operation. Both stores atomically bind acceptance and readiness work
+under the app lock. Accepted attempts, including terminal ones, cannot execute
+again; changed pairs or reasons conflict. Serving, release, artifact, contract
+and binding gates remain required. Implicit selection, alert attribution, release
+acknowledgement and service/worker attempts do not use this contract.
+
+The bridge persists the original attempt and encrypted bounded lookup before
+POST. The default apply outcome reader validates the original app/scope, exact
+operation/pair, request fingerprint and creation evidence after restart/expiry.
+It returns redacted historical acceptance and an exact rollback progress call.
+Current traffic/health and completion require separate reads. Passive history
+and recipes discover the lookup without fetching receipts. Legacy attempted
+plans receive no new identity; missing evidence stays unresolved. Retention,
+storage, immutable identity and read consent are rechecked before release.
+Recovery never rewrites history, renews expiry or replays a mutation. The existing
+ledger/API are reused; no migration, new tool or quota is added. See
+[ADR-20261105000513](adr/20261105000513-management-mcp-rollback-outcomes.md).
+
+## Management MCP request promotion outcomes (ADR-20261105000512)
+
+New guarded request promotions persist a stable opaque identity before PATCH.
+Native Mem/Pg stores commit an immutable receipt and traffic atomically, preserving
+serving/review/admission gates and preventing an accepted attempt from moving
+traffic twice. Owned deployment-read lookup binds the original candidate,
+request hash, serving guard and immutable named target. Receipt absence never
+establishes non-commit. Schema expansion is additive; receipts end with retained
+app/candidate lifetime and require current named environment identity.
+
+The existing MCP outcome reader accepts optional `phase=apply|promotion`, with
+apply as default. A separate encrypted promotion reference survives plan expiry,
+shares bounded history retention and OAuth purge, and is preserved by N-1 readers.
+Legacy attempted plans receive no new identity. History/prompts/resources offer
+separate exact apply/promotion outcome calls without fetching receipts. Final
+read guards recheck consent, immutable ownership/target, retention, references
+and storage. Verified promotion proves historical acceptance only; current
+traffic and health need separate observation. No recovery read mutates history,
+replays writes or renews authority. Recovery helpers follow the selected toolsets
+and current grant; writes retain their existing authorization. No quota changes.
+See [ADR-20261105000512](adr/20261105000512-management-mcp-promotion-outcomes.md).
+
+## Management MCP deployment submission outcomes (ADR-20261024234500)
+
+New MCP deployment and service/worker rollout apply attempts atomically persist
+an opaque native deployment-attempt ID before submitting image or exact-commit
+source writes. A bounded encrypted companion retains only that ID, artifact
+fingerprint and immutable history binding after expiry. Original HTTP keys and
+native guards remain; previously attempted legacy plans are never assigned new
+native identities. The existing outcome tool verifies native acceptance receipts
+and deployment scope/provenance, returns only original apply acceptance plus an
+exact observation call, and keeps completion/health/promotion/queue evidence
+separate. History and recovery recipes expose this read-only path after expiry;
+missing or mismatched evidence remains unresolved. No expiry renewal, replay,
+history upgrade, catalog/SDK/native API/schema/quota/migration changes.
+See [ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
+
+## Management MCP outcome recovery discovery (ADR-20261024223000)
+
+Eligible attempted route-budget history advertises an exact `recovery.outcome`
+call and the existing prompt/resource links after original plan expiry. Live
+recipes retain review/check calls and can add outcome/current-policy observation;
+expired recipes contain only history/outcome/observation. Current consent,
+immutable targets, retained history, storage and lookup bindings are checked
+again before release. Discovery fetches no receipts or fresh baselines, never
+upgrades an initially unavailable hint, and preserves recorded uncertainty and
+original expiry. Verified receipts describe historical intent; current policy
+can differ and missing evidence never proves non-commit. Catalog, native APIs,
+SDKs, encrypted formats, retention, quotas and migrations remain unchanged.
+See [ADR-20261024223000](adr/20261024223000-management-mcp-outcome-recovery-discovery.md).
+
+## Management MCP route-budget outcome lookup (ADR-20261024210000)
+
+Read-only `gregale_get_action_outcome` verifies the original native route-budget
+receipt against an encrypted minimal request UUID/fingerprint/history binding.
+It remains available after original plan expiry while action history is retained.
+The native scoped receipt GET returns immutable identities and original revision
+metadata without policy configuration. Receipt absence, unavailability or mismatch
+remains unresolved and cannot prove non-commit. No read replays writes, renews
+expiry or upgrades recorded history; historical intent is separate from current
+configuration and runtime completion. Current consent/ownership and identities
+are rechecked before release. Catalog discovery follows selected toolsets and the
+current grant. No new migration or quota.
+See [ADR-20261024210000](adr/20261024210000-management-mcp-budget-outcomes.md).
+
+## Management MCP history recovery discovery (ADR-20261024180000)
+
+Available original app/environment action rows add exact recovery resource,
+prompt and applicability-check links, preserving the existing review call.
+Require complete original plan/target bindings. Final history guards recheck
+storage and availability after identity/consent reads, removing hints if a plan
+expired, disappeared or lost its binding while retaining historical uncertainty,
+receipts, ordering and pagination. Initially unavailable snapshots never gain
+hints during that read. No discovery hint grants authority, extends expiry,
+persists state, polls approval or refreshes a native baseline. Followed calls
+retain their independent guards; checks concern original apply rather than later
+request promotion. Catalog stays 57 read/planning tools, 66 with writes enabled,
+eight prompts and eleven templates. See
+[ADR-20261024180000](adr/20261024180000-management-mcp-history-recovery-discovery.md).
+
+## Management MCP saved-plan recovery resources (ADR-20261024160000)
+
+Default/named app and environment-plan resource templates expose the existing
+read-only recovery recipe as bounded JSON. Strict canonical URI/selector checks
+and final saved-plan identity, consent, diagnostic, storage, presence and expiry
+guards remain mandatory. Reuse fixed prompt guidance and structured calls;
+exclude saved prose, native/private configuration/approval material and replay
+keys. Availability does not check freshness or native completion, and reads do
+not plan, mutate, poll approval, persist or renew expiry. Cached recipes grant no
+authority. Completion never enumerates plan IDs; recipes have no subscriptions.
+Catalog: 57 read/planning tools, 66 with writes enabled, eight prompts and eleven
+resource templates. Pinned Codex uses resource-read for recipe retrieval and
+existing tools for subsequent guarded reads. See
+[ADR-20261024160000](adr/20261024160000-management-mcp-saved-plan-recovery-resources.md).
+
+## Management MCP saved-plan recovery prompts (ADR-20261105000511)
+
+`gregale_saved_plan_review` and `gregale_environment_plan_review` return fixed
+read-only recovery guidance and JSON history/review/check calls bound to original
+plan IDs and selectors. Verify current read/diagnostic consent, immutable target
+identities, both environments and whole-project access for environment plans,
+storage, original plan presence and expiry before releasing output. Exclude saved
+prose, configuration/preview/approval values and replay material. Preserve ambiguous
+original retries; explain stale unattempted intent before separately requested
+replanning. Retrieval performs no freshness/receipt/native-completion reads,
+mutation, approval action, persistence or expiry renewal. Plan-ID completion does
+not enumerate IDs. Catalog stays 57 read/planning tools, 66 with writes enabled;
+prompts increase to eight, with eight resource templates. Native MCP SDK clients
+qualify retrieval on both protocols; the pinned Codex app-server API lacks a
+prompt-get RPC. See
+[ADR-20261105000511](adr/20261105000511-management-mcp-saved-plan-recovery-prompts.md).
+
+## Management MCP plan drift details (ADR-20261024123000)
+
+Existing plan applicability tools add a fixed-field `drift` projection of changed
+first-attempt baselines. Scoped release IDs, policy revisions and validated
+regression observation versions expose expected/current primitive metadata.
+Configuration, identity mismatch and preview-baseline changes use value-free
+markers; credentials, preview hashes/tokens, configuration values and raw native
+objects are excluded. Promotion eligibility/config-sync and rollback/running
+changes use boolean comparisons. Unverified reads produce no invented
+comparisons. Attempted/receipted plans skip drift and preserve original
+requests. Final consent, identity, storage, presence and expiry guards remain in
+force, with no persistence, renewal, mutation or approval polling. Catalog stays
+57 read/planning tools, 66 with writes enabled. See
+[ADR-20261024123000](adr/20261024123000-management-mcp-plan-drift-details.md).
+
+## Management MCP plan applicability (ADR-20261024120000)
+
+Read-only `gregale_check_plan` and `gregale_check_environment_plan` observe
+original unexpired plan applicability under current target/diagnostic consent.
+They report advisory coverage, blockers or unknown native state without creating
+plans, modifying expiry/state, resolving source refs, executing mutations or
+starting/polling approvals. First attempts compare pinned release/configuration,
+budget revisions or regression observations; environment rollback coverage remains
+partial and native transaction guards remain authoritative. Ambiguous attempts
+skip baseline comparisons and preserve the original request for guarded retry;
+receipts do not prove native completion. Current write consent/enablement and
+original expiry still apply. Final saved-review guards withhold output on changed
+identity, read consent, storage, plan presence or expiry. Catalog: 57 read/planning
+tools, 66 with writes enabled. See
+[ADR-20261024120000](adr/20261024120000-management-mcp-plan-applicability.md).
+
+## Management MCP saved-plan review (ADR-20261023184309)
+
+Read-only app and environment plan retrieval reopens an original unexpired
+connection-local proposal after history discovery or encrypted restart. Fixed
+projections expose intended changes and pinned revisions while excluding native
+retry and approval credentials, environment-variable and secret values. Current
+identity/consent checks include both environments and all project workloads for
+environment plans, and diagnostic consent for regression plans. Final guards
+recheck presence, expiry and storage availability before releasing the review.
+
+A saved review explicitly leaves current apply eligibility and native completion
+unobserved. Retrieval never replans, refreshes evidence, polls approval, writes
+state or renews expiry. Expired private payloads remain unavailable; original
+mutation guards retain CAS, consent and human approval. Saved original-proposal
+review uses `gregale_get_saved_plan`; operation receipts retain `gregale_get_plan`.
+Existing storage formats, limits and
+native APIs are unchanged. See
+[ADR-20261023184309](adr/20261023184309-management-mcp-saved-plan-review.md).
+
+
+### Original environment rollback acceptance (ADR-20261105102920)
+
+Project-level environment rollback accepts paired optional original-attempt and
+request-hash headers. The request fingerprint binds canonical project/source/target
+UUIDs and exact promotion UUID/hash. Admission locks and validates the original
+promotion and current environment identities, then atomically stores a minimal
+immutable acceptance receipt with rollback intent. Accepted attempt-bearing requests cannot admit work
+again, including after terminal failure. Explicit legacy retries preserve their
+original-key checkpoint continuation and cannot alter the acceptance receipt;
+legacy/automatic rollback state cannot be adopted into a new receipt. The additive receipt table retains one row
+per promotion and cascades with promotion/account/project deletion.
+
+Read-only personal and organization project receipt endpoints refuse foreign or
+replacement scope identities. Management MCP exposes exact acceptance through
+`gregale_get_environment_action_outcome` and passive environment history/recovery
+recipes after plan expiry and encrypted restart. Current source/target consent,
+all project workload identities, storage, retention and the unchanged reference
+remain mandatory at release. Missing evidence stays unresolved; lookup never
+changes history, reruns a write, reconstructs a request or renews authority.
+Restoration progress, each workload's handoff and health are explicit separate
+observations. Promotion acceptance recovery is separate work.
+
+Validation: `TestEnvironmentRollbackReceiptMem`,
+`TestEnvironmentRollbackReceiptPG`, `TestEnvironmentRollbackReceiptPGAtomicFailure`,
+`TestEnvironmentRollbackReceiptHTTPLostReply`,
+`TestEnvironmentRollbackOutcomeLostReplyExpiry`,
+`TestEnvironmentRollbackOutcomeEvidenceAndGuards`, and the pinned real-client
+acceptance fixture. Portable fixtures do not qualify provider deployment.
+
+### Management MCP environment promotion outcomes (ADR-20261105153007)
+
+Project environment promotion acceptance can be recovered by its original opaque
+attempt after a lost response, encrypted restart or plan expiry. The native
+receipt commits atomically with admission and approval consumption; original
+project/source/target IDs and the reviewed promotion fingerprint bind it.
+Repeated modern accepted attempts cannot dispatch again, while existing explicit
+legacy checkpoint continuation retains its guards and cannot adopt receipts.
+The existing environment outcome tool reads exact receipts and returns the
+native promotion ID with a separate progress observation. It never retries,
+replans, approves, renews authority or changes recorded uncertainty. Current
+scope/workload identities, consent, storage and retention remain mandatory;
+missing evidence remains unresolved and replacement scopes cannot inherit it.
+No tool/prompt/template counts or GA capability levels change. Portable fixtures
+do not qualify provider/native execution. See ADR-20261105153007 for the wire hash,
+receipt lifecycle and SDK contract.

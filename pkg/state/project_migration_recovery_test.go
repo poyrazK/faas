@@ -45,9 +45,11 @@ func testMigrationRecovery(t *testing.T, factory func(*testing.T) Store) {
 			if err = store.(ProjectMigrationTaskRuntimeStore).BindProjectMigrationTaskRuntime(ctx, task, fence); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = tasks.MarkAppTaskRunning(ctx, task.ID, *task.LeaseToken, at); err != nil {
+			task, err = tasks.MarkAppTaskRunning(ctx, task.ID, *task.LeaseToken, at)
+			if err != nil {
 				t.Fatal(err)
 			}
+			at = task.UpdatedAt
 			exit := 23
 			code, message := "command_failed", "cleanup failure"
 			completion := CompleteAppTaskParams{ID: task.ID, LeaseToken: *task.LeaseToken, Status: AppTaskFailed, ExitCode: &exit, FailureCode: &code, FailureMessage: &message, FinishedAt: at.Add(time.Millisecond)}

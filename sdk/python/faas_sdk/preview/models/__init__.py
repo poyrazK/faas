@@ -14,11 +14,13 @@ from .account_deletion_response import AccountDeletionResponse
 from .account_deletion_response_status import AccountDeletionResponseStatus
 from .account_deploy_rate_limit import AccountDeployRateLimit
 from .account_egress_allowlist_extra_response import AccountEgressAllowlistExtraResponse
+from .account_email_change_request import AccountEmailChangeRequest
 from .account_export_response import AccountExportResponse
 from .account_export_response_schema_version import AccountExportResponseSchemaVersion
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_overage_cap_response import AccountOverageCapResponse
+from .account_profile_update import AccountProfileUpdate
 from .account_rate_limits_response import AccountRateLimitsResponse
 from .account_release_webhook_response import AccountReleaseWebhookResponse
 from .account_release_webhook_response_delivery_format import AccountReleaseWebhookResponseDeliveryFormat
@@ -73,8 +75,21 @@ from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsRes
 from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_approval_channels_request import AgentApprovalChannelsRequest
+from .agent_approval_channels_response import AgentApprovalChannelsResponse
+from .agent_approval_pending_info import AgentApprovalPendingInfo
+from .agent_approval_pending_info_category import AgentApprovalPendingInfoCategory
+from .agent_approval_pending_info_status import AgentApprovalPendingInfoStatus
+from .agent_approval_response import AgentApprovalResponse
+from .agent_approval_response_category import AgentApprovalResponseCategory
+from .agent_approval_response_status import AgentApprovalResponseStatus
+from .agent_approval_webhook_payload import AgentApprovalWebhookPayload
+from .agent_approval_webhook_payload_category import AgentApprovalWebhookPayloadCategory
+from .agent_approval_webhook_payload_status import AgentApprovalWebhookPayloadStatus
+from .agent_approvals_response import AgentApprovalsResponse
 from .agent_client_request import AgentClientRequest
 from .agent_connection_response import AgentConnectionResponse
+from .agent_connection_response_approvals_item import AgentConnectionResponseApprovalsItem
 from .agent_connection_response_kind import AgentConnectionResponseKind
 from .agent_connections_response import AgentConnectionsResponse
 from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
@@ -147,6 +162,7 @@ from .api_consumer_usage_threshold_webhook_payload import APIConsumerUsageThresh
 from .api_key_export_response import APIKeyExportResponse
 from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
+from .api_key_response_approval_categories_item import APIKeyResponseApprovalCategoriesItem
 from .api_key_response_scopes_item import APIKeyResponseScopesItem
 from .api_key_response_status import APIKeyResponseStatus
 from .app_agent_binding import AppAgentBinding
@@ -276,6 +292,8 @@ from .app_operational_recovery import AppOperationalRecovery
 from .app_operational_rollback import AppOperationalRollback
 from .app_operational_summary import AppOperationalSummary
 from .app_operational_summary_version import AppOperationalSummaryVersion
+from .app_postgres_binding import AppPostgresBinding
+from .app_postgres_binding_list import AppPostgresBindingList
 from .app_private_network_attachment import AppPrivateNetworkAttachment
 from .app_private_network_attachment_request import AppPrivateNetworkAttachmentRequest
 from .app_private_network_attachment_response import AppPrivateNetworkAttachmentResponse
@@ -785,6 +803,7 @@ from .config_revision_detail import ConfigRevisionDetail
 from .config_revision_detail_secret_versions import ConfigRevisionDetailSecretVersions
 from .config_revision_detail_variables import ConfigRevisionDetailVariables
 from .config_revision_source import ConfigRevisionSource
+from .config_rollback_receipt import ConfigRollbackReceipt
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
@@ -952,6 +971,7 @@ from .create_job_run_request_env_overrides import CreateJobRunRequestEnvOverride
 from .create_job_run_request_execution_class import CreateJobRunRequestExecutionClass
 from .create_job_run_request_failure_policy import CreateJobRunRequestFailurePolicy
 from .create_key_request import CreateKeyRequest
+from .create_key_request_approval_categories_item import CreateKeyRequestApprovalCategoriesItem
 from .create_key_request_scopes_item import CreateKeyRequestScopesItem
 from .create_managed_execution_workflow_request import CreateManagedExecutionWorkflowRequest
 from .create_managed_execution_workflow_request_failure_policy import CreateManagedExecutionWorkflowRequestFailurePolicy
@@ -989,6 +1009,7 @@ from .create_object_storage_compute_binding_request import CreateObjectStorageCo
 from .create_object_storage_compute_binding_request_permission import CreateObjectStorageComputeBindingRequestPermission
 from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
+from .create_org_api_key_request_approval_categories_item import CreateOrgAPIKeyRequestApprovalCategoriesItem
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_object_bucket_body import CreateOrgObjectBucketBody
 from .create_org_request import CreateOrgRequest
@@ -1118,6 +1139,11 @@ from .data_api_change_event import DataAPIChangeEvent
 from .data_api_change_event_batch import DataAPIChangeEventBatch
 from .data_api_change_event_batch_response import DataAPIChangeEventBatchResponse
 from .data_api_change_event_batch_version import DataAPIChangeEventBatchVersion
+from .data_api_change_hook_report import DataAPIChangeHookReport
+from .data_api_change_hook_report_publishing import DataAPIChangeHookReportPublishing
+from .data_api_change_hook_report_version import DataAPIChangeHookReportVersion
+from .data_api_change_hook_status import DataAPIChangeHookStatus
+from .data_api_change_hook_status_publishing import DataAPIChangeHookStatusPublishing
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
@@ -1130,6 +1156,8 @@ from .data_api_server_key import DataAPIServerKey
 from .data_api_server_key_permission_set import DataAPIServerKeyPermissionSet
 from .data_api_server_key_permission_set_access import DataAPIServerKeyPermissionSetAccess
 from .data_api_server_key_slot import DataAPIServerKeySlot
+from .data_api_status import DataAPIStatus
+from .data_api_status_runtime_reports import DataAPIStatusRuntimeReports
 from .data_api_usage import DataAPIUsage
 from .data_api_usage_bucket import DataAPIUsageBucket
 from .data_api_usage_counts import DataAPIUsageCounts
@@ -1254,6 +1282,7 @@ from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
 from .debug_status_deployment import DebugStatusDeployment
 from .debug_status_health import DebugStatusHealth
+from .debug_status_memory import DebugStatusMemory
 from .debug_status_oom_kill import DebugStatusOOMKill
 from .debug_status_response import DebugStatusResponse
 from .debug_status_response_verdict import DebugStatusResponseVerdict
@@ -1332,6 +1361,7 @@ from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_promotion_hold import DeploymentPromotionHold
 from .deployment_promotion_hold_last_recovery_outcome import DeploymentPromotionHoldLastRecoveryOutcome
+from .deployment_promotion_receipt import DeploymentPromotionReceipt
 from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_release import DeploymentRelease
 from .deployment_release_status import DeploymentReleaseStatus
@@ -1351,6 +1381,8 @@ from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseP
 from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseParkedReasonType3Type1
 from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_tag import DeploymentResponseTag
+from .deployment_retry_intent import DeploymentRetryIntent
+from .deployment_retry_intent_version import DeploymentRetryIntentVersion
 from .deployment_route_policy_snapshot_response import DeploymentRoutePolicySnapshotResponse
 from .deployment_runtime_response import DeploymentRuntimeResponse
 from .deployment_runtime_response_status import DeploymentRuntimeResponseStatus
@@ -1437,10 +1469,24 @@ from .dispatch_invocation_batch_response_200_results_item_status import (
 from .dns_record_instruction import DNSRecordInstruction
 from .dns_record_instruction_purpose import DNSRecordInstructionPurpose
 from .dns_record_instruction_type import DNSRecordInstructionType
+from .domain_apply_request import DomainApplyRequest
+from .domain_apply_response import DomainApplyResponse
+from .domain_binding_change import DomainBindingChange
+from .domain_binding_change_action import DomainBindingChangeAction
+from .domain_binding_spec import DomainBindingSpec
+from .domain_binding_target import DomainBindingTarget
 from .domain_doctor_check import DomainDoctorCheck
 from .domain_doctor_check_name import DomainDoctorCheckName
 from .domain_doctor_check_status import DomainDoctorCheckStatus
 from .domain_doctor_report import DomainDoctorReport
+from .domain_manifest import DomainManifest
+from .domain_manifest_version import DomainManifestVersion
+from .domain_plan import DomainPlan
+from .domain_plan_version import DomainPlanVersion
+from .domain_readiness import DomainReadiness
+from .domain_readiness_ownership import DomainReadinessOwnership
+from .domain_readiness_routing import DomainReadinessRouting
+from .domain_readiness_status import DomainReadinessStatus
 from .download_profile_capture_kind import DownloadProfileCaptureKind
 from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
@@ -1562,6 +1608,11 @@ from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
 from .egress_flow_log_response import EgressFlowLogResponse
+from .egress_overage_request import EgressOverageRequest
+from .egress_overage_response import EgressOverageResponse
+from .egress_overage_response_billing import EgressOverageResponseBilling
+from .email_verification_resend_response import EmailVerificationResendResponse
+from .email_verification_resend_response_status import EmailVerificationResendResponseStatus
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .enable_durable_entity_registry_body import EnableDurableEntityRegistryBody
@@ -1631,11 +1682,15 @@ from .environment_job_smoke import EnvironmentJobSmoke
 from .environment_policy import EnvironmentPolicy
 from .environment_policy_kind import EnvironmentPolicyKind
 from .environment_policy_match_headers import EnvironmentPolicyMatchHeaders
+from .environment_promotion_receipt import EnvironmentPromotionReceipt
 from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
 from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
 from .environment_recovery_retention import EnvironmentRecoveryRetention
+from .environment_rollback_receipt import EnvironmentRollbackReceipt
+from .environment_route_budget_receipt import EnvironmentRouteBudgetReceipt
+from .environment_route_budget_receipt_budget_source import EnvironmentRouteBudgetReceiptBudgetSource
 from .environment_route_budgets import EnvironmentRouteBudgets
 from .environment_route_budgets_budget_source import EnvironmentRouteBudgetsBudgetSource
 from .environment_route_contract import EnvironmentRouteContract
@@ -2187,6 +2242,7 @@ from .get_custom_metric_series_range import GetCustomMetricSeriesRange
 from .get_deployment_open_api_doc_response_200 import GetDeploymentOpenAPIDocResponse200
 from .get_durable_entity_readiness_response_200 import GetDurableEntityReadinessResponse200
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
+from .get_environment_route_budget_receipt_scope import GetEnvironmentRouteBudgetReceiptScope
 from .get_environment_route_budgets_scope import GetEnvironmentRouteBudgetsScope
 from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
 from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
@@ -2219,9 +2275,15 @@ from .get_worker_rollout_observation_scope import GetWorkerRolloutObservationSco
 from .get_workflow_operation_execution_control_x_gregale_operation_execution_kind import (
     GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind,
 )
+from .git_hub_account_connection import GitHubAccountConnection
+from .git_hub_account_connection_health import GitHubAccountConnectionHealth
+from .git_hub_account_connections import GitHubAccountConnections
 from .git_hub_activity_retry_response import GitHubActivityRetryResponse
 from .git_hub_check_activity import GitHubCheckActivity
 from .git_hub_check_activity_status import GitHubCheckActivityStatus
+from .git_hub_connection_manage_request import GitHubConnectionManageRequest
+from .git_hub_connection_verification import GitHubConnectionVerification
+from .git_hub_connection_verification_permissions import GitHubConnectionVerificationPermissions
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
 from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
@@ -2454,6 +2516,8 @@ from .labels_response_labels import LabelsResponseLabels
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerRequest
 from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
+from .linked_sign_in import LinkedSignIn
+from .linked_sign_in_provider import LinkedSignInProvider
 from .list_account_operations_state import ListAccountOperationsState
 from .list_account_workflow_attention_dependency_status import ListAccountWorkflowAttentionDependencyStatus
 from .list_account_workflow_attention_priority import ListAccountWorkflowAttentionPriority
@@ -3006,6 +3070,7 @@ from .mfa_enroll_request import MFAEnrollRequest
 from .mfa_enroll_response import MFAEnrollResponse
 from .mfa_recover_request import MFARecoverRequest
 from .mfa_recover_response import MFARecoverResponse
+from .mfa_regenerate_recovery_codes_body import MfaRegenerateRecoveryCodesBody
 from .mfa_verify_request import MFAVerifyRequest
 from .mfa_verify_response import MFAVerifyResponse
 from .migration_cutover import MigrationCutover
@@ -3082,6 +3147,8 @@ from .object_bucket_object_lock_configuration import ObjectBucketObjectLockConfi
 from .object_bucket_object_lock_last_error_code import ObjectBucketObjectLockLastErrorCode
 from .object_bucket_object_lock_request import ObjectBucketObjectLockRequest
 from .object_bucket_object_lock_state import ObjectBucketObjectLockState
+from .object_bucket_retry import ObjectBucketRetry
+from .object_bucket_retry_reason import ObjectBucketRetryReason
 from .object_bucket_state import ObjectBucketState
 from .object_bucket_versioning import ObjectBucketVersioning
 from .object_bucket_versioning_desired_status import ObjectBucketVersioningDesiredStatus
@@ -4038,6 +4105,7 @@ from .org_activity_response import OrgActivityResponse
 from .org_activity_response_data import OrgActivityResponseData
 from .org_agent_policy_request import OrgAgentPolicyRequest
 from .org_agent_policy_request_allowed_scopes_item import OrgAgentPolicyRequestAllowedScopesItem
+from .org_agent_policy_request_approval_categories_item import OrgAgentPolicyRequestApprovalCategoriesItem
 from .org_agent_policy_response import OrgAgentPolicyResponse
 from .org_app_list_response import OrgAppListResponse
 from .org_app_summary import OrgAppSummary
@@ -4872,6 +4940,12 @@ from .queue_receive_response_payload import QueueReceiveResponsePayload
 from .queue_receive_response_result import QueueReceiveResponseResult
 from .queue_release_requirements import QueueReleaseRequirements
 from .queue_release_requirements_additional_property import QueueReleaseRequirementsAdditionalProperty
+from .queue_send_batch_message import QueueSendBatchMessage
+from .queue_send_batch_message_payload import QueueSendBatchMessagePayload
+from .queue_send_batch_request import QueueSendBatchRequest
+from .queue_send_batch_response import QueueSendBatchResponse
+from .queue_send_batch_result import QueueSendBatchResult
+from .queue_send_batch_result_status import QueueSendBatchResultStatus
 from .queue_send_request import QueueSendRequest
 from .queue_send_request_payload import QueueSendRequestPayload
 from .queue_send_response import QueueSendResponse
@@ -4998,8 +5072,10 @@ from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
 from .reconcile_object_storage_compute_triggers_request import ReconcileObjectStorageComputeTriggersRequest
 from .record_dev_sync_request import RecordDevSyncRequest
 from .record_dev_sync_request_status import RecordDevSyncRequestStatus
+from .record_release_outcome_check_request import RecordReleaseOutcomeCheckRequest
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
+from .recovery_codes_response import RecoveryCodesResponse
 from .refresh_automatic_route_check_response_202 import RefreshAutomaticRouteCheckResponse202
 from .refresh_automatic_route_check_response_202_status import RefreshAutomaticRouteCheckResponse202Status
 from .refund_account_invoice_body import RefundAccountInvoiceBody
@@ -5049,6 +5125,8 @@ from .release_gate_comparison import ReleaseGateComparison
 from .release_gate_kind import ReleaseGateKind
 from .release_gate_result import ReleaseGateResult
 from .release_gate_result_kind import ReleaseGateResultKind
+from .release_outcome_check import ReleaseOutcomeCheck
+from .release_outcome_check_task_status import ReleaseOutcomeCheckTaskStatus
 from .release_restore_point import ReleaseRestorePoint
 from .release_timeline import ReleaseTimeline
 from .release_timeline_event import ReleaseTimelineEvent
@@ -5066,6 +5144,8 @@ from .replay_event_fanout_failure_response_state import ReplayEventFanoutFailure
 from .replay_retryable_event_fanout_failures_request import ReplayRetryableEventFanoutFailuresRequest
 from .replay_retryable_event_fanout_failures_response import ReplayRetryableEventFanoutFailuresResponse
 from .repo_response import RepoResponse
+from .request_account_email_change_response_202 import RequestAccountEmailChangeResponse202
+from .request_account_email_change_response_202_status import RequestAccountEmailChangeResponse202Status
 from .request_analytics_compute_cost import RequestAnalyticsComputeCost
 from .request_analytics_compute_cost_allocation_method import RequestAnalyticsComputeCostAllocationMethod
 from .request_analytics_compute_cost_basis import RequestAnalyticsComputeCostBasis
@@ -5078,6 +5158,7 @@ from .request_analytics_group import RequestAnalyticsGroup
 from .request_analytics_group_method import RequestAnalyticsGroupMethod
 from .request_analytics_response import RequestAnalyticsResponse
 from .request_analytics_response_group_by import RequestAnalyticsResponseGroupBy
+from .request_analytics_response_sampled_measures import RequestAnalyticsResponseSampledMeasures
 from .request_analytics_route import RequestAnalyticsRoute
 from .request_analytics_route_deployment_observation import RequestAnalyticsRouteDeploymentObservation
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
@@ -5616,6 +5697,7 @@ from .send_app_message_request_data_content_type import SendAppMessageRequestDat
 from .send_app_message_request_datacontenttype import SendAppMessageRequestDatacontenttype
 from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
+from .service_abort_receipt import ServiceAbortReceipt
 from .service_authorization_check import ServiceAuthorizationCheck
 from .service_authorization_check_result import ServiceAuthorizationCheckResult
 from .service_binding_explanation import ServiceBindingExplanation
@@ -5729,6 +5811,7 @@ from .sidecar_timeline_response import SidecarTimelineResponse
 from .sidecar_timeline_status import SidecarTimelineStatus
 from .sidecar_timeline_status_status import SidecarTimelineStatusStatus
 from .sidecar_type import SidecarType
+from .sign_in_methods_response import SignInMethodsResponse
 from .simulate_automation_request import SimulateAutomationRequest
 from .simulate_automation_request_mock_attempts import SimulateAutomationRequestMockAttempts
 from .simulate_automation_request_mock_item_attempts import SimulateAutomationRequestMockItemAttempts
@@ -5868,6 +5951,7 @@ from .trigger_work_binding import TriggerWorkBinding
 from .trusted_signer import TrustedSigner
 from .udp_listener_response import UDPListenerResponse
 from .udp_listener_response_protocol import UDPListenerResponseProtocol
+from .unlink_account_sign_in_method_provider import UnlinkAccountSignInMethodProvider
 from .unregister_managed_realtime_push_device_response_200 import UnregisterManagedRealtimePushDeviceResponse200
 from .update_account_billing_info_request import UpdateAccountBillingInfoRequest
 from .update_account_release_webhook_request import UpdateAccountReleaseWebhookRequest
@@ -6303,11 +6387,13 @@ __all__ = (
     "AccountDeletionResponseStatus",
     "AccountDeployRateLimit",
     "AccountEgressAllowlistExtraResponse",
+    "AccountEmailChangeRequest",
     "AccountExportResponse",
     "AccountExportResponseSchemaVersion",
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountOverageCapResponse",
+    "AccountProfileUpdate",
     "AccountRateLimitsResponse",
     "AccountReleaseWebhookResponse",
     "AccountReleaseWebhookResponseDeliveryFormat",
@@ -6360,8 +6446,21 @@ __all__ = (
     "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentApprovalChannelsRequest",
+    "AgentApprovalChannelsResponse",
+    "AgentApprovalPendingInfo",
+    "AgentApprovalPendingInfoCategory",
+    "AgentApprovalPendingInfoStatus",
+    "AgentApprovalResponse",
+    "AgentApprovalResponseCategory",
+    "AgentApprovalResponseStatus",
+    "AgentApprovalsResponse",
+    "AgentApprovalWebhookPayload",
+    "AgentApprovalWebhookPayloadCategory",
+    "AgentApprovalWebhookPayloadStatus",
     "AgentClientRequest",
     "AgentConnectionResponse",
+    "AgentConnectionResponseApprovalsItem",
     "AgentConnectionResponseKind",
     "AgentConnectionsResponse",
     "AgentConnectionsRevokeAllResponse",
@@ -6434,6 +6533,7 @@ __all__ = (
     "APIKeyExportResponse",
     "APIKeyExportResponseScopesItem",
     "APIKeyResponse",
+    "APIKeyResponseApprovalCategoriesItem",
     "APIKeyResponseScopesItem",
     "APIKeyResponseStatus",
     "AppAgentBinding",
@@ -6656,6 +6756,8 @@ __all__ = (
     "AppOperationPreviewChecks",
     "AppOperationPreviewOperation",
     "AppOperationPreviewSchemaVersion",
+    "AppPostgresBinding",
+    "AppPostgresBindingList",
     "AppPrivateNetworkAttachment",
     "AppPrivateNetworkAttachmentRequest",
     "AppPrivateNetworkAttachmentResponse",
@@ -7058,6 +7160,7 @@ __all__ = (
     "ConfigRevisionDetailSecretVersions",
     "ConfigRevisionDetailVariables",
     "ConfigRevisionSource",
+    "ConfigRollbackReceipt",
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",
@@ -7224,6 +7327,7 @@ __all__ = (
     "CreateJobRunRequestExecutionClass",
     "CreateJobRunRequestFailurePolicy",
     "CreateKeyRequest",
+    "CreateKeyRequestApprovalCategoriesItem",
     "CreateKeyRequestScopesItem",
     "CreateManagedExecutionWorkflowRequest",
     "CreateManagedExecutionWorkflowRequestFailurePolicy",
@@ -7255,6 +7359,7 @@ __all__ = (
     "CreateObjectStorageComputeBindingRequestPermission",
     "CreateObjectUploadRouteRequest",
     "CreateOrgAPIKeyRequest",
+    "CreateOrgAPIKeyRequestApprovalCategoriesItem",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgObjectBucketBody",
     "CreateOrgRequest",
@@ -7371,6 +7476,11 @@ __all__ = (
     "DataAPIChangeEventBatch",
     "DataAPIChangeEventBatchResponse",
     "DataAPIChangeEventBatchVersion",
+    "DataAPIChangeHookReport",
+    "DataAPIChangeHookReportPublishing",
+    "DataAPIChangeHookReportVersion",
+    "DataAPIChangeHookStatus",
+    "DataAPIChangeHookStatusPublishing",
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
@@ -7383,6 +7493,8 @@ __all__ = (
     "DataAPIServerKeyPermissionSet",
     "DataAPIServerKeyPermissionSetAccess",
     "DataAPIServerKeySlot",
+    "DataAPIStatus",
+    "DataAPIStatusRuntimeReports",
     "DataAPIUsage",
     "DataAPIUsageBucket",
     "DataAPIUsageCounts",
@@ -7507,6 +7619,7 @@ __all__ = (
     "DebugRunningResponse",
     "DebugStatusDeployment",
     "DebugStatusHealth",
+    "DebugStatusMemory",
     "DebugStatusOOMKill",
     "DebugStatusResponse",
     "DebugStatusResponseVerdict",
@@ -7582,6 +7695,7 @@ __all__ = (
     "DeploymentPreviewURL",
     "DeploymentPromotionHold",
     "DeploymentPromotionHoldLastRecoveryOutcome",
+    "DeploymentPromotionReceipt",
     "DeploymentReadinessProbe",
     "DeploymentRelease",
     "DeploymentReleaseStatus",
@@ -7601,6 +7715,8 @@ __all__ = (
     "DeploymentResponseParkedReasonType3Type1",
     "DeploymentResponseRolloutState",
     "DeploymentResponseTag",
+    "DeploymentRetryIntent",
+    "DeploymentRetryIntentVersion",
     "DeploymentRoutePolicySnapshotResponse",
     "DeploymentRuntimeResponse",
     "DeploymentRuntimeResponseStatus",
@@ -7688,10 +7804,24 @@ __all__ = (
     "DNSRecordInstruction",
     "DNSRecordInstructionPurpose",
     "DNSRecordInstructionType",
+    "DomainApplyRequest",
+    "DomainApplyResponse",
+    "DomainBindingChange",
+    "DomainBindingChangeAction",
+    "DomainBindingSpec",
+    "DomainBindingTarget",
     "DomainDoctorCheck",
     "DomainDoctorCheckName",
     "DomainDoctorCheckStatus",
     "DomainDoctorReport",
+    "DomainManifest",
+    "DomainManifestVersion",
+    "DomainPlan",
+    "DomainPlanVersion",
+    "DomainReadiness",
+    "DomainReadinessOwnership",
+    "DomainReadinessRouting",
+    "DomainReadinessStatus",
     "DownloadProfileCaptureKind",
     "DryRunAppOpenAPIBody",
     "DryRunAppOpenAPIBodyInfo",
@@ -7813,6 +7943,11 @@ __all__ = (
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",
     "EgressFlowLogResponse",
+    "EgressOverageRequest",
+    "EgressOverageResponse",
+    "EgressOverageResponseBilling",
+    "EmailVerificationResendResponse",
+    "EmailVerificationResendResponseStatus",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnableDurableEntityRegistryBody",
@@ -7880,11 +8015,15 @@ __all__ = (
     "EnvironmentPolicy",
     "EnvironmentPolicyKind",
     "EnvironmentPolicyMatchHeaders",
+    "EnvironmentPromotionReceipt",
     "EnvironmentQueueBinding",
     "EnvironmentQueueBindingMode",
     "EnvironmentQueueSmoke",
     "EnvironmentQueueSmokePayloadType0",
     "EnvironmentRecoveryRetention",
+    "EnvironmentRollbackReceipt",
+    "EnvironmentRouteBudgetReceipt",
+    "EnvironmentRouteBudgetReceiptBudgetSource",
     "EnvironmentRouteBudgets",
     "EnvironmentRouteBudgetsBudgetSource",
     "EnvironmentRouteContract",
@@ -8402,6 +8541,7 @@ __all__ = (
     "GetDeploymentOpenAPIDocResponse200",
     "GetDurableEntityReadinessResponse200",
     "GetEdgeRuleStatsWindow",
+    "GetEnvironmentRouteBudgetReceiptScope",
     "GetEnvironmentRouteBudgetsScope",
     "GetEventBacklogCapacityScope",
     "GetEventBacklogConsumerKind",
@@ -8430,11 +8570,17 @@ __all__ = (
     "GetServiceMapRange",
     "GetWorkerRolloutObservationScope",
     "GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind",
+    "GitHubAccountConnection",
+    "GitHubAccountConnectionHealth",
+    "GitHubAccountConnections",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
     "GitHubCheckActivityStatus",
     "GithubCheckUpdateRecord",
     "GithubCheckUpdateRecordStatus",
+    "GitHubConnectionManageRequest",
+    "GitHubConnectionVerification",
+    "GitHubConnectionVerificationPermissions",
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
     "GitHubDeploymentPolicyPatchPreviewServicePolicy",
@@ -8663,6 +8809,8 @@ __all__ = (
     "LabelsResponse",
     "LabelsResponseLabels",
     "LatestDeploymentsByAppResponse",
+    "LinkedSignIn",
+    "LinkedSignInProvider",
     "LinkPlatformTenantConsumerRequest",
     "LinkPlatformTenantSurfaceRequest",
     "ListAccountOperationsState",
@@ -9153,6 +9301,7 @@ __all__ = (
     "MFAEnrollResponse",
     "MFARecoverRequest",
     "MFARecoverResponse",
+    "MfaRegenerateRecoveryCodesBody",
     "MFAVerifyRequest",
     "MFAVerifyResponse",
     "MigrationCutover",
@@ -9229,6 +9378,8 @@ __all__ = (
     "ObjectBucketObjectLockLastErrorCode",
     "ObjectBucketObjectLockRequest",
     "ObjectBucketObjectLockState",
+    "ObjectBucketRetry",
+    "ObjectBucketRetryReason",
     "ObjectBucketState",
     "ObjectBucketVersioning",
     "ObjectBucketVersioningDesiredStatus",
@@ -10077,6 +10228,7 @@ __all__ = (
     "OrgActivityResponseData",
     "OrgAgentPolicyRequest",
     "OrgAgentPolicyRequestAllowedScopesItem",
+    "OrgAgentPolicyRequestApprovalCategoriesItem",
     "OrgAgentPolicyResponse",
     "OrgAppListResponse",
     "OrgAppSummary",
@@ -10855,6 +11007,12 @@ __all__ = (
     "QueueReceiveResponseResult",
     "QueueReleaseRequirements",
     "QueueReleaseRequirementsAdditionalProperty",
+    "QueueSendBatchMessage",
+    "QueueSendBatchMessagePayload",
+    "QueueSendBatchRequest",
+    "QueueSendBatchResponse",
+    "QueueSendBatchResult",
+    "QueueSendBatchResultStatus",
     "QueueSendRequest",
     "QueueSendRequestPayload",
     "QueueSendResponse",
@@ -10975,8 +11133,10 @@ __all__ = (
     "ReconcileObjectStorageComputeTriggersRequest",
     "RecordDevSyncRequest",
     "RecordDevSyncRequestStatus",
+    "RecordReleaseOutcomeCheckRequest",
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
+    "RecoveryCodesResponse",
     "RefreshAutomaticRouteCheckResponse202",
     "RefreshAutomaticRouteCheckResponse202Status",
     "RefundAccountInvoiceBody",
@@ -11026,6 +11186,8 @@ __all__ = (
     "ReleaseGateKind",
     "ReleaseGateResult",
     "ReleaseGateResultKind",
+    "ReleaseOutcomeCheck",
+    "ReleaseOutcomeCheckTaskStatus",
     "ReleaseRestorePoint",
     "ReleaseTimeline",
     "ReleaseTimelineEvent",
@@ -11043,6 +11205,8 @@ __all__ = (
     "ReplayRetryableEventFanoutFailuresRequest",
     "ReplayRetryableEventFanoutFailuresResponse",
     "RepoResponse",
+    "RequestAccountEmailChangeResponse202",
+    "RequestAccountEmailChangeResponse202Status",
     "RequestAnalyticsComputeCost",
     "RequestAnalyticsComputeCostAllocationMethod",
     "RequestAnalyticsComputeCostBasis",
@@ -11055,6 +11219,7 @@ __all__ = (
     "RequestAnalyticsGroupMethod",
     "RequestAnalyticsResponse",
     "RequestAnalyticsResponseGroupBy",
+    "RequestAnalyticsResponseSampledMeasures",
     "RequestAnalyticsRoute",
     "RequestAnalyticsRouteDeploymentObservation",
     "RequestAnalyticsRouteMethod",
@@ -11583,6 +11748,7 @@ __all__ = (
     "SendAppMessageRequestDataContentType",
     "SendAppMessageResponse",
     "SendAppMessageResponseStatus",
+    "ServiceAbortReceipt",
     "ServiceAuthorizationCheck",
     "ServiceAuthorizationCheckResult",
     "ServiceBindingExplanation",
@@ -11692,6 +11858,7 @@ __all__ = (
     "SidecarTimelineStatus",
     "SidecarTimelineStatusStatus",
     "SidecarType",
+    "SignInMethodsResponse",
     "SimulateAutomationRequest",
     "SimulateAutomationRequestMockAttempts",
     "SimulateAutomationRequestMockItemAttempts",
@@ -11821,6 +11988,7 @@ __all__ = (
     "TrustedSigner",
     "UDPListenerResponse",
     "UDPListenerResponseProtocol",
+    "UnlinkAccountSignInMethodProvider",
     "UnregisterManagedRealtimePushDeviceResponse200",
     "UpdateAccountBillingInfoRequest",
     "UpdateAccountReleaseWebhookRequest",

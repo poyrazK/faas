@@ -98,6 +98,10 @@ func (e *Engine) reconcileLiveRepair(ctx context.Context, p Pipeline, raw string
 	if !reflect.DeepEqual(actual, base.After) {
 		return true, &blocked{"source_schema_changed", true}
 	}
+	healthy := slices.DeleteFunc(slices.Clone(base.Before), func(r relation) bool { return r.Name == plan.Recovery.Table })
+	if err = checkRecordedSourceStorage(ctx, p, source, target, healthy); err != nil {
+		return true, err
+	}
 	if err = checkRetention(ctx, p, source, target, ob); err != nil {
 		return true, err
 	}
@@ -116,7 +120,7 @@ func (e *Engine) reconcileLiveRepair(ctx context.Context, p Pipeline, raw string
 	if err != nil {
 		return true, err
 	}
-	if err = ensureSubscription(ctx, p, source, target, conninfo); err != nil {
+	if err = ensureSubscription(ctx, p, source, target, conninfo, current); err != nil {
 		return true, err
 	}
 	if plan.Recovery.State == "detected" {
@@ -158,6 +162,9 @@ func validateLiveRepairMirror(ctx context.Context, p Pipeline, target receiptSQL
 }
 
 func (e *Engine) replayLiveRepair(ctx context.Context, p Pipeline, raw string, source *pgxpool.Pool, target *pgx.Conn, owner string, ob *Observation, current func(context.Context) error) error {
+	if err := ensureTableRecoveryReceipt(ctx, target); err != nil {
+		return err
+	}
 	stage, err := loadTableRecovery(ctx, p, target)
 	if err != nil || stage != "complete" {
 		return ErrConflict

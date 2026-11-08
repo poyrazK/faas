@@ -699,7 +699,7 @@ func TestRequireStepUp_ExpiredStamp_403(t *testing.T) {
 	r := mkRequest("GET", "/v1/keys/some/rotate", nil, nil)
 	r = r.WithContext(authmw.WithStepUp(r.Context(), time.Now().Add(-10*time.Minute)))
 	h := mw.RequireStepUp(5 * time.Minute)(func(_ http.ResponseWriter, _ *http.Request, _ state.Account) {})
-	h(rec, r, mkActiveAccount("acct-1"))
+	h(rec, r, state.Account{ID: "acct-1", MFARequired: true})
 
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", rec.Code)
@@ -728,7 +728,7 @@ func TestRequireStepUp_FreshStamp_Passes(t *testing.T) {
 	h := mw.RequireStepUp(5 * time.Minute)(func(_ http.ResponseWriter, _ *http.Request, _ state.Account) {
 		hits++
 	})
-	h(rec, r, mkActiveAccount("acct-1"))
+	h(rec, r, state.Account{ID: "acct-1", MFARequired: true})
 
 	if hits != 1 {
 		t.Errorf("hits = %d, want 1 (fresh step-up should pass)", hits)
@@ -760,7 +760,7 @@ func TestRequireStepUp_MissingStamp_403(t *testing.T) {
 	h := mw.RequireStepUp(5 * time.Minute)(func(_ http.ResponseWriter, _ *http.Request, _ state.Account) {
 		hits++
 	})
-	h(rec, r, mkActiveAccount("acct-1"))
+	h(rec, r, state.Account{ID: "acct-1", MFARequired: true})
 
 	// Missing-stamp = bearer-bypass path: pass through. Verify
 	// hits=1 and no audit row.

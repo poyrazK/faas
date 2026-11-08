@@ -57,6 +57,7 @@
     {"path": "forks", "source": "docs/forks.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "functions", "source": "docs/functions.md"},
     {"path": "gdpr", "source": "docs/account.md"},
+    {"path": "handler-api", "source": "docs/handler-api.md"},
     {"path": "issues", "source": "docs/issues.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "jobs", "source": "docs/jobs.md"},
     {"path": "kubernetes", "source": "docs/kubernetes.md", "unpublished": "preview capability; published when it reaches beta"},

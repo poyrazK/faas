@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
@@ -57,7 +58,7 @@ func (s *Service) PublishAppProducerEvent(ctx context.Context, acct state.Accoun
 	if ctx.Err() != nil {
 		return AppProducerNotAttempted()
 	}
-	_, source, id, err := AppProducerEventIdentity(appID, event.Key)
+	canonical, source, id, err := AppProducerEventIdentity(appID, event.Key)
 	if err != nil {
 		return batchPublishFailure("rejected", false, api.ErrValidation(err.Error()))
 	}
@@ -65,6 +66,9 @@ func (s *Service) PublishAppProducerEvent(ctx context.Context, acct state.Accoun
 	if err != nil {
 		return batchPublishFailure("rejected", false, api.ErrValidation(err.Error()))
 	}
+	// The app speaks for these events, so the company reach filter applies
+	// to their fanout as it does to an in-guest publish (ADR-20261025211616).
+	envelope.Producer = eventcontract.AppProducer(canonical)
 	trace := pkgtrace.InjectHeaders(ctx)
 	envelope.Traceparent, envelope.Tracestate, envelope.Baggage = trace["traceparent"], trace["tracestate"], trace["baggage"]
 	payload, err := json.Marshal(envelope)

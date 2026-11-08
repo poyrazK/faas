@@ -53,14 +53,56 @@ func SandboxMain(args []string) int {
 	// no_new_privs). The process ends in execve, so the lock is never undone.
 	runtime.LockOSThread()
 	spec, err := parseHelperArgs(args)
+	var vec execVectors
+	if err == nil {
+		vec, err = newExecVectors(spec.tool, spec.args, os.Environ())
+	}
 	if err == nil {
 		err = confine(spec)
 	}
 	if err == nil {
-		err = syscall.Exec(spec.tool, append([]string{spec.tool}, spec.args...), os.Environ())
+		err = execLimited(spec.fsize, vec)
 	}
 	fmt.Fprintf(os.Stderr, "vmmd-guestdisk: %v\n", err)
 	return helperFailureExit
+}
+
+// execVectors is execve's arguments, built before the resource limits apply.
+type execVectors struct {
+	path       *byte
+	argv, envv []*byte
+}
+
+func newExecVectors(tool string, args, env []string) (execVectors, error) {
+	path, err := syscall.BytePtrFromString(tool)
+	if err != nil {
+		return execVectors{}, err
+	}
+	argv, err := syscall.SlicePtrFromStrings(append([]string{tool}, args...))
+	if err != nil {
+		return execVectors{}, err
+	}
+	envv, err := syscall.SlicePtrFromStrings(env)
+	if err != nil {
+		return execVectors{}, err
+	}
+	return execVectors{path: path, argv: argv, envv: envv}, nil
+}
+
+// execLimited sets the tool's resource limits and replaces the helper with
+// the tool, with nothing in between that allocates. The limits are for the
+// tool. A Go process may already have more address space mapped than the cap
+// (a -race binary always does), and then any mapping the runtime needs after
+// the cap is set kills the helper with "fatal error: runtime: cannot allocate
+// memory" before the tool starts. Setting the cap last keeps the helper's own
+// work out of that window; vmmd-guestdisk runs nothing else concurrently.
+func execLimited(fsize int64, vec execVectors) error {
+	if err := setLimits(fsize); err != nil {
+		return err
+	}
+	limit := unix.Rlimit{Cur: sandboxAddressSize, Max: sandboxAddressSize}
+	errno := execWithAddressLimit(vec.path, &vec.argv[0], &vec.envv[0], &limit)
+	return fmt.Errorf("exec under address-space limit: %w", errno)
 }
 
 func parseHelperArgs(args []string) (helperSpec, error) {
@@ -143,9 +185,7 @@ func confine(spec helperSpec) error {
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		return fmt.Errorf("set no_new_privs: %w", err)
 	}
-	if err := setLimits(spec.fsize); err != nil {
-		return err
-	}
+	// The resource limits are set last, by execLimited.
 	// An ignored signal stays ignored across execve: a write past the file
 	// size limit then fails with EFBIG instead of killing the tool.
 	signal.Ignore(syscall.SIGXFSZ)
@@ -338,7 +378,6 @@ func setLimits(fsize int64) error {
 	}{
 		{unix.RLIMIT_CORE, 0},
 		{unix.RLIMIT_CPU, sandboxCPUSeconds},
-		{unix.RLIMIT_AS, sandboxAddressSize},
 		{unix.RLIMIT_FSIZE, uint64(fsize)},
 		{unix.RLIMIT_NOFILE, sandboxOpenFiles},
 	}

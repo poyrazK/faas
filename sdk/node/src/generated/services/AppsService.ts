@@ -89,6 +89,7 @@ import type { DeletedAppSummary } from '../models/DeletedAppSummary.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { EdgeProtectionResponse } from '../models/EdgeProtectionResponse.js';
+import type { EnvironmentRouteBudgetReceipt } from '../models/EnvironmentRouteBudgetReceipt.js';
 import type { EnvironmentRouteBudgets } from '../models/EnvironmentRouteBudgets.js';
 import type { GuardedDebugRegressionActionRequest } from '../models/GuardedDebugRegressionActionRequest.js';
 import type { Issue } from '../models/Issue.js';
@@ -3286,7 +3287,7 @@ export class AppsService {
   /**
    * Read an app's change timeline.
    * Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
-   * otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+   * otherwise 403 `change_timeline_unavailable`. Requires apps:read or
    * admin; no MFA required.
    *
    * Merges deployment audit, edge-rule changes, the latest runtime-config
@@ -3518,7 +3519,7 @@ export class AppsService {
    * Overage computation: `overage_gb_hours = max(0, gb_hours -
    * plan_included_gb_hours)`. The included band is echoed from
    * `acct.Plan.PlanIncludedGBHours`; the overage figure is the
-   * integer-rounded float the Stripe pusher bills at $0.01/GB-h.
+   * integer-rounded float the Stripe pusher bills at $0.05/GB-h.
    *
    * Source: `usage_minutes` today (after the 30d retention cap).
    * `usage_daily` / `mixed` land with the trail-period reader
@@ -6627,9 +6628,12 @@ export class AppsService {
    * available for spreadsheet and support workflows. The export uses the
    * same plan retention boundary as the debugger list, never includes
    * request bodies, headers, source IPs, or raw span attributes, and is
-   * capped at 10,000 rows. `X-Faas-Request-Log-Window` and
-   * `X-Faas-Request-Log-Retention-Clamped` describe the effective window
-   * applied to the artifact.
+   * capped at 10,000 rows. It takes the request list's filters.
+   * `X-Faas-Request-Log-Window` and `X-Faas-Request-Log-Retention-Clamped`
+   * describe the effective window applied to the artifact, and
+   * `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+   * In CSV, a value that would start a spreadsheet formula is written
+   * with a leading apostrophe.
    *
    * @returns binary Metadata-only request telemetry export.
    * @throws ApiError
@@ -6640,6 +6644,11 @@ export class AppsService {
     route,
     format = 'ndjson',
     limit,
+    deploymentId,
+    status,
+    coldBoot,
+    consumerId,
+    minLatencyMs,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -6661,6 +6670,26 @@ export class AppsService {
      * Maximum number of retained rows to export.
      */
     limit?: number | null,
+    /**
+     * Export only rows served by this deployment UUID.
+     */
+    deploymentId?: string | null,
+    /**
+     * Export only rows with this HTTP status.
+     */
+    status?: number | null,
+    /**
+     * Export only cold-start rows when true, or only warm rows when false.
+     */
+    coldBoot?: boolean | null,
+    /**
+     * Export only one consumer's rows (UUID), or __anonymous__ for rows without a stable consumer identity.
+     */
+    consumerId?: string | null,
+    /**
+     * Export only rows whose latency bucket bound is at least this many milliseconds.
+     */
+    minLatencyMs?: number | null,
   }): CancelablePromise<Blob> {
     return __request(OpenAPI, {
       responseType: 'blob',
@@ -6674,6 +6703,11 @@ export class AppsService {
         'route': route,
         'format': format,
         'limit': limit,
+        'deployment_id': deploymentId,
+        'status': status,
+        'cold_boot': coldBoot,
+        'consumer_id': consumerId,
+        'min_latency_ms': minLatencyMs,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -8977,6 +9011,59 @@ export class AppsService {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
         402: `Enabling requires telemetry entitlement and account admission.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an original durable environment budget receipt.
+   * Requires current app read access and completed MFA. Matches account, app and current immutable project/environment identities. Returns historical committed policy revisions and the exact original request fingerprint, excluding configuration values. Later policy edits do not replace this receipt. A missing, inaccessible or unavailable receipt never proves non-commit. This endpoint performs no mutation, replay, approval or expiry renewal and does not establish runtime health.
+   * @returns EnvironmentRouteBudgetReceipt Historical policy-intent receipt, not current configuration or runtime completion.
+   * @throws ApiError
+   */
+  public static getEnvironmentRouteBudgetReceipt({
+    slug,
+    requestId,
+    scope,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact original nonzero request UUID.
+     */
+    requestId: string,
+    /**
+     * Select scope=default or one registered environment; exactly one selector is required.
+     */
+    scope?: 'default',
+    /**
+     * Current named environment containing the original receipt; mutually exclusive with scope=default.
+     */
+    environment?: string,
+  }): CancelablePromise<EnvironmentRouteBudgetReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-budgets/receipts/{request_id}',
+      path: {
+        'slug': slug,
+        'request_id': requestId,
+      },
+      query: {
+        'scope': scope,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,

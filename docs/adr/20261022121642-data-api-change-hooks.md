@@ -138,7 +138,8 @@ subscription example.
   parks (its idle timeout).
 - Retrying failed events republishes them after newer events of the same row.
 - Pending and failed counts are visible only in the outbox table for now;
-  reporting them to the dashboard is a follow-up.
+  reporting them to the dashboard is a follow-up. (Amendment 1 reports them
+  to the platform.)
 
 ## Rejected alternatives
 
@@ -154,3 +155,91 @@ subscription example.
 - **Account API keys stored as app secrets.** Long-lived, MFA-exempt
   credentials inside a workload; the workload identity is short-lived and
   bound to the app.
+
+## Amendment 1 (2026-11-03): delivery status, drain schedules, runtime report availability
+
+**Context.** Three gaps showed up once hooks merged. Owners could not see
+delivery: waiting and rejected changes lived only in the outbox table, which
+only the relay may read. Changes written while the Data API was parked (by
+other apps, migrations or SQL jobs) waited for the next request to wake it,
+which can take hours. And an installation without workload identity
+(ADR-1141) accepted `hooks enable` while every publication failed silently.
+
+**Decision.**
+
+- *Delivery reports.* After a cycle the relay reads two counts from the
+  outbox through loopback PostgREST, under the same `hooks` claim: waiting
+  changes with the oldest `captured_at`, and rejected changes with the latest
+  `failure_code`. The head's `available_at` in the future means publications
+  keep failing (`publishing: retrying`). It sends `{version, pending, failed,
+  oldest_pending_at, last_published_at, last_failure_code, publishing}` to
+  the private `POST /v1/runtime/data-api/change-status` under its
+  `gregale:data-api:events` identity. It reports at start and after a
+  restore, when publications start or stop failing, when changes are
+  rejected, when delivery changed (at most once a minute) and every ten
+  minutes while awake. The report never carries change data. apid keeps the
+  latest report per app in `data_api_change_hook_reports` (counts and codes
+  only, deleted with the app). A platform answering 404 (an older release) is
+  not asked again until the runtime restarts.
+- *Owner status.* `GET /v1/apps/{slug}/data-api/status` answers without
+  waking the API. It returns the runtime version the control plane serves
+  (so `data-api health` no longer downloads the runtime archive),
+  `runtime_reports: available|unavailable` (whether this installation has
+  workload trust), and the last delivery report. `gregale data-api hooks
+  status` prints them.
+- *Drain schedules.* `gregale data-api hooks enable NAME --drain-every 5m`
+  creates one platform cron on the app that POSTs
+  `/__gregale/hooks/drain`. The runtime answers that path only when the
+  request carries `x-faas-cron: true`, which only platform-dispatched
+  invocations can carry because the gateway strips inbound `x-faas-*`
+  headers. A drain kicks the relay, waits up to 45 s until it has nothing
+  more to do, reports delivery and answers with the counts: 200, or 503 while
+  publications are failing, so the cron's run history shows it. Accepted
+  intervals are minutes that divide an hour, hours that divide a day, or
+  24h. The cron counts against the plan's cron limits (none on Free), and
+  each run is billed app time. `--drain-every off` and `hooks disable` remove
+  it.
+- *Runtime report availability.* `hooks enable` warns when the installation
+  accepts no runtime reports: changes keep waiting in the outbox and publish
+  once workload identity is configured.
+
+**Consequences.** Delivery is visible within a minute while the API is awake
+and stays readable while it is parked. Bounded delivery latency for other
+writers costs the owner one wake per interval. Without a drain schedule,
+changes from other writers still wait for the next request, as before.
+
+**Rejected.** A platform poller reading customer databases (it would hold
+customer credentials outside the Data API and wake Neon computes). LISTEN/
+NOTIFY from the database (it cannot wake a parked VM). Waking on every
+recorded change (needs a database-to-platform channel, the same problem).
+
+## Amendment 2 (2026-11-05): production only, a backlog bound, refusals before storing
+
+**Production only, finally.** Publication and delivery reports already took
+only production workloads, but refused a stage with the same `401` as a bad
+token, so its relay retried forever. A valid token from a non-production
+workload now gets `403 workload_not_production`. The relay returns its claim
+untouched and stops; writes no longer wake it, delivery reports stop, and a
+drain request answers `409 data_api_change_hooks_not_production`.
+
+**A backlog bound.** When nothing publishes (a stage, an installation without
+workload identity) or publishing keeps failing, the trigger kept recording
+every write, growing `gregale_change_events` until it filled the customer's
+database. `capture()` now records nothing while
+`DataAPIChangeHooksBacklogMax` (100,000) changes wait: it compares the
+identity sequence's last value with the oldest waiting (not rejected) change,
+through a new partial index `gregale_change_events_pending (id) WHERE
+failed_at IS NULL`. Counting identifiers errs early (rolled-back writes burn
+some) and costs one index lookup per hooked write, with no shared counter row
+for writers to contend on. Changes past the bound are lost, not queued:
+consumers that need every change must keep publishing healthy, and
+`hooks status` warns from 90% of the bound. Installations made before this
+amendment keep working unbounded; `gregale data-api hooks export --upgrade`
+prints the index and the bounded `capture()` from the same template, and the
+runtime logs `data_api_change_hooks_unbounded` at boot until it is applied.
+
+**Refuse before storing.** `hooks enable` now refuses, changing nothing, on a
+platform that takes no runtime reports (publishing needs the same workload
+identity) and on a non-production scope. With `--drain-every`, the drain cron
+is created first, so a plan that allows no crons (Free) refuses the schedule
+before hooks turn on, instead of leaving hooks on without it.

@@ -56,6 +56,13 @@ type syntheticInvocationContextKey struct{}
 
 type trustedServiceCallerAssertionContextKey struct{}
 
+// trustedServiceCallerEnvContextKey marks a request whose preview markers
+// (X-Faas-Caller-Env, X-Faas-Caller-Preview-Of) ServiceProxy set after
+// resolving the caller. They are documented for the target to read, so they
+// must cross the guest boundary; customer-authored copies never carry the
+// mark and stay stripped (ADR-20261107090000).
+type trustedServiceCallerEnvContextKey struct{}
+
 // WithSyntheticInvocation marks an internal scheduler-to-runner request.
 // Platform-owned invocation metadata may cross the vmmd HTTP bridge only for
 // this context; ordinary customer requests keep the x-faas-* strip policy.
@@ -75,7 +82,7 @@ func isSyntheticInvocation(ctx context.Context) bool {
 // remain internal. Dropping the workflow headers broke the documented
 // X-Faas-Workflow-Attempt contract (production-us hunt #5, H5-44).
 func guestReceivesFaasHeader(ctx context.Context, name string) bool {
-	return isTrustedServiceCallerAssertion(ctx, name) ||
+	return isTrustedServiceCallerAssertion(ctx, name) || isTrustedServiceCallerEnv(ctx, name) ||
 		strings.EqualFold(name, api.InvocationIDHeader) ||
 		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsInvocationAttemptHeader(name) || api.IsWorkflowStepHeader(name))) ||
 		api.IsGuestIdentityHeader(name) ||
@@ -106,6 +113,11 @@ func guestDeadlineHeader(ctx context.Context) (*vmmdpb.Header, bool) {
 // platform-authored assertion may cross it.
 func withTrustedServiceCallerAssertion(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), trustedServiceCallerAssertionContextKey{}, true))
+}
+
+func isTrustedServiceCallerEnv(ctx context.Context, header string) bool {
+	trusted, _ := ctx.Value(trustedServiceCallerEnvContextKey{}).(bool)
+	return trusted && (strings.EqualFold(header, ServiceCallerEnvHeader) || strings.EqualFold(header, ServiceCallerPreviewOfHeader))
 }
 
 func isTrustedServiceCallerAssertion(ctx context.Context, header string) bool {
@@ -463,6 +475,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if deadline, ok := guestDeadlineHeader(r.Context()); ok {
 		init.Headers = append(init.Headers, deadline)
 	}
+	for _, kv := range guestEdgeJWTHeaders(r.Context()) {
+		init.Headers = append(init.Headers, &vmmdpb.Header{Name: kv[0], Value: kv[1]})
+	}
 	if err := stream.Send(&vmmdpb.ForwardHTTPStreamRequest{
 		Frame: &vmmdpb.ForwardHTTPStreamRequest_Init{Init: init},
 	}); err != nil {
@@ -497,36 +512,16 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// leak visible in production dashboards. (Issue #471
 	// review F3 fix.)
 	bodyErrCh := make(chan error, 1)
-	go func() {
-		defer close(bodyErrCh)
-		cr, stopReader := newCtxReader(ctx, r.Body)
-		defer stopReader()
-		buf := make([]byte, 8*1024)
-		for {
-			n, err := cr.Read(buf)
-			if n > 0 {
-				touch()
-				if serr := stream.Send(&vmmdpb.ForwardHTTPStreamRequest{
-					Frame: &vmmdpb.ForwardHTTPStreamRequest_BodyChunk{
-						BodyChunk: append([]byte(nil), buf[:n]...),
-					},
-				}); serr != nil {
-					bodyErrCh <- serr
-					return
-				}
-			}
-			if errors.Is(err, io.EOF) {
-				_ = stream.CloseSend()
-				bodyErrCh <- nil
-				return
-			}
-			if err != nil {
-				_ = stream.CloseSend()
-				bodyErrCh <- err
-				return
-			}
-		}
-	}()
+	if r.Body == nil || r.Body == http.NoBody {
+		// No body: end the request half now, with the outcome the pump
+		// reports for an empty body, instead of a goroutine, a ctxReader
+		// and an 8 KiB buffer per request.
+		_ = stream.CloseSend()
+		bodyErrCh <- nil
+		close(bodyErrCh)
+	} else {
+		go pumpForwardRequestBody(ctx, r.Body, stream, touch, bodyErrCh)
+	}
 
 	// ADR-696: join the body pump even if the response writer or receiver
 	// panics. Explicit error reads below preserve outcome classification;
@@ -1316,6 +1311,9 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 			headers.Del(name)
 		}
 	}
+	for _, kv := range guestEdgeJWTHeaders(r.Context()) {
+		headers.Set(kv[0], kv[1])
+	}
 	injectGuestTraceContext(r.Context(), headers)
 
 	var buf bytes.Buffer
@@ -1825,4 +1823,46 @@ func (l *leaseCloser) Close() error {
 		return l.entry.conn.Close()
 	}
 	return nil
+}
+
+// forwardBodySender is the request half of a ForwardHTTPStream.
+type forwardBodySender interface {
+	Send(*vmmdpb.ForwardHTTPStreamRequest) error
+	CloseSend() error
+}
+
+// pumpForwardRequestBody streams body to the forward stream in 8 KiB chunks
+// and reports the first error (client disconnect, send failure) on result,
+// which it closes. A cancelled ctx closes body through the ctxReader, so a
+// stalled upload does not hold the goroutine until the server's ReadTimeout
+// (issue #471 review F3).
+func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardBodySender, touch func(), result chan<- error) {
+	defer close(result)
+	cr, stopReader := newCtxReader(ctx, body)
+	defer stopReader()
+	buf := make([]byte, 8*1024)
+	for {
+		n, err := cr.Read(buf)
+		if n > 0 {
+			touch()
+			if serr := stream.Send(&vmmdpb.ForwardHTTPStreamRequest{
+				Frame: &vmmdpb.ForwardHTTPStreamRequest_BodyChunk{
+					BodyChunk: append([]byte(nil), buf[:n]...),
+				},
+			}); serr != nil {
+				result <- serr
+				return
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			_ = stream.CloseSend()
+			result <- nil
+			return
+		}
+		if err != nil {
+			_ = stream.CloseSend()
+			result <- err
+			return
+		}
+	}
 }

@@ -25,6 +25,8 @@ CREATE TABLE {{schema}}.gregale_change_events (
   failure_code text CHECK (octet_length(failure_code) <= 64)
 );
 ALTER TABLE {{schema}}.gregale_change_events ENABLE ROW LEVEL SECURITY;
+-- Waiting changes in order: the relay's claim and capture's backlog bound.
+CREATE INDEX gregale_change_events_pending ON {{schema}}.gregale_change_events (id) WHERE failed_at IS NULL;
 
 -- Only the Data API's relay reads and settles events: it adds the
 -- gateway-owned gregale_access = 'hooks' claim, which the gateway never gives
@@ -40,6 +42,12 @@ REVOKE ALL ON SCHEMA gregale_hooks FROM PUBLIC;
 -- ('row' or 'keys'), excluded columns and the hooked relation's name. Rows
 -- larger than 64 KiB together are left out and the event marked truncated;
 -- consumers read the row by its key.
+--
+-- gregale:backlog-bound (amendment 2). While {{backlog_max}} changes wait to
+-- publish, because the platform does not take them (a stage, an installation
+-- without workload identity) or publishing keeps failing, new changes are not
+-- recorded: the table cannot grow until it fills the database. The bound
+-- counts identifiers from the oldest waiting change, so it errs early.
 CREATE FUNCTION gregale_hooks.capture() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -51,6 +59,8 @@ DECLARE
   changed text[];
   row_key jsonb;
   truncated boolean := false;
+  newest bigint;
+  oldest bigint;
 BEGIN
   IF current_setting('gregale_hooks.skip', true) = 'on' THEN
     RETURN NULL;
@@ -77,6 +87,12 @@ BEGIN
     old_row := NULL;
     new_row := NULL;
     truncated := true;
+  END IF;
+  -- gregale:backlog-bound
+  newest := pg_sequence_last_value(pg_get_serial_sequence('{{schema}}.gregale_change_events', 'id')::regclass);
+  SELECT id INTO oldest FROM {{schema}}.gregale_change_events WHERE failed_at IS NULL ORDER BY id LIMIT 1;
+  IF newest - oldest + 1 >= {{backlog_max}} THEN
+    RETURN NULL;
   END IF;
   INSERT INTO {{schema}}.gregale_change_events (relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated)
   VALUES (TG_ARGV[3], TG_ARGV[4], lower(TG_OP), row_key, old_row, new_row, changed, truncated);

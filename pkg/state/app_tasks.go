@@ -194,6 +194,14 @@ type AppTaskStore interface {
 	ListAppTasksByExclusiveOperation(ctx context.Context, accountID, operationID string) ([]AppTask, error)
 }
 
+// NodeScopedAppTaskClaimer claims only tasks whose app a schedd on nodeID may
+// place: apps it owns and unowned apps. Placement refuses an app owned by
+// another node, so an unscoped claim on a multi-node fleet failed such tasks
+// before any command ran. An empty nodeID claims any app.
+type NodeScopedAppTaskClaimer interface {
+	ClaimNextAppTaskForNode(ctx context.Context, owner, nodeID string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error)
+}
+
 // ScheduledCronOccurrenceStore creates one command-cron occurrence and its
 // durable task atomically, or records an explained skip without a task.
 type ScheduledCronOccurrenceStore interface {

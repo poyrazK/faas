@@ -115,11 +115,13 @@ func (a *authHandlers) renderLogin(w http.ResponseWriter, r *http.Request, statu
 // consumed). No information leak between cases — they all return 410.
 //
 // A link opened straight from a mail app or the address bar signs in at
-// once. Any other navigation, such as a click in webmail or a page that
-// sends the browser here, gets a confirm page instead, whose POST must come
-// from Gregale itself: otherwise any site could sign a visitor into an
-// account of its choosing with a link it requested for itself (login CSRF,
-// security audit 2026-10-27).
+// once. Any other request, such as a click in webmail, a page that sends the
+// browser here, or a client that sends no Sec-Fetch-Site at all (mail
+// scanners that prefetch links, curl), gets a confirm page instead, whose
+// POST must come from Gregale itself: otherwise any site could sign a visitor
+// into an account of its choosing with a link it requested for itself (login
+// CSRF, security audit 2026-10-27), and a scanner's prefetch would use up the
+// single-use token before the customer clicks (bug hunt H19).
 func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	hash, ok := magicLinkHash(token)
@@ -153,10 +155,11 @@ func (a *authHandlers) verifyConfirmed(w http.ResponseWriter, r *http.Request) {
 // directNavigation reports whether the browser opened this URL itself
 // (address bar, bookmark, a desktop mail app) or from a Gregale page, rather
 // than following a link or redirect on another site. A client that sends no
-// Sec-Fetch-Site (old browsers, curl) is treated as direct.
+// Sec-Fetch-Site is not a current browser navigating (mail scanners, link
+// previews, curl), so it gets the confirm page and cannot use up the token.
 func directNavigation(r *http.Request) bool {
 	switch strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))) {
-	case "", "none", "same-origin":
+	case "none", "same-origin":
 		return true
 	}
 	return false
@@ -331,7 +334,7 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		// ignored the flag, so MFA protected only /v1: the password or
 		// inbox alone opened every page. Until the TOTP challenge is
 		// passed, only the challenge itself is reachable.
-		mfaPending := session.IsMFAPending(env)
+		mfaPending := session.IsMFAPending(env) && s.sessionMFAPending(acct)
 		if mfaPending && !dashboardMFARoute(r.Method, r.URL.Path) {
 			target := dashboardMFAPath
 			if r.Method == http.MethodGet {
@@ -344,6 +347,12 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, dashboardRecoveryPage(acct), http.StatusFound)
 			return
 		}
+		// Past the verification grace only the account page (with its
+		// resend button) and the resend form remain.
+		if s.verificationOverdueNow(acct) && !dashboardMFARoute(r.Method, r.URL.Path) && !dashboardOverdueRoute(r.Method, r.URL.Path) {
+			http.Redirect(w, r, "/dashboard/account", http.StatusFound)
+			return
+		}
 		// The session and pending flag feed cookie re-issue on
 		// /dashboard/mfa, the same context shape RequireSession builds.
 		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
@@ -352,6 +361,9 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		r = r.WithContext(authmw.WithMFAPending(r.Context(), mfaPending))
 		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
 		r = r.WithContext(WithAccount(r.Context(), acct))
+		// Dashboard verification uses the same live account policy as /v1.
+		//nolint:contextcheck // WithPrincipal derives from r.Context(), preserving the session and MFA stamps above.
+		r = r.WithContext(authmw.WithPrincipal(r.Context(), acct, nil, nil))
 		// IAM-hardening-mega-PR (logical change 6, ADR-077 /
 		// review finding #3): stamp env.StepUpAt onto
 		// r.Context() so requireStepUpHandler can read it. The

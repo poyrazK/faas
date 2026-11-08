@@ -265,8 +265,9 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 	expected := []string{
 		"app_binding_release_policies.scope",
 		"app_binding_release_policy_history.scope",
-		"app_config_guards.scope",    // Closed and open config guard windows are change history; app_envs already blocks while configuration remains.
-		"app_config_revisions.scope", // Append-only configuration revision history.
+		"app_config_guards.scope",      // Closed and open config guard windows are change history; app_envs already blocks while configuration remains.
+		"app_config_revisions.scope",   // Append-only configuration revision history.
+		"app_env_batch_receipts.scope", // Retained receipt of an env batch apply.
 		"app_environment_route_budgets.environment_id",
 		"app_environment_route_budgets.scope",
 		"app_environment_secret_ref_suppressions.environment_id",
@@ -279,6 +280,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_mcp_readiness_policies.scope",       // Per-environment readiness gate configuration blocks scope cleanup.
 		"app_mcp_readiness_policy_history.scope", // Append-only policy audit history is retained evidence.
 		"app_runtime_config_scope_changes.scope",
+		"app_scaling_receipts.scope", // Retained receipt of a scaling request.
 		"app_secret_revocations.scope",
 		"app_secret_runtime_reload_observations.scope",
 		"app_secrets.scope",
@@ -297,6 +299,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"data_upstreams.deployment_scope",
 		"data_upstreams.scope",
 		"deployment_openapi_snapshots.scope",
+		"deployment_promotion_receipts.environment_id", // Retained promotion evidence.
+		"deployment_promotion_receipts.scope",
 		"deployment_rollback_operations.scope",
 		"deployment_rollbacks.scope", // Rollback outcome history; deployment_rollback_operations blocks in-flight work.
 		"deployment_route_policy_snapshots.scope",
@@ -359,8 +363,10 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"project_environment_clone_postgres_verifications.scope",
 		"project_environment_config_versions.environment_slug",
 		"project_environment_edge_policies.environment_slug",
+		"project_environment_promotion_receipts.environment_id", // Retained promotion receipts.
 		"project_environment_qualifications.environment_slug",
 		"project_environment_queue_runtime_sets.environment_id",
+		"project_environment_rollback_receipts.environment_id", // Retained rollback receipts.
 		"project_environment_route_policies.environment_slug",
 		"project_environment_secrets.environment_slug", // ADR-1139: a trigger deletes them with the environment row.
 		"project_environment_workload_heads.environment_id",
