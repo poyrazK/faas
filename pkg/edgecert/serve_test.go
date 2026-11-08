@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgecert"
 )
 
@@ -216,8 +217,8 @@ func TestServedTrustsTheLeafNotTheRow(t *testing.T) {
 		}
 		found = true
 		m := f.GetMetric()
-		if len(m) != 1 || m[0].GetLabel()[0].GetValue() != "app.gregale.dev" || m[0].GetGauge().GetValue() > (91*24*time.Hour).Seconds() {
-			t.Fatalf("expiry = %v, want the leaf's name and its 90-day validity", m)
+		if len(m) != 1 || m[0].GetLabel()[0].GetValue() != "app.gregale.dev" || m[0].GetGauge().GetValue() > api.EdgeCertificateLifetimeMax.Seconds() {
+			t.Fatalf("expiry = %v, want the leaf's name and its short-lived validity", m)
 		}
 	}
 	if !found {
