@@ -29,7 +29,7 @@ type automationDefinitionDiff struct {
 }
 
 func diffAutomationDefinition(automation api.AutomationResponse) (automationDefinitionDiff, error) {
-	report := automationDefinitionDiff{Name: automation.Name, DraftVersion: automation.Version, PublishedVersion: automation.PublishedVersion, FirstPublication: automation.Published == nil, LiveEnabled: automation.Enabled, Changes: []automationDefinitionChange{}}
+	report := automationDefinitionDiff{Name: automation.Name, DraftVersion: automation.Version, PublishedVersion: automation.PublishedVersion, FirstPublication: automation.Published == nil, LiveEnabled: automation.Published != nil && automation.Enabled, Changes: []automationDefinitionChange{}}
 	// Compare fields as raw JSON to retain exact numbers and distinguish null from absence.
 	normalize := func(spec api.WorkflowSpec) (map[string]json.RawMessage, error) {
 		data, err := json.Marshal(spec)

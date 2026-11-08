@@ -15513,7 +15513,7 @@ paths:
           schema: { type: string, format: date-time }
         - name: until
           in: query
-          description: Exclusive UTC end of the usage window, snapped to midnight.
+          description: Exclusive UTC end of the usage window, snapped to midnight. Defaults to the next UTC midnight, so today is included.
           schema: { type: string, format: date-time }
       responses:
         '200':
@@ -19097,7 +19097,7 @@ paths:
           schema: { type: string, format: date-time }
         - name: until
           in: query
-          description: Exclusive UTC-day boundary; buckets before this instant are included.
+          description: Exclusive UTC-day boundary; buckets before this instant are included. Defaults to the next UTC midnight, so today is included.
           schema: { type: string, format: date-time }
       responses:
         '200':
@@ -19461,7 +19461,7 @@ paths:
       - name: until
         in: query
         required: false
-        description: RFC3339 exclusive upper bound. Defaults to UTC midnight today.
+        description: RFC3339 exclusive upper bound, snapped to UTC midnight. Defaults to the next UTC midnight, so today is included.
         schema: { type: string, format: date-time }
     get:
       tags: [consumers]
@@ -19498,7 +19498,7 @@ paths:
       - name: until
         in: query
         required: false
-        description: Optional RFC3339 exclusive upper bound for the quote period; defaults to UTC midnight today.
+        description: Optional RFC3339 exclusive upper bound for the quote period; defaults to the next UTC midnight, so today is included.
         schema: { type: string, format: date-time }
     get:
       tags: [consumers]
