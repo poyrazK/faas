@@ -14,15 +14,29 @@ import (
 // Until pkg/legal/legal.json is complete, the legal routes answer exactly
 // like an unknown path: no half-filled document reaches anyone.
 func TestLegalPagesUnpublishedAnswerNotFound(t *testing.T) {
-	if _, ok := publishedLegal(); ok {
-		t.Skip("legal.json is complete; TestLegalPagesServePublishedDocuments covers the live path")
-	}
+	unpublishLegalForTest(t)
 	e := setup(t, api.PlanPro)
 	for _, doc := range legal.Documents {
 		rec := httptest.NewRecorder()
 		e.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/"+doc, nil))
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("GET /%s unpublished: got %d, want 404", doc, rec.Code)
+		}
+	}
+}
+
+// The checked-in legal.json is published, so the routes serve the pages
+// through the full handler chain without a session or API key.
+func TestLegalPagesServedThroughRoutes(t *testing.T) {
+	if _, ok := publishedLegal(); !ok {
+		t.Fatal("pkg/legal/legal.json is incomplete; the legal pages would answer 404 in production")
+	}
+	e := setup(t, api.PlanPro)
+	for _, doc := range legal.Documents {
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/"+doc, nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), legal.Title(doc)) {
+			t.Errorf("GET /%s: got %d", doc, rec.Code)
 		}
 	}
 }
@@ -59,23 +73,35 @@ func publishedTestConfig(t *testing.T) legal.Config {
 	return cfg
 }
 
-// publishLegalForTest makes the legal config published for one test. Not
+// useLegalForTest makes loadLegal return cfg for one test. Not
 // parallel-safe: loadLegal is process-wide.
-func publishLegalForTest(t *testing.T) legal.Config {
+func useLegalForTest(t *testing.T, cfg legal.Config) {
 	t.Helper()
-	cfg := publishedTestConfig(t)
 	prev := loadLegal
 	loadLegal = func() (legal.Config, error) { return cfg, nil }
 	t.Cleanup(func() { loadLegal = prev })
+}
+
+// publishLegalForTest makes the legal config published for one test.
+func publishLegalForTest(t *testing.T) legal.Config {
+	t.Helper()
+	cfg := publishedTestConfig(t)
+	useLegalForTest(t, cfg)
 	return cfg
+}
+
+// unpublishLegalForTest makes the legal config unpublished for one test.
+func unpublishLegalForTest(t *testing.T) {
+	t.Helper()
+	cfg := publishedTestConfig(t)
+	cfg.EffectiveDate = ""
+	useLegalForTest(t, cfg)
 }
 
 // Sign-up stores the published Terms version with the new account; while
 // the Terms are unpublished it stores nothing.
 func TestSignupRecordsTermsAcceptance(t *testing.T) {
-	if _, ok := publishedLegal(); ok {
-		t.Skip("legal.json is published; the unpublished case needs an unpublished config")
-	}
+	unpublishLegalForTest(t)
 	srv, _, st := v1AuthTestHarness(t)
 	mem := st.(*state.MemStore)
 	signup := func(email string) state.Account {
@@ -119,7 +145,8 @@ func TestLoginPageShowsTermsNoticeWhenPublished(t *testing.T) {
 		}
 		return rec.Body.String()
 	}
-	if _, ok := publishedLegal(); !ok && strings.Contains(get(), `href="/terms"`) {
+	unpublishLegalForTest(t)
+	if strings.Contains(get(), `href="/terms"`) {
 		t.Fatal("unpublished Terms linked from the login page")
 	}
 	publishLegalForTest(t)
