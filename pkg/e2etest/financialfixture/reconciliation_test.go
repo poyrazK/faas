@@ -92,6 +92,12 @@ func seedReplay(t *testing.T) replayFixture {
 	if err := s.UpsertBillingIdentity(ctx, state.BillingIdentity{AccountID: a.ID, Provider: "polar", CustomerID: "acceptance-customer", SubscriptionID: "acceptance-subscription", BillingFrom: month}); err != nil {
 		t.Fatal(err)
 	}
+	// Egress above the allowance is billed only in hours an egress overage
+	// election covers (ADR-20261104204500); elect it from the period start so
+	// every replayed hour delivers its egress window.
+	if _, err := s.SetEgressOverage(ctx, a.ID, true, month); err != nil {
+		t.Fatal(err)
+	}
 	want := make(map[string]int64)
 	// Deliberately insert completed hours out of chronological order.
 	// Provider retries below replay the same durable windows in both meters.
