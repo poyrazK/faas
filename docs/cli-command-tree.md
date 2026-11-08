@@ -441,6 +441,7 @@ touch them. The tables below map each earlier name.
 | `gregale jobs next` | `gregale job get --next` |
 | `gregale jobs replay-failed` | `gregale job replay` |
 | `gregale keys grace-window` | `gregale key grace-window set` |
+| `gregale mcp approval-channels` | `gregale mcp server approval channels` |
 | `gregale mcp call` | `gregale mcp client call` |
 | `gregale mcp complete` | `gregale mcp client complete` |
 | `gregale mcp config` | `gregale mcp server export` |

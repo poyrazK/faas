@@ -464,6 +464,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp readiness notification", "mcp readiness notifications"},
 	{"mcp readiness reminder", "mcp readiness reminder-defaults"},
 	{"mcp server export", "mcp config"},
+	{"mcp server approval channels", "mcp approval-channels"},
 	{"mcp server monitor check", "mcp monitor provider-check"},
 	{"mcp server retirements ack", "mcp retirements acknowledge-manual"},
 	{"mcp server tasks deploy", "mcp tasks release"},

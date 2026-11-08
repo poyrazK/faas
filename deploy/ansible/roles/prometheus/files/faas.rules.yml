@@ -4396,6 +4396,32 @@ groups:
           summary: "{{ $value }} accounts' {{ $labels.month }} month reconcile as {{ $labels.result }}"
           description: "The financial ledger's net compute and the compute receipts meterd delivered disagree (drift) or could not be compared (failed) for the {{ $labels.month }} UTC month, for two hours (ADR-20261019193600). Customers may be billed differently from the ledger the cost reports use. meterd_financial_ledger_drift_mb_seconds is the summed difference."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      # ADR-20261107105126: egress joins the dual run, and the pusher compares
+      # usage_minutes with the ledger for every hour it delivers. Either
+      # disagreeing blocks moving billing to the ledger.
+      - alert: FaasMeterdLedgerEgressDrift
+        expr: max by (month, result) (meterd_financial_ledger_egress_reconcile_accounts{result=~"drift|failed"}) > 0
+        for: 2h
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "{{ $value }} accounts' {{ $labels.month }} month egress reconciles as {{ $labels.result }}"
+          description: "The egress the financial ledger bills, by the egress hour rules, and the egress receipts meterd settled disagree (drift) or could not be compared (failed) for the {{ $labels.month }} UTC month, for two hours (ADR-20261107105126). meterd_financial_ledger_egress_drift_bytes is the summed difference."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasMeterdBillingUsageSourceMismatch
+        expr: sum by (meter, source) (increase(meterd_billing_usage_source_mismatch_windows_total[1h])) > 0
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "Delivered {{ $labels.meter }} hours had different usage_minutes and ledger quantities (billing from {{ $labels.source }})"
+          description: "meterd compared the usage_minutes and financial-ledger quantities of the hours it delivered in the last hour and some differed (ADR-20261107105126). The hour was billed from the source in the source label. Both are written in one transaction, so a difference is a bug or an operator ledger correction; meterd logs each one as 'billing usage sources disagree'."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
       - alert: FaasMeterdHeldUsageExpiring
         expr: sum by (meter, reason) (meterd_billing_usage_held_expiring_windows) > 0
         for: 1h

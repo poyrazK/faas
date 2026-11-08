@@ -8,7 +8,7 @@ App target: a command that takes `--app` and no other arguments also accepts the
 
 Earlier names: commands keep working under the names they had before the command tree (`gregale crons list` is `gregale cron list`); `gregale help --all --operator` lists them, and [The CLI command tree](cli-command-tree.md) maps each one.
 
-Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
+Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. With an agent key, put `--wait-for-approval` before the command to wait for a person to decide a request that needs approval, then retry it once. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
 
 | Command | What it does |
 |---|---|
@@ -6675,7 +6675,7 @@ List signed-in browsers
 
 #### account sessions revoke
 
-Sign out one browser, or every browser with --all; API keys keep working
+Sign out one browser session, or all of them
 
 `gregale account sessions revoke [--all] [--yes] [SESSION_ID]`
 
@@ -6683,6 +6683,8 @@ Sign out one browser, or every browser with --all; API keys keep working
 |---|---|---|
 | `--all` | sign out every browser |  |
 | `--yes` | with --all, sign out without prompting |  |
+
+API keys keep working.
 
 ### account email
 
