@@ -128,8 +128,8 @@ func TestMigrateRunsAsRootNotTheFaasUser(t *testing.T) {
 		if strings.HasPrefix(call, "su ") || strings.Contains(call, " faas -s ") || strings.HasPrefix(call, "runuser ") || strings.HasPrefix(call, "sudo ") {
 			t.Errorf("%q switches users; the migrator must run as root (faas_map root faas)", call)
 		}
-		if !strings.Contains(call, `DATABASE_URL="postgres:///faas?host=/run/postgresql&user=faas"`) {
-			t.Errorf("%q does not pass the owner DATABASE_URL", call)
+		if !strings.Contains(call, `exec env -i PATH=/usr/bin:/bin DATABASE_URL="postgres:///faas?host=/run/postgresql&user=faas"`) {
+			t.Errorf("%q must start the migrator with a clean environment and the owner DATABASE_URL", call)
 		}
 	}
 }
