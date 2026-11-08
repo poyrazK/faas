@@ -6411,7 +6411,8 @@ func (s *PgStore) applyProjectReconcileOnce(
 					return ProjectReconcileResult{}, fmt.Errorf("state: marshal restored project app manifest: %w", marshalErr)
 				}
 				restored, restoreErr := scanApp(tx.QueryRow(ctx, `update apps set status = 'active', deleted_at = null, delete_grace_until = null, root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $6, platform_tenant_required = case when $7 then $8 else platform_tenant_required end, ram_mb = case when $9 and $10 > 0 then $10 else ram_mb end, cpu_millicores = case when $9 and $11 > 0 then $11 else cpu_millicores end, max_concurrency = case when $9 and $12 > 0 then $12 else max_concurrency end where id = $1 and delete_grace_until > now() and purge_claimed_at is null returning `+appsSelectColumns, tombstone.ID, tombstone.RootDir, tombstone.WorkloadName, string(tombstone.WorkloadClass), nullString(tombstone.StartCommand), manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired, mutation.SetResources, app.RAMMB, app.CPUMillicores, app.MaxConcurrency))
-				if errors.Is(restoreErr, pgx.ErrNoRows) {
+				// scanApp maps no row to ErrNotFound.
+				if errors.Is(restoreErr, ErrNotFound) {
 					// The same guards as RestoreApp: past its grace deadline,
 					// or once the purge has started deleting its artifacts, a
 					// tombstone cannot come back. The workload name stays taken
