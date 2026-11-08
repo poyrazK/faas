@@ -2075,6 +2075,20 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			return reconcile.Result{}, previewSetupFailure("the pull request does not fit the %s plan: %s", account.Plan, strings.Join(reasons, "; "))
 		}
 		headValues = prHeadComposeValues(tree.FS(), scan, s.scanOptions(binding.AccountID), previewLimits)
+		// Refuse before reserving anything: a service that would start without
+		// its datastore, or a set whose builds do not all fit the hour's PR
+		// preview deploys, fails the check with the reason (ADR-20261108140000).
+		previewed := append([]state.App{parentApp}, dependencies...)
+		shortfall, shortfallErr := s.previewDatastoreShortfall(ctx, tree.FS(), binding.AccountID, scan, previewed, headValues)
+		if shortfallErr != nil {
+			return reconcile.Result{}, shortfallErr
+		}
+		if shortfall == "" {
+			shortfall = s.previewDeployShortfall(ctx, account, len(previewed))
+		}
+		if shortfall != "" {
+			return reconcile.Result{}, previewSetupFailure("%s", shortfall)
+		}
 	}
 	// Source fetching and scanning can take longer than a PR head update.
 	// Recheck before the first preview mutation or build reservation.
