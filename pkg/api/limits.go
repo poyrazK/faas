@@ -18184,9 +18184,16 @@ const (
 	PublicBlockListRefreshInterval = 30 * time.Second
 )
 
-// Edge certificates (ADR-20261103163954 §3). edgednsd obtains the apps
-// domains' certificate from Let's Encrypt with DNS-01 and renews it
-// EdgeCertificateRenewBefore its expiry, checking every
+// Edge certificates (ADR-20261103163954 §3, ADR-20261108100000). edgednsd
+// obtains the apps domains' certificate from Let's Encrypt with DNS-01 under
+// the EdgeCertificateProfile ACME profile, whose certificates live about 160
+// hours, and renews it EdgeCertificateRenewBefore its expiry: a new one about
+// every 64 hours, about 2.6 of the 5 Let's Encrypt allows for the same names
+// in 7 days, which leaves two for rotating the key after a compromise. A key
+// a compromised compute node copied is good only until its certificate
+// expires. A stored certificate that lives longer than
+// EdgeCertificateLifetimeMax is replaced at once, and an order that returns
+// one is refused. edgednsd checks every
 // EdgeCertificateCheckInterval. A failed order is retried after
 // EdgeCertificateRetryMin, doubling to EdgeCertificateRetryMax: Let's
 // Encrypt allows 5 failed validations per account, hostname and hour, and 5
@@ -18196,8 +18203,10 @@ const (
 // certificate's row is kept EdgeCertificateKeepAfterExpiry past its expiry,
 // so the Certificate Transparency watch can tell ours from anyone else's.
 const (
-	EdgeCertificateRenewBefore     = 30 * 24 * time.Hour
+	EdgeCertificateRenewBefore     = 4 * 24 * time.Hour
 	EdgeCertificateCheckInterval   = time.Hour
+	EdgeCertificateProfile         = "shortlived"
+	EdgeCertificateLifetimeMax     = 7 * 24 * time.Hour
 	EdgeCertificateRetryMin        = time.Hour
 	EdgeCertificateRetryMax        = 12 * time.Hour
 	EdgeCertificateOrderTimeout    = 10 * time.Minute
