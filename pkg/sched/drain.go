@@ -1187,15 +1187,17 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		}
 	}
 	if err != nil {
-		// Permanent invoke errors (4xx) terminal-fail; transient
-		// (network / 5xx) retry. The gateway is the source of
-		// truth — it knows whether the failure is recoverable.
+		// The gateway's verdict decides first: permanent invoke errors
+		// (the app's own 4xx or thrown handler) terminal-fail, transient
+		// ones (network, platform 5xx) retry. applicationFailure then
+		// retries or dead-letters the app's own failures on durable async
+		// sources so none ends as a plain, unreplayable failure.
 		retryAfter := d.invocationRetryDelay(ctx, inv)
 		if errors.Is(err, ErrPermanentInvoke) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		retryAfter, budget = d.eventDeliveryFailure(ctx, inv, err, retryAfter, budget)
+		retryAfter, budget = d.applicationFailure(ctx, inv, err, retryAfter, budget)
 		if errors.Is(err, ErrDispatchRefused) {
 			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
@@ -1601,15 +1603,20 @@ func (d *Drain) cronRunTarget(ctx context.Context, inv state.Invocation) (path s
 // budget moves back: out of the head of the walk, attempts untouched.
 const financialHoldDeferral = time.Minute
 
-// eventDeliveryFailure applies ADR-20261031100001 to a failed event
-// delivery. A handler that threw (the runner's 500) or asked to be retried
-// (408, 429) retries with the event backoff and is dead-lettered when its
-// attempts run out; any other 4xx is final but dead-lettered at once, so it
-// can be replayed after a fix. Every other invocation keeps the gateway's
-// verdict, as does a failure the app's code did not return.
-func (d *Drain) eventDeliveryFailure(ctx context.Context, inv state.Invocation, err error, retryAfter time.Duration, budget int) (time.Duration, int) {
+// applicationFailure applies ADR-20261031100001 to a failed event delivery
+// and, since its 2026-11-07 amendment, to every durable async source
+// (state.RetriesApplicationFailures): async invocations, async routes,
+// inbound webhooks, queue messages and delayed tasks. A handler that threw
+// (the runner's 500) or asked to be retried (408, 429) retries with the
+// invocation's backoff and is dead-lettered when its attempts run out; any
+// other 4xx is final but dead-lettered at once, so it can be replayed after a
+// fix. Before the amendment a thrown handler on those sources failed after
+// one attempt with no dead letter, and an inbound provider that had already
+// received 202 never sent the event again. Cron runs and exclusive operations
+// keep the gateway's verdict, as does a failure the app's code did not return.
+func (d *Drain) applicationFailure(ctx context.Context, inv state.Invocation, err error, retryAfter time.Duration, budget int) (time.Duration, int) {
 	var appErr applicationStatusError
-	if !state.IsEventDelivery(inv) || !errors.As(err, &appErr) {
+	if !state.RetriesApplicationFailures(inv) || !errors.As(err, &appErr) {
 		return retryAfter, budget
 	}
 	delay := d.invocationRetryDelay(ctx, inv)
