@@ -102,6 +102,13 @@ Other characters follow Go's `path.Match`: `*` matches within one segment,
 as `/users/{id}` are not globs; the API rejects them and suggests the glob
 (`/users/?*`).
 
+Before any rule runs, the gateway resolves `.` and `..` segments (also when
+percent-encoded) and collapses repeated slashes, keeping a trailing slash,
+and forwards that path to your app: `/public/../upload` and `//upload` are
+`/upload` to every rule and to the app. A path already in that form is
+forwarded unchanged. Backslashes, `;` parameters and letter case are left
+as sent.
+
 Rules that refuse or limit requests (`ip`, `geo`, `jwt`, `limit`, `throttle`,
 `validate`, `maintenance`, `waf`, `challenge`) also match the path's
 normalized form, with `.` and `..` segments and repeated slashes resolved, and

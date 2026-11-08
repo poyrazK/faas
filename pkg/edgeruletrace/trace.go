@@ -410,6 +410,9 @@ func NormalizeInput(input Input) (Input, error) {
 	if !strings.HasPrefix(input.Path, "/") || len(input.Path) > 2048 {
 		return Input{}, fmt.Errorf("path must start with / and be at most 2048 characters")
 	}
+	// The gateway forwards, and its rules see, the normalized path
+	// (ADR-20261108100000).
+	input.Path = api.NormalizeEdgeRequestPath(input.Path)
 	input.Method = strings.ToUpper(strings.TrimSpace(input.Method))
 	if input.Method == "" {
 		input.Method = http.MethodGet
