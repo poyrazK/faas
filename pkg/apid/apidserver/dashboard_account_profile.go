@@ -28,18 +28,21 @@ const (
 	dashboardProviderUnlinkAction = "account_provider_unlink"
 	dashboardProviderUnlinkCookie = "faas_csrf_account_provider_unlink"
 	accountPagePath               = "/dashboard/account"
+	accountPageActivityRows       = 20
 	accountStepUpTTL              = 5 * time.Minute
 )
 
 // accountFormErrors are the account page banners for a refused form.
 var accountFormErrors = map[string]string{
-	"expired":     "That form expired. Reload the page and try again.",
-	"step_up":     "Confirm with your authenticator first: open Manage two-factor authentication, verify, then try again within 5 minutes.",
-	"mfa":         "Finish setting up two-factor authentication first.",
-	"password":    "Your current password was not correct.",
-	"invalid":     "Check the value you entered and try again.",
-	"last_method": "That is your last way to sign in. Set a password or link another provider first.",
-	"failed":      "Gregale could not save that change. Try again in a moment.",
+	"expired":      "That form expired. Reload the page and try again.",
+	"step_up":      "Confirm with your authenticator first: open Manage two-factor authentication, verify, then try again within 5 minutes.",
+	"mfa":          "Finish setting up two-factor authentication first.",
+	"password":     "Your current password was not correct.",
+	"invalid":      "Check the value you entered and try again.",
+	"last_method":  "That is your last way to sign in. Set a password or link another provider first.",
+	"failed":       "Gregale could not save that change. Try again in a moment.",
+	"link_session": "Linking needs this browser to stay signed in. Sign in again and press Link once more.",
+	"link_taken":   "That provider account already signs in to another Gregale account. Remove it there first.",
 }
 
 // fillAccountProfileForms mints the form tokens and lists the account page
@@ -54,6 +57,7 @@ func (s *server) fillAccountProfileForms(w http.ResponseWriter, r *http.Request,
 		{&data.DisplayNameConfirmToken, dashboardDisplayNameAction, dashboardDisplayNameCookie},
 		{&data.SessionRevokeConfirmToken, dashboardSessionRevokeAction, dashboardSessionRevokeCookie},
 		{&data.ProviderUnlinkConfirmToken, dashboardProviderUnlinkAction, dashboardProviderUnlinkCookie},
+		{&data.ProviderLinkConfirmToken, dashboardProviderLinkAction, dashboardProviderLinkCookie},
 	}
 	if !acct.EmailVerified() {
 		forms = append(forms, form{&data.VerifyResendConfirmToken, dashboardVerifyResendAction, dashboardVerifyResendCSRFCookie})
@@ -72,17 +76,11 @@ func (s *server) fillAccountProfileForms(w http.ResponseWriter, r *http.Request,
 			linked[p.Provider] = true
 			data.Providers = append(data.Providers, dashboard.AccountProviderRow{Provider: p.Provider, Email: p.Email, LinkedAt: p.LinkedAt})
 		}
-		for _, opt := range []struct {
-			provider, path string
-			enabled        bool
-		}{
-			{"google", "/v1/auth/google", s.oauthConfig.Google.Enabled()},
-			{"github", "/v1/auth/github", s.oauthConfig.GitHub.Enabled()},
-		} {
-			if opt.enabled && !linked[opt.provider] {
+		for _, provider := range []string{"google", "github"} {
+			if _, _, enabled := s.oauthLinkStart(provider); enabled && !linked[provider] {
 				data.LinkProviders = append(data.LinkProviders, dashboard.AccountLinkOption{
-					Name: providerDisplayName(opt.provider),
-					URL:  opt.path + "?next=" + url.QueryEscape(accountPagePath),
+					Provider: provider,
+					Name:     providerDisplayName(provider),
 				})
 			}
 		}
@@ -93,6 +91,17 @@ func (s *server) fillAccountProfileForms(w http.ResponseWriter, r *http.Request,
 		data.DisplayName, _ = flow.AccountDisplayName(r.Context(), acct.ID)
 	}
 	s.fillAccountSessions(r, acct, data)
+	if events, err := s.securityActivity(r.Context(), acct.ID, time.Now()); err == nil {
+		for i, e := range events {
+			if i == accountPageActivityRows {
+				data.MoreActivity = true
+				break
+			}
+			data.Activity = append(data.Activity, dashboard.AccountActivityRow{
+				At: strings.Replace(strings.TrimSuffix(e.At, "Z"), "T", " ", 1) + " UTC", Summary: e.Summary, IP: e.IP, Detail: e.Detail,
+			})
+		}
+	}
 	return nil
 }
 
@@ -128,6 +137,8 @@ func accountFlowFlash(r *http.Request) string {
 		return "That browser was signed out."
 	case q.Get("provider") == "removed":
 		return "Sign-in method removed."
+	case q.Get("provider") == "linked":
+		return "Sign-in method linked. A notice was sent to your email address."
 	}
 	return ""
 }

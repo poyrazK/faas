@@ -1213,6 +1213,11 @@ func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
+	// A password traded for a key is the path a stolen password takes;
+	// a brand-new account's own signup key is not news.
+	if !acct.CreatedAt.IsZero() && time.Since(acct.CreatedAt) > credentialNoticeSignupQuiet {
+		s.noticeCredentialCreated(r, acct, credentialAPISignIn, k.Label)
+	}
 	writeV1AuthJSON(w, acct, requestEmail, plaintext, k)
 }
 

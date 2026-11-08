@@ -639,6 +639,9 @@ var cliCommands = []cliCommand{
 			{Name: "provider", Short: "Show how you can sign in", Subcommands: []cliSub{
 				{Name: "list", Short: "List your password, two-factor and linked Google/GitHub sign-ins"},
 			}},
+			{Name: "activity", Short: "Show sign-ins and security changes", Subcommands: []cliSub{
+				{Name: "list", Short: "List sign-ins, credentials and security changes of the last 90 days (newest 100)"},
+			}},
 			{Name: "billing-connection", Short: "Connect, show or disconnect a billing key for invoice exports", Notes: []string{"Supports Stripe, Paddle and Lago."}, Subcommands: []cliSub{
 				{Name: "connect", Short: "Connect a billing provider key", Notes: []string{"Reads the key from stdin, so it never appears in shell history or the process list."}, Positionals: []string{"{stripe|paddle|lago}"}, Flags: []cliFlag{
 					{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (default https://api.getlago.com)", Value: "URL"},

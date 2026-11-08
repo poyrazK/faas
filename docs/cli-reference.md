@@ -6722,6 +6722,16 @@ List your password, two-factor and linked Google/GitHub sign-ins
 
 `gregale account provider list`
 
+### account activity
+
+Show sign-ins and security changes
+
+#### account activity list
+
+List sign-ins, credentials and security changes of the last 90 days (newest 100)
+
+`gregale account activity list`
+
 
 ## org
 
