@@ -1,0 +1,12 @@
+{
+  "name": "gregale-e2e-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node worker.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
