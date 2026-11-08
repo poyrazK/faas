@@ -4626,7 +4626,8 @@
       "oldest_pending_at",
       "last_published_at",
       "last_failure_code",
-      "publishing"
+      "publishing",
+      "last_dropped_at"
     ],
     "kind": "operational"
   },
