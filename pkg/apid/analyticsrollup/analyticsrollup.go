@@ -27,8 +27,25 @@ type Reader = state.RequestAnalyticsRollupReader
 // Covers reports whether the app's rollups hold every minute from from on:
 // rollups started at least RequestAnalyticsSettleLag before from, so the
 // first, partial minute and an upgrade's stragglers are outside the window.
-// Any error, or a store without rollups, means no.
+// Minutes are kept only RequestAnalyticsMinuteRetention (amendment 3), so a
+// window starting past RequestAnalyticsMinuteReadHorizon is covered only
+// when it starts on a whole hour the hourly tier holds; the apid window
+// parser aligns such windows, ends included. Any error, or a store without
+// rollups, means no.
 func Covers(ctx context.Context, store any, appID string, from time.Time) (Reader, bool) {
+	reader, ok := coversMinutes(ctx, store, appID, from)
+	if !ok || !from.Before(time.Now().Add(-api.RequestAnalyticsMinuteReadHorizon)) {
+		return reader, ok
+	}
+	id, _ := uuid.Parse(appID)
+	hoursSince, has, err := reader.RequestAnalyticsRollupHoursCoverage(ctx, id)
+	if err != nil || !has || !from.Equal(from.UTC().Truncate(time.Hour)) {
+		return reader, false
+	}
+	return reader, !from.Before(ceilHour(hoursSince.Add(api.RequestAnalyticsSettleLag)))
+}
+
+func coversMinutes(ctx context.Context, store any, appID string, from time.Time) (Reader, bool) {
 	reader, ok := store.(Reader)
 	if !ok {
 		return nil, false
@@ -95,6 +112,33 @@ func HourRange(from, until, hoursSince time.Time, hasHours bool) (time.Time, tim
 		return until, until
 	}
 	return hoursFrom, hoursUntil
+}
+
+// AlignWindow widens the ends of an analytics window that lie past
+// RequestAnalyticsMinuteReadHorizon to whole UTC hours: minute rollups are
+// kept only RequestAnalyticsMinuteRetention, so the hourly tier answers that
+// part (amendment 3). from moves back to its hour, or forward when that hour
+// starts before the plan's retention, whose hour rows are swept; until moves
+// forward to its next hour. Ends inside the horizon are kept, so a recent
+// window still ends at now. A zero retention means unlimited.
+func AlignWindow(from, until, now time.Time, retention time.Duration) (time.Time, time.Time) {
+	from, until, now = from.UTC(), until.UTC(), now.UTC()
+	horizon := now.Add(-api.RequestAnalyticsMinuteReadHorizon)
+	if from.Before(horizon) {
+		floor := from.Truncate(time.Hour)
+		if retention > 0 && floor.Before(now.Add(-retention)) {
+			floor = ceilHour(from)
+		}
+		from = floor
+	}
+	if until.Before(horizon) {
+		until = ceilHour(until)
+	}
+	if !from.Before(until) {
+		// A window inside one hour at the retention edge keeps that hour.
+		until = from.Add(time.Hour)
+	}
+	return from, until
 }
 
 func ceilHour(t time.Time) time.Time {

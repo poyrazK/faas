@@ -210,6 +210,12 @@ your OpenTelemetry configuration alone, and a Python app that ships its own
 keeps working; to send spans to the debugger as well, export to the public
 `/v1/otel/v1/traces` endpoint with an API key.
 
+Set `tracing.enabled: true` as well. It leaves your exporter alone, as above,
+and it tells the debugger to keep a record of each traced request instead of
+folding busy requests into one summary row: spans can only attach to a request
+that has its own record, so without the setting most spans of a busy route
+find no request and are dropped.
+
 The key needs the `admin`, `deploy:write` or `metrics:write` scope; a
 read-only key gets `403`. Spans attach to requests of the trace in apps the
 key can write to:

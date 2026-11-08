@@ -81,8 +81,9 @@ func TestRuntimeRolesCoverEveryMappedDaemonUser(t *testing.T) {
 			t.Errorf("runtime-roles.sql creates %s but faas_map maps no daemon user to it", role)
 		}
 	}
-	if !strings.Contains(runtimeRolesSQL(t), "GRANT faas_runtime TO faas_compute") {
-		t.Error("runtime-roles.sql does not add faas_compute to faas_runtime")
+	compute := regexp.MustCompile(`(?s)FOREACH r IN ARRAY ARRAY\[('faas_compute'.*?)\] LOOP(.*?)END LOOP`).FindStringSubmatch(runtimeRolesSQL(t))
+	if compute == nil || !strings.Contains(compute[2], "GRANT faas_runtime TO %I") {
+		t.Error("runtime-roles.sql does not add faas_compute (and the per-daemon compute roles) to faas_runtime")
 	}
 }
 

@@ -22553,7 +22553,7 @@ paths:
         Overage computation: `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)`. The included band is echoed from
         `acct.Plan.PlanIncludedGBHours`; the overage figure is the
-        integer-rounded float the Stripe pusher bills at $0.01/GB-h.
+        integer-rounded float the Stripe pusher bills at $0.05/GB-h.
 
         Source: `usage_minutes` today (after the 30d retention cap).
         `usage_daily` / `mixed` land with the trail-period reader
@@ -24768,9 +24768,12 @@ paths:
         available for spreadsheet and support workflows. The export uses the
         same plan retention boundary as the debugger list, never includes
         request bodies, headers, source IPs, or raw span attributes, and is
-        capped at 10,000 rows. `X-Faas-Request-Log-Window` and
-        `X-Faas-Request-Log-Retention-Clamped` describe the effective window
-        applied to the artifact.
+        capped at 10,000 rows. It takes the request list's filters.
+        `X-Faas-Request-Log-Window` and `X-Faas-Request-Log-Retention-Clamped`
+        describe the effective window applied to the artifact, and
+        `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+        In CSV, a value that would start a spreadsheet formula is written
+        with a leading apostrophe.
       parameters:
         - name: since
           in: query
@@ -24792,6 +24795,31 @@ paths:
           required: false
           schema: { type: [integer, 'null'], minimum: 1, maximum: 10000, default: 10000 }
           description: "Maximum number of retained rows to export."
+        - name: deployment_id
+          in: query
+          required: false
+          schema: { type: [string, 'null'], format: uuid }
+          description: "Export only rows served by this deployment UUID."
+        - name: status
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 100, maximum: 599 }
+          description: "Export only rows with this HTTP status."
+        - name: cold_boot
+          in: query
+          required: false
+          schema: { type: [boolean, 'null'] }
+          description: "Export only cold-start rows when true, or only warm rows when false."
+        - name: consumer_id
+          in: query
+          required: false
+          schema: { type: [string, 'null'], maxLength: 64 }
+          description: "Export only one consumer's rows (UUID), or __anonymous__ for rows without a stable consumer identity."
+        - name: min_latency_ms
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 0, maximum: 86400000 }
+          description: "Export only rows whose latency bucket bound is at least this many milliseconds."
       responses:
         '200':
           description: Metadata-only request telemetry export.
@@ -24807,6 +24835,9 @@ paths:
             X-Faas-Request-Log-Retention-Clamped:
               schema: { type: boolean }
               description: Whether the requested window exceeded plan retention.
+            X-Faas-Request-Log-Truncated:
+              schema: { type: boolean }
+              description: Whether more rows matched than the row limit exported.
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
@@ -47707,6 +47738,38 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/queues/send-batch:
+    post:
+      tags: [queues]
+      operationId: queueSendBatch
+      summary: Send up to 100 messages to one queue as one request.
+      description: |
+        Sends the messages in order with the same admission as a single send:
+        queue depth, backlog bytes and message size are checked for each one.
+        The first refused message ends the batch; the messages after it are
+        not attempted. Resend from the first message that was not accepted.
+        The batch counts as one request against the account's API budget.
+        API keys require `queues:send`, `deploy:write`, or `admin`.
+      x-faas-queue-leases: false
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueSendBatchRequest' }
+      responses:
+        '200':
+          description: The outcome of every message, in input order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueSendBatchResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/PlanQueueDepth' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/commit-sources:
     post:
       tags: [queues]
@@ -68205,6 +68268,49 @@ paths:
       required: true
       description: 'Organization queues: Enqueue a row on the per-app FIFO queue. Company owning the application or
         project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/send-batch:
+    post:
+      tags:
+      - queues
+      operationId: sendOrgQueueMessageBatch
+      summary: 'Organization queues: Send up to 100 messages to one queue as one request'
+      description: 'Organization queues: Send up to 100 messages to one queue as one request. Owners, admins and
+        developers can configure and operate queues. Requires current membership and the corresponding credential
+        scope. Mutations require organization billing adoption. The first refused message ends the batch; resend from
+        the first message that was not accepted. API keys require `queues:send`, `deploy:write`, or `admin`.'
+      x-faas-queue-leases: false
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueSendBatchRequest'
+      responses:
+        '200':
+          description: 'Organization queues: The outcome of every message, in input order.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueSendBatchResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '403':
+          $ref: '#/components/responses/PlanQueueDepth'
+        '413':
+          $ref: '#/components/responses/PlanSourceBytes'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Send up to 100 messages to one queue as one request. Company owning the
+        application or project.'
       schema:
         type: string
   /v1/orgs/{organization}/apps/{slug}/queue-bindings:
@@ -116691,7 +116797,7 @@ components:
         rounding). `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)` — 0 when the customer is under
         their included band, the billable overage above the band
-        otherwise. The Stripe pusher bills overage at $0.01/GB-h
+        otherwise. The Stripe pusher bills overage at $0.05/GB-h
         (CLAUDE.md integer-cents-only rule).
       type: object
       required: [slug, period_start, period_end, mb_seconds, gb_hours, requests, tx_bytes, net_tx_bytes, builder_seconds, cold_boot_count, plan_included_gb_hours, overage_gb_hours, source, as_of]
@@ -117354,7 +117460,7 @@ components:
         used_gb_hours: { type: number , example: 1.234}
         included_gb_hours: { type: integer, format: int64 }
         overage_gb_hours: { type: number }
-        overage_cents: { type: integer, format: int64, description: 'Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.' }
+        overage_cents: { type: integer, format: int64, description: 'Integer cents. Includes compute at $0.05/GB-h and configured live egress overage; shadow egress is excluded.' }
         quiet_paused_gb_hours:
           type: number
           description: 'GB-hours this month that instances spent quiet-paused between requests and were not billed for, in the same plan RAM + 8 MB unit as used_gb_hours and not included in it. Absent while zero.'
@@ -119246,6 +119352,49 @@ components:
         work:
           allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
           description: "Optional keyed ordering policy for a queue message. Scoped environment bindings reject this option until their policy adapter is available."
+
+    QueueSendBatchRequest:
+      description: "Body for POST /v1/apps/{slug}/queues/send-batch: up to 100 messages for one queue, sent in order. The body is at most 8 MiB; each message meets its plan's message size."
+      type: object
+      required: [messages]
+      properties:
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Target registered environment with an enabled scoped queue binding. Omission sends through the default environment." }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Logical queue that receives every message in the batch. Required when an app has multiple enabled queue consumers." }
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          description: Optional retry curve override for every message of the batch.
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/QueueSendBatchMessage' }
+
+    QueueSendBatchMessage:
+      description: One message of a batch send.
+      type: object
+      properties:
+        payload: { type: object, additionalProperties: true }
+
+    QueueSendBatchResult:
+      description: "The outcome of one message by its zero-based input index: accepted, rejected with the problem, or not attempted after an earlier rejection."
+      type: object
+      required: [index, status]
+      properties:
+        index: { type: integer, minimum: 0, description: "Zero-based position of the message in the request's messages array." }
+        status: { type: string, enum: [accepted, rejected, not_attempted] }
+        message: { $ref: '#/components/schemas/QueueSendResponse' }
+        problem: { $ref: '#/components/schemas/Problem' }
+
+    QueueSendBatchResponse:
+      description: Per-message outcomes in the original input order.
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/QueueSendBatchResult' }
 
     QueueWorkloadProfileRequest:
       description: |
@@ -125234,6 +125383,15 @@ components:
         guest_evidence: { $ref: '#/components/schemas/DebugCoverageSignal' }
         oldest_telemetry_at: { type: string, format: date-time }
         latest_telemetry_at: { type: string, format: date-time }
+        requests_not_retained:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Requests the app's request analytics counted in the window's whole
+            minutes that the debugger did not keep, because the plan's
+            per-minute debugger row limit turned them away. A lower bound;
+            absent when request analytics do not cover the window.
 
     DebugRunningRequestAttribution:
       type: object

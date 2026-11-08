@@ -196,6 +196,9 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		log.Warn("dashboard renderAppDebug: coverage", "account_id", acct.ID, "app_id", app.ID, "err", coverageErr)
 	} else {
 		data.Coverage = dashboardDebugCoverageView(coverage, data.Since, data.WindowStart, data.WindowEnd, limits.DebugTelemetryRetentionDays)
+		if missing := s.debugRequestsNotRetained(ctx, app.ID, windowStart, windowEnd); missing != nil {
+			data.Coverage.RequestsNotRetained = *missing
+		}
 	}
 
 	dependencyRows, dependencyErr := s.store.ListRequestTelemetryDependencySpans(ctx, sqlc.ListRequestTelemetryDependencySpansParams{

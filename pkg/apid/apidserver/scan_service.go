@@ -2105,10 +2105,16 @@ func (s *server) scanService(
 			}
 		}
 		if existing != nil {
-			// Visibility is create-only; the plan shows what the app has.
+			// The plan shows what the app will have: a production deploy makes
+			// internal a service Compose no longer publishes; anything else
+			// keeps the app's visibility (ADR-20261107090000).
 			pw.Visibility = ""
-			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal {
+			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal ||
+				(req.Environment == "" && reposcan.NewWorkloadVisibility(w) == api.AppVisibilityInternal) {
 				pw.Visibility = api.AppVisibilityInternal
+			}
+			if note := projectVisibilityNote(w, *existing, req.Environment == ""); note != "" {
+				warnings = append(warnings, note)
 			}
 		}
 		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
@@ -2745,6 +2751,11 @@ func (s *server) scanService(
 	}
 	if problem := s.importComposeEnv(r, acct, project.ID, importScope, composeEnv, filteredW, limits); problem != nil {
 		return resp, state.Project{}, nil, nil, nil, nil, problem
+	}
+	if req.Environment == "" {
+		if problem := s.applyComposeInternalVisibility(r, acct, project.ID, filteredW); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
 	}
 	if len(composePostgres) > 0 {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
