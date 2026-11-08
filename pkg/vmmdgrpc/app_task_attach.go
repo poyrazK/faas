@@ -42,11 +42,16 @@ var (
 	errAppTaskAttachNotPending  = errors.New("vmmdgrpc: no interactive app task is waiting for this instance")
 	errAppTaskAttachTokenDenied = errors.New("vmmdgrpc: attach token rejected")
 	errAppTaskAttachDuplicate   = errors.New("vmmdgrpc: interactive app task already awaits attach")
+	errAppTaskAttachClaimed     = errors.New("vmmdgrpc: interactive app task already has a client")
 )
 
 type appTaskAttachRegistry struct {
 	mu      sync.Mutex
 	pending map[string]*pendingAppTaskAttach
+	// attached holds instances whose rendezvous a client consumed, until the
+	// session ends, so a second attach is told the session is taken rather
+	// than that nothing is waiting yet (which the gateway retries).
+	attached map[string]struct{}
 }
 
 type pendingAppTaskAttach struct {
@@ -111,14 +116,28 @@ func (r *appTaskAttachRegistry) claim(instance, token string, client *appTaskAtt
 	defer r.mu.Unlock()
 	entry, ok := r.pending[instance]
 	if !ok {
+		if _, taken := r.attached[instance]; taken {
+			return errAppTaskAttachClaimed
+		}
 		return errAppTaskAttachNotPending
 	}
 	if !credhash.For(credhash.FamilyAttach).Matches(api.AttachTokenCredentialTag, digest[:], entry.digest) {
 		return errAppTaskAttachTokenDenied
 	}
 	delete(r.pending, instance)
+	if r.attached == nil {
+		r.attached = make(map[string]struct{})
+	}
+	r.attached[instance] = struct{}{}
 	entry.claimed <- client
 	return nil
+}
+
+// detach forgets instance's attached client once its session has ended.
+func (r *appTaskAttachRegistry) detach(instance string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.attached, instance)
 }
 
 // AttachAppTask connects the gateway's client stream to a waiting
@@ -141,10 +160,17 @@ func (s *Server) AttachAppTask(stream vmmdpb.Vmmd_AttachAppTaskServer) error {
 	client := &appTaskAttachClient{stream: stream, start: start, done: make(chan struct{})}
 	if err := s.appTaskAttach.claim(start.GetInstance(), start.GetAttachToken(), client); err != nil {
 		var problem *api.Problem
-		if errors.Is(err, errAppTaskAttachTokenDenied) {
+		switch {
+		case errors.Is(err, errAppTaskAttachTokenDenied):
 			problem = api.NewProblem(int(codes.PermissionDenied), api.CodeUnauthorized,
 				"Attach rejected", "the attach token does not match this session")
-		} else {
+		case errors.Is(err, errAppTaskAttachClaimed):
+			// AlreadyExists is final for the gateway; NotFound below is
+			// retried, because schedd records the task as running before
+			// this node registers its rendezvous.
+			s.ops.Observe(op, time.Since(started), err)
+			return status.Error(codes.AlreadyExists, "the interactive session already has a client")
+		default:
 			problem = api.NewProblem(int(codes.NotFound), api.CodeNotFound,
 				"Session not waiting", "no interactive session is waiting for a client on this instance")
 		}
@@ -204,6 +230,7 @@ func (s *Server) executeInteractiveAppTaskStream(req *vmmdpb.ExecuteAppTaskReque
 		client = <-entry.claimed
 	}
 	defer close(client.done)
+	defer s.appTaskAttach.detach(instance)
 	if err := stream.Context().Err(); err != nil {
 		_ = client.send(attachTerminalEvent(interactiveFailure(req.GetTaskId(), "cancelled", "the session was cancelled")))
 		return err

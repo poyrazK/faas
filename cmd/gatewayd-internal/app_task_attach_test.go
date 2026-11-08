@@ -36,6 +36,7 @@ type fakeAttachStream struct {
 	events chan *vmmdpb.AttachAppTaskEvent
 	start  chan *vmmdpb.AttachAppTaskStart
 	token  string
+	refuse codes.Code // when set, vmmd refuses every attach with this code
 	once   sync.Once
 }
 
@@ -46,6 +47,9 @@ func (s *fakeAttachStream) Send(req *vmmdpb.AttachAppTaskRequest) error {
 	switch frame := req.GetFrame().(type) {
 	case *vmmdpb.AttachAppTaskRequest_Start:
 		s.start <- frame.Start
+		if s.refuse != codes.OK {
+			return nil
+		}
 		if frame.Start.GetAttachToken() != s.token {
 			close(s.events)
 			return nil
@@ -66,6 +70,9 @@ func (s *fakeAttachStream) Send(req *vmmdpb.AttachAppTaskRequest) error {
 }
 
 func (s *fakeAttachStream) Recv() (*vmmdpb.AttachAppTaskEvent, error) {
+	if s.refuse != codes.OK {
+		return nil, status.Error(s.refuse, "refused")
+	}
 	select {
 	case event, ok := <-s.events:
 		if !ok {
@@ -80,11 +87,12 @@ func (s *fakeAttachStream) Recv() (*vmmdpb.AttachAppTaskEvent, error) {
 type fakeAttachVmmd struct {
 	vmmdpb.VmmdClient
 	token  string
+	refuse codes.Code
 	starts chan *vmmdpb.AttachAppTaskStart
 }
 
 func (v *fakeAttachVmmd) AttachAppTask(ctx context.Context, _ ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.AttachAppTaskRequest, vmmdpb.AttachAppTaskEvent], error) {
-	return &fakeAttachStream{ctx: ctx, events: make(chan *vmmdpb.AttachAppTaskEvent, 8), start: v.starts, token: v.token}, nil
+	return &fakeAttachStream{ctx: ctx, events: make(chan *vmmdpb.AttachAppTaskEvent, 8), start: v.starts, token: v.token, refuse: v.refuse}, nil
 }
 
 type fakeAttachNodes struct {
@@ -225,6 +233,10 @@ func TestAppTaskAttachHTTPFailures(t *testing.T) {
 		"no node yet":    {token: "tok", status: http.StatusConflict, mutate: func(f *attachFixture) { f.targets.target.NodeID = "" }},
 		"finished":       {token: "tok", status: http.StatusGone, mutate: func(f *attachFixture) { f.targets.target.TaskStatus = state.AppTaskSucceeded }},
 		"node offline":   {token: "tok", status: http.StatusServiceUnavailable, mutate: func(f *attachFixture) { f.nodes.offline = true }},
+		// schedd marks the task running before vmmd registers the
+		// rendezvous; vmmd's NotFound in that gap must stay retryable.
+		"not registered yet": {token: "tok", status: http.StatusConflict, mutate: func(f *attachFixture) { f.nodes.vmmd.refuse = codes.NotFound }},
+		"already attached":   {token: "tok", status: http.StatusGone, mutate: func(f *attachFixture) { f.nodes.vmmd.refuse = codes.AlreadyExists }},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

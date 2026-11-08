@@ -201,8 +201,8 @@ func TestAttachAppTaskTokenIsCheckedAndSingleUse(t *testing.T) {
 	_ = second.Send(&vmmdpb.AttachAppTaskRequest{Frame: &vmmdpb.AttachAppTaskRequest_Start{
 		Start: &vmmdpb.AttachAppTaskStart{Instance: "task-1", AttachToken: testAttachToken},
 	}})
-	if _, err := second.Recv(); status.Code(err) != codes.NotFound {
-		t.Fatalf("reused token = %v, want NotFound", err)
+	if _, err := second.Recv(); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("reused token = %v, want AlreadyExists", err)
 	}
 	_ = stream.Send(&vmmdpb.AttachAppTaskRequest{Frame: &vmmdpb.AttachAppTaskRequest_StdinClose{StdinClose: &vmmdpb.AttachAppTaskStdinClose{}}})
 	select {

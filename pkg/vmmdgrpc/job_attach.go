@@ -50,6 +50,7 @@ func (s *Server) serveInteractiveJob(ctx context.Context, jobVMM JobInteractiveV
 		client = <-entry.claimed
 	}
 	defer close(client.done)
+	defer s.appTaskAttach.detach(instance)
 
 	sessionCtx, cancelSession := context.WithTimeout(ctx,
 		time.Duration(taskTimeoutSec)*time.Second+jobInteractiveSessionSlack)

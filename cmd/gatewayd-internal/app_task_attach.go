@@ -154,6 +154,14 @@ func (h *AppTaskAttachHandler) open(w http.ResponseWriter, r *http.Request, node
 		first, err = stream.Recv()
 	}
 	if err != nil || first.GetAttached() == nil {
+		if status.Code(err) == codes.NotFound {
+			// schedd marks the task running before the node registers its
+			// rendezvous, so "nothing waiting" is briefly normal; once the
+			// attach window closes the task turns terminal and the next
+			// attempt answers "Session ended".
+			writeAttachNotReady(w)
+			return
+		}
 		api.WriteProblem(w, attachProblem(err))
 		return
 	}
@@ -327,9 +335,9 @@ func attachProblem(err error) *api.Problem {
 	switch status.Code(err) {
 	case codes.PermissionDenied:
 		return api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Attach rejected", "the attach token does not match this session")
-	case codes.NotFound:
+	case codes.AlreadyExists:
 		return api.NewProblem(http.StatusGone, api.CodeConflict, "Session unavailable",
-			"the session already has a client, or its attach window closed")
+			"the session already has a client")
 	default:
 		return api.NewProblem(http.StatusBadGateway, api.CodeInternal, "Attach failed", "the node could not start the session")
 	}
