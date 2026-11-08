@@ -74,7 +74,11 @@ the alert thread and close it. If a legitimate program keeps raising
 **Not explained**, or any page event:
 
 1. Treat the host as compromised. Follow
-   [incident response](incident-response.md) and declare an incident.
+   [incident response](incident-response.md) and declare an incident. For a
+   compute node, work through
+   [compute-node-compromise.md](compute-node-compromise.md) instead of the
+   steps below: it cuts the node's database access before draining it, which
+   matters because a compute node can rewrite its own drain flag.
 2. Take the host out of app traffic: drain it, so edgednsd withdraws its
    address records.
 3. Do not log in to look around first. Read Loki: it holds what the host
