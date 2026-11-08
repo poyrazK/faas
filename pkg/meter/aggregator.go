@@ -17,7 +17,7 @@ import (
 // The aggregator rounds to 6 decimal places so the test surface and the
 // financial-model cells line up without float drift. (Spec §4.7 says the
 // billable unit is integer mb-seconds; the float only exists at the quota
-// gate where $0.01/GB-h needs a unit.)
+// gate where the overage rate needs a unit.)
 func MonthlyUsageGB(usages []state.Usage) float64 {
 	var mbSec int64
 	for _, u := range usages {
@@ -78,7 +78,7 @@ type QuotaResult struct {
 // financial-model §1):
 //
 //	Free       — included GB-h/month (limits.go).  ≥100 % ⇒ hard stop.
-//	Hobby/Pro/Scale — included quotas; overage accrues at $0.01/GB-h.
+//	Hobby/Pro/Scale — included quotas; overage accrues at api.OverageMillicentsPerGBHour ($0.05/GB-h).
 //	                        ≥100 % ⇒ one warning event per UTC day (the
 //	                        caller de-duplicates; see EmitQuotaWarning).
 //

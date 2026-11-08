@@ -85923,6 +85923,63 @@ func (q *Queries) ReadProductionQueueStateLive(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const readProductionQueueTelemetry = `-- name: ReadProductionQueueTelemetry :one
+WITH RECURSIVE names AS (
+    (SELECT w.queue_name FROM production_invocation_work w
+     WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='pending'
+     ORDER BY w.queue_name LIMIT 1)
+  UNION ALL
+    SELECT (SELECT w.queue_name FROM production_invocation_work w
+            WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='pending' AND w.queue_name>n.queue_name
+            ORDER BY w.queue_name LIMIT 1)
+    FROM names n WHERE n.queue_name IS NOT NULL
+)
+SELECT
+  (SELECT count(*) FROM (SELECT 1 FROM production_invocation_work w
+     WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state IN ('pending','dispatching')
+     LIMIT $2::integer) live)::bigint AS depth,
+  (SELECT count(*) FROM (SELECT 1 FROM production_invocation_work w
+     WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='dispatching'
+       AND w.lease_expires_at IS NOT NULL AND w.lease_expires_at>now()
+     LIMIT $2::integer) leased)::bigint AS in_flight,
+  (SELECT count(*) FROM (SELECT 1 FROM production_invocation_work w
+     WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='dead_letter'
+     LIMIT $2::integer) dead)::bigint AS dead_letter,
+  (SELECT min(first.created_at) FROM names n CROSS JOIN LATERAL (
+     SELECT w.created_at FROM production_invocation_work w
+     WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='pending' AND w.queue_name=n.queue_name
+     ORDER BY w.due_at LIMIT 1) first
+   WHERE n.queue_name IS NOT NULL)::timestamptz AS oldest_pending_at
+`
+
+type ReadProductionQueueTelemetryParams struct {
+	AppID    pgtype.UUID
+	RowLimit int32
+}
+
+type ReadProductionQueueTelemetryRow struct {
+	Depth           int64
+	InFlight        int64
+	DeadLetter      int64
+	OldestPendingAt pgtype.Timestamptz
+}
+
+// ReadProductionQueueStateLive plus CountProductionQueueDeadLetter for the
+// status reads a customer can poll: each count stops at row_limit, and the
+// oldest pending message is the first one due under each of the app's queue
+// names, found one name at a time (ADR-20261018101500 amendment 2026-10-31).
+func (q *Queries) ReadProductionQueueTelemetry(ctx context.Context, db DBTX, arg ReadProductionQueueTelemetryParams) (ReadProductionQueueTelemetryRow, error) {
+	row := db.QueryRow(ctx, readProductionQueueTelemetry, arg.AppID, arg.RowLimit)
+	var i ReadProductionQueueTelemetryRow
+	err := row.Scan(
+		&i.Depth,
+		&i.InFlight,
+		&i.DeadLetter,
+		&i.OldestPendingAt,
+	)
+	return i, err
+}
+
 const readProductionQueueTriggerInvocation = `-- name: ReadProductionQueueTriggerInvocation :one
 SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at, i.async_quota_subject_id, i.edge_jwt_issuer, i.edge_jwt_subject FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue'
           and i.environment_id is null
@@ -108275,6 +108332,33 @@ func (q *Queries) TriggerRecordStatesByItems(ctx context.Context, db DBTX, arg T
 		return nil, err
 	}
 	return items, nil
+}
+
+const trimCompletedQueuePayloads = `-- name: TrimCompletedQueuePayloads :execrows
+WITH due AS (
+    SELECT id FROM invocations
+    WHERE source='queue' AND state='completed' AND payload <> 'null'::jsonb
+      AND completed_at <= $1::timestamptz
+    ORDER BY completed_at LIMIT $2::integer
+    FOR UPDATE SKIP LOCKED)
+UPDATE invocations i SET payload='null'::jsonb FROM due WHERE i.id=due.id
+`
+
+type TrimCompletedQueuePayloadsParams struct {
+	CompletedBefore pgtype.Timestamptz
+	RowLimit        int32
+}
+
+// A completed queue message keeps its payload for a day after its ack, then
+// only its history; failures and dead letters keep theirs for replay
+// (ADR-20261018101500 amendment 2026-10-31). Reads
+// invocations_queue_completed_payload_idx in completion order.
+func (q *Queries) TrimCompletedQueuePayloads(ctx context.Context, db DBTX, arg TrimCompletedQueuePayloadsParams) (int64, error) {
+	result, err := db.Exec(ctx, trimCompletedQueuePayloads, arg.CompletedBefore, arg.RowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const tryEdgeRuleAccountMutationLock = `-- name: TryEdgeRuleAccountMutationLock :one

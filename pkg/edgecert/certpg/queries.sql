@@ -25,12 +25,15 @@ LIMIT 1;
 DELETE FROM edge_tls_certificates WHERE not_after < @before;
 
 -- name: LiveEdgeTLSCertificates :many
--- What a compute edge serves: for each set of names, the newest certificate
--- from ca that is valid now, with its chain and sealed key.
-SELECT DISTINCT ON (names) id, names, chain_pem, key_sealed, not_before, not_after
+-- What a compute edge may serve: the certificates from ca that are valid
+-- now, newest first, with their chains and sealed keys. Every one is
+-- returned, not only the newest per set of names, so a row the edge cannot
+-- open never hides one it can (ADR-20261107180000).
+SELECT id, names, chain_pem, key_sealed, not_before, not_after
 FROM edge_tls_certificates
 WHERE ca = @ca AND not_before <= now() AND not_after > now()
-ORDER BY names, not_after DESC, id DESC;
+ORDER BY not_after DESC, id DESC
+LIMIT @max::int;
 
 -- name: EdgeTLSCertificateChains :many
 -- Every stored chain, expired ones included: the Certificate Transparency

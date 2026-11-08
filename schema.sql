@@ -183,6 +183,19 @@ END $$;
 CREATE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer) RETURNS void
     LANGUAGE plpgsql
     AS $$
+BEGIN
+    PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb, p_reservation_percent,
+        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit, 0);
+END $$;
+
+
+--
+-- Name: admission_reserve_node(uuid, bigint, integer, boolean, integer, integer, integer, integer, integer, integer, integer, integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer, p_quiet_ram_mb integer) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     node_lifecycle text;
     node_generation bigint;
@@ -196,6 +209,7 @@ DECLARE
     used_cpu bigint;
     quiet_vcpu bigint;
     quiet_cpu bigint;
+    quiet_ram bigint;
 BEGIN
     PERFORM node_admission_lock_capacity();
     SELECT lifecycle::text, lifecycle_generation INTO node_lifecycle, node_generation
@@ -233,11 +247,20 @@ BEGIN
        AND i.state IN ('waking','cold_booting','running','draining','warm');
     used_mb := used_mb + resident_mb;
     cap_mb := ceiling_mb * greatest(100, least(coalesce(p_reservation_percent, 100), 200)) / 100;
-    IF ceiling_mb > 0 AND used_mb + p_ram_mb + p_overhead_mb > cap_mb THEN
+    -- ADR-20261107122928: the scheduler leaves out the reservations of
+    -- instances vmmd holds at the idle ladder's freeze level, which measured
+    -- admission books at their measured memory. Only a measured allowance
+    -- takes it, and at most api.IdleLadderReservationDiscountMaxPercent (200)
+    -- of the ceiling.
+    quiet_ram := 0;
+    IF coalesce(p_reservation_percent, 100) > 100 THEN
+        quiet_ram := least(greatest(coalesce(p_quiet_ram_mb, 0), 0), ceiling_mb * 2);
+    END IF;
+    IF ceiling_mb > 0 AND used_mb - quiet_ram + p_ram_mb + p_overhead_mb > cap_mb THEN
         RAISE EXCEPTION 'node RAM headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
-                  DETAIL = format('used_mb=%s admit_mb=%s ceiling_mb=%s cap_mb=%s',
-                                  used_mb, p_ram_mb + p_overhead_mb, ceiling_mb, cap_mb);
+                  DETAIL = format('used_mb=%s discount_mb=%s admit_mb=%s ceiling_mb=%s cap_mb=%s',
+                                  used_mb, quiet_ram, p_ram_mb + p_overhead_mb, ceiling_mb, cap_mb);
     END IF;
     IF coalesce(p_vcpu, 0) <= 0 AND coalesce(p_cpu_millicores, 0) <= 0 THEN
         RETURN;
@@ -378,13 +401,29 @@ END $$;
 CREATE FUNCTION public.admit_wake_instance(p_app_id uuid, p_deployment_id text, p_state text, p_ram_mb integer, p_node_id uuid, p_wake_id text, p_mode text, p_expected_generation bigint, p_counts boolean, p_overhead_mb integer, p_bind_recovery boolean, p_snapshot_id uuid, p_guard_generation bigint, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer, p_owner_node_id uuid) RETURNS SETOF public.instances
     LANGUAGE plpgsql
     AS $$
+BEGIN
+    RETURN QUERY SELECT * FROM admit_wake_instance(p_app_id, p_deployment_id, p_state, p_ram_mb, p_node_id, p_wake_id, p_mode,
+        p_expected_generation, p_counts, p_overhead_mb, p_bind_recovery, p_snapshot_id, p_guard_generation, p_reservation_percent,
+        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit,
+        p_owner_node_id, 0);
+END $$;
+
+
+--
+-- Name: admit_wake_instance(uuid, text, text, integer, uuid, text, text, bigint, boolean, integer, boolean, uuid, bigint, integer, integer, integer, integer, integer, integer, integer, uuid, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admit_wake_instance(p_app_id uuid, p_deployment_id text, p_state text, p_ram_mb integer, p_node_id uuid, p_wake_id text, p_mode text, p_expected_generation bigint, p_counts boolean, p_overhead_mb integer, p_bind_recovery boolean, p_snapshot_id uuid, p_guard_generation bigint, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer, p_owner_node_id uuid, p_quiet_ram_mb integer) RETURNS SETOF public.instances
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     admitted instances%ROWTYPE;
     bound integer;
     current_generation bigint;
 BEGIN
     PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb, p_reservation_percent,
-        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit);
+        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit,
+        p_quiet_ram_mb);
     -- ADR-20261028200212: the admitting scheduler must still own the app.
     PERFORM admission_check_app_owner(p_app_id, p_owner_node_id);
     INSERT INTO instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
@@ -25944,6 +25983,17 @@ $$;
 --
 
 CREATE FUNCTION public.request_analytics_hist_add(a bigint[], b bigint[]) RETURNS bigint[]
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    AS $$
+    SELECT array_agg(x + y ORDER BY i) FROM unnest(a, b) WITH ORDINALITY AS u(x, y, i)
+$$;
+
+
+--
+-- Name: request_analytics_hist_add_int4(integer[], integer[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.request_analytics_hist_add_int4(a integer[], b integer[]) RETURNS integer[]
     LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
     AS $$
     SELECT array_agg(x + y ORDER BY i) FROM unnest(a, b) WITH ORDINALITY AS u(x, y, i)
@@ -54836,7 +54886,8 @@ CREATE TABLE public.request_analytics_hours (
     cold_boots bigint NOT NULL,
     request_time_ms bigint NOT NULL,
     latency_max_ms integer NOT NULL,
-    latency_hist bigint[] NOT NULL,
+    latency_hist bigint[],
+    latency_hist_int4 integer[],
     CONSTRAINT request_analytics_hours_bucket_start_check CHECK ((isfinite(bucket_start) AND (bucket_start = date_bin('01:00:00'::interval, bucket_start, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
     CONSTRAINT request_analytics_hours_check CHECK (((octet_length(method) <= 16) AND ((dimension_kind = 'route'::text) OR (method = ''::text)))),
     CONSTRAINT request_analytics_hours_check1 CHECK (((error_requests >= 0) AND (error_requests <= requests))),
@@ -54844,10 +54895,12 @@ CREATE TABLE public.request_analytics_hours (
     CONSTRAINT request_analytics_hours_dimension_check CHECK (((octet_length(dimension) >= 1) AND (octet_length(dimension) <= 512))),
     CONSTRAINT request_analytics_hours_dimension_kind_check CHECK ((dimension_kind = ANY (ARRAY['route'::text, 'country'::text, 'referrer_host'::text, 'ua_family'::text, 'consumer_id'::text]))),
     CONSTRAINT request_analytics_hours_latency_hist_check CHECK (((cardinality(latency_hist) = 45) AND (array_ndims(latency_hist) = 1) AND (array_position(latency_hist, NULL::bigint) IS NULL))),
+    CONSTRAINT request_analytics_hours_latency_hist_int4_chk CHECK (((latency_hist_int4 IS NULL) OR ((cardinality(latency_hist_int4) = 45) AND (array_ndims(latency_hist_int4) = 1) AND (array_position(latency_hist_int4, NULL::integer) IS NULL)))),
+    CONSTRAINT request_analytics_hours_latency_hist_present_chk CHECK (((latency_hist IS NOT NULL) OR (latency_hist_int4 IS NOT NULL))),
     CONSTRAINT request_analytics_hours_latency_max_ms_check CHECK ((latency_max_ms >= 0)),
     CONSTRAINT request_analytics_hours_request_time_ms_check CHECK ((request_time_ms >= 0)),
     CONSTRAINT request_analytics_hours_requests_check CHECK ((requests >= 1)),
-    CONSTRAINT request_analytics_hours_status_check CHECK (((status >= 100) AND (status <= 599)))
+    CONSTRAINT request_analytics_hours_status_kind_chk CHECK ((((status >= 100) AND (status <= 599)) OR ((status = 0) AND (dimension_kind <> 'route'::text))))
 );
 
 
@@ -54876,7 +54929,8 @@ CREATE TABLE public.request_analytics_minutes (
     cold_boots bigint NOT NULL,
     request_time_ms bigint NOT NULL,
     latency_max_ms integer NOT NULL,
-    latency_hist bigint[] NOT NULL,
+    latency_hist bigint[],
+    latency_hist_int4 integer[],
     CONSTRAINT request_analytics_minutes_bucket_start_check CHECK ((isfinite(bucket_start) AND (bucket_start = date_bin('00:01:00'::interval, bucket_start, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
     CONSTRAINT request_analytics_minutes_check CHECK (((octet_length(method) <= 16) AND ((dimension_kind = 'route'::text) OR (method = ''::text)))),
     CONSTRAINT request_analytics_minutes_check1 CHECK (((error_requests >= 0) AND (error_requests <= requests))),
@@ -54884,10 +54938,12 @@ CREATE TABLE public.request_analytics_minutes (
     CONSTRAINT request_analytics_minutes_dimension_check CHECK (((octet_length(dimension) >= 1) AND (octet_length(dimension) <= 512))),
     CONSTRAINT request_analytics_minutes_dimension_kind_check CHECK ((dimension_kind = ANY (ARRAY['route'::text, 'country'::text, 'referrer_host'::text, 'ua_family'::text, 'consumer_id'::text]))),
     CONSTRAINT request_analytics_minutes_latency_hist_check CHECK (((cardinality(latency_hist) = 45) AND (array_ndims(latency_hist) = 1) AND (array_position(latency_hist, NULL::bigint) IS NULL))),
+    CONSTRAINT request_analytics_minutes_latency_hist_int4_chk CHECK (((latency_hist_int4 IS NULL) OR ((cardinality(latency_hist_int4) = 45) AND (array_ndims(latency_hist_int4) = 1) AND (array_position(latency_hist_int4, NULL::integer) IS NULL)))),
+    CONSTRAINT request_analytics_minutes_latency_hist_present_chk CHECK (((latency_hist IS NOT NULL) OR (latency_hist_int4 IS NOT NULL))),
     CONSTRAINT request_analytics_minutes_latency_max_ms_check CHECK ((latency_max_ms >= 0)),
     CONSTRAINT request_analytics_minutes_request_time_ms_check CHECK ((request_time_ms >= 0)),
     CONSTRAINT request_analytics_minutes_requests_check CHECK ((requests >= 1)),
-    CONSTRAINT request_analytics_minutes_status_check CHECK (((status >= 100) AND (status <= 599)))
+    CONSTRAINT request_analytics_minutes_status_kind_chk CHECK ((((status >= 100) AND (status <= 599)) OR ((status = 0) AND (dimension_kind <> 'route'::text))))
 );
 
 
@@ -76882,6 +76938,13 @@ CREATE INDEX invocations_platform_tenant_idx ON public.invocations USING btree (
 --
 
 CREATE INDEX invocations_queue_binding_scope_idx ON public.invocations USING btree (app_id, queue_binding_id, deployment_scope, state, created_at) WHERE ((source = 'queue'::text) AND (state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'dead_letter'::text])));
+
+
+--
+-- Name: invocations_queue_completed_payload_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_queue_completed_payload_idx ON public.invocations USING btree (completed_at) WHERE ((source = 'queue'::text) AND (state = 'completed'::text) AND (payload <> 'null'::jsonb));
 
 
 --

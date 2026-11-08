@@ -186,6 +186,25 @@
     - faas_postgres_compute_password is defined
     - not (faas_postgres_standby_mode | default(false) | bool)
 
+# ADR-20261023104734 step 3: every compute daemon logs in as its own role.
+# CD derives each role's password from POSTGRES_COMPUTE_ROLE_KEY and passes
+# only its SCRAM verifier (scripts/ci/compute_db_roles.py), which PostgreSQL
+# stores as given; the derived salt keeps it stable across converges.
+- name: postgres — create per-daemon compute roles — ADR-20261023104734
+  community.postgresql.postgresql_user:
+    name: "{{ item.key }}"
+    password: "{{ item.value }}"
+    role_attr_flags: LOGIN
+    state: present
+  become: true
+  become_user: postgres
+  no_log: true
+  loop: "{{ faas_postgres_compute_daemon_role_verifiers | default({}) | dict2items }}"
+  when:
+    - not (faas_postgres_standby_mode | default(false) | bool)
+    - item.key is match('^faas_[a-z][a-z0-9_]{0,40}$')
+    - item.value is match('^SCRAM-SHA-256\$')
+
 # Creates faas_runtime and the per-daemon roles, grants row DML on every table
 # and sequence, and sets default privileges for the objects later migrations
 # create. The script prints a fingerprint of the result before and after.
@@ -398,6 +417,17 @@
   register: pg_ident
   failed_when: false
   notify: reload postgresql
+
+# Older deploy steps appended owner mappings outside the managed block (for
+# example cd-controlplane's `faas_map  faas-outboundd  faas`). Once the owner
+# is contracted, no OS user but root may map to it anywhere in the file.
+- name: postgres — remove owner mappings outside the managed block when contracted — ADR-20261023104734
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/pg_ident.conf"
+    regexp: '^faas_map\s+(?!root\s)\S+\s+faas\s*$'
+    state: absent
+  notify: reload postgresql
+  when: faas_postgres_owner_contracted | default(false) | bool
 
 - name: postgres — verify unix-socket-only listeners (defensive)
   ansible.builtin.command: pg_lsclusters
