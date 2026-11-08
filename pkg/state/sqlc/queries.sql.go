@@ -2183,6 +2183,33 @@ func (q *Queries) ApplyEventSubscriptionIntent(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const applyGatewayEdgeUsageEvent = `-- name: ApplyGatewayEdgeUsageEvent :execrows
+insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
+select a.account_id, a.id, md5('gregale-edge-egress:' || a.id::text)::uuid, $1::timestamptz, 0, 0, 0, $2::bigint, $2::bigint, 0, 0, 0
+  from apps a
+ where a.id = $3::uuid
+on conflict (instance_id, minute) do update
+   set tx_bytes     = usage_minutes.tx_bytes     + EXCLUDED.tx_bytes,
+       net_tx_bytes = usage_minutes.net_tx_bytes + EXCLUDED.net_tx_bytes
+`
+
+type ApplyGatewayEdgeUsageEventParams struct {
+	Minute  pgtype.Timestamptz
+	TxBytes int64
+	AppID   pgtype.UUID
+}
+
+// An edge frame's bytes, served by a gateway for an app without an instance,
+// count as the app's egress (ADR-20261104132753): tx_bytes and net_tx_bytes
+// under the app's edge usage ID, md5('gregale-edge-egress:' || app id).
+func (q *Queries) ApplyGatewayEdgeUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayEdgeUsageEventParams) (int64, error) {
+	result, err := db.Exec(ctx, applyGatewayEdgeUsageEvent, arg.Minute, arg.TxBytes, arg.AppID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const applyGatewayUsageEvent = `-- name: ApplyGatewayUsageEvent :execrows
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
 select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
@@ -3675,6 +3702,59 @@ func (q *Queries) BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (Build
 		&i.CacheStatus,
 		&i.CacheKeySha256,
 	)
+	return i, err
+}
+
+const buildSecondsThisMonthForApp = `-- name: BuildSecondsThisMonthForApp :one
+with subject as (
+  select case when o.id is not null and not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end as id
+    from apps a
+    left join orgs o on o.id = a.org_id
+   where a.id = $1::uuid
+), payer_apps as (
+  select a.id
+    from subject s
+    join apps a on a.account_id = s.id or a.org_id = s.id
+    left join orgs o on o.id = a.org_id
+   where (case when o.id is not null and not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) = s.id
+), used as (
+  -- A build ends at its finish, its cancellation, or now while it runs, and
+  -- never counts past the build timeout: a row left without an end (a
+  -- cancelled build has no finished_at) must not run on to the month's end.
+  select coalesce(sum(extract(epoch from (
+           least(coalesce(b.finished_at, b.cancelled_at, now()),
+                 b.started_at + make_interval(secs => $2::double precision))
+           - b.started_at))), 0)::bigint as seconds
+    from payer_apps pa
+    join deployments d on d.app_id = pa.id
+    join builds b on b.deployment_id = d.id
+   where b.started_at >= $3::timestamptz
+     and b.coalesced_with is null
+)
+select coalesce((select br.plan from billing_resource_accounts br join subject s on br.id = s.id), '')::text as plan,
+       (select seconds from used)::bigint as used_seconds
+`
+
+type BuildSecondsThisMonthForAppParams struct {
+	AppID           pgtype.UUID
+	MaxBuildSeconds float64
+	MonthStart      pgtype.Timestamptz
+}
+
+type BuildSecondsThisMonthForAppRow struct {
+	Plan        string
+	UsedSeconds int64
+}
+
+// Builder time this UTC month of the account that pays for an app
+// (ADR-20261104132753): every build of that payer's apps that started at or
+// after month_start, each capped at the build timeout (a running one counts up to now). A coalesced build ran
+// no builder of its own. The payer is an organization only when it owns its
+// resources, as bind_app_usage_owner decides.
+func (q *Queries) BuildSecondsThisMonthForApp(ctx context.Context, db DBTX, arg BuildSecondsThisMonthForAppParams) (BuildSecondsThisMonthForAppRow, error) {
+	row := db.QueryRow(ctx, buildSecondsThisMonthForApp, arg.AppID, arg.MaxBuildSeconds, arg.MonthStart)
+	var i BuildSecondsThisMonthForAppRow
+	err := row.Scan(&i.Plan, &i.UsedSeconds)
 	return i, err
 }
 
@@ -62152,6 +62232,15 @@ func (q *Queries) LockReadinessSubscriptionLease(ctx context.Context, db DBTX, a
 	return id, err
 }
 
+const lockRealtimeEgressSync = `-- name: LockRealtimeEgressSync :exec
+SELECT pg_advisory_xact_lock(hashtextextended('realtime-egress-sync', 0))
+`
+
+func (q *Queries) LockRealtimeEgressSync(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockRealtimeEgressSync)
+	return err
+}
+
 const lockRetainedRollbackDeployment = `-- name: LockRetainedRollbackDeployment :one
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND d.deleted_at IS NULL
@@ -107367,6 +107456,47 @@ WHERE scaling.app_id=a.id AND a.id=$1::uuid AND scaling.scope='production'
 func (q *Queries) SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error {
 	_, err := db.Exec(ctx, syncProductionScalingStates, appID)
 	return err
+}
+
+const syncRealtimeEgressUsage = `-- name: SyncRealtimeEgressUsage :execrows
+with delivered as (
+  select r.app_id, sum(r.delivered_bytes)::bigint as bytes
+    from realtime_usage_hours r
+   where r.hour >= $2::timestamptz and r.hour < $3::timestamptz
+   group by r.app_id
+), pending as (
+  select d.app_id, (d.bytes - coalesce((
+      select sum(u.net_tx_bytes) from usage_minutes u
+       where u.instance_id = md5('gregale-realtime-egress:' || d.app_id::text)::uuid
+         and u.minute >= $2::timestamptz and u.minute < $3::timestamptz), 0))::bigint as bytes
+    from delivered d
+)
+insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
+select a.account_id, a.id, md5('gregale-realtime-egress:' || a.id::text)::uuid, $1::timestamptz, 0, 0, 0, p.bytes, p.bytes, 0, 0, 0
+  from pending p
+  join apps a on a.id = p.app_id
+ where p.bytes > 0
+on conflict (instance_id, minute) do update
+   set tx_bytes     = usage_minutes.tx_bytes     + EXCLUDED.tx_bytes,
+       net_tx_bytes = usage_minutes.net_tx_bytes + EXCLUDED.net_tx_bytes
+`
+
+type SyncRealtimeEgressUsageParams struct {
+	Minute     pgtype.Timestamptz
+	MonthStart pgtype.Timestamptz
+	MonthEnd   pgtype.Timestamptz
+}
+
+// Realtime fan-out counts as the app's egress (ADR-20261104132753). Every
+// realtime_usage_hours row only grows, so this appends, under the app's
+// realtime usage ID, the month's delivered bytes not yet appended. The caller
+// holds LockRealtimeEgressSync in the same transaction.
+func (q *Queries) SyncRealtimeEgressUsage(ctx context.Context, db DBTX, arg SyncRealtimeEgressUsageParams) (int64, error) {
+	result, err := db.Exec(ctx, syncRealtimeEgressUsage, arg.Minute, arg.MonthStart, arg.MonthEnd)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const syntheticCheckRunStats = `-- name: SyntheticCheckRunStats :one

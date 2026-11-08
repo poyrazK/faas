@@ -456,7 +456,9 @@ func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client egressp
 	if closer, ok := client.(interface{ Close() error }); ok {
 		defer func() { _ = closer.Close() }()
 	}
-	stream, err := client.StreamBytes(ctx, &egresspb.StreamBytesRequest{})
+	// Edge frames (ADR-20261104132753) are asked for only when they can be
+	// persisted: the in-memory fallback is keyed by live instance only.
+	stream, err := client.StreamBytes(ctx, &egresspb.StreamBytesRequest{EdgeFrames: a.persistFrame != nil})
 	if err != nil {
 		if log != nil {
 			log.Warn("gatewayEgressAdapter: stream open failed", "err", err)

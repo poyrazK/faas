@@ -661,6 +661,7 @@ func (l *Loop) runQuotaOnce(ctx context.Context) error {
 		capCache = map[string]int64{}
 	}
 	now := l.now()
+	l.syncRealtimeEgress(ctx, now)
 	elections := l.loadEgressOverageElections(ctx, accounts)
 	for _, acct := range accounts {
 		usages, err := MonthUsageForAccount(ctx, l.store, acct.ID, now)
@@ -696,6 +697,25 @@ func (l *Loop) runQuotaOnce(ctx context.Context) error {
 		return fmt.Errorf("meter: quota: %d failure(s), first: %w", failures, firstErr)
 	}
 	return nil
+}
+
+// realtimeEgressSyncer is the store side of syncRealtimeEgress.
+type realtimeEgressSyncer interface {
+	SyncRealtimeEgressUsage(ctx context.Context, now time.Time) (int64, error)
+}
+
+// syncRealtimeEgress meters the realtime bytes delivered since the last tick
+// as each app's egress before the tick reads usage (ADR-20261104132753), so
+// realtime fan-out reaches the egress ceiling and overage like an instance's
+// bytes. A failure leaves them for the next tick.
+func (l *Loop) syncRealtimeEgress(ctx context.Context, now time.Time) {
+	syncer, ok := l.store.(realtimeEgressSyncer)
+	if !ok {
+		return
+	}
+	if _, err := syncer.SyncRealtimeEgressUsage(ctx, now); err != nil {
+		l.log.Warn("meter: realtime egress sync failed", "err", err)
+	}
 }
 
 // recordSpendCapHold compares the account's combined billable overage this
