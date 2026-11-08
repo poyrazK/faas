@@ -1947,3 +1947,53 @@ A twelfth review found four gaps.
    rules do not apply, and attack mode is one of them: switching it on left
    every path the app's hosts route elsewhere open. The source app's
    attack-mode rule, and only it, now also challenges routed requests.
+
+## Amendment (2026-11-07): project-limited keys and agent approvals
+
+An edge-rules review found two gaps around agent credentials.
+
+1. **Project-limited keys are held to their app like deploy tokens.** An
+   agent or `mcp-login` key limited to projects (ADR-20261104085712) reached
+   `POST /v1/apps/{slug}/edge-rules`, `PATCH /v1/edge-rules/{id}`, rollback,
+   OpenAPI policy apply and a deployed `gregale.yaml`'s `routes` and
+   `async_routes` for apps in its projects, but the host and route-target
+   checks applied only to credentials with an `AppID`. The gateway applies an
+   owner's `*`, glob and other-host rules to every app of that owner, so such
+   a key could redirect, take down, ungate or route apps in other projects; a
+   `route` rule served another project's paths (with its visitors' cookies and
+   `Authorization`) from the key's app, and an `async` rule queued another
+   project's requests with outcomes delivered to the key's app's webhooks.
+   `AppBoundHostProblem` and `appBoundRouteTargetProblem` now apply to every
+   restricted credential: `match_host` must be `@app`, the app's own host or
+   its custom domains, and a route target must be an app the key reaches. A
+   restricted credential also may not update, delete or roll back over a
+   stored rule whose `match_host` reaches past its app
+   (`StoredRuleReachProblem`), since an account credential may have written
+   it to gate other apps.
+2. **Agent approvals cover edge-rule writes.** Rollback of edge rules was in
+   the `production` approval category but create, update, WAF exclusions,
+   attack mode and OpenAPI policy apply were not, although a route, redirect,
+   maintenance or async rule moves or stops traffic as a rollback does. They
+   are now `production` requests; rules addressed by ID resolve to their app
+   (`TargetEdgeRule`), so a preview's rules stay ungated.
+
+## Amendment (2026-11-07, later): host characters, rollback CORS guard, streaming cap docs
+
+1. **`match_host` refuses `%`, `_`, `[`, `]` and `\`.** The store serves a
+   host's rules with `host LIKE replace(match_host, '*', '%')`, where `%` and
+   `_` are wildcards and `[`, `]` and `\` are literal, while cache
+   invalidation, convergence fences, the trace and the dashboard use
+   `path.Match`, which reads them the other way round. A `%` rule was served
+   to hosts its edits never refreshed; an `app[12]` rule showed as covering
+   hosts it never applied to. New and updated rules may not use them; stored
+   rules keep their meaning.
+2. **Rollback re-runs the credentialed CORS origin guard.** A rule-set
+   version recorded before the shared-domain (2026-10-28) and public-suffix
+   (2026-11-04) guards could restore `https://*.<apps domain>` or
+   `https://*.vercel.app` with `allow_credentials` over a fix. Rollback now
+   refuses that, unless the same rule is live with the same origins.
+3. **`max_body_bytes_streaming` is documented as the request cap it is.** On
+   an app with streaming on, every request except a WebSocket upgrade
+   streams (ADR-102 D3: a JSON `Accept` is advisory), so a `limit` rule's
+   `max_body_bytes_streaming` replaces `max_body_bytes` for request bodies, as
+   D24 §6 decided. The edge-rules guide called it a response cap only.

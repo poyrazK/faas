@@ -432,6 +432,8 @@ var routeExclude = map[string]bool{
 	// is GitHub-side state — programmatic consumers shouldn't bind
 	// apps via API. Mirrors the "browser-only dashboard routes"
 	// exclusion above.
+	"POST /v1/account/email":                                     true, // email change; session-cookie + named CSRF-only (ADR-20261107103000)
+	"POST /v1/account/mfa/recovery-codes":                        true, // recovery codes; browser session + strict step-up only (ADR-20261107103000)
 	"POST /v1/install/repos/list":                                true, // bind picker hydrates from this; browser-only
 	"GET /v1/install/connections":                                true, // account connection manager; session-cookie-only
 	"DELETE /v1/install/connections/{installationID}":            true, // account disconnect; session-cookie + named CSRF-only
@@ -613,6 +615,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings":       "GetOrgProjectEnvironmentQueueBindings",
 	"PUT /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings":       "ReplaceOrgProjectEnvironmentQueueBindings",
 	"POST /v1/orgs/{organization}/apps/{slug}/queues/send":                                                             "SendOrgQueueMessage",
+	"POST /v1/orgs/{organization}/apps/{slug}/queues/send-batch":                                                       "SendOrgQueueMessageBatch",
 	"GET /v1/orgs/{organization}/apps/{slug}/queue-bindings":                                                           "ListOrgQueueBindings",
 	"POST /v1/orgs/{organization}/apps/{slug}/queue-bindings":                                                          "CreateOrgQueueBinding",
 	"GET /v1/orgs/{organization}/apps/{slug}/queue-bindings/{id}":                                                      "GetOrgQueueBinding",
@@ -1450,19 +1453,25 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/account/egress-overage":                             "SetEgressOverage",
 	"POST /v1/account/mfa/disable-email":                         "PostAccountMfaDisableEmail",
 	"POST /v1/account/mfa/disable-email/confirm":                 "PostAccountMfaDisableEmailConfirm",
-	"GET /v1/apps/{slug}/forks":                                  "ListAppForks",
-	"POST /v1/apps/{slug}/forks":                                 "CreateAppFork",
-	"GET /v1/apps/{slug}/forks/{id}":                             "GetAppFork",
-	"DELETE /v1/apps/{slug}/forks/{id}":                          "CancelAppFork",
-	"POST /v1/apps/{slug}/forks/{id}/execs":                      "CreateAppForkExec",
-	"GET /v1/apps/{slug}/forks/{id}/execs":                       "ListAppForkExecs",
-	"GET /v1/apps/{slug}/forks/{id}/execs/{exec_id}":             "GetAppForkExec",
-	"GET /v1/apps/{slug}/crash-snapshots/settings":               "GetCrashSnapshotSettings",
-	"PUT /v1/apps/{slug}/crash-snapshots/settings":               "PutCrashSnapshotSettings",
-	"GET /v1/apps/{slug}/crash-snapshots":                        "ListCrashSnapshots",
-	"POST /v1/apps/{slug}/crash-snapshots":                       "CreateCrashSnapshot",
-	"GET /v1/apps/{slug}/crash-snapshots/{id}":                   "GetCrashSnapshot",
-	"POST /v1/apps/{slug}/crash-snapshots/{id}/fork":             "ForkCrashSnapshot",
+	// ADR-20261107103000 account flow routes.
+	"PATCH /v1/account":                              "SetDisplayName",
+	"GET /v1/account/sign-in-methods":                "SignInMethods",
+	"DELETE /v1/account/sign-in-methods/{provider}":  "UnlinkSignInMethod",
+	"POST /v1/auth/verify-email/resend":              "ResendEmailVerification",
+	"POST /v1/orgs/{slug}/leave":                     "LeaveOrg",
+	"GET /v1/apps/{slug}/forks":                      "ListAppForks",
+	"POST /v1/apps/{slug}/forks":                     "CreateAppFork",
+	"GET /v1/apps/{slug}/forks/{id}":                 "GetAppFork",
+	"DELETE /v1/apps/{slug}/forks/{id}":              "CancelAppFork",
+	"POST /v1/apps/{slug}/forks/{id}/execs":          "CreateAppForkExec",
+	"GET /v1/apps/{slug}/forks/{id}/execs":           "ListAppForkExecs",
+	"GET /v1/apps/{slug}/forks/{id}/execs/{exec_id}": "GetAppForkExec",
+	"GET /v1/apps/{slug}/crash-snapshots/settings":   "GetCrashSnapshotSettings",
+	"PUT /v1/apps/{slug}/crash-snapshots/settings":   "PutCrashSnapshotSettings",
+	"GET /v1/apps/{slug}/crash-snapshots":            "ListCrashSnapshots",
+	"POST /v1/apps/{slug}/crash-snapshots":           "CreateCrashSnapshot",
+	"GET /v1/apps/{slug}/crash-snapshots/{id}":       "GetCrashSnapshot",
+	"POST /v1/apps/{slug}/crash-snapshots/{id}/fork": "ForkCrashSnapshot",
 	// Issue #679 / PR-B / ADR-082 — per-account additive budget on
 	// top of the plan's apps.egress_allowlist cap. The auto-derivation
 	// would concat "Account" + "Egress_allowlist_extra" (the literal
@@ -2197,6 +2206,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/commit-sources/{source}/blocked-events":                         "ListCommitBlockedEvents",
 	"POST /v1/commit-sources/{source}/events/{event}/replay":                 "ReplayCommitBlockedEvent",
 	"POST /v1/apps/{slug}/queues/send":                                       "QueueSend",
+	"POST /v1/apps/{slug}/queues/send-batch":                                 "QueueSendBatch",
 	"POST /v1/apps/{slug}/queues/receive":                                    "QueueReceive",
 	"POST /v1/apps/{slug}/queues/{id}/ack":                                   "AckQueueRow",
 	"POST /v1/apps/{slug}/queues/{queue}/leases":                             "LeaseQueueMessages",

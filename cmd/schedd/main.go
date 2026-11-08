@@ -755,6 +755,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// scheduler's fleet-wide placement; a configured owner pins this
 	// schedd to its registered compute node.
 	engine.WithOwnerNodeID(ownerNodeID)
+	// Workloads reach this installation's API through GREGALE_API_URL; unset
+	// leaves the SDK default, https://api.gregale.dev.
+	engine.WithPublicAPIURL(os.Getenv("FAAS_PUBLIC_API_URL"))
 	if leaseGuard != nil {
 		engine.WithTakeoverGuard(leaseGuard)
 	}
@@ -816,7 +819,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261106214916: after a node takes a release, find the recently
 	// active apps whose snapshots there the release made stale.
 	snapshotRefresher := sched.NewSnapshotRefresher(engine, ops.Registry(), log)
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, cpuShapeKeys...), runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.CPUShapeKeys...), runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			if handled, err := requestConcurrency.Apply(key, value); handled {
 				if err == nil {
@@ -1854,6 +1857,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
 			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
 	}
+	switch {
+	case cfg.IdleLadderIdleOut && !cfg.QuietPauseLedger:
+		log.Warn("idle_ladder_idle_out ignored: it needs quiet_pause_ledger (ADR-20261107122928)")
+	case cfg.IdleLadderIdleOut:
+		// The reaper holds an account's paused instances only where meterd
+		// leaves their paused seconds unbilled: the same flag decision.
+		engine.WithIdleLadderIdleOut(func(subject platformflags.Subject) bool {
+			return capabilityFlags.Enabled(platformflags.QuietPauseUnbilled, subject)
+		})
+		log.Info("idle ladder idle-out enabled (ADR-20261107122928)",
+			"snapshot_after_seconds", api.IdleLadderSnapshotAfterSeconds)
+	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
 		if cfg.FrozenTierApps {
@@ -2107,6 +2122,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).
 		WithInstanceActivity(autoscaleReader).
+		WithIdleLadderIdleOutMetrics(sched.NewIdleLadderIdleOutMetrics(ops.Registry())).
 		// Issue #171: shared Prometheus registry (same instance the
 		// engine got) — needed by the aggressive-reaper scale-down
 		// counter (ObserveScaleDown) and the audit-row emission.

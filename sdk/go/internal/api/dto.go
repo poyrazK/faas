@@ -1254,13 +1254,13 @@ type ExecutionUsageSummaryResponse struct {
 // without having to sum rows.
 //
 // Overage math: anything above IncludedGBHours is billable at the
-// overage rate in the financial model (€0.01/GB-h). Cents are integer.
+// overage rate in the financial model ($0.05/GB-h). Cents are integer.
 type UsageSummaryResponse struct {
 	Month           string                         `json:"month"`             // YYYY-MM
 	UsedGBHours     float64                        `json:"used_gb_hours"`     // Σ mb_seconds / 3_600_000
 	IncludedGBHours int64                          `json:"included_gb_hours"` // from plan limits
 	OverageGBHours  float64                        `json:"overage_gb_hours"`  // max(0, used - included)
-	OverageCents    int64                          `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
+	OverageCents    int64                          `json:"overage_cents"`     // overage priced at $0.05/GB-h, in cents
 	Executions      *ExecutionUsageSummaryResponse `json:"executions,omitempty"`
 	// QuietPausedGBHours is quiet-paused time that was not billed; not part
 	// of UsedGBHours. Zero until unbilled quiet pause reaches the account.

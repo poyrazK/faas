@@ -45,8 +45,11 @@ The customer is not billed for this work.
 1. **What starts a pass.** A node's `compute_nodes.release_id` changes (the
    release install stamps it), and once per node when schedd starts, since
    schedd restarts during a release. schedd runs one refresh pass for that
-   node. A pass for a base, kernel or Firecracker change made outside a
-   release, started by an operator, is a later addition.
+   node. Every node is also passed again when the CPU shape settings change
+   the guest vCPU count apps boot with (`guest_vcpu_from_cpu_apps` and the
+   three shape keys, ADR-20261101160231; added 2026-11-08). A pass for a
+   base, kernel or Firecracker change made outside a release, started by an
+   operator, is a later addition.
 2. **Which snapshots.** For each app with a gateway wake in the last
    `snapshot_refresh_window_hours` (default 168), schedd asks the node's vmmd
    whether the app's live snapshot would restore there. A new
@@ -55,6 +58,18 @@ The customer is not billed for this work.
    without starting a VM and answers `current`, `stale` or `unknown`.
    Only `stale` is refreshed. The check stays exact: a pass that asks too
    often costs a lookup, never a wrong restore.
+   Before asking, schedd checks the vCPU count. A snapshot does not record
+   the count it was captured with, and vmmd learns it only by restoring one
+   (`ErrSnapshotVCPUMismatch`). schedd replays the global revisions of the
+   CPU shape keys up to the snapshot's `created_at` and compares the count
+   those settings gave the app with the count it boots with now. A
+   difference is stale (detail `vcpu_count_changed`) without asking vmmd.
+   When the replayed history does not end at the settings schedd applies
+   now (a value written without a revision, or a value schedd refused),
+   schedd skips the comparison and the restore check decides, as before.
+   An instance booted before a change and parked after it keeps the old
+   count in a snapshot dated after the change; the pass misses it and its
+   next wake cold-boots once.
 3. **Skipped.** schedd does not refresh:
    - apps with a live instance (they are recaptured after they park);
    - suspended, deleting or dunning-blocked accounts, and paused or deleted

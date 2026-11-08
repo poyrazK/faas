@@ -1359,6 +1359,11 @@ type App struct {
 	// (sorted, no base ports). Empty for Free/Hobby; Pro and Scale are
 	// capped by api.Plan.EgressExtraPortsMax.
 	EgressPorts []int
+	// EgressAllowlistRevision is apps.egress_allowlist_revision, bumped by
+	// the database on every allowlist or port change. A wake request carries
+	// it so vmmd can tell its cached app policy from a newer one in the
+	// request (0 = unknown, e.g. an App built outside the store).
+	EgressAllowlistRevision int64
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4 that
 	// the app's egress traffic presents on the wire. NULL => no
 	// static IP — egress exits with the host's primary IP (the

@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"io"
 	"log/slog"
@@ -71,6 +72,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 	"net/url"
@@ -2180,6 +2182,30 @@ func (s *server) RunDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 // request path (H86).
 func (r *server) WaitPasswordResetMail() { r.resetMail.wait() }
 
+// SignInIsNew exposes the new-device check behind the sign-in notice.
+func (r *server) SignInIsNew(ctx context.Context, accountID, ip, ua string) bool {
+	return r.signInIsNew(ctx, accountID, ip, ua)
+}
+
+// ResetSecurityMailLimiter forgets every throttled security-mail send.
+func (r *server) ResetSecurityMailLimiter() { r.securityMail = newSecurityMailLimiter() }
+
+// SetVerificationClock moves the clock the email-verification grace reads.
+func (r *server) SetVerificationClock(now func() time.Time) { r.verificationClock = now }
+
+// VerificationDeadline is when an unverified account becomes restricted.
+func VerificationDeadline(acct state.Account) time.Time { return verificationDeadline(acct) }
+
+// LinkOAuthByEmail runs the OAuth email-match link step; the bool reports
+// a refusal because the owner removed the provider.
+func (r *server) LinkOAuthByEmail(req *http.Request, acct state.Account, provider, sub string) (refused bool, err error) {
+	err = r.linkOAuthByEmail(req, acct, provider, sub, acct.Email, true)
+	if errors.Is(err, errOAuthProviderUnlinked) {
+		return true, nil
+	}
+	return false, err
+}
+
 // Login failure limiter internals (bug hunt round 8: eviction when full).
 func NewLoginFailureLimiterForTest() *loginFailureLimiter { return newLoginFailureLimiter() }
 func (l *loginFailureLimiter) Record(key string) bool     { return l.record(key) }
@@ -2189,6 +2215,25 @@ func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
+
+// RegressionComparison exposes chooseRegressionComparison's choice.
+type RegressionComparison struct {
+	Cur, Prev          string
+	CurStart, CurEnd   time.Time
+	PrevStart, PrevEnd time.Time
+}
+
+func ChooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now time.Time) (RegressionComparison, bool) {
+	c, ok := chooseRegressionComparison(deps, now)
+	return RegressionComparison{
+		Cur: c.cur.DeploymentID.String(), Prev: c.prev.DeploymentID.String(),
+		CurStart: c.curStart, CurEnd: c.curEnd, PrevStart: c.prevStart, PrevEnd: c.prevEnd,
+	}, ok
+}
+
+var DebugEvidenceLogWindow = debugEvidenceLogWindow
+
+var CSVSafeCell = csvSafeCell
 
 // ManagedPostgresCapNoticeReady exposes the H88 startup gate on compute cap
 // enforcement.
