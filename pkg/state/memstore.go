@@ -19442,6 +19442,24 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 	return out, nil
 }
 
+// ListEventsBySubjectKind mirrors PgStore.ListEventsBySubjectKind.
+func (m *MemStore) ListEventsBySubjectKind(_ context.Context, subject, kind string, since time.Time, limit int) ([]Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	subj := parseSubjectID(subject)
+	if subj == nil {
+		return nil, nil
+	}
+	var out []Event
+	for i := len(m.events) - 1; i >= 0 && (limit <= 0 || len(out) < limit); i-- {
+		e := m.events[i]
+		if e.Subject != nil && *e.Subject == *subj && e.Kind == kind && !e.At.Before(since) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 func (m *MemStore) ListCustomerEvents(_ context.Context, filter CustomerEventFilter) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

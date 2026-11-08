@@ -154,6 +154,15 @@ func followAppRestart(ctx, signalCtx context.Context, client restartStatusClient
 	if err != nil && options.wait && last.Status != "failed" {
 		_, _ = fmt.Fprintf(osStderr, "Resume following this request: %s\n", restartStatusCommand(slug, options.wakeID))
 	}
+	// --timeout ending the wait is not a network failure: the restart is
+	// still being processed server-side. Say so instead of "Could not reach".
+	if err != nil && signalCtx.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		status := "no status was read"
+		if last.WakeID != "" {
+			status = "last status: " + last.Status + " · " + last.ProgressMessage()
+		}
+		return printErr("Restart still processing", fmt.Errorf("stopped waiting after %s (%s); the restart continues", options.timeout, status))
+	}
 	return checkedRollbackCLIError(signalCtx, "Restart status could not establish completion", err)
 }
 

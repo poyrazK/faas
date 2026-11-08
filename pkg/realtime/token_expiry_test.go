@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -54,6 +55,39 @@ func TestOIDCSocketEndsWhenItsTokenExpires(t *testing.T) {
 	}
 	if time.Now().After(exp.Add(5 * time.Second)) {
 		t.Fatal("socket outlived its token by more than a few seconds")
+	}
+}
+
+// A token inside the verifier's skew leeway but already past exp is refused
+// at the handshake: its socket could not outlive the upgrade, and the app's
+// connect callback would admit an expired identity.
+func TestOIDCHandshakeRefusesTokenPastExpiry(t *testing.T) {
+	m := NewManager(Config{JWTAuthorizer: &recordingJWTAuthorizer{}}, nil)
+	defer m.Close()
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "private", MaxConnectionAge: time.Hour,
+		ClientAuth: AuthPolicy{Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
+			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	defer server.Close()
+	exp := time.Now().Add(-30 * time.Second)
+	payload := base64.RawURLEncoding.EncodeToString(fmt.Appendf(nil, `{"sub":"user-123","exp":%d}`, exp.Unix()))
+	client, response, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):]+ManagedPathPrefix+"private",
+		map[string][]string{"Authorization": {"Bearer e30." + payload + ".sig"}})
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil {
+		_ = client.Close()
+		t.Fatal("handshake with an expired token was accepted")
+	}
+	if response == nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("handshake answered %v, want 401", response)
+	}
+	if stats := m.Stats(); stats.AcceptedConnections != 0 || len(m.Snapshot()) != 0 {
+		t.Fatalf("expired token admitted a connection: %+v", stats)
 	}
 }
 

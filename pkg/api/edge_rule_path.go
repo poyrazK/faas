@@ -195,6 +195,28 @@ func MatchProtectiveEdgeRulePath(glob, requestPath string) (bool, error) {
 	return false, nil
 }
 
+// ProtectiveEdgeRulePaths returns the path forms a rule that denies or
+// constrains matches requestPath under (MatchProtectiveEdgeRulePath): the raw
+// path, its dot-segment/duplicate-slash normalized form, that form with each
+// segment's ";" parameters dropped, and the case-folded forms, each once and
+// raw first. Match conditions on such rules hold when they hold for any form
+// (ADR-20261107190000), as the match_path selector already does.
+func ProtectiveEdgeRulePaths(requestPath string) []string {
+	out := []string{requestPath}
+	add := func(p string) {
+		if !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	cleaned := path.Clean("/" + strings.ReplaceAll(requestPath, "\\", "/"))
+	bare := stripPathParameters(cleaned)
+	add(cleaned)
+	add(bare)
+	add(strings.ToLower(cleaned))
+	add(strings.ToLower(bare))
+	return out
+}
+
 // stripPathParameters drops each segment's ";" parameters (RFC 3986 section
 // 3.3), as servlet containers do before routing: /a;jsessionid=1/b;v=2
 // becomes /a/b.

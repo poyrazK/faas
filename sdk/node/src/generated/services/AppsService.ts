@@ -6628,9 +6628,12 @@ export class AppsService {
    * available for spreadsheet and support workflows. The export uses the
    * same plan retention boundary as the debugger list, never includes
    * request bodies, headers, source IPs, or raw span attributes, and is
-   * capped at 10,000 rows. `X-Faas-Request-Log-Window` and
-   * `X-Faas-Request-Log-Retention-Clamped` describe the effective window
-   * applied to the artifact.
+   * capped at 10,000 rows. It takes the request list's filters.
+   * `X-Faas-Request-Log-Window` and `X-Faas-Request-Log-Retention-Clamped`
+   * describe the effective window applied to the artifact, and
+   * `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+   * In CSV, a value that would start a spreadsheet formula is written
+   * with a leading apostrophe.
    *
    * @returns binary Metadata-only request telemetry export.
    * @throws ApiError
@@ -6641,6 +6644,11 @@ export class AppsService {
     route,
     format = 'ndjson',
     limit,
+    deploymentId,
+    status,
+    coldBoot,
+    consumerId,
+    minLatencyMs,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -6662,6 +6670,26 @@ export class AppsService {
      * Maximum number of retained rows to export.
      */
     limit?: number | null,
+    /**
+     * Export only rows served by this deployment UUID.
+     */
+    deploymentId?: string | null,
+    /**
+     * Export only rows with this HTTP status.
+     */
+    status?: number | null,
+    /**
+     * Export only cold-start rows when true, or only warm rows when false.
+     */
+    coldBoot?: boolean | null,
+    /**
+     * Export only one consumer's rows (UUID), or __anonymous__ for rows without a stable consumer identity.
+     */
+    consumerId?: string | null,
+    /**
+     * Export only rows whose latency bucket bound is at least this many milliseconds.
+     */
+    minLatencyMs?: number | null,
   }): CancelablePromise<Blob> {
     return __request(OpenAPI, {
       responseType: 'blob',
@@ -6675,6 +6703,11 @@ export class AppsService {
         'route': route,
         'format': format,
         'limit': limit,
+        'deployment_id': deploymentId,
+        'status': status,
+        'cold_boot': coldBoot,
+        'consumer_id': consumerId,
+        'min_latency_ms': minLatencyMs,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

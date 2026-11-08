@@ -111,7 +111,8 @@ type Querier interface {
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)
 	AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlugRow, error)
 	// New config: requests from the minute of the latest change on, served by an
-	// instance started after it or failing before any instance served them.
+	// instance started after it or failing before any instance served them
+	// (those carry no deployment; see the WHERE clause).
 	// Old config: requests in the baseline window before the guard opened.
 	// Telemetry is minute-bucketed, so instance start time attributes the change
 	// minute. Only deployments that existed when the guard opened count: a
@@ -3693,6 +3694,10 @@ type Querier interface {
 	// PR-B uses this to seed the dropdowns; the actual percentile
 	// comparison is two RequestTelemetryBaselineP95ByRoute calls in Go
 	// (PR-A ships that query; the regression cron uses the same shape).
+	//
+	// deployment_created_at lets the regression detector order deployments by
+	// release rather than by who served the last request (ADR-127 amendment
+	// 2026-11-05).
 	ListDeploymentsForCompare(ctx context.Context, db DBTX, arg ListDeploymentsForCompareParams) ([]ListDeploymentsForCompareRow, error)
 	ListDevBridges(ctx context.Context, db DBTX, arg ListDevBridgesParams) ([]ListDevBridgesRow, error)
 	ListDoctorDomainBatch(ctx context.Context, db DBTX, batchLimit int32) ([]string, error)
@@ -3782,6 +3787,11 @@ type Querier interface {
 	// fan-out can enforce tenant isolation without joining apps.
 	ListEventSubscriptionsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]EventSubscription, error)
 	ListEvents(ctx context.Context, db DBTX, arg ListEventsParams) ([]ListEventsRow, error)
+	// One kind of a subject's events since a time, newest first: the debugger's
+	// "why is it running" history reads only the scheduler's observations, so
+	// other events about the app cannot push them out of a bounded read
+	// (ADR-127 amendment 2026-11-05). events_subject_idx (subject, at desc).
+	ListEventsBySubjectKind(ctx context.Context, db DBTX, arg ListEventsBySubjectKindParams) ([]ListEventsBySubjectKindRow, error)
 	// issue #517 / PR-C / ADR-064 — wake-timeline read-side query.
 	// Filters on the jsonb expression index events_wake_id_idx
 	// (migrations/00114_events_wake_id_idx.sql) and orders by at ASC
@@ -4007,7 +4017,12 @@ type Querier interface {
 	// pass an app id from another tenant; the app lookup remains the primary
 	// IDOR boundary. Evidence is newest-first within each route/deployment
 	// partition, then interleaved so one high-volume revision cannot crowd all
-	// prior deployments out of the bounded comparison window.
+	// prior deployments out of the bounded comparison window. $6 splits each
+	// partition at the time the history compares across (the window's middle),
+	// so the older half keeps its share of a busy app's bounded read instead of
+	// losing all of it to the newest rows (ADR-127 amendment 2026-11-05); a
+	// caller that compares deployments rather than halves passes the window
+	// start.
 	ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error)
 	// adr: 20261018030616
 	ListRestartFunctionMigrationDestinations(ctx context.Context, db DBTX, arg ListRestartFunctionMigrationDestinationsParams) ([]FunctionMigrationDestination, error)
@@ -6789,6 +6804,14 @@ type Querier interface {
 	// Lock the node before its epoch, matching registration and FK deletion order.
 	ReportGatewayPolicyProgress(ctx context.Context, db DBTX, arg ReportGatewayPolicyProgressParams) (int64, error)
 	ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg ReportGatewayTrafficRuntimeParams) (int64, error)
+	// Requests the analytics rollups counted for an app in whole minutes from
+	// bucket_from to bucket_until, and the first minute the rollups hold for it.
+	// The rollups count every row the plan keeps, including the rows the
+	// debugger's per-minute ingest cap turned away (ADR-20261103113952), so the
+	// debugger can say how many requests it did not keep (ADR-127 amendment
+	// 2026-11-05). Route rows carry every request once. retained is the
+	// debugger's own count over the same minutes.
+	RequestAnalyticsCountedRequests(ctx context.Context, db DBTX, arg RequestAnalyticsCountedRequestsParams) (RequestAnalyticsCountedRequestsRow, error)
 	// ADR-20261103113952: analytics totals from the rollups. Whole hours in
 	// [hours_from, hours_until) come from the hourly tier and the minutes on
 	// either side from the minute tier (amendment 2); callers pass an empty
@@ -6880,11 +6903,16 @@ type Querier interface {
 	// request. The rank/floor formulation below is equivalent to
 	// percentile_cont over the expanded multiset of bucket
 	// representatives, without materializing one row per request.
+	// $5 (regression view, ADR-127 amendment 2026-11-05) leaves out what is
+	// not the deployment's own warm latency, as the release gates do:
+	// platform refusals, requests pinned to a deployment, long-lived
+	// streams and cold boots. Other callers pass false.
 	RequestTelemetryBaselineP95ByRoute(ctx context.Context, db DBTX, arg RequestTelemetryBaselineP95ByRouteParams) ([]RequestTelemetryBaselineP95ByRouteRow, error)
 	// Per-deployment drilldown. Used by gregale debug compare and the
 	// regression detector (PR-B). Includes the publisher's `count`
 	// weight so callers can report request totals rather than stored
 	// aggregate-row totals. Uses request_telemetry_app_dep_received_idx.
+	// $6 is the regression view (see RequestTelemetryBaselineP95ByRoute).
 	RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg RequestTelemetryByDeploymentParams) ([]RequestTelemetryByDeploymentRow, error)
 	// Bounded candidate/stable health summary for the deployment circuit breaker.
 	// `count` weights collapsed telemetry rows; compute request and 5xx totals,
@@ -6914,7 +6942,9 @@ type Querier interface {
 	// deployment and window, weighted by the publisher's collapsed-row count.
 	// The regression detector compares the error share of the current and the
 	// previous deployment (ADR-127 amendment: error-rate regressions). Same
-	// index as RequestTelemetryBaselineP95ByRoute.
+	// index as RequestTelemetryBaselineP95ByRoute. $5 is the regression view:
+	// the platform's own refusals and requests pinned to a deployment are not
+	// the deployment's errors.
 	RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryErrorsByRouteParams) ([]RequestTelemetryErrorsByRouteRow, error)
 	// One immutable deployment only. Identity joins validate ownership, never
 	// infer a tenant from today's consumer link. Counts precede all output caps.

@@ -21728,6 +21728,48 @@ func (s *PgStore) ListEvents(ctx context.Context, subject string, limit int) ([]
 	return out, rows.Err()
 }
 
+// RequestsNotRetained returns how many requests the analytics rollups
+// counted for an app in the whole minutes from bucketFrom to bucketUntil
+// beyond what the debugger kept, and whether the rollups held the app since
+// bucketFrom (RequestAnalyticsCounter).
+func (s *PgStore) RequestsNotRetained(ctx context.Context, appID string, bucketFrom, bucketUntil time.Time) (int64, bool, error) {
+	id, err := uuid.Parse(appID)
+	if err != nil {
+		return 0, false, fmt.Errorf("requests not retained: app id: %w", err)
+	}
+	row, err := sqlc.New().RequestAnalyticsCountedRequests(ctx, s.pool, sqlc.RequestAnalyticsCountedRequestsParams{
+		AppID:       pgtype.UUID{Bytes: id, Valid: true},
+		BucketFrom:  pgtype.Timestamptz{Time: bucketFrom, Valid: true},
+		BucketUntil: pgtype.Timestamptz{Time: bucketUntil, Valid: true},
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	return max(row.Requests-row.Retained, 0), row.CoveredSince.Valid && !row.CoveredSince.Time.After(bucketFrom), nil
+}
+
+// ListEventsBySubjectKind returns one kind of a subject's events since a
+// time, newest first (EventKindLister).
+func (s *PgStore) ListEventsBySubjectKind(ctx context.Context, subject, kind string, since time.Time, limit int) ([]Event, error) {
+	id, err := uuid.Parse(subject)
+	if err != nil {
+		return nil, fmt.Errorf("list events by kind: subject: %w", err)
+	}
+	rows, err := sqlc.New().ListEventsBySubjectKind(ctx, s.pool, sqlc.ListEventsBySubjectKindParams{
+		Subject: pgtype.UUID{Bytes: id, Valid: true}, Kind: kind,
+		At: pgtype.Timestamptz{Time: since, Valid: true}, Limit: int32(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Event, 0, len(rows))
+	for _, row := range rows {
+		subj := uuid.UUID(row.Subject.Bytes)
+		out = append(out, Event{ID: row.ID, At: row.At.Time, Actor: row.Actor, Kind: row.Kind, Subject: &subj, Data: json.RawMessage(row.Data)})
+	}
+	return out, nil
+}
+
 // listCustomerEventsHead and listCustomerEventsTail frame both shapes of the
 // account-wide ListCustomerEvents query; only the kind-prefix predicate
 // differs. $1 account, $2 include anonymous, $3 kind prefix, $4 since,
@@ -26398,7 +26440,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&onlyAllowDeclaredRoutes, &declaredRoutesBytes, &visibility,
 		&a.RetryPolicyJSON, &securityPolicy, &orgID,
 		&a.RequestRateLimitRPS, &a.RequestRateLimitBurst, &egressPorts,
-		&a.PlatformTenantRequired); err != nil {
+		&a.PlatformTenantRequired, &a.EgressAllowlistRevision); err != nil {
 		return mapErr(err)
 	}
 	a.EgressPorts = egressPortsFromDB(egressPorts)
@@ -26596,7 +26638,11 @@ const appsSelectColumns = `
 	request_rate_limit_rps, request_rate_limit_burst,
 	-- ADR-361: extra egress ports, appended to keep positional scans stable.
 	egress_ports,
-	platform_tenant_required`
+	platform_tenant_required,
+	-- Read with egress_allowlist/egress_ports in one row so a wake request
+	-- can name the revision of the policy it carries; appended to keep
+	-- positional scans stable.
+	egress_allowlist_revision`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`

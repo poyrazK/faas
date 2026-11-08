@@ -3975,6 +3975,11 @@ type WakeRequest struct {
 	// on top of api.TenantEgressBasePorts. Forbidden ports are dropped
 	// again when the policy is applied.
 	EgressPorts []uint16
+	// EgressRevision is the apps.egress_allowlist_revision that
+	// EgressAllowlist/EgressPorts were read at. wake uses the cached app
+	// policy (UpdateAppEgressPolicy) unless this revision is newer than it;
+	// 0 = unknown (older scheduler), the cache wins.
+	EgressRevision int64
 	// PrivateNetworkCIDRs contains provider-verified VPC destinations. Empty
 	// means the attachment is pending/error (or not configured); vmmd keeps the
 	// default RFC1918 deny in that case. Ready CIDRs are validated again here
@@ -4202,6 +4207,8 @@ type ColdBootRequest struct {
 	EgressAllowlist []string
 	// EgressPorts (ADR-361) — same shape as WakeRequest.
 	EgressPorts []uint16
+	// EgressRevision — same meaning as WakeRequest.EgressRevision.
+	EgressRevision int64
 	// PrivateNetworkCIDRs mirrors WakeRequest.PrivateNetworkCIDRs for callers
 	// that invoke ColdBoot directly instead of using the scheduler wire.
 	PrivateNetworkCIDRs         []string
@@ -4285,6 +4292,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		APIEnvEntries:               req.APIEnvEntries,
 		EgressAllowlist:             req.EgressAllowlist,
 		EgressPorts:                 req.EgressPorts,
+		EgressRevision:              req.EgressRevision,
 		PrivateNetworkCIDRs:         req.PrivateNetworkCIDRs,
 		PrivateNetworkAllowedCIDRs:  req.PrivateNetworkAllowedCIDRs,
 		PrivateNetworkFirewallRules: req.PrivateNetworkFirewallRules,
@@ -4731,13 +4739,18 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			m.mu.Unlock()
 			return nil, err
 		}
-	} else if policy, ok := m.appEgressPolicies[req.AppID]; ok {
+	} else if policy, ok := m.appEgressPolicies[req.AppID]; ok && !wakeEgressNewerThanCache(req, policy) {
 		if err := validateAppEgressPolicyPlan(req.Plan, policy); err != nil {
 			m.mu.Unlock()
 			return nil, err
 		}
 		req.EgressAllowlist = egressPrefixStrings(policy.allowlist)
 		req.EgressPorts = append([]uint16{}, policy.ports...)
+	} else if ok && len(req.EgressPorts) > req.Plan.EgressExtraPortsMax() {
+		// The newer request replaces a cached policy that was plan-checked;
+		// hold it to the same bound.
+		m.mu.Unlock()
+		return nil, fmt.Errorf("fcvm: app egress policy exceeds live workload plan")
 	}
 	m.mu.Unlock()
 

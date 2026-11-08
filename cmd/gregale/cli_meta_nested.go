@@ -100,16 +100,14 @@ func debugRequestsCLISubcommand() cliSub {
 		cliFlag{Name: "interval", Short: "poll interval (250ms..1h)", Value: "DURATION"},
 		cliFlag{Name: "once", Short: "poll once and exit"})
 	inspect := append(debugRequestFilterCLIFlags(), cliFlag{Name: "latest", Short: "select the newest retained request matching the filters"})
+	export := append(debugRequestFilterCLIFlags(),
+		cliFlag{Name: "format", Short: "export format (default ndjson)", Value: "FORMAT", ClosedSet: []string{"ndjson", "csv"}},
+		cliFlag{Name: "limit", Short: "maximum exported rows (1..10000)", Value: "N"},
+		cliFlag{Name: "output", Short: "destination file; - writes stdout", Value: "PATH"})
 	request := []string{"<slug>", "<request-id-or-row-id>"}
 	return cliSub{Name: "requests", Short: "Per-request telemetry and root-cause synthesis", Subcommands: []cliSub{
 		{Name: "list", Short: "List recent request telemetry", Positionals: []string{"<slug>"}, Flags: list},
-		{Name: "export", Short: "Export metadata-only request telemetry", Positionals: []string{"<slug>"}, Flags: []cliFlag{
-			{Name: "since", Short: "lookback window", Value: "DURATION"},
-			{Name: "route", Short: "route filter: /path matches every method", Value: "PATH"},
-			{Name: "format", Short: "export format (default ndjson)", Value: "FORMAT", ClosedSet: []string{"ndjson", "csv"}},
-			{Name: "limit", Short: "maximum exported rows (1..10000)", Value: "N"},
-			{Name: "output", Short: "destination file; - writes stdout", Value: "PATH"},
-		}},
+		{Name: "export", Short: "Export metadata-only request telemetry", Positionals: []string{"<slug>"}, Flags: export},
 		{Name: "watch", Short: "Watch new or changed telemetry rows", Positionals: []string{"<slug>"}, Flags: watch},
 		{Name: "get", Short: "Show request metadata", Positionals: request},
 		{Name: "show", Short: "Show the request timeline and evidence", Positionals: request},

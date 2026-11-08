@@ -153,3 +153,15 @@ func (m *Manager) currentAppEgressAllowlist(appID string) []netip.Prefix {
 	defer m.perAppAllowlistMu.RUnlock()
 	return append([]netip.Prefix{}, m.perAppAllowlist[appID]...)
 }
+
+// wakeEgressNewerThanCache reports whether a wake request carries a newer
+// egress policy than the node's cached projection for the app. The cache is
+// refreshed by UpdateAppEgressPolicy, which schedd sends only after the
+// change commits; a wake scheduled in between reads the app row directly
+// and names its revision. The request's policy then wins (it is validated
+// again when the netns is rendered); the cache is left for schedd's
+// ordinary push, which also patches this node's live VMs. A request without
+// a revision (an older scheduler) keeps the cache, as before.
+func wakeEgressNewerThanCache(req WakeRequest, cached appEgressPolicy) bool {
+	return req.EgressRevision > 0 && req.EgressRevision > cached.revision
+}
