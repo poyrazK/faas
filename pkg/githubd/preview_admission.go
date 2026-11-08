@@ -32,7 +32,7 @@ func (s *Service) previewDatastoreShortfall(ctx context.Context, fsys fs.FS, acc
 	env, err := reposcan.ReadProjectEnv(fsys, s.scanOptions(accountID), scan.Workloads)
 	if err != nil {
 		// The PR head's values could not be read either; the build reports it.
-		return "", nil
+		return "", nil //nolint:nilerr // an unreadable Compose file is the build's failure to report, not this check's.
 	}
 	byWorkload := make(map[string]state.App, len(previewed))
 	for _, app := range previewed {
