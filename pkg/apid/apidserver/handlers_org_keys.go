@@ -426,6 +426,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 			s.notFound(w, "key already revoked")
 			return
 		}
+		if errors.Is(err, state.ErrAPIKeyExpired) {
+			api.WriteProblem(w, api.ErrAPIKeyExpired())
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("could not rotate key"))
 		return
 	}
