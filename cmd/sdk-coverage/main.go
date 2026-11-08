@@ -1786,6 +1786,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/notification-channels":            "ListNotificationChannels",
 	"POST /v1/notification-channels":           "CreateNotificationChannel",
 	"GET /v1/notification-channels/{id}":       "GetNotificationChannel",
+	"PATCH /v1/notification-channels/{id}":     "UpdateNotificationChannel",
 	"DELETE /v1/notification-channels/{id}":    "DeleteNotificationChannel",
 	"POST /v1/notification-channels/{id}/test": "TestNotificationChannel",
 	// ADR-747 customer SLOs are named after the resource noun.

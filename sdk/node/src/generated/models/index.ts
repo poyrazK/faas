@@ -3144,6 +3144,7 @@ export type { UpdateManagedRealtimeEndpointRequest } from './UpdateManagedRealti
 export type { UpdateMirrorRuleRequest } from './UpdateMirrorRuleRequest.js';
 export type { UpdateNativeIssueTrackerStatusRequest } from './UpdateNativeIssueTrackerStatusRequest.js';
 export type { UpdateNativeLinearIssueTrackerStatusRequest } from './UpdateNativeLinearIssueTrackerStatusRequest.js';
+export type { UpdateNotificationChannelRequest } from './UpdateNotificationChannelRequest.js';
 export type { UpdateOutboundBindingPolicyRequest } from './UpdateOutboundBindingPolicyRequest.js';
 export type { UpdatePlatformTenantWebhookRequest } from './UpdatePlatformTenantWebhookRequest.js';
 export type { UpdatePrivateNetworkPolicyRequest } from './UpdatePrivateNetworkPolicyRequest.js';
