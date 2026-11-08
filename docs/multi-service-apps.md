@@ -346,7 +346,9 @@ deploy to a named environment sets it on the services it creates; the protocol
 is app-wide, so a stage deploy leaves an existing app's alone. A service that
 declares none keeps the protocol set with
 `gregale app update <app> --app-protocol`. gRPC needs the Hobby plan or
-above, and the plan refuses it on Free.
+above, and the plan refuses it on Free. A streaming RPC between services, like
+any streamed response, ends after about 15 minutes; clients reconnect and
+resume ([long-lived streams](networking.md#long-lived-streams)).
 
 Plain TCP between services (Redis, PostgreSQL and other non-HTTP protocols)
 is off unless your operator has enabled it; see
