@@ -51,6 +51,10 @@ export type { AdoptEnvironmentGitOpsResponse } from './models/AdoptEnvironmentGi
 export type { AdvanceCanaryRequest } from './models/AdvanceCanaryRequest.js';
 export type { AdvanceStoredWorkflowLiveSuiteRequest } from './models/AdvanceStoredWorkflowLiveSuiteRequest.js';
 export type { AfterRestoreHook } from './models/AfterRestoreHook.js';
+export type { AgentActivityBefore } from './models/AgentActivityBefore.js';
+export type { AgentActivityEntry } from './models/AgentActivityEntry.js';
+export type { AgentActivityLimit } from './models/AgentActivityLimit.js';
+export type { AgentActivityResponse } from './models/AgentActivityResponse.js';
 export type { AgentApprovalChannelsRequest } from './models/AgentApprovalChannelsRequest.js';
 export type { AgentApprovalChannelsResponse } from './models/AgentApprovalChannelsResponse.js';
 export type { AgentApprovalPendingInfo } from './models/AgentApprovalPendingInfo.js';

@@ -223,6 +223,18 @@ type Agent struct {
 	DeletedAt     pgtype.Timestamptz
 }
 
+type AgentActivity struct {
+	ID         pgtype.UUID
+	KeyID      pgtype.UUID
+	AccountID  pgtype.UUID
+	OrgID      pgtype.UUID
+	Method     string
+	Path       string
+	Status     int32
+	ApprovalID pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+}
+
 // ADR-20261107140000 notification channels that get agent approval requests; apid is the only writer.
 type AgentApprovalChannelBinding struct {
 	AccountID pgtype.UUID

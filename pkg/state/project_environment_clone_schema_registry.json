@@ -62,6 +62,21 @@
     "kind": "operational"
   },
   {
+    "table": "agent_activity",
+    "columns": [
+      "account_id",
+      "approval_id",
+      "created_at",
+      "id",
+      "key_id",
+      "method",
+      "org_id",
+      "path",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_approval_notifications",
     "columns": [
       "account_id",

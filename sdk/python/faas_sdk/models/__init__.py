@@ -34,6 +34,9 @@ from .activity_actor_response_type import ActivityActorResponseType
 from .activity_resource_response import ActivityResourceResponse
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_activity_entry import AgentActivityEntry
+from .agent_activity_entry_method import AgentActivityEntryMethod
+from .agent_activity_response import AgentActivityResponse
 from .agent_approval_channels_request import AgentApprovalChannelsRequest
 from .agent_approval_channels_response import AgentApprovalChannelsResponse
 from .agent_approval_pending_info import AgentApprovalPendingInfo
@@ -2705,6 +2708,9 @@ __all__ = (
     "ActivityResourceResponse",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentActivityEntry",
+    "AgentActivityEntryMethod",
+    "AgentActivityResponse",
     "AgentApprovalChannelsRequest",
     "AgentApprovalChannelsResponse",
     "AgentApprovalPendingInfo",

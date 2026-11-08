@@ -6742,9 +6742,11 @@ Show sign-ins and security changes
 
 #### account activity list
 
-List sign-ins, credentials and security changes of the last 90 days (newest 100)
+List sign-ins, credential and security changes of the last 90 days
 
 `gregale account activity list`
+
+Shows the newest 100 events.
 
 
 ## org
