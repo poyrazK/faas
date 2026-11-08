@@ -29,7 +29,7 @@ type storedWorkflowDefinitionDiff struct {
 }
 
 func diffStoredWorkflowDefinition(storedWorkflow api.StoredWorkflowResponse) (storedWorkflowDefinitionDiff, error) {
-	report := storedWorkflowDefinitionDiff{Name: storedWorkflow.Name, DraftVersion: storedWorkflow.Version, PublishedVersion: storedWorkflow.PublishedVersion, FirstPublication: storedWorkflow.Published == nil, LiveEnabled: storedWorkflow.Enabled, Changes: []storedWorkflowDefinitionChange{}}
+	report := storedWorkflowDefinitionDiff{Name: storedWorkflow.Name, DraftVersion: storedWorkflow.Version, PublishedVersion: storedWorkflow.PublishedVersion, FirstPublication: storedWorkflow.Published == nil, LiveEnabled: storedWorkflow.Published != nil && storedWorkflow.Enabled, Changes: []storedWorkflowDefinitionChange{}}
 	// Compare fields as raw JSON to retain exact numbers and distinguish null from absence.
 	normalize := func(spec api.WorkflowSpec) (map[string]json.RawMessage, error) {
 		data, err := json.Marshal(spec)

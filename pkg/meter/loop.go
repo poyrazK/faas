@@ -313,6 +313,14 @@ func (l *Loop) Run(ctx context.Context) error {
 			"per_account_flag", l.quietPauseRelease != nil)
 	}
 	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
+	if source, err := ParseUsageSource(l.cfg.BillingUsageSource); err != nil {
+		// cmd/meterd refuses to start on an invalid value; a Loop built
+		// another way keeps billing usage_minutes.
+		l.log.Warn("meter: billing usage source stays usage_minutes", "err", err)
+	} else {
+		pusher.WithUsageSource(source)
+		l.log.Info("meter: billing usage source (ADR-20261107105126)", "source", source)
+	}
 	finalLag := newUsageFinalLagGauge(l.ops.Registry())
 	// One result slot per possible worker, including monitoring and delivery;
 	// a cancelled Run must not strand workers trying to report their exit.
@@ -781,6 +789,12 @@ func (l *Loop) sendSpendCapMail(ctx context.Context, acct state.Account, hold st
 	}
 }
 
+// liveMeterOverageCents is the month's live overage on meter for the spend
+// cap. Egress is what the month is billed by the egress hour rules
+// (monthLiveEgressBilled): bytes sent in hours the overage election does not
+// cover, or on Free, are not billed (ADR-20261103131742 amendment 2,
+// ADR-20261104204500). A store that cannot read usage by hour keeps the
+// older bound: the elected overage above the allowance.
 func liveMeterOverageCents(ctx context.Context, store state.Store, provider billing.Provider, acct state.Account, now time.Time, meter state.BillingMeter) (int64, error) {
 	policyProvider, ok := provider.(billing.MeterUsagePolicyProvider)
 	if !ok {
@@ -789,6 +803,17 @@ func liveMeterOverageCents(ctx context.Context, store state.Store, provider bill
 	policy, configured := policyProvider.MeterUsagePolicy(acct.Plan, meter)
 	if !configured || policy.Mode != billing.MeterDeliveryLive {
 		return 0, nil
+	}
+	if meter == state.BillingMeterEgress {
+		// The egress the month is billed by the hour rules, the figure the
+		// pusher's cap clamps reserve.
+		billed, err := monthLiveEgressBilled(ctx, usageReader{store: store}, provider, acct, now, now)
+		if !errors.Is(err, errNoHourlyUsage) {
+			if err != nil {
+				return 0, err
+			}
+			return billing.MeterUsageCents(policy, billed), nil
+		}
 	}
 	monthStart := time.Date(now.UTC().Year(), now.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
 	start := monthStart

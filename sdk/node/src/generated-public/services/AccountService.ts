@@ -17,6 +17,7 @@ import type { EgressOverageResponse } from '../models/EgressOverageResponse.js';
 import type { Preview } from '../models/Preview.js';
 import type { PreviewList } from '../models/PreviewList.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
+import type { SecurityActivityResponse } from '../models/SecurityActivityResponse.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
 import type { SignInMethodsResponse } from '../models/SignInMethodsResponse.js';
 import type { UpdateAccountBillingInfoRequest } from '../models/UpdateAccountBillingInfoRequest.js';
@@ -190,6 +191,32 @@ export class AccountService {
       url: '/v1/account/sign-in-methods',
       errors: {
         401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the account's sign-ins and security changes.
+   * Sign-ins, API keys and CLI sign-ins, password, email, two-factor
+   * and sign-in method changes of the last 90 days, newest first, at
+   * most 100. Each event carries a fixed summary, and the client address
+   * and sign-in method when they were recorded. Needs a full-access
+   * credential.
+   *
+   * @returns SecurityActivityResponse Security events, newest first.
+   * @throws ApiError
+   */
+  public static getAccountSecurityActivity(): CancelablePromise<SecurityActivityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/security-activity',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

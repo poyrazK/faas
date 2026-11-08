@@ -60,6 +60,9 @@ func topLevelUsage(showAll, showOperator bool) string {
 	b.WriteString("                         Interactive-only commands retain human prompts.\n")
 	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
 	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
+	b.WriteString("  --wait-for-approval    When an agent key's request needs a person's approval,\n")
+	b.WriteString("                         wait for the decision and retry once (before the\n")
+	b.WriteString("                         command). Equivalent env: GREGALE_WAIT_FOR_APPROVAL=1.\n")
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
 }
@@ -112,14 +115,15 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
-	previousStoredWorkflow := nonInteractive
-	defer func() { nonInteractive = previousStoredWorkflow }()
+	previousAutomation, previousWait := nonInteractive, approvalWaitEnabled
+	defer func() { nonInteractive, approvalWaitEnabled = previousAutomation, previousWait }()
 	nonInteractive = false
+	approvalWaitEnabled = os.Getenv("GREGALE_WAIT_FOR_APPROVAL") == "1"
 	previousInsecureWarned := insecureAPIWarned
 	defer func() { insecureAPIWarned = previousInsecureWarned }()
 	insecureAPIWarned = false
-	var storedWorkflowErr error
-	args, storedWorkflowErr = extractStoredWorkflowFlag(args)
+	var automationErr error
+	args, automationErr = extractAutomationFlag(args)
 	previousProfile := profileOverride
 	defer func() { profileOverride = previousProfile }()
 	profileOverride = ""
@@ -134,8 +138,8 @@ func run(args []string) (status int) {
 		PrintUsage(os.Stderr, "invalid --json value "+invalidJSON+"; use true or false", "cli")
 		return 1
 	}
-	if storedWorkflowErr != nil {
-		return printErr("Invalid stored workflow option", storedWorkflowErr)
+	if automationErr != nil {
+		return printErr("Invalid automation option", automationErr)
 	}
 	if profileErr != nil {
 		return printErr("Invalid connection profile", profileErr)

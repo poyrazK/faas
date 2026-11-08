@@ -2,6 +2,7 @@
 package edgecert_test
 
 import (
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -38,6 +39,9 @@ type fakeCA struct {
 	swapKey bool
 	names   []string
 	now     time.Time
+	// lifetime is the leaf's validity; zero is Let's Encrypt's short-lived
+	// profile, 160 hours.
+	lifetime time.Duration
 }
 
 func newFakeCA(t *testing.T) *fakeCA {
@@ -72,7 +76,7 @@ func (f *fakeCA) Order(_ context.Context, key crypto.Signer, names []string) ([]
 		names = f.names
 	}
 	tmpl := &x509.Certificate{SerialNumber: big.NewInt(int64(0xabc000 + f.orders)), DNSNames: names,
-		NotBefore: f.now, NotAfter: f.now.Add(90 * 24 * time.Hour)}
+		NotBefore: f.now, NotAfter: f.now.Add(cmp.Or(f.lifetime, 160*time.Hour))}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, f.cert, pub, f.key)
 	if err != nil {
 		f.t.Fatal(err)
@@ -131,6 +135,7 @@ func TestIssueRefusesALeafItDidNotAskFor(t *testing.T) {
 		{"another key", func(f *fakeCA) { f.swapKey = true }, "does not carry the key"},
 		{"other names", func(f *fakeCA) { f.names = []string{"*.evil.dev"} }, "the leaf names"},
 		{"order fails", func(f *fakeCA) { f.fail = errors.New("rate limited") }, "rate limited"},
+		{"a CA that ignored the profile", func(f *fakeCA) { f.lifetime = 90 * 24 * time.Hour }, "longer than"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ca := newFakeCA(t)
@@ -167,6 +172,8 @@ func TestDue(t *testing.T) {
 		{"fresh", fresh, "k1", false},
 		{"recipient changed", fresh, "k2", true},
 		{"inside the renewal window", &edgecert.Terms{KeyKID: "k1", NotAfter: now.Add(api.EdgeCertificateRenewBefore)}, "k1", true},
+		{"longer-lived than the limit", &edgecert.Terms{KeyKID: "k1", NotAfter: now.Add(api.EdgeCertificateLifetimeMax + time.Minute)}, "k1", true},
+		{"at the limit", &edgecert.Terms{KeyKID: "k1", NotAfter: now.Add(api.EdgeCertificateLifetimeMax)}, "k1", false},
 	} {
 		if due, reason := edgecert.Due(tc.newest, tc.kid, now); due != tc.due || due == (reason == "") {
 			t.Errorf("%s: Due = %v %q, want %v", tc.name, due, reason, tc.due)
@@ -174,7 +181,8 @@ func TestDue(t *testing.T) {
 	}
 }
 
-// fakeStore keeps certificates in memory and fails inserts on request.
+// fakeStore keeps certificates in memory and fails inserts on request. Its
+// newest certificate is the one issued last, as the queries order them.
 type fakeStore struct {
 	certs      []edgecert.Certificate
 	failInsert int
@@ -184,7 +192,7 @@ type fakeStore struct {
 func (s *fakeStore) NewestTerms(_ context.Context, names []string, ca string) (edgecert.Terms, bool, error) {
 	var newest *edgecert.Certificate
 	for i, c := range s.certs {
-		if strings.Join(c.Names, ",") == strings.Join(names, ",") && c.CA == ca && (newest == nil || !c.NotAfter.Before(newest.NotAfter)) {
+		if strings.Join(c.Names, ",") == strings.Join(names, ",") && c.CA == ca && (newest == nil || !c.NotBefore.Before(newest.NotBefore)) {
 			newest = &s.certs[i]
 		}
 	}
@@ -290,5 +298,25 @@ func TestManagerReordersForANewRecipient(t *testing.T) {
 	newManager(ca, store, next, &now).Step(t.Context())
 	if ca.orders != 2 || store.certs[1].KeyKID != next.Recipient().String() {
 		t.Fatalf("orders %d, newest kid %q", ca.orders, store.certs[len(store.certs)-1].KeyKID)
+	}
+}
+
+// A certificate from before short-lived ones is replaced at once, and only
+// once: the replacement, issued later, is the newest even though the old
+// one expires later (ADR-20261108100000). Ordering by expiry instead would
+// keep the old one newest and order again every hour.
+func TestManagerReplacesALongLivedCertificateOnce(t *testing.T) {
+	ca, store, id := newFakeCA(t), &fakeStore{}, newIdentity(t)
+	now := ca.now
+	store.certs = append(store.certs, edgecert.Certificate{Names: wildcard, CA: ca.CA(), KeyKID: id.Recipient().String(),
+		NotBefore: now.Add(-30 * 24 * time.Hour), NotAfter: now.Add(60 * 24 * time.Hour)})
+	m := newManager(ca, store, id, &now)
+	for range 3 {
+		m.Step(t.Context())
+		now = now.Add(api.EdgeCertificateCheckInterval)
+		ca.now = now
+	}
+	if ca.orders != 1 || len(store.certs) != 2 {
+		t.Fatalf("orders %d, stored %d; want the long-lived certificate replaced by one order", ca.orders, len(store.certs))
 	}
 }

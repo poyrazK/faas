@@ -362,7 +362,9 @@ func storedWorkflowResponses(manifest json.RawMessage, records []state.StoredWor
 			item.Source = "dashboard"
 		} else if item.Source == "" {
 			item.Source = "draft"
-			item.Enabled = record.Enabled
+			// Nothing is published yet: report the state publication would
+			// produce, from the draft's trigger.enabled.
+			item.Enabled = item.Draft.Trigger == nil || item.Draft.Trigger.Enabled == nil || *item.Draft.Trigger.Enabled
 		}
 		byName[record.Name] = item
 	}

@@ -329,7 +329,10 @@ other hosts (`*`, a wildcard, another app's host), or a route that sends
 another app's host to this app, needs an account API key, because edge rules
 apply to every host they cover across your apps. A route rule written with a
 deploy token may serve only the token's app: routing its hosts to another app
-needs an account API key too.
+needs an account API key too. For the same reason a deploy token cannot
+change, delete or roll back over a rule an account credential wrote for wider
+hosts, even when the rule is listed under its app: that answers 403 naming the
+rule's host, and an account API key makes the change.
 
 ```bash
 gregale app deploy-token create --app my-api --label ci   # default expiry: 90 days

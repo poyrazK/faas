@@ -870,7 +870,10 @@ func printStoredWorkflowDelete(name string, version int64, restoreManifest bool)
 }
 
 type storedWorkflowRevisionSummary struct {
-	Version        int64     `json:"version"`
+	Version int64 `json:"version"`
+	// Revision repeats Version under the name that `revisions show --revision`
+	// and `restore --revision` take.
+	Revision       int64     `json:"revision"`
 	DefinitionHash string    `json:"definition_hash"`
 	RecordedAt     time.Time `json:"recorded_at"`
 	LegacySnapshot bool      `json:"legacy_snapshot"`
@@ -970,7 +973,7 @@ func printStoredWorkflowRevisionRestore(revision int64, result api.StoredWorkflo
 }
 
 func summarizeStoredWorkflowRevision(result api.StoredWorkflowRevisionResponse) storedWorkflowRevisionSummary {
-	return storedWorkflowRevisionSummary{Version: result.Version, DefinitionHash: result.DefinitionHash, RecordedAt: result.RecordedAt, LegacySnapshot: result.LegacySnapshot}
+	return storedWorkflowRevisionSummary{Version: result.Version, Revision: result.Version, DefinitionHash: result.DefinitionHash, RecordedAt: result.RecordedAt, LegacySnapshot: result.LegacySnapshot}
 }
 
 func printStoredWorkflowHealth(result api.StoredWorkflowHealthResponse) int {

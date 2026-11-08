@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docs.gregale.dev/dpa/subprocessors.schema.json",
-  "version": "1.0.0",
-  "effective_date": "2026-08-08",
+  "version": "2.0.0",
+  "effective_date": "2026-11-08",
   "notice_window_days": 30,
   "controller_artifact_path": "docs/compliance/subprocessors.json",
   "rendered_artifact_path": "docs/compliance/subprocessors.md",
@@ -10,61 +10,64 @@
   "dpa_reference": "docs/DPA.md §7",
   "sub_processors": [
     {
-      "id": "postgres-hosting",
-      "category": "database",
-      "vendor": "Hetzner",
-      "service": "Hetzner managed single-tenant Postgres",
+      "id": "hosting-ovhcloud",
+      "category": "infrastructure-hosting",
+      "vendor": "OVHcloud",
+      "service": "Dedicated bare-metal servers for the control plane, compute nodes, managed Postgres and storage",
       "data_categories": [
-        "account metadata",
-        "app metadata",
-        "deployment artifacts (digests only — secrets never stored here)",
-        "audit events",
-        "usage metering records"
+        "account and organization data (email, sign-in and security records, audit log)",
+        "application source code, build artifacts and container images",
+        "application environment variables and secrets (secrets sealed with host keys before storage)",
+        "application request logs and metrics",
+        "managed Postgres databases and object storage contents",
+        "backups of the above"
       ],
-      "data_region": "EU (FSN1 / NBG1 datacenters)",
-      "encryption": "AES-256 at rest; TLS 1.3 in transit",
-      "retention_days": 30,
+      "data_region": "US (OVHcloud US data centres)",
+      "encryption": "TLS in transit; customer secrets sealed at rest with host keys",
+      "retention_days": null,
       "dpa_signed": true,
-      "dpa_reference": "docs/DPA.md §7",
+      "dpa_reference": "OVHcloud Data Processing Agreement (part of the OVHcloud contract terms)",
       "operator_switch_env": null,
-      "rationale": "Single source of truth for platform state. The model budget (spec §13) assumes EU jurisdiction; FSN1/NBG1 gives us that."
+      "rationale": "Primary production hosting for the public release. Gregale runs and administers the servers; OVHcloud provides the hardware, data centres and network."
     },
     {
-      "id": "stripe-billing",
-      "category": "billing",
-      "vendor": "Stripe",
-      "service": "Stripe Billing + metered usage records (legacy opt-in)",
+      "id": "hosting-google-cloud",
+      "category": "infrastructure-hosting",
+      "vendor": "Google Cloud",
+      "service": "Compute Engine virtual machines and Cloud Storage",
       "data_categories": [
-        "customer email",
-        "plan tier",
-        "metered usage (account-id + hours + MB-RAM-hours)",
-        "invoice items"
+        "account and organization data (email, sign-in and security records, audit log)",
+        "application source code, build artifacts and container images",
+        "application environment variables and secrets (secrets sealed with host keys before storage)",
+        "application request logs and metrics",
+        "managed Postgres databases and object storage contents",
+        "backups of the above"
       ],
-      "data_region": "US (Stripe default) — controller can opt into EU via Stripe account settings",
-      "encryption": "Stripe-managed; PCI-DSS Level 1 attestation",
+      "data_region": "US (us-east1)",
+      "encryption": "Google-managed AES-256 at rest; TLS in transit; customer secrets additionally sealed with host keys",
       "retention_days": null,
       "dpa_signed": true,
-      "dpa_reference": "Stripe Data Processing Addendum (linked from Stripe Dashboard)",
-      "operator_switch_env": "FAAS_BILLING_PROVIDER",
-      "rationale": "Legacy opt-in billing provider. We pass account-id + plan + metered usage; Stripe handles card data under its own PCI-DSS attestation. Processor never sees card numbers."
+      "dpa_reference": "Google Cloud Data Processing Addendum (Cloud Data Processing Terms)",
+      "operator_switch_env": null,
+      "rationale": "Hosts the current production fleet during the public beta. After the move to OVHcloud it hosts a standby and test environments."
     },
     {
-      "id": "paddle-billing",
-      "category": "billing",
-      "vendor": "Paddle",
-      "service": "Paddle Billing (explicit compatibility provider)",
+      "id": "network-cloudflare",
+      "category": "network-dns-cdn",
+      "vendor": "Cloudflare",
+      "service": "DNS, reverse proxy and TLS termination, CDN and DDoS / web application firewall protection",
       "data_categories": [
-        "customer email",
-        "plan tier",
-        "metered usage (account-id + hours + MB-RAM-hours)"
+        "request metadata for traffic to Gregale and customer apps (IP address, headers, URL, timing)",
+        "request and response bodies in transit through the proxy",
+        "DNS records for Gregale and customer custom domains"
       ],
-      "data_region": "EU or US (Paddle entity selected by the merchant)",
-      "encryption": "Paddle-managed; PCI-DSS Level 1 attestation",
+      "data_region": "Global (Cloudflare edge network)",
+      "encryption": "TLS in transit at the edge and to origin",
       "retention_days": null,
       "dpa_signed": true,
-      "dpa_reference": "Paddle Data Processing Addendum (linked from Paddle Dashboard)",
-      "operator_switch_env": "FAAS_BILLING_PROVIDER",
-      "rationale": "Explicit compatibility provider for deployments that already use Paddle. Paddle Billing has no usage-summary endpoint, so ReconcileUsage returns ErrNotImplemented for Paddle accounts (issue #279)."
+      "dpa_reference": "Cloudflare Customer Data Processing Addendum (linked from the Cloudflare dashboard)",
+      "operator_switch_env": null,
+      "rationale": "Every request to gregale.dev, the API and customer apps passes through Cloudflare for DNS, TLS, caching and attack protection before it reaches Gregale's servers."
     },
     {
       "id": "polar-billing",
@@ -102,40 +105,6 @@
       "dpa_reference": "Resend Data Processing Addendum (linked from Resend Dashboard)",
       "operator_switch_env": "FAAS_MAIL_TRANSPORT",
       "rationale": "Transactional email transport + inbound webhook. Outbound: account-holder-only email (no end-user PII). Inbound (issue #246 / ADR-115 §D.3): Resend POSTs bounce / complaint / delivery events to /v1/webhooks/resend, Svix HMAC-signed; payload carries recipient email + provider event id, no body or subject. The bounce handler (pkg/meter/bounce_handler.go) writes a mail_suppressions row + a mail.bounce_hard / mail.bounce_complaint audit row + advances dunning for hard bounces. Default in dev is 'log' (writes to slog; no third-party processing)."
-    },
-    {
-      "id": "transactional-email-postmark",
-      "category": "transactional-email",
-      "vendor": "Postmark",
-      "service": "Postmark transactional email transport + bounce / spam-complaint webhook",
-      "data_categories": [
-        "recipient email (account holder only)",
-        "subject + body of the transactional message",
-        "inbound bounce / spam-complaint events: recipient email + bounce reason + message id"
-      ],
-      "data_region": "US (Postmark default)",
-      "encryption": "TLS 1.3 in transit",
-      "retention_days": null,
-      "dpa_signed": true,
-      "dpa_reference": "Postmark Data Processing Addendum (linked from Postmark Dashboard)",
-      "operator_switch_env": "FAAS_MAIL_TRANSPORT",
-      "rationale": "Opt-in transactional email transport + inbound webhook. Production wires FAAS_MAIL_TRANSPORT=postmark; default in dev is 'log'. Inbound webhook parity with the Resend handler is a follow-up ADR — today only the Resend dispatch is wired (issue #246 acceptance item 8). Email bodies contain no end-user PII."
-    },
-    {
-      "id": "off-host-backup-storage",
-      "category": "off-host-backup",
-      "vendor": "Hetzner",
-      "service": "Hetzner Storage Box (SFTP + rclone)",
-      "data_categories": [
-        "encrypted Postgres dump (AES-256 / X25519-sealed via ADR-020)"
-      ],
-      "data_region": "EU (FSN1 / NBG1 datacenters)",
-      "encryption": "Storage Box sees ciphertext only — encryption with operator's host X25519 age recipient happens BEFORE transit (ADR-020)",
-      "retention_days": 30,
-      "dpa_signed": true,
-      "dpa_reference": "docs/DPA.md §7",
-      "operator_switch_env": null,
-      "rationale": "Off-host encrypted backups (DR drill requirement, SOC 2 CC7.5 / ISO 27001 A.5.29/A.5.30). The customer's own storage box is the Processor-side target; Processor holds the decryption key but does not access backup contents absent a Controller-initiated restore request."
     },
     {
       "id": "oauth-google",
@@ -178,9 +147,10 @@
       "id": "github-checks-api",
       "category": "developer-platform",
       "vendor": "GitHub",
-      "service": "GitHub Checks API + install-token exchange (outbound from githubd)",
+      "service": "GitHub App: repository access for deploys, Checks API and install-token exchange (outbound from githubd)",
       "data_categories": [
-        "SHA-only commit metadata (Checks API)",
+        "source archives of repositories the customer connects, fetched to build deployments",
+        "commit metadata (SHA, branch, author) for deploys and Checks",
         "OAuth install-token exchange payloads"
       ],
       "data_region": "US (GitHub default)",
@@ -189,7 +159,39 @@
       "dpa_signed": true,
       "dpa_reference": "GitHub Data Protection Addendum (linked from GitHub Settings)",
       "operator_switch_env": null,
-      "rationale": "githubd daemon is the only outbound caller to api.github.com. Outbound traffic carries SHA-only commit metadata (Checks) and OAuth install-token exchange — no customer PII. Inbound webhook reception at POST /webhooks/github is HMAC-SHA-256 verified (X-Hub-Signature-256, constant-time compare) before any payload is consumed."
+      "rationale": "githubd is the only outbound caller to api.github.com. It fetches the source of repositories a customer connects through the Gregale GitHub App to build their deployments, posts Checks results keyed by commit SHA, and exchanges installation tokens. Inbound webhooks at POST /webhooks/github are HMAC-SHA-256 verified (X-Hub-Signature-256, constant-time compare) before any payload is consumed."
+    },
+    {
+      "id": "frontend-vercel",
+      "category": "website-hosting",
+      "vendor": "Vercel",
+      "service": "Hosting for the gregale.dev website, documentation and web front end",
+      "data_categories": [
+        "website visitor request metadata (IP address, user agent, URL) in request logs"
+      ],
+      "data_region": "Global edge network (US by default)",
+      "encryption": "TLS in transit",
+      "retention_days": null,
+      "dpa_signed": true,
+      "dpa_reference": "Vercel Data Processing Addendum (linked from the Vercel dashboard)",
+      "operator_switch_env": null,
+      "rationale": "Serves the marketing site, docs and web front end. Account data and applications are stored by Gregale's own servers, not Vercel."
+    },
+    {
+      "id": "testing-aws",
+      "category": "test-infrastructure",
+      "vendor": "Amazon Web Services",
+      "service": "Test and development environments",
+      "data_categories": [
+        "test accounts and synthetic data only; no customer personal data in normal operation"
+      ],
+      "data_region": "US",
+      "encryption": "AWS-managed encryption at rest; TLS in transit",
+      "retention_days": null,
+      "dpa_signed": true,
+      "dpa_reference": "AWS Data Processing Addendum (part of the AWS Service Terms)",
+      "operator_switch_env": null,
+      "rationale": "Runs test environments. Listed for completeness: production customer data is not copied there."
     }
   ]
 }

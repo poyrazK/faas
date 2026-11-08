@@ -83,10 +83,15 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 				return
 			}
 		}
+		action := edgerules.ActionFromBody(check.Kind, check.Action)
+		if problem := edgerules.SecretHeaderOpsProblem(check.Kind, action); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		rules = append(rules, state.ProjectEnvironmentEdgeRule{
 			Kind: state.EdgeRuleKind(check.Kind), MatchPath: check.MatchPath,
 			MatchMethods: append([]string(nil), check.MatchMethods...), MatchHeaders: check.MatchHeaders,
-			Priority: priority, Enabled: enabled, Action: edgerules.ActionFromBody(check.Kind, check.Action),
+			Priority: priority, Enabled: enabled, Action: action,
 		})
 	}
 	convergence, err := s.edgeRules.PrepareEdgeRuleMutation(r.Context(), app.ID, "", "environment_policy_updated", host)

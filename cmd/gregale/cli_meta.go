@@ -624,7 +624,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "sessions", Short: "List or sign out browser sessions", Subcommands: []cliSub{
 				{Name: "list", Short: "List signed-in browsers"},
-				{Name: "revoke", Short: "Sign out one browser, or every browser with --all; API keys keep working", Positionals: []string{"[SESSION_ID]"}, Flags: []cliFlag{
+				{Name: "revoke", Short: "Sign out one browser session, or all of them", Notes: []string{"API keys keep working."}, Positionals: []string{"[SESSION_ID]"}, Flags: []cliFlag{
 					{Name: "all", Short: "sign out every browser", Bool: true},
 					{Name: "yes", Short: "with --all, sign out without prompting", Bool: true},
 				}},
@@ -638,6 +638,9 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "provider", Short: "Show how you can sign in", Subcommands: []cliSub{
 				{Name: "list", Short: "List your password, two-factor and linked Google/GitHub sign-ins"},
+			}},
+			{Name: "activity", Short: "Show sign-ins and security changes", Subcommands: []cliSub{
+				{Name: "list", Short: "List sign-ins, credentials and security changes of the last 90 days (newest 100)"},
 			}},
 			{Name: "billing-connection", Short: "Connect, show or disconnect a billing key for invoice exports", Notes: []string{"Supports Stripe, Paddle and Lago."}, Subcommands: []cliSub{
 				{Name: "connect", Short: "Connect a billing provider key", Notes: []string{"Reads the key from stdin, so it never appears in shell history or the process list."}, Positionals: []string{"{stripe|paddle|lago}"}, Flags: []cliFlag{
@@ -2636,16 +2639,20 @@ var cliCommands = []cliCommand{
 			"gregale workflow stored list --app billing",
 			"gregale workflow stored get --app billing --name paid-invoice",
 			"gregale workflow stored health --app billing --name paid-invoice",
-			"gregale workflow stored pause --app billing --name paid-invoice --expected-version 8",
-			"gregale workflow stored resume --app billing --name paid-invoice --expected-version 9",
+			"gregale workflow stored pause --app billing --name paid-invoice --expected-version VERSION",
+			"gregale workflow stored resume --app billing --name paid-invoice --expected-version VERSION",
 			"gregale workflow stored revisions list --app billing --name paid-invoice",
 			"gregale workflow stored revisions show --app billing --name paid-invoice --revision 42",
 			"gregale workflow stored validate --app billing --file stored_workflow.yaml",
 			"gregale workflow stored simulate --app billing --file stored_workflow.yaml --input-file sample.json",
 			"gregale workflow stored apply --app billing --file stored_workflow.yaml --expected-version 0",
-			"gregale workflow stored publish --app billing --name paid-invoice --expected-version 1",
-			"gregale workflow stored restore --app billing --name paid-invoice --revision 42 --expected-version 47",
-			"gregale workflow stored delete --app billing --name paid-invoice --expected-version 48 --yes",
+			"gregale workflow stored publish --app billing --name paid-invoice --expected-version VERSION",
+			"gregale workflow stored restore --app billing --name paid-invoice --revision 42 --expected-version VERSION",
+			"gregale workflow stored delete --app billing --name paid-invoice --expected-version VERSION --yes",
+		},
+		HelpNotes: []string{
+			"VERSION is the \"version\" returned by the previous write (or shown by get/list). Versions come from one counter shared by every stored workflow in the app, so a new draft saved with --expected-version 0 usually returns a version greater than 1.",
+			"Revision numbers in `revisions list` (\"revision\", also \"version\") are what --revision takes. Resume restores the published trigger.enabled; it does not enable a definition with trigger.enabled: false.",
 		},
 		Subcommands: []cliSub{
 			{Name: "live", Short: "Start, observe and check saved cases against real execution", Subcommands: storedWorkflowLiveCLISubs()},
@@ -2656,7 +2663,7 @@ var cliCommands = []cliCommand{
 			{Name: "get", Short: "Inspect stored workflow state or export a definition", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "definition-out", Short: "export the selected definition as JSON to a new file", Value: "PATH"}, {Name: "published", Short: "export the published definition instead of the draft"}}},
 			{Name: "runs", Short: "List run history for one stored workflow", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "status", Short: "pending, running, awaiting_event, succeeded, failed or dead", Value: "STATUS"}, {Name: "limit", Short: "page size (1..100, default 50)", Value: "N"}, {Name: "offset", Short: "page offset", Value: "N"}, {Name: "created-after", Short: "inclusive RFC3339 creation-time start", Value: "RFC3339"}, {Name: "created-before", Short: "inclusive RFC3339 creation-time end", Value: "RFC3339"}}},
 			{Name: "diagnose", Short: "Diagnose a run belonging to the selected stored workflow", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "run", Short: "workflow run UUID", Req: true, Value: "UUID"}}},
-			{Name: "history", Short: "Inspect retained recovery stored workflow history", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "workflow", Value: "NAME", Short: "native workflow filter"}, {Name: "run", Value: "UUID", Short: "native run filter"}, {Name: "policy-version", Value: "N", Short: "policy version filter"}, {Name: "created-after", Value: "RFC3339", Short: "inclusive start"}, {Name: "created-before", Value: "RFC3339", Short: "inclusive end"}, {Name: "after", Value: "CURSOR", Short: "next page cursor"}, {Name: "limit", Value: "N", Short: "page size (default 25, max 100)"}}},
+			{Name: "history", Short: "Inspect retained recovery automation history", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "workflow", Value: "NAME", Short: "native workflow filter"}, {Name: "run", Value: "UUID", Short: "native run filter"}, {Name: "policy-version", Value: "N", Short: "policy version filter"}, {Name: "created-after", Value: "RFC3339", Short: "inclusive start"}, {Name: "created-before", Value: "RFC3339", Short: "inclusive end"}, {Name: "after", Value: "CURSOR", Short: "next page cursor"}, {Name: "limit", Value: "N", Short: "page size (default 25, max 100)"}}},
 			{Name: "health", Short: "Inspect app recovery health or named stored workflow run reliability", Flags: []cliFlag{{Name: "stall-after-seconds", Value: "SECONDS", Short: "app recovery evaluation threshold (default 300)"}, {Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Value: "NAME"}, {Name: "created-after", Short: "inclusive RFC3339 window start (max 30 days)", Value: "RFC3339"}, {Name: "created-before", Short: "inclusive RFC3339 window end", Value: "RFC3339"}}},
 			{Name: "report", Short: "Summarize workflow recovery outcomes over a time window", Flags: []cliFlag{
 				{Name: "app", Req: true, Value: "SLUG", Short: "app slug"},
@@ -3311,16 +3318,29 @@ var cliCommands = []cliCommand{
 				"gregale dev trigger invoke --method POST --path /orders --payload @order.json",
 				"gregale dev trigger cron /jobs/nightly",
 				"gregale dev trigger delayed-task --delay 5m --path /reminders",
+				"gregale dev trigger invoke --source ./api --name shop --method GET --path /healthz",
 				"gregale dev trigger --local cron digest",
 				"gregale dev trigger --local invoke users /users/7 --data '{\"id\":7}'",
-			}, Flags: []cliFlag{
+			}, Notes: []string{"--source and --name select the developer environment and work before or after the verb. After the verb, --path is the request URL path; before the verb it is the older spelling of --source."}, Flags: []cliFlag{
 				{Name: "local", Short: "call a function served by gregale dev --local, as a cron or async call reaches it"},
-				{Name: "path", Short: "source directory (before the verb)", Value: "DIR"},
-				{Name: "name", Short: "developer-session project name (before the verb)", Value: "PROJECT"},
+				{Name: "source", Short: "source directory (before or after the verb)", Value: "DIR"},
+				{Name: "name", Short: "developer-session project name (before or after the verb)", Value: "PROJECT"},
+				{Name: "path", Short: "source directory, only before the verb (use --source)", Value: "DIR"},
 			}, Subcommands: []cliSub{
-				{Name: "invoke", Short: "Invoke the developer app"},
+				{Name: "invoke", Short: "Invoke the developer app", Flags: []cliFlag{
+					{Name: "path", Short: "request URL path (defaults to the handler's)", Value: "URL_PATH"},
+					{Name: "method", Short: "HTTP method override", Value: "METHOD"},
+					{Name: "payload", Short: "JSON payload, @file, or - for stdin", Value: "JSON"},
+					{Name: "async", Short: "fire and forget; prints the status URL"},
+				}},
 				{Name: "cron", Short: "POST to a cron route declared for this app in gregale.yaml", Positionals: []string{"[ROUTE]"}},
-				{Name: "delayed-task", Short: "Schedule a delayed task on the developer app"},
+				{Name: "delayed-task", Short: "Schedule a delayed task on the developer app", Flags: []cliFlag{
+					{Name: "path", Short: "request URL path invoked when due (default /)", Value: "URL_PATH"},
+					{Name: "delay", Short: "relative delay such as 30m", Value: "DURATION"},
+					{Name: "scheduled-at", Short: "RFC3339 dispatch time", Value: "RFC3339"},
+					{Name: "method", Short: "HTTP method (default POST)", Value: "METHOD"},
+					{Name: "payload", Short: "JSON payload, @file, or - for stdin", Value: "JSON"},
+				}},
 			}},
 			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},

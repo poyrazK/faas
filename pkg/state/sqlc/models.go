@@ -2333,6 +2333,7 @@ type BillingMeterUsageDelivery struct {
 	WindowStart pgtype.Timestamptz
 	Quantity    int64
 	DeliveredAt pgtype.Timestamptz
+	UsageSource pgtype.Text
 }
 
 type BillingPaymentFailureReceipt struct {
@@ -2471,6 +2472,7 @@ type BillingUsageDelivery struct {
 	WindowStart pgtype.Timestamptz
 	MbSeconds   int64
 	DeliveredAt pgtype.Timestamptz
+	UsageSource pgtype.Text
 }
 
 type BindingVerificationRun struct {
@@ -3158,6 +3160,22 @@ type CrashSnapshotSetting struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+// One-time fixed provider discounts Gregale attached to a billing subject's subscription to apply its account credit to the next order; redeemed when an order carries it. Written only by apid (ADR-20261104212028).
+type CreditDiscount struct {
+	ID                     pgtype.UUID
+	SubjectID              pgtype.UUID
+	Provider               string
+	ProviderSubscriptionID string
+	ProviderDiscountID     string
+	AmountCents            int64
+	Currency               string
+	State                  string
+	ProviderInvoiceID      pgtype.Text
+	RedeemedCents          pgtype.Int8
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+}
+
 type CreditLedger struct {
 	ID                pgtype.UUID
 	AccountID         pgtype.UUID
@@ -3638,6 +3656,8 @@ type DataApiChangeHookReport struct {
 	LastPublishedAt pgtype.Timestamptz
 	LastFailureCode pgtype.Text
 	Publishing      string
+	// ADR-20261022121642 amendment 3: when capture last left a change out at the backlog bound, as the runtime last reported.
+	LastDroppedAt pgtype.Timestamptz
 }
 
 type DataApiRuntimeConnectionObservation struct {
@@ -4695,6 +4715,14 @@ type EdgeRuleEvent struct {
 	WafRuleIds    []int32
 	WafCategories []string
 	WafScore      int32
+}
+
+type EdgeRuleHeaderSecret struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	Ciphertext []byte
+	CreatedAt  pgtype.Timestamptz
 }
 
 type EdgeRuleHitCount struct {
@@ -8101,6 +8129,14 @@ type LayerArtifactRetention struct {
 	DeleteRequestedAt pgtype.Timestamptz
 }
 
+type LegalAcceptance struct {
+	AccountID  pgtype.UUID
+	Document   string
+	Version    string
+	Method     string
+	AcceptedAt pgtype.Timestamptz
+}
+
 type LogArchiveErasure struct {
 	AccountID           pgtype.UUID
 	DeletionRequestedAt pgtype.Timestamptz
@@ -9652,6 +9688,18 @@ type MfaDisableToken struct {
 	ReadyAt          pgtype.Timestamptz
 	ExpiresAt        pgtype.Timestamptz
 	ConsumedAt       pgtype.Timestamptz
+}
+
+type MfaTrustedBrowser struct {
+	ID         pgtype.UUID
+	TokenHash  []byte
+	AccountID  pgtype.UUID
+	UaFamily   string
+	CreatedIp  string
+	CreatedAt  pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+	RevokedAt  pgtype.Timestamptz
 }
 
 type MigrationAdmission struct {

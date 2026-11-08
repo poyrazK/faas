@@ -1039,7 +1039,7 @@ func cmdAppsRm(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale app delete <slug> [--dry-run|-q|--quiet|--yes]", "apps")
 		return 1
 	}
-	if code := requireStoredWorkflowConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
+	if code := requireAutomationConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
 		return code
 	}
 	slug := fs.Arg(0)
@@ -2787,6 +2787,25 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return &v
 	}
 	slug := *name
+	// A project deploy names its project from the link's "project", never
+	// from its "app" (ChronoLake finding 25.3).
+	linkedProject := ""
+	if projectRequested && slug == "" && *projectSlug == "" {
+		var linkErr error
+		linkedProject, linkErr = linkedProjectSlug(contextDir)
+		if linkErr != nil {
+			return printErr("Could not read local project context", linkErr)
+		}
+		if linkedProject != "" {
+			// The app slug is unused by a project deploy; a project link
+			// that selects no single workload must not fail here.
+			if app, appErr := linkedAppSlug(contextDir); appErr == nil {
+				slug = app
+			} else {
+				slug = linkedProject
+			}
+		}
+	}
 	if slug == "" {
 		var nameErr error
 		slug, nameErr = linkedDefaultAppName(contextDir)
@@ -3197,6 +3216,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			projectName = defaultProjectSlug(*tarball)
 		case *name == "" && *templateName != "":
 			projectName = *templateName
+		case *name == "" && linkedProject != "":
+			projectName = linkedProject
 		case *name == "":
 			// Compose names its project at the top level; a directory
 			// name that differs must not claim another project's apps.

@@ -95,7 +95,7 @@ func requireConfirmationFlag(approved bool, flag, action string) int {
 	if approved {
 		return 0
 	}
-	if code := requireStoredWorkflowConfirmation(false, flag); code != 0 {
+	if code := requireAutomationConfirmation(false, flag); code != 0 {
 		return code
 	}
 	if jsonOutput {

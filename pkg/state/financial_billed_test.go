@@ -118,3 +118,47 @@ func TestCurrentMonthOverageCentsAfterADowngrade(t *testing.T) {
 		t.Fatalf("overage after 7 GB-h more = %d (%v), want 7 GB-h of overage", cents, err)
 	}
 }
+
+// Free hours are never billed (ADR-20261101143527), so they never count as
+// billed compute: a subject that subscribes mid-month is billed only usage
+// after it subscribes above the allowance then in force, and its cap is not
+// spent on its Free hours. A month on Free throughout bills nothing.
+// adr: 20261101143527, 20261031100000
+func TestMonthBilledComputeSkipsFreeHours(t *testing.T) {
+	monthStart := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	subscribed := monthStart.Add(11 * 24 * time.Hour) // the 12th, 00:00
+	grant := func(plan api.Plan, at time.Time) FinancialPriceSnapshot {
+		return FinancialPriceSnapshot{
+			PeriodStart: monthStart, PeriodEnd: monthStart.AddDate(0, 1, 0), Plan: plan, EffectiveFrom: at, RecordedAt: at,
+			Price: financial.Price{Meter: "compute", IncludedQuantity: api.IncludedMBSeconds(plan)},
+		}
+	}
+	gbh := api.SecondsPerGBHour
+	// 140 GB-h on Free before subscribing, 210 GB-h on Hobby after.
+	usageBefore := func(time.Time) (int64, error) { return 140 * gbh, nil }
+	snapshots := []FinancialPriceSnapshot{grant(api.PlanFree, monthStart), grant(api.PlanHobby, subscribed)}
+	end := monthStart.AddDate(0, 1, 0)
+	got, err := MonthBilledComputeMBSeconds(api.PlanHobby, snapshots, end, 350*gbh, usageBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// After subscribing the allowance is Free's share of the 11 days plus
+	// Hobby's of the other 20; the pusher bills each Hobby hour above it.
+	included := MonthComputeIncludedMBSeconds(api.PlanHobby, snapshots, subscribed.Add(time.Hour))
+	want := api.BillableMBSecondsAbove(included, 350*gbh) - api.BillableMBSecondsAbove(included, 140*gbh)
+	if got != want || want <= 0 {
+		t.Fatalf("billed %d mb_seconds, want %d: only Hobby hours above the allowance", got, want)
+	}
+	// Through the subscription the month was Free: nothing is billed.
+	if got, err := MonthBilledComputeMBSeconds(api.PlanHobby, snapshots, subscribed, 140*gbh, usageBefore); err != nil || got != 0 {
+		t.Fatalf("billed through the subscription = %d (%v), want 0", got, err)
+	}
+	free := []FinancialPriceSnapshot{grant(api.PlanFree, monthStart)}
+	if got, err := MonthBilledComputeMBSeconds(api.PlanFree, free, end, 90*gbh, usageBefore); err != nil || got != 0 {
+		t.Fatalf("a Free month billed %d (%v), want 0", got, err)
+	}
+	// Without recorded activations the current plan applies, Free included.
+	if got, err := MonthBilledComputeMBSeconds(api.PlanFree, nil, end, 90*gbh, usageBefore); err != nil || got != 0 {
+		t.Fatalf("a Free month without activations billed %d (%v), want 0", got, err)
+	}
+}

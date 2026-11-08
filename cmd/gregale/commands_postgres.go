@@ -460,7 +460,7 @@ func cmdPostgresDelete(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale postgres delete <database> [--purge] [--yes|--quiet]", "postgres")
 		return 1
 	}
-	if code := requireStoredWorkflowConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
 		return code
 	}
 	if !*quiet && jsonOutput {

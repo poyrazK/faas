@@ -121,6 +121,7 @@ plain managed_realtime_worker_credentials.token_hash
 plain mcp_bridge_state.sealed
 plain mfa_disable_requests.token_hash
 plain mfa_disable_tokens.token_hash
+plain mfa_trusted_browsers.token_hash
 plain migration_admissions.adoption_receipt
 plain mirror_invocation_results.body_hash
 plain mirror_invocation_results.schema_hash

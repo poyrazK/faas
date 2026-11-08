@@ -65,13 +65,13 @@ func TestCLIRegressionStoredWorkflowPrefixAndForwarding(t *testing.T) {
 	} {
 		nonInteractive = false
 		original := append([]string(nil), tc.args...)
-		got, err := extractStoredWorkflowFlag(tc.args)
+		got, err := extractAutomationFlag(tc.args)
 		if err != nil || !reflect.DeepEqual(got, tc.want) || nonInteractive != tc.enabled || !reflect.DeepEqual(tc.args, original) {
 			t.Fatalf("args=%v got=%v mode=%t err=%v", tc.args, got, nonInteractive, err)
 		}
 	}
 	nonInteractive = false
-	if _, err := extractStoredWorkflowFlag([]string{"--non-interactive=maybe", "apps"}); err == nil {
+	if _, err := extractAutomationFlag([]string{"--non-interactive=maybe", "apps"}); err == nil {
 		t.Fatal("invalid boolean accepted")
 	}
 }

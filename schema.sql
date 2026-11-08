@@ -26485,10 +26485,7 @@ BEGIN
  IF NOT FOUND THEN blockers:=blockers||jsonb_build_array('fresh_authenticated_approval_required');
  ELSE
  blockers:=blockers||route_removal_coverage_blockers(p.app_id,approval.observation_from,date_trunc('minute',stamp-interval '2 minutes'));
- IF EXISTS (SELECT 1 FROM request_telemetry rt JOIN deployments td ON td.id=rt.deployment_id
- JOIN jsonb_array_elements(removed) r ON rt.method=r->>'method' AND rt.route IN (r->>'path',(r->>'method')||' '||(r->>'path'))
- WHERE rt.app_id=p.app_id AND rt.account_id=p.account_id AND coalesce(nullif(td.scope,''),'default') IN ('default','prod','production')
- AND rt.received_at>=approval.observation_from AND rt.count>0) THEN
+ IF route_removal_route_observed(p.app_id,p.account_id,removed,c.doc,approval.observation_from) THEN
  blockers:=blockers||jsonb_build_array('old_route_observed'); END IF;
  END IF;
  END IF;
@@ -26555,6 +26552,48 @@ CREATE FUNCTION public.route_removal_operations(document jsonb) RETURNS TABLE(me
  CROSS JOIN LATERAL jsonb_each(p.value) o
  WHERE lower(o.key) IN ('get','put','post','delete','options','head','patch','trace')
 $$;
+
+
+--
+-- Name: route_removal_route_observed(uuid, uuid, jsonb, jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_removal_route_observed(target_app uuid, target_account uuid, removed jsonb, retained jsonb, since timestamp with time zone) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ WITH r AS (
+  SELECT upper(x->>'method') AS method, route_removal_route_pattern(x->>'method', x->>'path') AS pattern
+  FROM jsonb_array_elements(coalesce(removed,'[]'::jsonb)) x
+  WHERE coalesce(x->>'method','')<>'' AND coalesce(x->>'path','') LIKE '/%'
+ ), k AS (
+  SELECT o.method, CASE WHEN o.path='/' THEN '/' ELSE rtrim(o.path,'/') END AS path
+  FROM route_removal_operations(coalesce(retained,'{}'::jsonb)) o
+ )
+ SELECT EXISTS (
+  SELECT 1 FROM request_telemetry rt JOIN deployments td ON td.id=rt.deployment_id
+  JOIN r ON (rt.method=r.method OR (r.method='GET' AND rt.method='HEAD')) AND rt.route ~ r.pattern
+  WHERE rt.app_id=target_app AND rt.account_id=target_account
+   AND coalesce(nullif(td.scope,''),'default') IN ('default','prod','production')
+   AND rt.received_at>=since AND rt.count>0
+   AND NOT EXISTS (SELECT 1 FROM k WHERE (k.method=rt.method OR (k.method='GET' AND rt.method='HEAD'))
+    AND rt.route IN (k.path, rt.method||' '||k.path))
+ )
+$$;
+
+
+--
+-- Name: route_removal_route_pattern(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_removal_route_pattern(method text, path text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+ SELECT '^((' || CASE WHEN upper(method)='GET' THEN 'GET|HEAD' ELSE upper(method) END || ') )?'
+  || regexp_replace(
+       regexp_replace(CASE WHEN path='/' THEN '/' ELSE rtrim(path,'/') END, '([$^.*+?(){}|\\\[\]])', '\\\1', 'g'),
+       '\\\{[^/}]*\\\}', '[^/]+', 'g')
+  || CASE WHEN path='/' THEN '' ELSE '/?' END || '$'
+$_$;
 
 
 --
@@ -33408,9 +33447,11 @@ CREATE TABLE public.billing_meter_usage_deliveries (
     window_start timestamp with time zone NOT NULL,
     quantity bigint NOT NULL,
     delivered_at timestamp with time zone DEFAULT now() NOT NULL,
+    usage_source text,
     CONSTRAINT billing_meter_usage_deliveries_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'egress'::text]))),
     CONSTRAINT billing_meter_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
-    CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0))
+    CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0)),
+    CONSTRAINT billing_meter_usage_deliveries_usage_source_chk CHECK (((usage_source IS NULL) OR (usage_source = ANY (ARRAY['usage_minutes'::text, 'ledger'::text]))))
 );
 
 
@@ -33692,8 +33733,10 @@ CREATE TABLE public.billing_usage_deliveries (
     window_start timestamp with time zone NOT NULL,
     mb_seconds bigint NOT NULL,
     delivered_at timestamp with time zone DEFAULT now() NOT NULL,
+    usage_source text,
     CONSTRAINT billing_usage_deliveries_mb_seconds_check CHECK ((mb_seconds >= 0)),
-    CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+    CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
+    CONSTRAINT billing_usage_deliveries_usage_source_chk CHECK (((usage_source IS NULL) OR (usage_source = ANY (ARRAY['usage_minutes'::text, 'ledger'::text]))))
 );
 
 
@@ -34995,6 +35038,42 @@ CREATE TABLE public.crash_snapshot_settings (
 
 
 --
+-- Name: credit_discounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.credit_discounts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    subject_id uuid NOT NULL,
+    provider text NOT NULL,
+    provider_subscription_id text NOT NULL,
+    provider_discount_id text NOT NULL,
+    amount_cents bigint NOT NULL,
+    currency text NOT NULL,
+    state text DEFAULT 'attached'::text NOT NULL,
+    provider_invoice_id text,
+    redeemed_cents bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT credit_discounts_amount_cents_check CHECK ((amount_cents > 0)),
+    CONSTRAINT credit_discounts_currency_check CHECK ((currency ~ '^[a-z]{3}$'::text)),
+    CONSTRAINT credit_discounts_provider_check CHECK ((provider = 'polar'::text)),
+    CONSTRAINT credit_discounts_provider_discount_id_check CHECK (((char_length(provider_discount_id) >= 1) AND (char_length(provider_discount_id) <= 200))),
+    CONSTRAINT credit_discounts_provider_invoice_id_check CHECK (((provider_invoice_id IS NULL) OR ((char_length(provider_invoice_id) >= 1) AND (char_length(provider_invoice_id) <= 200)))),
+    CONSTRAINT credit_discounts_provider_subscription_id_check CHECK (((char_length(provider_subscription_id) >= 1) AND (char_length(provider_subscription_id) <= 200))),
+    CONSTRAINT credit_discounts_redeemed_cents_check CHECK (((redeemed_cents IS NULL) OR (redeemed_cents >= 0))),
+    CONSTRAINT credit_discounts_redeemed_check CHECK (((state = 'redeemed'::text) = ((provider_invoice_id IS NOT NULL) AND (redeemed_cents IS NOT NULL)))),
+    CONSTRAINT credit_discounts_state_check CHECK ((state = ANY (ARRAY['attached'::text, 'redeemed'::text, 'detached'::text])))
+);
+
+
+--
+-- Name: TABLE credit_discounts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.credit_discounts IS 'One-time fixed provider discounts Gregale attached to a billing subject''s subscription to apply its account credit to the next order; redeemed when an order carries it. Written only by apid (ADR-20261104212028).';
+
+
+--
 -- Name: credit_ledger; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -35910,6 +35989,7 @@ CREATE TABLE public.data_api_change_hook_reports (
     last_published_at timestamp with time zone,
     last_failure_code text,
     publishing text NOT NULL,
+    last_dropped_at timestamp with time zone,
     CONSTRAINT data_api_change_hook_reports_check CHECK (((pending = 0) = (oldest_pending_at IS NULL))),
     CONSTRAINT data_api_change_hook_reports_failed_check CHECK (((failed >= 0) AND (failed <= '1000000000000'::bigint))),
     CONSTRAINT data_api_change_hook_reports_last_failure_code_check CHECK ((last_failure_code ~ '^[a-z0-9_]{1,64}$'::text)),
@@ -35923,6 +36003,13 @@ CREATE TABLE public.data_api_change_hook_reports (
 --
 
 COMMENT ON TABLE public.data_api_change_hook_reports IS 'ADR-20261022121642 amendment 1: change hook delivery last reported by each Data API runtime (counts and codes only).';
+
+
+--
+-- Name: COLUMN data_api_change_hook_reports.last_dropped_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.data_api_change_hook_reports.last_dropped_at IS 'ADR-20261022121642 amendment 3: when capture last left a change out at the backlog bound, as the runtime last reported.';
 
 
 --
@@ -37779,6 +37866,21 @@ CREATE SEQUENCE public.edge_rule_generation_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
+
+
+--
+-- Name: edge_rule_header_secrets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_rule_header_secrets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    ciphertext bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT edge_rule_header_secrets_ciphertext_check CHECK (((octet_length(ciphertext) >= 1) AND (octet_length(ciphertext) <= 16384))),
+    CONSTRAINT edge_rule_header_secrets_created_at_check CHECK (isfinite(created_at))
+);
 
 
 --
@@ -44284,6 +44386,22 @@ CREATE TABLE public.layer_artifact_retention (
 
 
 --
+-- Name: legal_acceptances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.legal_acceptances (
+    account_id uuid NOT NULL,
+    document text NOT NULL,
+    version text NOT NULL,
+    method text NOT NULL,
+    accepted_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT legal_acceptances_document_check CHECK ((document = 'terms'::text)),
+    CONSTRAINT legal_acceptances_method_check CHECK (((method <> ''::text) AND (length(method) <= 32))),
+    CONSTRAINT legal_acceptances_version_check CHECK ((version ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text))
+);
+
+
+--
 -- Name: log_archive_erasure_instances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -47172,6 +47290,29 @@ CREATE TABLE public.mfa_disable_tokens (
     CONSTRAINT mfa_disable_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
     CONSTRAINT mfa_disable_tokens_password_revision_check CHECK ((password_revision > 0)),
     CONSTRAINT mfa_disable_tokens_requested_at_check CHECK (isfinite(requested_at))
+);
+
+
+--
+-- Name: mfa_trusted_browsers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mfa_trusted_browsers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    ua_family text NOT NULL,
+    created_ip text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    last_used_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    CONSTRAINT mfa_trusted_browsers_created_ip_check CHECK ((char_length(created_ip) <= 64)),
+    CONSTRAINT mfa_trusted_browsers_revoked_check CHECK (((revoked_at IS NULL) OR isfinite(revoked_at))),
+    CONSTRAINT mfa_trusted_browsers_token_hash_check CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
+    CONSTRAINT mfa_trusted_browsers_ua_family_check CHECK ((char_length(ua_family) <= 64)),
+    CONSTRAINT mfa_trusted_browsers_used_check CHECK (((last_used_at IS NULL) OR isfinite(last_used_at))),
+    CONSTRAINT mfa_trusted_browsers_window_check CHECK ((isfinite(created_at) AND (expires_at > created_at)))
 );
 
 
@@ -61461,6 +61602,14 @@ ALTER TABLE ONLY public.crash_snapshot_settings
 
 
 --
+-- Name: credit_discounts credit_discounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.credit_discounts
+    ADD CONSTRAINT credit_discounts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: credit_ledger credit_ledger_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62626,6 +62775,14 @@ ALTER TABLE ONLY public.edge_rule_change_log
 
 ALTER TABLE ONLY public.edge_rule_events
     ADD CONSTRAINT edge_rule_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: edge_rule_header_secrets edge_rule_header_secrets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_header_secrets
+    ADD CONSTRAINT edge_rule_header_secrets_pkey PRIMARY KEY (id);
 
 
 --
@@ -65589,6 +65746,14 @@ ALTER TABLE ONLY public.layer_artifact_retention
 
 
 --
+-- Name: legal_acceptances legal_acceptances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.legal_acceptances
+    ADD CONSTRAINT legal_acceptances_pkey PRIMARY KEY (account_id, document, version);
+
+
+--
 -- Name: log_archive_erasure_instances log_archive_erasure_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -66658,6 +66823,22 @@ ALTER TABLE ONLY public.mfa_disable_requests
 
 ALTER TABLE ONLY public.mfa_disable_tokens
     ADD CONSTRAINT mfa_disable_tokens_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: mfa_trusted_browsers mfa_trusted_browsers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_trusted_browsers
+    ADD CONSTRAINT mfa_trusted_browsers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mfa_trusted_browsers mfa_trusted_browsers_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_trusted_browsers
+    ADD CONSTRAINT mfa_trusted_browsers_token_hash_key UNIQUE (token_hash);
 
 
 --
@@ -73989,6 +74170,20 @@ CREATE INDEX crash_captures_plaintext_idx ON public.crash_captures USING btree (
 
 
 --
+-- Name: credit_discounts_attached_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX credit_discounts_attached_subject_idx ON public.credit_discounts USING btree (subject_id) WHERE (state = 'attached'::text);
+
+
+--
+-- Name: credit_discounts_provider_discount_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX credit_discounts_provider_discount_key ON public.credit_discounts USING btree (provider, provider_discount_id);
+
+
+--
 -- Name: credit_ledger_account_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -75148,6 +75343,13 @@ CREATE INDEX edge_rule_events_occurred_idx ON public.edge_rule_events USING btre
 --
 
 CREATE INDEX edge_rule_events_rule_time_idx ON public.edge_rule_events USING btree (rule_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: edge_rule_header_secrets_app_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_header_secrets_app_id_idx ON public.edge_rule_header_secrets USING btree (app_id);
 
 
 --
@@ -78452,6 +78654,13 @@ CREATE INDEX mfa_disable_tokens_account_idx ON public.mfa_disable_tokens USING b
 --
 
 CREATE INDEX mfa_disable_tokens_expiry_idx ON public.mfa_disable_tokens USING btree (expires_at, token_hash);
+
+
+--
+-- Name: mfa_trusted_browsers_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mfa_trusted_browsers_account_idx ON public.mfa_trusted_browsers USING btree (account_id) WHERE (revoked_at IS NULL);
 
 
 --
@@ -93111,6 +93320,14 @@ ALTER TABLE ONLY public.crash_snapshot_settings
 
 
 --
+-- Name: credit_discounts credit_discounts_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.credit_discounts
+    ADD CONSTRAINT credit_discounts_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
 -- Name: credit_ledger credit_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -94828,6 +95045,22 @@ ALTER TABLE ONLY public.domain_doctor_observations
 
 ALTER TABLE ONLY public.domain_doctor_observations
     ADD CONSTRAINT domain_doctor_observations_surface_id_fkey FOREIGN KEY (surface_id) REFERENCES public.tenant_surfaces(id) ON DELETE SET NULL;
+
+
+--
+-- Name: edge_rule_header_secrets edge_rule_header_secrets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_header_secrets
+    ADD CONSTRAINT edge_rule_header_secrets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: edge_rule_header_secrets edge_rule_header_secrets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_header_secrets
+    ADD CONSTRAINT edge_rule_header_secrets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -98143,6 +98376,14 @@ ALTER TABLE ONLY public.jobs
 
 
 --
+-- Name: legal_acceptances legal_acceptances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.legal_acceptances
+    ADD CONSTRAINT legal_acceptances_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: log_archive_erasure_instances log_archive_erasure_instances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -99324,6 +99565,14 @@ ALTER TABLE ONLY public.mfa_disable_requests
 
 ALTER TABLE ONLY public.mfa_disable_tokens
     ADD CONSTRAINT mfa_disable_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mfa_trusted_browsers mfa_trusted_browsers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_trusted_browsers
+    ADD CONSTRAINT mfa_trusted_browsers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

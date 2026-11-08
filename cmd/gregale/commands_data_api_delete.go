@@ -28,7 +28,7 @@ func cmdDataAPIDelete(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale data-api delete NAME [--yes]", "data-api")
 		return 1
 	}
-	if code := requireStoredWorkflowConfirmation(*yes, "--yes"); code != 0 {
+	if code := requireAutomationConfirmation(*yes, "--yes"); code != 0 {
 		return code
 	}
 	slug := fs.Arg(0)

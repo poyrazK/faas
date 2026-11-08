@@ -36,7 +36,7 @@ func cmdDeploysClear(args []string) int {
 		PrintUsage(os.Stderr, deploysClearUsage+"   (id is 32 hex chars)", "deploys")
 		return 1
 	}
-	if code := requireStoredWorkflowConfirmation(*force || *dryRun, "--yes"); code != 0 {
+	if code := requireAutomationConfirmation(*force || *dryRun, "--yes"); code != 0 {
 		return code
 	}
 	client, err := authedClient()

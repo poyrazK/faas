@@ -2939,6 +2939,8 @@ export type { SecretReferenceEnvironment } from './SecretReferenceEnvironment.js
 export type { SecretRevocationTarget } from './SecretRevocationTarget.js';
 export type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObservation.js';
 export type { SecretScanResult } from './SecretScanResult.js';
+export type { SecurityActivityEvent } from './SecurityActivityEvent.js';
+export type { SecurityActivityResponse } from './SecurityActivityResponse.js';
 export type { SecurityQuarantineRecoveryRequest } from './SecurityQuarantineRecoveryRequest.js';
 export type { SecurityQuarantineRecoveryResponse } from './SecurityQuarantineRecoveryResponse.js';
 export type { SelectedTraceApp } from './SelectedTraceApp.js';
