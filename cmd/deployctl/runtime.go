@@ -378,14 +378,21 @@ func (r hostRuntime) Migrate(ctx context.Context, manifest releasebundle.Manifes
 		}
 	}
 	command := fmt.Sprintf("DATABASE_URL=%q %q", r.databaseURL, migrate)
-	return runCommand(ctx, "su", "-", "faas", "-s", "/bin/bash", "-c", command)
+	return runCommand(ctx, "/bin/bash", "-c", command)
 }
+
+// The migrator runs as root, deployctl's own user: the owner role is reached
+// through `faas_map root faas`, which pg_ident keeps in both modes
+// (ADR-20261023104734). Under faas_postgres_owner_contracted the OS user
+// faas maps only to faas_shared, so the `su - faas` this used to run was
+// refused peer authentication and failed the rc.330 control-plane activation
+// after the schema had already been applied.
 
 // pendingMigrations runs `migrate -status` and returns the pending_count from
 // its JSON status line (the migrator logs to stderr, folded into stdout).
 func pendingMigrations(ctx context.Context, databaseURL, migrate string) (int, error) {
 	command := fmt.Sprintf("DATABASE_URL=%q %q -status 2>&1", databaseURL, migrate)
-	out, err := commandOutput(ctx, "su", "-", "faas", "-s", "/bin/bash", "-c", command)
+	out, err := commandOutput(ctx, "/bin/bash", "-c", command)
 	if err != nil {
 		return 0, err
 	}
