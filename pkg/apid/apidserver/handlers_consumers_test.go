@@ -144,7 +144,8 @@ func TestAPIConsumerUsageReadSurface(t *testing.T) {
 
 // Prod hunt #9: `gregale consumers usage --since <today>` returned 500
 // "could not load API consumer usage". The window snaps to UTC midnight and
-// is half-open, so since=today is empty; the ledger answers ErrNotFound.
+// is half-open, so since=until=today is empty; the ledger answers
+// ErrNotFound. (Without until the window now runs to the next midnight.)
 func TestAPIConsumerUsageEmptyWindowIsEmptyNot500(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)
 	apidserver.MustSeedApp(t, e, "consumer-usage-empty")
@@ -159,7 +160,7 @@ func TestAPIConsumerUsageEmptyWindowIsEmptyNot500(t *testing.T) {
 		t.Fatalf("decode consumer: %v", err)
 	}
 	today := time.Now().UTC().Format("2006-01-02") + "T11:00:00Z"
-	read := e.Do(t, http.MethodGet, "/v1/apps/consumer-usage-empty/consumers/"+consumer.ID+"/usage?since="+today, nil, nil)
+	read := e.Do(t, http.MethodGet, "/v1/apps/consumer-usage-empty/consumers/"+consumer.ID+"/usage?since="+today+"&until="+today, nil, nil)
 	if read.Code != http.StatusOK {
 		t.Fatalf("empty window: %d %s, want 200", read.Code, read.Body)
 	}
