@@ -125,6 +125,13 @@ type DeploymentAppResolver interface {
 	DeploymentAppID(ctx context.Context, deploymentID string) (string, error)
 }
 
+// EdgeRuleAppResolver is the optional store seam that loads the edge rule an
+// agent approval addresses by id, to tell a production app's rule from a
+// preview's (ADR-091 amendment 2026-11-07).
+type EdgeRuleAppResolver interface {
+	GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error)
+}
+
 // deployTokenDeploymentReads are the routes outside /v1/apps/{slug} a deploy
 // token may read, for a deployment of its own app: the ones
 // api.ScopesDeploymentReadSurface admits for deploy:write, which every CLI

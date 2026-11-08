@@ -61,6 +61,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"qualificationInstances":            "bootonly",
 		"quietStates":                       "reset", // quiet pause waits one idle period after adoption
 		"idleStates":                        "reset", // the idle ladder observe pass measures from adoption
+		"idleColdCeilings":                  "reset", // compression ceilings relearn from the next wakes; a restarted vmmd starts at the defaults
 		"readinessLoopCancels":              "rebuilt",
 		"resourceLinks":                     "rebuilt",
 		"resourceNetworks":                  "rebuilt",

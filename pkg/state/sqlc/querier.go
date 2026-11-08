@@ -6101,6 +6101,11 @@ type Querier interface {
 	// ADR-531: production filtering precedes aggregates, limits, and cursor anchors.
 	ReadProductionQueueInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error)
 	ReadProductionQueueStateLive(ctx context.Context, db DBTX, arg ReadProductionQueueStateLiveParams) (ReadProductionQueueStateLiveRow, error)
+	// ReadProductionQueueStateLive plus CountProductionQueueDeadLetter for the
+	// status reads a customer can poll: each count stops at row_limit, and the
+	// oldest pending message is the first one due under each of the app's queue
+	// names, found one name at a time (ADR-20261018101500 amendment 2026-10-31).
+	ReadProductionQueueTelemetry(ctx context.Context, db DBTX, arg ReadProductionQueueTelemetryParams) (ReadProductionQueueTelemetryRow, error)
 	ReadProductionQueueTriggerInvocation(ctx context.Context, db DBTX, arg ReadProductionQueueTriggerInvocationParams) (Invocation, error)
 	ReadProfileAlertDeploymentScope(ctx context.Context, db DBTX, arg ReadProfileAlertDeploymentScopeParams) (string, error)
 	ReadProfileAlertOwner(ctx context.Context, db DBTX, arg ReadProfileAlertOwnerParams) (string, error)
@@ -6804,7 +6809,9 @@ type Querier interface {
 	// route/method filter applies to route rows only, so callers pass group_by
 	// 'route' or 'status' with it. A bucket counts when it starts inside the
 	// window. latency_hist is the groups' merged histogram, summed bucket by
-	// bucket; callers turn it into percentiles. filtered is not materialized:
+	// bucket; callers turn it into percentiles. A row holds its histogram in
+	// latency_hist, latency_hist_int4 or, while two releases write, both
+	// (amendment 3), so each bucket adds the two. filtered is not materialized:
 	// the top-group pass reads no histograms.
 	RequestAnalyticsRollupGroups(ctx context.Context, db DBTX, arg RequestAnalyticsRollupGroupsParams) ([]RequestAnalyticsRollupGroupsRow, error)
 	// Whether any minute starting inside the window lost rollups.
@@ -7714,6 +7721,11 @@ type Querier interface {
 	// retry, or a record another dispatcher holds, can run; topic maps a record
 	// stored under an earlier release's item identifier (ADR-20261101093512).
 	TriggerRecordStatesByItems(ctx context.Context, db DBTX, arg TriggerRecordStatesByItemsParams) ([]TriggerRecordStatesByItemsRow, error)
+	// A completed queue message keeps its payload for a day after its ack, then
+	// only its history; failures and dead letters keep theirs for replay
+	// (ADR-20261018101500 amendment 2026-10-31). Reads
+	// invocations_queue_completed_payload_idx in completion order.
+	TrimCompletedQueuePayloads(ctx context.Context, db DBTX, arg TrimCompletedQueuePayloadsParams) (int64, error)
 	TryEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error)
 	TryEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	TryLockApplicationStandardApprovalArtifactChildren(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) (bool, error)
