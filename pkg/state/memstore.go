@@ -444,8 +444,10 @@ type MemStore struct {
 	// object storage timeline fence (ADR-20261025111015 amendment).
 	objectStorageTimeline         string
 	acceptedObjectStorageTimeline string
-	alertRuleChannels             map[string][]string // rule id → channel ids (ADR-749)
-	appSLOs                       map[string][]SLO    // app id → definitions (ADR-747), lazily made
+	alertRuleChannels             map[string][]string                               // rule id → channel ids (ADR-749)
+	alertChannelResolveRetries    map[alertChannelRetryKey]AlertChannelResolveRetry // ADR-20261031144636
+	alertChannelStandDowns        map[alertChannelRetryKey]memStandDown             // ADR-20261104142830
+	appSLOs                       map[string][]SLO                                  // app id → definitions (ADR-747), lazily made
 	sloHours                      map[string]map[time.Time]memSLOHour
 	syntheticChecks               map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
 	syntheticRuns                 map[string][]SyntheticCheckRun
@@ -7930,6 +7932,8 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	m.deleteEventExecutionLedgerAppLocked(id)
 	m.deleteScenarioWorkerFaultsForAppLocked(id)
+	// alert_rules.app_id ON DELETE CASCADE; the episodes stay (ADR-20261030214500).
+	m.deleteAlertRulesLocked(func(r AlertRule) bool { return r.AppID == id })
 	if purged, ok := m.apps[id]; ok {
 		m.holdSlugLocked(purged.Slug, purged.AccountID)
 	}
@@ -25337,7 +25341,16 @@ func (m *MemStore) deleteAlertRulesLocked(match func(AlertRule) bool) {
 // deleteAlertRuleLocked mirrors the alert_rules delete: its episodes stay
 // (ADR-20261030214500) and everything else of the rule cascades.
 func (m *MemStore) deleteAlertRuleLocked(id string) {
+	// The alert_rules_channel_stand_downs trigger: a deleted rule still owes
+	// its channels the recovery notice of an open episode
+	// (ADR-20261104142830), unless its account is being deleted too.
+	if rule, ok := m.alertRules[id]; ok {
+		if _, live := m.accounts[rule.AccountID]; live {
+			m.queueAlertChannelStandDownsLocked(rule, StandDownDeleted, time.Now().UTC())
+		}
+	}
 	m.keepDeletedRuleEpisodesLocked(m.alertRules[id], time.Now().UTC())
+	m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.rule == id })
 	delete(m.alertRules, id)
 	delete(m.readinessIncidentCursors, id)
 	delete(m.readinessPagerDutyPolicies, id)

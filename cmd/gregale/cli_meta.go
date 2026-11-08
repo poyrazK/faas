@@ -1208,6 +1208,11 @@ var cliCommands = []cliCommand{
 				{Name: "pagerduty-region", Short: "PagerDuty service region", Value: "REGION", ClosedSet: []string{"us", "eu"}},
 				{Name: "email", Short: "your account email (kind email)", Value: "EMAIL"},
 			}},
+			{Name: "update", Short: "Rename a channel or replace its destination; read from stdin", Positionals: []string{"<channel-id>"}, Flags: []cliFlag{
+				{Name: "name", Short: "new channel name, unique per account", Value: "NAME"},
+				{Name: "secret-stdin", Short: "read the new Slack webhook URL or PagerDuty routing key from stdin"},
+				{Name: "pagerduty-region", Short: "PagerDuty service region of the new key", Value: "REGION", ClosedSet: []string{"us", "eu"}},
+			}},
 			{Name: "test", Short: "Send a marked test notification", Positionals: []string{"<channel-id>"}},
 			{Name: "rm", Short: "Delete a channel", Positionals: []string{"<channel-id>"}},
 		},

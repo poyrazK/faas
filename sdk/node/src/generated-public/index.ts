@@ -1186,6 +1186,7 @@ export type { UpdateEdgeRuleRequest } from './models/UpdateEdgeRuleRequest.js';
 export type { UpdateFinancialBudgetRequest } from './models/UpdateFinancialBudgetRequest.js';
 export type { UpdateInboundWebhookEndpointRequest } from './models/UpdateInboundWebhookEndpointRequest.js';
 export type { UpdateJobRequest } from './models/UpdateJobRequest.js';
+export type { UpdateNotificationChannelRequest } from './models/UpdateNotificationChannelRequest.js';
 export type { UpdateProjectEnvironmentConfigRequest } from './models/UpdateProjectEnvironmentConfigRequest.js';
 export type { UpdateProjectRequest } from './models/UpdateProjectRequest.js';
 export type { UploadDeployOptions } from './models/UploadDeployOptions.js';

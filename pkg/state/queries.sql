@@ -21026,6 +21026,89 @@ DELETE FROM alert_episodes e WHERE e.id IN (
     AND NOT EXISTS (SELECT 1 FROM alert_rules r WHERE r.id = o.rule_id)
   ORDER BY o.resolved_at LIMIT sqlc.arg(max_rows)::integer);
 
+-- name: RecordAlertChannelResolveRetry :exec
+-- A failed recovery notice for one channel (ADR-20261031144636). The first
+-- failure keeps the observation and time it reports; each later one counts
+-- an attempt and moves the next try.
+INSERT INTO alert_channel_resolve_retries (rule_id, channel_id, observed, resolved_at, attempts, next_attempt_at, last_error)
+VALUES (sqlc.arg(rule_id)::uuid, sqlc.arg(channel_id)::uuid, sqlc.arg(observed)::double precision,
+        sqlc.arg(resolved_at)::timestamptz, 1, sqlc.arg(next_attempt_at)::timestamptz, sqlc.arg(last_error)::text)
+ON CONFLICT (rule_id, channel_id) DO UPDATE
+   SET attempts = alert_channel_resolve_retries.attempts + 1,
+       next_attempt_at = EXCLUDED.next_attempt_at,
+       last_error = EXCLUDED.last_error;
+
+-- name: DeleteAlertChannelResolveRetry :exec
+DELETE FROM alert_channel_resolve_retries
+ WHERE rule_id = sqlc.arg(rule_id)::uuid AND channel_id = sqlc.arg(channel_id)::uuid;
+
+-- name: ClearAlertChannelResolveRetries :exec
+-- A new fire of the rule supersedes the recovery it had not delivered.
+DELETE FROM alert_channel_resolve_retries WHERE rule_id = sqlc.arg(rule_id)::uuid;
+
+-- name: DueAlertChannelResolveRetries :many
+-- Retries due now whose rule is still enabled and recovered.
+SELECT x.rule_id::text AS rule_id, x.channel_id::text AS channel_id, x.observed, x.resolved_at, x.attempts
+  FROM alert_channel_resolve_retries x
+  JOIN alert_rules r ON r.id = x.rule_id
+ WHERE x.next_attempt_at <= sqlc.arg(now)::timestamptz AND r.enabled AND r.state = 'ok'
+ ORDER BY x.next_attempt_at, x.rule_id, x.channel_id
+ LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: QueueAlertChannelStandDowns :execrows
+-- A rule whose episode ends without it recovering owes each bound channel a
+-- recovery notice (ADR-20261104142830): the channels of its open episode,
+-- and those whose recovery notice is still being retried, which move here.
+WITH rule AS (
+    SELECT r.id, r.account_id, r.app_id, r.name, r.metric FROM alert_rules r WHERE r.id = sqlc.arg(rule_id)::uuid
+), owed AS (
+    SELECT b.channel_id FROM alert_rule_channels b
+     WHERE b.rule_id = sqlc.arg(rule_id)::uuid
+       AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = sqlc.arg(rule_id)::uuid AND e.resolved_at IS NULL)
+    UNION
+    SELECT x.channel_id FROM alert_channel_resolve_retries x WHERE x.rule_id = sqlc.arg(rule_id)::uuid
+), moved AS (
+    DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = sqlc.arg(rule_id)::uuid
+)
+INSERT INTO alert_channel_stand_downs
+    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at)
+SELECT rule.id, owed.channel_id, rule.account_id, rule.app_id, rule.name, rule.metric,
+       sqlc.arg(reason)::text, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz
+  FROM rule CROSS JOIN owed
+ON CONFLICT (rule_id, channel_id) DO NOTHING;
+
+-- name: DueAlertChannelStandDowns :many
+SELECT s.rule_id::text AS rule_id, s.channel_id::text AS channel_id, s.account_id::text AS account_id,
+       coalesce(s.app_id::text, '')::text AS app_id, s.rule_name, s.rule_metric, s.reason, s.queued_at, s.attempts
+  FROM alert_channel_stand_downs s
+ WHERE s.next_attempt_at <= sqlc.arg(now)::timestamptz
+ ORDER BY s.next_attempt_at, s.rule_id, s.channel_id
+ LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: RecordAlertChannelStandDownAttempt :exec
+UPDATE alert_channel_stand_downs
+   SET attempts = attempts + 1, next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz, last_error = sqlc.arg(last_error)::text
+ WHERE rule_id = sqlc.arg(rule_id)::uuid AND channel_id = sqlc.arg(channel_id)::uuid;
+
+-- name: DeleteAlertChannelStandDown :exec
+DELETE FROM alert_channel_stand_downs WHERE rule_id = sqlc.arg(rule_id)::uuid AND channel_id = sqlc.arg(channel_id)::uuid;
+
+-- name: ClearAlertChannelStandDowns :exec
+-- A new fire of the rule supersedes the recovery notices it still owed.
+DELETE FROM alert_channel_stand_downs WHERE rule_id = sqlc.arg(rule_id)::uuid;
+
+-- name: ListStrandedAlertRules :many
+-- Rules left out of evaluation (disabled, or their app deleted) while not
+-- ok: their state and open episode would otherwise stay as they were.
+SELECT * FROM alert_rules r
+ WHERE r.state <> 'ok'
+   AND (NOT r.enabled OR EXISTS (SELECT 1 FROM apps a WHERE a.id = r.app_id AND a.status = 'deleted'))
+ ORDER BY r.updated_at, r.id
+ LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: AlertRuleEpisodeOpen :one
+SELECT EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = sqlc.arg(rule_id)::uuid AND e.resolved_at IS NULL)::boolean AS open;
+
 -- name: PurgeAlertDeliveriesBefore :execrows
 -- Deletes up to max_rows settled deliveries fired before the cutoff, oldest
 -- first (ADR-20261029203000). A rule's newest delivery stays, because
@@ -27472,6 +27555,20 @@ SELECT * FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uui
 -- name: DeleteNotificationChannel :execrows
 DELETE FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(id)::uuid;
 
+-- name: UpdateNotificationChannel :one
+-- Renames a channel or replaces its sealed destination (ADR-20261104142830).
+-- A new destination clears the last error, which was the old one's.
+UPDATE notification_channels
+   SET name = coalesce(sqlc.narg(name)::text, name),
+       target_sealed = coalesce(sqlc.narg(target_sealed)::bytea, target_sealed),
+       target_hint = coalesce(sqlc.narg(target_hint)::text, target_hint),
+       pagerduty_region = coalesce(sqlc.narg(pagerduty_region)::text, pagerduty_region),
+       last_error = CASE WHEN sqlc.narg(target_sealed)::bytea IS NULL THEN last_error END,
+       last_error_at = CASE WHEN sqlc.narg(target_sealed)::bytea IS NULL THEN last_error_at END,
+       updated_at = now()
+ WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(id)::uuid
+RETURNING *;
+
 -- name: LockNotificationChannel :one
 -- Holds the channel while its delete checks the rules bound to it; a binding
 -- insert waits on the row through its foreign key.
@@ -27605,12 +27702,13 @@ DELETE FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc
 -- ADR-748 slice 2: synthetic check runs (meterd is the only writer).
 
 -- name: ListRunnableSyntheticChecks :many
--- Every enabled check on a live app, with its app slug and last run time;
--- the runner decides which are due.
+-- Every enabled check on a live public app, with its app slug and last run
+-- time; the runner decides which are due. The public edge does not serve an
+-- internal app, so its checks wait until it is public (ADR-20261031144636).
 SELECT c.*, a.slug AS app_slug,
  (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
 FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
-WHERE c.enabled AND a.status <> 'deleted'
+WHERE c.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal'
 ORDER BY c.id;
 
 -- name: InsertSyntheticCheckRun :exec

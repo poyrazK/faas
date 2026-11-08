@@ -21501,6 +21501,26 @@ paths:
               schema: { $ref: '#/components/schemas/NotificationChannelResponse' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateNotificationChannel
+      summary: Rename a notification channel or replace its destination
+      description: "Renames the channel or replaces its Slack webhook URL or PagerDuty routing key in place, so a leaked destination is rotated without unbinding the channel from its rules. The kind never changes; an email channel can only be renamed. A PagerDuty region changes only together with a new routing key. A new destination clears the channel's last error."
+      tags: [alert_rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNotificationChannelRequest' }
+      responses:
+        '200':
+          description: The updated channel.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationChannelResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
     delete:
       operationId: deleteNotificationChannel
       summary: Delete a notification channel
@@ -22321,7 +22341,9 @@ paths:
         Resolves every widget for its window through the code behind the
         per-app endpoints: request metrics, log search counts, pushed custom
         metrics and SLO status. A widget that cannot be read carries `error`
-        and no value; the rest still resolve.
+        and no value; the rest still resolve. An account reads at most two
+        dashboards at once; a third read is refused with 429
+        `dashboard_data_busy` and `Retry-After`.
       responses:
         '200':
           description: The resolved widgets.
@@ -22329,7 +22351,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DashboardData' }
         default:
-          description: No dashboard to read widgets for (dashboard_not_found), or the preview is disabled.
+          description: No dashboard to read widgets for (dashboard_not_found), two reads of the account's dashboards already in progress (dashboard_data_busy), or the preview is disabled.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -94963,6 +94985,26 @@ components:
           type: string
           format: email
           description: "The account's own email address (kind email)."
+    UpdateNotificationChannelRequest:
+      description: "Renames a channel or replaces its destination; set name, the channel's own destination, or both."
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'New name, unique per account.'
+        slack_webhook_url:
+          type: string
+          format: uri
+          description: 'New Slack incoming webhook (kind slack).'
+        pagerduty_routing_key:
+          type: string
+          pattern: '^[A-Za-z0-9]{32}$'
+          description: 'New Events API v2 integration key (kind pagerduty).'
+        pagerduty_region:
+          type: string
+          enum: [us, eu]
+          description: 'PagerDuty service region of the new key (kind pagerduty); default us.'
     NotificationChannelResponse:
       description: 'One alert notification channel.'
       type: object

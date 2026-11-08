@@ -6057,6 +6057,8 @@ from .update_native_linear_issue_tracker_status_request import UpdateNativeLinea
 from .update_native_linear_issue_tracker_status_request_desired_state import (
     UpdateNativeLinearIssueTrackerStatusRequestDesiredState,
 )
+from .update_notification_channel_request import UpdateNotificationChannelRequest
+from .update_notification_channel_request_pagerduty_region import UpdateNotificationChannelRequestPagerdutyRegion
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
 from .update_outbound_binding_policy_request import UpdateOutboundBindingPolicyRequest
 from .update_platform_tenant_webhook_request import UpdatePlatformTenantWebhookRequest
@@ -12082,6 +12084,8 @@ __all__ = (
     "UpdateNativeIssueTrackerStatusRequestDesiredState",
     "UpdateNativeLinearIssueTrackerStatusRequest",
     "UpdateNativeLinearIssueTrackerStatusRequestDesiredState",
+    "UpdateNotificationChannelRequest",
+    "UpdateNotificationChannelRequestPagerdutyRegion",
     "UpdateOperatorRuntimeConfigBody",
     "UpdateOutboundBindingPolicyRequest",
     "UpdatePlatformTenantWebhookRequest",
