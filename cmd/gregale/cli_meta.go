@@ -624,7 +624,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "sessions", Short: "List or sign out browser sessions", Subcommands: []cliSub{
 				{Name: "list", Short: "List signed-in browsers"},
-				{Name: "revoke", Short: "Sign out one browser, or every browser with --all; API keys keep working", Positionals: []string{"[SESSION_ID]"}, Flags: []cliFlag{
+				{Name: "revoke", Short: "Sign out one browser session, or all of them", Notes: []string{"API keys keep working."}, Positionals: []string{"[SESSION_ID]"}, Flags: []cliFlag{
 					{Name: "all", Short: "sign out every browser", Bool: true},
 					{Name: "yes", Short: "with --all, sign out without prompting", Bool: true},
 				}},

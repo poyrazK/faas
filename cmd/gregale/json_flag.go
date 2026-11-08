@@ -318,6 +318,7 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 func globalFlagPlacementHint(diagnostic, path string) string {
 	for _, global := range []struct{ name, example string }{
 		{"non-interactive", "--non-interactive"},
+		{"wait-for-approval", "--wait-for-approval"},
 		{"profile", "--profile NAME"},
 	} {
 		if diagnostic == "unknown flag --"+global.name || strings.HasPrefix(diagnostic, "unknown flag --"+global.name+"=") {
