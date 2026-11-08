@@ -600,6 +600,53 @@
         group: root
         mode: "0644"
 
+    # ADR-20261108170000: the bootstrap below installs executables from this
+    # bundle (the release-built Firecracker VMM), so verify it before anything
+    # is extracted for bootstrap. The later verification play still runs.
+    - name: Verify the release tarball signature before bootstrap extracts from it
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/cosign
+          - verify-blob
+          - --certificate-identity-regexp
+          - '^https://github\.com/poyrazK/faas/\.github/workflows/release\.yml@refs/tags/.+$'
+          - --certificate-oidc-issuer
+          - https://token.actions.githubusercontent.com
+          - --bundle
+          - /var/lib/faas/bootstrap/release.cosign.bundle
+          - /var/lib/faas/bootstrap/release.tar.gz
+      changed_when: false
+
+    # Releases carry the patched Firecracker as firecracker-vmm. The firecracker
+    # role installs it under the upstream basename and checks it against
+    # release.firecracker_digest. A release without it (built before the patch,
+    # or a rollback to one) removes any staged copy so the role keeps upstream's
+    # binary, which that release's manifest digest names.
+    - name: Stage the release-built Firecracker VMM
+      ansible.builtin.shell:
+        cmd: >-
+          set -euo pipefail;
+          umask 077;
+          if ! tar --list --gzip --file /var/lib/faas/bootstrap/release.tar.gz
+          firecracker-vmm > /dev/null 2>&1; then
+          rm -f /var/lib/faas/bootstrap/firecracker-vmm;
+          echo absent;
+          exit 0;
+          fi;
+          tmp=$(mktemp /var/lib/faas/bootstrap/firecracker-vmm.XXXXXX);
+          trap 'rm -f "$tmp"' EXIT;
+          tar --extract --gzip --file /var/lib/faas/bootstrap/release.tar.gz
+          --to-stdout firecracker-vmm > "$tmp";
+          test -s "$tmp";
+          install -o root -g root -m 0755 "$tmp"
+          /var/lib/faas/bootstrap/firecracker-vmm;
+          rm -f "$tmp";
+          trap - EXIT;
+          echo staged
+        executable: /bin/bash
+      register: faas_join_firecracker_stage
+      changed_when: (faas_join_firecracker_stage.stdout | trim) == 'staged'
+
     - name: Delete kernel temporaries left by interrupted or older rollouts
       ansible.builtin.command:
         argv:
