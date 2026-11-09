@@ -86,6 +86,8 @@ type memAccountFlow struct {
 	unlinked     map[string]bool // account ID + "\x00" + provider
 	// trustedBrowsers: stored token hash → remembered browser.
 	trustedBrowsers map[string]*memMFATrustedBrowser
+	// mailSlots: account ID + "\x00" + kind → mail counter.
+	mailSlots map[string]*memMailSlot
 }
 
 func (m *MemStore) IssueEmailChange(_ context.Context, tokenHash []byte, accountID, newEmail string, expiresAt time.Time) error {

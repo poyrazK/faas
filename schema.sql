@@ -29680,6 +29680,22 @@ CREATE TABLE public.account_email_changes (
 
 
 --
+-- Name: account_mail_throttle; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_mail_throttle (
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    window_started_at timestamp with time zone NOT NULL,
+    sent_in_window integer NOT NULL,
+    last_sent_at timestamp with time zone NOT NULL,
+    CONSTRAINT account_mail_throttle_count_check CHECK (((sent_in_window >= 1) AND (sent_in_window <= 1000))),
+    CONSTRAINT account_mail_throttle_kind_check CHECK ((kind ~ '^[a-z][a-z0-9_]{0,47}$'::text)),
+    CONSTRAINT account_mail_throttle_times_check CHECK ((isfinite(window_started_at) AND isfinite(last_sent_at) AND (last_sent_at >= window_started_at)))
+);
+
+
+--
 -- Name: account_oauth_unlinks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -29830,6 +29846,26 @@ CREATE VIEW public.active_environment_git_sources AS
     detached
    FROM public.environment_git_sources
   WHERE (NOT detached);
+
+
+--
+-- Name: agent_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_activity (
+    id uuid NOT NULL,
+    key_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    org_id uuid,
+    method text NOT NULL,
+    path text NOT NULL,
+    status integer NOT NULL,
+    approval_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_activity_method_check CHECK ((method = ANY (ARRAY['POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text]))),
+    CONSTRAINT agent_activity_path_check CHECK (((char_length(path) >= 1) AND (char_length(path) <= 512))),
+    CONSTRAINT agent_activity_status_check CHECK (((status >= 100) AND (status <= 599)))
+);
 
 
 --
@@ -59155,6 +59191,14 @@ ALTER TABLE ONLY public.account_email_changes
 
 
 --
+-- Name: account_mail_throttle account_mail_throttle_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_mail_throttle
+    ADD CONSTRAINT account_mail_throttle_pkey PRIMARY KEY (account_id, kind);
+
+
+--
 -- Name: account_oauth_unlinks account_oauth_unlinks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -59216,6 +59260,14 @@ ALTER TABLE ONLY public.accounts
 
 ALTER TABLE ONLY public.accounts
     ADD CONSTRAINT accounts_stripe_customer_id_key UNIQUE (provider_customer_id);
+
+
+--
+-- Name: agent_activity agent_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_activity
+    ADD CONSTRAINT agent_activity_pkey PRIMARY KEY (id);
 
 
 --
@@ -72145,6 +72197,20 @@ CREATE INDEX accounts_mfa_required_pending_idx ON public.accounts USING btree (i
 --
 
 CREATE INDEX accounts_past_due_idx ON public.accounts USING btree (past_due_at) WHERE (status = 'past_due'::text);
+
+
+--
+-- Name: agent_activity_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_activity_created_idx ON public.agent_activity USING btree (created_at);
+
+
+--
+-- Name: agent_activity_key_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_activity_key_created_idx ON public.agent_activity USING btree (key_id, created_at DESC, id DESC);
 
 
 --
@@ -90256,6 +90322,14 @@ ALTER TABLE ONLY public.account_deploy_rate_limits
 
 ALTER TABLE ONLY public.account_email_changes
     ADD CONSTRAINT account_email_changes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_mail_throttle account_mail_throttle_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_mail_throttle
+    ADD CONSTRAINT account_mail_throttle_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

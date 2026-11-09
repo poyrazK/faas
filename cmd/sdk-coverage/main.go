@@ -380,6 +380,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/suspend":                true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/restore":                true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":        true, // operator-only tenant security control
+	"POST /v1/admin/ops/accounts/{id}/reset-mfa":              true, // operator-only account recovery
 	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling": true, // operator-only support grant (ADR-20261101214152)
 	"POST /v1/admin/ops/nodes/{name}/drain":                   true, // operator-only node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/force-drain":             true, // operator-only destructive node lifecycle control
@@ -1256,6 +1257,9 @@ var methodRouteMap = map[string]string{
 	"POST /v1/agent-connections/revoke_all":                                                      "RevokeAllAgentConnections",
 	"PUT /v1/agent-connections/self":                                                             "NameAgentClient",
 	"DELETE /v1/agent-connections/self":                                                          "DisconnectAgent",
+	"GET /v1/agent-connections/self/activity":                                                    "AgentConnectionSelfActivity",
+	"GET /v1/agent-connections/{id}/activity":                                                    "AgentConnectionActivity",
+	"GET /v1/orgs/{slug}/agent-connections/{id}/activity":                                        "OrgAgentConnectionActivity",
 	"GET /v1/orgs/{slug}/agent-connections":                                                      "ListOrgAgentConnections",
 	"DELETE /v1/orgs/{slug}/agent-connections/{id}":                                              "RevokeOrgAgentConnection",
 	"POST /v1/orgs/{slug}/agent-connections/revoke_all":                                          "RevokeAllOrgAgentConnections",

@@ -751,6 +751,11 @@ var cliCommands = []cliCommand{
 				Short: "Revoke every active session for an account",
 				Flags: accountMutationCLIFlags(),
 			},
+			{
+				Name:  "reset-mfa",
+				Short: "Clear a customer's two-factor authentication after verified recovery",
+				Flags: accountMutationCLIFlags(),
+			},
 		},
 	},
 	{

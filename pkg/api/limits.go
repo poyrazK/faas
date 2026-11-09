@@ -239,6 +239,15 @@ const (
 	AgentApprovalBodyBindBytes = 1 << 20
 )
 
+// Agent activity (ADR-20261107220000): an agent key's write requests are
+// kept AgentActivityRetention; a page holds DefaultAgentActivityPage rows
+// unless ?limit asks for up to MaxAgentActivityPage.
+const (
+	AgentActivityRetention   = 7 * 24 * time.Hour
+	DefaultAgentActivityPage = 50
+	MaxAgentActivityPage     = 200
+)
+
 // Agent approval outcomes (ADR-20261107140000 §6): an agent repeating a
 // request denied, or expired, within AgentApprovalOutcomeWindow is told so
 // instead of asking again; a denial note holds at most

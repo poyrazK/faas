@@ -150,6 +150,14 @@ type AccountEmailChange struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type AccountMailThrottle struct {
+	AccountID       pgtype.UUID
+	Kind            string
+	WindowStartedAt pgtype.Timestamptz
+	SentInWindow    int32
+	LastSentAt      pgtype.Timestamptz
+}
+
 type AccountOauthUnlink struct {
 	AccountID  pgtype.UUID
 	Provider   string
@@ -221,6 +229,18 @@ type Agent struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	DeletedAt     pgtype.Timestamptz
+}
+
+type AgentActivity struct {
+	ID         pgtype.UUID
+	KeyID      pgtype.UUID
+	AccountID  pgtype.UUID
+	OrgID      pgtype.UUID
+	Method     string
+	Path       string
+	Status     int32
+	ApprovalID pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
 }
 
 // ADR-20261107140000 notification channels that get agent approval requests; apid is the only writer.

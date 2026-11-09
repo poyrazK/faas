@@ -192,9 +192,10 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
       clearTimeout(timer); timer = null
       const sent = report()
       if (waitMs === undefined) return await sent
-      // The bound is not unref'd: it must keep the event loop alive for at
-      // most waitMs, or a hung report lets the loop drain mid-flush (Node 22
-      // then cancels the awaiting caller).
+      // The bound stays referenced: with a hung report and nothing else
+      // holding the event loop (shutdown, tests), an unref'd bound lets the
+      // loop end with this flush still pending. It is cleared below, so it
+      // holds the process for at most waitMs.
       let bound
       await Promise.race([sent, new Promise(resolve => { bound = setTimeout(resolve, Math.max(0, waitMs)) })])
       clearTimeout(bound)

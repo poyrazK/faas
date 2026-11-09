@@ -506,6 +506,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/suspend":                      true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/restore":                      true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":              true, // operator-only tenant security control
+	"POST /v1/admin/ops/accounts/{id}/reset-mfa":                    true, // operator-only account recovery (ADR-20261108160000)
 	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling":       true, // operator-only support grant (ADR-20261101214152)
 	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/force-drain":                   true, // operator-only destructive node lifecycle control
@@ -2056,6 +2057,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "debug_rollout.go"),     // ADR-1447 amendment: rollout explanation + debug status
 		filepath.Join(root, "pkg", "api", "agent_connections.go"), // ADR-20261030133644: connected agents
 		filepath.Join(root, "pkg", "api", "agent_approvals.go"),   // ADR-20261104140058: approvals for risky agent actions
+		filepath.Join(root, "pkg", "api", "agent_activity.go"),    // ADR-20261107220000: agent activity log
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
