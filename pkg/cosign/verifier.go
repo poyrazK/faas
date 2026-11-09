@@ -91,10 +91,10 @@ func (v *LocalVerifier) CheckPresent(ctx context.Context, layerKey, sigKey strin
 	if err != nil {
 		return fmt.Errorf("cosign: read sig %q: %w", sigKey, err)
 	}
-	if shapeErr := checkSignatureShape(layerKey, sig); shapeErr != nil {
+	if checkSignatureShape(layerKey, sig) != nil {
 		return api.NewProblem(503, "sig_invalid",
 			"malformed signature for cold-boot layer",
-			fmt.Sprintf("signature for layer %q at %q: %v", layerKey, sigKey, shapeErr))
+			fmt.Sprintf("signature for layer %q at %q is neither a v1 signature nor a v2 signature for this layer", layerKey, sigKey))
 	}
 	exists, supported, err := storage.Exists(ctx, v.stor, layerKey)
 	if err != nil {
