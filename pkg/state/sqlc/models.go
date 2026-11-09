@@ -594,6 +594,7 @@ type AlertRule struct {
 	LogQuery                        pgtype.Text
 	CreatedByAccountID              pgtype.UUID
 	NotifyResolved                  bool
+	CustomMetricLabels              []byte
 }
 
 type AlertRuleChannel struct {
@@ -1647,6 +1648,7 @@ type AppReleaseGate struct {
 	SyntheticCheckID  pgtype.UUID
 	MaxFailurePercent pgtype.Int4
 	MaxChangePercent  pgtype.Int4
+	MetricLabels      []byte
 }
 
 type AppResourceAccount struct {

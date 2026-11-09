@@ -28291,6 +28291,11 @@ components:
           type: string
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           example: orders_pending
+        labels:
+          description: "custom targets only: watch the one labelled gauge series of the metric with exactly these labels instead of its aggregate. Keys match ^[a-z_][a-z0-9_]{0,62}$."
+          type: object
+          maxProperties: 3
+          additionalProperties: {type: string, maxLength: 128}
         value:
           description: "Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside `targets` it must be > 0. queue_depth requires a positive per-worker backlog budget, and cpu is capped at 100."
           type: number
@@ -36088,6 +36093,11 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'The pushed custom metric a custom_metric rule watches. Present only when metric is custom_metric.'
           example: orders_pending
+        custom_metric_labels:
+          type: object
+          additionalProperties: {type: string, maxLength: 128}
+          maxProperties: 3
+          description: 'The labelled series a custom_metric rule watches: the series with exactly these labels. Absent when the rule watches the aggregate.'
         log_query:
           type: string
           description: 'The canonical log search filters a log_search_matches rule counts. Present only when metric is log_search_matches.'
@@ -36188,6 +36198,11 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h.'
           example: orders_pending
+        custom_metric_labels:
+          type: object
+          additionalProperties: {type: string, maxLength: 128}
+          maxProperties: 3
+          description: 'custom_metric rules only: watch the one labelled series with exactly these labels instead of the aggregate (counters summed, gauges max across series). Keys match ^[a-z_][a-z0-9_]{0,62}$.'
         log_query:
           type: string
           maxLength: 2048

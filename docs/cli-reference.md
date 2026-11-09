@@ -6422,7 +6422,7 @@ List alert rules
 
 Add an alert rule
 
-`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
+`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--metric-label <KEY=VALUE>]... [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6438,6 +6438,7 @@ Add an alert rule
 | `--failure-source <SOURCE>` | any\|cron\|queue\|delayed_task\|async_invoke\|inbound_webhook |  |
 | `--channel <CHANNEL_ID>` | notification channel id (repeatable); with one, the webhook is optional |  |
 | `--custom-metric <NAME>` | Pushed custom metric to watch; required with --metric custom_metric |  |
+| `--metric-label <KEY=VALUE>` | with --custom-metric: watch the series with this label (repeatable) |  |
 | `--log-query <FILTERS>` | Log search filters to count, e.g. level=error&amp;q=timeout; with --metric log_search_matches |  |
 | `--saved-search <NAME>` | Copy a saved log search&#39;s filters; with --metric log_search_matches |  |
 | `--slo <SLO_ID>` | SLO id for slo_budget_burn or slo_budget_remaining_pct |  |

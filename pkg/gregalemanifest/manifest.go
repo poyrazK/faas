@@ -1059,6 +1059,9 @@ type ScalingTarget struct {
 	// Name selects WHICH custom metric to watch (ADR-202). Required with
 	// `metric: custom`, rejected with any other metric.
 	Name string `yaml:"name,omitempty"`
+	// Labels selects one labelled series of the custom metric
+	// (ADR-20261108160000 slice C2); omitted, the metric's aggregate.
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 // ScalingConfig declares the app-level autoscaling policy. Pointers preserve
@@ -1267,7 +1270,7 @@ func (s *ScalingConfig) Validate() error {
 	if len(s.Targets) > 0 {
 		converted := make([]api.ScalingTarget, 0, len(s.Targets))
 		for _, t := range s.Targets {
-			converted = append(converted, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name})
+			converted = append(converted, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels})
 		}
 		if problem := api.ValidateScalingTargets("targets", converted); problem != nil {
 			return fmt.Errorf("scaling: %s", problem.Detail)
@@ -1339,10 +1342,10 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 		out.ScaleInCooldownS = *s.ScaleInCooldownS
 	}
 	if s.Target != nil {
-		out.Target = &api.ScalingTarget{Metric: s.Target.Metric, Value: s.Target.Value, Name: s.Target.Name}
+		out.Target = &api.ScalingTarget{Metric: s.Target.Metric, Value: s.Target.Value, Name: s.Target.Name, Labels: s.Target.Labels}
 	}
 	for _, t := range s.Targets {
-		out.Targets = append(out.Targets, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name})
+		out.Targets = append(out.Targets, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels})
 	}
 	out.Timezone = s.Timezone
 	// Validate() already rejected an unparseable duration, so a failure

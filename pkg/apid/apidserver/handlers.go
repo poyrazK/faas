@@ -1485,6 +1485,7 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 			Metric: p.Target.Metric,
 			Value:  p.Target.Value,
 			Name:   p.Target.Name,
+			Labels: p.Target.Labels,
 		}
 	}
 	// ADR-194 targets, ADR-195 schedules — the read half of the same gap
@@ -1492,7 +1493,7 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 	// configured even once the write path carried it.
 	for _, t := range p.Targets {
 		out.Targets = append(out.Targets, api.ScalingTarget{
-			Metric: t.Metric, Value: t.Value, Name: t.Name,
+			Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels,
 		})
 	}
 	out.Timezone = p.Timezone

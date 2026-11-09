@@ -2299,3 +2299,6 @@ func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.R
 
 // SourceLivenessOverrides is a multipart deploy's liveness_probe override.
 var SourceLivenessOverrides = sourceLivenessOverrides
+
+// ValidateCustomMetricAlertLabels exposes the custom_metric rule label check.
+var ValidateCustomMetricAlertLabels = validateCustomMetricAlertLabels
