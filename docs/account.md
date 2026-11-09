@@ -44,7 +44,17 @@ operation still enforces its own authorization and admission checks.
   your previous address; if the billing provider refuses, you get an email
   saying which one to update. Wrong passwords count
   against the same per-IP limit as sign-in.
-- **Password:** `gregale account password update` opens the form.
+- **Password:** `gregale account password update` opens the form. A reset
+  (**Forgot password**) signs out every browser and revokes the keys that
+  sign-ins created. API keys you created by hand keep working; the reset
+  emails you a list of them and the account page shows it, so you can revoke
+  any you do not recognise.
+- **Recovery cancels pending grants:** resetting or changing the password,
+  confirming an email change, signing out everywhere and claiming an
+  unverified address with an email link also cancel a pending email change,
+  invitations you sent that were not yet accepted, and CLI sign-ins approved
+  in the browser but not yet picked up by the CLI. Security activity records
+  it.
 - **Sign-in methods:** `gregale account provider list` shows whether a password
   and two-factor authentication are set and which Google or GitHub identities
   are linked. Remove a linked provider from the account page or with an API
@@ -70,6 +80,9 @@ operation still enforces its own authorization and admission checks.
 - **Credential emails:** creating or rotating an API key, a CLI or agent
   (MCP) sign-in, and a password sign-in through the API each email you, so a
   credential you did not create is noticed.
+- **Rotation grace window:** `gregale key grace-window set --days N` keeps a
+  rotated key working for N days (0 to 30). Changing it asks for a recent
+  sign-in or authenticator code.
 - **Leaving an org:** `gregale org leave SLUG`. Owners transfer ownership first,
   billing contacts are replaced first, and a personal org cannot be left.
 

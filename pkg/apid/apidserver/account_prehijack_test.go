@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -236,7 +237,11 @@ func TestVerifyEmailLinkNeedsTheAccountsBrowser(t *testing.T) {
 	if acct.EmailVerified() {
 		t.Fatal("a click without the account's session verified it")
 	}
-	if _, err := store.(state.EmailVerificationPeekStore).EmailVerificationTokenAccount(context.Background(), api.HashToken(token)); err != nil {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.(state.EmailVerificationPeekStore).EmailVerificationTokenAccount(context.Background(), api.HashToken(raw)); err != nil {
 		t.Errorf("a refused click spent the token: %v", err)
 	}
 }

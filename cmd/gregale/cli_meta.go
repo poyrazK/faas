@@ -5026,7 +5026,7 @@ var cliCommands = []cliCommand{
 			{Name: subRotate, Short: "Rotate an API key", Positionals: []string{"<key-id>"}, Examples: []string{"gregale key rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a"}},
 			{Name: "grace-window", Short: "Read or update the rotation grace window", Flags: []cliFlag{
 				{Name: "reset", Short: "clear the account override and use the plan default", Bool: true},
-				{Name: "days", Short: "new grace window in days (0 or greater)", Value: "N"},
+				{Name: "days", Short: "new grace window in days (0 to 30)", Value: "N"},
 			}},
 		},
 	},
