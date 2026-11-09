@@ -132,6 +132,17 @@ type LocalSigner struct {
 	priv *ecdsa.PrivateKey
 	stor storage.StorageBackend
 	log  Logger
+	// v2 writes signatures bound to the artifact's key
+	// (ADR-20261109170000) instead of raw v1 signatures.
+	v2 bool
+}
+
+// WithSignatureV2 makes the signer write v2 signatures, which bind the
+// storage key. Turn it on only once every verifier reads v2: a verifier of
+// a release before ADR-20261109170000 rejects them.
+func (s *LocalSigner) WithSignatureV2(on bool) *LocalSigner {
+	s.v2 = on
+	return s
 }
 
 // Logger is a minimal interface for the signer to log non-fatal
@@ -200,18 +211,25 @@ func (s *LocalSigner) Sign(ctx context.Context, layerKey, sigKey string) error {
 		}
 	}
 	digest := h.Sum(nil)
-	r, sBig, err := ecdsa.Sign(rand.Reader, s.priv, digest)
-	if err != nil {
-		return fmt.Errorf("cosign: ecdsa sign: %w", err)
+	var out []byte
+	if s.v2 {
+		if out, err = encodeSignatureV2(s.priv, layerKey, digest); err != nil {
+			return fmt.Errorf("cosign: sign %q: %w", layerKey, err)
+		}
+	} else {
+		r, sBig, err := ecdsa.Sign(rand.Reader, s.priv, digest)
+		if err != nil {
+			return fmt.Errorf("cosign: ecdsa sign: %w", err)
+		}
+		out = make([]byte, 64)
+		rb := r.Bytes()
+		sb := sBig.Bytes()
+		if len(rb) > 32 || len(sb) > 32 {
+			return fmt.Errorf("cosign: oversized r/s (%d/%d)", len(rb), len(sb))
+		}
+		copy(out[32-len(rb):32], rb)
+		copy(out[64-len(sb):64], sb)
 	}
-	out := make([]byte, 64)
-	rb := r.Bytes()
-	sb := sBig.Bytes()
-	if len(rb) > 32 || len(sb) > 32 {
-		return fmt.Errorf("cosign: oversized r/s (%d/%d)", len(rb), len(sb))
-	}
-	copy(out[32-len(rb):32], rb)
-	copy(out[64-len(sb):64], sb)
 
 	// Write the raw sig blob via bytes.NewReader. One heap alloc
 	// per Sign — well under the build-pipeline cost budget (one

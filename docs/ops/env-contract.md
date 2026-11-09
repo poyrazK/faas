@@ -88,6 +88,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APP_TASK_API_ENABLED` | apid | `unit` |  |  | `` | explicit 0 until deployment-attached task admission and the ADR-230 metal isolation path are qualified together |
 | `FAAS_APP_TASK_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for deployment-attached one-off command dispatch; default off provides a production-safe rollout gate |
 | `FAAS_ARTIFACT_REPLICATOR` | imaged | `envfile` |  |  | `` |  |
+| `FAAS_ARTIFACT_SIGNATURE_FORMAT` | imaged | `default` |  | v1 | `` | ADR-20261109170000: v2 writes layer signatures bound to their storage key, so a signed layer copied over another app's key fails verification; turn on once every schedd and apid reads v2 (the release after the one that taught them); v1 or unset writes the raw signature |
 | `FAAS_ARTIFACT_SYNC_TARGET` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
 | `FAAS_ARTIFACT_SYNC_USER` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
 | `FAAS_ASYNC_WAKE_FINALIZE` | schedd | `default` |  |  | `` | optional boolean switch for ADR-20261105090246: a booted wake answers after its RUNNING publication and records its workload class and secret delivery afterwards; production default is off |
