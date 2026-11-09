@@ -273,6 +273,9 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
   })
   server.usage = usage
   server.changes = changes
+  // The engine's owner calls this when the engine stops, starts, reloads or
+  // is restored, so /healthz never answers for an engine that is gone.
+  server.invalidateHealth = () => health.invalidate()
   server.on('close', () => { usage?.stop(); changes?.stop() })
   return server
 }
@@ -487,8 +490,9 @@ export async function main(env = process.env) {
     // Usage counted since the last report would be dropped by the restore
     // check, so it is reported before the snapshot, within the hook's budget;
     // a report still in flight keeps its id and is applied once.
-    beforeCheckpoint: () => Promise.all([engine.stop(), refresh?.release(), server?.usage?.flush(checkpointFlushMs)]),
-    afterRestore: () => { engine.start(); config.accessSafety.restored() },
+    // The snapshot carries no health answer: the engine it described stops here.
+    beforeCheckpoint: () => { server?.invalidateHealth(); return Promise.all([engine.stop(), refresh?.release(), server?.usage?.flush(checkpointFlushMs)]) },
+    afterRestore: () => { server?.invalidateHealth(); engine.start(); config.accessSafety.restored() },
   }
   engine.start()
   server = createServer(config, verify)
@@ -502,7 +506,7 @@ export async function main(env = process.env) {
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; void server.usage?.flush(); server.close(); void engine.stop() })
   process.on('SIGUSR1', () => {
     if (config.coordinatedRefresh) runtimeFailure('data_api_uncoordinated_reload_rejected')
-    else engine.signal('SIGUSR1')
+    else { engine.signal('SIGUSR1'); server.invalidateHealth() }
   })
   server.listen(Number(env.PORT || 8080), '0.0.0.0')
 }

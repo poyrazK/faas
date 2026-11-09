@@ -337,13 +337,20 @@ func (a *appErrorsReceiver) requestRowsFull(ctx context.Context, accountID, appI
 	if !ok {
 		return false
 	}
-	accounts, ok := a.store.(interface {
-		AccountByID(context.Context, string) (state.Account, error)
+	owners, ok := a.store.(interface {
+		state.AppOwnerReader
+		AppByID(context.Context, string) (state.App, error)
 	})
 	if !ok {
 		return false
 	}
-	acct, err := accounts.AccountByID(ctx, accountID.String())
+	// The cap is the app owner's plan (ADR-20261109153000): an app an
+	// organization owns follows the organization's plan.
+	app, err := owners.AppByID(ctx, appID.String())
+	if err != nil {
+		return false
+	}
+	acct, err := state.AppResourceAccount(ctx, owners, app)
 	if err != nil {
 		return false
 	}

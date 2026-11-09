@@ -6251,7 +6251,7 @@ var cliCommands = []cliCommand{
 				{Name: "auth-jwks-url", Short: "OIDC JWKS URL", Value: "URL"},
 				{Name: "auth", Short: "Auth app that verifies clients and authorizes channels; replaces the callback and auth flags", Value: "AUTH_APP", Unreleased: true},
 				{Name: "auth-audience", Short: "OIDC audience (repeatable)", Value: "AUDIENCE", Repeatable: true},
-				{Name: "auth-algorithm", Short: "OIDC signing algorithm (repeatable)", Value: "ALG", Repeatable: true},
+				{Name: "auth-algorithm", Short: "OIDC signing algorithm, required for oidc_jwt (repeatable)", Value: "ALG", Repeatable: true},
 				{Name: "auth-claim", Short: "required OIDC claim as KEY=VALUE (repeatable)", Value: "KEY=VALUE", Repeatable: true},
 				{Name: "allowed-origin", Short: "exact browser origin (repeatable)", Value: "ORIGIN", Repeatable: true},
 				{Name: "max-connections", Short: "per-endpoint connection cap (0 inherits the default)", Value: "N"},

@@ -2761,6 +2761,8 @@ func ResolveSourceUploadCapForTest(ctx context.Context, c *Client) (mb int, veri
 // ForwardAppTaskSession is the shared port-forward / postgres connect relay.
 var ForwardAppTaskSession = forwardAppTaskSession
 
+var DebugWatchNextWait = debugWatchNextWait
+
 // ADR-20261107180000 `gregale config explain`.
 var (
 	ExplainConfigKey         = explainConfigKey

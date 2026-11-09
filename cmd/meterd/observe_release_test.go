@@ -18,6 +18,8 @@ import (
 
 type observeReleaseFake struct {
 	accounts map[string]state.Account
+	apps     map[string]state.App
+	orgs     map[string]state.Org
 	err      error
 }
 
@@ -31,8 +33,82 @@ func (f observeReleaseFake) AccountByID(_ context.Context, id string) (state.Acc
 	return state.Account{}, state.ErrNotFound
 }
 
+// AppByID knows only the apps a test lists; any other app reads as gone, so
+// its work is decided by the account.
 func (f observeReleaseFake) AppByID(_ context.Context, id string) (state.App, error) {
-	return state.App{ID: id}, nil
+	if f.err != nil {
+		return state.App{}, f.err
+	}
+	if app, ok := f.apps[id]; ok {
+		return app, nil
+	}
+	return state.App{}, state.ErrNotFound
+}
+
+func (f observeReleaseFake) OrgByID(_ context.Context, id string) (state.Org, error) {
+	if org, ok := f.orgs[id]; ok {
+		return org, nil
+	}
+	return state.Org{}, state.ErrNotFound
+}
+
+const (
+	proOrg       = "00000000-0000-4000-8000-0000000000c1"
+	suspendedOrg = "00000000-0000-4000-8000-0000000000c2"
+)
+
+// orgStore is releaseAccounts plus a Free member's apps in a Pro organization
+// and a suspended one, both owning their apps.
+func orgStore() observeReleaseFake {
+	return observeReleaseFake{
+		accounts: releaseAccounts(),
+		apps: map[string]state.App{
+			"org-app":       {ID: "org-app", AccountID: freeAccount, OrgID: proOrg},
+			"suspended-app": {ID: "suspended-app", AccountID: proAccount, OrgID: suspendedOrg},
+		},
+		orgs: map[string]state.Org{
+			proOrg:       {ID: proOrg, Plan: api.PlanPro, Status: state.OrgStatusActive, ResourceOwnershipEnabled: true},
+			suspendedOrg: {ID: suspendedOrg, Plan: api.PlanPro, Status: state.OrgStatusSuspended, ResourceOwnershipEnabled: true},
+		},
+	}
+}
+
+// adr: 20261109153000 — work on an app an organization owns follows the
+// organization's plan and status, not the creating member's: a Free member's
+// rules, probes and rollups in a Pro organization run, and a suspended
+// organization's stop although its member's account is active.
+func TestObserveReleaseFollowsTheAppsOwner(t *testing.T) {
+	on := platformflags.Definition{Enabled: true, Default: true}
+	written := map[string]platformflags.Definition{"synthetic-checks": on, "custom-slos": on}
+	r := releaseFor(t, orgStore(), written)
+	ctx := context.Background()
+	rule := state.AlertRule{ID: "r1", AccountID: freeAccount, AppID: "org-app", Metric: state.AlertMetricErrorRate, Comparison: state.AlertGt}
+	if evaluate, channels := r.ForAccount(ctx, freeAccount)(ctx, rule); !evaluate || !channels {
+		t.Errorf("a Free member's rule on a Pro organization's app = (%v, %v), want it running", evaluate, channels)
+	}
+	limit, ok := r.RuleLimits(ctx, rule)
+	pro, _ := api.LimitsFor(api.PlanPro)
+	if !ok || limit.PerApp != pro.AlertRuleLimitPerApp || limit.Subject != proOrg {
+		t.Errorf("caps = %+v, %v; want the organization's Pro caps counted against it", limit, ok)
+	}
+	check := state.RunnableSyntheticCheck{SyntheticCheck: state.SyntheticCheck{AccountID: freeAccount, AppID: "org-app"}}
+	if !r.Synthetic(ctx, check) {
+		t.Error("a Pro organization's check must be probed whoever created it")
+	}
+	if !r.SLO(ctx, state.SLO{AccountID: freeAccount, AppID: "org-app"}) {
+		t.Error("a Pro organization's SLO must get rollups whoever created it")
+	}
+	suspended := state.AlertRule{ID: "r2", AccountID: proAccount, AppID: "suspended-app", Metric: state.AlertMetricErrorRate, Comparison: state.AlertGt}
+	if evaluate, _ := r.ForAccount(ctx, proAccount)(ctx, suspended); evaluate {
+		t.Error("a suspended organization's rule must not run though its member is active")
+	}
+	if r.Synthetic(ctx, state.RunnableSyntheticCheck{SyntheticCheck: state.SyntheticCheck{AccountID: proAccount, AppID: "suspended-app"}}) {
+		t.Error("a suspended organization's check must not be probed")
+	}
+	// An account-wide rule still follows the account.
+	if evaluate, _ := r.ForAccount(ctx, freeAccount)(ctx, state.AlertRule{AccountID: freeAccount, Metric: state.AlertMetricErrorRate}); evaluate {
+		t.Error("a Free account's own account-wide rule must not run")
+	}
 }
 
 const (
@@ -115,13 +191,15 @@ func TestObserveReleaseDecidesAlertRules(t *testing.T) {
 			if release == nil {
 				t.Fatal("a readable account must get a decision")
 			}
+			tc.rule.AccountID = tc.account
 			evaluate, channels := release(context.Background(), tc.rule)
 			if evaluate != tc.evaluate || channels != tc.channels {
 				t.Fatalf("decision = (%v, %v), want (%v, %v)", evaluate, channels, tc.evaluate, tc.channels)
 			}
 		})
 	}
-	if release := releaseFor(t, observeReleaseFake{err: errors.New("connection refused")}, nil).ForAccount(context.Background(), proAccount); release != nil {
+	release := releaseFor(t, observeReleaseFake{err: errors.New("connection refused")}, nil).ForAccount(context.Background(), proAccount)
+	if evaluate, channels := release(context.Background(), rule(string(state.AlertMetricErrorRate), "gt")); !evaluate || !channels {
 		t.Fatal("an unreadable account must keep every rule running")
 	}
 }

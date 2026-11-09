@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	schedpkg "github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -327,7 +329,7 @@ func TestSynthAdapterDebugReplayUsesMirrorTargetAndStripsMetadata(t *testing.T) 
 		AppID:     "app-1",
 		AccountID: "acct-1",
 		Source:    state.InvocationReplay,
-		Method:    http.MethodPost,
+		Method:    http.MethodGet,
 		Path:      "/replayed",
 		Payload:   []byte(`{"sensitive":"discard"}`),
 		Headers:   metadata,
@@ -352,6 +354,66 @@ func TestSynthAdapterDebugReplayUsesMirrorTargetAndStripsMetadata(t *testing.T) 
 	}
 	if result.SourceStatusCode != 200 || result.MirrorStatusCode != 200 || result.StatusDiff || result.Crashed {
 		t.Fatalf("replay result = %+v, want matching healthy statuses", result)
+	}
+}
+
+// A telemetry replay has no body, so an unsafe method needs the mirror rule's
+// own allow_unsafe_methods opt-in, as live mirroring does. With it, a bodyless
+// POST is run but its comparison is marked incomplete rather than a diff.
+func TestSynthAdapterDebugReplayUnsafeMethodNeedsRuleOptIn(t *testing.T) {
+	metadata, err := json.Marshal(map[string]string{
+		api.DebugReplayRequestIDHeader:     "request-1",
+		api.DebugReplayDeploymentIDHeader:  "dep-source",
+		api.DebugReplayMirrorRuleIDHeader:  "rule-1",
+		api.DebugReplaySourceStatusHeader:  "201",
+		api.DebugReplaySourceLatencyHeader: "12",
+	})
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	for _, allowUnsafe := range []bool{false, true} {
+		b := &replayTestBackend{
+			rule: gateway.MirrorRuleRow{
+				ID: "rule-1", AccountID: "acct-1", AppID: "app-1",
+				SourceDeploymentID: "dep-source", MirrorDeploymentID: "dep-mirror",
+				Enabled: true, AllowUnsafeMethods: allowUnsafe,
+			},
+			target: gateway.Target{NodeID: "node-mirror", InstanceID: "instance-mirror", DeploymentID: "dep-mirror"},
+		}
+		a := &synthAdapter{
+			backend: b,
+			forward: func(gateway.Target) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusBadRequest)
+				})
+			},
+		}
+		out, _, err := a.InvokeWithStatus(context.Background(), "app-1", state.Invocation{
+			ID: "inv-1", AppID: "app-1", AccountID: "acct-1", Source: state.InvocationReplay,
+			Method: http.MethodPost, Path: "/orders", Headers: metadata,
+		})
+		if !allowUnsafe {
+			if !errors.Is(err, schedpkg.ErrPermanentInvoke) {
+				t.Fatalf("safe-only rule: err = %v, want permanent refusal", err)
+			}
+			if b.scheduleCalls.Load() != 0 {
+				t.Fatalf("safe-only rule scheduled the mirror target %d times", b.scheduleCalls.Load())
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("opted-in rule: %v", err)
+		}
+		var result struct {
+			StatusDiff           bool `json:"status_diff"`
+			ComparisonIncomplete bool `json:"comparison_incomplete"`
+		}
+		if err := json.Unmarshal(out.Result, &result); err != nil {
+			t.Fatalf("decode replay result %q: %v", out.Result, err)
+		}
+		if result.StatusDiff || !result.ComparisonIncomplete {
+			t.Fatalf("bodyless POST result = %+v, want incomplete and no status diff", result)
+		}
 	}
 }
 

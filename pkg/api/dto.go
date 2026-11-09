@@ -4140,6 +4140,19 @@ func ParseMirrorWindow(s string) (MirrorWindowDuration, error) {
 	return 0, errInvalidMirrorWindow
 }
 
+// MirrorSafeMethod reports whether a method is mirrored and replayed without
+// the mirror rule's allow_unsafe_methods opt-in: GET, HEAD and OPTIONS. Live
+// mirroring, debugger replay and the replay dispatcher share it, so a rule
+// that opted out of side effects is never replayed with one.
+func MirrorSafeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
+}
+
 // MirrorAlwaysStrippedHeaders is the set of headers the gateway
 // strips from every mirror invocation regardless of the
 // customer-supplied RedactHeaders list (issue #72 / ADR-125

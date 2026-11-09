@@ -1,6 +1,6 @@
 # ADR-20261108160000: Custom metrics take OTLP deltas, up-down counters, histograms and bounded labels, capped per plan
 
-- **Status:** accepted (slices A and C1 implemented here; B on PR #6788; C2 on its own PR)
+- **Status:** accepted (slices A, C1 and C2 implemented; B on PR #6788)
 - **Date:** 2026-11-08
 - **Amends:** ADR-202 (pushed custom metrics: the flat cap of 5 names per
   app becomes a per-plan cap), ADR-745 (OTLP metrics ingestion: more types

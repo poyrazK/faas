@@ -204,6 +204,8 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
     await once(child, 'exit')
     child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstream), PGRST_ADMIN_SERVER_PORT: String(ready) }, stdio: ['ignore', 'pipe', 'pipe'] })
     child.stdout.on('data', value => { logs += value }); child.stderr.on('data', value => { logs += value })
+    // The runtime's engine owner forgets the health answer on every restart.
+    gateway.invalidateHealth()
     let healthy = false
     for (let i = 0; i < 100; i++) {
       if ((await fetch(url + '/healthz')).status === 200) { healthy = true; break }

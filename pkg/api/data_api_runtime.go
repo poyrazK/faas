@@ -10,6 +10,12 @@ import (
 	"net/url"
 )
 
+// DataAPILivenessPath is the Data API runtime's process check (no SQL, engine
+// or JWT work). Data API deploys use it as the liveness probe: /healthz
+// reports SQL readiness, which a saturated pool or a database blip fails
+// while the runtime is healthy, and three such answers would destroy it.
+const DataAPILivenessPath = "/livez"
+
 // DataAPIRuntime is the Data API runtime the control plane currently serves
 // (ADR-20261031095954). The CLI deploys this archive instead of the runtime it
 // was built with, so an old CLI release cannot redeploy an old runtime once
