@@ -20,13 +20,11 @@ package receivers
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -705,12 +703,4 @@ func RegisterRequestTelemetryReceiver(s *grpc.Server, store RequestTelemetryStor
 		}
 	}
 	apidpb.RegisterRequestTelemetryServer(s, receiver)
-}
-
-// errorsAsPgError is a tiny helper that returns true when err is
-// (or wraps) a *pgconn.PgError, populating *target. Delegates to
-// errors.As so the errorlint pass is happy and the unwrap chain is
-// semantically correct for pgx v5.
-func errorsAsPgError(err error, target **pgconn.PgError) bool {
-	return errors.As(err, target)
 }

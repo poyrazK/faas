@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -38,8 +40,8 @@ func TestRequestTelemetryGroupCommitOnPostgres(t *testing.T) {
 	for range 3 {
 		records = append(records, rollupTelemetryRequest(account.ID, app.ID, deployment, time.Now()))
 	}
-	replay := *records[1]
-	records = append(records, &replay) // the same event twice in one batch
+	replay := proto.Clone(records[1]).(*apidpb.IncrementRequestTelemetryRequest)
+	records = append(records, replay) // the same event twice in one batch
 	receiver := NewRequestTelemetryReceiver(store, nil, nil, true)
 	stream := newTelemetryStream(ctx, records, false)
 	if err := receiver.IncrementRequestTelemetry(stream); err != nil {
