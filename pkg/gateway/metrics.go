@@ -181,6 +181,10 @@ type Metrics struct {
 	// new-host budget was spent). A sustained shed rate is a flood of names
 	// that route nowhere.
 	routeLookupUnknownHost *prometheus.CounterVec
+	// requestLogSuppressed counts gateway_request lines not written
+	// because the request-log budget (api.GatewayRequestLogLinesPerSecond)
+	// was spent.
+	requestLogSuppressed prometheus.Counter
 	// inflightRequests (issue #587 / PR-A) is the per-daemon
 	// drain.Tracker in-flight gauge (see SetInflightRequests).
 	inflightRequests *prometheus.GaugeVec
@@ -2290,8 +2294,12 @@ func NewMetrics() *Metrics {
 	}, []string{"outcome"})
 	m.routeLookupUnknownHost.WithLabelValues("remembered_miss")
 	m.routeLookupUnknownHost.WithLabelValues("shed")
+	m.requestLogSuppressed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "gateway_request_log_suppressed_total",
+		Help: "gateway_request log lines (cold requests and non-2xx answers) not written because this gateway spent its request-log budget (GatewayRequestLogLinesPerSecond in pkg/api/limits.go). The next written line carries suppressed_before. A sustained rate means a flood of errors or of names that route nowhere; gateway_requests_total still counts every request.",
+	})
 	m.initMCPMetrics(reg)
-	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed, m.routeLookupUnknownHost)
+	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed, m.routeLookupUnknownHost, m.requestLogSuppressed)
 	return m
 }
 
@@ -2346,6 +2354,15 @@ func (m *Metrics) ObserveRouteLookupUnknownHost(outcome string) {
 		return
 	}
 	m.routeLookupUnknownHost.WithLabelValues(outcome).Inc()
+}
+
+// ObserveRequestLogSuppressed counts one gateway_request line the request-log
+// budget kept from being written. Nil-safe.
+func (m *Metrics) ObserveRequestLogSuppressed() {
+	if m == nil || m.requestLogSuppressed == nil {
+		return
+	}
+	m.requestLogSuppressed.Inc()
 }
 
 // ObserveDrainWait (issue #587 / PR-A) records the wall-clock
