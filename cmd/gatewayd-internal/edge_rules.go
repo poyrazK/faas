@@ -103,6 +103,10 @@ type gatewaydEdgeRules struct {
 	// capabilityAllowed drops the rules of an off capability per request
 	// (ADR-20261023115741); nil keeps every rule.
 	capabilityAllowed func(capability, accountID string) bool
+	// headerSecretOpener opens sealed request header values
+	// (ADR-20261108110000); nil leaves rules using them unapplied.
+	headerSecretOpener edgeRuleHeaderSecretOpener
+	headerSecrets      edgeRuleHeaderSecrets
 }
 
 // edgeRuleFenceKey scopes a fence to the account whose mutation raised it;
@@ -477,6 +481,10 @@ func (g *gatewaydEdgeRules) compileHostRules(ctx context.Context, host string, s
 		return nil, err
 	}
 	storeRules, err := g.resolveEdgeRuleLists(ctx, storeRules)
+	if err != nil {
+		return nil, err
+	}
+	storeRules, err = g.resolveEdgeRuleHeaderSecrets(ctx, storeRules)
 	if err != nil {
 		return nil, err
 	}

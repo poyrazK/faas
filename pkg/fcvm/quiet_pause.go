@@ -116,6 +116,8 @@ type quietState struct {
 	// observation off or ends it in QuietResume.
 	observing     atomic.Bool
 	observedSince time.Time
+	// cold is the idle ladder's L3/L4 compression record (idle_compress.go).
+	cold coldState
 }
 
 // quietPauseAfterFor is the quiet pause delay an instance gets. Instances
@@ -135,7 +137,7 @@ func quietPauseAfterFor(req WakeRequest, qualificationOnly bool) time.Duration {
 // now. A frozen instance (ADR-1151) is already paused, and its pause belongs
 // to Freeze and Thaw. The caller holds m.mu.
 func (m *Manager) quietEligibleLocked(id string, inst *Instance) bool {
-	if inst == nil || inst.QuietPauseAfter <= 0 || inst.Paused || inst.Frozen || inst.IsJob ||
+	if inst == nil || m.quietPauseAfter(inst) <= 0 || inst.Paused || inst.Frozen || inst.IsJob ||
 		inst.ExecutionOnly || inst.AppTaskOnly || inst.QualificationOnly || inst.TailCount > 0 {
 		return false
 	}
@@ -160,6 +162,9 @@ type quietCandidate struct {
 	// agent marks an agent run waiting on the model (agent_wait_pause.go),
 	// which has its own eligibility and idle rule.
 	agent bool
+	// guarded marks an app the idle ladder pauses behind its activity guard
+	// (idle_ladder_apps.go): it is idle only when the guard agrees.
+	guarded bool
 }
 
 // RunQuietPause pauses idle eligible instances every tick until ctx ends.
@@ -193,7 +198,7 @@ func (m *Manager) quietPausePass(ctx context.Context, now time.Time) {
 		live[id] = inst
 		switch {
 		case m.quietActivity != nil && m.quietEligibleLocked(id, inst):
-			candidates = append(candidates, quietCandidate{id: id, inst: inst, after: inst.QuietPauseAfter})
+			candidates = append(candidates, quietCandidate{id: id, inst: inst, after: m.quietPauseAfter(inst), guarded: inst.QuietPauseAfter <= 0})
 		case m.agentWaitEligibleLocked(id, inst):
 			candidates = append(candidates, quietCandidate{id: id, inst: inst, after: inst.AgentWaitPauseAfter, agent: true})
 		}
@@ -442,6 +447,7 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	if migrating {
 		return ErrInstanceBusy
 	}
+	wake := m.startColdWake(st, inst)
 	started := time.Now()
 	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), quietVMMTimeout)
 	err := m.ensureRehearsalNetwork(resumeCtx, inst)
@@ -464,6 +470,7 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	st.paused.Store(false)
 	st.since = time.Time{}
 	st.epoch.Add(1)
+	m.resumedColdWake(st, inst, wake, time.Since(started))
 	if inst.AgentRunOnly {
 		m.agentWaitMetrics.observeResume(time.Since(started))
 	} else {

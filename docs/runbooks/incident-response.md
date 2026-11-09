@@ -26,6 +26,7 @@ start without an alert, or span many alerts, start here:
 | Operator device or credential lost, stolen or phished | [operator-credential-compromise.md](operator-credential-compromise.md) |
 | DNS records or registrar changed by someone else | [dns-registrar-compromise.md](dns-registrar-compromise.md) |
 | Internal mTLS CA key or daemon leaf exposed | [internal-ca-compromise.md](internal-ca-compromise.md) |
+| Root or code execution on a compute node; guest escape | [compute-node-compromise.md](compute-node-compromise.md) |
 | Cloud provider zone or region down, project suspended, admin lost | [cloud-provider-loss.md](cloud-provider-loss.md) |
 | Cloudflare, GitHub, email, Polar or ACME CA down | [third-party-outage.md](third-party-outage.md) |
 | Control-plane host lost | [ControlPlaneFailover.md](ControlPlaneFailover.md), then [ControlPlaneStateBackup.md](ControlPlaneStateBackup.md) |

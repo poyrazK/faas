@@ -1688,10 +1688,11 @@ func (s *server) scanService(
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 			"project_selection_empty", "No workloads selected", "all requested workloads are excluded; review the persisted exclusions before deploying")
 	}
-	var dependencyReferences []reposcan.Workload
-	if req.Migration {
-		dependencyReferences = projectsetup.DependencyReferences(result.Workloads, filteredW)
-	}
+	// Services left out by --only or --exclude stay valid dependency targets:
+	// a partial rollout of compactor,query must not report their store
+	// dependency as unknown (ChronoLake finding 10). They are references only,
+	// never reconciled, built or counted against quotas.
+	dependencyReferences := projectsetup.DependencyReferences(result.Workloads, filteredW)
 	// Post-scan exclude-validity check: every entry in req.Exclude
 	// must correspond to a real scan workload OR an existing app in
 	// the account. A typo would otherwise silently survive and
@@ -2104,10 +2105,16 @@ func (s *server) scanService(
 			}
 		}
 		if existing != nil {
-			// Visibility is create-only; the plan shows what the app has.
+			// The plan shows what the app will have: a production deploy makes
+			// internal a service Compose no longer publishes; anything else
+			// keeps the app's visibility (ADR-20261107090000).
 			pw.Visibility = ""
-			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal {
+			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal ||
+				(req.Environment == "" && reposcan.NewWorkloadVisibility(w) == api.AppVisibilityInternal) {
 				pw.Visibility = api.AppVisibilityInternal
+			}
+			if note := projectVisibilityNote(w, *existing, req.Environment == ""); note != "" {
+				warnings = append(warnings, note)
 			}
 		}
 		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
@@ -2143,6 +2150,8 @@ func (s *server) scanService(
 	if shortfall := s.projectDeployRateShortfall(r.Context(), acct, len(filteredW), timeNow().UTC()); shortfall != "" {
 		warnings = append(warnings, "deploy rate: "+strings.TrimPrefix(shortfall, "not deployed: "))
 	}
+	warnings = append(warnings, s.environmentDependencyNotes(r.Context(), req.Environment, filteredW, projectApps)...)
+	warnings = append(warnings, allowCallersNotes(filteredW, result.Workloads, projectApps, acctApps)...)
 	respManaged := make([]api.PlanManaged, len(filteredMc))
 	for i, m := range filteredMc {
 		respManaged[i] = toPlanManaged(m)
@@ -2700,7 +2709,7 @@ func (s *server) scanService(
 	}
 	if len(req.Secrets) > 0 {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
-		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, req.Environment, req.Secrets); prob != nil {
+		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, filteredW, req.Environment, req.Secrets); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 		// Secret-only redeploys also need a build, even if source reconciliation
@@ -2744,6 +2753,11 @@ func (s *server) scanService(
 	}
 	if problem := s.importComposeEnv(r, acct, project.ID, importScope, composeEnv, filteredW, limits); problem != nil {
 		return resp, state.Project{}, nil, nil, nil, nil, problem
+	}
+	if req.Environment == "" {
+		if problem := s.applyComposeInternalVisibility(r, acct, project.ID, filteredW); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
 	}
 	if len(composePostgres) > 0 {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)

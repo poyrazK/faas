@@ -126,7 +126,10 @@
     scheduler preempting a busy app, and the A/B checks liveness under a
     CPU-bound load.
   - **One cold boot per app** after the switch includes it, when its old
-    snapshot is retired.
+    snapshot is retired. With snapshot refresh on (ADR-20261106214916), a
+    change to the list or the shape runs a refresh pass on every node: the
+    recently active apps whose count changed are re-captured in the
+    background, unbilled, so their next wake restores instead.
   - **Lower measured CPU per request** leaves measured CPU admission more room
     on the same node. Fewer exits also means less work for the host kernel
     under load.

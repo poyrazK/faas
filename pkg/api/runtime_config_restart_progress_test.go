@@ -26,3 +26,15 @@ func TestRestartProgressSeparatesFailurePendingAndHealth(t *testing.T) {
 		}
 	}
 }
+
+func TestRestartProgressNamesAStartupCrash(t *testing.T) {
+	for _, status := range []string{"retrying", "failed"} {
+		row := RuntimeConfigRestartStatusResponse{Status: status, FailureReason: CodeAppStartupCrash}
+		if message := row.ProgressMessage(); !strings.Contains(message, "crashed during startup") {
+			t.Fatalf("%s: message %q does not name the startup crash", status, message)
+		}
+		if next := row.ProgressNextStep(); !strings.Contains(next, "gregale env history") {
+			t.Fatalf("%s: next step %q does not point at config history", status, next)
+		}
+	}
+}

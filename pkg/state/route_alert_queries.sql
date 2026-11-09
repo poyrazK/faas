@@ -100,6 +100,15 @@ FROM (
 WHERE coalesce(r->>'method', '') <> '' AND coalesce(r->>'path', '') <> ''
 ORDER BY label;
 
+-- name: RouteRemovalBaselineDoc :one
+-- ADR-20261028110044 amendment 6: the captured contract of the deployment an
+-- app's route removal policy holds as its baseline. The gateway labels
+-- requests with its templates when the app's current document no longer
+-- declares them, so a removed route's traffic keeps its own label.
+SELECT d.doc FROM app_route_removal_policies p
+JOIN deployment_openapi_docs d ON d.deployment_id = p.baseline_deployment_id AND d.app_id = p.app_id AND d.account_id = p.account_id
+WHERE p.app_id = sqlc.arg(app_id)::text::uuid AND p.account_id = sqlc.arg(account_id)::text::uuid AND NOT d.truncated;
+
 -- name: ReadDeploymentPromotedAt :one
 -- ADR-20261028110044 amendment 4: when a traffic change last took the
 -- deployment to 100%, which anchors the monitor's rollback window.

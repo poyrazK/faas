@@ -72,3 +72,25 @@ database then either) and is logged as `data_api_access_recheck_unavailable`.
 Each reread is one short catalog connection, like the boot checks, inside the
 control headroom of the connection budget. The window between a migration and
 the gate is now at most a minute, not until a refresh.
+
+## Amendment 2 (2026-11-07): live reads apply the gate
+
+Live reads (ADR-20261016151947) compile a Data API read in the database's hub
+and run it as the binding login. They had no row-security gate, so a table
+without RLS was fully readable to every signed-in user over a live
+subscription, while REST answered `403 rls_required`. The hub now resolves
+whether each relation a live read reaches is row-secured, using the same rule
+as the runtime: a table with RLS on, or a view with `security_invoker`. It
+checks the target and every embedding, and refuses with a `forbidden` error
+naming `rls_required`:
+
+- a signed-in read reaches only row-secured relations, or ones listed in
+  `allow_without_rls`;
+- an anonymous read reaches only row-secured relations, as the public-read rule
+  requires, even if a relation is exempt;
+- server keys are not checked, as in REST.
+
+The runtime adds `allow_without_rls` to the access settings it reports, and
+realtimed puts that list on every RLS-mode frame it sends the hub, replacing
+whatever a client sent. A hub reached by an older realtimed gets no list, so it
+refuses exempt relations: the check fails closed.

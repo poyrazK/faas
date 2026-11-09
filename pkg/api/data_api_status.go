@@ -46,6 +46,9 @@ type DataAPIChangeHookStatus struct {
 	LastPublishedAt *time.Time `json:"last_published_at,omitempty"`
 	LastFailureCode string     `json:"last_failure_code,omitempty"`
 	Publishing      string     `json:"publishing"`
+	// LastDroppedAt is when capture last left a change out at the backlog
+	// bound (ADR-20261022121642 amendment 3): changes went unrecorded.
+	LastDroppedAt *time.Time `json:"last_dropped_at,omitempty"`
 }
 
 // DataAPIChangeHookReport is a runtime's private change hook delivery report,
@@ -58,6 +61,7 @@ type DataAPIChangeHookReport struct {
 	LastPublishedAt *time.Time `json:"last_published_at,omitempty"`
 	LastFailureCode string     `json:"last_failure_code,omitempty"`
 	Publishing      string     `json:"publishing"`
+	LastDroppedAt   *time.Time `json:"last_dropped_at,omitempty"`
 }
 
 var dataAPIChangeFailureCode = lazyregexp.New(`^[a-z0-9_]{1,64}$`)
@@ -79,7 +83,7 @@ func (r DataAPIChangeHookReport) Validate(now time.Time) error {
 	if (r.Pending == 0) != (r.OldestPendingAt == nil) {
 		return errors.New("oldest_pending_at is set exactly when changes are pending")
 	}
-	for _, at := range []*time.Time{r.OldestPendingAt, r.LastPublishedAt} {
+	for _, at := range []*time.Time{r.OldestPendingAt, r.LastPublishedAt, r.LastDroppedAt} {
 		if at != nil && (at.After(now.Add(DataAPIChangeHookReportClockSkew)) || at.Year() < 2000) {
 			return errors.New("report times must not be in the future")
 		}

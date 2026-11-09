@@ -227,7 +227,10 @@ them later, and the projects themselves. Every other app and project answers
 as if it did not exist, account-wide routes answer 403, and the app and
 project lists show only what the limit allows. Databases belong to the
 account or organization rather than a project, so a limited agent cannot
-manage them. The limit is fixed when the agent connects; to change it,
+manage them. Its edge rules stay on its own apps too: they may match only
+`@app`, the app's own host or its custom domains, route only to apps of its
+projects, and it cannot change or roll back a rule another credential wrote
+for wider hosts. The limit is fixed when the agent connects; to change it,
 connect again. `gregale mcp connection list` and `GET /v1/account`
 (`key_projects`) name a connection's projects.
 

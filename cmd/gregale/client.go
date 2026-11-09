@@ -46,7 +46,7 @@ type Client = api.Client
 // A client for a plain-HTTP base on another host refuses every request
 // (guardAPIClient) unless the user opted in.
 func NewClient(baseURL, token string) *Client {
-	return guardAPIClient(bindProfileCompletionCache(api.NewClient(baseURL, token).WrapTransport(wrapCLITransport)))
+	return guardAPIClient(bindProfileCompletionCache(withApprovalWait(api.NewClient(baseURL, token).WrapTransport(wrapCLITransport))))
 }
 
 // NewClientWithDeployTimeout wraps api.NewClientWithDeployTimeout like
@@ -56,7 +56,18 @@ func NewClientWithDeployTimeout(baseURL, token string, d time.Duration) *Client 
 	if apiClientRefused(baseURL) {
 		d = 0
 	}
-	return guardAPIClient(bindProfileCompletionCache(api.NewClientWithDeployTimeout(baseURL, token, d).WrapTransport(wrapCLITransport)))
+	return guardAPIClient(bindProfileCompletionCache(withApprovalWait(api.NewClientWithDeployTimeout(baseURL, token, d).WrapTransport(wrapCLITransport))))
+}
+
+// withApprovalWait applies --wait-for-approval: the client prints the review
+// link on stderr and waits for a person's decision.
+func withApprovalWait(c *api.Client) *api.Client {
+	if !approvalWaitEnabled {
+		return c
+	}
+	return c.WaitForApproval(func(p api.AgentApprovalPendingInfo) {
+		_, _ = fmt.Fprintf(osStderr, "Waiting for approval (%s) until %s. Review: %s\n", p.Category, p.ExpiresAt, p.ReviewURL)
+	})
 }
 
 // APIError aliases the SDK's error type. CLI callers type-switch on

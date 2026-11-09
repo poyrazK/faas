@@ -1212,6 +1212,127 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '409': {$ref: '#/components/responses/ConflictDelete'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+    patch:
+      tags: [account]
+      operationId: updateAccountProfile
+      summary: Set the account display name.
+      description: |
+        Sets the optional display name shown to org members and in the
+        dashboard. Leading and trailing spaces are removed; an empty string
+        clears it. At most 80 characters, no control characters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccountProfileUpdate'}
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountProfileUpdate'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/email:
+    post:
+      tags: [account]
+      operationId: requestAccountEmailChange
+      summary: Start a sign-in email change.
+      description: |
+        Browser sessions only; an API key gets 403. Accounts with two-factor
+        authentication need a recent authenticator verification
+        (`step_up_required` otherwise); accounts with a password send
+        `current_password`. A single-use link valid for 1 hour is emailed to
+        the new address; opening it and confirming moves the account and
+        signs out every browser. The previous address gets a notice. A new
+        address that already belongs to an account gets the same response
+        and no email. CSRF: action `account_email_change`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccountEmailChangeRequest'}
+      responses:
+        '202':
+          description: Confirmation sent to the new address.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, email]
+                properties:
+                  status: {type: string, enum: [confirmation_sent]}
+                  email: {type: string, format: email}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: 'An API key was used, or a recent authenticator verification is required (`step_up_required`).'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/sign-in-methods:
+    get:
+      tags: [account]
+      operationId: listAccountSignInMethods
+      summary: List the ways to sign in to the account.
+      description: Whether a password and two-factor authentication are set, and the linked Google or GitHub identities.
+      responses:
+        '200':
+          description: Sign-in methods.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SignInMethodsResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/security-activity:
+    get:
+      tags: [account]
+      operationId: getAccountSecurityActivity
+      summary: List the account's sign-ins and security changes.
+      description: |
+        Sign-ins, API keys and CLI sign-ins, password, email, two-factor
+        and sign-in method changes of the last 90 days, newest first, at
+        most 100. Each event carries a fixed summary, and the client address
+        and sign-in method when they were recorded. Needs a full-access
+        credential.
+      responses:
+        '200':
+          description: Security events, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SecurityActivityResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/sign-in-methods/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: Linked sign-in provider to remove.
+        schema: {type: string, enum: [google, github]}
+    delete:
+      tags: [account]
+      operationId: unlinkAccountSignInMethod
+      summary: Remove a linked Google or GitHub sign-in.
+      description: |
+        Browser sessions need a recent authenticator verification when
+        two-factor authentication is on. Refused with 409 when it is the
+        last way to sign in; set a password or link another provider first.
+        The provider stays removed: signing in with it no longer links it by
+        matching email, until it is linked again from a browser signed in to
+        the account. CSRF: action `sign_in_method_unlink` (browser sessions
+        only; API keys need no token).
+      responses:
+        '204': {description: Sign-in method unlinked.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404':
+          description: The provider is not linked to this account.
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '409':
+          description: The provider is the last way to sign in.
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/account/rate-limits:
     get:
       tags: [account]
@@ -1495,6 +1616,42 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/account/mfa/recovery-codes:
+    post:
+      tags: [mfa]
+      operationId: mfaRegenerateRecoveryCodes
+      summary: Replace the recovery codes.
+      description: |
+        Browser sessions with a recent authenticator verification only.
+        Creates a new set of recovery codes, shown once; the previous codes
+        stop working and the account gets an email notice. CSRF: action
+        `mfa_recovery_codes`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csrf_token]
+              properties:
+                csrf_token: {type: string}
+      responses:
+        '200':
+          description: New recovery codes.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecoveryCodesResponse'}
+        '400':
+          description: CSRF token missing or wrong for a browser session.
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: 'Recovery codes need a browser session with a recent authenticator verification (`step_up_required`); API keys are refused.'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '409':
+          description: Two-factor authentication is not set up.
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/account/mfa/disable:
     post:
       tags: [mfa]
@@ -2320,26 +2477,48 @@ paths:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/auth/verify-email/resend:
+    post:
+      tags: [auth]
+      operationId: resendEmailVerification
+      summary: Send a new email verification link.
+      description: |
+        Mails a new 24-hour verification link when the account's address is
+        unverified, at most once a minute and five times an hour. Returns
+        `already_verified` when there is nothing to send. Available after the
+        30-day verification period ends, when other routes answer
+        `email_verification_required`.
+      responses:
+        '200':
+          description: The address is already verified.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EmailVerificationResendResponse'}
+        '202':
+          description: A link was sent, or held back by the per-account limit.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EmailVerificationResendResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/auth/sessions/revoke_all:
     post:
       tags: [auth]
       operationId: postAccountSessionsRevokeAll
       summary: Revoke every session except the calling one.
       description: |
-        Revokes all `sessions` rows for the calling account
-        whose `id` is NOT the calling cookie's `sid`. The
-        caller's session stays active. Returns the count of
-        rows revoked so the dashboard can render "Signed out
-        N other devices".
+        From a browser session: revokes every other browser session of the
+        calling account and keeps the caller's. CSRF: action
+        `sessions_revoke_all`.
 
-        CSRF: action `sessions_revoke_all`.
+        With an API key: revokes every browser session. API keys keep
+        working, and no CSRF token is needed.
 
-        Emits `auth.sessions.revoke_all` with
-        `{revoked_count, retained_sid}`.
+        Returns the count of sessions revoked.
       parameters:
         - $ref: '#/components/parameters/CookieSession'
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
@@ -3603,6 +3782,26 @@ paths:
               schema: {$ref: '#/components/schemas/NotificationChannelResponse'}
         '402': {$ref: '#/components/responses/PaymentRequired'}
         '404': {$ref: '#/components/responses/NotFound'}
+    patch:
+      operationId: updateNotificationChannel
+      summary: Rename a notification channel or replace its destination
+      description: "Renames the channel or replaces its Slack webhook URL or PagerDuty routing key in place, so a leaked destination is rotated without unbinding the channel from its rules. The kind never changes; an email channel can only be renamed. A PagerDuty region changes only together with a new routing key. A new destination clears the channel's last error."
+      tags: [alert_rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateNotificationChannelRequest'}
+      responses:
+        '200':
+          description: The updated channel.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationChannelResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '402': {$ref: '#/components/responses/PaymentRequired'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
     delete:
       operationId: deleteNotificationChannel
       summary: Delete a notification channel
@@ -4068,7 +4267,7 @@ paths:
         Overage computation: `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)`. The included band is echoed from
         `acct.Plan.PlanIncludedGBHours`; the overage figure is the
-        integer-rounded float the Stripe pusher bills at $0.01/GB-h.
+        integer-rounded float the Stripe pusher bills at $0.05/GB-h.
 
         Source: `usage_minutes` today (after the 30d retention cap).
         `usage_daily` / `mixed` land with the trail-period reader
@@ -6187,6 +6386,57 @@ paths:
               example: {"id": "0123456789abcdef0123456789abcdef", "email": "alice@example.com", "plan": "pro", "status": "active"}
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+  /v1/account/egress-overage:
+    get:
+      tags: [account]
+      operationId: getEgressOverage
+      summary: Read the account's egress overage election.
+      description: |
+        Without the election every plan stops at its monthly egress allowance:
+        the account's apps are parked (`quota_exceeded_egress`) until the month
+        ends or the plan grows. With it, egress above the allowance is billed as
+        overage, within the spend cap, while egress billing is live
+        (`billing: live`); while `billing` is `off` the allowance still holds.
+      responses:
+        '200':
+          description: The account's election.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    put:
+      tags: [account]
+      operationId: setEgressOverage
+      summary: Turn the account's egress overage election on or off.
+      description: |
+        `{"enabled": true|false}`. Requires admin scope and MFA; a dashboard
+        session also needs a step-up within the last 5 minutes. Turning it on
+        needs a paid plan (HTTP 402 `plan_egress_overage_not_allowed`); turning
+        it off is always allowed. Egress already sent while the election was on
+        is still billed. Audit row `egress_overage.changed` records each change.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EgressOverageRequest'}
+            example: {"enabled": true}
+      responses:
+        '200':
+          description: The election after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402':
+          description: 'code: plan_egress_overage_not_allowed — the plan stops at its egress allowance; upgrade to a paid plan.'
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
   /v1/apps/{slug}/rename:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -9687,7 +9937,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/AutomationConflict', description: Tenant-required apps must use the tenant-self preview.}
+        '409': {$ref: '#/components/responses/StoredWorkflowConflict', description: Tenant-required apps must use the tenant-self preview.}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServerError'}
   /v1/apps/{slug}/workflows/{name}/runs:
@@ -13517,7 +13767,7 @@ paths:
         durably instead of enqueuing an app invocation. Unmatched events keep
         the ordinary invocation path.
         Terminal callbacks are acknowledged as ignored after verification.
-        An automation-bound endpoint captures its published definition in durable
+        A stored-workflow-bound endpoint captures its published definition in durable
         fanout work. Paused, unpublished or type-unmatched events are durably ignored;
         content filters are evaluated by the scheduler. Provider retries return the
         original receipt; changed content for the same event ID returns 409.
@@ -13565,13 +13815,13 @@ paths:
             application/json:
               schema:
                 anyOf:
-                  - $ref: '#/components/schemas/WebhookAutomationReceiptResponse'
+                  - $ref: '#/components/schemas/WebhookWorkflowReceiptResponse'
                   - $ref: '#/components/schemas/WorkflowCallbackWebhookReceiptResponse'
                   - $ref: '#/components/schemas/InboundWebhookReceiptResponse'
         '400': {$ref: '#/components/responses/InboundWebhookInvalid'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
-          description: Changed content for a retained provider event ID (webhook_automation_conflict).
+          description: Changed content for a retained provider event ID (webhook_workflow_conflict).
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -15210,6 +15460,47 @@ paths:
               schema: {$ref: '#/components/schemas/AgentApprovalsResponse'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-approvals/channels:
+    get:
+      tags: [keys]
+      operationId: getAgentApprovalChannels
+      summary: Show where the account's agents' approval requests also go.
+      description: |
+        The notification channels that get a message for each new approval
+        request of the account's agents, besides the email to the person
+        who connected the agent.
+      responses:
+        '200':
+          description: The account's approval channels.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalChannelsResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [keys]
+      operationId: setAgentApprovalChannels
+      summary: Choose where the account's agents' approval requests also go.
+      description: |
+        Replaces the notification channels that get the account's agents'
+        approval requests. Name your own channels; an empty list leaves
+        email only. Needs an admin credential, so an agent cannot change
+        where its own requests go.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentApprovalChannelsRequest'}
+      responses:
+        '200':
+          description: The channels now bound.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentApprovalChannelsResponse'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/agent-approvals/{id}:
     get:
       tags: [keys]
@@ -15287,6 +15578,58 @@ paths:
         '204': {description: No body. The key is revoked.}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/self/activity:
+    get:
+      tags: [keys]
+      operationId: agentConnectionSelfActivity
+      summary: Read the calling agent's own activity.
+      description: |
+        The write requests (POST, PUT, PATCH, DELETE) the calling agent key
+        made in the last 7 days, newest first. Only an agent key can call it;
+        a person reads an agent's log by its connection id.
+      parameters:
+        - $ref: '#/components/parameters/AgentActivityBefore'
+        - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the calling agent's write requests, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentActivityResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/{id}/activity:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose activity to read.
+        schema: {type: string}
+    get:
+      tags: [keys]
+      operationId: agentConnectionActivity
+      summary: Read a connected agent's activity.
+      description: |
+        The write requests one of the account's agents made in the last 7
+        days, newest first: when, method, path, response status and the
+        approval request it went through on. Reads and requests the approval
+        gate answered are not listed. An agent key may read only its own.
+      parameters:
+        - $ref: '#/components/parameters/AgentActivityBefore'
+        - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the connected agent's write requests, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentActivityResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/agent-connections/{id}:
     parameters:
@@ -15408,6 +15751,36 @@ paths:
               schema: {$ref: '#/components/schemas/AgentConnectionsRevokeAllResponse'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/agent-connections/{id}/activity:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: API key id of the organization agent whose activity to read.
+        schema: {type: string}
+    get:
+      tags: [orgs, keys]
+      operationId: orgAgentConnectionActivity
+      summary: Read the activity of an agent acting in an organization.
+      description: |
+        The write requests an agent acting in the organization made in the
+        last 7 days, newest first. Owners and admins only; an id that is not
+        one of the organization's agents is 404.
+      parameters:
+        - $ref: '#/components/parameters/AgentActivityBefore'
+        - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the organization agent's write requests, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentActivityResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/orgs/{slug}/agent-connections/{id}:
     parameters:
@@ -17604,6 +17977,28 @@ paths:
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/orgs/{slug}/leave:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    post:
+      tags: [orgs]
+      operationId: leaveOrg
+      summary: Leave an org.
+      description: |
+        Ends the caller's own membership. Any role except owner may leave;
+        the owner transfers ownership first. A personal org cannot be left,
+        and the org's billing contact must be replaced first
+        (`billing_contact_member`).
+      responses:
+        '204': {description: Left the org.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404':
+          description: The caller is not an active member.
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '409':
+          description: 'The caller is the owner (`org_last_owner`), the org is personal, or the caller is the billing contact.'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/orgs/{slug}/transfer_ownership:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -19366,6 +19761,56 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/egress-overage:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgEgressOverage
+      summary: Read the organization's egress overage election.
+      description: "Requires current organization membership and usage:read. An organization that owns its resources elects egress overage apart from its members."
+      responses:
+        '200':
+          description: The organization's election.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [orgs]
+      operationId: setOrgEgressOverage
+      summary: Turn the organization's egress overage election on or off.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. `{"enabled": true|false}`; turning it on needs a
+        paid plan (HTTP 402 `plan_egress_overage_not_allowed`).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EgressOverageRequest'}
+            example: {"enabled": true}
+      responses:
+        '200':
+          description: The organization's election after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402':
+          description: 'code: plan_egress_overage_not_allowed — the organization''s plan stops at its egress allowance; move the organization to a paid plan.'
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/orgs/{slug}/billing/costs:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -20561,6 +21006,18 @@ components:
         type: string
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
   parameters:
+    AgentActivityBefore:
+      name: before
+      in: query
+      required: false
+      description: The `next_before` value of an earlier activity page; omit it for the newest rows.
+      schema: {type: string}
+    AgentActivityLimit:
+      name: limit
+      in: query
+      required: false
+      description: Activity rows per page, 1 to 200. Default 50.
+      schema: {type: integer, minimum: 1, maximum: 200}
     OrgProjectOrganization:
       name: organization
       in: path
@@ -25102,7 +25559,7 @@ components:
           description: Stable reason when enabled is false. Plan restrictions take precedence when both gates deny access. Omitted when enabled; older servers may omit it.
         unavailable_detail:
           type: string
-          description: Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for automation. Omitted when enabled; older servers may omit it.
+          description: Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for stored workflow. Omitted when enabled; older servers may omit it.
     CapabilitiesResponse:
       description: Account-scoped capability registry with resolved entitlement and existing runtime availability gates.
       type: object
@@ -25129,6 +25586,7 @@ components:
         id: {type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef"}
         email: {type: string, format: email}
         email_verified: {type: boolean}
+        display_name: {type: string, maxLength: 80, description: "Optional display name; absent when unset."}
         email_verification_grace_ends_at:
           type: string
           format: date-time
@@ -25211,6 +25669,49 @@ components:
           type: [integer, 'null']
           format: int64
           minimum: 0
+    EgressOverageRequest:
+      description: Turns the egress overage election on or off.
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+    EgressOverageResponse:
+      description: |
+        The billing subject's election to pay for egress above its plan's monthly
+        allowance instead of stopping at it.
+      type: object
+      required: [enabled, electable, included_gib, billing]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the election is on.
+        electable:
+          type: boolean
+          description: Whether the plan allows the election; Free does not.
+        enabled_at:
+          type: string
+          format: date-time
+          description: When the election started; kept when it is turned off and on again.
+        disabled_at:
+          type: string
+          format: date-time
+          description: When the election was last turned off.
+        included_gib:
+          type: integer
+          format: int64
+          description: The plan's monthly egress allowance in GiB.
+        billing:
+          type: string
+          enum: [live, "off"]
+          description: live when egress above the allowance is billed while the election is on; off while egress is not billed, when the allowance still holds.
+        price_millicents_per_gib:
+          type: integer
+          format: int64
+          description: Price of a GiB above the allowance while billing is live, in millicents.
+        currency:
+          type: string
+          description: Currency of the price.
     OrgBillingEmailRequest:
       description: The email an organization bills to; invoices and the billing portal sign-in go to it.
       type: object
@@ -25509,7 +26010,7 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
+          description: "Permission set attached to the exported key. github:manage controls customer GitHub connection stored workflow; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: {type: string, format: date-time}
         last_used_at: {type: [string, "null"], format: date-time}
@@ -27676,6 +28177,26 @@ components:
           type: string
           format: email
           description: "The account's own email address (kind email)."
+    UpdateNotificationChannelRequest:
+      description: "Renames a channel or replaces its destination; set name, the channel's own destination, or both."
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'New name, unique per account.'
+        slack_webhook_url:
+          type: string
+          format: uri
+          description: 'New Slack incoming webhook (kind slack).'
+        pagerduty_routing_key:
+          type: string
+          pattern: '^[A-Za-z0-9]{32}$'
+          description: 'New Events API v2 integration key (kind pagerduty).'
+        pagerduty_region:
+          type: string
+          enum: [us, eu]
+          description: 'PagerDuty service region of the new key (kind pagerduty); default us.'
     NotificationChannelResponse:
       description: 'One alert notification channel.'
       type: object
@@ -30504,7 +31025,7 @@ components:
     WorkflowRecoveryPollingWebhookPayload:
       type: object
       additionalProperties: false
-      description: Historical automation.recovery_polling_status event. Three consecutive deterministic polling failures trigger failed; unchanged code and policy version stay quiet. Recovered proves a successful poll, independently of workflow outcome. Recipients and payload are frozen at capture; use event_id for deduplication.
+      description: Historical stored_workflow.recovery_polling_status event. Three consecutive deterministic polling failures trigger failed; unchanged code and policy version stay quiet. Recovered proves a successful poll, independently of workflow outcome. Recipients and payload are frozen at capture; use event_id for deduplication.
       required: [event_id, app_id, app, scope, policy_version, sequence, state, code, attempts, observed_at, inspection_url, monitoring_only]
       properties:
         event_id: {type: string, format: uuid}
@@ -30582,7 +31103,7 @@ components:
         receiver_webhook_ids: {type: array, items: {type: string, format: uuid}}
     WorkflowRecoveryQueueBlockedWebhookPayload:
       type: object
-      description: Historical automation.recovery_queue_blocked event. Saved-failure retries capture changes in exact parent or child evidence diagnosis and proven clearance, with diagnosis URL and CLI guidance. Initial automatic recovery identifies initial_failure_id. Unchanged blockers stay quiet; recovery identifies cleared evidence rather than successful execution. Capturing this event does not finalize a child, release its execution slot, or authorize another retry. Delivery may occur after the block resolves; stable identity and frozen recipients support receiver deduplication.
+      description: Historical stored_workflow.recovery_queue_blocked event. Saved-failure retries capture changes in exact parent or child evidence diagnosis and proven clearance, with diagnosis URL and CLI guidance. Initial automatic recovery identifies initial_failure_id. Unchanged blockers stay quiet; recovery identifies cleared evidence rather than successful execution. Capturing this event does not finalize a child, release its execution slot, or authorize another retry. Delivery may occur after the block resolves; stable identity and frozen recipients support receiver deduplication.
       required: [event_id, app_id, app, review_id, action_id, policy_version, position, status, reason, observed_at, queue_url, review_status_url]
       properties:
         evidence_kind: {type: string, enum: [parent, child, initial]}
@@ -30641,7 +31162,7 @@ components:
         actions: {type: array, items: {$ref: '#/components/schemas/WorkflowRecoveryAutomaticAction'}}
     WorkflowRecoveryPolicyPausedWebhookPayload:
       type: object
-      description: Historical automation.recovery_policy_paused event emitted once per policy version after repeated proven automatic retry failures. Frozen receivers and stable event identity survive retries and later policy updates.
+      description: Historical stored_workflow.recovery_policy_paused event emitted once per policy version after repeated proven automatic retry failures. Frozen receivers and stable event identity survive retries and later policy updates.
       required: [event_id, app_id, app, policy_version, paused_at, consecutive_failures, reason, policy_url]
       properties:
         event_id: {type: string, format: uuid}
@@ -30696,7 +31217,7 @@ components:
         recovery_notification: {$ref: '#/components/schemas/WorkflowRecoveryHealthNotification'}
     WorkflowRecoveryHealthWebhookPayload:
       type: object
-      description: Historical automation.recovery_health_alert or automation.recovery_health_recovered transition with stable event and incident identities. Recovery targets only original alert receivers still enabled and subscribed to recovery at capture. Delivery can occur after the observed condition changes and does not authorize retries or release slots.
+      description: Historical stored_workflow.recovery_health_alert or stored_workflow.recovery_health_recovered transition with stable event and incident identities. Recovery targets only original alert receivers still enabled and subscribed to recovery at capture. Delivery can occur after the observed condition changes and does not authorize retries or release slots.
       required: [event_id, episode_id, app_id, app, policy_version, status, reason, opened_at, observed_at, pending, outstanding, queue_truncated, health_url]
       properties:
         event_id: {type: string, format: uuid}
@@ -31197,7 +31718,7 @@ components:
         receiver_webhook_ids: {type: array, items: {type: string, format: uuid}}
     WorkflowRecoveryReviewReadyWebhookPayload:
       type: object
-      description: Payload of automation.recovery_review_ready. Carries frozen prepared targets and review commands; approval and application remain explicit. Retries reuse the event identifier and delivery ledger.
+      description: Payload of stored_workflow.recovery_review_ready. Carries frozen prepared targets and review commands; approval and application remain explicit. Retries reuse the event identifier and delivery ledger.
       required: [event_id, review_id, app_id, app, policy_version, prepared_at, observed_at, targets, review_url, status_url, review_command, export_command]
       properties:
         initial_failure_id: {type: string, format: uuid, description: Captured initial failure for parentless reviews. Parent-job reviews carry job_id instead.}
@@ -31226,7 +31747,7 @@ components:
         result: {$ref: '#/components/schemas/WorkflowRecoveryReviewStatus'}
     WorkflowRecoveryReviewFinishedWebhookPayload:
       type: object
-      description: Payload of automation.recovery_review_finished. All actions have proven final outcomes for their frozen generations. This historical result remains valid after review decisions or later retries; receivers deduplicate by event_id.
+      description: Payload of stored_workflow.recovery_review_finished. All actions have proven final outcomes for their frozen generations. This historical result remains valid after review decisions or later retries; receivers deduplicate by event_id.
       required: [event_id, review_id, app_id, app, job_id, policy_version, captured_at, result, review_url, status_url, status_command]
       properties:
         event_id: {type: string, format: uuid}
@@ -36435,6 +36956,25 @@ components:
             Expand ${name} request values in `value` (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>, cookie:<name>;
             $$ is a literal $). Control characters are dropped and each
             value is capped at 1 KiB. Not allowed with action=remove.
+        secret:
+          type: boolean
+          description: |
+            Seal `value` (request headers only): it is
+            stored encrypted to the edge seal domain and never returned.
+            Authorization, Proxy-Authorization, Cookie and names containing
+            token, secret, password, api-key, apikey, signature or credential
+            are sealed without it. Not allowed with template or action=remove.
+        secret_id:
+          type: string
+          description: |
+            The sealed value of a secret op, returned in place of `value`.
+            Send it back with no `value` to keep that value.
+        redacted:
+          type: boolean
+          description: |
+            Set in responses on a credential-named value stored before
+            sealing, which is left out. Send the op back with no `value` to
+            seal the stored value.
     EdgeRuleHeadersAction:
       description: 'Mutates request + response headers. The gateway enforces a hard-coded blacklist (Host, Content-Length, Transfer-Encoding, Connection, x-faas-*).'
       type: object
@@ -37645,6 +38185,11 @@ components:
           type: array
           description: Kinds of action every agent acting in the organization must have a person approve; omit to keep the current ones.
           items: {type: string, enum: [delete, production, credentials, billing]}
+        approval_channels:
+          type: array
+          maxItems: 5
+          description: Names of your own notification channels that get approval requests of agents acting in the organization; omit to keep them, send an empty list to remove them.
+          items: {type: string}
     OrgAgentPolicyResponse:
       description: An organization's agent policy.
       type: object
@@ -37659,17 +38204,68 @@ components:
           type: array
           description: Kinds of action every agent acting in the organization must have a person approve.
           items: {type: string}
+        approval_channels:
+          type: array
+          description: Your notification channels that get this organization's agents' approval requests.
+          items: {type: string}
         updated_at: {type: string, format: date-time, description: When the policy last changed; absent for an organization that never set one.}
         revoked: {type: integer, minimum: 0, description: Agent connections a change revoked because the new policy no longer allows them.}
     AgentApprovalPendingInfo:
-      description: "The approval request behind an approval_required problem: a person opens review_url to decide, then the agent repeats the same request once."
+      description: "The approval request behind an approval_required, approval_denied or approval_expired problem. On approval_required a person opens review_url to decide, then the agent repeats the same request once; on the other two the agent should stop repeating it."
       type: object
       required: [id, category, review_url, expires_at]
       properties:
-        id: {type: string, format: uuid, description: The id of the pending approval request.}
+        id: {type: string, format: uuid, description: The id of the approval request.}
         category: {type: string, enum: [delete, production, credentials, billing], description: The kind of action that needs approval.}
         review_url: {type: string, format: uri, description: "The page where a signed-in member who may decide approves or denies the request."}
         expires_at: {type: string, format: date-time, description: When the request and any approval of it expire.}
+        status: {type: string, enum: [denied, expired], description: "Set on approval_denied and approval_expired: what became of the request."}
+        note: {type: string, maxLength: 280, description: "The person's reason for denying the request, when they gave one."}
+    AgentApprovalChannelsRequest:
+      description: The notification channels to send the account's agents' approval requests to.
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          maxItems: 5
+          description: Names of your notification channels; an empty list leaves email only.
+          items: {type: string}
+    AgentApprovalChannelsResponse:
+      description: The notification channels that get the account's agents' approval requests.
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          description: Channel names, in alphabetical order.
+          items: {type: string}
+    AgentActivityResponse:
+      type: object
+      description: One page of an agent's write requests, newest first.
+      required: [activity]
+      properties:
+        activity:
+          type: array
+          items: {$ref: '#/components/schemas/AgentActivityEntry'}
+        next_before:
+          type: string
+          description: Pass as `before` to read the next older page; absent on the last page.
+    AgentActivityEntry:
+      type: object
+      description: One write request an agent key made.
+      required: [id, method, path, status, created_at]
+      properties:
+        id: {type: string}
+        method: {type: string, enum: [POST, PUT, PATCH, DELETE]}
+        path:
+          type: string
+          description: The request path, without its query string.
+        status: {type: integer, description: The HTTP status the request was answered with.}
+        approval_id:
+          type: string
+          description: The approval request the write went through on, when it needed one.
+        created_at: {type: string, format: date-time}
     AgentApprovalResponse:
       description: "One request of an agent connection that needed a person's approval."
       type: object
@@ -37686,6 +38282,7 @@ components:
         created_at: {type: string, format: date-time, description: When the agent first made the request.}
         expires_at: {type: string, format: date-time, description: After this time the request can no longer be approved or used.}
         decided_at: {type: string, format: date-time, description: When a person approved or denied it.}
+        note: {type: string, maxLength: 280, description: "Why the person denied this request, if they said; absent otherwise."}
     AgentApprovalsResponse:
       description: "Approval requests, newest first: an agent's own, or those pending that the caller may decide."
       type: object
@@ -37714,7 +38311,7 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
+          description: "Closed permission set attached to the key. github:manage controls customer GitHub connection stored workflow; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: {type: [string, "null"], format: date-time}
         created_at: {type: string, format: date-time, example: "2026-07-25T13:25:00Z"}
@@ -37796,7 +38393,7 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
+          description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection stored workflow. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project."}
         approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field."}
@@ -37822,7 +38419,7 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
+          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection stored workflow; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project."}
         approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action the organization's agent key must have a person approve; the organization's floor applies on top. Omit for every kind, empty for none."}
@@ -39895,7 +40492,7 @@ components:
         rounding). `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)` — 0 when the customer is under
         their included band, the billable overage above the band
-        otherwise. The Stripe pusher bills overage at $0.01/GB-h
+        otherwise. The Stripe pusher bills overage at $0.05/GB-h
         (CLAUDE.md integer-cents-only rule).
       type: object
       required: [slug, period_start, period_end, mb_seconds, gb_hours, requests, tx_bytes, net_tx_bytes, builder_seconds, cold_boot_count, plan_included_gb_hours, overage_gb_hours, source, as_of]
@@ -40326,7 +40923,7 @@ components:
         used_gb_hours: {type: number, example: 1.234}
         included_gb_hours: {type: integer, format: int64}
         overage_gb_hours: {type: number}
-        overage_cents: {type: integer, format: int64, description: 'Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.'}
+        overage_cents: {type: integer, format: int64, description: 'Integer cents. Includes compute at $0.05/GB-h and configured live egress overage; shadow egress is excluded.'}
         quiet_paused_gb_hours:
           type: number
           description: 'GB-hours this month that instances spent quiet-paused between requests and were not billed for, in the same plan RAM + 8 MB unit as used_gb_hours and not included in it. Absent while zero.'
@@ -40997,6 +41594,71 @@ components:
           type: array
           description: "Active sessions, newest first. Revoked rows are not returned."
           items: {$ref: '#/components/schemas/SessionInfo'}
+    AccountProfileUpdate:
+      description: "Body for `PATCH /v1/account`."
+      type: object
+      required: [display_name]
+      properties:
+        display_name: {type: string, maxLength: 80, description: "Empty clears the display name."}
+    AccountEmailChangeRequest:
+      description: "Body for `POST /v1/account/email`."
+      type: object
+      required: [email]
+      properties:
+        email: {type: string, format: email, maxLength: 254}
+        current_password: {type: string, description: "Required when the account has a password and no two-factor authentication."}
+        csrf_token: {type: string}
+    EmailVerificationResendResponse:
+      description: "Result of `POST /v1/auth/verify-email/resend`."
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [sent, already_verified]}
+        email: {type: string, format: email}
+    SecurityActivityResponse:
+      description: "Body of `GET /v1/account/security-activity`."
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items: {$ref: '#/components/schemas/SecurityActivityEvent'}
+    SecurityActivityEvent:
+      description: "One sign-in, credential or account-security change."
+      type: object
+      required: [at, summary, kind]
+      properties:
+        at: {type: string, format: date-time}
+        kind: {type: string, description: "Audit event kind, e.g. auth.session.created or api_key.created."}
+        summary: {type: string, description: "Fixed English phrase for the kind."}
+        ip: {type: string, description: "Client address recorded with the event."}
+        detail: {type: string, description: "Sign-in method, provider or key label, when recorded."}
+    SignInMethodsResponse:
+      description: "The ways the account can sign in."
+      type: object
+      required: [password, mfa, providers]
+      properties:
+        password: {type: boolean}
+        mfa: {type: boolean}
+        providers:
+          type: array
+          items: {$ref: '#/components/schemas/LinkedSignIn'}
+    LinkedSignIn:
+      description: "A Google or GitHub identity linked to the account."
+      type: object
+      required: [provider, email, linked_at]
+      properties:
+        provider: {type: string, enum: [google, github]}
+        email: {type: string, format: email}
+        linked_at: {type: string, format: date-time}
+    RecoveryCodesResponse:
+      description: "New MFA recovery codes, shown once."
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          items: {type: string}
     SessionsRevokeAllResponse:
       description: "Body for `POST /v1/auth/sessions/revoke_all`."
       type: object
@@ -41789,6 +42451,10 @@ components:
         email:
           type: string
           format: email
+        display_name:
+          type: string
+          maxLength: 80
+          description: The member's display name; absent when unset.
           example: "bob@acme.com"
         role:
           type: string
@@ -41982,6 +42648,23 @@ components:
         error_fix: {type: string}
         relevant_logs: {type: array, items: {type: string}}
       additionalProperties: true
+    AgentApprovalWebhookPayload:
+      type: object
+      description: "Delivered with agent.approval.requested, agent.approval.approved and agent.approval.denied: an agent key's request waits for a person, or a person decided it. It never carries the request body."
+      required: [approval_id, key_id, category, method, path, status, expires_at]
+      properties:
+        approval_id: {type: string, format: uuid, description: The approval request this event is about.}
+        key_id: {type: string, format: uuid, description: The agent key that made the request.}
+        org_id: {type: string, format: uuid, description: The organization the key acts in, when it acts in one.: null}
+        category: {type: string, enum: [delete, production, credentials, billing], description: Which kind of risky action the agent asked to take.}
+        method: {type: string, description: HTTP method of the agent's request.}
+        path: {type: string, description: Path and query of the agent's request.}
+        status: {type: string, enum: [pending, approved, denied], description: The request's status when the event was recorded.}
+        expires_at: {type: string, format: date-time, description: When the request stops being approvable or usable.}
+        review_url: {type: string, format: uri, description: "On agent.approval.requested: the page where a member who may decide opens it."}
+        decided_at: {type: string, format: date-time, description: When the person approved or denied the request.}
+        note: {type: string, maxLength: 280, description: "On agent.approval.denied: the reason the person gave the agent, if any."}
+      additionalProperties: true
     RolloutCompletedWebhookPayload:
       type: object
       description: The configured rollout completed. Explicit traffic splits may complete below 100%; inspect traffic_percent.
@@ -42173,7 +42856,7 @@ components:
       additionalProperties: false
     CreateInboundWebhookEndpointRequest:
       type: object
-      description: Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or automation starts when bound.
+      description: Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or stored workflow starts when bound.
       required: [name, provider, signing_secret]
       properties:
         name:
@@ -42223,8 +42906,8 @@ components:
           description: One-time-disclosed public provider URL, present only on create.
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
-    WebhookAutomationReceiptResponse:
-      description: Durable provider event routing decision and automation admission progress.
+    WebhookWorkflowReceiptResponse:
+      description: Durable provider event routing decision and stored workflow admission progress.
       type: object
       required: [receipt_id, endpoint_id, provider_event_id, workflow_name, status, duplicate, accepted_at, event_source, routing_status]
       properties:
@@ -42233,7 +42916,7 @@ components:
         provider_event_id: {type: string}
         workflow_name: {type: string}
         status: {type: string, enum: [accepted, ignored]}
-        ignored_reason: {type: string, enum: [automation_paused, automation_failure_paused, event_filtered, automation_unpublished]}
+        ignored_reason: {type: string, enum: [stored_workflow_paused, stored_workflow_failure_paused, event_filtered, stored_workflow_unpublished]}
         duplicate: {type: boolean}
         accepted_at: {type: string, format: date-time}
         event_source: {type: string}
@@ -42333,7 +43016,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - app.health.changed
               - event_recovery.completed
               - event_recovery.cancelled
@@ -42345,13 +43028,13 @@ components:
               - event_recovery.execution_finished
               - realtime.channel.published
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -42566,7 +43249,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - app.health.changed
               - event_recovery.completed
               - event_recovery.cancelled
@@ -42578,13 +43261,13 @@ components:
               - event_recovery.execution_finished
               - realtime.channel.published
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -42615,7 +43298,7 @@ components:
         enabled: true
     CreateAccountReleaseWebhookRequest:
       type: object
-      description: Subscribe to account release outcomes and environment GitOps status transitions.
+      description: "Subscribe to account release outcomes, environment GitOps status transitions, and agent approval requests and decisions."
       required: [target_url, webhook_secret, event_filter]
       properties:
         target_url: {type: string, format: uri, minLength: 8, maxLength: 2048}
@@ -42623,9 +43306,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 5
+          maxItems: 8
           uniqueItems: true
-          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"]}
+          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"]}
         retry_policy: {type: string, enum: [default, aggressive, none], default: default}
         delivery_format: {type: string, enum: [json, cloudevents], default: json}
         enabled: {type: boolean, default: true}
@@ -42693,7 +43376,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - app.health.changed
               - event_recovery.completed
               - event_recovery.cancelled
@@ -42705,13 +43388,13 @@ components:
               - event_recovery.execution_finished
               - realtime.channel.published
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -42741,9 +43424,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 5
+          maxItems: 8
           uniqueItems: true
-          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"]}
+          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"]}
         retry_policy: {type: string, enum: [default, aggressive, none]}
         delivery_format: {type: string, enum: [json, cloudevents]}
         enabled: {type: boolean}
@@ -43146,6 +43829,15 @@ components:
         guest_evidence: {$ref: '#/components/schemas/DebugCoverageSignal'}
         oldest_telemetry_at: {type: string, format: date-time}
         latest_telemetry_at: {type: string, format: date-time}
+        requests_not_retained:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Requests the app's request analytics counted in the window's whole
+            minutes that the debugger did not keep, because the plan's
+            per-minute debugger row limit turned them away. A lower bound;
+            absent when request analytics do not cover the window.
     DebugRunningRequestAttribution:
       type: object
       description: |
@@ -50676,8 +51368,8 @@ components:
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
-    AutomationConflict:
-      description: "code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership."
+    StoredWorkflowConflict:
+      description: "code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership."
       content:
         application/problem+json:
           schema:

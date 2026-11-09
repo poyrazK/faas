@@ -16,6 +16,10 @@ type Relation struct {
 	Schema  string
 	Name    string
 	Columns []string // in order
+	// RowSecured: PostgreSQL decides which rows a reader sees, as a table
+	// with row-level security on or a security-invoker view (ADR
+	// 20261026140223, the Data API's rowSecured).
+	RowSecured bool
 }
 
 // ForeignKey relates two relations.
@@ -35,9 +39,11 @@ type Catalog interface {
 }
 
 // Compiled is a request as SQL, its parameters PostgreSQL text values.
+// Relations are every relation it reads: the target and each embedding.
 type Compiled struct {
-	SQL  string
-	Args []any
+	SQL       string
+	Args      []any
+	Relations []Relation
 }
 
 // Compile turns a parsed request on schema into SQL.
@@ -100,7 +106,7 @@ func Compile(ctx context.Context, cat Catalog, schema string, req *Request) (*Co
 	if req.Offset > 0 {
 		b.WriteString(" OFFSET " + strconv.Itoa(req.Offset))
 	}
-	return &Compiled{SQL: b.String(), Args: c.args}, nil
+	return &Compiled{SQL: b.String(), Args: c.args, Relations: c.read}, nil
 }
 
 type compiler struct {
@@ -109,7 +115,8 @@ type compiler struct {
 	schema  string
 	args    []any
 	aliases int
-	inner   []string // EXISTS conditions from top-level !inner embeds
+	inner   []string   // EXISTS conditions from top-level !inner embeds
+	read    []Relation // every relation resolved, in order
 }
 
 func (c *compiler) alias() string {
@@ -130,6 +137,7 @@ func (c *compiler) relation(name string) (*Relation, error) {
 	if rel == nil {
 		return nil, invalid("no relation %s.%s", c.schema, name)
 	}
+	c.read = append(c.read, *rel)
 	return rel, nil
 }
 
@@ -364,7 +372,10 @@ type PG struct{ Conn *pgx.Conn }
 
 // Relation reads a relation's columns; nil when it does not exist.
 func (p PG) Relation(ctx context.Context, schema, name string) (*Relation, error) {
-	rows, err := p.Conn.Query(ctx, `SELECT c.oid, a.attname FROM pg_class c
+	rows, err := p.Conn.Query(ctx, `SELECT c.oid, a.attname,
+		(c.relkind IN ('r', 'p') AND c.relrowsecurity) OR (c.relkind = 'v' AND COALESCE((SELECT lower(o.option_value)
+			FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), '') IN ('true', 'on', 'yes', '1'))
+		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
 		WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
@@ -377,11 +388,12 @@ func (p PG) Relation(ctx context.Context, schema, name string) (*Relation, error
 	for rows.Next() {
 		var oid uint32
 		var col string
-		if err := rows.Scan(&oid, &col); err != nil {
+		var secured bool
+		if err := rows.Scan(&oid, &col, &secured); err != nil {
 			return nil, fmt.Errorf("rest: read relation: %w", err)
 		}
 		if rel == nil {
-			rel = &Relation{OID: oid, Schema: schema, Name: name}
+			rel = &Relation{OID: oid, Schema: schema, Name: name, RowSecured: secured}
 		}
 		rel.Columns = append(rel.Columns, col)
 	}

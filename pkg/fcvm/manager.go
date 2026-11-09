@@ -481,6 +481,12 @@ type Instance struct {
 	// QuietPauseAfter is the ADR-1151 quiet pause delay; zero means the
 	// instance keeps running between requests (quiet_pause.go).
 	QuietPauseAfter time.Duration
+	// IdleLadderEligible marks a request-serving instance the idle ladder's
+	// observe mode measures (ADR-20261107122928; idle_ladder.go).
+	IdleLadderEligible bool
+	// IdleLadderGuardedPause marks an app the idle ladder may quiet-pause
+	// behind its activity guard (idle_ladder_apps.go).
+	IdleLadderGuardedPause bool
 	// AgentWaitPauseAfter is an agent run's model-wait pause delay
 	// (ADR-20261027090012; agent_wait_pause.go); zero means the run VM keeps
 	// running while it waits on the model.
@@ -1355,6 +1361,27 @@ type Manager struct {
 	quietTick     time.Duration
 	quietMu       sync.Mutex
 	quietStates   map[string]*quietState
+
+	// Idle ladder (ADR-20261107122928; idle_ladder.go). idleActivity is nil
+	// unless vmmd.toml sets idle_ladder; idleLadderOn applies levels L1 and
+	// L2. idleMu guards idleStates and idleLast and is a leaf lock: it is
+	// never held while m.mu is taken.
+	idleActivity QuietActivity
+	idleLadderOn bool
+	idleAppsOn   bool
+	idleCPU      IdleLadderCPU
+	idleNet      IdleLadderNet
+	idleMetrics  *IdleLadderMetrics
+	idleTick     time.Duration
+	idleMu       sync.Mutex
+	idleStates   map[string]*idleLadderState
+	idleLast     time.Time
+	// idleCompressOn applies L3/L4 (idle_compress.go). idleColdMu guards
+	// idleColdCeilings, each app's compression ceiling, and is a leaf lock.
+	idleCompressOn      bool
+	idleCompressMetrics *IdleCompressMetrics
+	idleColdMu          sync.Mutex
+	idleColdCeilings    map[string]coldCeiling
 
 	// Model-wait pause of agent runs (ADR-20261027090012;
 	// agent_wait_pause.go). agentWaitCPU is nil unless vmmd.toml enables it.
@@ -3815,6 +3842,15 @@ type WakeRequest struct {
 	// Manager ignores it for instances that cannot be paused safely; see
 	// quietPauseAfterFor.
 	QuietPauseAfter time.Duration
+	// IdleLadderEligible (ADR-20261107122928) marks a request-serving
+	// workload the pause tiers may pause, whatever its declared pause.
+	// vmmd's idle_ladder observe mode measures it; see idleLadderEligibleFor.
+	IdleLadderEligible bool
+	// IdleLadderGuardedPause (ADR-20261107122928 §6) lets vmmd quiet-pause a
+	// request-serving app that declared no pause, behind the idle ladder's
+	// activity guard, when idle_ladder_apps is on; see
+	// idleLadderGuardedPauseFor.
+	IdleLadderGuardedPause bool
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Drives the parent-cgroup path (ParentCgroupFor) and the
 	// --cgroup cpu.weight=N jailer argv, plus the per-instance
@@ -3943,6 +3979,11 @@ type WakeRequest struct {
 	// on top of api.TenantEgressBasePorts. Forbidden ports are dropped
 	// again when the policy is applied.
 	EgressPorts []uint16
+	// EgressRevision is the apps.egress_allowlist_revision that
+	// EgressAllowlist/EgressPorts were read at. wake uses the cached app
+	// policy (UpdateAppEgressPolicy) unless this revision is newer than it;
+	// 0 = unknown (older scheduler), the cache wins.
+	EgressRevision int64
 	// PrivateNetworkCIDRs contains provider-verified VPC destinations. Empty
 	// means the attachment is pending/error (or not configured); vmmd keeps the
 	// default RFC1918 deny in that case. Ready CIDRs are validated again here
@@ -4170,6 +4211,8 @@ type ColdBootRequest struct {
 	EgressAllowlist []string
 	// EgressPorts (ADR-361) — same shape as WakeRequest.
 	EgressPorts []uint16
+	// EgressRevision — same meaning as WakeRequest.EgressRevision.
+	EgressRevision int64
 	// PrivateNetworkCIDRs mirrors WakeRequest.PrivateNetworkCIDRs for callers
 	// that invoke ColdBoot directly instead of using the scheduler wire.
 	PrivateNetworkCIDRs         []string
@@ -4253,6 +4296,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		APIEnvEntries:               req.APIEnvEntries,
 		EgressAllowlist:             req.EgressAllowlist,
 		EgressPorts:                 req.EgressPorts,
+		EgressRevision:              req.EgressRevision,
 		PrivateNetworkCIDRs:         req.PrivateNetworkCIDRs,
 		PrivateNetworkAllowedCIDRs:  req.PrivateNetworkAllowedCIDRs,
 		PrivateNetworkFirewallRules: req.PrivateNetworkFirewallRules,
@@ -4699,13 +4743,18 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			m.mu.Unlock()
 			return nil, err
 		}
-	} else if policy, ok := m.appEgressPolicies[req.AppID]; ok {
+	} else if policy, ok := m.appEgressPolicies[req.AppID]; ok && !wakeEgressNewerThanCache(req, policy) {
 		if err := validateAppEgressPolicyPlan(req.Plan, policy); err != nil {
 			m.mu.Unlock()
 			return nil, err
 		}
 		req.EgressAllowlist = egressPrefixStrings(policy.allowlist)
 		req.EgressPorts = append([]uint16{}, policy.ports...)
+	} else if ok && len(req.EgressPorts) > req.Plan.EgressExtraPortsMax() {
+		// The newer request replaces a cached policy that was plan-checked;
+		// hold it to the same bound.
+		m.mu.Unlock()
+		return nil, fmt.Errorf("fcvm: app egress policy exceeds live workload plan")
 	}
 	m.mu.Unlock()
 
@@ -5416,10 +5465,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
-		QuietPauseAfter:     quietPauseAfterFor(req, qualificationOnly),
-		AgentWaitPauseAfter: agentWaitPauseAfterFor(req),
-		ExecutionMode:       req.ExecutionMode,
-		Characterization:    report, Runtime: req.Runtime,
+		QuietPauseAfter:        quietPauseAfterFor(req, qualificationOnly),
+		IdleLadderEligible:     idleLadderEligibleFor(req, qualificationOnly),
+		IdleLadderGuardedPause: idleLadderGuardedPauseFor(req, qualificationOnly),
+		AgentWaitPauseAfter:    agentWaitPauseAfterFor(req),
+		ExecutionMode:          req.ExecutionMode,
+		Characterization:       report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
 	}

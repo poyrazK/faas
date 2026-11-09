@@ -60,6 +60,9 @@ func topLevelUsage(showAll, showOperator bool) string {
 	b.WriteString("                         Interactive-only commands retain human prompts.\n")
 	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
 	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
+	b.WriteString("  --wait-for-approval    When an agent key's request needs a person's approval,\n")
+	b.WriteString("                         wait for the decision and retry once (before the\n")
+	b.WriteString("                         command). Equivalent env: GREGALE_WAIT_FOR_APPROVAL=1.\n")
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
 }
@@ -112,9 +115,10 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
-	previousAutomation := nonInteractive
-	defer func() { nonInteractive = previousAutomation }()
+	previousAutomation, previousWait := nonInteractive, approvalWaitEnabled
+	defer func() { nonInteractive, approvalWaitEnabled = previousAutomation, previousWait }()
 	nonInteractive = false
+	approvalWaitEnabled = os.Getenv("GREGALE_WAIT_FOR_APPROVAL") == "1"
 	previousInsecureWarned := insecureAPIWarned
 	defer func() { insecureAPIWarned = previousInsecureWarned }()
 	insecureAPIWarned = false
@@ -715,9 +719,9 @@ func run(args []string) (status int) {
 	case "workflows":
 		// ADR-081: durable execution workflows (list|run|status|steps|resume|resumes|cancel|events).
 		return cmdWorkflows(args[1:])
-	case "automations":
-		// Manage declarative automation definitions: validate, save a draft, publish.
-		return cmdAutomations(args[1:])
+	case "stored-workflows":
+		// Manage stored workflow definitions: validate, save a draft, publish.
+		return cmdStoredWorkflows(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
 	case "data-repair":
@@ -808,7 +812,7 @@ func run(args []string) (status int) {
 		// requires an authenticated session + 5-min step-up.
 		return cmdInvitations(args[1:])
 	case "overage-cap":
-		// Tier B audit gap: per-account overage cap ($0.01/GB-h
+		// Tier B audit gap: per-account overage cap ($0.05/GB-h
 		// above the plan's included GB-h). schedd refuses new wakes
 		// once the cap is hit.
 		return cmdOverageCap(args[1:])
@@ -1070,7 +1074,7 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []string) {
 	usage := localHelpSubcommandPath(command, names)
 	if len(sub.Subcommands) > 0 {
-		usage += " <" + sub.subcommandChoice() + ">"
+		usage += " " + sub.subcommandSynopsis()
 	}
 	if sub.SubcommandsAfterPositionals {
 		usage = localHelpArguments(usage, nil, sub.Flags, false)
