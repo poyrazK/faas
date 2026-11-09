@@ -879,6 +879,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresSQLProber(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runAppHealthCollector(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runEdgeCrawlerRangesRefresher(ctx) })
+		// ADR-20261108110000 amendment 2026-11-09: seal credential header
+		// values stored before sealing, once every gateway can open them.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.edgeRules.RunHeaderSecretBackfill(ctx, 0) })
 		go background.Staggered(ctx, background.StartSpread, func() {
 			mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log, srv.mcpReadinessPreview)
 		})
@@ -2063,6 +2066,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// reconciliation. It retains the local Unix fast path when present.
 		srv.realtime.Owner = resolver
 		srv.realtime.Registrar = resolver
+		srv.realtime.NodesServePreview = resolver.NodesServePreview
 		log.Info("apid: managed realtime leased owner resolver armed", "local_node_id", localNodeID)
 	}
 

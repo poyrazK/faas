@@ -545,6 +545,7 @@ state is `observed`, `mixed`, or `unverified`. Modes show:
 | `security_revocation` | Emergency revocation registry attached to the handler |
 | `managed_http` | Tenant managed HTTP listener constructed and bound |
 | `managed_circuit` | Adaptive endpoint breaker attached to that managed HTTP listener |
+| `edge_header_secrets` | Gateway opens sealed edge-rule request header values; until every serving gateway does, apid stores new credential values as written (omitted by older releases) |
 
 Shared retry endpoint identities contain no URL or credentials and are used
 only for aggregation; the customer response contains no node names or process

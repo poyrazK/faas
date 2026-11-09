@@ -16,6 +16,22 @@ func sourceHealthcheckOverrides(probe *api.DeploymentHealthcheck) *api.CreateDep
 	return &api.CreateDeploymentOverrides{Healthcheck: probe}
 }
 
+// sourceLivenessOverrides adds a multipart deploy's liveness_probe, which
+// replaces the plan-default /healthz liveness probe. A plan without liveness
+// probes (Free) has no probe to replace, so the field is ignored there rather
+// than refused: the Data API CLI sends it on every plan, and the caller
+// cannot see which plan bills an organization's app.
+func sourceLivenessOverrides(overrides *api.CreateDeploymentOverrides, probe *api.DeploymentLivenessProbe, limits api.Limits) *api.CreateDeploymentOverrides {
+	if probe == nil || limits.LivenessPeriodSeconds == 0 {
+		return overrides
+	}
+	if overrides == nil {
+		overrides = &api.CreateDeploymentOverrides{}
+	}
+	overrides.LivenessProbe = probe
+	return overrides
+}
+
 // projectReadinessOverrides are the deployment startup and liveness probes
 // a project deploy stores for its app: the HTTP or gRPC readiness check the
 // scan read from a Kubernetes manifest (ADR-20261029093621 §3), checked both

@@ -7790,6 +7790,7 @@
     "columns": [
       "boot_id",
       "deadline_signing",
+      "edge_header_secrets_boot",
       "generation",
       "managed_circuit",
       "managed_http",
@@ -17503,6 +17504,15 @@
     "columns": [
       "account_id",
       "connections",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "realtime_node_endpoint_connections",
+    "columns": [
+      "connections",
+      "endpoint_id",
       "node_name"
     ],
     "kind": "operational"

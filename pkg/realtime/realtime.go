@@ -24,6 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -76,6 +77,10 @@ var (
 	ErrInvalidDirectMessageID           = errors.New("realtime: invalid direct message ID")
 	ErrDirectMessageReceiptsUnavailable = errors.New("realtime: direct message receipts unavailable")
 	ErrCallbackNotPersisted             = errors.New("realtime: callback was not persisted")
+	// ErrInvalidTextMessage refuses a text message whose bytes are not UTF-8.
+	// RFC 6455 makes clients fail the socket on such a text frame, so one
+	// publish would disconnect every subscriber; send other bytes as binary.
+	ErrInvalidTextMessage = errors.New("realtime: text message is not valid UTF-8; send other bytes as binary")
 )
 
 const maxPendingDirectMessageReceipts = 256
@@ -209,6 +214,10 @@ type Endpoint struct {
 	MaxConnections   int
 	MaxMessageBytes  int64
 	MaxConnectionAge time.Duration
+	// maxConnectionsSet records that the customer set MaxConnections, so the
+	// cap holds across the fleet (fleetConnections). An unset cap defaults
+	// to the node's own capacity and stays a per-node bound.
+	maxConnectionsSet bool
 	// AccountMaxConnections is the account's plan allowance of concurrent
 	// connections across the fleet (ADR-1323). Zero enforces no account limit.
 	AccountMaxConnections int
@@ -260,6 +269,43 @@ func (e Endpoint) accessOn(cfg Config) bool {
 
 func (e Endpoint) occupancyOn(cfg Config) bool {
 	return cfg.OccupancyPreview && e.Preview && (e.Previews == nil || e.Previews.Occupancy)
+}
+
+// NodePreviewsHeader carries, on the endpoint inventory, the realtime
+// previews this node can serve (ADR 20261021080640, amendment of
+// 2026-11-09). apid releases a preview only while every node that answers
+// lists it. A node that predates the header sends none, which apid reads as
+// unknown.
+const NodePreviewsHeader = "X-Faas-Realtime-Node-Previews"
+
+// Node preview names, as NodePreviews lists them.
+const (
+	NodePreviewAccess    = "access"
+	NodePreviewOccupancy = "occupancy"
+	NodePreviewResume    = "resume"
+	NodePreviewTickets   = "tickets"
+)
+
+// NodePreviews lists the previews this node serves for an endpoint apid
+// releases them to: the switch is on and what the feature reads is wired.
+// Tickets ride the v2 protocol, so they also need resume.
+func (m *Manager) NodePreviews() []string {
+	cfg := m.cfg
+	resume := cfg.ResumePreview && cfg.HistoryReader != nil
+	previews := []string{}
+	if cfg.AccessPreview && cfg.AccessReader != nil {
+		previews = append(previews, NodePreviewAccess)
+	}
+	if cfg.OccupancyPreview {
+		previews = append(previews, NodePreviewOccupancy)
+	}
+	if resume {
+		previews = append(previews, NodePreviewResume)
+	}
+	if resume && cfg.TicketPreview && cfg.TicketReader != nil {
+		previews = append(previews, NodePreviewTickets)
+	}
+	return previews
 }
 
 func clonePreviews(p *EndpointPreviews) *EndpointPreviews {
@@ -631,6 +677,9 @@ type endpointState struct {
 	account *accountConnections
 	// relays is the endpoint's share of the node's ephemeral relays.
 	relays relayBudget
+	// remote is the endpoint's connections on the other nodes from the last
+	// connection sync; it counts only for a customer-set max_connections.
+	remote atomic.Int64
 }
 
 // Manager is the owner of managed realtime sockets for one process/node.
@@ -860,6 +909,7 @@ func (m *Manager) registerEndpoint(e Endpoint) error {
 		return err
 	}
 	e.LiveRoutes = routes
+	e.maxConnectionsSet = e.MaxConnections > 0
 	if e.MaxConnections <= 0 || e.MaxConnections > m.cfg.MaxConnections {
 		e.MaxConnections = m.cfg.MaxConnections
 	}
@@ -950,20 +1000,12 @@ func (m *Manager) RemoveEndpoint(id string) {
 		}
 	}
 	m.mu.RUnlock()
-	// Each client is told why (1008 "endpoint removed") so it does not
+	// Each client is told why (1008 "endpoint removed or disabled") so it does not
 	// reconnect as it would after a network drop. The close frames are
 	// written in parallel under one short deadline: revocation must not wait
 	// on a slow client, and closing the transport afterwards unblocks the read
 	// pump and persists its disconnect callback through the normal path.
-	var wg sync.WaitGroup
-	for _, c := range connections {
-		wg.Add(1)
-		go func(c *connection) {
-			defer wg.Done()
-			c.closeWithin(websocket.ClosePolicyViolation, "endpoint removed", endpointRemovalCloseWait)
-		}(c)
-	}
-	wg.Wait()
+	closeConnectionsWithin(connections, websocket.ClosePolicyViolation, "endpoint removed or disabled", endpointRemovalCloseWait)
 }
 
 // endpointRemovalCloseWait bounds the close-frame write to each client of a
@@ -1224,7 +1266,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	state.gate.Lock()
 	if state.revoked.Load() {
 		state.gate.Unlock()
-		_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "endpoint removed"), time.Now().Add(m.cfg.WriteWait))
+		_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "endpoint removed or disabled"), time.Now().Add(m.cfg.WriteWait))
 		_ = ws.Close()
 		return
 	}
@@ -1263,14 +1305,19 @@ func (m *Manager) tryReserve(state *endpointState) (connectionRefusal, bool) {
 	for {
 		current := m.reserved.Load()
 		if current >= int64(m.cfg.MaxConnections) {
-			return connectionRefusal{}, false
+			return connectionRefusal{scope: api.RealtimeConnectionLimitNode, limit: int64(m.cfg.MaxConnections), observed: current}, false
 		}
 		if m.reserved.CompareAndSwap(current, current+1) {
 			for {
 				endpointCurrent := state.reserved.Load()
-				if state.revoked.Load() || endpointCurrent >= int64(state.config.Load().MaxConnections) {
+				if state.revoked.Load() {
 					m.reserved.Add(-1)
 					return connectionRefusal{}, false
+				}
+				config := state.config.Load()
+				if limit, observed := int64(config.MaxConnections), endpointCurrent+m.remoteEndpointConnections(state, config); observed >= limit {
+					m.reserved.Add(-1)
+					return connectionRefusal{scope: api.RealtimeConnectionLimitEndpoint, limit: limit, observed: observed}, false
 				}
 				if state.reserved.CompareAndSwap(endpointCurrent, endpointCurrent+1) {
 					if refusal, ok := m.reserveAccount(state); !ok {
@@ -1296,14 +1343,15 @@ func (m *Manager) countRefusal(r connectionRefusal) {
 	}
 }
 
-// refuseConnection answers a refused reservation: an account limit as an RFC
-// 7807 problem with the limit and observed count, anything else as before.
+// refuseConnection answers a refused reservation: a limit as an RFC 7807
+// problem with the limit and observed count; an endpoint revoked meanwhile
+// answers 404 like one that was never registered.
 func refuseConnection(w http.ResponseWriter, r connectionRefusal) {
 	if r.scope != "" {
 		api.WriteProblem(w, r.problem())
 		return
 	}
-	http.Error(w, "realtime connection limit reached", http.StatusTooManyRequests)
+	http.Error(w, "realtime endpoint not found", http.StatusNotFound)
 }
 
 func (m *Manager) release(state *endpointState) {
@@ -1494,6 +1542,12 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 			}
 			return
 		}
+		// A frame proves the client is alive, like a pong. Pacing below stops
+		// reading while the client has frames queued, and its pongs queue
+		// behind them, so without this a client over the message rate for
+		// Heartbeat+PongWait was dropped without a close frame and its queued
+		// frames were lost instead of being read at the documented rate.
+		_ = c.ws.SetReadDeadline(time.Now().Add(m.cfg.Heartbeat + m.cfg.PongWait))
 		if !c.accessAllows(ctx, "") {
 			return
 		}
@@ -1785,12 +1839,20 @@ func (c *connection) closeWithin(code int, reason string, wait time.Duration) {
 	})
 }
 
-func (c *connection) terminate(code int, reason string) {
-	c.closeOne.Do(func() {
-		c.recordClose(code, reason)
-		c.closeOutboundQueue()
-		_ = c.ws.Close()
-	})
+// closeConnectionsWithin tells each connection why it is closing (a close
+// frame with code and reason, so the client does not treat it as a network
+// drop) and then closes it. The frames are written in parallel under one
+// short deadline so a slow client cannot hold up the caller.
+func closeConnectionsWithin(connections []*connection, code int, reason string, wait time.Duration) {
+	var wg sync.WaitGroup
+	for _, c := range connections {
+		wg.Add(1)
+		go func(c *connection) {
+			defer wg.Done()
+			c.closeWithin(code, reason, wait)
+		}(c)
+	}
+	wg.Wait()
 }
 
 func (c *connection) recordClose(code int, reason string) {
@@ -1804,6 +1866,21 @@ func (c *connection) recordClose(code int, reason string) {
 
 // Send queues one bounded message for a live connection.
 func (m *Manager) Send(ctx context.Context, connectionID string, msg Message) error {
+	if !validTextMessage(msg) {
+		return ErrInvalidTextMessage
+	}
+	return m.sendChecked(ctx, connectionID, msg)
+}
+
+// validTextMessage reports whether msg may be written as its frame type: a
+// text frame must carry UTF-8 (RFC 6455 §8.1).
+func validTextMessage(msg Message) bool {
+	return msg.Binary || utf8.Valid(msg.Data)
+}
+
+// sendChecked is Send for a message whose text encoding the caller already
+// checked once, so a fan-out does not rescan the payload per connection.
+func (m *Manager) sendChecked(ctx context.Context, connectionID string, msg Message) error {
 	c, ok := m.connection(connectionID)
 	if !ok {
 		return ErrConnectionNotFound
@@ -1845,6 +1922,9 @@ func (m *Manager) SendToPrincipal(ctx context.Context, endpointID, principal, me
 	maxMessageBytes := min(int64(api.RealtimePrincipalMessageMaxBytes), endpoint.config.Load().MaxMessageBytes)
 	if int64(len(msg.Data)) > maxMessageBytes {
 		return PrincipalSendStatus{}, fmt.Errorf("realtime: principal message exceeds %d bytes", maxMessageBytes)
+	}
+	if !validTextMessage(msg) {
+		return PrincipalSendStatus{}, ErrInvalidTextMessage
 	}
 	m.mu.RLock()
 	targets := make([]*connection, 0)
@@ -1920,7 +2000,7 @@ func (m *Manager) SendToPrincipal(ctx context.Context, endpointID, principal, me
 				DataBase64: base64.StdEncoding.EncodeToString(msg.Data), Binary: msg.Binary,
 			})
 		} else {
-			err = m.Send(ctx, c.info.ID, msg)
+			err = m.sendChecked(ctx, c.info.ID, msg)
 		}
 		queueStatus := state.ManagedRealtimeDirectQueueQueued
 		switch {
@@ -2219,9 +2299,12 @@ func (m *Manager) PublishWithStatus(ctx context.Context, endpointID, channel str
 	if int64(len(msg.Data)) > maxMessageBytes {
 		return PublishStatus{}, fmt.Errorf("realtime: message exceeds %d bytes", maxMessageBytes)
 	}
+	if !validTextMessage(msg) {
+		return PublishStatus{}, ErrInvalidTextMessage
+	}
 	status := PublishStatus{Subscribers: len(connections)}
 	for _, id := range connections {
-		switch err := m.Send(ctx, id, msg); {
+		switch err := m.sendChecked(ctx, id, msg); {
 		case err == nil:
 			status.Queued++
 		case errors.Is(err, ErrOutboundQueueFull):

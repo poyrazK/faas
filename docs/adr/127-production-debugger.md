@@ -441,6 +441,38 @@ A second review of the debugger on main found:
 - Latency regressions are about warm requests; a slower cold boot shows in debug status and wake evidence, not as a route regression.
 - Dependency percentiles still weight a folded row's one traced sample by its request count: a bucket's requests share route, status and latency bucket.
 
+## Amendment (2026-11-09): replay safety, span privacy and detector accuracy
+
+### Decision
+
+- **Unsafe replays need the rule's opt-in.** Replaying a POST, PUT, PATCH or
+  DELETE through a mirror rule without `allow_unsafe_methods` is refused (409
+  `debug_replay_unsupported` in apid; a permanent failure in the gateway if
+  one is enqueued anyway). A body-carrying replay whose body was not retained
+  is marked comparison-incomplete rather than reporting a status diff.
+- **Spans keep only what the debugger reads.** Ingestion keeps an allowlist of
+  dependency-classification, failure-class and status-code attributes plus
+  the platform's `gregale.*` families, reduces `url.full`/`http.url` to the
+  origin, and widens statement normalization (dollar-quoted, hex, quoted
+  values, JSON-shaped statements; cache commands keep only the verb). Debug
+  bundles omit log messages and statements.
+- **Detector counts the whole window.** The affected-request count reads
+  per-route weighted latency buckets for the window
+  (`RequestTelemetryLatencyWeightsByRoute`) instead of the newest 10k rows;
+  baseline routes are capped by volume, busiest first; and a pass that
+  completed resolves observations it no longer detected
+  (`ResolveRegressionObservationsNotSeenSince`), so a fixed regression stops
+  showing as open.
+- **`debug status`** counts errors in the regression view, reports the
+  request-weighted warm p95 of the serving deployments, and scans recent
+  failures per serving deployment.
+- **Access and clients.** `POST /debug/compare` is read-only and needs the
+  app-logs read permission. `debug … watch` backs off exponentially on failed polls (to
+  5 minutes or the interval) and honours `Retry-After`. A request-list cursor
+  whose window reaches past retention is clamped to the horizon instead of
+  expiring. `gregalectl debug pprof` refuses an abstract socket held by a
+  non-system, non-daemon uid.
+
 ## Amendment (2026-11-09): group commit for request telemetry
 
 ### Context

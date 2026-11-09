@@ -3549,6 +3549,21 @@ func ValidGuestVCPUMillicores(v int) bool {
 	return v >= GuestVCPUMillicoresMin && v <= GuestVCPUMillicoresMax
 }
 
+// CPU admission (ADR-20261109172421), schedd's `cpu_admission`. enforce
+// refuses work for the per-node vCPU and physical CPU budgets; observe admits
+// on memory alone and counts what those gates would have refused, so CPU
+// decides where an instance goes, never whether it runs.
+const (
+	CPUAdmissionEnforce = "enforce"
+	CPUAdmissionObserve = "observe"
+	DefaultCPUAdmission = CPUAdmissionEnforce
+)
+
+// ValidCPUAdmission reports whether v is a `cpu_admission` value.
+func ValidCPUAdmission(v string) bool {
+	return v == CPUAdmissionEnforce || v == CPUAdmissionObserve
+}
+
 // Snapshot refresh after a release (ADR-20261106214916). schedd's
 // `snapshot_refresh` runtime config is off, shadow (find and count the
 // snapshots a release made stale, boot nothing) or on.
@@ -3906,7 +3921,10 @@ func RealtimeResumeSubscriptionsPerNodeFor(accountMaxConnections int) int {
 // Each realtimed process reports its per-account connection counts to apid
 // every RealtimeConnectionSyncInterval and learns the other nodes' counts in
 // return. Counts older than RealtimeConnectionSyncStaleAfter are ignored, and a
-// node whose own sync is that stale enforces its local count only.
+// node whose own sync is that stale enforces its local count only. The same
+// sync carries the open connections of each endpoint with its own
+// max_connections (at most RealtimeConnectionSyncMaxEndpoints), so that cap
+// holds across the fleet rather than once per node.
 //
 // RealtimeNodeOutboundBytesDefault bounds the payload bytes queued for clients
 // across a whole node. Each connection may queue up to 4 MiB, so without it
@@ -3924,6 +3942,7 @@ const (
 	RealtimeConnectionSyncInterval        = 5 * time.Second
 	RealtimeConnectionSyncStaleAfter      = 30 * time.Second
 	RealtimeConnectionSyncMaxAccounts     = 10_000
+	RealtimeConnectionSyncMaxEndpoints    = 10_000
 )
 
 // Channel rules (ADR-20261019102657): realtimed authorizes channels from a
@@ -13762,6 +13781,12 @@ const (
 	TrafficRuntimeObservationTimeout   = 250 * time.Millisecond
 	TrafficRuntimeObservationFreshness = 10 * time.Second
 	TrafficRuntimeObservationMaxNodes  = 4096
+	// EdgeRuleHeaderSecretBackfillInterval is how often apid seals the
+	// credential header values edge rules and their versions still store as
+	// written (ADR-20261108110000, amendment 2026-11-09); the first pass waits
+	// EdgeRuleHeaderSecretBackfillStartDelay so gateways can report first.
+	EdgeRuleHeaderSecretBackfillInterval   = 15 * time.Minute
+	EdgeRuleHeaderSecretBackfillStartDelay = 2 * time.Minute
 	// RequestBudgetPlanMax is the largest request budget any plan may allow
 	// (Scale's 15 minutes, ADR-1150). Every per-plan ceiling is clamped to
 	// it, edge-rule and route-requirement budgets are validated against it,
@@ -15790,8 +15815,10 @@ const (
 	// everyone. Server keys (trusted backends) are bounded only by the total.
 	DataAPIStorageTransfersPerClient = 2
 	// /healthz is public and its readiness checks reach the database: a
-	// completed result answers further checks for this long, so polling it
-	// asks the database at most once per interval per instance.
+	// completed ready result answers further checks for this long, so polling
+	// a healthy API asks the database at most once per interval per instance.
+	// Unready results are never reused, and engine restarts, schema reloads,
+	// checkpoints and restores forget the cached one (ADR-20261109160000).
 	DataAPIHealthCache = 5 * time.Second
 	// The gateway sends the SQL deadline this much early, so a VM clock that
 	// runs ahead of the database's by up to it still passes the engine's
@@ -17041,6 +17068,14 @@ const (
 	LogProjectionTickRowsMax     = 2000
 	LogProjectionBuildErrorBytes = 1024
 )
+
+// AlertRatioMinRequests is the fewest requests a window must hold before a
+// threshold rule on a share or percentile of them (error_rate_pct,
+// cold_start_pct, latency_p50/p95/p99_ms) fires (ADR-20261109153000). On a
+// scale-to-zero app a window often holds a handful of requests, and one
+// failed wake out of three read as a 33% error rate and paged. Below it the
+// rule reads unknown: too few requests to tell.
+const AlertRatioMinRequests = 10
 
 // Anomaly alert bounds (ADR-744). A baseline rule compares a request metric
 // with the median of its value at the same time of day over the previous
