@@ -109,6 +109,25 @@ control plane, which restarts schedd:
   targets, the other nodes' cancel peers and the app route. Converge the
   compute and database nodes too. Its pgproxyd instance id stays reserved.
 
+`service_tcp` (ADR-576) turns on private TCP service addressing on the
+compute-only hosts, one stage per rollout in this order:
+
+```yaml
+service_tcp:
+  node: true       # vmmd admits service addresses; nftables DNATs them
+  listener: true   # gatewayd-internal accepts service TCP on the bridge (:10082)
+  dns: true        # gatewayd-internal answers guest lookups for service names
+```
+
+Each stage needs the one before it. Re-render and converge the compute
+nodes after each change, and let it reach every node before the next.
+`node` renders `faas_service_tcp_enabled` (vmmd's routing drop-in and the
+boot-time nftables ruleset), `listener` renders `gatewayd_service_tcp_listen`
+on the service proxy's bridge address, and `dns` renders
+`gatewayd_service_tcp_dns`. Port 443 is DNATed only where the private service
+HTTPS listener is staged. Turn stages off in reverse, `dns` first. The control
+plane and database hosts get nothing.
+
 `public_edge.custom_domains` (ADR-520) turns on self-hosted certificates for
 customer custom domains. It renders `faas_custom_domain_*` for the control
 plane only: the `public_edge` role adds Caddy's on-demand TLS site (asking

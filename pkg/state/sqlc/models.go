@@ -11949,6 +11949,8 @@ type PrPreviewSet struct {
 	UpdatedAt      pgtype.Timestamptz
 	SetupError     pgtype.Text
 	AccountID      pgtype.UUID
+	MemberPins     []byte
+	MemberPinsHead pgtype.Text
 }
 
 type PrewarmIntent struct {

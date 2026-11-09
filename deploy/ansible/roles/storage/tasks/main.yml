@@ -89,6 +89,28 @@
          ('reflink=1' in storage_xfs_info.stdout | default('')) }}
     faas_storage_existing_mount: "{{ storage_mount.stdout | default('') | trim }}"
 
+# ADR-20261109120000: an encrypted volume that did not unlock at boot (no
+# Tang peer answered) leaves the mountpoint empty. Stop here with the way out
+# rather than at the device checks, which refuse a LUKS disk anyway.
+- name: storage — inspect boot-time unlock of an encrypted volume
+  ansible.builtin.command:
+    argv: [grep, -Eq, '^{{ faas_storage_label }}-crypt\s', /etc/crypttab]
+  register: storage_crypttab_entry
+  changed_when: false
+  failed_when: storage_crypttab_entry.rc not in [0, 1, 2]
+  when: not (faas_storage_existing_valid | bool)
+
+- name: storage — refuse while the encrypted volume is locked
+  ansible.builtin.assert:
+    that:
+      - storage_crypttab_entry.rc != 0
+    fail_msg: >-
+      {{ faas_storage_mount }} is an encrypted volume ({{ faas_storage_label }}-crypt
+      in /etc/crypttab) that is not mounted: it did not unlock at boot. Bring a
+      Tang peer back, or open it with the recovery key, as
+      docs/runbooks/disk-encryption.md describes. Nothing was changed.
+  when: not (faas_storage_existing_valid | bool)
+
 - name: storage — detect an interrupted mirror setup
   ansible.builtin.command:
     argv:
@@ -370,6 +392,16 @@
   ansible.builtin.set_fact:
     faas_storage_filesystem_device: "{{ '/dev/md/faas-fc' if (faas_storage_use_mirror | bool) else faas_storage_selected_disks[0] }}"
   when: not (faas_storage_existing_valid | bool)
+
+# ADR-20261109120000: a new volume on a fleet with disk_encryption becomes
+# LUKS2, unlocked by the other hosts' Tang servers, before XFS goes on it.
+# Only a volume this role is creating is encrypted; an existing plain one is
+# never converted in place (encrypted.yml explains the move).
+- name: storage — encrypt the new data volume
+  ansible.builtin.include_tasks: encrypted.yml
+  when:
+    - faas_disk_encryption | default(false) | bool
+    - not (faas_storage_existing_valid | bool)
 
 - name: storage — format the new filesystem
   changed_when: true
