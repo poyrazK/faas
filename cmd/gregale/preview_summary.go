@@ -43,7 +43,7 @@ func deploymentPreviewTargetSources(preview *cliPreviewSummary, source string, n
 	if nameExplicit && environmentExplicit {
 		return
 	}
-	link, _, err := findProjectContext(source)
+	link, _, err := targetProjectContext(source)
 	if err == nil {
 		if !nameExplicit && link.App != "" {
 			preview.AppSource = "saved source context"

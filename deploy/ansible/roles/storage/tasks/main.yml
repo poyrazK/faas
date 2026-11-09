@@ -780,3 +780,11 @@
     fail_msg: >-
       {{ faas_storage_mount }} did not converge to an XFS filesystem with
       prjquota enabled.
+
+# ADR-20261109120000 slice 2: on an encrypted volume, host secrets and the
+# control plane's Postgres move onto it (encrypted_paths.yml).
+- name: storage — keep host secrets and Postgres on the encrypted volume
+  ansible.builtin.include_tasks: encrypted_paths.yml
+  when:
+    - faas_disk_encryption | default(false) | bool
+    - storage_final_mount.stdout.split() | first == '/dev/mapper/' ~ faas_storage_label ~ '-crypt'
