@@ -133,6 +133,10 @@ type Manifest struct {
 	// fleet's database hosts (managed_postgres.go).
 	ManagedPostgres *ManagedPostgres `yaml:"managed_postgres,omitempty"`
 
+	// ServiceTCP stages private TCP service addressing (ADR-576) on the
+	// compute-only hosts (service_tcp.go).
+	ServiceTCP *ServiceTCP `yaml:"service_tcp,omitempty"`
+
 	// PostgreSQL is the database cluster configuration. The renderer
 	// needs the role names, the database name, and the migration
 	// policy (the manifest validator checks the migration scope is
@@ -1499,6 +1503,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
 	errs = append(errs, m.validateManagedPostgres()...)
+	errs = append(errs, m.validateServiceTCP()...)
 	errs = append(errs, m.ObjectStorage.validate()...)
 	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
 	errs = append(errs, m.LogArchive.validate()...)

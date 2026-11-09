@@ -195,7 +195,7 @@ table inet faas {
 {{ '  ' }}chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
 {% if faas_service_tcp_enabled | default(false) -%}
-{{ '    ' }}iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.19.0.0/16 tcp dport { {{ '443, ' if faas_service_tcp_https_enabled | default(false) else '' }}10080, 10081 } dnat ip to {{ bridge_cidr.split('/')[0] }}
+{{ '    ' }}iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.19.0.0/16 tcp dport { {{ '443, ' if faas_service_tcp_https_enabled | default(false) | bool else '' }}10080, 10081 } dnat ip to {{ bridge_cidr.split('/')[0] }}
     iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.19.0.0/16 meta l4proto tcp dnat ip to {{ bridge_cidr.split('/')[0] }}:10082
 {% endif -%}
 {% if faas_database_route_enabled | default(false) -%}
