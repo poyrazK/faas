@@ -1434,6 +1434,9 @@ func TestMetricsSpec12(t *testing.T) {
 	h2, b2, _ := newTestHandler(t)
 	h2.SetWakeGateHook()
 	b2.app.Plan = api.PlanFree
+	// A frozen clock stops refill while the loop drains the bucket.
+	fixed := time.Now()
+	h2.WithLimiter(NewLimiterWithClock(func() time.Time { return fixed }))
 	for i := 0; i < api.MustLimitsFor(api.PlanFree).RateLimitBurst+5; i++ {
 		req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 		rec = httptest.NewRecorder()
