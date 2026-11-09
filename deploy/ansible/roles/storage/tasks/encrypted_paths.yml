@@ -22,9 +22,12 @@
 
 - name: storage — choose the paths that live on the encrypted volume
   ansible.builtin.set_fact:
+    faas_storage_holds_postgres: "{{ 'control_plane' in group_names or 'postgres_standby' in group_names }}"
     faas_storage_encrypted_paths: >-
       {{ faas_storage_encrypted_secret_paths
-         + (faas_storage_encrypted_postgres_paths if 'control_plane' in group_names else []) }}
+         + (faas_storage_encrypted_database_paths if 'database_nodes' in group_names else [])
+         + (faas_storage_encrypted_postgres_paths
+            if ('control_plane' in group_names or 'postgres_standby' in group_names) else []) }}
 
 - name: storage — install the copy tool
   ansible.builtin.apt:
@@ -72,7 +75,7 @@
     that:
       - faas_storage_pg_databases.stdout | int <= 3
     fail_msg: >-
-      The control-plane Postgres on this host holds data on the plain disk
+      The Postgres on this host holds data on the plain disk
       ({{ faas_storage_pg_databases.stdout }} databases). It is not stopped
       automatically: move it in a maintenance window as
       docs/runbooks/disk-encryption.md ("Moving a live Postgres") describes,
@@ -232,7 +235,7 @@
       # Managed by Gregale (storage, ADR-20261109120000). Host secrets and
       # daemon state live on the encrypted data volume, bind-mounted here.
       [Unit]
-      RequiresMountsFor={{ faas_storage_encrypted_secret_paths | map(attribute='path') | join(' ') }}
+      RequiresMountsFor={{ faas_storage_encrypted_paths | rejectattr('postgres', 'defined') | map(attribute='path') | join(' ') }}
     owner: root
     group: root
     mode: "0644"
@@ -246,7 +249,7 @@
     group: root
     mode: "0755"
   loop: [postgresql.service, "postgresql@.service"]
-  when: "'control_plane' in group_names"
+  when: faas_storage_holds_postgres | bool
 
 - name: storage — keep Postgres off an unmounted data directory
   ansible.builtin.copy:
@@ -261,7 +264,7 @@
     mode: "0644"
   loop: [postgresql.service, "postgresql@.service"]
   register: faas_storage_pg_dropin
-  when: "'control_plane' in group_names"
+  when: faas_storage_holds_postgres | bool
 
 # auditd loads its rules early in boot, before /etc/faas/secrets is mounted;
 # reload them once it is, so the faas_secrets watch covers the mounted tree.
