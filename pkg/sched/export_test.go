@@ -1132,6 +1132,14 @@ func (e *Engine) AppCPUMillicores(app state.App, limits api.Limits) int {
 	return e.appCPUMillicores(app, limits)
 }
 
+// AppCPUWeight, CPUBySize and PolicyAppCPUMillicores expose CPU that follows
+// instance size (ADR-20261109172421).
+func (e *Engine) AppCPUWeight(app state.App) int32 { return e.appCPUWeight(app) }
+func (e *Engine) CPUBySize(appID string) bool      { return e.cpuBySize(appID) }
+func (e *Engine) PolicyAppCPUMillicores(ctx context.Context, appID string, configured int) (int, error) {
+	return e.policyAppCPUMillicores(ctx, appID, configured)
+}
+
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
 func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {

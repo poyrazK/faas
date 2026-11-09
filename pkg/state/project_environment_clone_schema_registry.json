@@ -8409,6 +8409,7 @@
       "application_standard_boot_token",
       "application_standard_promotion_token",
       "booked_cpu_millicores",
+      "booked_vcpu",
       "capacity_cpu_millicores",
       "capacity_ram_mb",
       "capacity_vcpu",

@@ -26,6 +26,13 @@ func freshNodePlacement(ctx context.Context) bool {
 func (e *Engine) nodePlacementContext(ctx context.Context, p Placement, r Request) context.Context {
 	admission := state.NodeAdmission{NodeID: p.NodeID, Generation: p.LifecycleGeneration,
 		BookedCPUMillicores: r.BookedCPUMillicores}
+	if r.BookedCPUMillicores > 0 {
+		// The apps schedd stamps a CPU booking for are the ones whose guest
+		// vCPU count it shapes (guest_vcpu_from_cpu_apps, cpu_size_apps):
+		// store the count they boot with, not the plan's
+		// (ADR-20261109172421 step 5).
+		admission.BookedVCPU = r.VCPU
+	}
 	if e.ledger != nil {
 		admission.ReservationPercent = e.ledger.ReservationPercent(p.NodeID)
 		// ADR-20261107122928: the idle ladder discount placement applied.

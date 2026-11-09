@@ -50,7 +50,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -218,12 +217,10 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 		}
 	}
 
-	if booked := nodeBookedCPUMillicores(ctx, nodeID); booked > 0 {
-		// capture_instance_capacity stores it on the row this transaction
-		// inserts (ADR-20261101160231 step 5b).
-		if _, err := tx.Exec(ctx, `SELECT set_config('faas.instance_booked_cpu_millicores', $1::text, true)`, strconv.Itoa(booked)); err != nil {
-			return Instance{}, fmt.Errorf("state: node reservation: booked CPU (node=%s): %w", nodeID, err)
-		}
+	// capture_instance_capacity stores them on the row this transaction
+	// inserts (ADR-20261101160231 step 5b, ADR-20261109172421 step 5).
+	if err := setInstanceBookings(ctx, tx, nodeBookedCPUMillicores(ctx, nodeID), nodeBookedVCPU(ctx, nodeID)); err != nil {
+		return Instance{}, fmt.Errorf("state: node reservation (node=%s): %w", nodeID, err)
 	}
 	inst, err := insert(tx)
 	if err != nil {
