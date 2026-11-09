@@ -36,6 +36,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -474,6 +475,8 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	s.revokeSignInKeysAfterPasswordChange(r, acct)
+	leftKeys := s.keysLeftAfterReset(r.Context(), acct)
+	s.mailKeysLeftAfterReset(r.Context(), acct, leftKeys)
 	if !s.passwordChangedAlertRequested() {
 		// The durable path queued its own alert in the reset transaction.
 		s.alertPasswordChangedInline(r.Context(), acct, "password_reset")
@@ -482,7 +485,11 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 	// pause someone else's guessing put on it.
 	s.loginFailures.reset(auth.HashEmail(acct.Email))
 	s.issueSessionCookie(w, r, acct)
-	http.Redirect(w, r, "/dashboard/", http.StatusFound)
+	target := "/dashboard/"
+	if len(leftKeys) > 0 {
+		target = accountPagePath + "?password_reset=keys"
+	}
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 // postSetPassword is the authenticated POST /dashboard/account/set-password.
@@ -1473,13 +1480,21 @@ func (s *server) verifyEmail(w http.ResponseWriter, r *http.Request) {
 	s.verifyEmailToken(w, r, strings.TrimSpace(r.PostFormValue("token")))
 }
 
-// verifyEmailToken consumes a verification token without authenticating the
-// browser. The success page explicitly sends the customer back through sign
-// in, so possession of the email link never becomes a session credential.
+// verifyEmailToken consumes a verification token. Possession of the email
+// link never becomes a session credential, and the link verifies only from a
+// browser signed in to its account (ADR 20261109120000): whoever signed up
+// with the address may not own it, and the mailbox owner clicking a link
+// someone else's sign-up sent them must not vouch for that someone's
+// password, keys and authenticator. The mailbox owner who did not sign up
+// cannot sign in with that password; they use an email sign-in link, which
+// clears whatever the sign-up left.
 func (s *server) verifyEmailToken(w http.ResponseWriter, r *http.Request, token string) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(raw) != 32 {
 		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		return
+	}
+	if !s.verificationFromAccountBrowser(w, r, api.HashToken(raw), token) {
 		return
 	}
 	accountID, err := s.store.ConsumeEmailVerificationToken(r.Context(), api.HashToken(raw))
@@ -1501,3 +1516,30 @@ func (s *server) verifyEmailToken(w http.ResponseWriter, r *http.Request, token 
 // Keep the imports tidy — these helpers are referenced by the
 // future test surface and the README expansion; the imports stay
 // green so gofmt doesn't flag them on a future edit.
+
+// verificationFromAccountBrowser reports whether r comes from a browser fully
+// signed in to the account the verification link belongs to. Otherwise it
+// answers: a browser goes to sign in and comes back to the link, any other
+// client gets 401; the link is not consumed.
+func (s *server) verificationFromAccountBrowser(w http.ResponseWriter, r *http.Request, hash []byte, token string) bool {
+	peek, ok := s.store.(state.EmailVerificationPeekStore)
+	if !ok {
+		return true
+	}
+	ownerID, err := peek.EmailVerificationTokenAccount(r.Context(), hash)
+	if err != nil {
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		return false
+	}
+	if owner, err := s.store.AccountByID(r.Context(), ownerID); err == nil && s.signedInBrowserAs(r, owner) {
+		return true
+	}
+	if api.AcceptsHTML(r) {
+		next := emailVerificationPath + "?token=" + url.QueryEscape(token)
+		http.Redirect(w, r, loginPath+"?verify=1&next="+url.QueryEscape(next), http.StatusSeeOther)
+		return false
+	}
+	api.WriteProblemForRequest(w, r, api.NewProblem(http.StatusUnauthorized, api.CodeSessionExpired,
+		"Sign in to verify", "open the link in a browser signed in to the account it was sent for"))
+	return false
+}
