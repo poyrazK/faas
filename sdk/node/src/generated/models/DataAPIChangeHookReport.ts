@@ -13,5 +13,6 @@ export type DataAPIChangeHookReport = {
   last_published_at?: string;
   last_failure_code?: string;
   publishing: 'ok' | 'retrying';
+  last_dropped_at?: string;
 };
 

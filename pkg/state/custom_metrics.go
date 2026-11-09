@@ -71,6 +71,68 @@ func (s *PgStore) PutCustomMetricOfKind(ctx context.Context, appID, name, kind s
 	return nil
 }
 
+// CustomMetricDeltaStore adds an OTLP delta to a stored metric
+// (ADR-20261108160000): delta counters and histogram totals accumulate into
+// a running total, and delta up-down counters move a gauge.
+type CustomMetricDeltaStore interface {
+	AddCustomMetricOfKind(ctx context.Context, appID, name, kind string, delta float64, observedAt time.Time, distinctLimit int) error
+}
+
+var (
+	_ CustomMetricDeltaStore = (*PgStore)(nil)
+	_ CustomMetricDeltaStore = (*MemStore)(nil)
+)
+
+// customMetricMaxTotal bounds an accumulated total below the column's
+// finite CHECK; a total that large is a broken producer, not a count.
+const customMetricMaxTotal = 1e15
+
+// clampCustomMetricTotal keeps an accumulated value inside the stored
+// range: never negative (app_custom_metrics_value_finite) and finite.
+func clampCustomMetricTotal(v float64) float64 {
+	switch {
+	case v < 0 || v != v:
+		return 0
+	case v > customMetricMaxTotal:
+		return customMetricMaxTotal
+	}
+	return v
+}
+
+// AddCustomMetricOfKind adds delta to the stored value of name, inserting it
+// as delta when the name is new or was stored with another kind (a kind
+// change restarts the total). The result is clamped to [0, 1e15]. The
+// distinct-name cap is enforced in the statement as in PutCustomMetricOfKind.
+func (s *PgStore) AddCustomMetricOfKind(ctx context.Context, appID, name, kind string, delta float64, observedAt time.Time, distinctLimit int) error {
+	if distinctLimit <= 0 {
+		return fmt.Errorf("state: add custom metric %q: distinct limit must be > 0", name)
+	}
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO app_custom_metrics (app_id, name, value, observed_at, kind)
+		SELECT $1::uuid, $2::text, LEAST(GREATEST($3::double precision, 0), $7::double precision), $4::timestamptz, $6::text
+		WHERE EXISTS (
+			SELECT 1 FROM app_custom_metrics
+			 WHERE app_id = $1::uuid AND name = $2::text
+		) OR (
+			SELECT count(*) FROM app_custom_metrics WHERE app_id = $1::uuid
+		) < $5::int
+		ON CONFLICT (app_id, name) DO UPDATE
+		   SET value = LEAST(GREATEST(
+		           CASE WHEN app_custom_metrics.kind = EXCLUDED.kind
+		                THEN app_custom_metrics.value + $3::double precision
+		                ELSE $3::double precision END, 0), $7::double precision),
+		       observed_at = GREATEST(app_custom_metrics.observed_at, EXCLUDED.observed_at),
+		       kind = EXCLUDED.kind
+	`, appID, name, delta, observedAt, distinctLimit, kind, customMetricMaxTotal)
+	if err != nil {
+		return fmt.Errorf("state: add custom metric %q for app %s: %w", name, appID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrCustomMetricLimit
+	}
+	return nil
+}
+
 // ListCustomMetrics returns every stored gauge for an app, name-ordered so
 // callers and tests see a stable sequence.
 //
@@ -216,6 +278,36 @@ func (m *MemStore) PutCustomMetricOfKind(_ context.Context, appID, name, kind st
 		return ErrCustomMetricLimit
 	}
 	byName[name] = CustomMetric{Name: name, Value: value, ObservedAt: observedAt, Kind: kind}
+	return nil
+}
+
+// AddCustomMetricOfKind mirrors the PgStore delta upsert.
+func (m *MemStore) AddCustomMetricOfKind(_ context.Context, appID, name, kind string, delta float64, observedAt time.Time, distinctLimit int) error {
+	if distinctLimit <= 0 {
+		return fmt.Errorf("state: add custom metric %q: distinct limit must be > 0", name)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.customMetrics == nil {
+		m.customMetrics = map[string]map[string]CustomMetric{}
+	}
+	byName, ok := m.customMetrics[appID]
+	if !ok {
+		byName = map[string]CustomMetric{}
+		m.customMetrics[appID] = byName
+	}
+	prev, exists := byName[name]
+	if !exists && len(byName) >= distinctLimit {
+		return ErrCustomMetricLimit
+	}
+	value := delta
+	if exists && prev.Kind == kind {
+		value = prev.Value + delta
+	}
+	if exists && prev.ObservedAt.After(observedAt) {
+		observedAt = prev.ObservedAt
+	}
+	byName[name] = CustomMetric{Name: name, Value: clampCustomMetricTotal(value), ObservedAt: observedAt, Kind: kind}
 	return nil
 }
 

@@ -83,6 +83,7 @@ func Run(t *testing.T, open Open) {
 		{"database_switch_cancel_hold_and_account_cap", testDatabaseSwitchCancelHoldAndAccountCap},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
+		{"custom_metric_deltas_accumulate", testCustomMetricDeltaContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
 		{"targeted_build_claim_fences_a_second_claimer", testTargetedBuildClaimFencesASecondClaimer},
@@ -4564,6 +4565,74 @@ func testCustomMetricsContract(t *testing.T, fx *Fixture) {
 	// intent is "this metric is gone", which is already true.
 	if err := fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "never_existed"); err != nil {
 		t.Errorf("delete of a missing name = %v, want nil", err)
+	}
+}
+
+// testCustomMetricDeltaContract pins ADR-20261108160000 on both stores: OTLP
+// deltas add to the stored value of the same kind, a kind change restarts
+// it, the total never goes below zero, the newest timestamp is kept, and the
+// distinct-name cap applies as for a plain push.
+func testCustomMetricDeltaContract(t *testing.T, fx *Fixture) {
+	t.Helper()
+	deltas, ok := fx.Store.(state.CustomMetricDeltaStore)
+	if !ok {
+		t.Fatal("store does not implement CustomMetricDeltaStore")
+	}
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	value := func(name string) state.CustomMetric {
+		t.Helper()
+		rows, err := fx.Store.ListCustomMetrics(fx.Ctx, fx.App.ID)
+		if err != nil {
+			t.Fatalf("ListCustomMetrics: %v", err)
+		}
+		for _, row := range rows {
+			if row.Name == name {
+				return row
+			}
+		}
+		t.Fatalf("%s not stored", name)
+		return state.CustomMetric{}
+	}
+	add := func(name, kind string, delta float64, when time.Time) error {
+		return deltas.AddCustomMetricOfKind(fx.Ctx, fx.App.ID, name, kind, delta, when, 2)
+	}
+
+	if err := add("requests_total", state.CustomMetricKindCounter, 3, at); err != nil {
+		t.Fatalf("first delta: %v", err)
+	}
+	if err := add("requests_total", state.CustomMetricKindCounter, 4, at.Add(time.Minute)); err != nil {
+		t.Fatalf("second delta: %v", err)
+	}
+	// An older export arriving late still adds, but does not move time back.
+	if err := add("requests_total", state.CustomMetricKindCounter, 1, at); err != nil {
+		t.Fatalf("late delta: %v", err)
+	}
+	if got := value("requests_total"); got.Value != 8 || got.Kind != state.CustomMetricKindCounter || !got.ObservedAt.UTC().Equal(at.Add(time.Minute)) {
+		t.Fatalf("requests_total = %+v, want counter 8 observed at the newest delta", got)
+	}
+
+	// A delta up-down counter moves a gauge and stops at zero.
+	if err := add("connections", state.CustomMetricKindGauge, 2, at); err != nil {
+		t.Fatalf("gauge delta: %v", err)
+	}
+	if err := add("connections", state.CustomMetricKindGauge, -5, at.Add(time.Second)); err != nil {
+		t.Fatalf("negative gauge delta: %v", err)
+	}
+	if got := value("connections"); got.Value != 0 {
+		t.Fatalf("connections = %v, want floored at 0", got.Value)
+	}
+
+	// The cap counts names as a plain push does.
+	if err := add("third_name", state.CustomMetricKindCounter, 1, at); !errors.Is(err, state.ErrCustomMetricLimit) {
+		t.Fatalf("third name at cap 2 = %v, want ErrCustomMetricLimit", err)
+	}
+
+	// A kind change restarts the total from the delta.
+	if err := add("connections", state.CustomMetricKindCounter, 6, at.Add(2*time.Second)); err != nil {
+		t.Fatalf("kind change: %v", err)
+	}
+	if got := value("connections"); got.Value != 6 || got.Kind != state.CustomMetricKindCounter {
+		t.Fatalf("after kind change = %+v, want counter 6", got)
 	}
 }
 

@@ -106,8 +106,8 @@ func TestPostOTLPMetrics_ReportsPartialSuccessInJSON(t *testing.T) {
 	e := customHistoryEnv(t)
 	createApp(t, e, "shop")
 	metrics := []*metricspb.Metric{otlpGauge("ok_metric", 1), otlpGauge("negative", -5)}
-	for i := 0; i < api.MaxCustomMetricsPerApp; i++ {
-		metrics = append(metrics, otlpGauge("extra_"+string(rune('a'+i)), 1))
+	for i := 0; i < api.PlanPro.CustomMetricsPerApp(); i++ {
+		metrics = append(metrics, otlpGauge(fmt.Sprintf("extra_%03d", i), 1))
 	}
 	body, err := protojson.Marshal(otlpExport(metrics...))
 	if err != nil {
@@ -158,8 +158,10 @@ func TestPostOTLPMetrics_AdmitsNewNamesOnlyWithinTheLimit(t *testing.T) {
 	if rec.Code != http.StatusOK || proto.Unmarshal(rec.Body.Bytes(), &resp) != nil {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
-	if got := resp.GetPartialSuccess().GetRejectedDataPoints(); got != 99 {
-		t.Fatalf("rejected = %d, want the 99 new names beyond the one free slot", got)
+	limit := api.PlanPro.CustomMetricsPerApp()
+	free := limit - len(known)
+	if got := resp.GetPartialSuccess().GetRejectedDataPoints(); got != int64(100-free) {
+		t.Fatalf("rejected = %d, want the %d new names beyond the %d free slots", got, 100-free, free)
 	}
 	rows, err := e.store.ListCustomMetrics(context.Background(), app.ID)
 	if err != nil {
@@ -169,11 +171,64 @@ func TestPostOTLPMetrics_AdmitsNewNamesOnlyWithinTheLimit(t *testing.T) {
 	for _, row := range rows {
 		values[row.Name] = row.Value
 	}
-	if len(values) != api.MaxCustomMetricsPerApp || values["known_a"] != 9 {
-		t.Fatalf("stored = %v, want the known names (known_a updated) and one new name", values)
+	if len(values) != limit || values["known_a"] != 9 {
+		t.Fatalf("stored = %v, want the known names (known_a updated) and new names up to the plan's %d", values, limit)
 	}
 	if _, ok := values["new_00"]; !ok {
 		t.Fatalf("stored = %v, want the first new name in name order", values)
+	}
+}
+
+// adr: 20261108160000 — delta counters accumulate across exports and a
+// histogram is stored as its five derived series.
+func TestPostOTLPMetrics_DeltasAccumulateAndHistogramsDerive(t *testing.T) {
+	e := customHistoryEnv(t)
+	app := createApp(t, e, "shop")
+	delta := func(v int64) []byte {
+		body, err := proto.Marshal(otlpExport(&metricspb.Metric{Name: "jobs.done", Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
+			IsMonotonic: true, AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA,
+			DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: uint64(time.Now().UnixNano()), Value: &metricspb.NumberDataPoint_AsInt{AsInt: v}}},
+		}}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	for _, v := range []int64{3, 4} {
+		if rec := postOTLP(t, e, "application/x-protobuf", delta(v)); rec.Code != http.StatusOK {
+			t.Fatalf("delta export: %d %s", rec.Code, rec.Body)
+		}
+	}
+	sumValue := 30.0
+	histogram, err := proto.Marshal(otlpExport(&metricspb.Metric{Name: "latency", Data: &metricspb.Metric_Histogram{Histogram: &metricspb.Histogram{
+		AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+		DataPoints: []*metricspb.HistogramDataPoint{{TimeUnixNano: uint64(time.Now().UnixNano()), Count: 4, Sum: &sumValue,
+			ExplicitBounds: []float64{10}, BucketCounts: []uint64{4, 0}}},
+	}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := postOTLP(t, e, "application/x-protobuf", histogram); rec.Code != http.StatusOK {
+		t.Fatalf("histogram export: %d %s", rec.Code, rec.Body)
+	}
+	rows, err := e.store.ListCustomMetrics(context.Background(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]state.CustomMetric{}
+	for _, row := range rows {
+		got[row.Name] = row
+	}
+	if r := got["jobs_done"]; r.Value != 7 || r.Kind != state.CustomMetricKindCounter {
+		t.Fatalf("jobs_done = %+v, want counter 7 accumulated from deltas 3 and 4", r)
+	}
+	for _, name := range []string{"latency_count", "latency_sum", "latency_p50", "latency_p95", "latency_p99"} {
+		if _, ok := got[name]; !ok {
+			t.Fatalf("histogram series %s missing; stored %v", name, got)
+		}
+	}
+	if got["latency_count"].Value != 4 || got["latency_sum"].Value != 30 || got["latency_p50"].Value != 5 {
+		t.Fatalf("histogram series = %+v", got)
 	}
 }
 

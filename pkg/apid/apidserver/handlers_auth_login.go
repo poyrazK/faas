@@ -602,6 +602,8 @@ func (s *server) revokeSessionsAfterPasswordChange(ctx context.Context, accountI
 	if keepSID == "" {
 		keepSID = uuid.Nil.String()
 	}
+	// A changed password or email also forgets remembered browsers.
+	s.forgetTrustedBrowsers(ctx, accountID, "credential_change")
 	n, err := s.store.RevokeAllSessions(ctx, accountID, keepSID)
 	if err != nil {
 		s.log.Warn("password change: revoke sessions failed", "account", accountID, "err", err)
@@ -1213,6 +1215,11 @@ func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
+	// A password traded for a key is the path a stolen password takes;
+	// a brand-new account's own signup key is not news.
+	if !acct.CreatedAt.IsZero() && time.Since(acct.CreatedAt) > credentialNoticeSignupQuiet {
+		s.noticeCredentialCreated(r, acct, credentialAPISignIn, k.Label)
+	}
 	writeV1AuthJSON(w, acct, requestEmail, plaintext, k)
 }
 

@@ -49,7 +49,7 @@ func (k guestMetricsSink) StoreGuestMetrics(ctx context.Context, accountID, appI
 		return 0, 0, receivers.ErrGuestMetricsDisabled
 	}
 	res := otlpmetrics.Translate(export, time.Now().UTC())
-	if err := k.s.storeOTLPPoints(ctx, store, app.ID, &res); err != nil {
+	if err := k.s.storeOTLPPoints(ctx, store, app.ID, k.s.customMetricLimit(ctx, owner.Plan, app), &res); err != nil {
 		return 0, 0, err
 	}
 	return int64(len(res.Points)), res.Rejected, nil

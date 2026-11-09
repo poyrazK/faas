@@ -40,7 +40,7 @@ func (s *server) renderCustomMetricsDashboard(w http.ResponseWriter, r *http.Req
 
 func (s *server) dashboardCustomMetricsData(r *http.Request, acct state.Account, app state.App) (dashboard.CustomMetricsData, error) {
 	enabled := s.customMetricHistoryEnabled && s.capabilityEnabledFor("custom-metric-history", acct, app)
-	data := dashboard.CustomMetricsData{Enabled: enabled, AppSlug: app.Slug, MaxMetrics: api.MaxCustomMetricsPerApp}
+	data := dashboard.CustomMetricsData{Enabled: enabled, AppSlug: app.Slug, MaxMetrics: s.customMetricLimit(r.Context(), acct.Plan, app)}
 	if !data.Enabled {
 		return data, nil
 	}

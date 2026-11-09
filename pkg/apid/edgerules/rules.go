@@ -44,7 +44,7 @@ import (
 // older clients reading action.validate_mode still see the
 // same value.
 func EdgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
-	actionBytes, _ := json.Marshal(r.Action)
+	actionBytes, _ := json.Marshal(RedactHeaderSecrets(r.Action))
 	matchHeaders := r.MatchHeaders
 	if matchHeaders == nil {
 		matchHeaders = map[string]string{}
@@ -692,7 +692,10 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			ops := func(in []api.EdgeRuleHeaderOp) []state.EdgeRuleHeaderOp {
 				out := make([]state.EdgeRuleHeaderOp, len(in))
 				for i, op := range in {
-					out[i] = state.EdgeRuleHeaderOp{Name: op.Name, Value: op.Value, Action: op.Action, Template: op.Template}
+					out[i] = state.EdgeRuleHeaderOp{
+						Name: op.Name, Value: op.Value, Action: op.Action, Template: op.Template,
+						Secret: op.Secret, SecretID: op.SecretID, Redacted: op.Redacted,
+					}
 				}
 				return out
 			}

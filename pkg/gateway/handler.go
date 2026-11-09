@@ -6306,6 +6306,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The compute edge's request for the instance's node, likewise
 	// (ADR-20261031105055).
 	r = takeEdgePlacement(r)
+	// Edge rules, routing and the app all see one path: dot segments
+	// resolved and duplicate slashes collapsed (ADR-20261108100000).
+	normalizeRequestPath(r)
 	if h.devBridgeAuthorize != nil {
 		if problem := h.devBridgeAuthorize(r); problem != nil {
 			api.WriteProblem(w, problem)

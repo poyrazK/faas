@@ -16,6 +16,7 @@
 package apidserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -32,6 +33,19 @@ import (
 // of a push rather than a scrape — a parked app has no process, and a
 // scale-to-zero platform whose custom signal requires a running instance
 // cannot scale from zero on it.
+// customMetricLimit is the app's cap on distinct custom metric names
+// (ADR-20261108160000): its resource owner's plan, so an organization's app
+// follows the organization's plan, falling back to the caller's plan when
+// the owner cannot be read or its plan has no custom metrics.
+func (s *server) customMetricLimit(ctx context.Context, fallback api.Plan, app state.App) int {
+	if owner, err := state.AppResourceAccount(ctx, s.store, app); err == nil {
+		if limit := owner.Plan.CustomMetricsPerApp(); limit > 0 {
+			return limit
+		}
+	}
+	return fallback.CustomMetricsPerApp()
+}
+
 func (s *server) putCustomMetric(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !acct.Plan.CustomMetricsAllowed() {
 		api.WriteProblem(w, api.ErrPlanCustomMetricsNotAllowed(acct.Plan))
@@ -61,9 +75,10 @@ func (s *server) putCustomMetric(w http.ResponseWriter, r *http.Request, acct st
 	// The store enforces the distinct-name cap inside the insert, not with
 	// a preceding count: two concurrent pushes of two NEW names would both
 	// pass a check-then-insert against a cap of one.
-	err := s.store.PutCustomMetric(r.Context(), app.ID, name, req.Value, time.Now(), api.MaxCustomMetricsPerApp)
+	limit := s.customMetricLimit(r.Context(), acct.Plan, app)
+	err := s.store.PutCustomMetric(r.Context(), app.ID, name, req.Value, time.Now(), limit)
 	if errors.Is(err, state.ErrCustomMetricLimit) {
-		api.WriteProblem(w, api.ErrCustomMetricLimitReached(api.MaxCustomMetricsPerApp))
+		api.WriteProblem(w, api.ErrCustomMetricLimitReached(limit))
 		return
 	}
 	if err != nil {
@@ -96,7 +111,7 @@ func (s *server) listCustomMetrics(w http.ResponseWriter, r *http.Request, acct 
 	out := api.CustomMetricListResponse{
 		Metrics:    make([]api.CustomMetricResponse, 0, len(rows)),
 		FreshnessS: api.CustomMetricFreshnessSeconds,
-		MaxMetrics: api.MaxCustomMetricsPerApp,
+		MaxMetrics: s.customMetricLimit(r.Context(), acct.Plan, app),
 	}
 	now := time.Now()
 	freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second

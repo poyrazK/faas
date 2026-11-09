@@ -64,7 +64,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "state-key-file", Short: "independent private 32-byte state encryption key file", Value: "PATH"},
 			{Name: "oauth-redirect-uri", Short: "allowed OAuth callback; repeat; omit loopback HTTP port for ephemeral ports", Value: "URI"},
 		}, Examples: []string{"gregale mcp serve --transport stdio", "gregale --profile staging mcp serve --timeout 15s"}},
-		{Name: "approval-channels", Short: "Show or choose the notification channels that also get your agents' approval requests", Notes: []string{"Without flags, shows them. Each request still emails the person who connected the agent.", "Changing them needs an admin credential; an agent key cannot."}, Examples: []string{"gregale mcp approval-channels", "gregale mcp approval-channels --set ops-slack", "gregale mcp approval-channels --clear"}, Flags: []cliFlag{
+		{Name: "approval-channels", Short: "Show or choose the channels that get agent approval requests", Notes: []string{"These notification channels also get your agents' approval requests. Without flags, shows them. Each request still emails the person who connected the agent.", "Changing them needs an admin credential; an agent key cannot."}, Examples: []string{"gregale mcp server approval channels", "gregale mcp server approval channels --set ops-slack", "gregale mcp server approval channels --clear"}, Flags: []cliFlag{
 			{Name: "set", Short: "replace with these comma-separated notification channel names", Value: "NAME,NAME"},
 			{Name: "clear", Short: "remove every channel; requests go to email only", Bool: true},
 		}},

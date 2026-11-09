@@ -29,6 +29,7 @@ type DataApiChangeHookReport struct {
 	LastPublishedAt pgtype.Timestamptz
 	LastFailureCode pgtype.Text
 	Publishing      string
+	LastDroppedAt   pgtype.Timestamptz
 }
 
 type DataApiUsageHourly struct {
