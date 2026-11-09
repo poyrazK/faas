@@ -49,3 +49,7 @@ Environment=FAAS_EDGE_PROXY_CIDRS={{ (faas_edge_cloudflare_ipv4_cidrs + faas_edg
 {% endif %}
 {% endif %}
 {% endif %}
+{% if (faas_internal_keepalive_per_node | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+# Keep connections to each node's gatewayd-internal alive (manifest hot_path).
+Environment=FAAS_INTERNAL_KEEPALIVE_PER_NODE=1
+{% endif %}
