@@ -781,6 +781,10 @@ type Instance struct {
 	// set on a claimed warm instance. Recorded in the adoption block.
 	// Guarded by Manager.mu.
 	warmSpare bool
+	// resumeIdentity is the identity schedd assigned this instance at wake.
+	// Every later resume hook carries it (ADR-20261107160000): a warm-pool
+	// restore sends no hook until it is promoted.
+	resumeIdentity ResumeIdentity
 }
 
 // LiveEgressInstance is the minimal live-instance view needed by vmmd's
@@ -4985,6 +4989,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		err = fmt.Errorf("wake %s: prepare runtime env: %w", req.Instance, err)
 		return nil, err
 	}
+	resumeIdentity := resumeIdentityFromAPIEnv(req.preparedAPIEnvJSON)
+	ctx = withResumeIdentity(ctx, resumeIdentity)
 	if err = m.prepareSidecarEnvFiles(ctx, &req); err != nil {
 		err = fmt.Errorf("wake %s: prepare sidecar env: %w", req.Instance, err)
 		return nil, err
@@ -5487,7 +5493,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	inst := &Instance{
 		functionDestination: m.functionDestinationForWake(req),
 		publicForwardTarget: publicTarget,
-		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
+		Lease:               lease, Net: nc, Method: method, wakeID: wakeID, resumeIdentity: resumeIdentity,
 		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
 		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
@@ -6617,14 +6623,14 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 		if !ok {
 			return fmt.Errorf("%s %s: image healthcheck capability unavailable", op, instance)
 		}
-		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
+		if err := m.vmm.TriggerResumeHook(withResumeIdentity(ctx, inst.resumeIdentity), inst.Lease, time.Now().UnixNano()); err != nil {
 			return fmt.Errorf("%s %s: resume hook: %w", op, instance, err)
 		}
 		if err := checker.WaitImageHealthcheck(ctx, inst.Lease, inst.StartupDeadlineS); err != nil {
 			return err
 		}
 	} else if runResumeHook {
-		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
+		if err := m.vmm.TriggerResumeHook(withResumeIdentity(ctx, inst.resumeIdentity), inst.Lease, time.Now().UnixNano()); err != nil {
 			return fmt.Errorf("%s %s: resume hook: %w", op, instance, err)
 		}
 	}

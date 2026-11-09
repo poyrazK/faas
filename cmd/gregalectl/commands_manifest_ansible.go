@@ -214,6 +214,11 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		}
 		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay, m.SSH, m.DNS.Mode, m.DNS.OriginPull, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
 		body += renderDomainLayoutVars(m.DNS)
+		diskVars, diskErr := renderDiskEncryptionVars(m, host)
+		if diskErr != nil {
+			return nil, diskErr
+		}
+		body += diskVars
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
 			body += renderScheddListenVars(m)
@@ -225,6 +230,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			}
 		}
 		body += databases.hostVars(host, hostScheddTarget)
+		body += renderServiceTCPVars(m.ServiceTCP, host)
 		body += renderComputeEdgeVars(m.PublicEdge, host, postgresListenAddress, computeAllowedCIDRs)
 		if host.Role == roleControlPlane {
 			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts, m.DNS.AppsDomain)
@@ -270,10 +276,14 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if gw := m.Egress.TenantGateway; gw != nil && standby.Name == tenantEgressGatewayHost {
 			return nil, fmt.Errorf("postgresql.standby name %q is reserved for the tenant egress gateway", tenantEgressGatewayHost)
 		}
+		standbyDiskVars, err := renderStandbyDiskEncryptionVars(m, standby)
+		if err != nil {
+			return nil, fmt.Errorf("postgresql.standby disk encryption: %w", err)
+		}
 		writeInventoryGroup(&inventory, "postgres_standby", []string{standby.Name})
 		hostVars = append(hostVars, manifestAnsibleFile{
 			Path: filepath.Join(outputDir, "inventory", "host_vars", standby.Name+".yml"),
-			Body: []byte(renderPostgresStandbyHostVars(standby)),
+			Body: []byte(renderPostgresStandbyHostVars(standby) + standbyDiskVars),
 		})
 	}
 	files := []manifestAnsibleFile{{

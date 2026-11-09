@@ -21,6 +21,17 @@
     update_cache: true
     cache_valid_time: 3600
 
+# Debian's default for the postgres home. On an encrypted host the storage
+# role created this directory before the package existed
+# (ADR-20261109120000); elsewhere it is already so.
+- name: postgres — own the cluster root as Debian ships it
+  ansible.builtin.file:
+    path: /var/lib/postgresql
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0755"
+
 - name: postgres — discover installed cluster major version
   ansible.builtin.find:
     paths: /etc/postgresql

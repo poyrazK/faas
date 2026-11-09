@@ -6374,6 +6374,15 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 			return Deployment{}, ErrTrafficServingChanged
 		}
 	}
+	current := map[string]int{id: d.TrafficPercent}
+	for otherID, other := range m.deployments {
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive {
+			current[otherID] = other.TrafficPercent
+		}
+	}
+	if err := checkExpectedTrafficWeights(ctx, current); err != nil {
+		return Deployment{}, err
+	}
 
 	// Plan every weight before mutating any row, including upgrade fences.
 	priorPercent := d.TrafficPercent

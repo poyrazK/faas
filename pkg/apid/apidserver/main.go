@@ -2708,7 +2708,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// A store without rollups (the in-memory dev store) leaves them off.
 	var rollups *receivers.RequestAnalyticsRollups
 	if rollupStore, ok := srv.store.(state.RequestAnalyticsRollupStore); ok {
-		rollups = receivers.NewRequestAnalyticsRollups(rollupStore, srv.ops.Registry(), log)
+		// Amendment 4: a marker under /var/lib/faas tells the next start that
+		// this apid stopped without writing its pending rollups.
+		marker := envOr("FAAS_ANALYTICS_ROLLUP_CRASH_MARKER", "/var/lib/faas/apid-analytics-rollups.running")
+		rollups = receivers.NewRequestAnalyticsRollups(rollupStore, srv.ops.Registry(), log).WithCrashMarker(marker)
 		go rollups.Run(ctx, api.RequestAnalyticsRollupFlushInterval)
 	}
 	ingest := telemetryIngest{gate: receivers.NewIngestGate(api.TelemetryIngestDBConcurrency), rollups: rollups}

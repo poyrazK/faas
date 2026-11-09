@@ -140,6 +140,11 @@ table inet faas {
     {{ faas_priv }}ip saddr {{ cidr }} tcp dport 9080 accept comment "Promtail metrics scraped from control (ADR-20261023124955)"
 {% endfor -%}
 {% endif -%}
+{% if (faas_disk_encryption | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_tang_allowed_cidrs | default([]) -%}
+{% for cidr in faas_tang_allowed_cidrs -%}
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport {{ faas_tang_port | default(7500) }} accept comment "faas Tang key server from the fleet (ADR-20261109120000)"
+{% endfor -%}
+{% endif -%}
 {% if faas_tcpd_enabled | default(false) and faas_tcpd_allowed_cidrs | default([]) -%}
 {% for cidr in faas_tcpd_allowed_cidrs -%}
 {% if ':' in cidr %}    ip6 saddr {{ cidr }} tcp dport 40000-49999 accept comment "raw TCP app listeners"
@@ -208,7 +213,7 @@ table inet faas {
 {{ '  ' }}chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
 {% if faas_service_tcp_enabled | default(false) -%}
-{{ '    ' }}iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.19.0.0/16 tcp dport { {{ '443, ' if faas_service_tcp_https_enabled | default(false) else '' }}10080, 10081 } dnat ip to {{ bridge_cidr.split('/')[0] }}
+{{ '    ' }}iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.19.0.0/16 tcp dport { {{ '443, ' if faas_service_tcp_https_enabled | default(false) | bool else '' }}10080, 10081 } dnat ip to {{ bridge_cidr.split('/')[0] }}
     iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.19.0.0/16 meta l4proto tcp dnat ip to {{ bridge_cidr.split('/')[0] }}:10082
 {% endif -%}
 {% if faas_database_route_enabled | default(false) -%}

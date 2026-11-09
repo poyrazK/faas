@@ -9068,6 +9068,14 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 				expectedServingID[0], servingID, ErrTrafficServingChanged)
 		}
 	}
+	current := make(map[string]int, len(siblings)+1)
+	current[id] = currentTrafficPercent
+	for _, sibling := range siblings {
+		current[sibling.ID] = sibling.Prior
+	}
+	if err := checkExpectedTrafficWeights(ctx, current); err != nil {
+		return Deployment{}, err
+	}
 	if newPercent == 100 && currentTrafficPercent != 100 && len(siblings) > 0 {
 		if err := checkMCPTaskCompatibilityReportTx(ctx, tx, appID, id); err != nil {
 			return Deployment{}, err
