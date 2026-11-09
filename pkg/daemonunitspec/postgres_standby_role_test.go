@@ -230,7 +230,9 @@ func TestPostgresStandbyPlaybook(t *testing.T) {
 		}
 	}
 	want := [][]string{
-		{"host_hardening", "node_exporter", "postgres", "postgres_standby", "control_plane_standby"},
+		// storage runs only with disk encryption (ADR-20261109120000), before
+		// PostgreSQL is installed so the replica lands on the encrypted volume.
+		{"host_hardening", "storage", "node_exporter", "postgres", "postgres_standby", "control_plane_standby"},
 		// Pre-install: only roles that start no service, read no /etc/faas
 		// file and write nothing to the database belong here.
 		{"firecracker", "supply_chain_scanners"},

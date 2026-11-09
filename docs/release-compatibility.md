@@ -155,6 +155,14 @@ budget. `TestPublicTrafficSecurityFollowsItsPeers`,
 this. A new header requirement needs the same fleet gate or an opt-in
 negotiation, plus a case in those tests.
 
+**Policy data the edge reads is part of the contract too.** apid writes edge
+rules before the gateways upgrade, so a new field that changes what a rule
+does must not be written until every gateway reads it. ADR-20261108110000
+sealed header values as an empty `value` plus `secret_id`; an N-1 gateway
+ignored `secret_id` and sent the header empty. apid now seals only while every
+gateway reports `edge_header_secrets` in its traffic runtime report, a
+capability tied to the reporting boot so a rolled-back gateway stops counting.
+
 ## Gate 1: version skew (CI, every pull request)
 
 `make version-skew-check` runs `scripts/ci/versionskew`, a Go tool. CI runs
