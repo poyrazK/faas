@@ -10,7 +10,9 @@ import (
 	"regexp"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 )
 
@@ -32,6 +34,7 @@ Account suspension notices also require FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUT
 Account restoration confirmations also require FAAS_INTERNAL_MAIL_ACCOUNT_RESTORED_OUTBOX_ENABLED=1.
 Managed PostgreSQL compute cap notices also require FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1.
 Managed PostgreSQL restore slot notices also require FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_RESTORE_SLOT_OUTBOX_ENABLED=1.
+Managed PostgreSQL plan excess notices also require FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=1.
 Payment failure warnings also require FAAS_INTERNAL_MAIL_PAYMENT_FAILED_OUTBOX_ENABLED=1.
 MFA enabled alerts also require FAAS_INTERNAL_MAIL_MFA_ENABLED_ALERT_OUTBOX_ENABLED=1.
 Password changed alerts also require FAAS_INTERNAL_MAIL_PASSWORD_CHANGED_ALERT_OUTBOX_ENABLED=1.
@@ -131,6 +134,7 @@ func RunOperator(ctx context.Context, args []string, getenv func(string) string,
 	reconciler = reconciler.WithAccountSuspended(func() bool { return internalmail.AccountSuspendedOutboxEnabled(getenv) })
 	reconciler = reconciler.WithManagedPostgresCap(func() bool { return internalmail.ManagedPostgresCapOutboxEnabled(getenv) })
 	reconciler = reconciler.WithManagedPostgresRestoreSlot(func() bool { return internalmail.ManagedPostgresRestoreSlotOutboxEnabled(getenv) })
+	reconciler = reconciler.WithManagedPostgresPlanExcess(func() bool { return internalmail.ManagedPostgresPlanExcessOutboxEnabled(getenv) })
 	reconciler = reconciler.WithAccountRestored(func() bool { return internalmail.AccountRestoredOutboxEnabled(getenv) })
 	reconciler = reconciler.WithPaymentFailed(func() bool { return internalmail.PaymentFailedOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMFAEnabledAlert(func() bool { return internalmail.MFAEnabledAlertOutboxEnabled(getenv) })
@@ -163,6 +167,7 @@ func operatorPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	cfg.MinConns, cfg.MinIdleConns = 0, 0
 	cfg.ConnConfig.ConnectTimeout = api.InternalMailAPITimeout
 	cfg.ConnConfig.RuntimeParams["application_name"] = "faas-apid-mail-outbox"
+	dbbounds.ConfigureTimeouts(cfg)
 	return pgxpool.NewWithConfig(ctx, cfg)
 }
 

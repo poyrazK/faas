@@ -3,6 +3,7 @@ package conformance
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"testing"
 	"time"
 
@@ -301,6 +302,22 @@ func testAPIKeyRotationGrace(t *testing.T, fx *Fixture) {
 	if next.ExpiresAt == nil || !next.ExpiresAt.Equal(deadline) {
 		t.Fatalf("successor expires_at = %v, want the predecessor's %v", next.ExpiresAt, deadline)
 	}
+
+	// Expiry is lazy: a key nobody presented after its deadline still reads
+	// active. Rotation gives the old key a fresh grace deadline, so it must
+	// refuse an expired key instead of bringing it back to life.
+	pastHash := randomTokenHash(t)
+	past := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	expired, err := fx.Store.CreateAPIKeyWithExpiry(fx.Ctx, fx.Account.ID, pastHash, "expired", api.ScopesAdminOnly, &past)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := fx.Store.RotateAPIKey(fx.Ctx, fx.Account.ID, expired.ID, randomTokenHash(t), "", time.Hour); !errors.Is(err, state.ErrAPIKeyExpired) {
+		t.Fatalf("RotateAPIKey(expired) err = %v, want ErrAPIKeyExpired", err)
+	}
+	if _, _, err := fx.Store.AuthenticateKey(fx.Ctx, pastHash); err == nil {
+		t.Fatal("expired key authenticates after a refused rotation")
+	}
 }
 
 // testConsumerKeyLookupIsAppScoped pins the gateway's consumer-key lookup:
@@ -458,6 +475,47 @@ func testOIDCRepositoryBindingResolution(t *testing.T, fx *Fixture) {
 	}
 	if acct, err := resolver.AccountByOIDCRepositoryBinding(fx.Ctx, issuer, "repo:acme/app:ref:refs/heads/main"); err == nil {
 		t.Fatalf("a deleted app's binding still resolved %q", acct.ID)
+	}
+}
+
+// testOIDCProjectRepositoryBindings pins the project bindings the OIDC
+// exchange confirms with GitHub for a repository connected only through a
+// project: those of an installation the project's account connected, for the
+// subject's repository name in any case (ADR-20261101160300, amendment 1).
+func testOIDCProjectRepositoryBindings(t *testing.T, fx *Fixture) {
+	resolver, ok := fx.Store.(state.OIDCProjectRepositoryResolver)
+	if !ok {
+		t.Skip("store has no project repository resolver")
+	}
+	const issuer = "https://token.actions.githubusercontent.com"
+	if err := fx.Store.UpsertGitHubInstall(fx.Ctx, state.GitHubInstall{
+		AccountID: fx.Account.ID, InstallationID: 4244, AuditGithubLogin: "octo",
+		SealedToken: []byte("sealed"), TokenExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertGitHubInstall: %v", err)
+	}
+	for _, p := range []state.Project{
+		{AccountID: fx.Account.ID, Slug: "oidc-" + uuid.NewString()[:8], RepoFullName: "Acme/Shop", InstallID: 4244, ProductionBranch: "main"},
+		// An installation the account never connected proves nothing.
+		{AccountID: fx.Account.ID, Slug: "oidc-" + uuid.NewString()[:8], RepoFullName: "acme/shop", InstallID: 9999, ProductionBranch: "main"},
+	} {
+		p.ScanSource = state.ProjectScanSourceConvention
+		if _, err := fx.Store.CreateProject(fx.Ctx, p); err != nil {
+			t.Fatalf("CreateProject: %v", err)
+		}
+	}
+	repo, bindings, ok, err := resolver.GitHubProjectBindingsForOIDCSubject(fx.Ctx, issuer, "repo:acme/shop:ref:refs/heads/main")
+	if err != nil || !ok || repo.FullName != "acme/shop" {
+		t.Fatalf("GitHubProjectBindingsForOIDCSubject = %+v, %v, %v; want the subject's repository", repo, ok, err)
+	}
+	if len(bindings) != 1 || bindings[0].AccountID != fx.Account.ID || bindings[0].InstallationID != 4244 {
+		t.Fatalf("bindings = %+v, want only the connected installation's project", bindings)
+	}
+	if _, bindings, ok, err := resolver.GitHubProjectBindingsForOIDCSubject(fx.Ctx, issuer, "repo:acme/other:ref:refs/heads/main"); err != nil || !ok || len(bindings) != 0 {
+		t.Fatalf("other repository: %+v, %v, %v; want no bindings", bindings, ok, err)
+	}
+	if _, _, ok, err := resolver.GitHubProjectBindingsForOIDCSubject(fx.Ctx, "https://gitlab.example", "repo:acme/shop:ref:refs/heads/main"); err != nil || ok {
+		t.Fatalf("other issuer: ok = %v, %v; want not a GitHub Actions subject", ok, err)
 	}
 }
 

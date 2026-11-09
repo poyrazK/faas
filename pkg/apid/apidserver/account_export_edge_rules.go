@@ -45,7 +45,12 @@ func listEdgeRuleListsForAccountExport(ctx context.Context, st state.Store, acco
 	}
 	names := make([]string, 0, len(lists))
 	for _, l := range lists {
-		names = append(names, l.Name)
+		// An organization's lists belong to the organization, not to the
+		// member whose account holds them; a member who left must not take
+		// them along (ADR-091 amendment 2026-11-04, review round 10).
+		if l.OrgID == "" {
+			names = append(names, l.Name)
+		}
 	}
 	withItems, err := store.EdgeRuleListsByName(ctx, accountID, names)
 	if err != nil {
@@ -56,4 +61,30 @@ func listEdgeRuleListsForAccountExport(ctx context.Context, st state.Store, acco
 		out = append(out, edgerules.EdgeRuleListResponse(l, nil, true))
 	}
 	return out, nil
+}
+
+// listCorsPresetsForAccountExport exports the account's CORS presets: the
+// account-wide ones and those scoped to an app the export covers (ADR-091
+// amendment 2026-11-04). The export carried the rules that name presets but
+// not the presets themselves.
+func (s *server) listCorsPresetsForAccountExport(ctx context.Context, acct state.Account) ([]api.CorsPresetResponse, error) {
+	rows, err := s.store.ListCorsPresetsForAccount(ctx, acct.ID)
+	if err != nil {
+		return nil, err
+	}
+	scope := accountexport.For(ctx, s.store, acct.ID)
+	kept := make([]state.CorsPreset, 0, len(rows))
+	for _, row := range rows {
+		if row.AppID != "" {
+			allowed, err := scope.App(ctx, row.AppID)
+			if err != nil {
+				return nil, err
+			}
+			if !allowed {
+				continue
+			}
+		}
+		kept = append(kept, row)
+	}
+	return corsPresetResponsesFromRows(kept), nil
 }

@@ -48,6 +48,11 @@ type ObjectBucketUsage struct {
 	// InventoryScan is the bucket's listing in progress, if any
 	// (ADR-20261030100835).
 	InventoryScan ObjectInventoryScan
+	// InventoryHeld is set while a versioning, Object Lock or capacity
+	// transition fences the bucket's capacity. The inventory sweep skips
+	// such a bucket, and no admitted write can grow it, so its last
+	// inventory remains the bound for admission until the transition ends.
+	InventoryHeld bool
 }
 
 type ObjectUsageSnapshot struct {
@@ -62,11 +67,10 @@ type ObjectUsageSnapshot struct {
 }
 
 // objectStoragePlanLimits returns the plan's object-storage limits with the
-// storage ceiling the account's spend cap pays for (ADR-20261101214152), or
-// none for an unknown plan.
-func objectStoragePlanLimits(plan api.Plan, capCents *int64) api.ObjectStoragePlanLimits {
-	limits, _ := api.LimitsFor(plan)
-	return limits.ObjectStorage.WithSpendCap(capCents)
+// ceiling support granted the subject and tightened by what its spend cap
+// pays for (ADR-20261101214152), or none for an unknown plan.
+func objectStoragePlanLimits(plan api.Plan, grantBytes, capCents *int64) api.ObjectStoragePlanLimits {
+	return api.ObjectStorageLimitsFor(plan, grantBytes, capCents)
 }
 
 // storedOverPlanCeiling refuses object bodies while the account stores more

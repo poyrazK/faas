@@ -339,7 +339,7 @@ func TestComputeEdgeRootForwardsUploads(t *testing.T) {
 	var hit string
 	forward := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "forward" })
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "next" })
-	root, err := computeEdgeRoot(next, forward, nil, emptyPublicReadStore{}, testDomains(t, "", "gregale.dev"), quietEdgeLog())
+	root, err := computeEdgeRoot(next, forward, nil, emptyPublicReadStore{}, nil, nil, testDomains(t, "", "gregale.dev"), quietEdgeLog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestComputeEdgeRootServesPublicReadsLocally(t *testing.T) {
 	forward := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "forward" })
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "next" })
 	local := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "local" })
-	root, err := computeEdgeRoot(next, forward, local, emptyPublicReadStore{}, testDomains(t, "", "gregale.dev"), quietEdgeLog())
+	root, err := computeEdgeRoot(next, forward, local, emptyPublicReadStore{}, nil, nil, testDomains(t, "", "gregale.dev"), quietEdgeLog())
 	if err != nil {
 		t.Fatal(err)
 	}

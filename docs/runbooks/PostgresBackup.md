@@ -25,7 +25,10 @@ off-host recovery source.
 - **Bounded local WAL**: `faas-pg-wal-prune.timer` runs hourly. It derives
   the recovery boundary from the oldest retained basebackup, copies every
   deletion candidate off-host, verifies the bytes, and only then removes
-  local WAL preceding that boundary.
+  local WAL preceding that boundary. The first run after each basebackup
+  verifies a day of WAL (about 24 GB). The unit caps its reads at 16 MB/s
+  and its page cache at 512 MB so it cannot starve PostgreSQL of the disk
+  it shares; that run takes about 25 minutes.
 - **RPO in steady state**: `archive_timeout = 60s` (ADR-1344) forces a
   WAL segment switch at least once a minute, so the off-host copy is at
   most about a minute plus the push time behind. Before that setting a

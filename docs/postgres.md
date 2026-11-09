@@ -34,6 +34,18 @@ Operators: see the [operator guide](managed-postgres.md).
 - A plan downgrade waits until your databases fit the new plan: the refusal
   lists the databases to delete and the ones to move to a class the plan
   includes. A database whose delete is scheduled no longer counts.
+- A plan can also drop without that check, for example when a subscription
+  ends. Databases the new plan no longer includes are then suspended, never
+  deleted:
+  - your oldest databases are kept, up to the plan's database limit;
+  - a newer one shows `plan_excess: database_limit`;
+  - one in a class the plan does not include shows
+    `plan_excess: service_class`.
+
+  `get`, `list` and the dashboard show it, and you get an email. Its data,
+  credentials and app bindings are kept, but it does not start until you
+  upgrade, delete a database, or resize it to an included class. The next
+  usage sweep, within minutes, resumes it.
 - When the platform is near capacity, new databases on the Free plan pause
   first (`503 managed_postgres_new_databases_paused`); paid plans can still
   create them.
@@ -99,6 +111,62 @@ databases:
 - In a project with several apps, give each entry an `app`.
 - All of one deployment's database entries use the same scope.
 
+Add `create` to have the deploy create the database when none with that name
+exists, so a new project needs no `gregale postgres create` first
+([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)):
+
+```yaml
+databases:
+  - database: chronolake-db
+    app: gateway
+    create:                # or `create: true` for the defaults
+      postgres_major: 17
+      class: development   # development (default), burstable or production
+      scale_to_zero: true  # default
+      region: us-east-1    # defaults to your default region
+  - database: chronolake-db
+    app: gateway
+    env: MIGRATION_DATABASE_URL
+    access: migration
+```
+
+- `create` applies only when the database is missing: an existing database
+  keeps its settings, and the deploy never changes or deletes one.
+- Declare `create` once per database; other entries for the same name bind it.
+- A project deploy lists the database under **Managed PostgreSQL (provided by
+  this deploy)** before you apply. The database counts against your plan's
+  limit, and the plan stops before creating anything when it would not fit.
+- `gregale deploy` of a single app waits up to three minutes for the new
+  database. A project deploy reserves the bindings right away and delivers each
+  key once the database is ready, usually before the first build ends.
+- Creating a database needs a credential with `postgres:manage`. Deploy
+  tokens and `deploy:write` keys can bind existing databases but not create
+  them.
+
+## Connect from your laptop
+
+`gregale postgres connect` opens `psql` on your machine against a managed
+database, through an app that is bound to it:
+
+```sh
+gregale postgres connect orders
+gregale postgres connect orders --access read_only -- -c 'select count(*) from segments'
+gregale postgres connect orders --proxy --port 5433   # for a GUI client
+```
+
+It starts a task VM of a bound app to read that binding and relays a local
+port to the database through
+[`gregale app port-forward`](apps.md). TLS still verifies the database's own
+host name, and the password reaches `psql` in its environment, so it is never
+printed or put on the command line. With `--proxy` the tunnel stays open for
+another client; take the password from the app's binding.
+
+- It picks a `ready` binding, preferring `read_write`, then `migration`, then
+  `read_only`. Choose one with `--app`, `--env` or `--access`.
+- It needs [app tasks](apps.md) on your plan and `psql` on your machine (or
+  `--proxy`). The app's image needs `printenv`, which Debian, Ubuntu and
+  Alpine images include.
+
 Choose the credential with `--access`:
 
 | Access | Use it for |
@@ -136,6 +204,10 @@ To rotate a credential, run `gregale postgres bindings list orders`, then
 the new credential is active. `--wait` polls until `rotation_pending` clears,
 for up to five minutes (`--wait-timeout`).
 
+Rotation recovery queues the runtime refresh even if the original request
+fails or the worker restarts. The previous serving credential stays valid
+until that refresh is confirmed; retrying rotation reuses its generation.
+
 The `rest-api-postgres` and `rest-api-postgres-python` starters
 (`gregale init --template rest-api-postgres`) already use this layout. They
 adopt rotated credentials and reconnect after a restore. See the
@@ -156,8 +228,9 @@ restore can target now. The earliest is the later of the database's creation
 and the start of its restore window.
 
 Attach the restored database under its own environment key when you want an
-app to read it. A source cannot be deleted while a database restored from it
-exists.
+app to read it. A source you delete while a database restored from it exists
+is kept until that copy is gone; see
+[Delete, recover and purge](#delete-recover-and-purge).
 
 The restored database counts toward your plan's database limit. When the
 account is at its limit, one restore may still go one database past it, on
@@ -171,12 +244,14 @@ every plan:
   7-day undo. Its bindings are removed first. The source is never touched.
 - The account that ran the restore gets an email 48 hours before
   `restore_slot_until` while there is still no room, and another when the
-  delete is scheduled.
+  delete is scheduled. Recording the expiry email and scheduling deletion
+  happen together, so a worker restart cannot lose the notice.
 - A second restore past the limit while a copy holds the slot returns
   `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
-- A copy cannot replace its source: the source cannot be deleted while the
-  copy exists. To keep restored rows on a one-database plan, copy them back
-  into the source, then purge the copy.
+- A copy can replace its source on a one-database plan: detach the source's
+  apps and purge it. The source no longer counts, so the copy becomes an
+  ordinary database. The source is kept, with its name and storage, until the
+  copy is deleted.
 - A [rollback that restores the database](deploys.md#rollbacks-that-restore-the-database)
   never uses the slot: its copy becomes the app's database, so the account
   needs room for it inside the limit.
@@ -193,6 +268,9 @@ gregale postgres resize status orders "$REQUEST_ID"
 
 - Keep the request ID, a lowercase UUID: repeating it returns the same
   resize's progress.
+- A confirmed rejection reports `failed` and `last_error_code`, keeps the
+  original configuration and permits deletion or a corrected request with a
+  new ID. An uncertain outcome stays `pending` until it can be confirmed.
 - Clients may be disconnected during the change. They reconnect with the same
   credentials.
 - Region, version, storage and the restore window stay as they are.
@@ -230,6 +308,11 @@ gregale postgres delete orders --purge
 - After that, it is deleted for good.
 - A database that never became ready is deleted at once.
 
+If a delete request fails while the provider is confirming that compute has
+stopped, check the database with `gregale postgres get`. Its delete may already
+be scheduled. Retrying delete finishes that step without extending the 7 days;
+`recover` can still undo it.
+
 `--purge` (API: `DELETE /v1/postgres/databases/{id}?purge=true`) deletes the
 database and its restore history at once, even during the 7 days. It cannot be
 undone through Gregale. The provider keeps the deleted data for up to 7 more
@@ -238,7 +321,19 @@ days before it erases it.
 Until it is purged, a deleted database:
 - still counts toward your plan's database limit;
 - keeps its name, so creating another database with that name returns 409;
-- uses nothing from your compute allowance or storage pool.
+- uses nothing from your compute allowance or storage pool, unless it has a
+  restored copy (below).
+
+A database you restored a copy from, for example the original database after
+a rollback that restored it, can be deleted while the copy lives. The copy is
+stored inside the original, so:
+- the 7 days to recover it run as usual, and its usage keeps counting, because
+  it includes the copy's;
+- after that, or at once with `--purge`, it stays in `deleting`, with
+  `last_error_code` `restore_copies_remain`. It no longer counts toward your
+  database limit, and can no longer be recovered;
+- it is deleted for good once you delete its copies. Until then its name stays
+  taken, and the storage it holds stays in your storage pool.
 
 Undelete applies the same plan check as create. A database your current plan
 no longer allows, for example after a downgrade, cannot be recovered.

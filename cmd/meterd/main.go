@@ -186,10 +186,7 @@ func (a *scheddCPUAdapter) refreshContext(ctx context.Context) {
 		// tripwire).
 		return
 	}
-	m := make(map[string]scheddgrpc.InstanceStatsRow, len(rows))
-	for _, r := range rows {
-		m[r.InstanceID] = r
-	}
+	m := preferLiveStatsRows(rows)
 	a.mu.Lock()
 	a.rows = m
 	a.fetched = a.now()
@@ -459,7 +456,9 @@ func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client egressp
 	if closer, ok := client.(interface{ Close() error }); ok {
 		defer func() { _ = closer.Close() }()
 	}
-	stream, err := client.StreamBytes(ctx, &egresspb.StreamBytesRequest{})
+	// Edge frames (ADR-20261104132753) are asked for only when they can be
+	// persisted: the in-memory fallback is keyed by live instance only.
+	stream, err := client.StreamBytes(ctx, &egresspb.StreamBytesRequest{EdgeFrames: a.persistFrame != nil})
 	if err != nil {
 		if log != nil {
 			log.Warn("gatewayEgressAdapter: stream open failed", "err", err)
@@ -580,6 +579,14 @@ type egressAggregator struct {
 	gw     interface {
 		ReadUsageDeltas(string) (meter.UsageDeltas, bool)
 	}
+}
+
+// CumulativeNetworkCounters implements meter.CumulativeNetworkSource: with the
+// schedd adapter wired, host-interface bytes are vmmd's cumulative counters,
+// which the Store checkpoints exactly once, so meterd can record a fully
+// rolled minute as egress-complete (ADR-20261101113742).
+func (a *egressAggregator) CumulativeNetworkCounters() bool {
+	return a != nil && a.schedd != nil
 }
 
 func (a *egressAggregator) ReadUsageDeltas(instanceID string) (meter.UsageDeltas, bool) {
@@ -763,6 +770,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops := wire.NewOpsMetrics("meterd")
 	requestTelemetryPartitions := newRequestTelemetryPartitionMetrics(ops.Registry(), deps.now)
 	logEventMaintenance := newLogEventMaintenanceMetrics(ops.Registry(), deps.now)
+	jobLogRetention := newJobLogRetentionMetrics(ops.Registry(), deps.now)
 	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "meterd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("meterd: init tracing: %w", traceErr)
@@ -1203,8 +1211,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR 20261022111812: apid relays the test sends it cannot open here;
 	// meterd holds the alerting key.
 	go runAlertTestSends(ctx, evaluator, log)
+	startAgentApprovalNotifications(ctx, store, mailer, evaluator, ops.Registry(), log)
 	evaluator.SetRuleRelease(release.ForAccount)
+	evaluator.SetRuleLimits(release.RuleLimits)
 	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))
+	// ADR-20261109153000: the spend alert reads the billing page's figure.
+	evaluator.SetSpend(monthSpend(store, pusher))
 	// ADR-20261022172052: firing app alerts carry what the log ledger shows,
 	// for the accounts the log-search capability flag releases it to
 	// (ADR-20261024222102).
@@ -1320,7 +1332,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if billingMode.Enabled() {
 		ledgerProvider = provName // with billing off there are no receipts to compare
 	}
-	ledgerRec := meter.NewLedgerReconciler(meter.NewPusher(store, pusher, log, deps.now, ops), ledgerProvider, recRegistry)
+	// The dual run reads usage through the source the pusher bills from, so
+	// its cap floors match the pusher's clamps (ADR-20261107105126).
+	ledgerPusher := meter.NewPusher(store, pusher, log, deps.now, ops)
+	if source, err := meter.ParseUsageSource(mc.BillingUsageSource); err == nil {
+		ledgerPusher.WithUsageSource(source)
+	}
+	ledgerRec := meter.NewLedgerReconciler(ledgerPusher, ledgerProvider, recRegistry)
 	go ledgerRec.Loop(ctx, mc.ReconcileInterval)
 
 	// ADR-049 §B.3: snapshot/app-layer storage rollup. The store
@@ -1352,6 +1370,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go meter.RetentionLoopRequestAudit(ctx, partitionDB, time.Hour, log)
 	go meter.LogEventPartitionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observePartition)
 	go meter.LogEventRetentionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observeRetention)
+	// ADR-20261102183152: job task output follows the account plan's log
+	// retention too. job_tasks/job_task_attempts are written by apid and
+	// schedd; this sweep only empties the output of finished runs and keeps
+	// every row, status and exit code, as meterd ages out request_telemetry
+	// and deployment_audit rows other daemons write.
+	go meter.JobLogRetentionLoop(ctx, store, meter.JobLogRetentionInterval, log, jobLogRetention.observe)
 
 	// SAFE-RELEASES production-leveling Stream D (issue #976 /
 	// ADR-122 post-merge audit): deployment_audit GC cron.
@@ -1397,6 +1421,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	})
 	go AccountSpendAggregatorLoop(ctx, AccountSpendAggregatorParams{
 		Store:    store,
+		Provider: pusher,
 		Log:      log,
 		Ops:      ops,
 		Interval: mc.AccountSpendAggregatorInterval,

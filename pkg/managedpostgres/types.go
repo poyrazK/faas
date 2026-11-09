@@ -25,7 +25,16 @@ var (
 	ErrUnsupported   = pgerrors.ErrUnsupported
 	ErrQuotaExceeded = pgerrors.ErrQuotaExceeded
 	ErrUsageStale    = pgerrors.ErrUsageStale
+	// ErrUsageLimitReached is the monthly usage ceiling refusing a new
+	// database, restore or resize. It is an ErrQuotaExceeded, but deleting a
+	// database cannot help, so it carries its own code and hint: the old
+	// "delete a database you no longer need" sent a 4-of-10 account hunting
+	// for a count problem it did not have (ChronoLake finding 18).
+	ErrUsageLimitReached = fmt.Errorf("%w: monthly usage ceiling reached", pgerrors.ErrQuotaExceeded)
 )
+
+// UsageLimitHint is the remediation for ErrUsageLimitReached.
+const UsageLimitHint = "This month's managed PostgreSQL usage reached its ceiling (see compute_ceiling and guardrail_state in gregale postgres usage). Existing databases keep running; new databases and restores resume next month or when the ceiling is raised. Contact support if the ceiling is below your plan's allowance."
 
 // ChangeRejectedError is a provider's final refusal of an in-place change:
 // asking again for the same change cannot succeed. Code is a stable
@@ -94,6 +103,9 @@ func QuotaProblem(err error) (status int, code, title string) {
 	if errors.Is(err, ErrPreviewDatabaseLimit) {
 		return 403, "managed_postgres_preview_database_limit", "PR preview database limit reached"
 	}
+	if errors.Is(err, ErrUsageLimitReached) {
+		return 403, "managed_postgres_usage_limit_reached", "Managed PostgreSQL monthly usage limit reached"
+	}
 	return 403, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
 }
 
@@ -105,10 +117,10 @@ const (
 )
 
 // UsageStaleDetail is the customer-facing explanation for ErrUsageStale. A
-// deleted database holds the gate until its final usage correction lands, so
-// without it a timed wait reads like an outage (production-us hunt #9,
-// H9-P101).
-const UsageStaleDetail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. After a database is deleted this lasts until its final usage correction is collected, up to a few hours. Existing databases keep running; retry later."
+// deleted database holds the gate until the hour it was deleted in has been
+// collected, so without it a timed wait reads like an outage (production-us
+// hunt #9, H9-P101; ADR-20261104143000).
+const UsageStaleDetail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. After a database is deleted this lasts until the hour it was deleted in has closed and its usage is collected, usually under an hour. Existing databases keep running; retry later."
 
 type State string
 
@@ -724,6 +736,12 @@ type UsageProgress struct {
 	// A resource created inside the current window has no completed window
 	// to collect yet, so its missing first observation is not a gap.
 	CreatedAt time.Time
+	// CreationLeaseUntil is snapshot metadata: while the resource is
+	// provisioning, when its worker's lifecycle lease ends. Zero otherwise.
+	CreationLeaseUntil time.Time
+	// DatabaseID is snapshot metadata: the database this coverage is for.
+	// The compute cap sweep reads a scope's use since it.
+	DatabaseID string
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an
@@ -1239,6 +1257,8 @@ type BindingStore interface {
 	DueBindings(context.Context, bool, int, time.Time) ([]Binding, error)
 	BeginBindingRotation(context.Context, string, string, string, time.Time) (Binding, bool, error)
 	ClaimBinding(context.Context, string, string, string, BindingState, time.Time, time.Time) (Binding, error)
+	// A rotated serving credential commits its ready receipt with a durable
+	// runtime refresh, or permits cleanup when no old runtime remains.
 	FinishBindingProvision(context.Context, string, string, string, string, time.Time) (Binding, error)
 	FinishBindingRotationCleanup(context.Context, string, string, string, time.Time) (Binding, error)
 	ReleaseBinding(context.Context, string, string, BindingState, string, time.Time, time.Time) error

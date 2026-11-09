@@ -75,3 +75,34 @@ execution.
   resumes within a minute of the hold lifting.
 - No schema change. An older scheduler keeps today's behaviour; both run
   side by side.
+
+## Amendment 2026-11-07: every durable async source
+
+A production test on 2026-11-07 (test account, Scale, app
+`retry_policy.max_attempts: 3`) threw once in the handler of a plain async
+invocation, an inbound Stripe webhook, a default queue message, an async
+route request and a delayed task. Each ran exactly once, ended `failed`,
+and left nothing in the dead letters. The Stripe event was the worst case:
+the provider had already been answered `202`, so it never sent the event
+again, and a manual resend from the provider is answered `duplicate: true`
+for the same receipt. The rows were enqueued with the app's retry policy,
+and [dead letters](../dead-letters.md) promise that async invocations,
+queue messages and delayed tasks whose handler failed on every attempt are
+kept there; the decision above only covered event deliveries.
+
+The decision now applies to every durable async source a caller cannot
+resend by itself: async invocations (including async routes), replays,
+inbound webhooks, queue messages drained by the scheduler and delayed tasks
+(`state.RetriesApplicationFailures`). A thrown handler, 408 or 429 retries
+with the invocation's backoff and is dead-lettered when its attempts run out;
+another 4xx is dead-lettered at once so it can be replayed after a fix.
+Cron runs keep the gateway's verdict (they fire again on schedule and have
+their own failure rules), as do exclusive operations, which settle through
+their owners. A failed provider event is recovered by replaying its dead
+letter, so a provider resend stays a duplicate.
+
+Consequences: dead-letter volume rises by the async work that used to end
+as plain `failed` rows; a caller polling an invocation sees `pending`
+between attempts and `dead_letter` instead of `failed` at the end; an
+`--on-failure-webhook` fires when the row dead-letters. No schema change; an
+older scheduler keeps the old verdict side by side.

@@ -86,6 +86,15 @@ func TestGCSNativeTransferUsesStreamBudget(t *testing.T) {
 	if readErr != nil || closeErr != nil || string(data) != "x" {
 		t.Fatal("native stream body", readErr, closeErr)
 	}
+	pinned, err := store.ReadObjectVersion(ctx, "physical", "key", 1)
+	if err != nil {
+		t.Fatal("native pinned reader used metadata timeout", err)
+	}
+	data, readErr = io.ReadAll(pinned)
+	closeErr = pinned.Close()
+	if readErr != nil || closeErr != nil || string(data) != "x" {
+		t.Fatal("native pinned stream body", readErr, closeErr)
+	}
 	if _, err = store.BucketState(ctx, "physical"); err == nil {
 		t.Fatal("metadata call escaped its shorter bound")
 	}

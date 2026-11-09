@@ -41,16 +41,7 @@ func LimitProblem(err error) *api.Problem {
 
 // PlanAllowsClass reports whether the plan includes the service class.
 func PlanAllowsClass(limits api.ManagedPostgresPlanLimits, class managedpostgres.ServiceClass) bool {
-	switch class {
-	case managedpostgres.ClassDevelopment:
-		return limits.DevelopmentAllowed
-	case managedpostgres.ClassBurstable:
-		return limits.BurstableAllowed
-	case managedpostgres.ClassProduction:
-		return limits.ProductionAllowed
-	default:
-		return false
-	}
+	return managedpostgres.PlanAllowsClass(limits, class)
 }
 
 // AdmitResize checks a new resize request against the plan: a class, if
@@ -90,6 +81,9 @@ func ResizeView(operation managedpostgres.ResizeOperation) api.ManagedPostgresRe
 		TargetClass: string(target.Class), FromStorageLimitBytes: operation.SourceSpec.StorageLimitBytes, TargetStorageLimitBytes: target.StorageLimitBytes,
 		Generation: operation.Generation, State: string(operation.State), ConnectionInterruptionExpected: true,
 		LastErrorCode: operation.LastErrorCode, CreatedAt: operation.CreatedAt.UTC().Format(time.RFC3339Nano)}
+	if operation.State == managedpostgres.ResizeFailed {
+		out.LastErrorCode = operation.ErrorCode
+	}
 	if !operation.CompletedAt.IsZero() {
 		out.CompletedAt = operation.CompletedAt.UTC().Format(time.RFC3339Nano)
 	}

@@ -222,7 +222,9 @@ jobs:
     needs: go-lint
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # go vet ./... alone takes 37-45 min at GOMAXPROCS=2; 60 cancelled two
+    # of three nightly runs on 2026-11-07.
+    timeout-minutes: 90
     steps:
       - name: require all lint shards
         env:
@@ -233,6 +235,14 @@ jobs:
           # PR-4a compares the PR head against the event's base SHA and
           # scans every commit subject for fix-shaped changes.
           fetch-depth: 0
+      # The restored Go/lint cache and the full build ran the runner out of
+      # disk (run 41565131421). This job uses none of the preinstalled
+      # Android, .NET, GHC or CodeQL toolchains.
+      - name: free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job
@@ -647,8 +657,12 @@ jobs:
   # Shard 1 (Postgres-heavy A): pkg/apid/apidserver, migrations, pkg/meter, pkg/db, pkg/alerts,
   # pkg/e2etest (its fixture SQL must run against a real migrated schema)
   unit-tests-pg-1:
-    name: unit tests (pg shard 1 — apid/meter/migrations)
+    name: unit tests (pg shard 1 — apid/meter/migrations ${{ matrix.part }}/4)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4]
     # Include cold APID race compilation and the full PostgreSQL API suite.
     # Green runs on 2026-10-12/13 took 42-43 minutes; by 2026-10-19/20 they
     # took 58-60, and three of five full runs were cancelled at the old
@@ -659,7 +673,10 @@ jobs:
     # bounds. On 2026-10-27 the apidserver package alone reached the old 45m
     # package timeout (2705 s, run 40420329172) inside a 66-minute job, so
     # the bounds are 60m and 90 minutes until apidserver gets its own shards.
-    timeout-minutes: 90
+    # On 2026-11-03 apidserver took 3582 s (18 s under 60m) and the job hit
+    # 90 minutes (run 41565131421), so the bounds are now 90m and 120.
+    # Each of the four verified API parts retains those same bounds.
+    timeout-minutes: 120
     permissions:
       contents: read
       id-token: write
@@ -708,6 +725,14 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
+      # The restored cache, the postgres image and the apid race build filled
+      # the runner disk mid-test (run 41541035516). This job uses none of the
+      # preinstalled Android, .NET, GHC or CodeQL toolchains.
+      - name: free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job
@@ -759,47 +784,84 @@ jobs:
       - name: unit tests (pg shard 1)
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit debug metadata for API and newly instrumented state; keep optimization.
-        # Serialized backends retain the existing memory and test budgets.
+        # Run the complete API inventory in four independent test processes.
+        # Runs 42138115946 and 42149428058 ended with SIGTERM at the same
+        # signup case, without a Go assertion failure or timeout report.
+        # The registered-list guard prevents dropping any test, fuzz seed or
+        # runnable example; TestPGClone* keeps its dedicated jobs below.
+        # Supporting packages run once, serially, on part 1.
+        # GOGC=10 made the API suite several times slower under race/coverage;
+        # retain the same 2 GiB memory and package/job deadlines with less GC
+        # churn, as the isolated clone jobs already do below.
         env:
           GREGALE_OBJECT_STORAGE_E2E_CLI: ${{ runner.temp }}/gregale
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/state=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
-          GOGC: 10
+          GOGC: 50
           GOMAXPROCS: 2
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/apid/apidserver|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
-          # Public API/worker contracts also exercise the exact state package.
-          # Preserve every selected package and instrument the shared adapters;
-          # the aggregate still requires every complete state shard below.
+          # Keep the original package inventory and coverage instrumentation
+          # identical across all API parts and the supporting packages.
           STATEPKG=$(go list ./pkg/state)
+          APIDPKG=$(go list ./pkg/apid/apidserver)
           COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
-          go test -json -race -count=1 -p 4 -timeout=60m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
-          python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
+          if [[ '${{ matrix.part }}' == 1 ]]; then
+            SUPPORTPKGS=$(printf '%s\n' "$PKGS" | grep -Fxv "$APIDPKG")
+            test -n "$SUPPORTPKGS"
+            go test -json -race -count=1 -p 1 -timeout=90m -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $SUPPORTPKGS
+            python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
+          fi
+          go test -race -p 1 -coverpkg="$COVERPKGS" -covermode=atomic -list . "$APIDPKG" > coverage/api-inventory-${{ matrix.part }}.txt
+          go run ./scripts/ci/e2eshard -package=./pkg/apid/apidserver -all-tests -shards=4 -check -list-file=coverage/api-inventory-${{ matrix.part }}.txt
+          API_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/apid/apidserver -all-tests -shards=4 -shard=${{ matrix.part }})
+          go test -json -race -count=1 -p 1 -timeout=90m -run="$API_RUN" -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1-api-${{ matrix.part }}.out -covermode=atomic "$APIDPKG"
+          python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1-api-${{ matrix.part }}.out
 
       - name: application-standard ledger recovery tests
+        if: matrix.part == 1
         # This recovery API deliberately refuses TCP, including localhost.
         run: scripts/ci/with-pg16-unix.sh go test -race -count=1 -p 1 -timeout=20m ./pkg/db -run '^TestApplicationStandardLedgerRecovery'
 
       - name: upload public API state-adapter coverage
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: coverage-state-api
-          path: coverage/cover-shard1.out
+          name: coverage-state-api-${{ matrix.part }}
+          path: coverage/cover-shard1*.out
           if-no-files-found: error
 
       - name: sdk-check
+        if: matrix.part == 1
         run: make sdk-check
 
       - name: upload to Codecov (pg shard 1)
         uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
         with:
-          files: coverage/cover-shard1.out
+          files: coverage/cover-shard1*.out
           flags: unittests
           use_oidc: true
           # Coverage reporting is best-effort; an OIDC/Codecov outage must
           # not turn a passing unit-test shard red.
           fail_ci_if_error: false
+
+  # Keep the historical check name while requiring every API partition.
+  unit-tests-pg-1-gate:
+    name: unit tests (pg shard 1 — apid/meter/migrations)
+    if: always()
+    needs: [unit-tests-pg-1]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: require every public API and supporting-package part
+        env:
+          API_RESULT: ${{ needs.unit-tests-pg-1.result }}
+        run: |
+          if [[ "$API_RESULT" != success ]]; then
+            echo "::error::Public API or supporting-package tests did not pass: $API_RESULT"
+            exit 1
+          fi
 
   # pkg/apid/apidserver's environment-clone suite (TestPGClone*, ADR-590)
   # runs here, split four ways by name. Only the apidserver test binary runs
@@ -938,6 +1000,14 @@ jobs:
       GREGALE_GITOPS_ACCEPTANCE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Restoring the shared Go cache ran a shard out of disk before any test
+      # ran (run 41773662497, state shard 8). The tests use none of the
+      # preinstalled Android, .NET, GHC or CodeQL toolchains.
+      - name: free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -1296,7 +1366,7 @@ jobs:
           use_oidc: true
           fail_ci_if_error: false
 
-  # Require all six compatible profiles, including complete public API contracts.
+  # Require every state, API and environment-clone coverage profile.
   # A partial suite or external-adapter-only profile
   # cannot replace the full exact-package 70% gate.
   state-coverage:
@@ -1315,7 +1385,7 @@ jobs:
           merge-multiple: true
       - name: exact pkg/state coverage gate
         run: |
-          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard-state-5.out coverage/cover-shard-state-6.out coverage/cover-shard-state-7.out coverage/cover-shard-state-8.out coverage/cover-shard2a.out coverage/cover-shard1.out coverage/cover-shard1-pgclone-1.out coverage/cover-shard1-pgclone-2.out coverage/cover-shard1-pgclone-3.out coverage/cover-shard1-pgclone-4.out
+          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard-state-5.out coverage/cover-shard-state-6.out coverage/cover-shard-state-7.out coverage/cover-shard-state-8.out coverage/cover-shard2a.out coverage/cover-shard1.out coverage/cover-shard1-api-1.out coverage/cover-shard1-api-2.out coverage/cover-shard1-api-3.out coverage/cover-shard1-api-4.out coverage/cover-shard1-pgclone-1.out coverage/cover-shard1-pgclone-2.out coverage/cover-shard1-pgclone-3.out coverage/cover-shard1-pgclone-4.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
 
@@ -1352,6 +1422,14 @@ jobs:
       GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The PostgreSQL phase needs 10 GiB of build storage; after the unit
+      # phase a runner had 7.6 GB (run 41784916894). Neither phase uses the
+      # preinstalled Android, .NET, GHC or CodeQL toolchains.
+      - name: free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -1632,9 +1710,23 @@ jobs:
   container-contract:
     name: portable container contracts (strict)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_DB: faas
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s --health-timeout 5s --health-retries 12
     # Bounded-memory cold builds reached 14 min before the contracts finished.
-    # Whole green runs took 29-34 minutes on 2026-10-12/13.
-    timeout-minutes: 50
+    # Whole green runs took 29-34 minutes on 2026-10-12/13, and 41-49 by
+    # 2026-11-03 (UDP control-plane and container contract steps 16-24 min
+    # each); run 41565131421 hit the old 50-minute cap mid-way.
+    timeout-minutes: 75
     permissions:
       contents: read
     # The UDP contract race-builds cmd/apid; cold, that exhausted hosted-runner
@@ -1645,6 +1737,10 @@ jobs:
       GOMEMLIMIT: 2GiB
       GOGC: 10
       GOMAXPROCS: 2
+      DATABASE_URL: postgres://faas@127.0.0.1:5432/faas?sslmode=disable
+      FAAS_SKIP_PG_TESTS: ""
+      # OpenMigrated's non-template fallback only creates an empty schema.
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -1770,6 +1866,8 @@ jobs:
         run: make adr-number-uniqueness-check
       - name: ADR number gate checker tests
         run: make adr-number-uniqueness-check-test
+      - name: Cloudflare range check tests
+        run: make cloudflare-ranges-check-test
       - name: migration-version gate checker tests
         run: make migration-version-hygiene-check-test
       # The two encoding/quoting gates run in `make lint`, but the tests that
@@ -2078,6 +2176,7 @@ jobs:
           pip install --quiet 'ansible-core==2.21.2'
           python3 scripts/ci/test_udp_deployment.py
           python3 scripts/ci/test_durable_listeners.py
+          python3 scripts/ci/test_pipeline_deployment.py
           cd deploy/ansible
           COLLECTIONS_PATH="${RUNNER_TEMP}/ansible-collections"
           export ANSIBLE_COLLECTIONS_PATH="${COLLECTIONS_PATH}"
@@ -2530,6 +2629,54 @@ jobs:
         run: python -m pytest tests/ --ignore=tests/debug_chain.py -v
 
 
+  outbound-pool-load:
+    name: outbound resilience (deadlines and pool load)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_DB: faas
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: mirror.gcr.io/library/redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      GO_TEST_MEMLIMIT: 3GiB
+      GOMAXPROCS: 2
+      DATABASE_URL: postgres://faas@127.0.0.1:5432/faas?sslmode=disable
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+      FAAS_RESILIENCE_DATABASE_URL: postgres://faas@127.0.0.1:5432/faas?sslmode=disable
+      FAAS_RESILIENCE_REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Check deadlines, pool saturation and recovery
+        run: make test-outbound-resilience
+      - name: Check pool capacity and recovery at both concurrency levels
+        run: |
+          failed=0
+          for concurrency in 32 64; do
+            if ! FAAS_RESILIENCE_CONCURRENCY="$concurrency" make test-outbound-resilience-load; then
+              failed=1
+            fi
+          done
+          exit "$failed"
+
   load:
     # M4 acceptance gate (spec §14 row 2): "1,000 rps to hot app adds < 2 ms p50".
     # Decoupled from the `test` job because (a) it is a load test, not a
@@ -2966,13 +3113,18 @@ jobs:
         # dropping back to the runner uid for the test process.
         run: |
           BOOT_CONTRACT_PATH="$PATH"
-          sudo -E setpriv \
+          # The runner's sudo (sudo-rs) ignores -E, so name the environment
+          # the test needs: HOME and the Go paths keep the build cache under
+          # the runner user instead of /root.
+          sudo setpriv \
             --bounding-set=-sys_admin \
             --reuid "$(id -u)" \
             --regid "$(id -g)" \
             --init-groups \
             --no-new-privs \
-            -- env "PATH=$BOOT_CONTRACT_PATH" \
+            -- env "PATH=$BOOT_CONTRACT_PATH" "HOME=$HOME" \
+              "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" "GOPATH=$(go env GOPATH)" \
+              "GOTOOLCHAIN=${GOTOOLCHAIN:-local}" "DATABASE_URL=${DATABASE_URL:-}" "FAAS_SKIP_PG_TESTS=${FAAS_SKIP_PG_TESTS:-}" \
             go test -race -count=1 -timeout=15m -run '^TestBootContract_' ./cmd/e2e/...
 
   e2e-shard1:

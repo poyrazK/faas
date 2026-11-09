@@ -124,10 +124,15 @@ func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string, rea
 					t.Error("application JWTs would be blocked by owner-key public authentication")
 				}
 			}
+			// ChronoLake finding 21: --origins is optional; an empty secret
+			// write failed the create after the app and binding existed.
+			if strings.HasSuffix(r.URL.Path, "/DATA_API_ALLOWED_ORIGINS") {
+				t.Error("create wrote DATA_API_ALLOWED_ORIGINS without --origins")
+			}
 			settings++
 			writeJSONTest(w, map[string]any{})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/deployments"):
-			if settings != 7 {
+			if settings != 6 {
 				t.Errorf("deployment preceded configuration: %d writes", settings)
 			}
 			body, err := io.ReadAll(r.Body)
@@ -164,7 +169,9 @@ func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string, rea
 		t.Fatal("create did not deploy the runtime the control plane serves")
 	}
 	for name := range uploaded {
-		if strings.Contains(name, "/test/") || strings.Contains(name, "/.") {
+		// Runtime tests stay out of deployments. Vendored dependencies may
+		// include their own test files in the control plane's runtime bundle.
+		if strings.HasPrefix(name, "data-api/test/") || strings.Contains(name, "/.") {
 			t.Fatalf("create uploaded %s", name)
 		}
 	}
@@ -277,7 +284,8 @@ func TestDataAPIConfiguresBindingEgressAndScopedSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(writes) != 8 || !strings.HasSuffix(writes[0], "/bindings") || writes[1] != "PATCH /v1/apps/notes" {
+	// Seven writes: no empty DATA_API_ALLOWED_ORIGINS (ChronoLake finding 21).
+	if len(writes) != 7 || !strings.HasSuffix(writes[0], "/bindings") || writes[1] != "PATCH /v1/apps/notes" {
 		t.Fatalf("wrong configuration order: %v", writes)
 	}
 }
@@ -319,10 +327,17 @@ func TestDataAPIRuntimeBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, bound := range map[string]int{"userConcurrencyMaxSubjects": api.DataAPIUserConcurrencyMaxSubjects, "userConcurrencyCooldownMs": api.DataAPIUserConcurrencyCooldownMS, "connectionReportMs": int(api.DataAPIRuntimeConnectionReportTimeout.Milliseconds()), "connectionReportIntervalMs": int(api.DataAPIRuntimeConnectionReportInterval.Milliseconds()), "connectionReportBytes": api.DataAPIRuntimeConnectionReportMaxBytes, "pool": api.DataAPIDefaultPoolConnections, "poolMax": api.DataAPIMaxPoolConnections, "rows": api.DataAPIMaxRows, "bodyBytes": api.DataAPIMaxRequestBytes, "responseBytes": api.DataAPIMaxResponseBytes, "outputBytes": api.DataAPIMaxOutputBytes, "queryMs": api.DataAPIQueryTimeoutMS, "lockMs": api.DataAPILockTimeoutMS, "relations": api.DataAPIMaxRelations, "columns": api.DataAPIMaxColumns, "types": api.DataAPIMaxTypes, "queuedRequests": api.DataAPIMaxQueuedRequests, "admissionWaitMs": api.DataAPIAdmissionWaitMS, "overloadRetrySeconds": api.DataAPIOverloadRetrySeconds, "healthProbeMs": api.DataAPIHealthProbeMS, "healthBytes": api.DataAPIHealthMaxBytes, "rateLimitDefaultPerSecond": api.DataAPIRateLimitDefaultPerSecond, "rateLimitDefaultBurst": api.DataAPIRateLimitDefaultBurst, "rateLimitMaxPerSecond": api.DataAPIRateLimitMaxPerSecond, "rateLimitMaxBurst": api.DataAPIRateLimitMaxBurst, "rateLimitMaxSubjects": api.DataAPIRateLimitMaxSubjects, "rateLimitSweepMs": api.DataAPIRateLimitSweepMS, "anonymousCoarseSubjects": api.DataAPIAnonymousCoarseSubjects, "publicReadMaxRelations": api.DataAPIPublicReadMaxRelations, "publicRpcMaxFunctions": api.DataAPIPublicRPCMaxFunctions, "usageReportMs": int(api.DataAPIUsageReportTimeout.Milliseconds()), "usageReportIntervalMs": int(api.DataAPIUsageReportInterval.Milliseconds()), "usageReportMaxHours": api.DataAPIUsageReportMaxHours, "usageMonthlyCapMax": api.DataAPIUsageMonthlyCapMax, "usageRestoreJumpMs": int(api.DataAPIUsageRestoreJump.Milliseconds()), "serverKeySubjectMaxBytes": api.DataAPIServerKeySubjectMaxBytes, "publicReadMaxAgeSeconds": api.DataAPIPublicReadMaxAgeSeconds, "cacheTagMaxBytes": api.CacheTagMaxBytes, "cacheTagsMax": api.CacheTagMaxCount, "serverKeyPermissionsBytes": api.DataAPIServerKeyPermissionsMaxBytes, "serverKeyPermissionsEntries": api.DataAPIServerKeyPermissionsMaxEntries, "storageObjectDefaultBytes": api.DataAPIStorageObjectDefaultBytes, "storageObjectMaxBytes": api.DataAPIStorageObjectMaxBytes, "storageTransfers": api.DataAPIStorageTransfers, "storageTransferMs": int(api.DataAPIStorageTransferTimeout.Milliseconds()), "storageSignSeconds": int(api.DataAPIStorageSignedURLTTL.Seconds())} {
+	for name, bound := range map[string]int{"userConcurrencyMaxSubjects": api.DataAPIUserConcurrencyMaxSubjects, "userConcurrencyCooldownMs": api.DataAPIUserConcurrencyCooldownMS, "connectionReportMs": int(api.DataAPIRuntimeConnectionReportTimeout.Milliseconds()), "connectionReportIntervalMs": int(api.DataAPIRuntimeConnectionReportInterval.Milliseconds()), "connectionReportBytes": api.DataAPIRuntimeConnectionReportMaxBytes, "pool": api.DataAPIDefaultPoolConnections, "poolMax": api.DataAPIMaxPoolConnections, "rows": api.DataAPIMaxRows, "bodyBytes": api.DataAPIMaxRequestBytes, "responseBytes": api.DataAPIMaxResponseBytes, "outputBytes": api.DataAPIMaxOutputBytes, "queryMs": api.DataAPIQueryTimeoutMS, "lockMs": api.DataAPILockTimeoutMS, "relations": api.DataAPIMaxRelations, "columns": api.DataAPIMaxColumns, "types": api.DataAPIMaxTypes, "queuedRequests": api.DataAPIMaxQueuedRequests, "admissionWaitMs": api.DataAPIAdmissionWaitMS, "overloadRetrySeconds": api.DataAPIOverloadRetrySeconds, "healthProbeMs": api.DataAPIHealthProbeMS, "healthBytes": api.DataAPIHealthMaxBytes, "rateLimitDefaultPerSecond": api.DataAPIRateLimitDefaultPerSecond, "rateLimitDefaultBurst": api.DataAPIRateLimitDefaultBurst, "rateLimitMaxPerSecond": api.DataAPIRateLimitMaxPerSecond, "rateLimitMaxBurst": api.DataAPIRateLimitMaxBurst, "rateLimitMaxSubjects": api.DataAPIRateLimitMaxSubjects, "rateLimitSweepMs": api.DataAPIRateLimitSweepMS, "anonymousCoarseSubjects": api.DataAPIAnonymousCoarseSubjects, "publicReadMaxRelations": api.DataAPIPublicReadMaxRelations, "publicRpcMaxFunctions": api.DataAPIPublicRPCMaxFunctions, "usageReportMs": int(api.DataAPIUsageReportTimeout.Milliseconds()), "usageReportIntervalMs": int(api.DataAPIUsageReportInterval.Milliseconds()), "usageReportMaxHours": api.DataAPIUsageReportMaxHours, "usageMonthlyCapMax": api.DataAPIUsageMonthlyCapMax, "usageRestoreJumpMs": int(api.DataAPIUsageRestoreJump.Milliseconds()), "serverKeySubjectMaxBytes": api.DataAPIServerKeySubjectMaxBytes, "publicReadMaxAgeSeconds": api.DataAPIPublicReadMaxAgeSeconds, "cacheTagMaxBytes": api.CacheTagMaxBytes, "cacheTagsMax": api.CacheTagMaxCount, "serverKeyPermissionsBytes": api.DataAPIServerKeyPermissionsMaxBytes, "serverKeyPermissionsEntries": api.DataAPIServerKeyPermissionsMaxEntries, "storageObjectDefaultBytes": api.DataAPIStorageObjectDefaultBytes, "storageObjectMaxBytes": api.DataAPIStorageObjectMaxBytes, "storageTransfers": api.DataAPIStorageTransfers, "storageTransferMs": int(api.DataAPIStorageTransferTimeout.Milliseconds()), "storageSignSeconds": int(api.DataAPIStorageSignedURLTTL.Seconds()), "changeEventsBatch": api.DataAPIChangeEventsBatchMaxEvents, "changeEventsBatchBytes": api.DataAPIChangeEventsBatchMaxBytes, "changeEventDataBytes": api.DataAPIChangeEventDataMaxBytes, "changeEventsLeaseMs": int(api.DataAPIChangeEventsLease.Milliseconds()), "changeEventsPublishMs": int(api.DataAPIChangeEventsPublishTimeout.Milliseconds()), "changeEventsIdleMinMs": int(api.DataAPIChangeEventsIdleMin.Milliseconds()), "changeEventsIdleMaxMs": int(api.DataAPIChangeEventsIdleMax.Milliseconds()), "changeHookReportBytes": api.DataAPIChangeHookReportMaxBytes, "changeHookReportIntervalMs": int(api.DataAPIChangeHookReportInterval.Milliseconds()), "changeHookReportHeartbeatMs": int(api.DataAPIChangeHookReportHeartbeat.Milliseconds()), "changeHooksDrainWaitMs": int(api.DataAPIChangeHooksDrainWait.Milliseconds()), "accessRecheckMs": int(api.DataAPIAccessRecheckInterval.Milliseconds()), "storageTransfersPerClient": api.DataAPIStorageTransfersPerClient, "healthCacheMs": int(api.DataAPIHealthCache.Milliseconds()), "sqlDeadlineClockSkewMs": int(api.DataAPISQLDeadlineClockSkew.Milliseconds())} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}
+	}
+	changes, err := os.ReadFile("templates/data-api/changes.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(changes), fmt.Sprintf("changeHooksDrainPath = '%s'", api.DataAPIChangeHooksDrainPath)) {
+		t.Fatal("the runtime drain path differs from the one drain schedules call")
 	}
 }
 

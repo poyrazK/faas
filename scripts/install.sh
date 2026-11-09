@@ -307,6 +307,23 @@ case ":$PATH:" in
 	;;
 esac
 
+# An older gregale earlier on PATH (an npm install, a copy in /usr/local/bin)
+# would keep answering to plain `gregale` while the version printed below is
+# the new one. -ef compares the files, so a symlink to the installed binary
+# or a PATH entry spelled differently does not warn. Only a path counts: an
+# exported shell function or alias is the user's own business.
+on_path="$(command -v "$BIN_NAME" 2>/dev/null || true)"
+case "$on_path" in
+/*) ;;
+*) on_path="" ;;
+esac
+if [ -n "$on_path" ] && ! [ "$on_path" -ef "$install_dir/$BIN_NAME" ]; then
+	log "warning: \`$BIN_NAME\` on your PATH runs $on_path, not the copy just installed."
+	log "  Remove that copy (for an npm install: npm uninstall -g gregale), or put"
+	log "  $install_dir before ${on_path%/*} on your PATH."
+	log ""
+fi
+
 "$install_dir/$BIN_NAME" version >&2 || log "warning: installed binary did not run cleanly"
 
 log ""

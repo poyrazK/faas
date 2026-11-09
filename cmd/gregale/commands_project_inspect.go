@@ -89,7 +89,7 @@ func projectInspectionTarget(args []string) (string, string, error) {
 		if err != nil {
 			return "", "", err
 		}
-		linked, _, err := linkedProjectContext(cwd)
+		linked, _, err := targetProjectContext(cwd)
 		if err != nil {
 			return "", "", err
 		}

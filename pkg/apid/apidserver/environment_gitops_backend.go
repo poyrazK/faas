@@ -46,6 +46,13 @@ func (b *environmentGitOpsBackend) Apply(ctx context.Context, lease state.Enviro
 		}
 	}
 
+	if jobs, ok := b.intent.(state.EnvironmentGitOpsJobUpdateStore); ok {
+		steps, err := jobs.PrepareEnvironmentGitOpsJobUpdates(ctx, lease, plan)
+		if err != nil || len(steps) > 0 {
+			return steps, err
+		}
+	}
+
 	if creator, ok := b.intent.(state.EnvironmentGitOpsWorkloadCreationStore); ok {
 		steps, err := creator.PrepareEnvironmentGitOpsWorkloads(ctx, lease, plan)
 		if err != nil || len(steps) != 0 {
@@ -225,7 +232,7 @@ func (b *environmentGitOpsBackend) RecoverEffects(ctx context.Context, lease sta
 		if err != nil {
 			return err
 		}
-		convergence, err := b.recoveryConvergence(recoverCtx, effect)
+		convergence, err := b.recoveryConvergence(recoverCtx, lease, effect, nodes)
 		if err != nil {
 			return err
 		}
@@ -236,12 +243,17 @@ func (b *environmentGitOpsBackend) RecoverEffects(ctx context.Context, lease sta
 	return nil
 }
 
-func (b *environmentGitOpsBackend) recoveryConvergence(ctx context.Context, effect state.EnvironmentGitOpsEffect) (*edgerules.EdgeRuleConvergence, error) {
+func (b *environmentGitOpsBackend) recoveryConvergence(ctx context.Context, lease state.EnvironmentGitOpsLease, effect state.EnvironmentGitOpsEffect, nodes []string) (*edgerules.EdgeRuleConvergence, error) {
 	convergence := &edgerules.EdgeRuleConvergence{Notif: b.server.notif, Generation: effect.GatewayGeneration,
-		AppID: effect.AppID, Operation: "environment_gitops", Hosts: effect.MatchHosts, Expected: map[string]struct{}{},
+		AppID: effect.AppID, AccountID: lease.Source.AccountID, Operation: "environment_gitops", Hosts: effect.MatchHosts, Expected: map[string]struct{}{},
 		Cancel: func() {}, Unlock: func(context.Context) {}, Metrics: b.server.edgeRules.Metrics}
 	for _, node := range effect.ExpectedNodes {
-		convergence.Expected[node] = struct{}{}
+		// Live gateways must acknowledge the replay. A departed gateway's
+		// persisted receipt still counts; one that never acknowledged stays
+		// required. The durable effect retains its complete minimum roster.
+		if slices.Contains(nodes, node) || !slices.Contains(effect.AcknowledgedNodes, node) {
+			convergence.Expected[node] = struct{}{}
+		}
 	}
 	if len(convergence.Expected) > 0 {
 		var err error

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // TestHostPolicyRenderHasFlushAndShebang — the file is exec'd directly by
@@ -1072,5 +1074,170 @@ func TestHostPolicyPublicInputSourceCIDRsReplaceTheOpenWebPorts(t *testing.T) {
 	}
 	if strings.Contains(input, "tcp dport { 22,80,443 } accept") {
 		t.Fatalf("input chain still admits 80/443 from anywhere:\n%s", input)
+	}
+}
+
+func TestHostPolicyPublicEntryAddrsTakeOnly443(t *testing.T) {
+	p := DefaultHostPolicy
+	p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10"), netip.MustParseAddr("2001:db8::10")}
+	out := p.Render()
+	start, end := strings.Index(out, "chain input {"), strings.Index(out, "chain forward {")
+	if start < 0 || end < start {
+		t.Fatalf("input chain not found:\n%s", out)
+	}
+	input := out[start:end]
+	at := 0
+	for _, rule := range []string{
+		`ip daddr 203.0.113.10 tcp dport 443 accept comment "public entry"`,
+		`ip6 daddr 2001:db8::10 tcp dport 443 accept comment "public entry"`,
+		`ip daddr 203.0.113.10 drop comment "public entry carries 443 only"`,
+		`ip6 daddr 2001:db8::10 drop comment "public entry carries 443 only"`,
+		"tcp dport 22 accept",
+	} {
+		i := strings.Index(input[at:], rule)
+		if i < 0 {
+			t.Fatalf("input chain lacks %q after offset %d, in order:\n%s", rule, at, input)
+		}
+		at += i + len(rule)
+	}
+	for _, broad := range []string{"tcp dport { 22,80,443 } accept", "tcp dport { 80,443 } accept comment"} {
+		if strings.Contains(input, broad) {
+			t.Fatalf("input chain still has %q:\n%s", broad, input)
+		}
+	}
+}
+
+// The kernel drops a source's new connections to an entry address past twice
+// the edge's own per-address limits, before the 443 accept, so a flood is shed
+// before userspace (ADR-20261103163954 §4). Each family gets its own sets, and
+// a policy with no entry address declares none.
+func TestHostPolicyPublicEntryAddrsLimitEachSource(t *testing.T) {
+	p := DefaultHostPolicy
+	p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10"), netip.MustParseAddr("2001:db8::10")}
+	out := p.Render()
+	// IPv6 sources count per /64, as the edge's own limits do
+	// (ADR-20261107180000).
+	for _, family := range []struct{ suffix, keyType, nft, addr, key string }{
+		{"v4", "ipv4_addr", "ip", "203.0.113.10", "ip saddr"},
+		{"v6", "ipv6_addr", "ip6", "2001:db8::10", "ip6 saddr and ffff:ffff:ffff:ffff::"},
+	} {
+		for _, set := range []string{
+			fmt.Sprintf("set public_entry_rate_%s {\n    type %s\n    size %d\n    flags dynamic,timeout\n    timeout 1m\n  }", family.suffix, family.keyType, api.PublicEntryTrackedSourcesMax),
+			fmt.Sprintf("set public_entry_conns_%s {\n    type %s\n    size %d\n    flags dynamic\n  }", family.suffix, family.keyType, api.PublicEntryTrackedSourcesMax),
+		} {
+			if !strings.Contains(out, set) {
+				t.Fatalf("policy lacks %q:\n%s", set, out)
+			}
+		}
+		at := 0
+		for _, rule := range []string{
+			fmt.Sprintf("%s daddr %s tcp dport 443 ct state new add @public_entry_rate_%s { %s limit rate over %d/second burst %d packets } counter drop",
+				family.nft, family.addr, family.suffix, family.key, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource),
+			fmt.Sprintf("%s daddr %s tcp dport 443 ct state new add @public_entry_conns_%s { %s ct count over %d } counter drop",
+				family.nft, family.addr, family.suffix, family.key, api.PublicEntryConnsPerSourceMax),
+			fmt.Sprintf(`%s daddr %s tcp dport 443 accept comment "public entry"`, family.nft, family.addr),
+		} {
+			i := strings.Index(out[at:], rule)
+			if i < 0 {
+				t.Fatalf("policy lacks %q after offset %d, in order:\n%s", rule, at, out)
+			}
+			at += i + len(rule)
+		}
+	}
+	if api.PublicEntryConnsPerSourceMax <= api.EdgeClientOpenConnsPerAddrMax ||
+		api.PublicEntryNewConnsPerSecondPerSource <= api.EdgeClientNewConnsPerSecondPerAddr ||
+		api.PublicEntryNewConnsBurstPerSource <= api.EdgeClientNewConnsBurstPerAddr {
+		t.Fatal("the kernel backstop must sit above the edge's own per-address limits")
+	}
+
+	v4only := DefaultHostPolicy
+	v4only.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10")}
+	if out := v4only.Render(); strings.Contains(out, "public_entry_rate_v6") || !strings.Contains(out, "public_entry_rate_v4") {
+		t.Fatalf("an IPv4-only entry declares the wrong sets:\n%s", out)
+	}
+	if out := DefaultHostPolicy.Render(); strings.Contains(out, "public_entry_") {
+		t.Fatalf("a policy with no entry address declares entry sets:\n%s", out)
+	}
+}
+
+// The vmmd drop-in sends Cloudflare's ranges beside the entry addresses, so a
+// vmmd that predates them stays Cloudflare-only; this one renders the entry
+// rules, as the nftables role does, and uses the ranges only to give
+// Cloudflare its own, higher per-source backstop (ADR-20261104221012).
+func TestHostPolicyPublicEntryAddrsTakePrecedenceOverCloudflareSources(t *testing.T) {
+	entry := DefaultHostPolicy
+	entry.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10")}
+	both := entry
+	both.PublicInputSourceCIDRs = []netip.Prefix{netip.MustParsePrefix("173.245.48.0/20")}
+	got := both.Render()
+	exemption := "  set public_entry_proxy_v4 {\n    type ipv4_addr\n    flags interval\n    auto-merge\n    elements = { 173.245.48.0/20 }\n  }\n"
+	if !strings.Contains(got, exemption) {
+		t.Fatalf("policy lacks the Cloudflare exemption set:\n%s", got)
+	}
+	got = strings.Replace(got, exemption, "", 1)
+	got = strings.ReplaceAll(got, " ip saddr != @public_entry_proxy_v4", "")
+	var kept []string
+	for _, line := range strings.SplitAfter(got, "\n") {
+		if !strings.Contains(line, "ip saddr @public_entry_proxy_v4") {
+			kept = append(kept, line)
+		}
+	}
+	got = strings.Join(kept, "")
+	if want := entry.Render(); got != want {
+		t.Fatalf("with Cloudflare's sources beside the entry addresses the policy changed beyond the exemption:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A host moved back behind Cloudflare reaches the edge from a few Cloudflare
+// addresses, each carrying many clients, so Cloudflare's ranges skip the
+// per-source backstop; a family with no Cloudflare range keeps it whole.
+func TestHostPolicyPublicEntryBackstopExemptsCloudflare(t *testing.T) {
+	p := DefaultHostPolicy
+	p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10"), netip.MustParseAddr("2001:db8::10")}
+	p.PublicInputSourceCIDRs = []netip.Prefix{netip.MustParsePrefix("173.245.48.0/20"), netip.MustParsePrefix("103.21.244.0/22")}
+	out := p.Render()
+	if !strings.Contains(out, "elements = { 173.245.48.0/20, 103.21.244.0/22 }") {
+		t.Fatalf("v4 exemption set lacks Cloudflare's ranges:\n%s", out)
+	}
+	if got := strings.Count(out, "ip daddr 203.0.113.10 tcp dport 443 ip saddr != @public_entry_proxy_v4 ct state new add"); got != 2 {
+		t.Fatalf("v4 backstop rules exempting Cloudflare = %d, want 2:\n%s", got, out)
+	}
+	// ADR-20261104221012: Cloudflare's ranges carry every Cloudflare
+	// customer's traffic, so they get a higher backstop, not none.
+	if got := strings.Count(out, "ip daddr 203.0.113.10 tcp dport 443 ip saddr @public_entry_proxy_v4 ct state new add"); got != 2 {
+		t.Fatalf("v4 proxy backstop rules = %d, want 2:\n%s", got, out)
+	}
+	if !strings.Contains(out, fmt.Sprintf("ct count over %d", api.PublicEntryProxyConnsPerSourceMax)) ||
+		!strings.Contains(out, fmt.Sprintf("limit rate over %d/second burst %d packets", api.PublicEntryProxyNewConnsPerSecondPerSource, api.PublicEntryProxyNewConnsBurstPerSource)) {
+		t.Fatalf("proxy backstop limits missing:\n%s", out)
+	}
+	if strings.Contains(out, "public_entry_proxy_v6") {
+		t.Fatalf("v6 entry exempts a Cloudflare set with no v6 ranges:\n%s", out)
+	}
+	if got := strings.Count(out, "ip6 daddr 2001:db8::10 tcp dport 443 ct state new add"); got != 2 {
+		t.Fatalf("v6 backstop rules = %d, want 2 without an exemption:\n%s", got, out)
+	}
+}
+
+func TestHostPolicyPublicEntryAddrsRejectBadInput(t *testing.T) {
+	for name, mutate := range map[string]func(*HostPolicy){
+		"invalid address": func(p *HostPolicy) { p.PublicEntryAddrs = []netip.Addr{{}} },
+		"zoned address": func(p *HostPolicy) {
+			p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("fe80::1%eth0")}
+		},
+		"IPv4-mapped address": func(p *HostPolicy) {
+			p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("::ffff:203.0.113.10")}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := DefaultHostPolicy
+			mutate(&p)
+			defer func() {
+				if recover() == nil {
+					t.Fatal("Render did not panic")
+				}
+			}()
+			_ = p.Render()
+		})
 	}
 }

@@ -147,7 +147,7 @@ func TestPublicAuthPatch_BasicPlanGate(t *testing.T) {
 		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 			Mode:      api.AppPublicAuthModeBasic,
 			BasicUser: "editor",
-			BasicPass: "hunter2",
+			BasicPass: "hunter2-hunter2",
 		})
 		if rec.Code != http.StatusPaymentRequired {
 			t.Fatalf("PATCH mode=basic on Free: code=%d body=%s; want 402",
@@ -163,7 +163,7 @@ func TestPublicAuthPatch_BasicPlanGate(t *testing.T) {
 		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 			Mode:      api.AppPublicAuthModeBasic,
 			BasicUser: "editor",
-			BasicPass: "hunter2",
+			BasicPass: "hunter2-hunter2",
 		})
 		if rec.Code != http.StatusPaymentRequired {
 			t.Fatalf("PATCH mode=basic on Hobby: code=%d body=%s; want 402",
@@ -177,7 +177,7 @@ func TestPublicAuthPatch_BasicPlanGate(t *testing.T) {
 		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 			Mode:      api.AppPublicAuthModeBasic,
 			BasicUser: "editor",
-			BasicPass: "hunter2",
+			BasicPass: "hunter2-hunter2",
 		})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("PATCH mode=basic on Pro: code=%d body=%s; want 200",
@@ -212,7 +212,7 @@ func TestPublicAuthPatch_OpenClearsBasicSealed(t *testing.T) {
 	rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 		Mode:      api.AppPublicAuthModeBasic,
 		BasicUser: "u",
-		BasicPass: "p",
+		BasicPass: "p-long-password",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first PATCH (basic): code=%d body=%s", rec.Code, rec.Body.String())
@@ -267,7 +267,7 @@ func TestPublicAuthPatch_AuditEmitsWithRedaction(t *testing.T) {
 	rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 		Mode:      api.AppPublicAuthModeBasic,
 		BasicUser: "alice",
-		BasicPass: "secret",
+		BasicPass: "secret-password",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first PATCH: code=%d body=%s", rec.Code, rec.Body.String())
@@ -720,7 +720,7 @@ func TestPublicAuthPatch_IPAllowlistEntryCountGatedByMode(t *testing.T) {
 	rec = patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 		Mode:      api.AppPublicAuthModeBasic,
 		BasicUser: "editor",
-		BasicPass: "hunter2",
+		BasicPass: "hunter2-hunter2",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second PATCH: code=%d body=%s", rec.Code, rec.Body.String())

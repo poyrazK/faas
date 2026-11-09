@@ -344,6 +344,47 @@ func TestAppFreezesMatchTheUnmemoizedFreeze(t *testing.T) {
 	}
 }
 
+// The memoized revision follows the pinned hosts and the declared-route
+// revision, including after an app's memo fills and starts over.
+func TestAppFreezeRevisionMemoFollowsTheDigestedDocument(t *testing.T) {
+	app := App{ID: "app", AccountID: "owner", Plan: api.PlanScale}
+	var contexts []context.Context
+	for i := range appFreezeRevisionMemoEntries + 4 {
+		entry := &HostEntry{Host: fmt.Sprintf("h%d.test", i), Budget: []EdgeRuleBudgetResolved{{ID: "budget", BudgetMs: 1000 + i}}}
+		if err := entry.SealPolicy(); err != nil {
+			t.Fatal(err)
+		}
+		ctx, err := WithPinnedHostPolicy(t.Context(), entry.Host, entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contexts = append(contexts, ctx, context.WithValue(ctx, declaredRoutePolicyRevisionKey{}, fmt.Sprintf("declared-%d", i)))
+	}
+	freezes := newAppFreezes()
+	seen := map[string]bool{}
+	for pass := range 3 {
+		for i, ctx := range contexts {
+			_, want, err := legacyFreezeTrafficApp(ctx, app)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, got, err := freezes.freeze(ctx, app)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("pass %d context %d: revision %s, want %s", pass, i, got, want)
+			}
+			if pass == 0 {
+				if seen[got] {
+					t.Fatalf("context %d shares revision %s with another document", i, got)
+				}
+				seen[got] = true
+			}
+		}
+	}
+}
+
 func TestAppFreezesShareOnlyAnIdenticalEncoding(t *testing.T) {
 	freezes := newAppFreezes()
 	app := App{ID: "app", AccountID: "owner", Plan: api.PlanPro, CORSDefaultOrigins: []string{"https://old.test"}}

@@ -155,6 +155,7 @@
     owner: root
     group: root
     mode: "0644"
+  notify: restart faas-apid-data-pipeline-worker
 
 # ADR-1591: independent catalog health monitor; install without enabling.
 - name: control_plane_service — install private pipeline alert worker unit
@@ -164,6 +165,7 @@
     owner: root
     group: root
     mode: "0644"
+  notify: restart faas-apid-data-pipeline-alert-worker
 
 # ADR-531: ship the private worker without enabling it. The same APID user owns
 # customer-intent writes; data capture remains gated in the coordinator.
@@ -428,6 +430,23 @@
     - faas-apid
     - faas-meterd
     - faas-outboundd
+
+- name: control_plane_service — set apid's deployment environment
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-environment.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-environment.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_environment | length > 0
+
+- name: control_plane_service — remove apid's deployment environment when unset
+  notify: restart faas-apid
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d/zz-faas-environment.conf
+    state: absent
+  when: faas_environment | length == 0
 
 - name: control_plane_service — set public-beta billing mode
   notify:
@@ -755,6 +774,17 @@
 # absent (operator-provisioned via `gregalectl secrets init`).
 - name: control_plane_service — sealed.env split perm-asserts (issue # 585 / ADR-127)
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml
+
+# ADR-20261107180000: apid refuses the labels of edgednsd's managed host
+# names as new apps' names.
+- name: control_plane_service — install apid reserved app names drop-in (ADR-20261107180000)
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: 99-faas-reserved-app-slugs.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/99-faas-reserved-app-slugs.conf
+    owner: root
+    group: root
+    mode: "0644"
 
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
 # through to the four control-plane daemons (apid, schedd,
@@ -1242,11 +1272,17 @@
       fi
       transport="$(grep -E '^FAAS_MAIL_TRANSPORT=' "$envfile" 2>/dev/null | head -1 | cut -d= -f2- || true)"
       case "$transport" in
-        resend|postmark|noop)
+        resend|postmark)
           # live transport — credentials are the operator's responsibility.
           # The pkg/mail factory fails closed on a missing credential
           # so we don't double-assert here.
           echo "$daemon mail transport = $transport (prod)"
+          ;;
+        noop)
+          # Bootable, but every email is dropped: no account can verify its
+          # address and no password reset or magic link is ever delivered.
+          # Production ran like this from bootstrap without anyone noticing.
+          echo "WARNING: $daemon mail transport = noop in $envfile — NO email is delivered (address verification, password reset, magic links, billing notices). Set FAAS_MAIL_TRANSPORT=resend (or postmark) with FAAS_MAIL_FROM and the provider key."
           ;;
         log|"")
           echo "FAIL: FAAS_MAIL_TRANSPORT=${transport:-unset} in $envfile — $daemon will refuse to boot. Set FAAS_MAIL_TRANSPORT=resend (or postmark / noop)."

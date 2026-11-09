@@ -3156,6 +3156,28 @@ leaves the slot, and its email expires at the slot's end. Maild re-checks the
 account at submission and cancels the email if the account is no longer active
 or is being deleted.
 
+## Managed PostgreSQL plan excess notices
+
+`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=0`
+independently gates the plan excess emails of
+[ADR-20261102125208](../adr/20261102125208-managed-postgres-databases-past-a-lowered-plan-are-suspended.md)
+in apid, maild and private reconciliation. Units and examples keep it off.
+Apply
+[`20261102175406542_managed_postgres_plan_excess_notices.sql`](../../migrations/20261102175406542_managed_postgres_plan_excess_notices.sql)
+before opting in. It has the same gate, transport and reader requirements as
+the compute cap notices above.
+
+While `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` and the compute cap are
+both `on`, the cap sweep records one notice for each database it suspends
+because the plan no longer includes it, with the reason (`database_limit` or
+`service_class`). A database back inside the plan loses its notice, so a later
+suspension is noticed again. Each sweep, apid mails every notice that is
+unmailed and under 24 hours old to the account that owns the database. It
+encrypts a frozen snapshot (database name, class, reason) and links the intent
+to the notice in one transaction, so a notice is mailed at most once. Maild
+re-checks the account at submission and cancels the email if the account is no
+longer active or is being deleted.
+
 ## Durable overdue-account suspension notices
 
 `FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED=0` independently gates

@@ -123,6 +123,42 @@ func TestLoopScalingPolicyObservationTracksCurrentAppRevision(t *testing.T) {
 	}
 }
 
+// batchObservationTestStore records the periodic pass in one call.
+type batchObservationTestStore struct {
+	*scalingPolicyObservationTestStore
+	batches [][]state.AppScalingPolicyObservation
+}
+
+func (s *batchObservationTestStore) RecordAppScalingPolicyObservations(_ context.Context, _ string, observations []state.AppScalingPolicyObservation) (int64, error) {
+	s.batches = append(s.batches, observations)
+	return int64(len(observations)), nil
+}
+
+// ADR 20261103094355: the periodic pass records every owned app in one
+// statement instead of one per app on the loop.
+func TestLoopScalingPolicyObservationBatchesThePass(t *testing.T) {
+	base := state.NewMemStore()
+	acct, first, _ := seedApp(t, base, api.PlanPro, 256, 5)
+	second, err := base.CreateApp(context.Background(), state.App{AccountID: acct.ID, Slug: "app-second", RAMMB: 256, MaxConcurrency: 5, IdleTimeoutS: 60})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	store := &batchObservationTestStore{scalingPolicyObservationTestStore: &scalingPolicyObservationTestStore{Store: base}}
+	loop := NewLoop(nil, &Engine{store: store}, testLog())
+
+	loop.runScalingPolicyObservation(context.Background())
+	if len(store.batches) != 1 || len(store.batches[0]) != 2 {
+		t.Fatalf("batches = %+v, want one holding both apps", store.batches)
+	}
+	got := map[string]int64{}
+	for _, o := range store.batches[0] {
+		got[o.AppID] = o.Revision
+	}
+	if got[first.ID] != 1 || got[second.ID] != 1 || store.status.ObservedRevision != 0 {
+		t.Fatalf("batch = %v, per-app status %+v; want both apps at revision 1 and no per-app write", got, store.status)
+	}
+}
+
 // TestHandleSnapshotPrime routes a snapshot_prime notification into engine.Prime,
 // producing a parked instance (the deploy-pipeline handoff, ADR-018).
 func TestHandleSnapshotPrime(t *testing.T) {
@@ -285,6 +321,8 @@ func TestHandleParkedAppNotification(t *testing.T) {
 		Channel: db.NotifyAppChanged,
 		Payload: `{"kind":"parked","app_id":"` + app.ID + `"}`,
 	})
+	// ADR 20261103164725: the park runs on the work pool.
+	loop.workPool().drain()
 
 	row, err := store.InstanceByID(context.Background(), res.InstanceID)
 	if err != nil {

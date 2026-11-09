@@ -87,6 +87,12 @@ type ManagedPostgresDatabase struct {
 	// database once the account has room; otherwise its delete is scheduled
 	// at this time.
 	RestoreSlotUntil string `json:"restore_slot_until,omitempty"`
+	// PlanExcess is set while the plan no longer includes the database and
+	// it is suspended (ADR-20261102125208): database_limit when it ranks
+	// past the plan's database limit, oldest first, or service_class when
+	// the plan does not include its class. Upgrading, deleting a database
+	// or resizing to an included class resumes it.
+	PlanExcess string `json:"plan_excess,omitempty"`
 	// RestoreRange is the span a point-in-time restore from this database
 	// can target now; absent while it cannot be restored from.
 	RestoreRange *ManagedPostgresRestoreRange `json:"restore_range,omitempty"`
@@ -237,6 +243,9 @@ type ManagedPostgresUsageOperatorResponse struct {
 }
 
 type CreateManagedPostgresDatabaseRequest struct {
+	// RequestID reserves the database identity for a durable workflow. Reusing
+	// it with another name or configuration is a conflict.
+	RequestID            string `json:"request_id,omitempty"`
 	Name                 string `json:"name"`
 	Region               string `json:"region"`
 	PostgresMajor        int    `json:"postgres_major,omitempty"`
@@ -269,6 +278,22 @@ type ManagedPostgresBinding struct {
 
 type ManagedPostgresBindingList struct {
 	Items []ManagedPostgresBinding `json:"items"`
+}
+
+// AppPostgresBinding is one live managed PostgreSQL binding of an app, on any
+// database it is bound to: the account's, an organization's or an environment
+// copy's. Database is the database's name.
+type AppPostgresBinding struct {
+	ID             string `json:"id"`
+	Database       string `json:"database"`
+	Scope          string `json:"scope"`
+	EnvironmentKey string `json:"environment_key"`
+	Access         string `json:"access"`
+	State          string `json:"state"`
+}
+
+type AppPostgresBindingList struct {
+	Items []AppPostgresBinding `json:"items"`
 }
 
 type CreateManagedPostgresBindingRequest struct {

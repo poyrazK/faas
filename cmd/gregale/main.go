@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -59,6 +60,9 @@ func topLevelUsage(showAll, showOperator bool) string {
 	b.WriteString("                         Interactive-only commands retain human prompts.\n")
 	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
 	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
+	b.WriteString("  --wait-for-approval    When an agent key's request needs a person's approval,\n")
+	b.WriteString("                         wait for the decision and retry once (before the\n")
+	b.WriteString("                         command). Equivalent env: GREGALE_WAIT_FOR_APPROVAL=1.\n")
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
 }
@@ -111,9 +115,13 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
-	previousAutomation := nonInteractive
-	defer func() { nonInteractive = previousAutomation }()
+	previousAutomation, previousWait := nonInteractive, approvalWaitEnabled
+	defer func() { nonInteractive, approvalWaitEnabled = previousAutomation, previousWait }()
 	nonInteractive = false
+	approvalWaitEnabled = os.Getenv("GREGALE_WAIT_FOR_APPROVAL") == "1"
+	previousInsecureWarned := insecureAPIWarned
+	defer func() { insecureAPIWarned = previousInsecureWarned }()
+	insecureAPIWarned = false
 	var automationErr error
 	args, automationErr = extractAutomationFlag(args)
 	previousProfile := profileOverride
@@ -141,6 +149,9 @@ func run(args []string) (status int) {
 	typed := args
 	args, err := rewriteCliTree(args)
 	if err != nil {
+		if errors.As(err, new(errFoldFlagRequired)) {
+			return printErr("Missing required flag", err)
+		}
 		return printErr("Invalid app target", err)
 	}
 	if slices.Equal(typed, args) {
@@ -154,13 +165,31 @@ func run(args []string) (status int) {
 			return printErr("Unknown flag", fmt.Errorf("gregale: unknown flag %s; run 'gregale %s --help' for its options", name, leadingWords(typed)))
 		}
 	}
-	if topic, ok := cliTreeHelpTopic(args); ok {
+	// Help under a tree noun or a shortcut comes from the tree manifest the
+	// reference renders, so it names the same verbs at every depth.
+	if words, ok := treeHelpWords(typed); ok {
+		if cliTreeTopicHidden(cliTreeTopic{Path: words[:1]}) {
+			return unknownCommand(strings.Join(leadingTreeWords(words), " "))
+		}
+		if printTreeManifestHelp(osStdout, words) {
+			return 0
+		}
+	}
+	// A topic is what the user typed: `mcp server --help` rewrites to `mcp
+	// --help`, whose topic is another page.
+	if topic, ok := cliTreeHelpTopic(args); ok && slices.Equal(typed, args) {
 		if cliTreeTopicHidden(topic) {
 			return unknownCommand(strings.Join(leadingTreeWords(typed), " "))
 		}
 		printCliTreeHelp(osStdout, topic)
 		return 0
 	}
+	previousUsageFrom, previousUsageTo := treeUsageFrom, treeUsageTo
+	treeUsageFrom, treeUsageTo = "", ""
+	if from, to, ok := cliTreeHelpRename(typed, args); ok {
+		treeUsageFrom, treeUsageTo = from, to
+	}
+	defer func() { treeUsageFrom, treeUsageTo = previousUsageFrom, previousUsageTo }()
 	if len(args) > 0 {
 		if noun, ok := lookupCliTreeNoun(args[0]); ok && oldPathDepth(args[:1]) == 0 {
 			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name))
@@ -210,6 +239,11 @@ func run(args []string) (status int) {
 	// A command that names its app only with --app also takes the app as the
 	// first argument after its verb.
 	rewritten, err := appArgumentAsFlag(args)
+	if err == nil {
+		// …and a command that takes the app only as its first argument also
+		// takes --app.
+		rewritten, err = appFlagAsArgument(rewritten)
+	}
 	if err != nil {
 		return printErr("Invalid app target", err)
 	}
@@ -250,17 +284,25 @@ func run(args []string) (status int) {
 		}
 		PrintUsage(os.Stderr, message, "cli")
 		return 1
+	case "completion":
+		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
+		// via cmdCompletion; the dispatcher is in completion.go. Like help,
+		// it must work with a broken profile: shells source it at startup.
+		return cmdCompletion(args[1:])
+	case "man":
+		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
+		// gregale-<command>(1). Dispatcher is in man.go.
+		return cmdMan(args[1:])
 	}
 	if err := validateSelectedProfile(); err != nil {
 		return printErr("Invalid connection profile", err)
 	}
+	if code, stop := connectionPreflight(args[0]); stop {
+		return code
+	}
 	switch args[0] {
 	case "profile":
 		return cmdProfile(args[1:])
-	case "completion":
-		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
-		// via cmdCompletion; the dispatcher is in completion.go.
-		return cmdCompletion(args[1:])
 	case "config":
 		return cmdConfig(args[1:])
 	case "link":
@@ -271,10 +313,6 @@ func run(args []string) (status int) {
 		return cmdContext(args[1:])
 	case "capabilities":
 		return cmdCapabilities(args[1:])
-	case "man":
-		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
-		// gregale-<command>(1). Dispatcher is in man.go.
-		return cmdMan(args[1:])
 	case "login":
 		return cmdLogin(args[1:])
 	case dispatchSignup:
@@ -681,9 +719,9 @@ func run(args []string) (status int) {
 	case "workflows":
 		// ADR-081: durable execution workflows (list|run|status|steps|resume|resumes|cancel|events).
 		return cmdWorkflows(args[1:])
-	case "automations":
-		// Manage declarative automation definitions: validate, save a draft, publish.
-		return cmdAutomations(args[1:])
+	case "stored-workflows":
+		// Manage stored workflow definitions: validate, save a draft, publish.
+		return cmdStoredWorkflows(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
 	case "data-repair":
@@ -774,7 +812,7 @@ func run(args []string) (status int) {
 		// requires an authenticated session + 5-min step-up.
 		return cmdInvitations(args[1:])
 	case "overage-cap":
-		// Tier B audit gap: per-account overage cap ($0.01/GB-h
+		// Tier B audit gap: per-account overage cap ($0.05/GB-h
 		// above the plan's included GB-h). schedd refuses new wakes
 		// once the cap is hit.
 		return cmdOverageCap(args[1:])
@@ -930,6 +968,7 @@ func printLocalCommandHelpDetail(w io.Writer, command cliCommand, showAll bool) 
 	case "rollback":
 		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
 		_, _ = fmt.Fprintf(w, "  %s\n", strings.TrimPrefix(rollbackStatusUsage, "usage: "))
+		_, _ = fmt.Fprintf(w, "  %s\n", strings.TrimPrefix(rollbackSwitchUsage, "usage: "))
 		if len(command.Examples) > 0 {
 			_, _ = fmt.Fprintln(w, "\nExamples:")
 			printCLIExamples(w, command.Examples)
@@ -1035,7 +1074,7 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []string) {
 	usage := localHelpSubcommandPath(command, names)
 	if len(sub.Subcommands) > 0 {
-		usage += " <" + sub.subcommandChoice() + ">"
+		usage += " " + sub.subcommandSynopsis()
 	}
 	if sub.SubcommandsAfterPositionals {
 		usage = localHelpArguments(usage, nil, sub.Flags, false)
@@ -1055,7 +1094,7 @@ func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []str
 		printCLIExamples(w, sub.Examples)
 	}
 	printHelpNotes(w, sub.Notes)
-	if takesAppArgument(sub.Flags, sub.Positionals, sub.Subcommands) {
+	if takesAppArgument(sub.Flags, sub.Positionals, sub.Subcommands, "app") {
 		_, _ = fmt.Fprintf(w, "\nThe app can also be the first argument: %s my-api\n", localHelpSubcommandPath(command, names))
 	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
@@ -1126,7 +1165,9 @@ func printLocalHelpFlag(w io.Writer, flag cliFlag) {
 	if flag.Req {
 		description += " (required)"
 	}
-	if flag.Repeatable {
+	// Many descriptions already end in "(repeatable)"; saying it twice read
+	// "OIDC audience (repeatable) (repeatable)".
+	if flag.Repeatable && !strings.Contains(description, "(repeatable") {
 		description += " (repeatable)"
 	}
 	label := mdFlagLabel(flag)

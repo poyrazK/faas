@@ -29,11 +29,13 @@ type mcpTaskMetricsSettings struct {
 }
 
 type mcpTaskQueueMetrics struct {
-	outstandingTasks             int64
-	oldestAgeSeconds             float64
-	withoutCompatibleWorkerTasks int64
-	handlerCompatibility         []mcpTaskHandlerCompatibility
-	compatibilityTruncated       bool
+	outstandingTasks                                                   int64
+	oldestAgeSeconds                                                   float64
+	withoutCompatibleWorkerTasks                                       int64
+	runningTasks, capacityWaitingTasks, failedTasks, retryWaitingTasks int64
+	activeWorkers, drainingWorkers, unsupportedHandlerTasks            int64
+	handlerCompatibility                                               []mcpTaskHandlerCompatibility
+	compatibilityTruncated                                             bool
 }
 
 type mcpTaskHandlerCompatibility struct {
@@ -123,13 +125,7 @@ func (publisher *mcpTaskMetricsPublisher) run(ctx context.Context, runtime *mcpT
 		defer cancel()
 		metrics, err := runtime.queueMetrics(metricsContext)
 		if err == nil {
-			err = pushMCPTaskMetric(metricsContext, client, settings, "mcp_tasks_outstanding", metrics.outstandingTasks)
-		}
-		if err == nil {
-			err = pushMCPTaskMetric(metricsContext, client, settings, "mcp_tasks_oldest_age_seconds", metrics.oldestAgeSeconds)
-		}
-		if err == nil {
-			err = pushMCPTaskMetric(metricsContext, client, settings, "mcp_tasks_without_compatible_worker", metrics.withoutCompatibleWorkerTasks)
+			err = publishMCPTaskGauges(metricsContext, client, settings, metrics)
 		}
 		if err == nil && observer {
 			err = pushMCPTaskCompatibilityReport(metricsContext, client, settings, metrics.handlerCompatibility, metrics.compatibilityTruncated)
@@ -160,6 +156,29 @@ func (publisher *mcpTaskMetricsPublisher) run(ctx context.Context, runtime *mcpT
 			publish()
 		}
 	}
+}
+
+func publishMCPTaskGauges(ctx context.Context, client *http.Client, settings mcpTaskMetricsSettings, metrics mcpTaskQueueMetrics) error {
+	for _, gauge := range []struct {
+		name  string
+		value any
+	}{
+		{"mcp_tasks_outstanding", metrics.outstandingTasks},
+		{"mcp_tasks_oldest_age_seconds", metrics.oldestAgeSeconds},
+		{"mcp_tasks_without_compatible_worker", metrics.withoutCompatibleWorkerTasks},
+		{"mcp_tasks_running", metrics.runningTasks},
+		{"mcp_tasks_capacity_waiting", metrics.capacityWaitingTasks},
+		{"mcp_tasks_failed", metrics.failedTasks},
+		{"mcp_tasks_retry_waiting", metrics.retryWaitingTasks},
+		{"mcp_tasks_active_workers", metrics.activeWorkers},
+		{"mcp_tasks_draining_workers", metrics.drainingWorkers},
+		{"mcp_tasks_unsupported_handler_tasks", metrics.unsupportedHandlerTasks},
+	} {
+		if err := pushMCPTaskMetric(ctx, client, settings, gauge.name, gauge.value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func pushMCPTaskMetric(ctx context.Context, client *http.Client, settings mcpTaskMetricsSettings, name string, value any) error {
@@ -218,29 +237,16 @@ func (runtime *mcpTaskRuntime) queueMetrics(ctx context.Context) (mcpTaskQueueMe
 		}
 	}
 	var metrics mcpTaskQueueMetrics
-	err := runtime.pool.QueryRow(ctx, `
-		SELECT LEAST(COUNT(*), 1000000000000::bigint)::bigint,
-		       LEAST(GREATEST(COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(created_at))), 0), 0), 1000000000000)::double precision,
-		       (SELECT LEAST(COUNT(*),1000000000000::bigint)::bigint
-		          FROM gregale_mcp_tasks AS queued
-		         WHERE queued.namespace=$1 AND queued.expires_at>clock_timestamp()
-		           AND (queued.status='queued' OR (queued.status='running' AND queued.lease_expires_at<=clock_timestamp()))
-		           AND (queued.attempt_count<3 OR (queued.status='queued' AND queued.resume_pending AND queued.attempt_count=3))
-		           AND NOT EXISTS (
-		             SELECT 1 FROM gregale_mcp_task_worker_handlers AS handler
-		              WHERE handler.namespace=queued.namespace AND handler.tool_name=queued.tool_name
-		                AND handler.handler_version=queued.handler_version
-		                AND handler.heartbeat_at>clock_timestamp()-interval '45 seconds'
-		           ))
-		  FROM gregale_mcp_tasks
-		 WHERE namespace = $1
-		   AND expires_at > clock_timestamp()
-		   AND status IN ('queued', 'running')
-	`, runtime.namespace).Scan(&metrics.outstandingTasks, &metrics.oldestAgeSeconds, &metrics.withoutCompatibleWorkerTasks)
+	err := runtime.pool.QueryRow(ctx, mcpTaskQueueMetricsSQL, runtime.namespace, runtime.execution.maxRunning, runtime.execution.maxRunningPerOwner, runtime.execution.maxAttempts).Scan(
+		&metrics.outstandingTasks, &metrics.oldestAgeSeconds, &metrics.runningTasks, &metrics.capacityWaitingTasks,
+		&metrics.failedTasks, &metrics.retryWaitingTasks, &metrics.activeWorkers, &metrics.drainingWorkers,
+		&metrics.unsupportedHandlerTasks, &metrics.withoutCompatibleWorkerTasks)
 	if err != nil {
 		return mcpTaskQueueMetrics{}, err
 	}
-	if metrics.outstandingTasks < 0 || metrics.oldestAgeSeconds < 0 || metrics.withoutCompatibleWorkerTasks < 0 {
+	if metrics.outstandingTasks < 0 || metrics.oldestAgeSeconds < 0 || metrics.withoutCompatibleWorkerTasks < 0 ||
+		metrics.runningTasks < 0 || metrics.capacityWaitingTasks < 0 || metrics.failedTasks < 0 || metrics.retryWaitingTasks < 0 ||
+		metrics.activeWorkers < 0 || metrics.drainingWorkers < 0 || metrics.unsupportedHandlerTasks < 0 {
 		return mcpTaskQueueMetrics{}, errors.New("MCP task queue metrics returned invalid values")
 	}
 	if runtime.role == "observer" {
@@ -363,20 +369,22 @@ func (runtime *mcpTaskRuntime) assertReadOnly(ctx context.Context) error {
 	if !tableExists || canInsert || canUpdate || canDelete || canTruncate || canReference || canCreateTrigger || canCreateSchemas || canCreateInTaskSchema {
 		return errors.New("MCP task observer requires read-only PostgreSQL access")
 	}
-	var handlersTableExists, handlersCanWrite bool
-	err = runtime.pool.QueryRow(ctx, `
+	for _, table := range []string{taskWorkerHandlersTable, "gregale_mcp_task_owners", "gregale_mcp_task_workers"} {
+		var handlersTableExists, handlersCanWrite bool
+		err = runtime.pool.QueryRow(ctx, `
 		SELECT pg_catalog.to_regclass($1)::oid IS NOT NULL,
 		       COALESCE(pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'INSERT') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass($1)::oid,'INSERT') OR
 		                pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'UPDATE') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass($1)::oid,'UPDATE') OR
 		                pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'DELETE') OR pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'TRUNCATE') OR
 		                pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'REFERENCES') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass($1)::oid,'REFERENCES') OR
 		                pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'TRIGGER'),false)
-	`, taskWorkerHandlersTable).Scan(&handlersTableExists, &handlersCanWrite)
-	if err != nil {
-		return err
-	}
-	if !handlersTableExists || handlersCanWrite {
-		return errors.New("MCP task observer requires read-only PostgreSQL access")
+	`, table).Scan(&handlersTableExists, &handlersCanWrite)
+		if err != nil {
+			return err
+		}
+		if !handlersTableExists || handlersCanWrite {
+			return errors.New("MCP task observer requires read-only PostgreSQL access")
+		}
 	}
 	return nil
 }

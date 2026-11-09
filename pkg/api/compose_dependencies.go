@@ -9,6 +9,11 @@ import (
 const (
 	ComposeDependencyStarted = "service_started"
 	ComposeDependencyHealthy = "service_healthy"
+	// ComposeDependencyCompleted is read only by the Compose scan, which runs
+	// the awaited service as the waiting service's release command
+	// (ADR-20261102192943). It never reaches an app's stored conditions, so
+	// ValidateComposeDependencyConditions still refuses it.
+	ComposeDependencyCompleted = "service_completed_successfully"
 )
 
 // ValidateComposeDependencyConditions checks the source-owned conditions on

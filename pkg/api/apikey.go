@@ -416,24 +416,30 @@ const (
 	// deploy:write so a CI key cannot silently take over a source-control
 	// connection.
 	ScopeGithubManage = "github:manage"
+	// ScopePreviewsRead reads the PR preview status of one app and nothing
+	// else. Only an OIDC exchange issues it (capability preview-read), bound
+	// to that app, so pull request CI can wait for its preview without a
+	// stored key (ADR-20261102203228). It is not in validScopes: no API key
+	// carries it.
+	ScopePreviewsRead = "previews:read"
 	// Reserved for synthetic principals backed by platform_tenant_access_tokens.
 	// They are deliberately excluded from validScopes and cannot be minted as
 	// account-wide API-key scopes.
-	ScopePlatformTenantUsageRead         = "platform_tenant:usage:read"
-	ScopePlatformTenantStatementsRead    = "platform_tenant:statements:read"
-	ScopePlatformTenantActivationRead    = "platform_tenant:activation:read"
-	ScopePlatformTenantHostnamesManage   = "platform_tenant:hostnames:manage"
-	ScopePlatformTenantCredentialsRead   = "platform_tenant:credentials:read"
-	ScopePlatformTenantCredentialsManage = "platform_tenant:credentials:manage"
-	ScopePlatformTenantConsumersManage   = "platform_tenant:consumers:manage"
-	ScopePlatformTenantInvocationsRead   = "platform_tenant:invocations:read"
-	ScopePlatformTenantInvocationsManage = "platform_tenant:invocations:manage"
-	ScopePlatformTenantOperationsRead    = "platform_tenant:operations:read"
-	ScopePlatformTenantOperationsManage  = "platform_tenant:operations:manage"
-	ScopePlatformTenantEventsRead        = "platform_tenant:events:read"
-	ScopePlatformTenantEventsManage      = "platform_tenant:events:manage"
-	ScopePlatformTenantAutomationsRead   = "platform_tenant:automations:read"
-	ScopePlatformTenantAutomationsManage = "platform_tenant:automations:manage"
+	ScopePlatformTenantUsageRead             = "platform_tenant:usage:read"
+	ScopePlatformTenantStatementsRead        = "platform_tenant:statements:read"
+	ScopePlatformTenantActivationRead        = "platform_tenant:activation:read"
+	ScopePlatformTenantHostnamesManage       = "platform_tenant:hostnames:manage"
+	ScopePlatformTenantCredentialsRead       = "platform_tenant:credentials:read"
+	ScopePlatformTenantCredentialsManage     = "platform_tenant:credentials:manage"
+	ScopePlatformTenantConsumersManage       = "platform_tenant:consumers:manage"
+	ScopePlatformTenantInvocationsRead       = "platform_tenant:invocations:read"
+	ScopePlatformTenantInvocationsManage     = "platform_tenant:invocations:manage"
+	ScopePlatformTenantOperationsRead        = "platform_tenant:operations:read"
+	ScopePlatformTenantOperationsManage      = "platform_tenant:operations:manage"
+	ScopePlatformTenantEventsRead            = "platform_tenant:events:read"
+	ScopePlatformTenantEventsManage          = "platform_tenant:events:manage"
+	ScopePlatformTenantStoredWorkflowsRead   = "platform_tenant:stored_workflows:read"
+	ScopePlatformTenantStoredWorkflowsManage = "platform_tenant:stored_workflows:manage"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
@@ -551,6 +557,12 @@ var (
 	// deployment it just created without receiving account-wide apps:read.
 	ScopesDeploymentReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite}
 
+	// ScopesPreviewStatusReadSurface: read a PR preview's status
+	// (GET /v1/preview/{slug} and its environment). deploy:write is admitted
+	// as for deployment reads, and previews:read is the preview-read OIDC
+	// bearer's only scope (ADR-20261102203228).
+	ScopesPreviewStatusReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite, ScopePreviewsRead}
+
 	// ScopesDeployTargetReadSurface: read the app a deploy targets
 	// (GET /v1/apps/{slug}). Every CLI deploy reads its app first, so
 	// deploy:write is admitted for the same reason as above: a deploy
@@ -577,6 +589,12 @@ var (
 	// requires this surface in addition to ScopesDeployWriteSurface.
 	// Granted by admin or secrets:read.
 	ScopesAppForkSecretsSurface = []string{ScopeAdmin, ScopeSecretsRead}
+
+	// ScopesAIContentReadSurface: GET
+	// /v1/outbound/integrations/{integration}/ai-requests/{request}/content
+	// (ADR 20261027132936). Captured prompts and answers can hold personal
+	// data, so reading them is granted by admin or secrets:read.
+	ScopesAIContentReadSurface = []string{ScopeAdmin, ScopeSecretsRead}
 
 	// ScopesEnvWriteSurface: PUT/DELETE on /v1/apps/{slug}/env/{key}
 	// (issue #395 / ADR-045). Granted by admin or env:write.

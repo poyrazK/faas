@@ -636,9 +636,10 @@ type OpsMetrics struct {
 	issueEventsRecorded *prometheus.CounterVec
 	// requestTelemetryRecorded (ADR-127 PR-B) — counter the
 	// apid gRPC handler (cmd/apid/grpc_server_request_telemetry.go)
-	// increments per outcome. outcome ∈ {inserted, rate_limited,
-	// db_error}. `inserted` is the §12 customer-telemetry-ingest
-	// panel (rate over 5m). `rate_limited` is the per-account
+	// increments per outcome. outcome ∈ {inserted, not_retained,
+	// rate_limited, db_error}. `inserted` is the §12 customer-telemetry-ingest
+	// panel (rate over 5m). `not_retained` is a row whose plan keeps no
+	// request telemetry (usage only). `rate_limited` is the per-account
 	// token-bucket overflow path (DebugTelemetryRequestsPerMinute
 	// exceeded). `db_error` is the per-row INSERT failure path.
 	// The closed label set keeps cardinality bounded.
@@ -1288,6 +1289,10 @@ type OpsMetrics struct {
 	// in the pre-instantiation loop below so every plan label surfaces
 	// in /metrics from the moment the daemon boots.
 	residentGBPerCustomer *prometheus.GaugeVec
+	// residentPayingCustomers: the per-plan paying-customer count behind
+	// residentGBPerCustomer, so FaasResidentGbPerCustomerHigh can skip a
+	// plan whose average comes from one or two accounts.
+	residentPayingCustomers *prometheus.GaugeVec
 	// billingCapExceededTotal: counter incremented by meterd's quota
 	// tick every time the per-account overage_cap_cents is met and
 	// the overage-row insert is skipped (issue #279). Labelled by
@@ -2368,7 +2373,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	ownerCacheTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_owner_cache_total",
-		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a coordinated wake selected other than the entry's deployment; it decided from its own reads), organization (a team organization's app, which the cache does not serve).",
+		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a wake named or selected a deployment other than the entry's production one, or an environment the entry does not serve; it decided from its own reads), organization (a team organization's app, which the cache does not serve).",
 	}, []string{"outcome"})
 	for _, outcome := range OwnerCacheOutcomes {
 		ownerCacheTotal.WithLabelValues(outcome)
@@ -3235,6 +3240,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_resident_gb_per_customer",
 		Help: "Month-to-date GB-RAM-hours divided by elapsed UTC-month hours and paying-customer count, per plan (ADR-031). Spec §12 target 0.305 (≈312 MB/customer); > 0.45 warns. Emitted by meterd once per ResidencyInterval.",
 	}, []string{"plan"})
+	residentPayingCustomers := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_resident_paying_customers",
+		Help: "Paying customers per plan counted by the last residency tick: the divisor of resident_gb_per_customer. Emitted by meterd once per ResidencyInterval.",
+	}, []string{"plan"})
 	billingCapExceededTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_billing_cap_exceeded_total",
 		Help: "Count of meterd quota ticks where accounts.overage_cap_cents was met and the overage-row insert was skipped (issue #279). Per-plan label so the §12 dashboard can split cap hits across plans. A non-zero rate is informational: a cap-hit account is operating as designed (the customer hit the operator-set monthly ceiling), not a failure mode.",
@@ -4080,7 +4089,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
 		buildExportCleanupTotal, buildExportCleanupErrors, buildExportBytes, builderSliceOOMKills,
-		residentGBPerCustomer, billingCapExceededTotal,
+		residentGBPerCustomer, residentPayingCustomers, billingCapExceededTotal,
 		meterdFloorAppliedTotal, meteredMBSecondsTotal,
 		// ADR-123 alert-preset signal series — PR-A (3) + PR-B (2). Each
 		// backs one of the 8 alert_presets catalog rows. Without
@@ -4359,7 +4368,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Customer-facing automatic error grouping ingest outcomes (ADR-096), labelled by outcome ∈ {ok, redaction_failed, rate_limited, db_error}. `ok` is the §12 customer-error-ingest panel (rate over 5m). `redaction_failed` is the tripwire for pkg/redact panicking — MUST stay at 0. `rate_limited` is the LRU-cardinality backstop firing when an app exceeds CardinalityLimit fingerprints. `db_error` is the publisher's per-row drop signal — incremented for EVERY row of a failed flush batch (the batch is drained before flushBatch is called, so failures always lose data; per-row observe gives the §12 panel an accurate outage timeline rather than only the 5th-consecutive-failure tripwire). Single-registry: registered on every daemon; only gatewayd-internal + apid increment via ObserveAppErrorsRecorded.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, appErrorsRecorded)
-	issueEventsRecorded := prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_issue_events_recorded_total", Help: "Gregale Issues accepted, duplicate, quota, rate, conflict, or persistence outcomes; no customer identifiers."}, []string{"outcome"})
+	issueEventsRecorded := prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_issue_events_recorded_total", Help: "Gregale Issues ingestion and bounded HTTP retry outcomes; no customer identifiers."}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, issueEventsRecorded)
 	// ADR-127 PR-B: production debugger ingest outcomes.
 	// outcome ∈ {inserted, rate_limited, db_error}. `inserted`
@@ -5431,6 +5440,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// least one plan tick has fired (ADR-031).
 	for _, plan := range api.Plans {
 		residentGBPerCustomer.WithLabelValues(string(plan))
+		residentPayingCustomers.WithLabelValues(string(plan))
 	}
 	// Pre-instantiate the closed plan set for the billingCapExceeded
 	// counter (issue #279). Same precedent as residentGBPerCustomer
@@ -5773,6 +5783,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		buildExportBytes:                     buildExportBytes,
 		builderSliceOOMKills:                 builderSliceOOMKills,
 		residentGBPerCustomer:                residentGBPerCustomer,
+		residentPayingCustomers:              residentPayingCustomers,
 		billingCapExceededTotal:              billingCapExceededTotal,
 		meterdFloorAppliedTotal:              meterdFloorAppliedTotal,
 		meteredMBSecondsTotal:                meteredMBSecondsTotal,
@@ -8986,6 +8997,15 @@ func (m *OpsMetrics) SetResidentGBPerCustomer(plan string, gb float64) {
 	m.residentGBPerCustomer.WithLabelValues(plan).Set(gb)
 }
 
+// SetResidentPayingCustomers writes the per-plan paying-customer count
+// behind SetResidentGBPerCustomer. Safe on a nil receiver.
+func (m *OpsMetrics) SetResidentPayingCustomers(plan string, n int) {
+	if m == nil {
+		return
+	}
+	m.residentPayingCustomers.WithLabelValues(plan).Set(float64(n))
+}
+
 // BillingCapExceededTotal is the per-plan counter the meterd quota
 // tick increments every time accounts.overage_cap_cents is met and
 // the overage-row insert is skipped (issue #279). Labelled by plan
@@ -10862,6 +10882,17 @@ type appLabelSet struct {
 	cap      int
 }
 
+// has reports whether app is admitted as its own label, without admitting it.
+func (s *appLabelSet) has(app string) bool {
+	if app == labelAppUnknown || app == otherAppLabel {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.admitted[app]
+	return ok
+}
+
 // newAppLabelSet constructs an admission set with the given
 // capacity. capacity must be > 0; the call panics otherwise to
 // fail loud at boot rather than silently allow unbounded
@@ -11326,7 +11357,7 @@ func (m *OpsMetrics) ObserveIssueEvent(outcome string) {
 		return
 	}
 	switch outcome {
-	case "accepted", "duplicate", "quota_exceeded", "rate_limited", "conflict", "db_error":
+	case "accepted", "duplicate", "invalid", "quota_exceeded", "rate_limited", "conflict", "db_error", "retry_recovered", "retry_dropped", "retry_skipped":
 	default:
 		return
 	}

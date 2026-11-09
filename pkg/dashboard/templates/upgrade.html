@@ -34,13 +34,21 @@
     {{template "email-verification-banner" .}}
     {{if .Data}}
       {{if .Data.Notice}}<p class="notice">{{.Data.Notice}}</p>{{end}}
+      {{if .Data.ScheduledChange}}
+        <p class="notice">{{.Data.ScheduledChange}}</p>
+        <form method="POST" action="/dashboard/upgrade" style="margin-bottom:1rem">
+          <input type="hidden" name="csrf_token" value="{{.Data.ConfirmToken}}">
+          <input type="hidden" name="plan" value="{{.Data.CurrentPlan}}">
+          <button type="submit">Keep subscription</button>
+        </form>
+      {{end}}
       {{if .Data.Target}}
         <h1>Upgrade to {{.Data.Target.Plan}}</h1>
         <p>Current plan: {{.Data.CurrentPlan}}</p>
         <table>
-          <tr><th>Monthly price</th><td>{{.Data.Target.PriceFormatted}}</td></tr>
+          <tr><th>Monthly price (before tax)</th><td>{{.Data.Target.PriceFormatted}}</td></tr>
           <tr><th>Included GB-hours / month</th><td>{{.Data.Target.IncludedGBHours}}</td></tr>
-          <tr><th>Overage</th><td>$0.01 per GB-hour above the included allowance, billed monthly</td></tr>
+          <tr><th>Overage</th><td>$0.05 per GB-hour above the included allowance, billed monthly</td></tr>
           <tr><th>Max app memory (RAM MB)</th><td>{{.Data.Target.RAMMB}}</td></tr>
           <tr><th>Max concurrent instances</th><td>{{.Data.Target.MaxConcurrency}}</td></tr>
           <tr><th>Max deployed apps</th><td>{{.Data.Target.DeployedApps}}</td></tr>
@@ -49,13 +57,26 @@
           <form method="POST" action="/dashboard/upgrade" style="margin-top:1rem">
             <input type="hidden" name="csrf_token" value="{{.Data.ConfirmToken}}">
             <input type="hidden" name="plan" value="{{.Data.Target.Plan}}">
-            <button type="submit">Continue to secure checkout ({{.Data.ProviderLabel}})</button>
+            {{if .Data.SubscriptionChange}}
+              <button type="submit">Upgrade now</button>
+            {{else}}
+              <button type="submit">Continue to secure checkout ({{.Data.ProviderLabel}})</button>
+            {{end}}
           </form>
-          <p style="margin-top:0.5rem; font-size:0.9em; color:#666">
-            You will be redirected to {{.Data.ProviderLabel}}, which handles payment and VAT as merchant of record.
-            No card data touches this server. Your plan changes as soon as the payment is confirmed —
-            usually within a minute of finishing checkout.
-          </p>
+          {{if .Data.SubscriptionChange}}
+            <p style="margin-top:0.5rem; font-size:0.9em; color:#666">
+              {{.Data.ProviderLabel}} charges the prorated difference for the rest of this billing period, plus any
+              sales tax or VAT, to the payment method on your subscription now. Your plan changes once the charge
+              succeeds; if it fails, nothing changes.
+            </p>
+          {{else}}
+            <p style="margin-top:0.5rem; font-size:0.9em; color:#666">
+              You will be redirected to {{.Data.ProviderLabel}}, which handles payment and VAT as merchant of record.
+              Prices exclude tax; any sales tax or VAT where you live is added at checkout.
+              No card data touches this server. Your plan changes as soon as the payment is confirmed —
+              usually within a minute of finishing checkout.
+            </p>
+          {{end}}
         {{else}}
           <p>{{.Data.Reason}}</p>
           {{if .Data.PortalURL}}

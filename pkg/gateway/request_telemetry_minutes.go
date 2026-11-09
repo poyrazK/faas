@@ -17,18 +17,33 @@ type requestTelemetryMinutes struct {
 	index map[string]int
 	// ready holds closed and exact rows in shipping order.
 	ready []RequestTelemetryRow
+	// exact counts the exact samples each open bucket has shipped
+	// (ADR-127 amendment 2026-10-31); a bucket's count goes when its minute
+	// closes.
+	exact map[string]exactSamples
+}
+
+type exactSamples struct {
+	n      int
+	minute time.Time
 }
 
 func newRequestTelemetryMinutes() *requestTelemetryMinutes {
-	return &requestTelemetryMinutes{index: make(map[string]int)}
+	return &requestTelemetryMinutes{index: make(map[string]int), exact: make(map[string]exactSamples)}
 }
 
 // add folds row into its open bucket. An exact row never folds: it is ready
-// at once, as it is on the per-batch path.
-func (m *requestTelemetryMinutes) add(row RequestTelemetryRow) {
-	row, key := requestTelemetryBucketed(row)
+// at once, as it is on the per-batch path. So are the first
+// requestTelemetryExactPerBucket exact samples of a bucket's minute.
+func (m *requestTelemetryMinutes) add(original RequestTelemetryRow) {
+	row, key := requestTelemetryBucketed(original)
 	if key == "" {
 		m.ready = append(m.ready, row)
+		return
+	}
+	if sampled := m.exact[key]; original.exactSample && sampled.n < requestTelemetryExactPerBucket {
+		m.exact[key] = exactSamples{n: sampled.n + 1, minute: row.ReceivedAt}
+		m.ready = append(m.ready, exactTelemetryRow(original, row))
 		return
 	}
 	if idx, ok := m.index[key]; ok {
@@ -60,9 +75,15 @@ func (m *requestTelemetryMinutes) closeAll() {
 	m.ready = append(m.ready, m.rows...)
 	m.keys, m.rows = nil, nil
 	clear(m.index)
+	clear(m.exact)
 }
 
 func (m *requestTelemetryMinutes) closeBefore(cutoff time.Time) {
+	for key, sampled := range m.exact {
+		if sampled.minute.Before(cutoff) {
+			delete(m.exact, key)
+		}
+	}
 	keys, rows := m.keys[:0], m.rows[:0]
 	clear(m.index)
 	for i, row := range m.rows {
@@ -117,13 +138,16 @@ func (m *requestTelemetryMinutes) takeAll() []RequestTelemetryRow {
 	return m.takeReady(len(m.ready))
 }
 
-// pendingByApp counts the requests held open or waiting to ship, per app.
-func (m *requestTelemetryMinutes) pendingByApp() map[uuid.UUID]int {
+// undeliveredByApp counts the requests in closed minutes that have not
+// shipped yet, per app. Requests still folding into a minute that has not
+// passed its grace are not pending: no consumer reads that minute yet (route
+// evidence waits api.RouteHealthIngestionLag, route removal two minutes), and
+// counting them kept every app with traffic permanently "pending", which
+// blocked route removal for good (ADR-20261028110044 amendment 4).
+func (m *requestTelemetryMinutes) undeliveredByApp() map[uuid.UUID]int {
 	counts := make(map[uuid.UUID]int)
-	for _, rows := range [][]RequestTelemetryRow{m.rows, m.ready} {
-		for _, row := range rows {
-			counts[row.AppID] += normalizedRequestTelemetryCount(row.Count)
-		}
+	for _, row := range m.ready {
+		counts[row.AppID] += normalizedRequestTelemetryCount(row.Count)
 	}
 	return counts
 }

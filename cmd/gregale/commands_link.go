@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -215,7 +216,7 @@ func cmdContext(args []string) int {
 	if err != nil {
 		return printErr("Could not read current directory", err)
 	}
-	context, path, err := linkedProjectContext(cwd)
+	context, path, err := targetProjectContext(cwd)
 	if err != nil && !errors.Is(err, errProjectContextNotFound) {
 		return printErr("Could not read project context", err)
 	}
@@ -224,7 +225,7 @@ func cmdContext(args []string) int {
 			return printErr("Invalid verification endpoint", err)
 		}
 	}
-	connection := effectiveConnectionContext()
+	connection := displayConnectionContext()
 	overview := projectTargeting(context, path, configPath, connection)
 	var verification *contextVerification
 	if *verify {
@@ -252,9 +253,14 @@ func cmdContext(args []string) int {
 			}
 		} else {
 			renderConnectionContext()
-			if context.Project == "" {
+			switch {
+			case filepath.Base(path) != projectContextFileName:
+				// ADR-20261107180000: no local link; the committed
+				// gregale.yaml names the target.
+				PrintOK(osStdout, "Committed project target (gregale.yaml); gregale link overrides it for this checkout")
+			case context.Project == "":
 				PrintOK(osStdout, "Saved standalone app context")
-			} else {
+			default:
 				PrintOK(osStdout, "Linked project context")
 			}
 			renderProjectContext(osStdout, receipt)

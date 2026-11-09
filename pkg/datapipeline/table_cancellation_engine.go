@@ -27,6 +27,14 @@ func (e *Engine) reconcileTableCancellation(ctx context.Context, p Pipeline, raw
 	if err != nil {
 		return err
 	}
+	if c.Kind == "live" {
+		if err = checkLiveRemovalSource(ctx, p, source, stage != ""); err != nil {
+			return err
+		}
+		if err = checkRecordedSourceStorage(ctx, p, source, target, liveRemovalRelations(p, stage != "")); err != nil {
+			return err
+		}
+	}
 	if stage == "" && c.State != "approved" && c.Kind == "" {
 		var finished bool
 		if err = target.QueryRow(ctx, `SELECT table_stage='complete' AND schema_change=$2 AND schema_phase='' FROM gregale_pipeline.mirrors WHERE pipeline_id=$1 AND generation=$3`, p.ID, p.SchemaApproval, p.Generation).Scan(&finished); err != nil {
@@ -47,7 +55,7 @@ func (e *Engine) reconcileTableCancellation(ctx context.Context, p Pipeline, raw
 	if err != nil {
 		return err
 	}
-	if err = ensureSubscription(ctx, p, source, target, conninfo); err != nil {
+	if err = ensureSubscription(ctx, p, source, target, conninfo, current); err != nil {
 		return err
 	}
 	native, err := cancellationNativeRelations(ctx, p, target)
@@ -125,8 +133,10 @@ func (e *Engine) reconcileTableCancellation(ctx context.Context, p Pipeline, raw
 			if err = previewLiveRemoval(ctx, p, source, target); err != nil {
 				return err
 			}
+			err = beginLiveRemoval(ctx, p, source, target, current)
+		} else {
+			err = beginTableCancellation(ctx, p, target, current)
 		}
-		err = beginTableCancellation(ctx, p, target, current)
 		c.Stage = "retiring"
 	case "retiring":
 		err = retireCancelledRelation(ctx, p, source, target, current)
@@ -179,7 +189,7 @@ func (e *Engine) finishTableCancellation(ctx context.Context, p Pipeline, source
 	if e.RefreshSchema == nil {
 		return &blocked{"schema_api_refresh_unavailable", false}
 	}
-	refresh := SchemaChange{ID: p.SchemaChange.Cancellation.ID}
+	refresh := SchemaChange{ID: p.SchemaChange.Cancellation.ID, Retry: p.SchemaChange.Cancellation.RefreshRetry}
 	refreshes, refreshed, err := e.RefreshSchema(ctx, p, refresh)
 	ob.SchemaChange.Refreshes = refreshes
 	if err != nil {
@@ -198,7 +208,12 @@ func (e *Engine) finishTableCancellation(ctx context.Context, p Pipeline, source
 	if stage == "refreshing" {
 		stage = "copying"
 	}
-	if err = completeTableCancellation(ctx, p, target, &result, stage, current); err != nil {
+	if p.SchemaChange.Cancellation.Kind == "live" {
+		err = completeLiveRemoval(ctx, p, source, target, &result, stage, current)
+	} else {
+		err = completeTableCancellation(ctx, p, target, &result, stage, current)
+	}
+	if err != nil {
 		return err
 	}
 	ob.TablesReady = ready

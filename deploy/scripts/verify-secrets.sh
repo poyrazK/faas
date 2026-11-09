@@ -123,6 +123,13 @@ for unit in faas-gatewayd-internal faas-gatewayd-public faas-imaged faas-githubd
   "
 done
 
+# 4b. gatewayd-internal, where it runs, signs edge challenges and traffic
+#     deadlines with the gateway fleet key instead (ADR-20261102191500).
+check "faas-gatewayd-internal loads FAAS_GATEWAY_FLEET_KEY_FILE where installed" bash -c '
+  ! systemctl cat faas-gatewayd-internal >/dev/null 2>&1 \
+    || systemctl show faas-gatewayd-internal -p Environment 2>/dev/null | grep -q "FAAS_GATEWAY_FLEET_KEY_FILE"
+'
+
 # 5. apid's unit file references LoadCredential (defence in depth).
 check "faas-apid.service uses LoadCredential=" bash -c '
   grep -q "^LoadCredential=faas_session_key:" /etc/systemd/system/faas-apid.service

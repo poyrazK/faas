@@ -312,6 +312,10 @@ func (m *MemStore) DrainingDatabaseSwitches(_ context.Context, limit int) ([]Dat
 func (m *MemStore) ReleasesUndoneByDatabaseSwitches(_ context.Context, appID, scope string) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.releasesUndoneByDatabaseSwitchesLocked(appID, scope), nil
+}
+
+func (m *MemStore) releasesUndoneByDatabaseSwitchesLocked(appID, scope string) []string {
 	scope = normalizedDeploymentScope(scope)
 	var out []string
 	for _, sw := range m.databaseSwitches {
@@ -325,7 +329,7 @@ func (m *MemStore) ReleasesUndoneByDatabaseSwitches(_ context.Context, appID, sc
 		}
 	}
 	sort.Strings(out)
-	return out, nil
+	return out
 }
 
 // validDatabaseSwitchProgress checks the fields a save may change.

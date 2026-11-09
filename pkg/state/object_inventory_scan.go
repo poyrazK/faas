@@ -74,6 +74,12 @@ func objectBucketInventoryStale(u ObjectBucketUsage, maxAge time.Duration, now t
 	if !objectInventoryStale(u.ObservedAt, maxAge, now) {
 		return false
 	}
+	// A versioning change takes at least ObjectBucketVersioningPropagation,
+	// longer than maxAge; refusing reads for its duration was an outage
+	// (11-04 prod test). A held bucket cannot grow, so a past inventory holds.
+	if u.InventoryHeld && !u.ObservedAt.IsZero() {
+		return false
+	}
 	s := u.InventoryScan
 	progressing := s.Pages > 0 && s.StartedAt.After(u.ObservedAt) && !s.ProgressAt.After(now) &&
 		now.Sub(s.ProgressAt) <= api.ObjectInventoryScanProgressWindow

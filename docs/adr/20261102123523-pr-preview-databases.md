@@ -77,11 +77,11 @@
        - A copy on Neon is a branch of its source's project, so it also stops at that project's water level.
      - **Compute:**
        - Once the account's pooled compute reaches 80% of its compute ceiling (the allowance, or twice it with overage on), its preview databases are held.
-       - The hold is the compute cap's own quota (ADR-20261025094915): a provider object holding only preview databases gets what the account has left of 80% of the ceiling instead of what it has left of the whole ceiling. The provider suspends its compute at that quota between sweeps, and connections are refused.
-       - The hold lifts with the provider's next monthly counters, or when an upgrade or overage raises the ceiling.
+       - The hold is the cap sweep's compute hold (ADR-20261025094915 amendment 2026-11-05): from 80% the sweep holds each preview database, so its compute stops and its connections are refused, and below 80% it releases it. Past the whole ceiling the sweep holds every database, as before.
+       - The quota is the backstop, as for production: a provider object holding only preview databases gets what the account has left of 80% of the ceiling instead of what it has left of the whole ceiling.
+       - The hold lifts with the next month's use, or when an upgrade or overage raises the ceiling.
        - It follows the compute cap's mode: shadow logs it, on applies it. A backend without compute quotas (the native backend today) caps nothing, previews included.
-       - Production databases keep today's caps. A provider object a preview database shares with production (a `copy` branched in its source's Neon project) keeps production's quota.
-       - A copy is held with the delete grace's provider hold instead (ADR-20261029174950): at 80% the sweep disables the copy's endpoint, so its compute stops and its connections are refused, and below 80% it enables it again. A preview database is never scheduled for deletion, so the hold has no other owner. The sweep caches each confirmed hold, so it writes only a change.
+       - Production databases keep today's caps. A provider object a preview database shares with production (a `copy` branched in its source's Neon project) keeps production's quota, so only the hold stops a copy.
   7. **Visibility.**
      - Preview databases are listed with the account's databases. The view marks them (`preview`: source database ID, PR number), omitted for every other database.
      - Customers can read, connect to and delete them. Binding them to another app, restoring from them and setting their `previews` are refused with `409 managed_postgres_preview_database`.
@@ -106,7 +106,7 @@
      Organization-owned databases are not set up in this step: setup and the setting route use the account's personal ownership, as developer-session databases do.
   3b. **The sweep** (`previewdb.RunSweep`) for preview databases whose environment closed while a teardown stopped midway, or while an older apid tore it down. It pages through the undeleted preview databases across accounts and checks each against its account's undeleted previews (`ListPreviewsForAccount`); an account whose previews cannot be listed keeps its databases. It is not behind the flag: it only removes preview databases.
   4. **Guards:** the storage pool leaves preview databases out of its sum, and the compute cap gives preview-only provider objects 80% of the ceiling (decision 6), both in `CapEnforcer`.
-  5. **`copy`:** the setting accepts it; setup restores the source (`Service.EnsurePreviewDatabase`, `ReservePreview` taking a copy's restore); the compute cap holds copies at 80% (`CapEnforcer.holdPreviewCopies`); a customer's delete of a source purges its copies (`previewdb.PurgeCopies`); the CLI takes `copy`.
+  5. **`copy`:** the setting accepts it; setup restores the source (`Service.EnsurePreviewDatabase`, `ReservePreview` taking a copy's restore); the cap sweep's compute hold takes every preview database from 80% (`capHeldDatabases`); a customer's delete of a source purges its copies (`previewdb.PurgeCopies`); the CLI takes `copy`.
   6. **Launch:** customer docs, the dashboard, a `tests/journeys` journey (preview with an empty database migrated by its release command, torn down with the PR), then `beta`.
 - **Release skew:**
   - An older apid ignores the new columns. It sets up no preview database and does not remove one. The newer apid's reconciler sweep removes preview databases whose environment closed while an older replica tore it down.

@@ -86,9 +86,7 @@ func TestPostgresRoleSkipsDatabaseWritesOnStandby(t *testing.T) {
 // Both roles that rewrite pg_hba.conf must carry the replication line, or a
 // node join silently cuts the standby off.
 func TestPgHbaAdmitsTheStandbyOnlyWhenDeclared(t *testing.T) {
-	if err := exec.Command("python3", "-c", "import jinja2").Run(); err != nil {
-		t.Skip("python3 with jinja2 required for pg_hba rendering")
-	}
+	requireJinja(t)
 	for role, taskName := range map[string]string{
 		"postgres":                  "postgres — narrow pg_hba.conf to peer/local auth (spec §11)",
 		"control_plane_peer_access": "control-plane peer access — render manifest-derived pg_hba entries",
@@ -99,23 +97,16 @@ func TestPgHbaAdmitsTheStandbyOnlyWhenDeclared(t *testing.T) {
 		if content == "" {
 			t.Fatalf("%s: no pg_hba content in %q", role, taskName)
 		}
-		script := `import sys
-from jinja2 import Template
-kw = {"faas_postgres_allowed_cidrs": ["10.42.0.2/32"]}
-if sys.argv[2]:
-    kw["faas_postgres_standby_address"] = sys.argv[2]
-print(Template(sys.argv[1]).render(**kw), end="")
-`
 		for _, tc := range []struct{ address, want string }{
 			{"10.42.0.9", "hostssl replication     replicator      10.42.0.9/32"},
 			{"fd00::9", "hostssl replication     replicator      fd00::9/128"},
 			{"", ""},
 		} {
-			out, err := exec.Command("python3", "-c", script, content, tc.address).CombinedOutput()
-			if err != nil {
-				t.Fatalf("%s: render pg_hba: %v: %s", role, err, out)
+			vars := `{"faas_postgres_allowed_cidrs": ["10.42.0.2/32"], "control_plane_postgres_owner_contracted": {"stat": {"exists": false}}`
+			if tc.address != "" {
+				vars += `, "faas_postgres_standby_address": "` + tc.address + `"`
 			}
-			hba := string(out)
+			hba := renderJinja(t, content, vars+"}")
 			if tc.want == "" {
 				if strings.Contains(hba, "replicator") {
 					t.Errorf("%s: pg_hba admits replication without a standby:\n%s", role, hba)
@@ -239,7 +230,9 @@ func TestPostgresStandbyPlaybook(t *testing.T) {
 		}
 	}
 	want := [][]string{
-		{"host_hardening", "node_exporter", "postgres", "postgres_standby", "control_plane_standby"},
+		// storage runs only with disk encryption (ADR-20261109120000), before
+		// PostgreSQL is installed so the replica lands on the encrypted volume.
+		{"host_hardening", "storage", "node_exporter", "postgres", "postgres_standby", "control_plane_standby"},
 		// Pre-install: only roles that start no service, read no /etc/faas
 		// file and write nothing to the database belong here.
 		{"firecracker", "supply_chain_scanners"},

@@ -36,7 +36,9 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -252,6 +254,13 @@ type WakePhaseMetrics struct {
 	// Node and Python apps against ~58 ms for Go, with the host able to see
 	// only connect (~10 ms) and "waiting for the ack".
 	resumeGuestStages *prometheus.HistogramVec
+	// residentExecStages counts copies of the jailer and firecracker
+	// executables onto the jail tmpfs, and launches that fell back to the
+	// installed binary (ADR-20261105100000).
+	residentExecStages *prometheus.CounterVec
+	// reseedUnregistered counts interpreter processes a restore's userspace
+	// reseed barrier did not reach (ADR-20261109140000).
+	reseedUnregistered *prometheus.CounterVec
 }
 
 // resumeGuestStageNames is the closed stage label set of
@@ -267,7 +276,11 @@ var resumeGuestStageNames = []string{
 var restorePhaseNames = []string{
 	"restore_gate_wait", "chroot", "resolve_images", "stage_drives", "stage_writable",
 	"stage_pre_boot_files", "pre_boot_join_wait", "stage_snapshot", "helper",
-	"network_wait", "start_jailer", "bind_tun", "load_snapshot", "resume_hook", "wait_ready",
+	"network_wait", "start_jailer", "bind_tun",
+	// The sub-phases of bind_tun; they add up to it, so never sum across the
+	// label set. cgroup_fence is the tail of the window, after the jail devices.
+	"tun_journal_checks", "tun_wait_mntns", "tun_wait_chroot", "tun_setup_jail", "cgroup_fence",
+	"load_snapshot", "resume_hook", "wait_ready",
 	"journal_sync", "journal_lock_wait",
 }
 
@@ -316,7 +329,7 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 	}
 	m.restorePhases = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "vmmd_restore_phase_duration_seconds",
-		Help:    "Snapshot restore sub-phase durations, operator-only (the customer wake.restore_breakdown event carries a subset). stage_writable is the per-instance drive clone inside stage_drives; pre_boot_join_wait and network_wait are the critical-path waits on the concurrent pre-boot write and wake network. journal_sync and journal_lock_wait are the wake's resource-journal fsyncs and lock waits, summed across the phases they overlap.",
+		Help:    "Snapshot restore sub-phase durations, operator-only (the customer wake.restore_breakdown event carries a subset). stage_writable is the per-instance drive clone inside stage_drives; pre_boot_join_wait and network_wait are the critical-path waits on the concurrent pre-boot write and wake network. journal_sync and journal_lock_wait are the wake's resource-journal fsyncs and lock waits, summed across the phases they overlap. tun_journal_checks, tun_wait_mntns, tun_wait_chroot, tun_setup_jail and cgroup_fence partition bind_tun: the native path's journal checks before it waits, the wait for the jailer to unshare its mount namespace and then to pivot into the jail, the journaled device-setup helper, and the pre-boot cgroup fence.",
 		Buckets: []float64{0.001, 0.0025, 0.005, 0.01, 0.02, 0.035, 0.05, 0.075, 0.1, 0.15, 0.25, 0.5, 1.0, 2.0},
 	}, []string{"phase"})
 	m.journalCommits = prometheus.NewCounter(prometheus.CounterOpts{
@@ -341,8 +354,35 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 	for _, stage := range resumeGuestStageNames {
 		m.resumeGuestStages.WithLabelValues(stage)
 	}
-	reg.MustRegister(m.phases, m.materializeSeconds, m.materializeBytes, m.restorePhases, m.journalCommits, m.preBootFiles, m.resumeGuestStages)
+	m.residentExecStages = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "vmmd_resident_exec_stages_total",
+		Help: "Jailer and firecracker executables vmmd keeps on the jail tmpfs so a launch never reads them from disk (ADR-20261105100000). outcome=\"staged\" is a verified copy (vmmd start, or the installed binary changed); outcome=\"fallback\" is a launch that used the installed binary because staging failed, which a node under page-cache pressure pays for with a cold read on the wake path.",
+	}, []string{"binary", "outcome"})
+	for _, binary := range residentExecKinds {
+		for _, outcome := range []string{"staged", "fallback"} {
+			m.residentExecStages.WithLabelValues(binary, outcome)
+		}
+	}
+	m.reseedUnregistered = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "vmmd_restore_reseed_unregistered_total",
+		Help: "Restores whose guest reported running Node, Python, Bun or Deno processes its userspace RNG reseed barrier did not reach, counted once per reported runtime (ADR-20261109140000). Those processes may repeat the snapshot's random values across wakes; restores are not refused. runtime ∈ {node, python, bun, deno, other}; scope ∈ {workload, sidecar}.",
+	}, []string{"runtime", "scope"})
+	for _, runtime := range reseedRuntimeLabels {
+		for _, scope := range []string{"workload", "sidecar"} {
+			m.reseedUnregistered.WithLabelValues(runtime, scope)
+		}
+	}
+	reg.MustRegister(m.phases, m.materializeSeconds, m.materializeBytes, m.restorePhases, m.journalCommits, m.preBootFiles, m.resumeGuestStages, m.residentExecStages, m.reseedUnregistered)
 	return m
+}
+
+// ObserveResidentExec records one staging outcome for binary. Safe on a nil
+// receiver.
+func (m *WakePhaseMetrics) ObserveResidentExec(binary, outcome string) {
+	if m == nil {
+		return
+	}
+	m.residentExecStages.WithLabelValues(binary, outcome).Inc()
 }
 
 // ObserveResumeGuestStages records one resume hook's guest-side stages.
@@ -363,6 +403,29 @@ func (m *WakePhaseMetrics) ObserveResumeGuestStages(t resumetimingproto.Timings,
 	}
 }
 
+// reseedRuntimeLabels is the closed runtime label set of
+// vmmd_restore_reseed_unregistered_total.
+var reseedRuntimeLabels = []string{"node", "python", "bun", "deno", "other"}
+
+// ObserveReseedUnregistered counts the runtimes a guest reported as missed by
+// its reseed barrier, once per reported runtime label. Safe on a nil
+// receiver.
+func (m *WakePhaseMetrics) ObserveReseedUnregistered(t resumetimingproto.Timings) {
+	if m == nil || t.ReseedUnregistered <= 0 {
+		return
+	}
+	for _, label := range strings.Split(t.ReseedUnregisteredRuntimes, ",") {
+		runtime, scope := strings.TrimSuffix(label, "-sidecar"), "workload"
+		if runtime != label {
+			scope = "sidecar"
+		}
+		if !slices.Contains(reseedRuntimeLabels, runtime) {
+			runtime = "other"
+		}
+		m.reseedUnregistered.WithLabelValues(runtime, scope).Inc()
+	}
+}
+
 func usDuration(us int64) time.Duration { return time.Duration(max(us, 0)) * time.Microsecond }
 
 // ObserveRestorePhases records one restore's sub-phases. Safe on a nil
@@ -376,8 +439,10 @@ func (m *WakePhaseMetrics) ObserveRestorePhases(b restoreTimingBreakdown) {
 		"stage_drives": b.StageDrivesMs, "stage_writable": b.StageWritableMs,
 		"stage_pre_boot_files": b.StagePreBootFilesMs, "pre_boot_join_wait": b.PreBootJoinWaitMs,
 		"stage_snapshot": b.StageSnapshotMs, "helper": b.HelperMs, "network_wait": b.NetworkWaitMs,
-		"start_jailer": b.StartJailerMs, "bind_tun": b.BindTunMs, "load_snapshot": b.LoadSnapshotMs,
-		"resume_hook": b.ResumeHookMs, "wait_ready": b.WaitReadyMs,
+		"start_jailer": b.StartJailerMs, "bind_tun": b.BindTunMs,
+		"tun_journal_checks": b.TunJournalChecksMs, "tun_wait_mntns": b.TunWaitMntnsMs,
+		"tun_wait_chroot": b.TunWaitChrootMs, "tun_setup_jail": b.TunSetupJailMs, "cgroup_fence": b.CgroupFenceMs,
+		"load_snapshot": b.LoadSnapshotMs, "resume_hook": b.ResumeHookMs, "wait_ready": b.WaitReadyMs,
 		"journal_sync": b.JournalSyncMs, "journal_lock_wait": b.JournalLockWaitMs,
 	}
 	for _, phase := range restorePhaseNames {

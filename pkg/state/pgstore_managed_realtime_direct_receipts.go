@@ -23,7 +23,7 @@ func (s *PgStore) BeginManagedRealtimeDirectMessageReceipt(ctx context.Context, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var lockedID string
-	if err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id = $1 for update`, endpointID).Scan(&lockedID); err != nil {
+	if err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id = $1 for no key update`, endpointID).Scan(&lockedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, false, ErrNotFound
 		}

@@ -36,6 +36,36 @@ type realtimePoller struct {
 
 	mu     sync.Mutex
 	claims map[string]state.RealtimeConsumerGroupClaim
+	// idleUntil and idleDelay back an idle group's polls off
+	// (realtimeIdlePollMax): an empty claim is a locking transaction on the
+	// group, and every tick ran one per trigger.
+	idleUntil time.Time
+	idleDelay time.Duration
+}
+
+// An idle realtime trigger claims again after realtimeIdlePollMin, doubling
+// up to realtimeIdlePollMax, instead of on every 1 s tick; a claim that
+// returns messages resets it (ADR-1322, amendment of 2026-11-03).
+const (
+	realtimeIdlePollMin = 2 * time.Second
+	realtimeIdlePollMax = 5 * time.Second
+)
+
+// idle reports whether the trigger's last claims found nothing and its next
+// one is not due yet.
+func (p *realtimePoller) idle(now time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return now.Before(p.idleUntil)
+}
+
+func (p *realtimePoller) observeClaim(batch state.RealtimeConsumerGroupBatch, now time.Time) {
+	if len(batch.Claims) > 0 {
+		p.idleDelay, p.idleUntil = 0, time.Time{}
+		return
+	}
+	p.idleDelay = min(max(2*p.idleDelay, realtimeIdlePollMin), realtimeIdlePollMax)
+	p.idleUntil = now.Add(p.idleDelay)
 }
 
 // realtimeTriggerRecord is the JSON body one invocation receives.
@@ -90,6 +120,7 @@ func (p *realtimePoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	now := time.Now().UTC()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.observeClaim(batch, now)
 	for _, claim := range batch.Claims {
 		body, err := json.Marshal(realtimeTriggerRecord{
 			EndpointID: p.cfg.EndpointID, Channel: p.cfg.Channel, Group: p.cfg.Group,

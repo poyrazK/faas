@@ -1,6 +1,7 @@
 package objectstorage
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -81,5 +82,8 @@ func servableMounts(buckets []state.ObjectBucket) []state.ObjectBucket {
 			out = append(out, bucket)
 		}
 	}
+	// Lookup takes the first matching mount. A nested mount owns its subtree
+	// independently of catalog creation order, on both serving and forwarding edges.
+	sort.SliceStable(out, func(i, j int) bool { return len(out[i].ServeAt) > len(out[j].ServeAt) })
 	return out
 }

@@ -122,11 +122,10 @@ type Dispatcher interface {
 // that crosses the boundary, and Execute is the only method — the
 // evaluator never calls pkg/safedeploy.Orchestrator directly.
 //
-// Concurrency: the evaluator serialises Execute behind dispatchMu,
-// across the accounts it evaluates in parallel. pkg/safedeploy.ActionDispatcher
-// is concurrency-safe today (its only side-effect is a single HTTP
-// call into apid), but the lock keeps the contract honest if a
-// future fan-out becomes multi-goroutine.
+// Concurrency: Execute must be safe for concurrent use. The evaluator
+// calls it from the accounts it evaluates in parallel, one call at a time
+// per account (ADR-20261109153000). pkg/safedeploy.ActionDispatcher is
+// safe: its only side-effect is a single HTTP call into apid.
 type ActionExecutor interface {
 	Execute(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error
 }
@@ -169,7 +168,6 @@ type Evaluator struct {
 	identity   func() *age.X25519Identity // nil = meterd can't unseal; skip with warn
 	identities func() []*age.X25519Identity
 	dispatch   Dispatcher
-	dispatchMu *sync.Mutex // serialises ActionExecutor calls (see ActionExecutor)
 	// actionExec (issue #976 / ADR-122 / SAFE-RELEASES-B) is the
 	// in-process action fan-out surface. Nil-coerced at
 	// construction so the evaluator's behaviour is the same on
@@ -201,16 +199,22 @@ type Evaluator struct {
 	// logContextReleased decides, per account, whether fires carry the
 	// ADR-20261022172052 log context; nil means never.
 	logContextReleased func(ctx context.Context, accountID, appID string) bool
+	// spend reads account_spend_eur's month to date (SetSpend); nil reads
+	// the store's compute overage.
+	spend SpendCents
 	// releaseMetrics counts release notice deliveries; nil records nothing.
 	releaseMetrics *releasemetrics.Metrics
 
 	// Per-account evaluation (ADR-20261028101615); see accounts.go.
 	release       func(ctx context.Context, accountID string) RuleRelease
 	ruleOutcome   func(reason string, n int)
+	ruleLimits    RuleLimits // ADR-20261104142830; nil = no plan caps
 	workers       int
 	accountBudget time.Duration
 	resumeMu      sync.Mutex
 	resume        map[string]string // account → rule its next tick starts with
+	// fireRetries are the fires channels did not take (ADR-20261109153000).
+	fireRetries fireRetries
 	// lastPurge is when RunOnce last purged expired deliveries
 	// (ADR-20261029203000); RunOnce runs on one goroutine.
 	lastPurge time.Time
@@ -322,13 +326,12 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		pagerDuty:  pagerduty.New(o.PagerDutyHTTPClient),
 		identities: o.Identities,
 		dispatch:   o.Dispatcher,
-		dispatchMu: &sync.Mutex{},
 		newSigner:  o.NewSigner,
 		now:        o.Now,
 		log:        o.Log,
 		ops:        o.Ops,
 
-		channels:         o.Channels,
+		channels:         verifiedEmailSender(o.Channels, o.Store),
 		channelOutcome:   o.ChannelOutcome,
 		dashboardBaseURL: o.DashboardBaseURL,
 		releaseMetrics:   o.ReleaseMetrics,
@@ -389,11 +392,28 @@ type Stats struct {
 	// SkippedNotReleased counts rules not evaluated because the account's
 	// plan or capability flags no longer cover them (ADR-20261028101615).
 	SkippedNotReleased int
+	// SkippedOverPlanLimit counts rules past the plan's per-app or
+	// per-account cap, kept from a bigger plan (ADR-20261104142830).
+	SkippedOverPlanLimit int
 	// ResolvesDelivered and ResolvesFailed count resolve events sent to the
 	// webhooks of rules that asked for them (ADR-20261029203000).
 	ResolvesDelivered, ResolvesFailed int
 	// DeliveriesPurged counts deliveries deleted past their retention.
 	DeliveriesPurged int64
+	// ChannelResolvesRetried and ChannelResolvesAbandoned count recovery
+	// notices re-sent to channels that had not taken them, and those given
+	// up after AlertChannelResolveRetryWindow (ADR-20261031144636).
+	ChannelResolvesRetried, ChannelResolvesAbandoned int
+	// ChannelFiresRetried counts fires re-sent to channels that had not
+	// taken them while their rule was still firing (ADR-20261109153000).
+	ChannelFiresRetried int
+	// StoodDown counts rules whose episode ended without them recovering:
+	// disabled, no longer covered, or their app deleted
+	// (ADR-20261104142830). ChannelStandDownsDelivered and
+	// ChannelStandDownsAbandoned count the recovery notices those episodes
+	// (and deleted rules') owed channels: sent, and given up.
+	StoodDown                                              int
+	ChannelStandDownsDelivered, ChannelStandDownsAbandoned int
 }
 
 // add sums the per-rule counters of an account's tick into s; Evaluated and
@@ -410,8 +430,10 @@ func (s *Stats) add(o Stats) {
 	s.ActionSkipped += o.ActionSkipped
 	s.Deferred += o.Deferred
 	s.SkippedNotReleased += o.SkippedNotReleased
+	s.SkippedOverPlanLimit += o.SkippedOverPlanLimit
 	s.ResolvesDelivered += o.ResolvesDelivered
 	s.ResolvesFailed += o.ResolvesFailed
+	s.StoodDown += o.StoodDown
 }
 
 // RunOnce walks the enabled alert-rule list once and applies the
@@ -455,6 +477,10 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 		}
 	}
 	stats.ReleaseApprovalNotices = e.deliverReleaseApprovalEvents(ctx, e.now())
+	e.standDownStranded(ctx, e.now(), &stats)
+	stats.ChannelFiresRetried = e.retryChannelFires(ctx, e.now())
+	stats.ChannelResolvesRetried, stats.ChannelResolvesAbandoned = e.retryChannelResolves(ctx, e.now())
+	stats.ChannelStandDownsDelivered, stats.ChannelStandDownsAbandoned = e.deliverChannelStandDowns(ctx, e.now())
 	stats.DeliveriesPurged = e.purgeDeliveries(ctx, e.now())
 	return stats, nil
 }
@@ -575,13 +601,17 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		if health != nil {
 			e.recoverMCPConnectionHealth(ctx, rule, observed, health, now, stats)
 		}
-		// Healthy tick — comparison false. If we were firing,
-		// flip back to ok and emit audit.resolved.
+		// Healthy tick — comparison false. If an episode was open, flip
+		// back to ok and announce the recovery. The episode stays open
+		// through degraded and unknown reads, so a firing rule that had
+		// one of those before recovering is announced too
+		// (ADR-20261104142830).
 		if rule.State != state.AlertStateOk {
+			wasFiring := e.episodeWasFiring(ctx, rule)
 			changed, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
 			if err != nil {
 				e.log.Warn("alerts: set state ok", "rule", rule.ID, "err", err)
-			} else if changed && rule.State == state.AlertStateFiring {
+			} else if changed && wasFiring {
 				if e.audit != nil && !api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
 					e.audit.Emit(ctx, "alert.resolved", &rule.AccountID, map[string]any{
 						"rule_id": rule.ID,
@@ -592,7 +622,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 				// close the incident the fire opened.
 				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now)
 				if rule.NotifyResolved && rule.WebhookURL != "" {
-					e.deliverResolve(ctx, rule, observed, now, stats)
+					e.deliverResolve(ctx, rule, &observed, "", now, stats)
 				}
 			}
 		}
@@ -737,14 +767,33 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			result.Err = fmt.Errorf("no notification channel accepted the alert (%d attempted)", attempted)
 		}
 		e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
-		e.dispatchMu.Lock()
 		e.runAction(ctx, rule, deliveryID, observed, now, stats)
-		e.dispatchMu.Unlock()
 		return
 	}
 	e.deliverAlert(ctx, rule, deliveryID, observed, payloadMap, now, stats)
 }
 func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) {
+	// SAFE-RELEASES-B fan-out: when the rule's action column is
+	// anything other than the 'webhook' default (or empty), route
+	// the same fire to the in-process ActionExecutor. Both paths
+	// are independent — a webhook 5xx never blocks the rollback,
+	// and a rollback failure never blocks the webhook.
+	//
+	// The action runs before the webhook (bug hunt H78): after it, a
+	// receiver that never answered held the rollback for the whole
+	// webhook budget, retries included, and a webhook secret that
+	// failed to open skipped the rollback entirely.
+	//
+	// The action is gated by the cool-down bucket that
+	// ClaimAlertFire enforces: a duplicate inside the cool-down
+	// window already returned at the `if !won` branch.
+	//
+	// Not serialised across accounts (ADR-20261109153000): one account's
+	// rules run in one goroutine, so actions on an app never overlap, and
+	// a slow action costs only its own account's tick budget. A global
+	// lock here used to hold every account's fires behind one rollback.
+	e.runAction(ctx, rule, deliveryID, observed, now, stats)
+
 	// Unseal the webhook secret. A nil identity or a namespace
 	// mismatch is a hard skip — we never dispatch without a valid
 	// signature, and we never re-open a future-namespace blob.
@@ -809,26 +858,6 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 	cancel()
 
 	e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
-
-	// SAFE-RELEASES-B fan-out: when the rule's action column is
-	// anything other than the 'webhook' default (or empty), route
-	// the same fire to the in-process ActionExecutor. Both paths
-	// are independent — a webhook 5xx never blocks the rollback,
-	// and a rollback failure never blocks the webhook.
-	//
-	// The action is gated by the cool-down bucket that
-	// ClaimAlertFire enforces above: the webhook path consumes
-	// the same idempotency key, so a duplicate inside the
-	// cool-down window would have already early-returned at the
-	// `if !won` branch and never reached this code.
-	//
-	// Serialised behind dispatchMu because the ActionDispatcher's
-	// Execute path may share connection state with the webhook
-	// dispatcher in the future; today the lock is just
-	// precautionary.
-	e.dispatchMu.Lock()
-	e.runAction(ctx, rule, deliveryID, observed, now, stats)
-	e.dispatchMu.Unlock()
 }
 
 // openIdentities returns the host identities that open webhook secrets,
@@ -852,7 +881,10 @@ func (e *Evaluator) openIdentities() []*age.X25519Identity {
 // rules that asked for one (ADR-20261029203000). A resolve is not a fire: it
 // takes no delivery-ledger row and runs no action, and a failure is logged and
 // counted, never retried on a later tick.
-func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, observed float64, now time.Time, stats *Stats) {
+// deliverResolve sends the webhook's alert.resolved. A rule stood down
+// (ADR-20261104142830) has no observed value; its payload carries the
+// reason instead.
+func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, observed *float64, reason string, now time.Time, stats *Stats) {
 	idents := e.openIdentities()
 	if len(idents) == 0 {
 		stats.SkippedNoIdentity++
@@ -864,17 +896,21 @@ func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, ob
 		stats.ResolvesFailed++
 		return
 	}
+	payload := map[string]any{
+		"event": eventResolve, "rule_id": rule.ID, "rule_name": rule.Name,
+		"metric": string(rule.Metric), "comparison": string(rule.Comparison), "threshold": rule.Threshold,
+		"observed": observed, "window": string(rule.WindowSpec), "resolved_at": now.UTC().Format(time.RFC3339Nano),
+	}
+	if reason != "" {
+		payload["reason"] = reason
+	}
 	evt := webhookout.Event{
 		ID:         uuid.NewString(),
 		OccurredAt: now,
 		Rule:       rule.Name,
 		RuleName:   rule.Name,
 		AppID:      rule.AppID,
-		Payload: map[string]any{
-			"event": eventResolve, "rule_id": rule.ID, "rule_name": rule.Name,
-			"metric": string(rule.Metric), "comparison": string(rule.Comparison), "threshold": rule.Threshold,
-			"observed": observed, "window": string(rule.WindowSpec), "resolved_at": now.UTC().Format(time.RFC3339Nano),
-		},
+		Payload:    payload,
 	}
 	dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
 	result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)
@@ -1111,7 +1147,7 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		// near money fail review" — observed is int64 cents,
 		// compareCents rounds the threshold to cents at the
 		// seam so the comparison is integer-aligned end-to-end.
-		cents, err := e.store.MTDSpendEurCents(ctx, rule.AccountID)
+		cents, err := e.monthSpendCents(ctx, rule.AccountID)
 		if err != nil {
 			e.log.Warn("alerts: mtd spend query",
 				"rule", rule.ID, "err", err)
@@ -1292,8 +1328,31 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		if appmetrics.IsDegradedSource(source) {
 			return 0, false, skipDegraded
 		}
-		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+		breached := compareFloat(observed, rule.Comparison, rule.Threshold)
+		if breached && ratioMetric(rule.Metric) {
+			// A share or percentile of a handful of requests is not
+			// evidence (ADR-20261109153000): one failed wake out of three
+			// requests is a 33% error rate.
+			requests, src := appmetrics.FetchAlertMetric(ctx, e.promQL, e.log, rule.AppID, string(rule.WindowSpec), "request_count")
+			if src != appmetrics.SourcePrometheus {
+				return 0, false, skipDegraded
+			}
+			if requests < api.AlertRatioMinRequests {
+				return observed, false, skipInsufficient
+			}
+		}
+		return observed, breached, ""
 	}
+}
+
+// ratioMetric reports a metric that is a share or a percentile of the
+// window's requests, which a minimum request count guards.
+func ratioMetric(m state.AlertMetric) bool {
+	switch string(m) {
+	case "error_rate_pct", "cold_start_pct", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms":
+		return true
+	}
+	return false
 }
 
 // summariseFailed walks every alertable InvocationSource value and sums
@@ -1415,7 +1474,7 @@ type investigationPaths struct {
 	appID            string
 	workflowRuns     string
 	workflowDeadRuns string
-	automations      string
+	storedWorkflows  string
 }
 
 func (e *Evaluator) investigationPaths(ctx context.Context, rule state.AlertRule) investigationPaths {
@@ -1432,7 +1491,7 @@ func (e *Evaluator) investigationPaths(ctx context.Context, rule state.AlertRule
 	}
 	slug, rng := url.PathEscape(app.Slug), url.QueryEscape(string(rule.WindowSpec))
 	if workflow {
-		paths := investigationPaths{appID: app.ID, automations: "/v1/apps/" + slug + "/automations"}
+		paths := investigationPaths{appID: app.ID, storedWorkflows: "/v1/apps/" + slug + "/workflows/stored"}
 		paths.workflowRuns = "/v1/apps/" + slug + "/workflows/runs"
 		if rule.Metric == state.AlertMetricWorkflowFailures {
 			paths.workflowDeadRuns = paths.workflowRuns + "?status=dead"
@@ -1508,7 +1567,7 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	if paths.workflowRuns != "" {
 		m["app_id"] = paths.appID
 		m["workflow_runs_path"] = paths.workflowRuns
-		m["automations_path"] = paths.automations
+		m["stored_workflows_path"] = paths.storedWorkflows
 		if paths.workflowDeadRuns != "" {
 			m["workflow_dead_runs_path"] = paths.workflowDeadRuns
 		}

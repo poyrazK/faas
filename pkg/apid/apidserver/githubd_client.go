@@ -345,6 +345,10 @@ func (l *liveClient) StreamSourceRef(ctx context.Context, accountID string, inst
 	}, nil
 }
 
+func (l *liveClient) GetInstallationRepository(ctx context.Context, accountID string, installationID int64, repoFullName string) (githubdgrpc.InstallationRepository, bool, error) {
+	return l.c.GetInstallationRepository(ctx, accountID, installationID, repoFullName)
+}
+
 func (l *liveClient) GetBranchHead(ctx context.Context, accountID string, installationID int64, repoFullName, branch string) (string, bool, error) {
 	return l.c.GetBranchHead(ctx, accountID, installationID, repoFullName, branch)
 }
@@ -398,4 +402,8 @@ func newGithubdClient(ctx context.Context, socketPath string, tlsCfg *tls.Config
 		log.Info("githubd connected", "socket", socketPath)
 	}
 	return &liveClient{c: c, log: log}
+}
+
+func (l *liveClient) GetInstallationAccess(ctx context.Context, accountID string, installationID int64) (githubdgrpc.InstallationAccess, error) {
+	return l.c.GetInstallationAccess(ctx, accountID, installationID)
 }

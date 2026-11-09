@@ -44,25 +44,20 @@ func TestClaudePluginManifestAndMCPServer(t *testing.T) {
 		t.Fatalf("plugin.json needs name gregale, a version and a description: %+v", manifest)
 	}
 
+	// The plugin connects to the hosted server: the person chooses at sign-in
+	// what the agent may do, so nothing runs locally with their login.
 	var config struct {
-		MCPServers map[string]struct {
-			Command string   `json:"command"`
-			Args    []string `json:"args"`
-		} `json:"mcpServers"`
+		MCPServers map[string]map[string]any `json:"mcpServers"`
 	}
 	readPluginJSON(t, ".mcp.json", &config)
 	server, ok := config.MCPServers["gregale"]
-	if !ok || server.Command != "gregale" || len(server.Args) < 2 || server.Args[0] != "mcp" || server.Args[1] != "serve" {
-		t.Fatalf(".mcp.json must run `gregale mcp serve`: %+v", config.MCPServers)
-	}
-	opts, err := parseMCPServeOptions(server.Args[2:])
-	if err != nil {
-		t.Fatalf(".mcp.json arguments do not parse: %v", err)
-	}
-	if opts.transport != "stdio" || opts.allowWrites {
-		t.Fatalf("the plugin's server must be read-only stdio; got transport %q, allowWrites %v", opts.transport, opts.allowWrites)
+	if !ok || len(config.MCPServers) != 1 || server["type"] != "http" || server["url"] != hostedMCPURL || len(server) != 2 {
+		t.Fatalf(".mcp.json must name only the hosted server %s over http: %+v", hostedMCPURL, config.MCPServers)
 	}
 }
+
+// hostedMCPURL is Gregale's hosted management MCP server.
+const hostedMCPURL = "https://api.gregale.dev/mcp"
 
 func TestClaudePluginSkillsHaveFrontmatter(t *testing.T) {
 	skills, err := filepath.Glob(filepath.Join(claudePluginDir, "skills", "*", "SKILL.md"))
@@ -172,7 +167,7 @@ func todaysCommand(fields []string, name, next string) (string, string) {
 	if err != nil || len(path) == 0 || slices.Equal(path, fields[at:]) {
 		return name, next
 	}
-	if len(path) == 1 {
+	if len(path) == 1 || strings.HasPrefix(path[1], "-") {
 		return path[0], ""
 	}
 	return path[0], path[1]
@@ -213,15 +208,75 @@ func hasSubcommand(command cliCommand, name string) bool {
 	return false
 }
 
-func managementToolNames(t *testing.T) map[string]bool {
+// TestPluginSkillsWorkOnCoreConnection fails when a skill relies on a tool
+// that a default hosted connection lacks. The hosted sign-in defaults to the
+// core toolset, so a skill may name any other tool only in a list item or
+// paragraph that also gives the `gregale` CLI command for the same answer
+// (ADR-20261026110240 amendment 1).
+func TestPluginSkillsWorkOnCoreConnection(t *testing.T) {
+	core := managementToolNames(t, mcpmanagement.ToolsetCore)
+	skills, err := filepath.Glob(filepath.Join(claudePluginDir, "skills", "*", "SKILL.md"))
+	if err != nil || len(skills) == 0 {
+		t.Fatalf("no skills found: %v", err)
+	}
+	for _, path := range skills {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, block := range markdownBlocks(string(content)) {
+			if strings.Contains(block, "`gregale ") {
+				continue
+			}
+			for _, name := range mcpToolNameRE.FindAllString(block, -1) {
+				if !core[name] {
+					t.Errorf("%s: %s is not a core tool; give its `gregale` CLI fallback in the same item (in %q)", path, name, block)
+				}
+			}
+		}
+	}
+}
+
+// markdownBlocks splits Markdown into paragraphs and list items: a blank line
+// or a line starting a new item ends a block, indented lines continue one.
+func markdownBlocks(content string) []string {
+	var blocks []string
+	var current []string
+	flush := func() {
+		if len(current) > 0 {
+			blocks = append(blocks, strings.Join(current, "\n"))
+			current = nil
+		}
+	}
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "":
+			flush()
+			continue
+		case strings.HasPrefix(line, "- "), strings.HasPrefix(line, "#"):
+			flush()
+		}
+		current = append(current, line)
+	}
+	flush()
+	return blocks
+}
+
+// managementToolNames lists the tools a local connection with writes offers
+// for the given toolsets (default: all, every tool agents may be told about).
+func managementToolNames(t *testing.T, toolsets ...string) map[string]bool {
 	t.Helper()
+	if len(toolsets) == 0 {
+		toolsets = []string{mcpmanagement.ToolsetAll}
+	}
 	const base = "http://127.0.0.1:1"
-	// A local connection with writes lists every tool agents may be told about.
 	noCLI := func(context.Context, []string, []byte) (mcpmanagement.LocalCLIResult, error) {
 		return mcpmanagement.LocalCLIResult{}, nil
 	}
 	server, err := mcpmanagement.NewServer(api.NewClient(base, "test-token"), mcpmanagement.Options{
 		APIBase: base, Token: "test-token", Version: "test", AllowWrites: true, LocalCLI: noCLI,
+		Toolsets: toolsets,
 	})
 	if err != nil {
 		t.Fatal(err)

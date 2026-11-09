@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 )
 
 var _ environmentgitops.RuntimeVerifier = (*environmentGitOpsBackend)(nil)
+var _ environmentgitops.RuntimeEffectObserver = (*environmentGitOpsBackend)(nil)
 
 func (b *environmentGitOpsBackend) runtimeStore() (state.EnvironmentGitOpsRuntimeStore, error) {
 	store, ok := b.intent.(state.EnvironmentGitOpsRuntimeStore)
@@ -23,6 +25,15 @@ func (b *environmentGitOpsBackend) runtimeStore() (state.EnvironmentGitOpsRuntim
 		return nil, state.ErrConflict
 	}
 	return store, nil
+}
+
+// ObserveRuntimeEffects can retire already-fresh bookkeeping in report mode.
+// The store observes the original effect scope without invalidation or refresh.
+func (b *environmentGitOpsBackend) ObserveRuntimeEffects(ctx context.Context, lease state.EnvironmentGitOpsLease) error {
+	if lease.Source.Spec.Mode != "report" {
+		return state.ErrConflict
+	}
+	return b.recoverRuntime(ctx, lease)
 }
 
 func (b *environmentGitOpsBackend) recoverRuntime(ctx context.Context, lease state.EnvironmentGitOpsLease) error {
@@ -39,7 +50,7 @@ func (b *environmentGitOpsBackend) recoverRuntime(ctx context.Context, lease sta
 		if err != nil {
 			return err
 		}
-		if progress.Request != nil {
+		if progress.Request != nil && lease.Source.Spec.Mode == "enforce" {
 			raw, _ := json.Marshal(progress.Request)
 			if err := b.server.notif.Notify(ctx, db.NotifyRuntimeConfigRestart, string(raw)); err != nil {
 				return err
@@ -55,16 +66,20 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 		return false, err
 	}
 	workloadReady := true
+	workloadServed := false
 	var workloadErr error
 	if lease.Source.Spec.Mode == "enforce" {
 		if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
 			steps, err := retirement.BeginEnvironmentGitOpsWorkloadRetirements(ctx, lease, plan)
-			if err != nil || len(steps) > 0 {
-				return false, err
+			if err != nil {
+				return false, fmt.Errorf("begin workload retirements: %w", err)
+			}
+			if len(steps) > 0 {
+				return false, nil
 			}
 		}
 		if err := store.EnsureEnvironmentGitOpsRuntime(ctx, lease, plan); err != nil {
-			return false, err
+			return false, fmt.Errorf("ensure runtime: %w", err)
 		}
 		var definition api.EnvironmentDefinition
 		if err := json.Unmarshal(lease.Revision.Definition, &definition); err != nil {
@@ -73,53 +88,70 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 		if definition.Workloads == nil {
 			return false, state.ErrInvalidArgument
 		}
-		if len(definition.Workloads) == 0 {
-			if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
-				if _, err := retirement.ActivateEnvironmentGitOpsEmptyRetirement(ctx, lease, plan); err != nil {
-					return false, err
-				}
-			}
-
-			// Empty membership is a valid environment configuration, but a
-			// previously activated Git-managed member must not disappear from
-			// serving evidence just because the new definition omits it.
-			guard, ok := b.intent.(state.EnvironmentGitOpsEmptyGraphGuard)
-			if !ok {
-				workloadReady = false
-			} else {
-				var managed bool
-				managed, workloadErr = guard.EnvironmentGitOpsHasServingManagedWorkload(ctx, lease)
-				workloadReady = !managed
-			}
+		// Both a candidate graph and an empty retirement publish a release.
+		// Keep their first cutover held while allowing existing cleanup below.
+		if b.server.platformReleasePaused() {
+			workloadReady = false
+		} else if len(definition.Workloads) == 0 {
+			workloadReady, workloadErr = b.activateEmptyWorkloadRetirement(ctx, lease, plan)
 		} else {
 			workloadReady, workloadErr = b.prepareWorkloadCandidates(ctx, lease, plan)
-		}
-		if err := b.recoverRuntime(ctx, lease); err != nil {
-			return false, err
+			workloadServed = workloadReady && workloadErr == nil
 		}
 		if workloadErr != nil {
 			return false, workloadErr
 		}
 	}
+	if err := b.recoverRuntime(ctx, lease); err != nil {
+		return false, fmt.Errorf("recover runtime: %w", err)
+	}
 	targets, err := store.ObserveEnvironmentGitOpsRuntime(ctx, lease)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("observe runtime: %w", err)
 	}
 	for _, target := range targets {
-		if !target.Ready() {
+		// The unqualified-workload fence predates graph qualification
+		// (ADR-568): it counts every Git-managed workload source. A reviewed
+		// graph that qualified, activated and served in this pass has met it,
+		// and nothing else ever clears it. Freshness still applies.
+		if !target.Fresh() || target.UnqualifiedWorkloads != 0 && !workloadServed {
 			return false, nil
 		}
 	}
 	pending, err := store.PendingEnvironmentGitOpsRuntime(ctx, lease)
-	if err != nil || len(pending) != 0 {
-		return false, err
+	if err != nil {
+		return false, fmt.Errorf("pending runtime: %w", err)
+	}
+	if len(pending) != 0 {
+		return false, nil
 	}
 	retired, err := b.reconcileWorkloadRetirements(ctx, lease)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("reconcile workload retirements: %w", err)
 	}
 	effects, err := b.effects.PendingEnvironmentGitOpsEffects(ctx, lease)
-	return workloadReady && retired && len(effects) == 0, err
+	if err != nil {
+		return false, fmt.Errorf("pending effects: %w", err)
+	}
+	return workloadReady && retired && len(effects) == 0, nil
+}
+
+func (b *environmentGitOpsBackend) activateEmptyWorkloadRetirement(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
+	if hold, err := b.gitOpsReleaseHold(ctx, lease, state.EnvironmentWorkloadGraph{}); err != nil || hold != "" {
+		return false, err
+	}
+	if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
+		if _, err := retirement.ActivateEnvironmentGitOpsEmptyRetirement(ctx, lease, plan); err != nil {
+			return false, err
+		}
+	}
+	// Empty desired membership cannot discard an existing serving member.
+	guard, ok := b.intent.(state.EnvironmentGitOpsEmptyGraphGuard)
+	if !ok {
+		return false, nil
+	}
+	managed, err := guard.EnvironmentGitOpsHasServingManagedWorkload(ctx, lease)
+	return !managed, err
 }
 
 func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
@@ -140,13 +172,13 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 		return false, nil
 	}
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("source requests: %w", err)
 	}
 	artifacts := map[string]state.EnvironmentWorkloadSourceArtifact{}
 	for _, request := range requests {
 		artifact, err := b.server.prepareEnvironmentGitArchive(ctx, lease, request)
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("prepare source archive: %w", err)
 		}
 		artifacts[request.Resource] = artifact
 	}
@@ -155,7 +187,7 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 		return false, nil // unsupported adapters remain partial; never serving proof
 	}
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("prepare candidates: %w", err)
 	}
 	// PgStore also commits the durable handoff with candidate creation. A
 	// repeated pending hint is safe: imaging deduplicates on deployment status.
@@ -183,18 +215,18 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 	}
 	graph, err := graphStore.ReconcileEnvironmentGitOpsPreparation(ctx, lease, plan)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("reconcile preparation: %w", err)
 	}
 	if graph.Phase == "prepared" {
 		if err := b.queueWorkloadQualification(ctx, lease, plan); err != nil {
-			return false, err
+			return false, fmt.Errorf("queue qualification: %w", err)
 		}
 		if err := b.verifyCandidateCredentials(ctx, graph.ID); err != nil {
-			return false, err
+			return false, fmt.Errorf("verify candidate credentials: %w", err)
 		}
 		hold, err := b.gitOpsReleaseHold(ctx, lease, graph)
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("release hold: %w", err)
 		}
 		if hold != "" {
 			b.server.log.Info("environment gitops: activation held", "source", lease.Source.ID, "graph", graph.ID, "hold", hold)
@@ -203,7 +235,7 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 		if activator, ok := b.intent.(state.EnvironmentGitOpsGraphActivationStore); ok {
 			_, activated, err := activator.ActivateEnvironmentGitOpsWorkloadGraph(ctx, lease, plan)
 			if err != nil {
-				return false, err
+				return false, fmt.Errorf("activate graph: %w", err)
 			}
 			if activated {
 				return b.convergeEnvironmentGitOpsWorkloadServing(ctx, lease, plan)
@@ -223,11 +255,14 @@ func (b *environmentGitOpsBackend) convergeEnvironmentGitOpsWorkloadServing(ctx 
 	}
 	gateways, err := b.server.edgeRules.ServingEdgeRuleNodes(ctx)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("serving gateways: %w", err)
 	}
 	receipt, serving, err := store.PrepareEnvironmentGitOpsWorkloadServing(ctx, lease, plan, gateways)
-	if err != nil || serving {
-		return serving, err
+	if err != nil {
+		return false, fmt.Errorf("prepare serving: %w", err)
+	}
+	if serving {
+		return true, nil
 	}
 	if receipt.GraphID == "" || len(receipt.Routes) == 0 || len(receipt.ExpectedGateways) == 0 {
 		// Scheduled-Job-only graphs have no route acknowledgements. The store

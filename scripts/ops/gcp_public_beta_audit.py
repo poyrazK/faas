@@ -181,6 +181,71 @@ def rule_allows_ports(rule: dict[str, Any], required: set[int]) -> bool:
     return admitted == required
 
 
+def custom_domain_tls_exceptions(policy: dict[str, Any], snap: dict[str, Any]) -> tuple[set[str], list[str]]:
+    """Only the dedicated control-plane edge may admit public HTTP/HTTPS."""
+    config = policy["access"].get("custom_domain_tls", {})
+    if not config.get("enabled"):
+        return set(), []
+    failures: list[str] = []
+    allowed: set[str] = set()
+    tag = config["target_tag"]
+    control = policy["control_plane"]["instance"]
+    tagged = {i["name"] for i in snap.get("instances", []) if tag in i.get("tags", {}).get("items", [])}
+    if tagged != {control}:
+        failures.append(f"custom-domain edge tag {tag} must belong only to {control}; observed {sorted(tagged)}")
+    firewalls = {r.get("name"): r for r in snap.get("firewalls", [])}
+    for family, name in config["firewall_rules"].items():
+        rule = firewalls.get(name, {})
+        entries = rule.get("allowed", [])
+        expected_source = "0.0.0.0/0" if family == "ipv4" else "::/0"
+        valid = (
+            not rule.get("disabled")
+            and rule.get("direction", "INGRESS") == "INGRESS"
+            and set(rule.get("sourceRanges", [])) == {expected_source}
+            and set(rule.get("targetTags", [])) == {tag}
+            and not rule.get("targetServiceAccounts")
+            and len(entries) == 1
+            and entries[0].get("IPProtocol", entries[0].get("ipProtocol")) == "tcp"
+            and set(entries[0].get("ports", [])) == {"80", "443"}
+        )
+        if valid:
+            allowed.add(name)
+        else:
+            failures.append(f"custom-domain firewall {name} must allow only public TCP/80,443 to tag {tag}")
+    return allowed, failures
+
+
+def direct_entry_rule_problems(rule: dict[str, Any], entry: dict[str, Any]) -> list[str]:
+    """What makes the direct-entry rule admit more than its policy allows.
+
+    ADR-20261103163954 §2: with nothing in front, a compute node's forwarded
+    entry address takes TCP 443 from every source. The one rule that admits
+    that names only the entry tag and only those ports, from 0.0.0.0/0.
+    """
+    problems: list[str] = []
+    if rule.get("disabled") or rule.get("direction", "INGRESS") != "INGRESS":
+        return problems
+    if set(rule.get("sourceRanges", [])) - {"0.0.0.0/0"}:
+        problems.append("admits sources beyond 0.0.0.0/0")
+    if rule.get("sourceTags") or rule.get("sourceServiceAccounts") or rule.get("targetServiceAccounts"):
+        problems.append("names source tags or service accounts")
+    if set(rule.get("targetTags", [])) != {entry["target_tag"]}:
+        problems.append(f"is not limited to target tag {entry['target_tag']}")
+    allowed_ports: set[int] = set()
+    for allowed in rule.get("allowed", []):
+        protocol = allowed.get("IPProtocol", allowed.get("ipProtocol", "")).lower()
+        ports = allowed.get("ports")
+        if protocol != "tcp" or not ports:
+            problems.append(f"admits {protocol or 'a protocol'} beyond the listed TCP ports")
+            continue
+        for item in ports:
+            lo, _, hi = str(item).partition("-")
+            allowed_ports.update(range(int(lo), int(hi or lo) + 1))
+    if allowed_ports != set(entry["tcp_ports"]):
+        problems.append(f"admits TCP {sorted(allowed_ports)}, not exactly {sorted(entry['tcp_ports'])}")
+    return problems
+
+
 def pinned_cloudflare_ranges(path: Path) -> set[str]:
     return {line.strip() for line in path.read_text().splitlines() if line.strip()}
 
@@ -285,9 +350,23 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
 
     origin_ports = set(policy["access"]["forbidden_direct_origin_tcp_ports"])
     firewalls = {str(rule.get("name")): rule for rule in snap.get("firewalls", [])}
+    custom_domain_rules, custom_domain_failures = custom_domain_tls_exceptions(policy, snap)
+    failures.extend(custom_domain_failures)
+    entry = policy["access"].get("direct_entry")
     for rule in firewalls.values():
-        if port_is_public(rule, origin_ports):
+        if entry and rule.get("name") == entry["firewall_rule"]:
+            for problem in direct_entry_rule_problems(rule, entry):
+                failures.append(f"direct entry firewall {entry['firewall_rule']} {problem}")
+            continue
+        if port_is_public(rule, origin_ports) and rule.get("name") not in custom_domain_rules:
             failures.append(f"firewall {rule.get('name', '<unnamed>')} exposes the HTTP origin publicly")
+    if entry:
+        # Only compute nodes carry the direct-entry tag. The control plane
+        # uses its separate, bounded custom-domain exception.
+        for name, item in instances.items():
+            tags = set(item.get("tags", {}).get("items", []))
+            if entry["target_tag"] in tags and not str(name).startswith(compute_policy["instance_prefix"]):
+                failures.append(f"{name}: carries the direct entry tag {entry['target_tag']}, which is for compute nodes only")
     origin_tag = policy["access"]["origin_target_tag"]
     control_tags = set((control_instance or {}).get("tags", {}).get("items", []))
     if origin_tag not in control_tags:

@@ -28,8 +28,17 @@ engine_container=''
 export POSTGREST_BINARY="$fixture_dir/postgrest"
 fixture_container=$(docker run --rm -d --label gregale.pipeline.tests=true \
  -p 127.0.0.1::5432 -v "$fixture_dir:/pipeline-cert:ro" \
- -e POSTGRES_USER=faas -e POSTGRES_DB=faas -e POSTGRES_HOST_AUTH_METHOD=trust \
- "$image" sh -ec 'cp /pipeline-cert/server.key /var/lib/postgresql/server.key; chown postgres:postgres /var/lib/postgresql/server.key; chmod 600 /var/lib/postgresql/server.key; exec docker-entrypoint.sh postgres -c wal_level=logical -c max_slot_wal_keep_size=1GB -c max_replication_slots=20 -c max_wal_senders=20 -c max_logical_replication_workers=10 -c max_worker_processes=16 -c wal_receiver_status_interval=1s -c ssl=on -c ssl_cert_file=/pipeline-cert/server.crt -c ssl_key_file=/var/lib/postgresql/server.key')
+ -e POSTGRES_USER=faas -e POSTGRES_DB=faas -e POSTGRES_PASSWORD=test \
+ "$image" sh -ec '
+ cp /pipeline-cert/server.key /var/lib/postgresql/server.key
+ chown postgres:postgres /var/lib/postgresql/server.key
+ chmod 600 /var/lib/postgresql/server.key
+ # Require real passwords for rotation fixtures, while preserving the existing
+ # local trust setup for unrelated large-table acceptance scenarios.
+ printf "%s\n" "CREATE ROLE pipeline_password_test NOLOGIN;" > /docker-entrypoint-initdb.d/pipeline-auth.sql
+ printf "%s\n" "local all all trust" "host all +pipeline_password_test all scram-sha-256" "host all all all trust" > /var/lib/postgresql/pipeline-pg_hba.conf
+ chmod 644 /var/lib/postgresql/pipeline-pg_hba.conf
+ exec docker-entrypoint.sh postgres -c hba_file=/var/lib/postgresql/pipeline-pg_hba.conf -c wal_level=logical -c max_slot_wal_keep_size=1GB -c max_replication_slots=20 -c max_wal_senders=20 -c max_logical_replication_workers=10 -c max_worker_processes=16 -c wal_receiver_status_interval=1s -c ssl=on -c ssl_cert_file=/pipeline-cert/server.crt -c ssl_key_file=/var/lib/postgresql/server.key')
 fixture_port=$(docker port "$fixture_container" 5432/tcp | sed -n 's/^127\.0\.0\.1://p')
 test -n "$fixture_port"
 ready=false
@@ -38,14 +47,14 @@ for attempt in {1..40}; do
  sleep 0.25
 done
 if [ "$ready" != true ]; then docker logs --tail 30 "$fixture_container" >&2; exit 1; fi
-export DATABASE_URL="postgres://faas@127.0.0.1:$fixture_port/faas?sslmode=disable"
+export DATABASE_URL="postgres://faas:test@127.0.0.1:$fixture_port/faas?sslmode=disable"
 export DATA_PIPELINE_TEST_DSN="postgres://faas:test@localhost:$fixture_port/faas?sslmode=verify-full"
 export DATA_PIPELINE_TEST_CA="$fixture_dir/server.crt"
 export PGSSLROOTCERT="$fixture_dir/server.crt"
 export DATA_PIPELINE_TEST_SUBSCRIBER_CA=/pipeline-cert/server.crt
 export FAAS_PGTEST_TEMPLATE_DATABASE=0
 unset FAAS_SKIP_PG_TESTS
-go test -race -count=1 ./pkg/datapipeline ./pkg/apid/datapipelines ./pkg/apid/apidsource ./pkg/dashboard
+go test -race -count=1 -timeout=18m ./pkg/datapipeline ./pkg/apid/datapipelines ./pkg/apid/apidsource ./pkg/dashboard
 go test -race -count=1 -run '^(TestCapacity|TestConnectionBudget|TestPipelineDatabase|TestPipelineAndWritable|TestSetup|TestCreateWithID)' ./pkg/managedpostgres
 go test -race -count=1 -run '^TestBoundedCredential' ./pkg/managedpostgres/neon
 # Match the platform CI's bounded CLI compiler settings as the command grows.

@@ -14,9 +14,16 @@ import (
 const claimQueuedProfileCapture = `-- name: ClaimQueuedProfileCapture :one
 UPDATE profile_captures SET status = 'capturing', claimed_at = $1::timestamptz
 WHERE id = (SELECT q.id FROM profile_captures q WHERE q.status = 'queued'
+  AND (SELECT count(*) FROM profile_captures r WHERE r.status = 'capturing'
+       AND coalesce(r.capture->>'pool', r.account_id::text) = coalesce(q.capture->>'pool', q.account_id::text)) < $2::int
   ORDER BY (coalesce(q.capture->>'trigger', 'manual') <> 'manual'), q.created_at, q.id FOR UPDATE SKIP LOCKED LIMIT 1)
 RETURNING id::text AS id, app_id::text AS app_id, account_id::text AS account_id, capture, created_at
 `
+
+type ClaimQueuedProfileCaptureParams struct {
+	Now        pgtype.Timestamptz
+	MaxRunning int32
+}
 
 type ClaimQueuedProfileCaptureRow struct {
 	ID        string
@@ -26,9 +33,12 @@ type ClaimQueuedProfileCaptureRow struct {
 	CreatedAt pgtype.Timestamptz
 }
 
-// Manual captures are claimed before automatic ones: someone is waiting.
-func (q *Queries) ClaimQueuedProfileCapture(ctx context.Context, db DBTX, now pgtype.Timestamptz) (ClaimQueuedProfileCaptureRow, error) {
-	row := db.QueryRow(ctx, claimQueuedProfileCapture, now)
+// Manual captures are claimed before automatic ones: someone is waiting. A
+// pool already running max_running captures waits its turn, so one account
+// cannot hold every capture worker (ADR-1155). Concurrent schedds may each
+// pass the check: the cap is soft, by at most one per scheduler.
+func (q *Queries) ClaimQueuedProfileCapture(ctx context.Context, db DBTX, arg ClaimQueuedProfileCaptureParams) (ClaimQueuedProfileCaptureRow, error) {
+	row := db.QueryRow(ctx, claimQueuedProfileCapture, arg.Now, arg.MaxRunning)
 	var i ClaimQueuedProfileCaptureRow
 	err := row.Scan(
 		&i.ID,
@@ -110,9 +120,13 @@ func (q *Queries) DeleteAccountProfileCaptures(ctx context.Context, db DBTX, arg
 }
 
 const deleteExpiredProfileCaptures = `-- name: DeleteExpiredProfileCaptures :execrows
-DELETE FROM profile_captures WHERE expires_at < $1::timestamptz
+DELETE FROM profile_captures p WHERE p.expires_at < $1::timestamptz
+  OR EXISTS (SELECT 1 FROM apps a WHERE a.id = p.app_id AND a.status = 'deleted')
 `
 
+// Expired captures, and every capture of a deleted app: nobody can read or
+// delete those any more, and they would hold their pool's storage until they
+// expired (ADR-1155).
 func (q *Queries) DeleteExpiredProfileCaptures(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error) {
 	result, err := db.Exec(ctx, deleteExpiredProfileCaptures, now)
 	if err != nil {

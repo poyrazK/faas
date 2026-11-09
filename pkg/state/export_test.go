@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -30,7 +31,7 @@ import (
 type AlertRollbackDeployment = alertRollbackDeployment
 type AlertRollbackFacts = alertRollbackFacts
 type ApplicationStandardAssignmentRecord = applicationStandardAssignmentRecord
-type AutomationPublishReceipt = automationPublishReceipt
+type StoredWorkflowPublishReceipt = storedWorkflowPublishReceipt
 type ContractTestStore = contractTestStore
 type DeploymentRuntimeArtifactIdentity = deploymentRuntimeArtifactIdentity
 type EffectFixture = effectFixture
@@ -159,8 +160,8 @@ var AutomaticObservationNewRevision = automaticObservationNewRevision
 var AutomaticObservationReviewPrecedence = automaticObservationReviewPrecedence
 var AutomaticPollingFailureCode = automaticPollingFailureCode
 var AutomaticRepair = automaticRepair
-var AutomationDraft = automationDraft
-var AutomationReceiptHash = automationReceiptHash
+var StoredWorkflowDraft = storedWorkflowDraft
+var StoredWorkflowReceiptHash = storedWorkflowReceiptHash
 var BaseProducerFixture = baseProducerFixture
 var BaseProducerLifecycle = baseProducerLifecycle
 var BaseProducerRefusals = baseProducerRefusals
@@ -256,7 +257,7 @@ var EnvironmentGraphSupportsProductionServing = environmentGraphSupportsProducti
 var EnvironmentWorkloadHeldFlag = environmentWorkloadHeldFlag
 var EnvironmentWorkloadServingReceiptAcknowledged = environmentWorkloadServingReceiptAcknowledged
 var EqualWorkflowJSON = equalWorkflowJSON
-var EvaluateAutomationTestCase = evaluateAutomationTestCase
+var EvaluateStoredWorkflowTestCase = evaluateStoredWorkflowTestCase
 var EvaluateRuntimeUpgradeGatewayMembership = evaluateRuntimeUpgradeGatewayMembership
 var EvaluateRuntimeUpgradeVerification = evaluateRuntimeUpgradeVerification
 var EvaluateWorkflowSchedule = evaluateWorkflowSchedule
@@ -536,7 +537,7 @@ var SeedResumeRun = seedResumeRun
 var SeedWorkflowSchedule = seedWorkflowSchedule
 var SettleProductOperationTx = settleProductOperationTx
 var SimpleResumeSpec = simpleResumeSpec
-var SimulateAutomationTestSuite = simulateAutomationTestSuite
+var SimulateStoredWorkflowTestSuite = simulateStoredWorkflowTestSuite
 var SimulateTest = simulateTest
 var SimulationLoopSpec = simulationLoopSpec
 var SimulationStep = simulationStep
@@ -668,7 +669,7 @@ var ValidStandardRuntimeRefresh = validStandardRuntimeRefresh
 var ValidStoredFinancialPrice = validStoredFinancialPrice
 var ValidateAPIConsumerPlanAlerts = validateAPIConsumerPlanAlerts
 var ValidateAPIConsumerUsageStatementHandoffInput = validateAPIConsumerUsageStatementHandoffInput
-var ValidateAutomationTestSuite = validateAutomationTestSuite
+var ValidateStoredWorkflowTestSuite = validateStoredWorkflowTestSuite
 var ValidateCheckpointCaptureRetirementObservation = validateCheckpointCaptureRetirementObservation
 var ValidateCheckpointCaptureRetirementPlan = validateCheckpointCaptureRetirementPlan
 var ValidateCheckpointObjectCopyObservation = validateCheckpointObjectCopyObservation
@@ -1144,6 +1145,16 @@ func (r *workflowOperationWindow) Lease() *time.Time    { return &r.lease }
 
 var LiveServiceProxyIdentities = liveServiceProxyIdentities
 
+// XFreezeDeploymentRuntime stores a reviewed candidate's frozen runtime on an
+// existing deployment, as GitOps candidate preparation does.
+func (m *MemStore) XFreezeDeploymentRuntime(id, raw string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.deployments[id]
+	d.EnvironmentWorkloadRuntime = raw
+	m.deployments[id] = d
+}
+
 // OperatorIntents exposes the MemStore's operator intents to tests.
 func (r *MemStore) OperatorIntents() map[string]OperatorIntent { return r.operatorIntents }
 
@@ -1154,3 +1165,22 @@ var (
 	AcknowledgmentDigest     = acknowledgmentDigest
 	ObjectUploadGrantLookups = objectUploadGrantLookups
 )
+
+// BeginTrafficBindingForTest opens the app binding transaction a deploy uses,
+// so a test can time its analysis bound (Hunt 31 H31-11).
+func (s *PgStore) BeginTrafficBindingForTest(ctx context.Context, account, appID string) (pgx.Tx, error) {
+	tx, err := s.beginTrafficBinding(ctx, TrafficPolicyWriterAppBinding, account, nil, appID)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+// SeedLegacyWorkflowEvent inserts a retained event as written by an older
+// version, before the current event payload limit existed.
+func (m *MemStore) SeedLegacyWorkflowEvent(event WorkflowEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.workflowEvents[event.RunID] = append(m.workflowEvents[event.RunID], event)
+	m.workflowEventApps[event.RunID] = m.workflowRuns[event.RunID].AppID
+}

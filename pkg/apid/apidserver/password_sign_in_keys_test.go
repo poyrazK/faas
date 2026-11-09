@@ -185,7 +185,7 @@ func TestAPIKeyCannotChangeSignInFactors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.CreateAPIKey(context.Background(), e.acct.ID, hash, "automation", api.ScopesAdminOnly); err != nil {
+	if _, err := e.store.CreateAPIKey(context.Background(), e.acct.ID, hash, "stored_workflow", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
 	for _, action := range []string{"mfa_disable", "mfa_confirm", "set_password"} {

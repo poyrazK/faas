@@ -20,8 +20,8 @@ import (
 )
 
 // plainRollbacks is the verified plain-rollback ledger (ADR-1446).
-func (s *server) plainRollbacks() release.Rollbacks {
-	return release.Rollbacks{Store: s.store, Log: s.log, Audit: s.audit, Metrics: s.ops, AutomaticFailed: s.automaticRollbackFailed}
+func (s *server) plainRollbacks() *release.Rollbacks {
+	return &release.Rollbacks{Store: s.store, Log: s.log, Audit: s.audit, Metrics: s.ops, AutomaticFailed: s.automaticRollbackFailed}
 }
 
 func (s *server) startCheckedRollback(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, req api.RollbackRequest) {
@@ -30,15 +30,22 @@ func (s *server) startCheckedRollback(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, problem)
 		return
 	}
-	// PostgreSQL commits the readiness outbox entry with intent. Notify also
-	// supports in-memory/local stores; duplicate deliveries are safe.
-	if s.notif != nil {
-		payload, _ := json.Marshal(map[string]string{"app_id": app.ID, "deployment_id": target.ID})
-		if err := s.notif.Notify(r.Context(), db.NotifySnapshotPrime, string(payload)); err != nil {
+	// Preparing targets have a transactional readiness outbox. Notify also
+	// wakes local stores and service reconciliation; duplicate deliveries are safe.
+	if s.notif != nil && (operation.Status == "preparing" || operation.Service) {
+		channel := db.NotifySnapshotPrime
+		fields := map[string]string{"app_id": app.ID, "deployment_id": target.ID}
+		if operation.Status == "ready" {
+			channel = db.NotifyDeploymentChanged
+			fields["kind"], fields["status"] = "service_rollout", "live"
+		}
+		payload, _ := json.Marshal(fields)
+		if err := s.notif.Notify(r.Context(), channel, string(payload)); err != nil {
 			s.log.Warn("checked rollback readiness wakeup", "request_id", operation.ID, "err", err)
 		}
 	}
 	response := s.deploymentResponse(r.Context(), target, app)
+	s.warnRollbackCrons(r.Context(), w, app, target)
 	response.RollbackOperation = &operation
 	writeJSON(w, http.StatusAccepted, response)
 }
@@ -65,13 +72,17 @@ func (s *server) prepareCheckedRollback(ctx context.Context, acct state.Account,
 	if problem := s.rollbackTargetApprovalProblem(ctx, app, target); problem != nil {
 		return empty, target, problem
 	}
-	if _, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases); problem != nil {
+	crossed, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases)
+	if problem != nil {
 		return empty, target, problem
+	}
+	if req.AcknowledgeReleases {
+		ctx = state.WithCheckedRollbackReleaseReview(ctx, crossed)
 	}
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return empty, target, problem
 	}
-	if api.ApiContractDiffEnabled() && strings.EqualFold(target.Scope, "prod") {
+	if api.ApiContractDiffEnabled() && openapidiff.IsProductionScope(target.Scope) {
 		return s.prepareCheckedRollbackWithContract(ctx, acct, app, req, target, currentID)
 	}
 	return s.persistCheckedRollback(ctx, acct, app, req, target, currentID)
@@ -83,6 +94,9 @@ func (s *server) persistCheckedRollback(ctx context.Context, acct state.Account,
 	}
 	operation, err := store.CreateCheckedRollback(ctx, acct.ID, app.ID, target.ID, currentID, req.Reason)
 	if err != nil {
+		if problem := rollbackAttemptProblem(err); problem != nil {
+			return operation, target, problem
+		}
 		if errors.Is(err, state.ErrLayerArtifactRetired) {
 			return operation, target, rollbackTargetArtifactsReclaimed()
 		}
@@ -136,7 +150,7 @@ func (s *server) getCheckedRollback(w http.ResponseWriter, r *http.Request, acct
 }
 
 func (s *server) prepareCheckedRollbackWithContract(ctx context.Context, acct state.Account, app state.App, req api.RollbackRequest, target state.Deployment, currentID string) (api.RollbackOperation, state.Deployment, *api.Problem) {
-	check, err := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
+	check, err := openapidiff.CheckDeploymentRollback(ctx, s.store, app.ID, target.ID, currentID, target.Scope)
 	if err != nil && !errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
 		return api.RollbackOperation{}, target, api.ErrCapacity("could not evaluate API contract")
 	}

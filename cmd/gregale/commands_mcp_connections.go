@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -20,11 +21,15 @@ import (
 // (ADR-20261030133644). With --socket it is the operator's view of a
 // bridge's grants through its local admin socket.
 func cmdMCPConnections(args []string) int {
+	if len(args) > 0 && args[0] == "activity" {
+		return cmdMCPConnectionActivity(args[1:])
+	}
 	if len(args) == 0 || (args[0] != "list" && args[0] != "revoke") {
-		return printErr("MCP connections", errors.New("use connection list, or connection revoke <id> | --all"))
+		return printErr("MCP connections", errors.New("use connection list, connection activity <id> | --self, or connection revoke <id> | --all"))
 	}
 	fs := newFlagSet("mcp-connections-"+args[0], flag.ContinueOnError)
 	socket := fs.String("socket", "", "owner-protected management control socket (operators)")
+	org := fs.String("org", "", "an organization's agents, for its owners and admins (ADR-20261101225122)")
 	limit, offset, grant, all := 20, 0, "", false
 	if args[0] == "list" {
 		fs.IntVar(&limit, "limit", 20, "page size from 1 to 100 (with --socket)")
@@ -38,9 +43,9 @@ func cmdMCPConnections(args []string) int {
 		return 1
 	}
 	if *socket == "" {
-		return cmdMCPAgentConnections(args[0], positional, all)
+		return cmdMCPAgentConnections(args[0], positional, all, *org)
 	}
-	if len(positional) != 0 || all || limit < 1 || limit > 100 || offset < 0 || (args[0] == "revoke" && grant == "") {
+	if len(positional) != 0 || all || *org != "" || limit < 1 || limit > 100 || offset < 0 || (args[0] == "revoke" && grant == "") {
 		return printErr("MCP connections", errors.New("with --socket, provide valid page bounds, and --grant-id for revocation"))
 	}
 	method, path := http.MethodGet, "/connections?limit="+strconv.Itoa(limit)+"&offset="+strconv.Itoa(offset)
@@ -53,8 +58,32 @@ func cmdMCPConnections(args []string) int {
 	return 0
 }
 
-// cmdMCPAgentConnections lists or revokes the account's connected agents.
-func cmdMCPAgentConnections(verb string, ids []string, all bool) int {
+// agentConnectionCalls are the account's connected-agents calls, or one
+// organization's with --org (ADR-20261101225122).
+type agentConnectionCalls struct {
+	list      func(context.Context) (api.AgentConnectionsResponse, error)
+	revoke    func(context.Context, string) error
+	revokeAll func(context.Context) (api.AgentConnectionsRevokeAllResponse, error)
+}
+
+func connectionCalls(client *Client, org string) agentConnectionCalls {
+	if org == "" {
+		return agentConnectionCalls{client.ListAgentConnections, client.RevokeAgentConnection, client.RevokeAllAgentConnections}
+	}
+	return agentConnectionCalls{
+		list: func(ctx context.Context) (api.AgentConnectionsResponse, error) {
+			return client.ListOrgAgentConnections(ctx, org)
+		},
+		revoke: func(ctx context.Context, id string) error { return client.RevokeOrgAgentConnection(ctx, org, id) },
+		revokeAll: func(ctx context.Context) (api.AgentConnectionsRevokeAllResponse, error) {
+			return client.RevokeAllOrgAgentConnections(ctx, org)
+		},
+	}
+}
+
+// cmdMCPAgentConnections lists or revokes the account's connected agents, or
+// an organization's.
+func cmdMCPAgentConnections(verb string, ids []string, all bool, org string) int {
 	if len(ids) > 1 || (verb == "list" && len(ids) != 0) || (verb == "revoke" && all == (len(ids) == 1)) {
 		return printErr("MCP connections", errors.New("use connection list, or connection revoke <id> | --all"))
 	}
@@ -62,10 +91,10 @@ func cmdMCPAgentConnections(verb string, ids []string, all bool) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx := context.Background()
+	ctx, calls := context.Background(), connectionCalls(client, org)
 	switch {
 	case verb == "list":
-		out, err := client.ListAgentConnections(ctx)
+		out, err := calls.list(ctx)
 		if err != nil {
 			return printErr("Could not list connected agents", err)
 		}
@@ -74,7 +103,7 @@ func cmdMCPAgentConnections(verb string, ids []string, all bool) int {
 		}
 		printAgentConnections(out.Items)
 	case all:
-		out, err := client.RevokeAllAgentConnections(ctx)
+		out, err := calls.revokeAll(ctx)
 		if err != nil {
 			return printErr("Could not revoke connected agents", err)
 		}
@@ -83,7 +112,7 @@ func cmdMCPAgentConnections(verb string, ids []string, all bool) int {
 		}
 		PrintOK(osStdout, "Revoked %d connected agent(s)", out.Revoked)
 	default:
-		if err := client.RevokeAgentConnection(ctx, ids[0]); err != nil {
+		if err := calls.revoke(ctx, ids[0]); err != nil {
 			return printErr("Could not revoke connected agent", err)
 		}
 		if jsonOutput {
@@ -99,7 +128,7 @@ func printAgentConnections(items []api.AgentConnectionResponse) {
 		_, _ = fmt.Fprintln(osStdout, "No agents are connected to this account.")
 		return
 	}
-	_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %s\n", "ID", "KIND", "AGENT", "LAST USED", "EXPIRES")
+	_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %-20s  %-24s  %-24s  %s\n", "ID", "KIND", "AGENT", "LAST USED", "EXPIRES", "MEMBER", "PROJECTS", "APPROVALS")
 	for _, c := range items {
 		kind, agent := "agent key", c.Label
 		if c.Kind == api.AgentConnectionHostedMCP {
@@ -108,7 +137,15 @@ func printAgentConnections(items []api.AgentConnectionResponse) {
 				agent += " (" + c.ClientSite + ")"
 			}
 		}
-		_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %s\n", c.ID, kind, dashIfEmpty(agent), dashIfEmpty(c.LastUsedAt), dashIfEmpty(c.ExpiresAt))
+		projects := "all"
+		if len(c.Projects) > 0 {
+			projects = strings.Join(c.Projects, ",")
+		}
+		approvals := "none"
+		if len(c.Approvals) > 0 {
+			approvals = strings.Join(c.Approvals, ",")
+		}
+		_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %-20s  %-24s  %-24s  %s\n", c.ID, kind, dashIfEmpty(agent), dashIfEmpty(c.LastUsedAt), dashIfEmpty(c.ExpiresAt), dashIfEmpty(c.Member), projects, approvals)
 	}
 }
 

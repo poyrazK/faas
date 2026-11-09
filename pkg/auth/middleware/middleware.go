@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -124,6 +125,13 @@ type DeploymentAppResolver interface {
 	DeploymentAppID(ctx context.Context, deploymentID string) (string, error)
 }
 
+// EdgeRuleAppResolver is the optional store seam that loads the edge rule an
+// agent approval addresses by id, to tell a production app's rule from a
+// preview's (ADR-091 amendment 2026-11-07).
+type EdgeRuleAppResolver interface {
+	GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error)
+}
+
 // deployTokenDeploymentReads are the routes outside /v1/apps/{slug} a deploy
 // token may read, for a deployment of its own app: the ones
 // api.ScopesDeploymentReadSurface admits for deploy:write, which every CLI
@@ -149,6 +157,29 @@ type deployTokenLastUsedToucher interface {
 // dragging in AEAD plumbing.
 type Sessions interface {
 	Verify(value string) (session.Envelope, error)
+}
+
+// ContextSessions is a Sessions that opens cookies somewhere else, such as
+// gatewayd-internal asking apid (ADR-20261102191500): the request's
+// context bounds the call. An error other than session.ErrInvalid means
+// the cookie could not be checked, and the request gets a retryable 503
+// with the cookie kept.
+type ContextSessions interface {
+	Sessions
+	VerifyContext(ctx context.Context, value string) (session.Envelope, error)
+}
+
+// verifySession opens a session cookie, through VerifyContext when the
+// Sessions supports it. unavailable reports that a ContextSessions could
+// not check the cookie; any other error means the cookie is invalid.
+func (m *Middleware) verifySession(ctx context.Context, value string) (env session.Envelope, unavailable bool, err error) {
+	remote, ok := m.Sessions.(ContextSessions)
+	if !ok {
+		env, err = m.Sessions.Verify(value)
+		return env, false, err
+	}
+	env, err = remote.VerifyContext(ctx, value)
+	return env, err != nil && !errors.Is(err, session.ErrInvalid), err
 }
 
 // SessionLookup is the live-session-row check IAM-3 (ADR-039)
@@ -200,12 +231,18 @@ type AccountHandler func(w http.ResponseWriter, r *http.Request, acct state.Acco
 type Middleware struct {
 	HostingAutomationEnabled func() bool
 	HostingOIDCEnabled       func() bool
-	Authn                    Authenticator
-	Sessions                 Sessions
-	Lookups                  SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
-	Audit                    Auditor             // nil-safe; nil disables audit emit
-	Log                      *slog.Logger        // nil-safe; nil disables the Warn path
-	Limiter                  *middleware.Limiter // shared per-IP bucket for RequireLimited
+	// MandatoryMFA adds deployment policy such as the operator allowlist.
+	// When configured, a factor reset can also clear a stale pending cookie.
+	MandatoryMFA func(state.Account) bool
+	Authn        Authenticator
+	Sessions     Sessions
+	Lookups      SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
+	Audit        Auditor             // nil-safe; nil disables audit emit
+	Log          *slog.Logger        // nil-safe; nil disables the Warn path
+	Limiter      *middleware.Limiter // shared per-IP bucket for RequireLimited
+	// ApprovalReviewURL is the page where a person decides an agent's
+	// approval request (ADR-20261104140058).
+	ApprovalReviewURL func(id string) string
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -571,11 +608,28 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// bearer" through the legacy 401 path.
 			} else {
 				if !acct.Active() {
-					if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+					if !inactiveCallerMayReach(r, acct) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
 					}
+				}
+				// ADR-20261104085712: an agent or mcp-login key limited to
+				// projects reaches only their apps and routes.
+				if m.limitKeyToProjects(w, r, acct, &key) {
+					return
+				}
+				// ADR-20261107220000: an agent's write requests are
+				// recorded once the handler answers; the approval gate
+				// notes the approval a request went through on.
+				var activity *agentActivityNote
+				if ProjectLimitable(key) && agentWrite(r.Method) {
+					*r = *r.WithContext(withAgentActivityNote(r.Context(), &activity))
+				}
+				// ADR-20261104140058: an agent's risky request waits for a
+				// person's approval.
+				if m.requireAgentApproval(w, r, acct, key) {
+					return
 				}
 				*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
 				// TouchKeyLastUsed is observability, not auth —
@@ -593,6 +647,12 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 							m.Log.Warn("api_key last_used_at touch failed", "key_id", id, "error", err.Error())
 						}
 					}(r.Context(), key.ID, t)
+				}
+				if activity != nil {
+					aw := &activityWriter{ResponseWriter: w}
+					next(aw, r, acct)
+					m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
+					return
 				}
 				next(w, r, acct)
 				return
@@ -680,7 +740,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					return
 				}
 				if !acct.Active() {
-					if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+					if !inactiveCallerMayReach(r, acct) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
@@ -719,7 +779,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						return
 					}
 					if !acct.Active() {
-						if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+						if !inactiveCallerMayReach(r, acct) {
 							api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 								"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 							return
@@ -758,7 +818,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		//     live row, stamp principal.
 		if m.Sessions != nil && m.Lookups != nil {
 			if c, err := m.sessionCookie(r); err == nil && c.Value != "" {
-				env, err := m.Sessions.Verify(c.Value)
+				env, unavailable, err := m.verifySession(r.Context(), c.Value)
+				if unavailable {
+					m.credentialStoreUnavailable(w, r, err)
+					return
+				}
 				if err == nil {
 					sess, handled, cookieErr := m.RequireSessionCookie(w, r, env)
 					if cookieErr != nil {
@@ -789,7 +853,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					//nolint:contextcheck // same pointer-mutation contract: AccountByID reads from r.Context() so the returned principal stamps into the same ctx as withPrincipal below.
 					if acct, err := m.Authn.AccountByID(r.Context(), env.AccountID); err == nil {
 						if !acct.Active() {
-							if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+							if !inactiveCallerMayReach(r, acct) {
 								api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 									"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 								return
@@ -798,7 +862,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						//nolint:contextcheck // same pointer-mutation contract: withPrincipal derives from r.Context() so the principal stamps into the OUTER r, not a captured local ctx.
 						*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: nil, Membership: nil}))
 						//nolint:contextcheck // same pointer-mutation contract: withMFAPending derives from r.Context() so the flag stamps into the OUTER r.
-						*r = *r.WithContext(withMFAPending(r.Context(), session.IsMFAPending(env)))
+						pending := session.IsMFAPending(env)
+						if m.MandatoryMFA != nil && !m.accountRequiresMFA(acct) {
+							pending = false
+						}
+						*r = *r.WithContext(withMFAPending(r.Context(), pending))
 						// IAM-hardening-mega-PR (logical change 6,
 						// ADR-077): stamp the step-up timestamp the
 						// /v1/account/mfa/verify handler last sealed
@@ -1032,15 +1100,31 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		}
 		return state.Session{}, true, nil
 	}
-	// (3.5) binding-hash mismatch = stolen-cookie auto-revoke
+	// (3.5) binding mismatch = stolen-cookie auto-revoke
 	// (IAM hardening mega-PR, logical change 5, ADR-076).
-	// Compare the envelope's binding_hash (sealed by AEAD at mint
-	// time) against the sessions row's binding_hash column.
-	// Either side empty = "binding not armed" (pre-PR-076 cookie
-	// or unix-socket code path); cross-check is skipped in that
-	// case. Mismatch ⇒ auto-revoke + audit + 401.
-	if m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != "" &&
-		env.BindingHash != sess.BindingHash {
+	// The envelope's binding hash (sealed at mint) must equal the
+	// live row's, and this request's browser family must equal the
+	// family the session was issued to, so a cookie copied into a
+	// different client (curl, another browser) is still caught.
+	//
+	// The client IP is deliberately NOT re-checked per request. The
+	// console reaches apid through a proxy (Vercel) whose egress
+	// address changes between requests, and browsers move between
+	// networks and between IPv4 and IPv6. rc.321 recomputed the
+	// IP-keyed hash on every request and revoked every console
+	// session on its first request from a new egress address.
+	//
+	// Either hash empty = "binding not armed" (pre-PR-076 cookie
+	// or unix-socket code path); the check is skipped in that
+	// case. An empty issued UA skips only the family comparison.
+	// Mismatch ⇒ auto-revoke + audit + 401.
+	bindingArmed := m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != ""
+	issuedFamily, presentedFamily := "", ""
+	if bindingArmed && sess.IssuedUA != "" {
+		issuedFamily = bindinghash.UAFamily(sess.IssuedUA)
+		presentedFamily = bindinghash.UAFamily(r.UserAgent())
+	}
+	if bindingArmed && (env.BindingHash != sess.BindingHash || issuedFamily != presentedFamily) {
 		// Best-effort revoke. Failure is logged but the
 		// 401 still returns — the request is rejected
 		// regardless of the revoke's success.
@@ -1053,11 +1137,13 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		// Audit emit (best-effort — never blocks the 401).
 		if m.Audit != nil {
 			m.Audit.Emit(ctx, "auth.session.binding_mismatch", &env.AccountID, map[string]any{
-				"sid":              env.Sid,
-				"method":           r.Method,
-				"path":             r.URL.Path,
-				"expected_prefix":  prefix8(sess.BindingHash),
-				"presented_prefix": prefix8(env.BindingHash),
+				"sid":                 env.Sid,
+				"method":              r.Method,
+				"path":                r.URL.Path,
+				"expected_prefix":     prefix8(sess.BindingHash),
+				"presented_prefix":    prefix8(env.BindingHash),
+				"expected_ua_family":  issuedFamily,
+				"presented_ua_family": presentedFamily,
 			})
 		}
 		m.clearSessionCookie(w)
@@ -1171,6 +1257,46 @@ func InactiveAccountMayReach(acct state.Account, method, path string) bool {
 	return false
 }
 
+// inactiveCallerMayReach is InactiveAccountMayReach for the authenticated
+// caller. A caller whose personal account is suspended for billing alone (a
+// Free quota stop or dunning; not an abuse hold or a pending deletion) also
+// reaches the routes that address an application, because appaccess decides
+// those by the application's owner: the caller's own personal apps still
+// answer 402 there, and a company's apps follow the company's status. A
+// member's personal Free stop or failed card no longer locks them, and the
+// organization keys they created, out of a company in good standing
+// (bug hunt H87).
+func inactiveCallerMayReach(r *http.Request, acct state.Account) bool {
+	if InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+		return true
+	}
+	return acct.Status == state.AccountSuspended && !acct.AbuseHeld() && appAddressedPattern(r.Pattern)
+}
+
+// appAddressedPattern reports a route pattern whose application appaccess
+// resolves and authorizes before the handler runs (appaccess.Wrap): an app
+// by slug, a company app under its organization, or a deployment or build
+// by ID.
+func appAddressedPattern(pattern string) bool {
+	_, path, ok := strings.Cut(pattern, " ")
+	if !ok {
+		path = pattern
+	}
+	for _, prefix := range []string{"/v1/apps/{slug}", "/v1/orgs/{organization}/apps/{slug}", "/v1/deployments/{id}", "/v1/builds/{id}"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// SuspendedProblem is the 402 a billing-suspended account gets on a route it
+// may not reach.
+func SuspendedProblem() *api.Problem {
+	return api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
+		"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL)
+}
+
 func isBillingRecoveryRoute(method, path string) bool {
 	if financialBudgetRecoveryRoute(method, path) {
 		return true
@@ -1185,7 +1311,11 @@ func isBillingRecoveryRoute(method, path string) bool {
 		"PATCH /v1/account/plan",
 		// Completing MFA is what clears an mfa_pending session and
 		// stamps the step-up that retry and plan change require.
-		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover":
+		"POST /v1/account/mfa/enroll", "POST /v1/account/mfa/confirm",
+		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover",
+		"POST /v1/account/mfa/disable", "POST /v1/account/mfa/disable-email",
+		"POST /v1/account/mfa/disable-email/confirm", "GET /auth/reset/mfa",
+		"HEAD /auth/reset/mfa", "GET /v1/auth/csrf":
 		return true
 	}
 	return false
@@ -1380,8 +1510,8 @@ const (
 //
 //	requireMFA → requireScope(admin) → requireStepUp(5m) → handler
 //
-// The new stamp is written by /v1/account/mfa/verify on every
-// success — see cmd/apid/handlers_mfa.go reissueSessionCookie.
+// Confirmation, authenticator verification and recovery all refresh the
+// stamp. Customer sessions without enabled or required MFA bypass this gate.
 //
 // RequireStepUpStrict is the opt-in for operations where a bearer must
 // never be enough proof. Invitation acceptance and provider-admin
@@ -1403,10 +1533,8 @@ func (m *Middleware) RequireStepUp(ttl time.Duration) func(AccountHandler) Accou
 // mutations use the same strict gate so bearer/API-key principals are
 // rejected consistently across the control plane.
 //
-// The cookie path is unchanged — the absence of a step-up stamp
-// on a session-cookie principal still fails-fast (the v1 cookie
-// branch already did, and the Envelope.StepUpAt omission is the
-// same condition).
+// Strict cookie sessions require a recent stamp even if the account has
+// not enrolled yet. This preserves mandatory operator verification.
 func (m *Middleware) RequireStepUpStrict(ttl time.Duration) func(AccountHandler) AccountHandler {
 	return m.requireStepUp(ttl, true)
 }
@@ -1421,6 +1549,15 @@ func (m *Middleware) requireStepUp(ttl time.Duration, strict bool) func(AccountH
 	}
 	return func(next AccountHandler) AccountHandler {
 		return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+			// Customer MFA is opt-in; strict provider operations keep their gate.
+			actor := acct
+			if principal, _, ok := AccountFromContext(r); ok {
+				actor = principal
+			}
+			if !strict && !m.accountRequiresMFA(actor) {
+				next(w, r, acct)
+				return
+			}
 			ts, has := StepUpFrom(r)
 			// Lax mode: bearer-key principal (no step-up stamp) bypasses.
 			// Pre-PR-077 cookie without step_up_at is also bypass-
@@ -1471,11 +1608,21 @@ func (m *Middleware) requireStepUp(ttl time.Duration, strict bool) func(AccountH
 // same bypass rules. The stamp is read off r.Context() the same
 // way RequireStepUp reads it via StepUpFrom.
 func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) http.Handler {
+	return m.RequireStepUpHandlerWithRedirect(ttl, nil)
+}
+
+// RequireStepUpHandlerWithRedirect lets browser forms visit a challenge.
+// An empty destination retains the structured API refusal.
+func (m *Middleware) RequireStepUpHandlerWithRedirect(ttl time.Duration, redirect func(*http.Request) string) func(http.Handler) http.Handler {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if acct, _, ok := AccountFromContext(r); ok && !m.accountRequiresMFA(acct) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			ts, has := StepUpFrom(r)
 			if !has {
 				next.ServeHTTP(w, r)
@@ -1489,7 +1636,6 @@ func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) 
 			if !ts.IsZero() {
 				reason = stepUpReasonExpired
 			}
-			api.WriteProblem(w, api.ErrStepUpRequired())
 			if m.Audit != nil {
 				// Dashboard routes don't carry a state.Account on
 				// the request context the way RequireSession's
@@ -1507,6 +1653,13 @@ func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) 
 					"ttl_sec": int(ttl.Seconds()),
 				})
 			}
+			if redirect != nil {
+				if target := redirect(r); target != "" {
+					http.Redirect(w, r, target, http.StatusSeeOther)
+					return
+				}
+			}
+			api.WriteProblem(w, api.ErrStepUpRequired())
 		})
 	}
 }
@@ -1577,7 +1730,7 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 			"Not found", "no such app"))
 		return state.App{}, false
 	}
-	if p, ok := principalFrom(r); ok && p.Key != nil && p.Key.AppID != "" && p.Key.AppID != app.ID {
+	if p, ok := principalFrom(r); ok && p.Key != nil && (p.Key.AppID != "" && p.Key.AppID != app.ID || AppOutsideKeyProjects(p.Key, app)) {
 		// App-bound deploy tokens must not be usable against another
 		// app in the same account. Collapse the mismatch to the same
 		// 404 shape as a cross-account slug probe.
@@ -1614,6 +1767,11 @@ func IsUploadSessionPath(path string) bool {
 // /v1/apps/{slug} routes, the upload routes and its app's deployment reads,
 // and nothing else. It answers the request and reports true when it refuses.
 func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Request, key state.APIKey, title string) bool {
+	// App agents inspect their own minimal principal and platform capabilities
+	// before connecting to MCP. This grants no account inventory or mutations.
+	if slices.Contains(key.Scopes, api.ScopeAgent) && r.Method == http.MethodGet && (r.URL.Path == "/v1/account" || r.URL.Path == "/v1/capabilities") {
+		return false
+	}
 	// The resumable upload routes are the CLI's default source
 	// deploy path. They name their app in the request body or the
 	// stored session, so the app binding is enforced where the
@@ -1623,9 +1781,12 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 	// A deploy follows the deployment it created; the route
 	// is bound by the deployment's app, not a path slug.
 	deploymentRead := deployTokenDeploymentReads[r.Pattern]
-	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead {
+	// CI waits for its app's PR previews; the route is bound by the
+	// preview's production app (ADR-20261102203228).
+	previewStatusRead := appBoundPreviewStatusReads[r.Pattern]
+	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead && !previewStatusRead {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments"))
+			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments and preview status"))
 		return true
 	}
 	var bound bool
@@ -1633,6 +1794,8 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 	switch {
 	case uploadRoute:
 		bound = key.AppID != ""
+	case previewStatusRead:
+		bound, bindErr = m.credentialBoundToPreview(r, key)
 	case deploymentRead:
 		bound, bindErr = m.deployTokenBoundToDeployment(r, key)
 	default:
@@ -1654,6 +1817,37 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 		return true
 	}
 	return false
+}
+
+// appBoundPreviewStatusReads are the PR preview status reads an app-bound
+// credential may make for its own app's previews.
+var appBoundPreviewStatusReads = map[string]bool{
+	"GET /v1/preview/{slug}":             true,
+	"GET /v1/preview/{slug}/environment": true,
+}
+
+// credentialBoundToPreview reports whether the {slug} of a preview status read
+// names a preview of the app the credential is bound to.
+func (m *Middleware) credentialBoundToPreview(r *http.Request, key state.APIKey) (bool, error) {
+	slug := r.PathValue("slug")
+	if slug == "" || key.AppID == "" {
+		return false, nil
+	}
+	preview, err := m.Authn.AppBySlug(r.Context(), slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil || preview.PreviewOfSlug == "" {
+		return false, err
+	}
+	parent, err := m.Authn.AppBySlug(r.Context(), preview.PreviewOfSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return parent.ID == key.AppID && parent.AccountID == preview.AccountID, nil
 }
 
 func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {

@@ -58,7 +58,7 @@ func testConfig(baseURL string) Config {
 }
 
 func catalogProductJSON(id string, fixedCents int64) string {
-	return `{"id":"` + id + `","recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"usd","price_amount":` + strconv.FormatInt(fixedCents, 10) + `,"is_archived":false},{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`
+	return `{"id":"` + id + `","recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"usd","price_amount":` + strconv.FormatInt(fixedCents, 10) + `,"is_archived":false},{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"5","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`
 }
 
 func catalogMeterJSON() string {
@@ -71,7 +71,7 @@ func egressTestConfig(baseURL, mode string) Config {
 	cfg.EgressBillingFrom = "2026-09-01T00:00:00Z"
 	cfg.EgressUsageEventName = "egress_usage"
 	cfg.EgressMeterID = "meter-egress"
-	cfg.EgressMillicentsPerGiB = 2_000
+	cfg.EgressMillicentsPerGiB = api.EgressOverageMillicentsPerGiB
 	cfg.HobbyIncludedEgressGiB = 10
 	cfg.ProIncludedEgressGiB = 100
 	cfg.ScaleIncludedEgressGiB = 1_000
@@ -257,11 +257,11 @@ func TestPushMeterUsageRecordRequiresLiveAndUsesDistinctEvent(t *testing.T) {
 		t.Fatal("live Polar provider missing egress capability")
 	}
 	policy, ok := p.MeterUsagePolicy(api.PlanHobby, state.BillingMeterEgress)
-	if !ok || policy.Mode != billing.MeterDeliveryLive || policy.IncludedQuantity != 10*(1<<30) || policy.MillicentsPerUnit != 2_000 {
+	if !ok || policy.Mode != billing.MeterDeliveryLive || policy.IncludedQuantity != 10*(1<<30) || policy.MillicentsPerUnit != 3_000 {
 		t.Fatalf("egress policy = (%+v, %v)", policy, ok)
 	}
-	if cents := billing.MeterUsageCents(policy, 3*(1<<30)); cents != 6 {
-		t.Fatalf("three-GiB policy cost = %d cents, want 6", cents)
+	if cents := billing.MeterUsageCents(policy, 3*(1<<30)); cents != 9 {
+		t.Fatalf("three-GiB policy cost = %d cents, want 9 at $0.03 per GiB", cents)
 	}
 	acct := state.Account{ID: "acct-1", ProviderCustomerID: "polar-customer"}
 	hour := time.Date(2026, 9, 11, 10, 0, 0, 0, time.UTC)
@@ -285,7 +285,7 @@ func TestPushMeterUsageRecordRequiresLiveAndUsesDistinctEvent(t *testing.T) {
 func withOrganization(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/organizations/" {
-			_, _ = io.WriteString(w, `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"}}],"pagination":{"total_count":1,"max_page":1}}`)
+			_, _ = io.WriteString(w, `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"},"customer_portal_settings":{"subscription":{"update_plan":false}}}],"pagination":{"total_count":1,"max_page":1}}`)
 			return
 		}
 		next(w, r)
@@ -293,15 +293,18 @@ func withOrganization(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // The preflight refuses an organization that lets a customer hold several
-// subscriptions, that charges a portal upgrade only at the next renewal, or a
-// token that does not name exactly one organization.
-// adr: 20261029180000, 20261031090658
+// subscriptions, that charges a portal upgrade only at the next renewal, that
+// lets customers switch plans in the portal, or a token that does not name
+// exactly one organization.
+// adr: 20261029180000, 20261031090658, 20261103131742
 func TestEnsurePlanProductsRequiresSingleSubscriptionOrganization(t *testing.T) {
 	for name, body := range map[string]string{
-		"multiple allowed":     `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":true,"proration_behavior":"invoice"}}]}`,
+		"multiple allowed":     `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":true,"proration_behavior":"invoice"},"customer_portal_settings":{"subscription":{"update_plan":false}}}]}`,
 		"setting missing":      `{"items":[{"id":"org-1","subscription_settings":{}}]}`,
-		"upgrade charge later": `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"prorate"}}]}`,
+		"upgrade charge later": `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"prorate"},"customer_portal_settings":{"subscription":{"update_plan":false}}}]}`,
 		"no organization":      `{"items":[]}`,
+		"portal plan switch":   `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"},"customer_portal_settings":{"subscription":{"update_plan":true}}}]}`,
+		"portal setting gone":  `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"}}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			var catalogReads int
@@ -347,7 +350,7 @@ func TestEnsurePlanProductsValidatesSeparateEgressCatalog(t *testing.T) {
 			case "scale-product":
 				fixed = 9900
 			}
-			product := strings.Replace(catalogProductJSON(id, fixed), `],"benefits"`, `,{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"2","meter_id":"meter-egress","cap_amount":null,"is_archived":false}],"benefits"`, 1)
+			product := strings.Replace(catalogProductJSON(id, fixed), `],"benefits"`, `,{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"3","meter_id":"meter-egress","cap_amount":null,"is_archived":false}],"benefits"`, 1)
 			_, _ = io.WriteString(w, product)
 			return
 		}
@@ -748,7 +751,7 @@ func TestChangeSubscriptionPlanSchedulesNextPeriodUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	effectiveAt, err := p.ChangeSubscriptionPlan(context.Background(), state.Account{
-		ID: "acct-1", StripeSubscriptionItem: "sub-1",
+		ID: "acct-1", Plan: api.PlanScale, StripeSubscriptionItem: "sub-1",
 	}, api.PlanPro)
 	if err != nil {
 		t.Fatalf("ChangeSubscriptionPlan: %v", err)

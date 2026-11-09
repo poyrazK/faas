@@ -1372,3 +1372,45 @@ Tests: `TestChallengePassSurvivesAShadowingCookie`,
 `TestWAFCookieOnlyDetectionBlocksWithoutBoxing`,
 `TestCheckInlineMarksCookieOnlyDetections`,
 `TestChallengedPreflightIsAnsweredAtTheEdge` and the trace's preflight case.
+
+## Amendment 19 (2026-11-02): a check scores bounded headers
+
+The cost of a WAF check grows faster than its input. Measured on a loaded
+workstation, one in-path check took 0.29 ms with no extra header, 1.7 ms
+with a 1 KiB cookie, 16 ms with 8 KiB, 307 ms with 32 KiB and 10 s with
+512 KiB. The edge accepts 1 MiB of headers, a check cannot be stopped once it
+holds a slot (three per production compute node), and the app's budget is
+charged after the check. A few requests a second with large headers, to any
+app with a `warn` or `block` rule, could hold every slot, so every other
+app's checks on the node failed open as `busy`, and burn gateway CPU.
+
+A check (in-path and sampled) now scores each header value up to
+`api.EdgeWAFMaxInspectHeaderValueBytes` (4 KiB) and at most
+`api.EdgeWAFMaxInspectHeaderBytes` (16 KiB) of header names and values in all,
+taken in name order; a longer value is cut on a character boundary and
+headers past the total are not scored. The URI and query are scored in full.
+This bounds every check, so the per-app budget again bounds what one app's
+traffic can take from the node. Like a body past its inspection limit,
+header content past the bound is not inspected; the docs say so.
+
+Tests: `TestBoundHeaders`.
+
+## Amendment 20 (2026-11-07): headers past the bound are a detection
+
+Amendment 19 bounded what a check scores (4 KiB per header value, 16 KiB of
+headers in all, in name order) and let the rest pass unscored. A client
+could pad its headers (four early-sorting 4 KiB headers, or 4 KiB of filler
+before a payload in one value) and hide an attack in Cookie, User-Agent or
+any later header from a `block` rule. A `warn` or `block` rule now counts a
+request whose headers exceed either bound
+(`api.EdgeWAFHeadersExceedInspection`) as a detection with category
+`uninspected-headers`, without running the check: `block` answers 403, `warn`
+adds `X-WAF-Warning`. Like a cookie-only detection it never boxes the client.
+A Cookie header is measured and scored one cookie per value
+(`api.EdgeWAFInspectHeaders`): browsers join every cookie into one header,
+often past 4 KiB, while capping each cookie at 4 KiB.
+`observe` is unchanged. Apps that legitimately receive larger headers keep
+those paths in `observe`; the bound itself, and so the cost of a check, is
+unchanged. Node.js already refuses more than 16 KiB of headers by default.
+
+Tests: `TestWAFHeadersPastTheInspectionBoundAreADetection`.

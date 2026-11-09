@@ -256,7 +256,11 @@ func SubscriptionEndedBody(email, fromPlan string, endedAt time.Time) (subject, 
 	return SubscriptionEndedBodyV1(email, fromPlan, endedAt)
 }
 
-// SubscriptionEndedBodyV1 is frozen for durable retries of subscription termination.
+// SubscriptionEndedBodyV1 is frozen for durable retries of subscription
+// termination: the outbox stores only template version 1. Its account of
+// what the Free plan does changed once, with ADR-20261103131742, when apps
+// outside the Free limits stopped waking; a notice delivered after that
+// release describes the release it is delivered under.
 func SubscriptionEndedBodyV1(email, fromPlan string, endedAt time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	atStr := endedAt.UTC().Format("2006-01-02 15:04 UTC")
@@ -269,9 +273,13 @@ Gregale account (%s) has ended. Your account is now on the Free plan.
 
 What changes:
 
-  - The Free plan includes %d deployed app, %d MB RAM per app, and
-    %d GB-hours per calendar month. Apps above those limits keep running
-    until the Free allowance is used up, then park until next month.
+  - The Free plan includes %d deployed app, %d MB RAM per app,
+    %d GB-hours and %d GiB of egress per calendar month.
+  - Only your oldest deployed app keeps serving. Other apps, and any app
+    set above %d MB RAM, park and stop waking until they fit: delete apps,
+    lower an app's RAM with gregale app NAME --ram %d, or upgrade.
+  - Once the month's GB-hours or egress are used up, apps park until next
+    month.
   - New deploys must fit the Free limits.
 
 To upgrade again at any time, run one of:
@@ -285,7 +293,7 @@ or open the billing page in the dashboard.
 If you did not expect this, contact support@gregale.dev.
 
 — Gregale
-`, atStr, fromPlan, email, free.DeployedApps, free.RAMMB, free.IncludedGBHours)
+`, atStr, fromPlan, email, free.DeployedApps, free.RAMMB, free.IncludedGBHours, free.MonthlyEgressGiB, free.RAMMB, free.RAMMB)
 	return
 }
 

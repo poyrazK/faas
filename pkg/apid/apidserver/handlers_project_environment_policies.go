@@ -16,8 +16,13 @@ import (
 
 // updateProjectEnvironmentPolicies replaces only the headers/CORS policy for
 // the workload's stable environment URL. Other app edge rules are unchanged.
+// Like routes, a protected stage takes this policy from an approved project
+// plan or promotion; production keeps the direct edit (ADR-233).
 func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	project, environment, _, problem := s.loadProjectEnvironmentConfig(r.Context(), acct, r.PathValue("slug"), r.PathValue("environment"))
+	if problem == nil && environment.Protected && !state.IsProductionScope(environment.Slug) {
+		problem = api.NewProblem(http.StatusConflict, api.CodeConflict, "Protected environment", "apply configuration through an approved project plan or environment promotion")
+	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -78,11 +83,25 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 				return
 			}
 		}
+		action := edgerules.ActionFromBody(check.Kind, check.Action)
 		rules = append(rules, state.ProjectEnvironmentEdgeRule{
 			Kind: state.EdgeRuleKind(check.Kind), MatchPath: check.MatchPath,
 			MatchMethods: append([]string(nil), check.MatchMethods...), MatchHeaders: check.MatchHeaders,
-			Priority: priority, Enabled: enabled, Action: edgerules.ActionFromBody(check.Kind, check.Action),
+			Priority: priority, Enabled: enabled, Action: action,
 		})
+	}
+	// Credential header values are sealed as on application rules
+	// (ADR-20261108110000 amendment 2026-11-09).
+	var previous []state.ProjectEnvironmentEdgeRule
+	if stored, err := s.store.GetProjectEnvironmentEdgePolicy(r.Context(), acct.ID, app.ID, environment.Slug); err == nil {
+		previous = stored.Rules
+	} else if !errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrCapacity("could not read the stored environment policies"))
+		return
+	}
+	if problem := s.edgeRules.SealEnvironmentPolicyHeaders(r.Context(), app, rules, previous); problem != nil {
+		api.WriteProblem(w, problem)
+		return
 	}
 	convergence, err := s.edgeRules.PrepareEdgeRuleMutation(r.Context(), app.ID, "", "environment_policy_updated", host)
 	if err != nil {
@@ -122,7 +141,8 @@ func projectEnvironmentEdgePolicyResponse(policy state.ProjectEnvironmentEdgePol
 	for _, rule := range policy.Rules {
 		var action any
 		if rule.Kind == state.EdgeRuleKindHeaders {
-			action = rule.Action.Headers
+			// Credential values are never returned (ADR-20261108110000).
+			action = edgerules.RedactEnvironmentPolicyAction(rule).Headers
 		} else {
 			action = rule.Action.CORS
 		}

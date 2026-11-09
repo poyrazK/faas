@@ -167,7 +167,7 @@ func (m *management) completeRequestArgument(ctx context.Context, req *mcp.Compl
 }
 
 func (m *management) completeRequestApps(ctx context.Context, prefix string) (*mcp.CompleteResult, error) {
-	apps, err := m.client.ListApps(ctx)
+	apps, err := listApps(ctx, m.client, m.opts.Org)
 	if err != nil {
 		return nil, err
 	}

@@ -3768,8 +3768,11 @@ type Store interface {
 	TriggerRecordIDByItemIdentifier(ctx context.Context, triggerID, itemIdentifier string) (string, error)
 	ListTriggerDeadLetter(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerDeadLetter, error)
 	ListTriggerRecordsForTrigger(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error)
-	RetryTriggerRecordByOperator(ctx context.Context, id string) error
-	DropTriggerRecordByOperator(ctx context.Context, id string) error
+	// RetryTriggerRecordByOperator and DropTriggerRecordByOperator act on
+	// one record of triggerID, a trigger of appID. A record of another
+	// trigger or app answers ErrNotFound, as a missing one does.
+	RetryTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error
+	DropTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error
 
 	// Fire-now request queue (ADR-090 PR-C / migrations/00193).
 	// apid inserts on POST /v1/crons/{id}/run; schedd claims +
@@ -4474,6 +4477,10 @@ type Store interface {
 	// each count stops at limit and the oldest pending message comes from
 	// the lease indexes (ADR-20261018101500 amendment 2026-10-27).
 	QueueBindingTelemetry(ctx context.Context, appID, bindingID string, limit int) (QueueStats, error)
+	// QueueAppTelemetry is QueueState with each count stopping at limit, for
+	// status reads a customer can poll (ADR-20261018101500 amendment
+	// 2026-10-31).
+	QueueAppTelemetry(ctx context.Context, appID string, limit int) (QueueStats, error)
 	WorkerPoolHistory(ctx context.Context, appID, deploymentID string) (WorkerPoolHistory, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by
@@ -5760,7 +5767,7 @@ type Store interface {
 	// CurrentMonthOverageCents returns the account's derived compute overage
 	// in integer cents for the current UTC month. The account plan's
 	// included calendar-month allowance is subtracted before the
-	// $0.01/GB-h conversion (CLAUDE.md: integer cents only, never float).
+	// OverageMillicentsPerGBHour conversion (CLAUDE.md: integer cents only, never float).
 	// meterd consults this on every quota tick to decide whether the
 	// overage row should be capped. The PgStore implementation sums
 	// usage_minutes.mb_seconds since the UTC month start and converts
@@ -6681,6 +6688,11 @@ type Store interface {
 	// ListRequestTelemetryByApp.
 	RequestTelemetryByDeployment(ctx context.Context, arg sqlc.RequestTelemetryByDeploymentParams) ([]sqlc.RequestTelemetryByDeploymentRow, error)
 
+	// RequestTelemetryLatencyWeightsByRoute backs the regression detector's
+	// affected-request count: per route and latency bucket, the requests the
+	// deployment served in the window (regression view), with no row cap.
+	RequestTelemetryLatencyWeightsByRoute(ctx context.Context, arg sqlc.RequestTelemetryLatencyWeightsByRouteParams) ([]sqlc.RequestTelemetryLatencyWeightsByRouteRow, error)
+
 	// RequestTelemetryBaselineP95ByRoute backs the regression
 	// detector's per-route p95 baseline lookup. PR-B's cron calls
 	// this per-deployment, then composes the result with
@@ -6726,6 +6738,9 @@ type Store interface {
 	ListActiveRegressionsByApp(ctx context.Context, arg sqlc.ListActiveRegressionsByAppParams) ([]sqlc.ListActiveRegressionsByAppRow, error)
 	ApplyRegressionAction(ctx context.Context, arg sqlc.ApplyRegressionActionParams) (sqlc.DebugRegressionObservation, error)
 	ResolveStaleRegressionObservations(ctx context.Context, arg pgtype.Interval) ([]sqlc.DebugRegressionObservation, error)
+	// ResolveRegressionObservationsNotSeenSince resolves an app's
+	// observations its complete detector pass did not reconfirm.
+	ResolveRegressionObservationsNotSeenSince(ctx context.Context, arg sqlc.ResolveRegressionObservationsNotSeenSinceParams) ([]sqlc.DebugRegressionObservation, error)
 
 	// ListDeploymentsForCompare backs the dashboard compare panel's
 	// two <select> dropdowns. Returns distinct deployment_ids that

@@ -53,8 +53,10 @@ type Service struct {
 	AccessPreviewEnabled  bool
 	TicketsPreviewEnabled bool
 	claimWaiters          claimWaiters
-	AuthLimiter           *middleware.Limiter
-	Host                  Host
+	// unsealed caches endpoint credentials for the endpoint reconcile.
+	unsealed    unsealedCredentials
+	AuthLimiter *middleware.Limiter
+	Host        Host
 
 	// Owner routes customer-facing connection operations to the node that
 	// owns a live socket; the local Unix client is the same-box fast path.
@@ -89,6 +91,11 @@ type Service struct {
 	// (ADR 20261021080640); legacy is the environment gate that decides until
 	// an operator writes the flag. Nil uses legacy.
 	PreviewReleased func(r *http.Request, acct state.Account, flagKey string, legacy bool) bool
+	// NodesServePreview reports whether every realtime node serves a preview
+	// (realtime.NodePreview*). A released preview the nodes cannot serve
+	// answers as off, so apid never accepts a ticket, access change or
+	// occupancy read the nodes would ignore. Nil trusts the flags alone.
+	NodesServePreview func(name string) bool
 	// EndpointPreviews are the per-account preview decisions sent with an
 	// endpoint's registration. A nil result sends none, so realtimed's own
 	// switches decide.
@@ -99,6 +106,9 @@ type Service struct {
 	RealtimeReleased func(ctx context.Context, accountID, appID string) bool
 
 	publishIdempotencySweep atomic.Uint64
+	// writeBudget is each account's realtime write rate on control-plane
+	// Postgres (RealtimeLimits.RetainedWritesPerSecond).
+	writeBudget writeBudget
 }
 
 // Registry is the registry the metrics were registered on, so apid can tell
@@ -118,6 +128,9 @@ type publishCaptureWriter struct {
 	http.ResponseWriter
 	status int
 	body   bytes.Buffer
+	// unwritten marks a refusal that wrote nothing, such as the account's
+	// realtime write rate: its key is released so a retry runs again.
+	unwritten bool
 }
 
 func (c *publishCaptureWriter) WriteHeader(status int) {

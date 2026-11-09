@@ -110,6 +110,10 @@ type WAFInlineResult struct {
 	// another host of a shared apps domain can plant such a cookie in a
 	// visitor's browser (ADR-831 amendment 18).
 	CookiesOnly bool
+	// Oversized marks a detection for headers past what a check scores
+	// (api.EdgeWAFHeadersExceedInspection, ADR-831 amendment 20). It blocks
+	// but never boxes the client: large cookies and tokens are not attacks.
+	Oversized bool
 }
 
 // Why an in-path check was skipped (gateway_waf_inline_skips_total, ADR-831
@@ -156,10 +160,31 @@ func (h *Handler) WithWAFInlineChecker(checker WAFInlineChecker) *Handler {
 // blocked. For an account the edge_waf_blocking platform flag leaves out,
 // warn and block rules are inspected as observe (ADR-20261023113721).
 func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder) (handled bool, submit func()) {
-	rule := h.matchEdgeRuleWAF(r, app)
-	if rule == nil {
-		return false, nil
+	var submits []func()
+	for _, rule := range h.matchEdgeRuleWAF(r, app) {
+		handled, submit := h.applyEdgeRuleWAFRule(w, r, app, rec, rule)
+		if handled {
+			return true, nil
+		}
+		if submit != nil {
+			submits = append(submits, submit)
+		}
 	}
+	switch len(submits) {
+	case 0:
+		return false, nil
+	case 1:
+		return false, submits[0]
+	}
+	return false, func() {
+		for _, submit := range submits {
+			submit()
+		}
+	}
+}
+
+// applyEdgeRuleWAFRule applies one matched waf rule.
+func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, rule *EdgeRuleWAFResolved) (handled bool, submit func()) {
 	sample := newWAFSample(r, app, rule)
 	if (rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock) && h.edgeFeatureReleased(platformflags.EdgeWAFBlocking, app) {
 		res := h.checkEdgeRuleWAFInline(rule, sample)
@@ -168,7 +193,7 @@ func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app A
 			if rule.Mode == api.EdgeWAFModeBlock {
 				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Request blocked",
 					"blocked by edge rule "+rule.ID+" (kind=waf)"))
-				if !res.CookiesOnly {
+				if !res.CookiesOnly && !res.Oversized {
 					h.penalizeEdgeRuleRejection(r, app, rule.ID)
 				}
 				return true, nil
@@ -194,7 +219,7 @@ func requestHasBody(r *http.Request) bool {
 	return r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0
 }
 
-func (h *Handler) matchEdgeRuleWAF(r *http.Request, app App) *EdgeRuleWAFResolved {
+func (h *Handler) matchEdgeRuleWAF(r *http.Request, app App) []*EdgeRuleWAFResolved {
 	if h.edgeRules == nil || (h.wafInspector == nil && h.wafInline == nil) {
 		return nil
 	}
@@ -202,17 +227,23 @@ func (h *Handler) matchEdgeRuleWAF(r *http.Request, app App) *EdgeRuleWAFResolve
 	if !ok {
 		return nil
 	}
-	rule := matcher.MatchWAF(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
-	if rule == nil {
+	rules := matchEdgeGates(r, func(ctx context.Context, path string) *EdgeRuleWAFResolved {
+		return matcher.MatchWAF(ctx, hostname(r.Host), path, r.Method)
+	})
+	if len(rules) == 0 {
 		h.metrics.ObserveEdgeRuleMatch("waf", "miss")
 		return nil
 	}
-	if rule.AccountID != app.AccountID {
-		h.metrics.ObserveEdgeRuleMatch("waf", "blocked")
-		return nil
+	out := rules[:0]
+	for _, rule := range rules {
+		if rule.AccountID != app.AccountID {
+			h.metrics.ObserveEdgeRuleMatch("waf", "blocked")
+			continue
+		}
+		h.metrics.ObserveEdgeRuleMatch("waf", "match")
+		out = append(out, rule)
 	}
-	h.metrics.ObserveEdgeRuleMatch("waf", "match")
-	return rule
+	return out
 }
 
 func newWAFSample(r *http.Request, app App, rule *EdgeRuleWAFResolved) WAFSample {
@@ -224,7 +255,7 @@ func newWAFSample(r *http.Request, app App, rule *EdgeRuleWAFResolved) WAFSample
 		ExcludeRuleIDs:   rule.ExcludeRuleIDs,
 		Method:           r.Method,
 		Host:             r.Host,
-		URI:              r.URL.RequestURI(),
+		URI:              originalRequestURI(r),
 		Proto:            r.Proto,
 		Header:           r.Header.Clone(),
 		country:          wafSampleCountry(r.Context()),
@@ -242,7 +273,14 @@ func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSa
 	if h.wafInline == nil {
 		return WAFInlineResult{}
 	}
-	res := h.wafInline.CheckInline(sample)
+	var res WAFInlineResult
+	if api.EdgeWAFHeadersExceedInspection(sample.Header) {
+		// A check would leave part of the headers unscored, which a
+		// client can use to hide a payload (ADR-831 amendment 20).
+		res = WAFInlineResult{Outcome: WAFInlineDetected, Categories: []string{api.EdgeWAFCategoryUninspectedHeaders}, Oversized: true}
+	} else {
+		res = h.wafInline.CheckInline(sample)
+	}
 	outcome := res.Outcome
 	if outcome == WAFInlineDetected {
 		outcome = "warned"

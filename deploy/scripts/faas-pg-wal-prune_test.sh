@@ -36,12 +36,20 @@ if [[ "$1" == check && "${MOCK_RCLONE_FAIL:-0}" == 1 ]]; then
   exit 9
 fi
 [[ "$1" == copy || "$1" == check ]]
+checkers=4
 for arg in "$@"; do
   case "$arg" in
     --files-from=*) list="${arg#--files-from=}" ;;
+    --checkers=*) checkers="${arg#--checkers=}" ;;
   esac
 done
 [[ -s "${list:-}" ]]
+# check hashes every candidate from PostgreSQL's disk: a day of WAL after each
+# basebackup. Parallel hashing saturated that disk and stalled the database.
+if [[ "$1" == check ]] && ((checkers > 2)); then
+  echo "rclone check with $checkers checkers" >&2
+  exit 7
+fi
 EOF
 cat >"$BIN/stat" <<'EOF'
 #!/usr/bin/env bash

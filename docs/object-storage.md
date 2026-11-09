@@ -47,6 +47,9 @@ gregale bucket list my-api
 app with `read_write` access (`--permission read` or `write` to narrow it). It
 is idempotent: running it again reuses the bucket and the binding.
 `gregale bucket list` shows the bucket IDs that other commands take.
+If a create or delete fails, Gregale keeps retrying it. While it does, the
+bucket stays `provisioning` or `deleting`, and `bucket list` (and the API's
+`retry` field) says why, how many attempts ran and when the next one starts.
 
 With the API, `POST /v1/apps/{app}/buckets` creates a bucket:
 
@@ -66,6 +69,11 @@ gregale bucket delete my-api BUCKET_ID
 Deleting a non-empty bucket is refused. An app that still has buckets cannot be
 deleted; delete its buckets first.
 
+Full environment clones currently copy objects up to 5 GiB each on qualified
+S3-compatible backends. A larger selected object is refused during capture with
+`object_storage_copy_size_unsupported`, before object copying begins. Multipart
+uploads keep their separate total object limit.
+
 ### Public buckets
 
 A bucket created with `--public --serve-at /assets` serves its objects at
@@ -76,6 +84,27 @@ use at most 75% of your account's monthly request and egress ceilings, and each
 bucket serves at most 100 reads per second (bursts to 200); past either limit,
 readers get `429`. The mount path cannot change after creation. Buckets are
 private unless created public.
+
+When public mount paths overlap, the longest matching path serves the request.
+For example, `/assets/images/logo.png` uses the bucket mounted at
+`/assets/images`, regardless of when the bucket at `/assets` was created.
+
+Conditional public reads return `304` when unchanged and `412` when a
+precondition fails. An unsatisfiable range returns `416` with `Content-Range`
+when the provider supplies it. These failures do not expose provider error
+documents and are not cached.
+
+Resumed public downloads honor `If-Range`: a matching strong ETag or modification
+date permits a partial response; a stale validator returns the full current
+object. If the provider ignores the condition, the full-read fallback counts as
+another request and must fit the remaining read and egress allowances.
+
+Reads of a mount are served before your app's edge rules and access control:
+`ip`, `jwt`, `geo`, `limit` and other rules, and the app's public auth mode
+(Basic, bearer, IP allowlist), do not apply to them. Put anything that needs
+those behind your app instead. SVG and XML objects are served with
+`Content-Security-Policy: sandbox`, so opening one directly cannot run script
+on your app's hostname.
 
 ## Upload and download files
 
@@ -102,6 +131,16 @@ POST /v1/apps/{app}/buckets/{bucket-id}/signed-url
 
 {"method": "PUT", "key": "avatars/42.png", "size_bytes": 18231, "content_type": "image/png", "expires_in": 300}
 ```
+
+From the CLI:
+
+```sh
+gregale bucket sign my-api BUCKET_ID v1/stream/segment.gz --expires 15m
+gregale bucket sign my-api BUCKET_ID avatars/42.png --method PUT --size-bytes 18231 --content-type image/png
+```
+
+It prints the URL, its headers and a `curl` command to send it with; `--json`
+prints the API response.
 
 The response holds a `url`, a `method` and `headers`. Send the request with
 exactly those headers and a body of exactly `size_bytes`. Use a plain HTTP
@@ -132,8 +171,20 @@ POST /v1/apps/{app}/upload-routes
 ```
 
 Clients then `POST /uploads/avatar` on your app's hostname with an API key that
-has `storage:write`. Send an `Idempotency-Key` header so retries cannot store a
+has `storage:write`. The route itself authorizes writes to its bucket, so the key
+needs no bucket grant; each key's uploads land under its own key ID below the
+route's prefix. Send an `Idempotency-Key` header so retries cannot store a
 file twice; `GET /uploads/avatar/receipts/{id}` reports an upload's status.
+Organization-bound keys must match the app's organization, and project-limited
+keys can upload and read receipts only for apps in their allowed projects.
+Each request is one PUT and must fit the configured single-upload limit,
+including when the route's stored byte policy is larger.
+
+Active content (HTML, SVG, XML, XSL and JavaScript types) is accepted only when
+the route lists the exact type: an empty list or a wildcard such as `image/*`
+never admits it, so `image/*` does not admit `image/svg+xml`. A route on a
+public bucket mount cannot list an active type at all, and such uploads are
+refused with `415`, because the file would be served on your app's hostname.
 
 ## Use an S3 SDK
 
@@ -143,6 +194,10 @@ Each bucket can have S3 credentials that work with standard S3 tools:
 - region: `us-east-1`
 - path-style addressing: `https://s3.gregale.dev/{bucket}/{key}`
 - Signature Version 4 only
+
+Presigned PUT URLs from S3 SDKs can carry object metadata, tags and checksums in
+their signed query parameters. Gregale preserves that metadata and validates
+the checksum before writing; conflicting or duplicate values are rejected.
 
 Create credentials for one bucket with
 `POST /v1/apps/{app}/buckets/{bucket-id}/s3-credentials` and a body such as
@@ -240,6 +295,43 @@ the old one is retired. Your app must be allowed to reach `s3.gregale.dev` under
 its egress rules. See [object storage from compute workloads](object-storage-compute.md)
 for SDK helpers.
 
+### Limit a binding to part of a bucket (preview)
+
+A binding can be limited to object keys under one prefix. Give each service
+only the keys it needs, with its own secret-name prefix:
+
+```yaml
+buckets:
+  - bucket: segments
+    app: store
+    permission: write
+    key_prefix: v1/L0/
+    prefix: GREGALE_S3_L0
+  - bucket: segments
+    app: query
+    permission: read
+    key_prefix: v1/
+  - bucket: segments
+    app: compactor
+    permission: read_write
+    key_prefix: v1/
+```
+
+Or `gregale add bucket segments --app store --permission write --key-prefix v1/L0/ --prefix GREGALE_S3_L0`.
+
+- The prefix is literal and ends with `/`: `v1/L0/` matches `v1/L0/a.gz` but
+  not `v1/L0x/a.gz`, and `tenant1` is refused so it cannot reach `tenant10/`.
+  Patterns such as `v1/*/L0/` are refused.
+- Object reads, writes, deletes and multipart uploads work only on keys under
+  it. A copy's source must be in the same bucket and under it too.
+- Listings must pass a `prefix` under it. `DeleteObjects` fails with 403 if any
+  key is outside it, and then deletes nothing.
+- Bucket-wide requests (versioning, lifecycle, notifications, encryption,
+  Object Lock, listing every bucket) are refused.
+- The key keeps its prefix through rotation and environment clones.
+- Until key-scoped bindings are released to your account, a binding with
+  `key_prefix` is refused with `403 object_storage_key_scopes_unavailable`.
+
 ## API keys and bucket grants
 
 Bucket management needs an API key with the `storage:manage` scope. Reading and
@@ -288,6 +380,10 @@ gregale bucket lifecycle get my-api BUCKET_ID
 
 Rules are checked hourly. Storage-class transitions are not supported. S3 SDKs
 can use `PutBucketLifecycleConfiguration` instead.
+On GCS, older-version age starts when the generation becomes noncurrent.
+Older-version rules continue to apply after the last live object is deleted.
+Current-object age starts when the upload completes; changing tags does not
+restart its expiration clock.
 
 ## Object Lock, retention and legal holds
 
@@ -309,26 +405,42 @@ gregale bucket protection retention my-api BUCKET_ID notes.txt VERSION_ID GOVERN
 ```
 
 A bucket or account holding protected versions cannot be deleted until the
-protection ends. See the [CLI reference](cli-reference.md#bucket-object-lock)
-for the bucket defaults.
+protection ends. Run `gregale bucket object-lock set --help` for the bucket
+defaults. (Object storage is in preview, so the public CLI reference does not
+list its commands.)
 
 ## Encryption
 
 Objects are encrypted at rest by the storage provider. You can also choose a
 bucket default (`gregale bucket encryption set AES256 my-api BUCKET_ID`) or, where
-enabled for your account, your own enrolled keys. See the
-[CLI reference](cli-reference.md#bucket-encryption).
+enabled for your account, your own enrolled keys. Run
+`gregale bucket encryption set --help` for the options.
+
+Public asset GET and HEAD responses also validate provider encryption metadata.
+An unknown or another account's KMS key, customer-supplied encryption, or ambiguous
+encryption headers returns a temporary-unavailability response before object data
+is served.
 
 ## Tags, copies and checksums
 
 - Tag objects with `gregale bucket tags`, or with S3 tagging calls.
+  On GCS, a concurrent object replacement or metadata change can return a
+  conflict; retry the tag operation against the current object. Each GCS tag
+  write uses two requests from the native request allowance.
 - `CopyObject` copies within a bucket. To copy from another of your buckets, give
-  the S3 credential a copy-source grant on it (`gregale bucket copy-source`).
+  the S3 credential a copy-source grant on it (`gregale bucket copy-source`) and
+  name the source by its bucket ID, as `x-amz-copy-source: <source-bucket-id>/<key>`;
+  a source named by its bucket name answers `NoSuchKey`. A project-limited API
+  key may grant copy access only when both buckets' apps are in its allowed
+  projects.
 - Conditional writes (`If-None-Match: *`, `If-Match`) work on single uploads.
 - Where your bucket's storage supports them, multipart uploads can carry CRC32,
   CRC32C, CRC64NVME, SHA1 or SHA256 checksums, validated on every part, and
   completing a multipart upload can be conditional. Otherwise the endpoint
-  answers `NotImplemented`.
+  answers `NotImplemented`. Recent AWS CLI and SDK releases add a checksum to
+  every multipart upload by default; where your storage lacks them, set
+  `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` (or
+  `request_checksum_calculation = when_required` in `~/.aws/config`).
 
 ## Events and notifications
 
@@ -341,6 +453,13 @@ or queue with the bucket's notification configuration:
 ```sh
 gregale bucket notifications set my-api BUCKET_ID notifications.json
 ```
+
+Notifications and compute triggers run app code, so they need a paid plan;
+Free answers `402`, like other triggers. Company apps use the organization's
+plan, including its queue depth limit, after resource ownership is adopted.
+Queue destinations must have a unique enabled queue name across the app's
+environments. Notifications enter the captured queue's environment and retain
+that destination if the queue is renamed.
 
 ## Browser access (CORS)
 
@@ -391,8 +510,9 @@ what you used.
 | CORS rules per bucket | 100 |
 | Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket |
 | Requests through `s3.gregale.dev` | 100 per second per account, bursts of 200; more answer `503 SlowDown`, which S3 SDKs retry with backoff |
+| Requests each month | Free 50,000, Hobby 500,000, Pro 2,500,000, Scale 10,000,000 ([plans](plans.md#object-storage)). At the limit, every request is refused until the month ends |
 | Uploads and upload parts in progress through `s3.gregale.dev` | A few per account; more wait up to 15 seconds for a turn, then answer `503 SlowDown` |
-| Stored data | Free stops at 1 GiB. A paid plan stores its included storage plus what your spend cap buys at $0.03 per GiB-month: with the default caps, Hobby 76 GiB, Pro 383 GiB and Scale 1,200 GiB. Raising the cap raises it; with no cap, the platform's own ceiling applies. Above it, uploads are refused and downloads answer `402` until you delete objects, raise the cap or upgrade; listing, `HEAD` and deletes keep working. A downgrade is refused while your data does not fit the new plan |
+| Stored data | Free stops at 1 GiB, Hobby at 20 GiB, Pro at 250 GiB and Scale at 1,000 GiB. A lower spend cap lowers it to the included storage plus what the cap buys at $0.03 per GiB-month; a $0 cap stops at the included storage. Need more? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused; while you store more than it, downloads answer `402` until you delete objects. Listing, `HEAD` and deletes keep working, and nothing is deleted for you. A downgrade is refused while your data does not fit the new plan |
 | Objects per account, counting retained versions | 1,000,000 on every plan |
 | Egress each month | 10 times your plan's included storage: Free 10 GiB, Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB ([plans](plans.md#object-storage)). Public objects served from the CDN's cache do not count. At the limit, every request except deletes is refused until the month ends |
 

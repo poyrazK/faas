@@ -25,6 +25,7 @@ type PostReleaseWatchCandidate struct {
 // explained decision on a release.
 type PostReleaseWatchStore interface {
 	ListPostReleaseWatchCandidates(ctx context.Context, window time.Duration, limit int) ([]PostReleaseWatchCandidate, error)
+	ListPostReleaseWatchCandidatesPage(ctx context.Context, window time.Duration, limit int, cursor ReleaseScanCursor) ([]PostReleaseWatchCandidate, error)
 	RecordPostReleaseRolloutDecision(ctx context.Context, deploymentID string, decision json.RawMessage) error
 }
 
@@ -34,8 +35,19 @@ var (
 )
 
 func (s *PgStore) ListPostReleaseWatchCandidates(ctx context.Context, window time.Duration, limit int) ([]PostReleaseWatchCandidate, error) {
+	return s.ListPostReleaseWatchCandidatesPage(ctx, window, limit, ReleaseScanCursor{})
+}
+
+func (s *PgStore) ListPostReleaseWatchCandidatesPage(ctx context.Context, window time.Duration, limit int, cursor ReleaseScanCursor) ([]PostReleaseWatchCandidate, error) {
+	afterAt, afterID, err := cursor.parameters()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
 	rows, err := sqlc.New().ListPostReleaseWatchCandidates(ctx, s.pool, sqlc.ListPostReleaseWatchCandidatesParams{
-		WindowSeconds: int32(window / time.Second), RowLimit: int32(limit)}) //nolint:gosec // bounded by api limits
+		WindowSeconds: int32(window / time.Second), RowLimit: int32(limit), AfterCompletedAt: afterAt, AfterID: afterID}) //nolint:gosec // bounded by api limits
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -64,7 +76,17 @@ func (s *PgStore) RecordPostReleaseRolloutDecision(ctx context.Context, deployme
 	return nil
 }
 
-func (m *MemStore) ListPostReleaseWatchCandidates(_ context.Context, window time.Duration, limit int) ([]PostReleaseWatchCandidate, error) {
+func (m *MemStore) ListPostReleaseWatchCandidates(ctx context.Context, window time.Duration, limit int) ([]PostReleaseWatchCandidate, error) {
+	return m.ListPostReleaseWatchCandidatesPage(ctx, window, limit, ReleaseScanCursor{})
+}
+
+func (m *MemStore) ListPostReleaseWatchCandidatesPage(_ context.Context, window time.Duration, limit int, cursor ReleaseScanCursor) ([]PostReleaseWatchCandidate, error) {
+	if _, _, err := cursor.parameters(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cutoff := time.Now().Add(-window)
@@ -75,6 +97,9 @@ func (m *MemStore) ListPostReleaseWatchCandidates(_ context.Context, window time
 			postReleaseRollbackSkipped(d.RolloutDecision) {
 			continue
 		}
+		if !cursor.includes(*d.RolloutCompletedAt, d.ID) {
+			continue
+		}
 		scope := normalizedDeploymentScope(d.Scope)
 		var predecessor *Deployment
 		newest := true
@@ -82,7 +107,11 @@ func (m *MemStore) ListPostReleaseWatchCandidates(_ context.Context, window time
 			if other.AppID != d.AppID || normalizedDeploymentScope(other.Scope) != scope || other.ID == d.ID {
 				continue
 			}
-			if other.CreatedAt.After(d.CreatedAt) && other.Status != DeployFailed && other.Status != DeployCancelled {
+			// Only a newer release that served makes d a rollback target; one
+			// staged with no traffic, parked for its schedule or still
+			// building does not stop the watch (ADR-1445 amendment 5).
+			if other.CreatedAt.After(d.CreatedAt) && other.Status != DeployFailed && other.Status != DeployCancelled &&
+				(deploymentServing(other) || m.deploymentServedLocked(other.ID)) {
 				newest = false
 			}
 			// The release a plain rollback returns to: the most recently

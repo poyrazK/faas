@@ -251,7 +251,7 @@ func (e *CapEnforcer) observeStorageScopes(ctx context.Context, databases []Data
 			summary.StorageUnsupported++
 			return nil, nil, nil
 		}
-		observed, err := provider.ObserveStorageCap(ctx, database.ProviderResourceID)
+		observed, err := provider.ObserveStorageCap(ctx, databaseDataResource(database))
 		if err != nil {
 			return nil, nil, err
 		}

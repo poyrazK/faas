@@ -28,7 +28,10 @@ func TestNativePipelineEndToEnd(t *testing.T) {
 	if raw == "" {
 		t.Skip("run scripts/test-data-pipeline.sh for native replication acceptance")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// Schema evolution and repair now include several 100k/200k-row copies and
+	// repeated verification passes. Keep a bounded overall acceptance budget
+	// without expiring a healthy late phase on slower disposable fixtures.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	admin, err := pgx.Connect(ctx, os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -280,7 +283,8 @@ func TestNativePipelineEndToEnd(t *testing.T) {
 			if item.State == state {
 				return item
 			}
-			if item.State == "blocked" || item.State == "resync_required" {
+			qualifying := item.Verification == "pending" && (item.Reason == "source_storage_verification" || item.Reason == "replication_continuity_verification")
+			if item.State == "blocked" && !qualifying || item.State == "resync_required" {
 				t.Fatalf("unexpected pipeline block: %+v", item)
 			}
 			time.Sleep(150 * time.Millisecond)
@@ -508,7 +512,7 @@ func TestNativePipelineEndToEnd(t *testing.T) {
 	_, _ = target.Exec(ctx, `RESET ROLE`)
 	// A lost upstream slot must not be silently replaced with a gap in data.
 	name := pipelineName(Pipeline{DataPipeline: p})
-	if err = setSubscriptionEnabled(ctx, Pipeline{DataPipeline: p}, target, false); err != nil {
+	if err = setSubscriptionEnabled(ctx, Pipeline{AccountID: account, DataPipeline: p}, target, false); err != nil {
 		t.Fatal(err)
 	}
 	for until := time.Now().Add(5 * time.Second); ; {

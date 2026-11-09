@@ -102,20 +102,72 @@ func (w *Watchdog) WithClock(now func() time.Time) *Watchdog {
 // on that the failure log line wouldn't already cover.
 func (w *Watchdog) sweepRuns(ctx context.Context) {
 	now := w.now()
-
-	w.runOne(ctx, now, state.StateWaking, WakingSweepBudget, StuckWakingTimeout)
-	w.runOne(ctx, now, state.StateColdBooting, ColdBootSweepBudget, StuckColdBootTimeout)
-	w.runOne(ctx, now, state.StateSnapshotting, SnapshotSweepBudget, StuckSnapshotTimeout)
+	// One read covers every bucket while no row is stuck: rows past the
+	// shortest budget, each bucket then keeping its own state and age. It was
+	// three reads a second per scheduler. Once a bucket sweeps a row, later
+	// buckets read again: a killed WAKING row falls back to COLD_BOOTING, and
+	// the cold-boot bucket must see it in the same tick.
+	buckets := []struct {
+		state  state.State
+		budget time.Duration
+		reason StuckReason
+	}{
+		{state.StateWaking, WakingSweepBudget, StuckWakingTimeout},
+		{state.StateColdBooting, ColdBootSweepBudget, StuckColdBootTimeout},
+		{state.StateSnapshotting, SnapshotSweepBudget, StuckSnapshotTimeout},
+	}
+	states := make([]state.State, 0, len(buckets))
+	shortest := buckets[0].budget
+	for _, b := range buckets {
+		states = append(states, b.state)
+		shortest = min(shortest, b.budget)
+	}
+	rows, err := w.store.ListInstancesByStatesOlderThan(ctx, states, now.Add(-shortest))
+	if err != nil {
+		w.log.Warn("watchdog: lookup", "err", err)
+		return
+	}
+	swept := false
+	for _, b := range buckets {
+		if swept {
+			w.runOne(ctx, now, b.state, b.budget, b.reason)
+			continue
+		}
+		threshold := now.Add(-b.budget)
+		var due []state.Instance
+		for _, ins := range rows {
+			if state.State(ins.State) == b.state && watchdogAgedBefore(ins, threshold) {
+				due = append(due, ins)
+			}
+		}
+		w.sweepBucket(ctx, now, b.state, b.budget, b.reason, due)
+		swept = len(due) > 0
+	}
 }
 
-// runOne is one bucket of the sweep.
+// watchdogAgedBefore applies ListInstancesByStatesOlderThan's age to one row:
+// a SNAPSHOTTING row ages from parked_at, any other from started_at, and a
+// row without that timestamp never qualifies.
+func watchdogAgedBefore(ins state.Instance, threshold time.Time) bool {
+	age := ins.StartedAt
+	if state.State(ins.State) == state.StateSnapshotting {
+		age = ins.ParkedAt
+	}
+	return !age.IsZero() && age.Before(threshold)
+}
+
+// runOne reads and sweeps one bucket on its own.
 func (w *Watchdog) runOne(ctx context.Context, now time.Time, st state.State, budget time.Duration, reason StuckReason) {
-	threshold := now.Add(-budget)
-	rows, err := w.store.ListInstancesByStatesOlderThan(ctx, []state.State{st}, threshold)
+	rows, err := w.store.ListInstancesByStatesOlderThan(ctx, []state.State{st}, now.Add(-budget))
 	if err != nil {
 		w.log.Warn("watchdog: lookup", "state", st, "err", err)
 		return
 	}
+	w.sweepBucket(ctx, now, st, budget, reason, rows)
+}
+
+// sweepBucket is one bucket of the sweep over its rows past the budget.
+func (w *Watchdog) sweepBucket(ctx context.Context, now time.Time, st state.State, budget time.Duration, reason StuckReason, rows []state.Instance) {
 	for _, ins := range rows {
 		// A row enters WAKING only after a wake or warm-pool restore chose a
 		// snapshot, and vmmd can spend the restore budget and then fall back

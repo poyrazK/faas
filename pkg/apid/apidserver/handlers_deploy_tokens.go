@@ -112,8 +112,18 @@ func (s *server) createDeployToken(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("could not generate deploy token"))
 		return
 	}
-	token, err := store.CreateDeployToken(r.Context(), acct.ID, app.ID, hash, req.Label,
-		[]string{api.ScopeDeployWrite}, expiresAt)
+	scopes := []string{api.ScopeDeployWrite}
+	if req.Agent {
+		scopes, err = api.NormalizeAppAgentScopes(req.Scopes)
+		if err != nil {
+			api.WriteProblem(w, api.ErrValidation(err.Error()))
+			return
+		}
+	} else if len(req.Scopes) > 0 {
+		api.WriteProblem(w, api.ErrValidation("scopes require agent=true"))
+		return
+	}
+	token, err := store.CreateDeployToken(r.Context(), acct.ID, app.ID, hash, req.Label, scopes, expiresAt)
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.ErrCapacity("could not allocate deploy token"))

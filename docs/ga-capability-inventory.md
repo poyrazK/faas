@@ -44,8 +44,8 @@ Columns:
 
 | Tier | Rows | Meaning |
 |---|---|---|
-| `GA` | 47 | Ships in v1.0, billed, held to the "ready to charge" bar. |
-| `beta` | 32 | On for every account, labelled beta, may change, no service credits. |
+| `GA` | 48 | Ships in v1.0, billed, held to the "ready to charge" bar. |
+| `beta` | 31 | On for every account, labelled beta, may change, no service credits. |
 | `preview` | 46 | Off by default; released per account with a platform flag (design partners). |
 | `internal` | 42 | Hidden from customers; development frozen until after v1.0. |
 
@@ -71,7 +71,7 @@ Columns:
   plan limits before anyone depends on them.
 - **internal** is operator tooling, frozen experiments, and features that
   duplicate or decorate others: the route-analysis family (8 rows, except
-  route monitoring), automations, scenario tests, platform tenants, API
+  route monitoring), stored workflows, scenario tests, platform tenants, API
   consumers and monetization, and the internal CI, hosting and mail systems.
 
 **Calls worth a second look**
@@ -128,7 +128,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | # | Capability | Where it lives | Catalog | Gate today | Tier |
 |---|---|---|---|---|---|
 | 24 | Rollback to a named revision | `rollback`, `gregale rollback` | `progressive-rollouts` beta | — | GA |
-| 25 | Progressive rollouts: canary ladder, traffic split, automatic rollback on 5xx | `rollouts`, `gregale canary` | `progressive-rollouts` beta | — | beta |
+| 25 | Progressive rollouts: canary ladder, traffic split, automatic rollback on 5xx | `rollouts`, `gregale canary`, service-abort acceptance receipts (`/v1/apps/{slug}/service-aborts/{attempt_id}`, Go SDK `service_abort_attempts`) | `progressive-rollouts` beta | — | beta |
 | 26 | Deployment aliases | `deployment-aliases`, `gregale alias` | **MISSING** | — | beta |
 | 27 | Pull-request previews | `previews` | `pr-previews` ga | — | GA |
 | 28 | Release gates on customer signals | `release-gates` | **MISSING** | — | preview |
@@ -215,7 +215,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 94 | Workflows: code workflows SDK, attention/outcomes/performance, recovery policy | `workflows`, `workflow-*`, `recovery-policy` | `workflows-and-jobs` preview | `env: FAAS_WORKFLOWS_ENABLED=1` | beta |
 | 95 | Delayed tasks | `delayed-tasks` | `delayed-execution` preview | — | beta |
 | 96 | Async invocations and results | `invoke`, `invocations` | **MISSING** | — | beta |
-| 97 | Triggers and event sources: Kafka, NATS JetStream, Redis Streams, AMQP / RabbitMQ, SQS-compatible, bucket events, function webhooks; batch delivery | `/v1/triggers` | **MISSING** | batch: `pf: trigger_batch_delivery` | preview |
+| 97 | Triggers and event sources: Kafka, NATS JetStream, Redis Streams, AMQP / RabbitMQ, SQS-compatible, bucket events, function webhooks; batch delivery (broker semantics: [broker-triggers.md](broker-triggers.md)) | `/v1/triggers` | `event-triggers` preview | batch: `pf: trigger_batch_delivery` | preview |
 | 98 | Events: publish, schemas, subscriptions, deliveries, replays, recoveries, DLQ, work policies | `events`, `event-*`, `dlq`, `work-policies` | **MISSING** | — | preview |
 | 99 | Queues: in-platform SQS-compatible HTTP queue, pull leases, queue bindings, queue workloads | `queues`, `queue-bindings`, `queue-workload` | **MISSING** | — | preview |
 | 100 | Worker pools | `workers` | `worker-pools` preview | — | preview |
@@ -223,7 +223,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 102 | Durable inbound webhooks | `inbound-webhooks` | `durable-inbound-webhooks` preview | — | beta |
 | 103 | Outbound webhooks (account and app) | `/v1/webhooks`, app `webhooks` | **MISSING** | — | beta |
 | 104 | Operations: typed customer work, approvals, schedules, children, signals, milestones, effects | `operations`, `operation-*` | **MISSING** | `pf: operation_schedules`, `pf: operation_children` | preview |
-| 105 | Automations: manual / scheduled / event steps, test suites, baselines | `automations` | **MISSING** | — | internal |
+| 105 | Stored workflows: manual / scheduled / event steps, test suites, baselines | `stored-workflows` | **MISSING** | — | internal |
 | 106 | Managed exclusive operations | | `managed-exclusive-operations` internal | — | internal |
 | 107 | Gregale Commit | `commit-sources` | `gregale-commit` internal | `env: FAAS_COMMIT_RELAY_ENABLED` | internal |
 
@@ -286,7 +286,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 149 | API consumers: end-customer keys (ADR-120) | `consumers` | **MISSING** | — | internal |
 | 150 | API monetization: rate cards, consumer plans, billing, signup | `consumer-*`, `rate-cards` | `api-monetization` internal | `pf: api_monetization` | internal |
 | 151 | Plans, usage, invoices, overage cap, cost breakdown and forecast, FOCUS 1.4 invoice export | `billing`, `invoices`, `usage`, `gregale billing costs/forecast` | **MISSING** | `faas_billing_mode: disabled` | GA |
-| 152 | Budgets: policies, projections, alerts and channels, automatic stops (strict budgets) | `gregale billing budgets`, `financial_budget_*` tables | **MISSING** | `pf: strict_budgets` | beta |
+| 152 | Budgets: policies, projections, alerts and channels, preview stops (GA, ADR-20261107160000); strict budgets that stop workloads stay beta | `gregale billing budgets`, `financial_budget_*` tables | `budgets` ga, `strict-budgets` beta | `pf: strict_budgets` (strict budgets only) | GA |
 | 153 | GDPR export, account deletion and restore during grace, DPA | `/v1/account/export`, `DELETE /v1/account`, `gregale account restore` | **MISSING** | — | GA |
 | 154 | Customer feature flags | | `feature-flags` internal | `pf: customer_flags` | internal |
 | 155 | Product control | `product-control` | `product-control` internal | env flag | internal |
@@ -311,4 +311,4 @@ internal hosting service and Gregale Agents are already unreachable.
 | 164 | Internal mail service | maild, mailctl | **MISSING** | `env: FAAS_INTERNAL_MAIL_*=0` | internal |
 | 165 | Operator admin, compute nodes, `gregalectl` | `/v1/admin`, `/v1/compute-nodes` | n/a | admin auth | internal |
 | 166 | Platform OCI registry: internal snapshot and image storage backend | `pkg/oci/registry.go` (`/v2/`) | n/a | internal | internal |
-| 167 | Gregale Agents: agent runs, the automation agent step, agent triggers | `/v1/agents`, `/v1/agent-runs`, `/v1/agent-callbacks`, `/v1/agent-tools`, agentd | `agents` internal | `pf: agents` | internal |
+| 167 | Gregale Agents: agent runs, the stored workflow agent step, agent triggers | `/v1/agents`, `/v1/agent-runs`, `/v1/agent-callbacks`, `/v1/agent-tools`, agentd | `agents` internal | `pf: agents` | internal |

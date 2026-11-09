@@ -12,7 +12,7 @@ func TestDaemonConnectionBudgetFitsMultiNodeFleet(t *testing.T) {
 	// Control plane: apid, schedd, public gateway/control services. Each
 	// compute node: schedd, internal gateway, vmmd, imaged, and builderd,
 	// plus the app edge and the object gateway where the cell turns them on.
-	control := []string{"apid", "apid-clone-worker", "schedd", "gatewayd-public", "meterd", "githubd", "outboundd", "s3-gatewayd", "bridged", "mcp-bridge"}
+	control := []string{"apid", "apid-background", "apid-clone-worker", "schedd", "gatewayd-public", "meterd", "githubd", "outboundd", "s3-gatewayd", "bridged", "mcp-bridge"}
 	compute := []string{"schedd", "gatewayd-internal", "vmmd", "imaged", "builderd"}
 	optionalCompute := map[string]string{
 		"faas_postgres_per_compute_edge_pool_budget":           "gatewayd-public",
@@ -57,16 +57,16 @@ func TestDaemonConnectionBudgetFitsMultiNodeFleet(t *testing.T) {
 		optional bool
 		wantMax  int32
 	}{
-		{computeNodes: 1, rolloutNodes: standaloneRolloutNodes, wantMax: 140},
+		{computeNodes: 1, rolloutNodes: standaloneRolloutNodes, wantMax: 150},
 		{computeNodes: 2, rolloutNodes: standaloneRolloutNodes, wantMax: 180},
 		{computeNodes: 10, rolloutNodes: standaloneRolloutNodes, wantMax: 540},
-		{computeNodes: 12, rolloutNodes: standaloneRolloutNodes, wantMax: 630},
+		{computeNodes: 12, rolloutNodes: standaloneRolloutNodes, wantMax: 640},
 		// join-fleet converges four nodes by default. These cases cover the
 		// boundary where the steady-state 75% margin alone is insufficient.
-		{computeNodes: 10, rolloutNodes: 4, wantMax: 550},
-		{computeNodes: 11, rolloutNodes: 4, wantMax: 580},
-		{computeNodes: 2, rolloutNodes: standaloneRolloutNodes, optional: true, wantMax: 200},
-		{computeNodes: 12, rolloutNodes: standaloneRolloutNodes, optional: true, wantMax: 770},
+		{computeNodes: 10, rolloutNodes: 4, wantMax: 560},
+		{computeNodes: 11, rolloutNodes: 4, wantMax: 590},
+		{computeNodes: 2, rolloutNodes: standaloneRolloutNodes, optional: true, wantMax: 210},
+		{computeNodes: 12, rolloutNodes: standaloneRolloutNodes, optional: true, wantMax: 780},
 	}
 	for _, tt := range tests {
 		computeNodes := tt.computeNodes
@@ -133,4 +133,28 @@ func postgresCapacityDefault(t *testing.T, key string) int32 {
 		t.Fatalf("parse postgres_capacity default %q: %v", key, err)
 	}
 	return int32(value)
+}
+
+func TestPooledDaemonConnectionBudgetFitsFleet(t *testing.T) {
+	t.Setenv(NotifyHubEnv, "1")
+	var direct int32
+	for _, daemon := range []string{"schedd", "gatewayd-internal", "vmmd", "imaged", "builderd"} {
+		direct += directMaxConns(daemon)
+	}
+	if declared := postgresCapacityDefault(t, "faas_postgres_per_compute_direct_budget"); declared != direct {
+		t.Fatalf("per-compute direct sessions = %d, capacity role declares %d", direct, declared)
+	}
+	control := postgresCapacityDefault(t, "faas_postgres_control_plane_pool_budget") + postgresCapacityDefault(t, "faas_pgbouncer_server_pool_budget")
+	reserved := postgresCapacityDefault(t, "faas_postgres_superuser_reserved_connections")
+	headroom := postgresCapacityDefault(t, "faas_postgres_min_operator_headroom")
+	overlap := postgresCapacityDefault(t, "faas_postgres_rollout_overlap_nodes")
+	for _, tc := range []struct{ nodes, want int32 }{{2, 240}, {12, 450}, {50, 1260}, {100, 2330}} {
+		steady := control + tc.nodes*direct
+		rollout := control + (tc.nodes+overlap)*direct
+		ordinary := max32((steady*4+2)/3, rollout+headroom)
+		got := roundUp10(ordinary + reserved)
+		if got != tc.want || steady*4 > (got-reserved)*3 || rollout+headroom > got-reserved {
+			t.Fatalf("%d nodes: max=%d want=%d steady=%d rollout=%d", tc.nodes, got, tc.want, steady, rollout)
+		}
+	}
 }

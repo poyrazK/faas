@@ -3,6 +3,20 @@
 This change completes the current core Data API development slice. It does not
 publish artifacts or establish hosted staging acceptance.
 
+## Health answers follow the engine; liveness checks the process
+
+[ADR 20261109160000](adr/20261109160000-data-api-health-cache-and-liveness.md):
+
+- **Readiness.** `/healthz` reuses only a ready answer, for up to 5 s, and
+  forgets it when the engine restarts, reloads its schema, is snapshotted or
+  restored. A cold boot is no longer held back by a remembered "not yet", and
+  a restored or reloaded API no longer reports ready for an engine that is
+  still starting. `data-api serve` reports every check as it happens.
+- **Liveness.** Data API deploys send `/livez` as the platform's liveness
+  probe (Hobby and above). A saturated pool or a short database outage no
+  longer gets a healthy runtime restarted, with its in-flight requests
+  dropped. Existing deployments switch on their next deploy.
+
 ## Hosted engine fixes: TLS roots and snapshot-safe sessions
 
 [ADR 20261026131131](adr/20261026131131-data-api-hosted-tls-roots-and-snapshot-sessions.md)
@@ -96,6 +110,12 @@ closes five product gaps, all opt-in:
   `storage_objects` decide every upload, download and removal, so file lists
   are ordinary queries and live reads. `@gregale/data` adds
   `createStorageClient`.
+- **Change hooks.** `gregale data-api hooks sql` adds a change event table
+  and `gregale_hooks.enable()` hooks tables; `hooks enable` publishes every
+  committed insert, update and delete as an event from the Data API app's
+  source. Any app subscribes with `event_triggers` or a workflow trigger, with
+  the router's retries, dead letters and per-row ordering
+  ([ADR 20261022121642](adr/20261022121642-data-api-change-hooks.md)).
 
 Every request now carries a gateway-owned `gregale_access` claim (`user`,
 `anonymous` or `server`) for policies. Logs and `data-api diagnostics` report

@@ -754,7 +754,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	setProbeStage("binding")
 	p.withServiceRoutingInputs(r, callerDeploymentID, targetPath, probe)
-	if p.pinServicePolicy(dispatchWriter, r, caller, service, alias) {
+	if p.pinServicePolicy(dispatchWriter, r, caller, service, alias, environmentBinding) {
 		return
 	}
 	dependencyCtx = r.Context()
@@ -821,7 +821,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencySpan.SetAttributes(attribute.String("gregale.service.target_app_id", target.AppID))
 	authorize := p.authorizeServiceCaller
-	if environmentBinding != nil && environmentBinding.FrozenPolicy {
+	if environmentBinding != nil && environmentBinding.FrozenPolicy && p.policy == nil {
 		authorize = p.authorizeBound
 		if authorize == nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "frozen service authorization is unavailable")
@@ -1055,6 +1055,13 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.policy != nil {
 		var err error
 		versionDeploymentID, err = p.serviceSnapshotDeployment(r.Context(), target.AppID)
+		var missing *ServiceEnvironmentMissingError
+		if errors.As(err, &missing) {
+			p.metrics.IncServiceCall(ServiceCallEnvironmentDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden,
+				fmt.Sprintf("service %q has no deployment in environment %q; deploy it to %q", service, missing.Environment, missing.Environment))
+			return
+		}
 		if err != nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service routing policy has no admitted deployment")
 			return
@@ -1646,7 +1653,16 @@ func (p *ServiceProxy) WakeTarget(ctx context.Context, appID string, port int) (
 	if len(endpoints) == 0 {
 		return Target{}, ErrNoServiceTarget
 	}
+	// A Node inspector client opens one connection to list targets and
+	// another to attach by target ID, each through its own tunnel. Pick the
+	// same instance every time (lowest instance ID) rather than whichever the
+	// registry lists first, so both land on the process that issued the ID.
 	endpoint := endpoints[0]
+	for _, candidate := range endpoints[1:] {
+		if candidate.InstanceID < endpoint.InstanceID {
+			endpoint = candidate
+		}
+	}
 	return Target{AppID: appID, NodeID: endpoint.NodeID, InstanceID: endpoint.InstanceID, DeploymentID: endpoint.DeploymentID, Port: port}, nil
 }
 
@@ -1754,6 +1770,7 @@ func (p *ServiceProxy) prepareGuestRequest(ctx context.Context, request *http.Re
 		callerEnv = servicecallerEnvPreview
 		request.Header.Set(ServiceCallerEnvHeader, callerEnv)
 		request.Header.Set(ServiceCallerPreviewOfHeader, caller.PreviewOfSlug)
+		ctx = context.WithValue(ctx, trustedServiceCallerEnvContextKey{}, true)
 		if target.PreviewScoped {
 			p.metrics.IncServicePreviewToPreview()
 		} else {

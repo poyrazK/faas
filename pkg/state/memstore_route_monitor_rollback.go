@@ -28,10 +28,23 @@ func (m *MemStore) ClaimRouteMonitorRollback(_ context.Context, accountID, appID
 		if !ok {
 			return RouteMonitorRollbackClaim{}, false, nil
 		}
-		claim, claimed, _ := decideRouteMonitorRollback(c, &incidents[j], d, time.Now().UTC())
+		var promotedAt *time.Time
+		if at, ok := m.deploymentPromotedAt[d.ID]; ok {
+			promotedAt = &at
+		}
+		claim, claimed, _ := decideRouteMonitorRollback(c, &incidents[j], d, promotedAt, time.Now().UTC())
 		return claim, claimed, nil
 	}
 	return RouteMonitorRollbackClaim{}, false, nil
+}
+
+// markDeploymentPromotedLocked mirrors deployments.promoted_at: a traffic
+// change took id to 100% (ADR-20261028110044 amendment 4). Caller holds mu.
+func (m *MemStore) markDeploymentPromotedLocked(id string, at time.Time) {
+	if m.deploymentPromotedAt == nil {
+		m.deploymentPromotedAt = map[string]time.Time{}
+	}
+	m.deploymentPromotedAt[id] = at
 }
 
 func (m *MemStore) RecordRouteMonitorRollback(_ context.Context, accountID, appID, incidentID string, outcome api.RouteMonitorIncidentRollback) error {

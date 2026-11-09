@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.api_key_response_approval_categories_item import (
+    APIKeyResponseApprovalCategoriesItem,
+    check_api_key_response_approval_categories_item,
+)
 from ..models.api_key_response_scopes_item import APIKeyResponseScopesItem, check_api_key_response_scopes_item
 from ..models.api_key_response_status import APIKeyResponseStatus, check_api_key_response_status
 from ..types import UNSET, Unset
@@ -37,9 +41,9 @@ class APIKeyResponse:
     prefix: str
     """First 16 chars of the key (e.g. `fp_live_abc12345…`)."""
     scopes: list[APIKeyResponseScopesItem]
-    """Closed permission set attached to the key. github:manage controls customer GitHub connection automation;
-    storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-
-    bucket grant; admin remains full access."""
+    """Closed permission set attached to the key. github:manage controls customer GitHub connection stored
+    workflow; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a
+    matching per-bucket grant; admin remains full access."""
     created_at: datetime.datetime
     label: None | str | Unset = UNSET
     last_used_at: datetime.datetime | None | Unset = UNSET
@@ -53,6 +57,11 @@ class APIKeyResponse:
     """Predecessor key id when this row was minted by rotateKey. Absent on a fresh mint."""
     plaintext: None | str | Unset = UNSET
     """PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again."""
+    projects: list[str] | Unset = UNSET
+    """Project slugs the key was limited to, on the create response of a limited agent key."""
+    approval_categories: list[APIKeyResponseApprovalCategoriesItem] | Unset = UNSET
+    """Kinds of action the agent key must have a person approve, on the create response when the request chose
+    them."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,6 +124,17 @@ class APIKeyResponse:
         else:
             plaintext = self.plaintext
 
+        projects: list[str] | Unset = UNSET
+        if not isinstance(self.projects, Unset):
+            projects = self.projects
+
+        approval_categories: list[str] | Unset = UNSET
+        if not isinstance(self.approval_categories, Unset):
+            approval_categories = []
+            for approval_categories_item_data in self.approval_categories:
+                approval_categories_item: str = approval_categories_item_data
+                approval_categories.append(approval_categories_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -140,6 +160,10 @@ class APIKeyResponse:
             field_dict["rotated_from_id"] = rotated_from_id
         if plaintext is not UNSET:
             field_dict["plaintext"] = plaintext
+        if projects is not UNSET:
+            field_dict["projects"] = projects
+        if approval_categories is not UNSET:
+            field_dict["approval_categories"] = approval_categories
 
         return field_dict
 
@@ -246,6 +270,19 @@ class APIKeyResponse:
 
         plaintext = _parse_plaintext(d.pop("plaintext", UNSET))
 
+        projects = cast(list[str], d.pop("projects", UNSET))
+
+        _approval_categories = d.pop("approval_categories", UNSET)
+        approval_categories: list[APIKeyResponseApprovalCategoriesItem] | Unset = UNSET
+        if _approval_categories is not UNSET:
+            approval_categories = []
+            for approval_categories_item_data in _approval_categories:
+                approval_categories_item = check_api_key_response_approval_categories_item(
+                    approval_categories_item_data
+                )
+
+                approval_categories.append(approval_categories_item)
+
         api_key_response = cls(
             id=id,
             org_id=org_id,
@@ -259,6 +296,8 @@ class APIKeyResponse:
             revoked_at=revoked_at,
             rotated_from_id=rotated_from_id,
             plaintext=plaintext,
+            projects=projects,
+            approval_categories=approval_categories,
         )
 
         api_key_response.additional_properties = d

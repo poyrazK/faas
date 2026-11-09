@@ -33,19 +33,24 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
    AND d.rollout_state = 'complete'
    AND d.rollout_completed_at IS NOT NULL
    AND d.rollout_completed_at > now() - make_interval(secs => $1::int)
+   AND ($2::timestamptz IS NULL OR
+        (d.rollout_completed_at, d.id) > ($2::timestamptz, $3::uuid))
    AND NOT EXISTS (
         SELECT 1 FROM deployments AS n
          WHERE n.app_id = d.app_id
            AND COALESCE(NULLIF(n.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
            AND n.created_at > d.created_at
-           AND n.status NOT IN ('failed', 'cancelled'))
+           AND n.status NOT IN ('failed', 'cancelled')
+           AND (n.serving_ended_at IS NOT NULL OR (n.status = 'live' AND n.traffic_percent > 0)))
  ORDER BY d.rollout_completed_at, d.id
- LIMIT $2::int
+ LIMIT $4::int
 `
 
 type ListPostReleaseWatchCandidatesParams struct {
-	WindowSeconds int32
-	RowLimit      int32
+	WindowSeconds    int32
+	AfterCompletedAt pgtype.Timestamptz
+	AfterID          pgtype.UUID
+	RowLimit         int32
 }
 
 type ListPostReleaseWatchCandidatesRow struct {
@@ -61,8 +66,11 @@ type ListPostReleaseWatchCandidatesRow struct {
 // ADR-1445: post-release watch.
 // Completed live releases that kept automatic rollback, finished within the
 // watch window (plus telemetry grace), are the newest deployment in their
-// scope, and have a superseded predecessor created before them. Being the
-// newest excludes rollback targets, which are older than what they replaced.
+// scope to have served, and have a superseded predecessor created before them.
+// Being the newest to have served excludes rollback targets, which are older
+// than what they replaced. A newer release that never served (staged with no
+// traffic, parked for its schedule, or still building) leaves the serving
+// release watched (ADR-1445 amendment 5); before, it silenced the watch.
 // An immediate release may not stamp rollout_started_at; its baseline then
 // ends when it completed.
 // The predecessor is the release a plain rollback returns to
@@ -73,7 +81,12 @@ type ListPostReleaseWatchCandidatesRow struct {
 // v3 with a release that never served and rolled back to it (release review
 // 2026-10-28).
 func (q *Queries) ListPostReleaseWatchCandidates(ctx context.Context, db DBTX, arg ListPostReleaseWatchCandidatesParams) ([]ListPostReleaseWatchCandidatesRow, error) {
-	rows, err := db.Query(ctx, listPostReleaseWatchCandidates, arg.WindowSeconds, arg.RowLimit)
+	rows, err := db.Query(ctx, listPostReleaseWatchCandidates,
+		arg.WindowSeconds,
+		arg.AfterCompletedAt,
+		arg.AfterID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

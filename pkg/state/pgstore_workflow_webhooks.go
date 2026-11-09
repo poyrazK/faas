@@ -13,10 +13,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func webhookAutomationBindingFromSQL(row sqlc.WorkflowWebhookBinding) WebhookAutomationBinding {
-	return WebhookAutomationBinding{EndpointID: pgUUIDString(row.EndpointID), WorkflowName: row.WorkflowName, EventType: row.EventType, Filter: row.Filter, Version: row.Version, UpdatedAt: row.UpdatedAt.Time}
+func webhookWorkflowBindingFromSQL(row sqlc.WorkflowWebhookBinding) WebhookWorkflowBinding {
+	return WebhookWorkflowBinding{EndpointID: pgUUIDString(row.EndpointID), WorkflowName: row.WorkflowName, EventType: row.EventType, Filter: row.Filter, Version: row.Version, UpdatedAt: row.UpdatedAt.Time}
 }
-func lockWebhookAutomationTarget(ctx context.Context, tx pgx.Tx, opts WebhookAutomationBindingOptions) (InboundWebhookEndpoint, sqlc.LockEventWorkflowTargetRow, error) {
+func lockWebhookWorkflowTarget(ctx context.Context, tx pgx.Tx, opts WebhookWorkflowBindingOptions) (InboundWebhookEndpoint, sqlc.LockEventWorkflowTargetRow, error) {
 	q := sqlc.New()
 	if err := q.LockWorkflowRunAdmission(ctx, tx, opts.AppID); err != nil {
 		return InboundWebhookEndpoint{}, sqlc.LockEventWorkflowTargetRow{}, err
@@ -28,119 +28,119 @@ func lockWebhookAutomationTarget(ctx context.Context, tx pgx.Tx, opts WebhookAut
 	if pgUUIDString(target.AccountID) != opts.AccountID || target.AppStatus == string(AppDeleted) {
 		return InboundWebhookEndpoint{}, target, ErrNotFound
 	}
-	row, err := q.LockWebhookAutomationEndpoint(ctx, tx, sqlc.LockWebhookAutomationEndpointParams{ID: mustPgUUID(opts.EndpointID), AppID: mustPgUUID(opts.AppID), AccountID: mustPgUUID(opts.AccountID)})
+	row, err := q.LockWebhookWorkflowEndpoint(ctx, tx, sqlc.LockWebhookWorkflowEndpointParams{ID: mustPgUUID(opts.EndpointID), AppID: mustPgUUID(opts.AppID), AccountID: mustPgUUID(opts.AccountID)})
 	if err != nil {
 		return InboundWebhookEndpoint{}, target, mapErr(err)
 	}
 	return InboundWebhookEndpoint{ID: opts.EndpointID, AppID: opts.AppID, AccountID: opts.AccountID, Provider: InboundWebhookProvider(row.Provider), Enabled: row.Enabled, TokenHash: row.TokenHash, SigningSecretSealed: row.SigningSecretSealed}, target, nil
 }
-func webhookAutomationTargetEligible(target sqlc.LockEventWorkflowTargetRow) bool {
+func webhookWorkflowTargetEligible(target sqlc.LockEventWorkflowTargetRow) bool {
 	return (target.AccountStatus == "active" || target.AccountStatus == "past_due") && !target.AbuseHoldAt.Valid && api.Plan(target.Plan).WorkflowsAllowed() && !target.MaintenanceMode && !target.PlatformTenantRequired
 }
-func webhookAutomationDefinitionTx(ctx context.Context, tx pgx.Tx, appID, name string) (*api.WorkflowSpec, string, string, error) {
+func webhookWorkflowDefinitionTx(ctx context.Context, tx pgx.Tx, appID, name string) (*api.WorkflowSpec, string, string, error) {
 	q := sqlc.New()
 	live, err := q.LockWorkflowScheduleTarget(ctx, tx, mustPgUUID(appID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, "", "", ErrWebhookAutomationUnavailable
+		return nil, "", "", ErrWebhookWorkflowUnavailable
 	}
 	if err != nil {
 		return nil, "", "", err
 	}
-	rows, err := q.ListAutomations(ctx, tx, mustPgUUID(appID))
+	rows, err := q.ListStoredWorkflows(ctx, tx, mustPgUUID(appID))
 	if err != nil {
 		return nil, "", "", err
 	}
-	records := make([]Automation, 0, len(rows))
+	records := make([]StoredWorkflow, 0, len(rows))
 	for _, row := range rows {
-		records = append(records, automationFromSQL(row))
+		records = append(records, storedWorkflowFromSQL(row))
 	}
-	spec, reason, err := webhookAutomationDefinition(live.Workflows, records, name, api.Plan(live.Plan))
+	spec, reason, err := webhookWorkflowDefinition(live.Workflows, records, name, api.Plan(live.Plan))
 	if err == nil {
-		paused, pauseErr := q.AutomationFailurePaused(ctx, tx, sqlc.AutomationFailurePausedParams{AppID: mustPgUUID(appID), Name: name})
+		paused, _, pauseErr := storedWorkflowFailureBlocksAdmissionPG(ctx, tx, appID, name, time.Now().UTC())
 		if pauseErr != nil {
 			return nil, "", "", pauseErr
 		}
 		if paused {
-			reason = "automation_failure_paused"
+			reason = "stored_workflow_failure_paused"
 		}
 	}
 	return spec, reason, pgUUIDString(live.DeploymentID), err
 }
-func (s *PgStore) SaveWebhookAutomationBinding(ctx context.Context, opts WebhookAutomationBindingOptions) (WebhookAutomationBinding, error) {
-	if err := validateWebhookAutomationBinding(opts); err != nil {
-		return WebhookAutomationBinding{}, err
+func (s *PgStore) SaveWebhookWorkflowBinding(ctx context.Context, opts WebhookWorkflowBindingOptions) (WebhookWorkflowBinding, error) {
+	if err := validateWebhookWorkflowBinding(opts); err != nil {
+		return WebhookWorkflowBinding{}, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return WebhookAutomationBinding{}, err
+		return WebhookWorkflowBinding{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	endpoint, target, err := lockWebhookAutomationTarget(ctx, tx, opts)
+	endpoint, target, err := lockWebhookWorkflowTarget(ctx, tx, opts)
 	if err != nil {
-		return WebhookAutomationBinding{}, err
+		return WebhookWorkflowBinding{}, err
 	}
-	if !webhookAutomationTargetEligible(target) || (endpoint.Provider != InboundWebhookProviderStripe && endpoint.Provider != InboundWebhookProviderGeneric) {
-		return WebhookAutomationBinding{}, ErrWebhookAutomationUnavailable
+	if !webhookWorkflowTargetEligible(target) || (endpoint.Provider != InboundWebhookProviderStripe && endpoint.Provider != InboundWebhookProviderGeneric) {
+		return WebhookWorkflowBinding{}, ErrWebhookWorkflowUnavailable
 	}
 	q := sqlc.New()
-	prior, err := q.GetWebhookAutomationBinding(ctx, tx, mustPgUUID(endpoint.ID))
+	prior, err := q.GetWebhookWorkflowBinding(ctx, tx, mustPgUUID(endpoint.ID))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return WebhookAutomationBinding{}, err
+		return WebhookWorkflowBinding{}, err
 	}
 	if prior.Version != opts.ExpectedVersion {
-		return WebhookAutomationBinding{}, ErrWebhookAutomationConflict
+		return WebhookWorkflowBinding{}, ErrWebhookWorkflowConflict
 	}
-	spec, _, _, err := webhookAutomationDefinitionTx(ctx, tx, endpoint.AppID, opts.WorkflowName)
+	spec, _, _, err := webhookWorkflowDefinitionTx(ctx, tx, endpoint.AppID, opts.WorkflowName)
 	if err != nil {
-		return WebhookAutomationBinding{}, err
+		return WebhookWorkflowBinding{}, err
 	}
 	if spec == nil {
-		return WebhookAutomationBinding{}, ErrNotFound
+		return WebhookWorkflowBinding{}, ErrNotFound
 	}
 	if err := validateWorkflowOutboundTx(ctx, tx, endpoint.AppID, endpoint.AccountID, *spec); err != nil {
-		return WebhookAutomationBinding{}, err
+		return WebhookWorkflowBinding{}, err
 	}
-	row, err := q.SaveWebhookAutomationBinding(ctx, tx, sqlc.SaveWebhookAutomationBindingParams{EndpointID: mustPgUUID(endpoint.ID), WorkflowName: opts.WorkflowName, EventType: opts.EventType, Filter: normalizedWebhookFilter(opts.Filter)})
+	row, err := q.SaveWebhookWorkflowBinding(ctx, tx, sqlc.SaveWebhookWorkflowBindingParams{EndpointID: mustPgUUID(endpoint.ID), WorkflowName: opts.WorkflowName, EventType: opts.EventType, Filter: normalizedWebhookFilter(opts.Filter)})
 	if isUniqueViolation(err) {
-		return WebhookAutomationBinding{}, ErrWebhookAutomationConflict
+		return WebhookWorkflowBinding{}, ErrWebhookWorkflowConflict
 	}
 	if err != nil {
-		return WebhookAutomationBinding{}, err
+		return WebhookWorkflowBinding{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return WebhookAutomationBinding{}, err
+		return WebhookWorkflowBinding{}, err
 	}
-	return webhookAutomationBindingFromSQL(row), nil
+	return webhookWorkflowBindingFromSQL(row), nil
 }
-func (s *PgStore) GetWebhookAutomationBinding(ctx context.Context, id string) (WebhookAutomationBinding, error) {
-	row, err := sqlc.New().GetWebhookAutomationBinding(ctx, s.pool, mustPgUUID(id))
-	return webhookAutomationBindingFromSQL(row), mapErr(err)
+func (s *PgStore) GetWebhookWorkflowBinding(ctx context.Context, id string) (WebhookWorkflowBinding, error) {
+	row, err := sqlc.New().GetWebhookWorkflowBinding(ctx, s.pool, mustPgUUID(id))
+	return webhookWorkflowBindingFromSQL(row), mapErr(err)
 }
-func (s *PgStore) DeleteWebhookAutomationBinding(ctx context.Context, opts WebhookAutomationBindingOptions) error {
+func (s *PgStore) DeleteWebhookWorkflowBinding(ctx context.Context, opts WebhookWorkflowBindingOptions) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, _, err := lockWebhookAutomationTarget(ctx, tx, opts); err != nil {
+	if _, _, err := lockWebhookWorkflowTarget(ctx, tx, opts); err != nil {
 		return err
 	}
 	q := sqlc.New()
-	row, err := q.GetWebhookAutomationBinding(ctx, tx, mustPgUUID(opts.EndpointID))
+	row, err := q.GetWebhookWorkflowBinding(ctx, tx, mustPgUUID(opts.EndpointID))
 	if err != nil {
 		return mapErr(err)
 	}
 	if row.Version != opts.ExpectedVersion {
-		return ErrWebhookAutomationConflict
+		return ErrWebhookWorkflowConflict
 	}
-	if _, err := q.DeleteWebhookAutomationBinding(ctx, tx, sqlc.DeleteWebhookAutomationBindingParams{EndpointID: mustPgUUID(opts.EndpointID), Version: opts.ExpectedVersion}); err != nil {
+	if _, err := q.DeleteWebhookWorkflowBinding(ctx, tx, sqlc.DeleteWebhookWorkflowBindingParams{EndpointID: mustPgUUID(opts.EndpointID), Version: opts.ExpectedVersion}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
-func webhookAutomationReceiptFromSQL(row sqlc.GetWebhookAutomationReceiptRow, provider InboundWebhookProvider) (WebhookAutomationReceipt, error) {
-	receipt := WebhookAutomationReceipt{EndpointID: pgUUIDString(row.EndpointID), ProviderEventID: row.ProviderEventID, ReceiptID: pgUUIDString(row.ReceiptID), WorkflowName: row.WorkflowName, Status: row.Status, IgnoredReason: row.IgnoredReason.String, AcceptedAt: row.AcceptedAt.Time, outboxID: row.OutboxID, bodyHash: row.BodyHash, RoutingStatus: "ignored"}
-	receipt.EventSource = webhookAutomationSource(provider, receipt.EndpointID)
+func webhookWorkflowReceiptFromSQL(row sqlc.GetWebhookWorkflowReceiptRow, provider InboundWebhookProvider) (WebhookWorkflowReceipt, error) {
+	receipt := WebhookWorkflowReceipt{EndpointID: pgUUIDString(row.EndpointID), ProviderEventID: row.ProviderEventID, ReceiptID: pgUUIDString(row.ReceiptID), WorkflowName: row.WorkflowName, Status: row.Status, IgnoredReason: row.IgnoredReason.String, AcceptedAt: row.AcceptedAt.Time, outboxID: row.OutboxID, bodyHash: row.BodyHash, RoutingStatus: "ignored"}
+	receipt.EventSource = webhookWorkflowSource(provider, receipt.EndpointID)
 	if row.RecipientID.Valid {
 		receipt.recipientID = pgUUIDString(row.RecipientID)
 		receipt.RoutingStatus = "pending"
@@ -157,93 +157,93 @@ func webhookAutomationReceiptFromSQL(row sqlc.GetWebhookAutomationReceiptRow, pr
 	}
 	return receipt, nil
 }
-func (s *PgStore) GetWebhookAutomationReceipt(ctx context.Context, endpointID, eventID string) (WebhookAutomationReceipt, error) {
-	row, err := sqlc.New().GetWebhookAutomationReceipt(ctx, s.pool, sqlc.GetWebhookAutomationReceiptParams{EndpointID: mustPgUUID(endpointID), ProviderEventID: eventID})
+func (s *PgStore) GetWebhookWorkflowReceipt(ctx context.Context, endpointID, eventID string) (WebhookWorkflowReceipt, error) {
+	row, err := sqlc.New().GetWebhookWorkflowReceipt(ctx, s.pool, sqlc.GetWebhookWorkflowReceiptParams{EndpointID: mustPgUUID(endpointID), ProviderEventID: eventID})
 	if err != nil {
-		return WebhookAutomationReceipt{}, mapErr(err)
+		return WebhookWorkflowReceipt{}, mapErr(err)
 	}
 	endpoint, err := s.InboundWebhookEndpointByID(ctx, endpointID)
 	if err != nil {
-		return WebhookAutomationReceipt{}, err
+		return WebhookWorkflowReceipt{}, err
 	}
-	return webhookAutomationReceiptFromSQL(row, endpoint.Provider)
+	return webhookWorkflowReceiptFromSQL(row, endpoint.Provider)
 }
-func (s *PgStore) AcceptWebhookAutomation(ctx context.Context, verified InboundWebhookEndpoint, body json.RawMessage, runtimeEnabled bool) (WebhookAutomationReceipt, bool, error) {
+func (s *PgStore) AcceptWebhookWorkflow(ctx context.Context, verified InboundWebhookEndpoint, body json.RawMessage, runtimeEnabled bool) (WebhookWorkflowReceipt, bool, error) {
 	eventID, eventType, err := webhookEventFromStripeBody(body)
 	if err != nil {
-		return WebhookAutomationReceipt{}, true, err
+		return WebhookWorkflowReceipt{}, true, err
 	}
-	return s.AcceptVerifiedWebhookAutomation(ctx, verified, eventID, eventType, body, runtimeEnabled)
+	return s.AcceptVerifiedWebhookWorkflow(ctx, verified, eventID, eventType, body, runtimeEnabled)
 }
-func (s *PgStore) AcceptVerifiedWebhookAutomation(ctx context.Context, verified InboundWebhookEndpoint, eventID, eventType string, body json.RawMessage, runtimeEnabled bool) (WebhookAutomationReceipt, bool, error) {
+func (s *PgStore) AcceptVerifiedWebhookWorkflow(ctx context.Context, verified InboundWebhookEndpoint, eventID, eventType string, body json.RawMessage, runtimeEnabled bool) (WebhookWorkflowReceipt, bool, error) {
 	if len(eventID) == 0 || len(eventID) > api.WorkflowWebhookEventMaxBytes ||
 		(eventType != "" && !api.ValidInboundWebhookEventType(eventType)) ||
 		(verified.Provider == InboundWebhookProviderGeneric && (!api.ValidInboundWebhookEventType(eventType) || !api.ValidInboundWebhookEventID(eventID))) {
-		return WebhookAutomationReceipt{}, true, ErrAutomationInvalid
+		return WebhookWorkflowReceipt{}, true, ErrStoredWorkflowInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return WebhookAutomationReceipt{}, true, err
+		return WebhookWorkflowReceipt{}, true, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	endpoint, target, err := lockWebhookAutomationTarget(ctx, tx, WebhookAutomationBindingOptions{EndpointID: verified.ID, AppID: verified.AppID, AccountID: verified.AccountID})
+	endpoint, target, err := lockWebhookWorkflowTarget(ctx, tx, WebhookWorkflowBindingOptions{EndpointID: verified.ID, AppID: verified.AppID, AccountID: verified.AccountID})
 	if err != nil {
-		return WebhookAutomationReceipt{}, true, err
+		return WebhookWorkflowReceipt{}, true, err
 	}
 	if !endpoint.Enabled || !bytes.Equal(endpoint.SigningSecretSealed, verified.SigningSecretSealed) {
-		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
+		return WebhookWorkflowReceipt{}, true, ErrWebhookWorkflowUnavailable
 	}
 	q := sqlc.New()
-	row, receiptErr := q.GetWebhookAutomationReceipt(ctx, tx, sqlc.GetWebhookAutomationReceiptParams{EndpointID: mustPgUUID(endpoint.ID), ProviderEventID: eventID})
+	row, receiptErr := q.GetWebhookWorkflowReceipt(ctx, tx, sqlc.GetWebhookWorkflowReceiptParams{EndpointID: mustPgUUID(endpoint.ID), ProviderEventID: eventID})
 	if receiptErr != nil && !errors.Is(receiptErr, pgx.ErrNoRows) {
-		return WebhookAutomationReceipt{}, true, receiptErr
+		return WebhookWorkflowReceipt{}, true, receiptErr
 	}
-	bindingRow, bindingErr := q.GetWebhookAutomationBinding(ctx, tx, mustPgUUID(endpoint.ID))
+	bindingRow, bindingErr := q.GetWebhookWorkflowBinding(ctx, tx, mustPgUUID(endpoint.ID))
 	if bindingErr != nil && !errors.Is(bindingErr, pgx.ErrNoRows) {
-		return WebhookAutomationReceipt{}, true, bindingErr
+		return WebhookWorkflowReceipt{}, true, bindingErr
 	}
 	if errors.Is(receiptErr, pgx.ErrNoRows) && errors.Is(bindingErr, pgx.ErrNoRows) {
-		return WebhookAutomationReceipt{}, false, nil
+		return WebhookWorkflowReceipt{}, false, nil
 	}
 	if (target.AccountStatus != "active" && target.AccountStatus != "past_due") || target.AbuseHoldAt.Valid || !api.Plan(target.Plan).WorkflowsAllowed() {
-		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
+		return WebhookWorkflowReceipt{}, true, ErrWebhookWorkflowUnavailable
 	}
 	if receiptErr == nil {
-		hash, err := webhookAutomationBodyHashForEvent(endpoint.Provider, eventType, body)
+		hash, err := webhookWorkflowBodyHashForEvent(endpoint.Provider, eventType, body)
 		if err != nil {
-			return WebhookAutomationReceipt{}, true, err
+			return WebhookWorkflowReceipt{}, true, err
 		}
 		if !bytes.Equal(hash, row.BodyHash) {
-			return WebhookAutomationReceipt{}, true, ErrWebhookAutomationConflict
+			return WebhookWorkflowReceipt{}, true, ErrWebhookWorkflowConflict
 		}
-		receipt, err := webhookAutomationReceiptFromSQL(row, endpoint.Provider)
+		receipt, err := webhookWorkflowReceiptFromSQL(row, endpoint.Provider)
 		receipt.Duplicate = true
 		return receipt, true, err
 	}
-	if !runtimeEnabled || !webhookAutomationTargetEligible(target) {
-		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
+	if !runtimeEnabled || !webhookWorkflowTargetEligible(target) {
+		return WebhookWorkflowReceipt{}, true, ErrWebhookWorkflowUnavailable
 	}
-	spec, reason, deploymentID, err := webhookAutomationDefinitionTx(ctx, tx, endpoint.AppID, bindingRow.WorkflowName)
+	spec, reason, deploymentID, err := webhookWorkflowDefinitionTx(ctx, tx, endpoint.AppID, bindingRow.WorkflowName)
 	if err != nil {
-		if errors.Is(err, ErrAutomationInvalid) {
-			err = ErrWebhookAutomationUnavailable
+		if errors.Is(err, ErrStoredWorkflowInvalid) {
+			err = ErrWebhookWorkflowUnavailable
 		}
-		return WebhookAutomationReceipt{}, true, err
+		return WebhookWorkflowReceipt{}, true, err
 	}
-	receipt, envelope, recipients, err := prepareWebhookAutomation(endpoint, webhookAutomationBindingFromSQL(bindingRow), spec, reason, eventID, eventType, body, time.Now().UTC())
+	receipt, envelope, recipients, err := prepareWebhookWorkflow(endpoint, webhookWorkflowBindingFromSQL(bindingRow), spec, reason, eventID, eventType, body, time.Now().UTC())
 	if err != nil {
 		return receipt, true, err
 	}
-	legacy, err := q.WebhookAutomationLegacyReceiptExists(ctx, tx, mustPgUUID(receipt.ReceiptID))
+	legacy, err := q.WebhookWorkflowLegacyReceiptExists(ctx, tx, mustPgUUID(receipt.ReceiptID))
 	if err != nil {
 		return receipt, true, err
 	}
 	if legacy {
-		return WebhookAutomationReceipt{}, false, nil
+		return WebhookWorkflowReceipt{}, false, nil
 	}
 	if spec != nil && reason == "" {
 		if err := validateWorkflowOutboundTx(ctx, tx, endpoint.AppID, endpoint.AccountID, *spec); err != nil {
-			return receipt, true, ErrWebhookAutomationUnavailable
+			return receipt, true, ErrWebhookWorkflowUnavailable
 		}
 	}
 	for i := range recipients {
@@ -257,7 +257,7 @@ func (s *PgStore) AcceptVerifiedWebhookAutomation(ctx context.Context, verified 
 	if err != nil {
 		return receipt, true, err
 	}
-	receipt.outboxID, err = q.InsertWebhookAutomationOutbox(ctx, tx, sqlc.InsertWebhookAutomationOutboxParams{AccountID: mustPgUUID(endpoint.AccountID), Source: envelope.Source, EventID: envelope.ID, EventType: envelope.Type, EventData: body, Payload: payload, RecipientSnapshot: snapshot})
+	receipt.outboxID, err = q.InsertWebhookWorkflowOutbox(ctx, tx, sqlc.InsertWebhookWorkflowOutboxParams{AccountID: mustPgUUID(endpoint.AccountID), Source: envelope.Source, EventID: envelope.ID, EventType: envelope.Type, EventData: body, Payload: payload, RecipientSnapshot: snapshot})
 	if err != nil {
 		return receipt, true, err
 	}
@@ -268,14 +268,14 @@ func (s *PgStore) AcceptVerifiedWebhookAutomation(ctx context.Context, verified 
 	if receipt.recipientID != "" {
 		recipientID = mustPgUUID(receipt.recipientID)
 	}
-	if err := q.InsertWebhookAutomationReceipt(ctx, tx, sqlc.InsertWebhookAutomationReceiptParams{EndpointID: mustPgUUID(endpoint.ID), ProviderEventID: receipt.ProviderEventID, ReceiptID: mustPgUUID(receipt.ReceiptID), BodyHash: receipt.bodyHash, WorkflowName: receipt.WorkflowName, RecipientID: recipientID, OutboxID: receipt.outboxID, Status: receipt.Status, IgnoredReason: pgtype.Text{String: receipt.IgnoredReason, Valid: receipt.IgnoredReason != ""}}); err != nil {
+	if err := q.InsertWebhookWorkflowReceipt(ctx, tx, sqlc.InsertWebhookWorkflowReceiptParams{EndpointID: mustPgUUID(endpoint.ID), ProviderEventID: receipt.ProviderEventID, ReceiptID: mustPgUUID(receipt.ReceiptID), BodyHash: receipt.bodyHash, WorkflowName: receipt.WorkflowName, RecipientID: recipientID, OutboxID: receipt.outboxID, Status: receipt.Status, IgnoredReason: pgtype.Text{String: receipt.IgnoredReason, Valid: receipt.IgnoredReason != ""}}); err != nil {
 		return receipt, true, err
 	}
-	stored, err := q.GetWebhookAutomationReceipt(ctx, tx, sqlc.GetWebhookAutomationReceiptParams{EndpointID: mustPgUUID(endpoint.ID), ProviderEventID: receipt.ProviderEventID})
+	stored, err := q.GetWebhookWorkflowReceipt(ctx, tx, sqlc.GetWebhookWorkflowReceiptParams{EndpointID: mustPgUUID(endpoint.ID), ProviderEventID: receipt.ProviderEventID})
 	if err != nil {
 		return receipt, true, err
 	}
-	receipt, err = webhookAutomationReceiptFromSQL(stored, endpoint.Provider)
+	receipt, err = webhookWorkflowReceiptFromSQL(stored, endpoint.Provider)
 	if err != nil {
 		return receipt, true, err
 	}

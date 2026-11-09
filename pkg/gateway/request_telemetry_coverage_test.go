@@ -22,7 +22,9 @@ func TestRequestTelemetryCoverage(t *testing.T) {
 		{"idle", true, 0, 4, 4, false, 0, 0},
 		{"disabled", false, 0, 4, 4, false, 0, 0},
 		{"delivered", true, 3, 4, 4, false, 0, 0},
-		{"backlog", true, 3, 4, 1, false, 0, 2},
+		// A backlog of full batches drains in one tick (ADR-20261103113952
+		// follow-up), so the report after it holds none.
+		{"backlog", true, 3, 4, 1, false, 0, 0},
 		{"rejected", true, 3, 4, 4, true, 3, 0},
 		{"overwrite", true, 3, 1, 4, false, 2, 0},
 	} {
@@ -85,6 +87,44 @@ func TestRequestTelemetryAppIsolation(t *testing.T) {
 	publisher.tick(context.Background())
 	if len(coverage.AppGaps) != 0 {
 		t.Fatal("acknowledged loss delta was replayed")
+	}
+}
+
+// A row the receiver rejects for good (an app over its ingest cap) is dropped
+// and journaled on the first answer. Retrying it held the one publisher
+// goroutine in backoff (3 ms -> 606 ms a batch) while every other app's rows
+// waited, so busy gateways overwrote their ring.
+func TestRequestTelemetryRejectedRowsAreNotRetried(t *testing.T) {
+	good, capped := makeRow(), makeRow()
+	recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 4}, nil)
+	recorder.RecordFromObserve(good)
+	recorder.RecordFromObserve(capped)
+	var coverage RequestTelemetryCoverage
+	calls := 0
+	publisher := NewRequestTelemetryPublisher(RequestTelemetryPublisherConfig{Enabled: true, FlushBatchSize: 4, MaxRetries: 3,
+		OnCoverage: func(_ context.Context, c RequestTelemetryCoverage) error { coverage = c; return nil },
+	}, recorder, func(_ context.Context, rows []RequestTelemetryRow) error {
+		calls++
+		accepted, rejected := map[uuid.UUID]bool{}, map[uuid.UUID]bool{}
+		for _, row := range rows {
+			if row.AppID == good.AppID {
+				accepted[row.EventID] = true
+			} else {
+				rejected[row.EventID] = true
+			}
+		}
+		return &RequestTelemetryDeliveryError{Accepted: accepted, Rejected: rejected, Cause: errors.New("rate limited")}
+	}, nil)
+	start := time.Now()
+	publisher.tick(context.Background())
+	if elapsed := time.Since(start); calls != 1 || elapsed > 150*time.Millisecond {
+		t.Fatalf("rejected row retried: %d ship calls in %v", calls, elapsed)
+	}
+	if publisher.ShippedTotal() != 1 || publisher.DroppedTotal() != 1 {
+		t.Fatalf("shipping counts: shipped %d dropped %d", publisher.ShippedTotal(), publisher.DroppedTotal())
+	}
+	if len(coverage.AppGaps) != 1 || coverage.AppGaps[0].AppID != capped.AppID || coverage.AppGaps[0].DroppedCount != 1 {
+		t.Fatalf("rejected row missing from the loss journal: %+v", coverage)
 	}
 }
 

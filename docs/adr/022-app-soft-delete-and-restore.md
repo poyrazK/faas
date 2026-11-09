@@ -24,6 +24,13 @@
 - **D4 account deletion interaction** — account hard deletion still owns the
   account-wide FK walk from ADR-021; app purge is narrower and cannot delete an
   app with active object-storage buckets.
+- **D5 work in progress** *(amendment, Hunt 31 H31-12)* — deletion cancels
+  the app's in-progress deployments (`cancelled_by_principal =
+  system:app-delete`) and their builds, as it already did for queued app tasks
+  and invocations. A deploy left `snapshotting` kept a builder slot and had
+  imaged retry its snapshot against an app it could no longer load. Restore
+  brings the app back on its last live deployment; cancelled deploys stay
+  cancelled.
 
 ## Interfaces
 

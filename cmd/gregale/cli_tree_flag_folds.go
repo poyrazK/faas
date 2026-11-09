@@ -54,11 +54,11 @@ var cliTreeFlagFolds = []cliTreeFlagFold{
 	{New: "event delivery retry", Flag: "retryable", Old: "events replay-retryable", Short: "retry a bounded batch of retryable terminal failures"},
 	{New: "event subscription health", Flag: "view=delivery", Old: "events subscription-delivery-health", Short: "show routing, executions, retry jobs and blockers"},
 	{New: "event subscription health", Flag: "view=execution", Old: "events subscription-execution-health", Short: "show executions, handler outcomes and retry-job health"},
-	{New: "automation recovery create", Flag: "dry-run", Also: "job", KeepAlso: true, Old: "automations recovery-retry-plan", Short: "with --job: review recovery failures and save an explicit retry plan"},
-	{New: "automation recovery create", Flag: "dry-run", Old: "automations recovery-preview", Short: "show the recovery and catch-up without writing"},
-	{New: "automation event-recovery start", Flag: "dry-run", Old: "automations event-recovery-plan", Short: "save the selected routing actions for review"},
-	{New: "automation recovery-response apply", Flag: "dry-run", Old: "automations recovery-response-plan", Short: "save the cancellation and retry actions for review"},
-	{New: "automation recovery cancel", Flag: "dry-run", Old: "automations recovery-cancel-preview", Short: "show the recovery generation it would cancel"},
+	{New: "workflow stored recovery create", Flag: "dry-run", Also: "job", KeepAlso: true, Old: "stored-workflows recovery-retry-plan", Short: "with --job: review recovery failures and save an explicit retry plan"},
+	{New: "workflow stored recovery create", Flag: "dry-run", Old: "stored-workflows recovery-preview", Short: "show the recovery and catch-up without writing"},
+	{New: "workflow stored event-recovery start", Flag: "dry-run", Old: "stored-workflows event-recovery-plan", Short: "save the selected routing actions for review"},
+	{New: "workflow stored recovery-response apply", Flag: "dry-run", Old: "stored-workflows recovery-response-plan", Short: "save the cancellation and retry actions for review"},
+	{New: "workflow stored recovery cancel", Flag: "dry-run", Old: "stored-workflows recovery-cancel-preview", Short: "show the recovery generation it would cancel"},
 	{New: "api route monitor set", Flag: "dry-run", Old: "routes monitor preview", Short: "evaluate the budgets against recent production traffic"},
 	{New: "api spec apply", Flag: "dry-run", Old: "openapi preview", Short: "show routes, edge policies and the contract diff"},
 	{New: "api spec import", Flag: "dry-run", Old: "openapi dry-run", Short: "show uncovered routes without importing"},
@@ -79,10 +79,12 @@ var cliTreeFlagFolds = []cliTreeFlagFold{
 	{New: "alert slo list", Flag: "account", Old: "account slo", Short: "show the account-wide SLO panel"},
 	{New: "alert incident update", Flag: "note", Append: true, Only: true, Old: "incidents note", Short: "add a note to the incident; notes cannot be edited"},
 	{New: "billing budgets create", Flag: "dry-run", Old: "billing budget-preview", Short: "show the budget's cost and workload consequences without writing"},
-	{New: "automation failure resume", Flag: "dry-run", Old: "automations failure-recovery-plan", Short: "preview the failure and save a reviewed first recovery plan"},
+	{New: "workflow stored failure resume", Flag: "dry-run", Old: "stored-workflows failure-recovery-plan", Short: "preview the failure and save a reviewed first recovery plan"},
 	{New: "environment release-sets rollback", Flag: "prepare", Old: "projects environments release-sets prepare-rollback", Short: "select a retained graph and freeze current routing and policies"},
 	{New: "api route health check", Flag: "review", Only: true, Old: "routes health review-release", Short: "gate an aggregate preview review on canary route health"},
 	{New: "debug issue update", Flag: "issues", Keep: true, Only: true, Old: "issues bulk", Short: "triage up to 50 selected issue groups at once (with --action)"},
+	{New: "debug issue lifecycle-alert set", Flag: "dry-run", Old: "issues lifecycle-alerts preview", Short: "show the alerts the draft filters would send without saving them"},
+	{New: "debug issue compound-alert set", Flag: "dry-run", Old: "issues compound-alerts preview", Short: "preview the rule against retained events without saving it"},
 	{New: "org standards reviews approve", Flag: "dry-run", Old: "orgs standards reviews preview", Short: "save affected applications and blockers without activating a change"},
 }
 
@@ -128,6 +130,32 @@ func rewriteFlagFold(args []string) ([]string, bool) {
 	}
 	return nil, false
 }
+
+// onlyFoldPath reports args that start with a path existing only through
+// its folds (`edge cache set`) but set none of their flags, with the flag
+// spellings that would run it.
+func onlyFoldPath(args []string) (string, []string, bool) {
+	words := leadingTreeWords(args)
+	var path string
+	var flags []string
+	for _, fold := range cliTreeFlagFolds {
+		fields := strings.Fields(fold.New)
+		if !fold.Only || len(fields) > len(words) || !slices.Equal(fields, words[:len(fields)]) {
+			continue
+		}
+		path = fold.New
+		flag := strings.TrimPrefix(fold.spelling(), fold.New+" ")
+		if !slices.Contains(flags, flag) {
+			flags = append(flags, flag)
+		}
+	}
+	return path, flags, path != ""
+}
+
+// errFoldFlagRequired is a fold-only path run without the flag it needs.
+type errFoldFlagRequired struct{ error }
+
+func (e errFoldFlagRequired) Unwrap() error { return e.error }
 
 type foldFlagSpan struct{ start, end int }
 
@@ -215,7 +243,9 @@ func (d cliTreeDiscovery) foldFlags(path string, own []cliFlag) []cliFlag {
 			}
 			continue
 		}
-		flag := cliFlag{Name: name, Short: short}
+		// A path that exists only through its folds runs nothing without
+		// the flag, so the flag is required there.
+		flag := cliFlag{Name: name, Short: short, Req: fold.Only, Bool: !valued && cliTreeFoldBoolean[name]}
 		switch {
 		case valued:
 			flag.Value, flag.Short = value, value+": "+short

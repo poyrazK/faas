@@ -35,7 +35,7 @@ func captureTestSetup(t *testing.T) (*Engine, *Engine, CaptureReadinessOptions, 
 	}
 	functions, _ := doctorFunctions()
 	for _, f := range functions {
-		if slices.Contains([]string{"begin_operation", "finish_operation", "check_enrollment", "fingerprint"}, f.Name) {
+		if slices.Contains([]string{"begin_operation", "finish_operation", "check_enrollment", "fingerprint", "type_fingerprint"}, f.Name) {
 			if _, err := e.Pool.Exec(t.Context(), "GRANT EXECUTE ON FUNCTION gregale_repair."+f.Name+"("+f.Args+") TO "+role); err != nil {
 				t.Fatal(err)
 			}

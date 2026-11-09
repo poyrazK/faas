@@ -20,6 +20,9 @@ func TestGlobalFlagAfterCommandExplainsPlacement(t *testing.T) {
 		{[]string{"deploy", "--non-interactive"}, "--non-interactive is a global flag: put it before the command, as in 'gregale --non-interactive deploy'"},
 		{[]string{"logs", "--profile", "staging"}, "--profile is a global flag: put it before the command, as in 'gregale --profile NAME logs'"},
 		{[]string{"deploy", "--naem", "demo"}, "Did you mean --name?"},
+		// rc.318 field report: the bare "unknown flag" did not say which
+		// command takes the setting.
+		{[]string{"app", "scale", "demo", "--websocket-enabled"}, "--websocket-enabled is an app setting, not a scale setting: run 'gregale app update <app> --websocket-enabled'"},
 	}
 	for _, tt := range tests {
 		_, stderr, restore := main.SwapIO(t)

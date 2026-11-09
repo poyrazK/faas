@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -71,6 +72,11 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	if presetErr != nil {
 		log.Warn("dashboard edge rules: list CORS presets", "account_id", acct.ID, "app_id", app.ID, "err", presetErr)
 	} else {
+		if _, company := corsPresetCompanyApp(r); company {
+			// A company app's page manages only the app's own presets
+			// (ADR-091 amendment 2026-11-03).
+			presets = slices.DeleteFunc(presets, func(p state.CorsPreset) bool { return p.AppID != app.ID })
+		}
 		data.CorsPresets = projectDashboardCorsPresets(presets, app.ID)
 	}
 	if traceForm != nil {
@@ -282,7 +288,7 @@ func (s *server) dashboardTraceEdgeRules(w http.ResponseWriter, r *http.Request)
 func projectDashboardEdgeRules(rows []state.EdgeRule, unreleased func(state.EdgeRule) []string) []dashboard.EdgeRulePageItem {
 	items := make([]dashboard.EdgeRulePageItem, 0, len(rows))
 	for _, row := range rows {
-		actionJSON, _ := json.Marshal(row.Action)
+		actionJSON, _ := json.Marshal(edgerules.RedactHeaderSecrets(row.Action))
 		item := dashboard.EdgeRulePageItem{
 			ID: row.ID, Kind: string(row.Kind), MatchHost: row.MatchHost, MatchPath: row.MatchPath,
 			MatchMethods: strings.Join(row.MatchMethods, ", "), Priority: row.Priority, Enabled: row.Enabled,

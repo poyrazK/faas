@@ -102,6 +102,24 @@ type EgressSource interface {
 	ReadUsageDeltas(instanceID string) (UsageDeltas, bool)
 }
 
+// CumulativeNetworkSource is an EgressSource whose host-interface bytes are
+// vmmd's cumulative per-instance counters (UsageDeltas.NetworkCumulative),
+// which the Store checkpoints exactly once. A missed, failed or caught-up
+// tick then loses no bytes: the next reading carries them into the minute it
+// is taken, and a counter reset counts its new value in full. So a minute the
+// compute sampler rolled in full is complete egress evidence too
+// (ADR-20261101113742). cmd/meterd's egress aggregator implements it.
+type CumulativeNetworkSource interface {
+	CumulativeNetworkCounters() bool
+}
+
+// cumulativeNetwork reports whether the sampler's egress source keeps
+// cumulative, checkpointed network counters.
+func (s *Sampler) cumulativeNetwork() bool {
+	source, ok := s.egress.(CumulativeNetworkSource)
+	return ok && source.CumulativeNetworkCounters()
+}
+
 // TailSecondsSource (issue #667 / ADR-078) is the per-instance
 // tail-seconds reader the sampler uses to populate
 // usage_minutes.tail_seconds. The reader is backed by vmmd
@@ -305,10 +323,8 @@ type RolledRow struct {
 	// execution_mode (normal / mirror / worker / service / job).
 	// The metered_mb_seconds_total{mode,plan} counter uses this
 	// as a label so dashboards can split worker idle-RAM from
-	// request-driven RAM. Mirror-mode rows are filtered out
-	// upstream via IsMeteredSkippableMode and never reach the
-	// row constructor — Mode stays "normal" / "worker" /
-	// "service" / "job".
+	// request-driven RAM. Mirror VMs bill too (ADR-20261104145353),
+	// so Mode may also be "mirror".
 	Mode string
 	// Plan (M-2 / ADR-137 §Decision 1) is the owning account's
 	// billing plan (free / hobby / pro / scale). Mirrored onto the
@@ -593,7 +609,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	for _, a := range accounts {
 		planByAccount[a.ID] = a.Plan
 	}
-	floorHeld := newFloorHolders(s.store)
+	floorHeld := newFloorHolders(s.store, minute)
 	instancesByApp, err := s.catchUpWindowInstances(ctx, minute, catchUp)
 	if err != nil {
 		return nil, err
@@ -666,19 +682,10 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			return mbs, nil
 		}
 		for _, ins := range ins {
-			// Issue #72 / ADR-125: skip mode='mirror' instances at
-			// the sampler. A mirror VM never serves the customer —
-			// the customer only saw the source deployment's
-			// response — so billing it would be a customer-trust
-			// bug, not a feature. The reaper also skips these rows
-			// (mirror VMs self-park on request completion, so
-			// there's no idle lifetime to reap), which keeps the
-			// sampler and reaper symmetric on the
-			// CountsForRAM-vs-mirror skip — both predicates are
-			// evaluated in the same order. The state-mode column is
-			// NOT NULL DEFAULT 'normal' (migration 00349), so
-			// pre-feature rows backfill to the default and skip
-			// this branch.
+			// ADR-20261104145353: a mirror VM bills plan RAM + 8 MB per
+			// running second like every other instance, as ADR-124 told
+			// customers. It is real capacity the customer chose to run.
+			// A platform snapshot refresh does not (ADR-20261106214916).
 			if state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
@@ -899,7 +906,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			// floor enrichment either. Skipping them keeps the floor
 			// math symmetric — a customer with a mirror rule sees
 			// their floor counted from production instances only.
-			if state.IsMeteredSkippableMode(ins.Mode) {
+			if ins.Mode == string(state.InstanceModeMirror) || state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
 			if ins.DeploymentID == "" {
@@ -927,8 +934,11 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		// outlives a downgrade, and schedd then holds none (Free) or no more
 		// than the plan allows, while the gap was still billed. An unknown
 		// plan (a failed prefetch) keeps the stored floor, as before.
+		// The billing subject's plan, as schedd's floor trigger reads it: a
+		// company app's floor follows its organization's plan, not its
+		// creator's (ADR-20261101113742).
 		floorCap := floor
-		if plan, known := planByAccount[app.AccountID]; known {
+		if plan, known := planByAccount[subject]; known {
 			floorCap = planFloorCap(app, plan)
 		}
 		floor = min(floor, floorCap)
@@ -960,14 +970,21 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			// that point schedd cannot fulfil the floor. Real CountsForRAM
 			// instances above remain billable because they consume memory
 			// regardless of deployment metadata.
-			floorAvailable, billableErr := s.billableFloorDeployment(ctx, app.ID)
+			floorDeployment, floorAvailable, billableErr := s.billableFloorDeployment(ctx, app.ID)
 			if billableErr != nil {
 				return out, billableErr
 			}
 			if !floorAvailable {
 				continue
 			}
-			billable := api.BillableRAMMB(app.RAMMB)
+			// A floor instance runs the deployment's sidecars too, so it is
+			// priced like a live instance of that deployment
+			// (ADR-20261103131742 amendment 2).
+			floorSidecars, sidecarErr := sidecarsFor(floorDeployment)
+			if sidecarErr != nil {
+				return out, sidecarErr
+			}
+			billable := api.BillableRAMMBWithSidecars(app.RAMMB, floorSidecars)
 			gap := floor - liveCount
 			floorTotal := int64(gap) * MBSecondsPerMinute(billable)
 			if exactResidency {
@@ -1019,19 +1036,23 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 // its latest deployment is still being provisioned. A terminal latest
 // deployment without a live fallback cannot satisfy a min-instances promise
 // and therefore cannot justify synthetic floor usage. Older abandoned pipeline
-// rows do not keep billing alive.
-func (s *Sampler) billableFloorDeployment(ctx context.Context, appID string) (bool, error) {
-	if _, err := s.store.LiveDeployment(ctx, appID); err == nil {
-		return true, nil
+// rows do not keep billing alive. It also names the deployment whose
+// instances fill the floor, for their sidecars.
+func (s *Sampler) billableFloorDeployment(ctx context.Context, appID string) (string, bool, error) {
+	if live, err := s.store.LiveDeployment(ctx, appID); err == nil {
+		return live.ID, true, nil
 	} else if !errors.Is(err, state.ErrNotFound) {
-		return false, fmt.Errorf("meter: resolve live deployment for floor %s: %w", appID, err)
+		return "", false, fmt.Errorf("meter: resolve live deployment for floor %s: %w", appID, err)
 	}
 
 	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, 1, 0)
 	if err != nil {
-		return false, fmt.Errorf("meter: list deployments for floor %s: %w", appID, err)
+		return "", false, fmt.Errorf("meter: list deployments for floor %s: %w", appID, err)
 	}
-	return len(deployments) == 1 && !deployments[0].Status.IsTerminal(), nil
+	if len(deployments) != 1 || deployments[0].Status.IsTerminal() {
+		return "", false, nil
+	}
+	return deployments[0].ID, true, nil
 }
 
 // cpuDeltaForMinute computes the per-minute CPU-µs delta for the

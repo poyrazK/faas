@@ -356,11 +356,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
+	if presigned && applyPresignedObjectHeaders(r) != nil {
+		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "The signed object request fields are invalid or ambiguous.", r.URL.Path, requestID)
+		return
+	}
 	if h.accountLimiter != nil && !h.accountLimiter.Allow(bucket) {
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, requestID)
 		return
 	}
 	if !h.applyBucketCORS(w, r, bucket, requestID) || !h.boundURLRequest(w, r, credential, bucket, requestID) {
+		return
+	}
+	// A key-scoped binding is checked before every route (ADR-20261106114500).
+	if !keyScopeAllows(r, credential, bucket) {
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access Denied.", r.URL.Path, requestID)
 		return
 	}
 	if h.routeWriteReceipt(w, r, requestContext{requestID: requestID, credential: credential, bucket: bucket, signature: parsed}) {
@@ -720,7 +729,10 @@ const bucketSettingsPermission = "bucket_settings"
 
 func (h *Handler) can(credential state.ObjectS3Credential, permission string) bool {
 	if permission == bucketSettingsPermission {
-		return credential.Permission == state.ObjectBucketPermissionReadWrite && credential.ManagedAppID == ""
+		// A rotation stage keeps a compute binding's previous key without
+		// the binding's app ID; it is still a compute key.
+		return credential.Permission == state.ObjectBucketPermissionReadWrite && credential.ManagedAppID == "" &&
+			credential.RotationParentID == "" && credential.KeyPrefix == ""
 	}
 	return credential.Permission == permission || credential.Permission == state.ObjectBucketPermissionReadWrite
 }
@@ -775,6 +787,9 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 			status, code, message = http.StatusForbidden, "AccessDenied", "The storage credential is no longer authorized."
 		} else if errors.Is(err, state.ErrObjectBudget) {
 			status, code, message = http.StatusPaymentRequired, "AccountProblem", objectBudgetMessage(err)
+		} else if limit := (*state.ObjectStorageLimitError)(nil); errors.As(err, &limit) && limit.Kind == "account_bytes" && errors.Is(err, state.ErrObjectCapacity) {
+			// ADR-20261101214152: the account's ceiling, which support can raise.
+			status, code, message = http.StatusConflict, "OperationAborted", fmt.Sprintf("The account would store more than its object storage ceiling: limit %d bytes, observed %d. Delete objects, or ask support for a higher ceiling. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 		} else if errors.Is(err, state.ErrObjectCapacity) {
 			status, code, message = http.StatusConflict, "OperationAborted", "The object storage capacity reservation would be exceeded."
 		} else if errors.Is(err, state.ErrConflict) {
@@ -796,7 +811,7 @@ func objectBudgetMessage(err error) string {
 	if limit.Kind == "account_bytes" {
 		// ADR-20261101214152: downloads stop while the account stores more
 		// than its plan's ceiling; listing, HEAD and DELETE still work.
-		return fmt.Sprintf("The account stores more than its plan's object storage ceiling: limit %d bytes, observed %d. Delete objects, raise the spend cap or upgrade to download again. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
+		return fmt.Sprintf("The account stores more than its object storage ceiling: limit %d bytes, observed %d. Delete objects to download again, or ask support for a higher ceiling. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 	}
 	return fmt.Sprintf("The account reached its object storage %s limit for the month: limit %d, observed %d. See %s.", limit.Kind, limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 }

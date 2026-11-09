@@ -298,6 +298,10 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if s.finishOAuthLink(w, r, "google", googleUser.ID, googleUser.Email, googleUser.VerifiedEmail) {
+		return
+	}
+
 	// Provision or fetch account. The full googleUser struct is
 	// passed so the helper can do a sub-first lookup against the
 	// oauth_links table — the §11 anti-takeover invariant
@@ -305,6 +309,10 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	acct, err := s.provisionOrFetchGoogleAccount(r, googleUser, signupSource(oauthNext(r)))
 	if errors.Is(err, errSignupNetworkCap) {
 		writeSignupNetworkCap(w)
+		return
+	}
+	if errors.Is(err, errOAuthProviderUnlinked) {
+		writeOAuthProviderUnlinked(w, r, "google")
 		return
 	}
 	if err != nil {
@@ -377,8 +385,8 @@ func (s *server) provisionOrFetchGoogleAccount(r *http.Request, info GoogleUserI
 		// returns ErrConflict on a different-account re-bind
 		// (handled by the sub-first lookup above), so this is
 		// safe.
-		if err := s.store.UpsertOAuthLink(ctx, acct.ID, "google", info.ID, email, info.VerifiedEmail); err != nil {
-			s.log.Error("google.upsert_link", "err", err)
+		if err := s.linkOAuthByEmail(r, acct, "google", info.ID, email, info.VerifiedEmail); err != nil {
+			return state.Account{}, err
 		}
 		return s.verifyOAuthAccountEmail(ctx, acct)
 	}

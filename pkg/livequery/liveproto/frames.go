@@ -103,6 +103,11 @@ type ClientFrame struct {
 	ServerKey string `json:"server_key,omitempty"`
 	Subject   string `json:"subject,omitempty"`
 	Access    string `json:"access,omitempty"`
+	// AllowWithoutRLS lists the relations ("schema.relation") the app's Data
+	// API lets signed-in users read without row-level security (ADR
+	// 20261026140223). realtimed sets it from the app's reported access
+	// settings on every RLS-mode frame; a client never sends it.
+	AllowWithoutRLS []string `json:"allow_without_rls,omitempty"`
 }
 
 // Access kinds realtimed sets on admitted frames without a user token.

@@ -44,6 +44,7 @@ alloy_journal_units:
   - faas-mcp-bridge.service
   - faas-outboundd.service
   - faas-agentd.service
+  - faas-edgednsd.service
   - faas-realtimed.service
   - faas-profiled.service
   - faas-livequeryd.service
@@ -55,6 +56,7 @@ alloy_journal_units:
   # Host helpers and timers.
   - faas-serving-probe.service
   - faas-cgroup-metrics.service
+  - faas-kernel-lockdown.service
   - faas-canary-artifact-sweep.service
   - faas-cp-state-backup.service
   - faas-audit-anchor.service
@@ -79,6 +81,58 @@ alloy_journal_units:
   - loki.service
   - node_exporter.service
 alloy_journal_max_age: 12h
+
+# Host security evidence (ADR-20261107203000). A root attacker can wipe the
+# local journal and audit log; these streams leave the host as they are
+# written, and Alloy counts the high-signal ones as
+# faas_security_events_total{event} for the faas_host_security alerts.
+alloy_security_enabled: true
+# Login, privilege and account changes, by journal SYSLOG_IDENTIFIER.
+# OpenSSH 9.8+ logs authentication from sshd-session.
+alloy_security_identifiers:
+  - sshd
+  - sshd-session
+  - sudo
+  - su
+  - useradd
+  - usermod
+  - userdel
+  - groupadd
+  - groupmod
+  - groupdel
+  - passwd
+  - chpasswd
+  - chage
+  - gpasswd
+  - chsh
+# Kernel messages at notice (5) or more severe; lockdown refusals are
+# notices. Bridge and tap port changes are info and stay local.
+alloy_security_kernel_max_priority: 5
+# host_hardening's auditd writes here, readable by the adm group.
+alloy_security_audit_log: /var/log/audit/audit.log
+# Record types that only add detail to an event already shipped (PATH, CWD,
+# PROCTITLE beside SYSCALL and EXECVE) or that platform daemons emit all day
+# (vmmd's nftables changes, systemd's unit and BPF records). They stay in
+# the local audit log.
+alloy_security_audit_drop_types:
+  - PATH
+  - CWD
+  - PROCTITLE
+  - SOCKADDR
+  - BPF
+  - NETFILTER_CFG
+  - SERVICE_START
+  - SERVICE_STOP
+# Programs that change sudoers, systemd units or nftables.conf outside a
+# login session as part of normal operation: systemd and systemctl, package
+# upgrades (dpkg, deb-systemd-helper under perl, unattended-upgrades under
+# python3), nft, and the platform's own binaries under /opt/faas. Any other
+# program doing so raises host_config_write_unattended.
+alloy_security_unattended_writer_exes: '/usr/lib/systemd/systemd|/usr/bin/systemctl|/usr/bin/dpkg|/usr/bin/perl[0-9.]*|/usr/bin/python3[0-9.]*|/usr/sbin/nft|/opt/faas/.*'
+# Ansible runs its modules with python3, so reads of /etc/faas/secrets by
+# python3 in a login session are deploys; anything else in a login session
+# is a person or a tool reading a secret by hand.
+alloy_security_deploy_reader_exes: '/usr/bin/python3[0-9.]*'
 # First start on a host that ran Promtail: read back only this far, so the
 # cutover gap is covered and at most this much is sent twice (Loki drops exact
 # duplicates in the same stream). Once Alloy has saved its own position the

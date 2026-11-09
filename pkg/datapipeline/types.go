@@ -21,6 +21,7 @@ var (
 	ErrUnavailable   = errors.New("data pipelines are unavailable")
 	ErrQuota         = errors.New("data pipeline limit reached")
 	ErrCheckRequired = errors.New("a fresh passing connection check is required for every selected table")
+	ErrCheckBusy     = errors.New("another connection check or setup is in progress; retry after it completes")
 	identifier       = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 )
 
@@ -67,16 +68,21 @@ func ValidateCreate(r api.CreateDataPipelineRequest) error {
 		}
 		seen[table] = true
 	}
-	seen = map[string]bool{}
-	for _, subject := range r.ReadSubjects {
-		if subject == "" || len(subject) > api.DataPipelineSubjectMaxBytes || strings.ContainsAny(subject, "\x00\r\n") || seen[subject] {
-			return ErrInvalid
-		}
-		seen[subject] = true
+	if !validReaders(r.ReadSubjects) {
+		return ErrInvalid
 	}
 	return nil
 }
 func validID(id string) bool { _, err := uuid.Parse(id); return err == nil }
+
+// Match PostgreSQL's UUID representation before comparing or persisting text IDs.
+// Preserve invalid input so the caller's ordinary validation still rejects it.
+func canonicalID(id string) string {
+	if parsed, err := uuid.Parse(id); err == nil {
+		return parsed.String()
+	}
+	return id
+}
 
 type Store interface {
 	CreateConnection(context.Context, Connection) (Connection, error)
@@ -104,6 +110,8 @@ type ConnectionCheck struct {
 }
 
 func normalize(r api.CreateDataPipelineRequest) api.CreateDataPipelineRequest {
+	r.SourceConnectionID = canonicalID(r.SourceConnectionID)
+	r.DatabaseID = canonicalID(r.DatabaseID)
 	r.Tables = slices.Clone(r.Tables)
 	r.ReadSubjects = slices.Clone(r.ReadSubjects)
 	slices.Sort(r.Tables)

@@ -66,6 +66,17 @@ case "$1" in
       printf '{"id":"deployment-%s","status":"failed","rollout_state":"aborted","error":"builderd: vm exit 1","failure_class":"infra"}\n' "$slug"
       exit 1
     fi
+    # apid's policy check ran out of time on every resend: the CLI prints the
+    # problem as one JSON line on stderr and nothing on stdout.
+    if [[ -n "${TEST_POLICY_TIMEOUT_ONCE_SUFFIX:-}" && "$slug" == *"$TEST_POLICY_TIMEOUT_ONCE_SUFFIX" && ! -e "$TEST_DEPLOY_LOG.policy" ]]; then
+      : >"$TEST_DEPLOY_LOG.policy"
+      printf '{"type":"about:blank","title":"Traffic policy too complex","status":422,"code":"traffic_policy_too_complex","detail":"traffic policy analysis ran out of time","retry_after_seconds":2,"category":"validation","exit_code":1}\n' >&2
+      exit 1
+    fi
+    if [[ -n "${TEST_POLICY_TOO_LARGE_SUFFIX:-}" && "$slug" == *"$TEST_POLICY_TOO_LARGE_SUFFIX" ]]; then
+      printf '{"title":"Traffic policy too complex","status":422,"code":"traffic_policy_too_complex","detail":"analysis exceeded 1000000 automaton nodes","category":"validation","exit_code":1}\n' >&2
+      exit 1
+    fi
     if [[ -n "${TEST_FAIL_SLUG_SUFFIX:-}" && "$slug" == *"$TEST_FAIL_SLUG_SUFFIX" ]]; then
       echo "build: step 4/7 failed: npm ci exited 1" >&2
       printf '{"id":"deployment-%s","status":"failed","rollout_state":"aborted","error":"build failed","error_code":"build_failed"}\n' "$slug"
@@ -148,7 +159,10 @@ if [[ -n "${TEST_CONTINUITY:-}" && "$*" == *"ra-"* && "$*" != *"--write-out"* ]]
   count=0
   if [[ -f "${TEST_CURL_LOG}.continuity" ]]; then read -r count <"${TEST_CURL_LOG}.continuity"; fi
   count=$((count + 1))
-  printf '%s\n' "$count" >"${TEST_CURL_LOG}.continuity"
+  # Replace the count atomically: the fake deployment wait reads it under
+  # set -e, and a truncated file in between ends that read with EOF.
+  printf '%s\n' "$count" >"${TEST_CURL_LOG}.continuity.tmp"
+  mv "${TEST_CURL_LOG}.continuity.tmp" "${TEST_CURL_LOG}.continuity"
   IFS=, read -ra pattern <<<"$TEST_CONTINUITY"
   index=$((count - 1))
   if ((index >= ${#pattern[@]})); then index=$((${#pattern[@]} - 1)); fi
@@ -404,6 +418,46 @@ fi
 			t.Fatalf("infra-failed deploy attempts = %d, want 2: %s", got, deployed)
 		}
 	})
+
+	// rc.322: a deploy refused because the policy check ran out of time on a
+	// busy control plane is resent once after a pause, because the refusal
+	// saved nothing. A size refusal (no retry_after_seconds) is a real defect
+	// and is never resent.
+	for _, tt := range []struct {
+		name, env    string
+		wantErr      bool
+		wantAttempts int
+		wantOutput   string
+	}{
+		{name: "policy check timed out retried once", env: "TEST_POLICY_TIMEOUT_ONCE_SUFFIX=-f1", wantAttempts: 2,
+			wantOutput: "a traffic policy check that ran out of time; retrying once"},
+		{name: "policy too large not retried", env: "TEST_POLICY_TOO_LARGE_SUFFIX=-f1", wantErr: true, wantAttempts: 1,
+			wantOutput: "automaton nodes"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			log := filepath.Join(t.TempDir(), "deploys")
+			cmd := exec.Command("bash", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
+				"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
+				"TEST_DEPLOY_LOG="+log, "TEST_CURL_LOG="+filepath.Join(t.TempDir(), "curls"),
+				"TEST_REVOKE_LOG="+filepath.Join(t.TempDir(), "revokes"),
+				tt.env, "POLICY_RETRY_DELAY_SECONDS=0",
+			)
+			out, err := cmd.CombinedOutput()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, want error %v:\n%s", err, tt.wantErr, out)
+			}
+			if !strings.Contains(string(out), tt.wantOutput) {
+				t.Errorf("output is missing %q:\n%s", tt.wantOutput, out)
+			}
+			deployed, _ := os.ReadFile(log)
+			if got := strings.Count(string(deployed), "ra-aaaaaaaa-12345678-f1\n"); got != tt.wantAttempts {
+				t.Fatalf("deploy attempts = %d, want %d: %s", got, tt.wantAttempts, deployed)
+			}
+		})
+	}
 
 	// The per-node canary (ACCEPTANCE_NODE) deploys until verify-node proves
 	// the node, skips the fleet gate, stays bounded, and fails on any failed

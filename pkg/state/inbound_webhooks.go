@@ -32,12 +32,29 @@ type InboundWebhookEndpoint struct {
 	Enabled             bool
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	// PreviousSigningSecretSealed is the secret a rotation replaced; it
+	// still verifies deliveries until PreviousSigningSecretExpiresAt
+	// (ADR-20261101093517). Empty when there is none.
+	PreviousSigningSecretSealed    []byte
+	PreviousSigningSecretExpiresAt *time.Time
+}
+
+// PreviousSigningSecretAt returns the previous sealed secret while its
+// overlap window lasts at now, or nil.
+func (e InboundWebhookEndpoint) PreviousSigningSecretAt(now time.Time) []byte {
+	if len(e.PreviousSigningSecretSealed) == 0 || e.PreviousSigningSecretExpiresAt == nil || !e.PreviousSigningSecretExpiresAt.After(now) {
+		return nil
+	}
+	return e.PreviousSigningSecretSealed
 }
 
 type UpdateInboundWebhookEndpointParams struct {
 	SigningSecretSealed *[]byte
 	DeliveryPath        *string
 	Enabled             *bool
+	// PreviousSecretUntil, set with SigningSecretSealed, keeps the secret
+	// being replaced valid until this instant (ADR-20261101093517).
+	PreviousSecretUntil *time.Time
 }
 
 type InboundWebhookQuotaScope string
@@ -168,6 +185,11 @@ func (m *MemStore) UpdateInboundWebhookEndpoint(_ context.Context, id string, pa
 		return InboundWebhookEndpoint{}, ErrNotFound
 	}
 	if params.SigningSecretSealed != nil {
+		if params.PreviousSecretUntil != nil && !bytes.Equal(endpoint.SigningSecretSealed, *params.SigningSecretSealed) {
+			until := *params.PreviousSecretUntil
+			endpoint.PreviousSigningSecretSealed = endpoint.SigningSecretSealed
+			endpoint.PreviousSigningSecretExpiresAt = &until
+		}
 		endpoint.SigningSecretSealed = bytes.Clone(*params.SigningSecretSealed)
 	}
 	if params.DeliveryPath != nil {
@@ -188,10 +210,10 @@ func (m *MemStore) DeleteInboundWebhookEndpoint(_ context.Context, id string) er
 		return ErrNotFound
 	}
 	delete(m.inboundWebhookEndpoints, id)
-	delete(m.webhookAutomationBindings, id)
-	for key, receipt := range m.webhookAutomationReceipts {
+	delete(m.webhookWorkflowBindings, id)
+	for key, receipt := range m.webhookWorkflowReceipts {
 		if receipt.EndpointID == id {
-			delete(m.webhookAutomationReceipts, key)
+			delete(m.webhookWorkflowReceipts, key)
 		}
 	}
 	delete(m.exclusiveTriggerBindings, "inbound_webhook\x00"+id)
@@ -207,12 +229,18 @@ func (m *MemStore) DeleteInboundWebhookEndpoint(_ context.Context, id string) er
 func cloneInboundWebhookEndpoint(endpoint InboundWebhookEndpoint) InboundWebhookEndpoint {
 	endpoint.TokenHash = bytes.Clone(endpoint.TokenHash)
 	endpoint.SigningSecretSealed = bytes.Clone(endpoint.SigningSecretSealed)
+	endpoint.PreviousSigningSecretSealed = bytes.Clone(endpoint.PreviousSigningSecretSealed)
+	if endpoint.PreviousSigningSecretExpiresAt != nil {
+		until := *endpoint.PreviousSigningSecretExpiresAt
+		endpoint.PreviousSigningSecretExpiresAt = &until
+	}
 	return endpoint
 }
 
 const inboundWebhookEndpointColumns = `id, app_id, account_id, name, provider,
        token_hash, signing_secret_sealed, delivery_path, enabled,
-       created_at, updated_at`
+       created_at, updated_at, previous_signing_secret_sealed,
+       previous_signing_secret_expires_at`
 
 type inboundWebhookEndpointScanner interface{ Scan(dest ...any) error }
 
@@ -223,6 +251,7 @@ func scanInboundWebhookEndpoint(row inboundWebhookEndpointScanner) (InboundWebho
 		&endpoint.ID, &endpoint.AppID, &endpoint.AccountID, &endpoint.Name, &provider,
 		&endpoint.TokenHash, &endpoint.SigningSecretSealed, &endpoint.DeliveryPath,
 		&endpoint.Enabled, &endpoint.CreatedAt, &endpoint.UpdatedAt,
+		&endpoint.PreviousSigningSecretSealed, &endpoint.PreviousSigningSecretExpiresAt,
 	)
 	endpoint.Provider = InboundWebhookProvider(provider)
 	return endpoint, err
@@ -341,6 +370,13 @@ func (s *PgStore) UpdateInboundWebhookEndpoint(ctx context.Context, id string, p
 		return InboundWebhookEndpoint{}, mapErr(err)
 	}
 	if params.SigningSecretSealed != nil {
+		if params.PreviousSecretUntil != nil && !bytes.Equal(endpoint.SigningSecretSealed, *params.SigningSecretSealed) {
+			// The row is locked FOR UPDATE above, so the secret read is
+			// the one being replaced.
+			until := *params.PreviousSecretUntil
+			endpoint.PreviousSigningSecretSealed = endpoint.SigningSecretSealed
+			endpoint.PreviousSigningSecretExpiresAt = &until
+		}
 		endpoint.SigningSecretSealed = *params.SigningSecretSealed
 	}
 	if params.DeliveryPath != nil {
@@ -349,10 +385,16 @@ func (s *PgStore) UpdateInboundWebhookEndpoint(ctx context.Context, id string, p
 	if params.Enabled != nil {
 		endpoint.Enabled = *params.Enabled
 	}
+	previous := endpoint.PreviousSigningSecretSealed
+	if previous == nil {
+		previous = []byte{}
+	}
 	endpoint, err = scanInboundWebhookEndpoint(tx.QueryRow(ctx, `update inbound_webhook_endpoints
-		set signing_secret_sealed=$2,delivery_path=$3,enabled=$4,updated_at=now()
+		set signing_secret_sealed=$2,delivery_path=$3,enabled=$4,
+		    previous_signing_secret_sealed=$5,previous_signing_secret_expires_at=$6,updated_at=now()
 		where id=$1 returning `+inboundWebhookEndpointColumns,
-		id, endpoint.SigningSecretSealed, endpoint.DeliveryPath, endpoint.Enabled))
+		id, endpoint.SigningSecretSealed, endpoint.DeliveryPath, endpoint.Enabled,
+		previous, endpoint.PreviousSigningSecretExpiresAt))
 	if err != nil {
 		return InboundWebhookEndpoint{}, mapErr(err)
 	}

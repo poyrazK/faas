@@ -22,6 +22,9 @@ func (w *Worker) restore(ctx context.Context, sw state.DatabaseSwitch) state.Dat
 			AccountID: sw.AccountID, SourceDatabaseID: sw.SourceDatabaseID, Name: sw.TargetName, PointInTime: sw.RestorePoint, WithinLimit: true})
 		switch {
 		case err == nil:
+			if !target.RestoreSlotUntil.IsZero() {
+				return w.beginAbort(sw, codeDatabaseLimit, "The restored copy is temporary and cannot become the app's live database. Free room under the plan's database limit, then retry the rollback.")
+			}
 			sw.TargetDatabaseID = target.ID
 		case errors.Is(err, managedpostgres.ErrQuotaExceeded):
 			return w.beginAbort(sw, codeDatabaseLimit, "The restored copy does not fit inside the plan's database limit, and a switch's copy cannot use the restore slot because it becomes the app's database. "+
@@ -43,6 +46,9 @@ func (w *Worker) restore(ctx context.Context, sw state.DatabaseSwitch) state.Dat
 	target, err := w.Databases.Get(ctx, sw.AccountID, sw.TargetDatabaseID)
 	if err != nil {
 		return w.retry(sw, errorCode(err))
+	}
+	if !target.RestoreSlotUntil.IsZero() {
+		return w.beginAbort(sw, codeDatabaseLimit, "The restored copy is temporary and cannot become the app's live database. Free room under the plan's database limit, then retry the rollback.")
 	}
 	switch target.State {
 	case managedpostgres.StateReady:
@@ -292,12 +298,24 @@ func (w *Worker) switchRelease(ctx context.Context, sw state.DatabaseSwitch) sta
 		if err != nil {
 			return w.retry(sw, errorCode(err))
 		}
+		// The restore can take long enough for a pause, a freeze or an
+		// approval change to begin after the request was checked
+		// (ADR-20261023181931 amendment 2).
+		if w.ReleaseGuard != nil {
+			refused, err := w.ReleaseGuard(ctx, sw)
+			if err != nil {
+				return w.retry(sw, "release_guard_unavailable")
+			}
+			if refused != "" {
+				return w.beginAbort(sw, codeReleaseSwitchFailed, refused)
+			}
+		}
 		if target.Status == state.DeploySuperseded || (target.Status == state.DeployLive && target.TrafficPercent == 0) {
-			if _, err := w.Releases.PrepareDeploymentRollback(ctx, sw.AppID, sw.TargetDeploymentID); err != nil {
+			if _, err := w.prepareRelease(ctx, sw, sw.TargetDeploymentID, sw.FromDeploymentID); err != nil {
 				return w.beginAbort(sw, codeReleaseSwitchFailed, "The rollback target could not be prepared: "+errorCode(err)+".")
 			}
 		}
-		if err := w.Releases.MarkDeploymentLive(ctx, sw.TargetDeploymentID); err != nil {
+		if err := w.promoteRelease(ctx, sw, sw.TargetDeploymentID); err != nil {
 			return w.beginAbort(sw, codeReleaseSwitchFailed, "The rollback target could not be made live: "+errorCode(err)+".")
 		}
 	}
@@ -360,17 +378,20 @@ func (w *Worker) abort(ctx context.Context, sw state.DatabaseSwitch) state.Datab
 			return w.activated(sw)
 		}
 	}
-	if sw.ReleaseSwitchedAt != nil && sw.FromDeploymentID != "" {
+	// A promotion can commit before its reply (or our progress save) is
+	// lost. Once we fenced the app, reconcile traffic rather than using the
+	// checkpoint as proof that the code change did not happen.
+	if sw.FencedAt != nil && sw.FromDeploymentID != "" {
 		live, err := w.Releases.LiveDeploymentForScope(ctx, sw.AppID, sw.Scope)
 		if err != nil && !errors.Is(err, state.ErrNotFound) {
 			return w.retry(sw, errorCode(err))
 		}
 		if live.ID == sw.TargetDeploymentID {
-			if _, err := w.Releases.PrepareDeploymentRollback(ctx, sw.AppID, sw.FromDeploymentID); err != nil &&
+			if _, err := w.prepareRelease(ctx, sw, sw.FromDeploymentID, sw.TargetDeploymentID); err != nil &&
 				!errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 				return w.retry(sw, errorCode(err))
 			}
-			if err := w.Releases.MarkDeploymentLive(ctx, sw.FromDeploymentID); err != nil {
+			if err := w.promoteRelease(ctx, sw, sw.FromDeploymentID); err != nil {
 				return w.retry(sw, errorCode(err))
 			}
 		}
@@ -393,7 +414,7 @@ func (w *Worker) abort(ctx context.Context, sw state.DatabaseSwitch) state.Datab
 // rolled the release back before it saw the activation commit. Activation
 // leaves the fence in place, so no instance served the previous release.
 func (w *Worker) restoreTarget(ctx context.Context, sw state.DatabaseSwitch) error {
-	if sw.ReleaseSwitchedAt == nil || sw.FromDeploymentID == "" {
+	if sw.FencedAt == nil || sw.FromDeploymentID == "" {
 		return nil
 	}
 	live, err := w.Releases.LiveDeploymentForScope(ctx, sw.AppID, sw.Scope)
@@ -403,9 +424,9 @@ func (w *Worker) restoreTarget(ctx context.Context, sw state.DatabaseSwitch) err
 	if live.ID != sw.FromDeploymentID {
 		return nil
 	}
-	if _, err := w.Releases.PrepareDeploymentRollback(ctx, sw.AppID, sw.TargetDeploymentID); err != nil &&
+	if _, err := w.prepareRelease(ctx, sw, sw.TargetDeploymentID, sw.FromDeploymentID); err != nil &&
 		!errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 		return err
 	}
-	return w.Releases.MarkDeploymentLive(ctx, sw.TargetDeploymentID)
+	return w.promoteRelease(ctx, sw, sw.TargetDeploymentID)
 }

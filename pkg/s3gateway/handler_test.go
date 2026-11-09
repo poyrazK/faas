@@ -495,10 +495,15 @@ func signedGatewayRequest(t *testing.T, method, target string, body []byte, payl
 	if method == http.MethodPut {
 		request.Header.Set("Content-Type", "application/octet-stream")
 	}
+	signGatewayRequest(t, request, payloadHash)
+	return request
+}
+
+func signGatewayRequest(t *testing.T, request *http.Request, payloadHash string) {
+	t.Helper()
 	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
-	return request
 }
 
 func presignedGatewayRequest(t *testing.T, method, target string, body []byte) *http.Request {
@@ -769,12 +774,10 @@ func TestGatewayRejectsUnsupportedSemanticHeaders(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			request := signedGatewayRequest(t, test.method, test.target, nil, "UNSIGNED-PAYLOAD")
 			request.Header.Set(test.header, test.value)
+			signGatewayRequest(t, request, "UNSIGNED-PAYLOAD")
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
 			status, code := http.StatusNotImplemented, "NotImplemented"
-			if test.header == "X-Amz-Server-Side-Encryption" {
-				status, code = http.StatusBadRequest, "InvalidRequest"
-			}
 			if recorder.Code != status || !strings.Contains(recorder.Body.String(), code) {
 				t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
 			}
@@ -1206,7 +1209,7 @@ func TestGatewayAcceptsSDKWritesWithUnsignedContentLength(t *testing.T) {
 }
 
 func TestGatewayPublicMultipartLifecycle(t *testing.T) {
-	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+	handler, store, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/upload/") {
 			if _, err := io.Copy(io.Discard, r.Body); err != nil {
 				return nil, err
@@ -1230,6 +1233,7 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 	initiateRequest.Header.Set("Content-Language", "en")
 	initiateRequest.Header.Set("X-Amz-Meta-Owner", "platform")
 	initiateRequest.Header.Set("X-Amz-Tagging", "env=prod&team=core")
+	signGatewayRequest(t, initiateRequest, "UNSIGNED-PAYLOAD")
 	handler.ServeHTTP(recorder, initiateRequest)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("initiate = %d %s", recorder.Code, recorder.Body.String())
@@ -1281,10 +1285,19 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 		}
 	}
 
+	// ListParts is admitted and its page counted as egress like the other
+	// listings (bug hunt 33: it skipped both).
 	recorder = httptest.NewRecorder()
+	store.admitted = nil
+	served, listMetrics := handler.requestMetrics, &readEgressMetrics{}
+	handler.requestMetrics = listMetrics
 	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/archive.bin?uploadId="+initiated.UploadID, nil, "UNSIGNED-PAYLOAD"))
+	handler.requestMetrics = served
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<PartNumber>1</PartNumber>") || !strings.Contains(recorder.Body.String(), "<PartNumber>2</PartNumber>") {
 		t.Fatalf("list parts = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if !slices.Contains(store.admitted, "__list__") || listMetrics.delivered != int64(recorder.Body.Len()) {
+		t.Fatalf("list parts admitted %v, recorded %d of %d bytes", store.admitted, listMetrics.delivered, recorder.Body.Len())
 	}
 
 	completeBody := []byte(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"etag-1"</ETag></Part><Part><PartNumber>2</PartNumber><ETag>"etag-2"</ETag></Part></CompleteMultipartUpload>`)

@@ -43,6 +43,10 @@ type NodeLedger struct {
 	perAppEnvironment map[string]int              // app_id|"\x00"|original environment -> serving concurrency (ADR-590)
 	perAppProduction  map[string]int              // valid production ownership, including unpinned compatibility rows
 	entries           map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
+	// byNode indexes entries by node and boosted holds the entries with a
+	// CPU startup boost to expire (admission_index.go).
+	byNode  map[string]map[string]*reservation
+	boosted map[*reservation]struct{}
 	// measured, when set, admits by measured memory (ADR-909): it returns a
 	// node's measured charge and when it was taken. nil keeps invariant 2's
 	// reservation check.
@@ -50,6 +54,10 @@ type NodeLedger struct {
 	// quietPaused, when set, lets the vCPU and CPU gates count only active
 	// instances (ADR-1151, admission_cpu_discount.go).
 	quietPaused QuietPaused
+	// idleLadderFrozen, when set, leaves instances vmmd holds at the idle
+	// ladder's freeze level out of measured admission's cap on reservations
+	// (ADR-20261107122928, admission_idle_ladder.go).
+	idleLadderFrozen IdleLadderFrozen
 	// measuredCPU, when set, charges measured instances their measured CPU
 	// at the vCPU and CPU gates (ADR 20261029151111, admission_cpu_discount.go).
 	measuredCPU MeasuredCPU
@@ -57,6 +65,9 @@ type NodeLedger struct {
 	// pressure (ADR 20261030100950): the gates then count its bookings in
 	// full. The engine sets it from its node registry.
 	cpuPressured func(nodeID string, now time.Time) bool
+	// cpuAdmission, observing, lets the vCPU and CPU gates count instead of
+	// refuse (ADR-20261109172421, cpu_admission.go).
+	cpuAdmission *cpuAdmission
 	now          func() time.Time // nil means time.Now; tests set it
 }
 
@@ -143,6 +154,7 @@ func NewNodeLedger() *NodeLedger {
 		perAppEnvironment: map[string]int{},
 		perAppProduction:  map[string]int{},
 		entries:           map[string]*reservation{},
+		cpuAdmission:      newCPUAdmission(),
 	}
 }
 
@@ -230,8 +242,12 @@ func kindCountsConcurrency(kind Kind) bool {
 
 // Request is an admission request for one instance (a wake or a build).
 type Request struct {
-	Instance string
-	AppID    string
+	// ignoreCPUBudgets makes placement skip the vCPU and CPU budget gates:
+	// observing cpu_admission, its retry after a refusal for CPU alone
+	// (ADR-20261109172421).
+	ignoreCPUBudgets bool
+	Instance         string
+	AppID            string
 	// DeploymentID is the target deployment for the wake (ADR-072 /
 	// issue #557 closure). The Engine resolves it from the wake
 	// target before calling Admit — the gateway passes the latest
@@ -274,7 +290,12 @@ type Request struct {
 	// the reservation and is durable so SeedLedger can reconstruct it.
 	CPUStartupBoostMillicores int
 	CPUStartupBoostUntil      time.Time
-	MaxConcurrency            int // the selected environment's deployed max (validated ≤ plan cap)
+	// BookedCPUMillicores, when positive, is stamped on the admitted
+	// instance's row as what it books once its startup boost ends, in place
+	// of its app's configured CPU (ADR-20261101160231 step 5b). Only apps on
+	// the guest_vcpu_from_cpu_apps list set it.
+	BookedCPUMillicores int
+	MaxConcurrency      int // the selected environment's deployed max (validated ≤ plan cap)
 	// AllowConcurrencyOverlap permits exactly one counted serving instance
 	// above the environment and shared plan ceilings. A candidate must overlap
 	// a serving revision of that same environment; node RAM/vCPU limits and
@@ -535,7 +556,13 @@ func (l *NodeLedger) Admit(r Request) error {
 		pressure = " (node under CPU pressure: every booking counts)"
 	}
 	vcpuUsed := quietEffective(node.usedVCPU, discountVCPU, vcpuCeiling, overcommitCap)
-	if vcpuUsed+r.VCPU > vcpuCeiling && !r.AllowResidentRecovery {
+	// Observing cpu_admission, an over-budget node is counted, not refused:
+	// memory is the only capacity limit (ADR-20261109172421).
+	observeCPU := l.cpuAdmission.observing()
+	vcpuOver := vcpuUsed+r.VCPU > vcpuCeiling && !r.AllowResidentRecovery
+	if vcpuOver && observeCPU {
+		l.cpuAdmission.refusedAt(CPUGateLedgerVCPU)
+	} else if vcpuOver {
 		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
 			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget%s",
 			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling, pressure)), resourceBlocker("node_vcpu", "vcpu", int64(r.VCPU)))
@@ -556,15 +583,16 @@ func (l *NodeLedger) Admit(r Request) error {
 		cpuCeiling -= flexibleAppReserveCPUMillicores
 	}
 	cpuUsed := quietEffective(node.usedCPUMillicores, discountCPU, cpuCeiling, overcommitCap)
-	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
-		cpuUsed+reservedCPU > cpuCeiling &&
-		!r.AllowResidentRecovery {
+	cpuOver := reservedCPU > 0 && r.CPUBudgetMillicores > 0 && cpuUsed+reservedCPU > cpuCeiling && !r.AllowResidentRecovery
+	if cpuOver && observeCPU {
+		l.cpuAdmission.refusedAt(CPUGateLedgerCPU)
+	} else if cpuOver {
 		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
 			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget%s",
 			r.NodeID, cpuUsed, reservedCPU, cpuCeiling, pressure)), resourceBlocker("node_cpu", "cpu_millicores", int64(reservedCPU)))
 	}
 
-	l.entries[r.Instance] = &reservation{
+	l.putEntry_locked(r.Instance, &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, environmentKey: r.EnvironmentKey, nodeID: r.NodeID,
 		production:  r.ProductionEnvironment || r.EnvironmentKey == "",
 		admissionMB: r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
@@ -573,7 +601,7 @@ func (l *NodeLedger) Admit(r Request) error {
 		countsConc: kindCountsConcurrency(r.Kind),
 		admittedAt: l.clock(),
 		agentRun:   r.Kind == KindAgentRun,
-	}
+	})
 	node.residentRAM += r.admissionMB()
 	node.usedVCPU += r.VCPU
 	node.usedCPUMillicores += reservedCPU
@@ -607,7 +635,7 @@ func (l *NodeLedger) SetCPUStartupBoostUntil(instance string, until time.Time) b
 }
 
 func (l *NodeLedger) expireCPUBoosts_locked(now time.Time) {
-	for _, r := range l.entries {
+	for r := range l.boosted {
 		if r.cpuBoostMillicores > 0 && !r.cpuBoostUntil.IsZero() && !now.Before(r.cpuBoostUntil) {
 			l.releaseCPUBoost_locked(r)
 		}
@@ -626,6 +654,7 @@ func (l *NodeLedger) releaseCPUBoost_locked(r *reservation) {
 	}
 	r.cpuBoostMillicores = 0
 	r.cpuBoostUntil = time.Time{}
+	delete(l.boosted, r)
 }
 
 // ceilingForNode_locked resolves the per-node admission ceiling.
@@ -748,7 +777,7 @@ func (l *NodeLedger) Release(instance string) {
 	if e == nil {
 		return
 	}
-	delete(l.entries, instance)
+	l.dropEntry_locked(instance)
 	if node, ok := l.resident[e.nodeID]; ok {
 		node.residentRAM -= e.admissionMB
 		if node.residentRAM < 0 {
@@ -900,6 +929,20 @@ func (l *NodeLedger) Concurrency(appID string) int {
 	return l.perApp[appID]
 }
 
+// InstancesForApp returns the instances this ledger holds a reservation for
+// under appID, whatever their state (ADR 20261103131546).
+func (l *NodeLedger) InstancesForApp(appID string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var ids []string
+	for id, r := range l.entries {
+		if r.appID == appID {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // AppInstancesByNode counts appID's serving reservations on each node, the
 // instances replica spread keeps apart (ADR-20261026140000). The owner
 // scheduler admits every instance of its apps, so its ledger sees them all.
@@ -995,8 +1038,8 @@ func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceili
 	}
 	// The measurement cannot include instances admitted after it, nor agent
 	// run VMs at all: it sums instances rows, and agent runs have none.
-	for _, e := range l.entries {
-		if e.nodeID == nodeID && (e.agentRun || e.admittedAt.After(asOf)) {
+	for _, e := range l.entriesOnNode_locked(nodeID) {
+		if e.agentRun || e.admittedAt.After(asOf) {
 			used += e.admissionMB
 		}
 	}
@@ -1004,7 +1047,7 @@ func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceili
 	// Frozen reservations already book measured memory, so the cap on
 	// reservations leaves them out (ADR-1151).
 	overcommit := ceiling * (api.MeasuredAdmissionMaxOvercommitPercent - 100) / 100
-	if capped := reserved - frozen - overcommit; capped > used {
+	if capped := reserved - frozen - l.idleLadderDiscountMB_locked(nodeID, ceiling) - overcommit; capped > used {
 		return capped, "reservations beyond the overcommit allowance"
 	}
 	return used, "measured"

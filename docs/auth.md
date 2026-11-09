@@ -10,13 +10,18 @@ gregale logout
 
 Browser-approved logins mint a 30-day CLI key tied to this device. The CLI
 stores that key's non-secret id and `gregale logout` revokes exactly that key
-before clearing the local keychain. Use `gregale key list` and
-`gregale key delete <id>` to remove a session from a lost device; CLI sessions are
-labelled `cli-login` and never expose their plaintext after creation.
+before clearing the local keychain. Logging in again, or removing a connection
+profile, revokes the CLI key of the login it replaces. Use `gregale key list`
+(its ID column) and `gregale key delete <id>` to remove a session from a lost
+device; CLI sessions are labelled `cli-login` and never expose their plaintext
+after creation.
 
 For CI, create a scoped project or organization token and expose it as `FAAS_TOKEN`, or pass it once with `gregale login --token "$FAAS_TOKEN"`. Prefer the narrowest scope and a short expiration. Do not commit tokens or pass them as command-line arguments where process listings can expose them.
 Tokens supplied through `FAAS_TOKEN` or `gregale login --token` remain
 non-owning: logout clears local state but does not revoke a shared CI key.
+`FAAS_TOKEN` outranks a saved login, so `gregale login` and `gregale start`
+refuse to run while it is set (unless `--token` passes the same value), and
+`gregale logout` says when `FAAS_TOKEN` is still active.
 
 For a Runs-only agent, mint an account key with `runs:write` instead of the
 default full-access `admin` key:
@@ -48,6 +53,72 @@ scopes pick the agent's tools; see
 [connected agents](mcp.md#see-and-revoke-connected-agents).
 
 Interactive users can enable MFA from the account settings page. Each authenticator code works once: a code that already verified a session is refused if it is sent again, so wait for the next code. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
+
+`gregale account mfa enroll`, `confirm`, `verify`, `recover`, and `disable`
+open the corresponding form in your signed-in browser. You can use recovery
+before completing CLI login. Enter passwords and codes in the browser;
+the CLI prints a URL, and `--json` returns that URL with `requires_browser: true`.
+In a terminal without a browser, open the printed URL on a device where you
+can sign in. Setup shows the QR code and recovery codes in the browser.
+Legacy code, password, and `--qr-out` arguments remain accepted but do not
+submit credentials or write setup material. A browser handoff is complete
+only after the browser confirms the action succeeded.
+
+Enrollment confirmation spends its authenticator code and grants the current
+session a fresh MFA verification. Accounts with a password must enter their
+current password to confirm setup. A pending setup cannot verify a session
+or provide recovery access. An already-enrolled account uses `verify`
+for further challenges; repeating `confirm` returns a conflict. A suspended
+account can enroll, verify, recover or reset its authenticator so billing
+recovery never depends on first restoring billing.
+
+MFA is optional for ordinary accounts. Plan changes, billing details and key
+creation ask for recent verification only when MFA is enabled or explicitly
+required. Enrollment, an authenticator code and a saved recovery code each
+establish five minutes of recent verification; enrollment needs no second code.
+Resetting MFA also clears the browser's pending challenge unless an explicit
+policy or operator access requires a replacement.
+
+If your last recovery code remains, use it to reset the authenticator and set
+up a replacement. If neither the device nor codes are available, choose email
+recovery. Its link can be confirmed after the existing 24-hour waiting period.
+If you have lost the device, the codes and the mailbox, contact
+support@gregale.dev. Support checks two independent proofs of ownership (such
+as payment details and a sign-in with your password or linked provider), mails
+the account's address and any co-owners, and after 72 hours without objection
+turns two-factor authentication off; you then sign in, set it up again and,
+if needed, change your email. Support never changes the sign-in email for you.
+To replace your recovery codes while you still have your authenticator, run
+`gregale account mfa rotate` (or use **New recovery codes** on the
+two-factor page) after verifying the session; the previous codes stop working
+and you get an email.
+
+At the dashboard sign-in check you can tick **Remember this browser for 30
+days**: that browser then skips the code at sign-in (not for sensitive
+actions) until it expires or you forget it on the account page. Operator
+accounts are always asked. See [account](account.md#profile-sign-in-and-sessions).
+
+## Email verification
+
+A password signup must verify its email address. Until it does, deploying and
+billing changes answer `email_verification_required`. Send a new 24-hour link
+with `gregale account email verify` or the account page's button. After 30
+days unverified the account keeps its data, but password sign-in and existing
+sessions and keys only reach the account page, logout, deletion, the resend and
+the email change (so an address with a typo can be fixed); opening a
+verification link, a magic sign-in link, confirming a new address, or signing
+in with Google or GitHub at the same address lifts the restriction. Accounts
+created before 16 November 2026 get their 30 days from that date
+(`api.EmailVerificationEnforcedFrom`). In the last 7 days before the deadline,
+an account that is still in use (a signed-in browser or an API key) is mailed
+a fresh verification link at most once a day.
+
+If you never verified and forgot your password, use **Forgot password** anyway:
+an unverified account receives a magic sign-in link. Opening it proves the
+address, signs out anything the earlier signup created, and lets you set a new
+password from the account page.
+`gregale org invitation accept TOKEN` opens the invitation in a browser so
+acceptance uses your own session and enabled MFA policy, rather than a CLI key.
 
 For shared applications, the current organization role and the credential's
 scope both apply. Use an organization-bound key to work on a teammate's app;
@@ -99,6 +170,11 @@ available and defaults to the same deploy-only bearer. Its optional closed
 environment-preflight GitHub Action uses that profile to qualify a source
 release set and check promotion policy without receiving deployment or secret
 permissions; see [the Action guide](../.github/actions/environment-preflight/README.md).
+`capability: preview-read` grants only `previews:read`: the status of one app's
+PR previews (`GET /v1/preview/{slug}` and its environment), and nothing else.
+Under a policy Gregale created it is issued to any run of the repository,
+pull request runs included, for an app bound to it
+([ADR-20261102203228](adr/20261102203228-ci-reads-its-preview-status.md)).
 
 For GitHub Actions, first-use account lookup accepts both the legacy
 `repo:OWNER/REPO:...` subject and GitHub's immutable

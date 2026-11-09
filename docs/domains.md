@@ -1,6 +1,87 @@
 # Domains
 
+## Declare bindings and review changes
+
+Use a separate `domains.yaml` to add or move bindings:
+
+```yaml
+version: 1
+domains:
+  - domain: api.example.com
+    app: my-api
+  - domain: stage.example.com
+    app: my-api
+    environment: stage
+```
+
+```sh
+gregale domain plan --file domains.yaml --out domains.plan.json
+gregale domain apply --plan domains.plan.json --confirm --rollback-out domains.rollback.json
+```
+
+Planning reads one snapshot without changing bindings or probing DNS. The diff
+shows creates, moves, unchanged bindings, destination deployments and source
+default selections that a move clears. Apply refreshes the saved diff and commits
+the set atomically. Changed claims, intervening moves, lost verification or a
+changed destination deployment require a fresh review. Final publication policy
+is checked at apply and can refuse a plan without changing any binding.
+
+Files accept up to 20 unique bindings. Omitted domains stay attached. An omitted
+environment selects ordinary default routing. Apps must share an account
+namespace and organization, with deployment-write access to every source and
+destination. New domains need normal DNS proof; this flow does not take over
+another owner's claim. Plan artifacts contain no ownership tokens.
+
+## Move a verified domain
+
+```sh
+gregale domain move api.example.com --app next-api --dry-run
+gregale domain move api.example.com --app next-api --confirm --rollback-out previous-binding.json
+gregale domain move api.example.com --app next-api --env production --dry-run
+```
+
+A move requires verified ownership and a serving destination deployment. It keeps
+TXT proof, verification, certificate state, wildcard allowlists and issuance
+budgets. Keep DNS records in place. If this was the source app's default domain,
+the plan shows that selection being cleared and the source app falls back to its
+platform URL. Selecting a default on the destination remains an explicit
+`domain default set` action.
+
+The rollback manifest contains previous bindings. Review it with
+`domain plan --file previous-binding.json --out rollback.plan.json`, then apply
+that plan. It moves domains back; it does not remove new claims or restore
+defaults. After an interrupted apply, inspect current bindings before preparing
+a new review. The API replays cached responses for the same authenticated request
+and Idempotency-Key; a committed change without a cached response makes its old
+plan stale.
+
+A serving deployment is control-plane evidence. Use guided production cutover
+for public DNS/TLS, exact-deployment response and traffic-budget checks. Moves
+change neither provider DNS nor deployment traffic and do not promise
+uninterrupted application behavior.
+
+## Verification
+
 Custom domains are attached to an app after it has a live deployment.
+
+`gregale domain verify <domain>` checks ownership and routing immediately and
+reports DNS and HTTPS progress. Add `--wait --timeout 10m` to wait until the
+domain is ready; `--poll-interval 5s` controls how often to check. The command
+exits successfully only after ownership, routing, and an unexpired certificate
+are confirmed. JSON mode emits one final response. Repeated manual checks have
+a fifteen-second cooldown; automatic background checking continues independently.
+
+Responses include independent `readiness.ownership`, `readiness.routing`, and
+`readiness.tls` states, plus an overall status such as `awaiting_ownership`,
+`fix_routing`, `preparing_https`, or `ready`. `checks` explains observed DNS
+values and the records to change. `verification_next_check_at` and
+`verification_attempts` describe automatic TXT checks. `cert_retry_at`, when
+present, is the legacy issuer's next allowed attempt; Caddy owns its retry clock.
+`domain get` displays these diagnostics and all required DNS records during setup.
+
+The first conclusive routing failure reports the problem immediately. Two
+consecutive failures revoke verification and mark the domain `dns_drifted`.
+Healthy and inconclusive DNS observations interrupt this confirmation sequence.
 
 ```bash
 gregale domain create --app my-api --domain api.example.com
@@ -47,7 +128,10 @@ changing the domain.
 
 A domain is attached to one app, and edge rules send parts of it to other apps
 in the same account. Declare the layout in `gregale.yaml` so it deploys with
-the code:
+the code. A reviewed deploy (`gregale deploy`, the dashboard) applies it; a
+GitHub push that changes it deploys its services but not the routes, and a
+failed `gregale / <project> (project settings)` check says to run a reviewed
+deploy ([ADR-20261108090000](adr/20261108090000-project-deploy-config-correctness.md)):
 
 ```yaml
 routes:
@@ -76,8 +160,10 @@ deploy until you remove one. Omitting `routes` leaves managed routes unchanged,
 In a single-app deploy every route must target the app being deployed. In a
 project deploy (`gregale deploy --project`) a route may name any workload, and
 only selected workloads are reconciled. `match_path` is a glob (`/api/**`),
-not an OpenAPI template. Routes are YAML-only and not yet available for
-organization-owned projects.
+not an OpenAPI template. Routes are YAML-only. On an organization's apps and
+projects, a deploy that adds, changes or removes routes needs the owner or
+admin role, as creating edge rules does; a deploy that leaves them unchanged
+needs only deploy access.
 
 Without a manifest, create the same rules directly:
 

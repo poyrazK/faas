@@ -101,9 +101,21 @@ type nativeSnapshotMemoryGrant struct {
 	io                nativeSnapshotMemoryIO
 	checkOwner        func(context.Context) error
 	checkRestoreOwner func(context.Context) error
-	closed            bool
-	pending           nativeSnapshotMemoryPhase
-	raiseStarted      bool
+	// fenceLimit records a limit in vmmd's cgroup fence before it is written,
+	// as widenSnapshotFence does, so a concurrent fence repair restores the
+	// allowance in force instead of the ordinary limit that OOM-kills the
+	// capture. Nil in modeled tests.
+	fenceLimit   func(uint64) (revert func())
+	closed       bool
+	pending      nativeSnapshotMemoryPhase
+	raiseStarted bool
+}
+
+func (g *nativeSnapshotMemoryGrant) trackLimit(limit uint64) (revert func()) {
+	if g.fenceLimit == nil {
+		return func() {}
+	}
+	return g.fenceLimit(limit)
 }
 
 func (g *nativeSnapshotMemoryGrant) current(ctx context.Context) (nativeHostHelperRecord, error) {
@@ -173,7 +185,9 @@ func (g *nativeSnapshotMemoryGrant) Raise(ctx context.Context) error {
 		return err
 	}
 	g.raiseStarted = true
+	revert := g.trackLimit(raised)
 	if err := g.io.Write(base, raised); err != nil {
+		revert()
 		return err
 	}
 	if _, err := g.current(ctx); err != nil {
@@ -218,6 +232,8 @@ func (g *nativeSnapshotMemoryGrant) Restore(ctx context.Context) error {
 	if value != base && value != raised {
 		return errors.New("native snapshot memory: limit changed outside original allowance")
 	}
+	// A repair from here on writes the base too, even if this write fails.
+	g.trackLimit(base)
 	if err := g.io.Write(value, base); err != nil {
 		return err
 	}

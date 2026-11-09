@@ -96,7 +96,7 @@ func outboundBindingAllows(step api.WorkflowOutboundSpec, methods, paths, bindin
 	return bindingMethods == nil && bindingPaths == nil || api.WorkflowOutboundPathAllowedByPolicy(step.Method, step.Path, routepolicy.Policy{AllowedMethods: bindingMethods, AllowedPathPrefixes: bindingPaths})
 }
 func invalidOutboundBinding(name string) error {
-	return fmt.Errorf("%w: step %q requires an enabled customer managed integration with a credential and app binding allowing its route", ErrAutomationInvalid, name)
+	return fmt.Errorf("%w: step %q requires an enabled customer managed integration with a credential and app binding allowing its route", ErrStoredWorkflowInvalid, name)
 }
 func validateWorkflowOutboundTx(ctx context.Context, db sqlc.DBTX, appID, accountID string, spec api.WorkflowSpec) error {
 	q := sqlc.New()

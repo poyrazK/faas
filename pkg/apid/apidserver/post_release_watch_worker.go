@@ -18,9 +18,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// postReleaseWatchSweep judges every watched release once. One failing
-// release does not stop the others.
+// postReleaseWatchSweep judges one bounded page of watched releases. Later
+// ticks continue the pass; one failing release does not stop the others.
 func (s *server) postReleaseWatchSweep(ctx context.Context, now time.Time) error {
+	s.postReleaseScanMu.Lock()
+	defer s.postReleaseScanMu.Unlock()
 	store, ok := s.store.(state.PostReleaseWatchStore)
 	telemetry := s.postReleaseTelemetry
 	if telemetry == nil {
@@ -29,7 +31,7 @@ func (s *server) postReleaseWatchSweep(ctx context.Context, now time.Time) error
 	if !ok || telemetry == nil {
 		return nil
 	}
-	rows, err := store.ListPostReleaseWatchCandidates(ctx, api.PostReleaseWatchWindow+api.RollbackOn5xxTelemetryGrace, api.PostReleaseWatchBatchSize)
+	rows, err := store.ListPostReleaseWatchCandidatesPage(ctx, api.PostReleaseWatchWindow+api.RollbackOn5xxTelemetryGrace, api.PostReleaseWatchBatchSize, s.postReleaseCursor)
 	if err != nil {
 		if ctx.Err() == nil {
 			s.releaseMetrics.Error(releasemetrics.WorkerPostReleaseWatch)
@@ -38,6 +40,12 @@ func (s *server) postReleaseWatchSweep(ctx context.Context, now time.Time) error
 	}
 	s.releaseMetrics.Pass(releasemetrics.WorkerPostReleaseWatch, now)
 	for _, c := range rows {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// Healthy releases stay watched; resume after each attempted row.
+		// Cancellation must not skip the page's unattempted candidates.
+		s.postReleaseCursor = state.ReleaseScanCursor{At: c.RolloutCompletedAt, ID: c.DeploymentID}
 		if err := s.evaluatePostRelease(ctx, store, telemetry, c, now); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -45,6 +53,9 @@ func (s *server) postReleaseWatchSweep(ctx context.Context, now time.Time) error
 			s.log.Warn("post-release watch: evaluate release", "app", c.AppID, "deployment", c.DeploymentID, "err", err)
 			s.releaseMetrics.Error(releasemetrics.WorkerPostReleaseWatch)
 		}
+	}
+	if len(rows) < api.PostReleaseWatchBatchSize {
+		s.postReleaseCursor = state.ReleaseScanCursor{}
 	}
 	return nil
 }
@@ -116,7 +127,7 @@ func (s *server) postReleaseRollback(ctx context.Context, store state.PostReleas
 	if err != nil {
 		return fmt.Errorf("load account: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
+	request, err := http.NewRequestWithContext(state.WithExpectedRollbackCurrent(ctx, c.DeploymentID), http.MethodPost, "/", nil)
 	if err != nil {
 		return err
 	}

@@ -55,17 +55,28 @@ export {
 } from './idempotency.js';
 // SSE streaming helpers.
 export { streamSse, parseFrame, type SseEvent } from './sse.js';
+// Function config declared next to the handler (ADR-20261107193000).
+export {
+  defineConfig,
+  type FunctionConfig,
+  type FunctionBucketEventConfig,
+  type FunctionEventTriggerConfig,
+  type FunctionQueueBindingConfig,
+  type FunctionWebhookConfig,
+} from './function-config.js';
 // Request-scoped release propagation for app-to-app calls.
 export {
   createGregaleFetch,
   currentGregaleRelease,
   currentGregaleRequestDeadline,
   gregaleReleaseMetaTag,
+  gregaleRequestTimeRemainingMs,
   withGregaleReleaseContext,
   withGregaleRequestContext,
   GREGALE_RELEASE_HEADER,
   GREGALE_REVISION_HEADER,
   GREGALE_REQUEST_DEADLINE_HEADER,
+  GREGALE_DEADLINE_MS_HEADER,
 } from './release-context.js';
 // Server-side verification of incoming service-binding identity assertions.
 export {
@@ -82,6 +93,7 @@ export {
   verifyWebhook,
   WebhookVerificationError,
   WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_PREVIOUS_SIGNATURE_HEADER,
   WEBHOOK_TIMESTAMP_HEADER,
   WEBHOOK_DELIVERY_ID_HEADER,
   DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE_MS,

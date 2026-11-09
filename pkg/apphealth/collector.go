@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,28 +31,48 @@ type Collector struct {
 	Observe func(string, time.Duration)
 }
 
+// Sweep collects due apps with api.AppHealthCollectorWorkers concurrent
+// workers, each claiming up to api.AppHealthCollectorBatch apps. One
+// sequential worker managed about seven apps a second, so past roughly 500
+// quiet apps every app's evidence went stale and rollout watching saw
+// expired health (bug hunt O35). Claims are leased and skip locked rows, so
+// workers never collect the same app at once.
 func (c *Collector) Sweep(ctx context.Context) (int, error) {
 	if c.Store == nil {
 		return 0, errors.New("app health collector requires a store")
 	}
-	checked := 0
 	if _, err := c.prune(ctx); err != nil {
 		return 0, fmt.Errorf("prune expired app health history: %w", err)
 	}
-	for range api.AppHealthCollectorBatch {
-		if err := ctx.Err(); err != nil {
-			return checked, err
-		}
-		found, err := c.checkNext(ctx)
-		if err != nil {
-			return checked, err
-		}
-		if !found {
-			break
-		}
-		checked++
+	var (
+		wg       sync.WaitGroup
+		checked  atomic.Int64
+		errOnce  sync.Once
+		firstErr error
+	)
+	for range max(api.AppHealthCollectorWorkers, 1) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range api.AppHealthCollectorBatch {
+				if err := ctx.Err(); err != nil {
+					errOnce.Do(func() { firstErr = err })
+					return
+				}
+				found, err := c.checkNext(ctx)
+				if err != nil {
+					errOnce.Do(func() { firstErr = err })
+					return
+				}
+				if !found {
+					return
+				}
+				checked.Add(1)
+			}
+		}()
 	}
-	return checked, nil
+	wg.Wait()
+	return int(checked.Load()), firstErr
 }
 
 func (c *Collector) prune(ctx context.Context) (int64, error) {

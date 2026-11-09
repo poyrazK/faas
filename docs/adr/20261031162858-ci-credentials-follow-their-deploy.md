@@ -89,3 +89,45 @@ Nothing new is stored, and no scope is added or renamed.
   environment values a deploy credential should not otherwise read.
 - An app-scoped deployment read (`/v1/apps/{slug}/deployments/{id}`), which
   would let the binding stay purely path-based.
+
+## Amendment 1 (2026-11-02): a deploy credential deploys a gregale.yaml
+
+The decision covered a bare deploy. A deploy whose `gregale.yaml` declares
+blocks still failed for a `deploy:write` credential, before it uploaded:
+
+- **Plan pre-checks.** Workflows, companions and extensions made the CLI read
+  `GET /v1/account` to check the manifest against the plan, and a plain
+  source deploy read it to size the archive. A refused read now skips the
+  workflow and companion check, since apid checks the request against the
+  plan when it creates the deployment. The archive is bounded by the
+  largest plan's source cap rather than the Free floor, which refused Pro
+  and Scale sources; apid refuses an upload above the account's own cap.
+- **Queue bindings.** `GET /v1/apps/{slug}/queue-bindings` admits
+  `deploy:write` (`api.ScopesDeployTargetReadSurface`). The deploy lists the
+  app's bindings before it writes them, and the writes already admit
+  `deploy:write`. A deploy token stays on its own app through the `{slug}`
+  binding.
+- **Function-set crons.** `GET /v1/crons?slug=` admits `deploy:write` for one
+  app's crons, which the deploy reconciles and may already create, update
+  and delete. The account-wide list without `slug` keeps `apps:read`. Deploy
+  tokens still reach no `/v1/crons` route.
+- **Databases and buckets.** Attaching a database or binding a bucket grants
+  the app a credential, so those writes keep `postgres:manage` and
+  `storage:manage`. A deploy credential is now refused before the upload
+  with the scope it lacks, not the read scope of the listing it failed.
+
+## Amendment 2 (2026-11-03): a deploy:write key follows the cron run it starts
+
+`POST /v1/crons/{id}/run` admits `deploy:write`, but the request it returns
+was readable only with `apps:read`, so `gregale cron run --wait` in CI queued
+the run and then exited 1 on a 403. `GET /v1/cron-fire-now-requests/{id}` now
+admits `deploy:write` (`api.ScopesDeployTargetReadSurface`) and, like the rest
+of the cron routes, `requireMFA`. It reveals nothing a `deploy:write` key
+cannot already learn: the request is the one the key may create, for a cron
+whose app the key may deploy. Deploy tokens still reach no `/v1/crons` route.
+
+The deploy's own reconciliation of `gregale.yaml` crons no longer checks the
+count against the deployer's plan (`GET /v1/account`). A company app's crons
+follow the company's plan, so a Free member deploying a Pro company's app was
+refused; apid checks each cron against the app owner's plan and a refusal
+rolls the set back. The CLI refuses only a count that no plan allows.

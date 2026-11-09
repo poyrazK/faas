@@ -151,19 +151,39 @@ func PinnedHostPolicyRevision(ctx context.Context, host string) string {
 	return ""
 }
 
+// UnenforceableEdgeRuleError is a pinned host policy holding one of the
+// app owner's rules the gateway cannot enforce, which fails the host closed.
+type UnenforceableEdgeRuleError struct {
+	// RuleID is the broken rule, or "" when the compile error names none.
+	RuleID string
+}
+
+func (e *UnenforceableEdgeRuleError) Error() string {
+	return "compiled host policy contains unavailable owner rules"
+}
+
 // ValidatePinnedHostPolicies runs after owner resolution. A foreign account's
 // free-form host match and broken preset must not take another tenant offline.
+// The error names the first broken rule, sorted by ID so every request names
+// the same one (ADR-091 amendment 2026-11-03, review round 9).
 func ValidatePinnedHostPolicies(ctx context.Context, account string) error {
 	pinned, _ := ctx.Value(pinnedEdgePoliciesKey{}).(map[string]*edgePolicySnapshot)
+	var broken *UnenforceableEdgeRuleError
 	for _, snapshot := range pinned {
 		for _, failure := range snapshot.entry.PathGlobErrs {
 			owner := snapshot.entry.PolicyRuleOwners[failure.RuleID]
-			if owner == "" || owner == account {
-				return errors.New("compiled host policy contains unavailable owner rules")
+			if owner != "" && owner != account {
+				continue
+			}
+			if broken == nil || failure.RuleID != "" && (broken.RuleID == "" || failure.RuleID < broken.RuleID) {
+				broken = &UnenforceableEdgeRuleError{RuleID: failure.RuleID}
 			}
 		}
 	}
-	return nil
+	if broken == nil {
+		return nil
+	}
+	return broken
 }
 
 const policyDigestPrefix = "traffic-v1:"
@@ -228,6 +248,39 @@ type appFreeze struct {
 	frozen  App
 	limits  []byte      // the JSON of api.LimitsFor(frozen.Plan)
 	prefix  hash.Cloner // sha256 over the effective policy up to its App member
+
+	// revisions memoizes the effective revision by the rest of the digested
+	// document (the pinned host revisions and the declared-route revision),
+	// so a request does not hash the plan's whole Limits again.
+	revisionsMu sync.Mutex
+	revisions   map[string]string
+}
+
+// An app freeze remembers at most appFreezeRevisionMemoEntries revisions, each
+// keyed by at most appFreezeRevisionMemoKeyBytes; cost counts the most they
+// can hold.
+const (
+	appFreezeRevisionMemoEntries  = 8
+	appFreezeRevisionMemoKeyBytes = 1024
+)
+
+func (f *appFreeze) memoizedRevision(key string) (string, bool) {
+	f.revisionsMu.Lock()
+	defer f.revisionsMu.Unlock()
+	revision, ok := f.revisions[key]
+	return revision, ok
+}
+
+func (f *appFreeze) rememberRevision(key, revision string) {
+	if len(key) > appFreezeRevisionMemoKeyBytes {
+		return
+	}
+	f.revisionsMu.Lock()
+	defer f.revisionsMu.Unlock()
+	if f.revisions == nil || len(f.revisions) >= appFreezeRevisionMemoEntries {
+		f.revisions = make(map[string]string, appFreezeRevisionMemoEntries)
+	}
+	f.revisions[key] = revision
 }
 
 func newAppFreezes() *appFreezes {
@@ -252,6 +305,13 @@ func (c *appFreezes) freeze(ctx context.Context, app App) (App, string, error) {
 	if err != nil {
 		return App{}, "", fmt.Errorf("encode effective policy: %w", err)
 	}
+	declared := declaredRoutePolicyRevision(ctx)
+	// The revision is a function of the sealed app (its encoding and plan
+	// limits), the pinned host revisions and the declared-route revision.
+	memoKey := string(encodedHosts) + "\x00" + declared
+	if revision, ok := sealed.memoizedRevision(memoKey); ok {
+		return sealed.frozen, revision, nil
+	}
 	digest, err := sealed.prefix.Clone()
 	if err != nil {
 		return App{}, "", fmt.Errorf("encode effective policy: %w", err)
@@ -263,7 +323,7 @@ func (c *appFreezes) freeze(ctx context.Context, app App) (App, string, error) {
 	_, _ = digest.Write(encodedHosts)
 	_, _ = digest.Write([]byte(`,"Limits":`))
 	_, _ = digest.Write(sealed.limits)
-	if declared := declaredRoutePolicyRevision(ctx); declared != "" {
+	if declared != "" {
 		encodedDeclared, err := json.Marshal(declared)
 		if err != nil {
 			return App{}, "", fmt.Errorf("encode effective policy: %w", err)
@@ -272,7 +332,9 @@ func (c *appFreezes) freeze(ctx context.Context, app App) (App, string, error) {
 		_, _ = digest.Write(encodedDeclared)
 	}
 	_, _ = digest.Write([]byte(`}`))
-	return sealed.frozen, policyDigestPrefix + hex.EncodeToString(digest.Sum(nil)), nil
+	revision := policyDigestPrefix + hex.EncodeToString(digest.Sum(nil))
+	sealed.rememberRevision(memoKey, revision)
+	return sealed.frozen, revision, nil
 }
 
 // seal returns the sealed policy for an app encoding, from the cache when an
@@ -347,7 +409,7 @@ func (c *appFreezes) removeLocked(element *list.Element) {
 }
 
 func (f *appFreeze) cost() int {
-	return 2*len(f.encoded) + len(f.limits) + 512
+	return 2*len(f.encoded) + len(f.limits) + 512 + appFreezeRevisionMemoEntries*(appFreezeRevisionMemoKeyBytes+128)
 }
 
 func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, app *App) bool {
@@ -364,7 +426,7 @@ func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, ap
 	}
 	// Validate after the app pins, so the app's own app-wide rules fail closed too.
 	if err := ValidatePinnedHostPolicies(r.Context(), app.AccountID); err != nil {
-		h.writeTrafficPolicyUnavailable(w, r)
+		h.writeUnenforceableEdgeRule(w, r, err)
 		return true
 	}
 	if h.applyTotalDeadline(w, r, *app) {
@@ -443,6 +505,22 @@ func (h *Handler) writeTrafficPolicyUnavailable(w http.ResponseWriter, r *http.R
 	w.Header().Set("Retry-After", "1")
 	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeTrafficPolicyUnavailable,
 		"Traffic policy unavailable", "Gregale could not verify this route's traffic policy. Retry shortly."))
+}
+
+// writeUnenforceableEdgeRule refuses a request whose host carries one of the
+// app owner's edge rules the gateway cannot enforce. The detail names the
+// rule, so the owner can find and fix it; a generic "retry shortly" made a
+// configuration problem look like an outage (ADR-091 amendment 2026-11-03,
+// review round 9). Responses already name edge rules by ID.
+func (h *Handler) writeUnenforceableEdgeRule(w http.ResponseWriter, r *http.Request, err error) {
+	var broken *UnenforceableEdgeRuleError
+	if !errors.As(err, &broken) || broken.RuleID == "" {
+		h.writeTrafficPolicyUnavailable(w, r)
+		return
+	}
+	recordTrafficRefusal(r.Context(), "policy_unavailable")
+	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeTrafficPolicyUnavailable,
+		"Traffic policy unavailable", "edge rule "+broken.RuleID+" on this host cannot be enforced, so Gregale refuses the host's requests until the app's owner fixes or deletes the rule"))
 }
 
 func TrafficPolicyRevision(ctx context.Context) string {

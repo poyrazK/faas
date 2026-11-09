@@ -16,11 +16,21 @@ import (
 // test compile peak at 4.9 GB of heap instead of 1.5 GB (ADR-982).
 type contractTestStore interface {
 	state.Store // teststorecheck:allow the one Store-sized interface the contracts alias
+	state.RollbackTrafficStore
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
 	state.AccountAbuseHoldStore
 	state.AgentClientStore
+	state.OrgAgentStore
+	state.KeyProjectLimitStore
+	state.AgentApprovalStore
+	state.AgentApprovalNotificationStore
+	state.AgentApprovalChannelStore
+	state.AgentActivityStore
+	state.NotificationChannelStore
 	state.AppWorkPolicyStore
+	state.ObjectStorageCeilingGrantStore
+	state.CreditDiscountStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
 	state.ComputeNodeReadinessStore
@@ -47,6 +57,7 @@ type contractTestStore interface {
 	state.EventSubscriptionControlStore
 	state.EventSubscriptionStore
 	state.EventSubscriptionReconcileStore
+	state.EventSubscriptionActivationStore
 	state.EventWorkBindingStore
 	state.FeatureFlagPromotionHoldReader
 	state.FeatureFlagStore
@@ -79,6 +90,7 @@ type contractTestStore interface {
 	state.NodeLeaseStore
 	state.NodeLifecycleCompletionStore
 	state.NodeMemoryReportStore
+	state.AppMemoryPressureStore
 	state.ObjectBucketAccessStore
 	state.ObjectBucketPlacementStore
 	state.ObjectBucketReservationResultStore

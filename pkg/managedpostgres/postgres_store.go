@@ -70,6 +70,9 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 		if existing.EnvironmentCloneOperationID != "" || !existing.Preview.IsZero() {
 			return Database{}, false, ErrConflict
 		}
+		if !restoreSlotAllowed(ctx) && !existing.RestoreSlotUntil.IsZero() {
+			return Database{}, false, ErrQuotaExceeded
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return Database{}, false, mapPostgresError(err)
 		}
@@ -163,7 +166,8 @@ func (s *PostgresStore) Due(ctx context.Context, includeProvisioning bool, limit
 		return nil, ErrInvalid
 	}
 	rows, err := new(sqlc.Queries).DueManagedPostgresLifecycleDatabases(ctx, s.catalog, sqlc.DueManagedPostgresLifecycleDatabasesParams{
-		IncludeProvisioning: includeProvisioning, At: databaseNullableTime(now), RowLimit: int32(limit)})
+		IncludeProvisioning: includeProvisioning, At: databaseNullableTime(now), RowLimit: int32(limit),
+		HoldRetryBefore: databaseNullableTime(now.Add(-defaultPollInterval))})
 	return databasesFromSQL(rows), mapPostgresError(err)
 }
 
@@ -236,8 +240,8 @@ func (s *PostgresStore) ClaimDelete(ctx context.Context, accountID, databaseID, 
 	if err != nil {
 		return Database{}, mapPostgresError(err)
 	}
-	if dependants.HasBindings || dependants.HasRestoreDescendants || dependants.HasCloneSnapshotHolds || dependants.HasCloneWriteFenceHolds {
-		return Database{}, ErrConflict
+	if err := lifecycleDependantsError(dependants); err != nil {
+		return Database{}, err
 	}
 	row, err = q.ClaimManagedPostgresLifecycleDelete(ctx, tx, sqlc.ClaimManagedPostgresLifecycleDeleteParams{
 		AccountID: account, DatabaseID: id, LeaseToken: leaseToken, LeaseUntil: databaseNullableTime(leaseUntil), At: databaseNullableTime(now)})

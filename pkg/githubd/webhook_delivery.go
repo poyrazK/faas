@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"log/slog"
 	"time"
 
@@ -14,6 +16,10 @@ import (
 const (
 	webhookMaxAttempts = 8
 	webhookPollEvery   = 500 * time.Millisecond
+	// webhookIdlePoll is the worker's poll when its store wakes it on every
+	// enqueue: it only catches retries coming due, stale claims and other
+	// processes' writes. Polling every 500 ms was two empty claims a second.
+	webhookIdlePoll = 5 * time.Second
 )
 
 var ErrNoWebhookDelivery = errors.New("githubd: no webhook delivery due")
@@ -68,6 +74,7 @@ type WebhookActivityRecord struct {
 	ReceivedAt  time.Time
 	ProcessedAt *time.Time
 	UpdatedAt   time.Time
+	SkipReason  string
 }
 
 // WebhookActivityStore is the customer-safe read seam used by the activity
@@ -83,10 +90,25 @@ type WebhookActivityRecoveryStore interface {
 	RetryWebhookDeliveriesForApp(ctx context.Context, accountID, appID string, limit int) (int, error)
 }
 
-type PGWebhookStore struct{ pool *pgxpool.Pool }
+type PGWebhookStore struct {
+	pool *pgxpool.Pool
+	// queued wakes this process's delivery worker when the store enqueues or
+	// requeues a delivery.
+	queued chan struct{}
+}
 
 func NewPGWebhookDeliveryStore(pool *pgxpool.Pool) *PGWebhookStore {
-	return &PGWebhookStore{pool: pool}
+	return &PGWebhookStore{pool: pool, queued: make(chan struct{}, 1)}
+}
+
+// Queued fires after this store enqueues or requeues a delivery.
+func (s *PGWebhookStore) Queued() <-chan struct{} { return s.queued }
+
+func (s *PGWebhookStore) signalQueued() {
+	select {
+	case s.queued <- struct{}{}:
+	default:
+	}
 }
 
 func (s *PGWebhookStore) Enqueue(ctx context.Context, delivery WebhookDelivery) (bool, error) {
@@ -99,6 +121,9 @@ func (s *PGWebhookStore) Enqueue(ctx context.Context, delivery WebhookDelivery) 
 		delivery.InstallationID, nullableText(delivery.RepoFullName), nullableText(delivery.CommitSHA))
 	if err != nil {
 		return false, fmt.Errorf("githubd: enqueue webhook delivery: %w", err)
+	}
+	if tag.RowsAffected() == 1 {
+		s.signalQueued()
 	}
 	return tag.RowsAffected() == 1, nil
 }
@@ -138,10 +163,16 @@ func (s *PGWebhookStore) Claim(ctx context.Context) (WebhookDelivery, error) {
 }
 
 func (s *PGWebhookStore) Complete(ctx context.Context, deliveryID string) error {
+	return s.CompleteSkipped(ctx, deliveryID, "")
+}
+
+// CompleteSkipped completes a delivery and records why it deployed nothing;
+// an empty reason means it did its work (ADR-20261101160300, amendment 2).
+func (s *PGWebhookStore) CompleteSkipped(ctx context.Context, deliveryID, reason string) error {
 	_, err := s.pool.Exec(ctx, `
 		update github_webhook_deliveries
-		set status = 'succeeded', processed_at = now(), updated_at = now(), last_error = ''
-		where delivery_id = $1`, deliveryID)
+		set status = 'succeeded', processed_at = now(), updated_at = now(), last_error = '', skip_reason = $2
+		where delivery_id = $1`, deliveryID, reason)
 	if err != nil {
 		return fmt.Errorf("githubd: complete webhook delivery: %w", err)
 	}
@@ -165,10 +196,15 @@ func (s *PGWebhookStore) Fail(ctx context.Context, deliveryID, message string, n
 	return nil
 }
 
+// Prune deletes succeeded deliveries processed before before and dead ones
+// last touched before it. A dead delivery can be retried until then; kept
+// for ever, stale dead rows held FaasGithubWebhookDeliveryDead firing and
+// hid new failures behind it.
 func (s *PGWebhookStore) Prune(ctx context.Context, before time.Time) error {
 	_, err := s.pool.Exec(ctx, `
 		delete from github_webhook_deliveries
-		where status = 'succeeded' and processed_at < $1`, before)
+		where (status = 'succeeded' and processed_at < $1)
+		   or (status = 'dead' and updated_at < $1)`, before)
 	if err != nil {
 		return fmt.Errorf("githubd: prune webhook deliveries: %w", err)
 	}
@@ -184,10 +220,11 @@ func (s *PGWebhookStore) ListWebhookDeliveriesForApp(ctx context.Context, accoun
 		limit = 10
 	}
 	rows, err := s.pool.Query(ctx, `
-		select d.event_type, d.status, coalesce(d.commit_sha, ''),
-		       d.received_at, d.processed_at, d.updated_at
+		select d.event_type, case when t.status='succeeded' then 'succeeded' else d.status end, coalesce(d.commit_sha, ''),
+         d.received_at, d.processed_at, greatest(d.updated_at,t.updated_at), coalesce(t.skip_reason,'')
 		from github_webhook_deliveries d
 		join apps a on a.id = $2 and a.account_id = $1
+ left join github_delivery_targets t on t.delivery_id=d.delivery_id and t.account_id=a.account_id
 		where d.installation_id = a.github_install_id
 		  and d.repo_full_name = a.github_repo_full_name
 		order by d.received_at desc
@@ -200,7 +237,7 @@ func (s *PGWebhookStore) ListWebhookDeliveriesForApp(ctx context.Context, accoun
 	for rows.Next() {
 		var record WebhookActivityRecord
 		if err := rows.Scan(&record.EventType, &record.Status, &record.CommitSHA,
-			&record.ReceivedAt, &record.ProcessedAt, &record.UpdatedAt); err != nil {
+			&record.ReceivedAt, &record.ProcessedAt, &record.UpdatedAt, &record.SkipReason); err != nil {
 			return nil, fmt.Errorf("githubd: scan app webhook activity: %w", err)
 		}
 		out = append(out, record)
@@ -245,10 +282,13 @@ func (s *PGWebhookStore) RetryWebhookDelivery(ctx context.Context, deliveryID st
 	tag, err := s.pool.Exec(ctx, `
 		update github_webhook_deliveries
 		set status = 'pending', attempts = 0, next_attempt_at = now(),
-		    last_error = '', processed_at = null, updated_at = now()
+		    last_error = '', skip_reason = '', processed_at = null, updated_at = now()
 		where delivery_id = $1 and status = 'dead'`, deliveryID)
 	if err != nil {
 		return false, fmt.Errorf("githubd: retry webhook delivery: %w", err)
+	}
+	if tag.RowsAffected() == 1 {
+		s.signalQueued()
 	}
 	return tag.RowsAffected() == 1, nil
 }
@@ -274,11 +314,14 @@ func (s *PGWebhookStore) RetryWebhookDeliveriesForApp(ctx context.Context, accou
 		)
 		update github_webhook_deliveries d
 		set status = 'pending', attempts = 0, next_attempt_at = now(),
-		    last_error = '', processed_at = null, updated_at = now()
+		    last_error = '', skip_reason = '', processed_at = null, updated_at = now()
 		from targets
 		where d.delivery_id = targets.delivery_id`, accountID, appID, limit)
 	if err != nil {
 		return 0, fmt.Errorf("githubd: retry app webhook deliveries: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		s.signalQueued()
 	}
 	return int(tag.RowsAffected()), nil
 }
@@ -352,7 +395,13 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 	if log == nil {
 		log = slog.Default()
 	}
-	ticker := time.NewTicker(webhookPollEvery)
+	// A store that wakes the worker on enqueue needs only a slow poll.
+	var queued <-chan struct{}
+	poll := webhookPollEvery
+	if waker, ok := store.(interface{ Queued() <-chan struct{} }); ok {
+		queued, poll = waker.Queued(), webhookIdlePoll
+	}
+	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	prune := time.NewTicker(6 * time.Hour)
 	defer prune.Stop()
@@ -369,7 +418,7 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 			}
 			dispatchErr := service.HandleWebhookDelivery(ctx, delivery)
 			if dispatchErr == nil || IsNoBinding(dispatchErr) || IsIgnored(dispatchErr) || IsSkipDeploy(dispatchErr) || isReleaseTagRejected(dispatchErr) {
-				if err := store.Complete(ctx, delivery.DeliveryID); err != nil {
+				if err := completeWebhookDelivery(ctx, store, delivery.DeliveryID, SkipReason(dispatchErr)); err != nil {
 					log.Error("githubd: complete webhook delivery", "delivery_id", delivery.DeliveryID, "err", err)
 				}
 				continue
@@ -394,6 +443,7 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 		select {
 		case <-ctx.Done():
 			return
+		case <-queued:
 		case <-ticker.C:
 		case <-prune.C:
 			if err := store.Prune(ctx, time.Now().Add(-7*24*time.Hour)); err != nil {
@@ -401,4 +451,34 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 			}
 		}
 	}
+}
+
+// webhookSkipCompleter is the optional store method that records why a
+// completed delivery deployed nothing.
+type webhookSkipCompleter interface {
+	CompleteSkipped(ctx context.Context, deliveryID, reason string) error
+}
+
+func completeWebhookDelivery(ctx context.Context, store WebhookDeliveryStore, deliveryID, reason string) error {
+	if skipper, ok := store.(webhookSkipCompleter); ok {
+		return skipper.CompleteSkipped(ctx, deliveryID, reason)
+	}
+	return store.Complete(ctx, deliveryID)
+}
+
+// DeliveryTargetStore keeps account-specific outcomes out of the shared inbox.
+type DeliveryTargetStore interface {
+	RecordDeliveryTarget(context.Context, string, string, bool, string) error
+}
+
+func (s *PGWebhookStore) RecordDeliveryTarget(ctx context.Context, deliveryID, accountID string, success bool, reason string) error {
+	var account pgtype.UUID
+	if err := account.Scan(accountID); err != nil {
+		return err
+	}
+	status := "pending"
+	if success {
+		status = "succeeded"
+	}
+	return sqlc.New().RecordGitHubDeliveryTarget(ctx, s.pool, sqlc.RecordGitHubDeliveryTargetParams{DeliveryID: deliveryID, AccountID: account, Status: status, SkipReason: reason})
 }

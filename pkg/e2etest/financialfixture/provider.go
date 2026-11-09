@@ -109,7 +109,7 @@ func (p *Provider) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/" {
-		_, _ = w.Write([]byte(`{"items":[{"id":"fixture-org","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"}}]}`))
+		_, _ = w.Write([]byte(`{"items":[{"id":"fixture-org","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"},"customer_portal_settings":{"subscription":{"update_plan":false}}}]}`))
 		return
 	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/products/") {
@@ -123,7 +123,7 @@ func (p *Provider) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			"id": id, "recurring_interval": "month", "recurring_interval_count": 1, "is_recurring": true,
 			"prices": []map[string]any{
 				{"amount_type": "fixed", "price_currency": api.BillingCurrencyLower, "price_amount": billing.PlanMonthlyMillicents(plan) / api.MillicentsPerCent},
-				{"amount_type": "metered_unit", "price_currency": api.BillingCurrencyLower, "unit_amount": "1", "meter_id": "compute"},
+				{"amount_type": "metered_unit", "price_currency": api.BillingCurrencyLower, "unit_amount": fmt.Sprint(api.OverageMillicentsPerGBHour / api.MillicentsPerCent), "meter_id": "compute"},
 				{"amount_type": "metered_unit", "price_currency": api.BillingCurrencyLower, "unit_amount": fmt.Sprint(p.price / api.MillicentsPerCent), "meter_id": "egress"},
 			}, "benefits": []any{},
 		})

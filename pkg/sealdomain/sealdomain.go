@@ -26,6 +26,12 @@ const (
 	Build    Domain = "build"
 	Source   Domain = "source"
 	Edge     Domain = "edge"
+	// EdgeTLS holds the key of the apps domains' publicly trusted
+	// certificate (ADR-20261103163954 §3). edgednsd seals it on the control
+	// plane and only the compute edges' gatewayd-public open it, so neither
+	// the daemon that talks to guests nor the one that reads customer
+	// credentials holds it.
+	EdgeTLS  Domain = "edge-tls"
 	Alerting Domain = "alerting"
 	Storage  Domain = "storage"
 	Delivery Domain = "delivery"
@@ -134,13 +140,22 @@ var registry = []Spec{
 		cols("github_installations", "sealed_install_token"),
 		cols("github_webhook_secrets", "secret_sealed"),
 	)},
-	// gatewayd-internal on compute opens basic-auth credentials and log
-	// drain headers. gatewayd-public's DNS-provider token is not stored in
-	// these columns, so it is not a reader.
+	// gatewayd-internal on compute opens basic-auth credentials, log drain
+	// headers and sealed edge-rule request header values
+	// (ADR-20261108110000). gatewayd-public's DNS-provider token is not
+	// stored in these columns, so it is not a reader.
 	{Domain: Edge, Readers: []string{"gatewayd-internal"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("apps", "public_auth_basic"),
 		cols("app_log_drains", "auth_header_sealed"),
 		cols("application_standard_log_destinations", "auth_header_sealed"),
+		cols("edge_rule_header_secrets", "ciphertext"),
+	)},
+	// The apps domains' certificate key (ADR-20261103163954 §3). edgednsd
+	// seals it to this domain alone, never the fleet identity: the table is
+	// new, so no reader needs a fleet copy, and a fleet holder must not get a
+	// publicly trusted key for every app host.
+	{Domain: EdgeTLS, Readers: []string{"gatewayd-public"}, Roles: computeOnly, Wired: true, Columns: join(
+		cols("edge_tls_certificates", "key_sealed"),
 	)},
 	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("alert_rules", "webhook_secret_sealed"),
@@ -157,7 +172,7 @@ var registry = []Spec{
 	// a schedd of the previous release opens them with the fleet key alone.
 	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("execution_payloads", "sealed_payload"),
-		cols("app_webhooks", "secret_sealed"),
+		cols("app_webhooks", "secret_sealed", "previous_secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
 	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
@@ -177,7 +192,7 @@ var registry = []Spec{
 		// opens it; schedd never reads it.
 		cols("agent_execution_workflows", "sealed_plan"),
 		cols("account_billing_connections", "sealed_secret"),
-		cols("inbound_webhook_endpoints", "signing_secret_sealed"),
+		cols("inbound_webhook_endpoints", "signing_secret_sealed", "previous_signing_secret_sealed"),
 		cols("gitlab_oauth_connections", "credentials_sealed"),
 		cols("issue_slack_installations", "token_sealed"),
 		cols("issue_slack_interaction_policies", "secret_sealed"),

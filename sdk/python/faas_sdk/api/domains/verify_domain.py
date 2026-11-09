@@ -59,6 +59,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -84,10 +89,14 @@ def sync_detailed(
 ) -> Response[CustomDomainResponse | Problem]:
     """Re-verify a domain's DNS + cert.
 
-     Re-runs the DNS verifier + cert dial; returns the canonical
-    CustomDomainResponse. Used by `gregale domains verify
-    <domain>`. Idempotent: POSTing twice does not change the
-    durable verification state.
+     Runs a bounded ownership TXT check and routing/TLS probes using the
+    background verifier's claim-bound logic. Concurrent checks for the same
+    claim are coalesced; a durable 15-second cooldown limits repeated probes
+    across API processes. Returns CustomDomainResponse with independent
+    readiness states, DNS diagnostics, and retry scheduling. DNS or TLS that
+    is not ready is a successful check with a non-ready response, not a
+    transport failure. Expired claims require recreation. The same
+    Idempotency-Key replays its original response; use a new key to recheck.
 
     Args:
         domain (str):
@@ -121,10 +130,14 @@ def sync(
 ) -> CustomDomainResponse | Problem | None:
     """Re-verify a domain's DNS + cert.
 
-     Re-runs the DNS verifier + cert dial; returns the canonical
-    CustomDomainResponse. Used by `gregale domains verify
-    <domain>`. Idempotent: POSTing twice does not change the
-    durable verification state.
+     Runs a bounded ownership TXT check and routing/TLS probes using the
+    background verifier's claim-bound logic. Concurrent checks for the same
+    claim are coalesced; a durable 15-second cooldown limits repeated probes
+    across API processes. Returns CustomDomainResponse with independent
+    readiness states, DNS diagnostics, and retry scheduling. DNS or TLS that
+    is not ready is a successful check with a non-ready response, not a
+    transport failure. Expired claims require recreation. The same
+    Idempotency-Key replays its original response; use a new key to recheck.
 
     Args:
         domain (str):
@@ -153,10 +166,14 @@ async def asyncio_detailed(
 ) -> Response[CustomDomainResponse | Problem]:
     """Re-verify a domain's DNS + cert.
 
-     Re-runs the DNS verifier + cert dial; returns the canonical
-    CustomDomainResponse. Used by `gregale domains verify
-    <domain>`. Idempotent: POSTing twice does not change the
-    durable verification state.
+     Runs a bounded ownership TXT check and routing/TLS probes using the
+    background verifier's claim-bound logic. Concurrent checks for the same
+    claim are coalesced; a durable 15-second cooldown limits repeated probes
+    across API processes. Returns CustomDomainResponse with independent
+    readiness states, DNS diagnostics, and retry scheduling. DNS or TLS that
+    is not ready is a successful check with a non-ready response, not a
+    transport failure. Expired claims require recreation. The same
+    Idempotency-Key replays its original response; use a new key to recheck.
 
     Args:
         domain (str):
@@ -188,10 +205,14 @@ async def asyncio(
 ) -> CustomDomainResponse | Problem | None:
     """Re-verify a domain's DNS + cert.
 
-     Re-runs the DNS verifier + cert dial; returns the canonical
-    CustomDomainResponse. Used by `gregale domains verify
-    <domain>`. Idempotent: POSTing twice does not change the
-    durable verification state.
+     Runs a bounded ownership TXT check and routing/TLS probes using the
+    background verifier's claim-bound logic. Concurrent checks for the same
+    claim are coalesced; a durable 15-second cooldown limits repeated probes
+    across API processes. Returns CustomDomainResponse with independent
+    readiness states, DNS diagnostics, and retry scheduling. DNS or TLS that
+    is not ready is a successful check with a non-ready response, not a
+    transport failure. Expired claims require recreation. The same
+    Idempotency-Key replays its original response; use a new key to recheck.
 
     Args:
         domain (str):

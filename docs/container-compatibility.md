@@ -134,16 +134,32 @@ from the snapshot.
 
 Reseed these yourself, or avoid keeping them across a snapshot:
 
-- generators in other runtimes, such as Go `math/rand`, Java `Random` and
-  `SecureRandom`, Ruby `Random`, and PHP `mt_rand`;
+- generators in other runtimes, such as Go `math/rand` and `math/rand/v2`,
+  Java `Random` and `Math.random`, Ruby `Random`, and PHP `mt_rand`. Two
+  restores of one snapshot return the same Go and Java values (measured,
+  ADR-20261107160000). Go `crypto/rand` and Java's default `SecureRandom`
+  read the kernel on each draw and do not replay; a `SecureRandom` you seed
+  yourself or create as `SHA1PRNG` does;
 - generator objects your code created before the snapshot, such as Python
   `random.Random()` or `numpy.random.default_rng()`;
 - values your code generated before the snapshot, such as a secret, nonce or
   instance ID drawn once at startup: every instance restored from that snapshot
   holds the same value. Draw them per request or per use, and take the serving
-  instance from the `X-Faas-Instance-Id` request header;
+  instance from the `X-Faas-Instance-Id` request header or, outside a request,
+  from the file named by `FAAS_INSTANCE_IDENTITY_FILE`, which Gregale rewrites
+  on every wake ([trace propagation](runtimes/trace-propagation.md#deployment-identity));
 - `Math.random` inside Node worker threads;
-- sidecars that run from their own root filesystem.
+- sidecars that run from their own root filesystem;
+- Bun and Deno, which do not load the Node reseed; Python started with `-S`,
+  `-E` or `-I`, which skips the Python reseed; and any Node or Python process
+  started with a cleared environment. Gregale logs a warning on each wake when
+  it finds such a process running
+  ([ADR-20261109140000](adr/20261109140000-report-processes-the-reseed-barrier-missed.md));
+- OpenSSL copies bundled inside Python packages, such as `psycopg2-binary` and
+  `cryptography` wheels: the reseed reaches only the standard library's `ssl`;
+- ID libraries that keep a random pool or per-process state, such as `nanoid`,
+  the npm `uuid` package's v1, v6 and v7, MongoDB `ObjectId` and Go `rs/xid`: instances
+  restored from one snapshot can generate the same IDs.
 
 Setting `GREGALE_RESTORE_RESEED=off` in the app's environment disables the
 Node and Python reseed. Only do that for an app that never generates tokens,
@@ -173,9 +189,13 @@ live with traffic in the same environment. A failed dependency or a fixed
 serving. `gregale deploys status` and the dashboard stage summary show the
 blocker. This gates release activation; candidate processes can boot while
 waiting. Declarations allow at most 100 dependency conditions per workload.
-Completion conditions, optional healthy dependencies, and healthy managed or job
-targets are rejected.
-See [ADR-685](adr/685-compose-dependency-release-gates.md).
+Optional healthy dependencies and healthy job targets are rejected. A healthy
+gate on a Compose datastore such as `postgres` is accepted as a plain
+dependency, and a `service_completed_successfully` dependency runs as the
+release command of the waiting service that shares its build
+([multi-service apps](multi-service-apps.md#start-order-and-migrations)).
+See [ADR-685](adr/685-compose-dependency-release-gates.md) and
+[ADR-20261102192943](adr/20261102192943-compose-files-deploy-as-written.md).
 
 Compose `healthcheck:` overrides are also retained for prebuilt image workloads:
 
@@ -299,7 +319,7 @@ services:
 A reviewed project apply (`gregale deploy`, the dashboard, or
 `gregale deploy --repo … --project`) writes each imported value into the
 service's app, in the deploy's environment, before any build starts; a GitHub
-push deploy imports nothing. Values are written only where the key is still unset: a
+push imports only the addresses of sibling services. Values are written only where the key is still unset: a
 value configured on the app, as a variable or a secret, is never replaced. The
 plan lists imported names under **Imported from Compose** and gives the reason
 for each value it skips: a secret-looking key or value, an address of another

@@ -56,6 +56,7 @@ func issueImpactListRow(r sqlc.IssueListByImpactRow) api.Issue {
 			IdentifiedCustomers: r.IdentifiedCustomers,
 			ObservedEvents:      r.ObservedEvents,
 			UnattributedEvents:  r.UnattributedEvents,
+			UnknownHTTPBatches:  r.UnknownHttpBatches,
 		},
 	}
 }
@@ -70,13 +71,11 @@ func (s *PgStore) CreateIssueToken(ctx context.Context, account, app string, in 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	owner, err := q.IssueLockApp(ctx, tx, issueUUID(app))
+	current, err := lockIssueResourcePolicy(ctx, tx, IssueCredential{AccountID: account, AppID: app})
 	if err != nil {
-		return api.IssueIngestToken{}, mapErr(err)
+		return api.IssueIngestToken{}, err
 	}
-	if issueID(owner.AccountID) != account {
-		return api.IssueIngestToken{}, ErrNotFound
-	}
+	lim.TokensPerApp = min(lim.TokensPerApp, current.TokensPerApp)
 	if _, err = q.IssueDeploymentScope(ctx, tx, sqlc.IssueDeploymentScopeParams{DeploymentID: issueUUID(in.DeploymentID), AppID: issueUUID(app), AccountID: issueUUID(account), Environment: in.Environment}); err != nil {
 		return api.IssueIngestToken{}, mapErr(err)
 	}
@@ -138,13 +137,190 @@ func (s *PgStore) RevokeIssueToken(ctx context.Context, app, id string) error {
 // RecordIssue serializes short writes per app. The unique event key, group
 // creation, counters, attribution, and transition outbox commit together.
 func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.IssueEventResponse, error) {
-	tx, err := s.pool.Begin(ctx)
+	results, err := s.RecordIssueBatch(ctx, []RecordIssueParams{in})
 	if err != nil {
 		return api.IssueEventResponse{}, err
 	}
+	return results[0], nil
+}
+
+// RecordIssueBatch commits all occurrences together, so a failed export does
+// not leave an accepted prefix behind. The app lock serializes quota checks.
+func (s *PgStore) RecordIssueBatch(ctx context.Context, inputs []RecordIssueParams) ([]api.IssueEventResponse, error) {
+	if len(inputs) > api.IssueMaxBatchEvents {
+		return nil, ErrInvalidArgument
+	}
+	for _, in := range inputs {
+		if in.Credential != inputs[0].Credential || in.Limits != inputs[0].Limits || in.EnforceResourcePolicy != inputs[0].EnforceResourcePolicy {
+			return nil, ErrInvalidArgument
+		}
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if len(inputs) > 0 && inputs[0].EnforceResourcePolicy {
+		limits, err := lockIssueResourcePolicy(ctx, tx, inputs[0].Credential)
+		if err != nil {
+			return nil, err
+		}
+		inputs = append([]RecordIssueParams(nil), inputs...)
+		retentionFloor := time.Now().UTC().AddDate(0, 0, -limits.RetentionDays)
+		for i := range inputs {
+			inputs[i].Limits = limits
+			if inputs[i].Event.OccurredAt.Before(retentionFloor) {
+				return nil, ErrInvalidArgument
+			}
+		}
+	}
+	results := make([]api.IssueEventResponse, 0, len(inputs))
+	batchMaps := make(map[string]*issues.SourceMapSet)
+	for _, in := range inputs {
+		out, err := s.recordIssueTx(ctx, tx, in, batchMaps)
+		if err != nil {
+			var limit *IssueLimitError
+			if errors.As(err, &limit) && (limit.Rate || limit.Resource == "events") {
+				limit.NoCapacityAtBatchStart = true
+				for _, prior := range results {
+					if !prior.Duplicate {
+						limit.NoCapacityAtBatchStart = false
+						break
+					}
+				}
+				// Bounded retention cleanup must make progress even if the app
+				// remains full. An atomic batch with no new occurrence has only
+				// performed duplicate reads and retention bookkeeping so far.
+				if limit.Resource == "events" && limit.NoCapacityAtBatchStart {
+					if commitErr := tx.Commit(ctx); commitErr != nil {
+						return nil, commitErr
+					}
+				}
+			}
+			return nil, err
+		}
+		results = append(results, out)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// Lock the financial owner before the app, matching plan-update lock order.
+// This prevents an in-flight capture from committing after a suspension or
+// downgrade using an earlier policy snapshot.
+func lockIssueResourcePolicy(ctx context.Context, tx pgx.Tx, credential IssueCredential) (api.IssueLimits, error) {
+	q := sqlc.New()
+	app, err := q.IssuePolicyApp(ctx, tx, issueUUID(credential.AppID))
+	if err != nil {
+		return api.IssueLimits{}, mapErr(err)
+	}
+	if issueID(app.AccountID) != credential.AccountID {
+		return api.IssueLimits{}, ErrNotFound
+	}
+	account, err := q.IssuePolicyLockAccount(ctx, tx, app.AccountID)
+	if err != nil {
+		return api.IssueLimits{}, mapErr(err)
+	}
+	policy := Account{Plan: api.Plan(account.Plan), Status: AccountStatus(account.Status), AbuseHoldAt: issueTimePtr(account.AbuseHoldAt)}
+	if app.OrgID.Valid {
+		org, orgErr := q.IssuePolicyLockOrg(ctx, tx, app.OrgID)
+		if orgErr != nil {
+			return api.IssueLimits{}, mapErr(orgErr)
+		}
+		if org.PersonalOrg {
+			if org.PersonalOwnerAccountID != app.AccountID {
+				return api.IssueLimits{}, ErrConflict
+			}
+		} else if org.ResourceOwnershipEnabled {
+			policy = Account{Plan: api.Plan(org.Plan), Status: AccountStatus(org.Status), AbuseHoldAt: issueTimePtr(org.AbuseHoldAt)}
+			if org.DeletedPending {
+				policy.Status = AccountDeletedPending
+			}
+		} else {
+			policy.Status = orgLegacyOwnerStatus(Org{Status: OrgStatus(org.Status), DeletedPending: org.DeletedPending}, policy.Status)
+			if org.AbuseHoldAt.Valid {
+				policy.AbuseHoldAt = issueTimePtr(org.AbuseHoldAt)
+			}
+		}
+	}
+	locked, err := q.IssueLockApp(ctx, tx, issueUUID(credential.AppID))
+	if err != nil {
+		return api.IssueLimits{}, mapErr(err)
+	}
+	if locked.AccountID != app.AccountID || locked.OrgID != app.OrgID {
+		return api.IssueLimits{}, ErrConflict
+	}
+	limits := policy.Plan.IssueLimits()
+	if !policy.Active() || !limits.Enabled {
+		return api.IssueLimits{}, ErrIssuePolicyChanged
+	}
+	return limits, nil
+}
+
+func validateIssueTimeBuckets(in RecordIssueParams, count int64) error {
+	if len(in.TimeBuckets) == 0 {
+		return nil
+	}
+	if len(in.TimeBuckets) > 1000 || in.Credential.ID != "" || in.Event.SourceKind != "http" {
+		return ErrInvalidArgument
+	}
+	second := in.Event.OccurredAt.UnixMilli() / 1000
+	sample := in.Event.OccurredAt.UnixMilli()
+	var sum, previous int64
+	found := false
+	for i, pair := range in.TimeBuckets {
+		if pair[0]/1000 != second || pair[1] <= 0 || (i > 0 && pair[0] <= previous) || pair[0] > in.Now.UnixMilli() {
+			return ErrInvalidArgument
+		}
+		previous = pair[0]
+		sum += pair[1]
+		if sum > count {
+			return ErrInvalidArgument
+		}
+		if pair[0] == sample {
+			found = true
+		}
+	}
+	if sum != count || !found {
+		return ErrInvalidArgument
+	}
+	return nil
+}
+
+func issueEarliestEventTime(in RecordIssueParams) time.Time {
+	earliest := in.Event.OccurredAt
+	if len(in.TimeBuckets) > 0 {
+		at := time.UnixMilli(in.TimeBuckets[0][0]).UTC()
+		if at.Before(earliest) {
+			earliest = at
+		}
+	}
+	return earliest
+}
+
+func issueLatestEventTime(in RecordIssueParams) time.Time {
+	latest := in.Event.OccurredAt
+	if len(in.TimeBuckets) > 0 {
+		at := time.UnixMilli(in.TimeBuckets[len(in.TimeBuckets)-1][0]).UTC()
+		if at.After(latest) {
+			latest = at
+		}
+	}
+	return latest
+}
+
+func (s *PgStore) recordIssueTx(ctx context.Context, tx pgx.Tx, in RecordIssueParams, batchMaps map[string]*issues.SourceMapSet) (api.IssueEventResponse, error) {
 	q := sqlc.New()
 	c := in.Credential
+	count := max(int64(1), in.OccurrenceCount)
+	if count > api.IssueHTTPBatchMaxCount || (count > 1 && (c.ID != "" || in.Event.SourceKind != "http")) {
+		return api.IssueEventResponse{}, ErrInvalidArgument
+	}
+	if err := validateIssueTimeBuckets(in, count); err != nil {
+		return api.IssueEventResponse{}, err
+	}
 	owner, err := q.IssueLockApp(ctx, tx, issueUUID(c.AppID))
 	if err != nil {
 		return api.IssueEventResponse{}, mapErr(err)
@@ -178,15 +354,28 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 	}
 	// The app lock also serializes artifact publication/retirement. Exact retries
 	// above keep their original evidence even if mapping artifacts are retired.
-	if err = symbolicateIssueTx(ctx, q, tx, &in); err != nil {
+	if err = symbolicateIssueTx(ctx, q, tx, &in, batchMaps); err != nil {
 		return api.IssueEventResponse{}, err
 	}
-	if err = q.IssuePurgeEvents(ctx, tx, sqlc.IssuePurgeEventsParams{AppID: owner.ID, Before: issueTime(in.Now.AddDate(0, 0, -in.Limits.RetentionDays))}); err != nil {
+	if _, err = q.IssuePurgeEventsBounded(ctx, tx, sqlc.IssuePurgeEventsBoundedParams{AppID: owner.ID, Before: issueTime(in.Now.AddDate(0, 0, -in.Limits.RetentionDays)), BatchLimit: api.IssueIngestPurgeBatch}); err != nil {
 		return api.IssueEventResponse{}, err
 	}
-	n, err := q.IssueCountEvents(ctx, tx, owner.ID)
+	if err = q.IssueCreateEventUsage(ctx, tx, owner.ID); err != nil {
+		return api.IssueEventResponse{}, err
+	}
+	usage, err := q.IssueLockEventUsage(ctx, tx, owner.ID)
 	if err != nil {
 		return api.IssueEventResponse{}, err
+	}
+	n := usage.RetainedCount
+	if !usage.Initialized {
+		n, err = q.IssueCountEvents(ctx, tx, owner.ID)
+		if err != nil {
+			return api.IssueEventResponse{}, err
+		}
+		if err = q.IssueInitializeEventUsage(ctx, tx, sqlc.IssueInitializeEventUsageParams{AppID: owner.ID, RetainedCount: n}); err != nil {
+			return api.IssueEventResponse{}, err
+		}
 	}
 	if n >= int64(in.Limits.EventsPerApp) {
 		return api.IssueEventResponse{}, &IssueLimitError{Resource: "events", Limit: int64(in.Limits.EventsPerApp), Observed: n + 1}
@@ -208,7 +397,7 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 		if n >= int64(in.Limits.IssuesPerApp) {
 			return api.IssueEventResponse{}, &IssueLimitError{Resource: "issues", Limit: int64(in.Limits.IssuesPerApp), Observed: n + 1}
 		}
-		row, err = q.IssueCreate(ctx, tx, sqlc.IssueCreateParams{AccountID: owner.AccountID, AppID: owner.ID, Environment: c.Environment, Fingerprint: in.Fingerprint, GroupingVersion: int32(in.GroupingVersion), Title: in.Title, OccurredAt: issueTime(in.Event.OccurredAt)})
+		row, err = q.IssueCreate(ctx, tx, sqlc.IssueCreateParams{AccountID: owner.AccountID, AppID: owner.ID, Environment: c.Environment, Fingerprint: in.Fingerprint, GroupingVersion: int32(in.GroupingVersion), Title: in.Title, OccurredAt: issueTime(issueEarliestEventTime(in))})
 	}
 	if err != nil {
 		return api.IssueEventResponse{}, err
@@ -224,7 +413,9 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 		return api.IssueEventResponse{}, err
 	}
 	consumer, tenant, err := issueAttribution(ctx, q, tx, in)
-	if err != nil {
+	if errors.Is(err, ErrIssueAttributionConflict) {
+		consumer, tenant = pgtype.UUID{}, pgtype.UUID{}
+	} else if err != nil {
 		return api.IssueEventResponse{}, err
 	}
 	policy, err := q.IssueGetImpactAlertPolicy(ctx, tx, owner.ID)
@@ -245,11 +436,23 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 	if err != nil {
 		return api.IssueEventResponse{}, err
 	}
-	if err = q.IssueInsertEvent(ctx, tx, sqlc.IssueInsertEventParams{AppID: owner.ID, DeploymentID: dep.ID, EventID: issueUUID(in.Event.EventID), IssueID: row.ID, OriginalIssueID: provenanceID, PayloadHash: in.PayloadHash, Payload: raw, OccurredAt: issueTime(in.Event.OccurredAt), ReceivedAt: issueTime(in.Now), ConsumerID: consumer, TenantID: tenant}); err != nil {
+	// The ingress body is capped at 64 KiB; normalization and source maps
+	// can expand it. Keep a separate bound before PostgreSQL's JSONB check.
+	if len(raw) > 512<<10 {
+		return api.IssueEventResponse{}, ErrInvalidArgument
+	}
+	bucketJSON := []byte("[]")
+	if len(in.TimeBuckets) != 0 {
+		bucketJSON, err = json.Marshal(in.TimeBuckets)
+		if err != nil {
+			return api.IssueEventResponse{}, err
+		}
+	}
+	if err = q.IssueInsertEvent(ctx, tx, sqlc.IssueInsertEventParams{AppID: owner.ID, DeploymentID: dep.ID, EventID: issueUUID(in.Event.EventID), IssueID: row.ID, OriginalIssueID: provenanceID, PayloadHash: in.PayloadHash, Payload: raw, OccurredAt: issueTime(in.Event.OccurredAt), ReceivedAt: issueTime(in.Now), ConsumerID: consumer, TenantID: tenant, OccurrenceCount: count, HttpTimeBuckets: bucketJSON}); err != nil {
 		return api.IssueEventResponse{}, err
 	}
-	regressed := issues.Recurs(issueRow(group), c.DeploymentID, in.Event.OccurredAt, group.FixedDeploymentCreatedAt.Valid && dep.CreatedAt.Time.After(group.FixedDeploymentCreatedAt.Time))
-	row, err = q.IssueObserve(ctx, tx, sqlc.IssueObserveParams{ID: row.ID, OccurredAt: issueTime(in.Event.OccurredAt), Regressed: regressed})
+	regressed := issues.Recurs(issueRow(group), c.DeploymentID, issueLatestEventTime(in), group.FixedDeploymentCreatedAt.Valid && dep.CreatedAt.Time.After(group.FixedDeploymentCreatedAt.Time))
+	row, err = q.IssueObserve(ctx, tx, sqlc.IssueObserveParams{ID: row.ID, OccurredAt: issueTime(issueEarliestEventTime(in)), LastOccurredAt: issueTime(issueLatestEventTime(in)), Regressed: regressed, OccurrenceCount: count})
 	if err != nil {
 		return api.IssueEventResponse{}, err
 	}
@@ -287,7 +490,7 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 			break
 		}
 	}
-	if err = q.IssueObserveRelease(ctx, tx, sqlc.IssueObserveReleaseParams{IssueID: originalID, DeploymentID: dep.ID, CommitSha: dep.CommitSha.String, ImageDigest: dep.ImageDigest, OccurredAt: issueTime(in.Event.OccurredAt)}); err != nil {
+	if err = q.IssueObserveRelease(ctx, tx, sqlc.IssueObserveReleaseParams{IssueID: originalID, DeploymentID: dep.ID, CommitSha: dep.CommitSha.String, ImageDigest: dep.ImageDigest, OccurredAt: issueTime(issueEarliestEventTime(in)), LastOccurredAt: issueTime(issueLatestEventTime(in)), OccurrenceCount: count}); err != nil {
 		return api.IssueEventResponse{}, err
 	}
 	if regressed {
@@ -351,9 +554,6 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 	if err = recordIssueCompoundAlerts(ctx, q, tx, row, in); err != nil {
 		return api.IssueEventResponse{}, err
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return api.IssueEventResponse{}, err
-	}
 	return api.IssueEventResponse{IssueID: issueID(row.ID), EventID: in.Event.EventID, Regressed: regressed}, nil
 }
 
@@ -368,22 +568,38 @@ func issueAttribution(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, in Rec
 		tenant = r.PlatformTenantID
 	}
 	if in.Event.RequestID != "" {
-		rows, err := q.IssueRequestAttribution(ctx, db, sqlc.IssueRequestAttributionParams{AccountID: issueUUID(c.AccountID), AppID: issueUUID(c.AppID), DeploymentID: issueUUID(c.DeploymentID), RequestID: in.Event.RequestID})
+		rows, err := q.IssueRequestAttribution(ctx, db, sqlc.IssueRequestAttributionParams{AccountID: issueUUID(c.AccountID), AppID: issueUUID(c.AppID), DeploymentID: issueUUID(c.DeploymentID), RequestID: in.Event.RequestID, Since: issueTime(in.Event.OccurredAt.Add(-api.IssueMaxClockSkew)), Until: issueTime(in.Event.OccurredAt.Add(api.IssueMaxClockSkew))})
 		if err != nil {
 			return consumer, tenant, err
 		}
 		if len(rows) > 1 {
-			return consumer, tenant, nil
+			return consumer, tenant, ErrIssueAttributionConflict
 		}
 		if len(rows) == 1 {
+			if in.Event.TraceID != "" && rows[0].TraceID != in.Event.TraceID {
+				return consumer, tenant, ErrIssueAttributionConflict
+			}
 			consumer = issueUUID(rows[0].ConsumerKey)
 			if tenant.Valid && rows[0].PlatformTenantID.Valid && tenant != rows[0].PlatformTenantID {
-				return consumer, tenant, ErrInvalidArgument
+				return consumer, tenant, ErrIssueAttributionConflict
 			}
 			if rows[0].PlatformTenantID.Valid {
 				tenant = rows[0].PlatformTenantID
 			}
-			return consumer, tenant, nil
+			// Anonymous audit evidence is an affirmative observation. Do not
+			// promote it using an independently supplied correlation hint.
+			if !consumer.Valid && !tenant.Valid {
+				return consumer, tenant, nil
+			}
+		}
+	}
+	if in.Event.RequestID != "" && in.Event.TraceID != "" {
+		rows, err := q.IssueRequestTraceJournal(ctx, db, sqlc.IssueRequestTraceJournalParams{AccountID: issueUUID(c.AccountID), AppID: issueUUID(c.AppID), RequestID: in.Event.RequestID, Since: issueTime(in.Event.OccurredAt.Add(-api.IssueMaxClockSkew)), Until: issueTime(in.Event.OccurredAt.Add(api.IssueMaxClockSkew))})
+		if err != nil {
+			return consumer, tenant, err
+		}
+		if len(rows) > 1 || (len(rows) == 1 && rows[0].Valid && rows[0].String != in.Event.TraceID) {
+			return consumer, tenant, ErrIssueAttributionConflict
 		}
 	}
 	if in.Event.TraceID != "" {
@@ -391,10 +607,23 @@ func issueAttribution(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, in Rec
 		if err != nil {
 			return consumer, tenant, err
 		}
+		if len(rows) > 1 {
+			return consumer, tenant, ErrIssueAttributionConflict
+		}
 		if len(rows) == 1 {
-			consumer = rows[0].ConsumerID
+			// Fill a missing component only if the trace also corroborates
+			// every previously verified component.
+			if consumer.Valid && rows[0].ConsumerID.Valid && consumer != rows[0].ConsumerID {
+				return consumer, tenant, ErrIssueAttributionConflict
+			}
 			if tenant.Valid && rows[0].PlatformTenantID.Valid && tenant != rows[0].PlatformTenantID {
-				return consumer, tenant, ErrInvalidArgument
+				return consumer, tenant, ErrIssueAttributionConflict
+			}
+			if consumer.Valid && !rows[0].ConsumerID.Valid || tenant.Valid && !rows[0].PlatformTenantID.Valid {
+				return consumer, tenant, nil
+			}
+			if rows[0].ConsumerID.Valid {
+				consumer = rows[0].ConsumerID
 			}
 			if rows[0].PlatformTenantID.Valid {
 				tenant = rows[0].PlatformTenantID
@@ -647,6 +876,7 @@ func (s *PgStore) ListIssues(ctx context.Context, app string, filter IssueListFi
 			IdentifiedCustomers: row.IdentifiedCustomers,
 			ObservedEvents:      row.ObservedEvents,
 			UnattributedEvents:  row.UnattributedEvents,
+			UnknownHTTPBatches:  row.UnknownHttpBatches,
 		}
 	}
 	for i := range out.Items {
@@ -704,7 +934,7 @@ func (s *PgStore) GetIssueDetail(ctx context.Context, app, id string, since, unt
 		if e.VerifiedConsumerID.Valid || e.VerifiedPlatformTenantID.Valid {
 			attr = "verified"
 		}
-		out.Events = append(out.Events, api.IssueOccurrence{ID: issueID(e.ID), OriginalIssueID: issueID(e.ProvenanceIssueID), IssueEvent: event, GroupingExplanation: issues.ExplainGrouping(event, int(e.GroupingVersion), e.Fingerprint), DebugRequestID: issueDebugRequest(ctx, q, tx, issueID(r.AccountID), issueID(r.AppID), issueID(e.DeploymentID), event), DeploymentID: issueID(e.DeploymentID), ReceivedAt: e.ReceivedAt.Time, VerifiedConsumerID: issueID(e.VerifiedConsumerID), VerifiedPlatformTenantID: issueID(e.VerifiedPlatformTenantID), Attribution: attr})
+		out.Events = append(out.Events, api.IssueOccurrence{ID: issueID(e.ID), OriginalIssueID: issueID(e.ProvenanceIssueID), OccurrenceCount: e.OccurrenceCount, OccurrenceCountExact: e.OccurrenceWeightKnown || e.OccurrenceCount > 1 || event.SourceKind != "http", IssueEvent: event, GroupingExplanation: issues.ExplainGrouping(event, int(e.GroupingVersion), e.Fingerprint), DebugRequestID: issueDebugRequest(ctx, q, tx, issueID(r.AccountID), issueID(r.AppID), issueID(e.DeploymentID), event), DeploymentID: issueID(e.DeploymentID), ReceivedAt: e.ReceivedAt.Time, VerifiedConsumerID: issueID(e.VerifiedConsumerID), VerifiedPlatformTenantID: issueID(e.VerifiedPlatformTenantID), Attribution: attr})
 	}
 	if len(events) > api.IssuePageSize {
 		last := out.Events[len(out.Events)-1]
@@ -742,7 +972,7 @@ func (s *PgStore) GetIssueDetail(ctx context.Context, app, id string, since, unt
 	if err != nil {
 		return out, err
 	}
-	out.Impact = api.IssueImpact{WindowStart: since, WindowEnd: until, IdentifiedCustomers: impact.IdentifiedCustomers, ObservedEvents: impact.ObservedEvents, UnattributedEvents: impact.UnattributedEvents, Coverage: "observed retained events; uninstrumented or rejected failures are not counted"}
+	out.Impact = api.IssueImpact{WindowStart: since, WindowEnd: until, IdentifiedCustomers: impact.IdentifiedCustomers, ObservedEvents: impact.ObservedEvents, UnattributedEvents: impact.UnattributedEvents, UnknownHTTPBatches: impact.UnknownHttpBatches, Coverage: "observed retained events; uninstrumented or rejected failures are not counted"}
 	return out, tx.Commit(ctx)
 }
 
@@ -890,16 +1120,20 @@ func actOnIssueTxDetails(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app, i
 // MaintainIssues is a bounded sweep, independent of whether an app receives
 // new events. Issue metadata and release totals outlive occurrence retention.
 func (s *PgStore) MaintainIssues(ctx context.Context, now time.Time) error {
-	q := sqlc.New()
-	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
-		if _, err := q.IssuePurgePlanEvents(ctx, s.pool, sqlc.IssuePurgePlanEventsParams{Plan: string(plan), Before: issueTime(now.AddDate(0, 0, -plan.IssueLimits().RetentionDays)), BatchLimit: api.IssueMaintenanceBatch}); err != nil {
-			return err
-		}
-	}
-	if _, err := q.IssuePurgeExpiredTokens(ctx, s.pool, issueTime(now)); err != nil {
+	if _, err := s.MaintainIssueRetention(ctx, now); err != nil {
 		return err
 	}
+	return s.MaintainIssueHousekeeping(ctx, now)
+}
+
+// MaintainIssueHousekeeping advances attribution and expired ignores without
+// coupling them to a potentially large retention backlog.
+func (s *PgStore) MaintainIssueHousekeeping(ctx context.Context, now time.Time) error {
+	q := sqlc.New()
 	if err := s.enrichIssueAttribution(ctx, now); err != nil {
+		return err
+	}
+	if err := s.reviewHistoricalIssueAttribution(ctx, now); err != nil {
 		return err
 	}
 	rows, err := q.IssueExpiredIgnores(ctx, s.pool, sqlc.IssueExpiredIgnoresParams{Now: issueTime(now), BatchLimit: api.IssueMaintenanceBatch})
@@ -914,26 +1148,78 @@ func (s *PgStore) MaintainIssues(ctx context.Context, now time.Time) error {
 	return nil
 }
 
+// MaintainIssueRetention deletes one bounded batch per plan and one token
+// batch. A full batch signals the worker to keep draining after a short pause.
+func (s *PgStore) MaintainIssueRetention(ctx context.Context, now time.Time) (bool, error) {
+	q := sqlc.New()
+	more := false
+	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		n, err := q.IssuePurgePlanEvents(ctx, s.pool, sqlc.IssuePurgePlanEventsParams{Plan: string(plan), Before: issueTime(now.AddDate(0, 0, -plan.IssueLimits().RetentionDays)), BatchLimit: api.IssueMaintenanceBatch})
+		if err != nil {
+			return false, err
+		}
+		more = more || n >= api.IssueMaintenanceBatch
+	}
+	n, err := q.IssuePurgeExpiredTokens(ctx, s.pool, sqlc.IssuePurgeExpiredTokensParams{Now: issueTime(now), BatchLimit: api.IssueMaintenanceBatch})
+	if err != nil {
+		return false, err
+	}
+	return more || n >= api.IssueMaintenanceBatch, nil
+}
+
 func issueDebugRequest(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, account, app, dep string, e api.IssueEvent) string {
 	if e.RequestID == "" && e.TraceID == "" {
 		return ""
 	}
-	rows, err := q.IssueDebugRequest(ctx, db, sqlc.IssueDebugRequestParams{AccountID: issueUUID(account), AppID: issueUUID(app), DeploymentID: issueUUID(dep), RequestID: issueUUID(e.RequestID), TraceID: e.TraceID, Since: issueTime(e.OccurredAt.Add(-api.IssueMaxClockSkew)), Until: issueTime(e.OccurredAt.Add(api.IssueMaxClockSkew))})
+	rows, err := q.IssueDebugRequest(ctx, db, sqlc.IssueDebugRequestParams{AccountID: issueUUID(account), AppID: issueUUID(app), DeploymentID: issueUUID(dep), RequestID: e.RequestID, TraceID: e.TraceID, Since: issueTime(e.OccurredAt.Add(-api.IssueMaxClockSkew)), Until: issueTime(e.OccurredAt.Add(api.IssueMaxClockSkew))})
 	if err == nil && len(rows) == 1 {
 		return issueID(rows[0])
 	}
 	return ""
 }
 
+// After an initial prompt check, space retries so one app's retained events do
+// not exceed the shared maintenance budget. Complete identities use the same
+// cadence and get a final grace period after the evidence window.
+const issueVerifiedRecheckInterval = 30 * time.Minute
+
 func (s *PgStore) enrichIssueAttribution(ctx context.Context, now time.Time) error {
 	q := sqlc.New()
-	rows, err := q.IssueUnattributedEvents(ctx, s.pool, sqlc.IssueUnattributedEventsParams{Before: issueTime(now.Add(-api.IssueMaintenanceInterval)), BatchLimit: api.IssueMaintenanceBatch})
-	if err != nil {
-		return err
-	}
-	for _, row := range rows {
-		if err := s.enrichOneIssueAttribution(ctx, q, row, now); err != nil {
+	// Drain several pages without monopolizing maintenance indefinitely.
+	deadline := time.Now().Add(api.IssueMaintenanceInterval / 2)
+	blockedApps := make(map[pgtype.UUID]bool)
+	var excludedApps []pgtype.UUID
+	for batch := 0; batch < api.IssueAttributionMaxBatches; batch++ {
+		queryCtx, cancel := context.WithDeadline(ctx, deadline)
+		rows, err := q.IssueUnattributedEvents(queryCtx, s.pool, sqlc.IssueUnattributedEventsParams{Before: issueTime(now.Add(-api.IssueMaintenanceInterval)), VerifiedBefore: issueTime(now.Add(-issueVerifiedRecheckInterval)), WindowStart: issueTime(now.Add(-api.IssueAttributionRetryWindow)), FullOldest: issueTime(now.Add(-api.IssueAttributionRetryWindow - issueVerifiedRecheckInterval - api.IssueMaintenanceInterval)), BatchLimit: api.IssueAttributionBatch, ExcludedAppIds: excludedApps})
+		cancel()
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+				return nil
+			}
 			return err
+		}
+		for _, row := range rows {
+			if time.Now().After(deadline) {
+				return nil
+			}
+			if blockedApps[row.AppID] {
+				continue
+			}
+			rowCtx, rowCancel := context.WithDeadline(ctx, minTime(deadline, time.Now().Add(api.IssueAttributionRowTimeout)))
+			err := s.enrichOneIssueAttribution(rowCtx, q, row, now)
+			rowCancel()
+			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+				blockedApps[row.AppID] = true
+				excludedApps = append(excludedApps, row.AppID)
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if len(rows) < api.IssueAttributionBatch || time.Now().After(deadline) {
+			break
 		}
 	}
 	return nil
@@ -942,11 +1228,16 @@ func (s *PgStore) enrichIssueAttribution(ctx context.Context, now time.Time) err
 // issueAttributionSettled reports whether no later evidence can attribute the
 // occurrence: it names no request, trace or invocation, or its evidence had
 // api.IssueAttributionRetryWindow since ingestion to arrive.
-func issueAttributionSettled(e api.IssueEvent, receivedAt, now time.Time) bool {
+func issueAttributionSettled(e api.IssueEvent, receivedAt, lastChecked, now time.Time) bool {
 	if e.RequestID == "" && e.TraceID == "" && e.InvocationID == "" {
 		return true
 	}
-	return !receivedAt.After(now.Add(-api.IssueAttributionRetryWindow))
+	if receivedAt.After(now.Add(-api.IssueAttributionRetryWindow)) {
+		return false
+	}
+	// If a backlog delayed the first attempt past the window, give evidence
+	// at least one further maintenance interval to arrive.
+	return lastChecked.After(receivedAt.Add(api.IssueMaintenanceInterval))
 }
 
 func (s *PgStore) enrichOneIssueAttribution(ctx context.Context, q *sqlc.Queries, row sqlc.IssueUnattributedEventsRow, now time.Time) error {
@@ -969,17 +1260,53 @@ func (s *PgStore) enrichOneIssueAttribution(ctx context.Context, q *sqlc.Queries
 	}
 	in := RecordIssueParams{Credential: IssueCredential{AccountID: issueID(row.AccountID), AppID: issueID(row.AppID), DeploymentID: issueID(row.DeploymentID), Environment: row.Environment}, Event: e}
 	consumer, tenant, attributionErr := issueAttribution(ctx, q, tx, in)
+	if errors.Is(attributionErr, ErrNotFound) && e.InvocationID != "" {
+		// A deleted invocation must not prevent independent request evidence
+		// from revoking an earlier identity. It cannot supply a new identity.
+		probe := in
+		probe.Event.InvocationID = ""
+		observedConsumer, observedTenant, probeErr := issueAttribution(ctx, q, tx, probe)
+		if errors.Is(probeErr, ErrIssueAttributionConflict) ||
+			row.VerifiedConsumerID.Valid && observedConsumer.Valid && row.VerifiedConsumerID != observedConsumer ||
+			row.VerifiedPlatformTenantID.Valid && observedTenant.Valid && row.VerifiedPlatformTenantID != observedTenant {
+			attributionErr = ErrIssueAttributionConflict
+		} else if probeErr != nil {
+			return probeErr
+		}
+	}
+	conflicted := errors.Is(attributionErr, ErrIssueAttributionConflict)
 	// Deleted invocations or conflicting evidence never acquire a customer.
-	if attributionErr != nil && !errors.Is(attributionErr, ErrNotFound) && !errors.Is(attributionErr, ErrInvalidArgument) {
+	if attributionErr != nil && !errors.Is(attributionErr, ErrNotFound) && !errors.Is(attributionErr, ErrIssueAttributionConflict) {
 		return attributionErr
 	}
 	if attributionErr != nil {
 		consumer = pgtype.UUID{}
 		tenant = pgtype.UUID{}
 	}
+	// Revoke partial identity when newly available trusted evidence conflicts.
+	if row.VerifiedConsumerID.Valid && consumer.Valid && row.VerifiedConsumerID != consumer || row.VerifiedPlatformTenantID.Valid && tenant.Valid && row.VerifiedPlatformTenantID != tenant {
+		conflicted = true
+	}
+	if conflicted {
+		consumer, tenant = pgtype.UUID{}, pgtype.UUID{}
+	} else {
+		if row.VerifiedConsumerID.Valid && tenant.Valid && (!consumer.Valid || row.VerifiedConsumerID != consumer) {
+			tenant = pgtype.UUID{}
+		}
+		if row.VerifiedPlatformTenantID.Valid && consumer.Valid && (!tenant.Valid || row.VerifiedPlatformTenantID != tenant) {
+			consumer = pgtype.UUID{}
+		}
+		if row.VerifiedConsumerID.Valid {
+			consumer = row.VerifiedConsumerID
+		}
+		if row.VerifiedPlatformTenantID.Valid {
+			tenant = row.VerifiedPlatformTenantID
+		}
+	}
+	identityAdded := !row.VerifiedConsumerID.Valid && consumer.Valid || !row.VerifiedPlatformTenantID.Valid && tenant.Valid
 	var customersBefore int64
 	var minimumCustomers int64
-	if consumer.Valid || tenant.Valid {
+	if identityAdded {
 		policy, err := q.IssueGetImpactAlertPolicy(ctx, tx, row.AppID)
 		if err != nil {
 			return err
@@ -995,17 +1322,23 @@ func (s *PgStore) enrichOneIssueAttribution(ctx context.Context, q *sqlc.Queries
 		}
 	}
 	checkedAt := issueTime(now)
-	if !consumer.Valid && !tenant.Valid && issueAttributionSettled(e, row.ReceivedAt.Time, now) {
+	if issueAttributionSettled(e, row.ReceivedAt.Time, row.AttributionCheckedAt.Time, now) ||
+		(row.VerifiedConsumerID.Valid && row.VerifiedPlatformTenantID.Valid && !row.ReceivedAt.Time.After(now.Add(-api.IssueAttributionRetryWindow))) {
 		// Checked for the last time: an infinite check time takes the
 		// occurrence out of the retry scan for good, instead of locking its app
 		// and rewriting the row every maintenance pass until retention purges it.
 		checkedAt = pgtype.Timestamptz{InfinityModifier: pgtype.Infinity, Valid: true}
 	}
-	changed, err := q.IssueEnrichAttribution(ctx, tx, sqlc.IssueEnrichAttributionParams{AppID: row.AppID, DeploymentID: row.DeploymentID, EventID: row.EventID, ConsumerID: consumer, TenantID: tenant, Now: checkedAt})
+	changed, err := q.IssueEnrichAttribution(ctx, tx, sqlc.IssueEnrichAttributionParams{AppID: row.AppID, DeploymentID: row.DeploymentID, EventID: row.EventID, ConsumerID: consumer, TenantID: tenant, Now: checkedAt, PreviousConsumerID: row.VerifiedConsumerID, PreviousTenantID: row.VerifiedPlatformTenantID, PreviousCheckedAt: row.AttributionCheckedAt})
 	if err != nil {
 		return err
 	}
-	if changed > 0 && minimumCustomers > 0 && (consumer.Valid || tenant.Valid) {
+	if changed > 0 && (row.AttributionVersion < 2 || row.VerifiedConsumerID != consumer || row.VerifiedPlatformTenantID != tenant) {
+		if err := q.IssueMarkAttributionReviewed(ctx, tx, row.ID); err != nil {
+			return err
+		}
+	}
+	if changed > 0 && minimumCustomers > 0 && identityAdded {
 		customersAfter, countErr := q.IssueImpactCustomerCount(ctx, tx, sqlc.IssueImpactCustomerCountParams{
 			IssueID: row.IssueID, Since: issueTime(now.Add(-api.IssueImpactAlertWindow)), Until: issueTime(now),
 		})
@@ -1020,6 +1353,19 @@ func (s *PgStore) enrichOneIssueAttribution(ctx context.Context, q *sqlc.Queries
 			if err := recordIssueImpactThresholdTransition(ctx, q, tx, sqlc.AppIssue(issue), minimumCustomers, customersBefore, customersAfter, issueID(row.DeploymentID), now); err != nil {
 				return err
 			}
+		}
+	}
+	if changed > 0 && identityAdded {
+		// Late customer evidence can be the final condition of a compound
+		// alert. Reevaluate under the same app lock and transaction as the
+		// attribution update; cooldown receipts prevent duplicate delivery.
+		issue, err := q.IssueGetGroup(ctx, tx, sqlc.IssueGetGroupParams{AppID: row.AppID, ID: row.IssueID})
+		if err != nil {
+			return err
+		}
+		in.Now = now
+		if err = recordIssueCompoundAlerts(ctx, q, tx, sqlc.AppIssue(issue), in); err != nil {
+			return err
 		}
 	}
 	return tx.Commit(ctx)

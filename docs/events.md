@@ -5,6 +5,10 @@ recover failed deliveries. Events are a preview; this page moved out of
 [event-driven workloads](event-driven.md) so that page can be published
 (#5709), and it is published when events reach beta.
 
+To consume records from a broker you run (Kafka, NATS JetStream, Redis
+Streams), use a broker trigger; its delivery guarantees, retries, ordering,
+limits and TLS are on [broker triggers](broker-triggers.md).
+
 ## Event workflow starts
 
 A workflow can start directly from an internal event without an adapter handler:
@@ -229,15 +233,25 @@ gregale event publish --id evt-123 --source billing.stripe --type invoice.paid \
   --data '{"amount":150}'
 ```
 
+HTTP and CLI publication require the complete event envelope, including
+server-added metadata, to fit within the 1 MiB workflow input limit. The check
+also conservatively accounts for exponent-form JSON numbers expanding when
+stored. Oversized events are rejected before acceptance with
+`event_envelope_too_large`; batch publication reports that error on the item.
+
 ### Subscription limits and removal
 
 On a production deploy, the `event_triggers` in `gregale.yaml` are the app's
 whole set of event subscriptions
-([ADR 20261031130000](adr/20261031130000-event-subscription-reconcile.md)):
+([ADR 20261031130000](adr/20261031130000-event-subscription-reconcile.md)).
+The set takes effect when that release serves all production traffic
+([ADR 20261101030512](adr/20261101030512-event-subscriptions-go-live.md)):
+a scheduled, `--no-traffic`, failed or cancelled deploy disables nothing, and
+the old release's triggers keep delivering until the new one is live.
 
-- A trigger you remove is disabled. Events not yet routed to it are not
-  delivered; their receipts show it as filtered. Deliveries that already
-  started finish.
+- A trigger you remove is disabled once the release is live. Events not yet
+  routed to it are not delivered; their receipts show it as filtered.
+  Deliveries that already started finish.
 - Changing a trigger's filter replaces its subscription; the old filter stops
   delivering.
 - Declaring a trigger again re-enables the same subscription, with its
@@ -255,11 +269,14 @@ Each plan caps the enabled subscriptions per app and per account:
 | Pro | 20 | 50 |
 | Scale | 100 | 500 |
 
-A deploy that would go past a cap is refused with `403
+A deploy is counted as its declared set will stand once live, so replacing
+every trigger of an app at its cap works. A deploy, stage deploy or batch
+trigger create that would go past a cap is refused with `403
 plan_event_subscription_quota`, naming the limit and the count it would have
-reached, and changes nothing. The caps hold on every path that adds a
-subscription: a stage deploy and `POST /v1/triggers:batch_create` keep what
-is there, but what they add counts. Numbers in filters are kept exactly, so a filter
+reached, and changes nothing. If an `event_triggers` entry names an app that
+doesn't exist (for example after a rename), the deploy only adds
+subscriptions and disables none; update `gregale.yaml` to the new name.
+Numbers in filters are kept exactly, so a filter
 on an integer ID larger than 2^53 matches only that ID.
 
 ### Delivery identity
@@ -416,7 +433,7 @@ While it is paused:
 - Events already accepted are kept and wait to be routed; routing resumes when
   the pause ends. Delivery-age limits keep counting while they wait.
 - Deliveries that already became invocations run as usual.
-- Object-storage notifications, inbound webhook automation and other events
+- Object-storage notifications, inbound webhook stored workflow and other events
   Gregale publishes for you are still accepted and wait with the rest.
 
 ### Publish rate
@@ -444,6 +461,7 @@ decision on that event
 |---|---|---|
 | `202` | | Accepted and stored; it will be routed. |
 | `400` | `invalid_event` | The envelope is malformed or uses a reserved source. Fix it; do not retry as is. |
+| `413` | `event_envelope_too_large` | The normalized event envelope exceeds the workflow input limit. Reduce the data before retrying. |
 | `422` | `validation_failed` | The data does not match the event's registered schema. |
 | `429` | `event_publish_rate_limited` | Over your plan's [publish rate](#publish-rate). Retry the same event after `Retry-After`. |
 | `503` | `events_paused` | Events are [paused](#pausing-events). Retry the same event after `Retry-After`. |

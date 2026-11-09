@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -80,6 +80,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresBindings(args[1:])
 	case "attach", "bind":
 		return cmdPostgresAttach(args[1:])
+	case "connect":
+		return cmdPostgresConnect(args[1:])
 	case "live":
 		return cmdPostgresLive(args[1:])
 	default:
@@ -369,6 +371,8 @@ func cmdPostgresList(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "%s is scheduled for deletion; undo before %s with: gregale postgres recover %s\n", database.Name, database.RestorableUntil, database.Name)
 		} else if database.RestoreSlotUntil != "" {
 			_, _ = fmt.Fprintf(osStdout, "%s is a restored copy past your plan's database limit; its delete is scheduled at %s unless you purge a database or upgrade first\n", database.Name, database.RestoreSlotUntil)
+		} else if note := postgresPlanExcessNote(database); note != "" {
+			_, _ = fmt.Fprintf(osStdout, "%s is %s\n", database.Name, note)
 		}
 	}
 	return 0
@@ -848,6 +852,9 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 	if database.RestoreSlotUntil != "" {
 		_, _ = fmt.Fprintf(w, "  restore_slot_until: %s (a temporary copy past your plan's database limit; purge a database or upgrade to keep it)\n", database.RestoreSlotUntil)
 	}
+	if note := postgresPlanExcessNote(database); note != "" {
+		_, _ = fmt.Fprintf(w, "  plan_excess:      %s (%s)\n", database.PlanExcess, note)
+	}
 	if health := database.Health; health != nil {
 		_, _ = fmt.Fprintf(w, "  provider_health:  %s (fresh=%t)\n", health.Status, health.Fresh)
 		_, _ = fmt.Fprintf(w, "  compute_state:    %s\n", health.ComputeState)
@@ -912,4 +919,17 @@ func adoptRotationAfterUncertainError(ctx context.Context, client interface {
 		return api.ManagedPostgresBinding{}, false
 	}
 	return now, true
+}
+
+// postgresPlanExcessNote explains a database the plan no longer includes
+// (ADR-20261102125208); empty for any other database.
+func postgresPlanExcessNote(database api.ManagedPostgresDatabase) string {
+	switch database.PlanExcess {
+	case "database_limit":
+		return "suspended: your plan allows fewer databases than you have; its data is kept. Upgrade or delete a database to resume it"
+	case "service_class":
+		return fmt.Sprintf("suspended: your plan does not include the %s class; its data is kept. Upgrade, or resize it to a class your plan includes with gregale postgres resize, to resume it", database.ServiceClass)
+	default:
+		return ""
+	}
 }

@@ -1,5 +1,10 @@
 # ADR-119 · Static outbound IP per app (Scale-only, operator-provisioned, single-node v1)
 
+Runtime source selection and tenant-gateway routing are amended by
+[ADR-20261103194727](20261103194727-network-policy-runtime-enforcement.md).
+SNAT matches each VM's actual lease address; reserved app addresses are not
+packet source addresses.
+
 - **Status:** proposed (PR-#997 redesign, round 4 — IP source changed
   from customer-supplied BYOIP to operator-provisioned additional IPs
   to keep return-path routing intact; per-netns SNAT path deleted in

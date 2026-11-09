@@ -106,6 +106,19 @@ func TestCommandCapabilityPath(t *testing.T) {
 		// Hunt 14 H14-100: the profile gate route belongs to the internal
 		// traffic-profiles capability.
 		{[]string{"canary", "gate", "dep"}, "canary gate", "traffic-profiles"},
+		// rc.318 field report: these answered a bare "no such API route"
+		// on production-us, where their preview capabilities are off.
+		{[]string{"alerts", "actions", "--app", "my-app"}, "alerts actions", "alert-rollbacks"},
+		{[]string{"app", "my-app", "exec", "--", "ls"}, "app exec", "app-tasks"},
+		{[]string{"app", "my-app", "cp", "/tmp/x", "-"}, "app cp", "app-tasks"},
+		{[]string{"app", "my-app", "port-forward", "5432:db:5432"}, "app port-forward", "app-tasks"},
+		// ChronoLake report: `app network show` and `doctor` inspect any
+		// app's network (docs/networking.md); only attaching a private
+		// network is the private-networks preview.
+		{[]string{"app", "my-app", "network", "show"}, "app network show", "apps"},
+		{[]string{"app", "my-app", "network", "doctor"}, "app network doctor", "apps"},
+		{[]string{"app", "my-app", "network", "attach", "net", "--region", "r", "--cidrs", "10.0.0.0/24"}, "app network attach", "private-networks"},
+		{[]string{"app", "my-app", "network", "detach"}, "app network detach", "private-networks"},
 		{[]string{"deploy"}, "deploy", ""},
 	} {
 		path := main.CommandCapabilityPath(tc.args)
@@ -160,8 +173,11 @@ func TestLoggedOutHelpShowsTierDefaults(t *testing.T) {
 		t.Fatal("bash completion must offer realtime once every capability is released")
 	}
 	clearCapabilityReleaseAll(t)
-	if _, reference, _ := runCLI(t, "man", "--markdown"); !strings.Contains(reference, "realtime") {
-		t.Fatal("the generated reference must document every released command")
+	// The public reference documents GA and beta commands only (CLI audit
+	// 2026-11-04), whatever the account or the release-all switch shows.
+	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "1")
+	if _, reference, _ := runCLI(t, "man", "--markdown"); strings.Contains(reference, "\n## realtime\n") || !strings.Contains(reference, "\n## cron\n") {
+		t.Fatal("the generated reference must document GA cron and leave out preview realtime")
 	}
 }
 

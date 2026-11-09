@@ -3,10 +3,11 @@ package api
 import (
 	"fmt"
 	"net/netip"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 const (
@@ -25,9 +26,11 @@ const (
 	PrivateNetworkPeeringStatusError      = "error"
 	PrivateNetworkMinPrefixBits           = 16
 	PrivateNetworkMaxPrefixBits           = 28
+	// The VXLAN wire identifier reserves zero and the all-ones value.
+	PrivateNetworkMaxTransportVNI = 16_777_214
 )
 
-var privateNetworkIdentifierPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+var privateNetworkIdentifierPattern = lazyregexp.New(`^[a-z][a-z0-9-]{0,62}$`)
 
 // PrivateNetwork is the customer-visible Gregale-owned network definition.
 // Status describes the control-plane definition; an app attachment still

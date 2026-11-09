@@ -38,15 +38,27 @@ The `workflows_and_jobs` platform flag gates both; `workflows` and `jobs` gate
 each one ([platform flags](../ops/platform-flags.md)). The flags are beta, so
 they are on for every entitled account unless an operator writes them.
 
+The separate `stored_workflows` flag gates the authoring API and dashboard. It does
+not stop published definitions, schedule admissions, accepted events, or runs:
+those share the workflow runtime with manifest-defined workflows. Before hiding
+the authoring surface, pause the affected stored workflows and drain or cancel their
+existing runs. To hold all workflow execution for an account during an incident,
+deny `workflows` as described below; this also affects manifest workflows. A
+selective execution switch requires durable ownership of each admitted run and
+event, including legacy work and definition ownership changes.
+
 - **Stop one capability for everyone:**
   `gregalectl flags disable --key workflows --reason <incident> --yes` (or
   `--key jobs`). Within seconds apid answers the routes with `404`, and schedd
   defers held runs and tasks a minute at a time without spending a delivery
-  attempt. Nothing is failed or dropped: `gregalectl flags enable` resumes the
-  backlog. Cancel the work as well if the capability stays off.
+  attempt. New scheduled work is not admitted while the platform-wide switch
+  is off; each schedule's missed-fire policy applies when it is restored.
+  Cancel held work as well if the capability stays off.
 - **Stop one account:**
   `gregalectl flags deny --key workflows --account-id <uuid>` (or `jobs`).
   Use it when one account's long steps or jobs saturate dispatch for others.
+  App- and tenant-scoped schedules follow their missed-fire policies after the
+  account is re-enabled.
 - **Stop workflow dispatch on a host:** unset `FAAS_WORKFLOWS_ENABLED` on
   schedd and restart it. Runs stay `pending` and are claimed again once it is
   set back. Prefer the flag; this also hides the API on apid when unset
@@ -93,6 +105,17 @@ lease are not counted.
 3. Runs over their app or tenant in-flight cap wait by design; a single app
    with thousands of due runs shows lag only for that app's runs. Compare
    with `sum by (app) (rate(workflow_runs_total[10m]))`.
+
+## Workflow retention
+
+Completed workflow runs and their steps are retained for 30 days. Run events
+are retained for 90 days from receipt, including after the run is removed;
+those events move to `workflow_event_archive`. Permanent app deletion removes
+the archive for that app. Active runs keep their events until they terminate.
+
+The hourly retention worker removes expired rows in bounded batches away from
+the scheduler loop. A backlog or failed sweep can delay physical removal; check
+the schedd journal for `workflow retention: sweep failed` before intervening.
 
 ## FaasJobsQueueBacklog
 

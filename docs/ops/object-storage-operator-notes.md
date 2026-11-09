@@ -121,7 +121,7 @@ Create a bucket with `public: true` and a stable `serve_at` path, for example
 is ready, `GET` and `HEAD` requests to
 `https://<app>.<apps-domain>/assets/<key>` are served directly by
 `gatewayd-public`; a route hit never wakes or proxies to the app. Responses
-use `Cache-Control: public, max-age=300, must-revalidate` and do not require a
+use `Cache-Control: public, max-age=300, must-revalidate, no-transform` and do not require a
 Gregale or S3 signed URL. Caches revalidate every five minutes, so deleting or
 replacing an object takes it down everywhere within that time. Anonymous reads
 may use at most 75% of the account's monthly request and egress ceilings, so
@@ -553,7 +553,10 @@ concurrent writes to the same part return 409. Different parts remain concurrent
 Successful verified transfers settle their token. Failed or uncertain transfers
 block finalization for a conservative 36-minute window (30-minute transfer
 context, 60-second internal URL, five-minute grace). Expiry alone releases no
-capacity. Completion checks the part revision and absence of in-flight writes,
+capacity. An abort settles an uncertain attempt once its window has ended and
+the native abort is verified (no parts or `NoSuchUpload`), so an upload a
+client abandoned mid-part finishes aborting instead of retrying forever
+(ADR-20261104151650); completion still waits for proof. Completion checks the part revision and absence of in-flight writes,
 then atomically persists its size, exact part list, and final-object grant.
 
 Conditional completion also persists its immutable condition in a distinct
@@ -921,27 +924,48 @@ that already has buckets, and turn the mode on before the first customer
 bucket. Production has run this mode since `2026-10-12T08:41:00Z`, before its
 first bucket.
 
-A paid account's stored-bytes ceiling is its included storage plus what its
-spend cap buys (ADR-20261101214152); without a cap it is
-`max_account_bytes`. Paid plans set no request or authorization ceilings of
-their own, so size those values, and `max_account_bytes` for accounts that
-clear their cap, for the largest plan. `max_account_keys` is at most one
+Each plan has its own stored-bytes ceiling (ADR-20261101214152): Free 1 GiB,
+Hobby 20 GiB, Pro 250 GiB, Scale 1,000 GiB. A spend cap below what that
+storage costs lowers it. Support raises one paid account's ceiling with
+`gregalectl accounts object-storage-ceiling --account-id ID --gib N --reason
+R --yes`, and `--plan` returns it to the plan's; the cap still applies, and
+`max_account_bytes` still bounds every account. Paid plans set no request or
+authorization ceilings of their own, so size those values, and
+`max_account_bytes` for the largest grant support may give. `max_account_keys` is at most one
 million (`api.MaxObjectStorageAccountKeys`), because a bucket is metered by
 listing it whole.
 
-Example safety values **only**, not approved pricing or plan allowances:
+apid enforces the tighter of the safety policy and the plan, so a policy
+below what the plans sell holds every account below its plan. With
+`FAAS_ENVIRONMENT=production`, apid refuses new buckets and withdraws object
+storage from capabilities until `max_account_bytes` and `max_bucket_bytes`
+reach the largest plan ceiling (1,000 GiB), `max_monthly_egress_bytes` the
+largest plan egress (2,000 GiB) and `max_account_keys` one million; every
+environment logs the shortfall at startup (`object storage safety policy
+sells plans less than they promise`). CD sets `FAAS_ENVIRONMENT=production`
+for apid in every `production*` environment (the control-plane role's
+`faas_environment`, staged by `scripts/ci/faas_environment_vars.sh`); before
+2026-11-03 no deploy set it, so the refusal never ran. A support grant above
+`max_account_bytes` is refused, because it would not take effect.
+
+A provider that refuses the installation's credentials withdraws object
+storage for an hour; after that the next bucket operation tries the provider
+again and restores it or renews the hour.
+
+Example safety values, sized for the plans (production-us runs these since
+2026-11-02); they are not plan allowances:
 
 ```json
 "accounting": {
   "accounting_mode": "gateway_safety_v1",
   "gateway_metering_since": "2026-11-01T00:00:00Z",
-  "max_account_bytes": 10737418240,
-  "max_bucket_bytes": 5368709120,
-  "max_account_keys": 100000,
+  "max_account_bytes": 1099511627776,
+  "max_bucket_bytes": 1099511627776,
+  "max_account_keys": 1000000,
   "max_monthly_cost_millicents": 0,
-  "max_monthly_requests": 1000000,
-  "max_monthly_egress_bytes": 10737418240,
-  "max_monthly_authorizations": 100000,
+  "max_monthly_requests": 10000000,
+  "max_monthly_egress_bytes": 2147483648000,
+  "max_monthly_authorizations": 1000000,
   "max_report_age_seconds": 7200
 }
 ```
@@ -1072,7 +1096,9 @@ each backend's optional `usage_reports_path` to an **absolute, operator-owned
 regular JSON file**, readable by apid but not writable by customer workloads.
 A provider-specific exporter must atomically replace this file with an array
 of `ObjectStorageUsageReport` records from actual provider data. Apid imports
-it each accounting sweep. Files are capped at 4 MiB / 10,000 reports. Keep
+it each accounting sweep. Files are capped at 4 MiB / 10,000 reports, including
+the serialized JSON and trailing newline. The publisher checks both limits
+before replacing the previous file, using the same bounds as the importer. Keep
 exports limited to the latest cumulative report per account/month/backend.
 Publish the same feed to all API replicas, or configure a designated importer.
 
@@ -1087,16 +1113,24 @@ as zero. Neither Gregale's compute MB-seconds nor inventory samples substitute
 for these billing quantities.
 
 The repository includes an OVH Public Cloud adapter in
-`pkg/objectstorage/ovh_usage.go`. It reads the provider's signed usage-history
-API and normalizes bucket storage byte-hours, outgoing bandwidth, and provider
-costs when the provider response is denominated in EUR. A non-EUR project is
+`pkg/objectstorage/ovh_usage.go`. It reads the provider's signed `/usage/current`
+API for the current UTC month and `/usage/history` for closed periods. Historical
+exports require one matching, finalized complete UTC-month document; missing,
+partial or ambiguous periods remain unavailable. The adapter normalizes bucket
+storage byte-hours, outgoing bandwidth, and provider costs. Native per-storage
+`totalPrice` values are decimal numbers; the enclosing document supplies the
+currency. EUR prices are converted with exact decimal arithmetic, rounding a
+positive fractional millicent up. A non-EUR project is
 rejected until an explicit operator FX/conversion policy exists. OVH's public
 usage response does not currently include a request count, so the branded
 gateway records every outbound provider request attempt in the durable
 `object_storage_request_metrics` ledger. For GA, the OVH runner reads OVH
 Server Access Logging from the configured operator bucket per physical bucket
-and month, which also covers direct provider URLs; it fails closed when a log
-object is missing, malformed, partial, or unknown. It never substitutes
+and month, including direct provider URLs. Publication requires independent
+coverage evidence from a qualified collector; best-effort delivery and a
+nonempty log bucket cannot establish completeness. It fails closed when
+coverage or a selected log object is missing, malformed, partial, or unknown.
+It never substitutes
 signed-URL issuance counts or an explicit zero for unavailable data. The
 catalog and request source are injected through narrow interfaces so a
 qualified R2, AWS, GCS, or storage-node adapter can replace OVH without
@@ -1115,7 +1149,9 @@ For an OVH backend, set `usage.driver` to `ovh`, provide the three OVH API
 credential environment-variable names, and configure `request_log_bucket` (and
 optionally `request_log_prefix`) for a dedicated same-region bucket receiving
 [OVH Server Access Logging](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-server-access-logging)
-from every managed physical bucket. Keep
+from every managed physical bucket. Set `request_log_coverage_path` to an
+absolute path containing the qualified collector's coverage manifest described
+below. Without that configuration the OVH export job is not started. Keep
 `usage_reports_path` in the operator-owned registry, in a directory `apid` owns
 (for example `/var/spool/faas/object-storage-usage/<backend>.json`; apid
 creates the directory). `apid` runs the exporter immediately and every five
@@ -1124,14 +1160,74 @@ provider environment, atomically replaces that file, imports it each accounting
 sweep, and exposes `faas_object_storage_usage_exports_total` plus
 `faas_object_storage_usage_export_last_success_timestamp_seconds` (0 until the
 first success) on its metrics endpoint. No S3 gateway runs the export
-(ADR-20261031122757). OVH access logs are delivered asynchronously
-(normally about one hour later), so the report's `observed_at` is intentionally
-one hour behind the wall clock. Missing credentials, an unreadable/malformed
-log object, or a failed export does not publish a partial report; `apid`
+(ADR-20261031122757). Current reports retain the financial source's native
+`lastUpdate` as `observed_at`; closed reports use the last microsecond of the
+proven complete month. The exporter never substitutes wall-clock freshness or
+backdates newer cumulative data by an arbitrary lag. Request-log coverage must
+independently reach the financial observation, and request counts are filtered
+to that same instant. Asynchronous access-log delivery (normally about one
+hour later) alone cannot establish this coverage. A missing physical bucket in
+the financial source is unavailable, even when its request count is measured
+zero; a quiet bucket needs an explicit financial row too.
+Missing credentials or coverage, an unreadable/malformed log object, or a failed
+export does not publish a partial report; `apid`
 therefore continues to enforce the configured freshness window and fails closed
 when the previous report ages out. The durable request ledger remains useful
-for gateway diagnostics, but access logs are authoritative because API-issued
-direct S3 URLs bypass the gateway.
+for gateway diagnostics. Complete provider evidence must also cover API-issued
+direct S3 URLs, which bypass the gateway.
+
+The coverage file is a JSON array with one entry per UTC month. Each entry
+asserts complete request coverage from `period_start` through `covered_through`
+for the exact backend placement and catalogued physical bucket set. It lists
+every log object needed for that interval and the lowercase SHA-256 of its
+exact bytes. For example (replace the sample identities and digests):
+
+```json
+[
+  {
+    "version": 1,
+    "backend_id": "managed-virginia-v1",
+    "backend_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "log_bucket": "dedicated-ovh-access-log-bucket",
+    "log_prefix": "gregale/",
+    "period_start": "2026-11-01T00:00:00Z",
+    "covered_through": "2026-11-05T12:00:00Z",
+    "buckets": ["physical-managed-bucket"],
+    "objects": [
+      {
+        "key": "gregale/qualified-log-object",
+        "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+      }
+    ]
+  }
+]
+```
+
+`covered_through` must reach the export's requested observation time and cannot
+be in the future. Records after that observation time are excluded. Retain
+prior-month entries while month close still needs them. Bucket coverage is
+explicit even for quiet buckets; `objects: []` is valid only when the collector
+can independently attest zero requests for the complete covered interval.
+The exporter never creates this proof from log timestamps or file presence.
+This repository does not supply a qualified coverage producer: until one is
+available, OVH request exports remain unavailable. A collector must establish
+completeness independently before asserting it here; writing a manifest alone
+does not qualify a best-effort source for billing.
+
+Publish the manifest atomically in an operator-owned directory. It must be a
+regular file, not a symlink, and must not be group/world writable (use `0600`).
+The parser rejects unknown fields, duplicate months and trailing JSON. Reads
+are bounded to 8 MiB, 10,000 log objects, 64 MiB per object, 1 MiB per line and
+one million unique tracked requests per export. Selected objects are verified
+against their digests before any report is published. Repeated delivery of an
+identical bucket/request-ID record counts once across all selected objects;
+conflicting records with that identity reject the export. Missing IDs also
+reject it. Normal monotonic import checks still apply to any lower corrected
+total; this change does not rewrite previously imported usage.
+
+Deploy the updated binary before adding `request_log_coverage_path` to existing
+registries. The path does not change backend placement fingerprints. No usage
+report schema or database migration is needed.
 
 All fields are required, including explicit zero measurements. Reports must
 match catalogued backend placement. Identical repeats are harmless;
@@ -1308,6 +1404,15 @@ Third-party writers without the tracked capability retain conservative
 admissions and the previous failure-receipt behavior. Historical/direct signed
 uploads, copies and uncertain writes still cannot be force-refunded.
 
+Known GCS limitation: GCS returns a generation for every object, even in a
+bucket without versioning, and accounting reads any native version ID as
+retained versions. A GCS bucket's first tracked write therefore moves it to
+`all_versions` accounting, after which ADR-540 declines direct signed PUTs,
+untracked gateway writes and multipart completion with 409. S3 backends (OVH)
+return no version ID for an unversioned bucket and are unaffected. Object
+storage moves to OVH before customer launch, so this is not fixed on GCS
+(production journey 2026-11-03).
+
 The route policy is provider-neutral. It uses the registry's optional streaming
 writer, so switching an immutable bucket placement between OVH, R2, AWS, GCS,
 or another compatible backend does not change the customer endpoint. The
@@ -1478,10 +1583,10 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
   - **Pricing and budget cutoffs.** ADR-1430 prices storage. At the spend cap,
     storage keeps serving within plan limits and is billed only up to the cap
     ([ADR 20261020160000](../adr/20261020160000-object-storage-in-budgets.md));
-    budgets count the uncapped estimate. Free stops at 1 GiB. Paid plans have
-    no stored-bytes ceiling of their own, so the operator's
-    `max_account_bytes` bounds the storage above a customer's cap that nobody
-    pays for. Set it with that cost in mind.
+    budgets count the uncapped estimate. Each plan has a stored-bytes ceiling
+    (ADR-20261101214152), so the storage above a customer's cap that nobody
+    pays for is at most the plan's ceiling, or a support grant, less what the
+    cap covers.
   - **Account deletion.** Deleting an account, or 21 days of non-payment,
     starts the 30-day grace. Suspension, pending deletion and an abuse hold
     stop every data path at once: S3 credentials, signed URLs, upload grants

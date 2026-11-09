@@ -3,15 +3,17 @@ package state
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"golang.org/x/net/publicsuffix"
 )
 
-// CustomDomainTLSHostStore records which hostnames below a wildcard custom
-// domain the public edge has admitted for on-demand certificate issuance
+// CustomDomainTLSHostStore records which exact and wildcard hostnames
+// the public edge has admitted for on-demand certificate issuance
 // (ADR-520). The edge asks before it loads, obtains or renews a certificate,
 // so a host admitted once is admitted again for free and only a hostname
 // never seen before consumes issuance budget. gatewayd-public is the only
@@ -23,10 +25,10 @@ import (
 // source-compatible.
 type CustomDomainTLSHostStore interface {
 	// AdmitCustomDomainTLSHost reports whether a.Host may hold a
-	// certificate under the verified wildcard custom domain a.Wildcard. A
+	// certificate under the verified custom domain a.Wildcard. A
 	// host admitted before is admitted without consuming budget. A new host
 	// is recorded and admitted only while every cap in a has room. An
-	// unverified wildcard admits nothing; a missing one returns ErrNotFound.
+	// unverified claim admits nothing; a missing one returns ErrNotFound.
 	AdmitCustomDomainTLSHost(ctx context.Context, a CustomDomainTLSAdmission) (CustomDomainTLSVerdict, error)
 }
 
@@ -34,9 +36,16 @@ type CustomDomainTLSHostStore interface {
 // the hosts newly admitted within its window, including those whose
 // wildcard has since been deleted.
 type CustomDomainTLSAdmission struct {
+	// Wildcard is the authorizing claim, either *.example.com or an exact
+	// hostname equal to Host. Its legacy name is kept for compatibility.
 	Wildcard string
 	Host     string
 	Now      time.Time
+	// The public edge supplies both fields from its authorized claim. An
+	// admission cannot cross a replacement, including the known-host path.
+	// Empty fields retain compatibility for internal callers.
+	ExpectedAppID string
+	ExpectedToken string
 	// Window is the rolling window of PerRegisteredDomain and PerOwner.
 	// PerRegisteredDomain counts admissions under the wildcard's registered
 	// domain (public suffix + 1) across sibling wildcards; PerOwner counts
@@ -59,6 +68,8 @@ const (
 	TLSHostRegisteredDomainFull
 	TLSHostOwnerFull
 	TLSHostFleetFull
+	TLSHostClaimChanged
+	TLSHostNotAllowlisted
 )
 
 type customDomainTLSHost struct {
@@ -77,11 +88,14 @@ type customDomainTLSAdmission struct {
 func normalizeTLSHostAdmission(a CustomDomainTLSAdmission) (CustomDomainTLSAdmission, error) {
 	a.Wildcard = strings.ToLower(a.Wildcard)
 	a.Host = strings.ToLower(a.Host)
-	if !IsWildcardCustomDomain(a.Wildcard) {
-		return a, fmt.Errorf("%w: %q is not a wildcard custom domain", ErrInvalidArgument, a.Wildcard)
+	if ValidateCustomDomainName(a.Wildcard) != nil || ValidateCustomDomainName(a.Host) != nil || IsWildcardCustomDomain(a.Host) {
+		return a, fmt.Errorf("%w: invalid domain or TLS host", ErrInvalidArgument)
 	}
-	if !WildcardMatchesHost(a.Wildcard, a.Host) {
+	if a.Wildcard != a.Host && !WildcardMatchesHost(a.Wildcard, a.Host) {
 		return a, fmt.Errorf("%w: %q is not below %q", ErrInvalidArgument, a.Host, a.Wildcard)
+	}
+	if (a.ExpectedAppID == "") != (a.ExpectedToken == "") {
+		return a, fmt.Errorf("%w: incomplete TLS admission claim", ErrInvalidArgument)
 	}
 	if a.PerRegisteredDomain < 0 || a.PerOwner < 0 || a.FleetLimit < 0 || a.Window <= 0 || a.FleetWindow <= 0 {
 		return a, fmt.Errorf("%w: negative admission limit or empty window", ErrInvalidArgument)
@@ -130,12 +144,11 @@ func (s *pgCore) AdmitCustomDomainTLSHost(ctx context.Context, a CustomDomainTLS
 	if err != nil {
 		return 0, err
 	}
-	var known bool
-	if err := s.pool.QueryRow(ctx,
-		`select exists(
-		   select 1 from custom_domain_tls_hosts h
-		     join custom_domains d on d.domain = h.wildcard_domain
-		    where h.host = $1 and d.verified_at is not null)`, a.Host).Scan(&known); err != nil {
+	q := sqlc.New()
+	name, _ := WildcardHostName(a.Wildcard, a.Host)
+	lookup := sqlc.KnownCustomDomainTLSHostParams{Domain: a.Wildcard, Host: a.Host, ExpectedApp: a.ExpectedAppID, ExpectedToken: a.ExpectedToken, Name: name, Probe: probeHostAllowed(a.Wildcard, a.Host)}
+	known, err := q.KnownCustomDomainTLSHost(ctx, s.pool, lookup)
+	if err != nil {
 		return 0, fmt.Errorf("admit custom-domain tls host: lookup: %w", mapErr(err))
 	}
 	if known {
@@ -146,21 +159,35 @@ func (s *pgCore) AdmitCustomDomainTLSHost(ctx context.Context, a CustomDomainTLS
 		return 0, fmt.Errorf("admit custom-domain tls host: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var verified bool
-	var ownerID string
-	if err := tx.QueryRow(ctx,
-		`select d.verified_at is not null, coalesce(a.org_id, a.account_id)::text
-		   from custom_domains d join apps a on a.id = d.app_id
-		  where d.domain = $1 for no key update of d`,
-		a.Wildcard).Scan(&verified, &ownerID); err != nil {
+	claim, err := q.LockCustomDomainTLSAdmissionClaim(ctx, tx, a.Wildcard)
+	if err != nil {
 		return 0, fmt.Errorf("admit custom-domain tls host: lock wildcard: %w", mapErr(err))
 	}
-	if !verified {
+	if a.ExpectedAppID != "" && (claim.AppID != a.ExpectedAppID || claim.Token != a.ExpectedToken) {
+		return TLSHostClaimChanged, nil
+	}
+	if !claim.Verified {
 		return TLSHostWildcardUnverified, nil
 	}
+	allowed, err := q.CustomDomainTLSAdmissionAllowed(ctx, tx, sqlc.CustomDomainTLSAdmissionAllowedParams{Domain: a.Wildcard, Name: name, Probe: lookup.Probe})
+	if err != nil {
+		return 0, fmt.Errorf("admit custom-domain tls host: allowlist: %w", err)
+	}
+	if !allowed {
+		return TLSHostNotAllowlisted, nil
+	}
+	ownerID := claim.OwnerID
 	if _, err := tx.Exec(ctx,
 		`select pg_advisory_xact_lock(hashtextextended('custom_domain_tls_admissions', 0))`); err != nil {
 		return 0, fmt.Errorf("admit custom-domain tls host: lock ledger: %w", mapErr(err))
+	}
+	// Another request may have admitted this host while we waited for the
+	// domain or ledger lock. Reloads must stay free even when caps are full.
+	if known, err = q.KnownCustomDomainTLSHost(ctx, tx, lookup); err != nil {
+		return 0, fmt.Errorf("admit custom-domain tls host: recheck: %w", mapErr(err))
+	}
+	if known {
+		return TLSHostAdmitted, nil
 	}
 	if _, err := tx.Exec(ctx,
 		`delete from custom_domain_tls_admissions where admitted_at <= $1`, a.ledgerCutoff()); err != nil {
@@ -213,17 +240,22 @@ func (m *MemStore) AdmitCustomDomainTLSHost(_ context.Context, a CustomDomainTLS
 	if m.customDomainTLSHosts == nil {
 		m.customDomainTLSHosts = map[string]customDomainTLSHost{}
 	}
-	if prior, ok := m.customDomainTLSHosts[a.Host]; ok {
-		if d, live := m.domains[prior.wildcardDomain]; live && d.Verified() {
-			return TLSHostAdmitted, nil
-		}
-	}
 	d, ok := m.domains[a.Wildcard]
 	if !ok {
 		return 0, ErrNotFound
 	}
+	if a.ExpectedAppID != "" && (d.AppID != a.ExpectedAppID || d.ChallengeToken != a.ExpectedToken) {
+		return TLSHostClaimChanged, nil
+	}
 	if !d.Verified() {
 		return TLSHostWildcardUnverified, nil
+	}
+	name, _ := WildcardHostName(a.Wildcard, a.Host)
+	if names := m.customDomainTLSAllowedHosts[a.Wildcard]; len(names) > 0 && !probeHostAllowed(a.Wildcard, a.Host) && !slices.Contains(names, name) {
+		return TLSHostNotAllowlisted, nil
+	}
+	if prior, ok := m.customDomainTLSHosts[a.Host]; ok && prior.wildcardDomain == a.Wildcard {
+		return TLSHostAdmitted, nil
 	}
 	ownerID := d.AppID
 	if app, ok := m.apps[d.AppID]; ok {
@@ -270,6 +302,12 @@ func (m *MemStore) AdmitCustomDomainTLSHost(_ context.Context, a CustomDomainTLS
 // The previous claimant's list must not decide which names get the new
 // claim's certificates. The admission ledger stays, as on delete.
 func forgetCustomDomainTLSHostsTx(ctx context.Context, tx pgx.Tx, domain string) error {
+	if err := sqlc.New().ClearCustomDomainCertificateAttempt(ctx, tx, domain); err != nil {
+		return fmt.Errorf("forget custom-domain certificate attempt: %w", err)
+	}
+	if err := sqlc.New().ClearCustomDomainProbeObservation(ctx, tx, domain); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `delete from custom_domain_tls_allowed_hosts where wildcard_domain = $1`, domain); err != nil {
 		return fmt.Errorf("forget custom-domain tls allowlist: %w", mapErr(err))
 	}
@@ -284,6 +322,10 @@ func forgetCustomDomainTLSHostsTx(ctx context.Context, tx pgx.Tx, domain string)
 // ledger has no foreign key and stays. Callers hold m.mu.
 func (m *MemStore) dropCustomDomainTLSHostsLocked(domain string) {
 	domain = strings.ToLower(domain)
+	delete(m.customDomainCertRetries, domain)
+	if obs, ok := m.doctorObs[domain]; ok && obs.SurfaceID == "" {
+		delete(m.doctorObs, domain)
+	}
 	delete(m.customDomainTLSAllowedHosts, domain)
 	for host, h := range m.customDomainTLSHosts {
 		if h.wildcardDomain == domain {

@@ -203,8 +203,12 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 	if p.Enabled != nil {
 		current.Enabled = *p.Enabled
 	}
+	var previousUntil any
 	if p.WebhookSecretSealed != nil {
 		current.SecretSealed = append([]byte(nil), *p.WebhookSecretSealed...)
+		if p.PreviousSecretUntil != nil {
+			previousUntil = *p.PreviousSecretUntil
+		}
 	}
 	filterArr := current.EventFilter
 	if filterArr == nil {
@@ -223,13 +227,19 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 			delivery_format = $5,
 			enabled = $6,
 			secret_sealed = $7,
+			-- A rotation keeps the secret it replaces (the old value on
+			-- the right-hand side) for the overlap window.
+			previous_secret_sealed = case when $8::timestamptz is not null and secret_sealed is distinct from $7
+			    then secret_sealed else previous_secret_sealed end,
+			previous_secret_expires_at = case when $8::timestamptz is not null and secret_sealed is distinct from $7
+			    then $8::timestamptz else previous_secret_expires_at end,
 			updated_at = now()
 		where id = $1
 		returning id, app_id::text, platform_tenant_id::text, account_id, scope, target_url, secret_sealed,
 		          event_filter, retry_policy, delivery_format, enabled,
 		          created_at, updated_at
 	`, id, current.TargetURL, filterArr, string(current.RetryPolicy),
-		string(current.DeliveryFormat), current.Enabled, current.SecretSealed)
+		string(current.DeliveryFormat), current.Enabled, current.SecretSealed, previousUntil)
 	w, err := scanAppWebhook(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -240,12 +250,45 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 	return w, nil
 }
 
+// PreviousAppWebhookSecret returns the sealed secret a rotation replaced
+// while its overlap window lasts (ADR-20261101093517), or nil.
+func (s *PgStore) PreviousAppWebhookSecret(ctx context.Context, webhookID string, now time.Time) ([]byte, error) {
+	var sealed []byte
+	err := s.pool.QueryRow(ctx, `
+		select previous_secret_sealed from app_webhooks
+		 where id = $1 and previous_secret_expires_at > $2
+		   and octet_length(previous_secret_sealed) > 0
+	`, webhookID, now).Scan(&sealed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("state: read previous app webhook secret: %w", err)
+	}
+	return sealed, nil
+}
+
 func (s *PgStore) DeleteAppWebhook(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `delete from app_webhooks where id = $1`, id)
+	// The deliveries cascade with the webhook, but their unified dead-letter
+	// projections have no foreign key: they stayed listed and answered 404 on
+	// replay (ChronoLake finding 28). Both go in one statement; the CTE sees
+	// the deliveries before the cascade removes them.
+	var deleted int
+	err := s.pool.QueryRow(ctx, `
+		with projections as (
+			delete from dead_letter_events e
+			 using app_webhook_deliveries d
+			 where d.webhook_id = $1 and e.source = 'webhook_delivery' and e.source_id = d.id
+			returning e.id
+		), doomed as (
+			delete from app_webhooks where id = $1 returning id
+		)
+		select count(*) from doomed
+	`, id).Scan(&deleted)
 	if err != nil {
 		return fmt.Errorf("state: delete app_webhook: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if deleted == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -293,7 +336,60 @@ func (s *PgStore) RecordAppWebhookDelivery(ctx context.Context, in AppWebhookDel
 	if in.NextAttemptAt.IsZero() {
 		in.NextAttemptAt = time.Now()
 	}
-	row := s.pool.QueryRow(ctx, `
+	if in.AdmissionMaxPending <= 0 && in.AdmissionMaxBacklogBytes <= 0 {
+		return insertAppWebhookDelivery(ctx, s.pool, in)
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return AppWebhookDelivery{}, fmt.Errorf("state: begin app_webhook_delivery admission: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := checkAppWebhookOutboxAdmissionTx(ctx, tx, in); err != nil {
+		return AppWebhookDelivery{}, err
+	}
+	d, err := insertAppWebhookDelivery(ctx, tx, in)
+	if err != nil {
+		return AppWebhookDelivery{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AppWebhookDelivery{}, fmt.Errorf("state: commit app_webhook_delivery admission: %w", err)
+	}
+	return d, nil
+}
+
+// checkAppWebhookOutboxAdmissionTx applies the outbox caps
+// (ADR-20261101093517). The per-account advisory lock serializes capped
+// admissions for one account, so two concurrent deliveries cannot both pass
+// a cap with one slot left. The count reads app_webhook_deliveries_pending_idx
+// and stops at the cap; bytes are summed only under the count cap, so the
+// work per admission is bounded by the plan's pending cap.
+func checkAppWebhookOutboxAdmissionTx(ctx context.Context, tx pgx.Tx, in AppWebhookDelivery) error {
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended('app_webhook_outbox:' || $1, 0))`, in.AccountID); err != nil {
+		return fmt.Errorf("state: lock app webhook outbox: %w", err)
+	}
+	scan := int64(in.AdmissionMaxPending)
+	if scan <= 0 {
+		scan = -1 // no count cap: count every undelivered row for the bytes cap
+	}
+	var pending, held int64
+	if err := tx.QueryRow(ctx, `
+		select count(*), coalesce(sum(pg_column_size(d.payload)), 0)::bigint
+		  from (select payload from app_webhook_deliveries
+		         where account_id = $1 and status in ('pending', 'in_flight')
+		         limit case when $2::bigint < 0 then null else $2::bigint end) d
+	`, in.AccountID, scan).Scan(&pending, &held); err != nil {
+		return fmt.Errorf("state: count app webhook outbox: %w", err)
+	}
+	return appWebhookOutboxAdmission(in, pending, held)
+}
+
+// appWebhookDeliveryInserter is a pool or a transaction.
+type appWebhookDeliveryInserter interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func insertAppWebhookDelivery(ctx context.Context, q appWebhookDeliveryInserter, in AppWebhookDelivery) (AppWebhookDelivery, error) {
+	row := q.QueryRow(ctx, `
 		insert into app_webhook_deliveries
 			(webhook_id, app_id, account_id, event, payload,
 			 attempt, status, next_attempt_at)
@@ -321,6 +417,11 @@ func (s *PgStore) RecordAppWebhookDelivery(ctx context.Context, in AppWebhookDel
 //
 // An active receiver cooldown excludes the subscription from new claims. Once
 // it expires, only one recovery probe may be live until its outcome is known.
+// An account holds at most api.AppWebhookMaxInFlightPerAccount live claims.
+// A suspended, deleting or abuse-held account, and an app-scoped
+// subscription of a deleted app, is skipped: its deliveries stay pending
+// with their schedule and resume when the account or app returns, or go
+// with it when it is purged (ADR-20261101093517).
 // Each claim batch interleaves accounts, then subscriptions within each
 // account. Both starting positions rotate every five-second tick. The lateral
 // delivery read is bounded per subscription, so one deep backlog cannot fill
@@ -341,18 +442,26 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 	// set of locks, so an older backlog cannot hide another subscription.
 	lockRows, err := tx.Query(ctx, `
 		with live_claims as materialized (
-			select webhook_id, count(*) as n
+			select webhook_id, account_id, count(*) as n
 			  from app_webhook_deliveries
 			 where status = 'in_flight' and next_attempt_at > $1
-			 group by webhook_id
+			 group by webhook_id, account_id
+		), live_accounts as materialized (
+			select account_id, sum(n) as n from live_claims group by account_id
 		), eligible_accounts as materialized (
 			select distinct d.account_id
 			  from app_webhook_deliveries d
 			  join app_webhooks w on w.id = d.webhook_id
+			  join accounts a on a.id = d.account_id
+			  left join apps p on p.id = w.app_id
 			  left join live_claims live on live.webhook_id = d.webhook_id
+			  left join live_accounts live_account on live_account.account_id = d.account_id
 			 where d.status in ('pending','in_flight') and d.next_attempt_at <= $1
 			   and (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
 			   and coalesce(live.n, 0) < case when w.receiver_cooldown_until is null then $4 else 1 end
+			   and coalesce(live_account.n, 0) < $5
+			   and a.status in ('active', 'past_due') and a.abuse_hold_at is null
+			   and (w.app_id is null or p.status <> 'deleted')
 		), numbered_accounts as (
 			select account_id,
 			       row_number() over (order by account_id) - 1 as account_pos,
@@ -368,9 +477,11 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 			select w.id, w.account_id, selected_accounts.turn as account_turn
 			  from selected_accounts
 			  join app_webhooks w on w.account_id = selected_accounts.account_id
+			  left join apps p on p.id = w.app_id
 			  left join live_claims live on live.webhook_id = w.id
 			 where (w.receiver_cooldown_until is null or w.receiver_cooldown_until <= $1)
 			   and coalesce(live.n, 0) < case when w.receiver_cooldown_until is null then $4 else 1 end
+			   and (w.app_id is null or p.status <> 'deleted')
 			   and exists (
 			       select 1 from app_webhook_deliveries d
 			        where d.webhook_id = w.id
@@ -393,7 +504,7 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 		 order by h.hook_turn, h.account_turn, w.id
 		 limit ($2::integer * 2)
 		   for update of w skip locked
-	`, now, limit, rotation, AppWebhookMaxInFlightPerSubscription)
+	`, now, limit, rotation, AppWebhookMaxInFlightPerSubscription, api.AppWebhookMaxInFlightPerAccount)
 	if err != nil {
 		return nil, fmt.Errorf("state: lock claim subscriptions: %w", err)
 	}
@@ -478,17 +589,34 @@ func (s *PgStore) ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, n
 			           partition by webhook_id order by next_attempt_at, id
 			       ) as webhook_slot
 			  from locked
+		), admitted as (
+			select r.*
+			  from ranked r
+			  left join live_claims live on live.webhook_id = r.webhook_id
+			  join app_webhooks w on w.id = r.webhook_id
+			 where r.webhook_slot + coalesce(live.n, 0) <= case when w.receiver_cooldown_until is null then $4 else 1 end
+		), live_accounts as materialized (
+			select d.account_id, count(*) as n
+			  from app_webhook_deliveries d
+			 where d.account_id in (select account_id from locked_hooks)
+			   and d.status = 'in_flight' and d.next_attempt_at > $1
+			 group by d.account_id
+		), account_ranked as (
+			select admitted.*,
+			       row_number() over (
+			           partition by account_id order by account_slot, next_attempt_at, id
+			       ) as account_rank
+			  from admitted
 		)
 		select r.id, r.webhook_id, r.app_id, r.account_id, r.event, r.payload,
 		       r.attempt, r.status, r.last_error, r.last_response_code,
 		       r.next_attempt_at, r.delivered_at, r.created_at, r.updated_at
-		  from ranked r
-		  left join live_claims live on live.webhook_id = r.webhook_id
-		  join app_webhooks w on w.id = r.webhook_id
-		 where r.webhook_slot + coalesce(live.n, 0) <= case when w.receiver_cooldown_until is null then $4 else 1 end
+		  from account_ranked r
+		  left join live_accounts live_account on live_account.account_id = r.account_id
+		 where r.account_rank + coalesce(live_account.n, 0) <= $5
 		 order by r.account_slot, r.account_turn, r.next_attempt_at, r.id
 		 limit $2
-	`, now, limit, webhookIDs, AppWebhookMaxInFlightPerSubscription)
+	`, now, limit, webhookIDs, AppWebhookMaxInFlightPerSubscription, api.AppWebhookMaxInFlightPerAccount)
 	if err != nil {
 		return nil, fmt.Errorf("state: claim query: %w", err)
 	}
@@ -667,21 +795,37 @@ func (s *PgStore) ResetAppWebhookDeliveryFromDead(ctx context.Context, id, webho
 	// below only distinguishes "wrong status" (ErrConflict,
 	// since the caller must be the owner — they had to look
 	// it up to find the id) from "no such row" (ErrNotFound).
-	tag, err := s.pool.Exec(ctx, `
-		update app_webhook_deliveries set
-			status = 'pending',
-			attempt = 0,
-			replay_generation = replay_generation + 1,
-			last_error = '',
-			last_response_code = 0,
-			next_attempt_at = $4,
-			updated_at = now()
-		where id = $1 and webhook_id = $2 and account_id = $3 and status = 'dead'
-	`, id, webhookID, accountID, now)
+	//
+	// The unified dead-letter projection is stamped replayed in the same
+	// statement, exactly as `dlq replay` stamps it: a delivery retried
+	// through `webhook retry` otherwise stayed an active failed event after
+	// it succeeded (ChronoLake finding 28). A later death re-projects it
+	// (the capture trigger clears replayed_at).
+	var reset int
+	err := s.pool.QueryRow(ctx, `
+		with reset as (
+			update app_webhook_deliveries set
+				status = 'pending',
+				attempt = 0,
+				replay_generation = replay_generation + 1,
+				last_error = '',
+				last_response_code = 0,
+				next_attempt_at = $4,
+				updated_at = now()
+			where id = $1 and webhook_id = $2 and account_id = $3 and status = 'dead'
+			returning id
+		), stamped as (
+			update dead_letter_events e set replayed_at = now()
+			  from reset
+			 where e.source = 'webhook_delivery' and e.source_id = reset.id and e.replayed_at is null
+			returning e.id
+		)
+		select count(*) from reset
+	`, id, webhookID, accountID, now).Scan(&reset)
 	if err != nil {
 		return fmt.Errorf("state: reset from dead: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if reset == 0 {
 		// Probe ownership first. If the row exists AND its
 		// (webhook_id, account_id) match the caller but status
 		// is not 'dead' → ErrConflict (caller owns it; wrong
@@ -883,24 +1027,35 @@ func (s *PgStore) AppWebhookFleetQueueHealth(ctx context.Context, now time.Time)
 	var health AppWebhookFleetQueueHealth
 	if err := s.pool.QueryRow(ctx, `
 		with live_claims as materialized (
-			select webhook_id, count(*) as n
+			select webhook_id, account_id, count(*) as n
 			  from app_webhook_deliveries
 			 where status = 'in_flight' and next_attempt_at > $1
-			 group by webhook_id
+			 group by webhook_id, account_id
+		), live_accounts as materialized (
+			select account_id, sum(n) as n from live_claims group by account_id
 		), due as (
+			-- Deliveries the claim defers for a suspended, deleting or
+			-- abuse-held account or a deleted app are neither claimable nor
+			-- held by receiver backpressure, so they are left out.
 			select d.next_attempt_at,
 			       coalesce(w.receiver_cooldown_until > $1, false) or
-			           coalesce(live.n, 0) >= case when w.receiver_cooldown_until is null then $2 else 1 end as held
+			           coalesce(live.n, 0) >= case when w.receiver_cooldown_until is null then $2 else 1 end or
+			           coalesce(live_account.n, 0) >= $3 as held
 			  from app_webhook_deliveries d
 			  join app_webhooks w on w.id = d.webhook_id
+			  join accounts a on a.id = d.account_id
+			  left join apps p on p.id = w.app_id
 			  left join live_claims live on live.webhook_id = d.webhook_id
+			  left join live_accounts live_account on live_account.account_id = d.account_id
 			 where d.status in ('pending', 'in_flight') and d.next_attempt_at <= $1
+			   and a.status in ('active', 'past_due') and a.abuse_hold_at is null
+			   and (w.app_id is null or p.status <> 'deleted')
 		)
 		select min(next_attempt_at) filter (where not held),
 		       min(next_attempt_at) filter (where held),
 		       count(*) filter (where held)
 		  from due
-	`, now, AppWebhookMaxInFlightPerSubscription).Scan(&claimable, &held, &health.HeldDueCount); err != nil {
+	`, now, AppWebhookMaxInFlightPerSubscription, api.AppWebhookMaxInFlightPerAccount).Scan(&claimable, &held, &health.HeldDueCount); err != nil {
 		return AppWebhookFleetQueueHealth{}, fmt.Errorf("state: app webhook fleet queue health: %w", err)
 	}
 	if claimable.Valid {

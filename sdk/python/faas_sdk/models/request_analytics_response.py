@@ -11,6 +11,11 @@ from ..models.request_analytics_response_group_by import (
     RequestAnalyticsResponseGroupBy,
     check_request_analytics_response_group_by,
 )
+from ..models.request_analytics_response_sampled_measures import (
+    RequestAnalyticsResponseSampledMeasures,
+    check_request_analytics_response_sampled_measures,
+)
+from ..models.request_analytics_telemetry_gap import RequestAnalyticsTelemetryGap, check_request_analytics_telemetry_gap
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -68,6 +73,18 @@ class RequestAnalyticsResponse:
     deployment_costs: RequestAnalyticsDeploymentCostBreakdown | Unset = UNSET
     """Bounded deployment allocation of the app's estimated raw compute value for the analytics window. It is not
     an invoice amount."""
+    telemetry_complete: bool | Unset = UNSET
+    """True when every gateway delivered this window's request telemetry, so the totals include every request.
+    Judged up to two minutes before `as_of`, because the newest minutes are still arriving. Absent when it could not
+    be judged.
+    """
+    telemetry_gaps: list[RequestAnalyticsTelemetryGap] | Unset = UNSET
+    """Why requests in this window may be missing from the totals. Empty or absent when the window is complete."""
+    sampled_measures: RequestAnalyticsResponseSampledMeasures | Unset = UNSET
+    """Whether the detail only sampled raw rows carry is in this response: group CPU and sampled latency,
+    `deployment_costs`, and per-route deployment splits. `omitted` when reading it failed or ran past its
+    time budget; request counts, error rates and percentiles never depend on it.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -127,6 +144,19 @@ class RequestAnalyticsResponse:
         if not isinstance(self.deployment_costs, Unset):
             deployment_costs = self.deployment_costs.to_dict()
 
+        telemetry_complete = self.telemetry_complete
+
+        telemetry_gaps: list[str] | Unset = UNSET
+        if not isinstance(self.telemetry_gaps, Unset):
+            telemetry_gaps = []
+            for telemetry_gaps_item_data in self.telemetry_gaps:
+                telemetry_gaps_item: str = telemetry_gaps_item_data
+                telemetry_gaps.append(telemetry_gaps_item)
+
+        sampled_measures: str | Unset = UNSET
+        if not isinstance(self.sampled_measures, Unset):
+            sampled_measures = self.sampled_measures
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -158,6 +188,12 @@ class RequestAnalyticsResponse:
             field_dict["compute_cost"] = compute_cost
         if deployment_costs is not UNSET:
             field_dict["deployment_costs"] = deployment_costs
+        if telemetry_complete is not UNSET:
+            field_dict["telemetry_complete"] = telemetry_complete
+        if telemetry_gaps is not UNSET:
+            field_dict["telemetry_gaps"] = telemetry_gaps
+        if sampled_measures is not UNSET:
+            field_dict["sampled_measures"] = sampled_measures
 
         return field_dict
 
@@ -235,6 +271,24 @@ class RequestAnalyticsResponse:
         else:
             deployment_costs = RequestAnalyticsDeploymentCostBreakdown.from_dict(_deployment_costs)
 
+        telemetry_complete = d.pop("telemetry_complete", UNSET)
+
+        _telemetry_gaps = d.pop("telemetry_gaps", UNSET)
+        telemetry_gaps: list[RequestAnalyticsTelemetryGap] | Unset = UNSET
+        if _telemetry_gaps is not UNSET:
+            telemetry_gaps = []
+            for telemetry_gaps_item_data in _telemetry_gaps:
+                telemetry_gaps_item = check_request_analytics_telemetry_gap(telemetry_gaps_item_data)
+
+                telemetry_gaps.append(telemetry_gaps_item)
+
+        _sampled_measures = d.pop("sampled_measures", UNSET)
+        sampled_measures: RequestAnalyticsResponseSampledMeasures | Unset
+        if isinstance(_sampled_measures, Unset):
+            sampled_measures = UNSET
+        else:
+            sampled_measures = check_request_analytics_response_sampled_measures(_sampled_measures)
+
         request_analytics_response = cls(
             slug=slug,
             since=since,
@@ -259,6 +313,9 @@ class RequestAnalyticsResponse:
             as_of=as_of,
             compute_cost=compute_cost,
             deployment_costs=deployment_costs,
+            telemetry_complete=telemetry_complete,
+            telemetry_gaps=telemetry_gaps,
+            sampled_measures=sampled_measures,
         )
 
         request_analytics_response.additional_properties = d

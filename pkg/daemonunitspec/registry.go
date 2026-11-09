@@ -143,6 +143,8 @@ var OptionalRegistry = []Entry{
 	{Name: "s3-gatewayd", Unit: UnitS3Gateway, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8084", ReadyzURL: "http://127.0.0.1:9096/readyz"}},
 	{Name: "bridged", Unit: UnitBridged, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9098"}},
 	{Name: "apid-clone-worker", Unit: UnitApidCloneWorker, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
+	{Name: "apid-data-pipeline-worker", Unit: UnitApidDataPipelineWorker, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
+	{Name: "apid-data-pipeline-alert-worker", Unit: UnitApidDataPipelineAlertWorker, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
 	{Name: "maild", Unit: UnitMaild, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeUnix, ProbeTarget: "/run/faas/maild.sock"}},
 	// ADR-1343: the compute-node app edge, turned on per cell by the
 	// manifest's public_edge.compute_nodes.
@@ -154,6 +156,9 @@ var OptionalRegistry = []Entry{
 	{Name: "mcp-bridge", Unit: UnitMcpBridge, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8787"}},
 	// ADR-20261027090010, ADR-20261027090014: agent runs, switched on by the agentd_service role.
 	{Name: "agentd", Unit: UnitAgentd, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"schedd"}, Probe: ProbeSystemd}},
+	// ADR-20261102081618: the app hosts' records for direct entry, turned on
+	// by the manifest's public_edge.dns.
+	{Name: "edgednsd", Unit: UnitEdgednsd, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{Probe: ProbeSystemd}},
 	{Name: "gatewayd-public-edge", Unit: UnitGatewaydPublicEdge, Role: RoleComputeOnly, Critical: false, Lifecycle: Lifecycle{After: []string{"gatewayd-internal"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8090", ReadyzURL: "http://127.0.0.1:" + ComputeEdgeControlPort + "/readyz"}},
 	// ADR-20261031122757: the S3 gateway on a compute node, turned on per
 	// cell by the manifest's object_storage.compute_nodes.

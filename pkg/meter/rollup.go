@@ -26,10 +26,10 @@
 // grain. Provider push stays on the 24 h StripeInterval loop
 // (pkg/meter/loop.go).
 //
-// NOTE — the new `usage_daily.builder_seconds` column is NOT
-// populated by this rollup. builder_seconds are written to a
-// separate grain (`builder_usage`, migration 00068) and rolled up
-// in a follow-up PR; the column stays at 0 today.
+// NOTE — `usage_daily.builder_seconds` comes from `builder_usage`
+// (migration 00068), one row per finished build, summed beside the
+// usage_minutes rows by the build's finished_at day
+// (ADR-20261104090000). usage_minutes.builder_seconds has no writer.
 //
 // NOTE — `usage_daily.tail_seconds` (issue #667, ADR-078) IS
 // populated by this rollup. It's the per-day SUM of
@@ -43,6 +43,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // execer is the minimal pgxpool contract the rollup needs:
@@ -79,18 +81,44 @@ INSERT INTO public.usage_daily (
     tail_seconds, rolled_up_at
 )
 SELECT
-    account_id,
-    COALESCE(app_id, job_id) AS app_id,
-    meter_kind,
-    CASE WHEN meter_kind = 'job' THEN job_id ELSE NULL END AS job_id,
-    date_trunc('day', minute AT TIME ZONE 'UTC')::date AS day,
+    account_id, app_id, meter_kind, job_id, day,
     SUM(mb_seconds), SUM(requests), SUM(cpu_usec), SUM(tx_bytes),
     SUM(net_tx_bytes), SUM(net_rx_bytes), SUM(cold_boot_count),
-    SUM(CASE WHEN builder_kind <> 'none' THEN builder_seconds ELSE 0 END),
+    SUM(builder_seconds),
     SUM(tail_seconds),
     now()
-FROM public.usage_minutes
-WHERE minute >= $1 AND minute < $2
+FROM (
+    SELECT
+        account_id,
+        COALESCE(app_id, job_id) AS app_id,
+        meter_kind,
+        CASE WHEN meter_kind = 'job' THEN job_id ELSE NULL END AS job_id,
+        date_trunc('day', minute AT TIME ZONE 'UTC')::date AS day,
+        mb_seconds, requests::bigint AS requests, cpu_usec, tx_bytes,
+        net_tx_bytes, net_rx_bytes, cold_boot_count::bigint AS cold_boot_count,
+        CASE WHEN builder_kind <> 'none' THEN builder_seconds ELSE 0 END::bigint AS builder_seconds,
+        tail_seconds
+    FROM public.usage_minutes
+    WHERE minute >= $1 AND minute < $2
+    UNION ALL
+    -- Build time lives in builder_usage, one row per finished build
+    -- (ADR-048 §4); usage_minutes never carries it. A company app's build
+    -- belongs to its organization, like the app's usage rows
+    -- (ADR-20261104090000).
+    SELECT
+        COALESCE(o.id, b.account_id),
+        b.app_id,
+        'app',
+        NULL::uuid,
+        date_trunc('day', b.finished_at AT TIME ZONE 'UTC')::date,
+        0, 0, 0, 0, 0, 0, 0,
+        b.seconds,
+        0
+    FROM public.builder_usage b
+    LEFT JOIN public.orgs o
+      ON o.id = b.org_id AND o.resource_ownership_enabled AND NOT o.personal_org
+    WHERE b.finished_at >= $1 AND b.finished_at < $2 AND b.kind <> 'none'
+) u
 GROUP BY 1, 2, 3, 4, 5
 ON CONFLICT (account_id, app_id, day) DO UPDATE SET
     meter_kind      = EXCLUDED.meter_kind,
@@ -125,8 +153,10 @@ func RollupOnce(ctx context.Context, db execer, windowStart, windowEnd time.Time
 // RollupLoop ticks RollupOnce on interval. Each tick rolls both the previous
 // complete UTC day and the current partial UTC day. Recomputing the complete
 // day repairs late-arriving rows; recomputing today makes the customer-facing
-// default useful within one interval. ON CONFLICT overwrites totals, so ticks
-// and process restarts cannot double count.
+// default useful within one interval. The first tick and then one tick an hour
+// also recompute the earlier days meterd's catch-up can still write
+// (lateDailyRollupWindows). ON CONFLICT overwrites totals, so ticks and
+// process restarts cannot double count.
 //
 // Errors are logged Warn and retried on the next tick — a
 // persistent failure shows up as a flood of WARN logs that an
@@ -153,7 +183,9 @@ func RollupLoop(ctx context.Context, db execer, interval time.Duration, log *slo
 	if len(observers) > 0 {
 		observer = observers[0]
 	}
-	runDailyRollups(ctx, db, time.Now().UTC(), log, "initial", observer)
+	now := time.Now().UTC()
+	runDailyRollups(ctx, db, append(lateDailyRollupWindows(now), dailyRollupWindows(now)...), log, "initial", observer)
+	lateRolled := now
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -161,9 +193,36 @@ func RollupLoop(ctx context.Context, db execer, interval time.Duration, log *slo
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			runDailyRollups(ctx, db, time.Now().UTC(), log, "tick", observer)
+			now := time.Now().UTC()
+			windows := dailyRollupWindows(now)
+			if now.Sub(lateRolled) >= lateRollupInterval {
+				windows = append(lateDailyRollupWindows(now), windows...)
+				lateRolled = now
+			}
+			runDailyRollups(ctx, db, windows, log, "tick", observer)
 		}
 	}
+}
+
+// lateRollupInterval is how often the loop also recomputes the days before
+// yesterday: meterd rolls a missed minute up to api.MeterUsageFinalAfter late
+// (H5-55), so after an outage of more than a day its catch-up rows land in
+// days the yesterday-and-today windows no longer cover, and usage_daily, the
+// daily usage pages and daily cost alerts stayed short of what was billed.
+// Hourly keeps the extra scans off every 5-minute tick (ADR-20261101113742).
+const lateRollupInterval = time.Hour
+
+// lateDailyRollupWindows are the complete UTC days before yesterday that
+// meterd can still write usage for, oldest first.
+func lateDailyRollupWindows(now time.Time) []dailyRollupWindow {
+	now = now.UTC()
+	yesterday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Add(-24 * time.Hour)
+	earliest := now.Add(-api.MeterUsageFinalAfter)
+	var out []dailyRollupWindow
+	for day := time.Date(earliest.Year(), earliest.Month(), earliest.Day(), 0, 0, 0, 0, time.UTC); day.Before(yesterday); day = day.Add(24 * time.Hour) {
+		out = append(out, dailyRollupWindow{start: day, end: day.Add(24 * time.Hour)})
+	}
+	return out
 }
 
 type dailyRollupWindow struct {
@@ -180,8 +239,8 @@ func dailyRollupWindows(now time.Time) []dailyRollupWindow {
 	}
 }
 
-func runDailyRollups(ctx context.Context, db execer, now time.Time, log *slog.Logger, phase string, observer RollupObserver) {
-	for _, window := range dailyRollupWindows(now) {
+func runDailyRollups(ctx context.Context, db execer, windows []dailyRollupWindow, log *slog.Logger, phase string, observer RollupObserver) {
+	for _, window := range windows {
 		started := time.Now()
 		_, err := RollupOnce(ctx, db, window.start, window.end)
 		if observer != nil {

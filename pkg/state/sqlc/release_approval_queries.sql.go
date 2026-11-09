@@ -274,6 +274,87 @@ func (q *Queries) ListDueReleaseApprovalEvents(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const listReleaseApprovalPoliciesOnlyNotifyingChannel = `-- name: ListReleaseApprovalPoliciesOnlyNotifyingChannel :many
+SELECT a.slug FROM app_release_approval_policies p
+JOIN apps a ON a.id = p.app_id
+WHERE $1::uuid = ANY(p.notify_channel_ids)
+  AND NOT EXISTS (
+        SELECT 1 FROM notification_channels c
+         WHERE c.id = ANY(p.notify_channel_ids) AND c.id <> $1::uuid AND c.kind <> 'pagerduty')
+ORDER BY a.slug LIMIT $2::integer
+`
+
+type ListReleaseApprovalPoliciesOnlyNotifyingChannelParams struct {
+	ChannelID pgtype.UUID
+	MaxRows   int32
+}
+
+// Approval policies whose only remaining approvals-capable channel is this
+// one: deleting it would leave releases waiting for approval unannounced
+// (ADR-20261020085706 amendment 7).
+func (q *Queries) ListReleaseApprovalPoliciesOnlyNotifyingChannel(ctx context.Context, db DBTX, arg ListReleaseApprovalPoliciesOnlyNotifyingChannelParams) ([]string, error) {
+	rows, err := db.Query(ctx, listReleaseApprovalPoliciesOnlyNotifyingChannel, arg.ChannelID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		items = append(items, slug)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listScheduledReleasesOnlyNotifyingChannel = `-- name: ListScheduledReleasesOnlyNotifyingChannel :many
+SELECT a.slug, d.revision FROM scheduled_releases s
+JOIN apps a ON a.id = s.app_id
+JOIN deployments d ON d.id = s.deployment_id
+WHERE s.state = 'scheduled' AND $1::uuid = ANY(s.notify_channel_ids)
+  AND NOT EXISTS (
+        SELECT 1 FROM notification_channels c
+         WHERE c.id = ANY(s.notify_channel_ids) AND c.id <> $1::uuid AND c.kind <> 'pagerduty')
+ORDER BY s.release_at, s.id LIMIT $2::integer
+`
+
+type ListScheduledReleasesOnlyNotifyingChannelParams struct {
+	ChannelID pgtype.UUID
+	MaxRows   int32
+}
+
+type ListScheduledReleasesOnlyNotifyingChannelRow struct {
+	Slug     string
+	Revision int32
+}
+
+// Pending schedules whose only remaining approvals-capable channel is this
+// one: deleting it would start or block them unannounced.
+func (q *Queries) ListScheduledReleasesOnlyNotifyingChannel(ctx context.Context, db DBTX, arg ListScheduledReleasesOnlyNotifyingChannelParams) ([]ListScheduledReleasesOnlyNotifyingChannelRow, error) {
+	rows, err := db.Query(ctx, listScheduledReleasesOnlyNotifyingChannel, arg.ChannelID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListScheduledReleasesOnlyNotifyingChannelRow{}
+	for rows.Next() {
+		var i ListScheduledReleasesOnlyNotifyingChannelRow
+		if err := rows.Scan(&i.Slug, &i.Revision); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertAppReleaseApprovalPolicy = `-- name: UpsertAppReleaseApprovalPolicy :one
 
 INSERT INTO app_release_approval_policies (

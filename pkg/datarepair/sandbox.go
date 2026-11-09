@@ -81,11 +81,17 @@ func (r DockerRehearser) snapshot(ctx context.Context) ([]byte, string, error) {
 }
 
 func (r SnapshotExporter) snapshot(ctx context.Context) ([]byte, string, error) {
-	u, parseErr := url.Parse(r.SourceURL)
-	if parseErr != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
+	if !strings.HasPrefix(r.SourceURL, "postgres://") && !strings.HasPrefix(r.SourceURL, "postgresql://") {
 		return nil, "", &RehearsalError{Stage: "snapshot connection qualification"}
 	}
 	cfg, parseErr := pgx.ParseConfig(r.SourceURL)
+	if parseErr != nil {
+		return nil, "", &RehearsalError{Stage: "snapshot connection qualification"}
+	}
+	// pgx accepts libpq multi-host authorities, including multiple IPv6 hosts.
+	// net/url rejects some of those authorities; use it only for query options.
+	_, rawQuery, _ := strings.Cut(r.SourceURL, "?")
+	u, parseErr := url.Parse("?" + rawQuery)
 	if parseErr != nil {
 		return nil, "", &RehearsalError{Stage: "snapshot connection qualification"}
 	}
@@ -98,8 +104,17 @@ func (r SnapshotExporter) snapshot(ctx context.Context) ([]byte, string, error) 
 	cmd := exec.CommandContext(ctx, binary, "--no-owner", "--no-acl", "--format=plain", "--create", "--clean", "--if-exists")
 	// PGDATABASE is a database name, not a connection-string transport. Keep all
 	// credentials in libpq's process environment, never in argv or the sandbox.
-	cmd.Env = append(os.Environ(), "PGDATABASE="+cfg.Database, "PGHOST="+cfg.Host, "PGPORT="+strconv.Itoa(int(cfg.Port)), "PGUSER="+cfg.User, "PGPASSWORD="+cfg.Password)
-	for key, envName := range map[string]string{"sslmode": "PGSSLMODE", "sslrootcert": "PGSSLROOTCERT", "sslcert": "PGSSLCERT", "sslkey": "PGSSLKEY", "sslpassword": "PGSSLPASSWORD", "sslcrl": "PGSSLCRL", "sslcrldir": "PGSSLCRLDIR", "connect_timeout": "PGCONNECT_TIMEOUT", "options": "PGOPTIONS"} {
+	hosts, ports := []string{cfg.Host}, []string{strconv.Itoa(int(cfg.Port))}
+	for _, fallback := range cfg.Fallbacks {
+		port := strconv.Itoa(int(fallback.Port))
+		// pgx represents TLS/plaintext alternatives as additional fallbacks.
+		// libpq handles sslmode itself; preserve the ordered host/port pairs.
+		if fallback.Host != hosts[len(hosts)-1] || port != ports[len(ports)-1] {
+			hosts, ports = append(hosts, fallback.Host), append(ports, port)
+		}
+	}
+	cmd.Env = append(os.Environ(), "PGDATABASE="+cfg.Database, "PGHOST="+strings.Join(hosts, ","), "PGPORT="+strings.Join(ports, ","), "PGUSER="+cfg.User, "PGPASSWORD="+cfg.Password)
+	for key, envName := range map[string]string{"sslmode": "PGSSLMODE", "sslrootcert": "PGSSLROOTCERT", "sslcert": "PGSSLCERT", "sslkey": "PGSSLKEY", "sslpassword": "PGSSLPASSWORD", "sslcrl": "PGSSLCRL", "sslcrldir": "PGSSLCRLDIR", "connect_timeout": "PGCONNECT_TIMEOUT", "options": "PGOPTIONS", "target_session_attrs": "PGTARGETSESSIONATTRS"} {
 		if values, ok := u.Query()[key]; ok && len(values) == 1 {
 			cmd.Env = append(cmd.Env, envName+"="+values[0])
 		}
@@ -183,7 +198,15 @@ func (r DockerRehearser) Rehearse(ctx context.Context, p Plan) (evidence Evidenc
 	script := fmt.Sprintf(`BEGIN;
 UPDATE gregale_repair.plans SET rehearsed_at=clock_timestamp(),approved_at=clock_timestamp(),approved_by='isolated-rehearsal' WHERE id='%s'::uuid AND digest='%s';
 DO $rehearse$ BEGIN PERFORM gregale_repair.apply_plan('%s'::uuid,convert_from(decode('%s','base64'),'UTF8')::jsonb,'%s','%s'::uuid,'isolated-rehearsal'); END $rehearse$;
-DO $check$ DECLARE passed boolean; BEGIN EXECUTE convert_from(decode('%s','base64'),'UTF8') INTO STRICT passed; IF passed IS DISTINCT FROM TRUE THEN RAISE EXCEPTION 'repair_check_failed'; END IF; END $check$;
+DO $check$ DECLARE value_row json; value_type oid; columns_count bigint; query text;
+BEGIN
+ query:=gregale_repair.check_query(convert_from(decode('%s','base64'),'UTF8'));
+ EXECUTE format('SELECT row_to_json(q.*),pg_typeof(q.value)::oid FROM (%%s%%s) q(value)',query,E'\n') INTO STRICT value_row,value_type;
+ SELECT count(*) INTO columns_count FROM json_object_keys(value_row);
+ IF value_type<>16 OR columns_count<>1 OR (value_row->'value')::jsonb IS DISTINCT FROM 'true'::jsonb THEN
+  RAISE EXCEPTION 'repair_check_failed';
+ END IF;
+END $check$;
 COMMIT;`, p.ID, p.Digest, p.ID, scope, p.Digest, uuid.NewString(), checkEncoded)
 	if set.checks != nil {
 		policy, _ := json.Marshal(CheckPolicy{Version: 1, Checks: set.checks})

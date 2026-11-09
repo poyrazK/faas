@@ -83,8 +83,29 @@ type Worker struct {
 	// claim its due switches, false after a tick that could not and after
 	// each step that ended in a retry. nil reports nothing.
 	Report func(ok bool, at time.Time)
-	Log    *slog.Logger
-	Now    func() time.Time
+	// ReleaseGuard rechecks, just before the switch makes its rollback
+	// target live, the guards the rollback met when it was requested (the
+	// pause, freezes and approvals a release that never served meets). It
+	// returns a refusal, or an error when the guard cannot be read. Errors
+	// retry without activating the target. nil checks nothing.
+	ReleaseGuard func(ctx context.Context, sw state.DatabaseSwitch) (string, error)
+	// PromoteRelease checks binding policy at each traffic write, including
+	// compensation. The database cutover independently verifies the copy's
+	// staged credentials before publishing them and lifting the app fence.
+	PromoteRelease func(context.Context, state.DatabaseSwitch, string) error
+	Log            *slog.Logger
+	Now            func() time.Time
+}
+
+func (w *Worker) promoteRelease(ctx context.Context, sw state.DatabaseSwitch, id string) error {
+	if _, err := w.currentLease(ctx, sw); err != nil {
+		return err
+	}
+	ctx = state.WithDatabaseSwitchLease(ctx, sw)
+	if w.PromoteRelease != nil {
+		return w.PromoteRelease(ctx, sw, id)
+	}
+	return w.Releases.MarkDeploymentLive(ctx, id)
 }
 
 func (w *Worker) ownership(ctx context.Context, sw state.DatabaseSwitch) (context.Context, error) {
@@ -151,8 +172,16 @@ func (w *Worker) Tick(ctx context.Context) {
 
 // Advance runs one step of a leased switch and saves the result.
 func (w *Worker) Advance(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
+	leased, leaseErr := w.currentLease(ctx, sw)
+	if leaseErr != nil {
+		return sw
+	}
+	sw = leased
+	stepParent, cancel := context.WithTimeout(ctx, sw.LeaseUntil.Sub(w.now()))
+	defer cancel()
+	stepParent = state.WithDatabaseSwitchLease(stepParent, sw)
 	var next state.DatabaseSwitch
-	stepCtx, err := w.ownership(ctx, sw)
+	stepCtx, err := w.ownership(stepParent, sw)
 	if err != nil {
 		w.log().Warn("database switch: app ownership", "switch", sw.ID, "app", sw.AppID, "err", err)
 		next = w.retry(sw, errorCode(err))
@@ -328,4 +357,26 @@ func errorCode(err error) string {
 		return "invalid"
 	}
 	return "unavailable"
+}
+
+// Recheck at each code mutation as a lease can expire during a guard/provider read.
+func (w *Worker) currentLease(ctx context.Context, sw state.DatabaseSwitch) (state.DatabaseSwitch, error) {
+	if err := ctx.Err(); err != nil {
+		return state.DatabaseSwitch{}, err
+	}
+	current, err := w.Store.DatabaseSwitch(ctx, sw.AccountID, sw.ID)
+	if err != nil {
+		return current, err
+	}
+	if sw.LeaseToken == "" || current.LeaseToken != sw.LeaseToken || current.LeaseUntil == nil || !current.LeaseUntil.After(w.now()) || current.Phase != sw.Phase || state.DatabaseSwitchTerminal(current.Phase) {
+		return current, state.ErrDatabaseSwitchLeaseLost
+	}
+	return current, nil
+}
+func (w *Worker) prepareRelease(ctx context.Context, sw state.DatabaseSwitch, id, current string) (state.Deployment, error) {
+	if _, err := w.currentLease(ctx, sw); err != nil {
+		return state.Deployment{}, err
+	}
+	ctx = state.WithDatabaseSwitchLease(state.WithExpectedRollbackCurrent(ctx, current), sw)
+	return w.Releases.PrepareDeploymentRollback(ctx, sw.AppID, id)
 }

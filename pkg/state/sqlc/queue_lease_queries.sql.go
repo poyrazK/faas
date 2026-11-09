@@ -20,6 +20,82 @@ func (q *Queries) DeleteQueueLeaseReceipt(ctx context.Context, db DBTX, invocati
 	return err
 }
 
+const exhaustExpiredQueueLease = `-- name: ExhaustExpiredQueueLease :execrows
+UPDATE invocations SET state='dead_letter', outcome='dead_letter', completed_at=clock_timestamp(),
+    last_error='queue lease attempt budget exhausted after lease expiry', lease_expires_at=NULL, instance_id=NULL,
+    outcome_code='queue_lease_attempts_exhausted'
+WHERE id=$1::uuid AND state='dispatching' AND NOT quota_reserved AND attempts=$2::integer
+    AND lease_expires_at <= $3::timestamptz
+`
+
+type ExhaustExpiredQueueLeaseParams struct {
+	ID      pgtype.UUID
+	Attempt int32
+	NowAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ExhaustExpiredQueueLease(ctx context.Context, db DBTX, arg ExhaustExpiredQueueLeaseParams) (int64, error) {
+	result, err := db.Exec(ctx, exhaustExpiredQueueLease, arg.ID, arg.Attempt, arg.NowAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const expiredQueueLeases = `-- name: ExpiredQueueLeases :many
+SELECT i.id, i.attempts, i.retry_policy, coalesce(a.plan, o.plan, '')::text AS plan
+FROM invocations i
+JOIN invocation_queue_lease_receipts r ON r.invocation_id = i.id AND r.attempt = i.attempts
+    AND r.replay_generation = i.replay_generation
+LEFT JOIN accounts a ON a.id = i.account_id
+LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE i.state = 'dispatching' AND i.source = 'queue' AND i.environment_id IS NULL AND NOT i.quota_reserved
+    AND i.lease_expires_at IS NOT NULL AND i.lease_expires_at <= $1::timestamptz
+ORDER BY i.lease_expires_at, i.id
+LIMIT $2::integer
+FOR UPDATE OF i SKIP LOCKED
+`
+
+type ExpiredQueueLeasesParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+type ExpiredQueueLeasesRow struct {
+	ID          pgtype.UUID
+	Attempts    int32
+	RetryPolicy []byte
+	Plan        string
+}
+
+// ADR-20261101093812: pull leases that lapsed, with what their attempt budget
+// comes from. A lease on the message's last attempt dead-letters when it
+// lapses instead of waiting, pending, for a lease call that may never come.
+func (q *Queries) ExpiredQueueLeases(ctx context.Context, db DBTX, arg ExpiredQueueLeasesParams) ([]ExpiredQueueLeasesRow, error) {
+	rows, err := db.Query(ctx, expiredQueueLeases, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpiredQueueLeasesRow{}
+	for rows.Next() {
+		var i ExpiredQueueLeasesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Attempts,
+			&i.RetryPolicy,
+			&i.Plan,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const extendQueueLeaseInvocation = `-- name: ExtendQueueLeaseInvocation :one
 UPDATE invocations SET lease_expires_at=clock_timestamp()+make_interval(secs => $1::integer)
 WHERE id=$2::uuid AND state='dispatching' AND attempts=$3::integer
@@ -62,7 +138,7 @@ func (q *Queries) ExtendQueueLeaseReceipt(ctx context.Context, db DBTX, arg Exte
 }
 
 const lockQueueLeaseInvocation = `-- name: LockQueueLeaseInvocation :one
-SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at, i.async_quota_subject_id FROM invocations i WHERE i.id=$1 FOR UPDATE OF i
+SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at, i.async_quota_subject_id, i.edge_jwt_issuer, i.edge_jwt_subject FROM invocations i WHERE i.id=$1 FOR UPDATE OF i
 `
 
 func (q *Queries) LockQueueLeaseInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error) {
@@ -122,6 +198,8 @@ func (q *Queries) LockQueueLeaseInvocation(ctx context.Context, db DBTX, id pgty
 		&i.ReplayRootInvocationID,
 		&i.ReplayRootCreatedAt,
 		&i.AsyncQuotaSubjectID,
+		&i.EdgeJwtIssuer,
+		&i.EdgeJwtSubject,
 	)
 	return i, err
 }
@@ -214,7 +292,7 @@ FROM lease_clock
 WHERE i.id=$3::uuid AND i.app_id=$4::uuid AND i.source='queue'
     AND i.state='pending' AND NOT i.quota_reserved AND i.environment_id IS NULL AND i.work_policy_name IS NULL
     AND i.due_at<=lease_clock.at AND (i.deadline_at IS NULL OR i.deadline_at>lease_clock.at)
-RETURNING i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at, i.async_quota_subject_id
+RETURNING i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at, i.async_quota_subject_id, i.edge_jwt_issuer, i.edge_jwt_subject
 `
 
 type QueueLeaseClaimInvocationParams struct {
@@ -286,6 +364,8 @@ func (q *Queries) QueueLeaseClaimInvocation(ctx context.Context, db DBTX, arg Qu
 		&i.ReplayRootInvocationID,
 		&i.ReplayRootCreatedAt,
 		&i.AsyncQuotaSubjectID,
+		&i.EdgeJwtIssuer,
+		&i.EdgeJwtSubject,
 	)
 	return i, err
 }
@@ -303,7 +383,8 @@ func (q *Queries) QueueLeaseClock(ctx context.Context, db DBTX) (pgtype.Timestam
 
 const queueLeaseExhaustInvocation = `-- name: QueueLeaseExhaustInvocation :execrows
 UPDATE invocations SET state='dead_letter', outcome='dead_letter', completed_at=clock_timestamp(),
-    last_error='queue lease attempt budget exhausted after lease expiry', lease_expires_at=NULL, instance_id=NULL
+    last_error='queue lease attempt budget exhausted after lease expiry', lease_expires_at=NULL, instance_id=NULL,
+    outcome_code='queue_lease_attempts_exhausted'
 WHERE id=$1::uuid AND app_id=$2::uuid AND state='pending' AND attempts=$3::integer
 `
 

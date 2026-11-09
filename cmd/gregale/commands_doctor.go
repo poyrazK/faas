@@ -38,6 +38,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
@@ -132,6 +133,43 @@ func (r doctorReport) HasProfileWarnings() bool {
 	return r.Profile != nil && len(r.Profile.Warnings) > 0
 }
 
+// actionableProfileWarnings are the profile warnings doctor reports as
+// findings: the source is broken as written. A malformed package.json
+// (package_json_invalid, missing_start_command) passed --strict and read "No
+// local findings" while its profile already named the problem (CLI journey
+// 2026-11-05, #6640). The other codes stay advisory, in the JSON profile
+// only: container_command_deferred is every Dockerfile app,
+// loopback_bind_possible matches any "localhost" (the loopback-bind check is
+// the precise one), and an undetected framework may still build.
+var actionableProfileWarnings = map[string]bool{
+	"package_json_invalid":  true,
+	"missing_start_command": true,
+}
+
+// ActionableProfileWarnings lists the profile warnings doctor reports.
+func (r doctorReport) ActionableProfileWarnings() []frameworkprofile.Warning {
+	if r.Profile == nil {
+		return nil
+	}
+	return filterActionableProfileWarnings(r.Profile.Warnings)
+}
+
+func filterActionableProfileWarnings(warnings []frameworkprofile.Warning) []frameworkprofile.Warning {
+	var out []frameworkprofile.Warning
+	for _, warning := range warnings {
+		if actionableProfileWarnings[warning.Code] {
+			out = append(out, warning)
+		}
+	}
+	return out
+}
+
+// HasStrictWarnings is what `doctor --strict` and `deploy check --strict`
+// fail on: warn checks and actionable profile warnings.
+func (r doctorReport) HasStrictWarnings() bool {
+	return r.HasWarnings() || len(r.ActionableProfileWarnings()) > 0
+}
+
 func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 	if jsonMode {
 		_ = json.NewEncoder(osStderr).Encode(struct {
@@ -140,12 +178,20 @@ func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 		}{Doctor: rep, Exit: 0})
 		return
 	}
-	if rep.HasErrors() || rep.HasWarnings() {
+	if rep.HasErrors() || rep.HasStrictWarnings() {
 		renderDoctorHuman(osStderr, rep)
 	}
 	if rep.HasProfileWarnings() {
-		_, _ = fmt.Fprintln(osStderr, "gregale deploy — profile warnings")
+		var advisory []frameworkprofile.Warning
 		for _, warning := range rep.Profile.Warnings {
+			if !actionableProfileWarnings[warning.Code] { // the report above shows those
+				advisory = append(advisory, warning)
+			}
+		}
+		if len(advisory) > 0 {
+			_, _ = fmt.Fprintln(osStderr, "gregale deploy — profile warnings")
+		}
+		for _, warning := range advisory {
 			_, _ = fmt.Fprintf(osStderr, "  ! %s — %s\n", warning.Code, warning.Message)
 			if len(warning.Sources) > 0 {
 				_, _ = fmt.Fprintf(osStderr, "    sources: %s\n", strings.Join(warning.Sources, ", "))
@@ -162,9 +208,9 @@ func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 //	--json           machine output (default: human prose)
 //
 // Auth is NOT required — the customer-developer is scanning their
-// own cwd before they even login. Cross-referencing with a running
-// app's declared env is a future addition (TODO — needs a
-// pkg/client.ListEnv sibling).
+// own cwd before they even login. When logged in and an app is known
+// (--app or the linked project), its env and secret names count as
+// declared for the env-required check.
 //
 // Exit codes:
 //
@@ -182,6 +228,7 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	// deploy and scan take --path; doctor answered "unknown flag --path"
 	// (Hunt 14 H14-25). A positional directory still works.
 	pathFlag := fs.String("path", "", "source directory (default: current directory)")
+	appFlag := fs.String("app", "", "app whose env and secret names count as declared (defaults to linked context)")
 	imageFlags := registerDoctorImageFlags(fs)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -210,7 +257,11 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	if _, err := os.ReadDir(abs); err != nil {
 		return printErr("Could not read source directory", err)
 	}
-	report := withSourceCheck(runDoctorChecks(abs), abs)
+	appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
+	report := withSourceCheck(runDoctorChecksForApp(abs, detectShape(abs), &appEnv), abs)
+	if check, found := doctorCheckCapabilities(context.Background(), abs); found {
+		report.Checks = append([]doctorCheck{check}, report.Checks...)
+	}
 	// Honour --strict: a warn under strict promotes to exit 1.
 	// Use the doctorReport helpers so the standalone cmdDoctor
 	// exit semantics stay in sync with `gregale deploy --doctor-strict`
@@ -218,14 +269,14 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	// value (e.g. "skipped") only needs to extend the helpers,
 	// not three parallel iteration sites.
 	exit := 0
-	if report.HasErrors() || (*strict && report.HasWarnings()) {
+	if report.HasErrors() || (*strict && report.HasStrictWarnings()) {
 		exit = 1
 	}
 	if *jsonOut || jsonOutput {
 		_ = writeJSON(report)
 		return exit
 	}
-	renderDoctorHuman(osStdout, report)
+	renderDoctorHumanExit(osStdout, report, exit != 0)
 	return exit
 }
 
@@ -239,6 +290,12 @@ func runDoctorChecks(path string) doctorReport {
 }
 
 func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
+	return runDoctorChecksForApp(path, deploymentShape, nil)
+}
+
+// runDoctorChecksForApp is runDoctorChecksForShape with the app's env and
+// secret names for the env-required check; nil means they were not read.
+func runDoctorChecksForApp(path string, deploymentShape shape, appEnv *doctorAppEnv) doctorReport {
 	rep := doctorReport{Path: path}
 	// Framework profiles describe app-shaped deployments. A single
 	// handler.* tree is a valid zero-config function and should not be
@@ -251,7 +308,7 @@ func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
 	rep.Checks = append(rep.Checks, doctorCheckPortBind(path))
 	rep.Checks = append(rep.Checks, doctorCheckLoopbackBind(path))
 	rep.Checks = append(rep.Checks, doctorCheckArch(path))
-	rep.Checks = append(rep.Checks, doctorCheckEnvRequired(path))
+	rep.Checks = append(rep.Checks, doctorCheckEnvRequiredForApp(path, appEnv))
 	rep.Checks = append(rep.Checks, doctorCheckStatelessOnly(path))
 	if check, present := doctorCheckDurableEntities(path); present {
 		rep.Checks = append(rep.Checks, check)
@@ -407,30 +464,44 @@ var platformInjectedEnvVars = map[string]struct{}{
 	"PYTHON_VERSION":         {},
 }
 
-// doctorCheckEnvRequired scans source for env-var references and
-// flags any not declared in `.gregale/env.json` (the apid
-// persistence shape). Cross-referencing with a running app's
-// declared env (via pkg/client ListEnv) is a future addition.
-func doctorCheckEnvRequired(path string) doctorCheck {
+// platformProvidedEnvVar reports a variable the platform supplies, so a
+// source reference to it is never missing configuration. It follows apid's
+// rule (projectsetup.PlatformProvidedEnvKey): PORT, the GREGALE_ and FAAS_
+// namespaces and the identity keys, plus the runtime basics above. FAAS_ is
+// stamped by guest-init over customer values (Hunt 14 H14-52); GREGALE_
+// carries platform settings such as GREGALE_SERVICE_CA_BUNDLE and service
+// URLs (CLI audit 2026-10-31).
+func platformProvidedEnvVar(name string) bool {
+	if _, ok := platformInjectedEnvVars[name]; ok {
+		return true
+	}
+	return name == "PORT" || strings.HasPrefix(name, "GREGALE_") || strings.HasPrefix(name, "FAAS_") || api.IsPlatformIdentityEnvKey(name)
+}
+
+// doctorCheckEnvRequiredForApp scans source for env-var references and flags
+// any not declared in `.env`, `.gregale/env.json` or, when app was read, the
+// app's env and secret names. Without the app (nil or unchecked) the local
+// files may be incomplete, so a finding is a warning. A reference still missing after that comparison is an error; one
+// missing only from the local files is a warning, because values set with
+// `env set` or `secrets set` never appear there (CLI audit 2026-10-31).
+func doctorCheckEnvRequiredForApp(path string, app *doctorAppEnv) doctorCheck {
 	refs := scanEnvRefs(path, envVarRefRegex)
 	if len(refs) == 0 {
 		return doctorCheck{Name: "env-required", Status: "ok"}
 	}
 	declared := loadDeclaredEnv(path)
+	if app.checked() {
+		for name := range app.Names {
+			declared[name] = true
+		}
+	}
 	optional := loadOptionalEnv(path)
 	for _, r := range scanOptionalEnvRefs(path, envVarRefRegex) {
 		optional[r] = true
 	}
 	missing := []string{}
 	for _, r := range refs {
-		if _, ok := platformInjectedEnvVars[r]; ok {
-			continue
-		}
-		// FAAS_ is the platform's reserved namespace: guest-init stamps the
-		// identity and runtime variables (FAAS_APP_ID, FAAS_INSTANCE_ID, …)
-		// and overrides customer values. Fresh mcp-go and customer-operation
-		// templates failed doctor on them (Hunt 14 H14-52).
-		if strings.HasPrefix(r, "FAAS_") {
+		if platformProvidedEnvVar(r) {
 			continue
 		}
 		if _, ok := declared[r]; !ok {
@@ -444,7 +515,7 @@ func doctorCheckEnvRequired(path string) doctorCheck {
 		return doctorCheck{Name: "env-required", Status: "ok"}
 	}
 	p := whycopy.Decorate(&api.Problem{}, api.CodeEnvVarMissing, missing[0])
-	return doctorCheck{
+	check := doctorCheck{
 		Name:    "env-required",
 		Status:  "error",
 		Code:    api.CodeEnvVarMissing,
@@ -453,6 +524,12 @@ func doctorCheckEnvRequired(path string) doctorCheck {
 		Fix:     p.Fix,
 		Sources: missing,
 	}
+	if !app.checked() {
+		check.Status = "warn"
+		check.Hint = "your code references env vars missing from .env and .gregale/env.json; " + app.uncheckedReason()
+		check.Why = strings.TrimSpace(check.Why + " Only the local .env and .gregale/env.json were read, so values set with `gregale env set` or `gregale secrets set` are not counted.")
+	}
+	return check
 }
 
 // doctorCheckStatelessOnly mirrors the G13 stateless-only platform
@@ -980,6 +1057,12 @@ func scanStatelessShape(path string) []string {
 // no glyph). Skipped checks carry their reason so the summary never
 // implies that an unperformed check passed.
 func renderDoctorHuman(w io.Writer, rep doctorReport) {
+	renderDoctorHumanExit(w, rep, rep.HasErrors())
+}
+
+// renderDoctorHumanExit renders the report; failing says the command exits 1
+// on it, so the footer does not suggest --strict to make it fail.
+func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 	renderDoctorReadiness(w, rep)
 	if rep.Image != nil {
 		renderDoctorImage(w, rep.Image)
@@ -1053,6 +1136,20 @@ func renderDoctorHuman(w io.Writer, rep doctorReport) {
 			}
 		}
 	}
+	// Actionable profile warnings are findings too: a malformed package.json
+	// read "No local findings" (#6640).
+	for _, warning := range rep.ActionableProfileWarnings() {
+		hasFinding = true
+		if Enabled() {
+			_, _ = fmt.Fprintf(w, "  ! profile %s — warn\n", warning.Code)
+		} else {
+			_, _ = fmt.Fprintf(w, "  profile %s — warn\n", warning.Code)
+		}
+		RenderHintRow(w, warning.Message)
+		if len(warning.Sources) > 0 {
+			_, _ = fmt.Fprintf(w, "    sources: %s\n", strings.Join(warning.Sources, ", "))
+		}
+	}
 	if !hasFinding {
 		_, _ = fmt.Fprintln(w)
 		if hasSkipped {
@@ -1060,6 +1157,9 @@ func renderDoctorHuman(w io.Writer, rep doctorReport) {
 		} else {
 			_, _ = fmt.Fprintln(w, "All checks passed. Run `gregale deploy` to ship.")
 		}
+	} else if failing {
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "Fix the above findings before deploy.")
 	} else {
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintln(w, "Fix the above findings before deploy, or run with --strict to fail in CI.")

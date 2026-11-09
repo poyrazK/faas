@@ -72,7 +72,9 @@ func TestTrafficPreviewHeaderActionsCannotChangeSelectors(t *testing.T) {
 			if operation == "remove" {
 				input.Headers.Add("X-Selector", "original")
 			}
-			budget := trafficTraceRule(t, "selected", "budget", "*", 10, api.EdgeRuleBudgetAction{BudgetMs: 1200})
+			// The default override header only shortens a budget (#6236), so
+			// the selected rule's budget is above the 2400 ms override.
+			budget := trafficTraceRule(t, "selected", "budget", "*", 10, api.EdgeRuleBudgetAction{BudgetMs: 2700})
 			budget.MatchHeaders = map[string]string{"X-Selector": "original"}
 			headers := trafficTraceRule(t, "headers", "headers", "*", 1, api.EdgeRuleHeadersAction{RequestHeaders: []api.EdgeRuleHeaderOp{
 				{Name: "X-Selector", Action: operation, Value: "original"},

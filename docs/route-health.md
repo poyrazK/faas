@@ -199,9 +199,10 @@ traffic during a canary. Give a concrete path matching the selector:
 
 While a canary is in flight and the route's organic evidence stays sparse,
 Gregale sends 10 bodyless requests per minute to the candidate and to the
-stable deployment. Probes keep your auth gates: a route that rejects anonymous
-requests with 401/403 stays unknown (`probe_unauthenticated`), so probe public
-or read-only routes. Probe requests never appear in request telemetry,
+stable deployment. Probes pass Gregale's own gates (`require_authn` and a
+`public_auth` mode) the way deployment verification does, but carry no
+credential: a route your app itself rejects with 401/403 stays unknown
+(`probe_unauthenticated`), so probe read-only routes. Probe requests never appear in request telemetry,
 analytics, customer reach or usage, but they wake the app like any request.
 At most 5 selectors can probe.
 
@@ -224,6 +225,18 @@ request is not counted for either deployment: node admission, traffic policy,
 rate-limit or revocation state was unavailable, and neither deployment caused
 it. Deadlines, open circuits, capacity refusals and failed wakes or boots still
 count, because a candidate can cause each of them.
+
+Route evidence does not depend on per-route metrics: request telemetry labels
+routes whether or not the app turned on per-route Prometheus series. Each app
+has 50 route labels per gateway; the routes a guard or a production monitor
+selects always keep theirs, so a rarely called selected route is never folded
+into `__route_other__`.
+
+Requests sent to a deployment's own URL (its preview URL, an alias URL or a
+revision pin) are not evidence, so smoke tests against a canary's preview URL
+do not change its verdict. A response that stays open past its request budget,
+such as a WebSocket or an event stream, counts as a request and can count as an
+error, but its duration is left out of latency.
 
 Coverage is explicitly `observed_only`: the system cannot establish how many
 requests were dropped before telemetry storage. The ingestion allowance helps

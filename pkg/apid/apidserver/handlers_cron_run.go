@@ -28,9 +28,9 @@ import (
 //      status via the future GET /v1/cron-fire-now-requests/{id}
 //      surface or watches `GET /v1/crons/{id}/runs` for the audit row.
 //
-// The handler does NOT validate enabled — schedd's RunCronNow
-// re-checks enabled on claim (a cron disabled between INSERT and
-// claim surfaces as ErrCronDisabled in the row, not at the API).
+// The handler refuses a disabled cron (409); schedd's RunCronNow still
+// re-checks enabled on claim, so a cron disabled between INSERT and
+// claim surfaces as ErrCronDisabled in the row.
 // Same pattern for ErrAccountSuspended and ErrNoCapacity — the
 // failure is stamped onto the row in schedd's process and the
 // customer reads it from the row's terminal state.
@@ -88,7 +88,7 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, api.ErrPlanCronsNotAllowed(acct.Plan))
 		return
 	}
-	if prob := s.cronRunOverPlan(ctx, app, c); prob != nil {
+	if prob := s.cronRunRefusal(ctx, app, c); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -128,6 +128,26 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 		CronID:    c.ID,
 		Status:    "pending",
 	})
+}
+
+// cronRunRefusal refuses a manual run the scheduler would not start: a
+// disabled or suspended cron, a cron over its owner's plan, or an app a
+// compute budget holds, whose run would wait unstarted until the hold lifts
+// (crons audit 2026-11-03).
+func (s *server) cronRunRefusal(ctx context.Context, app state.App, c state.Cron) *api.Problem {
+	switch {
+	case !c.Enabled:
+		return api.ErrCronDisabledRun()
+	case c.SuspendedReason != "":
+		return api.ErrCronSuspendedRun(c.SuspendedReason)
+	}
+	if prob := s.cronRunOverPlan(ctx, app, c); prob != nil {
+		return prob
+	}
+	if cronrun.BudgetHeld(ctx, s.store, app, time.Now().UTC()) {
+		return cronrun.BudgetHeldProblem()
+	}
+	return nil
 }
 
 // cronRunOverPlan refuses a manual run of a cron that the owner's current plan

@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AuthCapabilities } from '../models/AuthCapabilities.js';
 import type { CSRFTokenResponse } from '../models/CSRFTokenResponse.js';
+import type { EmailVerificationResendResponse } from '../models/EmailVerificationResendResponse.js';
 import type { MagicLinkSignupRequest } from '../models/MagicLinkSignupRequest.js';
 import type { OAuthTokenExchangeResponse } from '../models/OAuthTokenExchangeResponse.js';
 import type { OIDCExchangeRequest } from '../models/OIDCExchangeRequest.js';
@@ -246,11 +247,13 @@ export class AuthService {
   }
   /**
    * Verify a password-signup email address.
-   * Consumes a 24-hour, single-use verification token and marks the
-   * account email verified. This endpoint does not create a session;
-   * the returned HTML page prompts the customer to sign in again.
+   * A browser (Accept text/html) gets an HTML page whose button posts the
+   * token back, and nothing is consumed, so a mail scanner that prefetches
+   * the link cannot use up the token. Any other client consumes the
+   * 24-hour, single-use token here and the account email is marked
+   * verified. No session is created.
    *
-   * @returns string Email verified; HTML sign-in prompt.
+   * @returns string The confirmation page, or for a non-browser client the verified-email page.
    * @throws ApiError
    */
   public static verifyEmail({
@@ -269,6 +272,41 @@ export class AuthService {
       },
       errors: {
         410: `Verification link expired, invalid, or already used.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Confirm an email verification from its confirmation page.
+   * The confirmation page's form posts the token here. It is consumed and
+   * the account email marked verified; the HTML answer asks the customer
+   * to sign in again rather than creating a session.
+   *
+   * @returns string Email verified; HTML sign-in prompt.
+   * @throws ApiError
+   */
+  public static confirmEmailVerification({
+    formData,
+  }: {
+    formData: {
+      /**
+       * The verification token from the confirmation page's form.
+       */
+      token: string;
+    },
+  }): CancelablePromise<string> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/auth/verify-email',
+      formData: formData,
+      mediaType: 'application/x-www-form-urlencoded',
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        410: `The posted token is expired, unknown, or was already used.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -793,28 +831,48 @@ export class AuthService {
     });
   }
   /**
+   * Send a new email verification link.
+   * Mails a new 24-hour verification link when the account's address is
+   * unverified, at most once a minute and five times an hour. Returns
+   * `already_verified` when there is nothing to send. Available after the
+   * 30-day verification period ends, when other routes answer
+   * `email_verification_required`.
+   *
+   * @returns EmailVerificationResendResponse The address is already verified.
+   * @throws ApiError
+   */
+  public static resendEmailVerification(): CancelablePromise<EmailVerificationResendResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/auth/verify-email/resend',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Revoke every session except the calling one.
-   * Revokes all `sessions` rows for the calling account
-   * whose `id` is NOT the calling cookie's `sid`. The
-   * caller's session stays active. Returns the count of
-   * rows revoked so the dashboard can render "Signed out
-   * N other devices".
+   * From a browser session: revokes every other browser session of the
+   * calling account and keeps the caller's. CSRF: action
+   * `sessions_revoke_all`.
    *
-   * CSRF: action `sessions_revoke_all`.
+   * With an API key: revokes every browser session. API keys keep
+   * working, and no CSRF token is needed.
    *
-   * Emits `auth.sessions.revoke_all` with
-   * `{revoked_count, retained_sid}`.
+   * Returns the count of sessions revoked.
    *
    * @returns SessionsRevokeAllResponse Bulk revocation succeeded.
    * @throws ApiError
    */
   public static postAccountSessionsRevokeAll({
-    requestBody,
     faasSid,
+    requestBody,
   }: {
-    requestBody: {
-      csrf_token: string;
-    },
     /**
      * Dashboard session cookie. Sealed; opaque to the client
      * (`HttpOnly; Secure; SameSite=Lax`). 7-day fixed lifetime.
@@ -824,6 +882,9 @@ export class AuthService {
      *
      */
     faasSid?: string,
+    requestBody?: {
+      csrf_token: string;
+    },
   }): CancelablePromise<SessionsRevokeAllResponse> {
     return __request(OpenAPI, {
       method: 'POST',

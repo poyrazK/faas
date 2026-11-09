@@ -11,6 +11,8 @@ package edgewaf
 import (
 	"fmt"
 	"io/fs"
+	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -22,6 +24,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // CRS request-detection rules live in 911000–948999 (method enforcement,
@@ -160,7 +163,7 @@ func evaluate(waf coraza.WAF, s gateway.WAFSample) (Result, error) {
 	tx.SetServerName(s.Host)
 	tx.ProcessURI(s.URI, s.Method, s.Proto)
 	tx.AddRequestHeader("Host", s.Host)
-	for name, values := range s.Header {
+	for name, values := range boundHeaders(s.Header) {
 		for _, v := range values {
 			tx.AddRequestHeader(name, v)
 		}
@@ -178,6 +181,42 @@ func evaluate(waf coraza.WAF, s gateway.WAFSample) (Result, error) {
 	res.Detected = res.Score >= s.AnomalyThreshold
 	tx.ProcessLogging()
 	return res, nil
+}
+
+// boundHeaders returns the headers a check scores: each value cut to
+// api.EdgeWAFMaxInspectHeaderValueBytes, and at most
+// api.EdgeWAFMaxInspectHeaderBytes of names and values in all, in name order
+// (ADR-831 amendment 19). Cookie headers are split into one value per cookie
+// first (api.EdgeWAFInspectHeaders, amendment 20), so a long Cookie header is
+// bounded per cookie. Headers within both bounds are returned as they are.
+func boundHeaders(h http.Header) http.Header {
+	h = api.EdgeWAFInspectHeaders(h)
+	total, within := 0, true
+	for name, values := range h {
+		for _, v := range values {
+			total += len(name) + len(v)
+			within = within && len(v) <= api.EdgeWAFMaxInspectHeaderValueBytes
+		}
+	}
+	if within && total <= api.EdgeWAFMaxInspectHeaderBytes {
+		return h
+	}
+	out := make(http.Header, len(h))
+	left := api.EdgeWAFMaxInspectHeaderBytes
+	for _, name := range slices.Sorted(maps.Keys(h)) {
+		for _, v := range h[name] {
+			room := min(api.EdgeWAFMaxInspectHeaderValueBytes, left-len(name))
+			if room <= 0 {
+				return out
+			}
+			if len(v) > room {
+				v = safetext.Truncate(v, room)
+			}
+			out[name] = append(out[name], v)
+			left -= len(name) + len(v)
+		}
+	}
+	return out
 }
 
 // score sums CRS anomaly points for detection rules that are not excluded.

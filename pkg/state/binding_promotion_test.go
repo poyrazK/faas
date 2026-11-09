@@ -19,6 +19,54 @@ func TestBindingPromotionPG(t *testing.T) {
 	bindingPromotionSuite(t, store)
 }
 
+func TestPreparedRollbackBindingFenceMem(t *testing.T) {
+	preparedRollbackBindingFence(t, state.NewMemStore())
+}
+
+func TestPreparedRollbackBindingFencePG(t *testing.T) {
+	store, _ := pgStore(t)
+	preparedRollbackBindingFence(t, store)
+}
+
+func preparedRollbackBindingFence(t *testing.T, store state.Store) {
+	t.Helper()
+	ctx := t.Context()
+	account, app, target, current := bindingPromotionFixture(t, store)
+	if _, err := store.UpdateDeploymentTraffic(ctx, current.ID, 100); err != nil {
+		t.Fatal(err)
+	}
+	zero := int64(0)
+	policy, err := store.(state.BindingReleasePolicyStore).SetBindingReleasePolicy(ctx, account.ID, app.ID, target.Scope, api.SetBindingReleasePolicyRequest{Mode: "enforce", ExpectedRevision: &zero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PrepareDeploymentRollback(ctx, app.ID, target.ID); err != nil {
+		t.Fatal(err)
+	}
+	ctx = state.WithPreparedRollbackPromotion(ctx)
+	if err := store.MarkDeploymentLive(ctx, target.ID); !state.IsBindingReleaseRequired(err) {
+		t.Fatalf("missing binding fence allowed prepared promotion: %v", err)
+	}
+	fence := bindingPromotionFence(t, store.(state.BindingPromotionStore), account, app, target)
+	fence.PolicyRevision = policy.Revision
+	fence.MaxVerificationAge, err = time.ParseDuration(policy.MaxVerificationAge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := fence
+	stale.Revision = "stale"
+	if err := store.MarkDeploymentLive(state.WithBindingReleaseFences(ctx, []state.BindingPromotionFence{stale}), target.ID); !errors.Is(err, state.ErrBindingPromotionChanged) {
+		t.Fatalf("stale binding fence allowed prepared promotion: %v", err)
+	}
+	if err := store.MarkDeploymentLive(state.WithBindingReleaseFences(ctx, []state.BindingPromotionFence{fence}), target.ID); err != nil {
+		t.Fatalf("valid binding fence blocked prepared promotion: %v", err)
+	}
+	live, err := store.LiveDeploymentForScope(ctx, app.ID, target.Scope)
+	if err != nil || live.ID != target.ID || live.TrafficPercent != 100 {
+		t.Fatalf("prepared target did not receive traffic: %+v %v", live, err)
+	}
+}
+
 func bindingPromotionFixture(t *testing.T, store state.Store) (state.Account, state.App, state.Deployment, state.Deployment) {
 	t.Helper()
 	return bindingPromotionFixtureCtx(context.Background(), t, store)

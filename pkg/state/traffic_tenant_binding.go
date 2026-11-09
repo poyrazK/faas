@@ -159,11 +159,11 @@ func (s *PgStore) beginTrafficTenantBinding(ctx context.Context, account string,
 	return s.beginTrafficBinding(ctx, TrafficPolicyWriterTenantBinding, account, hosts, "")
 }
 
-func (s *PgStore) beginTrafficBinding(ctx context.Context, writer, account string, hosts []string, appID string) (*trafficTenantBindingTx, error) {
+func (s *PgStore) beginTrafficBinding(ctx context.Context, writer, account string, hosts []string, appID string, budgets ...string) (*trafficTenantBindingTx, error) {
 	start := time.Now()
 	for {
 		attempt := time.Now()
-		tx, retry, err := s.tryBeginTrafficBinding(ctx, writer, account, hosts, appID)
+		tx, retry, err := s.tryBeginTrafficBinding(ctx, writer, account, hosts, appID, budgets...)
 		if err != nil || !retry {
 			observeTrafficPolicyPhase(writer, TrafficPolicyPhaseLockWait, attempt.Sub(start))
 			return tx, err
@@ -179,28 +179,40 @@ func (s *PgStore) beginTrafficBinding(ctx context.Context, writer, account strin
 	}
 }
 
-func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account string, requested []string, appID string) (*trafficTenantBindingTx, bool, error) {
+func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account string, requested []string, appID string, budgets ...string) (*trafficTenantBindingTx, bool, error) {
 	var hosts, accounts []string
 	var scope trafficBindingScope
 	var routes *trafficRouteScope
+	// Take the connection before the analysis bound starts, and keep it for
+	// the session locks and the transaction below. apid's pool can be empty
+	// for a second or two under concurrent writes, and that wait is not
+	// analysis: it refused a deploy as traffic_policy_too_complex at 2001 ms
+	// while the policy itself was small (Hunt 31 H31-11). A second wait for the
+	// lock connection, inside the bound, refused deploys the same way during a
+	// node activation (rc.322 canary), so an attempt takes one connection.
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("state: acquire traffic binding connection: %w", err)
+	}
 	discover := time.Now()
-	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var claims trafficBindingClaims
 		var err error
 		if s.trafficScopedBinding {
-			if claims, scope, _, err = readTrafficBindingScopeClaims(bounded, s.pool, account, requested, appID, s.trafficAppsSuffix); err != nil {
+			if claims, scope, _, err = readTrafficBindingScopeClaims(bounded, conn, account, requested, appID, s.trafficAppsSuffix); err != nil {
 				return err
 			}
 			routes = newTrafficRouteScope(scope.Hosts, scope.Subtrees)
-		} else if claims, err = readTrafficBindingClaims(bounded, s.pool, s.trafficAppsSuffix); err != nil {
+		} else if claims, err = readTrafficBindingClaims(bounded, conn, s.trafficAppsSuffix); err != nil {
 			return err
 		}
 		hosts = trafficBindingAffectedHosts(claims, account, requested, appID)
-		accounts, err = trafficTenantBindingOwners(bounded, s.pool, claims, hosts, account, routes)
+		accounts, err = trafficTenantBindingOwners(bounded, conn, claims, hosts, account, routes)
 		return err
 	})
 	observeTrafficPolicyPhase(writer, TrafficPolicyPhaseDiscover, time.Since(discover))
 	if err != nil {
+		conn.Release()
 		return nil, false, err
 	}
 	// The fleet-wide guard holds the root exclusively; a scoped write holds
@@ -212,7 +224,12 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account st
 	for _, owner := range accounts {
 		locks = append(locks, trafficSessionLock{Key: "gregale.traffic.account.v1:" + owner})
 	}
-	conn, release, busy, err := s.acquireTrafficBindingSessionLocks(ctx, locks)
+	for _, subject := range budgets {
+		locks = append(locks, trafficSessionLock{Key: "gregale.traffic.domain-claims.v1:" + subject})
+	}
+	// The lock statements are try-locks, not analysis, so the bound does not
+	// time them. They take the connection over and give it back when busy.
+	release, busy, err := tryLockTrafficPolicySession(ctx, conn, locks)
 	if err != nil || busy {
 		return nil, busy, err
 	}
@@ -224,65 +241,61 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account st
 	tx := &trafficTenantBindingTx{Tx: base, beforeViews: make(map[string]trafficHostAnalysis), accounts: accounts, hosts: hosts, account: account,
 		appsSuffix: s.trafficAppsSuffix, writer: writer, scoped: s.trafficScopedBinding, routes: routes, appID: appID, release: release}
 	retry := false
-	before := time.Now()
-	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		if err := sqlc.New().LockTrafficCapacityWriter(bounded, base); err != nil {
-			return err
-		}
-		for _, owner := range accounts {
-			if _, err := sqlc.New().LockTrafficPolicyAccount(bounded, base, uuidToPgtype(owner)); err != nil {
+	// The row locks and the access fence wait on other transactions, not on
+	// analysis, so the bound times only the reads that follow. The capacity
+	// and account locks are NOWAIT (a busy one retries the attempt). The
+	// fence's FOR SHARE waits for a membership or credential change in flight.
+	err = lockTrafficBindingRows(ctx, base, accounts)
+	if err == nil {
+		before := time.Now()
+		err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+			var err error
+			if tx.scoped {
+				tx.before, tx.scope, tx.lookup, err = readTrafficBindingScopeClaims(bounded, base, account, requested, appID, tx.appsSuffix)
+			} else if tx.before, err = readTrafficBindingClaims(bounded, base, s.trafficAppsSuffix); err == nil {
+				tx.scope, err = declareTrafficBindingScope(bounded, base, tx.before, account, requested, appID, tx.appsSuffix)
+			}
+			if err != nil {
 				return err
 			}
-		}
-		if err := guardOrgAccessTx(bounded, base); err != nil {
-			return err
-		}
-		var err error
-		if tx.scoped {
-			tx.before, tx.scope, tx.lookup, err = readTrafficBindingScopeClaims(bounded, base, account, requested, appID, tx.appsSuffix)
-		} else if tx.before, err = readTrafficBindingClaims(bounded, base, s.trafficAppsSuffix); err == nil {
-			tx.scope, err = declareTrafficBindingScope(bounded, base, tx.before, account, requested, appID, tx.appsSuffix)
-		}
-		if err != nil {
-			return err
-		}
-		freshHosts := trafficBindingAffectedHosts(tx.before, account, requested, appID)
-		freshAccounts, err := trafficTenantBindingOwners(bounded, base, tx.before, freshHosts, account, routes)
-		if err != nil {
-			return err
-		}
-		// A scoped write must still declare exactly what it locked.
-		retry = !slices.Equal(hosts, freshHosts) || !slices.Equal(accounts, freshAccounts) ||
-			tx.scoped && !tx.scope.equal(scope)
-		if retry {
+			freshHosts := trafficBindingAffectedHosts(tx.before, account, requested, appID)
+			freshAccounts, err := trafficTenantBindingOwners(bounded, base, tx.before, freshHosts, account, routes)
+			if err != nil {
+				return err
+			}
+			// A scoped write must still declare exactly what it locked.
+			retry = !slices.Equal(hosts, freshHosts) || !slices.Equal(accounts, freshAccounts) ||
+				tx.scoped && !tx.scope.equal(scope)
+			if retry {
+				return nil
+			}
+			if tx.scoped {
+				// An empty-scope route can match any unclaimed hostname, so its
+				// candidates need every reservation (ADR-20261029190349).
+				everywhere, err := sqlc.New().ReadTrafficEmptyScopeRoute(bounded, base)
+				if err != nil {
+					return err
+				}
+				if !everywhere {
+					tx.reservations = &tx.lookup
+				}
+			}
+			tx.globalBefore, err = readTrafficHostAnalysisFor(bounded, base, pgtype.UUID{}, tx.appsSuffix, tx.routes, tx.reservations)
+			if err != nil {
+				return err
+			}
+			for _, owner := range accounts {
+				view, err := readTrafficHostAnalysis(bounded, base, uuidToPgtype(owner), tx.appsSuffix)
+				if err != nil {
+					return err
+				}
+				tx.beforeViews[owner] = view
+			}
 			return nil
+		})
+		if !retry {
+			observeTrafficPolicyPhase(writer, TrafficPolicyPhaseBefore, time.Since(before))
 		}
-		if tx.scoped {
-			// An empty-scope route can match any unclaimed hostname, so its
-			// candidates need every reservation (ADR-20261029190349).
-			everywhere, err := sqlc.New().ReadTrafficEmptyScopeRoute(bounded, base)
-			if err != nil {
-				return err
-			}
-			if !everywhere {
-				tx.reservations = &tx.lookup
-			}
-		}
-		tx.globalBefore, err = readTrafficHostAnalysisFor(bounded, base, pgtype.UUID{}, tx.appsSuffix, tx.routes, tx.reservations)
-		if err != nil {
-			return err
-		}
-		for _, owner := range accounts {
-			view, err := readTrafficHostAnalysis(bounded, base, uuidToPgtype(owner), tx.appsSuffix)
-			if err != nil {
-				return err
-			}
-			tx.beforeViews[owner] = view
-		}
-		return nil
-	})
-	if !retry {
-		observeTrafficPolicyPhase(writer, TrafficPolicyPhaseBefore, time.Since(before))
 	}
 	if err != nil || retry {
 		_ = tx.Rollback(context.WithoutCancel(ctx))
@@ -293,6 +306,21 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account st
 		return nil, retry, mapErr(err)
 	}
 	return tx, false, nil
+}
+
+// lockTrafficBindingRows takes the row locks a binding write holds from its
+// first statement: the capacity writer lock, each owner's account lock and the
+// request's access fence, in that order.
+func lockTrafficBindingRows(ctx context.Context, tx pgx.Tx, accounts []string) error {
+	if err := sqlc.New().LockTrafficCapacityWriter(ctx, tx); err != nil {
+		return err
+	}
+	for _, owner := range accounts {
+		if _, err := sqlc.New().LockTrafficPolicyAccount(ctx, tx, uuidToPgtype(owner)); err != nil {
+			return err
+		}
+	}
+	return guardOrgAccessTx(ctx, tx)
 }
 
 func (tx *trafficTenantBindingTx) validate(ctx context.Context, claims trafficBindingClaims, globalAfter trafficHostAnalysis, views map[string]trafficHostAnalysis) error {

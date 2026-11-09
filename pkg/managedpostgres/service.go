@@ -17,10 +17,15 @@ const (
 )
 
 type ServiceOptions struct {
-	LeaseDuration       time.Duration
-	ProviderTimeout     time.Duration
-	PollInterval        time.Duration
+	LeaseDuration   time.Duration
+	ProviderTimeout time.Duration
+	PollInterval    time.Duration
+	// ProvisioningEnabled gates new databases.
 	ProvisioningEnabled func() bool
+	// OperationsEnabled gates work on databases that already exist: restore,
+	// resize and finishing an admitted reservation (ADR-20261103091657). Nil
+	// uses ProvisioningEnabled.
+	OperationsEnabled func() bool
 	// ProvisioningAllowed optionally narrows an enabled rollout to specific
 	// accounts. It is intended for staging canaries; deletion remains
 	// available regardless of this gate.
@@ -46,6 +51,7 @@ type Service struct {
 	providerTimeout        time.Duration
 	pollInterval           time.Duration
 	provisioningEnabled    func() bool
+	operationsEnabled      func() bool
 	provisioningAllowed    func(context.Context, string) bool
 	now                    func() time.Time
 	newID                  func() string
@@ -108,6 +114,9 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 	if options.ProvisioningEnabled == nil {
 		options.ProvisioningEnabled = func() bool { return false }
 	}
+	if options.OperationsEnabled == nil {
+		options.OperationsEnabled = options.ProvisioningEnabled
+	}
 	if options.ProvisioningAllowed == nil {
 		options.ProvisioningAllowed = func(context.Context, string) bool { return true }
 	}
@@ -135,6 +144,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		providerTimeout:        options.ProviderTimeout,
 		pollInterval:           options.PollInterval,
 		provisioningEnabled:    options.ProvisioningEnabled,
+		operationsEnabled:      options.OperationsEnabled,
 		provisioningAllowed:    options.ProvisioningAllowed,
 		now:                    options.Now,
 		newID:                  options.NewID,
@@ -252,7 +262,7 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 	if err != nil {
 		return Database{}, quotaDetail(err, reservationLimit)
 	}
-	if database.Spec != request.Spec {
+	if database.Spec != request.Spec || database.Name != request.Name || reservedID != "" && database.ID != reservedID {
 		return Database{}, ErrConflict
 	}
 	if database.State == StateReady {
@@ -273,7 +283,9 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 // RestoreWithResult also reports whether this invocation reserved the target.
 // Callers must compensate only resources they created, never adopted restores.
 func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabaseRequest) (Database, bool, error) {
-	if !s.provisioningEnabled() {
+	// A restore copies a database that exists, so it is recovery, not a new
+	// database: the operations gate decides (ADR-20261103091657).
+	if !s.operationsEnabled() {
 		return Database{}, false, ErrProvisioningClosed
 	}
 	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() {
@@ -288,9 +300,6 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	}
 	if !source.Preview.IsZero() {
 		return Database{}, false, ErrPreviewDatabase
-	}
-	if source.State != StateReady || source.ProviderResourceID == "" {
-		return Database{}, false, ErrConflict
 	}
 	now := s.now()
 	currentRestoreWindow := source.Spec.RestoreWindowSeconds
@@ -317,6 +326,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(existing, source) {
 			return Database{}, false, ErrConflict
 		}
+		if request.WithinLimit && !existing.RestoreSlotUntil.IsZero() {
+			return Database{}, false, ErrQuotaExceeded
+		}
 		if existing.State == StateReady {
 			return existing, false, nil
 		}
@@ -325,6 +337,11 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, false, err
+	}
+	// Readiness admits a new restore. An already reserved target owns its
+	// recovery intent even if the source is now updating or being deleted.
+	if source.State != StateReady || source.ProviderResourceID == "" {
+		return Database{}, false, ErrConflict
 	}
 	if !request.PointInTime.Before(now) || currentRestoreWindow <= 0 || source.Spec.RestoreWindowSeconds <= 0 ||
 		now.Sub(request.PointInTime) > time.Duration(currentRestoreWindow)*time.Second ||
@@ -336,6 +353,11 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	// on the account's database quota (production-us hunt #9).
 	if request.PointInTime.Before(source.CreatedAt) {
 		return Database{}, false, fmt.Errorf("%w: point in time is before the source database was created (%s)", ErrInvalid, source.CreatedAt.UTC().Format(time.RFC3339))
+	}
+	// A major upgrade preserves the older major's recovery archive. Persist
+	// that historical major before any target or quota slot is reserved.
+	if source.Spec, err = s.resolveRestoreSpec(ctx, source, request.PointInTime, request.SourceDefinition != nil); err != nil {
+		return Database{}, false, err
 	}
 	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
 		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID})
@@ -370,6 +392,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(database, source) {
 		return Database{}, false, ErrConflict
 	}
+	if request.WithinLimit && !database.RestoreSlotUntil.IsZero() {
+		return Database{}, false, ErrQuotaExceeded
+	}
 	if database.State == StateReady {
 		return database, created, nil
 	}
@@ -386,7 +411,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 // the target with its owner and live source lineage. This grants no access to
 // an existing private database.
 func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string, definition RestoreSourceDefinition) (int, error) {
-	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
+	if !s.operationsEnabled() || !s.provisioningAllowed(ctx, accountID) {
 		return 0, ErrProvisioningClosed
 	}
 	if accountID == "" || definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.ProviderResourceID == "" ||
@@ -446,7 +471,8 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	case StateDeleting, StateDeleted:
 		return Database{}, ErrConflict
 	case StateProvisioning, StateFailed:
-		if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
+		// Admission already reserved it; a lapsed approval must not strand it.
+		if !s.operationsEnabled() || !s.provisioningAllowed(ctx, accountID) {
 			return Database{}, ErrUnavailable
 		}
 	default:
@@ -647,6 +673,9 @@ func (s *Service) delete(ctx context.Context, database Database) (Database, erro
 	database, err := s.store.ClaimDelete(ctx, accountID, databaseID, leaseToken, now, now.Add(s.leaseDuration))
 	if err != nil {
 		return Database{}, err
+	}
+	if kept, waiting, err := s.keepForRestoreCopies(ctx, database); waiting {
+		return kept, err
 	}
 	if database.ProviderResourceID == "" && !database.AccountingRequired {
 		// New reservations that never reached provider I/O have nothing to

@@ -52,7 +52,7 @@ func newCreditRefundPolar(t *testing.T) (*httptest.Server, func() int) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/":
-			_, _ = w.Write([]byte(`{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"}}]}`))
+			_, _ = w.Write([]byte(`{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"},"customer_portal_settings":{"subscription":{"update_plan":false}}}]}`))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/products/"):
 			id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
 			plan, ok := map[string]api.Plan{"hobby-product": api.PlanHobby, "pro-product": api.PlanPro, "scale-product": api.PlanScale}[id]
@@ -61,7 +61,7 @@ func newCreditRefundPolar(t *testing.T) (*httptest.Server, func() int) {
 				return
 			}
 			fixedCents := api.MustLimitsFor(plan).PriceMillicents / 1000
-			_, _ = fmt.Fprintf(w, `{"id":%q,"recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":%q,"price_amount":%d,"is_archived":false},{"amount_type":"metered_unit","price_currency":%q,"unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`, id, api.BillingCurrencyLower, fixedCents, api.BillingCurrencyLower)
+			_, _ = fmt.Fprintf(w, `{"id":%q,"recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":%q,"price_amount":%d,"is_archived":false},{"amount_type":"metered_unit","price_currency":%q,"unit_amount":"5","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`, id, api.BillingCurrencyLower, fixedCents, api.BillingCurrencyLower)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/meters/meter-1":
 			_, _ = fmt.Fprint(w, `{"id":"meter-1","unit":"scalar","archived_at":null,"filter":{"conjunction":"and","clauses":[{"property":"name","operator":"eq","value":"ram_usage"}]},"aggregation":{"func":"sum","property":"gb_ram_hours"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/refunds":
@@ -304,19 +304,12 @@ func TestE2E_CreditIssue_NonAdminForbidden(t *testing.T) {
 }
 
 // spec: §14 billing credits must move provider money exactly once.
-// TestE2E_CreditConsume_HappyPathAndIdempotent — POST
-// /v1/invoices/{id}/consume-credits end-to-end. Plants an account
-// + invoice + credit + usage row directly in Postgres (no
-// SeedInvoiceForTest on PgStore yet — that lands with PR-B's
-// webhook writer; this PR's reducer is invoked via the operator
-// endpoint). Pins FIFO drain + the partial-unique-index idempotency
-// against real SQL, not the in-process MemStore.
-//
-// §14 BILLING gate for issue #279 PR-C: the reducer must drain
-// credits FIFO, return the per-credit breakdown, and be idempotent
-// under a fresh Idempotency-Key (the partial unique index on
-// credit_ledger (provider_invoice_id, credit_id) is the seam).
-func TestE2E_CreditConsume_HappyPathAndIdempotent(t *testing.T) {
+// TestE2E_CreditConsume_PolarAppliesCreditAsDiscount — with Polar, account
+// credit reaches the next order as a discount (ADR-20261104212028), so
+// POST /v1/invoices/{id}/consume-credits answers 409 against the real apid
+// and Postgres: no credit is drawn against the paid invoice and no refund
+// is sent to the provider, under a fresh Idempotency-Key as well.
+func TestE2E_CreditConsume_PolarAppliesCreditAsDiscount(t *testing.T) {
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("FAAS_SKIP_PG_TESTS set")
 	}
@@ -325,10 +318,6 @@ func TestE2E_CreditConsume_HappyPathAndIdempotent(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("MigrateUp: %v", err)
 	}
-	// Slot 56 lands the partial unique index on credit_ledger
-	// (provider_invoice_id, credit_id). WaitForMigration gates
-	// against the cmd/e2e schedd migration race — daemons must
-	// boot AFTER the migration is in goose_db_version.
 	pgtest.WaitForMigration(t, pool, 58, 10*time.Second)
 
 	const adminEmail = "e2e+hobby+admin@test.example"
@@ -351,7 +340,6 @@ func TestE2E_CreditConsume_HappyPathAndIdempotent(t *testing.T) {
 		})
 
 	store := state.NewPgStore(pool)
-
 	targetAcct, err := store.AccountByEmail(ctx, targetEmail)
 	if err != nil {
 		targetAcct, err = store.CreateAccount(ctx, targetEmail, api.PlanHobby)
@@ -360,23 +348,12 @@ func TestE2E_CreditConsume_HappyPathAndIdempotent(t *testing.T) {
 		}
 	}
 	adminToken := h.SeedAccount(ctx, api.PlanHobby, "admin")
-
-	// Plant a 250-cent credit.
-	credit, err := store.CreateAccountCredit(ctx, state.AccountCredit{
-		AccountID:      targetAcct.ID,
-		CentsRemaining: 250,
-		Reason:         "e2e goodwill",
-	})
-	if err != nil {
+	if _, err := store.CreateAccountCredit(ctx, state.AccountCredit{
+		AccountID: targetAcct.ID, CentsRemaining: 250, Reason: "e2e goodwill",
+	}); err != nil {
 		t.Fatalf("seed credit: %v", err)
 	}
-
-	// Plant an invoice. TODO(PR-B): the PR-B webhook writer adds
-	// UpsertInvoice to the Store interface; this raw-SQL insert goes
-	// away when webhook ingestion lands.
 	invoiceID := uuid.NewString()
-	periodStart := time.Now().UTC().Add(-24 * time.Hour)
-	periodEnd := time.Now().UTC().Add(time.Hour)
 	providerInvoiceID := "order_e2e_consume_" + uuid.NewString()
 	if _, err := pool.Exec(ctx,
 		`insert into invoices
@@ -385,169 +362,50 @@ func TestE2E_CreditConsume_HappyPathAndIdempotent(t *testing.T) {
 		    total_cents, amount_paid_cents, plan, currency, pdf_available,
 		    created_at, updated_at)
 		 values ($1, $2, 'polar', $3, $3, 'paid',
-		         $4, $5, 250, 0, 250, 250, 'hobby', 'eur', false,
+		         $4, $5, 250, 0, 250, 250, 'hobby', 'usd', false,
 		         now(), now())`,
-		invoiceID, targetAcct.ID, providerInvoiceID, periodStart, periodEnd); err != nil {
+		invoiceID, targetAcct.ID, providerInvoiceID, time.Now().UTC().Add(-24*time.Hour), time.Now().UTC().Add(time.Hour)); err != nil {
 		t.Fatalf("seed invoice: %v", err)
 	}
 
-	// Seed a real app + deployment + parked instance so the usage
-	// row's app_id / instance_id columns (uuid not null) accept the
-	// values AppendUsage writes. The instance is Parked so the
-	// meterd sampler doesn't append additional mb_seconds on top of
-	// our seed (spec invariant §6.2-4: parked instance consumes zero
-	// resident RAM and zero billable usage).
-	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
-	if err != nil {
-		t.Fatalf("resolve default-local compute_node: %v", err)
-	}
-	app, err := store.CreateApp(ctx, state.App{
-		AccountID:      targetAcct.ID,
-		Slug:           "consume-e2e",
-		Type:           state.AppTypeApp,
-		RAMMB:          256,
-		MaxConcurrency: 1,
-	})
-	if err != nil {
-		t.Fatalf("seed app: %v", err)
-	}
-	dep, err := store.CreateDeployment(ctx, state.Deployment{
-		AppID:       app.ID,
-		Status:      state.DeployLive,
-		Kind:        state.DeploymentKindImage,
-		ImageDigest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-	})
-	if err != nil {
-		t.Fatalf("seed deployment: %v", err)
-	}
-	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateParked), 256, node.ID, "")
-	if err != nil {
-		t.Fatalf("seed instance: %v", err)
+	for attempt := 1; attempt <= 2; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			h.APIDURL+"/v1/invoices/"+invoiceID+"/consume-credits", bytes.NewBufferString(`{}`))
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", fmt.Sprintf("e2e-consume-%d-%s", attempt, uuid.NewString()))
+		rec, err := h.HTTPClient().Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		status, body := rec.StatusCode, readBody(t, rec)
+		_ = rec.Body.Close()
+		if status != http.StatusConflict || !strings.Contains(body, "discount") {
+			t.Fatalf("attempt %d: status = %d body = %s, want 409 naming the discount", attempt, status, body)
+		}
 	}
 
-	// Plant the current plan allowance plus 250 billable GB-hours.
-	if err := store.AppendUsage(ctx, targetAcct.ID, app.ID, ins.ID,
-		time.Now().UTC(), int64(targetAcct.Plan.PlanIncludedGBHours()+250)*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
-		t.Fatalf("seed usage: %v", err)
-	}
-
-	// First call — drain 250 cents.
-	body := bytes.NewBufferString(`{}`)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		h.APIDURL+"/v1/invoices/"+invoiceID+"/consume-credits", body)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", "e2e-consume-1-"+uuid.NewString())
-
-	rec, err := h.HTTPClient().Do(req)
-	if err != nil {
-		t.Fatalf("do: %v", err)
-	}
-	defer rec.Body.Close()
-	if rec.StatusCode != http.StatusOK {
-		t.Fatalf("first call: status = %d, want 200; body=%s", rec.StatusCode, readBody(t, rec))
-	}
-
-	var resp api.ConsumeInvoiceResponse
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.InvoiceID != invoiceID {
-		t.Errorf("InvoiceID = %q, want %q", resp.InvoiceID, invoiceID)
-	}
-	if resp.ConsumedCents != 250 {
-		t.Errorf("ConsumedCents = %d, want 250", resp.ConsumedCents)
-	}
-	if resp.AlreadyConsumedForInvoice {
-		t.Errorf("first call: AlreadyConsumedForInvoice = true, want false")
-	}
-	if len(resp.PerCredit) != 1 || resp.PerCredit[0].CreditID != credit.ID {
-		t.Fatalf("PerCredit = %+v, want 1 row for credit %s", resp.PerCredit, credit.ID)
-	}
-	if resp.PerCredit[0].DeltaCents != -250 || resp.PerCredit[0].NewBalance != 0 {
-		t.Errorf("PerCredit[0] = %+v, want {delta=-250, balance=0}", resp.PerCredit[0])
-	}
-
-	// Verify the persisted account_credits reflect the drain.
 	credits, err := store.ListAccountCredits(ctx, targetAcct.ID, false)
 	if err != nil {
 		t.Fatalf("list credits: %v", err)
 	}
-	if len(credits) != 1 || credits[0].CentsRemaining != 0 {
-		t.Fatalf("credits after drain = %+v, want one row with cents_remaining=0", credits)
+	if len(credits) != 1 || credits[0].CentsRemaining != 250 {
+		t.Fatalf("credits = %+v, want the 250 cents left for the next order", credits)
 	}
-
-	// Verify the credit.consumed audit row landed.
-	events, err := store.ListEvents(ctx, targetAcct.ID, 50)
-	if err != nil {
-		t.Fatalf("ListEvents: %v", err)
-	}
-	var sawConsumed bool
-	for _, e := range events {
-		if e.Kind == "credit.consumed" {
-			sawConsumed = true
-			break
-		}
-	}
-	if !sawConsumed {
-		t.Fatalf("credit.consumed audit row missing for account %s", targetAcct.ID)
-	}
-
-	// Second call with a FRESH Idempotency-Key — the idempotent
-	// middleware must not short-circuit. The reducer-level dedupe
-	// (partial unique index on credit_ledger) must kick in: same
-	// ConsumedCents, AlreadyConsumedForInvoice=true, no new ledger
-	// rows.
-	body2 := bytes.NewBufferString(`{}`)
-	req2, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		h.APIDURL+"/v1/invoices/"+invoiceID+"/consume-credits", body2)
-	if err != nil {
-		t.Fatalf("new request 2: %v", err)
-	}
-	req2.Header.Set("Authorization", "Bearer "+adminToken)
-	req2.Header.Set("Content-Type", "application/json")
-	req2.Header.Set("Idempotency-Key", "e2e-consume-2-"+uuid.NewString())
-
-	rec2, err := h.HTTPClient().Do(req2)
-	if err != nil {
-		t.Fatalf("do 2: %v", err)
-	}
-	defer rec2.Body.Close()
-	if rec2.StatusCode != http.StatusOK {
-		t.Fatalf("second call: status = %d, want 200; body=%s", rec2.StatusCode, readBody(t, rec2))
-	}
-	var resp2 api.ConsumeInvoiceResponse
-	if err := json.NewDecoder(rec2.Body).Decode(&resp2); err != nil {
-		t.Fatalf("decode 2: %v", err)
-	}
-	if !resp2.AlreadyConsumedForInvoice {
-		t.Errorf("replay: AlreadyConsumedForInvoice = false, want true (partial unique index)")
-	}
-	if resp2.ConsumedCents != 250 {
-		t.Errorf("replay: ConsumedCents = %d, want 250 (stable across replays)", resp2.ConsumedCents)
-	}
-	if len(resp2.PerCredit) != 0 {
-		t.Errorf("replay: PerCredit = %+v, want 0", resp2.PerCredit)
-	}
-
-	// Exactly one consumption ledger row in Postgres for this
-	// invoice (the partial unique index made the replay's INSERT a
-	// no-op).
-	var consumptionRowCount int
+	var drawn int
 	if err := pool.QueryRow(ctx,
-		`select count(*) from credit_ledger
-		   where provider_invoice_id = $1 and delta_cents < 0`,
-		providerInvoiceID).Scan(&consumptionRowCount); err != nil {
+		`select count(*) from credit_ledger where provider_invoice_id = $1 and delta_cents < 0`,
+		providerInvoiceID).Scan(&drawn); err != nil {
 		t.Fatalf("count ledger: %v", err)
 	}
-	if consumptionRowCount != 1 {
-		t.Fatalf("consumption ledger rows = %d, want 1 (partial unique index)", consumptionRowCount)
+	if drawn != 0 {
+		t.Fatalf("credit drawn against the paid invoice %d times, want 0", drawn)
 	}
-	if got := refundPosts(); got != 1 {
-		t.Fatalf("provider refund POSTs = %d, want 1 across idempotent replay", got)
+	if got := refundPosts(); got != 0 {
+		t.Fatalf("provider refund POSTs = %d, want 0", got)
 	}
 }
 

@@ -1,6 +1,9 @@
 package apidserver
 
 import (
+	"context"
+	"errors"
+	"github.com/onebox-faas/faas/pkg/db"
 	"net/http"
 	"slices"
 
@@ -11,15 +14,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// importComposeEnv writes an opted-in project's plain Compose environment
-// values into each selected app before any build is admitted
-// (ADR-20261023085230). Keys already configured in the scope, as variables
-// or secrets, keep their values. Every app's quota is checked before the
-// first write; no value reaches a log, audit event or problem.
+// importComposeEnv writes a project's importable Compose environment values
+// into each selected app before any build is admitted (ADR-20261023085230):
+// every plain value when the project opted in, and sibling service addresses
+// without the opt-in (ADR-20261104221217). Returning early without the opt-in
+// skipped those addresses although the plan listed them as imported
+// (ADR-20261105104500). Keys already configured in the scope, as variables or
+// secrets, keep their values. Every app's quota is checked before the first
+// write; no value reaches a log, audit event or problem.
 func (s *server) importComposeEnv(r *http.Request, acct state.Account, projectID, scope string, env reposcan.ComposeEnv, workloads []reposcan.Workload, limits api.Limits) *api.Problem {
-	if !env.ImportsAny() {
-		return nil
-	}
 	apps, err := s.store.AppsForProject(r.Context(), acct.ID, projectID)
 	if err != nil {
 		return api.ErrCapacity("could not load project configuration targets")
@@ -100,4 +103,37 @@ func mapKeys[V any](values map[string]V) []string {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+// applyVariableWrites applies a restore's variable writes, invalidates the
+// scope's snapshots and tells the runtime, as the env handlers do.
+func (s *server) applyVariableWrites(ctx context.Context, acct state.Account, app state.App, scope string, writes []configguard.VariableWrite, out *api.ConfigRollbackResponse) error {
+	for _, write := range writes {
+		var err error
+		if write.Delete {
+			err = s.store.DeleteAppEnvInScope(ctx, acct.ID, app.ID, scope, write.Key)
+			if errors.Is(err, state.ErrNotFound) {
+				err = nil
+			}
+		} else {
+			err = s.store.UpsertAppEnvInScope(ctx, acct.ID, app.ID, scope, write.Key, write.Value)
+		}
+		if err != nil {
+			return err
+		}
+		kind := "set"
+		if write.Delete {
+			kind = "delete"
+		}
+		if out != nil {
+			if write.Delete {
+				out.Deleted = append(out.Deleted, write.Key)
+			} else {
+				out.Set = append(out.Set, write.Key)
+			}
+		}
+		s.notifyRuntimeConfigChange(ctx, db.NotifyAppEnvChanged, acct, app, kind, scope, write.Key)
+	}
+	_, err := state.InvalidateAppSnapshotsInScope(ctx, s.store, app.ID, scope)
+	return err
 }

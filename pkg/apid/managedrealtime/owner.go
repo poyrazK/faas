@@ -18,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
+	"github.com/onebox-faas/faas/pkg/retry"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -129,6 +130,9 @@ func (o LocalRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime.
 func (o LocalRealtimeNodeOperator) Endpoints(ctx context.Context) ([]string, error) {
 	return o.Client.Endpoints(ctx)
 }
+func (o LocalRealtimeNodeOperator) EndpointsWithPreviews(ctx context.Context) ([]string, []string, error) {
+	return o.Client.EndpointsWithPreviews(ctx)
+}
 func (o LocalRealtimeNodeOperator) ChannelRoutes(ctx context.Context) ([]realtime.ChannelRoute, error) {
 	return o.Client.ChannelRoutes(ctx)
 }
@@ -196,6 +200,9 @@ func (o remoteRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime
 func (o remoteRealtimeNodeOperator) Endpoints(ctx context.Context) ([]string, error) {
 	return o.client.Endpoints(ctx)
 }
+func (o remoteRealtimeNodeOperator) EndpointsWithPreviews(ctx context.Context) ([]string, []string, error) {
+	return o.client.EndpointsWithPreviews(ctx)
+}
 func (o remoteRealtimeNodeOperator) ChannelRoutes(ctx context.Context) ([]realtime.ChannelRoute, error) {
 	return o.client.ChannelRoutes(ctx)
 }
@@ -241,6 +248,9 @@ type leasedRealtimeOwner struct {
 	// connections each time.
 	missingMu sync.Mutex
 	missing   map[[2]string]time.Time
+	// endpointSync remembers what each node holds, so the endpoint
+	// reconcile skips registrations that would change nothing.
+	endpointSync endpointRegistrations
 }
 
 const (
@@ -412,6 +422,9 @@ func (o *leasedRealtimeOwner) resolve(ctx context.Context, endpointID, connectio
 
 func (o *leasedRealtimeOwner) connectionOperation(ctx context.Context, endpointID, connectionID string, closeAfter bool, fn func(state.ManagedRealtimeConnectionOwner, RealtimeNodeOperator) error) error {
 	for attempt := 0; attempt < 2; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return err
+		}
 		lease, op, err := o.resolve(ctx, endpointID, connectionID)
 		if err != nil {
 			return err
@@ -1141,9 +1154,15 @@ func (o *leasedRealtimeOwner) ListEndpointInventory(ctx context.Context) (realti
 	for _, node := range nodes {
 		op, err := o.nodeOperator(node)
 		if err == nil {
-			var ids []string
-			ids, err = op.Endpoints(ctx)
+			var ids, previews []string
+			if lister, ok := op.(nodePreviewLister); ok {
+				ids, previews, err = lister.EndpointsWithPreviews(ctx)
+			} else {
+				ids, err = op.Endpoints(ctx)
+			}
 			if err == nil {
+				o.endpointSync.recordInventory(node.ID, ids)
+				o.endpointSync.recordPreviews(node.ID, previews)
 				inventory.NodesQueried++
 				for _, id := range ids {
 					seen[id] = struct{}{}
@@ -1167,24 +1186,32 @@ func (o *leasedRealtimeOwner) ListEndpointInventory(ctx context.Context) (realti
 // active realtime node. The control-plane row remains authoritative; a node
 // restart is repaired by the periodic endpoint reconciler.
 func (o *leasedRealtimeOwner) RegisterEndpoint(ctx context.Context, endpoint realtime.Endpoint) error {
-	return o.broadcastEndpoint(ctx, endpoint.ID, func(op RealtimeNodeOperator) error {
-		return op.RegisterEndpoint(ctx, endpoint)
-	})
+	if err := o.registerEndpointOnNodes(ctx, endpoint); err != nil {
+		return fmt.Errorf("%w: endpoint %s: %w", errManagedRealtimeOwnerUnavailable, endpoint.ID, err)
+	}
+	return nil
 }
 
 func (o *leasedRealtimeOwner) RemoveEndpoint(ctx context.Context, endpointID string) error {
-	return o.broadcastEndpoint(ctx, endpointID, func(op RealtimeNodeOperator) error {
-		return op.RemoveEndpoint(ctx, endpointID)
-	})
+	o.endpointSync.forget(endpointID)
+	if err := o.broadcastEndpointNodes(ctx, func(_ state.ComputeNode, op RealtimeNodeOperator) (bool, error) {
+		return true, op.RemoveEndpoint(ctx, endpointID)
+	}); err != nil {
+		return fmt.Errorf("%w: endpoint %s: %w", errManagedRealtimeOwnerUnavailable, endpointID, err)
+	}
+	return nil
 }
 
-func (o *leasedRealtimeOwner) broadcastEndpoint(ctx context.Context, endpointID string, fn func(RealtimeNodeOperator) error) error {
+// broadcastEndpointNodes runs fn for every active node. It succeeds when one
+// node took the change or no node needed it; fn reports whether it sent
+// anything.
+func (o *leasedRealtimeOwner) broadcastEndpointNodes(ctx context.Context, fn func(state.ComputeNode, RealtimeNodeOperator) (bool, error)) error {
 	if o.nodes == nil {
 		return errManagedRealtimeOwnerUnavailable
 	}
-	nodes, err := o.nodes.ActiveComputeNodes(ctx)
+	nodes, err := o.activeNodes(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
+		return fmt.Errorf("list active nodes: %w", err)
 	}
 	var firstErr error
 	reached := 0
@@ -1196,7 +1223,7 @@ func (o *leasedRealtimeOwner) broadcastEndpoint(ctx context.Context, endpointID 
 			}
 			continue
 		}
-		if err := fn(op); err != nil {
+		if _, err := fn(node, op); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -1210,7 +1237,7 @@ func (o *leasedRealtimeOwner) broadcastEndpoint(ctx context.Context, endpointID 
 	if firstErr == nil {
 		firstErr = errors.New("no active realtime nodes accepted endpoint")
 	}
-	return fmt.Errorf("%w: endpoint %s: %w", errManagedRealtimeOwnerUnavailable, endpointID, firstErr)
+	return firstErr
 }
 
 func defaultRealtimeNodeOperator(node state.ComputeNode) (RealtimeNodeOperator, error) {

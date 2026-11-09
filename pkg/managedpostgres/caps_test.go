@@ -56,6 +56,21 @@ func TestPlanComputeCaps(t *testing.T) {
 		{name: "a raised ceiling lifts the preview hold", ceiling: 50 * hour, ledger: 0,
 			scopes:   []computeCapScope{{used: 15 * hour, quota: 20 * hour}, {used: 5 * hour, quota: 5 * hour, preview: true}},
 			wantUsed: 20 * hour, wantRemaining: 30 * hour, wantTargets: []int64{45 * hour, 25 * hour}, wantApply: []bool{true, true}},
+		// ADR-20261025094915 amendment 2026-11-05: a provider that reports
+		// use counts it as the ledger plus each scope's use since the
+		// ledger's coverage; the quotas stay on the provider's counters.
+		{name: "reported use adds to the ledger", ceiling: 5 * hour, ledger: 2 * hour,
+			scopes:   []computeCapScope{{used: hour, quota: 5 * hour, reported: true, unreported: 1800}},
+			wantUsed: 2*hour + 1800, wantRemaining: 3*hour - 1800, wantTargets: []int64{4*hour - 1800}, wantApply: []bool{true}},
+		{name: "a stale counter does not hide reported use", ceiling: 5 * hour, ledger: 4 * hour,
+			scopes:   []computeCapScope{{used: 600, quota: 5 * hour, reported: true, unreported: hour}},
+			wantUsed: 5 * hour, wantRemaining: 0, wantTargets: []int64{600}, wantApply: []bool{true}},
+		{name: "every scope's reported use counts", ceiling: 25 * hour, ledger: hour,
+			scopes:   []computeCapScope{{used: hour, reported: true, unreported: 600}, {used: 0, reported: true, unreported: 1200}},
+			wantUsed: hour + 1800, wantRemaining: 24*hour - 1800, wantTargets: []int64{25*hour - 1800, 24*hour - 1800}, wantApply: []bool{true, true}},
+		{name: "one unreported scope keeps the counters", ceiling: 25 * hour, ledger: hour,
+			scopes:   []computeCapScope{{used: 3 * hour, reported: true, unreported: 600}, {used: hour}},
+			wantUsed: 4 * hour, wantRemaining: 21 * hour, wantTargets: []int64{24 * hour, 22 * hour}, wantApply: []bool{true, true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,6 +110,24 @@ type capTestProvider struct {
 	observed map[string]ComputeCapObservation
 	setErr   map[string]error
 	set      map[string]int64
+	holds    map[string]bool
+}
+
+func (p *capTestProvider) ComputeHeld(_ context.Context, id string) (bool, error) {
+	return p.holds[id], nil
+}
+
+func (p *capTestProvider) HoldForDeletion(_ context.Context, id string) error {
+	if p.holds == nil {
+		p.holds = map[string]bool{}
+	}
+	p.holds[id] = true
+	return nil
+}
+
+func (p *capTestProvider) ReleaseDeletionHold(_ context.Context, id string) error {
+	delete(p.holds, id)
+	return nil
 }
 
 func (p *capTestProvider) ObserveComputeCap(_ context.Context, id string) (ComputeCapObservation, error) {
@@ -116,8 +149,22 @@ func (p *capTestProvider) SetComputeCap(_ context.Context, id string, quota int6
 // capTestStore serves only the two reads the enforcer makes.
 type capTestStore struct {
 	UsageStore
-	databases []Database
-	ledger    map[string]int64
+	databases  []Database
+	ledger     map[string]int64
+	holdClaims *MemoryStore
+}
+
+func (s *capTestStore) ClaimComputeHold(ctx context.Context, database Database, token string, now, until time.Time) (Database, error) {
+	if s.holdClaims == nil {
+		s.holdClaims = NewMemoryStore()
+		for _, row := range s.databases {
+			s.holdClaims.databases[row.ID] = cloneDatabase(row)
+		}
+	}
+	return s.holdClaims.ClaimComputeHold(ctx, database, token, now, until)
+}
+func (s *capTestStore) ReleaseComputeHold(ctx context.Context, id, token string, now time.Time) error {
+	return s.holdClaims.ReleaseComputeHold(ctx, id, token, now)
 }
 
 func (s *capTestStore) ListUsageDatabases(_ context.Context, after UsageDatabaseCursor, limit int) ([]Database, error) {
@@ -351,7 +398,7 @@ func TestCapEnforcerPoolsAnOrganizationAcrossNamespaces(t *testing.T) {
 func TestCapEnforcerHoldsPreviewDatabasesAtEightyPercent(t *testing.T) {
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
 	month := monthStart(now)
-	run := func(t *testing.T, limits CapLimits) map[string]int64 {
+	run := func(t *testing.T, limits CapLimits) *capTestProvider {
 		t.Helper()
 		provider := &capTestProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}, set: map[string]int64{},
 			observed: map[string]ComputeCapObservation{
@@ -382,36 +429,17 @@ func TestCapEnforcerHoldsPreviewDatabasesAtEightyPercent(t *testing.T) {
 		if _, err := enforcer.Enforce(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		return provider.set
+		return provider
 	}
-	// 15000 of 18000 is past 80% (14400): the preview database is held at
-	// its use, and production may run to the ceiling.
-	if set := run(t, CapLimits{Allowance: 18000, Ceiling: 18000}); set["proj-pr"] != 1000 || set["proj-live"] != 17000 {
-		t.Fatalf("quotas at 80%% = %v; want the preview held at 1000 and production at 17000", set)
+	// 15000 of 18000 is past 80% (14400): the preview database is held,
+	// with its quota at its use, and production may run to the ceiling.
+	if p := run(t, CapLimits{Allowance: 18000, Ceiling: 18000}); p.set["proj-pr"] != 1000 || p.set["proj-live"] != 17000 || !p.holds["proj-pr"] || p.holds["proj-live"] {
+		t.Fatalf("at 80%%: quotas %v, holds %v; want the preview held at 1000 and production at 17000", p.set, p.holds)
 	}
 	// Overage doubles the ceiling, and with it the previews' 80%.
-	if set := run(t, CapLimits{Allowance: 18000, Ceiling: 36000, Overage: true}); set["proj-pr"] != 1000+28800-15000 || set["proj-live"] != 14000+36000-15000 {
-		t.Fatalf("quotas with overage = %v", set)
+	if p := run(t, CapLimits{Allowance: 18000, Ceiling: 36000, Overage: true}); p.set["proj-pr"] != 1000+28800-15000 || p.set["proj-live"] != 14000+36000-15000 || len(p.holds) != 0 {
+		t.Fatalf("with overage: quotas %v, holds %v", p.set, p.holds)
 	}
-}
-
-// holdingCapProvider records the deletion holds a sweep writes.
-type holdingCapProvider struct {
-	*capTestProvider
-	held  map[string]bool
-	calls int
-}
-
-func (p *holdingCapProvider) HoldForDeletion(_ context.Context, id string) error {
-	p.calls++
-	p.held[id] = true
-	return nil
-}
-
-func (p *holdingCapProvider) ReleaseDeletionHold(_ context.Context, id string) error {
-	p.calls++
-	p.held[id] = false
-	return nil
 }
 
 // adr: 20261102123523 — a PR preview copy shares its source's project and
@@ -419,12 +447,11 @@ func (p *holdingCapProvider) ReleaseDeletionHold(_ context.Context, id string) e
 func TestCapEnforcerHoldsPreviewCopiesAtEightyPercent(t *testing.T) {
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
 	month := monthStart(now)
-	provider := &holdingCapProvider{held: map[string]bool{}, capTestProvider: &capTestProvider{
-		fakeProvider: &fakeProvider{capabilities: testCapabilities()}, set: map[string]int64{},
+	provider := &capTestProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}, set: map[string]int64{},
 		observed: map[string]ComputeCapObservation{
 			"proj-live":         {Scope: "live", PeriodStart: month, UsedUnitSeconds: 15000},
 			"proj-live/br-copy": {Scope: "live", PeriodStart: month, UsedUnitSeconds: 15000},
-		}}}
+		}}
 	registry := testRegistry(t, provider, func(config *Config) {
 		config.Usage = UsageConfig{Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600,
 			StaleAfterSeconds: 10800, MaxMonthlyCostMillicents: 1 << 40,
@@ -451,16 +478,16 @@ func TestCapEnforcerHoldsPreviewCopiesAtEightyPercent(t *testing.T) {
 	if _, err := enforcer.Enforce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !provider.held["proj-live/br-copy"] || provider.held["proj-live"] || provider.set["proj-live"] != 18000 {
-		t.Fatalf("holds %v, quotas %v; want the copy held and production's project at the ceiling", provider.held, provider.set)
+	if !provider.holds["proj-live/br-copy"] || provider.holds["proj-live"] || provider.set["proj-live"] != 18000 {
+		t.Fatalf("holds %v, quotas %v; want the copy held and production's project at the ceiling", provider.holds, provider.set)
 	}
-	// A confirmed hold is not written again.
-	if _, err := enforcer.Enforce(context.Background()); err != nil || provider.calls != 1 {
-		t.Fatalf("second sweep: %v, %d hold calls", err, provider.calls)
+	// A hold in place is not written again.
+	if summary, err := enforcer.Enforce(context.Background()); err != nil || summary.HoldsApplied != 0 || summary.HeldDatabases != 1 {
+		t.Fatalf("second sweep: %v, summary %+v", err, summary)
 	}
 	// Overage raises the ceiling past the previews' 80%: the hold lifts.
 	limits = CapLimits{Allowance: 18000, Ceiling: 36000, Overage: true}
-	if _, err := enforcer.Enforce(context.Background()); err != nil || provider.held["proj-live/br-copy"] || provider.calls != 2 {
-		t.Fatalf("after overage: %v, holds %v, %d calls", err, provider.held, provider.calls)
+	if summary, err := enforcer.Enforce(context.Background()); err != nil || provider.holds["proj-live/br-copy"] || summary.HoldsReleased != 1 {
+		t.Fatalf("after overage: %v, holds %v, summary %+v", err, provider.holds, summary)
 	}
 }

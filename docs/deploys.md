@@ -38,6 +38,16 @@ otherwise (`--source=worktree` includes uncommitted changes). Before upload:
 - **`.env` files** are scanned locally and credential-shaped values are
   redacted before upload (`--secret-scan=off` disables this). Use
   `--secrets-file` or `gregale env set` for real secrets.
+- **Credential files in a local-files upload.** When the deploy uploads the
+  files on disk (no Git repository, no `origin` remote, or
+  `--source=worktree`), everything not excluded above is uploaded, including
+  `.env` and `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, `*.pem`, `*.key`,
+  `*.p12`, `id_rsa*` and `id_ed25519*` private keys and similar files. The
+  deploy still uploads them, but warns on stderr and adds the warning to the
+  `--json` receipt's `warnings`, naming each file (`.env.example`,
+  `.env.sample`, `.env.template` and `*.pub` are not named). Add the files
+  to `.gregaleignore` to keep them out, and set their values with
+  `gregale env push` or `gregale env set`.
 
 ### Limits
 
@@ -221,9 +231,18 @@ request tears them down. Turn an app's previews off with `gregale github setup
 my-api --no-preview` or `PATCH /v1/apps/my-api/github/deployment-policy`
 with `{"preview_enabled": false}`.
 
+A new commit on the pull request rebuilds only the preview services whose
+files changed since the previous commit, by the same rule as production
+pushes: a file outside every service's directory rebuilds them all, and
+ignored paths are left out. The other services keep serving the build they
+already have, and take only the deploys the rebuilt services need. A service
+whose preview is not live, and every service when the previous commit's
+preview failed or the pull request was just opened or reopened, rebuilds.
+
 **Release tags.** A tag push deploys the apps bound to the branch whose head
 the tag points at; a tag on an older commit deploys nothing. A project's tags
-deploy its production branch.
+deploy its production branch. Annotated tags (`git tag -a`) and lightweight
+tags both deploy the commit they point at.
 
 **Several installations.** If your GitHub user can connect more than one
 installation (your personal account and an organization, say), Connect GitHub
@@ -241,11 +260,24 @@ once. Preview lifetime, bot and draft pull requests, a root directory,
 ignored paths and branch mappings are project settings: they need an app that
 belongs to a project.
 
+**Deploy only after CI passes.** A push the GitHub App deploys does not wait
+for your tests. To deploy only commits your CI passed, name your CI
+workflow (its `name:` field): `gregale github setup my-api --repo acme/my-api
+--wait-for CI`. Setup checks that a workflow of that name in
+`.github/workflows` runs on pushes to the deploy branches and refuses
+otherwise. The workflow then deploys a branch push once that
+workflow's run for the commit succeeds; a failed run, a pull request run and
+a run from a fork deploy nothing. If runs finish out of order, a commit that
+is no longer the branch head is skipped, so production never goes back to an
+older commit. Release tags and manual runs still deploy directly.
+
 **Renames.** Renaming or transferring the repository, or renaming the user or
 organization, keeps the binding.
 
 **When it does not deploy.** `gregale github status my-api` shows the binding,
-its health and the recent GitHub events that reached the app. `gregale github
+its health and the recent GitHub events that reached the app, with the reason
+an event deployed nothing (for example, production deploys come from your
+GitHub Actions workflow, or nothing deploys that branch). `gregale github
 sync my-api` rechecks access after you change the installation's
 repositories on GitHub.
 
@@ -266,6 +298,11 @@ Print a workflow starter with:
 gregale deploy --github
 ```
 
+The starter deploys pushes to the repository's default branch. If the
+Gregale GitHub App also deploys the repository's pushes, each push deploys
+twice; use `gregale github setup` instead, which writes a workflow and hands
+production deploys to it.
+
 The generated workflow uses an immutable deploy Action SHA from the CLI
 release, and Dependabot can update it from the accompanying `# v0` comment.
 Pass `--pin-action` to resolve the current `v0` tag during generation. Connect
@@ -279,11 +316,17 @@ repository through the GitHub installation before deploying. A transfer to a
 different owner also requires a rebind; a repository rename keeps the same
 identity.
 
+A repository connected through a project works the same way. Gregale asks
+GitHub for the repository's ID through the project's installation each time
+the workflow signs in, so the installation must still have access to the
+repository.
+
 ### Deploy tokens
 
 Other CI systems deploy with a deploy token: a credential that can only deploy
-one app. Minting and rotating one needs an MFA step-up from the last five
-minutes, so run `gregale account mfa verify` first. The token is shown once;
+one app. Browser sessions with MFA enabled need verification from the last
+five minutes when minting or rotating one. CLI requests use their scoped
+bearer credential. The token is shown once;
 store it as `FAAS_TOKEN` in the CI secret store.
 
 A deploy token can also manage its app's edge rules, but only for that app's
@@ -292,7 +335,12 @@ own hosts: a rule's `match_host` must be `@app`, the app's
 `routes` and `async_routes` in a `gregale.yaml` it deploys. A rule that covers
 other hosts (`*`, a wildcard, another app's host), or a route that sends
 another app's host to this app, needs an account API key, because edge rules
-apply to every host they cover across your apps.
+apply to every host they cover across your apps. A route rule written with a
+deploy token may serve only the token's app: routing its hosts to another app
+needs an account API key too. For the same reason a deploy token cannot
+change, delete or roll back over a rule an account credential wrote for wider
+hosts, even when the rule is listed under its app: that answers 403 naming the
+rule's host, and an account API key makes the change.
 
 ```bash
 gregale app deploy-token create --app my-api --label ci   # default expiry: 90 days
@@ -308,6 +356,15 @@ deployment's status and failure reason instead. Use a key with `apps:read`
 and `gregale logs my-api --deployment <id>` to read the build. A key created
 with only `deploy:write` and the deploy Action's OIDC credential work the
 same way, for any app in the account.
+
+These credentials deploy a `gregale.yaml` with workflows, companions,
+extensions, crons and queue bindings; Gregale checks the plan limits when it
+creates the deployment. A function-set deploy with crons needs a
+`deploy:write` key or the OIDC credential, since a deploy token reaches only
+its app's routes. Attaching databases or binding buckets grants the app a
+credential, so a manifest with a `databases` block needs `postgres:manage`
+and one with a `buckets` block needs `storage:manage`. The deploy stops before
+it uploads and names the missing scope.
 
 ## Safe changes
 
@@ -353,6 +410,23 @@ release it replaces keeps serving while the command runs and through the
 rollout, so the old code always runs against the new schema for a while.
 Write migrations that the previous release can live with: add columns and
 tables first, and remove what the old code uses only in a later release.
+
+Release commands of one app run one at a time per environment, oldest first.
+If you deploy again while a release's command is still waiting to start, the
+newer release replaces it and the older command never runs. A command that
+already started finishes before the next one starts.
+
+A release command can end without an exit code: its worker was lost, it timed
+out, or it was cancelled while running. It may have changed part of the
+database. The next release of that environment then fails with
+`release_outcome_uncertain` before its own command runs. Check the database,
+record what you found, and deploy again:
+
+```bash
+gregale release resolve v41 --app my-api --note "migration 42 applied; schema matches"
+```
+
+A later release command of the environment that succeeds also clears it.
 
 A rollback restores code, never the database. Rolling back to the release
 that was serving when the migration ran is the usual case and needs nothing
@@ -478,6 +552,12 @@ email, like a database restore), then
 `GET /v1/apps/{slug}/database-switches/{id}` and
 `POST /v1/apps/{slug}/database-switches/{id}/cancel` (also `postgres:manage`).
 
+An enforced binding release policy also applies to a database-restoring
+rollback. The switch checks the currently published bindings before changing
+the serving code and again before restoring the previous code if it aborts.
+The cutover separately verifies the restored database's staged credentials.
+Missing binding evidence blocks the code change; the policy remains enforced.
+
 ## Release gates
 
 Gregale already stops a release whose 5xx rate, latency, crashes or memory
@@ -509,7 +589,9 @@ started. The post-release watch judges them again for 30 minutes after the
 release reaches 100%. When a gate fails, the canary is aborted (rule
 `abort_release_gate`) or the release is rolled back (rule
 `abort_post_release_gate`). The rollout decision names the gate and what it
-measured.
+measured. Because the post-release watch needs `rollback_on_5xx`, a
+production release of an app with gates that takes traffic without a canary
+cannot also turn `--rollback-on-5xx` off (`409`): nothing would judge it.
 
 How each gate judges:
 - **`slo` gates** compare the release's bad requests with the SLO's error
@@ -581,6 +663,9 @@ It reports:
 
 A section shows as unknown when its history is gone: config history keeps
 the last 100 revisions per scope, and image releases have no build SBOM.
+A release whose build made no artifact (failed, cancelled or still running)
+has no runtime base yet: the runtime base is not listed as a changed setting,
+and the summary ends with `runtime base unknown: v2 made no build artifact`.
 The approval page and the "approval needed" message show the same
 comparison. `gregale release summary` remains the quick cockpit view:
 rollout status, rollback target, and release fields against the previous
@@ -645,6 +730,31 @@ The release starts its canary as usual. At the stage the policy names
 canary still judges the waiting stage, so a regression aborts the release
 even while it waits. Once enough people approve, the rollout continues on its
 next step.
+
+A release with a release command (a migration) waits earlier: after its
+build, before the command runs, because a migration changes production data
+the moment it runs and aborting a canary does not undo it. It is listed in
+`gregale release approval pending` like any waiting release, for the same
+timeout. Once approved, the command runs and the release rolls out without
+waiting again. If it is rejected or times out, the deployment fails without
+running the command and production keeps the current release. When it is
+approved, Gregale checks again before running the command:
+- **A newer release:** if you deployed a newer release of the app to the
+  same environment meanwhile, this one is superseded and its command never
+  runs.
+- **The break-glass pause:** it waits until the pause is lifted.
+- **A deploy freeze:** a freeze that started after you deployed fails it
+  with `release_frozen`. A freeze you overrode when deploying does not.
+- **Its schedule:** a scheduled release whose schedule ended (expired an
+  hour after its time, blocked or cancelled) before it was approved fails
+  without running its command. Deploy and schedule it again.
+
+A newer release that failed or was cancelled does not replace one that
+waits; only a newer release that can still ship does.
+
+The app's first production release has no canary to wait in, so its command
+runs at once
+([amendments 12 and 13](adr/20261020085706-release-approvals.md#amendment-12-2026-11-04-a-release-waits-for-approval-before-its-release-command)).
 
 A person approves on the release's approval page in the dashboard
 (`/dashboard/releases/<deployment>/approval`, linked from the notification),
@@ -721,10 +831,20 @@ refused the same way:
 
 Protect the environment (`gregale environment protect <project>
 production`) and its promotion approval stands in for the app's policy.
+That approval comes from a person signed in, not an API key or token, and on
+a company app from someone whose role the policy lets approve.
 A GitOps source releases into `production` only once a person approved the
 revision in Gregale (approval policy `manual`); with `protected_branch` the
 sync waits until you remove the app's policy or switch the source to manual
-approval.
+approval. That one approval stands in for the app's policy only when a person
+gave it, the policy asks for one approval and, in an organization, the
+approver holds a role the policy lets approve; otherwise the sync waits. An
+API key's approval of the revision does not count: approve the same revision
+on the environment's GitOps page in the dashboard.
+
+While a policy or a pending scheduled release names a channel as its last
+Slack or email channel, that channel can't be deleted (`409
+notification_channel_in_use`): name another channel there first.
 
 The app's **Release safety** page in the dashboard
 (`/dashboard/apps/<app>/release-safety`) shows the policy and the releases
@@ -773,6 +893,9 @@ with `release_frozen`, which names the freeze, its reason and its creator:
   began (`traffic`, promote, or a rollback to it): it has never served, so it
   waits like a new deploy. A release deployed during the freeze, or one that
   served before, is not refused.
+- a rollback to a release that never served, even after a newer release
+  replaced it. A rollback can't carry an override, and a rollback to a
+  rejected release is always refused.
 
 A GitOps source managing the `production` environment keeps its sync
 unconverged while a freeze covers one of its apps, and activates the new
@@ -816,8 +939,12 @@ While Gregale handles a security incident, it may pause new releases for
 every account
 ([ADR-20261022140000](adr/20261022140000-break-glass-controls.md)). Deploys
 and new schedules then fail with 503 `platform_release_paused`, which nothing
-in the request overrides. Queued builds wait, and scheduled releases start
-once the pause is lifted. Your running apps keep serving, rollbacks still
+in the request overrides. A release you deployed earlier with `--no-traffic`
+can't take its first traffic during the pause either. Queued builds wait, and
+scheduled releases start once the pause is lifted. A release deployed before
+the pause still finishes its build, but its release command (a migration)
+waits for the pause to be lifted. Your running apps keep
+serving, rollbacks to a release that served before still
 work, and you can still change env vars and secrets, so you can rotate a
 credential during the incident. Retry the deploy after the pause is lifted.
 
@@ -847,11 +974,18 @@ waiting one. At its time, Gregale starts the rollout the deploy would have
 had: the same canary (`--rollout safe` or `fast`, or the app's release
 policy), or all traffic at once for `--rollout immediate`.
 
+Because the build and any release command (a migration) run as soon as you
+deploy (once approved, when the app requires approvals), a freeze active
+right now refuses a scheduled release just as it refuses an immediate one,
+even when the scheduled time falls after the freeze. Wait for it to end, or deploy with `--override-freeze REASON`.
+
 Just before it starts, Gregale checks again:
 - **Freezes.** A freeze active at that moment stops the release, including a
   freeze created after you scheduled it. Scheduling into a freeze you know
   about needs `--override-freeze REASON`, which covers exactly the freezes
-  active at the scheduled time.
+  active at the scheduled time. Overriding a company organization's freeze
+  this way needs the same right as an immediate override: someone who may
+  lift the freeze.
 - **Approvals.** If the app requires approvals, the release must roll out
   through a canary, and it waits for approval in that canary like any other
   release. A policy added while the release waited applies to it.
@@ -984,8 +1118,17 @@ The first window opens when Gregale first sees traffic for the completed
 release and lasts 5 minutes. If at least 5 of the release's responses are 5xx,
 and those are at least half its requests, Gregale rolls back to the release it
 replaced. The check runs every 15 seconds, and the release keeps serving until
-the previous one is ready again. If a rollout wedges,
-`gregale rollouts recover my-api` is the manual escape hatch.
+the previous one is ready again. While a rollout runs, a plain
+`gregale rollback my-api` is refused because traffic is split; to stop the
+rollout and return its traffic to the release it replaced, run
+`gregale release traffic rollback my-api` (the same as
+`gregale rollouts recover my-api --action abort`). For a split you set by
+hand with `release traffic set`, the same command gives the release with the
+largest share all traffic; `--to v6` names another, and a tie needs it. It
+acts on one environment (`--env`, or the only one the app is live in), and
+refuses if traffic changes while it runs. If a rollout wedges,
+`gregale rollouts recover my-api --action advance|promote|abort` is the manual
+escape hatch.
 
 A new release that goes live while an earlier canary is still rolling out
 replaces it ([ADR-20261030102813](adr/20261030102813-a-newer-canary-supersedes-an-in-flight-one.md)).
@@ -994,15 +1137,25 @@ The earlier canary's traffic returns to the serving release, its rollout ends
 `rollout.aborted` webhook), and only the newest release rolls out. A release
 deployed with `--rollout immediate` takes all traffic and ends the earlier
 canary's rollout the same way.
+If the app cannot run the new release beside both the serving release and the
+earlier canary (with the default max_concurrency of 1 it cannot), the earlier
+canary is replaced just before the new release's health check instead of when
+it goes live, so the check can wake it. If that check then fails, the app stays
+on the serving release.
 
 ### Safe by default
 
 A production release of an app that already serves traffic rolls out on the
 `adaptive` ladder with first-wake 5xx rollback even when the deploy names no
 rollout policy ([ADR-1446](adr/1446-safe-releases-by-default.md)). This covers
-`gregale deploy`, GitHub App pushes, the API, and Terraform. It does not
-apply to an app's first deploy, PR previews, named project environments, or
-service, worker, and job apps, which keep their own rollout behavior.
+`gregale deploy`, GitHub App pushes, `gregale project apply`, the API, and
+Terraform, into the default scope or a project's `production` environment.
+It does not apply to an app's first deploy into that scope, PR previews,
+other project environments, atomic project releases (which cut every app
+over together), or service, worker, and job apps, which keep their own
+rollout behavior. A promotion into `production` gets the first-wake 5xx
+rollback and the post-release watch but no canary: its protected approval
+already stands in for the app's approval policy.
 
 The adaptive ladder sends 1%, then 10%, then 50%, then 100% of traffic to the
 new revision. Each stage lasts at least a minute and advances as soon as both
@@ -1064,7 +1217,9 @@ the previous release's traffic from before the rollout. A clear 5xx or p95
 latency regression rolls it back automatically and records why on the
 deployment (`gregale release summary`). This also covers immediate
 releases, and anything the canary's share of traffic did not show. Releases
-deployed with `--rollback-on-5xx=false` are not watched.
+deployed with `--rollback-on-5xx=false` are not watched. The watch ends early
+only when a newer release takes traffic; deploying one with `--no-traffic`,
+scheduling one, or a build still running leaves the serving release watched.
 
 Opt out when you need an immediate cutover:
 
@@ -1168,7 +1323,8 @@ manual stage advances remain immediate.
 
 While a canary is pending or rolling out, the generic traffic-split endpoint
 returns `409 traffic_change_during_canary`. Advance or recover the rollout
-before applying a separate traffic split.
+before applying a separate traffic split; `gregale rollouts recover <app>
+--action abort` stops it and returns its traffic to the release it replaced.
 
 A saved `gregale deploy` attempt can recover a lost acceptance reply with
 `gregale release resume SESSION_ID`. Image, multipart and source-ref submissions
@@ -1560,7 +1716,7 @@ gregale environment promote shop --from staging --to production --sync-config --
 The server returns an accepted running operation. Two complete healthy rounds,
 one minute apart, are required while candidates serve no normal traffic. Graph
 and configuration then cut over atomically, followed by two new healthy rounds
-before success. Probe requests preserve destination scope and customer auth.
+before success. Probe requests preserve destination scope and pass only Gregale's own auth gates; your app's own auth still applies.
 Use a dependency-checking application endpoint to test database access.
 
 Inspect `gregale environment status shop PROMOTION_ID --to production`

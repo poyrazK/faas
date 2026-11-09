@@ -123,14 +123,15 @@
       "name": "Capability acceptance: billing",
       "category": "resources",
       "description": "Each released billing capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["app-costs", "billing", "billing-focus-export", "billing-forecast", "budgets"],
+      "capabilities": ["app-costs", "billing", "billing-focus-export", "billing-forecast", "budgets", "strict-budgets"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_app_costs_test.go::TestAppCostsCLIUsesStableAppIdentityAndFiltersAccountReport"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_billing_invoice_details_test.go::TestFOCUSArtifactLimitProblem"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_change_plan_test.go::TestGetBillingPortal"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_financial_budgets_test.go::TestFinancialBudgetCRUD"},
-        {"kind": "test", "locator": "pkg/financial/forecast_test.go::TestForecastMeterUnavailable"}
+        {"kind": "test", "locator": "pkg/financial/forecast_test.go::TestForecastMeterUnavailable"},
+        {"kind": "test", "locator": "pkg/state/financialtest/financial_compute_account_test.go::TestFinancialComputeAccountReservations"}
       ]
     },
     {
@@ -452,7 +453,7 @@
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengeSolvePassesRouteGates"},
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengePassCoversTheHostForTheAccount"},
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengeSolveRefusesForeignTokens"},
-        {"kind": "test", "locator": "cmd/gatewayd-internal/edge_challenge_key_test.go::TestEdgeChallengeSecret"},
+        {"kind": "test", "locator": "cmd/gatewayd-internal/edge_challenge_key_test.go::TestLoadGatewayFleetKey"},
         {"kind": "test", "locator": "pkg/gateway/edge_security_review_test.go::TestChallengePassSurvivesAShadowingCookie"},
         {"kind": "test", "locator": "pkg/gateway/edge_security_review_test.go::TestChallengedPreflightIsAnsweredAtTheEdge"},
         {"kind": "runbook", "locator": "docs/runbooks/FaasEdgeChallenge.md"},
@@ -556,6 +557,22 @@
         {"kind": "workflow", "locator": ".github/workflows/mcp-contract.yml"},
         {"kind": "runbook", "locator": "docs/ops/evidence/20261001-mcp-preview/README.md"},
         {"kind": "runbook", "locator": "docs/mcp.md"}
+      ]
+    },
+    {
+      "id": "object-storage-key-scopes",
+      "name": "Scoped bucket credential enforcement",
+      "category": "security",
+      "description": "Key-scoped bindings are issued only after the capability is released to the account. Their credentials refuse requests, copy sources and bulk deletes outside the literal key prefix, and cannot change bucket-wide settings (ADR-20261106114500).",
+      "capabilities": ["object-storage-key-scopes"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/object/key_scope_test.go::TestKeyScopedBindingsNeedTheCapability"},
+        {"kind": "test", "locator": "pkg/apid/object/key_scope_test.go::TestManifestBucketBindingHonorsKeyPrefix"},
+        {"kind": "test", "locator": "pkg/s3gateway/key_scope_test.go::TestKeyScopeAllowsOnlyRequestsInsideThePrefix"},
+        {"kind": "test", "locator": "pkg/s3gateway/key_scope_test.go::TestKeyScopedBulkDeleteRefusesAnyKeyOutside"},
+        {"kind": "test", "locator": "pkg/s3gateway/key_scope_test.go::TestBucketSettingsExcludeRotationStagesAndScopedKeys"},
+        {"kind": "runbook", "locator": "docs/adr/20261106114500-key-scoped-bucket-bindings.md"}
       ]
     },
     {

@@ -7,8 +7,10 @@ import type { AccountDeadLetterPurgeResponse } from '../models/AccountDeadLetter
 import type { AccountDeadLetterReplayAllResponse } from '../models/AccountDeadLetterReplayAllResponse.js';
 import type { AccountDeletionResponse } from '../models/AccountDeletionResponse.js';
 import type { AccountEgressAllowlistExtraResponse } from '../models/AccountEgressAllowlistExtraResponse.js';
+import type { AccountEmailChangeRequest } from '../models/AccountEmailChangeRequest.js';
 import type { AccountExportResponse } from '../models/AccountExportResponse.js';
 import type { AccountOverageCapResponse } from '../models/AccountOverageCapResponse.js';
+import type { AccountProfileUpdate } from '../models/AccountProfileUpdate.js';
 import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsResponse.js';
 import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
@@ -23,13 +25,17 @@ import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
 import type { CreateBillingRunRequest } from '../models/CreateBillingRunRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
+import type { EgressOverageRequest } from '../models/EgressOverageRequest.js';
+import type { EgressOverageResponse } from '../models/EgressOverageResponse.js';
 import type { Preview } from '../models/Preview.js';
 import type { PreviewList } from '../models/PreviewList.js';
 import type { PutBillingConnectionRequest } from '../models/PutBillingConnectionRequest.js';
 import type { PutBillingRunScheduleRequest } from '../models/PutBillingRunScheduleRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
+import type { SecurityActivityResponse } from '../models/SecurityActivityResponse.js';
 import type { SelectedTraceLookupResponse } from '../models/SelectedTraceLookupResponse.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
+import type { SignInMethodsResponse } from '../models/SignInMethodsResponse.js';
 import type { StatementInvoiceListResponse } from '../models/StatementInvoiceListResponse.js';
 import type { UpdateAccountBillingInfoRequest } from '../models/UpdateAccountBillingInfoRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -87,6 +93,10 @@ export class AccountService {
    * Stages deletion. The account becomes `deleted_pending` for 30 days
    * during which the customer can call `POST /v1/account/restore`. After
    * the grace period, all rows are GC'd.
+   * An account serving as an organization's billing contact while it has
+   * a billing customer must move that contact first (409
+   * `billing_contact_member`). If the billing-contact check cannot
+   * complete, returns retryable 503 without staging deletion.
    *
    * @returns AccountDeletionResponse Staged.
    * @throws ApiError
@@ -110,6 +120,164 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         409: `code: account_deletion_confirm_required | account_deletion_pending | account_not_restorable`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Set the account display name.
+   * Sets the optional display name shown to org members and in the
+   * dashboard. Leading and trailing spaces are removed; an empty string
+   * clears it. At most 80 characters, no control characters.
+   *
+   * @returns AccountProfileUpdate Saved.
+   * @throws ApiError
+   */
+  public static updateAccountProfile({
+    requestBody,
+  }: {
+    requestBody: AccountProfileUpdate,
+  }): CancelablePromise<AccountProfileUpdate> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/account',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Start a sign-in email change.
+   * Browser sessions only; an API key gets 403. Accounts with two-factor
+   * authentication need a recent authenticator verification
+   * (`step_up_required` otherwise); accounts with a password send
+   * `current_password`. A single-use link valid for 1 hour is emailed to
+   * the new address; opening it and confirming moves the account and
+   * signs out every browser. The previous address gets a notice. A new
+   * address that already belongs to an account gets the same response
+   * and no email. CSRF: action `account_email_change`.
+   *
+   * @returns any Confirmation sent to the new address.
+   * @throws ApiError
+   */
+  public static requestAccountEmailChange({
+    requestBody,
+  }: {
+    requestBody: AccountEmailChangeRequest,
+  }): CancelablePromise<{
+    status: 'confirmation_sent';
+    email: string;
+  }> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/email',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `An API key was used, or a recent authenticator verification is required (\`step_up_required\`).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the ways to sign in to the account.
+   * Whether a password and two-factor authentication are set, and the linked Google or GitHub identities.
+   * @returns SignInMethodsResponse Sign-in methods.
+   * @throws ApiError
+   */
+  public static listAccountSignInMethods(): CancelablePromise<SignInMethodsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/sign-in-methods',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the account's sign-ins and security changes.
+   * Sign-ins, API keys and CLI sign-ins, password, email, two-factor
+   * and sign-in method changes of the last 90 days, newest first, at
+   * most 100. Each event carries a fixed summary, and the client address
+   * and sign-in method when they were recorded. Needs a full-access
+   * credential.
+   *
+   * @returns SecurityActivityResponse Security events, newest first.
+   * @throws ApiError
+   */
+  public static getAccountSecurityActivity(): CancelablePromise<SecurityActivityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/security-activity',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Remove a linked Google or GitHub sign-in.
+   * Browser sessions need a recent authenticator verification when
+   * two-factor authentication is on. Refused with 409 when it is the
+   * last way to sign in; set a password or link another provider first.
+   * The provider stays removed: signing in with it no longer links it by
+   * matching email, until it is linked again from a browser signed in to
+   * the account. CSRF: action `sign_in_method_unlink` (browser sessions
+   * only; API keys need no token).
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static unlinkAccountSignInMethod({
+    provider,
+  }: {
+    /**
+     * Linked sign-in provider to remove.
+     */
+    provider: 'google' | 'github',
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/sign-in-methods/{provider}',
+      path: {
+        'provider': provider,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `The provider is not linked to this account.`,
+        409: `The provider is the last way to sign in.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
       },
     });
   }
@@ -471,8 +639,23 @@ export class AccountService {
    * Switch the account between `free`, `hobby`, `pro`, and `scale`. The
    * local account moves to a paid tier only after the configured billing
    * provider confirms payment. If a new subscription is required, the
-   * `payment_required` response includes `checkout_url`; if an existing
-   * subscription must be changed, it includes `billing_portal_url`.
+   * `payment_required` response includes `checkout_url`. An existing
+   * subscription changes in place: an upgrade is charged the prorated
+   * difference now and answers 202 until the provider confirms it; a
+   * declined charge answers 402 with `billing_portal_url` to update the
+   * payment method, and the plan stays. A downgrade answers 202 and takes
+   * effect at the end of the billing period. A billing email that already
+   * pays for another account or organization answers 409
+   * `billing_email_in_use`.
+   *
+   * Asking for the plan the account already pays for keeps its
+   * subscription: a scheduled cancellation or downgrade is undone and the
+   * 200 carries `plan_change_status: scheduled_change_undone`. A
+   * subscription scheduled to end changes no plan, so an upgrade or
+   * downgrade then answers 409 `billing_subscription_ending` until it is
+   * kept. An upgrade whose charge the bank asks to confirm (3-D Secure)
+   * answers 402 `payment_authentication_required` with
+   * `billing_portal_url`; nothing is charged and the plan stays.
    *
    * @returns AccountResponse The updated account profile after the plan change.
    * @throws ApiError
@@ -997,7 +1180,8 @@ export class AccountService {
    *
    * Once current-month overage meets/exceeds the cap, the scheduler refuses
    * new wakes with `code: admission_refused` (HTTP 402). The cap is
-   * account-self-scoped (admin scope required) and the response
+   * account-self-scoped (admin scope required; a dashboard session also
+   * needs a step-up within the last 5 minutes) and the response
    * is the post-update account state. Audit row
    * `overage.cap_changed` is emitted on every successful call.
    *
@@ -1027,6 +1211,66 @@ export class AccountService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * Read the account's egress overage election.
+   * Without the election every plan stops at its monthly egress allowance:
+   * the account's apps are parked (`quota_exceeded_egress`) until the month
+   * ends or the plan grows. With it, egress above the allowance is billed as
+   * overage, within the spend cap, while egress billing is live
+   * (`billing: live`); while `billing` is `off` the allowance still holds.
+   *
+   * @returns EgressOverageResponse The account's election.
+   * @throws ApiError
+   */
+  public static getEgressOverage(): CancelablePromise<EgressOverageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/egress-overage',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+      },
+    });
+  }
+  /**
+   * Turn the account's egress overage election on or off.
+   * `{"enabled": true|false}`. Requires admin scope and MFA; a dashboard
+   * session also needs a step-up within the last 5 minutes. Turning it on
+   * needs a paid plan (HTTP 402 `plan_egress_overage_not_allowed`); turning
+   * it off is always allowed. Egress already sent while the election was on
+   * is still billed. Audit row `egress_overage.changed` records each change.
+   *
+   * @returns EgressOverageResponse The election after the change.
+   * @throws ApiError
+   */
+  public static setEgressOverage({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: EgressOverageRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EgressOverageResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/egress-overage',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_egress_overage_not_allowed — the plan stops at its egress allowance; upgrade to a paid plan.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
       },
     });
   }

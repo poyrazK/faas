@@ -82,3 +82,17 @@ The first-wake 5xx guard ([ADR-625](625-first-wake-5xx-rollback-from-request-tel
 ## Amendment 4 (2026-11-01): an automatic rollback that fails is not reported as one
 
 The post-release watch and the first-wake 5xx guard mark a release rolled back when they request the rollback, and the after-rollback freeze starts then too. When the rollback's outcome then failed (ADR-1446: the previous release went back to superseded, failed or did not serve within `RollbackOutcomeTimeout`), the bad release kept serving while its timeline said "Rolled back", neither worker judged it again, and the freeze held the fix that now had to ship. The rollback outcome worker now calls back into apid when an automatic rollback fails: apid records the regression on the release that still serves (its post-release decision, or a first-wake 5xx one, with `rollback_skipped: "rollback_failed"`), so the timeline shows that it still serves, and lifts the after-rollback freezes that name it (`release.freeze_lifted` by `gregale`). Operators are still paged by `FaasRollbackNotRestored`.
+
+## Amendment 5 (2026-11-02): a newer release that never served does not end the watch
+
+The watch judged a release only while it was the newest deployment in its scope, so that a rollback target, which is older than the release it replaced, is not judged as a fresh release. But any newer deployment that had not failed counted: a release staged with `--no-traffic`, one parked for a scheduled start, or a build still running. A second CI push within the window, a staged preview, or scheduling tomorrow's release stopped the watch for the release that served, and its timeline still said "Post-release watch passed". The watch now ends only when a newer release served (it serves now, or `serving_ended_at` records that it did). The timeline ends the watch when a newer release replaced the release before the window closed, and says so, and it no longer names a release that never served as the replacement.
+
+## Amendment 6 (2026-11-05): healthy releases do not monopolize the watch
+
+Each worker retains a process-local `(rollout_completed_at, id)` cursor across
+100-candidate sweeps. Healthy releases remain watched, but later candidates are
+evaluated on following ticks rather than waiting for older releases to age out.
+The cursor wraps after a short or empty page so a later regression in an earlier
+healthy release is still detected. Removed candidates cannot shift the next
+page past another release. The watch window, telemetry comparison and guarded
+rollback remain unchanged; the cursor grants no execution authority.

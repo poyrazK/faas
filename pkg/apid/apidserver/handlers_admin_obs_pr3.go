@@ -186,7 +186,7 @@ func (s *server) obsAuditLogSearch(w http.ResponseWriter, r *http.Request, acct 
 // Query parameters:
 //
 //	?actor=<text>        exact match (omitted → all)
-//	?kind_prefix=<prefix> LIKE 'prefix%' on kind
+//	?kind_prefix=<prefix> literal prefix of kind
 //	?subject=<uuid>     exact match (omitted → all)
 //	?since=<rfc3339>    inclusive lower bound (omitted → all)
 //	?limit=<n>          default 200, cap 500

@@ -11,6 +11,8 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.dns_record_instruction import DNSRecordInstruction
+    from ..models.domain_doctor_check import DomainDoctorCheck
+    from ..models.domain_readiness import DomainReadiness
 
 
 T = TypeVar("T", bound="CustomDomainResponse")
@@ -27,10 +29,25 @@ class CustomDomainResponse:
     domain: str
     app_id: str
     verified: bool
+    readiness: DomainReadiness | Unset = UNSET
+    """Independent ownership, DNS routing, and TLS activation state."""
+    verification_next_check_at: datetime.datetime | Unset = UNSET
+    """Next scheduled automatic ownership check; omitted after verification."""
+    verification_attempts: int | Unset = UNSET
+    cert_retry_at: datetime.datetime | Unset = UNSET
+    """Next permitted legacy certificate attempt, when a durable cooldown is active. Caddy manages its own retry
+    schedule."""
+    checks: list[DomainDoctorCheck] | Unset = UNSET
+    """Fresh checks for this claim, including observed values and remediation. Stale observations are omitted."""
     environment: str | Unset = UNSET
     """Project environment that owns the route; omitted for legacy application-wide domains."""
     challenge_token: None | str | Unset = UNSET
     verified_at: datetime.datetime | None | Unset = UNSET
+    verification_expires_at: datetime.datetime | Unset = UNSET
+    """Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof."""
+    verification_expired: bool | Unset = UNSET
+    """True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS
+    instructions are omitted; resume domain setup to recreate the claim."""
     txt_record: None | str | Unset = UNSET
     default: bool | Unset = UNSET
     """True when this domain is the app's default. Set via `gregale domains set-default`."""
@@ -62,6 +79,27 @@ class CustomDomainResponse:
 
         verified = self.verified
 
+        readiness: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.readiness, Unset):
+            readiness = self.readiness.to_dict()
+
+        verification_next_check_at: str | Unset = UNSET
+        if not isinstance(self.verification_next_check_at, Unset):
+            verification_next_check_at = self.verification_next_check_at.isoformat()
+
+        verification_attempts = self.verification_attempts
+
+        cert_retry_at: str | Unset = UNSET
+        if not isinstance(self.cert_retry_at, Unset):
+            cert_retry_at = self.cert_retry_at.isoformat()
+
+        checks: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.checks, Unset):
+            checks = []
+            for checks_item_data in self.checks:
+                checks_item = checks_item_data.to_dict()
+                checks.append(checks_item)
+
         environment = self.environment
 
         challenge_token: None | str | Unset
@@ -77,6 +115,12 @@ class CustomDomainResponse:
             verified_at = self.verified_at.isoformat()
         else:
             verified_at = self.verified_at
+
+        verification_expires_at: str | Unset = UNSET
+        if not isinstance(self.verification_expires_at, Unset):
+            verification_expires_at = self.verification_expires_at.isoformat()
+
+        verification_expired = self.verification_expired
 
         txt_record: None | str | Unset
         if isinstance(self.txt_record, Unset):
@@ -142,12 +186,26 @@ class CustomDomainResponse:
                 "verified": verified,
             }
         )
+        if readiness is not UNSET:
+            field_dict["readiness"] = readiness
+        if verification_next_check_at is not UNSET:
+            field_dict["verification_next_check_at"] = verification_next_check_at
+        if verification_attempts is not UNSET:
+            field_dict["verification_attempts"] = verification_attempts
+        if cert_retry_at is not UNSET:
+            field_dict["cert_retry_at"] = cert_retry_at
+        if checks is not UNSET:
+            field_dict["checks"] = checks
         if environment is not UNSET:
             field_dict["environment"] = environment
         if challenge_token is not UNSET:
             field_dict["challenge_token"] = challenge_token
         if verified_at is not UNSET:
             field_dict["verified_at"] = verified_at
+        if verification_expires_at is not UNSET:
+            field_dict["verification_expires_at"] = verification_expires_at
+        if verification_expired is not UNSET:
+            field_dict["verification_expired"] = verification_expired
         if txt_record is not UNSET:
             field_dict["txt_record"] = txt_record
         if default is not UNSET:
@@ -172,6 +230,8 @@ class CustomDomainResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.dns_record_instruction import DNSRecordInstruction
+        from ..models.domain_doctor_check import DomainDoctorCheck
+        from ..models.domain_readiness import DomainReadiness
 
         d = dict(src_dict)
         domain = d.pop("domain")
@@ -179,6 +239,38 @@ class CustomDomainResponse:
         app_id = d.pop("app_id")
 
         verified = d.pop("verified")
+
+        _readiness = d.pop("readiness", UNSET)
+        readiness: DomainReadiness | Unset
+        if isinstance(_readiness, Unset):
+            readiness = UNSET
+        else:
+            readiness = DomainReadiness.from_dict(_readiness)
+
+        _verification_next_check_at = d.pop("verification_next_check_at", UNSET)
+        verification_next_check_at: datetime.datetime | Unset
+        if isinstance(_verification_next_check_at, Unset):
+            verification_next_check_at = UNSET
+        else:
+            verification_next_check_at = datetime.datetime.fromisoformat(_verification_next_check_at)
+
+        verification_attempts = d.pop("verification_attempts", UNSET)
+
+        _cert_retry_at = d.pop("cert_retry_at", UNSET)
+        cert_retry_at: datetime.datetime | Unset
+        if isinstance(_cert_retry_at, Unset):
+            cert_retry_at = UNSET
+        else:
+            cert_retry_at = datetime.datetime.fromisoformat(_cert_retry_at)
+
+        _checks = d.pop("checks", UNSET)
+        checks: list[DomainDoctorCheck] | Unset = UNSET
+        if _checks is not UNSET:
+            checks = []
+            for checks_item_data in _checks:
+                checks_item = DomainDoctorCheck.from_dict(checks_item_data)
+
+                checks.append(checks_item)
 
         environment = d.pop("environment", UNSET)
 
@@ -207,6 +299,15 @@ class CustomDomainResponse:
             return cast(datetime.datetime | None | Unset, data)
 
         verified_at = _parse_verified_at(d.pop("verified_at", UNSET))
+
+        _verification_expires_at = d.pop("verification_expires_at", UNSET)
+        verification_expires_at: datetime.datetime | Unset
+        if isinstance(_verification_expires_at, Unset):
+            verification_expires_at = UNSET
+        else:
+            verification_expires_at = datetime.datetime.fromisoformat(_verification_expires_at)
+
+        verification_expired = d.pop("verification_expired", UNSET)
 
         def _parse_txt_record(data: object) -> None | str | Unset:
             if data is None:
@@ -303,9 +404,16 @@ class CustomDomainResponse:
             domain=domain,
             app_id=app_id,
             verified=verified,
+            readiness=readiness,
+            verification_next_check_at=verification_next_check_at,
+            verification_attempts=verification_attempts,
+            cert_retry_at=cert_retry_at,
+            checks=checks,
             environment=environment,
             challenge_token=challenge_token,
             verified_at=verified_at,
+            verification_expires_at=verification_expires_at,
+            verification_expired=verification_expired,
             txt_record=txt_record,
             default=default,
             cert_not_after=cert_not_after,

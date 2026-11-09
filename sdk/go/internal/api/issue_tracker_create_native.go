@@ -2,11 +2,12 @@ package api
 
 // CreateNativeIssueTicketRequest explicitly creates or recovers a GitHub ticket.
 type CreateNativeIssueTicketRequest struct {
-	RequestID   string `json:"request_id"`
-	Repository  string `json:"repository"`
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"`
-	RecoveryURL string `json:"recovery_url,omitempty"`
+	RequestID       string `json:"request_id"`
+	Repository      string `json:"repository"`
+	Title           string `json:"title"`
+	Description     string `json:"description,omitempty"`
+	RecoveryURL     string `json:"recovery_url,omitempty"`
+	OriginalAppSlug string `json:"original_app_slug,omitempty"`
 }
 
 // NativeIssueTicketResult is durable creation evidence; created means linking needs retry.

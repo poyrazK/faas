@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -27,6 +28,28 @@ type resolvedManagedPostgresBinding struct {
 	scope          string
 	environmentKey string
 	access         managedpostgres.CredentialAccess
+	// create is set when the database does not exist yet and the manifest
+	// declares `create` for it (ADR-20261106105015 §1): apply creates it
+	// before binding. database is then the zero value.
+	create *manifestDatabaseCreation
+	// pending accepts a binding whose database is still provisioning: the
+	// binding reconciler injects the key once it is ready, as for Compose
+	// postgres services (ADR-20261025111824).
+	pending bool
+}
+
+// manifestDatabaseCreation is one database a deploy creates from gregale.yaml.
+type manifestDatabaseCreation struct {
+	name string
+	spec managedpostgres.Spec
+}
+
+// databaseName names the bound database whether or not it exists yet.
+func (b resolvedManagedPostgresBinding) databaseName() string {
+	if b.create != nil {
+		return b.create.name
+	}
+	return b.database.Name
 }
 
 // resolvedProjectManifest contains the declarations needed after project
@@ -63,9 +86,6 @@ func (s *server) loadAndResolveProjectManifest(
 	}
 	if _, shared := projectaccess.From(ctx); shared && manifest.AsyncRoutes != nil {
 		return resolvedProjectManifest{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization async bindings unavailable", "deploy application workloads with environment configuration; async-route bindings require separate organization ownership support")
-	}
-	if _, shared := projectaccess.From(ctx); shared && manifest.Routes != nil {
-		return resolvedProjectManifest{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization routes unavailable", "manifest routes are not yet supported for organization-owned projects; create them with `gregale edge-rules create --kind route`")
 	}
 	_, sharedProject := projectaccess.From(ctx)
 	_, sharedApp := appaccess.FromContext(ctx)
@@ -137,6 +157,15 @@ func (s *server) resolveManifestPostgresBindings(
 		return nil, managedPostgresManifestProblem(err, "could not list managed PostgreSQL databases")
 	}
 	environment = strings.TrimSpace(environment)
+	// Every database the manifest creates, by name, so a dependency without
+	// `create` may bind a database another entry creates.
+	creates := map[string]gregalemanifest.DatabaseCreate{}
+	for _, dependency := range manifest.Databases {
+		if dependency.Create != nil {
+			creates[strings.TrimSpace(dependency.Database)] = *dependency.Create
+		}
+	}
+	planned := map[string]*manifestDatabaseCreation{}
 	seenTargets := make(map[string]struct{}, len(manifest.Databases))
 	resolved := make([]resolvedManagedPostgresBinding, 0, len(manifest.Databases))
 	var manifestScope string
@@ -191,25 +220,121 @@ func (s *server) resolveManifestPostgresBindings(
 		}
 		seenTargets[targetKey] = struct{}{}
 
+		name := strings.TrimSpace(dependency.Database)
+		create, declaresCreate := creates[name]
 		database, resolveErr := resolveManagedPostgresDatabaseRecord(databases, dependency.Database)
 		if resolveErr != nil {
 			if strings.Contains(resolveErr.Error(), "ambiguous") {
 				return nil, api.NewProblem(http.StatusConflict, "managed_postgres_ambiguous",
 					"Managed PostgreSQL database reference is ambiguous", fmt.Sprintf("database[%d]: %v", i, resolveErr))
 			}
-			return nil, api.NewProblem(http.StatusNotFound, "managed_postgres_not_found",
-				"Managed PostgreSQL database not found", fmt.Sprintf("database[%d]: no managed database named or identified %q", i, dependency.Database))
+			if !declaresCreate {
+				return nil, api.NewProblem(http.StatusNotFound, "managed_postgres_not_found",
+					"Managed PostgreSQL database not found", fmt.Sprintf("database[%d]: no managed database named or identified %q; add `create: true` to create it on deploy", i, dependency.Database))
+			}
+			creation := planned[name]
+			if creation == nil {
+				spec, problem := s.manifestDatabaseCreateSpec(ctx, acct, create, len(databases)+len(planned), i)
+				if problem != nil {
+					return nil, problem
+				}
+				creation = &manifestDatabaseCreation{name: name, spec: spec}
+				planned[name] = creation
+			}
+			resolved = append(resolved, resolvedManagedPostgresBinding{
+				appSlug: appSlug, scope: scope, environmentKey: environmentKey, access: access,
+				create: creation, pending: true,
+			})
+			continue
 		}
+		pending := false
 		if database.State != managedpostgres.StateReady || database.ProviderResourceID == "" {
-			return nil, api.NewProblem(http.StatusConflict, "managed_postgres_not_ready",
-				"Managed PostgreSQL database is not ready", fmt.Sprintf("database %q is %s; retry after provisioning completes", database.Name, database.State))
+			// A database this manifest creates may still be provisioning
+			// from an earlier deploy; its key arrives when it is ready.
+			if !declaresCreate || database.State != managedpostgres.StateProvisioning {
+				return nil, api.NewProblem(http.StatusConflict, "managed_postgres_not_ready",
+					"Managed PostgreSQL database is not ready", fmt.Sprintf("database %q is %s; retry after provisioning completes", database.Name, database.State))
+			}
+			pending = true
 		}
 		resolved = append(resolved, resolvedManagedPostgresBinding{
 			database: database, appSlug: appSlug, scope: scope,
-			environmentKey: environmentKey, access: access,
+			environmentKey: environmentKey, access: access, pending: pending,
 		})
 	}
 	return resolved, nil
+}
+
+// manifestDatabaseCreateSpec checks, before any mutation, that the account
+// may create the database a manifest declares, with the same gates as
+// `gregale postgres create`; existing counts databases the account has plus
+// the ones this deploy already plans.
+func (s *server) manifestDatabaseCreateSpec(ctx context.Context, acct state.Account, create gregalemanifest.DatabaseCreate, existing, index int) (managedpostgres.Spec, *api.Problem) {
+	detail := func(format string, a ...any) string {
+		return fmt.Sprintf("database[%d]: create: ", index) + fmt.Sprintf(format, a...)
+	}
+	// Creating a database is `gregale postgres create`: postgres:manage on
+	// every account, so a deploy token or deploy:write key (ADR-20261031162858
+	// amendment 1), or a push deploy without a principal, cannot buy one.
+	if sharedComposePostgres(ctx) && authorizeComposePostgres(ctx, nil) != nil ||
+		!authmw.HasScope((&http.Request{}).WithContext(ctx), api.ScopesManagedPostgresManageSurface...) {
+		return managedpostgres.Spec{}, api.NewProblem(http.StatusForbidden, "managed_postgres_forbidden",
+			"Cannot create managed PostgreSQL database", detail("creating a database needs a credential with postgres:manage; deploy tokens and deploy:write keys can only bind existing databases"))
+	}
+	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
+	if !ok || limits.DatabasesMax == 0 || managedPostgresFreeClosed(acct.Plan, s.managedPostgresCapMode) {
+		return managedpostgres.Spec{}, managedPostgresManifestProblem(managedpostgres.ErrNotInPlan, detail("the plan does not include managed databases"))
+	}
+	discovery, err := s.managedPostgres.DiscoverCapabilities(ctx, acct.ID, strings.TrimSpace(create.Region))
+	if err != nil {
+		return managedpostgres.Spec{}, managedPostgresManifestProblem(err, detail("could not read managed PostgreSQL capabilities"))
+	}
+	if !discovery.ProvisioningEnabled {
+		return managedpostgres.Spec{}, managedPostgresManifestProblem(managedpostgres.ErrUnavailable, detail("managed PostgreSQL provisioning is not open to this account"))
+	}
+	if room := min(limits.DatabasesMax, discovery.DatabaseLimit); existing >= room {
+		return managedpostgres.Spec{}, managedPostgresManifestProblem(managedpostgres.ErrQuotaExceeded, detail("the plan's limit of %d databases is reached", room))
+	}
+	request := create.Request("")
+	if request.Region == "" {
+		request.Region = discovery.Region
+	}
+	if request.PostgresMajor == 0 {
+		// The newest offered major, as for an untagged Compose postgres image
+		// (ADR-20261025111824); the API's fixed default may not be offered.
+		if major, offered := composePostgresMajor("postgres", discovery.Capabilities.PostgresMajors); offered {
+			request.PostgresMajor = major
+		}
+	}
+	spec, err := managedPostgresSpecFromRequest(request, limits)
+	if err != nil {
+		return managedpostgres.Spec{}, managedPostgresManifestProblem(err, detail("%v", err))
+	}
+	if err := discovery.Capabilities.Supports(spec); err != nil {
+		return managedpostgres.Spec{}, managedPostgresManifestProblem(err, detail("%v", err))
+	}
+	return spec, nil
+}
+
+// manifestDatabasePlan is the plan view of the databases a manifest creates,
+// so a reviewer sees them before apply (source gregale.yaml).
+func manifestDatabasePlan(bindings []resolvedManagedPostgresBinding) []api.PlanManaged {
+	var out []api.PlanManaged
+	index := map[string]int{}
+	for _, binding := range bindings {
+		if binding.create == nil {
+			continue
+		}
+		i, ok := index[binding.create.name]
+		if !ok {
+			i = len(out)
+			index[binding.create.name] = i
+			out = append(out, api.PlanManaged{Name: binding.create.name, Kind: "postgres", Source: "gregale.yaml",
+				Provision: &api.PlanManagedProvision{Database: binding.create.name, PostgresMajor: binding.create.spec.PostgresMajor}})
+		}
+		out[i].Provision.Bindings = append(out[i].Provision.Bindings, api.PlanManagedBinding{Workload: binding.appSlug, EnvKey: binding.environmentKey})
+	}
+	return out
 }
 
 func resolveManagedPostgresDatabaseRecord(databases []managedpostgres.Database, reference string) (managedpostgres.Database, error) {
@@ -250,6 +375,38 @@ func (s *server) bindResolvedManagedPostgresBindings(
 	for _, app := range apps {
 		appIDs[strings.ToLower(app.Slug)] = app.ID
 	}
+	// Every target app must exist before a database is created for it, so a
+	// mistyped `app` cannot leave an unbound paid database behind.
+	for i, dependency := range bindings {
+		if appIDs[strings.ToLower(dependency.appSlug)] == "" {
+			return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+				"Invalid manifest", fmt.Sprintf("database dependency %d targets workload %q, but no deployed app exists", i+1, dependency.appSlug))
+		}
+	}
+	// Databases the manifest creates, once each, before their bindings. A
+	// later failure leaves a created database in place: data is never
+	// deleted implicitly, and the next deploy reuses it by name.
+	databases := map[string]managedpostgres.Database{}
+	for _, dependency := range bindings {
+		if dependency.create == nil || databases[dependency.create.name].ID != "" {
+			continue
+		}
+		if s.managedPostgres == nil {
+			return nil, managedPostgresManifestProblem(managedpostgres.ErrUnavailable, "managed PostgreSQL is not configured")
+		}
+		ownedCtx, err := s.composePostgresOwnership(ctx, acct)
+		if err != nil {
+			return nil, api.ErrCapacity("could not resolve database ownership")
+		}
+		database, err := s.managedPostgres.Create(ownedCtx, managedpostgres.CreateRequest{AccountID: acct.ID, Name: dependency.create.name, Spec: dependency.create.spec})
+		if err != nil {
+			return nil, managedPostgresManifestProblem(err, fmt.Sprintf("gregale.yaml: create database %q", dependency.create.name))
+		}
+		databases[dependency.create.name] = database
+		s.audit.Emit(ctx, "managed_postgres.manifest_provisioned", &acct.ID, map[string]any{
+			"database_id": database.ID, "database": database.Name, "state": database.State,
+		})
+	}
 	created := make([]string, 0, len(bindings))
 	rollback := func() {
 		for i := len(created) - 1; i >= 0; i-- {
@@ -267,8 +424,12 @@ func (s *server) bindResolvedManagedPostgresBindings(
 			return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 				"Invalid manifest", fmt.Sprintf("database dependency %d targets workload %q, but no deployed app exists", i+1, dependency.appSlug))
 		}
+		database := dependency.database
+		if dependency.create != nil {
+			database = databases[dependency.create.name]
+		}
 		binding, wasCreated, err := s.managedPostgresBindings.CreateWithResult(ctx, managedpostgres.CreateBindingRequest{
-			AccountID: acct.ID, DatabaseAccountID: dependency.database.AccountID, DatabaseID: dependency.database.ID, AppID: appID,
+			AccountID: acct.ID, DatabaseAccountID: database.AccountID, DatabaseID: database.ID, AppID: appID,
 			Scope: dependency.scope, EnvironmentKey: dependency.environmentKey, Access: dependency.access,
 		})
 		if wasCreated && binding.ID != "" {
@@ -276,7 +437,10 @@ func (s *server) bindResolvedManagedPostgresBindings(
 		}
 		if err != nil {
 			rollback()
-			return nil, managedPostgresManifestProblem(err, fmt.Sprintf("database dependency %d (%q): create binding", i+1, dependency.database.Name))
+			return nil, managedPostgresManifestProblem(err, fmt.Sprintf("database dependency %d (%q): create binding", i+1, dependency.databaseName()))
+		}
+		if dependency.pending && binding.State == managedpostgres.BindingStateProvisioning {
+			continue
 		}
 		if binding.State != managedpostgres.BindingStateReady {
 			rollback()

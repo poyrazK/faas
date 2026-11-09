@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -61,9 +62,8 @@ func newLocalListener(t *testing.T) net.Listener {
 // FAAS_HOST_HMAC_KEY_PATH for the lifetime of the test so
 // loadOrGenerate{Audit,Recovery}HMACKey + loadHostHMACKey
 // auto-mint a fresh key in t.TempDir() rather than refusing to
-// start (production-grade strict-mode for the recovery-hmac.key
-// + host.hmac.key paths; the audit-hmac.key path tolerates a nil
-// but the recovery + env-diff paths do not).
+// start (production-grade strict mode for the audit-hmac.key,
+// recovery-hmac.key and host.hmac.key paths alike).
 //
 // The env-var overrides are unset by t.Cleanup. The tmp keys
 // persist for the test's lifetime — the loaders pass them
@@ -211,6 +211,7 @@ func TestRunAppErrorsServer_RejectsPlaintextRemoteTarget(t *testing.T) {
 		spansIngest{},
 		discardLogger(),
 		true,
+		telemetryIngest{},
 		nil,
 		nil,
 		nil,
@@ -300,6 +301,10 @@ func withTestStore(deps *runDeps) {
 }
 
 func TestRunWithDeps_ListenErrorReturns(t *testing.T) {
+	// ADR-20261023115741: stopped server wiring must not hide capabilities
+	// for a later server in the same process.
+	page := dashboard.Page{Account: &dashboard.AccountView{ID: "later-server", Plan: "pro"}}
+	previouslyReleased := page.On("production-debugger")
 	withTestHMACFiles(t)
 	withBillingKeysForTest(t)
 	withTestMailTransport(t)
@@ -314,6 +319,9 @@ func TestRunWithDeps_ListenErrorReturns(t *testing.T) {
 	}
 	if !contains(err.Error(), "addr in use") {
 		t.Errorf("error %q missing 'addr in use'", err.Error())
+	}
+	if page.On("production-debugger") != previouslyReleased {
+		t.Fatal("stopped server retained its dashboard capability decider")
 	}
 }
 

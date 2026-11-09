@@ -233,6 +233,11 @@ func cmdRollbackSwitch(args []string) int {
 		PrintUsage(osStdout, rollbackSwitchUsage, "rollback")
 		return 0
 	}
+	// The tree's `release rollback status` runs this command; with
+	// --operation it reads a rollback operation, as `rollback status` does.
+	if rollbackStatusNamesOperation(args) {
+		return cmdRollbackStatus(args)
+	}
 	fs := newFlagSet("rollback switch", flag.ContinueOnError)
 	cancelSwitch := fs.Bool("cancel", false, "cancel the switch")
 	wait := fs.Bool("wait", false, "follow the switch until it ends")

@@ -44,6 +44,8 @@ func TestAdminMutationRoutesRejectBearerKeys(t *testing.T) {
 		{http.MethodPost, "/v1/admin/ops/accounts/" + accountID + "/suspend"},
 		{http.MethodPost, "/v1/admin/ops/accounts/" + accountID + "/restore"},
 		{http.MethodPost, "/v1/admin/ops/accounts/" + accountID + "/revoke-sessions"},
+		{http.MethodPost, "/v1/admin/ops/accounts/" + accountID + "/reset-mfa"},
+		{http.MethodPost, "/v1/admin/ops/accounts/" + accountID + "/object-storage-ceiling"},
 		{http.MethodPost, "/v1/admin/ops/nodes/security-test/drain"},
 		{http.MethodPost, "/v1/admin/ops/nodes/security-test/force-drain"},
 		{http.MethodPost, "/v1/admin/ops/nodes/security-test/activate"},

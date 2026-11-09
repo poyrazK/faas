@@ -31,11 +31,41 @@ func (e *Engine) runningWakeResult(ctx context.Context, appID, tenantID string, 
 	if !dep.CreatedAt.IsZero() {
 		identity.DeploymentCreatedAt = dep.CreatedAt.UTC().Format(time.RFC3339Nano)
 	}
-	if node, err := e.store.ComputeNodeByID(ctx, ins.NodeID); err == nil {
+	// The node registry holds the row instanceNodeServes just checked; only
+	// a node it lacks costs a read.
+	if node, ok := e.nodeRegistry.Node(ins.NodeID); ok {
+		identity.Region = stringValue(node.Region)
+	} else if node, err := e.store.ComputeNodeByID(ctx, ins.NodeID); err == nil {
 		identity.Region = stringValue(node.Region)
 	}
 	return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID,
 		Port: deploymentRuntimePort(dep), DeploymentID: dep.ID, RequestCount: ins.RequestCount, Identity: identity}
+}
+
+// runningWakeReads are what a wake answered from a running instance reads
+// about it: whether it still runs in its app's mode, the database cutover
+// barrier, and its deployment, whose port and provenance the answer carries
+// (a newer live row, including one in another stage, cannot replace it).
+// Each depends only on the instance, so they run at once and the mode check
+// reuses the deployment read; one after another they cost a wake that holds
+// appMu five round trips.
+type runningWakeReads struct {
+	modeMatches bool
+	barrierErr  error
+	dep         state.Deployment
+	depErr      error
+}
+
+func (e *Engine) readRunningWake(ctx context.Context, appID string, ins state.Instance) runningWakeReads {
+	var r runningWakeReads
+	concurrently(
+		func() {
+			r.dep, r.depErr = e.store.DeploymentByID(ctx, ins.DeploymentID)
+			r.modeMatches = e.wakeInstanceModeMatchesDeployment(ctx, appID, ins, r.dep, r.depErr)
+		},
+		func() { r.barrierErr = e.checkManagedPostgresAdmission(ctx, appID) },
+	)
+	return r
 }
 
 // awaitBootingInstanceForWake serves a wake the concurrency cap refused while
@@ -71,15 +101,13 @@ func (e *Engine) awaitBootingInstanceForWake(ctx context.Context, tenantID, appI
 		if err != nil {
 			return WakeResult{}, false
 		}
-		if ins, err := e.runningInstanceForWake(ctx, appID, deploymentID, scope); err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
-			if e.checkManagedPostgresAdmission(ctx, appID) != nil {
-				return WakeResult{}, false
+		if ins, err := e.runningInstanceForWake(ctx, appID, deploymentID, scope); err == nil {
+			if running := e.readRunningWake(ctx, appID, ins); running.modeMatches {
+				if running.barrierErr != nil || running.depErr != nil {
+					return WakeResult{}, false
+				}
+				return e.runningWakeResult(ctx, appID, tenantID, ins, running.dep), true
 			}
-			dep, err := e.store.DeploymentByID(ctx, ins.DeploymentID)
-			if err != nil {
-				return WakeResult{}, false
-			}
-			return e.runningWakeResult(ctx, appID, tenantID, ins, dep), true
 		}
 		if !booting {
 			return WakeResult{}, false
@@ -110,7 +138,7 @@ func (e *Engine) instanceBootingFor(ctx context.Context, appID, deploymentID str
 		return false, err
 	}
 	for _, instance := range instances {
-		if instance.DeploymentID != deploymentID || state.IsFork(instance.Mode) {
+		if instance.DeploymentID != deploymentID || state.NeverServes(instance.Mode) {
 			continue
 		}
 		switch state.State(instance.State) {

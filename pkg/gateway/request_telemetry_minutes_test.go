@@ -110,16 +110,30 @@ func TestRequestTelemetryMinuteCollapseShipsExactRowsAtOnce(t *testing.T) {
 	}
 }
 
-func TestRequestTelemetryMinuteCollapseCountsOpenRequestsAsPending(t *testing.T) {
+// adr: 20261028110044 — amendment 4: an open minute is read by no window yet,
+// so its requests are not pending; a closed minute waiting to ship is.
+func TestRequestTelemetryMinuteCollapseOpenMinuteIsNotPending(t *testing.T) {
 	f := newMinuteCollapseFixture(t, true)
 	app := uuid.New()
 	f.record(app, f.now, 7)
 	f.tickAt(f.now.Add(time.Second))
-	if f.coverage.PendingCount != 7 {
-		t.Fatalf("coverage pending = %d, want 7 requests held in the open minute", f.coverage.PendingCount)
+	if f.coverage.PendingCount != 0 || len(f.coverage.AppGaps) != 0 {
+		t.Fatalf("coverage pending = %d, gaps = %+v; an open minute must not hold the app pending", f.coverage.PendingCount, f.coverage.AppGaps)
 	}
-	if len(f.coverage.AppGaps) != 1 || f.coverage.AppGaps[0].AppID != app || f.coverage.AppGaps[0].PendingCount != 7 {
-		t.Fatalf("app gaps = %+v, want 7 pending for %s", f.coverage.AppGaps, app)
+	f.tickAt(f.now.Add(time.Minute))
+	if len(f.shipped) != 1 || f.coverage.PendingCount != 0 || len(f.coverage.AppGaps) != 0 {
+		t.Fatalf("after the minute closed: shipped %d rows, pending %d, gaps %+v", len(f.shipped), f.coverage.PendingCount, f.coverage.AppGaps)
+	}
+
+	m := newRequestTelemetryMinutes()
+	minute := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	m.add(RequestTelemetryRow{AccountID: app, AppID: app, DeploymentID: app, Route: "GET /", Method: "GET", Status: 200, ReceivedAt: minute.Add(10 * time.Second), Count: 4})
+	if got := m.undeliveredByApp()[app]; got != 0 {
+		t.Fatalf("open minute undelivered = %d, want 0", got)
+	}
+	m.close(minute.Add(time.Minute+6*time.Second), 5*time.Second, 64)
+	if got := m.undeliveredByApp()[app]; got != 4 {
+		t.Fatalf("closed minute undelivered = %d, want 4", got)
 	}
 }
 
@@ -150,5 +164,32 @@ func TestRequestTelemetryMinutesBoundShipsOldestMinuteEarly(t *testing.T) {
 	}
 	if dropped := m.trimReady(1); len(dropped) != 2 || len(m.ready) != 1 {
 		t.Fatalf("trim dropped %d and kept %d, want 2 dropped and 1 kept", len(dropped), len(m.ready))
+	}
+}
+
+// adr: 127 — amendment 2026-10-31 on the minute path: a bucket's first
+// requestTelemetryExactPerBucket exact samples ship at once as themselves;
+// later ones fold into the minute's row, and the sample count goes with the
+// minute.
+func TestRequestTelemetryMinutesShipBoundedExactSamples(t *testing.T) {
+	m := newRequestTelemetryMinutes()
+	app := uuid.New()
+	minute := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	traceOf := func(i int) string { return string(rune('a' + i)) }
+	for i := range requestTelemetryExactPerBucket + 2 {
+		m.add(RequestTelemetryRow{AppID: app, Route: "GET /checkout", Method: "GET", Status: 500, LatencyMS: 13, Count: 1,
+			TraceID: traceOf(i), ReceivedAt: minute.Add(time.Duration(i+1) * time.Second), exactSample: true})
+	}
+	if len(m.ready) != requestTelemetryExactPerBucket || len(m.rows) != 1 || m.rows[0].Count != 2 {
+		t.Fatalf("ready=%d open=%+v, want %d exact rows ready and the other 2 folded", len(m.ready), m.rows, requestTelemetryExactPerBucket)
+	}
+	for i, row := range m.ready {
+		if row.TraceID != traceOf(i) || row.LatencyMS != 13 || !row.ReceivedAt.Equal(minute.Add(time.Duration(i+1)*time.Second)) {
+			t.Fatalf("exact row %d = %+v, want its own trace, latency and time", i, row)
+		}
+	}
+	m.close(minute.Add(2*time.Minute), 5*time.Second, 100)
+	if len(m.exact) != 0 || len(m.rows) != 0 {
+		t.Fatalf("after the minute closed: exact=%v open=%d, want both empty", m.exact, len(m.rows))
 	}
 }

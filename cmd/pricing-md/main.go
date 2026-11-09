@@ -32,19 +32,19 @@ func render() string {
 	var b strings.Builder
 	b.WriteString("# Plans and pricing\n\n")
 	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->\n\n")
-	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly and shown in US dollars. Usage beyond the included GB-RAM-hours is billed at $0.01 per GB-RAM-hour on paid plans.\n\n")
+	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at " + formatPrice(api.OverageMillicentsPerGBHour) + " per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
-	b.WriteString("| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout | Max request timeout |\n")
-	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	b.WriteString("| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App egress / month | App layer | Idle timeout | Max request timeout |\n")
+	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, plan := range api.Plans {
 		l, ok := api.LimitsFor(plan)
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&b, "| **%s** | %s | %d | %d | %d | %d | %d MB | %d | %d MB | %s | %s |\n",
+		fmt.Fprintf(&b, "| **%s** | %s | %d | %d | %d | %d | %d MB | %d | %s GiB | %d MB | %s | %s |\n",
 			titlePlan(plan), formatPrice(l.PriceMillicents), l.DeployedApps,
 			l.PreviewApps, l.DeveloperApps, l.MaxConcurrency, l.RAMMB, l.IncludedGBHours,
-			l.AppLayerMaxMB,
+			formatThousands(l.MonthlyEgressGiB), l.AppLayerMaxMB,
 			formatDuration(l.IdleTimeoutS), formatDuration(int(l.RequestBudgetMaxDuration().Seconds())))
 	}
 	b.WriteString("\n## What each limit means\n\n")
@@ -52,6 +52,9 @@ func render() string {
 	b.WriteString("- **PR preview environments** is the separate limit for temporary pull-request previews: one per open pull request, however many workloads it runs. One environment runs at most as many workloads as the plan can deploy, and a closed pull request frees its environment at once. See [PR preview environments](preview-environments.md#quota).\n")
 	b.WriteString("- **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.\n")
 	b.WriteString("- **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.\n")
+	b.WriteString("- **After a plan ends or shrinks**, for example when a subscription lapses, the plan's limits still bind: your oldest deployed apps up to its deployed-app limit keep serving, and other apps, or any app set above its RAM, park and stop waking until they fit. Delete apps, lower an app's RAM (`gregale app APP --ram MB`) or upgrade. A downgrade you request is refused until your apps fit.\n")
+	fmt.Fprintf(&b, "- **App egress / month** is the data your apps send each month, including what Gregale sends for them without waking an instance: responses served from the [response cache](cache.md), fixed edge responses, [log drain](logs.md) deliveries and [realtime](#managed-realtime) messages to subscribers. Free stops serving at it until the month ends or it upgrades. A paid plan stops at it too, unless the account or organization turns on egress overage (`gregale billing egress-overage on`): egress beyond the plan's then costs %s per GiB, up to the [spend cap](billing.md#spend-cap). Each hour's egress counts against the plan in force that hour; see [egress overage](billing.md#egress-overage).\n",
+		formatPrice(api.EgressOverageMillicentsPerGiB))
 	b.WriteString("- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (")
 	var caps []string
 	for _, plan := range api.Plans {
@@ -78,6 +81,17 @@ func render() string {
 		}
 		fmt.Fprintf(&b, "| **%s** | %d | %s |\n", titlePlan(plan), l.DeveloperApps, formatDuration(l.DeveloperLeaseMaxHours*3600))
 	}
+	b.WriteString("\n## Builds\n\n")
+	b.WriteString("Builds are free. Each plan includes builder time per UTC month, shared by every app of the account or organization that pays for them; a running build counts up to now, and no build counts past the 15-minute build timeout. A build that would start past it is refused with `plan_limit_build_minutes` until the month ends or the plan grows. Deploying a prebuilt image builds nothing and still works.\n\n")
+	b.WriteString("| Plan | Build minutes / month |\n")
+	b.WriteString("|---|---:|\n")
+	for _, plan := range api.Plans {
+		l, ok := api.LimitsFor(plan)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "| **%s** | %s |\n", titlePlan(plan), formatThousands(int64(l.BuildMinutesPerMonth)))
+	}
 	b.WriteString("\n## Managed realtime\n\n")
 	b.WriteString("Realtime is included on every paid plan at no extra charge: Gregale bills compute, and channels, consumer groups and delivery are software. Limits apply only where realtime holds real capacity. Retained history is bounded per endpoint, and functions triggered by channel messages bill as normal compute.\n\n")
 	b.WriteString("| Plan | Endpoints per app | Endpoints per account | Concurrent connections per account |\n")
@@ -103,15 +117,14 @@ func render() string {
 }
 
 // renderObjectStorage lists each plan's included object storage, the
-// published rate beyond it (ADR-1430), the most it stores with the default
-// spend cap (ADR-20261101214152) and its monthly egress limit
-// (ADR-20261031122757).
+// published rate beyond it (ADR-1430), its storage ceiling (ADR-20261101214152)
+// and its monthly egress limit (ADR-20261031122757).
 func renderObjectStorage(b *strings.Builder) {
 	b.WriteString("\n## Object storage\n\n")
-	fmt.Fprintf(b, "Object storage bills the bytes it holds. Each plan includes an average amount of stored data per month; storage beyond it costs %s per GiB-month. Requests and egress are not charged. Free stops at its included storage; a paid plan stores its included storage plus what your spend cap buys. Each plan limits the data you read out of your buckets each month to %d times its included storage.\n\n",
+	fmt.Fprintf(b, "Object storage bills the bytes it holds. Each plan includes an average amount of stored data per month; storage beyond it costs %s per GiB-month, up to the plan's storage ceiling. Requests and egress are not charged. Free stops at its included storage. Each plan limits the data you read out of your buckets each month to %d times its included storage.\n\n",
 		formatPrice(api.ObjectStorageMillicentsPerGiBMonth), api.ObjectStorageEgressPerIncludedByte)
-	b.WriteString("| Plan | Included storage | Beyond the included storage | Most stored with the default spend cap | Egress each month |\n")
-	b.WriteString("|---|---:|---|---:|---:|\n")
+	b.WriteString("| Plan | Included storage | Beyond the included storage | Most stored | Egress each month | Requests each month |\n")
+	b.WriteString("|---|---:|---|---:|---:|---:|\n")
 	for _, plan := range api.Plans {
 		l, ok := api.LimitsFor(plan)
 		if !ok {
@@ -121,14 +134,9 @@ func renderObjectStorage(b *strings.Builder) {
 		if l.ObjectStorage.MaxAccountBytes > 0 && l.ObjectStorage.MaxAccountBytes <= l.ObjectStorage.IncludedBytes {
 			beyond = "stops at " + formatGiB(l.ObjectStorage.MaxAccountBytes)
 		}
-		var defaultCap *int64
-		if cents, ok := plan.DefaultOverageCapCents(); ok {
-			defaultCap = &cents
-		}
-		ceiling := formatGiB(l.ObjectStorage.WithSpendCap(defaultCap).MaxAccountBytes)
-		fmt.Fprintf(b, "| **%s** | %s | %s | %s | %s |\n", titlePlan(plan), formatGiB(l.ObjectStorage.IncludedBytes), beyond, ceiling, formatGiB(l.ObjectStorage.MaxMonthlyEgressBytes))
+		fmt.Fprintf(b, "| **%s** | %s | %s | %s | %s | %s |\n", titlePlan(plan), formatGiB(l.ObjectStorage.IncludedBytes), beyond, formatGiB(l.ObjectStorage.MaxAccountBytes), formatGiB(l.ObjectStorage.MaxMonthlyEgressBytes), formatThousands(l.ObjectStorage.MaxMonthlyRequests))
 	}
-	fmt.Fprintf(b, "\nIncluded storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. Raising your spend cap raises how much a paid plan stores. Above that, uploads are refused and downloads stop until you delete objects, raise the cap or upgrade, and a downgrade waits until your data fits. Every plan stores up to %s objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends. See [object storage](object-storage.md#limits).\n",
+	fmt.Fprintf(b, "\nIncluded storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. A lower spend cap lowers how much a paid plan stores: a $0 cap stops at the included storage. Need more than the plan stores? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused, and downloads stop while you store more than it until you delete objects. A downgrade waits until your data fits. Every plan stores up to %s objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends; at the request limit, every request is refused until the month ends. See [object storage](object-storage.md#limits).\n",
 		formatCount(api.MaxObjectStorageAccountKeys))
 }
 
@@ -178,4 +186,13 @@ func formatDuration(seconds int) string {
 		return fmt.Sprintf("%dm", seconds/60)
 	}
 	return fmt.Sprintf("%ds", seconds)
+}
+
+// formatThousands renders n with comma thousands separators.
+func formatThousands(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	for i := len(s) - 3; i > 0 && s[i-1] != '-'; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }

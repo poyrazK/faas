@@ -15,25 +15,24 @@
 // package-level `var` that returns a typed result so test
 // injection is a one-line swap.
 //
-// CAA: Go's net.Resolver does not expose LookupCAA (as of
-// Go 1.23), so we use LookupTXT at "<domain>" (the apex) and
-// parse the `CAA`-style payload. Per RFC 8659, the record
-// content is "<flags> <tag> <value>" where tag ∈ {issue,
-// issuewild, iodef}. A `0 issue "letsencrypt.org"` (or any
-// non-empty issuer) record permits issuance; `0 issue ";"`
-// denies ALL issuance; missing CAA permits by default. The
-// 15-line parser below is the entire CAA adapter.
+// CAA queries and issuer policy live in pkg/apid/domaindns.
 
 package apidserver
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/domaindns"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // probeStatus is the closed set of probe outcomes. Mirrors the
@@ -69,7 +68,7 @@ type ProbeResult struct {
 // > 5s gets the same ctx-cancel + joinErr treatment dialCert
 // has, so a misconfigured DNS server can't wedge the
 // goroutine.
-const probeTimeout = 5 * time.Second
+const probeTimeout = api.DomainDoctorDNSTimeout
 
 // --- Test seams. Production = real net.Resolver. --------------
 
@@ -108,15 +107,8 @@ var aaaaLookupFunc = func(ctx context.Context, domain string) ([]string, error) 
 	return out, nil
 }
 
-// caaLookupFunc returns the CAA records at the apex. Go's
-// net.Resolver does not expose LookupCAA, so this uses
-// LookupTXT and filters for the CAA-flagged payloads. Per
-// RFC 8659, every record begins with "<flags> <tag> <value>"
-// — flags=0 means non-critical, tag is one of {issue,
-// issuewild, iodef}.
-var caaLookupFunc = func(ctx context.Context, domain string) ([]string, error) {
-	return (&net.Resolver{}).LookupTXT(ctx, domain)
-}
+// caaLookupFunc queries the relevant CAA RRset through the system resolvers.
+var caaLookupFunc = domaindns.LookupCAA
 
 // appsDomainFunc returns the configured Gregale apex (the
 // "expected" CNAME / A target for the points_to_gregale
@@ -126,9 +118,8 @@ var caaLookupFunc = func(ctx context.Context, domain string) ([]string, error) {
 var appsDomainFunc = func() string { return "" }
 
 // ownedDomainsFunc returns every domain Gregale owns (ADR-20261026100000).
-// run() wires the configured layout; a CNAME to any of their apexes still
-// reaches the edge, so a custom domain created under an earlier apps domain
-// is not reported as drifted after the apps domain moves.
+// run() wires the configured layout. Without a dedicated custom-domain
+// target, earlier owned apexes remain valid across an apps-domain move.
 var ownedDomainsFunc = func() []string { return nil }
 
 // isOwnedApex reports whether target is the apex of an owned domain.
@@ -157,7 +148,7 @@ func checkApexA_AAAA(ctx context.Context, domain string) ProbeResult {
 		// returns *net.DNSError; check for NXDOMAIN/NOERROR
 		// shape — net.DNSError.IsNotFound is the canonical
 		// predicate.
-		if isNotFound(aErr) || isNotFound(aaaaErr) {
+		if isNotFound(aErr) && isNotFound(aaaaErr) {
 			return ProbeResult{
 				Status:      probeFail,
 				Detail:      "no A or AAAA records published at " + domain,
@@ -205,40 +196,19 @@ func checkPointsToGregale(ctx context.Context, domain string) ProbeResult {
 			ObservedAt: now,
 		}
 	}
-	if cErr != nil {
-		// Branch on isNotFound first, mirroring the other three
-		// probes (checkApexA_AAAA, checkCAA, checkAAAAConflict).
-		// A transient resolver error (timeout, SERVFAIL, network
-		// unreachable) is "data missing, retry later" → probePending,
-		// NOT probeNA. Conflating the two cases tells the customer
-		// nothing is wrong when in reality the CNAME was simply not
-		// fetched — and the points_to_gregale check is the
-		// load-bearing one for activation drop-off, so a
-		// misclassification here masks real DNS misconfiguration
-		// during the exact window the customer is debugging it.
-		if isNotFound(cErr) {
-			// No CNAME. The customer may be using an apex A
-			// record instead. checkApexA_AAAA is the load-bearing
-			// check for that case; this check is na unless we
-			// also see the apex pointing at us. Report na so the
-			// customer isn't told to add a CNAME when they
-			// correctly have an A record.
-			return ProbeResult{
-				Status:     probeNA,
-				Detail:     "no CNAME at apex; using A/AAAA record instead",
-				ObservedAt: now,
-			}
-		}
+	if cErr != nil && !isNotFound(cErr) {
 		return ProbeResult{
 			Status:     probePending,
 			Detail:     "CNAME lookup failed (transient)",
 			ObservedAt: now,
 		}
 	}
+	// A missing CNAME may have A/AAAA alternatives. Evaluate those below:
+	// definite absence of all routing records must revoke verification.
 	// Strip the trailing dot (LookupCNAME returns "target.")
 	// and compare case-insensitively.
 	target := strings.TrimSuffix(cname, ".")
-	if strings.EqualFold(target, expected) || isOwnedApex(target) {
+	if cErr == nil && (strings.EqualFold(target, expected) || (api.CustomDomainTarget() == "" && isOwnedApex(target))) {
 		return ProbeResult{
 			Status:     probeOK,
 			Detail:     "CNAME → " + strings.ToLower(target),
@@ -249,7 +219,18 @@ func checkPointsToGregale(ctx context.Context, domain string) ProbeResult {
 	// ADR-520: an apex A/AAAA record (Go reports the name itself as its
 	// canonical name) or a flattened CNAME is fine when every address is
 	// a configured edge address.
-	if ok, observed := resolvesToEdge(rctx, domain); ok {
+	status, observed := probeFail, []string(nil)
+	if cErr != nil || len(customDomainAddresses()) > 0 {
+		status, observed = resolvesToEdge(rctx, domain)
+	}
+	if status == probePending {
+		detail := "address lookup failed (transient)"
+		if len(observed) > 0 && len(customDomainAddresses()) == 0 {
+			detail = "configure FAAS_CUSTOM_DOMAIN_ADDRESSES to validate A/AAAA routing"
+		}
+		return ProbeResult{Status: probePending, Detail: detail, ObservedAt: now}
+	}
+	if status == probeOK {
 		return ProbeResult{
 			Status:     probeOK,
 			Detail:     "A/AAAA → Gregale edge",
@@ -266,6 +247,32 @@ func checkPointsToGregale(ctx context.Context, domain string) ProbeResult {
 	}
 }
 
+// checkDomainRouting retries a failed fixed wildcard probe using an
+// unpredictable name. An explicit DNS record for the fixed probe must not
+// revoke an otherwise healthy wildcard claim.
+func checkDomainRouting(ctx context.Context, domain string) (ProbeResult, string) {
+	probe, wildcard := state.WildcardProbeHost(domain)
+	result := checkPointsToGregale(ctx, probe)
+	if !wildcard || result.Status != probeFail {
+		return result, probe
+	}
+	suffix, _ := state.WildcardDomainSuffix(domain)
+	available := api.TrafficPolicyMaxHostnameBytes - len(suffix) - 1
+	var random [16]byte
+	if available < 1 {
+		return ProbeResult{Status: probePending, Detail: "wildcard DNS probe name is too long"}, probe
+	}
+	if _, err := rand.Read(random[:]); err != nil {
+		return ProbeResult{Status: probePending, Detail: "wildcard DNS probe unavailable"}, probe
+	}
+	label := hex.EncodeToString(random[:])
+	if available < len(label) {
+		label = label[:available]
+	}
+	alternative := label + "." + suffix
+	return checkPointsToGregale(ctx, alternative), alternative
+}
+
 // checkCAA answers "does the customer's DNS permit certificate
 // issuance?". A `0 issue "letsencrypt.org"` record permits; a
 // `0 issue ";"` record denies ALL issuance; missing CAA
@@ -274,7 +281,8 @@ func checkPointsToGregale(ctx context.Context, domain string) ProbeResult {
 func checkCAA(ctx context.Context, domain string) ProbeResult {
 	rctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	records, err := caaLookupFunc(rctx, domain)
+	caaHost, wildcard := customDomainCAAHost(domain)
+	records, err := caaLookupFunc(rctx, caaHost)
 	now := time.Now().UTC()
 	if err != nil {
 		if isNotFound(err) {
@@ -297,16 +305,20 @@ func checkCAA(ctx context.Context, domain string) ProbeResult {
 			ObservedAt: now,
 		}
 	}
-	// Parse the records. Per RFC 8659: "<flags> <tag> <value>"
-	// where tag is one of {issue, issuewild, iodef}. We treat
-	// issue + issuewild as the controlling tags. Go's
-	// LookupTXT returns each TXT record as the concatenated
-	// text per RFC 1035 §3.3.14, so a CAA record stored as
-	// `"0 issue \"letsencrypt.org\""` arrives in `records`
-	// as `0 issue "letsencrypt.org"` (outer quotes already
-	// stripped, inner quotes preserved).
-	permits, observed := parseCAARecords(records)
-	if permits {
+	// The lookup returns CAA records, including an inherited or aliased RRset.
+	challenges := []string{"dns-01"}
+	if api.CustomDomainTLSOnDemand() {
+		challenges = []string{"http-01", "tls-alpn-01"}
+	}
+	permission := domaindns.LetsEncryptPermission(records, challenges)
+	if wildcard {
+		permission = domaindns.LetsEncryptWildcardPermission(records, challenges)
+	}
+	observed := permission.Observed
+	if permission.Unknown {
+		return ProbeResult{Status: probePending, Detail: "CAA issuer restrictions require confirmation against the edge ACME account", Observed: strings.Join(observed, ";"), ObservedAt: now}
+	}
+	if permission.Permits {
 		return ProbeResult{
 			Status:     probeOK,
 			Detail:     "CAA permits certificate issuance",
@@ -319,60 +331,14 @@ func checkCAA(ctx context.Context, domain string) ProbeResult {
 		Detail:      "CAA denies certificate issuance for this CA",
 		Observed:    strings.Join(observed, ";"),
 		ObservedAt:  now,
-		Remediation: "Update CAA record at " + domain + " to permit letsencrypt.org (e.g. '0 issue \"letsencrypt.org\"')",
+		Remediation: customDomainCAARemediation(domain),
 	}
 }
 
-// parseCAARecords returns (permits, observed). Permits is
-// true when any record allows issuance. Per RFC 8659, the
-// `issue` and `issuewild` tags are independent: an
-// `0 issue ";"` denies all CA issuance, but `0 issuewild
-// "letsencrypt.org"` still permits wildcards. We treat
-// the doctor's "permits issuance" question as: "would
-// letsencrypt.org be allowed to issue SOME cert for this
-// domain?" — which means: at least one tag (issue or
-// issuewild) must allow a non-empty issuer, AND no
-// controlling tag must deny. The RFC semantics are stricter
-// (an empty issuewild tag with a populated issue permits
-// only exact-hostname issuance), but the doctor renders
-// "permits / denies" at coarse grain so a customer who
-// can publish a cert at all sees ok.
+// parseCAARecords checks Let's Encrypt's concrete-host certificates. A
+// wildcard domain also receives individual host certificates (ADR-520).
 func parseCAARecords(records []string) (bool, []string) {
-	observed := make([]string, 0, len(records))
-	issuePermits := false
-	issuewildPermits := false
-	for _, r := range records {
-		r = strings.TrimSpace(r)
-		if r == "" {
-			continue
-		}
-		observed = append(observed, r)
-		parts := strings.Fields(r)
-		if len(parts) < 3 {
-			continue
-		}
-		tag := strings.ToLower(parts[1])
-		value := strings.Trim(parts[2], `"`)
-		switch tag {
-		case "issue":
-			if value != "" && value != ";" {
-				issuePermits = true
-			}
-		case "issuewild":
-			if value != "" && value != ";" {
-				issuewildPermits = true
-			}
-		}
-	}
-	// The doctor's "permits" check is satisfied when EITHER
-	// tag allows a non-empty issuer. A `0 issue ";"` by
-	// itself does not deny wildcards; a `0 issuewild ";"`
-	// by itself does not deny exact-hostname. A future
-	// strict-RFC variant of the doctor would surface
-	// the per-tag state separately; the coarse binary
-	// is the load-bearing answer for the activation
-	// drop-off.
-	return issuePermits || issuewildPermits, observed
+	return domaindns.PermitsLetsEncrypt(records)
 }
 
 // checkAAAAConflict answers "is there a stray AAAA record at
@@ -408,6 +374,12 @@ func checkAAAAConflict(ctx context.Context, domain string) ProbeResult {
 			Status:     probeOK,
 			Detail:     "no AAAA record at apex",
 			ObservedAt: now,
+		}
+	}
+	if len(customDomainAddresses()) == 0 {
+		return ProbeResult{
+			Status: probePending, Detail: "configure edge addresses to check IPv6 routing",
+			Observed: strings.Join(aaaa, ","), ObservedAt: now,
 		}
 	}
 	if addressesAreEdge(aaaa) {
@@ -464,13 +436,18 @@ func errorsAs(err error, target any) bool {
 // returns within the budget, its result is recorded; if
 // the budget elapses, the probe is reported as pending
 // (the customer can re-poll).
-func runProbesParallel(ctx context.Context, domain string) (dnsFound, pointsToG, caa, aaaa ProbeResult) {
+func runProbesParallel(ctx context.Context, domain string) (dnsFound, pointsToG, caa, aaaa ProbeResult, routingProbe string) {
+	probeDomain, _ := state.WildcardProbeHost(domain)
 	var wg sync.WaitGroup
 	wg.Add(4)
-	go func() { defer wg.Done(); dnsFound = checkApexA_AAAA(ctx, domain) }()
-	go func() { defer wg.Done(); pointsToG = checkPointsToGregale(ctx, domain) }()
+	go func() { defer wg.Done(); dnsFound = checkApexA_AAAA(ctx, probeDomain) }()
+	go func() { defer wg.Done(); pointsToG, routingProbe = checkDomainRouting(ctx, domain) }()
 	go func() { defer wg.Done(); caa = checkCAA(ctx, domain) }()
-	go func() { defer wg.Done(); aaaa = checkAAAAConflict(ctx, domain) }()
+	go func() { defer wg.Done(); aaaa = checkAAAAConflict(ctx, probeDomain) }()
 	wg.Wait()
+	if routingProbe != probeDomain {
+		dnsFound = checkApexA_AAAA(ctx, routingProbe)
+		aaaa = checkAAAAConflict(ctx, routingProbe)
+	}
 	return
 }

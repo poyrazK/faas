@@ -4,6 +4,7 @@ Date: 2026-10-27
 Status: Accepted
 Amends: [ADR-1180](1180-long-async-invocations.md) (its rejected "make every drain dispatch asynchronous")
 Related: [ADR-614](614-event-delivery-backpressure.md), [ADR-191](191-scheduler-divergence-and-bounded-dispatch.md), [ADR-972](972-parallel-queue-push-dispatch.md)
+Amended by: [ADR-20261101091437](20261101091437-drain-walk-resumes.md) (the walk resumes where the last tick stopped)
 
 ## Context
 

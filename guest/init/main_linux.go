@@ -372,7 +372,11 @@ func boot() error {
 	if err != nil {
 		return err
 	}
-	if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
+	if manifest.EffectivePort() == api.ProfileBridgePort() {
+		// The bridge would take the app's own port; an older imaged may
+		// still have stamped collectors for it (ADR-1155).
+		slog.Default().Warn("profile bridge skipped: the app listens on its port", "port", manifest.EffectivePort())
+	} else if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
 		slog.Default().Warn("profile bridge unavailable", "err", err)
 	}
 	if err := startTraceBridge(manifest.Tracing, slog.Default()); err != nil {
@@ -435,6 +439,11 @@ func boot() error {
 	if apiErr != nil {
 		slog.Default().Warn("env.json could not be loaded; proceeding without api env", "err_kind", errorKind(apiErr))
 	}
+	// ADR-20261107160000: the identity file outlives the environment's
+	// FAAS_INSTANCE_ID, which a snapshot restore cannot change.
+	if err := publishBootInstanceIdentity(apiEnv, time.Now()); err != nil {
+		slog.Default().Warn("instance identity file unavailable", "err", err)
+	}
 	qualificationReceiptToken, qualificationReceiptMACKey, qualificationReceiptErr := takeQualificationConfigReceiptControl(apiEnv)
 	if qualificationReceiptErr != nil {
 		slog.Default().Warn("qualification configuration receipt control is invalid")
@@ -476,6 +485,11 @@ func boot() error {
 	if qualificationReceiptToken != "" {
 		emitQualificationConfigReceipt(slog.Default(), "main", qualificationReceiptToken, qualificationReceiptMACKey, apiEnv, secrets, nil)
 		clear(qualificationReceiptMACKey)
+		// A native qualification restore of this guest re-attests the same
+		// configuration under a fresh token (ADR 20261023093000).
+		if err := rememberQualificationRestoreBasis(apiEnv, secrets); err != nil {
+			slog.Default().Warn("qualification restore receipt basis unavailable", "err", err)
+		}
 	}
 
 	// ADR-051 Phase 4: Supervisor holds atomic.Pointer (Run is a
@@ -619,10 +633,14 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
-	env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	if m.EffectivePort() != api.ProfileBridgePort() {
+		// Collectors would poll the app's own port where the bridge belongs.
+		env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	}
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
+	env = StampInstanceIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", "/")
 	if trustErr != nil {
@@ -637,16 +655,23 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// boundary. Empty = no OTel configured, the env is unchanged.
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
 	// ADR-741: `gregale dev --debug` starts the Node inspector for the main
-	// workload only.
+	// workload only, and only in a developer environment: schedd owns the
+	// marker, so the switch set on any other app is ignored.
+	developer := apiEnv[api.PlatformDeveloperEnvironmentEnv] == "1"
 	preload := ""
 	if devDebugEnvValue(env, api.DevDebugEnv) == api.DevDebugRuntimeNode {
-		if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
-			slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
-		} else {
-			preload = devDebugPreloadPath
+		switch {
+		case !developer:
+			slog.Warn("dev debug ignored: not a developer environment", "key", api.DevDebugEnv)
+		default:
+			if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
+				slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
+			} else {
+				preload = devDebugPreloadPath
+			}
 		}
 	}
-	env = StampDevDebugEnv(env, preload)
+	env = StampDevDebugEnv(env, preload, developer)
 	// ADR-1170: a watch-mode developer image runs a development server that
 	// reloads patched files itself.
 	devWatchActive.Store(devDebugEnvValue(env, api.DevWatchEnv) == "1")
@@ -779,14 +804,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		}
 		sup.markHealthy()
 	}
-	// ADR-1155: report memory pressure so the control plane can capture the
-	// heap before an OOM kill. Only deployments with on-demand profiling
-	// have collectors to capture from.
-	if m.ProfilingOnDemand {
-		pressureCtx, pressureCancel := context.WithCancel(context.Background())
-		go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
-		defer pressureCancel()
-	}
+	// Report memory pressure on every app so app health can warn before an
+	// OOM kill (ADR-20261102124306); a report made while a profile collector
+	// is active also lets the control plane capture the heap (ADR-1155).
+	pressureCtx, pressureCancel := context.WithCancel(context.Background())
+	go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
+	defer pressureCancel()
 	// ADR-1155: a Go application serving net/http/pprof is profiled through
 	// that endpoint, labelled with this run's process, when the deployment
 	// names its port and the profile bridge is running.
@@ -1443,6 +1466,11 @@ func runBuildOnce(m api.BuildManifest) error {
 		err = context.DeadlineExceeded
 	}
 	clock.finishBuild(time.Since(buildStarted), buf.Bytes())
+	// A failure to reach the registry for a platform-owned image is the
+	// platform's, not the customer's (H105).
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && platformPullFailure(buf.Bytes(), m.RuntimeBaseRef) {
+		err = builderNetworkError{fmt.Errorf("pull platform image: %w", err)}
+	}
 	// A deferred stop runs after writeAndPoweroff, which never returns on a
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.

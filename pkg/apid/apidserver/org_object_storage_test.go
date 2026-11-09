@@ -203,8 +203,10 @@ func orgObjectStorageJourney(t *testing.T, server *apidserver.Server, store stat
 		{"GET", strings.Replace(base, org.Slug, "another-company", 1), nil, adminHeaders, 404},
 		{"GET", base, nil, map[string]string{"Authorization": "Bearer " + personalKey}, 404},
 		{"GET", "/v1/account/object-storage-usage", nil, adminHeaders, 404},
-		{"GET", "/v1/apps/" + app.Slug + "/buckets/" + bucket.ID + "/encryption", nil, creatorHeaders, 403},
-		{"POST", "/v1/apps/" + app.Slug + "/buckets/" + bucket.ID + "/signed-url", nil, creatorHeaders, 403},
+		// Reviewed in bug hunt 37: bucket writes and signed URLs are owners' and
+		// admins' (ManageObjectStorage), whoever created the app.
+		{"PUT", "/v1/apps/" + app.Slug + "/buckets/" + bucket.ID + "/encryption", nil, developerHeaders, 403},
+		{"POST", "/v1/apps/" + app.Slug + "/buckets/" + bucket.ID + "/signed-url", nil, developerHeaders, 403},
 	} {
 		if rec := send(tc.method, tc.path, tc.body, tc.headers); rec.Code != tc.want {
 			t.Fatalf("%s %s: %d %s; want %d", tc.method, tc.path, rec.Code, rec.Body, tc.want)

@@ -3,11 +3,11 @@ package state
 import (
 	"context"
 	"encoding/json"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // DataRepairAdmission contains only immutable plan metadata validated by the
@@ -30,7 +30,7 @@ type DataRepairOperationStore interface {
 	AdvanceDataRepairOperation(context.Context, string, string, DataRepairAdvance) (Operation, error)
 }
 
-var repairHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var repairHash = lazyregexp.New(`^[0-9a-f]{64}$`)
 
 func validateDataRepairAdmission(in DataRepairAdmission) error {
 	for _, id := range []string{in.AccountID, in.AppID, in.ID, in.Plan.PlanID, in.Plan.SourceOperationID} {
@@ -174,14 +174,18 @@ func advanceDataRepair(op *Operation, in DataRepairAdvance, now time.Time) (api.
 	default:
 		op.State, op.FailureCode = api.OperationRunning, ""
 	}
-	if from == api.DataRepairResolving && (to == api.DataRepairClosed || to == api.DataRepairSucceeded) {
+	if to == api.DataRepairClosed || to == api.DataRepairSucceeded {
 		// A recovered reservation may outlive the original result window. Keep
 		// its newly settled outcome reviewable under the usual retention bounds;
 		// the source plan's fixed expiry and approval authority never change.
-		op.ExpiresAt = now.Add(time.Duration(op.PlanLimits.ResultRetentionSeconds) * time.Second)
-		op.EventExpiresAt = now.Add(time.Duration(op.PlanLimits.EventRetentionSeconds) * time.Second)
+		renewRepairRetention(op, now)
 	}
 	return dataRepairEvent(op, kind, now), nil
+}
+
+func renewRepairRetention(op *Operation, now time.Time) {
+	op.ExpiresAt = now.Add(time.Duration(op.PlanLimits.ResultRetentionSeconds) * time.Second)
+	op.EventExpiresAt = now.Add(time.Duration(op.PlanLimits.EventRetentionSeconds) * time.Second)
 }
 
 func decideDataRepairApproval(op *Operation, in OperationApprovalInput, now time.Time) (api.OperationEvent, bool, error) {

@@ -116,7 +116,7 @@ func TestRollupOnce_EmptyWindowReturnsZero(t *testing.T) {
 func TestDailyRollupFailureIsObservable(t *testing.T) {
 	db := &stubExecer{err: errors.New("rollup failed")}
 	ops := wire.NewOpsMetrics("meterd_test")
-	runDailyRollups(context.Background(), db, time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC), slog.Default(), "test", ops)
+	runDailyRollups(context.Background(), db, dailyRollupWindows(time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)), slog.Default(), "test", ops)
 
 	recorder := httptest.NewRecorder()
 	ops.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))

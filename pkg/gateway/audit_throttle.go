@@ -23,8 +23,14 @@ const auditRepeatKeys = 4096
 // repeatThrottledAuditor forwards the first informational row per key, then
 // at most one per auditRepeatWindow, carrying how many it held back as
 // data["suppressed"]; a count still held when its series goes quiet is
-// dropped with the key. Denials (edge_rule.*_blocked, *_rejected, *_forged,
-// *_failed) and every other kind pass through unchanged: each is evidence.
+// dropped with the key. The denials a client produces at will (a throttle's
+// 429, a validate or limit refusal, a forged caller address, a missing
+// throttle identity) repeat per rule the same way (IsRepeatedDenialAudit):
+// one row per request let a flood against a throttle rule turn into one
+// control-plane insert per refused request and crowd other tenants' evidence
+// out of the node's audit queue (ADR-091 amendment 2026-11-04, round 11).
+// The sampled security events (ADR-964) and metrics still see each request.
+// Every other kind passes through unchanged.
 type repeatThrottledAuditor struct {
 	next EdgeRuleAuditor
 	now  func() time.Time
@@ -72,11 +78,43 @@ func auditRepeatKey(kind string, data map[string]any) (string, bool) {
 	switch {
 	case kind == "vm.inflight_threshold_reached":
 		return kind + "|" + fmt.Sprint(data["instance_id"]), true
-	case strings.HasPrefix(kind, "edge_rule.") && strings.HasSuffix(kind, "_matched"):
+	case IsInformationalAudit(kind):
 		return kind + "|" + fmt.Sprint(data["rule_id"]) + "|" + fmt.Sprint(data["preflight"]), true
+	case IsRepeatedDenialAudit(kind):
+		return kind + "|" + fmt.Sprint(data["rule_id"]) + "|" + fmt.Sprint(data["app_id"]), true
 	default:
 		return "", false
 	}
+}
+
+// IsInformationalAudit reports a request-path audit kind that records that
+// something matched, not evidence of a refusal: edge_rule.*_matched and
+// vm.inflight_threshold_reached. Such rows are throttled here and queued
+// behind evidence rows (authn failures, denials) by gatewayd-internal's
+// audit writer, so a flood of matches cannot displace them (O22).
+func IsInformationalAudit(kind string) bool {
+	return kind == "vm.inflight_threshold_reached" || kind == "edge_rule.async_enqueued" ||
+		(strings.HasPrefix(kind, "edge_rule.") && strings.HasSuffix(kind, "_matched"))
+}
+
+// repeatedDenialAudits are the refusals a client can produce once per
+// request. They stay evidence (queued ahead of informational rows) but repeat
+// at most once per auditRepeatWindow per rule and app.
+var repeatedDenialAudits = map[string]struct{}{
+	"edge_rule.throttle_rejected":               {},
+	"edge_rule.throttle_identity_missing":       {},
+	"edge_rule.validate_failed":                 {},
+	"edge_rule.validate_unsupported_media_type": {},
+	"edge_rule.limit_rejected":                  {},
+	"edge_rule.caller_ip_forged":                {},
+	"edge_rule.ingress_ip_forged":               {},
+}
+
+// IsRepeatedDenialAudit reports a refusal audit kind that repeats per rule
+// and app rather than per request.
+func IsRepeatedDenialAudit(kind string) bool {
+	_, ok := repeatedDenialAudits[kind]
+	return ok
 }
 
 func (t *repeatThrottledAuditor) admit(key string) (suppressed int64, emit bool) {

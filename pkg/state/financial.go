@@ -109,11 +109,25 @@ func MonthComputeIncludedMBSeconds(current api.Plan, snapshots []FinancialPriceS
 // meterd records a plan change within a minute; until it has, the current
 // plan counts from now.
 func monthOverageCents(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time, mbSeconds int64, usageBefore func(time.Time) (int64, error)) (int64, error) {
-	billed, err := MonthBilledComputeMBSeconds(current, withCurrentPlan(current, snapshots, now), now, mbSeconds, usageBefore)
+	billed, err := CurrentMonthBilledComputeMBSeconds(current, snapshots, now, mbSeconds, usageBefore)
 	if err != nil {
 		return 0, err
 	}
 	return api.OverageCentsForBillableMBSeconds(billed), nil
+}
+
+// CurrentMonthBilledComputeMBSeconds is MonthBilledComputeMBSeconds through
+// now for the month in progress: a plan change meterd has not recorded yet
+// counts from now. The spend cap and the usage pages read this one figure, so
+// they show what the provider is billed (ADR-20261101113742).
+func CurrentMonthBilledComputeMBSeconds(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time, usage int64, usageBefore func(time.Time) (int64, error)) (int64, error) {
+	return MonthBilledComputeMBSeconds(current, withCurrentPlan(current, snapshots, now), now, usage, usageBefore)
+}
+
+// CurrentMonthComputeIncludedMBSeconds is the month's compute allowance as of
+// now, with a plan change meterd has not recorded yet counted from now.
+func CurrentMonthComputeIncludedMBSeconds(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time) int64 {
+	return MonthComputeIncludedMBSeconds(current, withCurrentPlan(current, snapshots, now), now)
 }
 
 // MonthBilledComputeMBSeconds returns the compute overage (mb_seconds) the
@@ -128,9 +142,12 @@ func monthOverageCents(current api.Plan, snapshots []FinancialPriceSnapshot, now
 // so the month splits at each activation's hour into segments, and each
 // segment bills its usage above that segment's allowance. Without an
 // activation after the first this is usage above the allowance, and
-// usageBefore is not called. The spend cap compares this figure, not usage
-// above today's allowance, so a plan change can neither overrun the cap nor
-// spend it on usage that is never billed (ADR-20261031100000).
+// usageBefore is not called. A segment whose plan is Free bills nothing, as
+// the pusher never bills a Free hour (ADR-20261101143527): usage on Free
+// before a mid-month subscription is not billed and does not spend the cap.
+// The spend cap compares this figure, not usage above today's allowance, so a
+// plan change can neither overrun the cap nor spend it on usage that is never
+// billed (ADR-20261031100000).
 func MonthBilledComputeMBSeconds(current api.Plan, snapshots []FinancialPriceSnapshot, through time.Time, usage int64, usageBefore func(time.Time) (int64, error)) (int64, error) {
 	var activations []time.Time
 	var first time.Time
@@ -173,11 +190,47 @@ func MonthBilledComputeMBSeconds(current api.Plan, snapshots []FinancialPriceSna
 		if i > 0 {
 			allowanceAt = segmentStart.Add(time.Hour)
 		}
-		included := MonthComputeIncludedMBSeconds(current, snapshots, allowanceAt)
-		billed += api.BillableMBSecondsAbove(included, usageAtEnd) - api.BillableMBSecondsAbove(included, usageAtStart)
+		if MonthPlanAt(current, snapshots, allowanceAt) != api.PlanFree {
+			included := MonthComputeIncludedMBSeconds(current, snapshots, allowanceAt)
+			billed += api.BillableMBSecondsAbove(included, usageAtEnd) - api.BillableMBSecondsAbove(included, usageAtStart)
+		}
 		segmentStart, usageAtStart = end, usageAtEnd
 	}
 	return billed, nil
+}
+
+// MonthPlanAt returns the plan whose compute activation applies to usage up to
+// through, by the rule MonthComputeIncludedMBSeconds uses: the latest recorded
+// activation before through, or the earliest when none is. With no recorded
+// activation it is current. The provider pusher bills no hour whose plan is
+// Free (ADR-20261101143527).
+func MonthPlanAt(current api.Plan, snapshots []FinancialPriceSnapshot, through time.Time) api.Plan {
+	var active *FinancialPriceSnapshot
+	for i := range snapshots {
+		s := &snapshots[i]
+		if s.Price.Meter != "compute" || s.Plan == "" {
+			continue
+		}
+		switch {
+		case active == nil:
+			active = s
+		case s.EffectiveFrom.Before(through) && (!active.EffectiveFrom.Before(through) || laterActivation(s, active)):
+			active = s
+		case !active.EffectiveFrom.Before(through) && !s.EffectiveFrom.Before(through) && laterActivation(active, s):
+			active = s // none applies yet: the earliest covers the month before it
+		}
+	}
+	if active == nil {
+		return current
+	}
+	return active.Plan
+}
+
+func laterActivation(a, b *FinancialPriceSnapshot) bool {
+	if c := a.EffectiveFrom.Compare(b.EffectiveFrom); c != 0 {
+		return c > 0
+	}
+	return a.RecordedAt.After(b.RecordedAt)
 }
 
 // withCurrentPlan adds current as an activation just before now when the

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -196,7 +197,7 @@ func (s *Service) IdempotentManagedRealtimePublish(next httpkit.AccountHandler) 
 
 		cap := &publishCaptureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
-		if managedRealtimePublishReplayable(cap.status) {
+		if managedRealtimePublishReplayable(cap.status) && !cap.unwritten {
 			if err := s.Host.Store().PutIdempotent(context.WithoutCancel(r.Context()), acct.ID, scopedKey, cap.status, cap.body.Bytes()); err != nil {
 				// Keep the reservation in-flight: a repeat must not Publish again
 				// when the first outcome could not be durably recorded.
@@ -368,6 +369,18 @@ func (s *Service) managedRealtimeOwner(w http.ResponseWriter) (RealtimeOwner, bo
 	return s.Owner, true
 }
 
+// managedRealtimeEndpointMessageLimit refuses a message the endpoint's own
+// max_message_bytes or text encoding rule would make its node refuse.
+func managedRealtimeEndpointMessageLimit(row state.ManagedRealtimeEndpoint, message realtime.Message) *api.Problem {
+	if row.MaxMessageBytes > 0 && int64(len(message.Data)) > row.MaxMessageBytes {
+		return api.ErrRealtimeMessageTooLarge(row.MaxMessageBytes, int64(len(message.Data)))
+	}
+	if !message.Binary && !utf8.Valid(message.Data) {
+		return api.ErrRealtimeInvalidText()
+	}
+	return nil
+}
+
 func decodeManagedRealtimeMessage(r *http.Request) (realtime.Message, *api.Problem) {
 	var request api.ManagedRealtimeMessageRequest
 	// Base64 expands a payload by roughly 4/3; allow that overhead while
@@ -380,7 +393,10 @@ func decodeManagedRealtimeMessage(r *http.Request) (realtime.Message, *api.Probl
 		return realtime.Message{}, api.ErrRealtimeInvalid("data_base64 must be valid standard base64")
 	}
 	if len(data) > api.RealtimeMessageMaxBytes {
-		return realtime.Message{}, api.ErrRealtimeInvalid(fmt.Sprintf("message exceeds %d bytes", api.RealtimeMessageMaxBytes))
+		return realtime.Message{}, api.ErrRealtimeMessageTooLarge(api.RealtimeMessageMaxBytes, int64(len(data)))
+	}
+	if !request.Binary && !utf8.Valid(data) {
+		return realtime.Message{}, api.ErrRealtimeInvalidText()
 	}
 	if request.ExpectedSequence != nil {
 		delivery, valid := managedRealtimeDeliveryFromRequest(r)
@@ -526,6 +542,27 @@ const (
 	managedRealtimeDrainStatusPending    = "pending"
 )
 
+// managedRealtimeDrainSelectionProblem refuses a drain that does not say
+// which connections or how many: before, a body with only a reason closed up
+// to the default limit of every connection on the endpoint. all=true is the
+// explicit way to select every match, and it cannot also take a limit, which
+// it would otherwise ignore silently.
+func managedRealtimeDrainSelectionProblem(request api.ManagedRealtimeDrainRequest) *api.Problem {
+	if request.All {
+		if len(request.ConnectionIDs) > 0 {
+			return api.ErrRealtimeInvalid("all cannot be combined with connection_ids")
+		}
+		if request.Limit != 0 {
+			return api.ErrRealtimeInvalid("all cannot be combined with limit; all selects every match up to the safety cap")
+		}
+		return nil
+	}
+	if request.Channel == "" && request.Principal == "" && len(request.ConnectionIDs) == 0 && request.Limit == 0 {
+		return api.ErrRealtimeInvalid("select connections to drain with channel, principal, connection_ids or limit, or set all=true to drain every connection")
+	}
+	return nil
+}
+
 func (s *Service) DrainManagedRealtimeConnections(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	row, owner, ok := s.managedRealtimeEndpointAction(w, r, acct)
 	if !ok {
@@ -561,11 +598,11 @@ func (s *Service) DrainManagedRealtimeConnections(w http.ResponseWriter, r *http
 			return
 		}
 	}
+	if problem := managedRealtimeDrainSelectionProblem(request); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if request.All {
-		if len(request.ConnectionIDs) > 0 {
-			api.WriteProblem(w, api.ErrRealtimeInvalid("all cannot be combined with connection_ids"))
-			return
-		}
 		request.Limit = ManagedRealtimeDrainAllMax
 	} else if request.Limit == 0 {
 		request.Limit = managedRealtimeConnectionsLimitDefault
@@ -749,6 +786,9 @@ func (s *Service) SendManagedRealtimeConnection(w http.ResponseWriter, r *http.R
 		return
 	}
 	message, problem := decodeManagedRealtimeMessage(r)
+	if problem == nil {
+		problem = managedRealtimeEndpointMessageLimit(row, message)
+	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -792,11 +832,11 @@ func (s *Service) SendManagedRealtimePrincipal(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if len(data) > api.RealtimePrincipalMessageMaxBytes {
-		api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("principal messages are limited to %d decoded bytes", api.RealtimePrincipalMessageMaxBytes)))
+		api.WriteProblem(w, api.ErrRealtimeMessageTooLarge(api.RealtimePrincipalMessageMaxBytes, int64(len(data))))
 		return
 	}
-	if row.MaxMessageBytes > 0 && int64(len(data)) > row.MaxMessageBytes {
-		api.WriteProblem(w, api.ErrRealtimeInvalid("message exceeds this endpoint's max_message_bytes"))
+	if problem := managedRealtimeEndpointMessageLimit(row, realtime.Message{Data: data, Binary: request.Binary}); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if request.Delivery != "" && request.Delivery != api.ManagedRealtimeDeliveryLive && request.Delivery != api.ManagedRealtimeDeliveryRetained {
@@ -1172,6 +1212,9 @@ func (s *Service) PublishManagedRealtimeChannel(w http.ResponseWriter, r *http.R
 		return
 	}
 	message, problem := decodeManagedRealtimeMessage(r)
+	if problem == nil {
+		problem = managedRealtimeEndpointMessageLimit(row, message)
+	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -1203,6 +1246,9 @@ func (s *Service) PublishManagedRealtimeChannel(w http.ResponseWriter, r *http.R
 		}
 		if row.MaxMessageBytes > 0 && int64(len(message.Data)) > row.MaxMessageBytes {
 			api.WriteProblem(w, api.ErrRealtimeInvalid("message exceeds this endpoint's max_message_bytes"))
+			return
+		}
+		if !s.allowRealtimeWrites(w, acct, 1) {
 			return
 		}
 		store, ok := s.managedRealtimeHistoryStore(w)
@@ -1298,6 +1344,13 @@ func (s *Service) writeManagedRealtimeOwnerError(w http.ResponseWriter, r *http.
 			return
 		case http.StatusTooManyRequests:
 			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Realtime queue full", "the connection owner is temporarily unable to accept more messages"))
+			return
+		case http.StatusBadRequest:
+			// The node refused the request itself (a size or encoding rule
+			// apid did not check first). Retrying cannot help, so this is
+			// not the 503 an unreachable owner gets.
+			s.Host.Logger().WarnContext(r.Context(), "managed realtime owner refused request", "operation", operation, "err", err)
+			api.WriteProblem(w, api.ErrRealtimeInvalid("the realtime node refused this message; check its size against the endpoint's max_message_bytes and that a text message is valid UTF-8"))
 			return
 		}
 	}

@@ -172,9 +172,11 @@ func (s *server) createSurfaceUnderQuotas(
 // takeover token at _faas-verify.<hostname>; until then the conflict is a
 // *claimPendingError naming that record (ADR-20261020090500).
 func (s *server) createTenantHostname(ctx context.Context, surf state.TenantSurface, hostname string, limits api.Limits) (state.TenantHostname, error) {
+	ctx = state.WithPublicTenantHostnameClaim(ctx)
 	in := state.CreateTenantHostnameParams{SurfaceID: surf.ID, Hostname: hostname, ChallengeToken: randomToken(16)}
 	h, err := s.store.CreateTenantHostnameIfUnderQuota(ctx, in, limits)
-	if !errors.Is(err, state.ErrConflict) {
+	var overlap *state.CustomDomainTenantOverlapError
+	if !errors.Is(err, state.ErrConflict) || errors.As(err, &overlap) {
 		return h, err
 	}
 	takeover, ok := s.store.(state.TenantHostnameClaimTakeover)
@@ -265,7 +267,13 @@ func surfaceCreateProblem(err error, plan api.Plan) *api.Problem {
 func hostnameCreateProblem(err error, plan api.Plan, surfaceID string) *api.Problem {
 	var qe *state.TenantHostnameQuotaError
 	var pending *claimPendingError
+	var overlap *state.CustomDomainTenantOverlapError
+	var exact *state.TenantHostnameCustomDomainConflictError
 	switch {
+	case errors.As(err, &exact):
+		return api.NewProblem(http.StatusConflict, api.CodeTenantHostnameAlreadyClaimed, "Hostname claimed", exact.Error())
+	case errors.As(err, &overlap):
+		return api.ErrWildcardDomainTenantSurfaceOverlap(overlap.Wildcard, overlap.Hostname)
 	case errors.As(err, &qe) && qe.Pending:
 		return api.ErrTenantHostnamePendingQuota(plan, surfaceID, qe.Limit, qe.Observed)
 	case errors.As(err, &qe):

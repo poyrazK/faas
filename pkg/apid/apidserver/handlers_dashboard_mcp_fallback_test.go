@@ -75,6 +75,9 @@ func TestDashboardMCPFallbackFormsAndGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.SetMFARequired(t.Context(), owner.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	pending, err := manager.IssueWithSessionAndBindingHash(env.Sid, owner.ID, env.BindingHash, true)
 	if err != nil {
 		t.Fatal(err)

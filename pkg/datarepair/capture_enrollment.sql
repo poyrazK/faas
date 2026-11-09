@@ -1,12 +1,15 @@
 WITH entry AS MATERIALIZED (
  SELECT e.*,c.oid AS live_oid,c.relnamespace,c.relname,n.nspname,
-  coalesce(c.relkind='r' AND NOT c.relispartition AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity AND
+  coalesce(e.fingerprint_datestyle IS NOT NULL AND e.fingerprint_intervalstyle IS NOT NULL AND e.fingerprint_monetary IS NOT NULL AND e.fingerprint_timezone IS NOT NULL AND c.relkind='r' AND NOT c.relispartition AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity AND
    format('%I.%I',n.nspname,c.relname)=e.qualified_name AND
    NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=c.oid OR inhparent=c.oid) AND
+   NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=c.oid AND attnum>0 AND NOT attisdropped AND attgenerated<>'') AND
+   NOT __UNSUPPORTED_EXPRESSIONS__ AND
+   NOT __LOSSY_TYPES__ AND NOT __CASCADING_FIELDS__ AND NOT __TYPE_CONTRACT_CHANGED__ AND
    cardinality(e.fields)>0 AND cardinality(e.keys)>0 AND cardinality(e.fields)+cardinality(e.keys)<=__MAX_OBJECTS__ AND
    cardinality(e.fields||e.keys)=(SELECT count(DISTINCT f) FROM unnest(e.fields||e.keys) f) AND
    NOT EXISTS(SELECT 1 FROM unnest(e.fields||e.keys) f LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname=f AND a.attnum>0 AND NOT a.attisdropped
-    WHERE a.attnum IS NULL OR a.attgenerated<>'' OR a.attidentity<>'' OR f IN ('gregale_row_identity','gregale_row_version')) AND
+    WHERE a.attnum IS NULL OR a.attgenerated<>'' OR (a.attidentity<>'' AND f=ANY(e.fields)) OR f IN ('gregale_row_identity','gregale_row_version')) AND
    e.enrollment_id<>'00000000-0000-0000-0000-000000000000'::uuid AND e.fingerprint ~ '^[0-9a-f]{64}$' AND
    EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=c.oid AND attname='gregale_row_identity' AND atttypid='uuid'::regtype AND attnotnull AND NOT attisdropped) AND
    EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=c.oid AND attname='gregale_row_version' AND atttypid='int8'::regtype AND attnotnull AND NOT attisdropped),false) AS valid

@@ -638,18 +638,3 @@ func TestKafka_NackBrokerErrorNeverCommits(t *testing.T) {
 		})
 	}
 }
-
-func TestKafka_BrokerStats(t *testing.T) {
-	rdr := &poisonStrategyReader{}
-	k := &kafkaPoller{reader: rdr}
-	stats := k.BrokerStats(context.Background(), sqlc.Trigger{})
-	if !stats.Available {
-		t.Fatal("stats.Available = false, want true")
-	}
-	if stats.Lag != 10 {
-		t.Fatalf("stats.Lag = %d, want 10", stats.Lag)
-	}
-	if stats.Depth != 5 {
-		t.Fatalf("stats.Depth = %d, want 5", stats.Depth)
-	}
-}

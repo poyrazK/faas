@@ -49,12 +49,12 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
@@ -106,7 +106,7 @@ func (e *ResponseTruncatedError) Error() string {
 	return fmt.Sprintf("API response was truncated: expected %d bytes, received %d", e.Expected, e.Received)
 }
 
-var cookieOnlyPathRE = regexp.MustCompile(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
+var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/capabilities(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
 
 // Client is a typed wrapper over the v1 REST API. Construct with
 // NewClient (30s default timeout) or NewClientWithDeployTimeout
@@ -139,6 +139,12 @@ type Client struct {
 	// noConfigGuard sends `guard=false` on env and secret writes, so they
 	// open no config guard (ADR-1451, CLI --no-guard).
 	noConfigGuard bool
+
+	// approvalWait makes a call answered approval_required wait for a
+	// person's decision and retry once (WaitForApproval).
+	approvalWait   bool
+	approvalNotify func(AgentApprovalPendingInfo)
+	approvalPoll   time.Duration
 }
 
 // WithoutConfigGuard returns a client whose env and secret writes open no
@@ -190,7 +196,9 @@ const DefaultClientTimeout = 30 * time.Second
 // settings without coupling this client to that global lifecycle.
 func newClientTransport() http.RoundTripper {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
-		return transport.Clone()
+		clone := transport.Clone()
+		clone.ResponseHeaderTimeout = DefaultClientTimeout
+		return clone
 	}
 	return http.DefaultTransport
 }
@@ -231,6 +239,23 @@ func NewClientWithDeployTimeout(baseURL, token string, deployTimeout time.Durati
 // callers can swap transport-level knobs (TLS, retries) without
 // depending on a private field.
 func (c *Client) HTTPClient() *http.Client { return c.http }
+
+// WrapTransport replaces the transport of every HTTP client c sends with
+// (JSON, streams and uploads) by wrap(current), so a caller can stamp
+// headers or watch responses on all of them. It returns c.
+func (c *Client) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) *Client {
+	for _, cli := range []*http.Client{c.http, c.deployHTTP} {
+		if cli == nil {
+			continue
+		}
+		base := cli.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		cli.Transport = wrap(base)
+	}
+	return c
+}
 
 // BaseURL returns the URL prefix the client was constructed with.
 func (c *Client) BaseURL() string { return c.baseURL }
@@ -332,12 +357,22 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 	} else {
 		idempotencyKey = ""
 	}
+	waitedForApproval := false
 	for attempt := 1; ; attempt++ {
 		req, err := c.newJSONRequest(ctx, method, path, payload, body != nil, idempotencyKey, headers)
 		if err != nil {
 			return err
 		}
 		err = c.doReq(cli, req, out)
+		if pending, ok := pendingApproval(err); ok && c.approvalWait && !waitedForApproval {
+			// The approval gate answers before the idempotency layer, so
+			// the retry may carry the same Idempotency-Key.
+			waitedForApproval = true
+			if waitErr := c.awaitApproval(ctx, pending, err); waitErr != nil {
+				return waitErr
+			}
+			continue
+		}
 		pause, retry := trafficPolicyRetryPause(err, attempt)
 		if !retry {
 			return err
@@ -494,17 +529,23 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 // caller passes a *[]byte and receives the body untouched. Returns
 // (nil, *APIError) on a non-2xx, same shape as do.
 func (c *Client) doBytes(ctx context.Context, method, path string, body, out any) error {
+	_, err := c.doBytesWithHeader(ctx, method, path, body, out)
+	return err
+}
+
+// doBytesWithHeader is doBytes that also returns the response headers.
+func (c *Client) doBytesWithHeader(ctx context.Context, method, path string, body, out any) (http.Header, error) {
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("marshal request: %w", err)
+			return nil, fmt.Errorf("marshal request: %w", err)
 		}
 		r = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -517,31 +558,31 @@ func (c *Client) doBytes(ctx context.Context, method, path string, body, out any
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("could not reach the API: %w", err)
+		return nil, fmt.Errorf("could not reach the API: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := readBoundedResponse(resp, maxResponseBodyBytes)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		return apiErrorFromResponse(resp, data)
+		return nil, apiErrorFromResponse(resp, data)
 	}
 	if out != nil {
 		if bp, ok := out.(*[]byte); ok {
 			*bp = data
-			return nil
+			return resp.Header, nil
 		}
 		// Fall through: caller wants JSON-decoded, do the same
 		// unmarshal as doReq. Untyped callers will get a decode
 		// error if they pass anything other than *[]byte.
 		if len(data) > 0 {
 			if err := json.Unmarshal(data, out); err != nil {
-				return fmt.Errorf("decode response: %w", err)
+				return nil, fmt.Errorf("decode response: %w", err)
 			}
 		}
 	}
-	return nil
+	return resp.Header, nil
 }
 
 func readBoundedResponse(resp *http.Response, limit int64) ([]byte, error) {
@@ -762,7 +803,10 @@ func (c *Client) PostAccountMfaEnroll(ctx context.Context) (MFAEnrollResponse, e
 // ConfirmMFA finishes enrollment with the customer's first 6-digit
 // TOTP code. On success the server stamps mfa_enrolled_at, clears
 // mfa_required, and re-issues the session cookie without
-// mfa_pending. Idempotent on retry.
+// mfa_pending. An already-confirmed enrollment returns a conflict; use
+// verification for subsequent challenges. This method requires a session
+// and its action-bound CSRF token, plus CurrentPassword when the account has
+// one; the CLI opens the browser form instead.
 func (c *Client) PostAccountMfaConfirm(ctx context.Context, req MFAConfirmRequest) (MFAConfirmResponse, error) {
 	var out MFAConfirmResponse
 	return out, c.do(ctx, "POST", "/v1/account/mfa/confirm", req, &out)
@@ -1510,8 +1554,8 @@ func (c *Client) DeployMultipart(ctx context.Context, slug string, source io.Rea
 
 // DeployMultipartWithSourceRoot is the workspace-aware source upload path.
 // sourceRoot is a repository-relative directory inside the uploaded archive;
-// an empty value means the archive root. The legacy DeployMultipart method
-// delegates here with an empty root so existing callers remain unchanged.
+// an empty value uses the app's configured root (the archive root for standalone
+// apps). An explicit "." selects the archive root even for a nested app.
 func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations) (DeploymentResponse, error) {
 	ctx = deploymentSubmissionContext(ctx)
 	storedRoot, err := normalizeMultipartSourceRoot(sourceRoot)
@@ -1645,14 +1689,13 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	if _, err := io.Copy(fw, tarball); err != nil {
 		return DeploymentResponse{}, fmt.Errorf("copy tarball: %w", err)
 	}
-	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
-	// (the server treats missing sidecar as zero provenance).
-	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Environment != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
-		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.MCPTaskMigrationOverride || sidecar.Healthcheck != nil || sidecar.NoTriggers || sidecar.OverrideFreeze != "" {
-		sidecarJSON, err := json.Marshal(sidecar)
-		if err != nil {
-			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
-		}
+	// Derive presence from the wire object so every supplied option, including
+	// scheduling fields, survives without a separate field allowlist.
+	sidecarJSON, err := json.Marshal(sidecar)
+	if err != nil {
+		return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
+	}
+	if string(sidecarJSON) != "{}" {
 		if err := w.WriteField("sidecar", string(sidecarJSON)); err != nil {
 			return DeploymentResponse{}, fmt.Errorf("write sidecar: %w", err)
 		}
@@ -1692,8 +1735,8 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 // output byte-for-byte — a CI consumer parsing either path
 // agrees.
 //
-// Read-only: auth chain on the server is apps:read (no MFA, no
-// deploy:write required). The handler does not call CreateApp /
+// Read-only: auth chain on the server is apps:read or deploy:write (no
+// MFA). The handler does not call CreateApp /
 // CreateDeployment / anything in the write path.
 func (c *Client) Diff(ctx context.Context, slug string, req DiffRequest) (DiffResponse, error) {
 	var out DiffResponse
@@ -2369,7 +2412,7 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentApprovalsApproval(ctx con
 func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.do(ctx, http.MethodPost, path, req, &out)
+	return out, c.doWithHeaders(ctx, http.MethodPost, path, req, &out, environmentPromotionHeaders(ctx))
 }
 
 // PromoteProjectEnvironmentWithIdempotencyKey executes a promotion with an
@@ -2377,7 +2420,7 @@ func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, tar
 func (c *Client) PromoteProjectEnvironmentWithIdempotencyKey(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest, idempotencyKey string) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, req, &out, idempotencyKey)
+	return out, c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, http.MethodPost, path, req, &out, idempotencyKey, environmentPromotionHeaders(ctx))
 }
 
 // PostProjectsSlugEnvironmentsEnvironmentPromote is the route-shaped SDK
@@ -2433,7 +2476,7 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentPromotionsPromotion(ctx c
 func (c *Client) RollbackProjectEnvironmentPromotion(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
 	var out ProjectEnvironmentPromotionStatusResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotions/" + url.PathEscape(promotionID) + "/rollback"
-	return out, c.do(ctx, http.MethodPost, path, nil, &out)
+	return out, c.doWithHeaders(ctx, http.MethodPost, path, nil, &out, environmentRollbackHeaders(ctx))
 }
 
 // PostProjectsSlugEnvironmentsEnvironmentPromotionsPromotionRollback is the
@@ -2709,6 +2752,15 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 		UpdateDeploymentTrafficRequest{TrafficPercent: percent}, &out)
 }
 
+// PatchDeploymentTrafficIfSplit updates traffic only if the environment's
+// split still matches expected (live release ID → positive percent) at the
+// transaction boundary; otherwise apid answers 409 traffic_serving_changed.
+func (c *Client) PatchDeploymentTrafficIfSplit(ctx context.Context, id string, percent int, expected map[string]int) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
+		UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedTraffic: expected}, &out)
+}
+
 // PatchDeploymentTrafficIfServing updates traffic only if the named live
 // sibling still owns all production traffic at the transaction boundary.
 // An empty servingID requires no live sibling with positive traffic.
@@ -2719,7 +2771,7 @@ func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string,
 // PatchDeploymentTrafficIfServingWithMCPAccess atomically fences serving and stored access policy.
 func (c *Client) PatchDeploymentTrafficIfServingWithMCPAccess(ctx context.Context, id string, percent int, servingID string, policy *MCPAccessPolicyExpectation) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	err := c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID, ExpectedMCPAccessPolicy: policy}, &out)
+	err := c.doWithHeaders(ctx, "PATCH", "/v1/deployments/"+id+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID, ExpectedMCPAccessPolicy: policy}, &out, deploymentPromotionHeaders(ctx))
 	return out, err
 }
 
@@ -3916,34 +3968,48 @@ func (c *Client) UpdateEdgeWAFExclusions(ctx context.Context, id string, req Edg
 	return out, c.do(ctx, "POST", "/v1/edge-rules/"+url.PathEscape(id)+"/waf-exclusions", req, &out)
 }
 
-// ListEdgeRuleLists returns the account's reusable edge-rule lists, without
-// items (ADR-963).
-func (c *Client) ListEdgeRuleLists(ctx context.Context) (ListEdgeRuleListsResponse, error) {
+// edgeRuleListPath is a list URL. A non-empty app names a company app whose
+// organization's lists the call manages (ADR-091 amendment 2026-11-03);
+// empty manages the caller's personal lists.
+func edgeRuleListPath(name, app string) string {
+	path := "/v1/edge-rule-lists"
+	if name != "" {
+		path += "/" + url.PathEscape(name)
+	}
+	if app != "" {
+		path += "?app=" + url.QueryEscape(app)
+	}
+	return path
+}
+
+// ListEdgeRuleLists returns the reusable edge-rule lists, without items
+// (ADR-963): the caller's own, or a company app's when app is set.
+func (c *Client) ListEdgeRuleLists(ctx context.Context, app string) (ListEdgeRuleListsResponse, error) {
 	var out ListEdgeRuleListsResponse
-	return out, c.do(ctx, "GET", "/v1/edge-rule-lists", nil, &out)
+	return out, c.do(ctx, "GET", edgeRuleListPath("", app), nil, &out)
 }
 
 // GetEdgeRuleList returns one list with its items (ADR-963).
-func (c *Client) GetEdgeRuleList(ctx context.Context, name string) (EdgeRuleListResponse, error) {
+func (c *Client) GetEdgeRuleList(ctx context.Context, name, app string) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
-	return out, c.do(ctx, "GET", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, &out)
+	return out, c.do(ctx, "GET", edgeRuleListPath(name, app), nil, &out)
 }
 
 // CreateEdgeRuleList creates a list (ADR-963).
-func (c *Client) CreateEdgeRuleList(ctx context.Context, req CreateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+func (c *Client) CreateEdgeRuleList(ctx context.Context, req CreateEdgeRuleListRequest, app string) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
-	return out, c.do(ctx, "POST", "/v1/edge-rule-lists", req, &out)
+	return out, c.do(ctx, "POST", edgeRuleListPath("", app), req, &out)
 }
 
 // UpdateEdgeRuleList edits a list (ADR-963).
-func (c *Client) UpdateEdgeRuleList(ctx context.Context, name string, req UpdateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+func (c *Client) UpdateEdgeRuleList(ctx context.Context, name string, req UpdateEdgeRuleListRequest, app string) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
-	return out, c.do(ctx, "PATCH", "/v1/edge-rule-lists/"+url.PathEscape(name), req, &out)
+	return out, c.do(ctx, "PATCH", edgeRuleListPath(name, app), req, &out)
 }
 
 // DeleteEdgeRuleList deletes an unreferenced list (ADR-963).
-func (c *Client) DeleteEdgeRuleList(ctx context.Context, name string) error {
-	return c.do(ctx, "DELETE", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, nil)
+func (c *Client) DeleteEdgeRuleList(ctx context.Context, name, app string) error {
+	return c.do(ctx, "DELETE", edgeRuleListPath(name, app), nil, nil)
 }
 
 // ListEdgeRuleSetVersions returns the app's recorded edge-rule set versions,
@@ -4088,6 +4154,14 @@ func (c *Client) CancelPendingAppWork(ctx context.Context, slug, name string, re
 func (c *Client) QueueSend(ctx context.Context, slug string, req QueueSendRequest) (QueueSendResponse, error) {
 	var out QueueSendResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/queues/send", req, &out)
+}
+
+// QueueSendBatch sends up to QueueSendBatchMaxMessages messages to one queue
+// in order, as one API request. Each result says whether its message was
+// accepted.
+func (c *Client) QueueSendBatch(ctx context.Context, slug string, req QueueSendBatchRequest) (QueueSendBatchResponse, error) {
+	var out QueueSendBatchResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/queues/send-batch", req, &out)
 }
 
 // SendAppMessage reliably enqueues a CloudEvents-wrapped message for another
@@ -4524,9 +4598,12 @@ func (c *Client) ListKeys(ctx context.Context) ([]APIKeyResponse, error) {
 	var out []APIKeyResponse
 	return out, c.do(ctx, "GET", "/v1/keys", nil, &out)
 }
-func (c *Client) CreateKey(ctx context.Context, label string, scopes []string) (APIKeyResponse, error) {
+
+// CreateKey mints an account key; projects limits an agent key to those
+// projects' apps (ADR-20261104085712).
+func (c *Client) CreateKey(ctx context.Context, label string, scopes []string, projects ...string) (APIKeyResponse, error) {
 	var out APIKeyResponse
-	return out, c.do(ctx, "POST", "/v1/keys", CreateKeyRequest{Label: label, Scopes: scopes}, &out)
+	return out, c.do(ctx, "POST", "/v1/keys", CreateKeyRequest{Label: label, Scopes: scopes, Projects: projects}, &out)
 }
 func (c *Client) DeleteKey(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/keys/"+id, nil, nil)
@@ -4584,10 +4661,11 @@ func (c *Client) ListOrgAPIKeys(ctx context.Context, slug string) (ListOrgAPIKey
 // CreateOrgAPIKey mints a new API key against the org. Returns the
 // standard APIKeyResponse — plaintext is present on this single
 // response and never returned again. `scopes` is optional; nil
-// defaults to ["admin"] on the server side (mirrors CreateKey).
-func (c *Client) CreateOrgAPIKey(ctx context.Context, slug, label string, scopes []string) (APIKeyResponse, error) {
+// defaults to ["admin"] on the server side (mirrors CreateKey). projects
+// limits an agent key to those projects' apps (ADR-20261104085712).
+func (c *Client) CreateOrgAPIKey(ctx context.Context, slug, label string, scopes []string, projects ...string) (APIKeyResponse, error) {
 	var out APIKeyResponse
-	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/keys", CreateOrgAPIKeyRequest{Label: label, Scopes: scopes}, &out)
+	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/keys", CreateOrgAPIKeyRequest{Label: label, Scopes: scopes, Projects: projects}, &out)
 }
 
 // GetOrgAPIKey fetches a single key by id within the org. Cross-org
@@ -5171,9 +5249,26 @@ func (c *Client) GetConfigGuard(ctx context.Context, slug, scope string) (Config
 
 // RollbackConfig restores a scope's variables to a config revision.
 func (c *Client) RollbackConfig(ctx context.Context, slug, scope string, revision int64) (ConfigRollbackResponse, error) {
+	return c.RollbackConfigReviewed(ctx, slug, scope, ConfigRollbackRequest{Revision: revision})
+}
+
+// RollbackConfigReviewed submits the original revision and optional native guards.
+func (c *Client) RollbackConfigReviewed(ctx context.Context, slug, scope string, request ConfigRollbackRequest) (ConfigRollbackResponse, error) {
 	var out ConfigRollbackResponse
 	return out, c.do(ctx, "POST", c.configWriteQuery("/v1/apps/"+url.PathEscape(slug)+"/config/rollback", scope),
-		ConfigRollbackRequest{Revision: revision}, &out)
+		request, &out)
+}
+
+// GetConfigRollbackReceipt reads an original reviewed rollback without replaying it.
+func (c *Client) GetConfigRollbackReceipt(ctx context.Context, slug, scope, requestID, proof string) (ConfigRollbackReceipt, error) {
+	var out ConfigRollbackReceipt
+	path := "/v1/apps/" + url.PathEscape(slug) + "/config/rollback/requests/" + url.PathEscape(requestID)
+	headers := http.Header{}
+	if proof != "" {
+		headers.Set(EnvBatchReceiptProofHeader, proof)
+	}
+	err := c.doWithHeaders(ctx, http.MethodGet, c.scopeQuery(path, scope), nil, &out, headers)
+	return out, err
 }
 
 // scopeQuery appends "?scope=<name>" to path when scope is
@@ -7505,6 +7600,24 @@ func (c *Client) ListAppDebugRequestsAll(ctx context.Context, slug string, opts 
 // Limit is capped by the server at 10,000 rows. Request bodies, headers, and
 // raw span attributes are never included.
 func (c *Client) ExportAppDebugRequests(ctx context.Context, slug string, opts DebugTelemetryExportOptions) ([]byte, error) {
+	export, err := c.ExportAppDebugRequestsWithInfo(ctx, slug, opts)
+	return export.Data, err
+}
+
+// DebugTelemetryExport is a downloaded export with what the server applied:
+// the effective window, whether plan retention clamped it, and whether the
+// row limit cut it short. It is assembled from the response headers, not a
+// wire schema.
+type DebugTelemetryExport struct {
+	Data             []byte
+	Window           string
+	RetentionClamped bool
+	Truncated        bool
+}
+
+// ExportAppDebugRequestsWithInfo is ExportAppDebugRequests with the window
+// the server applied and whether the row limit cut the export short.
+func (c *Client) ExportAppDebugRequestsWithInfo(ctx context.Context, slug string, opts DebugTelemetryExportOptions) (DebugTelemetryExport, error) {
 	path := "/v1/apps/" + slug + "/debug/requests/export"
 	q := url.Values{}
 	if opts.Since != "" {
@@ -7519,11 +7632,33 @@ func (c *Client) ExportAppDebugRequests(ctx context.Context, slug string, opts D
 	if opts.Limit > 0 {
 		q.Set("limit", strconv.Itoa(opts.Limit))
 	}
+	if opts.DeploymentID != "" {
+		q.Set("deployment_id", opts.DeploymentID)
+	}
+	if opts.Status != 0 {
+		q.Set("status", strconv.Itoa(opts.Status))
+	}
+	if opts.ColdBoot != nil {
+		q.Set("cold_boot", strconv.FormatBool(*opts.ColdBoot))
+	}
+	if opts.ConsumerID != "" {
+		q.Set("consumer_id", opts.ConsumerID)
+	}
+	if opts.MinLatencyMS > 0 {
+		q.Set("min_latency_ms", strconv.Itoa(opts.MinLatencyMS))
+	}
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out []byte
-	return out, c.doBytes(ctx, http.MethodGet, path, nil, &out)
+	var out DebugTelemetryExport
+	header, err := c.doBytesWithHeader(ctx, http.MethodGet, path, nil, &out.Data)
+	if err != nil {
+		return out, err
+	}
+	out.Window = header.Get("X-Faas-Request-Log-Window")
+	out.RetentionClamped, _ = strconv.ParseBool(header.Get("X-Faas-Request-Log-Retention-Clamped"))
+	out.Truncated, _ = strconv.ParseBool(header.Get("X-Faas-Request-Log-Truncated"))
+	return out, nil
 }
 
 // GetAppDebugCoverage returns observed debugger signal coverage for one app.

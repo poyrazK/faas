@@ -73,8 +73,9 @@ type InputRequest struct {
 
 // InputResponse contains the user's decision for one form request.
 type InputResponse struct {
-	Action  string         `json:"action"`
-	Content map[string]any `json:"content,omitempty"`
+	Action string `json:"action"`
+	// Preserve a non-nil empty object for consent forms; omit absent content.
+	Content map[string]any `json:"content,omitzero"`
 }
 
 // InputResponder gathers one form response. Return decline or cancel without
@@ -150,6 +151,10 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 		req.Header.Set("Mcp-Method", method)
 		if name, ok := p["name"].(string); ok {
 			req.Header.Set("Mcp-Name", encodeHeader(name))
+		} else if method == "resources/read" {
+			if uri, ok := p["uri"].(string); ok {
+				req.Header.Set("Mcp-Name", encodeHeader(uri))
+			}
 		} else if strings.HasPrefix(method, "tasks/") {
 			if taskID, ok := p["taskId"].(string); ok {
 				req.Header.Set("Mcp-Name", encodeHeader(taskID))
@@ -542,6 +547,13 @@ func (c *Client) call(ctx context.Context, tool Tool, args map[string]any, optio
 			task, err = c.waitForTask(ctx, tool.Name, task, options)
 			x.DurationMS = time.Since(startedAt).Milliseconds()
 			if err != nil {
+				// Preserve the terminal failure or cancellation, including the
+				// server's structured error, rather than the initial task handle.
+				if task.Status == "failed" || task.Status == "cancelled" || task.Status == "completed" {
+					if snapshot, marshalErr := json.Marshal(task); marshalErr == nil {
+						x.Result = snapshot
+					}
+				}
 				return x, err
 			}
 			x.Result = task.Result
