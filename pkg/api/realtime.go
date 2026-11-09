@@ -385,7 +385,9 @@ type ManagedRealtimeOccupancyResponse struct {
 }
 
 // ManagedRealtimeDrainRequest selects a bounded set of live connections to
-// close, or every match up to the server safety cap when All is true. A
+// close, or every match up to the server safety cap when All is true. It must
+// name a channel, principal, connection IDs or a limit, or set All (which
+// takes no limit). A
 // non-dry-run request must acknowledge a partial fleet snapshot with
 // AllowPartial before the control plane will mutate the known subset.
 type ManagedRealtimeDrainRequest struct {

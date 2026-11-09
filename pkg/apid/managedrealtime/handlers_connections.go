@@ -542,6 +542,27 @@ const (
 	managedRealtimeDrainStatusPending    = "pending"
 )
 
+// managedRealtimeDrainSelectionProblem refuses a drain that does not say
+// which connections or how many: before, a body with only a reason closed up
+// to the default limit of every connection on the endpoint. all=true is the
+// explicit way to select every match, and it cannot also take a limit, which
+// it would otherwise ignore silently.
+func managedRealtimeDrainSelectionProblem(request api.ManagedRealtimeDrainRequest) *api.Problem {
+	if request.All {
+		if len(request.ConnectionIDs) > 0 {
+			return api.ErrRealtimeInvalid("all cannot be combined with connection_ids")
+		}
+		if request.Limit != 0 {
+			return api.ErrRealtimeInvalid("all cannot be combined with limit; all selects every match up to the safety cap")
+		}
+		return nil
+	}
+	if request.Channel == "" && request.Principal == "" && len(request.ConnectionIDs) == 0 && request.Limit == 0 {
+		return api.ErrRealtimeInvalid("select connections to drain with channel, principal, connection_ids or limit, or set all=true to drain every connection")
+	}
+	return nil
+}
+
 func (s *Service) DrainManagedRealtimeConnections(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	row, owner, ok := s.managedRealtimeEndpointAction(w, r, acct)
 	if !ok {
@@ -577,11 +598,11 @@ func (s *Service) DrainManagedRealtimeConnections(w http.ResponseWriter, r *http
 			return
 		}
 	}
+	if problem := managedRealtimeDrainSelectionProblem(request); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if request.All {
-		if len(request.ConnectionIDs) > 0 {
-			api.WriteProblem(w, api.ErrRealtimeInvalid("all cannot be combined with connection_ids"))
-			return
-		}
 		request.Limit = ManagedRealtimeDrainAllMax
 	} else if request.Limit == 0 {
 		request.Limit = managedRealtimeConnectionsLimitDefault
