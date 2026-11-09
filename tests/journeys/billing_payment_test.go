@@ -77,7 +77,10 @@ func TestBillingCheckout(t *testing.T) {
 		return
 	}
 	s.step("pay", func(t *testing.T) {
-		t.Logf("pay within %s with a Stripe test card (3DS: 4000 0027 6000 3184): %s", wait, checkoutURL)
+		// 4000 0025 0000 3155 asks for 3DS at checkout and not for the
+		// renewals charged later off-session; 4000 0027 6000 3184 asks on
+		// every charge, so its renewals fail.
+		t.Logf("pay within %s with a Stripe test card (3DS at checkout: 4000 0025 0000 3155): %s", wait, checkoutURL)
 		eventually(t, "the provider moves the account to hobby", wait, 10*time.Second, func() (bool, string) {
 			doc, observed := billingStatus(t, tg)
 			return str(doc, "plan") == "hobby" && field(doc, "subscription_configured") == true, observed
