@@ -1015,14 +1015,18 @@ const (
 	ProfileMaxChartPoints           = 120
 	ProfileChartMinStep             = time.Minute
 	ProfileMaxConcurrentUploads     = 4
-	ProfileMaxConcurrentQueries     = 4
-	ProfileMaxTrackedAccounts       = 10000
-	ProfileTransportTimeout         = 2 * time.Second
-	ProfileQueryTimeout             = 15 * time.Second
-	ProfileVsockPort                = 1040
-	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
-	ProfileHealthListen             = "127.0.0.1:9160"
-	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+	// ProfileCollectorLabelSlots bounds the Pyroscope collector_id label to a
+	// fixed set per deployment; one value per VM lifetime made a new series on
+	// every wake (profiling review round 4, R4-5).
+	ProfileCollectorLabelSlots  = 32
+	ProfileMaxConcurrentQueries = 4
+	ProfileMaxTrackedAccounts   = 10000
+	ProfileTransportTimeout     = 2 * time.Second
+	ProfileQueryTimeout         = 15 * time.Second
+	ProfileVsockPort            = 1040
+	ProfileLocalEndpoint        = "http://127.0.0.1:9191"
+	ProfileHealthListen         = "127.0.0.1:9160"
+	ProfileDefaultSocket        = "/run/faas/profiled.sock"
 	// ProfileRetryCacheMaxEntries bounds profiled's upload replay cache on a
 	// node. At the bound the oldest entries are evicted: the cache is
 	// best-effort replay protection, so it never refuses an upload.

@@ -2752,6 +2752,15 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 		UpdateDeploymentTrafficRequest{TrafficPercent: percent}, &out)
 }
 
+// PatchDeploymentTrafficIfSplit updates traffic only if the environment's
+// split still matches expected (live release ID → positive percent) at the
+// transaction boundary; otherwise apid answers 409 traffic_serving_changed.
+func (c *Client) PatchDeploymentTrafficIfSplit(ctx context.Context, id string, percent int, expected map[string]int) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
+		UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedTraffic: expected}, &out)
+}
+
 // PatchDeploymentTrafficIfServing updates traffic only if the named live
 // sibling still owns all production traffic at the transaction boundary.
 // An empty servingID requires no live sibling with positive traffic.
