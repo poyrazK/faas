@@ -37,7 +37,10 @@ existing chain, SAN, EKU and registry checks:
   share a connection;
 - gatewayd-internal's forwarder and gatewayd-public's raw TCP/UDP ingress:
   `NodeClientCache.WithNodeBinding`, which resolves the node's name and dials
-  with it.
+  with it;
+- pgproxyd: `<node_id>.faas` from schedd's wake reply (`DatabaseRuntime`
+  already carries `node_id` beside `vmmd_target`, so no proto change), with
+  one connection per node and target.
 
 A dial with no name to bind fails rather than falling back to the registry
 check. Unix-socket targets (single box, the local data socket) carry no TLS
@@ -59,9 +62,6 @@ restores the rows.
   `openssl x509 -noout -subject -in /etc/faas/tls/vmmd/server.crt` against
   `SELECT name FROM compute_nodes WHERE active`, and reissue mismatched
   leaves with the renderer first.
-- pgproxyd still dials database-node vmmd at the target schedd's wake reply
-  names, without a node name; binding it needs the reply to carry the node
-  id. Open.
 - The registry writes themselves stay open to `faas_compute` (heartbeats and
   self-registration use them). Moving them behind schedd is a larger change
   and no longer needed to stop the redirect.

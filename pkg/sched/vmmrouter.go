@@ -459,13 +459,13 @@ func (r *VMMRouter) Refresh(nodeID, targetURL string) {
 	r.mu.Lock()
 	name := r.names[nodeID]
 	r.mu.Unlock()
-	r.RefreshNode(nodeID, name, targetURL)
+	r.RefreshNode(nodeID, targetURL, name)
 }
 
 // RefreshNode is Refresh that also records the node's compute_nodes.name,
 // which every later dial to nodeID requires of the vmmd leaf
 // (ADR-20261108124106).
-func (r *VMMRouter) RefreshNode(nodeID, name, targetURL string) {
+func (r *VMMRouter) RefreshNode(nodeID, targetURL, name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.names[nodeID] = name

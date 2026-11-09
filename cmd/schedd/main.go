@@ -615,7 +615,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		row, err := store.ComputeNodeByID(rctx, nodeID)
 		switch {
 		case err == nil:
-			vmmRouter.RefreshNode(nodeID, row.Name, row.TargetURL)
+			vmmRouter.RefreshNode(nodeID, row.TargetURL, row.Name)
 			nodeRegistry.Refresh(row)
 			warnCPUIdentities()
 			return nil

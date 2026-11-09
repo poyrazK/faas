@@ -56,7 +56,7 @@ func TestVMMRouterBindsEachDialToTheNodeName(t *testing.T) {
 	if !bindsTo(t, got, "node-a.faas") {
 		t.Fatal("Refresh dropped the node's name")
 	}
-	r.RefreshNode("n1", "node-b.faas", "tcp://192.0.2.3:50051")
+	r.RefreshNode("n1", "tcp://192.0.2.3:50051", "node-b.faas")
 	_, _ = r.Ping(context.Background(), "n1")
 	if !bindsTo(t, got, "node-b.faas") || bindsTo(t, got, "node-a.faas") {
 		t.Fatal("RefreshNode did not move the binding to the new name")

@@ -50,7 +50,8 @@ type canceler interface {
 // backendKey reaches one PostgreSQL backend: the node's vmmd and the key
 // the backend sent at login.
 type backendKey struct {
-	target, databaseID string
+	target     Backend
+	databaseID string
 	pid                uint32
 	secret             []byte
 }
@@ -152,7 +153,7 @@ func (p *Proxy) handleCancel(ctx context.Context, pid uint32, secret []byte, for
 // session stream and waits for PostgreSQL to close it, by which time the
 // backend has been signalled. It never wakes a database.
 func (p *Proxy) cancelBackend(ctx context.Context, b backendKey) error {
-	if b.target == "" || len(b.secret) == 0 {
+	if b.target.Target == "" || len(b.secret) == 0 {
 		return fmt.Errorf("pgproxy: no backend key")
 	}
 	session, err := p.dialer.Dial(ctx, b.target, b.databaseID)
