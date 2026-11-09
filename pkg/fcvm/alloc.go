@@ -149,6 +149,12 @@ type Lease struct {
 	CPUMillicores int
 	// DisableStartupCPUBoost opts out of the bounded startup CPU allowance.
 	DisableStartupCPUBoost bool
+	// CPUWeight, when positive, is the per-VM cpu.weight instead of the
+	// plan's (ADR-20261109172421).
+	CPUWeight int
+	// CPUUncapped writes cpu.max = max and skips the startup boost
+	// (ADR-20261109172421).
+	CPUUncapped bool
 	// Networkless marks the dedicated disposable-execution lifecycle. Such a
 	// lease still owns a unique slot, uid, cgroup, and vsock identity, but it
 	// deliberately has no tenant netns/veth/tap resources to tear down.

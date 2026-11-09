@@ -5611,6 +5611,7 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 		Plan:        l.Plan,
 		Networkless: l.Networkless,
 		IsBuilder:   l.IsBuilder,
+		CPUWeight:   l.CPUWeight,
 		MemoryMaxBytes: func() int64 {
 			if l.MemoryMaxMiB < 1 {
 				return 0
