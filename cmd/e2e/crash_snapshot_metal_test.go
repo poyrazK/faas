@@ -82,10 +82,12 @@ func TestCrashSnapshotMetal(t *testing.T) {
 	if err := json.Unmarshal(raw, &dep); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	// The image deploy waits on its grype scan (imageDeployLiveBudget); the
+	// capture, fork and cancel steps below keep their own budgets.
+	ctx, cancel := context.WithTimeout(context.Background(), imageDeployLiveBudget+6*time.Minute)
 	defer cancel()
 	defer h.DumpLogs(t)
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, dep.ID, 90*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, dep.ID, imageDeployLiveBudget); err != nil {
 		t.Fatalf("deployment not live: %v", err)
 	}
 	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 90*time.Second); err != nil {
