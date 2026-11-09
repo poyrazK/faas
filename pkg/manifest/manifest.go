@@ -110,6 +110,12 @@ type Manifest struct {
 	// renderer uses the same endpoint port for per-daemon target_url entries.
 	Overlay Overlay `yaml:"overlay"`
 
+	// SSH limits who may reach sshd (ADR-20261109100000). Absent keeps the
+	// provider boundary in charge (GCP IAP); present, sshd answers only the
+	// private network (overlay.cidr, on overlay.interface when set) and
+	// AllowedCIDRs. Bare-metal fleets with a public address on every host set it.
+	SSH *SSH `yaml:"ssh,omitempty"`
+
 	// DNS is the public-facing hostname contract. apps_domain is the
 	// single source of truth — gatewayd-internal, apid, and the CLI
 	// PrintOK paths all read from it; a value of `gregale.dev` produces
@@ -742,6 +748,19 @@ type Overlay struct {
 	// CIDR is the overlay subnet (e.g. "10.42.0.0/24"). The renderer
 	// asserts each host's Address falls within CIDR.
 	CIDR string `yaml:"cidr"`
+	// Interface names the private network card for the "static" provider
+	// (ADR-20261109100000), e.g. an OVH vRack NIC. Empty keeps the
+	// default-route interface, which is right on a cloud VPC with one NIC and
+	// wrong on bare metal, where the default route is the public card. When
+	// set, the host firewall accepts private-service traffic only on it.
+	Interface string `yaml:"interface,omitempty"`
+}
+
+// SSH is the sshd source boundary (ADR-20261109100000).
+type SSH struct {
+	// AllowedCIDRs are the sources outside the private network that may reach
+	// sshd: an operator bastion or VPN. Empty means the private network only.
+	AllowedCIDRs []string `yaml:"allowed_cidrs,omitempty"`
 }
 
 // DNS is the public-facing hostname contract. apps_domain is the
@@ -1486,6 +1505,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.validateFleetEndpoints()...)
 	errs = append(errs, m.Daemons.validate()...)
 	errs = append(errs, m.Overlay.validate()...)
+	errs = append(errs, m.SSH.validate()...)
 	errs = append(errs, m.DNS.validate()...)
 	errs = append(errs, m.PrivateDNS.validate()...)
 	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
@@ -1925,11 +1945,41 @@ func (o *Overlay) validate() Errors {
 		errs = append(errs, Error{"overlay.provider",
 			fmt.Sprintf("unsupported %q (allowed: wireguard|tailscale|static)", o.Provider)})
 	}
+	if o.Interface != "" {
+		if !ifaceNameRe.MatchString(o.Interface) {
+			errs = append(errs, Error{"overlay.interface",
+				fmt.Sprintf("%q is not a network interface name (at most 15 of [A-Za-z0-9_.-])", o.Interface)})
+		} else if o.Provider != "static" {
+			errs = append(errs, Error{"overlay.interface",
+				fmt.Sprintf("applies to the static provider only; %s names its own interface", o.Provider)})
+		}
+	}
 	if o.CIDR == "" {
 		errs = append(errs, Error{"overlay.cidr", "is required"})
 	} else if !validCIDR(o.CIDR) {
 		errs = append(errs, Error{"overlay.cidr",
 			fmt.Sprintf("cidr %q must be a valid IPv4 CIDR (e.g. 10.42.0.0/24)", o.CIDR)})
+	}
+	return errs
+}
+
+var ifaceNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,15}$`)
+
+func (s *SSH) validate() Errors {
+	if s == nil {
+		return nil
+	}
+	var errs Errors
+	for i, cidr := range s.AllowedCIDRs {
+		path := fmt.Sprintf("ssh.allowed_cidrs[%d]", i)
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			errs = append(errs, Error{path, fmt.Sprintf("%q is not a CIDR", cidr)})
+			continue
+		}
+		if ones, _ := network.Mask.Size(); ones == 0 {
+			errs = append(errs, Error{path, fmt.Sprintf("%q admits every address; leave the ssh section out instead", cidr)})
+		}
 	}
 	return errs
 }
