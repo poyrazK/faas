@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 // This file is the CLI's thin facade over the public SDK client in
@@ -45,7 +46,7 @@ type Client = api.Client
 // A client for a plain-HTTP base on another host refuses every request
 // (guardAPIClient) unless the user opted in.
 func NewClient(baseURL, token string) *Client {
-	return guardAPIClient(bindProfileCompletionCache(api.NewClient(baseURL, token).WrapTransport(wrapCLITransport)))
+	return guardAPIClient(bindProfileCompletionCache(withApprovalWait(api.NewClient(baseURL, token).WrapTransport(wrapCLITransport))))
 }
 
 // NewClientWithDeployTimeout wraps api.NewClientWithDeployTimeout like
@@ -55,7 +56,18 @@ func NewClientWithDeployTimeout(baseURL, token string, d time.Duration) *Client 
 	if apiClientRefused(baseURL) {
 		d = 0
 	}
-	return guardAPIClient(bindProfileCompletionCache(api.NewClientWithDeployTimeout(baseURL, token, d).WrapTransport(wrapCLITransport)))
+	return guardAPIClient(bindProfileCompletionCache(withApprovalWait(api.NewClientWithDeployTimeout(baseURL, token, d).WrapTransport(wrapCLITransport))))
+}
+
+// withApprovalWait applies --wait-for-approval: the client prints the review
+// link on stderr and waits for a person's decision.
+func withApprovalWait(c *api.Client) *api.Client {
+	if !approvalWaitEnabled {
+		return c
+	}
+	return c.WaitForApproval(func(p api.AgentApprovalPendingInfo) {
+		_, _ = fmt.Fprintf(osStderr, "Waiting for approval (%s) until %s. Review: %s\n", p.Category, p.ExpiresAt, p.ReviewURL)
+	})
 }
 
 // APIError aliases the SDK's error type. CLI callers type-switch on
@@ -81,7 +93,8 @@ func DeployTarball(c *Client, ctx context.Context, slug, path, runtime, handler 
 
 // DeployTarballWithSourceRoot is the workspace-aware counterpart to
 // DeployTarball. sourceRoot is relative to the uploaded repository context;
-// an empty value preserves the legacy archive-root behavior.
+// an empty value uses the app's configured root. The CLI sends an explicit "."
+// when it selected the archive root while packing.
 func DeployTarballWithSourceRoot(c *Client, ctx context.Context, slug, path, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations) (api.DeploymentResponse, error) {
 	f, err := openCustomerFile(path)
 	if err != nil {
@@ -114,6 +127,9 @@ func ExportAccountFile(c *Client, ctx context.Context, outPath string, includeSe
 	requestID := newExportRequestID()
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return err
+		}
 		tmp, err := os.CreateTemp(dir, ".gregale-export-*.tmp")
 		if err != nil {
 			return fmt.Errorf("create export file: %w", err)

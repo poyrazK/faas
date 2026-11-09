@@ -72,8 +72,11 @@ its own code. An inherited `throttle` rule shares production's buckets.
 Edge rules do not run for managed realtime connections
 (`/__gregale/realtime/`), which authenticate with their own tokens, for
 requests to a production fork, which carry the fork's token, or for the
-`robots.txt`, `favicon.ico` and health-check answers the gateway serves itself
-when your manifest configures them.
+`robots.txt` and `favicon.ico` answers the gateway serves itself when your
+manifest configures them. The health-check answer and a parked app's `HEAD /`
+answer come after the access rules (`ip`, `geo`, `jwt`, `maintenance`,
+`challenge` and attack mode), so an uptime monitor of a gated app must be
+admitted by those rules.
 
 Edge rules apply to requests that arrive at your public hosts. A call from one
 of your apps to another over the internal service network goes straight to the
@@ -82,6 +85,14 @@ target and skips the target's edge rules, `jwt`, `ip`, `waf`, `challenge` and
 policy and `x-gregale-allow-callers` (see
 [Internal services](networking.md#internal-services)); check credentials in the
 app itself when a caller must prove more than which app it is.
+
+Work the platform delivers on your account's behalf also skips edge rules:
+`gregale invoke` and other synchronous or asynchronous invocations
+(`POST /v1/apps/{slug}/invoke`), queue messages, delayed tasks, crons and
+exclusive operations. These requests are authorized by your account's
+credentials and scopes when they are created, not by the public edge, so an
+`ip`, `geo`, `jwt` or `throttle` rule does not stop them. An app that must
+reject them checks in its own code.
 
 ### Path globs
 
@@ -99,6 +110,13 @@ Other characters follow Go's `path.Match`: `*` matches within one segment,
 as `/users/{id}` are not globs; the API rejects them and suggests the glob
 (`/users/?*`).
 
+Before any rule runs, the gateway resolves `.` and `..` segments (also when
+percent-encoded) and collapses repeated slashes, keeping a trailing slash,
+and forwards that path to your app: `/public/../upload` and `//upload` are
+`/upload` to every rule and to the app. A path already in that form is
+forwarded unchanged. Backslashes, `;` parameters and letter case are left
+as sent.
+
 Rules that refuse or limit requests (`ip`, `geo`, `jwt`, `limit`, `throttle`,
 `validate`, `maintenance`, `waf`, `challenge`) also match the path's
 normalized form, with `.` and `..` segments and repeated slashes resolved, and
@@ -112,7 +130,17 @@ with the `GET` handler, and one that lists `DELETE`, `PUT` or `PATCH` also
 covers a request that asks the app to run it as that method through an
 `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header or a
 `_method` query parameter. A `_method` field in a form body is not read at
-the edge: if your app honours one, leave `match_methods` off the rule.
+the edge: if your app honours one, leave `match_methods` off the rule. An app
+that only allows its declared routes (`only_allow_declared_routes`) gets the
+same treatment: a POST that asks to run as `DELETE` needs both `POST` and
+`DELETE` declared for its path.
+
+A `match` condition on these rules reads the same forms: it holds when it
+holds for the raw path or any normalized form above, and on a `HEAD` request
+also when it holds for `GET`. A `jwt` rule on `/**` with
+`{"not": {"field": "path", "op": "prefix", "value": "/public"}}` therefore
+still checks `/public/../admin`, and a `path prefix /admin` condition covers
+`//admin` and `/ADMIN`. Other kinds compare conditions exactly.
 
 A gate scoped by `match_headers`, or by a `header:`, `cookie:` or `query:`
 field in `match`, applies only when the client sends that value, and the
@@ -162,6 +190,10 @@ gregale edge rule-list create team-ips --app company-api --kind ip --item 203.0.
 ```
 
 Lists are available on Hobby and above; see [Limits](#limits).
+
+Edge rules do not apply to a public bucket mount's paths (`--serve-at`):
+those reads are answered before the rules run. See
+[object storage](object-storage.md#public-buckets).
 
 ## Which rule applies
 
@@ -271,7 +303,8 @@ token, or another credential bound to one app, may write a route rule only
 to that app itself; routing to another app needs an account API key.
 
 The rest of a routed request runs as the target app's: its `@app` rules
-apply, and the source app's `@app` rules do not. Rules written for the host
+apply, and the source app's `@app` rules do not, except the source app's
+attack mode, which challenges routed requests too. Rules written for the host
 itself (an exact host, `*` or a glob) still apply. To gate routed paths too,
 put the gate on the host, or on the target app's `@app`.
 
@@ -336,6 +369,29 @@ value alongside it. For common security headers,
 [Security headers on your app](security#security-headers-on-your-app) sets a
 recommended rule.
 
+#### Credentials in request headers
+
+A request header that carries a credential, such as the token your origin
+expects, is stored encrypted and never shown again:
+
+```json
+{"name": "Authorization", "action": "set", "value": "Bearer <token>", "secret": true}
+```
+
+Only the gateway that applies the rule can read the value. Rules, versions,
+exports, the dashboard and agent tools show `"secret": true` and a
+`secret_id` instead of the value. `Authorization`, `Proxy-Authorization`,
+`Cookie` and any header whose name contains `token`, `secret`, `password`,
+`api-key`, `apikey`, `signature` or `credential` are kept this way without
+`secret`. To keep a stored value when you change a rule, send the op back with
+its `secret_id` and no `value`; to replace it, send a new `value`. Sealed
+values are at most 4096 bytes and work on request headers only, not with
+`template` or `remove`.
+
+A credential-named value saved before sealing arrived is shown with an empty
+`value` and `"redacted": true`. Sending that op back unchanged seals the
+stored value. Environment policies do not take sealed values yet.
+
 ### cors
 
 ```json
@@ -352,7 +408,11 @@ headers. An origin is
 `https://host:*` for any port. `*` cannot be combined with
 `allow_credentials`, and neither can a subdomain wildcard under a Gregale
 domain (`https://*.<your apps domain>`): other customers' apps are served
-there. List your app origins instead. `max_age_seconds` is at most 86400.
+there. A wildcard directly under a public suffix (`https://*.com`,
+`https://*.co.uk`, `https://*.github.io`, `https://*.vercel.app`) cannot be
+combined with `allow_credentials` either, because anyone can register a name
+there; use a wildcard under your own domain (`https://*.example.com`). List
+your app origins instead. `max_age_seconds` is at most 86400.
 Instead of inline fields, `cors_preset_id` can name a CORS preset shared by
 several rules (`/v1/cors-presets`): an account-wide preset or one scoped to
 the rule's app. Editing a preset is applied like a rule change to every rule
@@ -373,6 +433,12 @@ A request needs `Authorization: Bearer <token>` signed by a key from
 and each of `required_claims` as a string claim with exactly that value. A missing or invalid token
 gets 401. The key's `alg` must match the token's, and encryption keys are not
 used for signatures.
+
+The app receives the caller the rule verified as `X-Faas-Edge-Jwt-Subject`
+(the token's `sub`) and `X-Faas-Edge-Jwt-Issuer` (the rule's `issuer`). Only
+the gateway sets them: a client's own copies never reach the app, and a value
+longer than 1 KiB or one HTTP cannot carry is not forwarded. A request an
+[`async`](#async) rule queues gets them too.
 
 A new or edited rule needs `audience` or at least one `required_claims`
 entry. Without one, every token the issuer signs would pass, and a shared
@@ -434,8 +500,11 @@ headers the client or a CDN sends.
 A request body over `max_body_bytes` (1 byte to 25 MiB) gets 413
 `request_too_large`. A request whose `Content-Length` is over the cap is
 refused before any of the body is read. `max_body_bytes_streaming`
-(optional, at least `max_body_bytes`, at most 100 MiB) sets the size cap for
-a streamed response on the route.
+(optional, at least `max_body_bytes`, at most 100 MiB) is the request body cap
+instead of `max_body_bytes` when your app has streaming turned on: every
+request to such an app streams except WebSocket upgrades, whatever its
+`Accept` header, so on a streaming app this is the cap that applies. Leave it
+unset to keep `max_body_bytes` there too. It also caps the streamed response.
 
 ### throttle
 
@@ -504,11 +573,19 @@ id>` to the response. A `Content-Type` outside `content_types` gets 415.
 
 The body is read into memory to validate it, up to `max_body_bytes`. Unset,
 the cap is 25 MiB, or your plan's request body cap if that is lower. Each
-gateway bounds the request bodies it holds in memory at once; when that bound
-is reached, a request gets 503 `capacity_unavailable` with `Retry-After`
-before its body is read. Set
+gateway bounds the request bodies it holds in memory at once, and one
+customer's apps hold at most a third of that bound and one client address at
+most four bodies, so other customers' uploads cannot use it up. A body sent
+without `Content-Length` is held as it arrives. When a bound is reached, a
+request gets 503 `capacity_unavailable` with `Retry-After`. Set
 `reject_on_unknown_fields` to reject properties the schema does not declare,
-and `apply_while_streaming` to validate a WebSocket handshake too. Path,
+and `apply_while_streaming` to validate a WebSocket handshake too. A body that
+names a property twice in one object, or in two spellings that differ only in
+case (`role` and `ROLE`), fails with `expected: unique_properties`: Go and
+ASP.NET Core bind property names case-insensitively, so the second spelling
+would reach your app unchecked. Query parameters are read as apps read them,
+split on `&` only, so `?id=1;--` is checked as `id=1;--`; a query with a
+percent-escape that does not decode fails with `expected: query_string`. Path,
 query and header parameters are always checked, and so is any body sent with
 `Connection: Upgrade`: servers that do not speak the named protocol run such a
 request as usual.
@@ -615,7 +692,9 @@ the app receives the original method, path, JSON body and safe headers later.
 `on_success` and `on_failure` name webhook subscriptions that receive the
 outcome. `retry_policy` and `max_age_seconds` override the app's defaults
 within your plan's limits. The app's workload must accept request
-invocations.
+invocations. The stored request keeps no `Authorization` or `Cookie` header;
+when a `jwt` rule verified the caller, the app receives it at delivery (and on
+replays) as `X-Faas-Edge-Jwt-Subject` and `X-Faas-Edge-Jwt-Issuer`.
 
 ### respond
 
@@ -641,6 +720,11 @@ whose target app is being renamed: until the change lands, its requests get
 served by the app the host belongs to. If the gateways cannot be reached,
 the change is refused with 503 and nothing changes; retry it. Changes to one account's rules are
 applied one at a time; other accounts' changes never wait for yours.
+
+A deploy token or a project-limited agent key manages only rules for its
+own apps' hosts. It cannot change, delete or roll back over a rule whose
+`match_host` covers other hosts (`*`, a wildcard, another app's host); use an
+account API key for those. See [deploy tokens](deploys.md#deploy-tokens).
 
 Two people editing the same app's rules at once cannot overwrite each other:
 send the `ETag` from `GET /v1/apps/{slug}/edge-rules` as `If-Match`, and a

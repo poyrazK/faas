@@ -112,6 +112,19 @@ func CustomDomainChallengeName(domain string) string {
 	return "_faas-verify." + domain
 }
 
+// ValidateCustomDomainClaim checks names generated for DNS ownership proof as
+// well as the claimed name. A valid hostname can be too long for the TXT
+// owner name after the verification label is prepended.
+func ValidateCustomDomainClaim(domain string) error {
+	if err := ValidateCustomDomainName(domain); err != nil {
+		return err
+	}
+	if len(CustomDomainChallengeName(domain)) > api.TrafficPolicyMaxHostnameBytes {
+		return errors.New("domain is too long for its DNS verification record")
+	}
+	return nil
+}
+
 // WildcardProbeLabel is the label DNS/TLS probes of a wildcard row query. Only
 // the customer's wildcard record answers it. Probing "www" revoked verified
 // wildcards whose zone kept www on another host, because an explicit www
@@ -126,7 +139,14 @@ func WildcardProbeHost(domain string) (string, bool) {
 	if !ok {
 		return domain, false
 	}
-	return WildcardProbeLabel + "." + suffix, true
+	label := WildcardProbeLabel
+	// Preserve the established label where it fits, shortening only for
+	// long existing or newly created claims. A valid wildcard always leaves
+	// room for at least one character before its suffix.
+	if available := api.TrafficPolicyMaxHostnameBytes - len(suffix) - 1; available < len(label) && available > 0 {
+		label = strings.TrimRight(label[:available], "-")
+	}
+	return label + "." + suffix, true
 }
 
 // ForeignVerifiedWildcard returns the verified wildcard custom domain, held

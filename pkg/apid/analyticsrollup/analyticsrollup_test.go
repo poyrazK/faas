@@ -55,3 +55,60 @@ func TestHistPercentileAndHours(t *testing.T) {
 		t.Fatal("route filters are answerable only by route and status groups")
 	}
 }
+
+func TestHourRangeTakesWholeCoveredHoursOnly(t *testing.T) {
+	at := func(h, m int) time.Time { return time.Date(2026, 11, 3, h, m, 0, 0, time.UTC) }
+	cases := []struct {
+		name               string
+		from, until, since time.Time
+		has                bool
+		wantFrom, wantTo   time.Time
+	}{
+		{"no hourly coverage", at(1, 0), at(9, 0), time.Time{}, false, at(9, 0), at(9, 0)},
+		{"partial edges stay on minutes", at(1, 30), at(9, 15), at(0, 0), true, at(2, 0), at(9, 0)},
+		{"aligned window", at(2, 0), at(9, 0), at(0, 0), true, at(2, 0), at(9, 0)},
+		{"coverage plus settle lag starts the tier", at(1, 0), at(9, 0), at(3, 58), true, at(4, 0), at(9, 0)},
+		{"coverage on the hour still waits the lag", at(1, 0), at(9, 0), at(4, 0), true, at(5, 0), at(9, 0)},
+		{"window inside one hour", at(4, 10), at(4, 50), at(0, 0), true, at(4, 50), at(4, 50)},
+		{"no whole hour across a boundary", at(4, 30), at(5, 30), at(0, 0), true, at(5, 30), at(5, 30)},
+	}
+	for _, tc := range cases {
+		gotFrom, gotTo := analyticsrollup.HourRange(tc.from, tc.until, tc.since, tc.has)
+		if !gotFrom.Equal(tc.wantFrom) || !gotTo.Equal(tc.wantTo) {
+			t.Errorf("%s: HourRange = [%s, %s), want [%s, %s)", tc.name, gotFrom, gotTo, tc.wantFrom, tc.wantTo)
+		}
+	}
+}
+
+// Windows reaching past the minute read horizon start and end on whole
+// hours, which the hourly tier alone answers (amendment 3); recent ends stay.
+func TestAlignWindowUsesWholeHoursPastTheMinuteHorizon(t *testing.T) {
+	now := time.Date(2026, 11, 20, 12, 34, 56, 0, time.UTC)
+	week := 7 * 24 * time.Hour
+	at := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	for _, tc := range []struct {
+		name                string
+		from, until         time.Time
+		retention           time.Duration
+		wantFrom, wantUntil time.Time
+	}{
+		{"recent window unchanged", now.Add(-24 * time.Hour), now, week, now.Add(-24 * time.Hour), now},
+		{"7d from moves back to its hour, until stays now", now.Add(-week + time.Hour), now, week, at("2026-11-13T13:00:00Z"), now},
+		{"clamped at retention moves forward", now.Add(-week), now, week, at("2026-11-13T13:00:00Z"), now},
+		{"historical window widens both ends", at("2026-11-15T10:15:00Z"), at("2026-11-15T10:45:00Z"), week, at("2026-11-15T10:00:00Z"), at("2026-11-15T11:00:00Z")},
+		{"aligned historical window unchanged", at("2026-11-15T10:00:00Z"), at("2026-11-16T10:00:00Z"), week, at("2026-11-15T10:00:00Z"), at("2026-11-16T10:00:00Z")},
+		{"sub-hour window at the retention edge keeps an hour", now.Add(-week), now.Add(-week + 10*time.Minute), week, at("2026-11-13T13:00:00Z"), at("2026-11-13T14:00:00Z")},
+		{"just inside the horizon unchanged", now.Add(-api.RequestAnalyticsMinuteReadHorizon), now, week, now.Add(-api.RequestAnalyticsMinuteReadHorizon), now},
+	} {
+		gotFrom, gotUntil := analyticsrollup.AlignWindow(tc.from, tc.until, now, tc.retention)
+		if !gotFrom.Equal(tc.wantFrom) || !gotUntil.Equal(tc.wantUntil) {
+			t.Errorf("%s: got [%s, %s), want [%s, %s)", tc.name, gotFrom, gotUntil, tc.wantFrom, tc.wantUntil)
+		}
+	}
+}

@@ -16,6 +16,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type transientIssueStore struct {
@@ -77,6 +79,150 @@ func TestHTTPFailureRetryStopsOnPermanentRejection(t *testing.T) {
 	}
 }
 
+func TestHTTPIssueRetryWaitsForPerAppSlot(t *testing.T) {
+	receiver := NewAppErrorsReceiver(nil, nil, true)
+	app := uuid.NewString()
+	for i := 0; i < issueRetryPerApp; i++ {
+		if !receiver.acquireHTTPIssueRetry(context.Background(), app) {
+			t.Fatal("initial retry slot unavailable")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	acquired := make(chan bool, 1)
+	go func() { acquired <- receiver.acquireHTTPIssueRetry(ctx, app) }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		receiver.issueRetryMu.Lock()
+		waiting := receiver.issueRetryWaitApps[app]
+		receiver.issueRetryMu.Unlock()
+		if waiting == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("retry did not wait for a slot")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	receiver.releaseHTTPIssueRetry(app)
+	if !<-acquired {
+		t.Fatal("waiting retry was dropped instead of admitted")
+	}
+	for i := 0; i < issueRetryPerApp; i++ {
+		receiver.releaseHTTPIssueRetry(app)
+	}
+}
+
+func TestHTTPFailureReportsFullIssueQueue(t *testing.T) {
+	store := &countingAppErrorsStore{plan: api.PlanHobby}
+	receiver := NewAppErrorsReceiver(store, nil, true)
+	app := uuid.NewString()
+	receiver.issueAttemptApps[app] = issueRetryPerApp
+	receiver.issuePendingApps[app] = issuePendingPerApp
+	req := &apidpb.IncrementAppErrorRequest{AccountId: uuid.NewString(), AppId: app, DeploymentId: uuid.NewString(), RequestId: uuid.NewString(), IssueEventId: uuid.NewString(), RouteTemplate: "/orders", HttpStatus: 500, ErrorClass: "unhandled", Fingerprint: strings.Repeat("a", 64), ReceivedAtUnixMs: time.Now().UnixMilli(), RequestRowOmitted: true}
+	out := receiver.HandleOne(context.Background(), req)
+	if out.GetOutcome() != OutcomeInserted || out.GetIssueHandoff() != "retry" || len(store.increments) != 1 {
+		t.Fatalf("legacy write and independent retry signal: %+v", out)
+	}
+}
+
+func TestHTTPFailureAttemptsUseSharedIngestGate(t *testing.T) {
+	store := &issueCaptureStore{countingAppErrorsStore: &countingAppErrorsStore{plan: api.PlanHobby}, events: make(chan struct{}, 1)}
+	receiver := NewAppErrorsReceiver(store, nil, true)
+	receiver.gate = NewIngestGate(1)
+	release, err := receiver.gate.acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { release() }()
+	req := &apidpb.IncrementAppErrorRequest{AccountId: uuid.NewString(), AppId: uuid.NewString(), DeploymentId: uuid.NewString(), RequestId: uuid.NewString(), IssueEventId: uuid.NewString(), RouteTemplate: "/orders", HttpStatus: 500, ErrorClass: "unhandled", Fingerprint: strings.Repeat("a", 64), ReceivedAtUnixMs: time.Now().UnixMilli()}
+	if got := receiver.enqueueHTTPIssue(req); got != "queued" {
+		t.Fatalf("handoff = %q", got)
+	}
+	select {
+	case <-store.events:
+		t.Fatal("issue write bypassed the held ingest gate")
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	release = func() {}
+	select {
+	case <-store.events:
+	case <-time.After(time.Second):
+		t.Fatal("issue write did not start after gate release")
+	}
+}
+
+func TestHTTPFailureOneAppCannotOccupySharedGate(t *testing.T) {
+	receiver := NewAppErrorsReceiver(nil, nil, true)
+	receiver.gate = NewIngestGate(4)
+	ctx, cancel := context.WithCancel(context.Background())
+	release, err := receiver.acquireIssueWrite(ctx, "busy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	var waiters sync.WaitGroup
+	for i := 0; i < issueRetryPerApp; i++ {
+		waiters.Add(1)
+		go func() {
+			defer waiters.Done()
+			unlock, err := receiver.acquireIssueWrite(ctx, "busy")
+			if err == nil {
+				unlock()
+			}
+		}()
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		receiver.issueAppMu.Lock()
+		users := receiver.issueAppGates["busy"].users
+		receiver.issueAppMu.Unlock()
+		if users == issueRetryPerApp+1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			waiters.Wait()
+			t.Fatal("same-app attempts did not queue")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	otherCtx, otherCancel := context.WithTimeout(context.Background(), time.Second)
+	defer otherCancel()
+	otherRelease, err := receiver.acquireIssueWrite(otherCtx, "other")
+	if err != nil {
+		cancel()
+		waiters.Wait()
+		t.Fatal("one app starved another", err)
+	}
+	otherRelease()
+	cancel()
+	waiters.Wait()
+}
+
+func TestRecordHTTPIssueReportsBusyAdmissionWithoutSpendingWriteDeadline(t *testing.T) {
+	store := &issueCaptureStore{countingAppErrorsStore: &countingAppErrorsStore{plan: api.PlanHobby}}
+	receiver := NewAppErrorsReceiver(store, nil, true)
+	app := uuid.NewString()
+	release, err := receiver.acquireIssueWrite(context.Background(), app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { release() }()
+	req := &apidpb.IncrementAppErrorRequest{AccountId: uuid.NewString(), AppId: app, DeploymentId: uuid.NewString(), RequestId: uuid.NewString(), IssueEventId: uuid.NewString(), RouteTemplate: "/orders", HttpStatus: 500, ErrorClass: "unhandled", Fingerprint: strings.Repeat("a", 64), ReceivedAtUnixMs: time.Now().UnixMilli()}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err = receiver.RecordHTTPIssue(ctx, req); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("busy admission: %v", err)
+	}
+	release()
+	release = func() {}
+	if _, err = receiver.RecordHTTPIssue(ctx, req); err != nil {
+		t.Fatalf("retry after admission: %v", err)
+	}
+}
+
 type issueCaptureStore struct {
 	*countingAppErrorsStore
 	state.IssueStore
@@ -126,6 +272,18 @@ func TestHTTPFailureFirstAttemptIsIndependentOfRetrySlots(t *testing.T) {
 	defer store.mu.Unlock()
 	if len(store.counts) != 1 || store.counts[0] != 42 {
 		t.Fatalf("gateway count was not preserved: %v", store.counts)
+	}
+}
+
+func TestRecordHTTPIssueDoesNotReplayLegacyCounts(t *testing.T) {
+	store := &issueCaptureStore{countingAppErrorsStore: &countingAppErrorsStore{plan: api.PlanHobby}}
+	receiver := NewAppErrorsReceiver(store, nil, true)
+	req := &apidpb.IncrementAppErrorRequest{AccountId: uuid.NewString(), AppId: uuid.NewString(), DeploymentId: uuid.NewString(), RequestId: uuid.NewString(), IssueEventId: uuid.NewString(), RouteTemplate: "GET /orders", HttpStatus: 500, ErrorClass: "unhandled", Fingerprint: strings.Repeat("a", 64), ReceivedAtUnixMs: time.Now().UnixMilli()}
+	if _, err := receiver.RecordHTTPIssue(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.increments) != 0 || len(store.eventIDs) != 1 || store.eventIDs[0] != req.IssueEventId {
+		t.Fatalf("issue retry changed legacy counts or event identity: increments=%d events=%v", len(store.increments), store.eventIDs)
 	}
 }
 
@@ -270,7 +428,9 @@ func TestHTTPFailureDoesNotBlockLegacyCountingAndLimitsPerApp(t *testing.T) {
 	req.AppId = uuid.NewString()
 	receiver.HandleOne(context.Background(), req)
 	seen := map[string]int{}
-	for i := 0; i < issueRetryPerApp+1; i++ {
+	// Only one write per app may reach the store at a time, but another app
+	// must be able to progress while the first app's write is blocked.
+	for i := 0; i < 2; i++ {
 		select {
 		case app := <-store.started:
 			seen[app]++
@@ -278,17 +438,25 @@ func TestHTTPFailureDoesNotBlockLegacyCountingAndLimitsPerApp(t *testing.T) {
 			t.Fatal("Issue attempts did not start")
 		}
 	}
-	if seen[firstApp] != issueRetryPerApp || seen[req.AppId] != 1 || len(store.increments) != issueRetryPerApp+2 {
+	if seen[firstApp] != 1 || seen[req.AppId] != 1 || len(store.increments) != issueRetryPerApp+2 {
 		t.Fatalf("issue slots=%v, legacy counts=%d", seen, len(store.increments))
 	}
+	receiver.issueRetryMu.Lock()
+	active, pending := receiver.issueAttemptApps[firstApp], receiver.issuePendingApps[firstApp]
+	receiver.issueRetryMu.Unlock()
+	if active != issueRetryPerApp || pending != 1 {
+		t.Fatalf("first app has %d active and %d pending attempts, want %d and 1", active, pending, issueRetryPerApp)
+	}
 	release.Do(func() { close(store.release) })
-	select {
-	case app := <-store.started:
-		if app != firstApp {
-			t.Fatalf("queued wrong app: %s", app)
+	for i := 0; i < issueRetryPerApp; i++ {
+		select {
+		case app := <-store.started:
+			if app != firstApp {
+				t.Fatalf("queued wrong app: %s", app)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("queued issue never received its first attempt")
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("queued issue never received its first attempt")
 	}
 }
 

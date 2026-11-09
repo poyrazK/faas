@@ -31,6 +31,7 @@ const schemaRefPrefix = "#/components/schemas/"
 // stageStateSchemaPins maps each spec schema to the Go struct it describes.
 var stageStateSchemaPins = []struct{ schema, file, goType string }{
 	{"DeploymentStageState", "pkg/state/types.go", "StageState"},
+	{"DeploymentRetryIntent", "pkg/state/deployment_retry_intent.go", "DeploymentRetryIntent"},
 	{"DeploymentStageHistoryEntry", "pkg/state/types.go", "StageStateItem"},
 	{"DeploymentDependencyGate", "pkg/state/deployment_dependency_gate.go", "DeploymentDependencyGate"},
 	{"DeploymentDependencyPin", "pkg/state/deployment_dependency_gate.go", "DeploymentDependencyPin"},

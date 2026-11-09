@@ -102,6 +102,10 @@ var RouterCloseGrace = &routerCloseGrace
 
 // Package-level funcs
 var AppTaskFailureStage = appTaskFailureStage
+
+// ADR-20261105120000: plan caps on floors and warm pools saved under a larger plan.
+var PlanCappedFloor = planCappedFloor
+var WarmPoolTarget = warmPoolTarget
 var DeploymentStaticEgressIP = deploymentStaticEgressIP
 var AppTaskGRPCCode = appTaskGRPCCode
 var AppTaskResultFromResponse = appTaskResultFromResponse
@@ -227,6 +231,12 @@ var QuietEffective = quietEffective
 var QuietLog = quietLog
 var NewWorkPool = newWorkPool
 var QuietPauseAfterMS = quietPauseAfterMS
+
+var PauseTierWorkload = pauseTierWorkload
+
+var IdleLadderGuardedPause = idleLadderGuardedPause
+
+var VMInstanceStatFromProto = vmInstanceStatFromProto
 var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
 var ReaperAbortedCanary = reaperAbortedCanary
@@ -318,6 +328,10 @@ var ReadWakeRPC = readWakeRPC
 
 // XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
 func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget() }
+
+func (e *Engine) XWithPublicAPIURL(env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
+	return e.withPublicAPIURL(env)
+}
 
 // XSpendCapSubject is the billing subject whose spend cap governs app.
 func (e *Engine) XSpendCapSubject(ctx context.Context, app state.App) string {
@@ -436,6 +450,9 @@ func (r *Engine) NodePresence() **nodePresenceTracker { return &r.nodePresence }
 func (r *Engine) Now() *func() time.Time              { return &r.now }
 func (r *Engine) Ops() **wire.OpsMetrics              { return &r.ops }
 func (r *Engine) Owners() *ownerCache                 { return &r.owners }
+func (r *Engine) WorkerReconcileSubmit() *func(context.Context, string) {
+	return &r.workerReconcileSubmit
+}
 func (r *Engine) ServiceReconcileSubmit() *func(context.Context, string) {
 	return &r.serviceReconcileSubmit
 }
@@ -668,7 +685,14 @@ func (r *composedWaveFixture) Vmm() **composedWaveNativeVMM { return &r.vmm }
 func (r *composedWaveNativeVMM) Identity() *runtimeadmission.Identity { return &r.identity }
 
 // Members of drainSynth
-func (r *drainSynth) Calls() *atomic.Int64    { return &r.calls }
+func (r *drainSynth) Calls() *atomic.Int64 { return &r.calls }
+
+// LastPath is the path of the newest delivered invocation.
+func (r *drainSynth) LastPath() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastPath
+}
 func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
 func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
 
@@ -722,6 +746,9 @@ var LiftErr = liftErr
 // NewVMMWakeNotStarted is the error liftErr returns for a pre-start failure.
 func NewVMMWakeNotStarted(p *api.Problem) error { return vmmWakeNotStartedError{p} }
 
+func (r *fakeVMM) Characterization() *api.CharacterizationReport {
+	return &r.characterization
+}
 func (r *fakeVMM) ColdBootHook() *func()      { return &r.coldBootHook }
 func (r *fakeVMM) ColdBoots() *int            { return &r.coldBoots }
 func (r *fakeVMM) DestroyErr() *error         { return &r.destroyErr }
@@ -793,7 +820,8 @@ func (r *notifyEvent) Payload() *string { return &r.payload }
 func (r *ownerCache) Lookup(p0 string) (ownerEntry, bool) { return r.lookup(p0) }
 
 // Members of ownerEntry
-func (r *ownerEntry) Generation() *int64 { return &r.generation }
+func (r *ownerEntry) Generation() *int64                         { return &r.generation }
+func (r *ownerEntry) ServesDeployment(p0 string, p1 string) bool { return r.servesDeployment(p0, p1) }
 
 // Members of queuePoller
 func (r *queuePoller) ItemsInFlight() *map[string]queueDeliveryClaim { return &r.itemsInFlight }
@@ -1090,6 +1118,23 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
 
+// GuestVCPUs exposes guestVCPUs (ADR-20261101160231).
+func (e *Engine) GuestVCPUs(app state.App, limits api.Limits) int { return e.guestVCPUs(app, limits) }
+
+// AppCPUBookingMillicores and AppCPUBookingStamp expose the step 5b
+// bookings (ADR-20261101160231).
+func (e *Engine) AppCPUBookingMillicores(app state.App, limits api.Limits) int {
+	return e.appCPUBookingMillicores(app, limits)
+}
+func (e *Engine) AppCPUBookingStamp(app state.App, limits api.Limits) int {
+	return e.appCPUBookingStamp(app, limits)
+}
+
+// AppCPUMillicores exposes appCPUMillicores (ADR-20261101160231).
+func (e *Engine) AppCPUMillicores(app state.App, limits api.Limits) int {
+	return e.appCPUMillicores(app, limits)
+}
+
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
 func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {
@@ -1281,4 +1326,51 @@ func RealtimeIdleDelays(sizes []int) []time.Duration {
 		out = append(out, p.idleDelay)
 	}
 	return out
+}
+
+// KeyedLocks exposes keyedLocks to sched_test (ADR 20261104143005).
+type KeyedLocks = keyedLocks
+
+func (k *keyedLocks) Lock(key string) func() { return k.lock(key) }
+func (k *keyedLocks) Size() int              { return k.size() }
+
+// VMMRequestConcurrency exposes vmmRequestConcurrency (ADR-20261101215228).
+func VMMRequestConcurrency(app state.App, limits api.Limits) int32 {
+	return vmmRequestConcurrency(app, limits)
+}
+
+// DrainWithdrawsRoutes exposes drainWithdrawsRoutes to package sched_test.
+func DrainWithdrawsRoutes(ins state.Instance) bool { return drainWithdrawsRoutes(ins) }
+
+// XNewVMMClient wraps a generated vmmd client for tests of VMMClient's
+// mapping of vmmd answers (ADR-20261106214916).
+func XNewVMMClient(cli vmmdpb.VmmdClient) *VMMClient { return &VMMClient{cli: cli} }
+
+// XBootCounts reports the fake's cold boots, snapshots and destroys.
+func (f *fakeVMM) XBootCounts() (coldBoots, snapshots, destroys int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.coldBoots, f.snapshots, f.destroys
+}
+
+// XFillLedger admits a resident on nodeID that holds percent of the node's
+// admission ceiling (ADR-20261106214916 headroom tests).
+func XFillLedger(t testing.TB, r *SnapshotRefresher, nodeID string, percent int) {
+	t.Helper()
+	l := r.e.ledger
+	ceiling := l.CeilingForNode(nodeID)
+	if err := l.Admit(Request{
+		Instance: "fill-" + nodeID, AppID: "fill-" + nodeID, Plan: api.PlanScale, RAMMB: ceiling * percent / 100,
+		Kind: KindSnapshotPrime, NodeID: nodeID, NodeCeilingMB: ceiling,
+	}); err != nil {
+		t.Fatalf("fill ledger: %v", err)
+	}
+}
+
+// XSetNow replaces the refresher's clock.
+func (r *SnapshotRefresher) XSetNow(now func() time.Time) { r.now = now }
+
+// XResidentRAMForNode is the refresher engine's ledger residency on nodeID.
+func (r *SnapshotRefresher) XResidentRAMForNode(nodeID string) int {
+	return r.e.ledger.ResidentRAMForNode(nodeID)
 }

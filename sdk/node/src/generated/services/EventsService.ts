@@ -553,7 +553,7 @@ export class EventsService {
     });
   }
   /**
-   * Publish an event for an automation linked to this tenant.
+   * Publish an event for a stored workflow linked to this tenant.
    * Requires platform_tenant:events:manage. The tenant identity comes from
    * the bearer token, and the app must be actively linked to that tenant.
    * The platform scopes the event to that app's published event-triggered

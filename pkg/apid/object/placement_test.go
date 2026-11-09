@@ -92,3 +92,33 @@ func TestCreateBucketPlacesAcrossPool(t *testing.T) {
 		t.Fatalf("region full gauge = %v", got)
 	}
 }
+
+// A create past max_buckets_per_app names the limit, its value and the
+// count instead of the generic busy-bucket conflict (11-04 prod test).
+func TestCreateBucketPastAppLimitNamesTheLimit(t *testing.T) {
+	st := state.NewMemStore()
+	ctx := t.Context()
+	acct, err := st.CreateAccount(ctx, "bucket-limit-"+uuid.NewString()+"@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := st.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "bucket-limit", Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := pooledRegistry(t, 100)
+	registry.MaxBucketsPerApp = 2
+	svc := Service{Host: receiptRecoveryHost{store: st, registry: registry}}
+	for _, name := range []string{"one", "two"} {
+		if _, err := svc.reserveBucket(ctx, st, acct.ID, app.ID, CreateBucketRequest{Name: name, Scope: api.DefaultEnvScope}); err != nil {
+			t.Fatal(name, err)
+		}
+	}
+	_, err = svc.reserveBucket(ctx, st, acct.ID, app.ID, CreateBucketRequest{Name: "three", Scope: api.DefaultEnvScope})
+	w := httptest.NewRecorder()
+	BucketProblem(w, err)
+	var problem api.Problem
+	if json.Unmarshal(w.Body.Bytes(), &problem) != nil || w.Code != 409 || problem.Limit == nil || *problem.Limit != 2 || problem.Observed == nil || *problem.Observed != 3 || problem.DocsURL == "" {
+		t.Fatalf("problem = %d %s", w.Code, w.Body.String())
+	}
+}

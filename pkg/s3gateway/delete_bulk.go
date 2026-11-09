@@ -75,6 +75,12 @@ func (h *Handler) readDeleteObjects(w http.ResponseWriter, r *http.Request, req 
 		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "The delete request contains invalid or unsupported fields.", r.URL.Path, req.requestID)
 		return deleteObjectsRequest{}, false
 	}
+	// A key-scoped binding deletes nothing when any key is outside its
+	// prefix (ADR-20261106114500).
+	if !deleteTargetsInScope(req.credential, request) {
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access Denied.", r.URL.Path, req.requestID)
+		return deleteObjectsRequest{}, false
+	}
 
 	return request, true
 }

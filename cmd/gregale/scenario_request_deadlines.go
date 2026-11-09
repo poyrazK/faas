@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -39,7 +40,17 @@ func validateTestRequestDeadlines(budgets map[string]testRequestDeadlineSpec) er
 		}
 		if spec.Expect != nil {
 			scenario := testScenario{Requests: []testHTTPRequest{{Name: name, Method: "GET", Path: "/", Expect: *spec.Expect}}}
-			if err := validateTestHTTPRequests(scenario); err != nil {
+			// Profiles have no request scope yet. Validate syntax here; the
+			// selected request's actual capture scope is checked after expansion.
+			known := make(map[string]string)
+			body, err := json.Marshal(spec.Expect.JSON)
+			if err != nil {
+				return fmt.Errorf("request_deadlines.%s expect: invalid JSON value", name)
+			}
+			for _, ref := range testSecretReferencePattern.FindAllString(string(body), -1) {
+				known[ref[2:len(ref)-1]] = "example-value"
+			}
+			if err := validateTestHTTPRequestsWithCaptures(scenario, nil, known); err != nil {
 				return fmt.Errorf("request_deadlines.%s expect: %w", name, err)
 			}
 		}

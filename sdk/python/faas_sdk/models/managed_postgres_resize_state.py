@@ -1,8 +1,9 @@
 from typing import Literal
 
-ManagedPostgresResizeState = Literal["pending", "succeeded"]
+ManagedPostgresResizeState = Literal["failed", "pending", "succeeded"]
 
 MANAGED_POSTGRES_RESIZE_STATE_VALUES: set[ManagedPostgresResizeState] = {
+    "failed",
     "pending",
     "succeeded",
 }

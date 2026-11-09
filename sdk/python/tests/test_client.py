@@ -595,3 +595,107 @@ async def test_async_chain_decodes_problem_after_retry_exhaustion() -> None:
         await chain.handle_async_request(httpx.Request("GET", "https://api.example.com/v1/x"))
     assert excinfo.value.problem.status == 500
     assert excinfo.value.problem.code == "unknown_thing"
+
+
+def test_retry_limits_attempts_and_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    delays: list[float] = []
+    monkeypatch.setattr(time, "sleep", delays.append)
+    calls = 0
+
+    def unavailable(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    for base in (0.0, -1.0, float("inf"), 100.0):
+        calls = 0
+        delays.clear()
+        transport = RetryTransport(httpx.MockTransport(unavailable), max_attempts=1000, backoff=base)
+        response = transport.handle_request(httpx.Request("GET", "https://api.example.com/v1/x"))
+        assert response.status_code == 503
+        assert calls == 9
+        assert all(0 < delay <= 8 for delay in delays)
+
+
+def test_low_level_clients_have_timeout_by_default() -> None:
+    from faas_sdk.client import Client, AuthenticatedClient
+
+    for client in (Client(base_url="https://api.example.com"), AuthenticatedClient(base_url="https://api.example.com", token="fixture")):
+        with client.get_httpx_client() as http:
+            assert http.timeout.connect == 30.0
+            assert http.timeout.read == 30.0
+            assert http.timeout.pool == 30.0
+
+
+async def test_async_retry_closes_real_async_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    closed = False
+    calls = 0
+
+    class AsyncOnlyBody(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"unavailable"
+
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(503, stream=AsyncOnlyBody())
+        return httpx.Response(200, json={"ok": True})
+
+    async def no_sleep(delay: float) -> None:
+        assert delay > 0
+
+    import asyncio
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    transport = AsyncRetryTransport(httpx.MockTransport(handler), max_attempts=1, backoff=0)
+    response = await transport.handle_async_request(httpx.Request("GET", "https://api.example.com/v1/x"))
+    assert response.status_code == 200
+    assert calls == 2
+    assert closed
+    await response.aclose()
+
+
+def test_sync_retry_surfaces_long_server_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_sleep(delay: float) -> None:
+        pytest.fail("long Retry-After escaped the retry wait bound")
+
+    monkeypatch.setattr(time, "sleep", no_sleep)
+    calls = 0
+
+    def unavailable(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503, headers={"Retry-After": "3600"}, json={"detail": "cooldown"})
+
+    transport = RetryTransport(httpx.MockTransport(unavailable), max_attempts=8)
+    response = transport.handle_request(httpx.Request("GET", "https://api.example.com/v1/x"))
+    assert calls == 1
+    assert response.headers["Retry-After"] == "3600"
+    assert response.json() == {"detail": "cooldown"}
+    response.close()
+
+
+async def test_async_retry_surfaces_long_server_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    async def no_sleep(delay: float) -> None:
+        pytest.fail("long Retry-After escaped the retry wait bound")
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    calls = 0
+
+    async def unavailable(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503, headers={"Retry-After": "3600"}, json={"detail": "cooldown"})
+
+    transport = AsyncRetryTransport(httpx.MockTransport(unavailable), max_attempts=8)
+    response = await transport.handle_async_request(httpx.Request("GET", "https://api.example.com/v1/x"))
+    assert calls == 1
+    assert response.headers["Retry-After"] == "3600"
+    assert response.json() == {"detail": "cooldown"}
+    await response.aclose()

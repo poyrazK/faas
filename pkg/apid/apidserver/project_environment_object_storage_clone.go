@@ -198,7 +198,7 @@ func (s *server) createProjectEnvironmentObjectStorageCredential(ctx context.Con
 		ID: credentialID, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
 		SecretSealed: sealed, KID: kid, Label: plan.objectCred.Label,
 		Permission: plan.objectCred.Permission, Status: state.ObjectS3CredentialStatusActive,
-		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix,
+		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix, KeyPrefix: plan.objectCred.KeyPrefix,
 	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
 	if err != nil {
 		return state.ObjectS3Credential{}, 0, fmt.Errorf("create isolated object storage credential: %w", err)

@@ -140,6 +140,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 	_, _ = w.Write(entry.body)
 	rec.status = entry.statusCode
 	rec.Bytes = int64(len(entry.body))
+	h.recordEdgeEgress(r, app, len(entry.body))
 	if h.metrics != nil {
 		h.metrics.cacheStaleWhileWaking.WithLabelValues(app.ID).Inc()
 	}
@@ -369,6 +370,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	_, _ = w.Write(entry.body)
 	rec.status = entry.statusCode
 	rec.Bytes = int64(len(entry.body))
+	h.recordEdgeEgress(r, app, len(entry.body))
 	// ADR-122 §Decision: stale_if_error_served is its own
 	// outcome label so the hit-rate numerator cannot be
 	// inflated by stale serves. The dashboard surfaces

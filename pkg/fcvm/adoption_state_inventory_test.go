@@ -28,6 +28,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"appDatabaseResolved":               "reset",    // bound database pairs for seeding (ADR-20261026150000)
 		"backingDigests":                    "reset",    // file digest cache
 		"backingHashing":                    "reset",    // in-flight file digests
+		"backingKeys":                       "reset",    // bases the digest primer follows; wakes note them again, recorded digests cover the rest
 		"backingPending":                    "reset",    // in-flight instance identities; adoption restores instanceBacking
 		"baseGenerations":                   "reset",    // base image generation cache
 		"cidToID":                           "rebuilt",
@@ -51,6 +52,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"staticEgressAliasIPs":              "reset",   // labeled kernel aliases rediscovered on bundle replay
 		"privateNetworkFabric":              "reset",   // idempotency cache; schedd's reconcile probes the kernel
 		"privateNetworkRouters":             "reset",   // probed and repaired on every fabric replay
+		"privateNetworkPeeringPolicies":     "reset",   // unknown policy is restricted to default drop before repair
 		"privateNetworkTransport":           "reset",
 		"privateNetworkTransportPeers":      "reset", // forces one peer sync after a restart, by design
 		"processGenerations":                "rebuilt",
@@ -58,6 +60,8 @@ var adoptionStateInventory = map[string]map[string]string{
 		"qualificationConfigReceiptWaiters": "bootonly", // qualification guests are never adopted
 		"qualificationInstances":            "bootonly",
 		"quietStates":                       "reset", // quiet pause waits one idle period after adoption
+		"idleStates":                        "reset", // the idle ladder observe pass measures from adoption
+		"idleColdCeilings":                  "reset", // compression ceilings relearn from the next wakes; a restarted vmmd starts at the defaults
 		"readinessLoopCancels":              "rebuilt",
 		"resourceLinks":                     "rebuilt",
 		"resourceNetworks":                  "rebuilt",
@@ -129,6 +133,8 @@ var adoptionInstanceInventory = map[string]string{
 	"QualificationOnly":               "refused", // qualification kind
 	"Paused":                          "rebuilt", // warm-pool restore, claimed or not
 	"QuietPauseAfter":                 "rebuilt",
+	"IdleLadderEligible":              "rebuilt",
+	"IdleLadderGuardedPause":          "rebuilt",
 	"Frozen":                          "rebuilt",
 	"FrozenSince":                     "rebuilt",
 	"freezing":                        "reset",   // no freeze is in flight at startup
@@ -160,6 +166,7 @@ var adoptionInstanceInventory = map[string]string{
 	"HealthcheckPath":                 "rebuilt",
 	"ImageHealthcheckRequired":        "rebuilt",
 	"StartupDeadlineS":                "rebuilt",
+	"RequestConcurrency":              "rebuilt",
 	"ExecutionMode":                   "rebuilt",
 	"WorkloadNames":                   "rebuilt",
 	"Characterization":                "rebuilt", // ObservedClass only: the liveness contract of an undeclared worker
@@ -175,8 +182,12 @@ var adoptionInstanceInventory = map[string]string{
 	"StaticEgressExcluded":            "rebuilt",
 	"PrivateNetworkExcluded":          "rebuilt",
 	"networkPolicyMu":                 "reset",
-	"resolvedEgress":                  "reset",   // cache; the nft entries keep their own timeouts
-	"databaseEgress":                  "reset",   // same for egress_db pairs (ADR-20261026150000)
+	"resolvedEgress":                  "rebuilt", // surviving nft entries retain their remaining lifetimes
+	"resolvedEgressGeneration":        "reset",   // restart invalidates outstanding DNS grants
+	"awaitingExit":                    "reset",   // only set while a teardown call waits on the guest
+	"egressAllowlistUncertain":        "reset",   // adopted guests re-prove their journaled allowlist
+	"egressPortsUncertain":            "reset",   // adopted guests read the surviving port sets
+	"databaseEgress":                  "rebuilt", // surviving egress_db pairs retain their remaining lifetimes
 	"environmentBranch":               "refused", // a contained branch guest is not adopted (ADR-20261031193635)
 	"branchDatabaseEgress":            "refused", // its branch_db pairs go with it
 	"TailCount":                       "reset",   // the host only ever sees decrements

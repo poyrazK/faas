@@ -42,27 +42,27 @@ terminate at pgbouncer and share its server pool, which is a constant rather
 than a per-node cost. What still scales per node is the session-scoped residue
 that cannot be pooled: `LISTEN` and session advisory locks on the direct DSN
 (`faas_postgres_per_compute_direct_budget`, 5 database daemons ×
-`db.directHubOnMaxConns`, plus imaged's ADR-570 nested traffic guard: 11; the
-edge and the object gateway each add `db.directHubOnMaxConns` where they run).
+`db.directHubOnMaxConns`, plus imaged's ADR-570 nested traffic guard and
+schedd's five prime locks: 16; the edge and the object gateway each add `db.directHubOnMaxConns` where they run).
 
 | Nodes | Unpooled | Pooled |
 |---|---|---|
-| 2 | 180 conns / 3.9 GB | 230 conns / 5.1 GB |
-| 12 | 640 conns / 14.7 GB | 370 conns / 8.3 GB |
-| 50 | 2,360 conns / 55.0 GB | 930 conns / 21.5 GB |
-| 100 | 4,620 conns / 107.9 GB | 1,660 conns / 38.6 GB |
+| 2 | 180 conns / 3.9 GB | 240 conns / 5.3 GB |
+| 12 | 640 conns / 14.7 GB | 450 conns / 10.2 GB |
+| 50 | 2,360 conns / 55.0 GB | 1,260 conns / 29.2 GB |
+| 100 | 4,620 conns / 107.9 GB | 2,330 conns / 54.3 GB |
 
 The table leaves out the edge and the object gateway.
 
-**Do not enable the pooler below four compute nodes.** pgbouncer's server pool
-is a fixed 80 backends, so on a two-node fleet it costs more than the 68 it
-saves. The crossover is at about 3½ nodes: `34n = 80 + 11n`.
+**Do not enable the pooler below five compute nodes.** pgbouncer's server pool
+is a fixed 80 backends, so on a two-node fleet it costs more than the 36 it
+saves after accounting for direct sessions. The crossover is at about 4½ nodes: `34n = 80 + 16n`.
 
 Note what pooling does and does not fix. It takes a 100-node fleet from
-impossible to a 48 GB database host, but the remaining 1,640 is dominated by
-the per-node `LISTEN` term, which is irreducible while every compute daemon
-subscribes to notifications. Cutting it further means fewer subscribing
-daemons per node, not a better pooler.
+impossible to a database host with at least 55,580 MB of RAM. The remaining
+per-node cost includes five prime-lock sessions on schedd as well as notification
+listeners and short session guards. Reducing that term requires changing the
+session-scoped work, rather than adding a transaction pooler.
 
 The per-daemon direct budget is hub-dependent: with `FAAS_DB_NOTIFY_HUB=0`
 every subscriber parks its own `LISTEN` connection on the direct pool, so
@@ -75,8 +75,12 @@ ADR-570 reserves three direct connections for hub-enabled apid when a separate
 `FAAS_DATABASE_URL_DIRECT` is configured: the notification hub, outer edge
 mutation convergence lock and guarded policy transaction. imaged gets the same
 three on every compute node: the hub, its deployment activation lock and
-MarkDeploymentLive's guarded policy transaction. The deployed pooler
-role targets compute nodes, so the control plane keeps the ordinary direct
+MarkDeploymentLive's guarded policy transaction. schedd reserves seven: its
+hub, four background prime locks, one inline prime lock and one short session
+operation. The worker concurrency comes from the same API constant as its
+direct pool budget. Converge the updated PostgreSQL capacity plan before
+rolling out this larger scheduler pool. The deployed pooler role targets
+compute nodes, so the control plane keeps the ordinary direct
 pool budget above. If the control plane is explicitly given a separate session
 pool, include that sibling pool in `faas_postgres_control_plane_pool_budget`;
 the default 61 (apid's request and background pools included) assumes the existing control-plane pool topology.

@@ -244,7 +244,7 @@ func (m *Manager) adoptOne(ctx context.Context, adopter guestAdopter, c adoption
 	if private := r.Adoption.Network.Private; m.privateNetworkMemberSource != nil && private != nil && (private.NetworkID == "" || private.AppID == "" || private.AccountID == "") {
 		return refuse(v.Instance, adoptionRefusedPrivateNetwork, "private member predates durable instance identities; replace this guest")
 	}
-	if err := m.adoptGuest(ctx, adopter, r); err != nil {
+	if err := m.adoptGuest(ctx, adopter, r, !AdoptionEnds(v.Resolved)); err != nil {
 		return refuse(v.Instance, adoptionRefusedAdoptFailed, err.Error())
 	}
 	if AdoptionEnds(v.Resolved) {
@@ -281,7 +281,7 @@ func (m *Manager) adoptedAdmission(instance string) *AdoptionAdmission {
 	}
 }
 
-func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resourceJournalRecord) error {
+func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resourceJournalRecord, restoreEgress bool) error {
 	var jails, binds, files, private []resourceAsset
 	var ns, veth resourceAsset
 	for _, a := range r.Assets {
@@ -328,6 +328,12 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 	}
 	lease := m.beginProcessAttempt(r.Lease)
 	inst := m.adoptedInstance(lease, r.Adoption)
+	if restoreEgress {
+		if err := m.restoreAdoptedEgress(ctx, inst); err != nil {
+			m.alloc.unadopt(id)
+			return fmt.Errorf("restore adopted egress: %w", err)
+		}
+	}
 	if inst.Net.PrivateNetworkAddress.IsValid() {
 		if err := m.reservePrivateNetworkAddresses(inst.Net, id); err != nil {
 			return err
@@ -378,9 +384,9 @@ func (m *Manager) adoptDriveHandoff(ctx context.Context, adopter guestAdopter, l
 	}
 }
 
-// adoptedInstance rebuilds the Instance from the record. Network policy that
-// is not recorded (egress allowlist contents, DNS gating sets) is pushed
-// again by the scheduler (slice 3); the per-netns rules themselves survived.
+// adoptedInstance rebuilds the journaled instance identity. restoreAdoptedEgress
+// reads the surviving namespace before publication; schedd re-proves the
+// desired allowlist revision through its ordinary convergence path.
 func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 	nc := netns.NewConfig(l.Instance, l.Netns, l.VethHost, l.VethPeer, l.HostIP)
 	nc.TapUID = l.UID
@@ -403,11 +409,13 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 		Lease: l, Net: nc, Method: method, Plan: l.Plan,
 		AppID: in.AppID, AccountID: in.AccountID, DeploymentID: in.DeploymentID, WakeID: in.WakeID, NodeID: in.NodeID,
 		Port: in.Port, HealthcheckPath: in.HealthcheckPath, HealthcheckGRPC: in.HealthcheckGRPC, ImageHealthcheckRequired: in.ImageHealthcheckRequired,
-		StartupDeadlineS: in.StartupDeadlineS, ExecutionMode: in.ExecutionMode, Runtime: in.Runtime,
+		StartupDeadlineS: in.StartupDeadlineS, RequestConcurrency: in.RequestConcurrency, ExecutionMode: in.ExecutionMode, Runtime: in.Runtime,
 		WorkloadNames:          append([]string(nil), in.WorkloadNames...),
 		LivenessProbe:          append([]byte(nil), in.LivenessProbe...),
 		ReadinessProbe:         append([]byte(nil), in.ReadinessProbe...),
 		QuietPauseAfter:        durationMillis(in.QuietPauseAfterMs),
+		IdleLadderEligible:     in.IdleLadderEligible,
+		IdleLadderGuardedPause: in.IdleLadderGuarded,
 		AllowlistHandleV4:      a.Network.AllowlistHandleV4,
 		AllowlistHandleV6:      a.Network.AllowlistHandleV6,
 		PrivateNetworkHandleV4: a.Network.PrivateNetworkHandleV4,

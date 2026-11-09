@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"net"
 	"sync"
 	"time"
@@ -47,6 +46,8 @@ type Server struct {
 	Handoff Handoff
 	Log     *slog.Logger
 	now     func() time.Time
+	quotaMu sync.Mutex
+	quotas  map[string]*quotaState
 }
 
 // log is Log, or slog.Default when unset. Serve never writes Log: one
@@ -60,10 +61,12 @@ func (s *Server) log() *slog.Logger {
 
 // Serve accepts streams until ctx ends or ln fails.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	stop := context.AfterFunc(ctx, func() { _ = ln.Close() })
 	defer stop()
 	var wg sync.WaitGroup
-	defer wg.Wait()
+	defer func() { cancel(); wg.Wait() }()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -76,6 +79,8 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		go func() {
 			defer wg.Done()
 			defer func() { _ = conn.Close() }()
+			stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+			defer stop()
 			s.handle(ctx, conn)
 		}()
 	}
@@ -119,11 +124,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 				_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
 				return
 			}
-			if room, err := s.quotaRoom(header); err != nil || room < req.Size {
-				s.refuseOverQuota(conn, header, err)
-				return // the payload is unread; the stream is unusable
-			}
-			err := s.Store.PutWAL(ctx, header.DatabaseID, req.Name, io.LimitReader(br, req.Size), req.Size)
+			err := s.putWAL(ctx, header, req, io.LimitReader(br, req.Size))
 			if err != nil {
 				s.log().Warn("dbarchive: archive failed", "database_id", header.DatabaseID, "name", req.Name, "err", err)
 			}
@@ -367,13 +368,28 @@ func (s *Server) handleBackup(ctx context.Context, conn net.Conn, br *bufio.Read
 		now = s.now
 	}
 	if req.Op == OpPutBackup {
-		room, err := s.quotaRoom(header)
+		quota := s.beginQuota(header)
+		defer quota.release()
+		room, err := quota.room()
 		if err != nil || room <= 0 {
 			s.refuseOverQuota(conn, header, err)
 			return false
 		}
 		body := &quotaReader{r: &chunkReader{r: br}, room: room}
-		m, err := s.Backups.PutBackup(ctx, header.DatabaseID, body, now())
+		var m BackupManifest
+		if quota.state != nil {
+			writer, ok := s.Backups.(interface {
+				putBackup(context.Context, string, io.Reader, time.Time, *archiveQuota) (BackupManifest, error)
+			})
+			if !ok {
+				_ = WriteLine(conn, Response{Error: ErrCodeInternal})
+				return false // a quota needs a writer that accounts for compressed bytes
+			}
+			m, err = writer.putBackup(ctx, header.DatabaseID, body, now(), quota)
+		} else {
+			m, err = s.Backups.PutBackup(ctx, header.DatabaseID, body, now())
+		}
+		quota.release() // committed bytes are now counted by LocalBytes
 		if errors.Is(err, ErrQuotaExceeded) || body.over {
 			s.refuseOverQuota(conn, header, nil)
 			return false
@@ -414,17 +430,13 @@ func (s *Server) handleBackup(ctx context.Context, conn net.Conn, br *bufio.Read
 	return bw.Flush() == nil
 }
 
-// quotaRoom is how many more bytes the stream's database may archive here:
-// unlimited without a quota (or without the archive's size to check).
-func (s *Server) quotaRoom(header Header) (int64, error) {
-	if header.QuotaBytes == 0 || s.Retention == nil {
-		return math.MaxInt64, nil
+func (s *Server) putWAL(ctx context.Context, header Header, req Request, r io.Reader) error {
+	quota := s.beginQuota(header)
+	defer quota.release()
+	if err := quota.reserve(req.Size); err != nil {
+		return err
 	}
-	used, err := s.Retention.LocalBytes(header.DatabaseID)
-	if err != nil {
-		return 0, err
-	}
-	return header.QuotaBytes - used, nil
+	return s.Store.PutWAL(ctx, header.DatabaseID, req.Name, r, req.Size)
 }
 
 func (s *Server) refuseOverQuota(conn net.Conn, header Header, err error) {

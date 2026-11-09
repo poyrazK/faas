@@ -106,9 +106,7 @@ func (l *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 // http.NewRequestWithContext-created requests (the SDK uses
 // http.NewRequestWithContext in doReq). On retry, we rewind
 // via GetBody so the body is replayable. For requests without
-// GetBody (rare — only requests built by hand), the retry
-// would send an empty body; this is acceptable because the
-// SDK only mutates via doReq, which always sets GetBody.
+// GetBody, one-shot bodies are sent once.
 //
 // max <= 0 is a no-op identity passthrough (matches
 // loggingRoundTripper's nil-log behavior: the option is
@@ -127,7 +125,21 @@ func newRetryRoundTripper(next http.RoundTripper, max int, backoff time.Duration
 	if max <= 0 {
 		return next
 	}
-	return &retryRoundTripper{next: next, max: max, backoff: backoff}
+	if backoff <= 0 {
+		backoff = 100 * time.Millisecond
+	}
+	return &retryRoundTripper{next: next, max: min(max, 8), backoff: min(backoff, 8*time.Second)}
+}
+
+func transportRetryDelay(base time.Duration, attempt int) time.Duration {
+	const cap = 8 * time.Second
+	for n := 1; n < attempt && base < cap; n++ {
+		if base > cap/2 {
+			return cap
+		}
+		base *= 2
+	}
+	return min(base, cap)
 }
 
 // RoundTrip is the http.RoundTripper contract. It loops up to
@@ -153,8 +165,11 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	var lastResp *http.Response
 	var retryAfter time.Duration
 	for attempt := 0; attempt <= r.max; attempt++ {
+		if err := req.Context().Err(); err != nil {
+			return nil, err
+		}
 		if attempt > 0 {
-			delay := max(r.backoff<<(attempt-1), retryAfter)
+			delay := max(transportRetryDelay(r.backoff, attempt), retryAfter)
 			timer := time.NewTimer(delay)
 			select {
 			case <-timer.C:
@@ -185,7 +200,7 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		// 4xx are a client-side problem; the server is not going to
 		// change its mind on a retry. The last answer keeps its body
 		// so the caller can decode the problem.
-		retryAfter = 0
+		retryAfter = transportRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 		if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
 			wait, timedOut := policyCheckTimedOut(resp)
 			if !timedOut {
@@ -193,7 +208,7 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 			}
 			retryAfter = wait
 		}
-		if attempt == r.max {
+		if attempt == r.max || req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
 			return resp, nil
 		}
 		// Drain + close before retrying so the connection can
@@ -204,6 +219,21 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		_ = resp.Body.Close()
 	}
 	return lastResp, nil
+}
+
+func transportRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
+		const maxDuration = time.Duration(1<<63 - 1)
+		if seconds > int64(maxDuration/time.Second) {
+			return maxDuration
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	if date, err := http.ParseTime(value); err == nil {
+		return max(0, date.Sub(now))
+	}
+	return 0
 }
 
 // policyCheckTimedOut reports a 422 traffic_policy_too_complex that carries

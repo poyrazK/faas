@@ -126,6 +126,11 @@ type Poller struct {
 	EgressAbuseHandler EgressAbuseHandler
 	egressAbuseMu      sync.Mutex
 	egressAbuseActed   map[string]struct{}
+	// enforce runs enforcement actions off the tick (offloop.go); nil runs
+	// them inline.
+	enforce EnforcementDispatch
+	// pauses feeds PauseLedger from a worker, in tick order (offloop.go).
+	pauses pauseQueue
 	// CPUSaturationHandler queues automatic CPU captures of instances held
 	// at their CPU quota (ADR-1155). Nil keeps the poller observation-only.
 	CPUSaturationHandler CPUSaturationHandler
@@ -401,7 +406,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.publishMemoryShadowWithBridges(instances, rows, bridgeMB, started)
 		p.publishQuietPaused(rows, started)
 		p.publishMeasuredCPU(rows, started)
-		p.PauseLedger.Observe(ctx, rows, p.now())
+		p.observePauses(ctx, rows, p.now())
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -428,7 +433,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.publishQuietPaused(rows, started)
 		p.publishMeasuredCPU(rows, started)
 		p.publishCPUPressure(p.Telemetry.CPUPressure(p.now()), started)
-		p.PauseLedger.Observe(ctx, rows, p.now())
+		p.observePauses(ctx, rows, p.now())
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
 		p.watchCPUSaturation(ctx, rows)
@@ -457,7 +462,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	p.publishQuietPaused(rows, started)
 	p.publishMeasuredCPU(rows, started)
 	p.publishCPUPressure(pressure, started)
-	p.PauseLedger.Observe(ctx, rows, p.now())
+	p.observePauses(ctx, rows, p.now())
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
 	p.watchCPUSaturation(ctx, rows)
@@ -507,15 +512,19 @@ func (p *Poller) enforceDiskPressure(ctx context.Context, rows []InstanceStat) {
 	}
 	p.diskPressureMu.Unlock()
 	for _, row := range actions {
-		if err := p.DiskPressureHandler(ctx, row, fcvm.DiskPressureFull); err != nil {
-			if p.Log != nil {
-				p.Log.Warn("instance stats: disk pressure handler failed", "instance_id", row.InstanceID, "pressure", fcvm.DiskPressureFull.String(), "err", err)
+		p.runEnforcement("disk/"+row.InstanceID, func() {
+			if err := p.DiskPressureHandler(ctx, row, fcvm.DiskPressureFull); err != nil {
+				if p.Log != nil {
+					p.Log.Warn("instance stats: disk pressure handler failed", "instance_id", row.InstanceID, "pressure", fcvm.DiskPressureFull.String(), "err", err)
+				}
+				return
 			}
-			continue
-		}
-		p.diskPressureMu.Lock()
-		p.diskPressureSeen[row.InstanceID] = fcvm.DiskPressureFull
-		p.diskPressureMu.Unlock()
+			p.diskPressureMu.Lock()
+			if p.diskPressureSeen != nil {
+				p.diskPressureSeen[row.InstanceID] = fcvm.DiskPressureFull
+			}
+			p.diskPressureMu.Unlock()
+		})
 	}
 }
 
@@ -573,16 +582,20 @@ func (p *Poller) enforceEgressAbuse(ctx context.Context, rows []InstanceStat) {
 	}
 	p.egressAbuseMu.Unlock()
 	for _, a := range actions {
-		if err := p.EgressAbuseHandler(ctx, a.row, a.reason, a.observed, a.limit); err != nil {
-			if p.Log != nil {
-				p.Log.Warn("instance stats: egress abuse handler failed", "instance_id", a.row.InstanceID, "app_id", a.row.AppID,
-					"reason", a.reason, "observed", a.observed, "limit", a.limit, "err", err)
+		p.runEnforcement("egress/"+a.row.InstanceID, func() {
+			if err := p.EgressAbuseHandler(ctx, a.row, a.reason, a.observed, a.limit); err != nil {
+				if p.Log != nil {
+					p.Log.Warn("instance stats: egress abuse handler failed", "instance_id", a.row.InstanceID, "app_id", a.row.AppID,
+						"reason", a.reason, "observed", a.observed, "limit", a.limit, "err", err)
+				}
+				return
 			}
-			continue
-		}
-		p.egressAbuseMu.Lock()
-		p.egressAbuseActed[a.row.InstanceID] = struct{}{}
-		p.egressAbuseMu.Unlock()
+			p.egressAbuseMu.Lock()
+			if p.egressAbuseActed != nil {
+				p.egressAbuseActed[a.row.InstanceID] = struct{}{}
+			}
+			p.egressAbuseMu.Unlock()
+		})
 	}
 }
 
@@ -615,6 +628,7 @@ func (p *Poller) decodeTelemetrySnapshot(
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
 			QuietPaused:      in.QuietPaused,
+			IdleLadderLevel:  in.IdleLadderLevel,
 			Frozen:           in.Frozen,
 			QuietPause:       in.QuietPause,
 			CPU:              Unknown,
@@ -904,6 +918,7 @@ func (p *Poller) decodeStatsSnapshot(
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
 			QuietPaused:      in.QuietPaused,
+			IdleLadderLevel:  in.IdleLadderLevel,
 			Frozen:           in.Frozen,
 			QuietPause:       in.QuietPause,
 			CPU:              Unknown,

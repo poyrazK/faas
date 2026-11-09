@@ -267,7 +267,10 @@ jobs:
   checks:
     name: "light: codegen, policy, migrations"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Cold generation builds plus the complete migration history and ledger
+    # recovery/replay checks can exceed 15 minutes. Keep every gate and the
+    # individual test deadlines; give the job enough time to finish them.
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -351,11 +354,15 @@ jobs:
           python3 scripts/ci/check_daemon_deps_test.py
           python3 scripts/ci/blast_radius_test.py
           python3 scripts/ci/binary_code_test.py
+          python3 scripts/ci/compute_db_roles_test.py
+          python3 scripts/ci/guest_init_reuse_test.py
+          python3 scripts/ci/guest_init_stability_test.py
           python3 scripts/ci/warm_unit_build_cache_test.py
           python3 scripts/ci/plan_unit_deploy_test.py
           python3 scripts/ci/plan_host_config_test.py
           python3 scripts/ci/plan_edge_rollout_test.py
           bash scripts/unit-release-verify_test.sh
+          bash scripts/reuse-release-guest-init_test.sh
           bash scripts/ci/unit_deploy_test.sh
           bash scripts/ci/check_edge_store_test.sh
           bash scripts/ci/seal_domain_vars_test.sh
@@ -364,6 +371,7 @@ jobs:
           bash scripts/ci/postgres_runtime_roles_vars_test.sh
           bash scripts/ci/faas_environment_vars_test.sh
           bash scripts/ci/verify_unit_release_test.sh
+          bash scripts/ci/fetch_release_asset_test.sh
       - name: release binaries link no forbidden package
         run: make daemon-deps-check
       - name: MemStore stub guard
@@ -418,7 +426,7 @@ jobs:
         run: |
           set -euo pipefail
           ZIP="$RUNNER_TEMP/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
-          curl --fail --silent --show-error --location --output "$ZIP" \
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --retry-delay 2 --output "$ZIP" \
             --header "Authorization: Bearer ${GITHUB_TOKEN}" \
             "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
           echo "${PROTOC_SHA256_LINUX_AMD64}  $ZIP" | sha256sum --check --strict
@@ -518,7 +526,7 @@ jobs:
     # large-package builds for PRs.
     # Cold native fixtures and large-package builds can exceed 20 minutes.
     # Use main's budget on PRs too; the Go test deadlines below stay bounded.
-    timeout-minutes: 40
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -734,16 +742,30 @@ jobs:
             GOMEMLIMIT=5GiB GOGC=50 GOMAXPROCS=2 go test -race -p 1 -count=1 -run '^$' $PKGS
             echo "::endgroup::"
             echo "testing with -race: $PKGS"
-            # The complete GitOps PostgreSQL suite reached test 157 of 195
-            # before a 10m package deadline. Whichever shard the diff assigns
-            # it to keeps every test and the 40m job bound (~13m of race
-            # builds, then the run) with a bounded 18m package deadline.
-            # cmd/gatewayd-internal's ADR-570 PostgreSQL fleet and public-route
-            # suites take 13-17m with -race on a light runner (#4153).
+            # The complete GitOps PostgreSQL suite exceeds 18m with GOGC=10
+            # beside other packages. Keep all tests and its 18m deadline,
+            # but run it alone with less GC churn under the same 2 GiB bound.
+            race_pkgs=()
+            for pkg in $PKGS; do
+              if [[ "$pkg" == ./pkg/environmentsync/pgintegration ]]; then
+                GOMEMLIMIT=2GiB GOGC=50 GOMAXPROCS=2 go test -race -count=1 -p 1 -timeout=18m "$pkg" || status=1
+              else
+                race_pkgs+=("$pkg")
+              fi
+            done
+            # cmd/gatewayd-internal reached its 754th test at the 18m
+            # deadline on a light runner. Give its full race suite 24m while
+            # retaining a 50m job limit and running every test.
+            # mcpmanagement's full protocol suite also exceeds 10m under
+            # this shard's 2 GiB / GOGC=10 race-test bounds. financialfixture
+            # builds a non-race meterd inside the test; the race-only cache
+            # makes that a cold build of ~8m before its scenarios start.
             package_timeout=10m
-            if [[ " $PKGS " == *" ./pkg/environmentsync/pgintegration "* || " $PKGS " == *" ./cmd/gatewayd-internal "* ]]; then package_timeout=18m; fi
-            # shellcheck disable=SC2086 # space-separated package list
-            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" $PKGS || status=1
+            if [[ " $PKGS " == *" ./pkg/mcpmanagement "* || " $PKGS " == *" ./pkg/e2etest/financialfixture "* ]]; then package_timeout=18m; fi
+            if [[ " $PKGS " == *" ./cmd/gatewayd-internal "* ]]; then package_timeout=24m; fi
+            if (( ${#race_pkgs[@]} )); then
+              GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" "${race_pkgs[@]}" || status=1
+            fi
           fi
           for pkg in $LARGE; do
             runs="$(python3 scripts/ci/select_package_tests.py --package "${pkg#./}" --cap "$SELECTIVE_CAP" --batch-size 50 --base "$LIGHT_DIFF_BASE" < "$RUNNER_TEMP/changed-paths.txt")"
@@ -840,13 +862,18 @@ jobs:
         # dropping back to the runner uid for the test process.
         run: |
           BOOT_CONTRACT_PATH="$PATH"
-          sudo -E setpriv \
+          # The runner's sudo (sudo-rs) ignores -E, so name the environment
+          # the test needs: HOME and the Go paths keep the build cache under
+          # the runner user instead of /root.
+          sudo setpriv \
             --bounding-set=-sys_admin \
             --reuid "$(id -u)" \
             --regid "$(id -g)" \
             --init-groups \
             --no-new-privs \
-            -- env "PATH=$BOOT_CONTRACT_PATH" \
+            -- env "PATH=$BOOT_CONTRACT_PATH" "HOME=$HOME" \
+              "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" "GOPATH=$(go env GOPATH)" \
+              "GOTOOLCHAIN=${GOTOOLCHAIN:-local}" "DATABASE_URL=${DATABASE_URL:-}" "FAAS_SKIP_PG_TESTS=${FAAS_SKIP_PG_TESTS:-}" \
             go test -race -count=1 -timeout=12m -run '^TestBootContract_' ./cmd/e2e/...
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'

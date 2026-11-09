@@ -105,7 +105,7 @@ func Run(t *testing.T, open Open) {
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
 		{"github_deployment_promotion_fences_stale_revisions", testGitHubDeploymentPromotionFence},
-		{"github_installation_ownership_is_exclusive", testGitHubInstallationOwnership},
+		{"github_deployment_connections_are_shared_and_login_is_exclusive", testGitHubDeploymentConnections},
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
@@ -195,6 +195,9 @@ func Run(t *testing.T, open Open) {
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"deployment_outcomes_exclude_customer_caused_failures", testDeploymentOutcomesExcludeCustomerCausedFailures},
 		{"deployment_served_before_tracks_traffic", testDeploymentServedBefore},
+		{"outpaced_release_is_superseded_before_its_command", testSupersedeOutpacedRelease},
+		{"release_commands_run_one_at_a_time_per_scope", testReleaseCommandOrder},
+		{"outpaced_queued_release_command_is_cancelled", testOutpacedQueuedReleaseCancelled},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"keyed_invocation_replacement_and_completion_are_fenced", testKeyedInvocationReplacementAndCompletion},
@@ -210,6 +213,7 @@ func Run(t *testing.T, open Open) {
 		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
 		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
 		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},
+		{"completed_queue_payloads_are_trimmed_after_their_retention", testQueuePayloadTrim},
 		{"trigger_record_states_by_items", testTriggerRecordStatesByItems},
 		{"trigger_record_claims_renew_while_dispatching", testTriggerRecordClaimRenewal},
 		{"trigger_record_operator_verbs_are_scoped", testTriggerRecordOperatorScope},
@@ -229,6 +233,7 @@ func Run(t *testing.T, open Open) {
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"app_task_lifecycle_pins_deployment_and_fences_replay", testAppTaskLifecycle},
 		{"app_task_attach_session_is_atomic_and_lease_fenced", testAppTaskAttachSession},
+		{"app_task_claim_respects_node_ownership", testAppTaskClaimRespectsNodeOwnership},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
 		{"workflow_run_creation_is_idempotent_and_quota_safe", testWorkflowRunCreateIdempotency},
 		{"workflow_concurrency_limit_queues_and_releases_runs", testWorkflowConcurrencyLimitQueues},
@@ -4299,10 +4304,13 @@ func testAccountCredits(t *testing.T, fx *Fixture) {
 // into a Go zero would report "no overage allowed" for an account that
 // never set a cap, and stop billing that should happen.
 func testOverageCap(t *testing.T, fx *Fixture) {
-	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+	// An unset cap reads as the plan's effective cap: none on Free, the
+	// plan's self-service ceiling on a paid plan (ADR-20261105120000).
+	unsetCents, unsetOK := state.EffectiveOverageCapCents(fx.Account.Plan, nil)
+	if cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
 		t.Fatalf("GetAccountOverageCapCents(unset): %v", err)
-	} else if ok {
-		t.Error("a fresh account reported a cap; want ok=false (no cap)")
+	} else if ok != unsetOK || (ok && cents != unsetCents) {
+		t.Errorf("a fresh account reported (%d, %v); want the plan's effective cap (%d, %v)", cents, ok, unsetCents, unsetOK)
 	}
 
 	zero := int64(0)
@@ -4330,10 +4338,10 @@ func testOverageCap(t *testing.T, fx *Fixture) {
 	if err := fx.Store.UpdateAccountOverageCapCents(fx.Ctx, fx.Account.ID, nil); err != nil {
 		t.Fatalf("UpdateAccountOverageCapCents(nil): %v", err)
 	}
-	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+	if cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
 		t.Fatalf("GetAccountOverageCapCents(cleared): %v", err)
-	} else if ok {
-		t.Error("cap still reported after clearing with nil; want ok=false")
+	} else if ok != unsetOK || (ok && cents != unsetCents) {
+		t.Errorf("cleared cap read back as (%d, %v); want the plan's effective cap (%d, %v)", cents, ok, unsetCents, unsetOK)
 	}
 }
 

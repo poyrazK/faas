@@ -81,8 +81,9 @@ func TestRuntimeRolesCoverEveryMappedDaemonUser(t *testing.T) {
 			t.Errorf("runtime-roles.sql creates %s but faas_map maps no daemon user to it", role)
 		}
 	}
-	if !strings.Contains(runtimeRolesSQL(t), "GRANT faas_runtime TO faas_compute") {
-		t.Error("runtime-roles.sql does not add faas_compute to faas_runtime")
+	compute := regexp.MustCompile(`(?s)FOREACH r IN ARRAY ARRAY\[('faas_compute'.*?)\] LOOP(.*?)END LOOP`).FindStringSubmatch(runtimeRolesSQL(t))
+	if compute == nil || !strings.Contains(compute[2], "GRANT faas_runtime TO %I") {
+		t.Error("runtime-roles.sql does not add faas_compute (and the per-daemon compute roles) to faas_runtime")
 	}
 }
 
@@ -242,6 +243,12 @@ func TestOwnerContractLeavesOnlyRoot(t *testing.T) {
 		if position[refuse] >= position[later] {
 			t.Errorf("%q runs before the contract's live check", later)
 		}
+	}
+	stray := byName["postgres — remove owner mappings outside the managed block when contracted — ADR-20261023104734"]
+	strayArgs, _ := stray.body["ansible.builtin.lineinfile"].(map[string]any)
+	if strayArgs["state"] != "absent" || !strings.Contains(fmt.Sprint(strayArgs["regexp"]), "(?!root\\s)") ||
+		!strings.Contains(whenClauses(stray), "faas_postgres_owner_contracted") {
+		t.Errorf("the contract no longer removes owner mappings written outside the managed block (keeping root's): %v", stray.body)
 	}
 	probe, _ := byName["postgres — read the logins that still use the owner — ADR-20261023104734"].body["ansible.builtin.command"].(map[string]any)
 	if !strings.Contains(fmt.Sprint(probe["argv"]), "usename = 'faas'") {

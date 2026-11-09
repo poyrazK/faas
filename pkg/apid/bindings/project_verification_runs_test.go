@@ -139,6 +139,38 @@ func TestGraphVerificationBackendChangedReviewCannotReplay(t *testing.T) {
 	}
 }
 
+func TestGraphVerificationBackendIgnoresOtherEnvironment(t *testing.T) {
+	backend, in, _ := graphBackendFixture(t)
+	ctx := t.Context()
+	store := backend.Catalog.(*state.MemStore)
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: backend.AccountID, ProjectID: backend.Project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	extra, err := store.CreateApp(ctx, state.App{AccountID: backend.AccountID, ProjectID: backend.Project.ID, Slug: "graph-stage-only", WorkloadName: "stage-only", Type: state.AppTypeFunction})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := state.WorkloadSettingsFromApp(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutProjectEnvironmentWorkloadSpec(ctx, backend.AccountID, backend.Project.ID, "staging", extra.ID, 0, settings); err != nil {
+		t.Fatal(err)
+	}
+	review, err := backend.Review(ctx, api.ReviewProjectBindingVerificationRequest{Manifest: in.Manifest})
+	if err != nil || !review.Ready || len(review.Members) != 2 {
+		t.Fatalf("unrelated stage blocked review: %+v %v", review, err)
+	}
+	run, err := backend.Create(ctx, in)
+	if err != nil || len(run.Members) != 2 {
+		t.Fatalf("unrelated stage blocked verification: %+v %v", run, err)
+	}
+	completed, err := backend.Complete(ctx, run.ID)
+	if err != nil || completed.Status != "passed" {
+		t.Fatalf("unrelated stage blocked completion: %+v %v", completed, err)
+	}
+}
+
 func TestGraphVerificationBackendBatchedPrivatePinReview(t *testing.T) {
 	backend, in, _ := graphBackendFixture(t)
 	ctx := t.Context()

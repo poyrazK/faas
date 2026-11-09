@@ -63,8 +63,8 @@ type testValidationResult struct {
 
 // Real-VM validation checks deployable app shapes. Local validation checks the
 // command directory and rejects waits that require platform evidence.
-func validateTestManifestForEngine(scenarios map[string]testScenario, manifestDir, selected, engine string) int {
-	results, err := collectTestValidationForEngine(scenarios, manifestDir, selected, engine)
+func validateTestManifestForEngine(scenarios map[string]testScenario, manifestDir, selected, engine string, profiles ...string) int {
+	results, err := collectTestValidationForEngine(scenarios, manifestDir, selected, engine, profiles...)
 	if err != nil {
 		return printErr("Invalid scenario manifest", err)
 	}
@@ -108,7 +108,7 @@ func collectTestValidation(scenarios map[string]testScenario, manifestDir, selec
 	return collectTestValidationForEngine(scenarios, manifestDir, selected, "real-vm")
 }
 
-func collectTestValidationForEngine(scenarios map[string]testScenario, manifestDir, selected, engine string) ([]testValidationResult, error) {
+func collectTestValidationForEngine(scenarios map[string]testScenario, manifestDir, selected, engine string, profiles ...string) ([]testValidationResult, error) {
 	names := make([]string, 0, len(scenarios))
 	if selected != "" {
 		if _, ok := scenarios[selected]; !ok {
@@ -127,17 +127,11 @@ func collectTestValidationForEngine(scenarios map[string]testScenario, manifestD
 	results := make([]testValidationResult, 0, len(names))
 	for _, name := range names {
 		scenario := scenarios[name]
-		if err := validateTestCommandExecution(scenario, engine, "warm"); err != nil {
+		if err := validateTestScenarioExecution(scenario, engine, profiles...); err != nil {
 			return nil, fmt.Errorf("scenario %q: %w", name, err)
-		}
-		if scenario.Actions != nil && engine != "real-vm" {
-			return nil, fmt.Errorf("scenario %q: webhook action capture requires the real-vm engine", name)
 		}
 		if err := validateTestBranchSources(scenario, engine); err != nil {
 			return nil, fmt.Errorf("scenario %q: %w", name, err)
-		}
-		if scenario.Chaos != nil && engine != "real-vm" {
-			return nil, fmt.Errorf("scenario %q declares chaos rules, which require the real-vm engine", name)
 		}
 		if scenario.CommandExecution != nil {
 			source := scenario.Source
@@ -156,9 +150,13 @@ func collectTestValidationForEngine(scenarios map[string]testScenario, manifestD
 		if source == "" {
 			source = "."
 		}
-		if engine == "local" {
-			if err := validateLocalTestScenario(scenario); err != nil {
-				return nil, fmt.Errorf("scenario %q: %w", name, err)
+		if engine == "local" || engine == "simulated" {
+			if engine == "local" {
+				if err := validateLocalTestScenario(scenario); err != nil {
+					return nil, fmt.Errorf("scenario %q: %w", name, err)
+				}
+			} else if len(scenario.Simulation) == 0 {
+				return nil, fmt.Errorf("scenario %q has no simulation command", name)
 			}
 			if _, err := resolveDeploySourceDir(manifestDir, source); err != nil {
 				return nil, fmt.Errorf("scenario %q: %w", name, err)

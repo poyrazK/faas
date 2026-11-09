@@ -699,6 +699,10 @@ jobs:
       # the runner, so it also needs the same DSN in its process environment.
       # The join play writes it to the adopted host separately.
       FAAS_PG_DSN: ${{ secrets.COMPUTE_DATABASE_URL }}
+      # ADR-20261023104734 step 3: per-daemon compute logins, derived from
+      # POSTGRES_COMPUTE_ROLE_KEY (scripts/ci/compute_db_roles.py).
+      POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
+      POSTGRES_COMPUTE_ROLE_KEY: ${{ secrets.POSTGRES_COMPUTE_ROLE_KEY }}
       COMPUTE_STORAGE_ENV: ${{ secrets.COMPUTE_STORAGE_ENV }}
       COMPUTE_IMAGED_STORAGE_ENV: ${{ secrets.COMPUTE_IMAGED_STORAGE_ENV }}
       COMPUTE_PKI_TARBALL_B64: ${{ secrets.COMPUTE_PKI_TARBALL_B64 }}
@@ -716,6 +720,8 @@ jobs:
       SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
       SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
       SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
+      SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY }}
+      SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT }}
       SEAL_DOMAIN_CONTROL_AGE_KEY: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_KEY }}
       SEAL_DOMAIN_CONTROL_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_RECIPIENT }}
       SEAL_DOMAIN_DELIVERY_AGE_KEY: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_KEY }}
@@ -959,6 +965,13 @@ jobs:
           # Keep both names in the same root-only file so a new node cannot
           # pass the CLI preflight and then fail closed during vmmd startup.
           printf '%s\n' "FAAS_VMMD_DBURL=$COMPUTE_DATABASE_URL" >> "$ARTIFACT_DIR/compute-db.env"
+          # ADR-20261023104734 step 3: each compute daemon's own login. The
+          # join play proves every one before any daemon uses it, and removes
+          # the per-daemon logins when this file is absent. A release cut
+          # before the script stages none.
+          if [[ -f scripts/ci/compute_db_roles.py ]]; then
+            python3 -I scripts/ci/compute_db_roles.py dsns "$ARTIFACT_DIR/compute-db-roles.env"
+          fi
           printf '%s\n' "$COMPUTE_STORAGE_ENV" > "$ARTIFACT_DIR/storage.env"
           printf '%s\n' "$COMPUTE_IMAGED_STORAGE_ENV" > "$ARTIFACT_DIR/imaged-storage.env"
           printf '%s\n' "$COMPUTE_SIGN_KEY" > "$ARTIFACT_DIR/sign.key"

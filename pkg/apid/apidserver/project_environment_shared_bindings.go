@@ -63,6 +63,10 @@ func (s *server) captureProjectEnvironmentValues(ctx context.Context, acct state
 	if err != nil {
 		return nil, state.ProjectEnvironmentCloneValuesSnapshot{}, fmt.Errorf("list project workloads for resource clone: %w", err)
 	}
+	apps, err = state.ProjectAppsForEnvironment(ctx, s.store, acct.ID, project.ID, source, apps)
+	if err != nil {
+		return nil, state.ProjectEnvironmentCloneValuesSnapshot{}, err
+	}
 	snapshot, err := store.CaptureProjectEnvironmentCloneValues(ctx, acct.ID, project.ID, source)
 	if err != nil {
 		return nil, snapshot, err
@@ -370,7 +374,7 @@ func (s *server) cloneSharedObjectStorageBinding(r *http.Request, acct state.Acc
 		ID: credentialID, AccountID: acct.ID, BucketID: plan.bucket.ID, AccessKeyID: accessKeyID,
 		SecretSealed: sealed, KID: kid, Label: plan.objectCred.Label,
 		Permission: plan.objectCred.Permission, Status: state.ObjectS3CredentialStatusActive,
-		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix,
+		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix, KeyPrefix: plan.objectCred.KeyPrefix,
 	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
 	if err != nil {
 		return fmt.Errorf("create isolated object storage credential: %w", err)

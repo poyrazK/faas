@@ -111,6 +111,18 @@ type PathGlobError = pathGlobError
 // `db.NotifyEdgeRuleChanged`.
 const EdgeRuleCacheCap = 10_000
 
+// EdgeRuleCacheAppShareDivisor bounds one app's share of the host cache to
+// cap/EdgeRuleCacheAppShareDivisor entries (1,250 of 10,000). A wildcard
+// custom domain gives its app an unbounded set of hostnames, and every new
+// one is a cache miss: one app's random subdomains used to evict every other
+// tenant's sets from the node's LRU. Past its share, an app's own least
+// recently used set goes first (ADR-091 amendment 2026-11-04, round 11).
+const EdgeRuleCacheAppShareDivisor = 8
+
+// edgeRuleCacheMinAppShare keeps a small cache's share usable: an app may
+// always hold this many sets (or the whole cache, when it is smaller).
+const edgeRuleCacheMinAppShare = 64
+
 // EdgeRuleConsumerCacheCap (ADR-104, issue #881 Phase 3) is the
 // maximum number of per-rule per-consumer buckets the
 // routeConsumerLimiter retains. Sized 10x the per-rule cap because
@@ -442,6 +454,11 @@ type EdgeRuleCache struct {
 	cap  int
 	ll   *list.List               // front = most recently used
 	byID map[string]*list.Element // host → element (element.Value is *HostEntry)
+	// appCap and apps bound one app's share (EdgeRuleCacheAppShareDivisor):
+	// apps[app] lists that app's elements of ll, most recently used first
+	// (element.Value is the *list.Element in ll).
+	appCap int
+	apps   map[string]*list.List
 	// invalidations logs the most recent generations' scopes, oldest first,
 	// so a request's pins are refused only for a change that can reach them
 	// (UnchangedSince), not for another tenant's.
@@ -502,6 +519,10 @@ func (inv edgeRuleInvalidation) covers(key, owner, inheritedApp string) bool {
 // loadHost builds the entry. PR 5 widens with CORS / JWT / IP slots.
 type HostEntry struct {
 	expiresAt time.Time
+	// cacheApp and appEl place the entry in its app's share of the cache.
+	// Cache metadata, like expiresAt.
+	cacheApp string
+	appEl    *list.Element
 	// owner is the account whose rules the set holds (ADR-091 amendment
 	// 2026-10-26), or "" for a set read with every account's rules.
 	// InvalidateAccountHosts drops an owned set only for its own account's
@@ -606,7 +627,8 @@ func NewEdgeRuleCache(capacity int) *EdgeRuleCache {
 	if capacity < 1 {
 		capacity = 1
 	}
-	return &EdgeRuleCache{now: time.Now, cap: capacity, ll: list.New(), byID: map[string]*list.Element{}}
+	return &EdgeRuleCache{now: time.Now, cap: capacity, ll: list.New(), byID: map[string]*list.Element{},
+		appCap: max(capacity/EdgeRuleCacheAppShareDivisor, min(capacity, edgeRuleCacheMinAppShare)), apps: map[string]*list.List{}}
 }
 
 // SetClock replaces the cache's time source. Tests outside this package use
@@ -625,6 +647,27 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 		return nil, false
 	}
 	return cloneHostEntry(entry), true
+}
+
+// PinnableHost returns a current host entry, sealed, for a request to pin,
+// without the copy of every rule kind GetHost makes. Cached entries are never
+// modified after Put and a pin keeps only the entry's sealed snapshot, so a
+// sealed entry is returned as is; the caller must not modify it. An unsealed
+// one (production seals before Put; fixtures may not) is sealed on a private
+// copy. GetHost plus a copy for the seal cost about 4 KB per request.
+func (c *EdgeRuleCache) PinnableHost(host string) (*HostEntry, bool, error) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false, nil
+	}
+	if entry.snapshot != nil {
+		return entry, true, nil
+	}
+	sealed := *entry
+	if err := sealed.SealPolicy(); err != nil {
+		return nil, false, err
+	}
+	return &sealed, true, nil
 }
 
 // HostRules returns a copy of one kind's compiled rules for a current host,
@@ -1109,7 +1152,18 @@ func (c *EdgeRuleCache) getEntry(host string) (*HostEntry, bool) {
 		return nil, false
 	}
 	c.ll.MoveToFront(el)
+	c.touchAppLocked(entry)
 	return entry, true
+}
+
+// touchAppLocked marks entry most recently used within its app's share.
+func (c *EdgeRuleCache) touchAppLocked(entry *HostEntry) {
+	if entry.appEl == nil {
+		return
+	}
+	if apps := c.apps[entry.cacheApp]; apps != nil {
+		apps.MoveToFront(entry.appEl)
+	}
 }
 
 // Put caches a successfully loaded rule set. Nil means no usable result;
@@ -1148,12 +1202,25 @@ func (c *EdgeRuleCache) putLocked(host string, entry *HostEntry) {
 		cached.expiresAt = cached.NotAfter
 	}
 	if el, ok := c.byID[host]; ok {
+		prev := el.Value.(*HostEntry)
+		cached.cacheApp, cached.appEl = prev.cacheApp, prev.appEl
 		el.Value = &cached
 		c.ll.MoveToFront(el)
+		c.touchAppLocked(&cached)
 		return
 	}
 	el := c.ll.PushFront(&cached)
 	c.byID[host] = el
+	cached.cacheApp = edgeRuleCacheKeyApp(host)
+	apps := c.apps[cached.cacheApp]
+	if apps == nil {
+		apps = list.New()
+		c.apps[cached.cacheApp] = apps
+	}
+	cached.appEl = apps.PushFront(el)
+	if apps.Len() > c.appCap {
+		c.removeElement(apps.Back().Value.(*list.Element))
+	}
 	if c.ll.Len() > c.cap {
 		c.evictLRU()
 	}
@@ -1167,6 +1234,7 @@ func (c *EdgeRuleCache) Reset() {
 	c.logInvalidationLocked(edgeRuleInvalidation{all: true})
 	c.ll.Init()
 	c.byID = map[string]*list.Element{}
+	c.apps = map[string]*list.List{}
 }
 
 // invalidateLocked advances the generation, logs inv and drops the sets it
@@ -1303,7 +1371,14 @@ func (c *EdgeRuleCache) evictLRU() {
 
 func (c *EdgeRuleCache) removeElement(el *list.Element) {
 	c.ll.Remove(el)
-	delete(c.byID, el.Value.(*HostEntry).Host)
+	entry := el.Value.(*HostEntry)
+	delete(c.byID, entry.Host)
+	if apps := c.apps[entry.cacheApp]; apps != nil && entry.appEl != nil {
+		apps.Remove(entry.appEl)
+		if apps.Len() == 0 {
+			delete(c.apps, entry.cacheApp)
+		}
+	}
 }
 
 // EdgeRuleMatcher is the narrow contract the gateway handler uses

@@ -50,6 +50,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -203,7 +204,10 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 	// ADR-1741: one statement when the database has the admission functions.
 	reserveNode := reserveNodeAndOwnerStatementsDB
 	if useAdmissionFunctions {
-		reserveNode = reserveNodeDB
+		discount := s.admissionDiscountUsable()
+		reserveNode = func(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramMB int) error {
+			return reserveNodeDB(ctx, tx, nodeID, newState, ramMB, discount)
+		}
 	}
 	if err := reserveNode(ctx, tx, nodeID, newState, ramMB); err != nil {
 		return Instance{}, err
@@ -214,6 +218,13 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 		}
 	}
 
+	if booked := nodeBookedCPUMillicores(ctx, nodeID); booked > 0 {
+		// capture_instance_capacity stores it on the row this transaction
+		// inserts (ADR-20261101160231 step 5b).
+		if _, err := tx.Exec(ctx, `SELECT set_config('faas.instance_booked_cpu_millicores', $1::text, true)`, strconv.Itoa(booked)); err != nil {
+			return Instance{}, fmt.Errorf("state: node reservation: booked CPU (node=%s): %w", nodeID, err)
+		}
+	}
 	inst, err := insert(tx)
 	if err != nil {
 		return Instance{}, mapErr(err)
@@ -283,8 +294,8 @@ func reserveNodeStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState st
 		                    and i.state in ('waking','cold_booting','running','draining','warm')), 0)::bigint,
 		       coalesce((select sum(case
 		                          when i.startup_cpu_boost_until > now() then
-		                            greatest(case when a.cpu_millicores > 0 then a.cpu_millicores else $3 end, $3)
-		                          else case when a.cpu_millicores > 0 then a.cpu_millicores else $3 end
+		                            greatest(coalesce(i.booked_cpu_millicores, case when a.cpu_millicores > 0 then a.cpu_millicores else $3 end), $3)
+		                          else coalesce(i.booked_cpu_millicores, case when a.cpu_millicores > 0 then a.cpu_millicores else $3 end)
 		                        end)
 		                   from instances i
 		                   join apps a on a.id = i.app_id
@@ -306,11 +317,13 @@ func reserveNodeStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState st
 			}
 			usedMB += residentExtra
 			admitMB := int64(ramMB) + int64(api.PerVMOverheadMB)
-			capMB := nodeReservationCapMB(ceilingMB, nodeReservationPercent(ctx, nodeID))
-			if ceilingMB > 0 && usedMB+admitMB > capMB {
+			percent := nodeReservationPercent(ctx, nodeID)
+			capMB := nodeReservationCapMB(ceilingMB, percent)
+			discountMB := reservationDiscountMB(nodeReservationDiscountMB(ctx, nodeID), percent, ceilingMB)
+			if ceilingMB > 0 && usedMB-discountMB+admitMB > capMB {
 				return fmt.Errorf(
-					"state: %w: node=%s used_mb=%d admit_mb=%d ceiling_mb=%d cap_mb=%d",
-					ErrNodeCapacity, nodeID, usedMB, admitMB, ceilingMB, capMB,
+					"state: %w: node=%s used_mb=%d discount_mb=%d admit_mb=%d ceiling_mb=%d cap_mb=%d",
+					ErrNodeCapacity, nodeID, usedMB, discountMB, admitMB, ceilingMB, capMB,
 				)
 			}
 			return nodeComputeRefusal(nodeID, nodeComputeAdmission(ctx, nodeID),
@@ -331,14 +344,15 @@ func reserveNodeStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState st
 // divergence — exactly the MemStore/PgStore drift that the uppercase-state
 // literal bug was made of.
 func (m *MemStore) checkNodeReservationLocked(nodeID, newState string, ramMB int) error {
-	return m.checkNodeReservationWithinLocked(nodeID, newState, ramMB, 100)
+	return m.checkNodeReservationWithinLocked(nodeID, newState, ramMB, 100, 0)
 }
 
 // checkNodeAdmissionReservationLocked is checkNodeReservationLocked with the
 // reservation allowance ctx's placement binding grants (ADR-909 amendment 1)
 // and the vCPU and CPU it books (ADR-20261027220445).
 func (m *MemStore) checkNodeAdmissionReservationLocked(ctx context.Context, nodeID, newState string, ramMB int) error {
-	if err := m.checkNodeReservationWithinLocked(nodeID, newState, ramMB, nodeReservationPercent(ctx, nodeID)); err != nil {
+	if err := m.checkNodeReservationWithinLocked(nodeID, newState, ramMB, nodeReservationPercent(ctx, nodeID),
+		nodeReservationDiscountMB(ctx, nodeID)); err != nil {
 		return err
 	}
 	compute := nodeComputeAdmission(ctx, nodeID)
@@ -362,8 +376,8 @@ func (m *MemStore) checkThawReservationLocked(ctx context.Context, instanceID, n
 	if !ok || ins.NodeID != nodeID {
 		return nil
 	}
-	percent, compute := thawAdmission(ctx, nodeID)
-	if err := m.checkNodeReservationWithinLocked(nodeID, string(StateRunning), ins.RAMMB, percent); err != nil {
+	percent, compute, discountMB := thawAdmission(ctx, nodeID)
+	if err := m.checkNodeReservationWithinLocked(nodeID, string(StateRunning), ins.RAMMB, percent, discountMB); err != nil {
 		return err
 	}
 	node, ok := m.computeNodes[nodeID]
@@ -387,10 +401,7 @@ func (m *MemStore) nodeLiveComputeLocked(nodeID string, now time.Time) (vcpu, cp
 		if !ok {
 			continue
 		}
-		cpu := app.CPUMillicores
-		if cpu <= 0 {
-			cpu = api.DefaultAppCPUMillicores
-		}
+		cpu := m.instanceCPUBookingLocked(ins, app)
 		if ins.StartupCPUBoostUntil != nil && ins.StartupCPUBoostUntil.After(now) && cpu < api.DefaultAppCPUMillicores {
 			cpu = api.DefaultAppCPUMillicores
 		}
@@ -399,7 +410,7 @@ func (m *MemStore) nodeLiveComputeLocked(nodeID string, now time.Time) (vcpu, cp
 	return vcpu, cpuMillicores
 }
 
-func (m *MemStore) checkNodeReservationWithinLocked(nodeID, newState string, ramMB, percent int) error {
+func (m *MemStore) checkNodeReservationWithinLocked(nodeID, newState string, ramMB, percent, discountMB int) error {
 	if !nodeUsageCounts(State(newState)) {
 		return nil
 	}
@@ -423,10 +434,11 @@ func (m *MemStore) checkNodeReservationWithinLocked(nodeID, newState string, ram
 	}
 	admitMB := int64(ramMB) + int64(api.PerVMOverheadMB)
 	capMB := nodeReservationCapMB(int64(node.AdmissionCeilingMB), percent)
-	if usedMB+admitMB > capMB {
+	discount := reservationDiscountMB(discountMB, percent, int64(node.AdmissionCeilingMB))
+	if usedMB-discount+admitMB > capMB {
 		return fmt.Errorf(
-			"state: %w: node=%s used_mb=%d admit_mb=%d ceiling_mb=%d cap_mb=%d",
-			ErrNodeCapacity, nodeID, usedMB, admitMB, node.AdmissionCeilingMB, capMB,
+			"state: %w: node=%s used_mb=%d discount_mb=%d admit_mb=%d ceiling_mb=%d cap_mb=%d",
+			ErrNodeCapacity, nodeID, usedMB, discount, admitMB, node.AdmissionCeilingMB, capMB,
 		)
 	}
 	return nil

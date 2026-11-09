@@ -20,6 +20,15 @@ fc_arch: "x86_64"
 # firecracker-v1.17.0-x86_64.tgz.sha256.txt at
 # https://github.com/firecracker-microvm/firecracker/releases/download/v1.17.0/
 fc_release_sha256: "06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558"
+# ADR-20261108170000: release CI builds the Firecracker VMM that compute nodes
+# run from this exact upstream commit (it must be what fc_release tags) plus
+# deploy/firecracker/patches/<fc_release>/*.patch, and ships it in the signed
+# bundle as `firecracker-vmm` (scripts/build-firecracker.sh). The upstream
+# tarball above still supplies the jailer and the image-seed/dev fallback.
+# Bump fc_release, fc_release_sha256, fc_source_commit and the patch directory
+# together.
+fc_source_repo: "https://github.com/firecracker-microvm/firecracker.git"
+fc_source_commit: "95f868c8e345b1cc8faccd1a3c910b4989dc3f58"
 fc_kernel_version: "6.18.54"
 fc_kernel_tar_url: "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-{{ fc_kernel_version }}.tar.xz"
 # SHA-256 of linux-6.18.54.tar.xz, matching kernel.org's v6.x/sha256sums.asc

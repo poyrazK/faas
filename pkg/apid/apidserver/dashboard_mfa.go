@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -29,8 +28,8 @@ func (s *server) dashboardMFA(w http.ResponseWriter, r *http.Request) {
 		writeDashboardUnauthorized(w, r)
 		return
 	}
-	if pending, _ := authmw.MFAPendingFrom(r); !pending {
-		http.Redirect(w, r, "/dashboard/", http.StatusFound)
+	if !s.sessionMFAPending(acct) {
+		http.Redirect(w, r, dashboardMFANext(r.URL.Query().Get("next")), http.StatusFound)
 		return
 	}
 	s.renderDashboardMFA(w, r, acct, http.StatusOK, "", dashboardMFANext(r.URL.Query().Get("next")))
@@ -43,10 +42,6 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !requireEnrolledMFA(w, acct) {
-		return
-	}
-	if pending, _ := authmw.MFAPendingFrom(r); !pending {
-		http.Redirect(w, r, "/dashboard/", http.StatusSeeOther)
 		return
 	}
 	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardMFAAction, acct.ID, dashboardMFACSRFCookie); err != nil {
@@ -74,10 +69,14 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.totp.reset(acct.ID)
+	remember := r.PostFormValue("remember") == "1" && s.sessionMFAChallengePending(r, acct)
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("dashboard.mfa.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
 		return
+	}
+	if remember {
+		s.rememberBrowser(w, r, acct)
 	}
 	s.audit.Emit(r.Context(), "account.mfa_session_stepped_up", &acct.ID, map[string]any{"via": "dashboard"})
 	s.audit.Emit(r.Context(), "auth.step_up_verified", &acct.ID, map[string]any{
@@ -107,7 +106,8 @@ func (s *server) renderDashboardMFA(w http.ResponseWriter, r *http.Request, acct
 		Title:   "Two-factor authentication",
 		Account: acctViewFrom(acct),
 		Body:    "mfa",
-		Data:    dashboard.MFAChallengeData{CSRFToken: token, Failed: failure != "", Reused: failure == totpCodeReplayed, Enrolled: acct.MFAEnrolled(), Next: next},
+		Data: dashboard.MFAChallengeData{CSRFToken: token, Failed: failure != "", Reused: failure == totpCodeReplayed, Enrolled: acct.MFAEnrolled(), Next: next,
+			OfferRemember: s.canRememberBrowser(acct) && s.sessionMFAChallengePending(r, acct)},
 	}
 	// Render sets these too, but only before the first write; a non-200
 	// status has to be written first.

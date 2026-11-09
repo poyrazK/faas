@@ -21,8 +21,11 @@ import (
 // (ADR-20261030133644). With --socket it is the operator's view of a
 // bridge's grants through its local admin socket.
 func cmdMCPConnections(args []string) int {
+	if len(args) > 0 && args[0] == "activity" {
+		return cmdMCPConnectionActivity(args[1:])
+	}
 	if len(args) == 0 || (args[0] != "list" && args[0] != "revoke") {
-		return printErr("MCP connections", errors.New("use connection list, or connection revoke <id> | --all"))
+		return printErr("MCP connections", errors.New("use connection list, connection activity <id> | --self, or connection revoke <id> | --all"))
 	}
 	fs := newFlagSet("mcp-connections-"+args[0], flag.ContinueOnError)
 	socket := fs.String("socket", "", "owner-protected management control socket (operators)")
@@ -125,7 +128,7 @@ func printAgentConnections(items []api.AgentConnectionResponse) {
 		_, _ = fmt.Fprintln(osStdout, "No agents are connected to this account.")
 		return
 	}
-	_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %-20s  %-24s  %s\n", "ID", "KIND", "AGENT", "LAST USED", "EXPIRES", "MEMBER", "PROJECTS")
+	_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %-20s  %-24s  %-24s  %s\n", "ID", "KIND", "AGENT", "LAST USED", "EXPIRES", "MEMBER", "PROJECTS", "APPROVALS")
 	for _, c := range items {
 		kind, agent := "agent key", c.Label
 		if c.Kind == api.AgentConnectionHostedMCP {
@@ -138,7 +141,11 @@ func printAgentConnections(items []api.AgentConnectionResponse) {
 		if len(c.Projects) > 0 {
 			projects = strings.Join(c.Projects, ",")
 		}
-		_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %-20s  %-24s  %s\n", c.ID, kind, dashIfEmpty(agent), dashIfEmpty(c.LastUsedAt), dashIfEmpty(c.ExpiresAt), dashIfEmpty(c.Member), projects)
+		approvals := "none"
+		if len(c.Approvals) > 0 {
+			approvals = strings.Join(c.Approvals, ",")
+		}
+		_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %-20s  %-24s  %-24s  %s\n", c.ID, kind, dashIfEmpty(agent), dashIfEmpty(c.LastUsedAt), dashIfEmpty(c.ExpiresAt), dashIfEmpty(c.Member), projects, approvals)
 	}
 }
 

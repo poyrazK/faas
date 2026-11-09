@@ -61,4 +61,8 @@ type Service struct {
 
 	// Metrics counts convergence skips and failures; nil records nothing.
 	Metrics *Metrics
+
+	// SealHeaderValue seals a secret request header value to the edge seal
+	// domain (ADR-20261108110000); nil refuses secret header values.
+	SealHeaderValue func(plaintext string) ([]byte, error)
 }

@@ -309,6 +309,11 @@ func interpolateComposeCandidate(candidate *composeCandidate, values map[string]
 		return err
 	}
 	candidate.PreviewServiceCallsPolicy = previewPolicy
+	appProtocol, err := interpolateComposeString(candidate.AppProtocol, values, source, service, "x-gregale-app-protocol")
+	if err != nil {
+		return err
+	}
+	candidate.AppProtocol = appProtocol
 	if candidate.AllowedServiceCallers != nil {
 		for i, caller := range *candidate.AllowedServiceCallers {
 			resolved, err := interpolateComposeString(caller, values, source, service, "x-gregale-allow-callers")

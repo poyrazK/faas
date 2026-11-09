@@ -99,6 +99,12 @@ func (s *server) postObsAccountRevokeSessions(w http.ResponseWriter, r *http.Req
 	s.postObsAccountMutation(w, r, acct, "revoke-sessions")
 }
 
+// postObsAccountResetMFA clears a customer's two-factor authentication for
+// the lost-authenticator-and-mailbox runbook (ADR 20261108160000).
+func (s *server) postObsAccountResetMFA(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.postObsAccountMutation(w, r, acct, "reset-mfa")
+}
+
 func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, acct state.Account, action string) {
 	if allowed, prob := s.adminAllows(acct); !allowed {
 		api.WriteProblem(w, prob)
@@ -140,6 +146,9 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 			// operator action revoke every active session for the target.
 			revokedSessions, err = s.store.RevokeAllSessions(r.Context(), targetID, uuid.Nil.String())
 		}
+		if err == nil {
+			s.forgetTrustedBrowsers(r.Context(), targetID, "operator_suspend")
+		}
 	case "restore":
 		err = s.store.UpdateAccountStatus(r.Context(), targetID, state.AccountActive)
 		if err == nil {
@@ -147,6 +156,15 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 		}
 	case "revoke-sessions":
 		revokedSessions, err = s.store.RevokeAllSessions(r.Context(), targetID, uuid.Nil.String())
+		if err == nil {
+			s.forgetTrustedBrowsers(r.Context(), targetID, "operator_revoke")
+		}
+	case "reset-mfa":
+		if problem := s.operatorMFAResetRefusal(r.Context(), targetID); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		revokedSessions, err = s.operatorResetMFA(r.Context(), targetID)
 	default:
 		err = fmt.Errorf("unsupported account action %q", action)
 	}

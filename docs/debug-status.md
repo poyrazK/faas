@@ -59,6 +59,21 @@ replaced and the next request starts a new one. A deployment that is still
 starting or rolling out fails instead (`app_runtime_oom`), and your previous
 release keeps serving.
 
+Where Gregale has released memory warnings to your account, the status also
+shows when your app ran short of memory in the last day, before any kill, and
+the RAM that would have kept 30% of it free, rounded up to 64 MB:
+
+```
+Memory pressure   available fell to 40 of 480 MB (8%), 3 episodes in the last day, newest 2026-11-05 10:00 UTC
+
+Memory:
+  Raise ram_mb from 512 MB: about 704 MB would have kept 30% free, and the pro plan allows up to 1024 MB.
+```
+
+When the suggestion is more than your plan allows, the line names the
+smallest plan that allows it. `gregale app health` gives the same suggestion
+in its `memory` check, and `--json` returns it as `memory_pressure`.
+
 ## Why was my release rolled back, or why is it waiting?
 
 ```sh

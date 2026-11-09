@@ -187,6 +187,19 @@ type ObjectMultipartTransferStore interface {
 	RejectObjectMultipartCompletion(context.Context, string, string, string) error
 }
 
+// ObjectMultipartAbandonedPartSettler resolves part attempts whose client
+// gave up mid-transfer. Such an attempt stays dispatched and unsettled, and
+// an uncertain attempt blocks the upload's abort, so the abort retried
+// forever (11-04 prod test). Once the attempt's transfer window has passed it
+// can no longer land; after the caller verified that the native upload is
+// aborted with no parts, the attempt provably wrote nothing and settles.
+// Only attempts whose grant still holds their transfer token and whose
+// unsafe window has ended are settled, and only on an aborting upload under
+// the caller's lease. It returns how many attempts it settled.
+type ObjectMultipartAbandonedPartSettler interface {
+	SettleAbandonedObjectMultipartPartWriters(ctx context.Context, id, token string) (int, error)
+}
+
 type multipartPartTransfer struct {
 	copySource  ObjectMultipartCopySource
 	token       string

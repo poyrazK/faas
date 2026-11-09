@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
@@ -154,12 +155,16 @@ type Loop struct {
 	ownedAppsMu  sync.Mutex
 	ownedApps    map[string]struct{}
 	primeMetrics *snapshotPrimeMetrics
-	cronMetrics  *commandCronMetrics
+	// primeRecoveryOffset is owned by the coalesced fleet recovery work item.
+	// It lets bounded sweeps progress beyond persistent older blocked rows.
+	primeRecoveryOffset int
+	cronMetrics         *commandCronMetrics
 	// cronResume asks the main loop to continue a cron sweep that used its
 	// slice; cronSweepTried holds the crons the minute's sweep already
-	// dispatched (runCronSweep).
+	// dispatched (runCronSweep) and cronSweepMinute the minute it belongs to.
 	cronResume            chan struct{}
 	cronSweepTried        map[string]struct{}
+	cronSweepMinute       time.Time
 	cronSweepSlice        time.Duration
 	audit                 *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
 	watchdog              *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
@@ -176,6 +181,7 @@ type Loop struct {
 	adoptionReports       *DeadNodeReconciler                     // vmmd restart adoption reports (adoption ADR §3); nil opts out
 	instStats             InstanceStatsPoller                     // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
 	instanceActivity      InstanceActivityReader                  // fresh per-instance request activity used by scale-in; nil opts out
+	idleLadderMetrics     *IdleLadderIdleOutMetrics               // ADR-20261107122928 idle-out series; nil records nothing
 	scaleup               *scaleup.Trigger                        // issue #169 / #172 reactive scale-up trigger; nil opts out
 	scaleupMu             sync.Mutex                              // serializes asynchronous scale-up ticks
 	scaleupRunning        bool                                    // true while one scale-up tick is in flight
@@ -547,6 +553,9 @@ type InstanceActivity struct {
 	LastRequest time.Time
 	// ResidentMB is the instance's cgroup memory; 0 when unmeasured.
 	ResidentMB int
+	// IdleLadderLevel is the idle ladder level vmmd reports
+	// (ADR-20261107122928); 0 is running.
+	IdleLadderLevel int
 }
 
 // InstanceActivityReader is the narrow reaper-facing view of VMMD activity.
@@ -1354,13 +1363,13 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-reaperT.C:
 			l.dispatchReaper(ctx)
 		case <-cronTicks:
-			l.runCronTick(ctx)
+			l.submitWork(workCronSweep, "sweep", func() { l.runCronTick(ctx) })
 		case <-l.cronResume:
-			l.runCronSweep(ctx)
+			l.submitWork(workCronSweep, "sweep", func() { l.runCronSweep(ctx) })
 		case <-watchdogTick(watchdogT):
 			l.dispatchWatchdog(ctx)
 		case <-heartbeatTick(heartbeatT):
-			l.runHeartbeat(ctx)
+			l.submitWork(workHeartbeat, "tick", func() { l.runHeartbeat(ctx) })
 		case <-diskDriftTick(diskDriftT):
 			l.runDiskDrift(ctx)
 		case <-instStatsTick(instStatsT):
@@ -1376,7 +1385,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-prewarmTick(prewarmT):
 			l.submitWork(workPrewarm, "tick", func() { l.runPrewarm(ctx) })
 		case <-recentLoadTick(recentLoadT):
-			l.runRecentLoad(ctx)
+			l.submitWork(workRecentLoad, "tick", func() { l.runRecentLoad(ctx) })
 		case <-migratingWatchdogTick(migratingWatchdogT):
 			l.runMigratingReconcile(ctx)
 		case <-deadNodeTick(deadNodeReconcilerT):
@@ -1427,8 +1436,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			// the notify arm — drainPendingOperatorIntents is the
 			// single owner of the claim + dispatch loop. 30s
 			// cadence (vs fire-now's 60s) matches the operator-
-			// action SLA.
-			l.drainPendingOperatorIntents(ctx)
+			// action SLA. The drain runs off the loop (ADR 20261104091530).
+			l.dispatchOperatorIntents(ctx)
 		case <-profileCaptureT.C:
 			// ADR-1155 safety sweep: expiry plus queued rows whose
 			// NotifyProfileCapture was lost.
@@ -2172,7 +2181,7 @@ func (l *Loop) runRecentLoad(ctx context.Context) {
 // takes a per-app lock (Engine.Prime → lockApp), so concurrent primes
 // for one app serialize anyway; this bounds the fan-out across apps and
 // keeps goroutine growth from a notify burst bounded.
-const maxConcurrentPrimes = 4
+const maxConcurrentPrimes = api.SnapshotPrimeConcurrentSlots
 
 const maxSnapshotPrimeAttempts = 2
 
@@ -2255,7 +2264,11 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 		for attempt := 1; attempt <= maxSnapshotPrimeAttempts; attempt++ {
 			attempts = attempt
 			err = l.engine.Prime(ctx, appID, deploymentID)
-			if err == nil {
+			if err == nil || errors.Is(err, state.ErrSnapshotPrimeStale) {
+				return
+			}
+			if errors.Is(err, errPrimeActivationPending) {
+				l.log.Warn("sched: prime activation handoff pending; recovery will retry", "app", appID, "deployment", deploymentID, "err", err)
 				return
 			}
 			if attempt == maxSnapshotPrimeAttempts || !retryableSnapshotPrimeError(err) || ctx.Err() != nil {
@@ -2370,6 +2383,9 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 	var p struct {
 		AppID  string `json:"app_id"`
 		WakeID string `json:"wake_id"`
+		// InstanceID names the frozen VM apid expects this wake to resume
+		// (#6639). It is a thaw preference only, like a session hint.
+		InstanceID string `json:"instance_id"`
 	}
 	if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
 		return fmt.Errorf("sched: decode app_wake payload: %w", err)
@@ -2378,6 +2394,7 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 		return errors.New("sched: app_wake payload requires app_id and wake_id")
 	}
 	wakeCtx := withRequestedWakeID(context.WithoutCancel(ctx), p.WakeID)
+	wakeCtx = WithPreferredInstance(wakeCtx, p.InstanceID)
 	if handled, err := l.engine.WakeWorkerApp(wakeCtx, p.AppID); handled {
 		if err != nil {
 			return fmt.Errorf("sched: explicit app wake %s: %w", p.WakeID, err)
@@ -2391,6 +2408,7 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 	}
 	if out.Instance != nil {
 		l.log.Info("sched: explicit app wake completed", "app", p.AppID, "wake_id", out.Instance.WakeID, "instance", out.Instance.InstanceID)
+		l.engine.noteWakeServedByInstance(wakeCtx, p.AppID, p.WakeID, out.Instance)
 	}
 	return nil
 }
@@ -2619,7 +2637,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// dispatch regardless of which intent_id the notify
 		// carried. Same defense-in-depth pattern as
 		// NotifyCronRunNow's handler arm above.
-		l.drainPendingOperatorIntents(ctx)
+		l.dispatchOperatorIntents(ctx)
 	case db.NotifyProfileCapture:
 		l.drainProfileCaptures(ctx)
 	case db.NotifyEventPublished:
@@ -2841,8 +2859,11 @@ func (l *Loop) runReaper(ctx context.Context) {
 	liveByApp := l.reaperLiveInstances(ctx, store, apps)
 	for _, a := range apps {
 		plan := api.Plan("")
+		ladderHold := false
 		if acct, err := accounts.forApp(ctx, a); err == nil {
 			plan = acct.Plan
+			// The subject meterd's quiet pause release decides with.
+			ladderHold = l.engine.idleLadderReleased(platformflags.Subject{AccountID: a.AccountID, Plan: string(acct.Plan), OrgID: a.OrgID})
 		}
 		instances := liveByApp[a.ID]
 		if liveByApp == nil {
@@ -2864,8 +2885,10 @@ func (l *Loop) runReaper(ctx context.Context) {
 			}
 			lastRequest := ins.LastRequestAt
 			var inflightRequests int64
+			ladderLevel := 0
 			if activity, ok := activityByInstance[ins.ID]; ok {
 				inflightRequests = activity.Inflight
+				ladderLevel = activity.IdleLadderLevel
 				if activity.LastRequest.After(lastRequest) {
 					lastRequest = activity.LastRequest
 				}
@@ -2910,7 +2933,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				AppType:      string(a.Type),
 				NodeID:       ins.NodeID,
 				// Filled with the pinned environment policy below.
-				MinInstances:           a.EffectiveMinInstances(),
+				MinInstances:           planCappedFloor(plan, a.EffectiveMinInstances()),
 				WarmPoolSize:           a.WarmPoolSize,
 				ConfiguredMinInstances: a.EffectiveMinInstances(),
 				PrewarmMinInstances:    appPrewarmFloor[a.ID],
@@ -2947,7 +2970,9 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// 'normal' so this is a no-op for every existing
 				// customer until a mirror goroutine wakes a
 				// mode='mirror' VM via Engine.AdmitInstance.
-				Mode: ins.Mode,
+				Mode:            ins.Mode,
+				IdleLadderLevel: ladderLevel,
+				IdleLadderHold:  ladderHold,
 			})
 		}
 	}
@@ -2991,15 +3016,21 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// ADR-20261021215353: quiet between_requests instances freeze before
 	// their idle timeout; ReapIdle only selects instances past it.
 	l.earlyFreezeFromReaper(ctx, snapshot, now, func(id string) int { return activityByInstance[id].ResidentMB })
+	l.observeIdleLadderHeld(snapshot, now)
 	for _, id := range ReapIdle(now, snapshot, l.ops, cooldownHeldByApp) {
 		// ADR-1151: an eligible instance freezes in place instead of
-		// parking; anything else parks as before.
-		if !l.freezeFromReaper(ctx, id, activityByInstance[id].ResidentMB) {
+		// parking; anything else parks as before. An instance the idle
+		// ladder held reached L5 and parks (ADR-20261107122928).
+		ladderHeld := instanceInfoByID[id].idleLadderHeld()
+		if ladderHeld || !l.freezeFromReaper(ctx, id, activityByInstance[id].ResidentMB) {
 			if err := l.reaperShutdown(ctx, instanceInfoByID, id, false); err != nil {
 				if !errors.Is(err, ErrParkActivity) {
 					l.log.Warn("reaper: idle park", "instance", id, "err", err)
 				}
 				continue
+			}
+			if ladderHeld {
+				l.observeIdleLadderPark()
 			}
 		}
 		if instance, ok := instanceInfoByID[id]; ok {
@@ -4578,6 +4609,19 @@ func (l *Loop) stopPriorScheduledRuns(ctx context.Context, job state.Job) error 
 	return nil
 }
 
+// dispatchOperatorIntents drains operator intents on the work pool: a force
+// park waits up to 90 s on vmmd and a restart up to 20 s, which held the
+// select loop (ADR 20261104091530).
+func (l *Loop) dispatchOperatorIntents(ctx context.Context) {
+	l.submitWork(workOperatorIntents, "drain", func() { l.drainPendingOperatorIntents(ctx) })
+}
+
+// EnforcementDispatch runs one of the stats tick's per-instance actions on
+// the work pool (ADR 20261104143005). Wire it to the instance-stats poller.
+func (l *Loop) EnforcementDispatch(key string, fn func()) {
+	l.submitWork(workInstanceEnforcement, key, fn)
+}
+
 // runJobsReaperTick is one iteration of the stuck-job reaper.
 // Same gate + warn-and-continue contract as runJobsDispatchTick.
 func (l *Loop) runJobsReaperTick(ctx context.Context) {
@@ -4708,11 +4752,11 @@ func (l *Loop) runWorkflowRetention(ctx context.Context) bool {
 	return more
 }
 
-// cronSweepSlice bounds one pass of the cron sweep, which runs on schedd's
-// main loop. A minute with more due crons than one pass dispatches continues
-// in further passes, so heartbeats, notifications and the reaper run in
-// between: one long sweep held them all, and past the 90 s heartbeat
-// staleness the node would be taken for dead.
+// cronSweepSlice bounds one pass of the cron sweep. A minute with more due
+// crons than one pass dispatches continues in further passes. The passes
+// once ran on schedd's main loop and the slice was what let heartbeats,
+// notifications and the reaper in between; they now run on the work pool
+// (cron_sweep, ADR 20261104091530), so a pass no longer holds the loop.
 const cronSweepSlice = 10 * time.Second
 
 // runCronTick starts the minute's cron sweep.
@@ -4751,8 +4795,13 @@ func (l *Loop) resumeCronSweep() {
 // for one slice, and asks for another pass when the slice runs out. A cron
 // whose dispatch failed is tried again on the next minute, as before.
 func (l *Loop) runCronSweep(ctx context.Context) {
-	if l.cronSweepTried == nil {
+	// The tried set belongs to one minute. A tick and a resume share one
+	// coalesced work slot (cron_sweep) where the latest submit wins, so a
+	// resume can replace the minute's tick; the pass then starts the new
+	// minute itself instead of skipping crons tried the minute before.
+	if minute := l.now().Truncate(time.Minute); l.cronSweepTried == nil || !minute.Equal(l.cronSweepMinute) {
 		l.cronSweepTried = map[string]struct{}{}
+		l.cronSweepMinute = minute
 	}
 	slice := l.cronSweepSlice
 	if slice <= 0 {

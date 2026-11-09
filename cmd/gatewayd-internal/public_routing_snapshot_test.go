@@ -70,6 +70,15 @@ func newPublicRoutingPGFixture(t *testing.T) publicRoutingPGFixture {
 	return publicRoutingPGFixture{t: t, pool: pool, store: store, app: app, project: project}
 }
 
+func (f publicRoutingPGFixture) environment(t *testing.T, slug string) state.ProjectEnvironment {
+	t.Helper()
+	environment, err := f.store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: f.app.AccountID, ProjectID: f.project.ID, Slug: slug})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return environment
+}
+
 func (f publicRoutingPGFixture) deployment(t *testing.T, scope, digest string) state.Deployment {
 	t.Helper()
 	deployment, err := f.store.CreateDeployment(t.Context(), state.Deployment{AppID: f.app.ID, Kind: state.DeploymentKindImage,
@@ -146,6 +155,7 @@ func TestPublicRoutingSnapshotPostgresRetainsOneViewAcrossCutover(t *testing.T) 
 	if err != nil || fresh.ReleaseVerdict != "allowed" || fresh.ReleaseDeploymentID != next.ID {
 		t.Fatalf("active graph: %+v %v", fresh, err)
 	}
+	f.environment(t, "staging")
 	stage := f.deployment(t, "staging", "sha256:staging")
 	for _, tc := range []struct {
 		name, deployment, scope string
@@ -308,6 +318,7 @@ func TestPublicRoutingSnapshotPostgresAdmitsHostingSmokeCandidate(t *testing.T) 
 		}
 		return deployment
 	}
+	f.environment(t, "staging")
 	production, staging := candidate("production", "sha256:candidate"), candidate("staging", "sha256:staging")
 	failed, deleted := candidate("production", "sha256:failed"), candidate("production", "sha256:deleted")
 	if _, err := f.pool.Exec(t.Context(), `UPDATE deployments SET status='failed' WHERE id=$1`, failed.ID); err != nil {

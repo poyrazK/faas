@@ -63,6 +63,23 @@ make -C "$repo_root" \
   BINDIR="$work_root/$git_sha/bin" \
   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 VERSION="$git_sha" build-release-batch
 
+# Every runtime base embeds guest-init as PID 1, and ADR-510 refuses to restore
+# a snapshot onto a base whose bytes changed, so a guest-init that is rebuilt
+# with different bytes but runs the same code retires every snapshot for
+# nothing. When the previous signed release's guest-init runs the same code as
+# the one just built, ship its bytes instead (ADR-20261105150000). Only the
+# release workflow asks for this: it needs gh, cosign and the release history.
+if [[ "${REUSE_GUEST_INIT:-}" == "true" ]]; then
+  if "$repo_root/scripts/reuse-release-guest-init.sh" \
+    --init "$work_root/$git_sha/bin/init" \
+    --git-sha "$git_sha"; then
+    :
+  else
+    status=$?
+    [[ "$status" == 3 ]] || exit "$status"
+  fi
+fi
+
 # Validate with the exact gregalectl binary that will be signed into the
 # release. The tag workflow used to invoke `go run ./cmd/gregalectl` before
 # this build, compiling and linking the same large command graph twice on a
@@ -84,6 +101,18 @@ if [[ -n "${KERNEL_FILE:-}" ]]; then
   # canonical bin tree so releaseinstall hashes it into tool_hashes and the
   # signed tarball carries the exact kernel every compute node will use.
   install -m 0644 "$KERNEL_FILE" "$work_root/$git_sha/bin/vmlinux"
+fi
+
+# ADR-20261108170000: the patched Firecracker VMM (host-owned virtio-net
+# header) is built once by release CI and shipped as a support artifact.
+# The node_join playbook installs it under the upstream basename; the distinct
+# name here keeps it from shadowing `firecracker` on vmmd's PATH.
+if [[ -n "${FIRECRACKER_FILE:-}" ]]; then
+  [[ -f "$FIRECRACKER_FILE" && -r "$FIRECRACKER_FILE" ]] || {
+    echo "FIRECRACKER_FILE is missing or unreadable: $FIRECRACKER_FILE" >&2
+    exit 2
+  }
+  install -m 0755 "$FIRECRACKER_FILE" "$work_root/$git_sha/bin/firecracker-vmm"
 fi
 
 # imaged verifies platform base provenance offline against the Sigstore root

@@ -106,6 +106,10 @@ type signalAdapter struct {
 	*fcvm.Manager
 }
 
+// vmmd checks snapshot keys against the instance's deployment through this
+// lookup; a wrapper that hid it would turn the check off (bug hunt H95).
+var _ vmmdgrpc.InstanceDeploymentLookup = signalAdapter{}
+
 func (a signalAdapter) SignalAndKill(ctx context.Context, instance string, signal int32, graceSeconds int32) (bool, int32, error) {
 	return a.Manager.SignalAndKill(ctx, instance, syscall.Signal(signal), time.Duration(graceSeconds)*time.Second)
 }
@@ -413,7 +417,13 @@ func defaultDeps() runDeps {
 		scheddTarget:        envOr("FAAS_VMMD_SCHEDD_TARGET", "unix:///run/faas/schedd.sock"),
 		capacityInterval:    durationPtr(CapacityInterval),
 		prepareJailHelper: func(jailer *fcvm.JailerVMM) error {
-			return jailer.PrepareJailHelper()
+			if err := jailer.PrepareJailHelper(); err != nil {
+				return err
+			}
+			// Best effort: a launch stages on demand and falls back to the
+			// installed jailer and firecracker (ADR-20261105100000).
+			jailer.PrepareResidentBinaries()
+			return nil
 		},
 		// residentFn left nil; runWithDeps fills it with
 		// leakcheck.ResidentBytes once the resolver runs.
@@ -1052,6 +1062,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.NativeRuntimeCapture {
 		jailer.WithNativeRuntimeCapture()
 	}
+	if cfg.NativeQualificationCapture {
+		// ADR 20261023093000: LoadConfig already required native recovery
+		// and both private roots.
+		jailer.WithEnvironmentQualificationCapture()
+	}
 	// Adoption ADR §2: only guests whose console is a file survive a vmmd
 	// restart in an adoptable state (V-A3). Records imply file consoles.
 	if cfg.AdoptionRecord && !cfg.NativeProcessRecovery {
@@ -1371,6 +1386,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// cpustats.NewWithDefaults() and skip the sample loop
 	// entirely via runCPUSampleInterval=0.
 	cpuCache := cpustats.NewWithDefaults()
+	// Netstats cache: per-instance byte-counter over root-side
+	// vethHost rx/tx_bytes, fed by runNetworkEgressPoll below and
+	// consumed by vmmdgrpc.Server.Stats as the net_tx_bytes wire field
+	// (ADR-046 step 7) and by the idle ladder's activity guard
+	// (ADR-20261107122928). nil-safe so tests can pass nil to
+	// vmmdgrpc.NewWithCPUAndNet and skip the sample loop entirely.
+	netCache := netstats.NewWithDefaults()
 	// ADR-20261027090012: pause an eligible agent run VM while it waits on
 	// the model. It shares ADR-1151's pause pass below.
 	if cfg.AgentWaitPause {
@@ -1403,6 +1425,37 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.QuietPause || cfg.QuietPauseObserve || cfg.AgentWaitPause {
 		go mgr.RunQuietPause(ctx)
 	}
+	// ADR-20261107122928 idle ladder. Observe measures the level each
+	// request-serving instance's idle time reaches and pauses nothing; on
+	// also quiet-pauses at the ladder's 1 s and reports instances quiet for
+	// 10 s at L2, whose memory measured admission charges with the frozen
+	// floor. LoadConfig
+	// refuses on without quiet pause.
+	if cfg.IdleLadder != idleLadderOff {
+		on := cfg.IdleLadder == idleLadderOn
+		mgr.WithIdleLadder(fcvm.IdleLadderConfig{
+			Activity: activityTracker,
+			Metrics:  fcvm.NewIdleLadderMetrics(ops.Registry()),
+			On:       on,
+			Apps:     cfg.IdleLadderApps,
+			// The activity guard (ADR §6) watches apps quiet pause does not
+			// pause: their VM CPU and veth bytes.
+			CPU: agentWaitCPU{cache: cpuCache},
+			Net: idleLadderNet{cache: netCache},
+			// L3/L4: compress quiet-paused VMs' cold pages (LoadConfig
+			// refuses it without on).
+			Compress:        cfg.IdleLadderCompress,
+			CompressMetrics: fcvm.NewIdleCompressMetrics(ops.Registry()),
+		})
+		go mgr.RunIdleLadderObserve(ctx)
+		go mgr.RunIdleLadderCompress(ctx)
+		if on {
+			log.Info("idle ladder on (ADR-20261107122928): quiet pause at 1 s, L2 reported at 10 s quiet",
+				"guarded_app_pause", cfg.IdleLadderApps, "cold_compression", cfg.IdleLadderCompress)
+		} else {
+			log.Info("idle ladder observe mode enabled (ADR-20261107122928): measuring ladder levels, pausing nothing")
+		}
+	}
 	// ADR-1151 frozen tier: nothing is frozen until schedd calls
 	// FreezeInstance. The activity tracker lets a freeze refuse an instance
 	// that is serving a request.
@@ -1434,8 +1487,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("vmmd: runtime bases routed to their generation keys", "bases", routedBases)
 	mgr.WithBaseGenerations(baseGenerations)
 	// ADR-510: identify the kernel and cached bases in the background so the
-	// first restore after this start does not hash a base in its wake path.
-	go mgr.PrimeBackingDigests(ctx)
+	// first restore after this start does not hash a base in its wake path,
+	// and keep following them: a release pre-stage replaces bases while this
+	// process still serves wakes (amendment 2).
+	go mgr.RunBackingDigestPrimer(ctx, fcvm.BackingDigestPrimeInterval)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// (pkg/events.Platform) on the VMM. vmmd is the canonical emit
 	// site for wake.readiness_200 (the first 2xx probe) and a
@@ -1627,11 +1682,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if recv != nil {
 		if readinessStore, ok := store.(state.EnvironmentQualificationFrameworkReadyReceiptStore); ok {
-			recv.WithQualificationFrameworkReadyRecorder(func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
+			record := func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
 				runtimeName string, warmupMS int64) error {
 				_, err := readinessStore.RecordEnvironmentQualificationFrameworkReadyReceipt(recordCtx, frame, runtimeName, warmupMS)
 				return err
-			})
+			}
+			recv.WithQualificationFrameworkReadyRecorder(record)
+			// A native qualification restore reads the restored runner's
+			// stored framework-ready state itself (ADR 20261023093000).
+			mgr.WithQualificationFrameworkReadyRecorder(record)
 		}
 		// Workstream B: the guest metadata event proxy sends only the
 		// caller-authored JSON over the instance-bound vsock stream. Resolve
@@ -1948,13 +2007,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Finding 5).
 	// cpuCache (created before quiet pause below) feeds
 	// vmmdgrpc.Server.Stats.
-	// Netstats cache: per-instance byte-counter over root-side
-	// vethHost.rx_bytes, fed by runNetworkEgressPoll below and
-	// consumed by vmmdgrpc.Server.Stats as the net_tx_bytes
-	// wire field. ADR-046 (step 7). nil-safe so tests can pass
-	// nil to vmmdgrpc.NewWithCPUAndNet and skip the sample
-	// loop entirely.
-	netCache := netstats.NewWithDefaults()
+	// netCache (created with cpuCache above) feeds
+	// vmmdgrpc.Server.Stats as the net_tx_bytes wire field.
 	gsrv := grpc.NewServer(append(append(
 		wire.ServerCredsOrEmpty(serverTLS),
 		wire.TraceServerOptions()...),

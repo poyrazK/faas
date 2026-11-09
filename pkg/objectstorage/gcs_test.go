@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	"google.golang.org/api/googleapi"
 )
 
 type fakeGCSStore struct {
@@ -81,8 +82,17 @@ func (s *fakeGCSStore) ObjectState(context.Context, string, string) (gcsObjectSt
 	return s.object, nil
 }
 
-func (s *fakeGCSStore) UpdateObjectMetadata(_ context.Context, _, _ string, metadata map[string]string) (gcsObjectState, error) {
-	s.object.Metadata = metadata
+func (s *fakeGCSStore) UpdateObjectMetadata(_ context.Context, _, _ string, generation, metageneration int64, metadata map[string]string) (gcsObjectState, error) {
+	if s.object.Version != generation || s.object.MetaVersion != metageneration {
+		return gcsObjectState{}, &googleapi.Error{Code: http.StatusPreconditionFailed}
+	}
+	if s.object.Metadata == nil {
+		s.object.Metadata = map[string]string{}
+	}
+	for key, value := range metadata {
+		s.object.Metadata[key] = value
+	}
+	s.object.MetaVersion++
 	return s.object, nil
 }
 
@@ -280,7 +290,7 @@ func TestGCSPresignMetadataAndTagCapability(t *testing.T) {
 }
 
 func TestGCSTagsUseReservedMetadata(t *testing.T) {
-	store := &fakeGCSStore{object: gcsObjectState{Key: "file.txt", Metadata: map[string]string{"owner": "platform"}}}
+	store := &fakeGCSStore{object: gcsObjectState{Key: "file.txt", Version: 1, MetaVersion: 1, Metadata: map[string]string{"owner": "platform"}}}
 	p := testGCS(gcsDefaultEndpoint, store)
 	tagger := ObjectTagger(p)
 	if err := tagger.PutObjectTags(context.Background(), "gregale-test", "file.txt", map[string]string{"env": "prod"}); err != nil {
@@ -325,7 +335,7 @@ func TestGCSMultipartOAuthProtocolAndCompletionRecovery(t *testing.T) {
 			if r.URL.Query().Get("part-number-marker") != "1" || r.URL.Query().Get("max-parts") != "2" {
 				t.Errorf("bad part listing: %s", r.URL.RequestURI())
 			}
-			_, _ = io.WriteString(w, `<ListPartsResult><IsTruncated>true</IsTruncated><NextPartNumberMarker>3</NextPartNumberMarker><Part><PartNumber>2</PartNumber><ETag>&quot;etag-2&quot;</ETag><Size>10</Size><LastModified>2026-09-07T00:00:00Z</LastModified></Part></ListPartsResult>`)
+			_, _ = io.WriteString(w, `<ListPartsResult><IsTruncated>true</IsTruncated><NextPartNumberMarker>2</NextPartNumberMarker><Part><PartNumber>2</PartNumber><ETag>&quot;etag-2&quot;</ETag><Size>10</Size><LastModified>2026-09-07T00:00:00Z</LastModified></Part></ListPartsResult>`)
 		case r.Method == http.MethodPost && r.URL.Query().Get("uploadId") == "provider-id":
 			completeCalls++
 			body, _ := io.ReadAll(r.Body)
@@ -361,7 +371,7 @@ func TestGCSMultipartOAuthProtocolAndCompletionRecovery(t *testing.T) {
 		t.Fatal("multipart initiation was not recoverable", recovered, err, initiateCalls)
 	}
 	page, err := p.ListMultipartParts(context.Background(), "gregale-test", MultipartListPartsRequest{Key: "folder/large.bin", ProviderUploadID: id, PartNumberMarker: 1, Limit: 2})
-	if err != nil || len(page.Items) != 1 || page.Items[0].ETag != `"etag-2"` || page.NextPartNumberMarker != 3 {
+	if err != nil || len(page.Items) != 1 || page.Items[0].ETag != `"etag-2"` || page.NextPartNumberMarker != 2 {
 		t.Fatal(page, err)
 	}
 	if err := p.CompleteMultipartUpload(context.Background(), "gregale-test", MultipartCompleteRequest{SessionID: "session-1", Key: "folder/large.bin", ProviderUploadID: id, SizeBytes: 10, Parts: []CompletedPart{{PartNumber: 1, ETag: `"etag-1"`}}}); err != nil {
