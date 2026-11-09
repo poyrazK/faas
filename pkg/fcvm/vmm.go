@@ -3170,8 +3170,11 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		// snapshot booted under; an older vmmd omits the field.
 		EventPublishVerdict  bool                            `json:"eventPublishVerdict,omitempty"`
 		QualificationReceipt *resumeHookQualificationReceipt `json:"qualificationReceipt,omitempty"`
+		// ADR-20261107160000: the serving instance's identity, which a
+		// restored process's environment cannot reflect.
+		Identity *resumeIdentityWire `json:"identity,omitempty"`
 	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true,
-		QualificationReceipt: qualificationReceipt})
+		QualificationReceipt: qualificationReceipt, Identity: resumeIdentityWireFromContext(ctx)})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}

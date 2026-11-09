@@ -6435,19 +6435,20 @@ type GatewayTrafficPolicyObservation struct {
 }
 
 type GatewayTrafficRuntimeObservation struct {
-	NodeName           string
-	Generation         int64
-	BootID             pgtype.UUID
-	ReportedAt         pgtype.Timestamptz
-	RetryEnabled       bool
-	RateCounterMode    string
-	RetryCounterMode   string
-	RetryBackendID     string
-	DeadlineSigning    bool
-	PolicySnapshot     bool
-	SecurityRevocation bool
-	ManagedHttp        bool
-	ManagedCircuit     bool
+	NodeName              string
+	Generation            int64
+	BootID                pgtype.UUID
+	ReportedAt            pgtype.Timestamptz
+	RetryEnabled          bool
+	RateCounterMode       string
+	RetryCounterMode      string
+	RetryBackendID        string
+	DeadlineSigning       bool
+	PolicySnapshot        bool
+	SecurityRevocation    bool
+	ManagedHttp           bool
+	ManagedCircuit        bool
+	EdgeHeaderSecretsBoot pgtype.UUID
 }
 
 type GdprRequest struct {
@@ -11949,6 +11950,8 @@ type PrPreviewSet struct {
 	UpdatedAt      pgtype.Timestamptz
 	SetupError     pgtype.Text
 	AccountID      pgtype.UUID
+	MemberPins     []byte
+	MemberPinsHead pgtype.Text
 }
 
 type PrewarmIntent struct {

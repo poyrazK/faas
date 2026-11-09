@@ -444,3 +444,81 @@ registered as clone configuration.
 - An app that only allows declared routes keeps its last verified document
   for up to 30 minutes when the store cannot be read and no change
   notification arrives.
+
+## Amendment 7 (2026-11-09): production evidence gaps
+
+A read-only review of production (release `7e35c62d41`) found route and
+rollout evidence that production traffic never produced, or produced under
+the wrong deployment.
+
+1. **Every streamed response was long-lived.** A streaming-enabled app's
+   requests carry `x-faas-stream`, and the gateway marked every 2xx/3xx of
+   such an app `long_lived`. 66 of 90 apps stream; 2.65M of 2.67M requests
+   over three days were long-lived, so route health and the production
+   monitor had no latency sample for most apps. The canary circuit breaker
+   (`RequestTelemetryCircuitBreakerSummary`) kept those durations, so a real
+   WebSocket or event stream's session length weighed into its latency
+   comparison.
+2. **Service calls were never labeled.** Service-to-service telemetry rows
+   always carried `__route_other__`. About 70% of a day's requests were
+   internal calls; route health, the monitor and route removal never saw an
+   internal caller of a route.
+3. **A failure before a target was nobody's evidence.** The gateway stamped a
+   row's deployment only from the target that answered. A wake or capacity
+   failure (`wake_response`, `capacity_response`) had none, so it was written
+   with the zero deployment even though routing had selected one: 564 such
+   503s in a week. The circuit breaker, route health, the monitor and the
+   ADR-625 first-wake rollback all read by deployment, and the first-wake
+   window opens only on an attributed request, so a release whose every wake
+   failed was never judged.
+4. **A silent candidate advanced.** The low-traffic advance (ADR-1446)
+   required no 5xx and clean OOM/liveness signals but not a single answer: a
+   candidate that answered none of the probes its predecessor answered
+   advanced after the hold and reached 100%.
+5. **One-off paths took labels.** Inference templated only numeric, UUID and
+   long hex segments, so typed identifiers (`qry_<hex>`), dates and files
+   named by an identifier each became their own route.
+6. **Rollouts never started or completed in the audit.** The safe-deploy
+   orchestrator audited only transitions it made, and the live and advance
+   paths make both, so 14 days of rollouts produced no
+   `deploy.rollout_started` and one `deploy.rollout_completed`; the release
+   timeline never showed either.
+
+**Decision.**
+
+- `long_lived` marks a session: an upgraded socket, an event-stream or gRPC
+  response, or a detached response that outlived the ordinary request
+  budget. Budget detachment itself is unchanged. The circuit breaker's
+  percentiles leave long-lived rows out; they still count as requests and 5xx.
+- A service call's row carries the target app's route label: the declared or
+  removal-baseline template from the target's document, or the inferred path,
+  admitted into the app's bounded label set by the same response rule as
+  public traffic. Templates declared only in `gregale.yaml` are not visible to
+  the service path; such calls use the inferred path.
+- A row with no target carries the deployment routing selected for it (a
+  traffic split, pin or release member). A platform refusal stays
+  unattributed, as amendment 3 decided. Rate limits and auth refusals happen
+  before selection and stay unattributed.
+- The low-traffic advance holds while the predecessor answered probes in the
+  stage and the candidate answered none (`CandidateProbeSilent`); the
+  stuck-rollout guard aborts a rollout held past its bound.
+- Inference also templates a typed identifier (a lowercase prefix of up to
+  eight letters, `_` or `-`, then at least ten letters and digits including a
+  digit) as `{id}`, an ISO date as `{date}`, and a file named by an identifier
+  as `{id}.<extension>`.
+- The live path audits `deploy.rollout_started` when it starts a canary and
+  the advance path audits `deploy.rollout_completed` when it completes one, in
+  the same transaction, under the app's account (actor `system:rollout`).
+
+**Consequences.**
+
+- Latency evidence appears for streaming apps; a canary can now hold or abort
+  on their latency.
+- Internal callers now count toward route health, monitoring and removal
+  evidence and consume the target app's labels.
+- A candidate that cannot wake now aborts on 5xx instead of advancing, and a
+  completed release whose wakes fail rolls back on first-wake 5xx.
+- A canary whose candidate never answers holds until the stuck guard aborts it.
+- Labels change shape for paths with typed identifiers, dates or ID-named
+  files; route selectors written against the old raw labels need updating.
+

@@ -142,3 +142,98 @@ func TestLoadPRPreviewSetCheck_CurrentHeadAndFullClosure(t *testing.T) {
 		t.Fatalf("tombstoned root retained preview set: %v", err)
 	}
 }
+
+// A push that skips a member pins it to the commit its live deployment was
+// built from; the check and the customer projection read that member there,
+// and the next head drops the pins (ADR-20261108150000).
+func TestLoadPRPreviewSetCheck_PinnedMemberReadAtItsCommit(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	accountID, projectID := uuid.NewString(), uuid.NewString()
+	rootID, workerID := uuid.NewString(), uuid.NewString()
+	if _, err := pool.Exec(ctx, `insert into accounts (id, email) values ($1, $2)`, accountID, "preview-pin-"+uuid.NewString()+"@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into orgs (id, slug, name, personal_org, personal_owner_account_id, plan, status)
+		select gen_random_uuid(), 'u-' || substring(replace(a.id::text, '-', '') from 1 for 12), 'Personal', true, a.id, a.plan, a.status
+		from accounts a where a.id = $1`, accountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into projects (id, account_id, slug) values ($1, $2, $3)`, projectID, accountID, "preview-pin-"+uuid.NewString()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range []struct{ id, slug, workload, parent string }{
+		{rootID, "pr-42-preview-pin-api", "api", "preview-pin-api"},
+		{workerID, "pr-42-preview-pin-worker", "worker", "preview-pin-worker"},
+	} {
+		if _, err := pool.Exec(ctx, `insert into apps
+			(id, account_id, slug, ram_mb, max_concurrency, project_id, workload_name,
+			 preview_of_slug, preview_pr_number, preview_pr_state)
+			values ($1, $2, $3, 256, 1, $4, $5, $6, 42, 'open')`,
+			app.id, accountID, app.slug, projectID, app.workload, app.parent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertDeployment := func(appID, sha, status string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `insert into deployments (id, app_id, image_digest, kind, status, commit_sha, created_at)
+			values ($1, $2, 'sha256:preview-pin-fixture', 'preview', $3, $4, now())`,
+			uuid.NewString(), appID, status, sha); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shaA, shaB, shaC := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)
+	sets := state.NewPgStore(pool)
+	set := state.PRPreviewSet{InstallationID: 78, RepoFullName: "octo/preview-pin", PRNumber: 42,
+		CommitSHA: shaB, RootAppID: rootID, MemberAppIDs: []string{workerID, rootID}}
+	if err := sets.PutPRPreviewSet(ctx, set); err != nil {
+		t.Fatal(err)
+	}
+	insertDeployment(workerID, shaA, "live")
+	insertDeployment(rootID, shaB, "live")
+	check, err := loadPRPreviewSetCheck(ctx, pool, 78, set.RepoFullName, 42, shaB)
+	if err != nil || check.Phase != githubdgrpc.CheckPhaseBuilding {
+		t.Fatalf("unpinned worker at old commit = (%+v, %v), want building", check, err)
+	}
+	head := state.PRPreviewHead{InstallationID: 78, RepoFullName: set.RepoFullName, PRNumber: 42, CommitSHA: shaB}
+	stale := head
+	stale.CommitSHA = shaA
+	if err := sets.PinPRPreviewMembers(ctx, stale, map[string]string{workerID: shaC}); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("pin for a superseded head = %v, want not found", err)
+	}
+	if err := sets.PinPRPreviewMembers(ctx, head, map[string]string{uuid.NewString(): shaA}); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("pin for a non-member = %v, want not found", err)
+	}
+	if err := sets.PinPRPreviewMembers(ctx, head, map[string]string{workerID: shaA}); err != nil {
+		t.Fatal(err)
+	}
+	check, err = loadPRPreviewSetCheck(ctx, pool, 78, set.RepoFullName, 42, shaB)
+	if err != nil || !check.CurrentHead || check.Phase != githubdgrpc.CheckPhaseLive {
+		t.Fatalf("pinned worker check = (%+v, %v), want live", check, err)
+	}
+	environment, err := sets.PRPreviewEnvironmentByRoot(ctx, rootID)
+	if err != nil || environment.Set.MemberCommit(workerID) != shaA || len(environment.Members) != 2 ||
+		environment.Members[0].DeploymentStatus != "live" || environment.Members[1].DeploymentStatus != "live" {
+		t.Fatalf("pinned customer projection = (%+v, %v)", environment, err)
+	}
+	// The previous release moves commit_sha without knowing the pins; they
+	// must not apply to that new head.
+	if _, err := pool.Exec(ctx, `update pr_preview_sets set commit_sha = $1 where root_app_id = $2`, shaC, rootID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := sets.GetPRPreviewSet(ctx, 78, set.RepoFullName, 42)
+	if err != nil || got.MemberCommitSHAs != nil || got.MemberCommit(workerID) != shaC {
+		t.Fatalf("pins leaked to an old-release head = (%+v, %v)", got, err)
+	}
+	set.CommitSHA = shaC
+	if err := sets.PutPRPreviewSet(ctx, set); err != nil {
+		t.Fatal(err)
+	}
+	var pins, pinsHead *string
+	if err := pool.QueryRow(ctx, `select member_pins::text, member_pins_head from pr_preview_sets where root_app_id = $1`, rootID).Scan(&pins, &pinsHead); err != nil || pins != nil || pinsHead != nil {
+		t.Fatalf("new head kept pins: %v %v %v", pins, pinsHead, err)
+	}
+}

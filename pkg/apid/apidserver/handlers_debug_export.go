@@ -221,12 +221,7 @@ func writeDebugTelemetryCSV(w http.ResponseWriter, rows []sqlc.ListRequestTeleme
 // labels and guest error classes come from the app's own traffic, so a value
 // that starts with =, +, -, @, a tab or a carriage return is written with a
 // leading apostrophe (OWASP CSV injection guidance).
-func csvSafeCell(value string) string {
-	if value != "" && strings.ContainsRune("=+-@\t\r", rune(value[0])) {
-		return "'" + value
-	}
-	return value
-}
+func csvSafeCell(value string) string { return api.CSVSafeCell(value) }
 
 func debugTelemetryExportFilename(slug, ext string) string {
 	slug = strings.TrimSpace(slug)

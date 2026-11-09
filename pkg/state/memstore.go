@@ -6355,6 +6355,15 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 			return Deployment{}, ErrTrafficServingChanged
 		}
 	}
+	current := map[string]int{id: d.TrafficPercent}
+	for otherID, other := range m.deployments {
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive {
+			current[otherID] = other.TrafficPercent
+		}
+	}
+	if err := checkExpectedTrafficWeights(ctx, current); err != nil {
+		return Deployment{}, err
+	}
 
 	// Plan every weight before mutating any row, including upgrade fences.
 	priorPercent := d.TrafficPercent
@@ -29046,6 +29055,12 @@ func (m *MemStore) ApplyRegressionAction(_ context.Context, _ sqlc.ApplyRegressi
 // MemStore; the detector and its lifecycle transitions are Postgres-only.
 func (m *MemStore) ResolveStaleRegressionObservations(_ context.Context, _ pgtype.Interval) ([]sqlc.DebugRegressionObservation, error) {
 	panic("memstore: ResolveStaleRegressionObservations unimplemented")
+}
+
+// ResolveRegressionObservationsNotSeenSince is Postgres-only, like the rest
+// of the detector's lifecycle transitions.
+func (m *MemStore) ResolveRegressionObservationsNotSeenSince(_ context.Context, _ sqlc.ResolveRegressionObservationsNotSeenSinceParams) ([]sqlc.DebugRegressionObservation, error) {
+	panic("memstore: ResolveRegressionObservationsNotSeenSince unimplemented")
 }
 
 // ListDeploymentsForCompare is intentionally unsupported by MemStore;

@@ -1015,14 +1015,18 @@ const (
 	ProfileMaxChartPoints           = 120
 	ProfileChartMinStep             = time.Minute
 	ProfileMaxConcurrentUploads     = 4
-	ProfileMaxConcurrentQueries     = 4
-	ProfileMaxTrackedAccounts       = 10000
-	ProfileTransportTimeout         = 2 * time.Second
-	ProfileQueryTimeout             = 15 * time.Second
-	ProfileVsockPort                = 1040
-	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
-	ProfileHealthListen             = "127.0.0.1:9160"
-	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+	// ProfileCollectorLabelSlots bounds the Pyroscope collector_id label to a
+	// fixed set per deployment; one value per VM lifetime made a new series on
+	// every wake (profiling review round 4, R4-5).
+	ProfileCollectorLabelSlots  = 32
+	ProfileMaxConcurrentQueries = 4
+	ProfileMaxTrackedAccounts   = 10000
+	ProfileTransportTimeout     = 2 * time.Second
+	ProfileQueryTimeout         = 15 * time.Second
+	ProfileVsockPort            = 1040
+	ProfileLocalEndpoint        = "http://127.0.0.1:9191"
+	ProfileHealthListen         = "127.0.0.1:9160"
+	ProfileDefaultSocket        = "/run/faas/profiled.sock"
 	// ProfileRetryCacheMaxEntries bounds profiled's upload replay cache on a
 	// node. At the bound the oldest entries are evicted: the cache is
 	// best-effort replay protection, so it never refuses an upload.
@@ -3543,6 +3547,21 @@ func ValidAppCPUCeilingFloorMillicores(v int) bool {
 // ValidGuestVCPUMillicores reports whether v is a valid `guest_vcpu_millicores`.
 func ValidGuestVCPUMillicores(v int) bool {
 	return v >= GuestVCPUMillicoresMin && v <= GuestVCPUMillicoresMax
+}
+
+// CPU admission (ADR-20261109172421), schedd's `cpu_admission`. enforce
+// refuses work for the per-node vCPU and physical CPU budgets; observe admits
+// on memory alone and counts what those gates would have refused, so CPU
+// decides where an instance goes, never whether it runs.
+const (
+	CPUAdmissionEnforce = "enforce"
+	CPUAdmissionObserve = "observe"
+	DefaultCPUAdmission = CPUAdmissionEnforce
+)
+
+// ValidCPUAdmission reports whether v is a `cpu_admission` value.
+func ValidCPUAdmission(v string) bool {
+	return v == CPUAdmissionEnforce || v == CPUAdmissionObserve
 }
 
 // Snapshot refresh after a release (ADR-20261106214916). schedd's
@@ -13758,6 +13777,12 @@ const (
 	TrafficRuntimeObservationTimeout   = 250 * time.Millisecond
 	TrafficRuntimeObservationFreshness = 10 * time.Second
 	TrafficRuntimeObservationMaxNodes  = 4096
+	// EdgeRuleHeaderSecretBackfillInterval is how often apid seals the
+	// credential header values edge rules and their versions still store as
+	// written (ADR-20261108110000, amendment 2026-11-09); the first pass waits
+	// EdgeRuleHeaderSecretBackfillStartDelay so gateways can report first.
+	EdgeRuleHeaderSecretBackfillInterval   = 15 * time.Minute
+	EdgeRuleHeaderSecretBackfillStartDelay = 2 * time.Minute
 	// RequestBudgetPlanMax is the largest request budget any plan may allow
 	// (Scale's 15 minutes, ADR-1150). Every per-plan ceiling is clamped to
 	// it, edge-rule and route-requirement budgets are validated against it,
@@ -15116,6 +15141,17 @@ const RouteAnalyticsQueryTimeout = 10 * time.Second
 // render; past it the panel is left out and the page renders without it.
 const DashboardRequestAnalyticsTimeout = 5 * time.Second
 
+// apid handles the request telemetry records that arrive together on one
+// stream as a group whose rows commit in one transaction (ADR-127
+// amendment, group commit). A group ends when the gateway half-closes its
+// batch, at RequestTelemetryReceiveGroupMax records (the gateway's batch
+// size), or when no record arrives for RequestTelemetryReceiveGroupWait, so
+// a client that waits for each outcome is still answered.
+const (
+	RequestTelemetryReceiveGroupMax  = 256
+	RequestTelemetryReceiveGroupWait = 2 * time.Millisecond
+)
+
 // RequestAnalyticsSettleLag is how far before now request analytics stops
 // judging telemetry completeness: gateways hold a minute's rows until it
 // closes and flush every few seconds, so the newest minutes are always still
@@ -15759,8 +15795,10 @@ const (
 	// everyone. Server keys (trusted backends) are bounded only by the total.
 	DataAPIStorageTransfersPerClient = 2
 	// /healthz is public and its readiness checks reach the database: a
-	// completed result answers further checks for this long, so polling it
-	// asks the database at most once per interval per instance.
+	// completed ready result answers further checks for this long, so polling
+	// a healthy API asks the database at most once per interval per instance.
+	// Unready results are never reused, and engine restarts, schema reloads,
+	// checkpoints and restores forget the cached one (ADR-20261109160000).
 	DataAPIHealthCache = 5 * time.Second
 	// The gateway sends the SQL deadline this much early, so a VM clock that
 	// runs ahead of the database's by up to it still passes the engine's

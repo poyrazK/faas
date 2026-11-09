@@ -258,9 +258,42 @@ type RequestAnalyticsRollupReader interface {
 	RequestAnalyticsRollupGroups(ctx context.Context, arg sqlc.RequestAnalyticsRollupGroupsParams) ([]sqlc.RequestAnalyticsRollupGroupsRow, error)
 	RequestAnalyticsRollupHasGap(ctx context.Context, appID uuid.UUID, from, until time.Time) (bool, error)
 	RequestAnalyticsRollupRouteDeployments(ctx context.Context, arg sqlc.RequestAnalyticsRollupRouteDeploymentsParams) ([]sqlc.RequestAnalyticsRollupRouteDeploymentsRow, error)
+	RequestTelemetryExistsBetween(ctx context.Context, appID uuid.UUID, from, until time.Time) (bool, error)
 }
 
 var _ RequestAnalyticsRollupReader = (*PgStore)(nil)
+
+// RequestTelemetryExistsBetween reports whether the app has raw telemetry
+// received in [from, until), under the analytics statement budget.
+func (s *PgStore) RequestTelemetryExistsBetween(ctx context.Context, appID uuid.UUID, from, until time.Time) (bool, error) {
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) (bool, error) {
+		return sqlc.New().RequestTelemetryExistsBetween(ctx, db, sqlc.RequestTelemetryExistsBetweenParams{
+			AppID:       NewPgtypeUUID(appID),
+			WindowFrom:  pgtype.Timestamptz{Time: from, Valid: true},
+			WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
+		})
+	})
+}
+
+// RequestAnalyticsRollupCrashStore marks the rollups an apid lost by
+// stopping without its final flush (amendment 4).
+type RequestAnalyticsRollupCrashStore interface {
+	RecordRequestAnalyticsRollupGapsFromTelemetry(ctx context.Context, from, until time.Time) error
+}
+
+var _ RequestAnalyticsRollupCrashStore = (*PgStore)(nil)
+
+// RecordRequestAnalyticsRollupGapsFromTelemetry marks every app minute with
+// raw telemetry received in [from, until) as having lost rollups.
+func (s *PgStore) RecordRequestAnalyticsRollupGapsFromTelemetry(ctx context.Context, from, until time.Time) error {
+	if err := sqlc.New().RecordRequestAnalyticsRollupGapsFromTelemetry(ctx, s.pool, sqlc.RecordRequestAnalyticsRollupGapsFromTelemetryParams{
+		WindowFrom:  pgtype.Timestamptz{Time: from, Valid: true},
+		WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
+	}); err != nil {
+		return fmt.Errorf("record request analytics rollup gaps from telemetry: %w", mapErr(err))
+	}
+	return nil
+}
 
 // RequestAnalyticsRollupGroups reads rollup groups under the analytics
 // statement budget, as the raw analytics reads do.
