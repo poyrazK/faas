@@ -36,7 +36,9 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -256,6 +258,9 @@ type WakePhaseMetrics struct {
 	// executables onto the jail tmpfs, and launches that fell back to the
 	// installed binary (ADR-20261105100000).
 	residentExecStages *prometheus.CounterVec
+	// reseedUnregistered counts interpreter processes a restore's userspace
+	// reseed barrier did not reach (ADR-20261109140000).
+	reseedUnregistered *prometheus.CounterVec
 }
 
 // resumeGuestStageNames is the closed stage label set of
@@ -358,7 +363,16 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 			m.residentExecStages.WithLabelValues(binary, outcome)
 		}
 	}
-	reg.MustRegister(m.phases, m.materializeSeconds, m.materializeBytes, m.restorePhases, m.journalCommits, m.preBootFiles, m.resumeGuestStages, m.residentExecStages)
+	m.reseedUnregistered = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "vmmd_restore_reseed_unregistered_total",
+		Help: "Restores whose guest reported running Node, Python, Bun or Deno processes its userspace RNG reseed barrier did not reach, counted once per reported runtime (ADR-20261109140000). Those processes may repeat the snapshot's random values across wakes; restores are not refused. runtime ∈ {node, python, bun, deno, other}; scope ∈ {workload, sidecar}.",
+	}, []string{"runtime", "scope"})
+	for _, runtime := range reseedRuntimeLabels {
+		for _, scope := range []string{"workload", "sidecar"} {
+			m.reseedUnregistered.WithLabelValues(runtime, scope)
+		}
+	}
+	reg.MustRegister(m.phases, m.materializeSeconds, m.materializeBytes, m.restorePhases, m.journalCommits, m.preBootFiles, m.resumeGuestStages, m.residentExecStages, m.reseedUnregistered)
 	return m
 }
 
@@ -386,6 +400,29 @@ func (m *WakePhaseMetrics) ObserveResumeGuestStages(t resumetimingproto.Timings,
 	}
 	for _, stage := range resumeGuestStageNames {
 		m.resumeGuestStages.WithLabelValues(stage).Observe(values[stage].Seconds())
+	}
+}
+
+// reseedRuntimeLabels is the closed runtime label set of
+// vmmd_restore_reseed_unregistered_total.
+var reseedRuntimeLabels = []string{"node", "python", "bun", "deno", "other"}
+
+// ObserveReseedUnregistered counts the runtimes a guest reported as missed by
+// its reseed barrier, once per reported runtime label. Safe on a nil
+// receiver.
+func (m *WakePhaseMetrics) ObserveReseedUnregistered(t resumetimingproto.Timings) {
+	if m == nil || t.ReseedUnregistered <= 0 {
+		return
+	}
+	for _, label := range strings.Split(t.ReseedUnregisteredRuntimes, ",") {
+		runtime, scope := strings.TrimSuffix(label, "-sidecar"), "workload"
+		if runtime != label {
+			scope = "sidecar"
+		}
+		if !slices.Contains(reseedRuntimeLabels, runtime) {
+			runtime = "other"
+		}
+		m.reseedUnregistered.WithLabelValues(runtime, scope).Inc()
 	}
 }
 
