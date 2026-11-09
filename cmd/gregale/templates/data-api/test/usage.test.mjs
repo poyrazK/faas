@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { EventEmitter } from 'node:events'
+import { spawnSync } from 'node:child_process'
 import { runtimeConfig, usageConfig, monthlyCaps, limits } from '../config.mjs'
 import { createUsage, rowsFromContentRange, accessReport } from '../usage.mjs'
 import { createServer } from '../server.mjs'
@@ -126,6 +127,23 @@ test('a flush waits at most its bound', async () => {
   await hung.flush(50)
   assert.ok(performance.now() - started < 1000)
   hung.stop()
+})
+
+test('a bounded flush settles even when nothing else holds the event loop', () => {
+  // A hung report plus an unref'd bound let the loop end with the flush
+  // still pending (shutdown, Node 22 test runner). Run it alone in a child.
+  const usageURL = new URL('../usage.mjs', import.meta.url).href
+  const configURL = new URL('../config.mjs', import.meta.url).href
+  const script = `
+    const { createUsage } = await import(${JSON.stringify(usageURL)})
+    const { usageConfig } = await import(${JSON.stringify(configURL)})
+    const usage = createUsage(usageConfig(${JSON.stringify(env)}), { nonce: 'n1',
+      fetchImpl: () => new Promise(() => {}), access: { version: 1, schemas: ['api'] } })
+    await usage.flush(50)
+    usage.stop()
+    console.log('settled')`
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 10000 })
+  assert.equal(run.stdout.trim(), 'settled', run.stderr)
 })
 
 test('caps compare month-to-date totals plus unreported counts', async () => {

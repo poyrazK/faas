@@ -8855,7 +8855,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				LongLived:                            decision.streamDetached,
 				exactSample:                          status >= http.StatusInternalServerError || exactRequestTelemetryFrom(r.Context()),
 			}
-			platformFailure := platformFailureUnbillable(r, status)
+			unbillable := usageUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {
 				// ADR-1505: the response's completion already waited for (or
 				// is aborted by) this event; never append it twice.
@@ -8881,14 +8881,14 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 					h.metrics.IncUsageOutboxFailure()
 					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)
 					// The debugger fallback bills every row it writes, so a
-					// platform failure must not reach it.
-					row.UsageOutboxed = platformFailure
+					// response the guest never answered must not reach it.
+					row.UsageOutboxed = unbillable
 				} else {
 					row.UsageOutboxed = true
 				}
-			} else if platformFailure {
+			} else if unbillable {
 				// Without an outbox the debugger fallback is the only ledger
-				// writer and bills every row; keep platform failures out of it.
+				// writer and bills every row; keep unanswered responses out of it.
 				row.UsageOutboxed = true
 			}
 			if h.requestTelemetry != nil {
