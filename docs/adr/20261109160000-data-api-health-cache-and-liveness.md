@@ -16,7 +16,7 @@ Related: [ADR-650](650-schema-generated-data-api.md), [ADR-078](../faas_implemen
    - a restored instance answered from the set cached just before the
      checkpoint (the monotonic clock resumes where the snapshot paused it),
      reporting ready while PostgREST was still restarting;
-   - `gregale data-api dev` kept reporting ready after a failed reload.
+   - `gregale data-api serve` kept reporting ready after a failed reload.
    Four real-engine acceptance tests failed on it (admission, two pool
    observation tests and the starter), reproduced against PostgreSQL 16 and
    PostgREST 14.3, and passing with the cache off.
@@ -40,7 +40,7 @@ Related: [ADR-650](650-schema-generated-data-api.md), [ADR-078](../faas_implemen
    reuses only a completed **ready** set, for `DataAPIHealthCache` (5 s). An
    unready set is never reused. The runtime forgets every set in
    `before_checkpoint`, `after_restore` and on a schema reload
-   (`invalidateHealth`). `gregale data-api dev` and real-engine tests that
+   (`invalidateHealth`). `gregale data-api serve` and real-engine tests that
    observe transitions set `healthCacheMs` to 0.
 2. Data API deploys keep startup readiness on `/healthz` and send a
    per-deployment liveness probe on `/livez` (`api.DataAPILivenessPath`),

@@ -3851,7 +3851,7 @@ A ready `/healthz` answer is reused for up to 5 seconds, so polling a healthy AP
 reaches the database at most once per interval; concurrent checks share one run.
 An unready answer is never reused, and an engine restart, schema reload, snapshot
 or restore forgets the cached answer, so readiness never describes an engine that
-is gone. `gregale data-api dev` checks every time.
+is gone. `gregale data-api serve` checks every time.
 
 `data-api deploy` and dashboard setup use `/healthz` for startup readiness and
 `/livez` as the platform's liveness probe (Hobby and above): `/healthz` reports

@@ -11,7 +11,7 @@ publish artifacts or establish hosted staging acceptance.
   forgets it when the engine restarts, reloads its schema, is snapshotted or
   restored. A cold boot is no longer held back by a remembered "not yet", and
   a restored or reloaded API no longer reports ready for an engine that is
-  still starting. `data-api dev` reports every check as it happens.
+  still starting. `data-api serve` reports every check as it happens.
 - **Liveness.** Data API deploys send `/livez` as the platform's liveness
   probe (Hobby and above). A saturated pool or a short database outage no
   longer gets a healthy runtime restarted, with its in-flight requests
