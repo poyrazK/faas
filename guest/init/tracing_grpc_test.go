@@ -140,7 +140,7 @@ func TestTraceGRPCReceiverEmptyExportSendsNothing(t *testing.T) {
 
 func TestTraceGRPCReceiverRejectsOtherMethods(t *testing.T) {
 	h, _ := startGRPCBridge(t, api.TraceAckAccepted)
-	err := h.conn.Invoke(callCtx(t), "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export", sampleTraceRequest(), &collectortracepb.ExportTraceServiceResponse{})
+	err := h.conn.Invoke(callCtx(t), "/opentelemetry.proto.collector.profiles.v1development.ProfilesService/Export", sampleTraceRequest(), &collectortracepb.ExportTraceServiceResponse{})
 	if status.Code(err) != codes.Unimplemented {
 		t.Fatalf("code = %v, want Unimplemented", status.Code(err))
 	}

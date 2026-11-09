@@ -162,7 +162,7 @@ func TestTraceBridgeBusy(t *testing.T) {
 
 func TestTraceBridgeRejectsOtherRoutes(t *testing.T) {
 	b := newTraceBridge(func(context.Context, []byte) (byte, error) { return api.TraceAckAccepted, nil })
-	req := httptest.NewRequest(http.MethodPost, "/v1/metrics", strings.NewReader("x"))
+	req := httptest.NewRequest(http.MethodPost, "/v1development/profiles", strings.NewReader("x"))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 	rec := httptest.NewRecorder()
 	b.handler().ServeHTTP(rec, req)
