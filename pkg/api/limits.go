@@ -18220,8 +18220,8 @@ const (
 	EdgeClientOpenConnsPerAddrMax      = 512
 	EdgeClientNewConnsPerSecondPerAddr = 100
 	EdgeClientNewConnsBurstPerAddr     = 400
-	EdgeClientRequestsPerSecondPerAddr = 500
-	EdgeClientRequestsBurstPerAddr     = 1000
+	EdgeClientRequestsPerSecondPerAddr = 2500
+	EdgeClientRequestsBurstPerAddr     = 5000
 	EdgeClientTrackedAddrsMax          = 200_000
 	// EdgeHostRequestsPerSecond and EdgeHostRequestsBurst are a node's
 	// ceiling for one hostname, checked at the edge before the request is

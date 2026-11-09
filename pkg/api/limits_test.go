@@ -850,7 +850,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// picker cache refresh path can validate inside the
 			// deployment_changed pg_notify fanout window.
 			MirrorRuleAllowed: true, MirrorTargetsPerApp: 3,
-			// ADR-040 / #1680: one Scale app can sustain its advertised 500 rps.
+			// ADR-040 / #1680: one Scale app can sustain its advertised 5000 rps.
 			RateLimitPerAccountRPM: 300000,
 			// ADR-104: Scale gets 10000 — full per-tenant
 			// cardinality on a multi-tenant SaaS deployment.
