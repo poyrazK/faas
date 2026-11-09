@@ -26,7 +26,25 @@ type startupCPUProfile struct {
 func shouldApplyStartupCPUBoost(lease Lease, eligible bool) bool {
 	// An uncapped VM already has every CPU a boost could lend
 	// (ADR-20261109172421).
-	return eligible && !lease.IsBuilder && lease.Plan.Valid() && !lease.DisableStartupCPUBoost && !lease.CPUUncapped
+	return eligible && !lease.IsBuilder && lease.Plan.Valid() && !lease.DisableStartupCPUBoost && !leaseUncappedAt(lease, lease.CPUMillicores)
+}
+
+// leaseUncappedAt reports whether an app lease runs without a CPU quota at a
+// given ceiling. An uncapped lease (ADR-20261109172421) drops the quota only
+// at the app default ceiling; an app that chose 250 or 500 millicores keeps
+// that as its cap, at boot and after a live policy update.
+func leaseUncappedAt(l Lease, cpuMillicores int) bool {
+	return l.CPUUncapped && !l.Networkless && !l.IsBuilder &&
+		(cpuMillicores <= 0 || cpuMillicores >= api.DefaultAppCPUMillicores)
+}
+
+// liveAppCPUMax is the cpu.max an app lease runs with at a ceiling pushed by
+// a live CPU policy update.
+func liveAppCPUMax(l Lease, cpuMillicores int) (string, error) {
+	if leaseUncappedAt(l, cpuMillicores) {
+		return uncappedCPUMax(l.Plan)
+	}
+	return appCPUMax(l.Plan, cpuMillicores)
 }
 
 // resolveStartupCPUProfile grants at most one host CPU while an app cold boots
@@ -328,7 +346,7 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 // networkless VM is sized in whole vCPUs (ADR-20261027090014 §3), beyond the app CPU
 // tiers; every other lease keeps the app rules.
 func leaseCPUMax(l Lease) (string, error) {
-	if l.CPUUncapped && !l.Networkless && !l.IsBuilder {
+	if leaseUncappedAt(l, l.CPUMillicores) {
 		return uncappedCPUMax(l.Plan)
 	}
 	if !l.Networkless || l.CPUMillicores <= api.DefaultAppCPUMillicores || !api.ValidAgentRunCPUMillicores(l.CPUMillicores) {

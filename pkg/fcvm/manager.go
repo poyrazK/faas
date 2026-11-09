@@ -3903,7 +3903,9 @@ type WakeRequest struct {
 	// commitment of a request without it unchanged.
 	CPUWeight int `json:",omitempty"`
 	// CPUUncapped runs the instance with cpu.max = max and no startup boost
-	// (ADR-20261109172421); false keeps the CPUMillicores quota.
+	// while CPUMillicores is the app default; an app's 250 or 500 millicore
+	// choice stays a cap, also after a live CPU policy update
+	// (ADR-20261109172421). False keeps the CPUMillicores quota.
 	CPUUncapped bool `json:",omitempty"`
 	// ExecutionMode is the declared lifecycle mode used to constrain the
 	// cold-boot characterization result. Empty preserves legacy inference.

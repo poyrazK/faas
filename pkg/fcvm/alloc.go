@@ -152,8 +152,9 @@ type Lease struct {
 	// CPUWeight, when positive, is the per-VM cpu.weight instead of the
 	// plan's (ADR-20261109172421).
 	CPUWeight int
-	// CPUUncapped writes cpu.max = max and skips the startup boost
-	// (ADR-20261109172421).
+	// CPUUncapped writes cpu.max = max and skips the startup boost while the
+	// ceiling is the app default; a 250 or 500 millicore ceiling stays a cap
+	// (ADR-20261109172421, leaseUncappedAt).
 	CPUUncapped bool
 	// Networkless marks the dedicated disposable-execution lifecycle. Such a
 	// lease still owns a unique slot, uid, cgroup, and vsock identity, but it

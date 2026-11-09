@@ -67,3 +67,40 @@ func TestRepairCgroupFencesKeepsTheInstanceWeightAndNoQuota(t *testing.T) {
 	}
 	assertFence(t, scope, memoryMaxValue(api.BillableRAMMB(512)), "32", fmt.Sprintf("max %d", api.PlanScale.CPUPeriodUS()))
 }
+
+// An uncapped lease drops its quota only at the app default ceiling: an app
+// that chose 250 or 500 millicores keeps that cap and its startup boost, and
+// a live policy update moves the VM between the two.
+func TestUncappedLeaseKeepsAnAppsOwnCPUCap(t *testing.T) {
+	uncapped := fmt.Sprintf("max %d", api.PlanPro.CPUPeriodUS())
+	half := fmt.Sprintf("%d %d", 500*api.PlanPro.CPUPeriodUS()/1000, api.PlanPro.CPUPeriodUS())
+	l := Lease{Instance: "self-capped", Plan: api.PlanPro, MemoryMaxMiB: 512, CPUMillicores: 500, CPUWeight: 32, CPUUncapped: true}
+	if got, err := leaseCPUMax(l); err != nil || got != half {
+		t.Fatalf("leaseCPUMax at 500 m = %q, %v; want %q", got, err, half)
+	}
+	if !shouldApplyStartupCPUBoost(l, true) {
+		t.Fatal("a self-capped VM lost its startup boost")
+	}
+
+	v, scope := fencedVM(t, l)
+	for _, step := range []struct {
+		cpu  int
+		want string
+	}{{1000, uncapped}, {500, half}, {1000, uncapped}} {
+		if err := v.UpdateCPULimit(context.Background(), l, step.cpu); err != nil {
+			t.Fatalf("UpdateCPULimit(%d): %v", step.cpu, err)
+		}
+		if got := readFenceFile(t, scope, "cpu.max"); got != step.want {
+			t.Fatalf("after a live update to %d m, cpu.max = %q, want %q", step.cpu, got, step.want)
+		}
+	}
+	// The fence repairs to the last live value, not the boot-time one.
+	if err := v.UpdateCPULimit(context.Background(), l, 500); err != nil {
+		t.Fatal(err)
+	}
+	resetLikeSystemdReload(t, scope)
+	if rep := v.RepairCgroupFences(context.Background()); rep.Repaired != 1 || rep.Failed != 0 {
+		t.Fatalf("report = %+v, want one repair", rep)
+	}
+	assertFence(t, scope, memoryMaxValue(api.BillableRAMMB(512)), "32", half)
+}

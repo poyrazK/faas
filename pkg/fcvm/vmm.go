@@ -1886,7 +1886,7 @@ func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores i
 		return fmt.Errorf("vmm: update CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 
-	value, err := appCPUMax(l.Plan, cpuMillicores)
+	value, err := liveAppCPUMax(l, cpuMillicores)
 	if err != nil {
 		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
 	}
@@ -1895,7 +1895,7 @@ func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores i
 	defer v.mu.Unlock()
 	scope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
 	revert := v.trackFenceValue(l.Instance, fenceCPUMax, value)
-	if err := writeAppCPUMaxTo(scope, l.Plan, cpuMillicores); err != nil {
+	if err := writeCPUMaxValueTo(scope, value); err != nil {
 		revert()
 		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
 	}
