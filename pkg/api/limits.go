@@ -15167,6 +15167,22 @@ const (
 	RequestAnalyticsRollupPendingRowsMax = 200_000
 )
 
+// A gateway counts its requests into per-minute rollups itself when
+// FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS is on (ADR-20261103113952
+// amendment 5). It buffers at most RequestAnalyticsGatewayRollupRowsMax
+// rollup rows, ships the minutes that closed RequestAnalyticsRollupMinuteGrace
+// ago in batches of at most RequestAnalyticsRollupBatchRowsMax rows (apid
+// refuses a larger one), and keeps RequestAnalyticsGatewayRollupBatchesMax
+// unacknowledged batches to resend before the oldest is lost. While apid
+// answers that it takes no batches, the gateway asks again every
+// RequestAnalyticsGatewayRollupProbeInterval and leaves the counting to apid.
+const (
+	RequestAnalyticsRollupBatchRowsMax         = 1000
+	RequestAnalyticsGatewayRollupRowsMax       = 100_000
+	RequestAnalyticsGatewayRollupBatchesMax    = 32
+	RequestAnalyticsGatewayRollupProbeInterval = 5 * time.Minute
+)
+
 // The minute tier is kept RequestAnalyticsMinuteRetention, whatever the plan
 // (ADR-20261103113952 amendment 3); the hourly tier keeps the plan's
 // telemetry retention. An analytics window reaching further back than

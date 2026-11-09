@@ -26,8 +26,12 @@ func (r *requestTelemetryReceiver) AddRequestAnalyticsRollups(ctx context.Contex
 		return nil, status.Error(codes.Unavailable, "request_telemetry disabled by FAAS_REQUEST_TELEMETRY_ENABLED")
 	}
 	store, ok := r.store.(state.RequestAnalyticsRollupBatchStore)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "this store keeps no analytics rollups")
+	if !ok || r.rollups == nil {
+		// The gateway keeps leaving the counting to apid.
+		return nil, status.Error(codes.Unimplemented, "this apid keeps no analytics rollups")
+	}
+	if len(req.GetRows()) > api.RequestAnalyticsRollupBatchRowsMax {
+		return nil, status.Errorf(codes.InvalidArgument, "a batch carries at most %d rows, got %d", api.RequestAnalyticsRollupBatchRowsMax, len(req.GetRows()))
 	}
 	batchID, err := uuid.Parse(req.GetBatchId())
 	if err != nil || batchID == uuid.Nil {

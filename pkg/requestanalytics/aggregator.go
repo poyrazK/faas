@@ -371,3 +371,17 @@ func Text(value string, maxBytes int) string {
 	}
 	return value[:cut]
 }
+
+// PendingRequests sums, per app, the requests buffered in minutes at or
+// before through (Unix seconds): the requests not yet written.
+func (a *Aggregator) PendingRequests(through int64) map[uuid.UUID]int64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := map[uuid.UUID]int64{}
+	for k, r := range a.pending {
+		if k.kind == KindRoute && k.minute <= through {
+			out[k.app] += r.Requests
+		}
+	}
+	return out
+}
