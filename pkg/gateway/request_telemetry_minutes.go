@@ -41,7 +41,7 @@ func (m *requestTelemetryMinutes) add(original RequestTelemetryRow) {
 		m.ready = append(m.ready, row)
 		return
 	}
-	if sampled := m.exact[key]; original.exactSample && sampled.n < requestTelemetryExactPerBucket {
+	if sampled := m.exact[key]; original.exactSample && sampled.n < exactSamplesPerBucket(original) {
 		m.exact[key] = exactSamples{n: sampled.n + 1, minute: row.ReceivedAt}
 		m.ready = append(m.ready, exactTelemetryRow(original, row))
 		return

@@ -3458,6 +3458,8 @@ type Querier interface {
 	// (a dark deploy) needs a retention pin. A canary candidate aborted before it
 	// ever completed served only its canary steps and failed them, so it is never
 	// an implicit target (H5-62).
+	// A release an automatic guard reverted (ADR-625, ADR-1445) is never an
+	// implicit target either; `rollback --to` can still name it.
 	LatestRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LatestRetainedRollbackDeploymentParams) (pgtype.UUID, error)
 	LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (Snapshot, error)
 	LatestSnapshotForTier(ctx context.Context, db DBTX, arg LatestSnapshotForTierParams) (Snapshot, error)
@@ -4624,6 +4626,8 @@ type Querier interface {
 	LockRegressionActionReceipt(ctx context.Context, db DBTX, arg LockRegressionActionReceiptParams) (LockRegressionActionReceiptRow, error)
 	LockReleaseAdditionAccount(ctx context.Context, db DBTX, accountID string) (string, error)
 	LockReleaseAdditionProject(ctx context.Context, db DBTX, arg LockReleaseAdditionProjectParams) (string, error)
+	// A release an automatic guard reverted (ADR-625, ADR-1445) is never an
+	// implicit target either; `rollback --to` can still name it.
 	LockRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LockRetainedRollbackDeploymentParams) (pgtype.UUID, error)
 	LockReviewedEnvironment(ctx context.Context, db DBTX, arg LockReviewedEnvironmentParams) (string, error)
 	LockReviewedRoutePolicy(ctx context.Context, db DBTX, arg LockReviewedRoutePolicyParams) error

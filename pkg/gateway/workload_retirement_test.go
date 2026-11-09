@@ -115,3 +115,41 @@ func TestWorkloadRetirementInvalidationRejectsAnOlderStorageRead(t *testing.T) {
 		t.Fatalf("old storage read repopulated admission after withdrawal: calls=%d err=%v", store.calls, err)
 	}
 }
+
+type unavailableAdmissionBackend struct {
+	Backend
+	err error
+}
+
+func (b *unavailableAdmissionBackend) CheckWorkloadAdmission(context.Context, string, string) error {
+	return b.err
+}
+
+// A refused admission is policy time with a named stage, not an unmeasured
+// "body_response" (prod 2026-11-09), and only a storage failure invites a retry.
+func TestWorkloadAdmissionRefusalIsAttributed(t *testing.T) {
+	for _, tc := range []struct {
+		name, stage, retryAfter string
+		err                     error
+	}{
+		{"storage", "workload_admission_unavailable", "2", errors.New("context deadline exceeded")},
+		{"retired", "workload_retired", "", state.ErrEnvironmentWorkloadRetired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &Handler{backend: &unavailableAdmissionBackend{err: tc.err}}
+			r := httptest.NewRequest(http.MethodPost, "http://api.apps.dom/orders", nil)
+			r = r.WithContext(withTrafficDecision(r.Context(), false))
+			w := httptest.NewRecorder()
+			if h.workloadAdmissionOpen(w, r, "app", "staging") {
+				t.Fatal("refused admission reported open")
+			}
+			if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != tc.retryAfter {
+				t.Fatalf("status=%d retry-after=%q", w.Code, w.Header().Get("Retry-After"))
+			}
+			got := trafficDecisionFrom(r.Context()).trafficDecisionSnapshot
+			if got.phase != trafficPolicy || got.refusal != "policy_unavailable" || got.policyStage != tc.stage {
+				t.Fatalf("decision phase=%s refusal=%q stage=%q", got.phase, got.refusal, got.policyStage)
+			}
+		})
+	}
+}
