@@ -193,6 +193,11 @@ func TestMagicLinkOutboxNewAccountProofRevokesPreVerificationCredentials(t *test
 	// The owner asks after the per-account sign-in mail interval; a second
 	// link within it is not sent (bug hunt 2026-10-27 H14).
 	server.AdvanceSecurityMailClockForTest(api.SecurityMailPerAccountInterval)
+	// The shared counter keeps the database's time (ADR 20261108160000).
+	if _, err := pool.Exec(t.Context(), "UPDATE account_mail_throttle SET window_started_at=window_started_at-$2::interval,last_sent_at=last_sent_at-$2::interval WHERE account_id=$1",
+		account.ID, api.SecurityMailPerAccountInterval.String()); err != nil {
+		t.Fatal(err)
+	}
 	if response := resetFormPost(handler, "/v1/auth/signup/magic-link", url.Values{"email": {account.Email}}); response.Code != http.StatusOK {
 		t.Fatal(response.Code)
 	}
