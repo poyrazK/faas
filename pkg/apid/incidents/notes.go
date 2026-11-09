@@ -92,7 +92,7 @@ func noteBody(raw string) (string, *api.Problem) {
 }
 
 // addNote stores n under the account that keeps the incident's notes (the
-// caller's, or a teammate's alert incident's owner, ADR-20261109120000) and
+// caller's, or a teammate's alert incident's owner, ADR-20261109153000) and
 // reports whether it is new; an acknowledgement that already existed comes
 // back unchanged. The author is always the caller.
 func (s *Service) addNote(w http.ResponseWriter, r *http.Request, acct state.Account, f found, n state.IncidentNote) (state.IncidentNote, bool, bool) {

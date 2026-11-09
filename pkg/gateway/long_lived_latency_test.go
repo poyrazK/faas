@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// adr: 20261109120000 — a long-lived response (an upgrade, a marked
+// adr: 20261109153000 — a long-lived response (an upgrade, a marked
 // long-lived forward, or an event stream) is recorded with its time to
 // headers, not its lifetime; an ordinary response keeps its full duration.
 func TestObservedLatencyUsesTimeToHeadersForLongLivedResponses(t *testing.T) {

@@ -879,6 +879,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresSQLProber(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runAppHealthCollector(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runEdgeCrawlerRangesRefresher(ctx) })
+		// ADR-20261108110000 amendment 2026-11-09: seal credential header
+		// values stored before sealing, once every gateway can open them.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.edgeRules.RunHeaderSecretBackfill(ctx, 0) })
 		go background.Staggered(ctx, background.StartSpread, func() {
 			mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log, srv.mcpReadinessPreview)
 		})
@@ -2704,7 +2707,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// A store without rollups (the in-memory dev store) leaves them off.
 	var rollups *receivers.RequestAnalyticsRollups
 	if rollupStore, ok := srv.store.(state.RequestAnalyticsRollupStore); ok {
-		rollups = receivers.NewRequestAnalyticsRollups(rollupStore, srv.ops.Registry(), log)
+		// Amendment 4: a marker under /var/lib/faas tells the next start that
+		// this apid stopped without writing its pending rollups.
+		marker := envOr("FAAS_ANALYTICS_ROLLUP_CRASH_MARKER", "/var/lib/faas/apid-analytics-rollups.running")
+		rollups = receivers.NewRequestAnalyticsRollups(rollupStore, srv.ops.Registry(), log).WithCrashMarker(marker)
 		go rollups.Run(ctx, api.RequestAnalyticsRollupFlushInterval)
 	}
 	ingest := telemetryIngest{gate: receivers.NewIngestGate(api.TelemetryIngestDBConcurrency), rollups: rollups}

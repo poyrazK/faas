@@ -124,7 +124,7 @@ type Dispatcher interface {
 //
 // Concurrency: Execute must be safe for concurrent use. The evaluator
 // calls it from the accounts it evaluates in parallel, one call at a time
-// per account (ADR-20261109120000). pkg/safedeploy.ActionDispatcher is
+// per account (ADR-20261109153000). pkg/safedeploy.ActionDispatcher is
 // safe: its only side-effect is a single HTTP call into apid.
 type ActionExecutor interface {
 	Execute(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error
@@ -213,7 +213,7 @@ type Evaluator struct {
 	accountBudget time.Duration
 	resumeMu      sync.Mutex
 	resume        map[string]string // account → rule its next tick starts with
-	// fireRetries are the fires channels did not take (ADR-20261109120000).
+	// fireRetries are the fires channels did not take (ADR-20261109153000).
 	fireRetries fireRetries
 	// lastPurge is when RunOnce last purged expired deliveries
 	// (ADR-20261029203000); RunOnce runs on one goroutine.
@@ -405,7 +405,7 @@ type Stats struct {
 	// up after AlertChannelResolveRetryWindow (ADR-20261031144636).
 	ChannelResolvesRetried, ChannelResolvesAbandoned int
 	// ChannelFiresRetried counts fires re-sent to channels that had not
-	// taken them while their rule was still firing (ADR-20261109120000).
+	// taken them while their rule was still firing (ADR-20261109153000).
 	ChannelFiresRetried int
 	// StoodDown counts rules whose episode ended without them recovering:
 	// disabled, no longer covered, or their app deleted
@@ -788,7 +788,7 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 	// ClaimAlertFire enforces: a duplicate inside the cool-down
 	// window already returned at the `if !won` branch.
 	//
-	// Not serialised across accounts (ADR-20261109120000): one account's
+	// Not serialised across accounts (ADR-20261109153000): one account's
 	// rules run in one goroutine, so actions on an app never overlap, and
 	// a slow action costs only its own account's tick budget. A global
 	// lock here used to hold every account's fires behind one rollback.
@@ -1331,7 +1331,7 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		breached := compareFloat(observed, rule.Comparison, rule.Threshold)
 		if breached && ratioMetric(rule.Metric) {
 			// A share or percentile of a handful of requests is not
-			// evidence (ADR-20261109120000): one failed wake out of three
+			// evidence (ADR-20261109153000): one failed wake out of three
 			// requests is a 33% error rate.
 			requests, src := appmetrics.FetchAlertMetric(ctx, e.promQL, e.log, rule.AppID, string(rule.WindowSpec), "request_count")
 			if src != appmetrics.SourcePrometheus {

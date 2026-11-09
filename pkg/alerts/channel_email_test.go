@@ -26,7 +26,7 @@ func (a accountsByID) AccountByID(_ context.Context, id string) (state.Account, 
 	return state.Account{}, state.ErrNotFound
 }
 
-// adr: 20261109120000 — an email channel sends to its account's current
+// adr: 20261109153000 — an email channel sends to its account's current
 // address, and only once that address is verified; other kinds pass through.
 func TestEmailChannelsSendToTheCurrentVerifiedAddress(t *testing.T) {
 	verified := time.Now()

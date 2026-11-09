@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 20261109120000 — the spend alert reads what the month is billed,
+// adr: 20261109153000 — the spend alert reads what the month is billed,
 // egress included, not the compute overage alone.
 func TestMonthToDateSpendCountsLiveEgress(t *testing.T) {
 	ctx := context.Background()

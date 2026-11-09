@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 20261109120000 — a member's dashboard reads an organization app a
+// adr: 20261109153000 — a member's dashboard reads an organization app a
 // teammate created as the app's owner: its log rows, held under the
 // creator's account, are counted; another account's personal app is
 // refused.

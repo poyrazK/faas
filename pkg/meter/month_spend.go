@@ -13,7 +13,7 @@ import (
 // its plan: the compute overage, the live egress overage and the
 // object-storage charge, the sum the spend cap compares
 // (recordSpendCapHold). The account_spend_eur alert metric and the
-// meterd_account_spend_eur gauge read it (ADR-20261109120000): reading
+// meterd_account_spend_eur gauge read it (ADR-20261109153000): reading
 // compute alone left a customer whose bill was mostly egress or storage
 // unwarned. A nil provider bills no egress.
 func MonthToDateSpendCents(ctx context.Context, store state.Store, provider billing.Provider, acct state.Account, now time.Time) (int64, error) {

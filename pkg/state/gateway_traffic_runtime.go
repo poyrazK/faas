@@ -34,6 +34,10 @@ type GatewayTrafficFeatures struct {
 	SecurityRevocation bool
 	ManagedHTTP        bool
 	ManagedCircuit     bool
+	// EdgeHeaderSecrets: the gateway opens sealed edge-rule request header
+	// values (ADR-20261108110000). It counts only for the boot that reported
+	// it, so a gateway rolled back to an older release stops counting.
+	EdgeHeaderSecrets bool
 }
 
 type ServingGatewayTrafficRuntime struct {
@@ -114,6 +118,7 @@ func (s *PgStore) ReportGatewayTrafficRuntime(ctx context.Context, epoch Gateway
 		RetryEnabled: f.RetryEnabled, RateCounterMode: f.RateCounterMode, RetryCounterMode: f.RetryCounterMode,
 		RetryBackendID: f.RetryBackendID, DeadlineSigning: f.DeadlineSigning, PolicySnapshot: f.PolicySnapshot,
 		SecurityRevocation: f.SecurityRevocation, ManagedHttp: f.ManagedHTTP, ManagedCircuit: f.ManagedCircuit,
+		EdgeHeaderSecrets: f.EdgeHeaderSecrets,
 	})
 	return gatewayTrafficWriteResult(n, err)
 }
@@ -155,6 +160,7 @@ func (s *pgCore) ListServingGatewayTrafficRuntime(ctx context.Context) ([]Servin
 				RetryEnabled: row.RetryEnabled, RateCounterMode: row.RateCounterMode, RetryCounterMode: row.RetryCounterMode,
 				RetryBackendID: row.RetryBackendID, DeadlineSigning: row.DeadlineSigning, PolicySnapshot: row.PolicySnapshot,
 				SecurityRevocation: row.SecurityRevocation, ManagedHTTP: row.ManagedHttp, ManagedCircuit: row.ManagedCircuit,
+				EdgeHeaderSecrets: row.EdgeHeaderSecrets,
 			},
 		}
 		if row.ReportedAt.Valid {

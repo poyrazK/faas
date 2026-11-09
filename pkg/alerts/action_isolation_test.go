@@ -29,7 +29,7 @@ func (b *blockingActionExecutor) Execute(ctx context.Context, rule state.AlertRu
 	return nil
 }
 
-// adr: 20261109120000 — one account's slow action (a rollback waiting on
+// adr: 20261109153000 — one account's slow action (a rollback waiting on
 // apid) does not hold up another account's fires: actions are no longer
 // serialised behind one evaluator-wide lock.
 func TestEvaluator_SlowActionDoesNotBlockOtherAccounts(t *testing.T) {

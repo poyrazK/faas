@@ -21,7 +21,7 @@ import (
 const fireReadRows = 200
 
 // teamEpisode reads an alert episode another account holds, for a teammate
-// (ADR-20261109120000). Only an episode of an existing organization app
+// (ADR-20261109153000). Only an episode of an existing organization app
 // qualifies; the caller then checks the app is one it may read. Any other
 // episode is state.ErrNotFound.
 func (s *Service) teamEpisode(ctx context.Context, id string) (state.AlertEpisode, error) {
@@ -86,7 +86,7 @@ type found struct {
 	updates []api.IncidentUpdate
 	// owner is the account that keeps the incident's acknowledgement and
 	// notes: an alert incident's episode account, so a team shares them
-	// (ADR-20261109120000); the caller for any other incident.
+	// (ADR-20261109153000); the caller for any other incident.
 	owner string
 }
 

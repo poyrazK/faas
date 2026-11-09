@@ -195,7 +195,7 @@ func AccountSpendAggregatorLoop(ctx context.Context, p AccountSpendAggregatorPar
 		}
 		for _, a := range accounts {
 			// The billing page's figure: compute, egress and object
-			// storage (ADR-20261109120000).
+			// storage (ADR-20261109153000).
 			cents, spendErr := meter.MonthToDateSpendCents(walkCtx, p.Store, p.Provider, a, time.Now())
 			if spendErr != nil {
 				p.Log.Warn("meterd: MTD spend read failed", "account_id", a.ID, "err", spendErr)

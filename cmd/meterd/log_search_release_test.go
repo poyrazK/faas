@@ -71,7 +71,7 @@ func TestLogSearchReleaseFollowsSwitchAndCapability(t *testing.T) {
 			checks: []check{{pro.ID, "app-pro", true}, {hobby.ID, "app-hobby", false}}},
 		{name: "an unreadable app decides off", env: "1", written: &proOnly,
 			checks: []check{{pro.ID, "app-gone", false}}},
-		// adr: 20261109120000 — an app its organization owns follows the
+		// adr: 20261109153000 — an app its organization owns follows the
 		// organization's plan, not the creating member's.
 		{name: "an organization app follows the organization's plan", env: "1", written: &proOnly,
 			checks: []check{{hobby.ID, "app-org", true}}},

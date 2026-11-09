@@ -40,7 +40,7 @@ type pattern struct {
 var patterns = []pattern{
 	{Error, "[error]"}, {Error, "[err]"}, {Error, "level=error"}, {Error, `"level":"error"`}, {Error, `"level": "error"`}, {Error, `"severity":"error"`},
 	// Fatal and critical are errors in the three-level vocabulary, as the
-	// structured parse at ring intake maps them (ADR-20261109120000).
+	// structured parse at ring intake maps them (ADR-20261109153000).
 	{Error, "[fatal]"}, {Error, "[critical]"}, {Error, "[crit]"}, {Error, "[panic]"}, {Error, "[emerg]"},
 	{Error, "level=fatal"}, {Error, "level=critical"}, {Error, "level=crit"}, {Error, "level=panic"},
 	{Warn, "[warn]"}, {Warn, "[warning]"}, {Warn, "level=warn"}, {Warn, `"level":"warn"`}, {Warn, `"level": "warn"`}, {Warn, `"severity":"warn"`},
@@ -53,7 +53,7 @@ var patterns = []pattern{
 // and runtime fatal errors, and the first line of a Node uncaught-exception
 // report ("TypeError: …"). Uncaught crashes reach the log as plain stderr in
 // these shapes, so without them a crash was no error line at all
-// (ADR-20261109120000). They are anchored to the start of the line and
+// (ADR-20261109153000). They are anchored to the start of the line and
 // case-sensitive, so prose that mentions an error stays unclassified.
 var prefixes = []pattern{
 	{Error, "ERROR:"}, {Error, "CRITICAL:"}, {Error, "FATAL:"}, {Error, "FATAL "},

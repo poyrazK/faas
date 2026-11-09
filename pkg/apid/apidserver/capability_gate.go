@@ -163,7 +163,7 @@ func (s *server) logSearchReleasedForApp(ctx context.Context, app state.App) boo
 	if s.capGate == nil {
 		return true
 	}
-	// The app's owner decides (ADR-20261109120000): an app an organization
+	// The app's owner decides (ADR-20261109153000): an app an organization
 	// owns follows the organization's plan, as its other routes do.
 	acct, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {

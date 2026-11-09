@@ -11,7 +11,7 @@ import (
 // be recorded in gateway_request_duration_seconds with its whole lifetime: a
 // chat socket open for ten minutes counted as one ten-minute request. Latency
 // panels, p95 alerts and latency SLOs then read an app that serves streams
-// as slow, and a latency SLO could not be met (ADR-20261109120000). A
+// as slow, and a latency SLO could not be met (ADR-20261109153000). A
 // long-lived response's latency is now the time to its response headers:
 // how long the client waited for the stream to start. Its request still
 // counts once, so request counts and error rates are unchanged.

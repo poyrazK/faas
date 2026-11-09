@@ -107,7 +107,7 @@ func sealChannel(acct state.Account, req api.CreateNotificationChannelRequest) (
 		if acct.Email == "" || !strings.EqualFold(req.Email, acct.Email) {
 			return in, api.ErrNotificationChannelInvalid("email channels can only send to this account's own email address; other recipients need a confirmation flow that is not available yet")
 		}
-		// An unverified address may be someone else's (ADR-20261109120000).
+		// An unverified address may be someone else's (ADR-20261109153000).
 		if !acct.EmailVerified() {
 			return in, api.ErrNotificationChannelInvalid("verify this account's email address before creating an email channel")
 		}

@@ -360,7 +360,7 @@ func (s *countingAppErrorsStore) OrgByID(_ context.Context, id string) (state.Or
 	return *s.org, nil
 }
 
-// adr: 20261109120000 — an app an organization owns keeps request rows up to
+// adr: 20261109153000 — an app an organization owns keeps request rows up to
 // the organization's plan cap, not the creating member's.
 func TestAppErrorsRequestRowCapFollowsTheAppsOwner(t *testing.T) {
 	org := state.Org{ID: uuid.NewString(), Plan: api.PlanScale, Status: state.OrgStatusActive, ResourceOwnershipEnabled: true}

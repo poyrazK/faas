@@ -61,7 +61,7 @@ func TestEvaluator_RulesPastThePlanCapStopEvaluating(t *testing.T) {
 	}
 }
 
-// adr: 20261109120000 — each rule gets its owner's caps: a rule on an app an
+// adr: 20261109153000 — each rule gets its owner's caps: a rule on an app an
 // organization owns follows the organization's plan, not the creating
 // member's, and a rule whose owner cannot be read keeps evaluating.
 func TestEvaluator_PlanCapsFollowEachRulesOwner(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 20261109120000 — a PagerDuty routing key is not replaced while a rule
+// adr: 20261109153000 — a PagerDuty routing key is not replaced while a rule
 // using the channel is firing: the resolve would go to the new key's service
 // and the incident the old key opened would stay open.
 func TestPagerDutyKeyIsNotReplacedUnderAnOpenIncident(t *testing.T) {

@@ -1,4 +1,4 @@
-# ADR-20261109120000 · Gregale Observe review, round 6: an organization's apps follow the organization, fires keep trying, small windows don't page, the spend alert counts the whole bill
+# ADR-20261109153000 · Gregale Observe review, round 6: an organization's apps follow the organization, fires keep trying, small windows don't page, the spend alert counts the whole bill
 
 - **Status:** proposed
 - **Date:** 2026-11-09

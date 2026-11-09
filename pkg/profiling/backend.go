@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net/http"
@@ -149,7 +150,7 @@ func encodeSeries(principal Principal, identity sampleIdentity, name string, p *
 	// Pyroscope query deduplication uses series identity and capture time.
 	// Separate VM/process lifetimes need distinct series even when their
 	// CPU samples and timestamps coincide. No guest label is forwarded.
-	labels := [][2]string{{"__name__", name}, {"service_name", "gregale"}, {"app_id", principal.AppID}, {"deployment_id", principal.DeploymentID}, {"scope", principal.Scope}, {"runtime", principal.Runtime}, {"collector_id", identity.Collector}}
+	labels := [][2]string{{"__name__", name}, {"service_name", "gregale"}, {"app_id", principal.AppID}, {"deployment_id", principal.DeploymentID}, {"scope", principal.Scope}, {"runtime", principal.Runtime}, {"collector_id", collectorLabel(identity.Collector)}}
 	var series []byte
 	for _, label := range labels {
 		var pair []byte
@@ -161,6 +162,17 @@ func encodeSeries(principal Principal, identity sampleIdentity, name string, p *
 	sample = protoBytes(sample, 2, []byte(identity.ID))
 	series = protoBytes(series, 2, sample)
 	return series, nil
+}
+
+// collectorLabel maps a lifetime's collector identity onto one of a fixed
+// number of label values. The label only keeps distinct lifetimes from being
+// deduplicated as one series when their samples and capture times coincide,
+// and a slot does that as well as a unique value; a unique value per wake grew
+// the series count without bound. Coverage still counts lifetimes from the
+// sample names, which keep the full identity.
+func collectorLabel(collector string) string {
+	sum := sha256.Sum256([]byte(collector))
+	return "c" + strconv.Itoa(int(binary.BigEndian.Uint32(sum[:4])%api.ProfileCollectorLabelSlots))
 }
 
 func (b *Pyroscope) pushSeries(ctx context.Context, tenant string, body []byte) error {

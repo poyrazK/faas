@@ -9,7 +9,7 @@ import (
 )
 
 // pagerDutyKeyChangeAllowed refuses replacing a PagerDuty routing key while
-// an enabled rule using the channel is firing (ADR-20261109120000). The
+// an enabled rule using the channel is firing (ADR-20261109153000). The
 // incident the fire opened is keyed to the old routing key's service; the
 // resolve, sent to the new key, would leave it open for good. Slack and
 // email keep no incident, so their destinations change freely.

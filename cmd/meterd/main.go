@@ -1215,7 +1215,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	evaluator.SetRuleRelease(release.ForAccount)
 	evaluator.SetRuleLimits(release.RuleLimits)
 	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))
-	// ADR-20261109120000: the spend alert reads the billing page's figure.
+	// ADR-20261109153000: the spend alert reads the billing page's figure.
 	evaluator.SetSpend(monthSpend(store, pusher))
 	// ADR-20261022172052: firing app alerts carry what the log ledger shows,
 	// for the accounts the log-search capability flag releases it to

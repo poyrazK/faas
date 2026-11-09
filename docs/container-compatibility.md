@@ -134,14 +134,20 @@ from the snapshot.
 
 Reseed these yourself, or avoid keeping them across a snapshot:
 
-- generators in other runtimes, such as Go `math/rand`, Java `Random` and
-  `SecureRandom`, Ruby `Random`, and PHP `mt_rand`;
+- generators in other runtimes, such as Go `math/rand` and `math/rand/v2`,
+  Java `Random` and `Math.random`, Ruby `Random`, and PHP `mt_rand`. Two
+  restores of one snapshot return the same Go and Java values (measured,
+  ADR-20261107160000). Go `crypto/rand` and Java's default `SecureRandom`
+  read the kernel on each draw and do not replay; a `SecureRandom` you seed
+  yourself or create as `SHA1PRNG` does;
 - generator objects your code created before the snapshot, such as Python
   `random.Random()` or `numpy.random.default_rng()`;
 - values your code generated before the snapshot, such as a secret, nonce or
   instance ID drawn once at startup: every instance restored from that snapshot
   holds the same value. Draw them per request or per use, and take the serving
-  instance from the `X-Faas-Instance-Id` request header;
+  instance from the `X-Faas-Instance-Id` request header or, outside a request,
+  from the file named by `FAAS_INSTANCE_IDENTITY_FILE`, which Gregale rewrites
+  on every wake ([trace propagation](runtimes/trace-propagation.md#deployment-identity));
 - `Math.random` inside Node worker threads;
 - sidecars that run from their own root filesystem.
 

@@ -53,7 +53,7 @@ func (l *logSearchRelease) Released(ctx context.Context, accountID, appID string
 	if err != nil {
 		return false
 	}
-	// The app's owner decides, as apid does (ADR-20261109120000): an app an
+	// The app's owner decides, as apid does (ADR-20261109153000): an app an
 	// organization owns follows the organization's plan.
 	owner, err := state.AppResourceAccount(ctx, l.store, app)
 	if err != nil {

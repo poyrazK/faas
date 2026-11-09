@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 20261109120000 — an organization app's incidents are held under the
+// adr: 20261109153000 — an organization app's incidents are held under the
 // account of the member who created it; a teammate who may read the app
 // lists and opens them, and its acknowledgement is the one every member
 // sees. Another account's personal app stays out of reach.

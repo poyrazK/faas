@@ -653,6 +653,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				budgetDetached = isLongLivedForward(r)
 				if budgetDetached {
 					recordTrafficStreamDetached(r.Context())
+					if isEventStream(w.Header()) || r.Header.Get("x-faas-protocol") == "grpc" {
+						recordTrafficLongLivedSession(r.Context())
+					}
 					if isEventStream(w.Header()) {
 						// An EventSource reconnects with Last-Event-ID, so a
 						// gateway restart ends it cleanly below rather than
@@ -1096,6 +1099,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// the 24-hour ceiling, and client cancellation.
 				detachBudget()
 				recordTrafficStreamDetached(r.Context())
+				if upgraded {
+					recordTrafficLongLivedSession(r.Context())
+				}
 				upgradeEstablished = true
 			}
 			if upgraded {
@@ -1537,7 +1543,12 @@ type NodeClientCache struct {
 	dialing map[string]*nodeDialCall
 
 	dial func(ctx context.Context, target string) (*grpc.ClientConn, error)
-	log  *slog.Logger
+	// nodeName and dialNode, set by WithNodeBinding, replace dial so each
+	// connection accepts only the vmmd leaf of the node it was opened for
+	// (ADR-20261108124106).
+	nodeName func(ctx context.Context, nodeID string) (string, bool)
+	dialNode func(ctx context.Context, target, name string) (*grpc.ClientConn, error)
+	log      *slog.Logger
 	// restartNotices, when set, holds stream opens through a node's planned
 	// vmmd restart (vmmd_restart_hold.go).
 	restartNotices *restartNotices
@@ -1564,6 +1575,35 @@ func (c *NodeClientCache) WithRestartNotices(store RestartNoticeReader) *NodeCli
 		c.restartNotices = &restartNotices{store: store, now: time.Now}
 	}
 	return c
+}
+
+// WithNodeBinding makes every dial name the node it is for: name resolves a
+// compute_nodes.id to its compute_nodes.name, and dial must accept only a
+// vmmd leaf whose CN is that name (wire.ExpectPeerCN). The target_url
+// alone is a row compute nodes can write, so without the binding a
+// compromised node could take another node's forwards (ADR-20261108124106).
+// Startup only.
+func (c *NodeClientCache) WithNodeBinding(name func(ctx context.Context, nodeID string) (string, bool), dial func(ctx context.Context, target, name string) (*grpc.ClientConn, error)) *NodeClientCache {
+	if c != nil && name != nil && dial != nil {
+		c.nodeName, c.dialNode = name, dial
+	}
+	return c
+}
+
+// dialFor opens the connection for nodeID at target, bound to the node's
+// name when WithNodeBinding is set.
+func (c *NodeClientCache) dialFor(ctx context.Context, nodeID, target string) (*grpc.ClientConn, error) {
+	if c.dialNode != nil {
+		name, ok := c.nodeName(ctx, nodeID)
+		if !ok || name == "" {
+			return nil, fmt.Errorf("gateway: no compute_nodes.name for node %q to bind the dial to", nodeID)
+		}
+		return c.dialNode(ctx, target, name)
+	}
+	if c.dial == nil {
+		return nil, errors.New("gateway: node client cache has no dialer")
+	}
+	return c.dial(ctx, target)
 }
 
 // client is the VmmdClient a lease of conn hands out.
@@ -1653,11 +1693,11 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 		c.finishNodeDial(nodeID, call, nil, "")
 		return nil, nil, false
 	}
-	if c.dial == nil {
+	if c.dial == nil && c.dialNode == nil {
 		c.finishNodeDial(nodeID, call, nil, "")
 		return nil, nil, false
 	}
-	conn, err := c.dial(ctx, target)
+	conn, err := c.dialFor(ctx, nodeID, target)
 	if err != nil {
 		if c.log != nil {
 			c.log.Warn("gateway: vmmd dial failed",

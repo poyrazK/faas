@@ -35,7 +35,7 @@ func (e *Evaluator) SetRuleRelease(forAccount func(ctx context.Context, accountI
 // RuleLimit is the plan caps that apply to one rule: its owner's caps per app
 // and per billing subject. Subject is the owner the per-account cap counts
 // against: the organization for an app it owns, else the account
-// (ADR-20261109120000), as the API counts when a rule is created.
+// (ADR-20261109153000), as the API counts when a rule is created.
 type RuleLimit struct {
 	PerApp, PerAccount int
 	Subject            string

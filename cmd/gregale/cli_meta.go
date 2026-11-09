@@ -6602,6 +6602,9 @@ var cliCommands = []cliCommand{
 				{Name: "set", Short: "Set KEY=VALUE pairs in every service's pr-preview scope", Positionals: []string{"<project>", "[KEY=VALUE...]"}, Flags: []cliFlag{{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin", Bool: true}}},
 				{Name: "unset", Short: "Remove keys from every service's pr-preview scope", Positionals: []string{"<project>", "<KEY...>"}},
 			}},
+			{Name: "import", Short: "Import .gregale/project.yaml into the root gregale.yaml project block", Notes: []string{"Runs locally; nothing is uploaded.", "The existing gregale.yaml is kept as written; the block is appended and checked against the old file before anything changes."}, Positionals: []string{"[<dir>]"}, Flags: []cliFlag{
+				{Name: "dry-run", Short: "print the new gregale.yaml without writing", Bool: true},
+			}},
 		},
 		Positionals:         []string{"<project-slug>"},
 		CompletionPositions: projectsCLICompletionPositions(),
@@ -6807,6 +6810,11 @@ var cliCommands = []cliCommand{
 			{Name: "get", Short: "Show one effective setting", Positionals: []string{"<api-base|json>"}},
 			{Name: "set", Short: "Persist one non-secret setting", Positionals: []string{"<api-base|json>", "<value>"}},
 			{Name: "list", Short: "Show all effective settings"},
+			{Name: "explain", Short: "Show where a CLI target or project setting comes from", Positionals: []string{"<key>"}, Notes: []string{
+				"Keys: project, app, environment, service_policy, services.<name>.service_policy, services.<name>.visibility, services.<name>.depends_on, api-base, json.",
+				"Lists every layer in precedence order (flag, .gregale/project.json, gregale.yaml `project:`, Compose x-gregale-*, .gregale/project.yaml) and marks the one that wins.",
+				"Runs locally; nothing is uploaded.",
+			}, Examples: []string{"gregale config explain app", "gregale config explain services.api.visibility"}},
 		},
 	},
 	{

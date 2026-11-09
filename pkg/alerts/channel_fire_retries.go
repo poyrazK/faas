@@ -10,7 +10,7 @@ import (
 )
 
 // A fire a notification channel did not take is retried
-// (ADR-20261109120000). The sender tries three times over about three
+// (ADR-20261109153000). The sender tries three times over about three
 // seconds, and the next fire waits for the rule's cool-down (15 minutes by
 // default, up to a day), so a short PagerDuty or Slack outage at the moment
 // of a fire lost the page for that long, or for good when the breach ended

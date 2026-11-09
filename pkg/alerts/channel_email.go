@@ -13,7 +13,7 @@ import (
 // (ADR-749). It stored that address when it was created, so it kept sending
 // to an address the account had since changed, and it could be created
 // before the account had verified its address, which made it a way to mail
-// someone else's inbox (ADR-20261109120000). The channel now sends to the
+// someone else's inbox (ADR-20261109153000). The channel now sends to the
 // account's current address, and only once that address is verified.
 
 // errEmailUnverified is an email channel's delivery error while its

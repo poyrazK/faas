@@ -73,7 +73,7 @@ func orgStore() observeReleaseFake {
 	}
 }
 
-// adr: 20261109120000 — work on an app an organization owns follows the
+// adr: 20261109153000 — work on an app an organization owns follows the
 // organization's plan and status, not the creating member's: a Free member's
 // rules, probes and rollups in a Pro organization run, and a suspended
 // organization's stop although its member's account is active.

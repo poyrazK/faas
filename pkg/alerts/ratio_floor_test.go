@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
-// adr: 20261109120000 — a share of a handful of requests is not evidence:
+// adr: 20261109153000 — a share of a handful of requests is not evidence:
 // one failed wake out of three requests must not page as a 33% error rate.
 func TestEvaluator_RatioRuleNeedsEnoughRequests(t *testing.T) {
 	cases := []struct {

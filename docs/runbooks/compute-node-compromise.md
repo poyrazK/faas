@@ -111,6 +111,8 @@ secret reaches beyond this node, and so what to rotate.
 | Database login (`faas_compute`, shared by every compute node) | `/etc/faas/compute-db.env` | the control plane's Postgres, as that role, from any allowed address | §4.4 |
 | Object storage provider keys | `/etc/faas/secrets/object-storage/provider.env` | customer buckets through the provider | §4.4 |
 | Cloudflare tunnel token | `/etc/faas/secrets/cloudflared/tunnel-token` | running a connector for that tunnel | §4.4 |
+| Gateway fleet key (`gatewayd_edge_challenge_key`, shared by every gateway) | `/etc/faas/secrets/gatewayd-internal/edge-challenge.key` | minting browser-challenge passes and managed deadlines that every gateway accepts, which skips challenge rules for any app (ADR-20261102191500) | §4.5 |
+| Origin certificate key, when the edge loads its certificate from files | `/etc/faas/secrets/edge-tls/origin.key` | answering as the origin for every app host to Cloudflare, from wherever Cloudflare can be pointed | §4.5 |
 | Overlay auth key | `/etc/faas/secrets/tailscale.authkey` | joining the tailnet | §1.2 |
 | Its internal mTLS leaf certificates | `/etc/faas/tls/` | talking to other daemons as this node until they expire | [internal-ca-compromise.md](internal-ca-compromise.md) §3 |
 | `host.age`, vmmd and builderd `node.key` | `/etc/faas/secrets/` | this node only | retire the node (§5) |
@@ -156,6 +158,23 @@ no new secret reaches the compromised one.
    then the old password works from any address still in the allowlist. Rotate the
    object-storage provider keys and the Cloudflare tunnel token in each
    provider's console. Then confirm the old ones fail.
+5. **Edge keys.** Make a new gateway fleet key (`openssl rand -hex 32`), put
+   it in Ansible Vault as `gatewayd_edge_challenge_key` and in the
+   `GATEWAYD_EDGE_CHALLENGE_KEY` deploy secret, and converge every healthy
+   gateway in one run: gateways with different keys refuse each other's
+   passes (`FaasEdgeChallengeKeyMismatch`), and visitors behind a challenge
+   rule are challenged once more. If the edge loads its certificate from
+   files, that key is a copy of the control plane's Caddy origin key
+   (EdgeDirectEntry.md): issue a new Cloudflare Origin CA certificate,
+   install it in `/etc/caddy/tls/cloudflare-origin.{pem,key}` on the control
+   plane and in `/etc/faas/secrets/edge-tls/origin.{pem,key}` on the healthy
+   nodes, reload both, and revoke the old one in the Cloudflare dashboard.
+6. **Registry rows.** The node could rewrite any `compute_nodes` row. schedd
+   and the gateways dial vmmd only when the answering certificate names the
+   node they meant (ADR-20261108124106), so a rewritten `target_url` stops
+   traffic rather than redirecting it; still restore every row's
+   `target_url`, `overlay_ip` and lifecycle from the manifest and the last
+   good state before undraining.
 
 ## 5. Rebuild, do not clean
 

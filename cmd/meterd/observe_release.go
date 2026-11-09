@@ -21,7 +21,7 @@ const observeReleaseTTL = time.Minute
 // observeRelease decides which customer observability work meterd still does
 // (ADR-20261028101615): alert rules and channel deliveries, synthetic probes
 // and SLO rollups. It follows the plan and status of the work's owner, as
-// apid's create checks do (ADR-20261109120000): an app an organization owns
+// apid's create checks do (ADR-20261109153000): an app an organization owns
 // follows the organization, any other app and every account-wide rule follow
 // the account. It also follows the capability flags (ADR-20261023115741), so
 // a downgraded owner or a capability an operator switched off stops costing
@@ -97,7 +97,7 @@ func (r *observeRelease) ForAccount(context.Context, string) alerts.RuleRelease 
 
 // RuleLimits is the plan caps on alert rules that apply to rule, so rules a
 // bigger plan allowed stop evaluating after a downgrade (ADR-20261104142830).
-// They are the owner's caps, counted per billing subject (ADR-20261109120000).
+// They are the owner's caps, counted per billing subject (ADR-20261109153000).
 // An unreadable or not-live owner reports !ok: ForAccount already decides it.
 func (r *observeRelease) RuleLimits(ctx context.Context, rule state.AlertRule) (alerts.RuleLimit, bool) {
 	owner, err := r.owner(ctx, rule.AccountID, rule.AppID)

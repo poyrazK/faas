@@ -67,7 +67,7 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 	}
 	// Any new notice supersedes a fire still waiting for a retry: a newer
 	// fire repeats it, and a late fire after a recovery would reopen the
-	// incident (ADR-20261109120000).
+	// incident (ADR-20261109153000).
 	e.clearChannelFires(rule.ID)
 	return e.sendToChannels(ctx, chans, e.channelMessage(ctx, rule, event, observed, now), now, func(ch state.NotificationChannel, errMsg string) {
 		switch event {

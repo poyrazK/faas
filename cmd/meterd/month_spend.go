@@ -12,7 +12,7 @@ import (
 
 // monthSpend reads an account's month to date for the account_spend_eur
 // alert metric: compute, egress and object storage, the billing page's
-// figure (ADR-20261109120000).
+// figure (ADR-20261109153000).
 func monthSpend(store state.Store, provider billing.Provider) alerts.SpendCents {
 	return func(ctx context.Context, accountID string) (int64, error) {
 		acct, err := store.AccountByID(ctx, accountID)

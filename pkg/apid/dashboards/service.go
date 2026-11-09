@@ -27,7 +27,7 @@ import (
 type Host interface {
 	// AppForAccount returns an app by slug that the request's principal
 	// may read, or false: the account's own, or an app of one of its
-	// organizations a teammate created (ADR-20261109120000).
+	// organizations a teammate created (ADR-20261109153000).
 	AppForAccount(ctx context.Context, acct state.Account, slug string) (state.App, bool)
 	// AppOwner is the account a widget on app reads as: the app's resource
 	// owner (state.AppResourceAccount), whose plan gates the widget and

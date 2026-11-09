@@ -1,6 +1,6 @@
 package alerts_test
 
-// adr: 20261109120000 — a fire a channel did not take is retried with
+// adr: 20261109153000 — a fire a channel did not take is retried with
 // backoff while the rule is still firing and before its next fire is due;
 // a recovery or a stand-down drops it, so a late page never reopens an
 // incident that has ended.

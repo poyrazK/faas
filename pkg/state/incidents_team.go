@@ -11,7 +11,7 @@ import (
 )
 
 // TeamIncidentStore reads alert episodes by app, whichever account holds
-// them (ADR-20261109120000). An organization's apps keep their alert rules,
+// them (ADR-20261109153000). An organization's apps keep their alert rules,
 // and so their episodes, under the account of the member who created the
 // app; a teammate's incident list reads them by the apps it may see, and the
 // caller decides that visibility.

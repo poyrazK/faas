@@ -39,7 +39,7 @@ func TestAlertPresetOperatorOnlyNameCannotBeEnabled(t *testing.T) {
 	}
 }
 
-// adr: 20261109120000 — the operator signals the catalog hides cannot be
+// adr: 20261109153000 — the operator signals the catalog hides cannot be
 // reached by naming them on a rule either: such a rule would stay degraded
 // for good and take a slot of the plan's rule limit.
 func TestAlertRuleCannotUseAnOperatorOnlyMetric(t *testing.T) {

@@ -1,8 +1,8 @@
 -- migration-compat: expand
--- filename: 20261109120500000_observe_preset_descriptions.sql
+-- filename: 20261109153500000_observe_preset_descriptions.sql
 
 -- +goose Up
--- ADR-20261109120000: preset descriptions say what their metrics count. The
+-- ADR-20261109153000: preset descriptions say what their metrics count. The
 -- cold-start preset counts cold boots, not snapshot wakes, and the spend
 -- preset reads compute, egress and object-storage overage.
 -- +goose StatementBegin

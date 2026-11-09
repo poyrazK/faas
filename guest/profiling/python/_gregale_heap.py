@@ -15,6 +15,10 @@ MAX_FRAMES = 32
 # Captures taken because memory runs low record shorter tracebacks: tracing
 # costs memory per traced block and per distinct traceback.
 LOW_MEMORY_FRAMES = 8
+# Continuous heap collection keeps tracing on for as long as it is enabled,
+# not just for a capture window, so it records the same short tracebacks
+# (profiling review round 4, R4-7).
+CONTINUOUS_FRAMES = 8
 # Tracing stops, without a snapshot, once available memory falls below the
 # larger of these: a heap capture must never cause the OOM kill it explains.
 FLOOR_BYTES = 16 << 20

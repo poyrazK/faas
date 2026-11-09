@@ -47,7 +47,7 @@ type Host interface {
 	AppVisible(ctx context.Context, acct state.Account, app state.App) bool
 	// TeamApps lists the apps of the caller's organizations that teammates
 	// created and the caller may read; their incidents are held under the
-	// creating member's account (ADR-20261109120000).
+	// creating member's account (ADR-20261109153000).
 	TeamApps(ctx context.Context, acct state.Account) []state.App
 	// Actor names who made the request: the signed-in email, or
 	// api_key:<id>.
@@ -208,7 +208,7 @@ func (s *Service) list(ctx context.Context, acct state.Account, app state.App, s
 
 // alertEpisodes reads the caller's own alert episodes and those of the
 // organization apps teammates created that the caller may read
-// (ADR-20261109120000), at most sourceRows, newest opened first.
+// (ADR-20261109153000), at most sourceRows, newest opened first.
 func (s *Service) alertEpisodes(ctx context.Context, acct state.Account, app state.App, since time.Time) ([]state.AlertEpisode, error) {
 	store := s.Host.Store()
 	var eps []state.AlertEpisode
@@ -256,7 +256,7 @@ func (s *Service) Recent(ctx context.Context, acct state.Account) api.IncidentsR
 // addAcknowledgements marks the listed incidents acknowledged, with one read
 // per account holding them: an alert incident's acknowledgement is kept by
 // the account its episode belongs to, so every teammate sees the same one
-// (ADR-20261109120000); owners names those accounts, and any other incident
+// (ADR-20261109153000); owners names those accounts, and any other incident
 // is the caller's.
 func (s *Service) addAcknowledgements(ctx context.Context, acct state.Account, owners map[string]string, resp *api.IncidentsResponse) {
 	if len(resp.Incidents) == 0 {

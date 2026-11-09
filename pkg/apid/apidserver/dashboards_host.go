@@ -33,7 +33,7 @@ func (h dashboardsHost) AppForAccount(ctx context.Context, acct state.Account, s
 	app, err := h.s.store.AppBySlug(ctx, slug)
 	// accountViewAppVisible keeps another account's personal app out and
 	// lets an organization app through for a member who may read it, whoever
-	// created it (ADR-20261109120000).
+	// created it (ADR-20261109153000).
 	if err != nil || !accountViewAppVisible(ctx, h.s.store, h.s.log, acct, app) {
 		return state.App{}, false
 	}

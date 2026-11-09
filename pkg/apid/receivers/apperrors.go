@@ -344,7 +344,7 @@ func (a *appErrorsReceiver) requestRowsFull(ctx context.Context, accountID, appI
 	if !ok {
 		return false
 	}
-	// The cap is the app owner's plan (ADR-20261109120000): an app an
+	// The cap is the app owner's plan (ADR-20261109153000): an app an
 	// organization owns follows the organization's plan.
 	app, err := owners.AppByID(ctx, appID.String())
 	if err != nil {

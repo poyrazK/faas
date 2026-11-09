@@ -19,7 +19,7 @@ func TestDetect(t *testing.T) {
 		{"[info] retry then [error] gave up", loglevel.Error},
 		{"an error occurred in prose", ""},
 		{"", ""},
-		// adr: 20261109120000 — the default shapes of an uncaught crash and
+		// adr: 20261109153000 — the default shapes of an uncaught crash and
 		// of fatal or critical lines are errors.
 		{"ERROR:    Exception in ASGI application", loglevel.Error},
 		{"ERROR:root:payment declined", loglevel.Error},

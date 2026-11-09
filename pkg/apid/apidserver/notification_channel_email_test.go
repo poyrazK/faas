@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 20261109120000 — an email channel needs the account's own address,
+// adr: 20261109153000 — an email channel needs the account's own address,
 // verified: an unverified address may belong to someone else.
 func TestEmailChannelNeedsAVerifiedAddress(t *testing.T) {
 	req := api.CreateNotificationChannelRequest{Name: "me", Kind: "email", Email: "me@example.com"}

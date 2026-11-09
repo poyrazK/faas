@@ -231,6 +231,14 @@ request tears them down. Turn an app's previews off with `gregale github setup
 my-api --no-preview` or `PATCH /v1/apps/my-api/github/deployment-policy`
 with `{"preview_enabled": false}`.
 
+A new commit on the pull request rebuilds only the preview services whose
+files changed since the previous commit, by the same rule as production
+pushes: a file outside every service's directory rebuilds them all, and
+ignored paths are left out. The other services keep serving the build they
+already have, and take only the deploys the rebuilt services need. A service
+whose preview is not live, and every service when the previous commit's
+preview failed or the pull request was just opened or reopened, rebuilds.
+
 **Release tags.** A tag push deploys the apps bound to the branch whose head
 the tag points at; a tag on an older commit deploys nothing. A project's tags
 deploy its production branch. Annotated tags (`git tag -a`) and lightweight
@@ -1708,7 +1716,7 @@ gregale environment promote shop --from staging --to production --sync-config --
 The server returns an accepted running operation. Two complete healthy rounds,
 one minute apart, are required while candidates serve no normal traffic. Graph
 and configuration then cut over atomically, followed by two new healthy rounds
-before success. Probe requests preserve destination scope and customer auth.
+before success. Probe requests preserve destination scope and pass only Gregale's own auth gates; your app's own auth still applies.
 Use a dependency-checking application endpoint to test database access.
 
 Inspect `gregale environment status shop PROMOTION_ID --to production`

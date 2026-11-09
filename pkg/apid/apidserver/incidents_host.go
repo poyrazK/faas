@@ -19,7 +19,7 @@ type incidentsHost struct{ s *server }
 var _ incidents.Host = incidentsHost{}
 
 // TeamApps lists the apps of the caller's organizations that teammates
-// created and the caller may read (ADR-20261109120000): their alert rules
+// created and the caller may read (ADR-20261109153000): their alert rules
 // and incidents are held under the creating member's account, so the
 // caller's own account never lists them. A failed read lists none.
 func (h incidentsHost) TeamApps(ctx context.Context, acct state.Account) []state.App {

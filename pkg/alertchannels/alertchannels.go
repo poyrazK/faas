@@ -91,7 +91,7 @@ type Target struct {
 	Region     string // kind pagerduty
 	Email      string // kind email
 	// AccountID is the channel's account. An email channel sends to that
-	// account's current verified address (ADR-20261109120000); the evaluator
+	// account's current verified address (ADR-20261109153000); the evaluator
 	// resolves it before sending.
 	AccountID string
 }
