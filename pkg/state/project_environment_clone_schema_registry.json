@@ -17060,6 +17060,7 @@
       "preset",
       "ram_mb",
       "state",
+      "template_id",
       "tenant_id",
       "updated_at",
       "workspace_snapshot_id"

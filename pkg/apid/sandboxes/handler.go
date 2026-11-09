@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -75,6 +76,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if prob == nil && body.Image != "" {
 		prob = h.image(r.Context(), acct, body.Image, &admission)
 	}
+	if prob == nil && body.Template != "" {
+		prob = h.template(r.Context(), acct, body.Template, &admission)
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -99,6 +103,26 @@ func (h *Handler) image(ctx context.Context, acct state.Account, image string, a
 		return prob
 	}
 	a.ImageRef, a.ImageJobID = ref, jobID
+	return nil
+}
+
+// template points the session at a template with a finished build.
+func (h *Handler) template(ctx context.Context, acct state.Account, name string, a *agentstore.SandboxAdmission) *api.Problem {
+	store, ok := h.Store.(TemplateStore)
+	if !ok {
+		return api.ErrSandboxUnsupported("template", "sandbox templates are unavailable on this control-plane host; name a preset")
+	}
+	t, err := store.SandboxTemplate(ctx, acct.ID, name)
+	if errors.Is(err, agentstore.ErrNotFound) {
+		return api.ErrSandboxTemplateNotFound(name)
+	}
+	if err != nil {
+		return h.problem(acct, "sandbox.template.read", err)
+	}
+	if !t.Ready() {
+		return api.ErrSandboxTemplateNotReady(name)
+	}
+	a.ImageRef, a.TemplateID = api.SandboxTemplateRefPrefix+name, t.ID
 	return nil
 }
 
@@ -240,7 +264,12 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 	out := api.Sandbox{ID: sb.ID, State: sb.State, Kind: sb.Kind, Preset: sb.Preset, RAMMB: sb.RAMMB,
 		Network: api.SandboxNetwork{Mode: sb.NetworkMode}, Tenant: sb.TenantID, IdleTimeoutS: sb.IdleTimeoutSec,
 		ExpiresAt: sb.ExpiresAt, Labels: sb.Labels, CloseRequestedAt: sb.CloseRequestedAt, CreatedAt: sb.CreatedAt,
-		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Image: sb.ImageRef}
+		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID}
+	if name, ok := strings.CutPrefix(sb.ImageRef, api.SandboxTemplateRefPrefix); ok {
+		out.Template = name
+	} else {
+		out.Image = sb.ImageRef
+	}
 	if out.Labels == nil {
 		out.Labels = map[string]string{}
 	}

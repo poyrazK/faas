@@ -31,11 +31,13 @@ func (s *server) createSandboxTemplateApp(ctx context.Context, r *http.Request, 
 		if err != nil {
 			return "", api.ErrCapacity("could not name the template's build app")
 		}
-		app, prob := s.buildApp(acct, api.CreateAppRequest{Slug: slug, Visibility: string(api.AppVisibilityInternal)}, limits)
+		// The template slug shape is reserved for these apps, so the
+		// defaults come from a placeholder and the slug is set after.
+		app, prob := s.buildApp(acct, api.CreateAppRequest{Slug: "sandbox-template", Visibility: string(api.AppVisibilityInternal)}, limits)
 		if prob != nil {
 			return "", prob
 		}
-		app.SandboxTemplate = true
+		app.Slug, app.SandboxTemplate = slug, true
 		app.WorkloadClass = state.WorkloadClassJob
 		app.Manifest.ExecutionMode = api.ExecutionModeJob
 		app.NodeID = ""
@@ -88,5 +90,5 @@ func sandboxTemplateSlug() (string, error) {
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}
-	return "sbt-" + hex.EncodeToString(b[:]), nil
+	return api.SandboxTemplateAppSlugPrefix + hex.EncodeToString(b[:]), nil
 }

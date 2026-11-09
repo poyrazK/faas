@@ -86,6 +86,9 @@ type SandboxAdmission struct {
 	// (ADR-1161). agentd claims the session once the image is ready.
 	ImageRef   string
 	ImageJobID string
+	// TemplateID boots the session from a sandbox template's newest
+	// finished build; ImageRef is then template:<name>.
+	TemplateID string
 }
 
 // SandboxFilter narrows a session listing. Before pages backwards from a
@@ -126,7 +129,7 @@ func (s *Store) CreateSandbox(ctx context.Context, a SandboxAdmission) (Sandbox,
 		id, err = s.q.InsertSandboxSession(ctx, tx, sqlc.InsertSandboxSessionParams{AccountID: a.AccountID, TenantID: optText(a.TenantID),
 			Kind: a.Kind, Preset: a.Preset, RamMb: int32(a.RAMMB), NetworkMode: a.NetworkMode, IdleTimeoutSec: int32(a.IdleTimeoutSec),
 			ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels, WorkspaceSnapshotID: optText(a.WorkspaceSnapshotID),
-			ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID)})
+			ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID), TemplateID: optText(a.TemplateID)})
 		if err != nil {
 			return fmt.Errorf("insert sandbox session: %w", err)
 		}

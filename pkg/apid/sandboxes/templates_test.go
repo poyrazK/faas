@@ -187,3 +187,37 @@ func TestTemplateCreateFailures(t *testing.T) {
 		t.Fatalf("unwired = %d %+v", code, p)
 	}
 }
+
+// A session names a template with a finished build; it records the
+// template, takes the template preset and the image default RAM.
+func TestCreateFromATemplate(t *testing.T) {
+	f := newFixture(t)
+	f.h.TemplateApps = (&templateApps{}).hooks()
+	if code := f.named(t, f.h.PutTemplate, http.MethodPut, "tools", `{}`, nil); code != http.StatusCreated {
+		t.Fatalf("put = %d", code)
+	}
+	var p api.Problem
+	for body, want := range map[string]string{
+		`{"template":"nope"}`:                      api.CodeSandboxTemplateNotFound,
+		`{"template":"tools"}`:                     api.CodeSandboxTemplateNotReady,
+		`{"template":"tools","preset":"codex"}`:    api.CodeValidation,
+		`{"template":"tools","image":"ghcr.io/x"}`: api.CodeValidation,
+	} {
+		if f.call(t, f.h.Create, pro(), http.MethodPost, "/v1/sandboxes", body, "", &p); p.Code != want {
+			t.Errorf("%s = %q, want %q", body, p.Code, want)
+		}
+	}
+	f.store.mu.Lock()
+	built := f.store.templates["tools"]
+	built.LiveRootfsKey = "apps/sbt-x/dep.ext4"
+	f.store.templates["tools"] = built
+	f.store.mu.Unlock()
+	sb, code := f.create(t, pro(), `{"template":"tools"}`)
+	if code != http.StatusCreated || sb.Template != "tools" || sb.Image != "" || sb.Preset != api.SandboxPresetTemplate ||
+		sb.RAMMB != api.SandboxImageDefaultRAMMB {
+		t.Fatalf("create = %d %+v", code, sb)
+	}
+	if got := f.store.admitted; got.TemplateID != built.ID || got.ImageRef != "template:tools" {
+		t.Fatalf("admitted %+v", got)
+	}
+}

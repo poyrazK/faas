@@ -270,6 +270,7 @@ type SandboxSession struct {
 	UpdatedAt           pgtype.Timestamptz
 	ClosedAt            pgtype.Timestamptz
 	WorkspaceSnapshotID pgtype.UUID
+	TemplateID          pgtype.UUID
 	ImageRef            pgtype.Text
 	ImageJobID          pgtype.UUID
 }

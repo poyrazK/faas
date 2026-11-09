@@ -100,6 +100,23 @@ func IsJobLayer(key string) bool {
 	return canonicalUUID(job) && (!attempt || canonicalUUID(artifact))
 }
 
+// IsSandboxTemplateLayer reports whether key is a sandbox template build's
+// full-rootfs artifact, AppLayer of a template build app
+// (api.IsSandboxTemplateAppSlug) and a UUID deployment
+// (ADR-20261027090013).
+func IsSandboxTemplateLayer(key string) bool {
+	rest, ok := strings.CutPrefix(key, "apps/")
+	if !ok {
+		return false
+	}
+	slug, file, ok := strings.Cut(rest, "/")
+	if !ok || !api.IsSandboxTemplateAppSlug(slug) {
+		return false
+	}
+	dep, ok := strings.CutSuffix(file, ".ext4")
+	return ok && canonicalUUID(dep)
+}
+
 // canonicalUUID reports whether s is a lowercase hyphenated UUID.
 func canonicalUUID(s string) bool {
 	if len(s) != 36 {

@@ -71,6 +71,22 @@ func TestParentBaseAliasesStartWithTheHostArch(t *testing.T) {
 	}
 }
 
+func TestIsSandboxTemplateLayer(t *testing.T) {
+	const dep = "0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10"
+	for key, want := range map[string]bool{
+		storagekey.AppLayer("sbt-0123456789ab", dep): true,
+		storagekey.AppLayer("sbt-0123456789", dep):   false,
+		storagekey.AppLayer("myapp", dep):            false,
+		storagekey.AppLayer("sbt-0123456789ab", "x"): false,
+		"apps/sbt-0123456789ab/" + dep + "/x.ext4":   false,
+		storagekey.JobLayer(dep):                     false,
+	} {
+		if got := storagekey.IsSandboxTemplateLayer(key); got != want {
+			t.Errorf("IsSandboxTemplateLayer(%q) = %v, want %v", key, got, want)
+		}
+	}
+}
+
 func TestIsJobLayer(t *testing.T) {
 	const id, art = "0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10", "9c1a2b3c-4d5e-4f60-8a7b-0c1d2e3f4a5b"
 	for key, want := range map[string]bool{

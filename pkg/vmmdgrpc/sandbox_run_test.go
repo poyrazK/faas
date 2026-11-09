@@ -245,9 +245,10 @@ func TestRunSandboxRefusals(t *testing.T) {
 // artifact named as the image is refused before a VM exists.
 func TestRunSandboxTakesOnlyJobImages(t *testing.T) {
 	for key, ok := range map[string]bool{
-		"jobs/0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10.ext4":      true,
-		"apps/acme/0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10.ext4": false,
-		"base/runner-agent-amd64.ext4":                        false,
+		"jobs/0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10.ext4":                  true,
+		"apps/sbt-0123456789ab/0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10.ext4": true,
+		"apps/acme/0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10.ext4":             false,
+		"base/runner-agent-amd64.ext4":                                    false,
 	} {
 		vmm := newSandboxRunVMM()
 		cli := newSandboxRunClient(t, vmm, true)

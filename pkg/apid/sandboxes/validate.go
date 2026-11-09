@@ -61,7 +61,7 @@ func (h *Handler) admission(acct state.Account, body createBody) (agentstore.San
 	}
 	checks := []func() *api.Problem{
 		func() *api.Problem { return validKind(&a) },
-		func() *api.Problem { return validPreset(acct.Plan, &a, in.Image, in.RAMMB) },
+		func() *api.Problem { return validPreset(acct.Plan, &a, in.Image, in.Template, in.RAMMB) },
 		func() *api.Problem { return validTenant(&a, in.Tenant) },
 		func() *api.Problem { return validNetwork(&a, in.Network) },
 		func() *api.Problem { return resourcelabels.Problem(labels.Change{Set: in.Labels}.Validate()) },
@@ -92,17 +92,25 @@ func validKind(a *agentstore.SandboxAdmission) *api.Problem {
 
 // validPreset resolves the preset and the session's RAM: the preset's
 // default within the plan's AgentRunRAMMBMax, or ram_mb in steps of 512 MB.
-// A session from a seller image names no preset (or "image") and defaults
+// A session from a seller image or a template names no preset and defaults
 // to SandboxImageDefaultRAMMB.
-func validPreset(plan api.Plan, a *agentstore.SandboxAdmission, image string, ramMB int) *api.Problem {
+func validPreset(plan api.Plan, a *agentstore.SandboxAdmission, image, template string, ramMB int) *api.Problem {
 	max := api.AgentRunRAMMBMax[plan.PlanIndex()]
 	defaultRAM := api.SandboxImageDefaultRAMMB
-	if image != "" {
+	switch {
+	case image != "" && template != "":
+		return api.ErrValidation("name one of preset, image or template")
+	case image != "":
 		if a.Preset != "" && a.Preset != api.SandboxPresetImage {
-			return api.ErrValidation("name either preset or image, not both")
+			return api.ErrValidation("name one of preset, image or template")
 		}
 		a.Preset = api.SandboxPresetImage
-	} else {
+	case template != "":
+		if a.Preset != "" && a.Preset != api.SandboxPresetTemplate {
+			return api.ErrValidation("name one of preset, image or template")
+		}
+		a.Preset = api.SandboxPresetTemplate
+	default:
 		preset, ok := agentpresets.Lookup(a.Preset)
 		if !ok {
 			return api.ErrValidation("preset must be one of " + strings.Join(agentpresets.Names(), ", ") + ", or name an image")

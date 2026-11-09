@@ -69,3 +69,49 @@ func TestSandboxTemplates(t *testing.T) {
 		t.Fatalf("a second delete = %v", err)
 	}
 }
+
+// A session from a template boots the template's newest finished build, and
+// fails as image_unavailable when the template is deleted before it starts.
+func TestSandboxFromATemplate(t *testing.T) {
+	pool, s := agentdFixture(t)
+	ctx := context.Background()
+	template := func(name, slug string, keys ...string) string {
+		t.Helper()
+		var app string
+		if err := pool.QueryRow(ctx, `INSERT INTO apps (account_id, slug) VALUES ($1, $2) RETURNING id::text`, account, slug).Scan(&app); err != nil {
+			t.Fatal(err)
+		}
+		for i, key := range keys {
+			if _, err := pool.Exec(ctx, `INSERT INTO deployments (app_id, status, rootfs_key, created_at) VALUES ($1, 'live', $2, $3)`,
+				app, key, time.Now().Add(time.Duration(i-len(keys))*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		id, err := s.CreateSandboxTemplate(ctx, account, name, app, agents.SandboxTemplateSpec{ReadyTimeoutSec: 60})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	tools := template("tools", "sbt-0123456789ab", "apps/sbt-0123456789ab/old.ext4", "apps/sbt-0123456789ab/new.ext4")
+	gone := template("gone", "sbt-ba9876543210", "apps/sbt-ba9876543210/a.ext4")
+	sb := admitSandbox(t, s, agents.SandboxAdmission{Preset: "template", ImageRef: "template:tools", TemplateID: tools})
+	doomed := admitSandbox(t, s, agents.SandboxAdmission{Preset: "template", ImageRef: "template:gone", TemplateID: gone})
+	if _, err := s.DeleteSandboxTemplate(ctx, account, "gone"); err != nil {
+		t.Fatal(err)
+	}
+	if _, failed, _, err := s.ExpireSandboxLeases(ctx); err != nil || failed != 1 {
+		t.Fatalf("expire = %d failed, %v", failed, err)
+	}
+	got, _ := s.Sandbox(ctx, account, doomed.ID)
+	if got.State != agents.SandboxFailed || got.OutcomeCode != "image_unavailable" || got.OutcomeMessage != "the template gone was deleted before the session started" {
+		t.Fatalf("session of a deleted template = %+v", got)
+	}
+	if got, _ := s.Sandbox(ctx, account, sb.ID); got.State != agents.SandboxQueued || got.ImageRef != "template:tools" {
+		t.Fatalf("template session = %+v", got)
+	}
+	claim, found, err := s.ClaimSandbox(ctx, "agentd", "tok", ttl, maxLive(5))
+	if err != nil || !found || claim.ID != sb.ID || claim.ImageKey != "apps/sbt-0123456789ab/new.ext4" || claim.ImageMissing {
+		t.Fatalf("claim = %+v, %v, %v", claim, found, err)
+	}
+}

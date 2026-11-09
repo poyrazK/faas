@@ -55606,6 +55606,7 @@ CREATE TABLE public.sandbox_sessions (
     workspace_snapshot_id uuid,
     image_ref text,
     image_job_id uuid,
+    template_id uuid,
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
     CONSTRAINT sandbox_sessions_image_ref_check CHECK (((image_ref IS NULL) OR ((char_length(image_ref) >= 1) AND (char_length(image_ref) <= 512)))),
@@ -55637,6 +55638,13 @@ COMMENT ON TABLE public.sandbox_sessions IS 'ADR-20261027090013 sandbox sessions
 --
 
 COMMENT ON COLUMN public.sandbox_sessions.image_job_id IS 'ADR-20261027090013: the image-run runner job (ADR-1161) caching the session image; a live session keeps it from eviction.';
+
+
+--
+-- Name: COLUMN sandbox_sessions.template_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sandbox_sessions.template_id IS 'ADR-20261027090013: the sandbox template the session boots; NULL for a preset or image session, or once the template is deleted.';
 
 
 --
@@ -103126,6 +103134,14 @@ ALTER TABLE ONLY public.sandbox_sessions
 
 ALTER TABLE ONLY public.sandbox_sessions
     ADD CONSTRAINT sandbox_sessions_image_job_id_fkey FOREIGN KEY (image_job_id) REFERENCES public.jobs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_template_id_fkey FOREIGN KEY (template_id) REFERENCES public.sandbox_templates(id) ON DELETE SET NULL;
 
 
 --

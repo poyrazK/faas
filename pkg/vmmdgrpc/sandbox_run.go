@@ -285,10 +285,10 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 	if wake.Network != api.SandboxNetworkNone && wake.Network != api.SandboxNetworkRegistries {
 		return fcvm.SandboxWakeRequest{}, invalid("network_mode must be none or registries")
 	}
-	// Only a materialized job image boots as a seller-image session's
-	// drive1, never an app layer, base or snapshot.
-	if wake.ImageKey != "" && !storagekey.IsJobLayer(wake.ImageKey) {
-		return fcvm.SandboxWakeRequest{}, invalid("image_key must be a job image artifact")
+	// Only a materialized job image or a sandbox template build boots as a
+	// session's drive1, never another app's layer, a base or a snapshot.
+	if wake.ImageKey != "" && !storagekey.IsJobLayer(wake.ImageKey) && !storagekey.IsSandboxTemplateLayer(wake.ImageKey) {
+		return fcvm.SandboxWakeRequest{}, invalid("image_key must be a job image or sandbox template artifact")
 	}
 	ms := start.GetQuietPauseAfterMs()
 	if ms < 0 || ms > api.AgentWaitPauseAfterMaxMillis {

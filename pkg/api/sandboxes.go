@@ -194,7 +194,18 @@ type CreateSandboxRequest struct {
 	// preset; the session is queued until the image is cached (the
 	// image-run cache, ImageRunCachedImages).
 	Image string `json:"image,omitempty"`
+	// Template boots the session from a sandbox template's newest finished
+	// build in place of a preset or image.
+	Template string `json:"template,omitempty"`
 }
+
+// SandboxPresetTemplate is the preset recorded for a session booted from a
+// sandbox template.
+const SandboxPresetTemplate = "template"
+
+// SandboxTemplateRefPrefix starts the image reference a template session
+// records: template:<name>.
+const SandboxTemplateRefPrefix = "template:"
 
 // SandboxPresetImage is the preset recorded for a session booted from a
 // seller image.
@@ -241,6 +252,8 @@ type Sandbox struct {
 	SnapshotID string `json:"snapshot_id,omitempty"`
 	// Image is the normalized seller image the session boots, if any.
 	Image string `json:"image,omitempty"`
+	// Template is the sandbox template the session boots, if any.
+	Template string `json:"template,omitempty"`
 }
 
 // SandboxSnapshot is a persisted workspace (ADR-20261027090013 step 7): a

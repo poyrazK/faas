@@ -226,6 +226,7 @@ CREATE TABLE sandbox_sessions (
  updated_at timestamptz NOT NULL DEFAULT now(),
  closed_at timestamptz,
  workspace_snapshot_id uuid,
+ template_id uuid,
  image_ref text,
  image_job_id uuid
 );
