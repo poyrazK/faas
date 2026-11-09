@@ -3453,6 +3453,10 @@ const AppCPUBaselineMillicoresPerGB = 1000
 // (instances.booked_cpu_millicores): the largest plan baseline.
 const AppCPUBookingMaxMillicores = 2000
 
+// GuestVCPUBookingMax bounds an instance's stored guest vCPU count
+// (instances.booked_vcpu, ADR-20261109172421): Firecracker's vCPU limit.
+const GuestVCPUBookingMax = 32
+
 // AppCPUCeilingFloorMillicores is the lowest burst ceiling (cpu.max) a plan
 // gets, so no plan bursts below today's one core (ADR-20261101160231).
 const AppCPUCeilingFloorMillicores = DefaultAppCPUMillicores
