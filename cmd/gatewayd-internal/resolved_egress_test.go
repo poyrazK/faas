@@ -45,13 +45,13 @@ func TestAllowResolvedEgressRequest(t *testing.T) {
 	}
 	// A database answer carries its name, which a contained branch instance
 	// matches against its own databases (ADR-20261031193635).
-	if err := allowResolvedEgressNamed(context.Background(), cli, "10.100.0.7", "ep-branch.eu.neon.tech", addrs, time.Minute, 5432); err != nil {
+	if err := allowResolvedEgressNamed(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, "ep-branch.eu.neon.tech", addrs, time.Minute, 5432); err != nil {
 		t.Fatal(err)
 	}
 	if cli.req.GetName() != "ep-branch.eu.neon.tech" || cli.req.GetDatabasePort() != 5432 {
 		t.Fatalf("database request = %+v", cli.req)
 	}
-	if err := allowResolvedEgressNamed(context.Background(), cli, "10.100.0.7", "example.com", addrs, time.Minute, 0); err != nil || cli.req.GetName() != "" {
+	if err := allowResolvedEgressNamed(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, "example.com", addrs, time.Minute, 0); err != nil || cli.req.GetName() != "" {
 		t.Fatalf("a non-database answer carried its name: %+v, %v", cli.req, err)
 	}
 	cli.err = status.Error(codes.Unimplemented, "old vmmd")

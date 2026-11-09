@@ -6126,6 +6126,7 @@
       "failure",
       "fc_version",
       "id",
+      "instance_id",
       "lease_token",
       "lease_until",
       "mem_bytes",
@@ -15791,6 +15792,7 @@
       "environment_id",
       "expires_at",
       "parent_environment_id",
+      "private_networks",
       "project_id"
     ],
     "kind": "operational"
@@ -20633,6 +20635,15 @@
       "upgrade_result",
       "vcpu_count",
       "volume_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_branch_capture_objects",
+    "columns": [
+      "created_at",
+      "deployment_id",
+      "storage_key"
     ],
     "kind": "operational"
   }
