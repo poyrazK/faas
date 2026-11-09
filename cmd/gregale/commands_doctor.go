@@ -313,9 +313,6 @@ func runDoctorChecksForApp(path string, deploymentShape shape, appEnv *doctorApp
 	if check, present := doctorCheckDurableEntities(path); present {
 		rep.Checks = append(rep.Checks, check)
 	}
-	if check, present := doctorCheckSecretReload(path); present {
-		rep.Checks = append(rep.Checks, check)
-	}
 	// The remaining checks need the server (listener probe, metered
 	// RAM reading, build dry-run, and cold-boot probe). Preserve their
 	// names in the stable JSON shape, but report them as skipped: an

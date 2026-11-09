@@ -772,6 +772,10 @@ type Instance struct {
 	// set on a claimed warm instance. Recorded in the adoption block.
 	// Guarded by Manager.mu.
 	warmSpare bool
+	// resumeIdentity is the identity schedd assigned this instance at wake.
+	// Every later resume hook carries it (ADR-20261107160000): a warm-pool
+	// restore sends no hook until it is promoted.
+	resumeIdentity ResumeIdentity
 }
 
 // LiveEgressInstance is the minimal live-instance view needed by vmmd's
@@ -931,6 +935,9 @@ type Manager struct {
 	// egress on this node (FAAS_EGRESS_DNS_GATING=off). Gating is on by
 	// default; turning it off keeps every other egress control.
 	dnsGatingOff bool
+	// releaseConnectionsOnDestroy resets an app guest's TCP connections
+	// before teardown destroys it (ADR-20261109130000).
+	releaseConnectionsOnDestroy bool
 	// appCPUPolicyUpdates serializes concurrent desired-policy changes so an
 	// older request cannot finish after a newer one and leave existing VMs at
 	// the stale quota. appCPUPolicies is guarded by mu and also fences a Wake
@@ -4944,6 +4951,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		err = fmt.Errorf("wake %s: prepare runtime env: %w", req.Instance, err)
 		return nil, err
 	}
+	resumeIdentity := resumeIdentityFromAPIEnv(req.preparedAPIEnvJSON)
+	ctx = withResumeIdentity(ctx, resumeIdentity)
 	if err = m.prepareSidecarEnvFiles(ctx, &req); err != nil {
 		err = fmt.Errorf("wake %s: prepare sidecar env: %w", req.Instance, err)
 		return nil, err
@@ -5445,7 +5454,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	inst := &Instance{
 		functionDestination: m.functionDestinationForWake(req),
 		publicForwardTarget: publicTarget,
-		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
+		Lease:               lease, Net: nc, Method: method, wakeID: wakeID, resumeIdentity: resumeIdentity,
 		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
 		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
@@ -6573,14 +6582,14 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 		if !ok {
 			return fmt.Errorf("%s %s: image healthcheck capability unavailable", op, instance)
 		}
-		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
+		if err := m.vmm.TriggerResumeHook(withResumeIdentity(ctx, inst.resumeIdentity), inst.Lease, time.Now().UnixNano()); err != nil {
 			return fmt.Errorf("%s %s: resume hook: %w", op, instance, err)
 		}
 		if err := checker.WaitImageHealthcheck(ctx, inst.Lease, inst.StartupDeadlineS); err != nil {
 			return err
 		}
 	} else if runResumeHook {
-		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
+		if err := m.vmm.TriggerResumeHook(withResumeIdentity(ctx, inst.resumeIdentity), inst.Lease, time.Now().UnixNano()); err != nil {
 			return fmt.Errorf("%s %s: resume hook: %w", op, instance, err)
 		}
 	}
@@ -6716,6 +6725,7 @@ func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instan
 	// A completed teardown retires the record; a failed one keeps this
 	// intent so a successor resumes it (adoption ADR §3).
 	m.beginAdoptionOp(instance, adoptionOpStop)
+	m.releaseConnectionsBeforeDestroy(ctx, inst, exportDir)
 	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
 	m.mu.Lock()
 	inst.awaitingExit = false // Teardown proper refuses grants from here.

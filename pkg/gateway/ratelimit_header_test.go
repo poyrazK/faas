@@ -9,14 +9,16 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // TestAppRateLimitHeaders_OnSuccess — the 2xx path carries the
-// X-RateLimit-{Limit,Remaining,Reset} trio. Free plan burst = 20; after
-// the first Allow, Peek should report remaining=19 and reset=0 (full
+// X-RateLimit-{Limit,Remaining,Reset} trio. After the first Allow on
+// the Free plan, Peek should report remaining=burst-1 and reset=0 (full
 // enough for the next request).
 func TestAppRateLimitHeaders_OnSuccess(t *testing.T) {
 	h, b, _ := newTestHandler(t)
@@ -29,11 +31,12 @@ func TestAppRateLimitHeaders_OnSuccess(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 from cold path on hot backend; got %d", rec.Code)
 	}
-	if got := rec.Header().Get("X-RateLimit-Limit"); got != "20" {
-		t.Errorf("X-RateLimit-Limit = %q; want 20 (Free burst)", got)
+	burst := api.MustLimitsFor(api.PlanFree).RateLimitBurst
+	if got, want := rec.Header().Get("X-RateLimit-Limit"), strconv.Itoa(burst); got != want {
+		t.Errorf("X-RateLimit-Limit = %q; want %s (Free burst)", got, want)
 	}
-	if got := rec.Header().Get("X-RateLimit-Remaining"); got != "19" {
-		t.Errorf("X-RateLimit-Remaining = %q; want 19 (burst 20, one consumed)", got)
+	if got, want := rec.Header().Get("X-RateLimit-Remaining"), strconv.Itoa(burst-1); got != want {
+		t.Errorf("X-RateLimit-Remaining = %q; want %s (Free burst, one consumed)", got, want)
 	}
 	// Bucket is full enough for the next request — reset should be 0.
 	if got := rec.Header().Get("X-RateLimit-Reset"); got != "0" {
@@ -72,20 +75,24 @@ func TestAppRateLimitHeaders_NotSetOnNoop(t *testing.T) {
 func TestAppRateLimitHeaders_On429(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.setLegacyHot()
-	b.app.Plan = api.PlanFree // burst 20, drain to exhaustion
+	b.app.Plan = api.PlanFree // drain the Free burst to exhaustion
+	burst := api.MustLimitsFor(api.PlanFree).RateLimitBurst
+	// A frozen clock stops refill while the loop drains the bucket.
+	fixed := time.Now()
+	h.WithLimiter(NewLimiterWithClock(func() time.Time { return fixed }))
 	// Drain the bucket.
-	for i := 0; i < 25; i++ {
+	for i := 0; i < burst+5; i++ {
 		req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code == http.StatusTooManyRequests {
 			// Found the 429 path. Sanity-check the headers.
-			if got := rec.Header().Get("X-RateLimit-Limit"); got != "20" {
-				t.Errorf("429 X-RateLimit-Limit = %q; want 20 (Free burst)", got)
+			if got, want := rec.Header().Get("X-RateLimit-Limit"), strconv.Itoa(burst); got != want {
+				t.Errorf("429 X-RateLimit-Limit = %q; want %s (Free burst)", got, want)
 			}
 			// remaining may be 0 OR a small positive number depending
 			// on whether the last Allow consumed or 429'd. The contract
-			// here is ">=0 and <=20".
+			// here is ">=0 and <=burst".
 			if got := rec.Header().Get("X-RateLimit-Remaining"); got == "" {
 				t.Error("429 X-RateLimit-Remaining absent; want set")
 			}
@@ -95,7 +102,7 @@ func TestAppRateLimitHeaders_On429(t *testing.T) {
 			return
 		}
 	}
-	t.Fatal("did not observe 429 within 25 Free-burst requests")
+	t.Fatalf("did not observe 429 within %d Free-burst requests", burst+5)
 }
 
 // adr: 040
@@ -109,18 +116,22 @@ func TestAppRateLimitHeaders_On429(t *testing.T) {
 func TestAccountRateLimitHeaders_OnAccount429(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.setLegacyHot()
-	b.app.Plan = api.PlanFree // per-app burst 20, but we bypass it
+	b.app.Plan = api.PlanFree // per-app burst applies, but we bypass it
 	b.app.AccountID = "acct-header-test"
 	h.WithLimiter(NewLimiter().WithNoop()) // bypass per-app scope
 	// Force account 429 by priming the smallest account bucket.
 	b.app.Plan = api.PlanFree
-	for i := 0; i < 350; i++ {
+	rpm := api.PlanFree.RateLimitPerAccountRPM()
+	// A frozen clock stops refill while the loop drains the bucket.
+	fixed := time.Now()
+	h.WithAccountLimiter(NewLimiterWithClock(func() time.Time { return fixed }))
+	for i := 0; i < rpm+50; i++ {
 		req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code == http.StatusTooManyRequests {
-			if got := rec.Header().Get("X-AccountRateLimit-Limit"); got != "300" {
-				t.Errorf("429 X-AccountRateLimit-Limit = %q; want 300 (Free RPM)", got)
+			if got, want := rec.Header().Get("X-AccountRateLimit-Limit"), strconv.Itoa(rpm); got != want {
+				t.Errorf("429 X-AccountRateLimit-Limit = %q; want %s (Free RPM)", got, want)
 			}
 			if got := rec.Header().Get("X-AccountRateLimit-Remaining"); got == "" {
 				t.Error("429 X-AccountRateLimit-Remaining absent; want set")
@@ -137,7 +148,7 @@ func TestAccountRateLimitHeaders_OnAccount429(t *testing.T) {
 			return
 		}
 	}
-	t.Fatal("did not observe account 429 within 350 Free-RPM requests")
+	t.Fatalf("did not observe account 429 within %d Free-RPM requests", rpm+50)
 }
 
 // TestAppRateLimitHeaders_DecrementAcrossCalls — the Remaining
@@ -148,7 +159,7 @@ func TestAccountRateLimitHeaders_OnAccount429(t *testing.T) {
 func TestAppRateLimitHeaders_DecrementAcrossCalls(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.setLegacyHot()
-	b.app.Plan = api.PlanHobby // burst 100, rps 20
+	b.app.Plan = api.PlanHobby
 
 	var prevRemaining = -1
 	for i := 0; i < 5; i++ {

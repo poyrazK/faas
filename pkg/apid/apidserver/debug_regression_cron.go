@@ -31,6 +31,7 @@
 package apidserver
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -77,11 +78,6 @@ const debugRegressionMaxApps = 1000
 // debugRegressionMaxRoutes is the per-app ceiling on baseline
 // routes walked. Caps the worst-case per-app round-trips.
 const debugRegressionMaxRoutes = 200
-
-// debugRegressionDrilldownLimit is the LIMIT on the per-route
-// affected-count drilldown. Caps the worst-case scan cost per
-// regressed route.
-const debugRegressionDrilldownLimit = 10000
 
 // debugRegressionBaselineWindow is the rolling window used for
 // the baseline p95 calculation on the prior deployment. 30
@@ -225,6 +221,7 @@ func regressionAppsAfter(appIDs []pgtype.UUID, after string, limit int) []pgtype
 //     regression row with regression_factor = current.p95 /
 //     baseline.p95.
 func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appID pgtype.UUID) error {
+	passStart := time.Now()
 	deps, err := s.store.ListDeploymentsForCompare(ctx, sqlc.ListDeploymentsForCompareParams{
 		AppID: appID,
 		Column2: pgtype.Interval{
@@ -239,7 +236,9 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 	cmp, ok := chooseRegressionComparison(deps, time.Now())
 	if !ok {
 		// No serving deployment with a predecessor → no baseline. PR-B
-		// decided this is a "no signal" outcome, not an error.
+		// decided this is a "no signal" outcome, not an error; nothing can
+		// be regressed now, so what an earlier pass recorded resolves.
+		s.resolveRegressionsNotSeen(ctx, log, appID, passStart)
 		return nil
 	}
 	cur, prev := cmp.cur, cmp.prev
@@ -256,27 +255,7 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 	if err != nil {
 		return fmt.Errorf("baseline p95: %w", err)
 	}
-	baselineByRoute := make(map[string]int32, len(baseline))
-	for _, row := range baseline {
-		baselineByRoute[row.Route] = row.P95Ms
-	}
-	if len(baselineByRoute) > debugRegressionMaxRoutes {
-		// Cap the map so a 10k-route app doesn't blow up the
-		// per-app pass. Sort the keys for determinism — Go's map
-		// iteration order is randomized, so without sorting the
-		// chosen cap-of-200 routes would change every tick and the
-		// regression banner would flake on/off across passes.
-		sortedRoutes := make([]string, 0, len(baselineByRoute))
-		for k := range baselineByRoute {
-			sortedRoutes = append(sortedRoutes, k)
-		}
-		sort.Strings(sortedRoutes)
-		kept := make(map[string]int32, debugRegressionMaxRoutes)
-		for _, k := range sortedRoutes[:debugRegressionMaxRoutes] {
-			kept[k] = baselineByRoute[k]
-		}
-		baselineByRoute = kept
-	}
+	baselineByRoute := regressionBaselineRoutes(baseline, debugRegressionMaxRoutes)
 
 	// Compute current p95 per route on the current deployment.
 	current, err := s.store.RequestTelemetryBaselineP95ByRoute(ctx, sqlc.RequestTelemetryBaselineP95ByRouteParams{
@@ -312,7 +291,54 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 	for _, route := range debugRegressionCandidateRoutes(baselineByRoute, currentP95ByRoute, baselineErrors, currentErrors) {
 		pass.evaluateRoute(ctx, route, baselineByRoute[route], currentP95ByRoute[route], baselineErrors[route], currentErrors[route])
 	}
+	// Only a complete pass may resolve: a route skipped over a failed read
+	// or write was not seen healthy.
+	if !pass.failed {
+		s.resolveRegressionsNotSeen(ctx, log, appID, passStart)
+	}
 	return nil
+}
+
+// regressionResolveClockSlack absorbs apid/PostgreSQL clock skew: the upsert
+// stamps last_detected_at with the database clock, passStart is apid's.
+const regressionResolveClockSlack = 30 * time.Second
+
+// resolveRegressionsNotSeen resolves the app's observations its complete pass
+// did not reconfirm, and publishes each transition.
+func (s *server) resolveRegressionsNotSeen(ctx context.Context, log *slog.Logger, appID pgtype.UUID, passStart time.Time) {
+	rows, err := s.store.ResolveRegressionObservationsNotSeenSince(ctx, sqlc.ResolveRegressionObservationsNotSeenSinceParams{
+		AppID:          appID,
+		LastDetectedAt: pgtype.Timestamptz{Time: passStart.Add(-regressionResolveClockSlack), Valid: true},
+	})
+	if err != nil {
+		log.Warn("regression_cron: resolve unseen observations failed", "app", appID.String(), "err", err)
+		return
+	}
+	for _, row := range rows {
+		s.notifyDebugRegressionChanged(ctx, uuidFromPg(row.AppID), debugRegressionObservationToItem(row))
+	}
+}
+
+// regressionBaselineRoutes maps route → baseline p95, capped so a 10k-route
+// app does not blow up the per-app pass. The cap keeps the routes that served
+// the most requests (name breaks ties, so the set is stable across ticks): an
+// alphabetical cut let /admin/* routes crowd /v1/* out of latency detection.
+func regressionBaselineRoutes(baseline []sqlc.RequestTelemetryBaselineP95ByRouteRow, limit int) map[string]int32 {
+	rows := slices.Clone(baseline)
+	if len(rows) > limit {
+		slices.SortFunc(rows, func(a, b sqlc.RequestTelemetryBaselineP95ByRouteRow) int {
+			if a.N != b.N {
+				return cmp.Compare(b.N, a.N)
+			}
+			return strings.Compare(a.Route, b.Route)
+		})
+		rows = rows[:limit]
+	}
+	out := make(map[string]int32, len(rows))
+	for _, row := range rows {
+		out[row.Route] = row.P95Ms
+	}
+	return out
 }
 
 // debugRegressionPass carries one app's detector pass. The latency
@@ -325,10 +351,13 @@ type debugRegressionPass struct {
 	cur, prev           sqlc.ListDeploymentsForCompareRow
 	curStart, curEnd    time.Time
 	prevStart           time.Time
-	drilldown           []sqlc.RequestTelemetryByDeploymentRow
+	drilldown           []sqlc.RequestTelemetryLatencyWeightsByRouteRow
 	drilldownLoaded     bool
 	dependencyRows      []sqlc.ListRequestTelemetryDependencySpansRow
 	dependencyRowsReady bool
+	// failed is set when a route could not be evaluated or recorded; the
+	// pass then resolves nothing.
+	failed bool
 }
 
 // evaluateRoute decides whether one route regressed on latency, on errors or
@@ -342,6 +371,7 @@ func (p *debugRegressionPass) evaluateRoute(ctx context.Context, route string, b
 			if !ok {
 				// Without the drilldown the latency signal is unknown; skip
 				// the route rather than record errors alone over it.
+				p.failed = true
 				return
 			}
 			affected = countAffectedRequests(rows, route, threshold)
@@ -360,13 +390,16 @@ func (p *debugRegressionPass) evaluateRoute(ctx context.Context, route string, b
 	params, err := debugRegressionParams(p.appID, p.cur.DeploymentID, route, kind, baseP95, curP95, affected, baseErrors, curErrors)
 	if err != nil {
 		p.log.Warn("regression_cron: numeric scan failed", "app", p.appID.String(), "route", route, "err", err)
+		p.failed = true
 		return
 	}
 	// Column8 is the suspected_dependency jsonb (nil keeps the stored one).
 	// An error-only regression names a failing dependency before a slow one.
 	params.Column8 = encodeSuspectedDependency(suspectedDependencyFor(
 		buildDebugDependencyComparisonBetween(p.dependencySpans(ctx), uuidFromPg(p.cur.DeploymentID), uuidFromPg(p.prev.DeploymentID), route, 0), !latency))
-	p.server.recordRegressionObservation(ctx, p.log, params)
+	if !p.server.recordRegressionObservation(ctx, p.log, params) {
+		p.failed = true
+	}
 }
 
 // debugRegressionParams builds the observation row for a regressed route.
@@ -397,21 +430,19 @@ func debugRegressionParams(appID, deploymentID pgtype.UUID, route, kind string, 
 	return params, err
 }
 
-func (p *debugRegressionPass) latencyDrilldown(ctx context.Context) ([]sqlc.RequestTelemetryByDeploymentRow, bool) {
+func (p *debugRegressionPass) latencyDrilldown(ctx context.Context) ([]sqlc.RequestTelemetryLatencyWeightsByRouteRow, bool) {
 	if p.drilldownLoaded {
 		return p.drilldown, p.drilldown != nil
 	}
 	p.drilldownLoaded = true
-	// Affected requests: the current deployment's rows in the window whose
-	// latency exceeds a route's threshold, capped at 10k rows; the caller
-	// filters by route.
-	rows, err := p.server.store.RequestTelemetryByDeployment(ctx, sqlc.RequestTelemetryByDeploymentParams{
+	// Affected requests: the requests each latency bucket of each route
+	// represents over the whole window, in the regression view the p95 that
+	// set the threshold uses; the caller filters by route and threshold.
+	rows, err := p.server.store.RequestTelemetryLatencyWeightsByRoute(ctx, sqlc.RequestTelemetryLatencyWeightsByRouteParams{
 		AppID:        p.appID,
 		DeploymentID: p.cur.DeploymentID,
 		ReceivedAt:   pgtype.Timestamptz{Time: p.curStart, Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: p.curEnd, Valid: true},
-		Limit:        debugRegressionDrilldownLimit,
-		Column6:      true, // regression view, as the p95 that set the threshold
 	})
 	if err != nil {
 		p.log.Warn("regression_cron: drilldown failed",
@@ -419,7 +450,7 @@ func (p *debugRegressionPass) latencyDrilldown(ctx context.Context) ([]sqlc.Requ
 		return nil, false
 	}
 	if rows == nil {
-		rows = []sqlc.RequestTelemetryByDeploymentRow{}
+		rows = []sqlc.RequestTelemetryLatencyWeightsByRouteRow{}
 	}
 	p.drilldown = rows
 	return rows, true
@@ -435,11 +466,11 @@ func (p *debugRegressionPass) dependencySpans(ctx context.Context) []sqlc.ListRe
 
 // recordRegressionObservation upserts one observation, re-reads it so the
 // event reflects a preserved acknowledgement or dismissal, and publishes it.
-func (s *server) recordRegressionObservation(ctx context.Context, log *slog.Logger, params sqlc.UpsertRegressionObservationParams) {
+func (s *server) recordRegressionObservation(ctx context.Context, log *slog.Logger, params sqlc.UpsertRegressionObservationParams) bool {
 	if err := s.store.UpsertRegressionObservation(ctx, params); err != nil {
 		log.Warn("regression_cron: upsert failed",
 			"app", params.AppID.String(), "deployment", params.DeploymentID.String(), "route", params.Route, "err", err)
-		return
+		return false
 	}
 	row, err := s.store.GetRegressionObservation(ctx, sqlc.GetRegressionObservationParams{
 		AppID: params.AppID, DeploymentID: params.DeploymentID, Route: params.Route,
@@ -447,7 +478,8 @@ func (s *server) recordRegressionObservation(ctx context.Context, log *slog.Logg
 	if err != nil {
 		log.Warn("regression_cron: read after upsert failed",
 			"app", params.AppID.String(), "deployment", params.DeploymentID.String(), "route", params.Route, "err", err)
-		return
+		// The upsert landed, so the observation was reconfirmed.
+		return true
 	}
 	s.notifyDebugRegressionChanged(ctx, uuidFromPg(params.AppID), debugRegressionObservationToItem(row))
 	// ADR-127 Debugger UX v1: regression persisted to
@@ -460,6 +492,7 @@ func (s *server) recordRegressionObservation(ctx context.Context, log *slog.Logg
 	if c := s.ops.DebugRegressionDetected(); c != nil {
 		c.Inc()
 	}
+	return true
 }
 
 // regressionErrorsByRoute reads per-route request and 5xx counts for one
@@ -562,21 +595,18 @@ func (s *server) regressionDependencyRows(ctx context.Context, log *slog.Logger,
 // publisher collapses identical requests into rows with a Count weight, so
 // counting rows would under-report the impact of a regression. The result is
 // saturated at the int32 range used by debug_regression_observations.
-func countAffectedRequests(rows []sqlc.RequestTelemetryByDeploymentRow, route string, threshold int32) int32 {
+func countAffectedRequests(rows []sqlc.RequestTelemetryLatencyWeightsByRouteRow, route string, threshold int32) int32 {
 	const maxAffectedCount = int64(1<<31 - 1)
 	var affected int64
 	for _, row := range rows {
-		// Drilldown is per-deployment, not per-route — the indexed query
-		// stays reusable for the compare endpoint and we filter here so
+		// Weights are per deployment, route and latency bucket; filter here so
 		// the persisted badge attributes the count to the route.
 		if row.Route != route || row.LatencyMs <= threshold {
 			continue
 		}
-		count := int64(row.Count)
+		count := row.Requests
 		if count < 1 {
-			// Legacy rows predate the CHECK constraint; preserve the old
-			// one-row semantics for those records.
-			count = 1
+			continue
 		}
 		if affected > maxAffectedCount-count {
 			return int32(maxAffectedCount)

@@ -53,6 +53,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/labels"
+	"github.com/onebox-faas/faas/pkg/projectconfig"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -1597,6 +1598,11 @@ type Manifest struct {
 	// sets these keys and removes none: a key dropped from the manifest stays
 	// until `gregale app label unset` removes it. Labels are not secret.
 	Labels map[string]string `yaml:"labels,omitempty"`
+	// Project holds the repository's project-wide service settings
+	// (ADR-20261107180000). It is meaningful in the repository's root
+	// gregale.yaml, where the scanner applies it; it replaces the
+	// deprecated .gregale/project.yaml. Not part of any app's deployment.
+	Project *projectconfig.Config `yaml:"project,omitempty" json:"-"`
 }
 
 // ReleaseConfig declares a command that must succeed for the candidate
@@ -1646,6 +1652,9 @@ type DevConfig struct {
 	// Debug starts the Node.js inspector in the developer environment and
 	// exposes it on a local port (`gregale dev --debug`, ADR-741).
 	Debug *bool `yaml:"debug,omitempty"`
+	// DebugPort is the local debugger port (`--debug-port`). Each app of a
+	// `gregale dev --all` workspace that sets debug needs its own.
+	DebugPort *int `yaml:"debug_port,omitempty"`
 	// Watch runs a development server instead of the production build
 	// (`gregale dev --watch`, ADR-1170).
 	Watch *DevWatchConfig `yaml:"watch,omitempty"`
@@ -2296,6 +2305,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	}
 	if err := m.validateRealtime(); err != nil {
 		return err
+	}
+	if m.Project != nil {
+		if err := m.Project.Validate(); err != nil {
+			return fmt.Errorf("project: %w", err)
+		}
 	}
 	if m.Profiling != nil {
 		if err := m.Profiling.Validate(plan); err != nil {

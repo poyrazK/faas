@@ -43,7 +43,20 @@ The same comparison is available for the whole app under dependency latency
 Database dependencies are also broken down by query. Each statement is
 normalized into a pattern: literal values, placeholders, `IN` lists and
 multi-row `VALUES` are folded, so `WHERE id = 42` and `WHERE id = 43` count as
-one query. When a dependency regresses, the evidence and the regression alert
+one query. Normalization also folds dollar-quoted and hex literals, quoted
+strings compared or listed as values, and every value in a JSON-shaped
+statement (MongoDB and similar); cache commands (Redis, Valkey, KeyDB,
+Dragonfly, memcached) keep only the verb, `GET ?`, never the key.
+
+Only the attributes the debugger needs are stored with a span: the dependency
+classification keys (`db.system`, `server.address`, `rpc.service`, …),
+failure classes (`error.type`, `exception.type`) and status codes. Every other
+attribute your instrumentation records, such as user ids or request headers,
+is dropped at ingestion, and `url.full` / `http.url` keep only the origin
+(`https://api.stripe.com`), never the path or query. `gregale debug bundle`
+leaves log messages and SQL statements out of the bundle it writes.
+
+When a dependency regresses, the evidence and the regression alert
 name the query that changed:
 
 > postgresql "SELECT orders" p95 rose from 82ms to 191ms (2.3x) compared with the previous deployment (v80). The slower query is `SELECT * FROM orders WHERE customer_id = ?` (p95 40ms to 210ms).

@@ -177,7 +177,7 @@ standby is lost too, rebuild from the off-host state backup instead
    A planned switchover loses nothing and the promote play accepts the new
    timeline itself.
 
-   Published events, webhook automations and object notifications accepted
+   Published events, webhook stored workflows and object notifications accepted
    within the reported lag are lost with the old primary
    (ADR 20261029093000). Tell the affected accounts the window, from the
    promote play's last replay time to the crash, so producers that must not

@@ -11096,7 +11096,7 @@ paths:
     post:
       tags: [events]
       operationId: publishPlatformTenantSelfEvent
-      summary: Publish an event for an automation linked to this tenant.
+      summary: Publish an event for a stored workflow linked to this tenant.
       description: |
         Requires platform_tenant:events:manage. The tenant identity comes from
         the bearer token, and the app must be actively linked to that tenant.
@@ -11179,7 +11179,7 @@ paths:
       tags: [workflows]
       operationId: listPlatformTenantSelfWorkflowSchedules
       summary: List schedules this tenant may customize for a linked app.
-      description: Requires platform_tenant:automations:read. Results include only live published schedule triggers that the app owner marked tenant_configurable. Version zero means the tenant still uses the published defaults.
+      description: Requires platform_tenant:stored_workflows:read. Results include only live published schedule triggers that the app owner marked tenant_configurable. Version zero means the tenant still uses the published defaults.
       security: [{ bearerAuth: [] }]
       responses:
         '200':
@@ -11250,7 +11250,7 @@ paths:
       operationId: updatePlatformTenantSelfWorkflowSchedule
       summary: Set this tenant's cadence for an opted-in workflow.
       description: |
-        Requires platform_tenant:automations:manage. expected_version is zero
+        Requires platform_tenant:stored_workflows:manage. expected_version is zero
         to create a tenant override and otherwise must match the current version.
         A stale version returns 409. Omitting timezone or overlap keeps the
         published defaults; enabled defaults to true. The tenant controls only
@@ -21501,6 +21501,26 @@ paths:
               schema: { $ref: '#/components/schemas/NotificationChannelResponse' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateNotificationChannel
+      summary: Rename a notification channel or replace its destination
+      description: "Renames the channel or replaces its Slack webhook URL or PagerDuty routing key in place, so a leaked destination is rotated without unbinding the channel from its rules. The kind never changes; an email channel can only be renamed. A PagerDuty region changes only together with a new routing key. A new destination clears the channel's last error."
+      tags: [alert_rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNotificationChannelRequest' }
+      responses:
+        '200':
+          description: The updated channel.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationChannelResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
     delete:
       operationId: deleteNotificationChannel
       summary: Delete a notification channel
@@ -22326,7 +22346,9 @@ paths:
         Resolves every widget for its window through the code behind the
         per-app endpoints: request metrics, log search counts, pushed custom
         metrics and SLO status. A widget that cannot be read carries `error`
-        and no value; the rest still resolve.
+        and no value; the rest still resolve. An account reads at most two
+        dashboards at once; a third read is refused with 429
+        `dashboard_data_busy` and `Retry-After`.
       responses:
         '200':
           description: The resolved widgets.
@@ -22334,7 +22356,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DashboardData' }
         default:
-          description: No dashboard to read widgets for (dashboard_not_found), or the preview is disabled.
+          description: No dashboard to read widgets for (dashboard_not_found), two reads of the account's dashboards already in progress (dashboard_data_busy), or the preview is disabled.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -34934,21 +34956,21 @@ paths:
 
   # ─── Durable workflows (ADR-081) ────────────────────────────
 
-  /v1/apps/{slug}/automations:
+  /v1/apps/{slug}/workflows/stored:
     parameters:
     - $ref: '#/components/parameters/Slug'
     get:
       tags:
       - workflows
-      operationId: listAutomations
-      summary: List drafts and published automations, including YAML definitions.
+      operationId: listStoredWorkflows
+      summary: List drafts and published stored workflows, including YAML definitions.
       responses:
         '200':
-          description: listAutomations result.
+          description: listStoredWorkflows result.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListAutomationsResponse'
+                $ref: '#/components/schemas/ListStoredWorkflowsResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -34960,22 +34982,22 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServerError'
-  /v1/apps/{slug}/automations:simulate:
+  /v1/apps/{slug}/workflows/stored:simulate:
     parameters:
     - $ref: '#/components/parameters/Slug'
     post:
       tags: [workflows]
-      operationId: simulateAutomation
-      summary: Simulate automation data flow with sample input and successful action mocks.
+      operationId: simulateStoredWorkflow
+      summary: Simulate stored workflow data flow with sample input and successful action mocks.
       description: |
         Returns a deterministic hypothetical trace without saving a definition,
         creating runs, invoking handlers, publishing events or calling integrations.
@@ -34997,14 +35019,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SimulateAutomationRequest'
+              $ref: '#/components/schemas/SimulateStoredWorkflowRequest'
       responses:
         '200':
           description: Definition validation and the bounded hypothetical execution trace.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SimulateAutomationResponse'
+                $ref: '#/components/schemas/SimulateStoredWorkflowResponse'
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -35012,21 +35034,21 @@ paths:
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
-  /v1/apps/{slug}/automations:validate:
+  /v1/apps/{slug}/workflows/stored:validate:
     parameters:
     - $ref: '#/components/parameters/Slug'
     post:
       tags:
       - workflows
-      operationId: validateAutomation
+      operationId: validateStoredWorkflow
       summary: Validate a definition without saving it or executing any steps.
       responses:
         '200':
-          description: validateAutomation result.
+          description: validateStoredWorkflow result.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ValidateAutomationResponse'
+                $ref: '#/components/schemas/ValidateStoredWorkflowResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35038,11 +35060,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -35052,8 +35074,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ValidateAutomationRequest'
-  /v1/apps/{slug}/automations/{name}:
+              $ref: '#/components/schemas/ValidateStoredWorkflowRequest'
+  /v1/apps/{slug}/workflows/stored/{name}:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
@@ -35063,19 +35085,19 @@ paths:
         type: string
         minLength: 1
         maxLength: 128
-      description: Automation name, shared with workflow run endpoints.
+      description: Stored workflow name, shared with workflow run endpoints.
     get:
       tags:
       - workflows
-      operationId: getAutomation
-      summary: Read an automation draft and its published definition.
+      operationId: getStoredWorkflow
+      summary: Read a stored workflow draft and its published definition.
       responses:
         '200':
-          description: getAutomation result.
+          description: getStoredWorkflow result.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationResponse'
+                $ref: '#/components/schemas/StoredWorkflowResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35087,11 +35109,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -35099,16 +35121,16 @@ paths:
     put:
       tags:
       - workflows
-      operationId: saveAutomationDraft
+      operationId: saveStoredWorkflowDraft
       summary: Save a draft with optimistic version checking; running definitions stay
         unchanged.
       responses:
         '200':
-          description: saveAutomationDraft result.
+          description: saveStoredWorkflowDraft result.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationResponse'
+                $ref: '#/components/schemas/StoredWorkflowResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35120,11 +35142,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -35134,16 +35156,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SaveAutomationDraftRequest'
+              $ref: '#/components/schemas/SaveStoredWorkflowDraftRequest'
     delete:
       tags:
       - workflows
-      operationId: deleteAutomation
+      operationId: deleteStoredWorkflow
       summary: Remove a dashboard definition; restoring YAML ownership requires explicit
         confirmation.
       responses:
         '204':
-          description: deleteAutomation result.
+          description: deleteStoredWorkflow result.
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35155,11 +35177,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -35181,17 +35203,17 @@ paths:
           default: false
         description: Explicitly return ownership to the current YAML definition after
           deletion.
-  /v1/apps/{slug}/automations/{name}/failure-policy:
+  /v1/apps/{slug}/workflows/stored/{name}/failure-policy:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: name
         in: path
         required: true
         schema: { type: string, minLength: 1, maxLength: 128 }
-        description: Published automation whose failure admission guard is inspected or changed.
+        description: Published stored workflow whose failure admission guard is inspected or changed.
     get:
       tags: [workflows]
-      operationId: getAutomationFailurePolicy
+      operationId: getStoredWorkflowFailurePolicy
       summary: Inspect failure pause policy and resume preview.
       description: Returns aggregate terminal outcomes since monitoring began or resumed, current pause generation, active run counts, retained event count and the latest 100 pause/resume transitions. Counts are advisory; no run payloads or error messages are included.
       responses:
@@ -35199,91 +35221,91 @@ paths:
           description: Current monitoring policy, failure pause, retained work preview and recent transitions.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AutomationFailurePolicyResponse' }
+              schema: { $ref: '#/components/schemas/StoredWorkflowFailurePolicyResponse' }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: 'code automation_failure_policy_conflict; reload failure guard state before a conflicting operation.'
+          description: 'code stored_workflow_failure_policy_conflict; reload failure guard state before a conflicting operation.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
-        '422': { $ref: '#/components/responses/AutomationInvalid' }
+        '422': { $ref: '#/components/responses/StoredWorkflowInvalid' }
     put:
       tags: [workflows]
-      operationId: setAutomationFailurePolicy
+      operationId: setStoredWorkflowFailurePolicy
       summary: Configure automatic pausing after repeated failures.
-      description: Opt-in policy for a published YAML or dashboard automation; requires deploy write scope. Compare-and-set expected_version starts at zero. Scheduler ticks latch a runtime pause when both failure count and minimum completed-run count are met. Policy edits, disabling monitoring, publishing, and ordinary enabled changes do not clear an existing failure pause.
+      description: Opt-in policy for a published YAML or dashboard stored workflow; requires deploy write scope. Compare-and-set expected_version starts at zero. Scheduler ticks latch a runtime pause when both failure count and minimum completed-run count are met. Policy edits, disabling monitoring, publishing, and ordinary enabled changes do not clear an existing failure pause.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/SetAutomationFailurePolicyRequest' }
+            schema: { $ref: '#/components/schemas/SetStoredWorkflowFailurePolicyRequest' }
       responses:
         '200':
           description: Updated failure monitoring configuration with the current independent admission guard.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AutomationFailurePolicyResponse' }
+              schema: { $ref: '#/components/schemas/StoredWorkflowFailurePolicyResponse' }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: 'code automation_failure_policy_conflict; the expected failure policy version changed.'
+          description: 'code stored_workflow_failure_policy_conflict; the expected failure policy version changed.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
-        '422': { $ref: '#/components/responses/AutomationInvalid' }
+        '422': { $ref: '#/components/responses/StoredWorkflowInvalid' }
 
-  /v1/apps/{slug}/automations/{name}/failure-policy/resume:
+  /v1/apps/{slug}/workflows/stored/{name}/failure-policy/resume:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: name
         in: path
         required: true
         schema: { type: string, minLength: 1, maxLength: 128 }
-        description: Published automation whose current failure pause is explicitly resumed.
+        description: Published stored workflow whose current failure pause is explicitly resumed.
     post:
       tags: [workflows]
-      operationId: resumeAutomationFailurePause
+      operationId: resumeStoredWorkflowFailurePause
       summary: Explicitly clear a failure pause after inspecting retained work.
       description: Requires deploy write scope and the current positive pause generation. Starts a fresh monitoring epoch and re-arms schedules without catch-up for the paused interval. Existing runs continue and captured events remain subject to their routing retention; events received without an eligible recipient are not replayed. This action does not change manual pause intent.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ResumeAutomationFailurePauseRequest' }
+            schema: { $ref: '#/components/schemas/ResumeStoredWorkflowFailurePauseRequest' }
       responses:
         '200':
           description: Explicitly resumed guard state with fresh monitoring counts and transition history.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AutomationFailurePolicyResponse' }
+              schema: { $ref: '#/components/schemas/StoredWorkflowFailurePolicyResponse' }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: 'code automation_failure_policy_conflict; the reviewed pause generation is stale or no pause remains.'
+          description: 'code stored_workflow_failure_policy_conflict; the reviewed pause generation is stale or no pause remains.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
-        '422': { $ref: '#/components/responses/AutomationInvalid' }
+        '422': { $ref: '#/components/responses/StoredWorkflowInvalid' }
 
-  /v1/apps/{slug}/automations/{name}/health:
+  /v1/apps/{slug}/workflows/stored/{name}/health:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: name
         in: path
         required: true
         schema: { type: string, minLength: 1, maxLength: 128 }
-        description: Automation whose recent execution health is summarized.
+        description: Stored workflow whose recent execution health is summarized.
     get:
       tags: [workflows]
-      operationId: getAutomationHealth
-      summary: Get bounded execution health for one automation.
+      operationId: getStoredWorkflowHealth
+      summary: Get bounded execution health for one stored workflow.
       description: |
         Returns run counts by status, the completed-run success rate, median
         and p95 duration, recent run identities and the most common failed
@@ -35305,10 +35327,10 @@ paths:
           description: Inclusive end of the summary window; defaults to now.
       responses:
         '200':
-          description: Safe operational summary for the selected automation and time window.
+          description: Safe operational summary for the selected stored workflow and time window.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AutomationHealthResponse' }
+              schema: { $ref: '#/components/schemas/StoredWorkflowHealthResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -35316,18 +35338,18 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
-  /v1/apps/{slug}/automations/{name}/revisions:
+  /v1/apps/{slug}/workflows/stored/{name}/revisions:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
       in: path
       required: true
       schema: { type: string, minLength: 1, maxLength: 128 }
-      description: Automation whose immutable published revisions are listed.
+      description: Stored workflow whose immutable published revisions are listed.
     get:
       tags: [workflows]
-      operationId: listAutomationRevisions
-      summary: List published automation revisions, newest first.
+      operationId: listStoredWorkflowRevisions
+      summary: List published stored workflow revisions, newest first.
       parameters:
       - name: limit
         in: query
@@ -35344,21 +35366,21 @@ paths:
           description: Immutable published definitions and pagination metadata.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ListAutomationRevisionsResponse' }
+              schema: { $ref: '#/components/schemas/ListStoredWorkflowRevisionsResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
-  /v1/apps/{slug}/automations/{name}/revisions/{version}:
+  /v1/apps/{slug}/workflows/stored/{name}/revisions/{version}:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
       in: path
       required: true
       schema: { type: string, minLength: 1, maxLength: 128 }
-      description: Automation that owns the requested published revision.
+      description: Stored workflow that owns the requested published revision.
     - name: version
       in: path
       required: true
@@ -35366,28 +35388,28 @@ paths:
       description: Published revision identifier returned by the revision list.
     get:
       tags: [workflows]
-      operationId: getAutomationRevision
-      summary: Read one immutable published automation revision.
+      operationId: getStoredWorkflowRevision
+      summary: Read one immutable published stored workflow revision.
       responses:
         '200':
           description: The selected published definition and its canonical hash.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AutomationRevisionResponse' }
+              schema: { $ref: '#/components/schemas/StoredWorkflowRevisionResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
-  /v1/apps/{slug}/automations/{name}/revisions/{version}/restore:
+  /v1/apps/{slug}/workflows/stored/{name}/revisions/{version}/restore:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
       in: path
       required: true
       schema: { type: string, minLength: 1, maxLength: 128 }
-      description: Automation that receives the restored draft.
+      description: Stored workflow that receives the restored draft.
     - name: version
       in: path
       required: true
@@ -35395,13 +35417,13 @@ paths:
       description: Published revision to copy into the current draft.
     post:
       tags: [workflows]
-      operationId: restoreAutomationRevision
+      operationId: restoreStoredWorkflowRevision
       summary: Restore a published revision as a new draft using optimistic version checking.
       description: |
-        Copies the selected immutable revision into the automation's draft. It
+        Copies the selected immutable revision into the stored workflow's draft. It
         does not publish the copy or change running and accepted workflows.
-        Send expected_version from the latest automation read; use zero when
-        creating a draft after the automation was deleted. YAML ownership still
+        Send expected_version from the latest stored workflow read; use zero when
+        creating a draft after the stored workflow was deleted. YAML ownership still
         requires explicit takeover when the restored draft is later published.
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
@@ -35409,30 +35431,30 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/RestoreAutomationRevisionRequest' }
+            schema: { $ref: '#/components/schemas/RestoreStoredWorkflowRevisionRequest' }
       responses:
         '200':
-          description: The updated automation draft; publishing remains a separate operation.
+          description: The updated stored workflow draft; publishing remains a separate operation.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AutomationResponse' }
+              schema: { $ref: '#/components/schemas/StoredWorkflowResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/AutomationConflict' }
+        '409': { $ref: '#/components/responses/StoredWorkflowConflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
-        '422': { $ref: '#/components/responses/AutomationInvalid' }
+        '422': { $ref: '#/components/responses/StoredWorkflowInvalid' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
-  /v1/apps/{slug}/automations:publish-policy:
+  /v1/apps/{slug}/workflows/stored:publish-policy:
     parameters:
       - $ref: '#/components/parameters/Slug'
     get:
       tags:
         - workflows
-      operationId: getAutomationPublishPolicy
+      operationId: getStoredWorkflowPublishPolicy
       summary: Inspect required publishing checks.
       responses:
         '200':
@@ -35440,7 +35462,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationPublishPolicy'
+                $ref: '#/components/schemas/StoredWorkflowPublishPolicy'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35450,11 +35472,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -35462,7 +35484,7 @@ paths:
     put:
       tags:
         - workflows
-      operationId: setAutomationPublishPolicy
+      operationId: setStoredWorkflowPublishPolicy
       summary: Set required publishing checks using admin scope and the current policy version.
       responses:
         '200':
@@ -35470,7 +35492,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationPublishPolicy'
+                $ref: '#/components/schemas/StoredWorkflowPublishPolicy'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35480,11 +35502,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -35494,8 +35516,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SetAutomationPublishPolicyRequest'
-  /v1/apps/{slug}/automations/{name}/tests:
+              $ref: '#/components/schemas/SetStoredWorkflowPublishPolicyRequest'
+  /v1/apps/{slug}/workflows/stored/{name}/tests:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
@@ -35505,11 +35527,11 @@ paths:
         type: string
         minLength: 1
         maxLength: 128
-      description: Automation whose reusable test suite is replaced or cleared.
+      description: Stored workflow whose reusable test suite is replaced or cleared.
     put:
       tags:
       - workflows
-      operationId: saveAutomationTestSuite
+      operationId: saveStoredWorkflowTestSuite
       summary: Save or clear reusable test data using the current draft version.
       responses:
         '200':
@@ -35517,7 +35539,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationResponse'
+                $ref: '#/components/schemas/StoredWorkflowResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35527,11 +35549,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -35541,8 +35563,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SaveAutomationTestSuiteRequest'
-  /v1/apps/{slug}/automations/{name}/tests/run:
+              $ref: '#/components/schemas/SaveStoredWorkflowTestSuiteRequest'
+  /v1/apps/{slug}/workflows/stored/{name}/tests/run:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
@@ -35552,11 +35574,11 @@ paths:
         type: string
         minLength: 1
         maxLength: 128
-      description: Automation whose saved test cases are simulated.
+      description: Stored workflow whose saved test cases are simulated.
     post:
       tags:
       - workflows
-      operationId: runAutomationTests
+      operationId: runStoredWorkflowTests
       summary: Simulate all saved cases against the saved draft and retain safe results.
       responses:
         '200':
@@ -35564,7 +35586,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationTestReport'
+                $ref: '#/components/schemas/StoredWorkflowTestReport'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35574,11 +35596,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -35588,8 +35610,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RunAutomationTestsRequest'
-  /v1/apps/{slug}/automations/{name}/publish-check:
+              $ref: '#/components/schemas/RunStoredWorkflowTestsRequest'
+  /v1/apps/{slug}/workflows/stored/{name}/publish-check:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: name
@@ -35599,11 +35621,11 @@ paths:
           type: string
           minLength: 1
           maxLength: 128
-        description: Saved automation draft to check.
+        description: Saved stored workflow draft to check.
     post:
       tags:
         - workflows
-      operationId: checkAutomationPublication
+      operationId: checkStoredWorkflowPublication
       summary: Evaluate scenario assertions and coverage on the server and issue a bound receipt.
       responses:
         '200':
@@ -35611,7 +35633,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CheckAutomationPublicationResponse'
+                $ref: '#/components/schemas/CheckStoredWorkflowPublicationResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35621,11 +35643,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -35635,8 +35657,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CheckAutomationPublicationRequest'
-  /v1/apps/{slug}/automations/{name}/publish:
+              $ref: '#/components/schemas/CheckStoredWorkflowPublicationRequest'
+  /v1/apps/{slug}/workflows/stored/{name}/publish:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
@@ -35646,20 +35668,20 @@ paths:
         type: string
         minLength: 1
         maxLength: 128
-      description: Automation whose saved draft will be published.
+      description: Stored workflow whose saved draft will be published.
     post:
       tags:
       - workflows
-      operationId: publishAutomation
+      operationId: publishStoredWorkflow
       summary: Validate and publish the saved draft; taking over a YAML name requires
         explicit confirmation.
       responses:
         '200':
-          description: publishAutomation result.
+          description: publishStoredWorkflow result.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationResponse'
+                $ref: '#/components/schemas/StoredWorkflowResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35671,11 +35693,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -35685,14 +35707,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PublishAutomationRequest'
+              $ref: '#/components/schemas/PublishStoredWorkflowRequest'
       description: Published definitions survive future YAML deployments. A live default
         deployment is required. Runtime execution also requires workflows to be
         enabled on the platform. Events accepted before publication retain their captured
         definition.
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
-  /v1/apps/{slug}/automations/{name}/enabled:
+  /v1/apps/{slug}/workflows/stored/{name}/enabled:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
@@ -35702,19 +35724,19 @@ paths:
         type: string
         minLength: 1
         maxLength: 128
-      description: Automation whose automatic starts will be paused or resumed.
+      description: Stored workflow whose automatic starts will be paused or resumed.
     put:
       tags:
       - workflows
-      operationId: setAutomationEnabled
+      operationId: setStoredWorkflowEnabled
       summary: Pause or resume automatic starts without cancelling existing runs.
       responses:
         '200':
-          description: setAutomationEnabled result.
+          description: setStoredWorkflowEnabled result.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationResponse'
+                $ref: '#/components/schemas/StoredWorkflowResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35726,11 +35748,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -35740,7 +35762,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SetAutomationEnabledRequest'
+              $ref: '#/components/schemas/SetStoredWorkflowEnabledRequest'
 
   /v1/apps/{slug}/workflows/schedules/occurrences:
     get:
@@ -35888,7 +35910,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/AutomationConflict', description: Tenant-required apps must use the tenant-self preview. }
+        '409': { $ref: '#/components/responses/StoredWorkflowConflict', description: Tenant-required apps must use the tenant-self preview. }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
@@ -43228,44 +43250,44 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
-  /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding:
+  /v1/apps/{slug}/inbound-webhooks/{id}/workflow-binding:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: id
         in: path
         required: true
         schema: { type: string, format: uuid }
-        description: Endpoint whose future verified events use this automation binding.
+        description: Endpoint whose future verified events use this stored workflow binding.
     put:
       tags: [inbound_webhooks]
-      operationId: putWebhookAutomationBinding
-      summary: Route a verified Stripe endpoint to a published automation.
+      operationId: putWebhookWorkflowBinding
+      summary: Route a verified Stripe endpoint to a published stored workflow.
       description: |
         One binding per endpoint, owned by the same app. expected_version is zero
         for creation and the returned version for updates. take_over_delivery
-        must be true: bound endpoints start automations instead of app delivery.
+        must be true: bound endpoints start stored workflows instead of app delivery.
         Callback and managed-operation bindings must be removed first.
         Event types accept edge wildcards; filters use the existing event language.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
-        description: Explicit delivery takeover and published automation selection.
+        description: Explicit delivery takeover and published stored workflow selection.
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PutWebhookAutomationBindingRequest' }
+            schema: { $ref: '#/components/schemas/PutWebhookWorkflowBindingRequest' }
       responses:
         '200':
           description: Saved binding with its new revision.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/WebhookAutomationBindingResponse' }
+              schema: { $ref: '#/components/schemas/WebhookWorkflowBindingResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { description: 'Plan does not allow workflows.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Binding revision or routing mode conflict (webhook_automation_conflict).
+          description: Binding revision or routing mode conflict (webhook_workflow_conflict).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -43274,22 +43296,22 @@ paths:
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
     get:
       tags: [inbound_webhooks]
-      operationId: getWebhookAutomationBinding
-      summary: Inspect an endpoint automation binding.
+      operationId: getWebhookWorkflowBinding
+      summary: Inspect an endpoint stored workflow binding.
       description: Returns the current event selection and revision for this endpoint.
       responses:
         '200':
           description: Current binding.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/WebhookAutomationBindingResponse' }
+              schema: { $ref: '#/components/schemas/WebhookWorkflowBindingResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
     delete:
       tags: [inbound_webhooks]
-      operationId: deleteWebhookAutomationBinding
+      operationId: deleteWebhookWorkflowBinding
       summary: Restore ordinary delivery for future webhook events.
       description: Already accepted receipts retain their captured routing decision.
       parameters:
@@ -43304,7 +43326,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Binding revision conflict (webhook_automation_conflict).
+          description: Binding revision conflict (webhook_workflow_conflict).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -43330,7 +43352,7 @@ paths:
         The named operation must exist on the environment's live deployment;
         every event resolves it again and admission pins it. expected_version is
         zero for creation and the returned version for updates.
-        take_over_delivery must be true. Automation and managed exclusive
+        take_over_delivery must be true. Stored workflow and managed exclusive
         operation bindings must be removed first. An empty event_types list
         admits every verified event; other types are acknowledged as ignored.
 
@@ -43406,11 +43428,11 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
-  /v1/apps/{slug}/inbound-webhooks/{id}/automation-receipts/{event_id}:
+  /v1/apps/{slug}/inbound-webhooks/{id}/workflow-receipts/{event_id}:
     get:
       tags: [inbound_webhooks]
-      operationId: getWebhookAutomationReceipt
-      summary: Inspect a verified provider event and its automation admission.
+      operationId: getWebhookWorkflowReceipt
+      summary: Inspect a verified provider event and its stored workflow admission.
       description: Returns the captured decision and scheduler progress for a retained provider event.
       parameters:
         - $ref: '#/components/parameters/Slug'
@@ -43429,7 +43451,7 @@ paths:
           description: Receipt, routing status and admitted run ID when retained.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/WebhookAutomationReceiptResponse' }
+              schema: { $ref: '#/components/schemas/WebhookWorkflowReceiptResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -43457,7 +43479,7 @@ paths:
         durably instead of enqueuing an app invocation. Unmatched events keep
         the ordinary invocation path.
         Terminal callbacks are acknowledged as ignored after verification.
-        An automation-bound endpoint captures its published definition in durable
+        A stored-workflow-bound endpoint captures its published definition in durable
         fanout work. Paused, unpublished or type-unmatched events are durably ignored;
         content filters are evaluated by the scheduler. Provider retries return the
         original receipt; changed content for the same event ID returns 409.
@@ -43505,13 +43527,13 @@ paths:
             application/json:
               schema:
                 anyOf:
-                  - $ref: '#/components/schemas/WebhookAutomationReceiptResponse'
+                  - $ref: '#/components/schemas/WebhookWorkflowReceiptResponse'
                   - $ref: '#/components/schemas/WorkflowCallbackWebhookReceiptResponse'
                   - $ref: '#/components/schemas/InboundWebhookReceiptResponse'
         '400': { $ref: '#/components/responses/InboundWebhookInvalid' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Changed content for a retained provider event ID (webhook_automation_conflict).
+          description: Changed content for a retained provider event ID (webhook_workflow_conflict).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -54204,6 +54226,60 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/agent-connections/self/activity:
+    get:
+      tags: [keys]
+      operationId: agentConnectionSelfActivity
+      summary: Read the calling agent's own activity.
+      description: |
+        The write requests (POST, PUT, PATCH, DELETE) the calling agent key
+        made in the last 7 days, newest first. Only an agent key can call it;
+        a person reads an agent's log by its connection id.
+      parameters:
+      - $ref: '#/components/parameters/AgentActivityBefore'
+      - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the calling agent's write requests, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentActivityResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/{id}/activity:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose activity to read.
+        schema: { type: string }
+    get:
+      tags: [keys]
+      operationId: agentConnectionActivity
+      summary: Read a connected agent's activity.
+      description: |
+        The write requests one of the account's agents made in the last 7
+        days, newest first: when, method, path, response status and the
+        approval request it went through on. Reads and requests the approval
+        gate answered are not listed. An agent key may read only its own.
+      parameters:
+      - $ref: '#/components/parameters/AgentActivityBefore'
+      - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the connected agent's write requests, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentActivityResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/agent-connections/{id}:
     parameters:
       - name: id
@@ -54328,6 +54404,37 @@ paths:
               schema: { $ref: '#/components/schemas/AgentConnectionsRevokeAllResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-connections/{id}/activity:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: API key id of the organization agent whose activity to read.
+        schema: { type: string }
+    get:
+      tags: [orgs, keys]
+      operationId: orgAgentConnectionActivity
+      summary: Read the activity of an agent acting in an organization.
+      description: |
+        The write requests an agent acting in the organization made in the
+        last 7 days, newest first. Owners and admins only; an id that is not
+        one of the organization's agents is 404.
+      parameters:
+      - $ref: '#/components/parameters/AgentActivityBefore'
+      - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the organization agent's write requests, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentActivityResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/orgs/{slug}/agent-connections/{id}:
@@ -63342,11 +63449,11 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
-  /v1/apps/{slug}/automations/{name}/live-baselines:
+  /v1/apps/{slug}/workflows/stored/{name}/live-baselines:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
-      description: Automation whose baseline catalog is being listed.
+      description: Stored workflow whose baseline catalog is being listed.
       in: path
       required: true
       schema:
@@ -63356,7 +63463,7 @@ paths:
     get:
       tags:
       - workflows
-      operationId: listAutomationLiveBaselines
+      operationId: listStoredWorkflowLiveBaselines
       summary: Discover named baseline heads and current retained evidence health.
       description: 'Read-only coherent snapshot, sorted by baseline name and bounded by the 20-name quota. Requires
         app read scope. Never runs workflows, checks assertions, repairs evidence or promotes. Evidence availability
@@ -63370,7 +63477,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListAutomationLiveBaselinesResponse'
+                $ref: '#/components/schemas/ListStoredWorkflowLiveBaselinesResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63380,18 +63487,18 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServerError'
-  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}:
+  /v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
-      description: Automation whose current baseline receipt is being read.
+      description: Stored workflow whose current baseline receipt is being read.
       in: path
       required: true
       schema:
@@ -63410,8 +63517,8 @@ paths:
     get:
       tags:
       - workflows
-      operationId: getAutomationLiveBaseline
-      summary: Read the current named automation baseline promotion receipt.
+      operationId: getStoredWorkflowLiveBaseline
+      summary: Read the current named stored workflow baseline promotion receipt.
       description: Read-only; requires app read scope. Records the exact suite, revision, actor, promotion time and reviewed
         coverage/age policy.
       responses:
@@ -63420,7 +63527,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveBaseline'
+                $ref: '#/components/schemas/StoredWorkflowLiveBaseline'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63430,7 +63537,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
@@ -63443,11 +63550,11 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
-  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/history:
+  /v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}/history:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
-      description: Automation whose baseline audit history is being read.
+      description: Stored workflow whose baseline audit history is being read.
       in: path
       required: true
       schema:
@@ -63466,9 +63573,9 @@ paths:
     get:
       tags:
       - workflows
-      operationId: getAutomationLiveBaselineHistory
-      summary: Read the last 100 promotions for a named automation baseline.
-      description: Newest revision first. History is immutable until bounded retention or automation deletion. Requires app
+      operationId: getStoredWorkflowLiveBaselineHistory
+      summary: Read the last 100 promotions for a named stored workflow baseline.
+      description: Newest revision first. History is immutable until bounded retention or stored workflow deletion. Requires app
         read scope.
       responses:
         '200':
@@ -63476,7 +63583,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveBaselineHistory'
+                $ref: '#/components/schemas/StoredWorkflowLiveBaselineHistory'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63486,18 +63593,18 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServerError'
-  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/promotions/{promotion_id}:
+  /v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}/promotions/{promotion_id}:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
-      description: Automation whose passing suite is being promoted.
+      description: Stored workflow whose passing suite is being promoted.
       in: path
       required: true
       schema:
@@ -63512,7 +63619,7 @@ paths:
         minLength: 1
         maxLength: 63
         pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
-      description: Release track to promote within this automation; execution routing is unchanged.
+      description: Release track to promote within this stored workflow; execution routing is unchanged.
     - name: promotion_id
       in: path
       required: true
@@ -63523,12 +63630,12 @@ paths:
     put:
       tags:
       - workflows
-      operationId: promoteAutomationLiveBaseline
+      operationId: promoteStoredWorkflowLiveBaseline
       summary: Deliberately promote passing retained evidence to a named baseline.
       description: Requires deploy write scope. Atomically checks the explicit current target and version 2 required-case/evidence-age
         policy, compares expected_revision, appends an attributed receipt and changes the head. expected_revision 0 creates.
         An identical retained promotion ID replays its original receipt without moving the head or rechecking. Never executes
-        or checks assertions. At most 20 active and 100 lifetime names per automation, with 100 receipts per name; active current
+        or checks assertions. At most 20 active and 100 lifetime names per stored workflow, with 100 receipts per name; active current
         suite groups are pinned within the existing suite limit, while linked run retention still applies. Retired names cannot
         be reused; original promotion retries return historical receipts without reactivation.
       requestBody:
@@ -63536,14 +63643,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PromoteAutomationLiveBaselineRequest'
+              $ref: '#/components/schemas/PromoteStoredWorkflowLiveBaselineRequest'
       responses:
         '200':
           description: Attributed promotion receipt for this request, replayed unchanged on an identical retained retry.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveBaseline'
+                $ref: '#/components/schemas/StoredWorkflowLiveBaseline'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63553,7 +63660,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
@@ -63566,11 +63673,11 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
-  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/retirements/{retirement_id}:
+  /v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}/retirements/{retirement_id}:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
-      description: Automation whose named baseline is being retired.
+      description: Stored workflow whose named baseline is being retired.
       in: path
       required: true
       schema:
@@ -63585,7 +63692,7 @@ paths:
         minLength: 1
         maxLength: 63
         pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
-      description: Baseline name to retire permanently within this automation.
+      description: Baseline name to retire permanently within this stored workflow.
     - name: retirement_id
       in: path
       required: true
@@ -63596,26 +63703,26 @@ paths:
     put:
       tags:
       - workflows
-      operationId: retireAutomationLiveBaseline
+      operationId: retireStoredWorkflowLiveBaseline
       summary: Permanently retire a named baseline and release its evidence pin.
       description: Requires deploy write scope and verified email. Atomically compares the positive expected revision and records
         the authenticated actor. Retirement permanently reserves the name, frees an active-name slot and releases its suite
         pin for normal retention; no evidence is immediately deleted. Promotion history remains available. Exact retries return
         the original retirement receipt. Old promotion retries never reactivate the name. At most 20 active and 100 lifetime
-        names per automation.
+        names per stored workflow.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RetireAutomationLiveBaselineRequest'
+              $ref: '#/components/schemas/RetireStoredWorkflowLiveBaselineRequest'
       responses:
         '200':
           description: Attributed immutable retirement receipt.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveBaselineRetirement'
+                $ref: '#/components/schemas/StoredWorkflowLiveBaselineRetirement'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63625,7 +63732,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
@@ -63638,13 +63745,13 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
-  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/start:
+  /v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/start:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
       in: path
       required: true
-      description: Saved automation whose managed suite is being started.
+      description: Saved stored workflow whose managed suite is being started.
       schema:
         type: string
         minLength: 1
@@ -63658,7 +63765,7 @@ paths:
         format: uuid
     post:
       tags: [workflows]
-      operationId: startAutomationLiveSuite
+      operationId: startStoredWorkflowLiveSuite
       summary: Start a durable live suite with explicit real-action confirmation.
       description: Creates an immutable ordered selection and admits its first case atomically with the saved run link. Retry this same suite ID and body after a lost response. A retained start replay only reads progress; it never advances later cases. New IDs must be UUIDv7 generated within the last ten minutes. Existing metadata-only suites cannot be taken over.
       requestBody:
@@ -63667,14 +63774,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/StartAutomationLiveSuiteRequest'
+              $ref: '#/components/schemas/StartStoredWorkflowLiveSuiteRequest'
       responses:
         '200':
-          description: startAutomationLiveSuite returns the original suite identities and current server-derived observations.
+          description: startStoredWorkflowLiveSuite returns the original suite identities and current server-derived observations.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveSuite'
+                $ref: '#/components/schemas/StoredWorkflowLiveSuite'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63684,20 +63791,20 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServerError'
-  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/advance:
+  /v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/advance:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
       in: path
       required: true
-      description: Saved automation whose managed suite is being continued.
+      description: Saved stored workflow whose managed suite is being continued.
       schema:
         type: string
         minLength: 1
@@ -63711,7 +63818,7 @@ paths:
         format: uuid
     post:
       tags: [workflows]
-      operationId: advanceAutomationLiveSuite
+      operationId: advanceStoredWorkflowLiveSuite
       summary: Check retained results and admit at most one next case of a managed suite.
       description: Requires explicit real-action confirmation on every call. Checks earlier original run IDs and stops on failed, unavailable, outdated or nonterminal results. The next admission and its immutable link commit together. Never recreates missing suites, replaces runs, resumes workflows or cancels them. Repeat while pending to observe execution; reopening history is read-only.
       requestBody:
@@ -63720,14 +63827,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AdvanceAutomationLiveSuiteRequest'
+              $ref: '#/components/schemas/AdvanceStoredWorkflowLiveSuiteRequest'
       responses:
         '200':
-          description: advanceAutomationLiveSuite returns the original suite identities and current server-derived observations.
+          description: advanceStoredWorkflowLiveSuite returns the original suite identities and current server-derived observations.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveSuite'
+                $ref: '#/components/schemas/StoredWorkflowLiveSuite'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63737,14 +63844,14 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServerError'
-  /v1/apps/{slug}/automations/{name}/live-suites:
+  /v1/apps/{slug}/workflows/stored/{name}/live-suites:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
@@ -63754,19 +63861,19 @@ paths:
         type: string
         minLength: 1
         maxLength: 128
-      description: Saved automation whose shared verification suites are accessed.
+      description: Saved stored workflow whose shared verification suites are accessed.
     get:
       tags:
       - workflows
-      operationId: listAutomationLiveSuites
+      operationId: listStoredWorkflowLiveSuites
       summary: List recent shared suite identities without executing or checking workflows.
       responses:
         '200':
-          description: listAutomationLiveSuites returns safe retained suite metadata and server-derived observations.
+          description: listStoredWorkflowLiveSuites returns safe retained suite metadata and server-derived observations.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListAutomationLiveSuitesResponse'
+                $ref: '#/components/schemas/ListStoredWorkflowLiveSuitesResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63776,14 +63883,14 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServerError'
-  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/compare/{baseline_id}:
+  /v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/compare/{baseline_id}:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
@@ -63793,7 +63900,7 @@ paths:
         type: string
         minLength: 1
         maxLength: 128
-      description: Automation owning both retained suites.
+      description: Stored workflow owning both retained suites.
     - name: suite_id
       in: path
       required: true
@@ -63807,11 +63914,11 @@ paths:
       schema:
         type: string
         format: uuid
-      description: Baseline suite UUID within the same app and automation.
+      description: Baseline suite UUID within the same app and stored workflow.
     get:
       tags:
       - workflows
-      operationId: compareAutomationLiveSuites
+      operationId: compareStoredWorkflowLiveSuites
       summary: Compare recorded results in one read-only snapshot without executing or checking runs.
       description: Cases match by name and require equal frozen definition/input/assertion hashes for regression or recovery classification. Historical target drift alone does not invalidate a report. Pending, missing, unchecked and stale reports are unknown. Added and removed refer to the suite selection. No release approval or CI gate is implied.
       responses:
@@ -63820,7 +63927,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveSuiteComparison'
+                $ref: '#/components/schemas/StoredWorkflowLiveSuiteComparison'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -63831,7 +63938,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServerError'
-  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}:
+  /v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
@@ -63841,7 +63948,7 @@ paths:
         type: string
         minLength: 1
         maxLength: 128
-      description: Automation owning the retained shared suite record.
+      description: Stored workflow owning the retained shared suite record.
     - name: suite_id
       in: path
       required: true
@@ -63852,15 +63959,15 @@ paths:
     get:
       tags:
       - workflows
-      operationId: getAutomationLiveSuite
+      operationId: getStoredWorkflowLiveSuite
       summary: Read current retained suite results in a consistent database snapshot.
       responses:
         '200':
-          description: getAutomationLiveSuite returns safe retained suite metadata and server-derived observations.
+          description: getStoredWorkflowLiveSuite returns safe retained suite metadata and server-derived observations.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveSuite'
+                $ref: '#/components/schemas/StoredWorkflowLiveSuite'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63870,7 +63977,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
@@ -63880,15 +63987,15 @@ paths:
     put:
       tags:
       - workflows
-      operationId: saveAutomationLiveSuite
+      operationId: saveStoredWorkflowLiveSuite
       summary: Save a frozen suite selection and monotonically attach existing run IDs; never execute workflows.
       responses:
         '200':
-          description: saveAutomationLiveSuite returns safe retained suite metadata and server-derived observations.
+          description: saveStoredWorkflowLiveSuite returns safe retained suite metadata and server-derived observations.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveSuite'
+                $ref: '#/components/schemas/StoredWorkflowLiveSuite'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63898,7 +64005,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
@@ -63911,8 +64018,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SaveAutomationLiveSuiteRequest'
-  /v1/apps/{slug}/automations/{name}/live-verifications:
+              $ref: '#/components/schemas/SaveStoredWorkflowLiveSuiteRequest'
+  /v1/apps/{slug}/workflows/stored/{name}/live-verifications:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
@@ -63922,19 +64029,19 @@ paths:
         type: string
         minLength: 1
         maxLength: 128
-      description: Automation whose recent live verification history is requested.
+      description: Stored workflow whose recent live verification history is requested.
     get:
       tags:
       - workflows
-      operationId: listAutomationLiveVerifications
+      operationId: listStoredWorkflowLiveVerifications
       summary: List recent live verifications and the current published deployment target.
       responses:
         '200':
-          description: listAutomationLiveVerifications returns safe verification identities and observations.
+          description: listStoredWorkflowLiveVerifications returns safe verification identities and observations.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListAutomationLiveVerificationsResponse'
+                $ref: '#/components/schemas/ListStoredWorkflowLiveVerificationsResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63944,11 +64051,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -63956,7 +64063,7 @@ paths:
     post:
       tags:
       - workflows
-      operationId: startAutomationLiveVerification
+      operationId: startStoredWorkflowLiveVerification
       summary: Explicitly execute one saved case input with atomic target fences and idempotency.
       parameters:
       - name: Idempotency-Key
@@ -63972,14 +64079,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/StartAutomationLiveVerificationRequest'
+              $ref: '#/components/schemas/StartStoredWorkflowLiveVerificationRequest'
       responses:
         '201':
-          description: startAutomationLiveVerification returns safe verification identities and observations.
+          description: startStoredWorkflowLiveVerification returns safe verification identities and observations.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveVerification'
+                $ref: '#/components/schemas/StoredWorkflowLiveVerification'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -63989,16 +64096,16 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServerError'
-  /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}:
+  /v1/apps/{slug}/workflows/stored/{name}/live-verifications/{run_id}:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
@@ -64008,7 +64115,7 @@ paths:
         type: string
         minLength: 1
         maxLength: 128
-      description: Automation containing the retained live verification to read.
+      description: Stored workflow containing the retained live verification to read.
     - name: run_id
       in: path
       required: true
@@ -64019,15 +64126,15 @@ paths:
     get:
       tags:
       - workflows
-      operationId: getAutomationLiveVerification
+      operationId: getStoredWorkflowLiveVerification
       summary: Read one verification without starting a run or evaluating live assertions.
       responses:
         '200':
-          description: getAutomationLiveVerification returns safe verification identities and observations.
+          description: getStoredWorkflowLiveVerification returns safe verification identities and observations.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveVerification'
+                $ref: '#/components/schemas/StoredWorkflowLiveVerification'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -64037,16 +64144,16 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServerError'
-  /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}/check:
+  /v1/apps/{slug}/workflows/stored/{name}/live-verifications/{run_id}/check:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
@@ -64056,7 +64163,7 @@ paths:
         type: string
         minLength: 1
         maxLength: 128
-      description: Automation whose frozen live assertions will be checked.
+      description: Stored workflow whose frozen live assertions will be checked.
     - name: run_id
       in: path
       required: true
@@ -64067,15 +64174,15 @@ paths:
     post:
       tags:
       - workflows
-      operationId: checkAutomationLiveVerification
+      operationId: checkStoredWorkflowLiveVerification
       summary: Check terminal run outcomes against frozen live assertions and retain a safe summary.
       responses:
         '200':
-          description: checkAutomationLiveVerification returns safe verification identities and observations.
+          description: checkStoredWorkflowLiveVerification returns safe verification identities and observations.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AutomationLiveVerification'
+                $ref: '#/components/schemas/StoredWorkflowLiveVerification'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -64085,11 +64192,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/AutomationConflict'
+          $ref: '#/components/responses/StoredWorkflowConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/AutomationInvalid'
+          $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -69579,6 +69686,18 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    AgentActivityBefore:
+      name: before
+      in: query
+      required: false
+      description: The `next_before` value of an earlier activity page; omit it for the newest rows.
+      schema: { type: string }
+    AgentActivityLimit:
+      name: limit
+      in: query
+      required: false
+      description: Activity rows per page, 1 to 200. Default 50.
+      schema: { type: integer, minimum: 1, maximum: 200 }
     EnvironmentPromotionAttempt:
       name: attempt_id
       in: path
@@ -87855,7 +87974,7 @@ components:
           description: Stable reason when enabled is false. Plan restrictions take precedence when both gates deny access. Omitted when enabled; older servers may omit it.
         unavailable_detail:
           type: string
-          description: Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for automation. Omitted when enabled; older servers may omit it.
+          description: Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for stored workflow. Omitted when enabled; older servers may omit it.
 
     CapabilitiesResponse:
       description: Account-scoped capability registry with resolved entitlement and existing runtime availability gates.
@@ -89885,7 +90004,7 @@ components:
         scopes:
           type: array
           items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
-          description: "Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
+          description: "Permission set attached to the exported key. github:manage controls customer GitHub connection stored workflow; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, "null"], format: date-time }
@@ -90200,6 +90319,9 @@ components:
         security_revocation: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
         managed_http: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
         managed_circuit: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        edge_header_secrets:
+          description: Gateways open sealed edge-rule request header values; until every serving gateway does, new credential values are stored as written. Omitted by older releases.
+          allOf: [{ $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }]
 
     TrafficRuntimeFeatureStatus:
       description: Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified.
@@ -91628,7 +91750,7 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage, platform_tenant:events:read, platform_tenant:events:manage, platform_tenant:automations:read, platform_tenant:automations:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage, platform_tenant:events:read, platform_tenant:events:manage, platform_tenant:stored_workflows:read, platform_tenant:stored_workflows:manage] }
         expires_at: { type: string, format: date-time, description: Defaults to 90 days from creation; maximum 365 days. }
 
     PlatformTenantAccessTokenResponse:
@@ -91642,7 +91764,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage, platform_tenant:events:read, platform_tenant:events:manage, platform_tenant:automations:read, platform_tenant:automations:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage, platform_tenant:events:read, platform_tenant:events:manage, platform_tenant:stored_workflows:read, platform_tenant:stored_workflows:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -91659,7 +91781,7 @@ components:
         prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
         scopes:
           type: array
-          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage, platform_tenant:events:read, platform_tenant:events:manage, platform_tenant:automations:read, platform_tenant:automations:manage] }
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read, platform_tenant:activation:read, platform_tenant:hostnames:manage, platform_tenant:credentials:read, platform_tenant:credentials:manage, platform_tenant:consumers:manage, platform_tenant:invocations:read, platform_tenant:invocations:manage, platform_tenant:events:read, platform_tenant:events:manage, platform_tenant:stored_workflows:read, platform_tenant:stored_workflows:manage] }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
@@ -94968,6 +95090,26 @@ components:
           type: string
           format: email
           description: "The account's own email address (kind email)."
+    UpdateNotificationChannelRequest:
+      description: "Renames a channel or replaces its destination; set name, the channel's own destination, or both."
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'New name, unique per account.'
+        slack_webhook_url:
+          type: string
+          format: uri
+          description: 'New Slack incoming webhook (kind slack).'
+        pagerduty_routing_key:
+          type: string
+          pattern: '^[A-Za-z0-9]{32}$'
+          description: 'New Events API v2 integration key (kind pagerduty).'
+        pagerduty_region:
+          type: string
+          enum: [us, eu]
+          description: 'PagerDuty service region of the new key (kind pagerduty); default us.'
     NotificationChannelResponse:
       description: 'One alert notification channel.'
       type: object
@@ -97010,6 +97152,13 @@ components:
         expected_serving_deployment_id:
           type: string
           description: "Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive traffic, for guarded first deployment promotion. If the condition changes at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic."
+        expected_traffic:
+          type: object
+          description: "Optional split the change was planned from: every live release in the deployment's environment with positive traffic, keyed by deployment id, mapped to its percent (1-100, summing to 100, at most 100 releases). If the split differs at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic. Cannot be combined with expected_serving_deployment_id or expected_review."
+          additionalProperties:
+            type: integer
+            minimum: 1
+            maximum: 100
         expected_mcp_access_policy:
           type: object
           description: "Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the transaction also requires the unchanged account revision and fresh replay from every currently registered serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on fleet membership."
@@ -98003,7 +98152,7 @@ components:
           additionalProperties: true
           description: Optional JSON predicate evaluated against the CloudEvents envelope. Event triggers reject schedule, timezone, input, overlap, and catch-up options.
 
-    AutomationFailurePolicy:
+    StoredWorkflowFailurePolicy:
       type: object
       additionalProperties: false
       description: Opt-in thresholds for scheduler-enforced failure admission pausing.
@@ -98040,7 +98189,7 @@ components:
           minimum: 60
           description: Lookback in seconds, bounded by the latest monitoring epoch.
           maximum: 86400
-    SetAutomationFailurePolicyRequest:
+    SetStoredWorkflowFailurePolicyRequest:
       type: object
       additionalProperties: false
       description: Complete failure policy replacement guarded by an expected version.
@@ -98077,7 +98226,7 @@ components:
           minimum: 60
           description: Requested lookback in seconds, bounded by the latest monitoring epoch.
           maximum: 86400
-    ResumeAutomationFailurePauseRequest:
+    ResumeStoredWorkflowFailurePauseRequest:
       type: object
       additionalProperties: false
       description: Explicit failure guard resume guarded by its current generation.
@@ -98089,7 +98238,7 @@ components:
           format: int64
           minimum: 1
           description: Positive pause generation reviewed by the caller.
-    AutomationFailureTransition:
+    StoredWorkflowFailureTransition:
       type: object
       additionalProperties: false
       description: Immutable bounded aggregate evidence for a failure guard transition.
@@ -98106,7 +98255,7 @@ components:
           type: integer
           format: int64
           minimum: 1
-          description: Unique runtime transition generation for this automation.
+          description: Unique runtime transition generation for this stored workflow.
         state:
           type: string
           enum:
@@ -98141,7 +98290,7 @@ components:
         actor_account_id:
           type: string
           description: Account that explicitly resumed; empty or omitted for an automatic pause.
-    AutomationFailurePolicyResponse:
+    StoredWorkflowFailurePolicyResponse:
       type: object
       additionalProperties: false
       description: Failure guard state, monitoring configuration and advisory retained-work preview.
@@ -98158,7 +98307,7 @@ components:
       - history
       properties:
         policy:
-          $ref: '#/components/schemas/AutomationFailurePolicy'
+          $ref: '#/components/schemas/StoredWorkflowFailurePolicy'
         paused:
           type: boolean
           description: Whether automatic admissions are blocked by the durable failure guard.
@@ -98204,15 +98353,15 @@ components:
           type: integer
           format: int64
           minimum: 0
-          description: Advisory count of unadmitted retained event recipients for this automation.
+          description: Advisory count of unadmitted retained event recipients for this stored workflow.
         history:
           type: array
           maxItems: 100
           description: Latest pause and resume transitions in descending generation order.
           items:
-            $ref: '#/components/schemas/AutomationFailureTransition'
+            $ref: '#/components/schemas/StoredWorkflowFailureTransition'
 
-    AutomationResponse:
+    StoredWorkflowResponse:
       type: object
       additionalProperties: false
       required:
@@ -98223,9 +98372,9 @@ components:
       - enabled
       properties:
         test_suite:
-          $ref: '#/components/schemas/AutomationTestSuite'
+          $ref: '#/components/schemas/StoredWorkflowTestSuite'
         test_report:
-          $ref: '#/components/schemas/AutomationTestReport'
+          $ref: '#/components/schemas/StoredWorkflowTestReport'
         failure_paused:
           type: boolean
           description: Runtime failure guard blocks automatic admissions independently of configured enabled intent.
@@ -98236,7 +98385,7 @@ components:
           format: int64
           minimum: 0
           description: Opaque monotonically increasing revision. Zero creates the first
-            draft. A stale value returns automation_version_conflict.
+            draft. A stale value returns stored_workflow_version_conflict.
         source:
           type: string
           enum:
@@ -98255,15 +98404,15 @@ components:
         updated_at:
           type: string
           format: date-time
-      description: Saved draft, publication, ownership and opaque revision of one automation.
-    ListAutomationsResponse:
+      description: Saved draft, publication, ownership and opaque revision of one stored workflow.
+    ListStoredWorkflowsResponse:
       type: object
       additionalProperties: false
       required:
       - app_slug
       - runtime_enabled
       - max_definitions
-      - automations
+      - stored_workflows
       properties:
         app_slug:
           type: string
@@ -98273,12 +98422,12 @@ components:
           type: string
         max_definitions:
           type: integer
-        automations:
+        stored_workflows:
           type: array
           items:
-            $ref: '#/components/schemas/AutomationResponse'
-      description: App automation definitions, plan limit and execution availability.
-    AutomationHealthRun:
+            $ref: '#/components/schemas/StoredWorkflowResponse'
+      description: App stored workflow definitions, plan limit and execution availability.
+    StoredWorkflowHealthRun:
       type: object
       additionalProperties: false
       required: [id, status, created_at]
@@ -98288,7 +98437,7 @@ components:
         created_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time }
       description: Safe recent-run identity and timestamps; workflow input, output and error text are omitted.
-    AutomationHealthStepFailure:
+    StoredWorkflowHealthStepFailure:
       type: object
       additionalProperties: false
       required: [step_name, failed_run_count, last_failed_at]
@@ -98297,17 +98446,17 @@ components:
         failed_run_count: { type: integer, format: int64, minimum: 1 }
         last_failed_at: { type: string, format: date-time }
       description: Number of terminal runs that failed at this logical step; loop items are grouped by parent.
-    AutomationQueueHealth:
+    StoredWorkflowQueueHealth:
       type: object
       additionalProperties: false
       required: [observed_at, waiting_run_count, due_run_count, stale_run_count, oldest_due_age_seconds, app_running_count, app_dispatch_limit, tenant_dispatch_limit, app_at_capacity, reason_counts]
       properties:
         observed_at: { type: string, format: date-time }
-        waiting_run_count: { type: integer, format: int64, minimum: 0, description: "Current pending and parked runs plus expired running leases for this automation; reason counts sum to this value." }
+        waiting_run_count: { type: integer, format: int64, minimum: 0, description: "Current pending and parked runs plus expired running leases for this stored workflow; reason counts sum to this value." }
         due_run_count: { type: integer, format: int64, minimum: 0, description: "Due waiting runs including capacity blockers and lease recovery." }
-        stale_run_count: { type: integer, format: int64, minimum: 0, description: "Running automation runs whose dispatch lease has expired." }
+        stale_run_count: { type: integer, format: int64, minimum: 0, description: "Running stored workflow runs whose dispatch lease has expired." }
         oldest_due_age_seconds: { type: number, format: double, minimum: 0, description: "Age since the oldest due run became eligible, bounded by creation time; zero if none is due." }
-        app_running_count: { type: integer, format: int64, minimum: 0, description: "Live automation dispatch claims across all workflows and tenants in this app; excludes expired leases and native operation custody." }
+        app_running_count: { type: integer, format: int64, minimum: 0, description: "Live stored workflow dispatch claims across all workflows and tenants in this app; excludes expired leases and native operation custody." }
         app_dispatch_limit: { type: integer, minimum: 1 }
         tenant_dispatch_limit: { type: integer, minimum: 1, description: "Live claim limit per tenant within this app." }
         app_at_capacity: { type: boolean }
@@ -98324,13 +98473,13 @@ components:
             tenant_capacity: { type: integer, format: int64, minimum: 0 }
             workflow_capacity: { type: integer, format: int64, minimum: 0, description: "The captured workflow definition run budget is full." }
       description: Current app-owned queue diagnostics independent of the historical health window. Each waiting run has one primary reason; future wakes take precedence followed by app, tenant and workflow capacity. No payloads or tenant identities, global worker occupancy or completion estimates are returned.
-    AutomationHealthResponse:
+    StoredWorkflowHealthResponse:
       type: object
       additionalProperties: false
-      required: [app_slug, automation_name, window_start, window_end, run_count, completed_run_count, active_run_count, queued_run_count, success_rate, status_counts, failed_steps]
+      required: [app_slug, stored_workflow_name, window_start, window_end, run_count, completed_run_count, active_run_count, queued_run_count, success_rate, status_counts, failed_steps]
       properties:
         app_slug: { type: string }
-        automation_name: { type: string }
+        stored_workflow_name: { type: string }
         window_start: { type: string, format: date-time }
         window_end: { type: string, format: date-time }
         run_count: { type: integer, format: int64, minimum: 0 }
@@ -98345,7 +98494,7 @@ components:
           format: int64
           minimum: 0
           description: Current pending runs that have not started; independent of the requested health window.
-        queue: { $ref: '#/components/schemas/AutomationQueueHealth' }
+        queue: { $ref: '#/components/schemas/StoredWorkflowQueueHealth' }
         success_rate:
           type: number
           format: double
@@ -98365,15 +98514,15 @@ components:
           additionalProperties: false
         p50_duration_ms: { type: integer, format: int64, minimum: 0, description: Median duration of completed runs with start and finish timestamps; omitted when no samples exist. }
         p95_duration_ms: { type: integer, format: int64, minimum: 0, description: 95th percentile duration of completed runs with start and finish timestamps; omitted when no samples exist. }
-        last_run: { $ref: '#/components/schemas/AutomationHealthRun' }
-        last_success: { $ref: '#/components/schemas/AutomationHealthRun' }
-        last_failure: { $ref: '#/components/schemas/AutomationHealthRun' }
+        last_run: { $ref: '#/components/schemas/StoredWorkflowHealthRun' }
+        last_success: { $ref: '#/components/schemas/StoredWorkflowHealthRun' }
+        last_failure: { $ref: '#/components/schemas/StoredWorkflowHealthRun' }
         failed_steps:
           type: array
           maxItems: 10
-          items: { $ref: '#/components/schemas/AutomationHealthStepFailure' }
-      description: Bounded aggregate automation health. Customer payloads and error strings are never returned.
-    AutomationPublishPolicy:
+          items: { $ref: '#/components/schemas/StoredWorkflowHealthStepFailure' }
+      description: Bounded aggregate stored workflow health. Customer payloads and error strings are never returned.
+    StoredWorkflowPublishPolicy:
       type: object
       additionalProperties: false
       required:
@@ -98392,7 +98541,7 @@ components:
           minimum: 0
       description: App policy for dashboard publication. YAML deployment is a separate surface. Changes
         require admin scope and invalidate previously issued receipts.
-    SetAutomationPublishPolicyRequest:
+    SetStoredWorkflowPublishPolicyRequest:
       description: Versioned app policy change; requires an admin credential.
       type: object
       additionalProperties: false
@@ -98410,7 +98559,7 @@ components:
           type: integer
           format: int64
           minimum: 0
-    AutomationCheckAttempt:
+    StoredWorkflowCheckAttempt:
       description: Expected ordered simulation attempt outcome and optional failure status.
       type: object
       additionalProperties: false
@@ -98427,7 +98576,7 @@ components:
           type: integer
           minimum: 100
           maximum: 599
-    AutomationCheckExpectation:
+    StoredWorkflowCheckExpectation:
       type: object
       additionalProperties: false
       required:
@@ -98472,11 +98621,11 @@ components:
         attempts:
           type: array
           items:
-            $ref: '#/components/schemas/AutomationCheckAttempt'
+            $ref: '#/components/schemas/StoredWorkflowCheckAttempt'
           maxItems: 25
       description: Requires at least one assertion. Loop item assertions use step <loop>/action, loop
         name and canonical zero-based item index.
-    AutomationTestInputs:
+    StoredWorkflowTestInputs:
       description: Saved test data — Explicitly saved synthetic inputs and mocks. Runs always bind the current saved draft.
       type: object
       additionalProperties: false
@@ -98506,7 +98655,7 @@ components:
               minItems: 1
               maxItems: 25
               items:
-                $ref: '#/components/schemas/AutomationSimulationMockAttempt'
+                $ref: '#/components/schemas/StoredWorkflowSimulationMockAttempt'
         mock_attempts:
           description: Saved test data — Ordered per-attempt outcomes keyed by action or wait name. Event and callback waits accept exactly one success with the received payload as output, or one timeout with a configured timeout and on_timeout route. Other waits accept timeout only. Successful wait payloads cannot be the reserved timeout sentinel. Action timeouts require on_timeout. Cannot be combined with mock_outputs for the same step.
           type: object
@@ -98515,8 +98664,8 @@ components:
             minItems: 1
             maxItems: 25
             items:
-              $ref: '#/components/schemas/AutomationSimulationMockAttempt'
-    AutomationTestCase:
+              $ref: '#/components/schemas/StoredWorkflowSimulationMockAttempt'
+    StoredWorkflowTestCase:
       description: A uniquely named set of definition-free mocks and expected step results.
       type: object
       additionalProperties: false
@@ -98528,20 +98677,20 @@ components:
         live:
           description: Optional live assertions saved with this case; null disables its live test.
           anyOf:
-          - $ref: '#/components/schemas/AutomationLiveTest'
+          - $ref: '#/components/schemas/StoredWorkflowLiveTest'
           - type: 'null'
         name:
           type: string
           minLength: 1
           maxLength: 128
         simulation:
-          $ref: '#/components/schemas/AutomationTestInputs'
+          $ref: '#/components/schemas/StoredWorkflowTestInputs'
         expectations:
           type: array
           maxItems: 4096
           items:
-            $ref: '#/components/schemas/AutomationCheckExpectation'
-    AutomationLiveExpectation:
+            $ref: '#/components/schemas/StoredWorkflowCheckExpectation'
+    StoredWorkflowLiveExpectation:
       description: A separate assertion against a real terminal workflow step, not a mock trace.
       type: object
       additionalProperties: false
@@ -98569,7 +98718,7 @@ components:
           type: integer
           minimum: 0
           maximum: 425
-    AutomationLiveTest:
+    StoredWorkflowLiveTest:
       description: Explicit live assertions frozen when a saved case is admitted for execution.
       type: object
       additionalProperties: false
@@ -98588,8 +98737,8 @@ components:
           minItems: 1
           maxItems: 128
           items:
-            $ref: '#/components/schemas/AutomationLiveExpectation'
-    StartAutomationLiveVerificationRequest:
+            $ref: '#/components/schemas/StoredWorkflowLiveExpectation'
+    StartStoredWorkflowLiveVerificationRequest:
       description: Fenced request to execute one saved case input against a specific published revision and deployment.
       type: object
       additionalProperties: false
@@ -98615,7 +98764,7 @@ components:
         confirm_real_actions:
           type: boolean
           description: Must be true to authorize real handler and connected-service actions.
-    AutomationLiveReport:
+    StoredWorkflowLiveReport:
       description: Payload-free verdict for the frozen live assertions at one terminal run state.
       type: object
       additionalProperties: false
@@ -98646,8 +98795,8 @@ components:
           type: array
           maxItems: 128
           items:
-            $ref: '#/components/schemas/AutomationTestStepResult'
-    StartAutomationLiveSuiteRequest:
+            $ref: '#/components/schemas/StoredWorkflowTestStepResult'
+    StartStoredWorkflowLiveSuiteRequest:
       type: object
       additionalProperties: false
       description: At most 16 KiB. Bind an ordered selection of saved live case names to the exact saved version, published revision and deployment, with explicit real-action authorization.
@@ -98673,7 +98822,7 @@ components:
             maxLength: 128
         confirm_real_actions:
           type: boolean
-    AdvanceAutomationLiveSuiteRequest:
+    AdvanceStoredWorkflowLiveSuiteRequest:
       type: object
       additionalProperties: false
       description: Explicit authorization to inspect existing identities and admit at most one remaining case. No target changes, run replacements or uploaded verdicts are accepted.
@@ -98681,7 +98830,7 @@ components:
       properties:
         confirm_real_actions:
           type: boolean
-    SaveAutomationLiveSuiteRequest:
+    SaveStoredWorkflowLiveSuiteRequest:
       type: object
       additionalProperties: false
       required:
@@ -98704,11 +98853,11 @@ components:
           minItems: 1
           maxItems: 32
           items:
-            $ref: '#/components/schemas/AutomationLiveSuiteMember'
+            $ref: '#/components/schemas/StoredWorkflowLiveSuiteMember'
       description: At most 16 KiB. Freeze an ordered saved-case selection and attach existing verification run IDs.
         No assertions, verdicts, keys or payloads are accepted. Saving never executes or checks a run. Existing run
         links cannot be replaced or removed.
-    AutomationLiveSuiteMember:
+    StoredWorkflowLiveSuiteMember:
       type: object
       additionalProperties: false
       required:
@@ -98722,7 +98871,7 @@ components:
           type: string
           format: uuid
       description: One saved live case and its optional existing verification run identity.
-    AutomationLiveBaselinePolicy:
+    StoredWorkflowLiveBaselinePolicy:
       description: Version 2 required-case coverage and evidence-age policy reviewed during baseline promotion.
       type: object
       additionalProperties: false
@@ -98749,7 +98898,7 @@ components:
           format: int64
           minimum: 1
           maximum: 9223372036
-    PromoteAutomationLiveBaselineRequest:
+    PromoteStoredWorkflowLiveBaselineRequest:
       description: Explicit target suite, reviewed policy and expected baseline revision for an audited promotion.
       type: object
       additionalProperties: false
@@ -98781,8 +98930,8 @@ components:
           type: string
           format: uuid
         policy:
-          $ref: '#/components/schemas/AutomationLiveBaselinePolicy'
-    AutomationLiveBaseline:
+          $ref: '#/components/schemas/StoredWorkflowLiveBaselinePolicy'
+    StoredWorkflowLiveBaseline:
       description: Immutable attributed receipt binding a named baseline revision to its retained suite and reviewed policy.
       type: object
       additionalProperties: false
@@ -98828,9 +98977,9 @@ components:
           type: string
           format: date-time
         suite:
-          $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+          $ref: '#/components/schemas/StoredWorkflowLiveSuiteSummary'
         policy:
-          $ref: '#/components/schemas/AutomationLiveBaselinePolicy'
+          $ref: '#/components/schemas/StoredWorkflowLiveBaselinePolicy'
         policy_hash:
           type: string
           pattern: ^[a-f0-9]{64}$
@@ -98845,7 +98994,7 @@ components:
           type: number
           format: double
           minimum: 0
-    AutomationLiveBaselineCaseHealth:
+    StoredWorkflowLiveBaselineCaseHealth:
       description: Current retained verification availability and renewal readiness for one promoted suite case.
       type: object
       additionalProperties: false
@@ -98867,7 +99016,7 @@ components:
           - pending
           - unavailable
           - not_started
-    AutomationLiveBaselineHealth:
+    StoredWorkflowLiveBaselineHealth:
       description: Coherent read-only evidence health observations for a named baseline head.
       type: object
       additionalProperties: false
@@ -98880,7 +99029,7 @@ components:
       - cases
       properties:
         baseline:
-          $ref: '#/components/schemas/AutomationLiveBaseline'
+          $ref: '#/components/schemas/StoredWorkflowLiveBaseline'
         evidence_status:
           type: string
           enum:
@@ -98905,7 +99054,7 @@ components:
           type: array
           maxItems: 32
           items:
-            $ref: '#/components/schemas/AutomationLiveBaselineCaseHealth'
+            $ref: '#/components/schemas/StoredWorkflowLiveBaselineCaseHealth'
         age_seconds:
           type: number
           description: Oldest original retained run age. Negative values indicate future timestamps.
@@ -98917,7 +99066,7 @@ components:
           format: int64
           minimum: 1
           maximum: 9223372036
-    ListAutomationLiveBaselinesResponse:
+    ListStoredWorkflowLiveBaselinesResponse:
       description: Bounded sorted catalog of active named baseline heads and their current evidence observations.
       type: object
       additionalProperties: false
@@ -98929,11 +99078,11 @@ components:
           type: array
           maxItems: 20
           items:
-            $ref: '#/components/schemas/AutomationLiveBaselineHealth'
+            $ref: '#/components/schemas/StoredWorkflowLiveBaselineHealth'
         observed_at:
           type: string
           format: date-time
-    RetireAutomationLiveBaselineRequest:
+    RetireStoredWorkflowLiveBaselineRequest:
       description: Expected positive baseline revision required to permanently retire an active name.
       type: object
       additionalProperties: false
@@ -98945,7 +99094,7 @@ components:
           format: int64
           minimum: 1
           maximum: 9223372036854775806
-    AutomationLiveBaselineRetirement:
+    StoredWorkflowLiveBaselineRetirement:
       description: Immutable attributed receipt recording permanent retirement and release of the baseline evidence pin.
       type: object
       additionalProperties: false
@@ -98989,7 +99138,7 @@ components:
         retired_at:
           type: string
           format: date-time
-    AutomationLiveBaselineHistory:
+    StoredWorkflowLiveBaselineHistory:
       description: Bounded promotion audit history and optional permanent retirement receipt for one baseline name.
       type: object
       additionalProperties: false
@@ -98997,13 +99146,13 @@ components:
       - promotions
       properties:
         retirement:
-          $ref: '#/components/schemas/AutomationLiveBaselineRetirement'
+          $ref: '#/components/schemas/StoredWorkflowLiveBaselineRetirement'
         promotions:
           type: array
           maxItems: 100
           items:
-            $ref: '#/components/schemas/AutomationLiveBaseline'
-    AutomationLiveSuiteComparison:
+            $ref: '#/components/schemas/StoredWorkflowLiveBaseline'
+    StoredWorkflowLiveSuiteComparison:
       type: object
       additionalProperties: false
       required:
@@ -99016,9 +99165,9 @@ components:
       - cases
       properties:
         baseline:
-          $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+          $ref: '#/components/schemas/StoredWorkflowLiveSuiteSummary'
         candidate:
-          $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+          $ref: '#/components/schemas/StoredWorkflowLiveSuiteSummary'
         baseline_outdated:
           type: boolean
         candidate_outdated:
@@ -99027,14 +99176,14 @@ components:
           type: string
           format: date-time
         summary:
-          $ref: '#/components/schemas/AutomationLiveSuiteComparisonCounts'
+          $ref: '#/components/schemas/StoredWorkflowLiveSuiteComparisonCounts'
         cases:
           type: array
           maxItems: 64
           items:
-            $ref: '#/components/schemas/AutomationLiveSuiteCaseComparison'
+            $ref: '#/components/schemas/StoredWorkflowLiveSuiteCaseComparison'
       description: Read-only evidence comparison. Outdated identifies target drift, independently of recorded result validity. Contains no inputs, outputs, assertions or admission keys.
-    AutomationLiveSuiteComparisonCounts:
+    StoredWorkflowLiveSuiteComparisonCounts:
       type: object
       additionalProperties: false
       required:
@@ -99080,7 +99229,7 @@ components:
           minimum: 0
           maximum: 32
       description: Disjoint case classifications; all categories sum to total. Zero regressions alone is not evidence that the candidate passed.
-    AutomationLiveSuiteCaseComparison:
+    StoredWorkflowLiveSuiteCaseComparison:
       type: object
       additionalProperties: false
       required:
@@ -99096,11 +99245,11 @@ components:
           enum: [regression, recovery, unchanged, added, removed, incompatible, unknown]
           description: Equal hashes and current terminal reports are required for regression, recovery or unchanged. Hash mismatch is incompatible even when a report is pending; absent evidence is unknown. Added and removed take precedence when only one suite selected the case.
         baseline:
-          $ref: '#/components/schemas/AutomationLiveSuiteObservation'
+          $ref: '#/components/schemas/StoredWorkflowLiveSuiteObservation'
         candidate:
-          $ref: '#/components/schemas/AutomationLiveSuiteObservation'
+          $ref: '#/components/schemas/StoredWorkflowLiveSuiteObservation'
       description: A missing side means the case was not selected in that suite. A selected case without a run has a not_started observation.
-    AutomationLiveSuiteObservation:
+    StoredWorkflowLiveSuiteObservation:
       type: object
       additionalProperties: false
       required:
@@ -99118,7 +99267,7 @@ components:
           enum: [passed, failed, pending, not_started, unavailable]
           description: Result of the original run independently of target drift. Unavailable includes missing runs and terminal runs without a current assertion report.
       description: Safe original run identity, creation time and recorded result only.
-    AutomationLiveSuiteSummary:
+    StoredWorkflowLiveSuiteSummary:
       type: object
       additionalProperties: false
       required:
@@ -99166,7 +99315,7 @@ components:
           minimum: 0
           maximum: 32
       description: Retained suite identity and linked-run counts. Listing is not an assertion verdict.
-    AutomationLiveSuiteCase:
+    StoredWorkflowLiveSuiteCase:
       type: object
       additionalProperties: false
       required:
@@ -99190,9 +99339,9 @@ components:
           - outdated
           - unavailable
         verification:
-          $ref: '#/components/schemas/AutomationLiveVerification'
+          $ref: '#/components/schemas/StoredWorkflowLiveVerification'
       description: A server-derived case observation; unavailable records keep their original run identity.
-    AutomationLiveSuiteCounts:
+    StoredWorkflowLiveSuiteCounts:
       type: object
       additionalProperties: false
       required:
@@ -99233,7 +99382,7 @@ components:
           minimum: 0
           maximum: 32
       description: Current suite case counts, including unstarted and unverifiable members.
-    AutomationLiveSuite:
+    StoredWorkflowLiveSuite:
       type: object
       additionalProperties: false
       required:
@@ -99300,18 +99449,18 @@ components:
           type: string
           format: date-time
         summary:
-          $ref: '#/components/schemas/AutomationLiveSuiteCounts'
+          $ref: '#/components/schemas/StoredWorkflowLiveSuiteCounts'
         cases:
           type: array
           minItems: 1
           maxItems: 32
           items:
-            $ref: '#/components/schemas/AutomationLiveSuiteCase'
+            $ref: '#/components/schemas/StoredWorkflowLiveSuiteCase'
       description: Server-derived observation of retained verification records. GET is read-only and never checks assertions
         or admits work. Missing records remain unavailable with their known IDs. Passed requires every linked case to
         have a current passing report and an unchanged saved version, published revision and deployment. Not a publication
         receipt.
-    ListAutomationLiveSuitesResponse:
+    ListStoredWorkflowLiveSuitesResponse:
       type: object
       additionalProperties: false
       required:
@@ -99321,10 +99470,10 @@ components:
           type: array
           maxItems: 20
           items:
-            $ref: '#/components/schemas/AutomationLiveSuiteSummary'
-      description: Twenty most recently created suites. One hundred recent suites are retained per automation; clearing
+            $ref: '#/components/schemas/StoredWorkflowLiveSuiteSummary'
+      description: Twenty most recently created suites. One hundred recent suites are retained per stored workflow; clearing
         saved test data clears shared suite history.
-    AutomationLiveVerification:
+    StoredWorkflowLiveVerification:
       description: Safe provenance and status for one explicitly authorized live verification run.
       type: object
       additionalProperties: false
@@ -99370,8 +99519,8 @@ components:
           description: True when the report still matches this run status, resume count and update time; also require
             outdated=false for current-target evidence.
         report:
-          $ref: '#/components/schemas/AutomationLiveReport'
-    ListAutomationLiveVerificationsResponse:
+          $ref: '#/components/schemas/StoredWorkflowLiveReport'
+    ListStoredWorkflowLiveVerificationsResponse:
       description: Current target identities and the twenty most recent retained live verifications.
       type: object
       additionalProperties: false
@@ -99388,8 +99537,8 @@ components:
           type: array
           maxItems: 20
           items:
-            $ref: '#/components/schemas/AutomationLiveVerification'
-    AutomationTestSuite:
+            $ref: '#/components/schemas/StoredWorkflowLiveVerification'
+    StoredWorkflowTestSuite:
       type: object
       additionalProperties: false
       required:
@@ -99397,14 +99546,14 @@ components:
       - cases
       properties:
         sample:
-          $ref: '#/components/schemas/AutomationTestInputs'
+          $ref: '#/components/schemas/StoredWorkflowTestInputs'
         cases:
           type: array
           maxItems: 32
           items:
-            $ref: '#/components/schemas/AutomationTestCase'
+            $ref: '#/components/schemas/StoredWorkflowTestCase'
       description: At most 32 uniquely named cases; sample up to 3 MiB, cases up to 24 MiB combined, suite up to 27 MiB. Data is explicitly persisted, never captured from real runs.
-    SaveAutomationTestSuiteRequest:
+    SaveStoredWorkflowTestSuiteRequest:
       description: Versioned suite replacement; explicitly sending null removes saved data and results.
       type: object
       additionalProperties: false
@@ -99418,10 +99567,10 @@ components:
           minimum: 1
         suite:
           anyOf:
-          - $ref: '#/components/schemas/AutomationTestSuite'
+          - $ref: '#/components/schemas/StoredWorkflowTestSuite'
           - type: 'null'
-          description: Null clears saved tests and the retained report. Saving advances the automation version and invalidates earlier publishing receipts.
-    RunAutomationTestsRequest:
+          description: Null clears saved tests and the retained report. Saving advances the stored workflow version and invalidates earlier publishing receipts.
+    RunStoredWorkflowTestsRequest:
       description: Expected current draft version for simulating its saved test cases.
       type: object
       additionalProperties: false
@@ -99432,7 +99581,7 @@ components:
           type: integer
           format: int64
           minimum: 1
-    AutomationTestReport:
+    StoredWorkflowTestReport:
       type: object
       additionalProperties: false
       required:
@@ -99457,9 +99606,9 @@ components:
           type: array
           maxItems: 32
           items:
-            $ref: '#/components/schemas/AutomationTestCaseResult'
+            $ref: '#/components/schemas/StoredWorkflowTestCaseResult'
       description: Retained observation, not a publishing receipt. Freshness compares definition and suite content; running does not advance the draft version or perform real actions.
-    AutomationTestCaseResult:
+    StoredWorkflowTestCaseResult:
       description: Safe overall case result and bounded per-step assertion summaries.
       type: object
       additionalProperties: false
@@ -99486,8 +99635,8 @@ components:
           type: array
           maxItems: 1024
           items:
-            $ref: '#/components/schemas/AutomationTestStepResult'
-    AutomationTestStepResult:
+            $ref: '#/components/schemas/StoredWorkflowTestStepResult'
+    StoredWorkflowTestStepResult:
       description: One assertion result and observed state, excluding input, output and error data.
       type: object
       additionalProperties: false
@@ -99512,8 +99661,8 @@ components:
           items:
             type: string
             enum: [step, state, reason, when_matched, output, attempt_count, attempts]
-    AutomationPublishCheckScenario:
-      description: Named simulation and assertions to evaluate against a saved automation draft.
+    StoredWorkflowPublishCheckScenario:
+      description: Named simulation and assertions to evaluate against a saved stored workflow draft.
       type: object
       additionalProperties: false
       required:
@@ -99524,21 +99673,21 @@ components:
         live:
           description: Live test configuration carried by the case editor; mock publishing checks do not evaluate it.
           anyOf:
-          - $ref: '#/components/schemas/AutomationLiveTest'
+          - $ref: '#/components/schemas/StoredWorkflowLiveTest'
           - type: 'null'
         name:
           type: string
           minLength: 1
           maxLength: 256
         simulation:
-          $ref: '#/components/schemas/SimulateAutomationRequest'
+          $ref: '#/components/schemas/SimulateStoredWorkflowRequest'
         expectations:
           type: array
           items:
-            $ref: '#/components/schemas/AutomationCheckExpectation'
+            $ref: '#/components/schemas/StoredWorkflowCheckExpectation'
           minItems: 1
           maxItems: 4096
-    CheckAutomationPublicationRequest:
+    CheckStoredWorkflowPublicationRequest:
       type: object
       additionalProperties: false
       required:
@@ -99556,18 +99705,18 @@ components:
         scenarios:
           type: array
           items:
-            $ref: '#/components/schemas/AutomationPublishCheckScenario'
+            $ref: '#/components/schemas/StoredWorkflowPublishCheckScenario'
           minItems: 1
           maxItems: 32
         exclusions:
           type: array
           items:
-            $ref: '#/components/schemas/AutomationCheckExclusion'
+            $ref: '#/components/schemas/StoredWorkflowCheckExclusion'
           maxItems: 256
       description: Run assertions and coverage on the saved draft on the server; mocks remain
         hypothetical. At most 24 MiB total and 3 MiB per simulation. Complete, valid traces and passing
         assertions are required. Coverage policy overrides require_coverage=false.
-    CheckAutomationPublicationResponse:
+    CheckStoredWorkflowPublicationResponse:
       description: Expiring server receipt with safe verified scenario and coverage metadata.
       type: object
       additionalProperties: false
@@ -99585,8 +99734,8 @@ components:
           type: string
           format: date-time
         evidence:
-          $ref: '#/components/schemas/AutomationCheckEvidence'
-    AutomationCheckEvidence:
+          $ref: '#/components/schemas/StoredWorkflowCheckEvidence'
+    StoredWorkflowCheckEvidence:
       type: object
       additionalProperties: false
       description: Simulation check metadata. server_verified is set only for server-issued publishing receipts; legacy or plain client evidence is unverified. Bound to the saved draft hash and version. Contains metadata only; no sample inputs, outputs, or failure text. Checked time must be within the past day (five minutes of future clock skew allowed).
@@ -99611,7 +99760,7 @@ components:
           minItems: 1
           maxItems: 32
           items:
-            $ref: '#/components/schemas/AutomationCheckScenario'
+            $ref: '#/components/schemas/StoredWorkflowCheckScenario'
         coverage_required:
           type: boolean
         coverage_passed:
@@ -99625,8 +99774,8 @@ components:
           type: array
           maxItems: 256
           items:
-            $ref: '#/components/schemas/AutomationCheckExclusion'
-    AutomationCheckScenario:
+            $ref: '#/components/schemas/StoredWorkflowCheckExclusion'
+    StoredWorkflowCheckScenario:
       type: object
       additionalProperties: false
       description: A named scenario reported as passing, definition valid, and complete by the publishing client.
@@ -99645,7 +99794,7 @@ components:
         complete:
           type: boolean
           enum: [true]
-    AutomationCheckExclusion:
+    StoredWorkflowCheckExclusion:
       type: object
       additionalProperties: false
       description: An explicitly reviewed coverage exclusion. Reasons are user-authored metadata and should contain no secrets.
@@ -99666,13 +99815,13 @@ components:
           type: string
           minLength: 1
           maxLength: 512
-    AutomationRevisionResponse:
+    StoredWorkflowRevisionResponse:
       type: object
       additionalProperties: false
       required: [version, definition, definition_hash, recorded_at, legacy_snapshot, published_by_account_id]
       properties:
         check_evidence:
-          $ref: '#/components/schemas/AutomationCheckEvidence'
+          $ref: '#/components/schemas/StoredWorkflowCheckEvidence'
         version:
           type: integer
           format: int64
@@ -99699,20 +99848,20 @@ components:
           type: string
           format: uuid
           description: API key used for the publish when the request used key authentication; omitted for session authentication and legacy snapshots.
-      description: Immutable published automation definition with actor and rollout provenance.
-    ListAutomationRevisionsResponse:
+      description: Immutable published stored workflow definition with actor and rollout provenance.
+    ListStoredWorkflowRevisionsResponse:
       type: object
       additionalProperties: false
       required: [revisions, total, limit, offset]
       properties:
         revisions:
           type: array
-          items: { $ref: '#/components/schemas/AutomationRevisionResponse' }
+          items: { $ref: '#/components/schemas/StoredWorkflowRevisionResponse' }
         total: { type: integer, minimum: 0 }
         limit: { type: integer, minimum: 1, maximum: 100 }
         offset: { type: integer, minimum: 0 }
       description: Newest-first immutable publication history and pagination metadata.
-    RestoreAutomationRevisionRequest:
+    RestoreStoredWorkflowRevisionRequest:
       type: object
       additionalProperties: false
       required: [expected_version]
@@ -99723,7 +99872,7 @@ components:
           minimum: 0
           description: Current draft revision for optimistic concurrency; zero creates a draft after deletion.
       description: Restores a selected immutable publication into the draft without publishing it.
-    SaveAutomationDraftRequest:
+    SaveStoredWorkflowDraftRequest:
       type: object
       additionalProperties: false
       required:
@@ -99738,7 +99887,7 @@ components:
         definition:
           $ref: '#/components/schemas/WorkflowSpec'
       description: Draft definition and the revision that the caller edited.
-    PublishAutomationRequest:
+    PublishStoredWorkflowRequest:
       type: object
       additionalProperties: false
       required:
@@ -99749,7 +99898,7 @@ components:
           pattern: '^[0-9a-f]{64}$'
           description: Server-issued receipt required by scenarios or coverage policy; stale, expired, cross-identity and reused receipts are rejected.
         check_evidence:
-          $ref: '#/components/schemas/AutomationCheckEvidence'
+          $ref: '#/components/schemas/StoredWorkflowCheckEvidence'
         expected_version:
           type: integer
           format: int64
@@ -99759,7 +99908,7 @@ components:
           type: boolean
           default: false
       description: Saved draft revision to publish, with explicit YAML takeover when needed.
-    SetAutomationEnabledRequest:
+    SetStoredWorkflowEnabledRequest:
       type: object
       additionalProperties: false
       required:
@@ -99770,11 +99919,11 @@ components:
           type: integer
           format: int64
           minimum: 0
-          description: Current automation revision to pause or resume.
+          description: Current stored workflow revision to pause or resume.
         enabled:
           type: boolean
       description: Publication revision and the desired state of automatic starts.
-    SimulateAutomationRequest:
+    SimulateStoredWorkflowRequest:
       description: Sample workflow data and mocked action, event/callback payload or timeout outcomes for a stateless simulation.
       type: object
       additionalProperties: false
@@ -99807,7 +99956,7 @@ components:
               minItems: 1
               maxItems: 25
               items:
-                $ref: '#/components/schemas/AutomationSimulationMockAttempt'
+                $ref: '#/components/schemas/StoredWorkflowSimulationMockAttempt'
         mock_attempts:
           description: Ordered per-attempt outcomes keyed by action or wait name. Event and callback waits accept exactly one success with the received payload as output, or one timeout with a configured timeout and on_timeout route. Other waits accept timeout only. Successful wait payloads cannot be the reserved timeout sentinel. Action timeouts require on_timeout. Cannot be combined with mock_outputs for the same step.
           type: object
@@ -99816,8 +99965,8 @@ components:
             minItems: 1
             maxItems: 25
             items:
-              $ref: '#/components/schemas/AutomationSimulationMockAttempt'
-    AutomationSimulationMockAttempt:
+              $ref: '#/components/schemas/StoredWorkflowSimulationMockAttempt'
+    StoredWorkflowSimulationMockAttempt:
       description: One mocked attempt; success requires output, failure requires exactly one of error or non-2xx http_status, and timeout has no additional fields.
       type: object
       additionalProperties: false
@@ -99837,7 +99986,7 @@ components:
           minimum: 100
           maximum: 599
           description: Mocked non-2xx response status.
-    SimulateAutomationResponse:
+    SimulateStoredWorkflowResponse:
       description: Definition validity, submitted-definition SHA-256 and deterministic simulated data flow.
       type: object
       additionalProperties: false
@@ -99865,8 +100014,8 @@ components:
           type: array
           maxItems: 1024
           items:
-            $ref: '#/components/schemas/AutomationSimulationStep'
-    AutomationSimulationStep:
+            $ref: '#/components/schemas/StoredWorkflowSimulationStep'
+    StoredWorkflowSimulationStep:
       description: One hypothetical root or loop item with resolved data and its control-flow decision.
       type: object
       additionalProperties: false
@@ -99895,7 +100044,7 @@ components:
           description: Safe summary of supplied action or wait outcomes; mocked error text is exposed only through eligible failure context.
           maxItems: 25
           items:
-            $ref: '#/components/schemas/AutomationSimulationAttempt'
+            $ref: '#/components/schemas/StoredWorkflowSimulationAttempt'
         run: { type: string }
         path: { type: string }
         method: { type: string }
@@ -99908,7 +100057,7 @@ components:
         parent_step: { type: string }
         item_index: { type: integer, minimum: 0 }
         item_count: { type: integer, minimum: 0, maximum: 128 }
-    AutomationSimulationAttempt:
+    StoredWorkflowSimulationAttempt:
       description: Safe summary of one supplied hypothetical attempt outcome.
       type: object
       additionalProperties: false
@@ -99919,7 +100068,7 @@ components:
           type: string
           enum: [success, failure, timeout]
         http_status: { type: integer, minimum: 100, maximum: 599 }
-    ValidateAutomationRequest:
+    ValidateStoredWorkflowRequest:
       type: object
       additionalProperties: false
       required:
@@ -99927,8 +100076,8 @@ components:
       properties:
         definition:
           $ref: '#/components/schemas/WorkflowSpec'
-      description: Candidate automation definition for a read-only validation.
-    ValidateAutomationResponse:
+      description: Candidate stored workflow definition for a read-only validation.
+    ValidateStoredWorkflowResponse:
       type: object
       additionalProperties: false
       required:
@@ -102035,7 +102184,7 @@ components:
     WorkflowRecoveryPollingWebhookPayload:
       type: object
       additionalProperties: false
-      description: Historical automation.recovery_polling_status event. Three consecutive deterministic polling failures trigger failed; unchanged code and policy version stay quiet. Recovered proves a successful poll, independently of workflow outcome. Recipients and payload are frozen at capture; use event_id for deduplication.
+      description: Historical stored_workflow.recovery_polling_status event. Three consecutive deterministic polling failures trigger failed; unchanged code and policy version stay quiet. Recovered proves a successful poll, independently of workflow outcome. Recipients and payload are frozen at capture; use event_id for deduplication.
       required: [event_id, app_id, app, scope, policy_version, sequence, state, code, attempts, observed_at, inspection_url, monitoring_only]
       properties:
         event_id: { type: string, format: uuid }
@@ -102113,7 +102262,7 @@ components:
         receiver_webhook_ids: { type: array, items: { type: string, format: uuid } }
     WorkflowRecoveryQueueBlockedWebhookPayload:
       type: object
-      description: Historical automation.recovery_queue_blocked event. Saved-failure retries capture changes in exact parent or child evidence diagnosis and proven clearance, with diagnosis URL and CLI guidance. Initial automatic recovery identifies initial_failure_id. Unchanged blockers stay quiet; recovery identifies cleared evidence rather than successful execution. Capturing this event does not finalize a child, release its execution slot, or authorize another retry. Delivery may occur after the block resolves; stable identity and frozen recipients support receiver deduplication.
+      description: Historical stored_workflow.recovery_queue_blocked event. Saved-failure retries capture changes in exact parent or child evidence diagnosis and proven clearance, with diagnosis URL and CLI guidance. Initial automatic recovery identifies initial_failure_id. Unchanged blockers stay quiet; recovery identifies cleared evidence rather than successful execution. Capturing this event does not finalize a child, release its execution slot, or authorize another retry. Delivery may occur after the block resolves; stable identity and frozen recipients support receiver deduplication.
       required: [event_id, app_id, app, review_id, action_id, policy_version, position, status, reason, observed_at, queue_url, review_status_url]
       properties:
         evidence_kind: { type: string, enum: [parent, child, initial] }
@@ -102172,7 +102321,7 @@ components:
         actions: { type: array, items: { $ref: '#/components/schemas/WorkflowRecoveryAutomaticAction' } }
     WorkflowRecoveryPolicyPausedWebhookPayload:
       type: object
-      description: Historical automation.recovery_policy_paused event emitted once per policy version after repeated proven automatic retry failures. Frozen receivers and stable event identity survive retries and later policy updates.
+      description: Historical stored_workflow.recovery_policy_paused event emitted once per policy version after repeated proven automatic retry failures. Frozen receivers and stable event identity survive retries and later policy updates.
       required: [event_id, app_id, app, policy_version, paused_at, consecutive_failures, reason, policy_url]
       properties:
         event_id: { type: string, format: uuid }
@@ -102227,7 +102376,7 @@ components:
         recovery_notification: { $ref: '#/components/schemas/WorkflowRecoveryHealthNotification' }
     WorkflowRecoveryHealthWebhookPayload:
       type: object
-      description: Historical automation.recovery_health_alert or automation.recovery_health_recovered transition with stable event and incident identities. Recovery targets only original alert receivers still enabled and subscribed to recovery at capture. Delivery can occur after the observed condition changes and does not authorize retries or release slots.
+      description: Historical stored_workflow.recovery_health_alert or stored_workflow.recovery_health_recovered transition with stable event and incident identities. Recovery targets only original alert receivers still enabled and subscribed to recovery at capture. Delivery can occur after the observed condition changes and does not authorize retries or release slots.
       required: [event_id, episode_id, app_id, app, policy_version, status, reason, opened_at, observed_at, pending, outstanding, queue_truncated, health_url]
       properties:
         event_id: { type: string, format: uuid }
@@ -102728,7 +102877,7 @@ components:
         receiver_webhook_ids: { type: array, items: { type: string, format: uuid } }
     WorkflowRecoveryReviewReadyWebhookPayload:
       type: object
-      description: Payload of automation.recovery_review_ready. Carries frozen prepared targets and review commands; approval and application remain explicit. Retries reuse the event identifier and delivery ledger.
+      description: Payload of stored_workflow.recovery_review_ready. Carries frozen prepared targets and review commands; approval and application remain explicit. Retries reuse the event identifier and delivery ledger.
       required: [event_id, review_id, app_id, app, policy_version, prepared_at, observed_at, targets, review_url, status_url, review_command, export_command]
       properties:
         initial_failure_id: { type: string, format: uuid, description: Captured initial failure for parentless reviews. Parent-job reviews carry job_id instead. }
@@ -102757,7 +102906,7 @@ components:
         result: { $ref: '#/components/schemas/WorkflowRecoveryReviewStatus' }
     WorkflowRecoveryReviewFinishedWebhookPayload:
       type: object
-      description: Payload of automation.recovery_review_finished. All actions have proven final outcomes for their frozen generations. This historical result remains valid after review decisions or later retries; receivers deduplicate by event_id.
+      description: Payload of stored_workflow.recovery_review_finished. All actions have proven final outcomes for their frozen generations. This historical result remains valid after review decisions or later retries; receivers deduplicate by event_id.
       required: [event_id, review_id, app_id, app, job_id, policy_version, captured_at, result, review_url, status_url, status_command]
       properties:
         event_id: { type: string, format: uuid }
@@ -104919,7 +105068,7 @@ components:
         next_fanout_before: { type: string, description: Opaque cursor for the next older page of pre-invocation failures. }
 
     EventRoutingRecoveryExpectation:
-      description: Reviewed acceptance-time automation routing state. All comparisons occur in the replay transaction; mismatches return 409 event_recovery_changed without queuing a replay. Generation must be supplied for recipient routing and omitted for legacy routing. Does not bypass admission rules.
+      description: Reviewed acceptance-time stored workflow routing state. All comparisons occur in the replay transaction; mismatches return 409 event_recovery_changed without queuing a replay. Generation must be supplied for recipient routing and omitted for legacy routing. Does not bypass admission rules.
       type: object
       additionalProperties: false
       required: [workflow_name, published_version, replay_count]
@@ -113608,6 +113757,32 @@ components:
           description: Channel names, in alphabetical order.
           items: { type: string }
 
+    AgentActivityResponse:
+      type: object
+      description: One page of an agent's write requests, newest first.
+      required: [activity]
+      properties:
+        activity:
+          type: array
+          items: { $ref: '#/components/schemas/AgentActivityEntry' }
+        next_before:
+          type: string
+          description: Pass as `before` to read the next older page; absent on the last page.
+    AgentActivityEntry:
+      type: object
+      description: One write request an agent key made.
+      required: [id, method, path, status, created_at]
+      properties:
+        id: { type: string }
+        method: { type: string, enum: [POST, PUT, PATCH, DELETE] }
+        path:
+          type: string
+          description: The request path, without its query string.
+        status: { type: integer, description: The HTTP status the request was answered with. }
+        approval_id:
+          type: string
+          description: The approval request the write went through on, when it needed one.
+        created_at: { type: string, format: date-time }
     AgentApprovalResponse:
       description: "One request of an agent connection that needed a person's approval."
       type: object
@@ -113656,7 +113831,7 @@ components:
         scopes:
           type: array
           items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
-          description: "Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
+          description: "Closed permission set attached to the key. github:manage controls customer GitHub connection stored workflow; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
         created_at: { type: string, format: date-time, example: "2026-07-25T13:25:00Z" }
@@ -113744,7 +113919,7 @@ components:
         scopes:
           type: array
           items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
-          description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
+          description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection stored workflow. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
         projects: { type: array, maxItems: 100, items: { type: string }, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project." }
         approval_categories: { type: array, items: { type: string, enum: [delete, production, credentials, billing] }, description: "Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field." }
@@ -113773,7 +113948,7 @@ components:
         scopes:
           type: array
           items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
-          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
+          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection stored workflow; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
         projects: { type: array, maxItems: 100, items: { type: string }, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project." }
         approval_categories: { type: array, items: { type: string, enum: [delete, production, credentials, billing] }, description: "Kinds of action the organization's agent key must have a person approve; the organization's floor applies on top. Omit for every kind, empty for none." }
@@ -123245,7 +123420,7 @@ components:
 
     CreateInboundWebhookEndpointRequest:
       type: object
-      description: Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or automation starts when bound.
+      description: Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or stored workflow starts when bound.
       required: [name, provider, signing_secret]
       properties:
         name:
@@ -123298,8 +123473,8 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
-    PutWebhookAutomationBindingRequest:
-      description: Bind a verified provider endpoint to a published automation with revision control.
+    PutWebhookWorkflowBindingRequest:
+      description: Bind a verified provider endpoint to a published stored workflow with revision control.
       type: object
       additionalProperties: false
       required: [expected_version, workflow_name, event_type, take_over_delivery]
@@ -123309,8 +123484,8 @@ components:
         event_type: { type: string, minLength: 1, maxLength: 256 }
         filter: { type: object, additionalProperties: true }
         take_over_delivery: { type: boolean, enum: [true] }
-    WebhookAutomationBindingResponse:
-      description: Captured automation name, event selection and current endpoint binding revision.
+    WebhookWorkflowBindingResponse:
+      description: Captured stored workflow name, event selection and current endpoint binding revision.
       type: object
       required: [endpoint_id, workflow_name, event_type, filter, version, updated_at]
       properties:
@@ -123372,8 +123547,8 @@ components:
         version: { type: integer, format: int64, minimum: 1 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
-    WebhookAutomationReceiptResponse:
-      description: Durable provider event routing decision and automation admission progress.
+    WebhookWorkflowReceiptResponse:
+      description: Durable provider event routing decision and stored workflow admission progress.
       type: object
       required: [receipt_id, endpoint_id, provider_event_id, workflow_name, status, duplicate, accepted_at, event_source, routing_status]
       properties:
@@ -123382,7 +123557,7 @@ components:
         provider_event_id: { type: string }
         workflow_name: { type: string }
         status: { type: string, enum: [accepted, ignored] }
-        ignored_reason: { type: string, enum: [automation_paused, automation_failure_paused, event_filtered, automation_unpublished] }
+        ignored_reason: { type: string, enum: [stored_workflow_paused, stored_workflow_failure_paused, event_filtered, stored_workflow_unpublished] }
         duplicate: { type: boolean }
         accepted_at: { type: string, format: date-time }
         event_source: { type: string }
@@ -123489,7 +123664,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - realtime.inbox.acknowledged
               - realtime.inbox.gap
               - realtime.inbox.fallback_required
@@ -123527,13 +123702,13 @@ components:
               - realtime.consumer_group.lag_exceeded
               - realtime.consumer_group.lag_recovered
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -124585,7 +124760,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - realtime.inbox.acknowledged
               - realtime.inbox.gap
               - realtime.inbox.fallback_required
@@ -124623,13 +124798,13 @@ components:
               - realtime.consumer_group.lag_exceeded
               - realtime.consumer_group.lag_recovered
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -124772,7 +124947,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - realtime.inbox.acknowledged
               - realtime.inbox.gap
               - realtime.inbox.fallback_required
@@ -124810,13 +124985,13 @@ components:
               - realtime.consumer_group.lag_exceeded
               - realtime.consumer_group.lag_recovered
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -136182,15 +136357,15 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
 
-    AutomationConflict:
-      description: "code: automation_version_conflict | automation_ownership_conflict\
+    StoredWorkflowConflict:
+      description: "code: stored_workflow_version_conflict | stored_workflow_ownership_conflict\
         \ — reload a stale revision or explicitly confirm transfer of YAML ownership."
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
-    AutomationInvalid:
-      description: "code: automation_invalid | validation_failed — the definition,\
+    StoredWorkflowInvalid:
+      description: "code: stored_workflow_invalid | validation_failed — the definition,\
         \ revision, or request fields are invalid."
       content:
         application/problem+json:

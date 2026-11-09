@@ -476,6 +476,9 @@ const (
 	// on a cancelled subscription until the cancellation is undone
 	// (ADR-20261103131742 amendment 1).
 	CodeBillingSubscriptionEnding = "billing_subscription_ending"
+	// CodeBillingAlreadyCancelled refuses a cancellation when the account has
+	// no active subscription, or its subscription is already cancelled.
+	CodeBillingAlreadyCancelled = "billing_already_cancelled"
 	// CodePaymentAuthenticationRequired answers an upgrade whose charge the
 	// customer's bank asked to confirm (3-D Secure). Nothing was charged and
 	// the plan is unchanged (ADR-20261103131742 amendment 1).
@@ -762,17 +765,17 @@ const (
 	CodeUndeclaredRoute = "undeclared_route"
 	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
 	// gateway cannot load or compile the contract required by an enabled app.
-	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
-	CodeValidation                     = "validation_failed"
-	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
-	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
-	CodeAutomationVersionConflict      = "automation_version_conflict"
-	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
-	CodeAutomationInvalid              = "automation_invalid"
-	CodeRealtimeConditionConflict      = "realtime_condition_conflict"
-	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
-	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
-	CodeConflict                       = "conflict"
+	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
+	CodeValidation                      = "validation_failed"
+	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
+	CodeStoredWorkflowVersionConflict   = "stored_workflow_version_conflict"
+	CodeStoredWorkflowOwnershipConflict = "stored_workflow_ownership_conflict"
+	CodeStoredWorkflowInvalid           = "stored_workflow_invalid"
+	CodeRealtimeConditionConflict       = "realtime_condition_conflict"
+	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
+	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
+	CodeConflict                        = "conflict"
 	// CodeIdempotencyKeyReused (422, ADR-20261022204036): the request's
 	// Idempotency-Key was used within its 24 h replay window for a different
 	// request. Nothing ran, and the first request's result is kept.
@@ -2163,8 +2166,8 @@ const (
 	CodeWorkflowStepRetryNotAllowed       = "workflow_step_retry_not_allowed"
 	CodeWorkflowDefinitionNotFound        = "workflow_definition_not_found"
 	CodeWorkflowEventNotFound             = "workflow_event_not_found"
-	CodeWebhookAutomationUnavailable      = "webhook_automation_unavailable"
-	CodeWebhookAutomationConflict         = "webhook_automation_conflict"
+	CodeWebhookWorkflowUnavailable        = "webhook_workflow_unavailable"
+	CodeWebhookWorkflowConflict           = "webhook_workflow_conflict"
 	CodeEventRecoveryChanged              = "event_recovery_changed"
 	CodeWorkflowResumeConflict            = "workflow_resume_conflict"
 	CodeWorkflowResumeUnsafe              = "workflow_resume_unsafe"
@@ -2222,7 +2225,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
-	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:
+	case CodeStoredWorkflowInvalid, CodeEdgeFeatureUnavailable:
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:
 		return http.StatusPreconditionFailed
@@ -2292,7 +2295,7 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeNotFound, CodeUndeclaredRoute:
 		return http.StatusNotFound
-	case CodeWebhookAutomationUnavailable, CodeDeclaredRoutePolicyUnavailable:
+	case CodeWebhookWorkflowUnavailable, CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
 	case CodeNotImplemented:
 		return http.StatusNotImplemented
@@ -2302,8 +2305,8 @@ func StatusForCode(code string) int {
 	// since the StatusForCode fallback returns 422 generically).
 	case CodeDatabaseCutoverFenced, CodeRealtimeConditionConflict, CodeRealtimeEntityVersionConflict, CodeRealtimeSequenceConflict, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
-		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
-		CodeWebhookAutomationConflict, CodeEventRecoveryChanged, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
+		CodeStoredWorkflowVersionConflict, CodeStoredWorkflowOwnershipConflict,
+		CodeWebhookWorkflowConflict, CodeEventRecoveryChanged, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
 		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeWorkflowStepRetryNotAllowed,
@@ -3252,6 +3255,17 @@ func ErrNotificationChannelInUseBy(rules, releases []string) *Problem {
 	}
 	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse, "Notification channel in use",
 		strings.Join(parts, " ")+" Then delete the channel.").
+		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
+}
+
+// ErrPagerDutyKeyHasOpenIncidents refuses replacing a PagerDuty routing key
+// while rules using the channel are firing (ADR-20261109153000): their
+// resolves would go to the new key's service and leave the incidents the
+// old key opened open for good.
+func ErrPagerDutyKeyHasOpenIncidents(rules []string) *Problem {
+	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse, "Channel has open incidents",
+		fmt.Sprintf("%d alert rule(s) using this channel are firing: %s. Their PagerDuty incidents were opened with the current routing key and are closed with it. Wait for them to recover, or disable the rules to close the incidents now, then replace the key.",
+			len(rules), strings.Join(rules, ", "))).
 		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
 }
 
@@ -4223,14 +4237,23 @@ func ErrRealtimeWriteRateLimited(perSecond, writes int, retryAfter time.Duration
 const (
 	RealtimeConnectionLimitAccount     = "account"
 	RealtimeConnectionLimitAccountNode = "account_node"
+	// RealtimeConnectionLimitEndpoint is the endpoint's own max_connections.
+	RealtimeConnectionLimitEndpoint = "endpoint"
+	// RealtimeConnectionLimitNode is the realtime node's total capacity.
+	RealtimeConnectionLimitNode = "node"
 )
 
 // ErrRealtimeConnectionLimit reports a refused realtime connection with the
 // limit that applied and the connections observed against it.
 func ErrRealtimeConnectionLimit(scope string, limit, observed int64) *Problem {
 	detail := fmt.Sprintf("Your plan allows %d concurrent realtime connections per account across all endpoints; %d are open. Close idle connections or upgrade the plan.", limit, observed)
-	if scope == RealtimeConnectionLimitAccountNode {
+	switch scope {
+	case RealtimeConnectionLimitAccountNode:
 		detail = fmt.Sprintf("One account may hold at most %d connections on a single realtime node; %d are open on this node. Retry with backoff.", limit, observed)
+	case RealtimeConnectionLimitEndpoint:
+		detail = fmt.Sprintf("This endpoint's max_connections is %d; %d are open. Close idle connections or raise the endpoint's max_connections.", limit, observed)
+	case RealtimeConnectionLimitNode:
+		detail = fmt.Sprintf("This realtime node holds its maximum of %d connections. Retry with backoff.", limit)
 	}
 	return NewProblem(http.StatusTooManyRequests, CodeRealtimeConnectionLimit, "Realtime connection limit reached", detail).
 		WithLimit(limit, observed).
@@ -5120,6 +5143,23 @@ func ErrPlanRealtimeQuota(plan Plan, scope string, limit, observed int) *Problem
 func ErrRealtimeInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid,
 		"Invalid managed realtime endpoint", reason)
+}
+
+// ErrRealtimeMessageTooLarge refuses a realtime message over a size limit:
+// the endpoint's max_message_bytes or the platform maximum.
+func ErrRealtimeMessageTooLarge(limit, observed int64) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid, "Realtime message too large",
+		fmt.Sprintf("The message is %d bytes; this endpoint accepts at most %d. Send a smaller message or raise the endpoint's max_message_bytes.", observed, limit)).
+		WithByteLimit(limit, observed).
+		WithDocs(docsBase + "/realtime#fair-use-limits")
+}
+
+// ErrRealtimeInvalidText refuses a text realtime message that is not UTF-8.
+// RFC 6455 makes every receiving client drop the socket on such a frame.
+func ErrRealtimeInvalidText() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid, "Invalid realtime text message",
+		"A text message must be valid UTF-8, or clients drop the connection when they receive it. Send other bytes with binary=true.").
+		WithDocs(docsBase + "/realtime#original-protocol")
 }
 
 // ErrRealtimeUnavailable is safe to expose at the public WebSocket proxy.
@@ -6177,6 +6217,15 @@ func ErrTrafficSplitReleaseLimit(limit, requested int) *Problem {
 // ErrTrafficServingChanged makes a stale promotion actionable without
 // disclosing any deployment the caller has not already been authorized to
 // read through the target app.
+// ErrTrafficSplitChanged is the expected_traffic form of
+// ErrTrafficServingChanged: the split changed after the caller read it.
+func ErrTrafficSplitChanged() *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficServingChanged,
+		"Traffic split changed",
+		"the environment's traffic split no longer matches expected_traffic; run gregale release traffic status and plan the change again.").
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
 func ErrTrafficServingChanged() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficServingChanged,
 		"Production revision changed",

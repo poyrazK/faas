@@ -719,9 +719,9 @@ func run(args []string) (status int) {
 	case "workflows":
 		// ADR-081: durable execution workflows (list|run|status|steps|resume|resumes|cancel|events).
 		return cmdWorkflows(args[1:])
-	case "automations":
-		// Manage declarative automation definitions: validate, save a draft, publish.
-		return cmdAutomations(args[1:])
+	case "stored-workflows":
+		// Manage stored workflow definitions: validate, save a draft, publish.
+		return cmdStoredWorkflows(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
 	case "data-repair":
@@ -1165,7 +1165,9 @@ func printLocalHelpFlag(w io.Writer, flag cliFlag) {
 	if flag.Req {
 		description += " (required)"
 	}
-	if flag.Repeatable {
+	// Many descriptions already end in "(repeatable)"; saying it twice read
+	// "OIDC audience (repeatable) (repeatable)".
+	if flag.Repeatable && !strings.Contains(description, "(repeatable") {
 		description += " (repeatable)"
 	}
 	label := mdFlagLabel(flag)

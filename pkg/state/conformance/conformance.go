@@ -4647,7 +4647,9 @@ func testCustomMetricSeriesContract(t *testing.T, fx *Fixture) {
 		t.Fatalf("series = %+v, %v", series, err)
 	}
 	fresh, err := store.ListFreshCustomMetricSeries(fx.Ctx, at.Add(5*time.Minute), 10)
-	if err != nil || len(fresh) != 1 || fresh[0].SeriesKey != "queue=b" || fresh[0].Value != 8 {
+	// The stale gauge series is left out; counter series always export.
+	if err != nil || len(fresh) != 3 || fresh[0].SeriesKey != "queue=b" || fresh[0].Value != 8 ||
+		fresh[1].Name != "jobs_total" || fresh[2].Name != "jobs_total" {
 		t.Fatalf("fresh series = %+v, %v", fresh, err)
 	}
 

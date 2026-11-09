@@ -36,7 +36,7 @@ test('branch joins preserve selection order and inspected source and value', asy
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'fixture-token', retry: { maxAttempts: 1, backoffMs: 0 } });
-  const saved = await WorkflowsService.saveAutomationDraft({ slug: 'billing', name: 'invoice', requestBody: { expected_version: 0, definition } });
+  const saved = await WorkflowsService.saveStoredWorkflowDraft({ slug: 'billing', name: 'invoice', requestBody: { expected_version: 0, definition } });
   assert.deepEqual(posted, { expected_version: 0, definition });
   assert.deepEqual(saved.draft.steps[2]?.join?.output_from, ['receipt', 'reminder']);
   const inspected = await WorkflowsService.listWorkflowSteps({ id: 'run' });

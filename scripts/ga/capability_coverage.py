@@ -232,7 +232,7 @@ RULES = [
     (r"datadog", "Datadog integration"),
     (r"log-drain|drain-analytics|log-analytics", "Log drains"),
     (r"logs?$|^log-|log-archive|tail|logarchive|/logs", "Logs, tail"),
-    (r"metrics|analytics|request-telemetry|telemetry", "App, service and account metrics"),
+    (r"metrics|analytics|request-telemetry|telemetry|long-lived-latency", "App, service and account metrics"),
     # --- data
     (r"ai-gateway|ai-access|aigateway|^ai$|llm|moderation|prompt", "AI gateway"),
     (r"outbound|integration", "Outbound integrations"),
@@ -245,7 +245,7 @@ RULES = [
     # --- async
     (r"inbound-webhook", "Durable inbound webhooks"),
     (r"webhook|account-release-webhook|delivery-format", "Outbound webhooks"),
-    (r"automation", "Automations:"),
+    (r"stored-workflow|storedworkflow|stored_workflow|workflows/stored", "Stored workflows:"),
     (r"operation|business-(invariant|decision|effect|compensation)|customer-operation", "Operations:"),
     (r"inbox|outbox|messaging|application-message|send$|deliver$", "Application inbox and outbox"),
     (r"worker-pool|^workers$|worker-replica", "Worker pools"),
@@ -361,7 +361,7 @@ PRIORITY_RULES = [
     (r"^signed-urls$", "Object storage"),
     (r"^test$|^scenario-tests$|^scenario-(test|object|postgres)", "Scenario tests"),
     (r"^(project-)?environment-(workload-)?qualification|^project-environment-qualifications$", "Environments and Environment GitOps"),
-    (r"automation-test", "Automations:"),
+    (r"stored-workflow-test", "Stored workflows:"),
     (r"realtime-customer-examples", "Realtime channels"),
     (r"^durableentity$", "Durable entities"),
     (r"^appmetrics$", "App, service and account metrics"),

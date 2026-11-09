@@ -157,6 +157,27 @@ func (q *Queries) AddRequestAnalyticsMinutes(ctx context.Context, db DBTX, arg A
 	return err
 }
 
+const claimRequestAnalyticsRollupBatch = `-- name: ClaimRequestAnalyticsRollupBatch :execrows
+INSERT INTO request_analytics_rollup_batches (batch_id, node_id)
+VALUES ($1, $2)
+ON CONFLICT (batch_id) DO NOTHING
+`
+
+type ClaimRequestAnalyticsRollupBatchParams struct {
+	BatchID pgtype.UUID
+	NodeID  string
+}
+
+// ADR-20261103113952 amendment 5: record a gateway rollup batch in the
+// transaction that applies it; 0 rows means the batch was applied before.
+func (q *Queries) ClaimRequestAnalyticsRollupBatch(ctx context.Context, db DBTX, arg ClaimRequestAnalyticsRollupBatchParams) (int64, error) {
+	result, err := db.Exec(ctx, claimRequestAnalyticsRollupBatch, arg.BatchID, arg.NodeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getRequestAnalyticsRollupCoverage = `-- name: GetRequestAnalyticsRollupCoverage :one
 SELECT covered_since, hours_covered_since FROM request_analytics_rollup_coverage WHERE app_id = $1
 `
@@ -221,6 +242,29 @@ type RecordRequestAnalyticsRollupGapsParams struct {
 // ADR-20261103113952 amendment 1: app minutes whose rollups apid lost.
 func (q *Queries) RecordRequestAnalyticsRollupGaps(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupGapsParams) error {
 	_, err := db.Exec(ctx, recordRequestAnalyticsRollupGaps, arg.AppIds, arg.BucketStarts)
+	return err
+}
+
+const recordRequestAnalyticsRollupGapsFromTelemetry = `-- name: RecordRequestAnalyticsRollupGapsFromTelemetry :exec
+INSERT INTO request_analytics_rollup_gaps (app_id, bucket_start)
+SELECT DISTINCT rt.app_id, date_bin('1 minute', rt.received_at, 'epoch'::timestamptz)
+FROM request_telemetry rt
+JOIN apps a ON a.id = rt.app_id
+WHERE rt.received_at >= $1::timestamptz
+  AND rt.received_at <  $2::timestamptz
+ON CONFLICT (app_id, bucket_start) DO NOTHING
+`
+
+type RecordRequestAnalyticsRollupGapsFromTelemetryParams struct {
+	WindowFrom  pgtype.Timestamptz
+	WindowUntil pgtype.Timestamptz
+}
+
+// ADR-20261103113952 amendment 4: after apid stopped without writing its
+// pending rollups, mark every app minute with raw telemetry in the span it
+// may have held as lost.
+func (q *Queries) RecordRequestAnalyticsRollupGapsFromTelemetry(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupGapsFromTelemetryParams) error {
+	_, err := db.Exec(ctx, recordRequestAnalyticsRollupGapsFromTelemetry, arg.WindowFrom, arg.WindowUntil)
 	return err
 }
 
@@ -470,4 +514,29 @@ func (q *Queries) RequestAnalyticsRollupRouteDeployments(ctx context.Context, db
 		return nil, err
 	}
 	return items, nil
+}
+
+const requestTelemetryExistsBetween = `-- name: RequestTelemetryExistsBetween :one
+SELECT EXISTS (
+    SELECT 1 FROM request_telemetry
+    WHERE app_id = $1
+      AND received_at >= $2::timestamptz
+      AND received_at <  $3::timestamptz
+)::bool AS has_rows
+`
+
+type RequestTelemetryExistsBetweenParams struct {
+	AppID       pgtype.UUID
+	WindowFrom  pgtype.Timestamptz
+	WindowUntil pgtype.Timestamptz
+}
+
+// Whether the app has raw telemetry received in [window_from, window_until).
+// Analytics backdates a rollup tier's coverage over a span with none
+// (ADR-20261103113952 amendment 4).
+func (q *Queries) RequestTelemetryExistsBetween(ctx context.Context, db DBTX, arg RequestTelemetryExistsBetweenParams) (bool, error) {
+	row := db.QueryRow(ctx, requestTelemetryExistsBetween, arg.AppID, arg.WindowFrom, arg.WindowUntil)
+	var has_rows bool
+	err := row.Scan(&has_rows)
+	return has_rows, err
 }

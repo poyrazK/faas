@@ -83,6 +83,9 @@ func TestTranslate_RejectsWhatCannotBeStored(t *testing.T) {
 		{"histogram name too long", histogramMetric(strings.Repeat("h", 58), metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
 			histPoint(0, 1, []float64{1}, []uint64{1, 0})), 1},
 		{"four attributes", gauge("orders", withAttrs), 1},
+		{"unspecified temporality", sum("reqs", true, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_UNSPECIFIED, dbl(1, 0)), 1},
+		{"future timestamp", gauge("orders", dbl(1, 6*time.Minute)), 1},
+		{"timestamp out of range", gauge("orders", &metricspb.NumberDataPoint{TimeUnixNano: math.MaxUint64, Value: &metricspb.NumberDataPoint_AsDouble{AsDouble: 1}}), 1},
 		{"negative", gauge("orders", dbl(-1, 0)), 1},
 		{"non-finite", gauge("orders", dbl(math.Inf(1), 0)), 1},
 		{"invalid name", gauge("9lives", dbl(1, 0)), 1},
@@ -283,6 +286,31 @@ func TestLabelsRejections(t *testing.T) {
 	}
 	if _, key, err := Labels([]*commonpb.KeyValue{strAttr("b", "2"), strAttr("a", "x=y%")}); err != nil || key != "a=x%3Dy%25,b=2" {
 		t.Fatalf("key = %q, %v", key, err)
+	}
+}
+
+// adr: 20261031144636 — delta points are increments: an export's points for
+// one name are summed into one Delta point that the store adds to the
+// counter's total, so instances of an app add up instead of overwriting.
+func TestTranslate_DeltaSumsAreSummed(t *testing.T) {
+	delta := metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA
+	res := Translate(request(
+		sum("checkouts", true, delta, dbl(3, -2*time.Minute), dbl(4, -time.Minute)),
+		sum("checkouts", true, delta, dbl(5, -90*time.Second)),
+	), now)
+	if res.Rejected != 0 || len(res.Points) != 1 {
+		t.Fatalf("result = %+v, want one point", res)
+	}
+	if p := res.Points[0]; !p.Delta || p.Kind != "counter" || p.Value != 12 || !p.ObservedAt.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("point = %+v, want a delta of 12 at the newest time", p)
+	}
+
+	mixed := Translate(request(
+		sum("checkouts", true, delta, dbl(3, -time.Minute)),
+		sum("checkouts", true, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, dbl(40, 0)),
+	), now)
+	if mixed.Rejected != 1 || len(mixed.Points) != 1 || mixed.Points[0].Value != 3 {
+		t.Fatalf("mixed temporalities = %+v, want the cumulative point rejected", mixed)
 	}
 }
 

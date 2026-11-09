@@ -86,6 +86,14 @@ policy and `x-gregale-allow-callers` (see
 [Internal services](networking.md#internal-services)); check credentials in the
 app itself when a caller must prove more than which app it is.
 
+Work the platform delivers on your account's behalf also skips edge rules:
+`gregale invoke` and other synchronous or asynchronous invocations
+(`POST /v1/apps/{slug}/invoke`), queue messages, delayed tasks, crons and
+exclusive operations. These requests are authorized by your account's
+credentials and scopes when they are created, not by the public edge, so an
+`ip`, `geo`, `jwt` or `throttle` rule does not stop them. An app that must
+reject them checks in its own code.
+
 ### Path globs
 
 | Pattern | Matches |
@@ -381,8 +389,15 @@ values are at most 4096 bytes and work on request headers only, not with
 `template` or `remove`.
 
 A credential-named value saved before sealing arrived is shown with an empty
-`value` and `"redacted": true`. Sending that op back unchanged seals the
-stored value. Environment policies do not take sealed values yet.
+`value` and `"redacted": true`. The platform seals such values in your rules
+and their saved versions on its own, which adds a rule version with the same
+headers; sending the op back unchanged seals the value right away. During a
+platform upgrade a new value can briefly be stored this way too, until every
+edge server can read sealed values.
+
+Environment edge policies seal credential values the same way. In an
+environment managed from Git, values stay as your repository defines them;
+responses still leave them out.
 
 ### cors
 

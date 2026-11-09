@@ -236,7 +236,7 @@ func TestPostOTLPMetrics_DeltasAccumulateAndHistogramsDerive(t *testing.T) {
 
 // adr: 20261108160000 — slice C: labelled points are stored as series, the
 // metric row carries their aggregate, a later unlabelled point joins as the
-// '' series, and the list shows the series.
+// ” series, and the list shows the series.
 func TestPostOTLPMetrics_LabelledSeriesAggregate(t *testing.T) {
 	e := customHistoryEnv(t)
 	app := createApp(t, e, "shop")
