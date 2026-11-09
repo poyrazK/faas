@@ -1491,6 +1491,12 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 			}
 			return
 		}
+		// A frame proves the client is alive, like a pong. Pacing below stops
+		// reading while the client has frames queued, and its pongs queue
+		// behind them, so without this a client over the message rate for
+		// Heartbeat+PongWait was dropped without a close frame and its queued
+		// frames were lost instead of being read at the documented rate.
+		_ = c.ws.SetReadDeadline(time.Now().Add(m.cfg.Heartbeat + m.cfg.PongWait))
 		if !c.accessAllows(ctx, "") {
 			return
 		}
