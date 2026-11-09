@@ -39,6 +39,7 @@ func (e *Evaluator) standDown(ctx context.Context, rule state.AlertRule, reason 
 		return
 	}
 	wasFiring := e.episodeWasFiring(ctx, rule)
+	e.clearChannelFires(rule.ID)
 	if store, ok := e.store.(state.AlertChannelStandDownStore); ok {
 		if _, err := store.QueueAlertChannelStandDowns(ctx, rule.ID, reason, now); err != nil {
 			e.log.Warn("alerts: queue channel stand-downs", "rule", rule.ID, "err", err)

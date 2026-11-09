@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
@@ -25,6 +26,9 @@ type RealtimeHistoryClientImpl struct {
 	conn     *grpc.ClientConn
 	cli      apidpb.RealtimeHistoryClient
 	nodeName string
+	// endpointSyncRefusedUntil (unix nanos) pauses sending endpoint counts
+	// after an apid that predates them refused the field.
+	endpointSyncRefusedUntil atomic.Int64
 }
 
 var _ RealtimeHistoryClient = (*RealtimeHistoryClientImpl)(nil)

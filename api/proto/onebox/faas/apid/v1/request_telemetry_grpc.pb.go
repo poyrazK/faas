@@ -46,6 +46,7 @@ const (
 	RequestTelemetry_RecordConsumerUsage_FullMethodName         = "/onebox.faas.apid.v1.RequestTelemetry/RecordConsumerUsage"
 	RequestTelemetry_RecordRequestIDJournal_FullMethodName      = "/onebox.faas.apid.v1.RequestTelemetry/RecordRequestIDJournal"
 	RequestTelemetry_RecordRequestIDJournalBatch_FullMethodName = "/onebox.faas.apid.v1.RequestTelemetry/RecordRequestIDJournalBatch"
+	RequestTelemetry_AddRequestAnalyticsRollups_FullMethodName  = "/onebox.faas.apid.v1.RequestTelemetry/AddRequestAnalyticsRollups"
 )
 
 // RequestTelemetryClient is the client API for RequestTelemetry service.
@@ -88,6 +89,12 @@ type RequestTelemetryClient interface {
 	// storage failures are gRPC errors for the whole batch. Gateways fall back
 	// to RecordRequestIDJournal while apid answers Unimplemented.
 	RecordRequestIDJournalBatch(ctx context.Context, in *RecordRequestIDJournalBatchRequest, opts ...grpc.CallOption) (*RecordRequestIDJournalBatchResponse, error)
+	// AddRequestAnalyticsRollups applies one gateway's per-minute analytics
+	// rollups (ADR-20261103113952 amendment 5), once per batch_id. A storage
+	// failure is a gRPC error and the gateway resends the batch. A gateway
+	// whose apid answers Unimplemented leaves its raw rows uncounted, so apid
+	// counts them as before.
+	AddRequestAnalyticsRollups(ctx context.Context, in *AddRequestAnalyticsRollupsRequest, opts ...grpc.CallOption) (*AddRequestAnalyticsRollupsResponse, error)
 }
 
 type requestTelemetryClient struct {
@@ -151,6 +158,16 @@ func (c *requestTelemetryClient) RecordRequestIDJournalBatch(ctx context.Context
 	return out, nil
 }
 
+func (c *requestTelemetryClient) AddRequestAnalyticsRollups(ctx context.Context, in *AddRequestAnalyticsRollupsRequest, opts ...grpc.CallOption) (*AddRequestAnalyticsRollupsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddRequestAnalyticsRollupsResponse)
+	err := c.cc.Invoke(ctx, RequestTelemetry_AddRequestAnalyticsRollups_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RequestTelemetryServer is the server API for RequestTelemetry service.
 // All implementations must embed UnimplementedRequestTelemetryServer
 // for forward compatibility.
@@ -191,6 +208,12 @@ type RequestTelemetryServer interface {
 	// storage failures are gRPC errors for the whole batch. Gateways fall back
 	// to RecordRequestIDJournal while apid answers Unimplemented.
 	RecordRequestIDJournalBatch(context.Context, *RecordRequestIDJournalBatchRequest) (*RecordRequestIDJournalBatchResponse, error)
+	// AddRequestAnalyticsRollups applies one gateway's per-minute analytics
+	// rollups (ADR-20261103113952 amendment 5), once per batch_id. A storage
+	// failure is a gRPC error and the gateway resends the batch. A gateway
+	// whose apid answers Unimplemented leaves its raw rows uncounted, so apid
+	// counts them as before.
+	AddRequestAnalyticsRollups(context.Context, *AddRequestAnalyticsRollupsRequest) (*AddRequestAnalyticsRollupsResponse, error)
 	mustEmbedUnimplementedRequestTelemetryServer()
 }
 
@@ -215,6 +238,9 @@ func (UnimplementedRequestTelemetryServer) RecordRequestIDJournal(context.Contex
 }
 func (UnimplementedRequestTelemetryServer) RecordRequestIDJournalBatch(context.Context, *RecordRequestIDJournalBatchRequest) (*RecordRequestIDJournalBatchResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RecordRequestIDJournalBatch not implemented")
+}
+func (UnimplementedRequestTelemetryServer) AddRequestAnalyticsRollups(context.Context, *AddRequestAnalyticsRollupsRequest) (*AddRequestAnalyticsRollupsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddRequestAnalyticsRollups not implemented")
 }
 func (UnimplementedRequestTelemetryServer) mustEmbedUnimplementedRequestTelemetryServer() {}
 func (UnimplementedRequestTelemetryServer) testEmbeddedByValue()                          {}
@@ -316,6 +342,24 @@ func _RequestTelemetry_RecordRequestIDJournalBatch_Handler(srv interface{}, ctx 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RequestTelemetry_AddRequestAnalyticsRollups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddRequestAnalyticsRollupsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RequestTelemetryServer).AddRequestAnalyticsRollups(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RequestTelemetry_AddRequestAnalyticsRollups_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RequestTelemetryServer).AddRequestAnalyticsRollups(ctx, req.(*AddRequestAnalyticsRollupsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RequestTelemetry_ServiceDesc is the grpc.ServiceDesc for RequestTelemetry service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -338,6 +382,10 @@ var RequestTelemetry_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RecordRequestIDJournalBatch",
 			Handler:    _RequestTelemetry_RecordRequestIDJournalBatch_Handler,
+		},
+		{
+			MethodName: "AddRequestAnalyticsRollups",
+			Handler:    _RequestTelemetry_AddRequestAnalyticsRollups_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

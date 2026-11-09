@@ -6357,6 +6357,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			(code >= http.StatusOK && code < http.StatusBadRequest && isLongLivedForward(r))
 	}
 	defer rec.stopTrafficResponse()
+	r = r.WithContext(withResponseRecorder(r.Context(), rec))
 	w = rec
 	// ADR-1505: the commit is armed once a monetized request is about to be
 	// forwarded; at exit it completes or aborts the response.
@@ -8671,7 +8672,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// ServeHTTP (issue #273 / ADR-042 fixed the WithStartTime dead-code
 	// bug so this is now request-received → handler-return, not
 	// "now() — now()").
-	elapsed := time.Since(startTime(r))
+	elapsed := observedLatency(r, status, time.Since(startTime(r)))
 	h.observeMCPRequest(r, status, appID, elapsed)
 	if h.metrics != nil {
 		// Use placeholder labels for the unknown-host path so 404s show up on
@@ -9334,8 +9335,11 @@ func (h *Handler) RoutesFor(appID string) (routes []string, overflowed bool) {
 // streaming path).
 type statusRecorder struct {
 	http.ResponseWriter
-	status                   int
-	wroteHeader              bool
+	status      int
+	wroteHeader bool
+	// headerAt is when the response headers were committed: a long-lived
+	// response's latency (ADR-20261109153000).
+	headerAt                 time.Time
 	request                  *http.Request
 	Bytes                    int64
 	ContentType              string
@@ -9448,6 +9452,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 	if !s.wroteHeader {
 		s.status = code
 		s.wroteHeader = true
+		s.headerAt = time.Now()
 		s.mirrorSourceCapture.writeHeader(code)
 		// Issue #471: capture the upstream Content-Type at header
 		// commit time so the post-proxy site can detect a buffered

@@ -852,6 +852,12 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // is not released to the subject, so an operator switch turned on to test one
 // account does not open the feature to every account.
 func (s *server) alertMetricCapabilityProblem(subject platformflags.Subject, metric string) *api.Problem {
+	// Fleet signals the catalog hides (ADR-20261109153000): a customer
+	// rule on one reads an operator gauge it cannot see, stays degraded
+	// for good and takes a slot of the plan's rule limit.
+	if isOperatorOnlyAlertPreset(metric) {
+		return api.ErrAlertRuleInvalid("metric " + metric + " is an operator signal and is not available to alert rules")
+	}
 	capability, ok := api.AlertMetricCapability(metric)
 	if !ok || s.capGate == nil || s.capGate.Enabled(capability, subject) {
 		return nil

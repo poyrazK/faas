@@ -39,7 +39,9 @@ Filters combine: every event shown matches all of them.
 
 Your app's output lines that are warnings or errors are indexed as `runtime`
 events, with the same level detection as `gregale logs --level`: a structured
-`"level"` field, or a marker such as `[error]` or `level=warn`. Info and
+`"level"` field, a marker such as `[error]` or `level=warn`, or the first
+line of an uncaught crash (`Traceback …`, `panic:`, `TypeError: …`, Python's
+and uvicorn's `ERROR:`; see [log alerts](alerts.md#log-alerts)). Info and
 unmarked lines are not indexed; `gregale logs` still shows them.
 
 ```sh

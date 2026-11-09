@@ -54857,6 +54857,18 @@ CREATE TABLE public.realtime_node_connections (
 
 
 --
+-- Name: realtime_node_endpoint_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.realtime_node_endpoint_connections (
+    node_name text NOT NULL,
+    endpoint_id uuid NOT NULL,
+    connections integer NOT NULL,
+    CONSTRAINT realtime_node_endpoint_connections_connections_check CHECK ((connections > 0))
+);
+
+
+--
 -- Name: realtime_usage_hours; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55222,6 +55234,25 @@ CREATE TABLE public.request_analytics_minutes (
 --
 
 COMMENT ON TABLE public.request_analytics_minutes IS 'Per-minute request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952).';
+
+
+--
+-- Name: request_analytics_rollup_batches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_analytics_rollup_batches (
+    batch_id uuid NOT NULL,
+    node_id text NOT NULL,
+    applied_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT request_analytics_rollup_batches_node_id_check CHECK ((octet_length(node_id) <= 255))
+);
+
+
+--
+-- Name: TABLE request_analytics_rollup_batches; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.request_analytics_rollup_batches IS 'Gateway analytics rollup batches apid applied; written only by apid, swept only by meterd (ADR-20261103113952 amendment 5).';
 
 
 --
@@ -70332,6 +70363,14 @@ ALTER TABLE ONLY public.realtime_node_connections
 
 
 --
+-- Name: realtime_node_endpoint_connections realtime_node_endpoint_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_endpoint_connections
+    ADD CONSTRAINT realtime_node_endpoint_connections_pkey PRIMARY KEY (node_name, endpoint_id);
+
+
+--
 -- Name: realtime_usage_hours realtime_usage_hours_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -70425,6 +70464,14 @@ ALTER TABLE ONLY public.request_analytics_hours
 
 ALTER TABLE ONLY public.request_analytics_minutes
     ADD CONSTRAINT request_analytics_minutes_pkey PRIMARY KEY (app_id, bucket_start, dimension_kind, dimension, method, status, deployment_id);
+
+
+--
+-- Name: request_analytics_rollup_batches request_analytics_rollup_batches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_rollup_batches
+    ADD CONSTRAINT request_analytics_rollup_batches_pkey PRIMARY KEY (batch_id);
 
 
 --
@@ -81091,6 +81138,13 @@ CREATE INDEX realtime_node_connections_account ON public.realtime_node_connectio
 
 
 --
+-- Name: realtime_node_endpoint_connections_endpoint; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX realtime_node_endpoint_connections_endpoint ON public.realtime_node_endpoint_connections USING btree (endpoint_id);
+
+
+--
 -- Name: realtime_publisher_credentials_endpoint; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -81270,6 +81324,13 @@ CREATE INDEX request_analytics_hours_bucket_idx ON public.request_analytics_hour
 --
 
 CREATE INDEX request_analytics_minutes_bucket_idx ON public.request_analytics_minutes USING btree (bucket_start);
+
+
+--
+-- Name: request_analytics_rollup_batches_applied_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_analytics_rollup_batches_applied_idx ON public.request_analytics_rollup_batches USING btree (applied_at);
 
 
 --
@@ -104127,6 +104188,14 @@ ALTER TABLE ONLY public.queue_bindings
 
 ALTER TABLE ONLY public.realtime_node_connections
     ADD CONSTRAINT realtime_node_connections_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.realtime_node_connection_syncs(node_name) ON DELETE CASCADE;
+
+
+--
+-- Name: realtime_node_endpoint_connections realtime_node_endpoint_connections_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_endpoint_connections
+    ADD CONSTRAINT realtime_node_endpoint_connections_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.realtime_node_connection_syncs(node_name) ON DELETE CASCADE;
 
 
 --

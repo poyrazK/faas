@@ -214,6 +214,10 @@ type Endpoint struct {
 	MaxConnections   int
 	MaxMessageBytes  int64
 	MaxConnectionAge time.Duration
+	// maxConnectionsSet records that the customer set MaxConnections, so the
+	// cap holds across the fleet (fleetConnections). An unset cap defaults
+	// to the node's own capacity and stays a per-node bound.
+	maxConnectionsSet bool
 	// AccountMaxConnections is the account's plan allowance of concurrent
 	// connections across the fleet (ADR-1323). Zero enforces no account limit.
 	AccountMaxConnections int
@@ -265,6 +269,43 @@ func (e Endpoint) accessOn(cfg Config) bool {
 
 func (e Endpoint) occupancyOn(cfg Config) bool {
 	return cfg.OccupancyPreview && e.Preview && (e.Previews == nil || e.Previews.Occupancy)
+}
+
+// NodePreviewsHeader carries, on the endpoint inventory, the realtime
+// previews this node can serve (ADR 20261021080640, amendment of
+// 2026-11-09). apid releases a preview only while every node that answers
+// lists it. A node that predates the header sends none, which apid reads as
+// unknown.
+const NodePreviewsHeader = "X-Faas-Realtime-Node-Previews"
+
+// Node preview names, as NodePreviews lists them.
+const (
+	NodePreviewAccess    = "access"
+	NodePreviewOccupancy = "occupancy"
+	NodePreviewResume    = "resume"
+	NodePreviewTickets   = "tickets"
+)
+
+// NodePreviews lists the previews this node serves for an endpoint apid
+// releases them to: the switch is on and what the feature reads is wired.
+// Tickets ride the v2 protocol, so they also need resume.
+func (m *Manager) NodePreviews() []string {
+	cfg := m.cfg
+	resume := cfg.ResumePreview && cfg.HistoryReader != nil
+	previews := []string{}
+	if cfg.AccessPreview && cfg.AccessReader != nil {
+		previews = append(previews, NodePreviewAccess)
+	}
+	if cfg.OccupancyPreview {
+		previews = append(previews, NodePreviewOccupancy)
+	}
+	if resume {
+		previews = append(previews, NodePreviewResume)
+	}
+	if resume && cfg.TicketPreview && cfg.TicketReader != nil {
+		previews = append(previews, NodePreviewTickets)
+	}
+	return previews
 }
 
 func clonePreviews(p *EndpointPreviews) *EndpointPreviews {
@@ -636,6 +677,9 @@ type endpointState struct {
 	account *accountConnections
 	// relays is the endpoint's share of the node's ephemeral relays.
 	relays relayBudget
+	// remote is the endpoint's connections on the other nodes from the last
+	// connection sync; it counts only for a customer-set max_connections.
+	remote atomic.Int64
 }
 
 // Manager is the owner of managed realtime sockets for one process/node.
@@ -865,6 +909,7 @@ func (m *Manager) registerEndpoint(e Endpoint) error {
 		return err
 	}
 	e.LiveRoutes = routes
+	e.maxConnectionsSet = e.MaxConnections > 0
 	if e.MaxConnections <= 0 || e.MaxConnections > m.cfg.MaxConnections {
 		e.MaxConnections = m.cfg.MaxConnections
 	}
@@ -1269,9 +1314,10 @@ func (m *Manager) tryReserve(state *endpointState) (connectionRefusal, bool) {
 					m.reserved.Add(-1)
 					return connectionRefusal{}, false
 				}
-				if limit := int64(state.config.Load().MaxConnections); endpointCurrent >= limit {
+				config := state.config.Load()
+				if limit, observed := int64(config.MaxConnections), endpointCurrent+m.remoteEndpointConnections(state, config); observed >= limit {
 					m.reserved.Add(-1)
-					return connectionRefusal{scope: api.RealtimeConnectionLimitEndpoint, limit: limit, observed: endpointCurrent}, false
+					return connectionRefusal{scope: api.RealtimeConnectionLimitEndpoint, limit: limit, observed: observed}, false
 				}
 				if state.reserved.CompareAndSwap(endpointCurrent, endpointCurrent+1) {
 					if refusal, ok := m.reserveAccount(state); !ok {

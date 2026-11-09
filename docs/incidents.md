@@ -76,8 +76,13 @@ gregale alert incident ack INCIDENT_ID
 gregale alert incident note INCIDENT_ID "rolled back to v41; watching error rate"
 ```
 
-Acknowledging an open incident tells everyone in your account that someone
-is on it: the list shows `yes` under `ACK`, and `show` says who and when. An
+In an organization, the list also holds the incidents of the organization's
+apps your teammates created, as far as your role lets you read those apps;
+you can open, acknowledge and annotate them like your own.
+
+Acknowledging an open incident tells everyone in your account, and on an
+organization's app every teammate who can read it, that someone is on it:
+the list shows `yes` under `ACK`, and `show` says who and when. An
 incident is acknowledged once; acknowledging it again keeps the first. A
 resolved incident cannot be acknowledged, but it still takes notes, which is
 where follow-ups and links to a postmortem go.

@@ -74,6 +74,30 @@ app in each account and verifies that one fixture push deploys both. It skips
 when the second credential is absent. Use disposable fixture accounts and a
 dedicated repository; the journey changes its `version.txt` on `main`.
 
+### Payment journeys
+
+`TestBillingCheckout` and `TestBillingSubscription` change a subscription,
+so they never use the suite's main account, and they run only where
+billing is live (the Polar sandbox before public billing); while a
+target's billing is off they skip. Each uses a fixture account on that
+target, named by a full-access API key:
+
+- `GREGALE_E2E_BILLING_FREE_TOKEN`: a Free account. The checkout journey
+  asks for Hobby and checks that the CLI hands off to the provider's
+  hosted checkout and that nothing changes before payment. Set
+  `GREGALE_E2E_BILLING_CHECKOUT_WAIT=15m` to pay it: the journey logs the
+  checkout URL, a person pays with a test card (a 3DS card exercises the
+  bank challenge), and the journey checks that the webhooks move the
+  account to Hobby and invoice the order. The account is then paid, so the
+  next checkout needs a fresh Free account.
+- `GREGALE_E2E_BILLING_TOKEN`: an account with a paid subscription, such
+  as the one a paid checkout run leaves. The subscription journey reads
+  status, invoices and the card or portal; sets the spend cap and restores
+  it; cancels the subscription and keeps it; and on Pro or Scale schedules
+  a downgrade and undoes it. It charges nothing new and leaves the
+  subscription renewing on its plan; a run that stops halfway keeps the
+  subscription in its cleanup.
+
 ## Known bugs, history and trends
 
 - `known_failures.json` lists steps that fail on a known platform bug. Such a

@@ -17509,6 +17509,15 @@
     "kind": "operational"
   },
   {
+    "table": "realtime_node_endpoint_connections",
+    "columns": [
+      "connections",
+      "endpoint_id",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "realtime_usage_hours",
     "columns": [
       "account_id",
@@ -17671,6 +17680,15 @@
     "columns": [
       "app_id",
       "bucket_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_rollup_batches",
+    "columns": [
+      "applied_at",
+      "batch_id",
+      "node_id"
     ],
     "kind": "operational"
   },
