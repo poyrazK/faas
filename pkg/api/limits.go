@@ -2239,6 +2239,12 @@ const OperationScheduleOnceHorizon = 366 * 24 * time.Hour
 const (
 	AfterRestoreHookDefaultTimeoutMS = 500
 	AfterRestoreHookMaxTimeoutMS     = 2000
+	// AfterRestoreHookBoundMaxTimeoutMS is the after_restore cap for an app
+	// with a managed PostgreSQL or object-storage binding (ADR-20261109120000):
+	// reconnecting to a scale-to-zero database across clouds missed 2 s in
+	// production and fell back to a cold boot. It stays inside the host's
+	// five-second resume deadline. apid refuses it for apps without a binding.
+	AfterRestoreHookBoundMaxTimeoutMS = 4000
 )
 
 const (

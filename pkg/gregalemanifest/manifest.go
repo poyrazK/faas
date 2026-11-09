@@ -2630,9 +2630,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("database[%d]: env: %w", i, problem)
 		}
 		access := dependency.EffectiveAccess()
-		if access != "read_write" && access != "read_only" && access != "migration" && access != "data_api" && access != "auth" {
+		if access != "read_write" && access != "read_only" && access != "migration" && access != "data_api" && access != "auth" && access != "session" {
 			// auth (application Auth, ADR-1190) is accepted but not yet listed.
-			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api}", i, access)
+			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api, session}", i, access)
 		}
 		// A database dependency targets one environment variable on one
 		// workload. Different databases must not silently compete for the

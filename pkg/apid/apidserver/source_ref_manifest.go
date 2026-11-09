@@ -953,6 +953,9 @@ func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
 		return prob
 	}
+	if prob := s.afterRestoreBudgetProblem(ctx, acct.ID, app.ID, req.AfterRestore); prob != nil {
+		return prob
+	}
 	if prob := s.executionModeApprovalProblem(ctx, app, &req); prob != nil {
 		return prob
 	}

@@ -269,7 +269,12 @@ lifecycle:
 - **after_restore** (also called on frozen thaw) cancels captured work,
   invalidates, rereads the latest secret snapshot even at the same revision
   (`coordinator.reload(...)`), waits for retirement, and only then reopens
-  admission.
+  admission. Keep it off the network: build the new pool lazily and let the
+  first query connect and report `database_unavailable` itself. A scale-to-zero
+  database can take seconds to answer, and a hook that waits for it misses the
+  restore deadline and turns every wake into a cold boot (ADR-20261109120000).
+  An app with a managed Postgres or object storage binding may raise
+  `after_restore.timeout_ms` to 4000; other apps are capped at 2000.
 
 Declaring `before_checkpoint` disables warm captures for the app (ADR-351). If
 you omit it, `after_restore` still replaces captured pools, but a capture can
