@@ -726,7 +726,7 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 		snap, err = p.Router.Stats(callCtx, node.ID)
 	} else {
 		var vmm sched.VMM
-		vmm, err = p.Dialer.Dial(callCtx, node.TargetURL, wire.TLSForPeerCN(p.TLS, node.Name)) // only this node's leaf (R8-12)
+		vmm, err = p.Dialer.Dial(callCtx, node.TargetURL, p.TLS)
 		if err != nil {
 			p.Log.Warn("instance stats dial failed", "node_id", node.ID, "err", err)
 			if p.Metrics != nil {

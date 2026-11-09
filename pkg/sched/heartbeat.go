@@ -721,7 +721,7 @@ func (h *Heartbeat) heartbeatPing(ctx context.Context, n state.ComputeNode) (*Pi
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	cli, err := h.dialer.Dial(probeCtx, n.TargetURL, wire.TLSForPeerCN(h.tls, n.Name)) // only this node's leaf (R8-12)
+	cli, err := h.dialer.Dial(probeCtx, n.TargetURL, h.tls)
 	if err != nil {
 		return nil, err
 	}
