@@ -222,7 +222,7 @@ func chooseAmongNodes(nodes []state.ComputeNode, usedMB map[string]int64, usedVC
 		// routed through ChoosePlacement) is always accepted
 		// on vCPU headroom, paralleling how r.RAMMB<=0 would
 		// have been rejected by the precondition above.
-		if r.VCPU > 0 {
+		if r.VCPU > 0 && !r.ignoreCPUBudgets {
 			used := usedVCPU[n.ID]
 			budget := n.VCPUBudget
 			if r.Kind == KindJob && r.Flexible {
@@ -238,7 +238,7 @@ func chooseAmongNodes(nodes []state.ComputeNode, usedMB map[string]int64, usedVC
 		// millicores of sustained app capacity. Missing/zero VPCPUs is
 		// rejected when the request opts into this guard; legacy requests
 		// with CPUMillicores=0 retain the previous behavior.
-		if r.CPUMillicores > 0 {
+		if r.CPUMillicores > 0 && !r.ignoreCPUBudgets {
 			budget := cpuBudgetMillicores(n)
 			if r.Kind == KindJob && r.Flexible {
 				budget -= flexibleAppReserveCPUMillicores
