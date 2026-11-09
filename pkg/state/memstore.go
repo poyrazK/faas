@@ -29048,6 +29048,12 @@ func (m *MemStore) ResolveStaleRegressionObservations(_ context.Context, _ pgtyp
 	panic("memstore: ResolveStaleRegressionObservations unimplemented")
 }
 
+// ResolveRegressionObservationsNotSeenSince is Postgres-only, like the rest
+// of the detector's lifecycle transitions.
+func (m *MemStore) ResolveRegressionObservationsNotSeenSince(_ context.Context, _ sqlc.ResolveRegressionObservationsNotSeenSinceParams) ([]sqlc.DebugRegressionObservation, error) {
+	panic("memstore: ResolveRegressionObservationsNotSeenSince unimplemented")
+}
+
 // ListDeploymentsForCompare is intentionally unsupported by MemStore;
 // it reads request_telemetry's deployment history.
 func (m *MemStore) ListDeploymentsForCompare(_ context.Context, _ sqlc.ListDeploymentsForCompareParams) ([]sqlc.ListDeploymentsForCompareRow, error) {

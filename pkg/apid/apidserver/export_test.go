@@ -437,6 +437,7 @@ var ConfigureSourceRefManagedPostgres = configureSourceRefManagedPostgres
 var Contains = contains
 var CookieDo = cookieDo
 var CountAffectedRequests = countAffectedRequests
+var RegressionBaselineRoutes = regressionBaselineRoutes
 var CreateApp = createApp
 
 // CustomHistoryEnv is setup with custom metric history (and so OTLP ingest) on.
