@@ -3453,6 +3453,10 @@ const AppCPUBaselineMillicoresPerGB = 1000
 // (instances.booked_cpu_millicores): the largest plan baseline.
 const AppCPUBookingMaxMillicores = 2000
 
+// GuestVCPUBookingMax bounds an instance's stored guest vCPU count
+// (instances.booked_vcpu, ADR-20261109172421): Firecracker's vCPU limit.
+const GuestVCPUBookingMax = 32
+
 // AppCPUCeilingFloorMillicores is the lowest burst ceiling (cpu.max) a plan
 // gets, so no plan bursts below today's one core (ADR-20261101160231).
 const AppCPUCeilingFloorMillicores = DefaultAppCPUMillicores
@@ -3547,6 +3551,38 @@ func ValidAppCPUCeilingFloorMillicores(v int) bool {
 // ValidGuestVCPUMillicores reports whether v is a valid `guest_vcpu_millicores`.
 func ValidGuestVCPUMillicores(v int) bool {
 	return v >= GuestVCPUMillicoresMin && v <= GuestVCPUMillicoresMax
+}
+
+// CPU admission (ADR-20261109172421), schedd's `cpu_admission`. enforce
+// refuses work for the per-node vCPU and physical CPU budgets; observe admits
+// on memory alone and counts what those gates would have refused, so CPU
+// decides where an instance goes, never whether it runs.
+const (
+	CPUAdmissionEnforce = "enforce"
+	CPUAdmissionObserve = "observe"
+	DefaultCPUAdmission = CPUAdmissionEnforce
+)
+
+// ValidCPUAdmission reports whether v is a `cpu_admission` value.
+func ValidCPUAdmission(v string) bool {
+	return v == CPUAdmissionEnforce || v == CPUAdmissionObserve
+}
+
+// SizeCPUWeightMax is the largest cgroup v2 cpu.weight.
+const SizeCPUWeightMax = 10_000
+
+// SizeVCPUs is the guest vCPU count of an instance whose CPU follows its size
+// (ADR-20261109172421): one per GB of instance RAM, at least one. It does not
+// depend on the plan.
+func SizeVCPUs(ramMB int) int {
+	return max(1, (ramMB+1023)/1024)
+}
+
+// SizeCPUWeight is the cpu.weight of such an instance: one per 16 MB of
+// instance RAM (8 at 128 MB, 128 at 2 GB), so a busy host shares CPU by
+// memory.
+func SizeCPUWeight(ramMB int) int {
+	return min(SizeCPUWeightMax, max(1, ramMB/16))
 }
 
 // Snapshot refresh after a release (ADR-20261106214916). schedd's
@@ -3906,7 +3942,10 @@ func RealtimeResumeSubscriptionsPerNodeFor(accountMaxConnections int) int {
 // Each realtimed process reports its per-account connection counts to apid
 // every RealtimeConnectionSyncInterval and learns the other nodes' counts in
 // return. Counts older than RealtimeConnectionSyncStaleAfter are ignored, and a
-// node whose own sync is that stale enforces its local count only.
+// node whose own sync is that stale enforces its local count only. The same
+// sync carries the open connections of each endpoint with its own
+// max_connections (at most RealtimeConnectionSyncMaxEndpoints), so that cap
+// holds across the fleet rather than once per node.
 //
 // RealtimeNodeOutboundBytesDefault bounds the payload bytes queued for clients
 // across a whole node. Each connection may queue up to 4 MiB, so without it
@@ -3924,6 +3963,7 @@ const (
 	RealtimeConnectionSyncInterval        = 5 * time.Second
 	RealtimeConnectionSyncStaleAfter      = 30 * time.Second
 	RealtimeConnectionSyncMaxAccounts     = 10_000
+	RealtimeConnectionSyncMaxEndpoints    = 10_000
 )
 
 // Channel rules (ADR-20261019102657): realtimed authorizes channels from a
@@ -4606,6 +4646,16 @@ type Limits struct {
 	// min_instances does, and an unbounded free-tier write endpoint is an
 	// abuse surface.
 	CustomMetricsAllowed bool
+	// CustomMetricsPerApp caps distinct custom metric names per app
+	// (ADR-20261108160000; was a flat MaxCustomMetricsPerApp = 5). A
+	// histogram uses five names (_count, _sum, _p50, _p95, _p99). Bounded
+	// because schedd reads an app's metrics every tick and apid exports
+	// every fresh one to the platform Prometheus.
+	CustomMetricsPerApp int
+	// CustomMetricSeriesPerApp caps labelled series (one per distinct label
+	// set of a metric name) per app, ADR-20261108160000 slice C. Each is a
+	// stored row and an exported Prometheus series.
+	CustomMetricSeriesPerApp int
 
 	// MaxInstancesAllowed (issue #462 / ADR-058) toggles the per-app
 	// ceiling on live instances. Mirrors MinInstancesAllowed: Hobby+
@@ -5998,8 +6048,8 @@ var planLimits = map[Plan]Limits{
 		// ten times that (ADR-20261031122757).
 		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyRequests: 50_000, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
-		RateLimitRPS:                   5,
-		RateLimitBurst:                 20,
+		RateLimitRPS:                   50,
+		RateLimitBurst:                 200,
 		EgressMbit:                     10,
 		MonthlyEgressGiB:               10,
 		EgressNewConnPerSecond:         10,
@@ -6234,8 +6284,8 @@ var planLimits = map[Plan]Limits{
 		BrokerEgressMbit:       0,
 		TLSSkipVerifyAllowed:   false,
 		// Per-account rate limit (ADR-040, amended by issue #1680): the
-		// account can sustain one Free app at its advertised 5 rps.
-		RateLimitPerAccountRPM: 300,
+		// account can sustain one Free app at its advertised 50 rps.
+		RateLimitPerAccountRPM: 3000,
 		// Wake-side admission throttle (ADR-099 PR-0). Free caps
 		// wake admissions at 1/min per app + 1/min per account — the
 		// abuse-floor tier should never burst-wake. The apid-side
@@ -6419,8 +6469,8 @@ var planLimits = map[Plan]Limits{
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
 		ConcurrencyPerVMBound:          5,
-		RateLimitRPS:                   20,
-		RateLimitBurst:                 100,
+		RateLimitRPS:                   200,
+		RateLimitBurst:                 1000,
 		EgressMbit:                     25,
 		MonthlyEgressGiB:               100,
 		EgressOverageElectable:         true,
@@ -6494,7 +6544,10 @@ var planLimits = map[Plan]Limits{
 		// they're paying for.
 		MinInstancesAllowed:  true,
 		CustomMetricsAllowed: true,
-		MaxInstancesAllowed:  true,
+		CustomMetricsPerApp:  20,
+		// ADR-20261108160000 slice C.
+		CustomMetricSeriesPerApp: 100,
+		MaxInstancesAllowed:      true,
 		// MaxMinInstances (ADR-071): Hobby gets 1 — one warm
 		// instance is the minimum the floor feature exists to
 		// deliver (the customer's "first request never pays the
@@ -6680,8 +6733,8 @@ var planLimits = map[Plan]Limits{
 		// headroom for Pro+ below the hard limit.
 		TriggerPayloadMaxBytes: 1048576,
 		// Per-account rate limit (ADR-040, amended by issue #1680): the
-		// account can sustain one Hobby app at its advertised 20 rps.
-		RateLimitPerAccountRPM: 1200,
+		// account can sustain one Hobby app at its advertised 200 rps.
+		RateLimitPerAccountRPM: 12000,
 		// Wake-side admission throttle (ADR-099 PR-0). Hobby
 		// permits a small wake burst — a cron tick on a Hobby
 		// customer's job can legitimately want 5 wakes/min across
@@ -6698,7 +6751,7 @@ var planLimits = map[Plan]Limits{
 		LogStreamsMax:          5,
 		// CPU fairness (issue #301): Hobby weight=4, quota 200ms/200ms.
 		// Doubles Free's quota — tracks the per-app concurrency bump
-		// (1 → 2) and the per-app rps (5 → 20).
+		// (1 → 2) and the per-app rps (50 → 200).
 		CPUWeight:   4,
 		CPUQuotaUS:  200_000,
 		CPUPeriodUS: 200_000,
@@ -6870,8 +6923,8 @@ var planLimits = map[Plan]Limits{
 		// typical SaaS-tier workload envelope (one Node/Python
 		// service handling fan-out from a single client request).
 		ConcurrencyPerVMBound:          25,
-		RateLimitRPS:                   100,
-		RateLimitBurst:                 500,
+		RateLimitRPS:                   1000,
+		RateLimitBurst:                 5000,
 		EgressMbit:                     100,
 		MonthlyEgressGiB:               500,
 		EgressOverageElectable:         true,
@@ -6892,7 +6945,10 @@ var planLimits = map[Plan]Limits{
 		RegistryCredentialMax: 5,
 		MinInstancesAllowed:   true,
 		CustomMetricsAllowed:  true,
-		MaxInstancesAllowed:   true,
+		CustomMetricsPerApp:   50,
+		// ADR-20261108160000 slice C.
+		CustomMetricSeriesPerApp: 500,
+		MaxInstancesAllowed:      true,
 		// MaxMinInstances (ADR-071): Pro = 3 — covers a small
 		// "always-warm fan-out for a customer-facing API" pattern
 		// without letting one Pro app reserve a quarter of the
@@ -7112,8 +7168,8 @@ var planLimits = map[Plan]Limits{
 		// identically pre/post migration 00274.
 		TriggerPayloadMaxBytes: 6291456,
 		// Per-account rate limit (ADR-040, amended by issue #1680): the
-		// account can sustain one Pro app at its advertised 100 rps.
-		RateLimitPerAccountRPM: 6000,
+		// account can sustain one Pro app at its advertised 1000 rps.
+		RateLimitPerAccountRPM: 60000,
 		// Wake-side admission throttle (ADR-099 PR-0). Pro is the
 		// production tier — the per-app burst ceiling of 20/min is
 		// calibrated against a customer running a cron fleet
@@ -7286,8 +7342,8 @@ var planLimits = map[Plan]Limits{
 		// for a typical Node.js / Go service; a sync-subprocess
 		// Python customer would saturate before hitting this cap.
 		ConcurrencyPerVMBound:          80,
-		RateLimitRPS:                   500,
-		RateLimitBurst:                 2000,
+		RateLimitRPS:                   5000,
+		RateLimitBurst:                 20000,
 		EgressMbit:                     250,
 		MonthlyEgressGiB:               2000,
 		EgressOverageElectable:         true,
@@ -7308,7 +7364,10 @@ var planLimits = map[Plan]Limits{
 		RegistryCredentialMax: 20,
 		MinInstancesAllowed:   true,
 		CustomMetricsAllowed:  true,
-		MaxInstancesAllowed:   true,
+		CustomMetricsPerApp:   200,
+		// ADR-20261108160000 slice C.
+		CustomMetricSeriesPerApp: 2000,
+		MaxInstancesAllowed:      true,
 		// MaxMinInstances (ADR-071): Scale = 10 — half of
 		// MaxConcurrency (20). At Scale's 1024 MB instance RAM
 		// and 8 MB overhead, 10 instances resident = 10,320 MB
@@ -7550,8 +7609,8 @@ var planLimits = map[Plan]Limits{
 		// constraint.
 		TriggerPayloadMaxBytes: 16777216,
 		// Per-account rate limit (ADR-040, amended by issue #1680): the
-		// account can sustain one Scale app at its advertised 500 rps.
-		RateLimitPerAccountRPM: 30000,
+		// account can sustain one Scale app at its advertised 5000 rps.
+		RateLimitPerAccountRPM: 300000,
 		// Wake-side admission throttle (ADR-099 PR-0). Scale is
 		// the upper tier — 100 wakes/min per app is enough to drain
 		// a 1000-task parallel job run in 10 min wall-clock, which
@@ -8109,6 +8168,15 @@ const (
 	// keep waiting for build disk before it fails with the disk-full error
 	// instead of being requeued (H83).
 	BuildDiskCapacityMaxWait = 15 * time.Minute
+	// SnapshotPrimeCapacityMaxWait is how long after its snapshot_prepare
+	// stage started a built deployment keeps waiting for a compute node with
+	// room for its first boot. Inside the window a node-budget refusal
+	// (memory, guest vCPUs, CPU) leaves the deployment snapshotting and the
+	// scheduler's prime recovery retries it each minute; after it the
+	// deployment fails with capacity_unavailable as before. Without the wait
+	// a momentarily full fleet failed a finished build, and the customer had
+	// to rebuild to retry.
+	SnapshotPrimeCapacityMaxWait = 5 * time.Minute
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment
@@ -9271,7 +9339,9 @@ const (
 	// latency bound rather than a product limit. Twelve covers a distinct
 	// window per month, which is well past any real weekly shape.
 	MaxScalingSchedules = 12
-	// MaxCustomMetricsPerApp caps distinct ADR-202 metric names per app.
+	// MaxCustomMetricsPerApp is the largest per-plan cap on distinct ADR-202
+	// metric names per app (Limits.CustomMetricsPerApp, ADR-20261108160000);
+	// enforcement reads the plan's own cap.
 	//
 	// The bound is a LATENCY property before it is a storage one: the
 	// targets trigger reads an app's custom metrics on every tick for
@@ -9279,7 +9349,7 @@ const (
 	// per-tick read. The (app_id, name) primary key means a push to an
 	// existing name is an upsert and cannot grow the count — only a new
 	// name can, which is where apid enforces this.
-	MaxCustomMetricsPerApp = 5
+	MaxCustomMetricsPerApp = 200
 	// CustomMetricNameMaxBytes bounds a metric name. Matches the
 	// app_custom_metrics_name_shape CHECK in the migration; the Go gate
 	// exists so the customer gets a 422 with a useful message instead of
@@ -9290,6 +9360,13 @@ const (
 	// ceiling one bad push would demand the plan cap's worth of instances
 	// on the very next tick.
 	CustomMetricMaxValue = 1e12
+	// Labelled series bounds (ADR-20261108160000 slice C): label keys per data
+	// point, the longest label value kept, and series per metric name. Each
+	// series is a stored row and an exported Prometheus series, so a metric
+	// labelled by an unbounded attribute (a user id) stops at the cap.
+	CustomMetricMaxLabels          = 3
+	CustomMetricLabelValueMaxBytes = 128
+	CustomMetricMaxSeriesPerMetric = 50
 	// MinScalingScheduleDurationS / MaxScalingScheduleDurationS bound a
 	// window. The floor is 60 s because the scheduler's own sweep is
 	// coarser than that, so a shorter window could close before any tick
@@ -11030,6 +11107,26 @@ func (p Plan) CustomMetricsAllowed() bool {
 		return false
 	}
 	return l.CustomMetricsAllowed
+}
+
+// CustomMetricsPerApp (ADR-20261108160000) returns the plan's cap on distinct
+// custom metric names per app; 0 when the plan has no custom metrics.
+func (p Plan) CustomMetricsPerApp() int {
+	l, ok := LimitsFor(p)
+	if !ok || !l.CustomMetricsAllowed {
+		return 0
+	}
+	return l.CustomMetricsPerApp
+}
+
+// CustomMetricSeriesPerApp (ADR-20261108160000 slice C) returns the plan's
+// cap on labelled custom metric series per app; 0 without custom metrics.
+func (p Plan) CustomMetricSeriesPerApp() int {
+	l, ok := LimitsFor(p)
+	if !ok || !l.CustomMetricsAllowed {
+		return 0
+	}
+	return l.CustomMetricSeriesPerApp
 }
 
 // QueueControlsAllowed (ADR-124) reports whether the plan may
@@ -13555,6 +13652,20 @@ const (
 	GatewayWildcardRecoveryPerSecond = 5
 	GatewayWildcardRecoveryBurst     = 50
 	GatewayNewHostLookupMaxWait      = 100 * time.Millisecond
+	// GatewayRequestLogLinesPerSecond and GatewayRequestLogBurst bound the
+	// gateway_request lines one gatewayd-internal writes at Info: a cold
+	// request or any answer but a 2xx (a warm 2xx is a Debug line). A flood
+	// of 404s for names that route nowhere, or an app answering errors at
+	// volume, would otherwise write one line per request. Building them took
+	// about 12% of gatewayd-internal's CPU under a 404 flood on 2026-11-09,
+	// and past journald's per-unit rate limit (10,000 lines per 30 s by
+	// default) journald dropped every line the daemon wrote, warnings
+	// included. A line past the budget is not built;
+	// gateway_request_log_suppressed_total counts it and the next written
+	// line carries suppressed_before. gateway_requests_total still counts
+	// every request.
+	GatewayRequestLogLinesPerSecond = 100
+	GatewayRequestLogBurst          = 1000
 	// The gateway and the edge preload every app slug and verified custom
 	// domain or admitted concrete wildcard host (at most KnownRouteHostsMax
 	// of each), refreshed every KnownRouteHostsRefreshInterval. Concrete names
@@ -13762,6 +13873,12 @@ const (
 	TrafficRuntimeObservationTimeout   = 250 * time.Millisecond
 	TrafficRuntimeObservationFreshness = 10 * time.Second
 	TrafficRuntimeObservationMaxNodes  = 4096
+	// EdgeRuleHeaderSecretBackfillInterval is how often apid seals the
+	// credential header values edge rules and their versions still store as
+	// written (ADR-20261108110000, amendment 2026-11-09); the first pass waits
+	// EdgeRuleHeaderSecretBackfillStartDelay so gateways can report first.
+	EdgeRuleHeaderSecretBackfillInterval   = 15 * time.Minute
+	EdgeRuleHeaderSecretBackfillStartDelay = 2 * time.Minute
 	// RequestBudgetPlanMax is the largest request budget any plan may allow
 	// (Scale's 15 minutes, ADR-1150). Every per-plan ceiling is clamped to
 	// it, edge-rule and route-requirement budgets are validated against it,
@@ -15167,6 +15284,22 @@ const (
 	RequestAnalyticsRollupPendingRowsMax = 200_000
 )
 
+// A gateway counts its requests into per-minute rollups itself when
+// FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS is on (ADR-20261103113952
+// amendment 5). It buffers at most RequestAnalyticsGatewayRollupRowsMax
+// rollup rows, ships the minutes that closed RequestAnalyticsRollupMinuteGrace
+// ago in batches of at most RequestAnalyticsRollupBatchRowsMax rows (apid
+// refuses a larger one), and keeps RequestAnalyticsGatewayRollupBatchesMax
+// unacknowledged batches to resend before the oldest is lost. While apid
+// answers that it takes no batches, the gateway asks again every
+// RequestAnalyticsGatewayRollupProbeInterval and leaves the counting to apid.
+const (
+	RequestAnalyticsRollupBatchRowsMax         = 1000
+	RequestAnalyticsGatewayRollupRowsMax       = 100_000
+	RequestAnalyticsGatewayRollupBatchesMax    = 32
+	RequestAnalyticsGatewayRollupProbeInterval = 5 * time.Minute
+)
+
 // The minute tier is kept RequestAnalyticsMinuteRetention, whatever the plan
 // (ADR-20261103113952 amendment 3); the hourly tier keeps the plan's
 // telemetry retention. An analytics window reaching further back than
@@ -15774,8 +15907,10 @@ const (
 	// everyone. Server keys (trusted backends) are bounded only by the total.
 	DataAPIStorageTransfersPerClient = 2
 	// /healthz is public and its readiness checks reach the database: a
-	// completed result answers further checks for this long, so polling it
-	// asks the database at most once per interval per instance.
+	// completed ready result answers further checks for this long, so polling
+	// a healthy API asks the database at most once per interval per instance.
+	// Unready results are never reused, and engine restarts, schema reloads,
+	// checkpoints and restores forget the cached one (ADR-20261109160000).
 	DataAPIHealthCache = 5 * time.Second
 	// The gateway sends the SQL deadline this much early, so a VM clock that
 	// runs ahead of the database's by up to it still passes the engine's
@@ -17026,6 +17161,14 @@ const (
 	LogProjectionBuildErrorBytes = 1024
 )
 
+// AlertRatioMinRequests is the fewest requests a window must hold before a
+// threshold rule on a share or percentile of them (error_rate_pct,
+// cold_start_pct, latency_p50/p95/p99_ms) fires (ADR-20261109153000). On a
+// scale-to-zero app a window often holds a handful of requests, and one
+// failed wake out of three read as a 33% error rate and paged. Below it the
+// rule reads unknown: too few requests to tell.
+const AlertRatioMinRequests = 10
+
 // Anomaly alert bounds (ADR-744). A baseline rule compares a request metric
 // with the median of its value at the same time of day over the previous
 // AnomalyBaselineDays days.
@@ -18214,8 +18357,8 @@ const (
 	EdgeClientOpenConnsPerAddrMax      = 512
 	EdgeClientNewConnsPerSecondPerAddr = 100
 	EdgeClientNewConnsBurstPerAddr     = 400
-	EdgeClientRequestsPerSecondPerAddr = 500
-	EdgeClientRequestsBurstPerAddr     = 1000
+	EdgeClientRequestsPerSecondPerAddr = 2500
+	EdgeClientRequestsBurstPerAddr     = 5000
 	EdgeClientTrackedAddrsMax          = 200_000
 	// EdgeHostRequestsPerSecond and EdgeHostRequestsBurst are a node's
 	// ceiling for one hostname, checked at the edge before the request is
@@ -18229,8 +18372,8 @@ const (
 	// client's to choose, so a hostname the full table cannot track passes
 	// instead of sharing one bucket that a flood of random names would drain
 	// for every tenant (hunt 38); the per-address limit still bounds it.
-	EdgeHostRequestsPerSecond       = 1000
-	EdgeHostRequestsBurst           = 4000
+	EdgeHostRequestsPerSecond       = 10_000
+	EdgeHostRequestsBurst           = 40_000
 	EdgeHostTrackedMax              = 100_000
 	EdgeTLSHandshakesInFlightPerCPU = 128
 	EdgeTLSHandshakeTimeout         = 10 * time.Second

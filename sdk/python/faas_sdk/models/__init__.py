@@ -492,6 +492,8 @@ from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
 from .custom_metric_response import CustomMetricResponse
 from .custom_metric_response_kind import CustomMetricResponseKind
+from .custom_metric_series_value import CustomMetricSeriesValue
+from .custom_metric_series_value_labels import CustomMetricSeriesValueLabels
 from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
@@ -2331,6 +2333,7 @@ from .test_alert_preset_response import TestAlertPresetResponse
 from .test_alert_preset_response_status import TestAlertPresetResponseStatus
 from .test_notification_channel_response import TestNotificationChannelResponse
 from .tracing_config import TracingConfig
+from .tracing_forward import TracingForward
 from .traffic_runtime_feature_status import TrafficRuntimeFeatureStatus
 from .traffic_runtime_feature_status_mode import TrafficRuntimeFeatureStatusMode
 from .traffic_runtime_feature_status_state import TrafficRuntimeFeatureStatusState
@@ -3163,6 +3166,8 @@ __all__ = (
     "CustomMetricRequest",
     "CustomMetricResponse",
     "CustomMetricResponseKind",
+    "CustomMetricSeriesValue",
+    "CustomMetricSeriesValueLabels",
     "CustomStage",
     "DailyUsageListResponse",
     "DailyUsagePoint",
@@ -4852,6 +4857,7 @@ __all__ = (
     "TestAlertPresetResponseStatus",
     "TestNotificationChannelResponse",
     "TracingConfig",
+    "TracingForward",
     "TrafficRuntimeFeatureStatus",
     "TrafficRuntimeFeatureStatusMode",
     "TrafficRuntimeFeatureStatusState",

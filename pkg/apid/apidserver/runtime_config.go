@@ -113,6 +113,8 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeconfig.KeyGuestVCPUMillicores, Label: "Millicores per guest vCPU", Description: "A listed app boots one guest vCPU per this many millicores of CPU ceiling, never more than its plan's count (ADR-20261101215228). Changing it makes listed apps cold-boot once.", Category: "Plan CPU", Kind: "integer", Default: json.RawMessage("1000"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.GuestVCPUMillicoresMin, api.GuestVCPUMillicoresMax, api.ValidGuestVCPUMillicores)},
 	{Key: runtimeconfig.KeyAppRequestConcurrencyDefault, Label: "Requests per instance (default)", Description: "Requests one instance of an app that declares no per_instance_concurrency takes at once, on every plan (ADR-20261101215228). 0 keeps each plan's concurrency_per_vm (Free 4, Hobby 5, Pro 25, Scale 80). Gateways, schedd and apid apply it; it is capped at app_request_concurrency_max when that is set, else at the plan's bound.", Category: "Plan requests", Kind: "integer", Default: json.RawMessage("0"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateRequestConcurrencySetting},
 	{Key: runtimeconfig.KeyAppRequestConcurrencyMax, Label: "Requests per instance (maximum)", Description: "The largest per_instance_concurrency an app may declare, on every plan, and what vmmd admits to an instance of an app without one (ADR-20261101215228). 0 keeps each plan's concurrency_per_vm. Set it only once every vmmd runs a release that takes the limit from the wake; an older vmmd keeps the plan bound and answers App busy above it.", Category: "Plan requests", Kind: "integer", Default: json.RawMessage("0"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateRequestConcurrencySetting},
+	{Key: runtimeconfig.KeyCPUAdmission, Label: "CPU admission", Description: "Whether schedd refuses work for the per-node vCPU and CPU budgets (ADR-20261109172421). enforce refuses as before; observe admits on memory alone, prefers nodes with CPU room, and counts what the CPU gates would have refused in schedd_cpu_admission_would_refuse_total.", Category: "Scheduling", Kind: "enum", Default: json.RawMessage(`"enforce"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateCPUAdmission},
+	{Key: runtimeconfig.KeyCPUSizeApps, Label: "Apps whose CPU follows instance size", Description: "Comma-separated app IDs, or * for every app, whose CPU follows instance size instead of plan (ADR-20261109172421): one guest vCPU per GB of instance RAM, a cpu.weight of one per 16 MB, no CPU quota unless the app chose 250 or 500 millicores, and a booking of its RAM's CPU baseline. Empty keeps every app on its plan; it takes precedence over guest_vcpu_from_cpu_apps. A listed app whose vCPU count changes cold-boots once. Before listing apps: every node runs a vmmd that accepts cpu_weight and cpu_uncapped, and cpu_admission is observe (the durable guard still books the plan's vCPUs); turn snapshot_refresh on before listing many.", Category: "Scheduling", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateGuestVCPUApps},
 	{Key: runtimeconfig.KeySnapshotRefresh, Label: "Snapshot refresh after a release", Description: "After a node takes a release, find the snapshots of recently active apps that the release made stale (ADR-20261106214916). off does nothing; shadow logs and counts them without booting anything; on boots each one on its node, captures a fresh snapshot and parks it, unbilled.", Category: "Snapshots", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateSnapshotRefresh},
 	{Key: runtimeconfig.KeySnapshotRefreshWindowHours, Label: "Snapshot refresh window (hours)", Description: "An app that parked on a node within this many hours is a snapshot refresh candidate on that node (ADR-20261106214916).", Category: "Snapshots", Kind: "integer", Default: json.RawMessage("168"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.SnapshotRefreshWindowHoursMin, api.SnapshotRefreshWindowHoursMax, api.ValidSnapshotRefreshWindowHours)},
 	{Key: runtimeConfigS3, Label: "S3 object storage", Description: "Allow bucket provisioning and new signed URLs. Disabling preserves metadata and cleanup; existing URLs expire normally. Provider configuration is still required.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -593,6 +595,17 @@ func validateSnapshotRefresh(value json.RawMessage) error {
 	}
 	if !api.ValidSnapshotRefresh(mode) {
 		return fmt.Errorf("%q is not off, shadow or on", mode)
+	}
+	return nil
+}
+
+func validateCPUAdmission(value json.RawMessage) error {
+	mode, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	if !api.ValidCPUAdmission(mode) {
+		return fmt.Errorf("%q is not enforce or observe", mode)
 	}
 	return nil
 }

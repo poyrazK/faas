@@ -8376,6 +8376,11 @@ func readLiveDeployments(ctx context.Context, db sqlc.DBTX, appID string) ([]Dep
 // to deployments_live_traffic_idx for the status='live' slice. No
 // new index needed for this PR; the column defaults + status
 // index from migration 00162 are sufficient.
+//
+// A deleted app's canary is left out: there is nothing to progress, every
+// gate read for it is not found, and the safe-deploy orchestrator closes its
+// rollout from its own list (closeDeletedAppRollout). Listing it made meterd
+// warn every tick until then.
 func (s *PgStore) ListCanaryInFlight(ctx context.Context) ([]Deployment, error) {
 	rows, err := s.pool.Query(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
@@ -8384,6 +8389,10 @@ func (s *PgStore) ListCanaryInFlight(ctx context.Context) ([]Deployment, error) 
 		   and canary_total_steps > 0
 		   and canary_step < canary_total_steps
 		   and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')
+		   and not exists (
+		     select 1 from apps a
+		      where a.id = deployments.app_id
+		        and (a.status = 'deleted' or a.deleted_at is not null))
 		 order by created_at asc`)
 	if err != nil {
 		return nil, fmt.Errorf("state: list canary in-flight: %w", err)
@@ -9391,6 +9400,11 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		 values ($1::uuid, $2, $3, $4, $5, $6::jsonb)
 		 returning id`, dep.ID, params.Audit.AccountID, string(auditKind), params.Audit.Actor, auditAt, []byte(params.Audit.Data)).Scan(&auditID); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary audit: %w", err)
+	}
+	if dep.CanaryTotalSteps > 0 && persistedStep >= dep.CanaryTotalSteps && dep.RolloutState != "complete" {
+		if err := insertRolloutLifecycleAuditTx(ctx, tx, dep, DeployRolloutCompleted, now); err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	updated, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
@@ -11208,6 +11222,12 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 				canary_step_started_at = $2
 			 where id = $1`, id, now); err != nil {
 			return fmt.Errorf("state: mark canary live: %w", err)
+		}
+		// A recovery replay of an already started rollout records nothing new.
+		if dep.RolloutState != "rolling_out" {
+			if err := insertRolloutLifecycleAuditTx(ctx, tx, dep, DeployRolloutStarted, now); err != nil {
+				return err
+			}
 		}
 		newWeights := RedistributeTraffic(siblings, 100-dep.TrafficPercent)
 		for i, sibling := range siblings {
@@ -31579,6 +31599,12 @@ func (s *PgStore) RequestTelemetryByDeployment(ctx context.Context, arg sqlc.Req
 	return s.appErrorsQueries().RequestTelemetryByDeployment(ctx, s.pool, arg)
 }
 
+// RequestTelemetryLatencyWeightsByRoute backs the regression detector's
+// affected-request count over the whole window.
+func (s *PgStore) RequestTelemetryLatencyWeightsByRoute(ctx context.Context, arg sqlc.RequestTelemetryLatencyWeightsByRouteParams) ([]sqlc.RequestTelemetryLatencyWeightsByRouteRow, error) {
+	return s.appErrorsQueries().RequestTelemetryLatencyWeightsByRoute(ctx, s.pool, arg)
+}
+
 // RequestTelemetryCircuitBreakerSummary is the bounded per-deployment
 // aggregate used by meterd's canary circuit breaker. It computes weighted
 // request and 5xx totals plus a weighted p95 in Postgres, avoiding transfer of
@@ -31714,6 +31740,12 @@ func (s *PgStore) ApplyRegressionAction(ctx context.Context, arg sqlc.ApplyRegre
 // refreshed by the detector within the supplied interval.
 func (s *PgStore) ResolveStaleRegressionObservations(ctx context.Context, arg pgtype.Interval) ([]sqlc.DebugRegressionObservation, error) {
 	return s.appErrorsQueries().ResolveStaleRegressionObservations(ctx, s.pool, arg)
+}
+
+// ResolveRegressionObservationsNotSeenSince resolves what an app's complete
+// detector pass no longer sees.
+func (s *PgStore) ResolveRegressionObservationsNotSeenSince(ctx context.Context, arg sqlc.ResolveRegressionObservationsNotSeenSinceParams) ([]sqlc.DebugRegressionObservation, error) {
+	return s.appErrorsQueries().ResolveRegressionObservationsNotSeenSince(ctx, s.pool, arg)
 }
 
 // CheckDebugRegressionReadiness verifies the exact relation and parameterized

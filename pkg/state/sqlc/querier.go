@@ -383,6 +383,10 @@ type Querier interface {
 	// The insert's account_id foreign key needs a key-share lock on the
 	// namespace; taking it here with SKIP LOCKED skips an app whose namespace is
 	// mid-apply instead of holding the app row while waiting for it (40P01).
+	// The app row is taken FOR NO KEY UPDATE: it still excludes a delete, but not
+	// the key-share lock FinishAppHealth's history insert takes through
+	// app_health_history.app_id while it holds this app's collection row, which
+	// the upsert below waits on when the previous lease has just expired.
 	ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error)
 	ClaimApplicationStandardEnrollment(ctx context.Context, db DBTX, arg ClaimApplicationStandardEnrollmentParams) (ClaimApplicationStandardEnrollmentRow, error)
 	// Interactive creation uses the same lease, without scanning or claiming a
@@ -508,6 +512,9 @@ type Querier interface {
 	ClaimQueuedProfileCapture(ctx context.Context, db DBTX, arg ClaimQueuedProfileCaptureParams) (ClaimQueuedProfileCaptureRow, error)
 	ClaimReadinessSubscriptions(ctx context.Context, db DBTX, arg ClaimReadinessSubscriptionsParams) ([]CustomerWorkflowReadinessSubscription, error)
 	ClaimRegressionActionReceipt(ctx context.Context, db DBTX, arg ClaimRegressionActionReceiptParams) error
+	// ADR-20261103113952 amendment 5: record a gateway rollup batch in the
+	// transaction that applies it; 0 rows means the batch was applied before.
+	ClaimRequestAnalyticsRollupBatch(ctx context.Context, db DBTX, arg ClaimRequestAnalyticsRollupBatchParams) (int64, error)
 	// Take an app for this evaluation unless another evaluation took it since
 	// due_before; one affected row means this caller evaluates it
 	// (ADR-20261024154324).
@@ -3786,6 +3793,12 @@ type Querier interface {
 	ListDueReleaseApprovalEvents(ctx context.Context, db DBTX, arg ListDueReleaseApprovalEventsParams) ([]ReleaseApprovalEvent, error)
 	ListDueRouteMonitors(ctx context.Context, db DBTX, batchLimit int32) ([]ListDueRouteMonitorsRow, error)
 	ListDueScheduledReleases(ctx context.Context, db DBTX, arg ListDueScheduledReleasesParams) ([]ListDueScheduledReleasesRow, error)
+	ListEdgeRuleSetVersionsWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEdgeRuleSetVersionsWithRequestHeaderLiteralsParams) ([]ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow, error)
+	// ADR-20261108110000 amendment 2026-11-09: the sealing backfill finds
+	// headers rules and rule-set versions that still store a request header value
+	// as written. The scan is broad (any literal value); apid applies the
+	// credential-name test.
+	ListEdgeRulesWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEdgeRulesWithRequestHeaderLiteralsParams) ([]ListEdgeRulesWithRequestHeaderLiteralsRow, error)
 	// ADR-570: replay actual recent probe history after restart. Keep unprobed
 	// opted-in upstreams as NULL samples so retirement differs from no evidence.
 	// Collapse region verdicts sharing one probe timestamp conservatively.
@@ -3817,6 +3830,10 @@ type Querier interface {
 	// 2026-10-28 B32).
 	ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error)
 	ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUdpListener, error)
+	// Environment edge policies written through the API. An environment with
+	// an active Git source for the app is left out: its values come from the
+	// repository, and a sealed value would read as drift there.
+	ListEnvironmentEdgePoliciesWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEnvironmentEdgePoliciesWithRequestHeaderLiteralsParams) ([]ProjectEnvironmentEdgePolicy, error)
 	ListEnvironmentGitOpsOverrideExpirations(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]ListEnvironmentGitOpsOverrideExpirationsRow, error)
 	ListEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg ListEnvironmentGitOpsRunsParams) ([]EnvironmentGitopsRun, error)
 	// Include expired release windows, but only completed serving history of this binding.
@@ -6892,6 +6909,9 @@ type Querier interface {
 	ReopenSkippedWorkflowStepsForRetry(ctx context.Context, db DBTX, arg ReopenSkippedWorkflowStepsForRetryParams) (int64, error)
 	ReplaceAccountRecoveryCodes(ctx context.Context, db DBTX, arg ReplaceAccountRecoveryCodesParams) (int64, error)
 	ReplaceDatabaseStandby(ctx context.Context, db DBTX, arg ReplaceDatabaseStandbyParams) (int64, error)
+	// The digest is computed as edge_rules_record_set_version computes it, and
+	// the row is replaced only if no one changed it since it was read.
+	ReplaceEdgeRuleSetVersionRules(ctx context.Context, db DBTX, arg ReplaceEdgeRuleSetVersionRulesParams) (int64, error)
 	ReplaceProductionAppWorkloadSettings(ctx context.Context, db DBTX, arg ReplaceProductionAppWorkloadSettingsParams) error
 	ReplayDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayDeadLetterInvocationParams) (int64, error)
 	ReplayProductionDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayProductionDeadLetterInvocationParams) (int64, error)
@@ -7012,7 +7032,9 @@ type Querier interface {
 	// Bounded candidate/stable health summary for the deployment circuit breaker.
 	// `count` weights collapsed telemetry rows; compute request and 5xx totals,
 	// overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
-	// only one row.
+	// only one row. A long-lived session's duration (WebSocket, event or gRPC
+	// stream) is not a request latency: it counts as a request and a 5xx but stays
+	// out of both percentiles (ADR-20261028110044 amendment 7).
 	RequestTelemetryCircuitBreakerSummary(ctx context.Context, db DBTX, arg RequestTelemetryCircuitBreakerSummaryParams) (RequestTelemetryCircuitBreakerSummaryRow, error)
 	// Signal coverage for the customer debugger. Counts are weighted by the
 	// publisher's collapsed-row `count`, while the row totals make the amount
@@ -7045,6 +7067,12 @@ type Querier interface {
 	// Analytics backdates a rollup tier's coverage over a span with none
 	// (ADR-20261103113952 amendment 4).
 	RequestTelemetryExistsBetween(ctx context.Context, db DBTX, arg RequestTelemetryExistsBetweenParams) (bool, error)
+	// The regression detector's affected-request count: the requests each
+	// latency bucket represents, per route, over the whole window and in the
+	// regression view. A newest-rows drilldown capped at 10k rows across every
+	// route undercounted busy apps, so a real regression missed the 100-request
+	// floor. latency_ms is a bounded bucket, so the result is small per route.
+	RequestTelemetryLatencyWeightsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryLatencyWeightsByRouteParams) ([]RequestTelemetryLatencyWeightsByRouteRow, error)
 	// One immutable deployment only. Identity joins validate ownership, never
 	// infer a tenant from today's consumer link. Counts precede all output caps.
 	RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, arg RequestTelemetryRouteCustomersParams) ([]RequestTelemetryRouteCustomersRow, error)
@@ -7089,6 +7117,13 @@ type Querier interface {
 	// Public release selectors retain their configured access window. Private
 	// execution retention is resolved only through an owned operation/workload.
 	ResolvePublicProjectRelease(ctx context.Context, db DBTX, arg ResolvePublicProjectReleaseParams) (ResolvePublicProjectReleaseRow, error)
+	// An app's complete detector pass reconfirms every regression it still sees
+	// (UpsertRegressionObservation stamps last_detected_at = now()); whatever of
+	// that app it did not reconfirm is no longer regressed, after a fix or a
+	// rollback included. Resolving here, rather than 24 hours later through
+	// ResolveStaleRegressionObservations, keeps the banner, status and the
+	// resolved webhook current. $2 is the pass start (with clock slack).
+	ResolveRegressionObservationsNotSeenSince(ctx context.Context, db DBTX, arg ResolveRegressionObservationsNotSeenSinceParams) ([]DebugRegressionObservation, error)
 	ResolveRetainedProjectRelease(ctx context.Context, db DBTX, arg ResolveRetainedProjectReleaseParams) (ResolveRetainedProjectReleaseRow, error)
 	// A detector pass that no longer sees a regression resolves the previous
 	// observation. Returning rows lets apid publish one account-scoped event per

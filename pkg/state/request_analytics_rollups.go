@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -119,6 +120,51 @@ func (s *PgStore) AddRequestAnalyticsRollups(ctx context.Context, rows []Request
 		return fmt.Errorf("begin request analytics rollups: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := addRequestAnalyticsRollupsTx(ctx, tx, rows, coverage); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit request analytics rollups: %w", err)
+	}
+	return nil
+}
+
+// RequestAnalyticsRollupBatchStore applies gateway rollup batches once
+// (ADR-20261103113952 amendment 5).
+type RequestAnalyticsRollupBatchStore interface {
+	AddRequestAnalyticsRollupBatch(ctx context.Context, batchID uuid.UUID, nodeID string, rows []RequestAnalyticsRollup, coverage []RequestAnalyticsCoverage) (replayed bool, err error)
+}
+
+var _ RequestAnalyticsRollupBatchStore = (*PgStore)(nil)
+
+// AddRequestAnalyticsRollupBatch applies a gateway's rollup batch and
+// records its batch_id in one transaction; a batch_id applied before is
+// left alone and reported as replayed.
+func (s *PgStore) AddRequestAnalyticsRollupBatch(ctx context.Context, batchID uuid.UUID, nodeID string, rows []RequestAnalyticsRollup, coverage []RequestAnalyticsCoverage) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin request analytics rollup batch: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	claimed, err := sqlc.New().ClaimRequestAnalyticsRollupBatch(ctx, tx, sqlc.ClaimRequestAnalyticsRollupBatchParams{
+		BatchID: NewPgtypeUUID(batchID), NodeID: nodeID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("claim request analytics rollup batch: %w", mapErr(err))
+	}
+	if claimed == 0 {
+		return true, nil
+	}
+	if err := addRequestAnalyticsRollupsTx(ctx, tx, rows, coverage); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit request analytics rollup batch: %w", err)
+	}
+	return false, nil
+}
+
+func addRequestAnalyticsRollupsTx(ctx context.Context, tx pgx.Tx, rows []RequestAnalyticsRollup, coverage []RequestAnalyticsCoverage) error {
 	q := sqlc.New()
 	for start := 0; start < len(rows); start += api.RequestAnalyticsRollupFlushRowsMax {
 		end := min(start+api.RequestAnalyticsRollupFlushRowsMax, len(rows))
@@ -147,9 +193,6 @@ func (s *PgStore) AddRequestAnalyticsRollups(ctx context.Context, rows []Request
 		if err := q.RecordRequestAnalyticsRollupCoverage(ctx, tx, arg); err != nil {
 			return fmt.Errorf("record request analytics rollup coverage: %w", mapErr(err))
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit request analytics rollups: %w", err)
 	}
 	return nil
 }

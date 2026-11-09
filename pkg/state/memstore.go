@@ -245,9 +245,9 @@ type MemStore struct {
 	exclusiveNow                         func() time.Time
 	exclusiveSubmissions                 map[string]string
 	capacityInstanceResources            map[string]capacityResources
-	// instanceBookedCPU mirrors instances.booked_cpu_millicores
-	// (ADR-20261101160231 step 5b).
-	instanceBookedCPU                          map[string]int
+	// instanceBookings mirrors instances.booked_cpu_millicores
+	// (ADR-20261101160231 step 5b) and booked_vcpu (ADR-20261109172421).
+	instanceBookings                           map[string]instanceBooking
 	serviceCapacityProtection                  bool
 	serviceRecovery                            map[string]ServiceRecovery
 	devBridgeSessions                          map[string]devbridge.Session
@@ -437,7 +437,10 @@ type MemStore struct {
 	// customMetrics[appID][name] holds ADR-202 pushed gauges. Nested so
 	// the per-app distinct-name cap is a len() on the inner map, matching
 	// what PgStore's count(*) over (app_id) measures.
-	customMetrics               map[string]map[string]CustomMetric
+	customMetrics map[string]map[string]CustomMetric
+	// customMetricSeries mirrors app_custom_metric_series: app id → metric
+	// name → series key (ADR-20261108160000 slice C).
+	customMetricSeries          map[string]map[string]map[string]CustomMetricSeries
 	mcpTaskCompatibilityReports map[string]MCPTaskCompatibilityReport
 	notificationChannels        map[string][]NotificationChannel // account id → channels (ADR-749), lazily made
 	// objectStorageTimeline and acceptedObjectStorageTimeline mirror the
@@ -7835,7 +7838,7 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 			delete(m.instanceRuntimeConfigReceipts, key)
 			m.deleteSecretRuntimeProcessesLocked(key)
 			delete(m.capacityInstanceResources, key)
-			delete(m.instanceBookedCPU, key)
+			delete(m.instanceBookings, key)
 		}
 	}
 	delete(m.deploymentPolicyStates, id)
@@ -9147,6 +9150,9 @@ func (m *MemStore) ListCanaryInFlight(_ context.Context) ([]Deployment, error) {
 		}
 		rolloutState := NormalizeRolloutState(d.RolloutState)
 		if rolloutState != "pending" && rolloutState != "rolling_out" {
+			continue
+		}
+		if app, ok := m.apps[d.AppID]; ok && (app.Status == AppDeleted || app.DeletedAt != nil) {
 			continue
 		}
 		d.RolloutState = rolloutState
@@ -17442,7 +17448,7 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 		delete(m.instanceRuntimeConfigReceipts, row.id)
 		m.deleteSecretRuntimeProcessesLocked(row.id)
 		delete(m.capacityInstanceResources, row.id)
-		delete(m.instanceBookedCPU, row.id)
+		delete(m.instanceBookings, row.id)
 	}
 	return int64(len(candidates)), nil
 }
@@ -17488,7 +17494,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	delete(m.instanceRuntimeConfigReceipts, id)
 	m.deleteSecretRuntimeProcessesLocked(id)
 	delete(m.capacityInstanceResources, id)
-	delete(m.instanceBookedCPU, id)
+	delete(m.instanceBookings, id)
 	return nil
 }
 
@@ -24492,7 +24498,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 			delete(m.instanceRuntimeConfigReceipts, iid)
 			m.deleteSecretRuntimeProcessesLocked(iid)
 			delete(m.capacityInstanceResources, iid)
-			delete(m.instanceBookedCPU, iid)
+			delete(m.instanceBookings, iid)
 		}
 	}
 	for taskID, task := range m.appTasks {
@@ -29055,6 +29061,12 @@ func (m *MemStore) ApplyRegressionAction(_ context.Context, _ sqlc.ApplyRegressi
 // MemStore; the detector and its lifecycle transitions are Postgres-only.
 func (m *MemStore) ResolveStaleRegressionObservations(_ context.Context, _ pgtype.Interval) ([]sqlc.DebugRegressionObservation, error) {
 	panic("memstore: ResolveStaleRegressionObservations unimplemented")
+}
+
+// ResolveRegressionObservationsNotSeenSince is Postgres-only, like the rest
+// of the detector's lifecycle transitions.
+func (m *MemStore) ResolveRegressionObservationsNotSeenSince(_ context.Context, _ sqlc.ResolveRegressionObservationsNotSeenSinceParams) ([]sqlc.DebugRegressionObservation, error) {
+	panic("memstore: ResolveRegressionObservationsNotSeenSince unimplemented")
 }
 
 // ListDeploymentsForCompare is intentionally unsupported by MemStore;

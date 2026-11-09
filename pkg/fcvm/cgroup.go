@@ -24,7 +24,27 @@ type startupCPUProfile struct {
 // shared by cold boots and snapshot restores. An unset opt-out stays false so
 // legacy and newly-created deployments retain the existing boost.
 func shouldApplyStartupCPUBoost(lease Lease, eligible bool) bool {
-	return eligible && !lease.IsBuilder && lease.Plan.Valid() && !lease.DisableStartupCPUBoost
+	// An uncapped VM already has every CPU a boost could lend
+	// (ADR-20261109172421).
+	return eligible && !lease.IsBuilder && lease.Plan.Valid() && !lease.DisableStartupCPUBoost && !leaseUncappedAt(lease, lease.CPUMillicores)
+}
+
+// leaseUncappedAt reports whether an app lease runs without a CPU quota at a
+// given ceiling. An uncapped lease (ADR-20261109172421) drops the quota only
+// at the app default ceiling; an app that chose 250 or 500 millicores keeps
+// that as its cap, at boot and after a live policy update.
+func leaseUncappedAt(l Lease, cpuMillicores int) bool {
+	return l.CPUUncapped && !l.Networkless && !l.IsBuilder &&
+		(cpuMillicores <= 0 || cpuMillicores >= api.DefaultAppCPUMillicores)
+}
+
+// liveAppCPUMax is the cpu.max an app lease runs with at a ceiling pushed by
+// a live CPU policy update.
+func liveAppCPUMax(l Lease, cpuMillicores int) (string, error) {
+	if leaseUncappedAt(l, cpuMillicores) {
+		return uncappedCPUMax(l.Plan)
+	}
+	return appCPUMax(l.Plan, cpuMillicores)
 }
 
 // resolveStartupCPUProfile grants at most one host CPU while an app cold boots
@@ -326,6 +346,9 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 // networkless VM is sized in whole vCPUs (ADR-20261027090014 §3), beyond the app CPU
 // tiers; every other lease keeps the app rules.
 func leaseCPUMax(l Lease) (string, error) {
+	if leaseUncappedAt(l, l.CPUMillicores) {
+		return uncappedCPUMax(l.Plan)
+	}
 	if !l.Networkless || l.CPUMillicores <= api.DefaultAppCPUMillicores || !api.ValidAgentRunCPUMillicores(l.CPUMillicores) {
 		return appCPUMax(l.Plan, l.CPUMillicores)
 	}
@@ -334,6 +357,16 @@ func leaseCPUMax(l Lease) (string, error) {
 		return "", fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max (%d/%d)", l.Plan, l.Plan.CPUQuotaUS(), period)
 	}
 	return fmt.Sprintf("%d %d", l.CPUMillicores*period/1000, period), nil
+}
+
+// uncappedCPUMax is the cpu.max of an app VM without a quota: it may use any
+// idle host CPU up to its vCPUs (ADR-20261109172421).
+func uncappedCPUMax(plan api.Plan) (string, error) {
+	period := plan.CPUPeriodUS()
+	if period <= 0 {
+		return "", fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max period %d", plan, period)
+	}
+	return fmt.Sprintf("max %d", period), nil
 }
 
 // appCPUMax returns the cpu.max value ("<quota> <period>") for an app VM.

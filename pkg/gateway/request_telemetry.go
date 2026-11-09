@@ -84,6 +84,10 @@ type RequestTelemetryRow struct {
 	TraceID      string // W3C trace-id hex (32 chars); "" when unset
 	ReceivedAt   time.Time
 	Count        int // PR-B: collapse aggregate; >= 1 (CHECK in 00428). Recorder sets to 1.
+	// AnalyticsCounted is set when the gateway counted the row into its own
+	// analytics rollups, so apid must not count it again
+	// (ADR-20261103113952 amendment 5).
+	AnalyticsCounted bool
 	// Causal identifiers retained for the debugger timeline. WakeID is set
 	// only when this request admitted a new wake; InstanceID identifies the
 	// selected VM when the request reached a target. They are opaque strings
@@ -204,6 +208,10 @@ type requestTelemetryRecorder struct {
 	wakeFn        func()
 	wakeThreshold int
 	wakeArmed     bool
+
+	// analytics counts rows into per-minute rollups before the ring; nil
+	// unless EnableAnalyticsRollups ran.
+	analytics *requestAnalyticsRollups
 }
 
 // NewRequestTelemetryRecorder wires the recorder. The publisher
@@ -249,7 +257,29 @@ func (r *requestTelemetryRecorder) RecordFromObserve(row RequestTelemetryRow) {
 	if row.EventID == uuid.Nil {
 		row.EventID = uuid.New()
 	}
+	row.AnalyticsCounted = r.analytics.count(row)
 	r.enqueue(row)
+}
+
+// EnableAnalyticsRollups makes the gateway count requests into per-minute
+// analytics rollups itself and ship them through cfg.Ship
+// (ADR-20261103113952 amendment 5;
+// FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS). Call it at boot, before request
+// traffic and before the publisher starts.
+func (r *requestTelemetryRecorder) EnableAnalyticsRollups(cfg RequestAnalyticsRollupsConfig, log *slog.Logger) {
+	g := newRequestAnalyticsRollups(cfg, log)
+	g.losses = func(byApp map[uuid.UUID]int64) {
+		r.ringMu.Lock()
+		defer r.ringMu.Unlock()
+		for app, n := range byApp {
+			if _, ok := r.appLosses[app]; !ok && len(r.appLosses) >= len(r.ring) {
+				r.unattributedLosses += n
+				continue
+			}
+			r.appLosses[app] += n
+		}
+	}
+	r.analytics = g
 }
 
 // enqueue is the single entry point for the ringbuffer append.

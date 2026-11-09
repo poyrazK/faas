@@ -389,8 +389,15 @@ values are at most 4096 bytes and work on request headers only, not with
 `template` or `remove`.
 
 A credential-named value saved before sealing arrived is shown with an empty
-`value` and `"redacted": true`. Sending that op back unchanged seals the
-stored value. Environment policies do not take sealed values yet.
+`value` and `"redacted": true`. The platform seals such values in your rules
+and their saved versions on its own, which adds a rule version with the same
+headers; sending the op back unchanged seals the value right away. During a
+platform upgrade a new value can briefly be stored this way too, until every
+edge server can read sealed values.
+
+Environment edge policies seal credential values the same way. In an
+environment managed from Git, values stay as your repository defines them;
+responses still leave them out.
 
 ### cors
 
