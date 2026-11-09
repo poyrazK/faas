@@ -154,7 +154,7 @@ func workloadDiff(
 			continue
 		}
 		// A function the repository no longer declares keeps its app; deleting
-		// it stays explicit (ADR-20261108160000 Â§2).
+		// it stays explicit (ADR-20261108160000 §2).
 		if a.Type == state.AppTypeFunction {
 			continue
 		}

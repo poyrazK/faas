@@ -1597,6 +1597,11 @@ type Manifest struct {
 	// sets these keys and removes none: a key dropped from the manifest stays
 	// until `gregale app label unset` removes it. Labels are not secret.
 	Labels map[string]string `yaml:"labels,omitempty"`
+
+	// FunctionSettings is set on a FunctionAppManifest view: the function's
+	// app settings (RAM, idle timeout, concurrency, env) that a repository
+	// push applies to its function app (ADR-20261108160000 §4). Never parsed.
+	FunctionSettings *FunctionSpec `yaml:"-"`
 }
 
 // ReleaseConfig declares a command that must succeed for the candidate

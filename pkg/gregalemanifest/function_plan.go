@@ -249,6 +249,8 @@ func (m *Manifest) FunctionAppManifest(p FunctionPlan) *Manifest {
 		Function:      &FunctionConfig{Runtime: p.Runtime, Handler: p.Handler},
 		QueueBindings: p.Spec.QueueBindings,
 	}
+	spec := p.Spec
+	out.FunctionSettings = &spec
 	for _, trigger := range p.Spec.EventTriggers {
 		trigger.App = p.Slug
 		out.EventTriggers = append(out.EventTriggers, trigger)

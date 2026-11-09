@@ -937,6 +937,14 @@ func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Accou
 			app = reloaded
 		}
 	}
+	if m.FunctionSettings != nil {
+		updated, problem := s.applySourceFunctionSettings(ctx, acct, app, *m.FunctionSettings)
+		if problem != nil {
+			undo(context.WithoutCancel(ctx))
+			return app, func(context.Context) {}, problem
+		}
+		app = updated
+	}
 	return app, undo, nil
 }
 

@@ -6314,7 +6314,7 @@ func (s *PgStore) applyProjectReconcileOnce(
 	creates, removes := 0, 0
 	// adopt maps a function workload to the same-account function app
 	// outside any project that already holds its slug: `gregale deploy`
-	// made it, and the repository takes it over (ADR-20261108160000 Â§1).
+	// made it, and the repository takes it over (ADR-20261108160000 §1).
 	adopt := make(map[string]string)
 	removeIDs := make(map[string]bool)
 	for _, mutation := range mutations {
