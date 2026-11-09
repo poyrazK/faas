@@ -25,12 +25,21 @@ func (f *fakeEndpointSyncer) SyncRealtimeConnectionsWithEndpoints(ctx context.Co
 	return accounts, f.endpoints, err
 }
 
+func (f *fakeEndpointSyncer) setEndpoints(endpoints []state.RealtimeEndpointConnections) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.endpoints = endpoints
+}
+
 // A customer-set max_connections holds across nodes: connections the other
 // nodes report count against it. Before, each node allowed the full cap, so
 // two nodes admitted twice the endpoint's max_connections.
 func TestEndpointMaxConnectionsCountsOtherNodes(t *testing.T) {
 	syncer := &fakeEndpointSyncer{}
-	node := newFairUseNode(t, Config{ConnectionSync: syncer, ConnectionSyncInterval: 3600e9})
+	// The syncer is attached after the Manager starts, so its background
+	// sync loop never runs and the test drives every sync itself.
+	node := newFairUseNode(t, Config{})
+	node.m.cfg.ConnectionSync = syncer
 	register := func(limit int) string {
 		id := uuid.NewString()
 		if err := node.m.RegisterEndpoint(Endpoint{Preview: true, ID: id, AppID: "app", AccountID: uuid.NewString(), MaxConnections: limit,
@@ -42,7 +51,7 @@ func TestEndpointMaxConnectionsCountsOtherNodes(t *testing.T) {
 	capped := register(2)
 	uncapped := register(0)
 	// Another node holds one connection to each endpoint.
-	syncer.endpoints = []state.RealtimeEndpointConnections{{EndpointID: capped, Connections: 1}, {EndpointID: uncapped, Connections: 1}}
+	syncer.setEndpoints([]state.RealtimeEndpointConnections{{EndpointID: capped, Connections: 1}, {EndpointID: uncapped, Connections: 1}})
 	node.m.syncConnections(context.Background())
 
 	syncer.mu.Lock()
@@ -65,7 +74,7 @@ func TestEndpointMaxConnectionsCountsOtherNodes(t *testing.T) {
 		}
 	}
 	// When the other node's connection goes, the next sync frees the slot.
-	syncer.endpoints = nil
+	syncer.setEndpoints(nil)
 	node.m.syncConnections(context.Background())
 	if _, status, _ := node.dial(t, capped); status != http.StatusSwitchingProtocols {
 		t.Fatalf("connection after the remote one closed refused with %d", status)
