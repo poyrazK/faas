@@ -122,6 +122,11 @@ type Config struct {
 	// returns guest-freed pages to the host. It is on by default on
 	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// DisableRestoreClockRealtime stops advancing a restored guest's
+	// kvm-clock by the time its capture spent parked (ADR-20261109120000).
+	// It is on by default on Firecracker 1.16+ hosts with the tsc
+	// clocksource; FAAS_RESTORE_CLOCK_REALTIME=0 overrides TOML.
+	DisableRestoreClockRealtime bool `toml:"disable_restore_clock_realtime"`
 	// RestoreReseedThread boots app VMs whose Node processes answer the
 	// restore reseed barrier from a native thread instead of their event
 	// loop (ADR-20261024105607). Off by default; FAAS_RESTORE_RESEED_THREAD
@@ -1125,6 +1130,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_FREE_PAGE_REPORTING must be a boolean (got %q)", v)
 		}
 		c.DisableFreePageReporting = !enabled
+	}
+	if v := os.Getenv("FAAS_RESTORE_CLOCK_REALTIME"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_CLOCK_REALTIME must be a boolean (got %q)", v)
+		}
+		c.DisableRestoreClockRealtime = !enabled
 	}
 	// A shared acceptance host runs several vmmd builds over time; each test
 	// run points its own vmmd at a private journal so a record written by a
