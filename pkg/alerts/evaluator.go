@@ -656,12 +656,17 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if cooldown <= 0 {
 		cooldown = time.Minute // belt + braces; the schema defaults to >= 1
 	}
-	if !rule.LastFiredAt.IsZero() && now.Sub(rule.LastFiredAt) < cooldown {
-		// Still breaching inside the cool-down: record the breach even
-		// though the cool-down withholds a delivery. That covers a degraded
-		// read that recovered and a new breach after the rule resolved to
-		// ok, which otherwise read "ok" for a whole incident (production-us
-		// hunt #9, H9-94).
+	// The cool-down limits repeat notices for one incident. A breach after
+	// the previous incident closed (the rule recovered to ok and its
+	// resolve went out) is a new incident and fires at once: gating it on
+	// the old fire's time hid a whole incident that started and ended inside
+	// the window, and the receiver then heard a second resolve for a fire it
+	// never got (ADR-20261110090000).
+	if !rule.LastFiredAt.IsZero() && now.Sub(rule.LastFiredAt) < cooldown && e.episodeWasFiring(ctx, rule) {
+		// Still breaching inside the cool-down of the open incident: record
+		// the breach even though the cool-down withholds a delivery. That
+		// covers a degraded read that recovered, which otherwise read "ok"
+		// for a whole incident (production-us hunt #9, H9-94).
 		if rule.State != state.AlertStateFiring {
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
 				e.log.Warn("alerts: restore firing state", "rule", rule.ID, "err", err)
