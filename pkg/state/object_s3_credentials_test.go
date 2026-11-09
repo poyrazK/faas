@@ -147,8 +147,21 @@ func objectS3ComputeBindingCreateSuite(t *testing.T, base state.Store) {
 	if _, err := bindings.CreateObjectS3ComputeBinding(ctx, duplicate); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate prefix = %v", err)
 	}
+	// ADR-20261109120000: only customer-authored secrets count toward the
+	// plan limit; the six managed values already stored do not.
+	if count, err := base.CountAppSecrets(ctx, acct.ID, app.ID); err != nil || count != 0 {
+		t.Fatalf("managed values counted as customer secrets: %d, %v", count, err)
+	}
+	for _, key := range []string{"CUSTOMER_ONE", "CUSTOMER_TWO"} {
+		if err := base.UpsertAppSecretInScope(ctx, acct.ID, app.ID, "default", key, []byte("customer")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stamp, _, err = base.AppRuntimeConfigChangedAt(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
 	limited := makeRequest("GREGALE_S3_OTHER", "GRGACCCCCCCCCCCCCCCC")
-	limited.MaxSecretsPerApp = 11
+	limited.MaxSecretsPerApp = 1
 	if _, err := bindings.CreateObjectS3ComputeBinding(ctx, limited); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("secret quota = %v", err)
 	}
@@ -157,6 +170,16 @@ func objectS3ComputeBindingCreateSuite(t *testing.T, base state.Store) {
 	}
 	if after, _, err := base.AppRuntimeConfigChangedAt(ctx, app.ID); err != nil || !after.Equal(stamp) {
 		t.Fatalf("rejected create changed runtime stamp: before=%v after=%v err=%v", stamp, after, err)
+	}
+	for _, key := range []string{"CUSTOMER_ONE", "CUSTOMER_TWO"} {
+		if err := base.DeleteAppSecretInScope(ctx, acct.ID, app.ID, "default", key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// With the customer secrets gone, a low plan limit no longer blocks a
+	// second binding although six managed values already exist.
+	if _, err := bindings.CreateObjectS3ComputeBinding(ctx, limited); err != nil {
+		t.Fatalf("managed values must not consume the plan secret limit: %v", err)
 	}
 }
 

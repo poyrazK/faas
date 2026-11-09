@@ -269,7 +269,8 @@ environment secrets: `<PREFIX>_ENDPOINT`, `_REGION`, `_BUCKET`,
 defaults to `GREGALE_S3_` and the bucket name in capitals, such as
 `GREGALE_S3_ASSETS`; set another with `--prefix`. Pass them to your
 S3 SDK. The credentials are sealed: they are never printed or returned by the
-API.
+API. These six values, like a managed PostgreSQL `DATABASE_URL`, do not count
+toward your plan's per-app secret limit, which covers only the secrets you set.
 
 To keep the binding next to your code, declare it in `gregale.yaml`:
 

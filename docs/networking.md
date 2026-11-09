@@ -276,8 +276,10 @@ read failures preserve other results and make inventory incomplete.
 
 The endpoint requires app read access and completed MFA for browser sessions.
 PostgreSQL metadata additionally requires `managed-postgres:read`; storage
-metadata requires `storage:manage`, matching the existing compute-binding read
-surface. An admin key or authenticated session has the existing full access.
+metadata requires `storage:read` or `storage:manage`, as does listing compute
+bindings; neither returns a credential, so a least-privilege CI key can run
+`gregale app binding check`. An admin key or authenticated session has the
+existing full access.
 Insufficient resource permissions omit that section without reading it.
 
 If a section or consumer status cannot be read, the API returns HTTP 200 with

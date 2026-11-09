@@ -3,6 +3,7 @@ package object
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -196,17 +197,16 @@ func (s *Service) newObjectStorageComputeBinding(ctx context.Context, acct state
 	secretValues := ObjectStorageBindingSecretValues(keys, s.Host.ObjectStorage().PublicEndpoint, s.Host.ObjectStorage().PublicRegion, bucket.Name, "", "")
 	for _, item := range secretValues {
 		if keySet[item.key] {
-			return state.ObjectS3Credential{}, nil, state.ErrConflict
+			// The default prefix maps punctuation to "_" and truncates, so two
+			// buckets can share one; name the key so the caller can pick another.
+			return state.ObjectS3Credential{}, api.NewProblem(http.StatusConflict, "object_storage_binding_secret_conflict", "Binding variable already exists",
+				fmt.Sprintf("The app already has %s in scope %q, so this binding's %s_* variables would collide.", item.key, bucket.Scope, req.Prefix)).
+				WithHint("Choose another prefix (gregale add bucket --prefix NAME, or prefix in the request), or remove the existing variable."), nil
 		}
 	}
+	// The binding's six managed values (four of them not secret) do not consume
+	// SecretCountMax; per-bucket credential limits bound them (ADR-20261109120000).
 	limits := api.MustLimitsFor(acct.Plan)
-	count, err := s.Host.Store().CountAppSecrets(ctx, acct.ID, app.ID)
-	if err != nil {
-		return state.ObjectS3Credential{}, nil, err
-	}
-	if count+len(secretValues) > limits.SecretCountMax {
-		return state.ObjectS3Credential{}, api.ErrPlanLimitSecrets(limits, count+len(secretValues)), nil
-	}
 	if !s.ObjectStorageSecretSealReady() {
 		return state.ObjectS3Credential{}, nil, objectstorage.ErrUnavailable
 	}
@@ -396,6 +396,7 @@ func (s *Service) RotateObjectStorageComputeBinding(w http.ResponseWriter, r *ht
 			break
 		}
 	}
+	resident := false
 	if !hasLive {
 		instances, err := s.Host.Store().ListInstancesForApp(r.Context(), app.ID)
 		if err != nil {
@@ -404,10 +405,16 @@ func (s *Service) RotateObjectStorageComputeBinding(w http.ResponseWriter, r *ht
 		}
 		for _, instance := range instances {
 			if state.State(instance.State).CountsForRAM() {
-				api.WriteProblem(w, api.ErrCapacity("cannot finish rotation while resident instances remain without a live deployment"))
-				return
+				resident = true
+				break
 			}
 		}
+	}
+	// Resident instances without a live deployment still hold the previous
+	// credential: queue the same rolling runtime refresh a live app gets, as
+	// managed PostgreSQL rotation does, instead of refusing the rotation on
+	// every retry while the staged credential waits.
+	if !hasLive && !resident {
 		if err := store.FinalizeObjectS3CredentialRotationsForApp(r.Context(), app.ID, wakeID); err != nil {
 			BucketProblem(w, err)
 			return

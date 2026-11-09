@@ -3507,9 +3507,9 @@
     },
     {
       "id": "object-storage-compute",
-      "name": "Object storage compute triggers",
+      "name": "Object storage compute bindings and triggers",
       "category": "data",
-      "description": "Run app code on bucket notifications.",
+      "description": "Bind buckets to apps and run app code on bucket notifications.",
       "maturity": "preview",
       "plans": [
         "hobby",

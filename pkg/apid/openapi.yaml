@@ -9039,7 +9039,7 @@ paths:
     get:
       operationId: listObjectStorageComputeBindings
       summary: List compute bindings for a bucket
-      description: Requires storage:manage or admin. Secret values are never returned; only the sealed app-secret names are listed.
+      description: Requires storage:read, storage:manage or admin. Secret values are never returned; only the sealed app-secret names are listed.
       tags: [storage]
       responses:
         '200':
