@@ -130,6 +130,12 @@ fleet runs that release. Rolling back past it means turning the variable off
 first. Every other request stays on HTTP/1.1, so an older gatewayd-public
 behind an h2c-enabled Caddy fails gRPC only.
 
+A new manifest key follows the same rule. An older gregalectl rejects a
+manifest key it does not know, so the deployment manifest gains the key only
+after a release whose gregalectl reads it has shipped; rolling back past that
+release means removing the key first. Feature stages in the manifest, such as
+`service_tcp` (ADR-576), turn on one stage per rollout and off in reverse.
+
 **Headers and trailers between gateways are part of the N±1 contract.**
 gatewayd-public runs on the control-plane host and moves with the
 control-plane stage, so for a whole rollout it sits in front of N-1 compute
@@ -148,6 +154,14 @@ budget. `TestPublicTrafficSecurityFollowsItsPeers`,
 `TestPublicProxyServesAPlainN1Answer` (`pkg/gateway`) hold the public hop to
 this. A new header requirement needs the same fleet gate or an opt-in
 negotiation, plus a case in those tests.
+
+**Policy data the edge reads is part of the contract too.** apid writes edge
+rules before the gateways upgrade, so a new field that changes what a rule
+does must not be written until every gateway reads it. ADR-20261108110000
+sealed header values as an empty `value` plus `secret_id`; an N-1 gateway
+ignored `secret_id` and sent the header empty. apid now seals only while every
+gateway reports `edge_header_secrets` in its traffic runtime report, a
+capability tied to the reporting boot so a rolled-back gateway stops counting.
 
 ## Gate 1: version skew (CI, every pull request)
 

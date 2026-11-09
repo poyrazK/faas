@@ -492,6 +492,8 @@ from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
 from .custom_metric_response import CustomMetricResponse
 from .custom_metric_response_kind import CustomMetricResponseKind
+from .custom_metric_series_value import CustomMetricSeriesValue
+from .custom_metric_series_value_labels import CustomMetricSeriesValueLabels
 from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
@@ -2402,6 +2404,7 @@ from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
 from .update_deployment_traffic_request_expected_mcp_access_policy import (
     UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy,
 )
+from .update_deployment_traffic_request_expected_traffic import UpdateDeploymentTrafficRequestExpectedTraffic
 from .update_edge_rule_list_request import UpdateEdgeRuleListRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
@@ -3162,6 +3165,8 @@ __all__ = (
     "CustomMetricRequest",
     "CustomMetricResponse",
     "CustomMetricResponseKind",
+    "CustomMetricSeriesValue",
+    "CustomMetricSeriesValueLabels",
     "CustomStage",
     "DailyUsageListResponse",
     "DailyUsagePoint",
@@ -4916,6 +4921,7 @@ __all__ = (
     "UpdateDeploymentRequest",
     "UpdateDeploymentTrafficRequest",
     "UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy",
+    "UpdateDeploymentTrafficRequestExpectedTraffic",
     "UpdateEdgeRuleListRequest",
     "UpdateEdgeRuleRequest",
     "UpdateEdgeRuleRequestMatchHeaders",

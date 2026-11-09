@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -135,10 +136,33 @@ func (h *devDebugTunnel) attach(w http.ResponseWriter, r *http.Request, acct sta
 	defer func() { _ = conn.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
+	// A debugger session can evaluate code and read the process environment,
+	// so it leaves an audit trail like any other privileged access: who
+	// attached (account and key, including agent keys), to which environment
+	// and instance, and for how long.
+	auditData := map[string]any{"app_id": app.ID, "app_slug": app.Slug, "instance_id": target.InstanceID}
+	if _, key, ok := mwauth.AccountFromCtx(r.Context()); ok && key != nil {
+		auditData["key_id"] = key.ID
+	}
+	h.emitAudit(r.Context(), "dev.debugger.attached", acct.ID, auditData)
+	started := time.Now()
 	h.log.Info("developer debugger attached", "account_id", acct.ID, "app_id", app.ID, "instance_id", target.InstanceID)
 	if err := h.forward(ctx, conn, target); err != nil && ctx.Err() == nil {
 		h.log.Info("developer debugger session ended", "app_id", app.ID, "err", err)
 	}
+	detached := make(map[string]any, len(auditData)+1)
+	for k, v := range auditData {
+		detached[k] = v
+	}
+	detached["duration_ms"] = time.Since(started).Milliseconds()
+	h.emitAudit(context.WithoutCancel(r.Context()), "dev.debugger.detached", acct.ID, detached)
+}
+
+func (h *devDebugTunnel) emitAudit(ctx context.Context, kind, accountID string, data map[string]any) {
+	if h.auth == nil || h.auth.Audit == nil {
+		return
+	}
+	h.auth.Audit.Emit(ctx, kind, &accountID, data)
 }
 
 // newDevDebugTunnel returns nil when the gateway lacks the API-key

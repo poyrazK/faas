@@ -36,7 +36,7 @@ func (e *Evaluator) SetChannels(sender ChannelSender, outcome func(kind, outcome
 	if e == nil {
 		return
 	}
-	e.channels, e.channelOutcome = sender, outcome
+	e.channels, e.channelOutcome = e.verifiedEmail(sender), outcome
 }
 
 // notifyChannels sends event to every channel bound to rule (ADR-749),
@@ -65,9 +65,16 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 		e.clearChannelResolves(ctx, rule.ID)
 		e.clearChannelStandDowns(ctx, rule.ID)
 	}
+	// Any new notice supersedes a fire still waiting for a retry: a newer
+	// fire repeats it, and a late fire after a recovery would reopen the
+	// incident (ADR-20261109153000).
+	e.clearChannelFires(rule.ID)
 	return e.sendToChannels(ctx, chans, e.channelMessage(ctx, rule, event, observed, now), now, func(ch state.NotificationChannel, errMsg string) {
-		if event == alertchannels.EventResolve {
+		switch event {
+		case alertchannels.EventResolve:
 			e.trackChannelResolve(ctx, rule, ch, observed, now, errMsg)
+		case alertchannels.EventFire:
+			e.trackChannelFire(rule, ch, observed, now, errMsg)
 		}
 		if errMsg != "" {
 			e.auditChannelFailure(ctx, rule, ch, event, errMsg)
@@ -197,7 +204,7 @@ func (e *Evaluator) unsealIdentities() []*age.X25519Identity {
 }
 
 func openTarget(ids []*age.X25519Identity, ch state.NotificationChannel) (alertchannels.Target, bool) {
-	t := alertchannels.Target{Kind: ch.Kind, Region: ch.PagerDutyRegion, Email: ch.Email}
+	t := alertchannels.Target{Kind: ch.Kind, Region: ch.PagerDutyRegion, Email: ch.Email, AccountID: ch.AccountID}
 	if ch.Kind == alertchannels.KindEmail {
 		return t, true
 	}

@@ -84,7 +84,7 @@ func (s *server) remindVerificationDue(r *http.Request, acct state.Account) {
 	now := s.verificationNow()
 	deadline := verificationDeadline(acct)
 	if now.After(deadline) || deadline.Sub(now) > api.EmailVerificationReminderWindow ||
-		!s.verificationReminders.allow(acct.ID, now) {
+		!s.allowVerificationReminder(r.Context(), acct.ID, now) {
 		return
 	}
 	base := s.passwordResetLinkBase(r)
@@ -151,4 +151,20 @@ func dashboardOverdueRoute(method, path string) bool {
 		return true
 	}
 	return false
+}
+
+// verificationReminderSlot allows one deadline reminder a day per account.
+var verificationReminderSlot = state.MailSlotLimit{
+	Window:       api.EmailVerificationReminderInterval,
+	MaxPerWindow: 1,
+	MinInterval:  api.EmailVerificationReminderInterval,
+}
+
+// allowVerificationReminder counts the reminder in the database so all
+// apids share one a day; the per-process map stands in when it cannot.
+func (s *server) allowVerificationReminder(ctx context.Context, accountID string, now time.Time) bool {
+	if allowed, shared := s.takeSharedMailSlot(ctx, accountID, "verification_reminder", verificationReminderSlot); shared {
+		return allowed
+	}
+	return s.verificationReminders.allow(accountID, now)
 }

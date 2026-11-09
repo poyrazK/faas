@@ -29680,6 +29680,22 @@ CREATE TABLE public.account_email_changes (
 
 
 --
+-- Name: account_mail_throttle; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_mail_throttle (
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    window_started_at timestamp with time zone NOT NULL,
+    sent_in_window integer NOT NULL,
+    last_sent_at timestamp with time zone NOT NULL,
+    CONSTRAINT account_mail_throttle_count_check CHECK (((sent_in_window >= 1) AND (sent_in_window <= 1000))),
+    CONSTRAINT account_mail_throttle_kind_check CHECK ((kind ~ '^[a-z][a-z0-9_]{0,47}$'::text)),
+    CONSTRAINT account_mail_throttle_times_check CHECK ((isfinite(window_started_at) AND isfinite(last_sent_at) AND (last_sent_at >= window_started_at)))
+);
+
+
+--
 -- Name: account_oauth_unlinks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -31457,6 +31473,26 @@ CREATE TABLE public.app_cpu_policy_node_status (
     CONSTRAINT app_cpu_policy_node_status_applied_revision_check CHECK ((applied_revision >= 0)),
     CONSTRAINT app_cpu_policy_node_status_attempted_revision_check CHECK ((attempted_revision >= 0)),
     CONSTRAINT app_cpu_policy_node_status_check CHECK ((attempted_revision >= applied_revision))
+);
+
+
+--
+-- Name: app_custom_metric_series; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_custom_metric_series (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    series_key text NOT NULL,
+    labels jsonb NOT NULL,
+    kind text NOT NULL,
+    value double precision NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT app_custom_metric_series_key_check CHECK ((octet_length(series_key) <= 1024)),
+    CONSTRAINT app_custom_metric_series_kind_check CHECK ((kind = ANY (ARRAY['gauge'::text, 'counter'::text]))),
+    CONSTRAINT app_custom_metric_series_labels_check CHECK ((jsonb_typeof(labels) = 'object'::text)),
+    CONSTRAINT app_custom_metric_series_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT app_custom_metric_series_value_check CHECK (((value >= (0)::double precision) AND (value = value) AND (value < 'Infinity'::double precision)))
 );
 
 
@@ -41288,6 +41324,7 @@ CREATE TABLE public.gateway_traffic_runtime_observations (
     security_revocation boolean DEFAULT false NOT NULL,
     managed_http boolean DEFAULT false NOT NULL,
     managed_circuit boolean DEFAULT false NOT NULL,
+    edge_header_secrets_boot uuid,
     CONSTRAINT gateway_traffic_runtime_observations_check CHECK (((NOT managed_circuit) OR managed_http)),
     CONSTRAINT gateway_traffic_runtime_observations_check1 CHECK ((((retry_counter_mode = ANY (ARRAY['shared'::text, 'redis'::text])) AND (retry_backend_id <> ''::text)) OR ((retry_counter_mode = ANY (ARRAY['local'::text, 'unwired'::text])) AND (retry_backend_id = ''::text)))),
     CONSTRAINT gateway_traffic_runtime_observations_generation_check CHECK ((generation > 0)),
@@ -51270,10 +51307,14 @@ CREATE TABLE public.pr_preview_sets (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     setup_error text,
     account_id uuid NOT NULL,
+    member_pins jsonb,
+    member_pins_head text,
     CONSTRAINT pr_preview_sets_account_not_null CHECK ((account_id IS NOT NULL)),
     CONSTRAINT pr_preview_sets_commit_sha_check CHECK ((commit_sha ~ '^[0-9a-f]{7,64}$'::text)),
     CONSTRAINT pr_preview_sets_installation_id_check CHECK ((installation_id > 0)),
     CONSTRAINT pr_preview_sets_member_app_ids_check CHECK ((cardinality(member_app_ids) > 0)),
+    CONSTRAINT pr_preview_sets_member_pins_chk CHECK (((member_pins IS NULL) OR (jsonb_typeof(member_pins) = 'object'::text))),
+    CONSTRAINT pr_preview_sets_member_pins_head_chk CHECK (((member_pins_head IS NULL) OR (member_pins_head ~ '^[0-9a-f]{7,64}$'::text))),
     CONSTRAINT pr_preview_sets_pr_number_check CHECK ((pr_number > 0)),
     CONSTRAINT pr_preview_sets_repo_full_name_check CHECK ((repo_full_name <> ''::text)),
     CONSTRAINT pr_preview_sets_setup_error_chk CHECK (((setup_error IS NULL) OR ((char_length(setup_error) >= 1) AND (char_length(setup_error) <= 1000))))
@@ -54836,6 +54877,18 @@ CREATE TABLE public.realtime_node_connections (
 
 
 --
+-- Name: realtime_node_endpoint_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.realtime_node_endpoint_connections (
+    node_name text NOT NULL,
+    endpoint_id uuid NOT NULL,
+    connections integer NOT NULL,
+    CONSTRAINT realtime_node_endpoint_connections_connections_check CHECK ((connections > 0))
+);
+
+
+--
 -- Name: realtime_usage_hours; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55201,6 +55254,25 @@ CREATE TABLE public.request_analytics_minutes (
 --
 
 COMMENT ON TABLE public.request_analytics_minutes IS 'Per-minute request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952).';
+
+
+--
+-- Name: request_analytics_rollup_batches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_analytics_rollup_batches (
+    batch_id uuid NOT NULL,
+    node_id text NOT NULL,
+    applied_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT request_analytics_rollup_batches_node_id_check CHECK ((octet_length(node_id) <= 255))
+);
+
+
+--
+-- Name: TABLE request_analytics_rollup_batches; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.request_analytics_rollup_batches IS 'Gateway analytics rollup batches apid applied; written only by apid, swept only by meterd (ADR-20261103113952 amendment 5).';
 
 
 --
@@ -59175,6 +59247,14 @@ ALTER TABLE ONLY public.account_email_changes
 
 
 --
+-- Name: account_mail_throttle account_mail_throttle_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_mail_throttle
+    ADD CONSTRAINT account_mail_throttle_pkey PRIMARY KEY (account_id, kind);
+
+
+--
 -- Name: account_oauth_unlinks account_oauth_unlinks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -59812,6 +59892,14 @@ ALTER TABLE ONLY public.app_config_revisions
 
 ALTER TABLE ONLY public.app_cpu_policy_node_status
     ADD CONSTRAINT app_cpu_policy_node_status_pkey PRIMARY KEY (app_id, node_id);
+
+
+--
+-- Name: app_custom_metric_series app_custom_metric_series_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_custom_metric_series
+    ADD CONSTRAINT app_custom_metric_series_pkey PRIMARY KEY (app_id, name, series_key);
 
 
 --
@@ -70303,6 +70391,14 @@ ALTER TABLE ONLY public.realtime_node_connections
 
 
 --
+-- Name: realtime_node_endpoint_connections realtime_node_endpoint_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_endpoint_connections
+    ADD CONSTRAINT realtime_node_endpoint_connections_pkey PRIMARY KEY (node_name, endpoint_id);
+
+
+--
 -- Name: realtime_usage_hours realtime_usage_hours_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -70396,6 +70492,14 @@ ALTER TABLE ONLY public.request_analytics_hours
 
 ALTER TABLE ONLY public.request_analytics_minutes
     ADD CONSTRAINT request_analytics_minutes_pkey PRIMARY KEY (app_id, bucket_start, dimension_kind, dimension, method, status, deployment_id);
+
+
+--
+-- Name: request_analytics_rollup_batches request_analytics_rollup_batches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_rollup_batches
+    ADD CONSTRAINT request_analytics_rollup_batches_pkey PRIMARY KEY (batch_id);
 
 
 --
@@ -81062,6 +81166,13 @@ CREATE INDEX realtime_node_connections_account ON public.realtime_node_connectio
 
 
 --
+-- Name: realtime_node_endpoint_connections_endpoint; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX realtime_node_endpoint_connections_endpoint ON public.realtime_node_endpoint_connections USING btree (endpoint_id);
+
+
+--
 -- Name: realtime_publisher_credentials_endpoint; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -81241,6 +81352,13 @@ CREATE INDEX request_analytics_hours_bucket_idx ON public.request_analytics_hour
 --
 
 CREATE INDEX request_analytics_minutes_bucket_idx ON public.request_analytics_minutes USING btree (bucket_start);
+
+
+--
+-- Name: request_analytics_rollup_batches_applied_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_analytics_rollup_batches_applied_idx ON public.request_analytics_rollup_batches USING btree (applied_at);
 
 
 --
@@ -90293,6 +90411,14 @@ ALTER TABLE ONLY public.account_email_changes
 
 
 --
+-- Name: account_mail_throttle account_mail_throttle_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_mail_throttle
+    ADD CONSTRAINT account_mail_throttle_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: account_oauth_unlinks account_oauth_unlinks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -91242,6 +91368,14 @@ ALTER TABLE ONLY public.app_cpu_policy_node_status
 
 ALTER TABLE ONLY public.app_cpu_policy_node_status
     ADD CONSTRAINT app_cpu_policy_node_status_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_custom_metric_series app_custom_metric_series_metric_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_custom_metric_series
+    ADD CONSTRAINT app_custom_metric_series_metric_fkey FOREIGN KEY (app_id, name) REFERENCES public.app_custom_metrics(app_id, name) ON DELETE CASCADE;
 
 
 --
@@ -104090,6 +104224,14 @@ ALTER TABLE ONLY public.queue_bindings
 
 ALTER TABLE ONLY public.realtime_node_connections
     ADD CONSTRAINT realtime_node_connections_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.realtime_node_connection_syncs(node_name) ON DELETE CASCADE;
+
+
+--
+-- Name: realtime_node_endpoint_connections realtime_node_endpoint_connections_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_endpoint_connections
+    ADD CONSTRAINT realtime_node_endpoint_connections_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.realtime_node_connection_syncs(node_name) ON DELETE CASCADE;
 
 
 --

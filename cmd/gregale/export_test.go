@@ -1296,7 +1296,6 @@ var DocsURLForCode = docsURLForCode
 var DocsURLForTemplate = docsURLForTemplate
 var DocsURLForTopic = docsURLForTopic
 var DoctorCheckDurableEntities = doctorCheckDurableEntities
-var DoctorCheckSecretReload = doctorCheckSecretReload
 var DoctorImageAccessError = doctorImageAccessError
 var DoctorImageContractCheck = doctorImageContractCheck
 var DoctorImageHealthcheck = doctorImageHealthcheck
@@ -2761,3 +2760,25 @@ func ResolveSourceUploadCapForTest(ctx context.Context, c *Client) (mb int, veri
 
 // ForwardAppTaskSession is the shared port-forward / postgres connect relay.
 var ForwardAppTaskSession = forwardAppTaskSession
+
+var DebugWatchNextWait = debugWatchNextWait
+
+// ADR-20261107180000 `gregale config explain`.
+var (
+	ExplainConfigKey         = explainConfigKey
+	RenderSettingExplanation = renderSettingExplanation
+)
+
+// gregale mcp connect seams (ADR-20261109121411).
+var (
+	MCPConnectLookPath    = &mcpConnectLookPath
+	MCPConnectRun         = &mcpConnectRun
+	MCPConnectInteractive = &mcpConnectInteractive
+	MCPConnectHome        = &mcpConnectHome
+	MCPEndpointCheck      = &mcpEndpointCheck
+	MCPHeadlessToolCount  = &mcpHeadlessToolCount
+	UpsertCodexServer     = upsertCodexServer
+)
+
+// MCPConnectOptions builds the options a test passes to MCPHeadlessToolCount.
+type MCPConnectOptions = mcpConnectOptions

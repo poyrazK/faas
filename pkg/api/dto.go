@@ -3882,6 +3882,42 @@ type UpdateDeploymentTrafficRequest struct {
 	// An explicit empty id requires no live sibling with positive traffic.
 	ExpectedServingDeploymentID *string                     `json:"expected_serving_deployment_id,omitempty"`
 	ExpectedMCPAccessPolicy     *MCPAccessPolicyExpectation `json:"expected_mcp_access_policy,omitempty"`
+	// ExpectedTraffic makes the change conditional on the split it was planned
+	// from: every live release in the deployment's environment with positive
+	// traffic, mapped to its percent. Any difference at write time is a 409
+	// traffic_serving_changed.
+	ExpectedTraffic map[string]int `json:"expected_traffic,omitempty"`
+}
+
+// MaxExpectedTrafficReleases bounds expected_traffic; no split serves more
+// releases than an app's largest concurrency.
+const MaxExpectedTrafficReleases = 100
+
+// ValidateExpectedTraffic checks the bounds of an expected_traffic map.
+func (r UpdateDeploymentTrafficRequest) ValidateExpectedTraffic() error {
+	if r.ExpectedTraffic == nil {
+		return nil
+	}
+	if len(r.ExpectedTraffic) == 0 || len(r.ExpectedTraffic) > MaxExpectedTrafficReleases {
+		return fmt.Errorf("expected_traffic must name between 1 and %d releases", MaxExpectedTrafficReleases)
+	}
+	if r.ExpectedServingDeploymentID != nil || r.ExpectedReview != nil {
+		return fmt.Errorf("expected_traffic cannot be combined with expected_serving_deployment_id or expected_review")
+	}
+	sum := 0
+	for id, percent := range r.ExpectedTraffic {
+		if _, err := uuid.Parse(id); err != nil {
+			return fmt.Errorf("expected_traffic key %q is not a deployment id", id)
+		}
+		if percent < 1 || percent > 100 {
+			return fmt.Errorf("expected_traffic percent for %s must be between 1 and 100", id)
+		}
+		sum += percent
+	}
+	if sum != 100 {
+		return fmt.Errorf("expected_traffic percents must sum to 100, got %d", sum)
+	}
+	return nil
 }
 
 // AdvanceCanaryRequest is the compare-and-swap body for
@@ -4098,6 +4134,19 @@ func ParseMirrorWindow(s string) (MirrorWindowDuration, error) {
 		return MirrorWindow7d, nil
 	}
 	return 0, errInvalidMirrorWindow
+}
+
+// MirrorSafeMethod reports whether a method is mirrored and replayed without
+// the mirror rule's allow_unsafe_methods opt-in: GET, HEAD and OPTIONS. Live
+// mirroring, debugger replay and the replay dispatcher share it, so a rule
+// that opted out of side effects is never replayed with one.
+func MirrorSafeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
 }
 
 // MirrorAlwaysStrippedHeaders is the set of headers the gateway
@@ -13518,6 +13567,20 @@ type CustomMetricResponse struct {
 	// Kind is "gauge" (pushed, a scaling signal) or "counter" (an ADR-745
 	// OTLP cumulative sum, charted as a rate and never a scaling signal).
 	Kind string `json:"kind,omitempty"`
+	// Series lists a labelled metric's series (ADR-20261108160000 slice C);
+	// Value is then their aggregate: the sum for counters, the maximum of
+	// fresh series for gauges. Empty for an unlabelled metric.
+	Series []CustomMetricSeriesValue `json:"series,omitempty"`
+}
+
+// CustomMetricSeriesValue is one labelled series' latest value. Key is the
+// canonical "k=v,..." form accepted by the history endpoint's labels query.
+type CustomMetricSeriesValue struct {
+	Key        string            `json:"key"`
+	Labels     map[string]string `json:"labels"`
+	Value      float64           `json:"value"`
+	ObservedAt time.Time         `json:"observed_at"`
+	Stale      bool              `json:"stale"`
 }
 
 // CustomMetricListResponse carries the rows plus the two limits an operator
@@ -13527,6 +13590,8 @@ type CustomMetricListResponse struct {
 	Metrics    []CustomMetricResponse `json:"metrics"`
 	FreshnessS int                    `json:"freshness_seconds"`
 	MaxMetrics int                    `json:"max_metrics"`
+	// MaxSeries is the app's cap on labelled series (slice C).
+	MaxSeries int `json:"max_series,omitempty"`
 }
 
 // EgressFlowLogEntry is one ADR-371 egress flow log row: a destination

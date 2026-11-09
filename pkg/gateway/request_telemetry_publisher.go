@@ -242,6 +242,7 @@ func (p *requestTelemetryPublisher) tick(ctx context.Context) {
 		return
 	}
 	defer p.reportCoverage(ctx)
+	p.recorder.analytics.tick(ctx, false)
 	if p.minutes != nil {
 		p.tickMinutes(ctx, false)
 		return
@@ -608,6 +609,7 @@ func requestTelemetryBucketed(row RequestTelemetryRow) (RequestTelemetryRow, str
 		ColdBoot:                             row.ColdBoot,
 		LatencyBucket:                        row.LatencyMS,
 		ContentOutcome:                       row.ContentOutcome,
+		AnalyticsCounted:                     row.AnalyticsCounted,
 		bucket:                               bucket,
 	}.String()
 	row.ReceivedAt = bucket
@@ -669,6 +671,7 @@ type bucketKey struct {
 	ColdBoot                             bool
 	LatencyBucket                        int
 	ContentOutcome                       string
+	AnalyticsCounted                     bool
 	bucket                               time.Time
 }
 
@@ -808,6 +811,15 @@ func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
 			gap.PendingCount += n
 			gaps[app] = gap
 		}
+	}
+	// Requests counted into closed minutes whose rollups apid has not
+	// acknowledged are pending too (ADR-20261103113952 amendment 5).
+	for app, n := range p.recorder.analytics.undelivered() {
+		coverage.PendingCount += int(n)
+		gap := gaps[app]
+		gap.AppID = app
+		gap.PendingCount += int(n)
+		gaps[app] = gap
 	}
 	for _, gap := range gaps {
 		coverage.AppGaps = append(coverage.AppGaps, gap)

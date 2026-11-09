@@ -437,7 +437,10 @@ type MemStore struct {
 	// customMetrics[appID][name] holds ADR-202 pushed gauges. Nested so
 	// the per-app distinct-name cap is a len() on the inner map, matching
 	// what PgStore's count(*) over (app_id) measures.
-	customMetrics               map[string]map[string]CustomMetric
+	customMetrics map[string]map[string]CustomMetric
+	// customMetricSeries mirrors app_custom_metric_series: app id → metric
+	// name → series key (ADR-20261108160000 slice C).
+	customMetricSeries          map[string]map[string]map[string]CustomMetricSeries
 	mcpTaskCompatibilityReports map[string]MCPTaskCompatibilityReport
 	notificationChannels        map[string][]NotificationChannel // account id → channels (ADR-749), lazily made
 	// objectStorageTimeline and acceptedObjectStorageTimeline mirror the
@@ -6354,6 +6357,15 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		if (expectedServingID[0] == "" && servingCount != 0) || (expectedServingID[0] != "" && (servingCount != 1 || !sameDeploymentID(servingID, expectedServingID[0]) || m.deployments[servingID].TrafficPercent != 100)) {
 			return Deployment{}, ErrTrafficServingChanged
 		}
+	}
+	current := map[string]int{id: d.TrafficPercent}
+	for otherID, other := range m.deployments {
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive {
+			current[otherID] = other.TrafficPercent
+		}
+	}
+	if err := checkExpectedTrafficWeights(ctx, current); err != nil {
+		return Deployment{}, err
 	}
 
 	// Plan every weight before mutating any row, including upgrade fences.
@@ -29046,6 +29058,12 @@ func (m *MemStore) ApplyRegressionAction(_ context.Context, _ sqlc.ApplyRegressi
 // MemStore; the detector and its lifecycle transitions are Postgres-only.
 func (m *MemStore) ResolveStaleRegressionObservations(_ context.Context, _ pgtype.Interval) ([]sqlc.DebugRegressionObservation, error) {
 	panic("memstore: ResolveStaleRegressionObservations unimplemented")
+}
+
+// ResolveRegressionObservationsNotSeenSince is Postgres-only, like the rest
+// of the detector's lifecycle transitions.
+func (m *MemStore) ResolveRegressionObservationsNotSeenSince(_ context.Context, _ sqlc.ResolveRegressionObservationsNotSeenSinceParams) ([]sqlc.DebugRegressionObservation, error) {
+	panic("memstore: ResolveRegressionObservationsNotSeenSince unimplemented")
 }
 
 // ListDeploymentsForCompare is intentionally unsupported by MemStore;

@@ -67,7 +67,7 @@ func cmdDeployCheck(args []string) int {
 		}
 	}
 	if *slug == "" {
-		linked, _, linkErr := findProjectContext(root)
+		linked, _, linkErr := targetProjectContext(root)
 		if linkErr == nil {
 			*slug = linked.Project
 		} else if !errors.Is(linkErr, errProjectContextNotFound) {

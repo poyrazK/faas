@@ -26220,6 +26220,9 @@ components:
         security_revocation: {$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}
         managed_http: {$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}
         managed_circuit: {$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}
+        edge_header_secrets:
+          description: Gateways open sealed edge-rule request header values; until every serving gateway does, new credential values are stored as written. Omitted by older releases.
+          allOf: [{$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}]
     TrafficRuntimeFeatureStatus:
       description: Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified.
       type: object
@@ -28235,7 +28238,24 @@ components:
           type: string
           enum: [gauge, counter]
           description: "gauge for pushed values (a scaling signal); counter for OTLP cumulative sums, which never drive scaling."
+        series:
+          description: "A labelled metric's series. value is then their aggregate: the sum for counters, the maximum of fresh series for gauges. Absent for an unlabelled metric."
+          type: array
+          items: {$ref: '#/components/schemas/CustomMetricSeriesValue'}
       example: {name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false, kind: gauge}
+    CustomMetricSeriesValue:
+      description: "One labelled series of a custom metric (from OTLP data point attributes)."
+      type: object
+      required: [key, labels, value, observed_at, stale]
+      properties:
+        key: {type: string, description: "Canonical k=v,... form, keys sorted; pass it as labels to the history endpoint.", example: "queue=emails"}
+        labels:
+          type: object
+          additionalProperties: {type: string}
+          example: {queue: emails}
+        value: {type: number}
+        observed_at: {type: string, format: date-time}
+        stale: {type: boolean}
     CustomMetricListResponse:
       description: "The app's gauges, plus the two limits needed to interpret them so debugging does not require reading the docs."
       type: object
@@ -28249,9 +28269,13 @@ components:
           type: integer
           example: 300
         max_metrics:
-          description: "Maximum distinct metric names this app may hold."
+          description: "Maximum distinct metric names this app may hold (per plan)."
           type: integer
-          example: 5
+          example: 50
+        max_series:
+          description: "Maximum labelled series this app may hold across its metrics (per plan); each metric also holds at most 50."
+          type: integer
+          example: 500
     ScalingTarget:
       description: "(metric, value) pair the engine watches for the scale-up trigger. The metric surface is closed, and every member of it is backed by a live source and read by a scheduler trigger. `p99_latency_ms` was removed: it validated for releases with no latency source behind it, and is now rejected with 422 pointing at concurrent_requests. The unset state (null) is the legacy 'engine falls back to autoscale_target_rps' path."
       type: object
@@ -29636,6 +29660,13 @@ components:
         expected_serving_deployment_id:
           type: string
           description: "Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive traffic, for guarded first deployment promotion. If the condition changes at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic."
+        expected_traffic:
+          type: object
+          description: "Optional split the change was planned from: every live release in the deployment's environment with positive traffic, keyed by deployment id, mapped to its percent (1-100, summing to 100, at most 100 releases). If the split differs at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic. Cannot be combined with expected_serving_deployment_id or expected_review."
+          additionalProperties:
+            type: integer
+            minimum: 1
+            maximum: 100
         expected_mcp_access_policy:
           type: object
           description: "Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the transaction also requires the unchanged account revision and fresh replay from every currently registered serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on fleet membership."

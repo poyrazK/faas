@@ -1,0 +1,304 @@
+---
+# ADR-20261109120000 slices 2-3: host secrets, daemon state (/var/lib/faas)
+# and the control plane's Postgres live on the encrypted data volume.
+#
+# Each path keeps its name (~60 readers of /etc/faas/secrets, Postgres and
+# its WAL archive need no change): /srv/fc/host-private/<name> is
+# bind-mounted over it. The first time, the existing contents are copied in,
+# the copy is verified, and the plaintext left underneath is shredded. The
+# hidden directory underneath is then made immutable, so while the volume is
+# locked nothing (a converge that skips this role, apt's initdb, a daemon)
+# can write secrets or a database onto the plain root disk: it fails instead.
+#
+# Postgres is never stopped here. A cluster that holds data needs the
+# maintenance-window move in docs/runbooks/disk-encryption.md; a running fresh
+# cluster (only the template databases) needs a stop and a second converge.
+# On a new host Postgres is not installed yet, so neither applies. Likewise a
+# quiesce path (/var/lib/faas) moves only while no faas service is running.
+#
+# Mounts already beneath a path (the OCI cache and Grype database under
+# /var/lib/faas) are not copied: they are unmounted for the bind and mounted
+# again from fstab on top of it, and their contents are left out of the proof.
+
+- name: storage — choose the paths that live on the encrypted volume
+  ansible.builtin.set_fact:
+    faas_storage_holds_postgres: "{{ 'control_plane' in group_names or 'postgres_standby' in group_names }}"
+    faas_storage_encrypted_paths: >-
+      {{ faas_storage_encrypted_secret_paths
+         + (faas_storage_encrypted_database_paths if 'database_nodes' in group_names else [])
+         + (faas_storage_encrypted_postgres_paths
+            if ('control_plane' in group_names or 'postgres_standby' in group_names) else []) }}
+
+- name: storage — install the copy tool
+  ansible.builtin.apt:
+    name: [rsync, e2fsprogs]
+    state: present
+
+- name: storage — inspect which paths are already on the encrypted volume
+  ansible.builtin.shell: |
+    set -euo pipefail
+    findmnt -n -o SOURCE --mountpoint {{ item.path | quote }} 2>/dev/null \
+      | grep -Fq "[/{{ faas_storage_private_subdir }}/{{ item.name }}]" && echo bound || echo plain
+  args:
+    executable: /bin/bash
+  loop: "{{ faas_storage_encrypted_paths }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: faas_storage_encrypted_state
+  changed_when: false
+
+- name: storage — remember the paths still to move
+  ansible.builtin.set_fact:
+    faas_storage_paths_to_move: >-
+      {{ faas_storage_encrypted_state.results
+         | selectattr('stdout', 'equalto', 'plain') | map(attribute='item') | list }}
+
+- name: storage — count the databases of a Postgres cluster still on the plain disk
+  ansible.builtin.shell: |
+    set -euo pipefail
+    max=0
+    for base in /var/lib/postgresql/*/*/base; do
+      [ -d "$base" ] || continue
+      n=$(find "$base" -mindepth 1 -maxdepth 1 -type d | wc -l)
+      [ "$n" -gt "$max" ] && max=$n
+    done
+    echo "$max"
+  args:
+    executable: /bin/bash
+  register: faas_storage_pg_databases
+  changed_when: false
+  when: faas_storage_paths_to_move | selectattr('postgres', 'defined') | list | length > 0
+
+# template0, template1 and postgres: a cluster with more holds data.
+- name: storage — refuse to move a Postgres that holds data
+  ansible.builtin.assert:
+    that:
+      - faas_storage_pg_databases.stdout | int <= 3
+    fail_msg: >-
+      The Postgres on this host holds data on the plain disk
+      ({{ faas_storage_pg_databases.stdout }} databases). It is not stopped
+      automatically: move it in a maintenance window as
+      docs/runbooks/disk-encryption.md ("Moving a live Postgres") describes,
+      then converge again. Nothing was changed.
+  when: faas_storage_pg_databases is not skipped
+
+- name: storage — inspect whether Postgres is running
+  ansible.builtin.command:
+    argv: [systemctl, is-active, --quiet, postgresql]
+  register: faas_storage_pg_active
+  changed_when: false
+  failed_when: false
+  when: faas_storage_pg_databases is not skipped
+
+# The storage role never stops Postgres: a running cluster, even a fresh one,
+# makes it refuse. The postgres role, later in the play, starts it again.
+- name: storage — refuse to move a running Postgres
+  ansible.builtin.assert:
+    that:
+      - faas_storage_pg_active.rc != 0
+    fail_msg: >-
+      Postgres is running on this host and its (fresh) cluster must move onto
+      the encrypted volume first. Stop the PostgreSQL service by hand and
+      converge again; the postgres role starts it. Nothing was changed.
+  when: faas_storage_pg_databases is not skipped
+
+- name: storage — list the faas services running
+  ansible.builtin.shell: |
+    set -euo pipefail
+    systemctl list-units --type=service --state=active --no-legend --plain 'faas-*.service' | awk '{print $1}'
+  args:
+    executable: /bin/bash
+  register: faas_storage_active_units
+  changed_when: false
+  when: faas_storage_paths_to_move | selectattr('quiesce', 'defined') | list | length > 0
+
+- name: storage — refuse to move daemon state while faas services run
+  ansible.builtin.assert:
+    that:
+      - faas_storage_active_units.stdout_lines | length == 0
+    fail_msg: >-
+      {{ faas_storage_paths_to_move | selectattr('quiesce', 'defined') | map(attribute='path') | join(', ') }}
+      must move onto the encrypted volume while no faas service writes to it,
+      and these run: {{ faas_storage_active_units.stdout_lines | join(', ') }}.
+      Drain the host, stop them, and converge again
+      (docs/runbooks/disk-encryption.md). Nothing was changed.
+  when: faas_storage_active_units is not skipped
+
+- name: storage — copy each path onto the encrypted volume
+  ansible.builtin.shell: |
+    set -euo pipefail
+    target={{ item.path | quote }}
+    src={{ (faas_storage_mount ~ '/' ~ faas_storage_private_subdir ~ '/' ~ item.name) | quote }}
+    install -d -m 0700 -o root -g root {{ (faas_storage_mount ~ '/' ~ faas_storage_private_subdir) | quote }}
+    if mountpoint -q "$target"; then
+      echo "$target is already a mountpoint of something else; refusing to hide it" >&2
+      exit 3
+    fi
+    if [ -d "$target" ]; then
+      install -d "$src"
+      chown --reference="$target" "$src"
+      chmod --reference="$target" "$src"
+      rsync --archive --hard-links --acls --xattrs --numeric-ids --one-file-system "$target/" "$src/"
+    else
+      install -d -m 0755 -o root -g root "$src" "$target"
+    fi
+    # Mounts beneath the path step aside for the bind and return on top of it.
+    mapfile -t below < <(findmnt -rn -o TARGET | awk -v p="$target/" 'index($0, p) == 1' | sort -r)
+    mapfile -t above < <(printf '%s\n' "${below[@]}" | sort | sed '/^$/d')
+    for m in "${below[@]}"; do
+      findmnt --fstab -n --mountpoint "$m" > /dev/null || {
+        echo "$m is mounted beneath $target but not in fstab, so it could not be put back; refusing" >&2
+        exit 3
+      }
+    done
+    for m in "${below[@]}"; do umount "$m"; done
+    mount --bind "$src" "$target"
+    for m in "${above[@]}"; do mount "$m"; done
+  args:
+    executable: /bin/bash
+  loop: "{{ faas_storage_paths_to_move }}"
+  loop_control:
+    label: "{{ item.path }}"
+  changed_when: true
+
+- name: storage — keep each bind from the encrypted volume in fstab
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    src: "{{ faas_storage_mount }}/{{ faas_storage_private_subdir }}/{{ item.name }}"
+    fstype: none
+    opts: "bind,nofail,x-systemd.requires-mounts-for={{ faas_storage_mount }}"
+    dump: "0"
+    passno: "0"
+    state: present
+  loop: "{{ faas_storage_encrypted_paths }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+# The plaintext left under each mount is reached through a non-recursive
+# bind of the filesystem that holds it. It is shredded only once the volume
+# copy is proven identical, then the empty directory is made immutable.
+- name: storage — shred the plaintext left under each path and seal it
+  ansible.builtin.shell: |
+    set -euo pipefail
+    target={{ item.path | quote }}
+    src={{ (faas_storage_mount ~ '/' ~ faas_storage_private_subdir ~ '/' ~ item.name) | quote }}
+    findmnt -n -o SOURCE --mountpoint "$target" | grep -Fq "[/{{ faas_storage_private_subdir }}/{{ item.name }}]"
+    parent_fs="$(findmnt -n -o TARGET -T "$(dirname "$target")")"
+    view="$(mktemp -d /run/faas-underlay.XXXXXX)"
+    trap 'umount "$view" 2>/dev/null || true; rmdir "$view"' EXIT
+    mount --bind "$parent_fs" "$view"
+    under="$view/${target#"${parent_fs%/}"/}"
+    [ -d "$under" ] || { echo "no underlying $under" >&2; exit 4; }
+    [ "$(stat -c %d "$under")" != "$(stat -c %d "$src")" ] || { echo "underlay resolves to the volume" >&2; exit 4; }
+    # What lies under a mount beneath the path (e.g. an OCI cache left on the
+    # boot disk before it moved to /srv/fc) was never copied: leave it out of
+    # the proof. It is shredded with the rest.
+    excludes=()
+    while read -r m; do excludes+=("--exclude=/${m#"$target"/}/**"); done \
+      < <(findmnt -rn -o TARGET | awk -v p="$target/" 'index($0, p) == 1')
+    if [ -n "$(find "$under" -mindepth 1 -print -quit)" ]; then
+      if lsattr -d "$under" | awk '{print $1}' | grep -q i; then chattr -i "$under"; fi
+      diff="$(rsync --archive --hard-links --acls --xattrs --numeric-ids --checksum --dry-run --itemize-changes "${excludes[@]}" "$under/" "$src/" | grep -v '^\.d' || true)"
+      if [ -n "$diff" ]; then
+        echo "the copy on the volume differs from $target underneath; not shredding:" >&2
+        echo "$diff" >&2
+        exit 5
+      fi
+      find "$under" -xdev -type f -exec shred -u {} +
+      find "$under" -xdev -mindepth 1 -depth -delete
+      echo shredded
+    fi
+    if ! lsattr -d "$under" | awk '{print $1}' | grep -q i; then
+      chattr +i "$under"
+      echo sealed
+    fi
+  args:
+    executable: /bin/bash
+  loop: "{{ faas_storage_encrypted_paths }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: faas_storage_underlay
+  changed_when: "'shredded' in faas_storage_underlay.stdout or 'sealed' in faas_storage_underlay.stdout"
+
+- name: storage — create the faas unit drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: storage — keep faas daemons off unmounted host secrets and state
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-.service.d/11-faas-encrypted-secrets.conf
+    content: |
+      # Managed by Gregale (storage, ADR-20261109120000). Host secrets and
+      # daemon state live on the encrypted data volume, bind-mounted here.
+      [Unit]
+      RequiresMountsFor={{ faas_storage_encrypted_paths | rejectattr('postgres', 'defined') | map(attribute='path') | join(' ') }}
+    owner: root
+    group: root
+    mode: "0644"
+  register: faas_storage_secrets_dropin
+
+- name: storage — create the Postgres drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [postgresql.service, "postgresql@.service"]
+  when: faas_storage_holds_postgres | bool
+
+- name: storage — keep Postgres off an unmounted data directory
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item }}.d/10-faas-encrypted-data.conf"
+    content: |
+      # Managed by Gregale (storage, ADR-20261109120000). The cluster and its
+      # WAL archive live on the encrypted data volume.
+      [Unit]
+      RequiresMountsFor={{ faas_storage_encrypted_postgres_paths | map(attribute='path') | join(' ') }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [postgresql.service, "postgresql@.service"]
+  register: faas_storage_pg_dropin
+  when: faas_storage_holds_postgres | bool
+
+# auditd loads its rules early in boot, before /etc/faas/secrets is mounted;
+# reload them once it is, so the faas_secrets watch covers the mounted tree.
+- name: storage — reload the audit rules once host secrets are mounted
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-secrets-audit-reload.service
+    content: |
+      # Managed by Gregale (storage, ADR-20261109120000).
+      [Unit]
+      Description=Reload audit rules over the mounted host secrets
+      After=auditd.service etc-faas-secrets.mount
+      Requires=etc-faas-secrets.mount
+      ConditionPathExists=/etc/audit/rules.d/faas.rules
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/sbin/augenrules --load
+
+      [Install]
+      WantedBy=multi-user.target
+    owner: root
+    group: root
+    mode: "0644"
+  register: faas_storage_audit_unit
+
+- name: storage — enable the audit reload and pick up the drop-ins
+  ansible.builtin.systemd_service:
+    name: faas-secrets-audit-reload.service
+    enabled: true
+    daemon_reload: true
+
+- name: storage — reload the audit rules now
+  ansible.builtin.command:
+    argv: [augenrules, --load]
+    removes: /etc/audit/rules.d/faas.rules
+  changed_when: true
+  when: faas_storage_paths_to_move | length > 0

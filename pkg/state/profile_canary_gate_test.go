@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"strings"
 	"testing"
 	"time"
 )
@@ -165,6 +166,11 @@ func TestProfileCanaryGateTimeoutAndFences(t *testing.T) {
 	decision := state.DecideProfileCanaryGate(d, p, nil, "stable", 1, at.Add(2*time.Hour))
 	if decision.Status != "timed_out" {
 		t.Fatal(decision)
+	}
+	// With no profiling data at all the reason says so and names the ways
+	// forward (R4-6), rather than a generic "did not qualify".
+	if !strings.Contains(decision.Reason, "No profiling data") || (p.Config.CanaryGate.OnTimeout != "continue" && !strings.Contains(decision.Reason, "override")) {
+		t.Fatalf("timeout reason = %q", decision.Reason)
 	}
 	params := state.CanaryAdvanceParams{}
 	if state.AuthorizeProfileGate(decision, &params) == nil {

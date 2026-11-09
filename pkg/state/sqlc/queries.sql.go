@@ -4633,7 +4633,7 @@ WITH candidate AS (
  AND (h.next_check_at IS NULL OR h.next_check_at <= $1::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= $1::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
+ LIMIT 1 FOR NO KEY UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, $1::timestamptz, $2::text, $1::timestamptz, $3::timestamptz FROM candidate
@@ -4660,6 +4660,10 @@ type ClaimAppHealthRow struct {
 // The insert's account_id foreign key needs a key-share lock on the
 // namespace; taking it here with SKIP LOCKED skips an app whose namespace is
 // mid-apply instead of holding the app row while waiting for it (40P01).
+// The app row is taken FOR NO KEY UPDATE: it still excludes a delete, but not
+// the key-share lock FinishAppHealth's history insert takes through
+// app_health_history.app_id while it holds this app's collection row, which
+// the upsert below waits on when the previous lease has just expired.
 func (q *Queries) ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error) {
 	row := db.QueryRow(ctx, claimAppHealth, arg.CheckedNow, arg.Token, arg.ExpiresAt)
 	var i ClaimAppHealthRow
@@ -49412,6 +49416,101 @@ func (q *Queries) ListDueRouteMonitors(ctx context.Context, db DBTX, batchLimit 
 	return items, nil
 }
 
+const listEdgeRuleSetVersionsWithRequestHeaderLiterals = `-- name: ListEdgeRuleSetVersionsWithRequestHeaderLiterals :many
+SELECT v.id, v.app_id, v.version, v.rules, v.rules_sha256 FROM edge_rule_set_versions v
+WHERE v.id > $1::bigint
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v.rules) rule,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(rule->'action'->'headers'->'request_headers') = 'array'
+        THEN rule->'action'->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE rule->>'kind' = 'headers' AND coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+ORDER BY v.id LIMIT $2::integer
+`
+
+type ListEdgeRuleSetVersionsWithRequestHeaderLiteralsParams struct {
+	AfterID  int64
+	RowLimit int32
+}
+
+type ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow struct {
+	ID          int64
+	AppID       pgtype.UUID
+	Version     int32
+	Rules       []byte
+	RulesSha256 string
+}
+
+func (q *Queries) ListEdgeRuleSetVersionsWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEdgeRuleSetVersionsWithRequestHeaderLiteralsParams) ([]ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow, error) {
+	rows, err := db.Query(ctx, listEdgeRuleSetVersionsWithRequestHeaderLiterals, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow{}
+	for rows.Next() {
+		var i ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Version,
+			&i.Rules,
+			&i.RulesSha256,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEdgeRulesWithRequestHeaderLiterals = `-- name: ListEdgeRulesWithRequestHeaderLiterals :many
+
+SELECT r.id, r.action FROM edge_rules r
+WHERE r.kind = 'headers' AND r.id > $1::uuid
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(r.action->'headers'->'request_headers') = 'array'
+        THEN r.action->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+ORDER BY r.id LIMIT $2::integer
+`
+
+type ListEdgeRulesWithRequestHeaderLiteralsParams struct {
+	AfterID  pgtype.UUID
+	RowLimit int32
+}
+
+type ListEdgeRulesWithRequestHeaderLiteralsRow struct {
+	ID     pgtype.UUID
+	Action []byte
+}
+
+// ADR-20261108110000 amendment 2026-11-09: the sealing backfill finds
+// headers rules and rule-set versions that still store a request header value
+// as written. The scan is broad (any literal value); apid applies the
+// credential-name test.
+func (q *Queries) ListEdgeRulesWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEdgeRulesWithRequestHeaderLiteralsParams) ([]ListEdgeRulesWithRequestHeaderLiteralsRow, error) {
+	rows, err := db.Query(ctx, listEdgeRulesWithRequestHeaderLiterals, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEdgeRulesWithRequestHeaderLiteralsRow{}
+	for rows.Next() {
+		var i ListEdgeRulesWithRequestHeaderLiteralsRow
+		if err := rows.Scan(&i.ID, &i.Action); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEgressCircuitCandidates = `-- name: ListEgressCircuitCandidates :many
 SELECT
     u.app_id,
@@ -49827,6 +49926,60 @@ func (q *Queries) ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUd
 			&i.PublicPort,
 			&i.Protocol,
 			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnvironmentEdgePoliciesWithRequestHeaderLiterals = `-- name: ListEnvironmentEdgePoliciesWithRequestHeaderLiterals :many
+SELECT p.account_id, p.project_id, p.app_id, p.environment_slug, p.rules, p.created_at, p.updated_at
+FROM project_environment_edge_policies p
+WHERE (p.app_id, p.environment_slug) > ($1::uuid, $2::text)
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p.rules) rule,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(rule->'action'->'headers'->'request_headers') = 'array'
+        THEN rule->'action'->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE rule->>'kind' = 'headers' AND coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+  AND NOT EXISTS (
+    SELECT 1 FROM active_environment_git_sources s
+    JOIN project_environments e ON e.id = s.environment_id
+    JOIN environment_gitops_resources r ON r.source_id = s.id
+    WHERE r.app_id = p.app_id AND e.slug = p.environment_slug)
+ORDER BY p.app_id, p.environment_slug LIMIT $3::integer
+`
+
+type ListEnvironmentEdgePoliciesWithRequestHeaderLiteralsParams struct {
+	AfterAppID       pgtype.UUID
+	AfterEnvironment string
+	RowLimit         int32
+}
+
+// Environment edge policies written through the API. An environment with
+// an active Git source for the app is left out: its values come from the
+// repository, and a sealed value would read as drift there.
+func (q *Queries) ListEnvironmentEdgePoliciesWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEnvironmentEdgePoliciesWithRequestHeaderLiteralsParams) ([]ProjectEnvironmentEdgePolicy, error) {
+	rows, err := db.Query(ctx, listEnvironmentEdgePoliciesWithRequestHeaderLiterals, arg.AfterAppID, arg.AfterEnvironment, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentEdgePolicy{}
+	for rows.Next() {
+		var i ProjectEnvironmentEdgePolicy
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.ProjectID,
+			&i.AppID,
+			&i.EnvironmentSlug,
+			&i.Rules,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -55742,6 +55895,7 @@ SELECT n.name AS node_name, COALESCE(o.generation, 0)::bigint AS generation, o.r
        COALESCE(o.security_revocation, false)::boolean AS security_revocation,
        COALESCE(o.managed_http, false)::boolean AS managed_http,
        COALESCE(o.managed_circuit, false)::boolean AS managed_circuit,
+       COALESCE(o.edge_header_secrets_boot = o.boot_id, false)::boolean AS edge_header_secrets,
        clock_timestamp()::timestamptz AS database_now
 FROM compute_nodes n LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
 WHERE n.active AND n.role IN ('compute-only', 'compute-node')
@@ -55762,6 +55916,7 @@ type ListServingGatewayTrafficRuntimeRow struct {
 	SecurityRevocation bool
 	ManagedHttp        bool
 	ManagedCircuit     bool
+	EdgeHeaderSecrets  bool
 	DatabaseNow        pgtype.Timestamptz
 }
 
@@ -55787,6 +55942,7 @@ func (q *Queries) ListServingGatewayTrafficRuntime(ctx context.Context, db DBTX,
 			&i.SecurityRevocation,
 			&i.ManagedHttp,
 			&i.ManagedCircuit,
+			&i.EdgeHeaderSecrets,
 			&i.DatabaseNow,
 		); err != nil {
 			return nil, err
@@ -96892,7 +97048,8 @@ WHERE ($2::bigint = 0 OR EXISTS (
 ON CONFLICT (node_name) DO UPDATE SET
     generation = EXCLUDED.generation, boot_id = EXCLUDED.boot_id, reported_at = NULL,
     retry_enabled = false, rate_counter_mode = 'unwired', retry_counter_mode = 'unwired', retry_backend_id = '',
-    deadline_signing = false, policy_snapshot = false, security_revocation = false, managed_http = false, managed_circuit = false
+    deadline_signing = false, policy_snapshot = false, security_revocation = false, managed_http = false, managed_circuit = false,
+    edge_header_secrets_boot = NULL
 WHERE gateway_traffic_runtime_observations.generation = $2::bigint
   AND gateway_traffic_runtime_observations.boot_id <> EXCLUDED.boot_id
 RETURNING generation
@@ -98143,6 +98300,28 @@ func (q *Queries) ReplaceDatabaseStandby(ctx context.Context, db DBTX, arg Repla
 	return result.RowsAffected(), nil
 }
 
+const replaceEdgeRuleSetVersionRules = `-- name: ReplaceEdgeRuleSetVersionRules :execrows
+UPDATE edge_rule_set_versions SET rules = $1::jsonb,
+    rules_sha256 = encode(sha256(convert_to($1::jsonb::text, 'UTF8')), 'hex')
+WHERE id = $2::bigint AND rules_sha256 = $3::text
+`
+
+type ReplaceEdgeRuleSetVersionRulesParams struct {
+	Rules          []byte
+	ID             int64
+	PreviousSha256 string
+}
+
+// The digest is computed as edge_rules_record_set_version computes it, and
+// the row is replaced only if no one changed it since it was read.
+func (q *Queries) ReplaceEdgeRuleSetVersionRules(ctx context.Context, db DBTX, arg ReplaceEdgeRuleSetVersionRulesParams) (int64, error) {
+	result, err := db.Exec(ctx, replaceEdgeRuleSetVersionRules, arg.Rules, arg.ID, arg.PreviousSha256)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const replaceProductionAppWorkloadSettings = `-- name: ReplaceProductionAppWorkloadSettings :exec
 with config as (select (json_populate_record(null::apps, $2::json)).*)
 		update apps a set visibility = c.visibility, type = c.type, runtime = nullif(c.runtime, ''),
@@ -98282,8 +98461,9 @@ UPDATE gateway_traffic_runtime_observations SET reported_at = clock_timestamp(),
     policy_snapshot = $6::boolean,
     security_revocation = $7::boolean,
     managed_http = $8::boolean,
-    managed_circuit = $9::boolean
-WHERE node_name = $10::text AND generation = $11::bigint AND boot_id = $12::uuid
+    managed_circuit = $9::boolean,
+    edge_header_secrets_boot = CASE WHEN $10::boolean THEN boot_id END
+WHERE node_name = $11::text AND generation = $12::bigint AND boot_id = $13::uuid
 `
 
 type ReportGatewayTrafficRuntimeParams struct {
@@ -98296,6 +98476,7 @@ type ReportGatewayTrafficRuntimeParams struct {
 	SecurityRevocation bool
 	ManagedHttp        bool
 	ManagedCircuit     bool
+	EdgeHeaderSecrets  bool
 	NodeName           string
 	Generation         int64
 	BootID             pgtype.UUID
@@ -98312,6 +98493,7 @@ func (q *Queries) ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg 
 		arg.SecurityRevocation,
 		arg.ManagedHttp,
 		arg.ManagedCircuit,
+		arg.EdgeHeaderSecrets,
 		arg.NodeName,
 		arg.Generation,
 		arg.BootID,
@@ -99923,7 +100105,9 @@ WITH weighted AS (
     SELECT latency_ms,
            SUM(count::bigint) AS requests,
            SUM(count::bigint) FILTER (WHERE status >= 500 AND status < 600) AS server_errors,
-           SUM(count::bigint) FILTER (WHERE cold_boot) AS cold_boot_requests
+           SUM(count::bigint) FILTER (WHERE cold_boot) AS cold_boot_requests,
+           COALESCE(SUM(count::bigint) FILTER (WHERE NOT long_lived), 0) AS latency_requests,
+           COALESCE(SUM(count::bigint) FILTER (WHERE cold_boot AND NOT long_lived), 0) AS cold_boot_latency_requests
       FROM request_telemetry
      WHERE app_id = $1::uuid
        AND deployment_id = $2::uuid
@@ -99949,16 +100133,16 @@ WITH weighted AS (
              requests,
              server_errors,
              cold_boot_requests,
-             SUM(requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
-             SUM(requests) OVER () AS total,
-             SUM(cold_boot_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cold_boot_cumulative,
-             SUM(cold_boot_requests) OVER () AS cold_boot_total
+             SUM(latency_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+             SUM(latency_requests) OVER () AS total,
+             SUM(cold_boot_latency_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cold_boot_cumulative,
+             SUM(cold_boot_latency_requests) OVER () AS cold_boot_total
         FROM weighted
 ), summary AS (
     SELECT COALESCE(SUM(requests), 0)::bigint AS requests,
            COALESCE(SUM(server_errors), 0)::bigint AS server_errors,
            COALESCE(
-               MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint),
+               MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint AND total > 0),
                0
            )::double precision AS p95_latency_ms,
            COALESCE(SUM(cold_boot_requests), 0)::bigint AS cold_boot_requests,
@@ -100002,7 +100186,9 @@ type RequestTelemetryCircuitBreakerSummaryRow struct {
 // Bounded candidate/stable health summary for the deployment circuit breaker.
 // `count` weights collapsed telemetry rows; compute request and 5xx totals,
 // overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
-// only one row.
+// only one row. A long-lived session's duration (WebSocket, event or gRPC
+// stream) is not a request latency: it counts as a request and a 5xx but stays
+// out of both percentiles (ADR-20261028110044 amendment 7).
 func (q *Queries) RequestTelemetryCircuitBreakerSummary(ctx context.Context, db DBTX, arg RequestTelemetryCircuitBreakerSummaryParams) (RequestTelemetryCircuitBreakerSummaryRow, error) {
 	row := db.QueryRow(ctx, requestTelemetryCircuitBreakerSummary,
 		arg.AppID,
@@ -100163,6 +100349,62 @@ func (q *Queries) RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, ar
 	for rows.Next() {
 		var i RequestTelemetryErrorsByRouteRow
 		if err := rows.Scan(&i.Route, &i.Requests, &i.ErrorRequests); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requestTelemetryLatencyWeightsByRoute = `-- name: RequestTelemetryLatencyWeightsByRoute :many
+SELECT route,
+       latency_ms,
+       SUM(GREATEST(count, 1)::bigint)::bigint AS requests
+FROM request_telemetry
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+  AND NOT platform_refusal AND NOT deployment_pinned AND NOT long_lived AND NOT cold_boot
+GROUP BY route, latency_ms
+`
+
+type RequestTelemetryLatencyWeightsByRouteParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+}
+
+type RequestTelemetryLatencyWeightsByRouteRow struct {
+	Route     string
+	LatencyMs int32
+	Requests  int64
+}
+
+// The regression detector's affected-request count: the requests each
+// latency bucket represents, per route, over the whole window and in the
+// regression view. A newest-rows drilldown capped at 10k rows across every
+// route undercounted busy apps, so a real regression missed the 100-request
+// floor. latency_ms is a bounded bucket, so the result is small per route.
+func (q *Queries) RequestTelemetryLatencyWeightsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryLatencyWeightsByRouteParams) ([]RequestTelemetryLatencyWeightsByRouteRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryLatencyWeightsByRoute,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryLatencyWeightsByRouteRow{}
+	for rows.Next() {
+		var i RequestTelemetryLatencyWeightsByRouteRow
+		if err := rows.Scan(&i.Route, &i.LatencyMs, &i.Requests); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -100845,6 +101087,71 @@ func (q *Queries) ResolvePublicProjectRelease(ctx context.Context, db DBTX, arg 
 	var i ResolvePublicProjectReleaseRow
 	err := row.Scan(&i.ReleaseID, &i.DeploymentID)
 	return i, err
+}
+
+const resolveRegressionObservationsNotSeenSince = `-- name: ResolveRegressionObservationsNotSeenSince :many
+UPDATE debug_regression_observations
+SET state = 'resolved',
+    resolved_at = COALESCE(resolved_at, now())
+WHERE app_id = $1
+  AND last_detected_at < $2
+  AND state <> 'resolved'
+RETURNING app_id, deployment_id, route,
+          p95_ms, p95_base_ms, affected_count,
+          regression_factor, first_detected_at, last_detected_at,
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count, review_version
+`
+
+type ResolveRegressionObservationsNotSeenSinceParams struct {
+	AppID          pgtype.UUID
+	LastDetectedAt pgtype.Timestamptz
+}
+
+// An app's complete detector pass reconfirms every regression it still sees
+// (UpsertRegressionObservation stamps last_detected_at = now()); whatever of
+// that app it did not reconfirm is no longer regressed, after a fix or a
+// rollback included. Resolving here, rather than 24 hours later through
+// ResolveStaleRegressionObservations, keeps the banner, status and the
+// resolved webhook current. $2 is the pass start (with clock slack).
+func (q *Queries) ResolveRegressionObservationsNotSeenSince(ctx context.Context, db DBTX, arg ResolveRegressionObservationsNotSeenSinceParams) ([]DebugRegressionObservation, error) {
+	rows, err := db.Query(ctx, resolveRegressionObservationsNotSeenSince, arg.AppID, arg.LastDetectedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DebugRegressionObservation{}
+	for rows.Next() {
+		var i DebugRegressionObservation
+		if err := rows.Scan(
+			&i.AppID,
+			&i.DeploymentID,
+			&i.Route,
+			&i.P95Ms,
+			&i.P95BaseMs,
+			&i.AffectedCount,
+			&i.RegressionFactor,
+			&i.FirstDetectedAt,
+			&i.LastDetectedAt,
+			&i.State,
+			&i.AcknowledgedAt,
+			&i.DismissedUntil,
+			&i.ResolvedAt,
+			&i.SuspectedDependency,
+			&i.Kind,
+			&i.ErrorRatePct,
+			&i.ErrorRateBasePct,
+			&i.ErrorCount,
+			&i.ReviewVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const resolveRetainedProjectRelease = `-- name: ResolveRetainedProjectRelease :one
