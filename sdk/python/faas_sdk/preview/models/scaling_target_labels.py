@@ -12,7 +12,7 @@ T = TypeVar("T", bound="ScalingTargetLabels")
 @_attrs_define
 class ScalingTargetLabels:
     """custom targets only: watch the one labelled gauge series of the metric with exactly these labels instead of its
-    aggregate (ADR-20261108160000). Keys match ^[a-z_][a-z0-9_]{0,62}$.
+    aggregate. Keys match ^[a-z_][a-z0-9_]{0,62}$.
 
     """
 

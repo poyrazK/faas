@@ -33,7 +33,7 @@ class ScalingTarget:
     having to remove."""
     labels: ScalingTargetLabels | Unset = UNSET
     """custom targets only: watch the one labelled gauge series of the metric with exactly these labels instead of
-    its aggregate (ADR-20261108160000). Keys match ^[a-z_][a-z0-9_]{0,62}$."""
+    its aggregate. Keys match ^[a-z_][a-z0-9_]{0,62}$."""
     value: float | Unset = UNSET
     """Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside
     `targets` it must be > 0. queue_depth requires a positive per-worker backlog budget, and cpu is capped at 100.
