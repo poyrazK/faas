@@ -95455,6 +95455,11 @@ components:
           type: string
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           example: orders_pending
+        labels:
+          description: "custom targets only: watch the one labelled gauge series of the metric with exactly these labels instead of its aggregate (ADR-20261108160000). Keys match ^[a-z_][a-z0-9_]{0,62}$."
+          type: object
+          maxProperties: 3
+          additionalProperties: { type: string, maxLength: 128 }
         value:
           description: "Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside `targets` it must be > 0. queue_depth requires a positive per-worker backlog budget, and cpu is capped at 100."
           type: number

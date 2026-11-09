@@ -2189,6 +2189,7 @@ from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_schedule import ScalingSchedule
 from .scaling_target import ScalingTarget
+from .scaling_target_labels import ScalingTargetLabels
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_project_project_add_services import ScanProjectProjectAddServices
 from .scan_project_project_progressive import ScanProjectProjectProgressive
@@ -4718,6 +4719,7 @@ __all__ = (
     "ScalingPolicyConcurrencyOverflow",
     "ScalingSchedule",
     "ScalingTarget",
+    "ScalingTargetLabels",
     "ScalingTargetMetric",
     "ScanProjectProjectAddServices",
     "ScanProjectProjectProgressive",
