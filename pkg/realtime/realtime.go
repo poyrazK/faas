@@ -955,20 +955,12 @@ func (m *Manager) RemoveEndpoint(id string) {
 		}
 	}
 	m.mu.RUnlock()
-	// Each client is told why (1008 "endpoint removed") so it does not
+	// Each client is told why (1008 "endpoint removed or disabled") so it does not
 	// reconnect as it would after a network drop. The close frames are
 	// written in parallel under one short deadline: revocation must not wait
 	// on a slow client, and closing the transport afterwards unblocks the read
 	// pump and persists its disconnect callback through the normal path.
-	var wg sync.WaitGroup
-	for _, c := range connections {
-		wg.Add(1)
-		go func(c *connection) {
-			defer wg.Done()
-			c.closeWithin(websocket.ClosePolicyViolation, "endpoint removed", endpointRemovalCloseWait)
-		}(c)
-	}
-	wg.Wait()
+	closeConnectionsWithin(connections, websocket.ClosePolicyViolation, "endpoint removed or disabled", endpointRemovalCloseWait)
 }
 
 // endpointRemovalCloseWait bounds the close-frame write to each client of a
@@ -1229,7 +1221,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	state.gate.Lock()
 	if state.revoked.Load() {
 		state.gate.Unlock()
-		_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "endpoint removed"), time.Now().Add(m.cfg.WriteWait))
+		_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "endpoint removed or disabled"), time.Now().Add(m.cfg.WriteWait))
 		_ = ws.Close()
 		return
 	}
@@ -1790,12 +1782,20 @@ func (c *connection) closeWithin(code int, reason string, wait time.Duration) {
 	})
 }
 
-func (c *connection) terminate(code int, reason string) {
-	c.closeOne.Do(func() {
-		c.recordClose(code, reason)
-		c.closeOutboundQueue()
-		_ = c.ws.Close()
-	})
+// closeConnectionsWithin tells each connection why it is closing (a close
+// frame with code and reason, so the client does not treat it as a network
+// drop) and then closes it. The frames are written in parallel under one
+// short deadline so a slow client cannot hold up the caller.
+func closeConnectionsWithin(connections []*connection, code int, reason string, wait time.Duration) {
+	var wg sync.WaitGroup
+	for _, c := range connections {
+		wg.Add(1)
+		go func(c *connection) {
+			defer wg.Done()
+			c.closeWithin(code, reason, wait)
+		}(c)
+	}
+	wg.Wait()
 }
 
 func (c *connection) recordClose(code int, reason string) {
