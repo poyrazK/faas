@@ -2220,7 +2220,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/env",
+      "docs_url": "/docs/environment-gitops",
       "acceptance_test": "pkg/apid/apidserver/handlers_environment_gitops_test.go::TestEnvironmentGitOpsHTTPScopedConfigWorkflow",
       "parent": "environments",
       "routes": [
@@ -3917,7 +3917,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/networking",
+      "docs_url": "/docs/outbound-integrations",
       "acceptance_test": "pkg/apid/apidserver/handlers_outbound_ai_test.go::TestCreateOutboundIntegrationRejectsInvalidAIPolicy",
       "routes": [
         "/dashboard/apps/{}/outbound-bindings",
