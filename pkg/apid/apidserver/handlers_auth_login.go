@@ -602,8 +602,10 @@ func (s *server) revokeSessionsAfterPasswordChange(ctx context.Context, accountI
 	if keepSID == "" {
 		keepSID = uuid.Nil.String()
 	}
-	// A changed password or email also forgets remembered browsers.
+	// A changed password or email also forgets remembered browsers and
+	// ends grants the old credentials started.
 	s.forgetTrustedBrowsers(ctx, accountID, "credential_change")
+	s.endPendingGrants(ctx, accountID, "credential_change")
 	n, err := s.store.RevokeAllSessions(ctx, accountID, keepSID)
 	if err != nil {
 		s.log.Warn("password change: revoke sessions failed", "account", accountID, "err", err)
@@ -872,6 +874,7 @@ func (s *server) revokePreVerificationCredentials(ctx context.Context, accountID
 	if err != nil {
 		return fmt.Errorf("revoke pre-verification sessions: %w", err)
 	}
+	s.endPendingGrants(ctx, accountID, "ownership_claim")
 	keys, err := s.store.ListAPIKeys(ctx, accountID)
 	if err != nil {
 		return fmt.Errorf("list pre-verification api keys: %w", err)

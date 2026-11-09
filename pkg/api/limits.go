@@ -8842,6 +8842,12 @@ const (
 	// "atomic revocation" (no grace).
 	DefaultAPIKeyGraceWindowDays = 7
 
+	// APIKeyGraceWindowMaxDays caps the per-account rotation grace window
+	// (ADR 20261109120000). Unbounded, a leaked admin key could set years
+	// of grace, so the owner's rotation of that key left it working; a
+	// value past ~106,751 days also overflowed time.Duration.
+	APIKeyGraceWindowMaxDays = 30
+
 	// SidecarCapMax bounds all helper workloads in one deployment, including
 	// the optional one-shot init helper. The global cap keeps roster, mount,
 	// and admission work bounded across every plan.

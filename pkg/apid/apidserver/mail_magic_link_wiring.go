@@ -28,6 +28,10 @@ func (s *server) consumeMagicLink(ctx context.Context, hash []byte) (string, *ap
 	if s.magicLinkCredentials != nil {
 		result, err := s.magicLinkCredentials.Redeem(ctx, hash)
 		if err == nil {
+			if result.Claimed {
+				s.forgetTrustedBrowsers(ctx, result.AccountID, "ownership_claim")
+				s.endPendingGrants(ctx, result.AccountID, "ownership_claim")
+			}
 			if result.RevokedSessions > 0 || result.RevokedAPIKeys > 0 {
 				s.audit.Emit(ctx, "auth.pre_verification_credentials_revoked", &result.AccountID, map[string]any{
 					"sessions": result.RevokedSessions, "api_keys": result.RevokedAPIKeys,

@@ -164,6 +164,47 @@ func (q *Queries) DeleteAccountOAuthLink(ctx context.Context, db DBTX, arg Delet
 	return removed, err
 }
 
+const endAccountApprovedCliCodes = `-- name: EndAccountApprovedCliCodes :execrows
+UPDATE cli_auth_codes SET status='expired'
+WHERE account_id=$1 AND status='consumed' AND consumed_at IS NULL
+`
+
+func (q *Queries) EndAccountApprovedCliCodes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, endAccountApprovedCliCodes, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const endAccountPendingEmailChanges = `-- name: EndAccountPendingEmailChanges :execrows
+DELETE FROM account_email_changes WHERE account_id=$1 AND consumed_at IS NULL
+`
+
+// Grants an account started that a recovery must end (ADR 20261109120000):
+// pending email changes, org invitations it created, and CLI or agent
+// sign-in codes approved but not yet exchanged for a key.
+func (q *Queries) EndAccountPendingEmailChanges(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, endAccountPendingEmailChanges, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const endAccountPendingInvitations = `-- name: EndAccountPendingInvitations :execrows
+UPDATE org_invitations SET revoked_at=clock_timestamp()
+WHERE invited_by_account_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL
+`
+
+func (q *Queries) EndAccountPendingInvitations(ctx context.Context, db DBTX, invitedByAccountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, endAccountPendingInvitations, invitedByAccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertAccountEmailChange = `-- name: InsertAccountEmailChange :execrows
 INSERT INTO account_email_changes(token_hash,account_id,old_email,new_email,expires_at)
 SELECT $1, a.id, lower(a.email::text), $2::text, $3
