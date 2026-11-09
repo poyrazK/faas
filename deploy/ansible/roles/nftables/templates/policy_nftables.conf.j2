@@ -140,6 +140,11 @@ table inet faas {
     {{ faas_priv }}ip saddr {{ cidr }} tcp dport 9080 accept comment "Promtail metrics scraped from control (ADR-20261023124955)"
 {% endfor -%}
 {% endif -%}
+{% if (faas_disk_encryption | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_tang_allowed_cidrs | default([]) -%}
+{% for cidr in faas_tang_allowed_cidrs -%}
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport {{ faas_tang_port | default(7500) }} accept comment "faas Tang key server from the fleet (ADR-20261109120000)"
+{% endfor -%}
+{% endif -%}
 {% if faas_tcpd_enabled | default(false) and faas_tcpd_allowed_cidrs | default([]) -%}
 {% for cidr in faas_tcpd_allowed_cidrs -%}
 {% if ':' in cidr %}    ip6 saddr {{ cidr }} tcp dport 40000-49999 accept comment "raw TCP app listeners"

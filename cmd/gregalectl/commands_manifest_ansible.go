@@ -214,6 +214,11 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		}
 		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay, m.SSH, m.DNS.Mode, m.DNS.OriginPull, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
 		body += renderDomainLayoutVars(m.DNS)
+		diskVars, diskErr := renderDiskEncryptionVars(m, host)
+		if diskErr != nil {
+			return nil, diskErr
+		}
+		body += diskVars
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
 			body += renderScheddListenVars(m)
