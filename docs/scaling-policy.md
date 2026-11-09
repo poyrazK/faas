@@ -194,10 +194,23 @@ Each data point becomes a custom metric under the same per-app name cap:
   and its name may be at most 57 characters after normalising.
 - **Names are normalised:** lowercase, with `.`, `-` and `/` turned into `_`,
   so `orders.pending` becomes `orders_pending`.
-- **Rejected:** data points with attributes (each attribute value would be a
-  separate series), exponential histograms, summaries, negative values
-  (except a delta up-down counter's decrease), histograms whose buckets do
-  not add up, and new names beyond the cap. The response's
+- **Attributes become labels.** A data point may carry up to 3 attributes
+  (string, bool, int or double values of at most 128 bytes; keys normalised
+  like names). Each distinct label set is a *series* of the metric, for
+  example `queue_depth{queue=emails}` and `queue_depth{queue=billing}`. The
+  metric itself holds the aggregate of its series: their **sum** for
+  counters, the **maximum** of series refreshed in the last 5 minutes for
+  gauges. Alerts, release gates, scaling and the metric's history read that
+  aggregate. `GET /v1/apps/{slug}/custom-metrics` lists each series with its
+  `key`, and the history endpoint takes `?labels=<key>` to chart one series.
+  A metric holds at most 50 series, and an app at most 100 (Hobby), 500
+  (Pro) or 2,000 (Scale). Use attributes with few values (a queue, a route,
+  a status class), never a user or request id. Once a metric has labelled
+  series, an unlabelled point for it is stored as the series with no labels.
+- **Rejected:** more than 3 attributes, attributes that are arrays, maps or
+  bytes, exponential histograms, summaries, negative values (except a delta
+  up-down counter's decrease), histograms whose buckets do not add up, new
+  names beyond the cap and new series beyond the series caps. The response's
   `partial_success` says how many points were rejected and why; the rest are
   stored.
 

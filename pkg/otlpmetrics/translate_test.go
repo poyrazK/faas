@@ -1,6 +1,7 @@
 package otlpmetrics
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -59,7 +60,7 @@ func TestTranslate_GaugesAndCountersKeepTheNewestPoint(t *testing.T) {
 
 func TestTranslate_RejectsWhatCannotBeStored(t *testing.T) {
 	withAttrs := dbl(1, 0)
-	withAttrs.Attributes = []*commonpb.KeyValue{{Key: "region", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "eu"}}}}
+	withAttrs.Attributes = []*commonpb.KeyValue{strAttr("a", "1"), strAttr("b", "2"), strAttr("c", "3"), strAttr("d", "4")}
 	exponential := &metricspb.Metric{Name: "latency", Data: &metricspb.Metric_ExponentialHistogram{ExponentialHistogram: &metricspb.ExponentialHistogram{
 		DataPoints: []*metricspb.ExponentialHistogramDataPoint{{}, {}},
 	}}}
@@ -81,7 +82,7 @@ func TestTranslate_RejectsWhatCannotBeStored(t *testing.T) {
 			histPoint(0, 1, []float64{-1}, []uint64{1, 0})), 1},
 		{"histogram name too long", histogramMetric(strings.Repeat("h", 58), metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
 			histPoint(0, 1, []float64{1}, []uint64{1, 0})), 1},
-		{"attributes", gauge("orders", withAttrs), 1},
+		{"four attributes", gauge("orders", withAttrs), 1},
 		{"negative", gauge("orders", dbl(-1, 0)), 1},
 		{"non-finite", gauge("orders", dbl(math.Inf(1), 0)), 1},
 		{"invalid name", gauge("9lives", dbl(1, 0)), 1},
@@ -220,6 +221,68 @@ func TestHistogramQuantileEdges(t *testing.T) {
 	if res := Translate(request(histogramMetric("empty", metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
 		histPoint(0, 0, nil, nil))), now); len(byName(res.Points)) != 2 {
 		t.Fatalf("an empty histogram = %+v, want only _count and _sum", res.Points)
+	}
+}
+
+func strAttr(k, v string) *commonpb.KeyValue {
+	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: v}}}
+}
+
+func withLabels(dp *metricspb.NumberDataPoint, attrs ...*commonpb.KeyValue) *metricspb.NumberDataPoint {
+	dp.Attributes = attrs
+	return dp
+}
+
+// adr: 20261108160000 — slice C: attributes become labels; each label set is
+// a series with its own canonical key, newest/summed per series.
+func TestTranslate_AttributesBecomeSeries(t *testing.T) {
+	res := Translate(request(
+		sum("jobs.done", true, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA,
+			withLabels(dbl(2, -2*time.Second), strAttr("queue", "emails")),
+			withLabels(dbl(3, -time.Second), strAttr("queue", "emails")),
+			withLabels(dbl(5, -time.Second), strAttr("queue", "billing")),
+			dbl(1, -time.Second)),
+		gauge("depth", withLabels(dbl(7, 0), strAttr("Region.Name", "eu,west"),
+			&commonpb.KeyValue{Key: "shard", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: 3}}})),
+	), now)
+	if res.Rejected != 0 {
+		t.Fatalf("rejected %d: %s", res.Rejected, res.Reason)
+	}
+	var got []string
+	for _, p := range res.Points {
+		got = append(got, fmt.Sprintf("%s{%s}=%v", p.Name, p.SeriesKey, p.Value))
+	}
+	want := []string{"depth{region_name=eu%2Cwest,shard=3}=7", "jobs_done{}=1", "jobs_done{queue=billing}=5", "jobs_done{queue=emails}=5"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("points = %v, want %v", got, want)
+	}
+	if l := res.Points[0].Labels; l["region_name"] != "eu,west" || l["shard"] != "3" {
+		t.Fatalf("labels = %v", l)
+	}
+
+	hist := histogramMetric("latency", metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+		histPoint(0, 4, []float64{10}, []uint64{2, 0}), histPoint(0, 4, []float64{10}, []uint64{2, 0}))
+	hist.GetHistogram().DataPoints[0].Attributes = []*commonpb.KeyValue{strAttr("route", "/a")}
+	hist.GetHistogram().DataPoints[1].Attributes = []*commonpb.KeyValue{strAttr("route", "/b")}
+	if n := len(Translate(request(hist), now).Points); n != 10 {
+		t.Fatalf("two labelled histogram series = %d points, want 10", n)
+	}
+}
+
+func TestLabelsRejections(t *testing.T) {
+	long := strings.Repeat("x", 129)
+	for name, attrs := range map[string][]*commonpb.KeyValue{
+		"bad key":     {strAttr("9x", "v")},
+		"duplicate":   {strAttr("a.b", "1"), strAttr("a_b", "2")},
+		"long value":  {strAttr("k", long)},
+		"array value": {{Key: "k", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_ArrayValue{ArrayValue: &commonpb.ArrayValue{}}}}},
+	} {
+		if _, _, err := Labels(attrs); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, key, err := Labels([]*commonpb.KeyValue{strAttr("b", "2"), strAttr("a", "x=y%")}); err != nil || key != "a=x%3Dy%25,b=2" {
+		t.Fatalf("key = %q, %v", key, err)
 	}
 }
 

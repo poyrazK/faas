@@ -1,6 +1,6 @@
 # ADR-20261108160000: Custom metrics take OTLP deltas, up-down counters, histograms and bounded labels, capped per plan
 
-- **Status:** accepted (slices A and B implemented; C to follow)
+- **Status:** accepted (slices A, B and C1 implemented; C2 next)
 - **Date:** 2026-11-08
 - **Amends:** ADR-202 (pushed custom metrics: the flat cap of 5 names per
   app becomes a per-plan cap), ADR-745 (OTLP metrics ingestion: more types
@@ -79,14 +79,47 @@ exports too.
   export cap (the log export rate) and stores only for the app's own
   account.
 
-### Slice C — labels (after B)
+### Slice C — labels (C1 implemented; C2 rule label filters next)
 
 Each metric name may carry up to 3 label keys and a bounded number of label
 combinations; each combination is a series stored and exported with its
 labels. Alerts, release gates and scaling rules that name only the metric
 read the sum (counters) or the maximum (gauges) across its series, and may
-add a label filter to read one series. The design of the series key,
-storage and caps is settled in that slice.
+add a label filter to read one series.
+
+C1 (this change):
+
+- **Storage: aggregate on write.** Series live in a new
+  `app_custom_metric_series` table keyed (app_id, name, series_key), with a
+  foreign key to the metric's `app_custom_metrics` row (ON DELETE CASCADE).
+  A series write, in one transaction, admits the metric row under the name
+  cap and locks it, admits the series under the caps, upserts it (set or
+  add by temporality, clamped to [0, 1e15]), drops series of another kind
+  (a kind change restarts the metric), and recomputes the metric row: the
+  sum of the series for counters, the maximum of series observed within
+  CustomMetricFreshnessSeconds of the newest for gauges. Every existing
+  reader of `app_custom_metrics` (schedd scaling, alerts, release gates,
+  history, release N-1 apid) therefore reads the aggregate unchanged; no
+  reader needed a change and no existing column or key changed.
+- **Series key:** labels' canonical `k=v,...`, keys sorted, with `%`, `,`
+  and `=` percent-escaped in values. Keys normalise like metric names and
+  match `[a-z_][a-z0-9_]{0,62}`; values are scalars of at most 128 bytes.
+- **Caps:** 3 labels per point, 50 series per metric
+  (`CustomMetricMaxSeriesPerMetric`), and per plan
+  `CustomMetricSeriesPerApp` Hobby 100 · Pro 500 · Scale 2000. The
+  per-metric count is exact (the metric row lock serializes it); the
+  per-app count may overshoot slightly under concurrent writes to different
+  names.
+- **Mixing:** once a metric has series, unlabelled points for it (OTLP or
+  the push endpoint) are stored as its `''` series, so they join the
+  aggregate instead of overwriting it.
+- **Export and API:** apid exports fresh series as
+  `gregale_app_custom_metric_series{app,name,labels=<key>}`; the list
+  endpoint returns each metric's series and `max_series`; the history
+  endpoint takes `?labels=<key>`.
+
+C2 (next): an optional label filter on alert rules, release gates and
+scaling targets that read one series instead of the aggregate.
 
 ## Consequences
 

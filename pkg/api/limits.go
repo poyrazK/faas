@@ -4599,6 +4599,10 @@ type Limits struct {
 	// because schedd reads an app's metrics every tick and apid exports
 	// every fresh one to the platform Prometheus.
 	CustomMetricsPerApp int
+	// CustomMetricSeriesPerApp caps labelled series (one per distinct label
+	// set of a metric name) per app, ADR-20261108160000 slice C. Each is a
+	// stored row and an exported Prometheus series.
+	CustomMetricSeriesPerApp int
 
 	// MaxInstancesAllowed (issue #462 / ADR-058) toggles the per-app
 	// ceiling on live instances. Mirrors MinInstancesAllowed: Hobby+
@@ -6488,6 +6492,8 @@ var planLimits = map[Plan]Limits{
 		MinInstancesAllowed:  true,
 		CustomMetricsAllowed: true,
 		CustomMetricsPerApp:  20,
+		// ADR-20261108160000 slice C.
+		CustomMetricSeriesPerApp: 100,
 		MaxInstancesAllowed:  true,
 		// MaxMinInstances (ADR-071): Hobby gets 1 — one warm
 		// instance is the minimum the floor feature exists to
@@ -6887,6 +6893,8 @@ var planLimits = map[Plan]Limits{
 		MinInstancesAllowed:   true,
 		CustomMetricsAllowed:  true,
 		CustomMetricsPerApp:   50,
+		// ADR-20261108160000 slice C.
+		CustomMetricSeriesPerApp: 500,
 		MaxInstancesAllowed:   true,
 		// MaxMinInstances (ADR-071): Pro = 3 — covers a small
 		// "always-warm fan-out for a customer-facing API" pattern
@@ -7304,6 +7312,8 @@ var planLimits = map[Plan]Limits{
 		MinInstancesAllowed:   true,
 		CustomMetricsAllowed:  true,
 		CustomMetricsPerApp:   200,
+		// ADR-20261108160000 slice C.
+		CustomMetricSeriesPerApp: 2000,
 		MaxInstancesAllowed:   true,
 		// MaxMinInstances (ADR-071): Scale = 10 — half of
 		// MaxConcurrency (20). At Scale's 1024 MB instance RAM
@@ -9288,6 +9298,13 @@ const (
 	// ceiling one bad push would demand the plan cap's worth of instances
 	// on the very next tick.
 	CustomMetricMaxValue = 1e12
+	// Labelled series bounds (ADR-20261108160000 slice C): label keys per data
+	// point, the longest label value kept, and series per metric name. Each
+	// series is a stored row and an exported Prometheus series, so a metric
+	// labelled by an unbounded attribute (a user id) stops at the cap.
+	CustomMetricMaxLabels          = 3
+	CustomMetricLabelValueMaxBytes = 128
+	CustomMetricMaxSeriesPerMetric = 50
 	// MinScalingScheduleDurationS / MaxScalingScheduleDurationS bound a
 	// window. The floor is 60 s because the scheduler's own sweep is
 	// coarser than that, so a shorter window could close before any tick
@@ -11034,6 +11051,16 @@ func (p Plan) CustomMetricsPerApp() int {
 		return 0
 	}
 	return l.CustomMetricsPerApp
+}
+
+// CustomMetricSeriesPerApp (ADR-20261108160000 slice C) returns the plan's
+// cap on labelled custom metric series per app; 0 without custom metrics.
+func (p Plan) CustomMetricSeriesPerApp() int {
+	l, ok := LimitsFor(p)
+	if !ok || !l.CustomMetricsAllowed {
+		return 0
+	}
+	return l.CustomMetricSeriesPerApp
 }
 
 // QueueControlsAllowed (ADR-124) reports whether the plan may

@@ -1115,6 +1115,8 @@ from .custom_metric_series_point import CustomMetricSeriesPoint
 from .custom_metric_series_response import CustomMetricSeriesResponse
 from .custom_metric_series_response_kind import CustomMetricSeriesResponseKind
 from .custom_metric_series_response_range import CustomMetricSeriesResponseRange
+from .custom_metric_series_value import CustomMetricSeriesValue
+from .custom_metric_series_value_labels import CustomMetricSeriesValueLabels
 from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
@@ -7455,6 +7457,8 @@ __all__ = (
     "CustomMetricSeriesResponse",
     "CustomMetricSeriesResponseKind",
     "CustomMetricSeriesResponseRange",
+    "CustomMetricSeriesValue",
+    "CustomMetricSeriesValueLabels",
     "CustomStage",
     "DailyUsageListResponse",
     "DailyUsagePoint",
