@@ -85,7 +85,7 @@ func TestThrottleRec_HappyPath(t *testing.T) {
 	resp, src := throttlerec.Fetch(context.Background(), stub, log, throttlerec.FetchOptions{
 		AppID:               "app-1",
 		Range:               "5m",
-		Plan:                api.PlanPro, // RateLimitRPS=100, Burst=500
+		Plan:                api.PlanPro, // RateLimitRPS=1000, Burst=5000
 		RouteMetricsEnabled: true,
 	})
 	if src != throttlerec.SourcePrometheus {
@@ -136,7 +136,7 @@ func TestThrottleRec_PlanCeilingClamp(t *testing.T) {
 	resp, src := throttlerec.Fetch(context.Background(), stub, log, throttlerec.FetchOptions{
 		AppID:               "app-1",
 		Range:               "5m",
-		Plan:                api.PlanPro, // RateLimitRPS=100, Burst=500
+		Plan:                api.PlanPro, // RateLimitRPS=1000, Burst=5000
 		RouteMetricsEnabled: true,
 	})
 	if src != throttlerec.SourcePrometheus {

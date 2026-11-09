@@ -687,7 +687,7 @@ func TestCmdEdgeRulesTraceReportsThrottlePolicyAndPlanCeiling(t *testing.T) {
 		t.Fatalf("throttle trace = %#v", result.Simulation)
 	}
 	policy := result.Simulation.Steps[0].ThrottlePolicy
-	if policy == nil || policy.RequestsPerSecond != 2.5 || policy.Burst != 12 || policy.KeyBy != api.ThrottleKeyByCountry || policy.PlanMaxRPS != api.MustLimitsFor(api.PlanHobby).RateLimitRPS || policy.PlanCeilingStatus != "within_plan" || policy.AppRequestRPS != 8 || policy.AppRequestBurst != 32 || policy.AccountRequestRPM != 1200 {
+	if policy == nil || policy.RequestsPerSecond != 2.5 || policy.Burst != 12 || policy.KeyBy != api.ThrottleKeyByCountry || policy.PlanMaxRPS != api.MustLimitsFor(api.PlanHobby).RateLimitRPS || policy.PlanCeilingStatus != "within_plan" || policy.AppRequestRPS != 8 || policy.AppRequestBurst != 32 || policy.AccountRequestRPM != 12000 {
 		t.Fatalf("throttle policy = %#v", policy)
 	}
 }
