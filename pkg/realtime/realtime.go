@@ -214,6 +214,10 @@ type Endpoint struct {
 	MaxConnections   int
 	MaxMessageBytes  int64
 	MaxConnectionAge time.Duration
+	// maxConnectionsSet records that the customer set MaxConnections, so the
+	// cap holds across the fleet (fleetConnections). An unset cap defaults
+	// to the node's own capacity and stays a per-node bound.
+	maxConnectionsSet bool
 	// AccountMaxConnections is the account's plan allowance of concurrent
 	// connections across the fleet (ADR-1323). Zero enforces no account limit.
 	AccountMaxConnections int
@@ -636,6 +640,9 @@ type endpointState struct {
 	account *accountConnections
 	// relays is the endpoint's share of the node's ephemeral relays.
 	relays relayBudget
+	// remote is the endpoint's connections on the other nodes from the last
+	// connection sync; it counts only for a customer-set max_connections.
+	remote atomic.Int64
 }
 
 // Manager is the owner of managed realtime sockets for one process/node.
@@ -865,6 +872,7 @@ func (m *Manager) registerEndpoint(e Endpoint) error {
 		return err
 	}
 	e.LiveRoutes = routes
+	e.maxConnectionsSet = e.MaxConnections > 0
 	if e.MaxConnections <= 0 || e.MaxConnections > m.cfg.MaxConnections {
 		e.MaxConnections = m.cfg.MaxConnections
 	}
@@ -1269,9 +1277,10 @@ func (m *Manager) tryReserve(state *endpointState) (connectionRefusal, bool) {
 					m.reserved.Add(-1)
 					return connectionRefusal{}, false
 				}
-				if limit := int64(state.config.Load().MaxConnections); endpointCurrent >= limit {
+				config := state.config.Load()
+				if limit, observed := int64(config.MaxConnections), endpointCurrent+m.remoteEndpointConnections(state, config); observed >= limit {
 					m.reserved.Add(-1)
-					return connectionRefusal{scope: api.RealtimeConnectionLimitEndpoint, limit: limit, observed: endpointCurrent}, false
+					return connectionRefusal{scope: api.RealtimeConnectionLimitEndpoint, limit: limit, observed: observed}, false
 				}
 				if state.reserved.CompareAndSwap(endpointCurrent, endpointCurrent+1) {
 					if refusal, ok := m.reserveAccount(state); !ok {

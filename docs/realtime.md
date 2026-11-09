@@ -346,8 +346,9 @@ where realtime holds real capacity on our servers:
   Live publishes are not counted.
 - **Functions triggered by channel messages** bill as normal compute.
 
-An endpoint's `max_connections` still caps that endpoint; the account limit
-applies on top of it.
+An endpoint's `max_connections` caps that endpoint across all realtime nodes
+(counts are shared every few seconds, so a burst can briefly pass it); the
+account limit applies on top of it.
 
 See where you stand with `gregale realtime usage` (or `GET /v1/usage/realtime`,
 a preview that answers 404 until it is enabled for your account): connections open
