@@ -21,8 +21,11 @@ import (
 // (ADR-20261030133644). With --socket it is the operator's view of a
 // bridge's grants through its local admin socket.
 func cmdMCPConnections(args []string) int {
+	if len(args) > 0 && args[0] == "activity" {
+		return cmdMCPConnectionActivity(args[1:])
+	}
 	if len(args) == 0 || (args[0] != "list" && args[0] != "revoke") {
-		return printErr("MCP connections", errors.New("use connection list, or connection revoke <id> | --all"))
+		return printErr("MCP connections", errors.New("use connection list, connection activity <id> | --self, or connection revoke <id> | --all"))
 	}
 	fs := newFlagSet("mcp-connections-"+args[0], flag.ContinueOnError)
 	socket := fs.String("socket", "", "owner-protected management control socket (operators)")

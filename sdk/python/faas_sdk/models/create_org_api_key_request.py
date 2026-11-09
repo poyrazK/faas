@@ -29,8 +29,8 @@ class CreateOrgAPIKeyRequest:
     label: str | Unset = UNSET
     scopes: list[CreateOrgAPIKeyRequestScopesItem] | Unset = UNSET
     """Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls
-    customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant.
-    The legacy and org-scoped key vocabularies remain identical."""
+    customer GitHub connection stored workflow; object-storage data scopes also require an explicit logical-bucket
+    grant. The legacy and org-scoped key vocabularies remain identical."""
     projects: list[str] | Unset = UNSET
     """Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then
     reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project."""

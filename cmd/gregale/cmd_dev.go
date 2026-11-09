@@ -316,6 +316,10 @@ func cmdDev(args []string) int {
 	if len(args) > 0 && args[0] == "trigger" {
 		return cmdDevTrigger(args[1:])
 	}
+	// ADR-20261107210000: run the functions on this machine instead.
+	if rest, isLocal := hasLocalFlag(args); isLocal {
+		return cmdDevLocal(rest)
+	}
 	fs := newFlagSet("dev", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")

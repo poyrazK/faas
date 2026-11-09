@@ -60,6 +60,8 @@ var adoptionStateInventory = map[string]map[string]string{
 		"qualificationConfigReceiptWaiters": "bootonly", // qualification guests are never adopted
 		"qualificationInstances":            "bootonly",
 		"quietStates":                       "reset", // quiet pause waits one idle period after adoption
+		"idleStates":                        "reset", // the idle ladder observe pass measures from adoption
+		"idleColdCeilings":                  "reset", // compression ceilings relearn from the next wakes; a restarted vmmd starts at the defaults
 		"readinessLoopCancels":              "rebuilt",
 		"resourceLinks":                     "rebuilt",
 		"resourceNetworks":                  "rebuilt",
@@ -131,6 +133,8 @@ var adoptionInstanceInventory = map[string]string{
 	"QualificationOnly":               "refused", // qualification kind
 	"Paused":                          "rebuilt", // warm-pool restore, claimed or not
 	"QuietPauseAfter":                 "rebuilt",
+	"IdleLadderEligible":              "rebuilt",
+	"IdleLadderGuardedPause":          "rebuilt",
 	"Frozen":                          "rebuilt",
 	"FrozenSince":                     "rebuilt",
 	"freezing":                        "reset",   // no freeze is in flight at startup

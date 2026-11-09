@@ -102,6 +102,13 @@ Other characters follow Go's `path.Match`: `*` matches within one segment,
 as `/users/{id}` are not globs; the API rejects them and suggests the glob
 (`/users/?*`).
 
+Before any rule runs, the gateway resolves `.` and `..` segments (also when
+percent-encoded) and collapses repeated slashes, keeping a trailing slash,
+and forwards that path to your app: `/public/../upload` and `//upload` are
+`/upload` to every rule and to the app. A path already in that form is
+forwarded unchanged. Backslashes, `;` parameters and letter case are left
+as sent.
+
 Rules that refuse or limit requests (`ip`, `geo`, `jwt`, `limit`, `throttle`,
 `validate`, `maintenance`, `waf`, `challenge`) also match the path's
 normalized form, with `.` and `..` segments and repeated slashes resolved, and
@@ -119,6 +126,13 @@ the edge: if your app honours one, leave `match_methods` off the rule. An app
 that only allows its declared routes (`only_allow_declared_routes`) gets the
 same treatment: a POST that asks to run as `DELETE` needs both `POST` and
 `DELETE` declared for its path.
+
+A `match` condition on these rules reads the same forms: it holds when it
+holds for the raw path or any normalized form above, and on a `HEAD` request
+also when it holds for `GET`. A `jwt` rule on `/**` with
+`{"not": {"field": "path", "op": "prefix", "value": "/public"}}` therefore
+still checks `/public/../admin`, and a `path prefix /admin` condition covers
+`//admin` and `/ADMIN`. Other kinds compare conditions exactly.
 
 A gate scoped by `match_headers`, or by a `header:`, `cookie:` or `query:`
 field in `match`, applies only when the client sends that value, and the
@@ -347,6 +361,29 @@ value alongside it. For common security headers,
 [Security headers on your app](security#security-headers-on-your-app) sets a
 recommended rule.
 
+#### Credentials in request headers
+
+A request header that carries a credential, such as the token your origin
+expects, is stored encrypted and never shown again:
+
+```json
+{"name": "Authorization", "action": "set", "value": "Bearer <token>", "secret": true}
+```
+
+Only the gateway that applies the rule can read the value. Rules, versions,
+exports, the dashboard and agent tools show `"secret": true` and a
+`secret_id` instead of the value. `Authorization`, `Proxy-Authorization`,
+`Cookie` and any header whose name contains `token`, `secret`, `password`,
+`api-key`, `apikey`, `signature` or `credential` are kept this way without
+`secret`. To keep a stored value when you change a rule, send the op back with
+its `secret_id` and no `value`; to replace it, send a new `value`. Sealed
+values are at most 4096 bytes and work on request headers only, not with
+`template` or `remove`.
+
+A credential-named value saved before sealing arrived is shown with an empty
+`value` and `"redacted": true`. Sending that op back unchanged seals the
+stored value. Environment policies do not take sealed values yet.
+
 ### cors
 
 ```json
@@ -455,8 +492,11 @@ headers the client or a CDN sends.
 A request body over `max_body_bytes` (1 byte to 25 MiB) gets 413
 `request_too_large`. A request whose `Content-Length` is over the cap is
 refused before any of the body is read. `max_body_bytes_streaming`
-(optional, at least `max_body_bytes`, at most 100 MiB) sets the size cap for
-a streamed response on the route.
+(optional, at least `max_body_bytes`, at most 100 MiB) is the request body cap
+instead of `max_body_bytes` when your app has streaming turned on: every
+request to such an app streams except WebSocket upgrades, whatever its
+`Accept` header, so on a streaming app this is the cap that applies. Leave it
+unset to keep `max_body_bytes` there too. It also caps the streamed response.
 
 ### throttle
 
@@ -531,7 +571,13 @@ most four bodies, so other customers' uploads cannot use it up. A body sent
 without `Content-Length` is held as it arrives. When a bound is reached, a
 request gets 503 `capacity_unavailable` with `Retry-After`. Set
 `reject_on_unknown_fields` to reject properties the schema does not declare,
-and `apply_while_streaming` to validate a WebSocket handshake too. Path,
+and `apply_while_streaming` to validate a WebSocket handshake too. A body that
+names a property twice in one object, or in two spellings that differ only in
+case (`role` and `ROLE`), fails with `expected: unique_properties`: Go and
+ASP.NET Core bind property names case-insensitively, so the second spelling
+would reach your app unchecked. Query parameters are read as apps read them,
+split on `&` only, so `?id=1;--` is checked as `id=1;--`; a query with a
+percent-escape that does not decode fails with `expected: query_string`. Path,
 query and header parameters are always checked, and so is any body sent with
 `Connection: Upgrade`: servers that do not speak the named protocol run such a
 request as usual.
@@ -666,6 +712,11 @@ whose target app is being renamed: until the change lands, its requests get
 served by the app the host belongs to. If the gateways cannot be reached,
 the change is refused with 503 and nothing changes; retry it. Changes to one account's rules are
 applied one at a time; other accounts' changes never wait for yours.
+
+A deploy token or a project-limited agent key manages only rules for its
+own apps' hosts. It cannot change, delete or roll back over a rule whose
+`match_host` covers other hosts (`*`, a wildcard, another app's host); use an
+account API key for those. See [deploy tokens](deploys.md#deploy-tokens).
 
 Two people editing the same app's rules at once cannot overwrite each other:
 send the `ETag` from `GET /v1/apps/{slug}/edge-rules` as `If-Match`, and a

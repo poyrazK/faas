@@ -79,27 +79,52 @@ func (s *PgStore) ListPendingAppEgressPolicyTargets(ctx context.Context, appID s
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
+	// Two kinds of target. A node serving the app needs every unapplied
+	// revision and a periodic re-observation. A node that once received the
+	// app's policy but serves nothing now still holds it in vmmd's policy
+	// cache, and vmmd lays that cache over the policy a wake request carries
+	// (a task VM, or the next wake after a parked app's egress changed). Such a
+	// node is offered each new revision once (attempted_revision), so a
+	// retired node is not retried forever; a vmmd restart drops the cache.
 	rows, err := s.pool.Query(ctx, `
+		SELECT app_id, node_id, slug, revision, allowlist, ports
+		FROM (
+		SELECT a.id::text AS app_id,
+		       i.node_id::text AS node_id,
+		       a.slug,
+		       a.egress_allowlist_revision AS revision,
+		       a.egress_allowlist::text AS allowlist,
+		       a.egress_ports AS ports,
+		       COALESCE(p.observed_at, 'epoch'::timestamptz) AS observed_at
+		FROM apps a
+		JOIN instances i ON i.app_id = a.id
+		LEFT JOIN app_egress_policy_node_status p
+		       ON p.app_id = a.id AND p.node_id = i.node_id
+		WHERE a.status <> 'deleted'
+		  AND i.node_id IS NOT NULL
+		  AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining')
+		  AND ($1 = '' OR a.id = $1::uuid)
+		  AND (
+		       COALESCE(p.applied_revision, 0) < a.egress_allowlist_revision
+		       OR COALESCE(p.observed_at, 'epoch'::timestamptz) < now() - ($2 * interval '1 second')
+		  )
+		GROUP BY a.id, i.node_id, a.slug, a.egress_allowlist_revision, a.egress_allowlist, a.egress_ports, p.observed_at
+		UNION
 		SELECT a.id::text,
-		       i.node_id::text,
+		       p.node_id::text,
 		       a.slug,
 		       a.egress_allowlist_revision,
 		       a.egress_allowlist::text,
-		       a.egress_ports
+		       a.egress_ports,
+		       p.observed_at
 		FROM apps a
-	JOIN instances i ON i.app_id = a.id
-	LEFT JOIN app_egress_policy_node_status p
-	       ON p.app_id = a.id AND p.node_id = i.node_id
-	WHERE a.status <> 'deleted'
-	  AND i.node_id IS NOT NULL
-	  AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining')
-	  AND ($1 = '' OR a.id = $1::uuid)
-	  AND (
-	       COALESCE(p.applied_revision, 0) < a.egress_allowlist_revision
-	       OR COALESCE(p.observed_at, 'epoch'::timestamptz) < now() - ($2 * interval '1 second')
-	  )
-	GROUP BY a.id, i.node_id, a.slug, a.egress_allowlist_revision, a.egress_allowlist, a.egress_ports, p.observed_at
-	ORDER BY COALESCE(p.observed_at, 'epoch'::timestamptz), a.id, i.node_id
+		JOIN app_egress_policy_node_status p ON p.app_id = a.id
+		WHERE a.status <> 'deleted'
+		  AND ($1 = '' OR a.id = $1::uuid)
+		  AND p.applied_revision < a.egress_allowlist_revision
+		  AND p.attempted_revision < a.egress_allowlist_revision
+		) targets
+	ORDER BY observed_at, app_id, node_id
 	LIMIT $3
 	`, appID, staleAfter.Seconds(), limit)
 	if err != nil {

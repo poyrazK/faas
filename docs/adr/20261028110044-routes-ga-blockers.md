@@ -383,3 +383,64 @@ cache on the request path.
 - Until a node's gatewayd runs this release, its rows carry neither flag.
 - An app's first request after a gateway starts can still fold a selected
   route into `__route_other__` while its pins load.
+
+## Amendment 6 (2026-11-04): removal evidence labels, contract reads, clone state
+
+A seventh review found route removal evidence that could miss a removed
+route's traffic, a contract read on the request path, and route monitor state
+registered as clone configuration.
+
+1. **Removal evidence matched one label.** Approval and the cutover gate
+   (`route_removal_check`) counted a removed operation only when telemetry
+   carried its exact method and contract path. Once the app's current OpenAPI
+   document no longer declares the route (the customer uploads the candidate's
+   contract before approval), the gateway labels its requests with the
+   inferred form (`{id}` only for numeric, UUID or hex segments) or the raw
+   path, or folds them into `__route_other__` when the app's 50 labels are
+   taken. HEAD requests to a GET route carry `HEAD`, and contract paths with a
+   trailing slash never matched. Removal could be approved while customers
+   still called the route.
+2. **The declared-route document was read on the request path.** When an
+   app's cached document expired (every 5 minutes), the request that found it
+   expired, and every concurrent one, read it from Postgres under the request's
+   own context with no bound, and a failed read was returned to the request.
+   Apps that only allow declared routes answered 503; other apps silently
+   labeled the request with the inferred form, splitting route health and
+   monitor evidence.
+3. **`route_monitors` registers runtime state as configuration.** Its clone
+   registry entry lists `active_incident_id`, `last_deployment_id`,
+   `last_healthy_deployment`, `customer_recovery_state` and `next_check_at`.
+   Route configuration has no clone capability yet; when it gains one, copying
+   those columns would point a clone at the source's incident and deployments.
+
+**Decision.**
+
+- `route_removal_route_observed` (migration `20261108095332288`) is the one
+  evidence check for approval and the cutover gate. A removed operation
+  matches telemetry whose route fits its template (each `{parameter}` one
+  segment, optional method prefix, optional trailing slash) for its method,
+  with HEAD counted for GET. Rows labeled with an operation the candidate keeps
+  are not the removed route.
+- The gateway labels a request its current contract does not declare with the
+  template of the app's route removal baseline contract, as a declared label
+  that never folds. The baseline only labels; it never admits a request. It
+  loads in the background and never on the request path.
+- The declared-route cache serves an expired document while one background
+  read renews it. Every read is bounded at 2 s and shared by concurrent
+  requests; a failed renewal keeps the document and retries after 10 s. A
+  document the store has not verified for 30 minutes past its TTL is no longer
+  served, so the next request reads and fails closed. Invalidation still drops
+  the document at once.
+- `route_monitors` gains clone capabilities only once a clone starts without
+  the source's runtime state; a test enforces this.
+
+**Consequences.**
+
+- Approval and cutover can block on traffic to a different route of the same
+  shape that the candidate does not declare; declaring that route clears it.
+- Until a gateway learns the baseline (at most one TTL), a removed route can
+  still fold into `__route_other__` on a full label set; the pattern match
+  covers every other label.
+- An app that only allows declared routes keeps its last verified document
+  for up to 30 minutes when the store cannot be read and no change
+  notification arrives.

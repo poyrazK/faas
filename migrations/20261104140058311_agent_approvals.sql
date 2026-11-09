@@ -50,7 +50,8 @@ ALTER TABLE org_agent_policies
 -- default '{}', so a later migration can VALIDATE without finding any.
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_agent_policies_approval_categories_check') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_agent_policies_approval_categories_check'
+                     AND conrelid = 'org_agent_policies'::regclass) THEN
         ALTER TABLE org_agent_policies
             ADD CONSTRAINT org_agent_policies_approval_categories_check
             CHECK (approval_categories <@ ARRAY['delete', 'production', 'credentials', 'billing']::text[]) NOT VALID;

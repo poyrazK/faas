@@ -18,5 +18,9 @@ export type OrgAgentPolicyRequest = {
    * Kinds of action every agent acting in the organization must have a person approve; omit to keep the current ones.
    */
   approval_categories?: Array<'delete' | 'production' | 'credentials' | 'billing'>;
+  /**
+   * Names of your own notification channels that get approval requests of agents acting in the organization; omit to keep them, send an empty list to remove them.
+   */
+  approval_channels?: Array<string>;
 };
 

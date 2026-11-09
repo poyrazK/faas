@@ -58,6 +58,11 @@ stored. Only the documented safe status codes and bodies up to 1 MiB are
 eligible. A cache miss or cache-backend failure always falls through to the
 application.
 
+A response served from the cache, fresh or stale, counts toward the app's
+monthly egress like a response from the app itself
+([plans](plans.md#what-each-limit-means)). It does not wake the app or use
+compute.
+
 ## Purge entries
 
 Purge an app completely:

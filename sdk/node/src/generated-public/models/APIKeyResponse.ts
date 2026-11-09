@@ -17,7 +17,7 @@ export type APIKeyResponse = {
   prefix: string;
   label?: string | null;
   /**
-   * Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access.
+   * Closed permission set attached to the key. github:manage controls customer GitHub connection stored workflow; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access.
    */
   scopes: Array<'admin' | 'apps:read' | 'deploy:write' | 'secrets:read' | 'secrets:write' | 'usage:read' | 'runs:read' | 'runs:write' | 'env:read' | 'env:write' | 'registry_credentials:read' | 'registry_credentials:write' | 'upstreams:write' | 'metrics:write' | 'delayed_tasks:read' | 'delayed_tasks:write' | 'events:publish' | 'queues:send' | 'queues:consume' | 'storage:manage' | 'storage:read' | 'storage:write' | 'postgres:manage' | 'postgres:read' | 'project_environments:read' | 'project_environments:qualify' | 'github:manage'>;
   last_used_at?: string | null;

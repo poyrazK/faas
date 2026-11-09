@@ -4234,6 +4234,8 @@ type AccountResponse struct {
 	ID            string            `json:"id"`
 	Email         string            `json:"email"`
 	EmailVerified bool              `json:"email_verified"`
+	// DisplayName is the account's optional human name; omitted when unset.
+	DisplayName string `json:"display_name,omitempty"`
 	// EmailVerificationGraceEndsAt is present only for unverified password
 	// accounts so API and dashboard clients can render the 30-day deadline.
 	EmailVerificationGraceEndsAt *time.Time    `json:"email_verification_grace_ends_at,omitempty"`
@@ -4305,6 +4307,35 @@ type AccountLimits struct {
 // Nil means no ceiling; zero means no overage is allowed.
 type AccountOverageCapResponse struct {
 	OverageCapCents *int64 `json:"overage_cap_cents"`
+}
+
+// EgressOverageRequest is PUT /v1/account/egress-overage and
+// PUT /v1/orgs/{slug}/egress-overage.
+type EgressOverageRequest struct {
+	// Enabled turns the election on or off. Required.
+	Enabled *bool `json:"enabled"`
+}
+
+// EgressOverageResponse is the billing subject's egress overage election.
+type EgressOverageResponse struct {
+	// Enabled is whether the election is on.
+	Enabled bool `json:"enabled"`
+	// Electable is whether the plan allows the election.
+	Electable bool `json:"electable"`
+	// EnabledAt is when the election started; it is kept when the election
+	// is turned off and on again.
+	EnabledAt *time.Time `json:"enabled_at,omitempty"`
+	// DisabledAt is when the election was last turned off.
+	DisabledAt *time.Time `json:"disabled_at,omitempty"`
+	// IncludedGiB is the plan's monthly egress allowance.
+	IncludedGiB int64 `json:"included_gib"`
+	// Billing is EgressOverageBillingLive or EgressOverageBillingOff.
+	Billing string `json:"billing"`
+	// PriceMillicentsPerGiB prices egress above the allowance while billing
+	// is live.
+	PriceMillicentsPerGiB int64 `json:"price_millicents_per_gib,omitempty"`
+	// Currency is the price's currency.
+	Currency string `json:"currency,omitempty"`
 }
 
 // OrgBillingEmailRequest sets the email an organization bills to. The billing
@@ -5303,7 +5334,7 @@ type ExecutionUsageSummaryResponse struct {
 // without having to sum rows.
 //
 // Overage math: anything above IncludedGBHours is billable at the
-// overage rate in the financial model ($0.01/GB-h). Cents are integer.
+// overage rate in the financial model (OverageMillicentsPerGBHour, $0.05/GB-h). Cents are integer.
 //
 // Issue #279 / PR-B: UsedCPUHours is informational and NOT billed.
 // The billing math is on UsedGBHours (plan RAM + 8 MB per running
@@ -5925,6 +5956,37 @@ type QueueSendResponse struct {
 	QueueBindingID string `json:"queue_binding_id,omitempty"`
 	ID             string `json:"id"`
 	TraceID        string `json:"trace_id,omitempty"`
+}
+
+// QueueSendBatchRequest is POST /v1/apps/{slug}/queues/send-batch: up to
+// QueueSendBatchMaxMessages messages for one queue, sent in order as one API
+// request (ADR-20261018101500 amendment 2026-10-31).
+type QueueSendBatchRequest struct {
+	Environment string                  `json:"environment,omitempty"`
+	QueueName   string                  `json:"queue_name,omitempty"`
+	RetryPolicy *RetryPolicyDTO         `json:"retry_policy,omitempty"`
+	Messages    []QueueSendBatchMessage `json:"messages"`
+}
+
+// QueueSendBatchMessage is one message of a batch send.
+type QueueSendBatchMessage struct {
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+
+// QueueSendBatchResult reports one message by its zero-based input index:
+// "accepted" with the message, "rejected" with the problem, or
+// "not_attempted" after an earlier message was rejected. Resend from the
+// first message that was not accepted.
+type QueueSendBatchResult struct {
+	Index   int                `json:"index"`
+	Status  string             `json:"status"`
+	Message *QueueSendResponse `json:"message,omitempty"`
+	Problem *Problem           `json:"problem,omitempty"`
+}
+
+// QueueSendBatchResponse lists every message of the batch in input order.
+type QueueSendBatchResponse struct {
+	Results []QueueSendBatchResult `json:"results"`
 }
 
 // QueueReceiveResponse is returned on POST /v1/apps/{slug}/queues/invocations:receive.
@@ -9051,6 +9113,16 @@ type EdgeRuleHeaderOp struct {
 	Action string `json:"action"`
 	// Template (ADR-968) expands ${name} request values in Value.
 	Template bool `json:"template,omitempty"`
+	// Secret seals Value (ADR-20261108110000): apid stores it encrypted to
+	// the edge seal domain and never returns it. Credential-named request
+	// headers (EdgeRuleHeaderNameIsCredential) are sealed without it.
+	Secret bool `json:"secret,omitempty"`
+	// SecretID names the sealed value of a secret op. Responses carry it;
+	// sending it back with no Value keeps that value.
+	SecretID string `json:"secret_id,omitempty"`
+	// Redacted marks a credential-named value stored before sealing, which
+	// responses leave out. Sending the op back with no Value seals it.
+	Redacted bool `json:"redacted,omitempty"`
 }
 
 // edgeRuleHeaderForbidden is the hard-coded blacklist of header
@@ -9150,9 +9222,18 @@ func (a *EdgeRuleHeadersAction) Validate() *Problem {
 		if p := a.RequestHeaders[i].Validate(); p != nil {
 			return p
 		}
+		if p := a.RequestHeaders[i].validateSecretFields(true); p != nil {
+			return p
+		}
+		if EdgeRuleHeaderOpSealed(a.RequestHeaders[i]) && len(a.RequestHeaders[i].Value) > EdgeRuleHeaderSecretMaxBytes {
+			return ErrValidation(fmt.Sprintf("header %q is sealed and its value must be at most %d bytes", a.RequestHeaders[i].Name, EdgeRuleHeaderSecretMaxBytes))
+		}
 	}
 	for i := range a.ResponseHeaders {
 		if p := a.ResponseHeaders[i].Validate(); p != nil {
+			return p
+		}
+		if p := a.ResponseHeaders[i].validateSecretFields(false); p != nil {
 			return p
 		}
 	}
@@ -11736,6 +11817,12 @@ type DebugTelemetryExportOptions struct {
 	Route  string
 	Format string
 	Limit  int
+	// The request list's filters, with the same meaning.
+	DeploymentID string
+	Status       int
+	ColdBoot     *bool
+	ConsumerID   string
+	MinLatencyMS int
 }
 
 // DebugTelemetryListResponse is the wire envelope for the debug
@@ -11788,6 +11875,11 @@ type DebugCoverageResponse struct {
 	GuestEvidence       DebugCoverageSignal `json:"guest_evidence"`
 	OldestTelemetryAt   string              `json:"oldest_telemetry_at,omitempty"`
 	LatestTelemetryAt   string              `json:"latest_telemetry_at,omitempty"`
+	// RequestsNotRetained is how many requests the app's request analytics
+	// counted in the window's whole minutes but the debugger did not keep,
+	// because the plan's per-minute debugger row limit turned them away. It
+	// is a lower bound, and absent when analytics do not cover the window.
+	RequestsNotRetained *int64 `json:"requests_not_retained,omitempty"`
 }
 
 // DebugRunningRequestAttribution links request activity to the nearest

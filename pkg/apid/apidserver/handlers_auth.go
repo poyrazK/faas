@@ -98,8 +98,9 @@ func (a *authHandlers) renderLogin(w http.ResponseWriter, r *http.Request, statu
 		// SignInConfig is read here — not at request time — so
 		// there is no per-request os.Getenv cost.
 		Auth: &dashboard.AuthCapabilitiesView{
-			GoogleEnabled: a.srv.oauthConfig.Google.Enabled(),
-			GitHubEnabled: a.srv.oauthConfig.GitHub.Enabled(),
+			GoogleEnabled:  a.srv.oauthConfig.Google.Enabled(),
+			GitHubEnabled:  a.srv.oauthConfig.GitHub.Enabled(),
+			TermsPublished: termsPublished(),
 		},
 		Data: map[string]any{
 			"Error":     isError,
@@ -345,6 +346,12 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		}
 		if !acct.Active() && !dashboardMFARoute(r.Method, r.URL.Path) && !dashboardRecoveryRoute(acct, r.Method, r.URL.Path) {
 			http.Redirect(w, r, dashboardRecoveryPage(acct), http.StatusFound)
+			return
+		}
+		// Past the verification grace only the account page (with its
+		// resend button) and the resend form remain.
+		if s.verificationOverdueNow(acct) && !dashboardMFARoute(r.Method, r.URL.Path) && !dashboardOverdueRoute(r.Method, r.URL.Path) {
+			http.Redirect(w, r, "/dashboard/account", http.StatusFound)
 			return
 		}
 		// The session and pending flag feed cookie re-issue on

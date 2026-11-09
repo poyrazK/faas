@@ -15,10 +15,16 @@ const (
 	ReasonOpenConnections = "open_connections"
 	ReasonConnectionRate  = "connection_rate"
 	ReasonHandshakes      = "handshakes"
-	ReasonRequestRate     = "request_rate"
-	ReasonBodyRate        = "body_rate"
-	ReasonForwardInFlight = "forward_in_flight"
-	ReasonHostRequestRate = "host_request_rate"
+	// ReasonHandshakesPerAddress refuses a connection whose address already
+	// has its share of the handshakes in progress (ADR-20261107180000).
+	ReasonHandshakesPerAddress = "handshakes_per_address"
+	ReasonRequestRate          = "request_rate"
+	ReasonBodyRate             = "body_rate"
+	ReasonForwardInFlight      = "forward_in_flight"
+	// ReasonForwardInFlightPerAddress refuses a forward from an address that
+	// already has its share of them (ADR-20261107180000).
+	ReasonForwardInFlightPerAddress = "forward_in_flight_per_address"
+	ReasonHostRequestRate           = "host_request_rate"
 )
 
 // Reasons lists every refusal reason, so a counter can start each at zero.

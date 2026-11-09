@@ -19,8 +19,8 @@ func (m *MemStore) workflowScheduleTargetLocked(appID string) (Deployment, Accou
 	if !exists || !account.Active() || !account.Plan.WorkflowsAllowed() {
 		return Deployment{}, Account{}, false
 	}
-	deployment := m.automationDeploymentLocked(appID)
-	effective, err := m.mergeRuntimeAutomationDefinitionsLocked(appID, deployment.Workflows)
+	deployment := m.storedWorkflowDeploymentLocked(appID)
+	effective, err := m.mergeRuntimeStoredWorkflowDefinitionsLocked(appID, deployment.Workflows)
 	if err != nil {
 		return Deployment{}, Account{}, false
 	}
@@ -38,8 +38,8 @@ func (m *MemStore) tenantWorkflowScheduleTargetLocked(appID, tenantID string) (D
 	if !exists || !account.Active() || !account.Plan.WorkflowsAllowed() {
 		return Deployment{}, Account{}, false
 	}
-	deployment := m.automationDeploymentLocked(appID)
-	effective, err := m.mergeRuntimeAutomationDefinitionsLocked(appID, deployment.Workflows)
+	deployment := m.storedWorkflowDeploymentLocked(appID)
+	effective, err := m.mergeRuntimeStoredWorkflowDefinitionsLocked(appID, deployment.Workflows)
 	if err != nil {
 		return Deployment{}, Account{}, false
 	}

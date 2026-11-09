@@ -51,10 +51,18 @@ const CodeApplicationStandardVersionStale = "application_standard_version_stale"
 
 const CodeApplicationStandardsPending = "application_standards_pending"
 
-// PreviewNotEnabledHint is the remediation for a dark-launched preview's 503.
+// PreviewNotEnabledHint is the remediation for a dark-launched preview.
 // Without it the CLI's generic 5xx hint told customers to check Gregale's
 // service status and inspect deployments before retrying (Hunt 14 H14-37).
-const PreviewNotEnabledHint = "This preview is not enabled for this account; retrying will not help. Ask Gregale support for access."
+const PreviewNotEnabledHint = "This preview is not enabled for this account or installation; retrying will not help. Ask Gregale support for access."
+
+// ErrPreviewNotEnabled answers a request for a dark-launched preview. It is a
+// 403: the gate is permanent until an operator enables it, and a 503 made the
+// CLI exit 3 (temporary_failure) and harnesses retry it (ChronoLake finding
+// 33). The code stays the feature's own *_unavailable code.
+func ErrPreviewNotEnabled(code, title, detail string) *Problem {
+	return NewProblem(http.StatusForbidden, code, title, detail).WithHint(PreviewNotEnabledHint)
+}
 
 // dashboardBillingURL is duplicated from pkg/wire because pkg/api cannot
 // import pkg/wire without creating an import cycle.
@@ -689,6 +697,9 @@ const (
 	// CodeDeployRateLimited marks an account that exhausted its plan's
 	// deployment admissions in the current one-hour window.
 	CodeDeployRateLimited = "deploy_rate_limited"
+	// CodePlanLimitBuildMinutes marks a build refused because the paying
+	// account used its plan's monthly build minutes (ADR-20261104132753).
+	CodePlanLimitBuildMinutes = "plan_limit_build_minutes"
 	// CodeNotificationChannelTestRateLimited marks an account that sent its
 	// notification channels more test messages than a minute allows
 	// (ADR-20261028101615).
@@ -751,17 +762,17 @@ const (
 	CodeUndeclaredRoute = "undeclared_route"
 	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
 	// gateway cannot load or compile the contract required by an enabled app.
-	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
-	CodeValidation                     = "validation_failed"
-	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
-	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
-	CodeAutomationVersionConflict      = "automation_version_conflict"
-	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
-	CodeAutomationInvalid              = "automation_invalid"
-	CodeRealtimeConditionConflict      = "realtime_condition_conflict"
-	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
-	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
-	CodeConflict                       = "conflict"
+	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
+	CodeValidation                      = "validation_failed"
+	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
+	CodeStoredWorkflowVersionConflict   = "stored_workflow_version_conflict"
+	CodeStoredWorkflowOwnershipConflict = "stored_workflow_ownership_conflict"
+	CodeStoredWorkflowInvalid           = "stored_workflow_invalid"
+	CodeRealtimeConditionConflict       = "realtime_condition_conflict"
+	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
+	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
+	CodeConflict                        = "conflict"
 	// CodeIdempotencyKeyReused (422, ADR-20261022204036): the request's
 	// Idempotency-Key was used within its 24 h replay window for a different
 	// request. Nothing ran, and the first request's result is kept.
@@ -1300,6 +1311,11 @@ const (
 	// actionable retry guidance ("raise your plan or lower
 	// --min-instances").
 	CodeMaxMinInstancesExceeded = "max_min_instances_exceeded"
+	// CodeOverageCapRequired and CodeOverageCapAboveMax (ADR-20261105120000):
+	// a paid subject keeps a spend cap, at most its plan's self-service
+	// ceiling.
+	CodeOverageCapRequired = "overage_cap_required"
+	CodeOverageCapAboveMax = "overage_cap_above_max"
 
 	// CodePlanTrafficSplitNotAllowed (issue #556 / traffic
 	// splitting across deployments) is a 403 for plan-tier
@@ -1428,6 +1444,10 @@ const (
 	// CodePlanQueueBacklogBytes: the account's pending queue messages hold
 	// the plan's MaxQueueBacklogBytesPerAccount (ADR-20261022105723).
 	CodePlanQueueBacklogBytes = "plan_queue_backlog_bytes"
+	// CodePlanWorkerReplicas: a worker asks for more running workers than
+	// the plan's WorkerReplicasMax, or the plan runs none
+	// (ADR-20261018101500 amendment 2026-10-31).
+	CodePlanWorkerReplicas = "plan_worker_replicas"
 	// CodeCustomMetricLimit: a push of a NEW ADR-202 metric name by an app
 	// already at MaxCustomMetricsPerApp. A push to an EXISTING name never
 	// produces this — it is an upsert and cannot grow the count.
@@ -2143,8 +2163,8 @@ const (
 	CodeWorkflowStepRetryNotAllowed       = "workflow_step_retry_not_allowed"
 	CodeWorkflowDefinitionNotFound        = "workflow_definition_not_found"
 	CodeWorkflowEventNotFound             = "workflow_event_not_found"
-	CodeWebhookAutomationUnavailable      = "webhook_automation_unavailable"
-	CodeWebhookAutomationConflict         = "webhook_automation_conflict"
+	CodeWebhookWorkflowUnavailable        = "webhook_workflow_unavailable"
+	CodeWebhookWorkflowConflict           = "webhook_workflow_conflict"
 	CodeEventRecoveryChanged              = "event_recovery_changed"
 	CodeWorkflowResumeConflict            = "workflow_resume_conflict"
 	CodeWorkflowResumeUnsafe              = "workflow_resume_unsafe"
@@ -2202,7 +2222,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
-	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:
+	case CodeStoredWorkflowInvalid, CodeEdgeFeatureUnavailable:
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:
 		return http.StatusPreconditionFailed
@@ -2212,7 +2232,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodePlanLimitEdgeRuleLists, CodePlanLimitEdgeRuleListItems:
 		return http.StatusForbidden
-	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
+	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodePlanLimitBuildMinutes, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
@@ -2272,7 +2292,7 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeNotFound, CodeUndeclaredRoute:
 		return http.StatusNotFound
-	case CodeWebhookAutomationUnavailable, CodeDeclaredRoutePolicyUnavailable:
+	case CodeWebhookWorkflowUnavailable, CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
 	case CodeNotImplemented:
 		return http.StatusNotImplemented
@@ -2282,8 +2302,8 @@ func StatusForCode(code string) int {
 	// since the StatusForCode fallback returns 422 generically).
 	case CodeDatabaseCutoverFenced, CodeRealtimeConditionConflict, CodeRealtimeEntityVersionConflict, CodeRealtimeSequenceConflict, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
-		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
-		CodeWebhookAutomationConflict, CodeEventRecoveryChanged, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
+		CodeStoredWorkflowVersionConflict, CodeStoredWorkflowOwnershipConflict,
+		CodeWebhookWorkflowConflict, CodeEventRecoveryChanged, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
 		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeWorkflowStepRetryNotAllowed,
@@ -3153,6 +3173,16 @@ func ErrExportRateLimited(retryAfterS int) *Problem {
 		"Only one account export is allowed per 24h window; retry after the indicated back-off.").
 		WithHeader("Retry-After", fmt.Sprintf("%d", retryAfterS)).
 		WithDocs("https://gregale.dev/docs/gdpr#export-rate-limit")
+}
+
+// ErrPlanLimitBuildMinutes refuses a build once the paying account used its
+// plan's monthly build minutes (ADR-20261104132753). Image deploys still work.
+func ErrPlanLimitBuildMinutes(l Limits, usedMinutes int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitBuildMinutes,
+		"Build minutes used up",
+		fmt.Sprintf("%s plan includes %d build minutes a month; this month's builds used %d. Builds resume on the 1st (UTC) or after an upgrade; deploying a prebuilt image still works.", l.Plan, l.BuildMinutesPerMonth, usedMinutes)).
+		WithLimit(int64(l.BuildMinutesPerMonth), int64(usedMinutes)).
+		WithDocs(docsBase + "/plans#builds")
 }
 
 // ErrDeployRateLimited reports an exhausted account deploy window. The
@@ -5985,6 +6015,36 @@ func ErrInvalidMinInstances(got, maxConcur int) *Problem {
 // can render actionable retry guidance ("raise your plan or lower
 // --min-instances"). Distinct from ErrInvalidMinInstances which
 // rejects negative values or values above MaxConcurrency.
+// OverageCapProblem validates a spend cap a subject on plan asks for
+// (ADR-20261105120000). nil clears the cap: allowed on Free, which stops at
+// its allowance, and refused on a paid plan. A paid cap may not exceed the
+// plan's self-service ceiling.
+func OverageCapProblem(plan Plan, cents *int64) *Problem {
+	if cents != nil && *cents < 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"overage_cap_cents must be >= 0 or null", "negative values are rejected")
+	}
+	ceiling, paid := plan.MaxSelfServiceOverageCapCents()
+	if !paid {
+		return nil
+	}
+	if cents == nil {
+		return NewProblem(http.StatusUnprocessableEntity, CodeOverageCapRequired,
+			"Spend cap required",
+			fmt.Sprintf("a paid plan keeps a spend cap; set overage_cap_cents to at most %d. Contact support for a higher cap.", ceiling)).
+			WithLimit(ceiling, 0).
+			WithDocs(docsBase + "/billing#spend-cap")
+	}
+	if *cents > ceiling {
+		return NewProblem(http.StatusUnprocessableEntity, CodeOverageCapAboveMax,
+			"Spend cap above plan maximum",
+			fmt.Sprintf("overage_cap_cents must be at most %d on this plan; got %d. Contact support for a higher cap.", ceiling, *cents)).
+			WithLimit(ceiling, *cents).
+			WithDocs(docsBase + "/billing#spend-cap")
+	}
+	return nil
+}
+
 func ErrMaxMinInstancesExceeded(got, planMax int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMaxMinInstancesExceeded,
 		"min_instances exceeds plan cap",
@@ -6839,6 +6899,19 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 		WithDocs(docsBase + "/plans#event-driven")
 }
 
+// ErrPlanWorkerReplicas refuses a worker that the plan cannot run: Free runs
+// no workers, and no plan runs more than WorkerReplicasMax at once
+// (ADR-20261018101500 amendment 2026-10-31).
+func ErrPlanWorkerReplicas(p Plan, limit, observed int) *Problem {
+	detail := fmt.Sprintf("the %s plan runs at most %d workers at once; this worker asks for up to %d. Lower worker.scale.max or upgrade.", p, limit, observed)
+	if limit == 0 {
+		detail = fmt.Sprintf("the %s plan doesn't run workers; upgrade to Hobby or higher to deploy one.", p)
+	}
+	return NewProblem(http.StatusForbidden, CodePlanWorkerReplicas, "Plan worker limit", detail).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/workers#limits")
+}
+
 // ErrPlanDelayedTasksCap is the variant surfaced when a delayed-task
 // schedule would push the per-app delayed-task count past the plan
 // cap. Distinct code so the dashboard can suggest "schedule later"
@@ -7066,6 +7139,16 @@ func ErrEmailVerificationRequired() *Problem {
 		WithDocs(docsBase + "/auth#email-verification")
 }
 
+// ErrEmailVerificationOverdue is returned once an unverified account is past
+// its verification grace period: it keeps its data, but signing in and using
+// existing credentials wait until the address is verified.
+func ErrEmailVerificationOverdue() *Problem {
+	return NewProblem(http.StatusForbidden, CodeEmailVerificationRequired,
+		"Email verification required",
+		"this account's email address was not verified within 30 days. We sent a new verification link; open it to continue.").
+		WithDocs(docsBase + "/auth#email-verification")
+}
+
 // ErrVerificationLinkInvalid intentionally collapses malformed, expired and
 // consumed verification links into one public response. This avoids revealing
 // token state while still telling the customer how to recover.
@@ -7172,7 +7255,7 @@ func ErrOrgMemberCapExceeded(limit, observed int) *Problem {
 func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 	return NewProblem(http.StatusForbidden, CodeOrgFreeLimitExceeded,
 		"Free organization limit reached",
-		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade or delete one to create another.",
+		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade one to create another; a Free organization deleted this month counts until the month ends.",
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/orgs#free-organizations")
@@ -7181,7 +7264,7 @@ func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 // ErrOrgFreeTransferLimitExceeded reports the recipient's ownership count.
 func ErrOrgFreeTransferLimitExceeded(limit, observed int) *Problem {
 	p := ErrOrgFreeLimitExceeded(limit, observed)
-	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade or delete one before accepting another.", observed, limit)
+	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade one before accepting another; a Free organization deleted this month counts until the month ends.", observed, limit)
 	return p
 }
 

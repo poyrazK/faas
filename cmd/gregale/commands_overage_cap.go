@@ -1,6 +1,6 @@
 // commands_overage_cap.go — `gregale overage-cap` (Tier B audit gap).
 // PATCH /v1/account/overage-cap lets the customer set or clear the
-// per-account overage cap ($0.01/GB-h above the plan's included GB-h).
+// per-account overage cap ($0.05/GB-h above the plan's included GB-h).
 // schedd refuses new wakes once the current-month overage meets the
 // cap; the CLI is the only path to flip the cap outside the dashboard.
 //

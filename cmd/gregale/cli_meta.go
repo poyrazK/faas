@@ -301,6 +301,17 @@ func (s cliSub) subcommandChoice() string {
 	return strings.Join(names, "|")
 }
 
+// subcommandSynopsis renders the child-verb slot of a usage line. A verb
+// that also runs on its own (`postgres resize --class ... <database>` beside
+// `postgres resize status`) shows the child as optional; `<status>` read as a
+// required argument of the resize itself (ChronoLake finding 22).
+func (s cliSub) subcommandSynopsis() string {
+	if len(s.Flags) > 0 && len(s.Positionals) > 0 {
+		return "[" + s.subcommandChoice() + "]"
+	}
+	return "<" + s.subcommandChoice() + ">"
+}
+
 func (s cliSub) completionSpellings() []string {
 	spellings := []string{s.Name}
 	for _, alias := range s.Aliases {
@@ -607,6 +618,30 @@ var cliCommands = []cliCommand{
 				{Name: "o", ShortName: "o", Short: "write the DPA template to a file", Value: "PATH"},
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
+			{Name: "update", Short: "Set your display name", Flags: []cliFlag{
+				{Name: "name", Short: "display name shown to org members (at most 80 characters)", Value: "NAME"},
+				{Name: "clear-name", Short: "remove the display name", Bool: true},
+			}},
+			{Name: "sessions", Short: "List or sign out browser sessions", Subcommands: []cliSub{
+				{Name: "list", Short: "List signed-in browsers"},
+				{Name: "revoke", Short: "Sign out one browser session, or all of them", Notes: []string{"API keys keep working."}, Positionals: []string{"[SESSION_ID]"}, Flags: []cliFlag{
+					{Name: "all", Short: "sign out every browser", Bool: true},
+					{Name: "yes", Short: "with --all, sign out without prompting", Bool: true},
+				}},
+			}},
+			{Name: "email", Short: "Verify or change your sign-in email", Subcommands: []cliSub{
+				{Name: "verify", Short: "Send a new email verification link"},
+				{Name: "update", Short: "Open the sign-in email change form in the browser", Notes: []string{"A confirmation link goes to the new address."}},
+			}},
+			{Name: "password", Short: "Change your password", Subcommands: []cliSub{
+				{Name: "update", Short: "Open the password change form in the browser"},
+			}},
+			{Name: "provider", Short: "Show how you can sign in", Subcommands: []cliSub{
+				{Name: "list", Short: "List your password, two-factor and linked Google/GitHub sign-ins"},
+			}},
+			{Name: "activity", Short: "Show sign-ins and security changes", Subcommands: []cliSub{
+				{Name: "list", Short: "List sign-ins, credential and security changes of the last 90 days", Notes: []string{"Shows the newest 100 events."}},
+			}},
 			{Name: "billing-connection", Short: "Connect, show or disconnect a billing key for invoice exports", Notes: []string{"Supports Stripe, Paddle and Lago."}, Subcommands: []cliSub{
 				{Name: "connect", Short: "Connect a billing provider key", Notes: []string{"Reads the key from stdin, so it never appears in shell history or the process list."}, Positionals: []string{"{stripe|paddle|lago}"}, Flags: []cliFlag{
 					{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (default https://api.getlago.com)", Value: "URL"},
@@ -650,6 +685,22 @@ var cliCommands = []cliCommand{
 		DocSlug: "add",
 		Short:   "Provision and bind managed resources to an app",
 		Subcommands: []cliSub{
+			{Name: "function", Short: "Scaffold a function that declares its own trigger and settings", Positionals: []string{"<name>"}, Notes: []string{
+				"Writes functions/<name>/ with a handler whose config `gregale deploy` reads without running it, and a test beside it. Nothing is created remotely.",
+			}, Examples: []string{
+				"gregale add function digest --trigger cron --schedule \"0 8 * * *\"",
+				"gregale add function thumbs --trigger bucket --bucket uploads --lang python",
+				"gregale add function payments --trigger webhook --provider stripe",
+			}, Flags: []cliFlag{
+				{Name: "trigger", Short: "what calls the function (default http)", Value: "KIND", ClosedSet: []string{"http", "cron", "queue", "bucket", "webhook"}},
+				{Name: "lang", Short: "handler language (default: inferred from the project, else node)", Value: "LANG", ClosedSet: []string{"node", "python"}},
+				{Name: "schedule", Short: "cron schedule for --trigger cron", Value: "CRON"},
+				{Name: "queue", Short: "queue for --trigger queue (default: the function name)", Value: "NAME"},
+				{Name: "bucket", Short: "bucket for --trigger bucket", Value: "NAME"},
+				{Name: "provider", Short: "webhook provider for --trigger webhook", Value: "PROVIDER", ClosedSet: []string{"stripe", "generic"}},
+				{Name: "path", Short: "project directory", Value: "DIR"},
+				{Name: "dry-run", Short: "show the files without writing them"},
+			}},
 			{Name: "postgres", Short: "Provision or attach PostgreSQL and inject DATABASE_URL", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
 				{Name: "env", Short: "environment scope (defaults to linked project environment)", Value: "SCOPE"},
@@ -1156,6 +1207,11 @@ var cliCommands = []cliCommand{
 				{Name: "secret-stdin", Short: "read the Slack webhook URL or PagerDuty routing key from stdin"},
 				{Name: "pagerduty-region", Short: "PagerDuty service region", Value: "REGION", ClosedSet: []string{"us", "eu"}},
 				{Name: "email", Short: "your account email (kind email)", Value: "EMAIL"},
+			}},
+			{Name: "update", Short: "Rename a channel or replace its destination; read from stdin", Positionals: []string{"<channel-id>"}, Flags: []cliFlag{
+				{Name: "name", Short: "new channel name, unique per account", Value: "NAME"},
+				{Name: "secret-stdin", Short: "read the new Slack webhook URL or PagerDuty routing key from stdin"},
+				{Name: "pagerduty-region", Short: "PagerDuty service region of the new key", Value: "REGION", ClosedSet: []string{"us", "eu"}},
 			}},
 			{Name: "test", Short: "Send a marked test notification", Positionals: []string{"<channel-id>"}},
 			{Name: "rm", Short: "Delete a channel", Positionals: []string{"<channel-id>"}},
@@ -1941,6 +1997,7 @@ var cliCommands = []cliCommand{
 				{Name: "no-open", Short: "alias of --print", Bool: true},
 			}},
 			{Name: "status", Short: "Show subscription status"},
+			{Name: "egress-overage", Short: "Show or set billing for egress above the monthly allowance", Positionals: []string{"[on|off]"}, Flags: []cliFlag{{Name: "org", Short: "Use the election of an organization that owns its resources", Value: "SLUG"}}, Examples: []string{"gregale billing egress-overage", "gregale billing egress-overage on", "gregale billing egress-overage off --org acme"}},
 			{Name: "costs", Short: "Explain retained usage costs and source coverage", Flags: []cliFlag{{Name: "month", Short: "UTC usage month (defaults to current)", Value: "YYYY-MM"}, {Name: "org", Short: "Read the costs of an organization that owns its resources", Value: "SLUG"}, {Name: "json", Short: "Print the machine-readable cost report"}}, Examples: []string{"gregale billing costs --month 2026-10 --json", "gregale billing costs --org acme"}},
 			{Name: "forecast", Short: "Show usage cost forecasts and their availability", Flags: []cliFlag{{Name: "month", Short: "UTC usage month (defaults to current)", Value: "YYYY-MM"}, {Name: "json", Short: "Print the machine-readable forecast"}}, Examples: []string{"gregale billing forecast --json"}},
 			{Name: "budget-preview", Short: "Preview a budget's cost and workload consequences without writes", Flags: []cliFlag{{Name: "file", Short: "Budget spec JSON file", Value: "PATH"}, {Name: "org", Short: "Preview an organization budget", Value: "SLUG"}, {Name: "json", Short: "Print the machine-readable preview"}}, Examples: []string{"gregale billing budget-preview --file budget.json --json"}},
@@ -2572,43 +2629,47 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "automations",
-		DocSlug: "automations",
-		Short:   "Build, monitor and control customer-built automations",
+		Name:    "stored-workflows",
+		DocSlug: "stored-workflows",
+		Short:   "Build, monitor and control stored workflows",
 		Examples: []string{
-			"gregale automation init --list",
-			"gregale automation check --app billing --scenarios scenarios.yaml",
-			"gregale automation diff --app billing --name approval-flow",
-			"gregale automation init --template scheduled-report --path reports",
-			"gregale automation runs --app billing --name approval-flow --status failed",
-			"gregale automation diagnose --app billing --name approval-flow --run RUN_ID",
-			"gregale automation recovery-preview --app billing --name approval-flow --since 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z",
-			"gregale automation recover --app billing --name approval-flow --run RUN_ID:COUNT --idempotency-key recovery-batch-1",
-			"gregale automation list --app billing",
-			"gregale automation get --app billing --name paid-invoice",
-			"gregale automation health --app billing --name paid-invoice",
-			"gregale automation pause --app billing --name paid-invoice --expected-version 8",
-			"gregale automation resume --app billing --name paid-invoice --expected-version 9",
-			"gregale automation revisions list --app billing --name paid-invoice",
-			"gregale automation revisions show --app billing --name paid-invoice --revision 42",
-			"gregale automation validate --app billing --file automation.yaml",
-			"gregale automation simulate --app billing --file automation.yaml --input-file sample.json",
-			"gregale automation apply --app billing --file automation.yaml --expected-version 0",
-			"gregale automation publish --app billing --name paid-invoice --expected-version 1",
-			"gregale automation restore --app billing --name paid-invoice --revision 42 --expected-version 47",
-			"gregale automation delete --app billing --name paid-invoice --expected-version 48 --yes",
+			"gregale workflow stored init --list",
+			"gregale workflow stored check --app billing --scenarios scenarios.yaml",
+			"gregale workflow stored diff --app billing --name approval-flow",
+			"gregale workflow stored init --template scheduled-report --path reports",
+			"gregale workflow stored runs --app billing --name approval-flow --status failed",
+			"gregale workflow stored diagnose --app billing --name approval-flow --run RUN_ID",
+			"gregale workflow stored recovery-preview --app billing --name approval-flow --since 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z",
+			"gregale workflow stored recover --app billing --name approval-flow --run RUN_ID:COUNT --idempotency-key recovery-batch-1",
+			"gregale workflow stored list --app billing",
+			"gregale workflow stored get --app billing --name paid-invoice",
+			"gregale workflow stored health --app billing --name paid-invoice",
+			"gregale workflow stored pause --app billing --name paid-invoice --expected-version VERSION",
+			"gregale workflow stored resume --app billing --name paid-invoice --expected-version VERSION",
+			"gregale workflow stored revisions list --app billing --name paid-invoice",
+			"gregale workflow stored revisions show --app billing --name paid-invoice --revision 42",
+			"gregale workflow stored validate --app billing --file stored_workflow.yaml",
+			"gregale workflow stored simulate --app billing --file stored_workflow.yaml --input-file sample.json",
+			"gregale workflow stored apply --app billing --file stored_workflow.yaml --expected-version 0",
+			"gregale workflow stored publish --app billing --name paid-invoice --expected-version VERSION",
+			"gregale workflow stored restore --app billing --name paid-invoice --revision 42 --expected-version VERSION",
+			"gregale workflow stored delete --app billing --name paid-invoice --expected-version VERSION --yes",
+		},
+		HelpNotes: []string{
+			"VERSION is the \"version\" returned by the previous write (or shown by get/list). Versions come from one counter shared by every stored workflow in the app, so a new draft saved with --expected-version 0 usually returns a version greater than 1.",
+			"Revision numbers in `revisions list` (\"revision\", also \"version\") are what --revision takes. Resume restores the published trigger.enabled; it does not enable a definition with trigger.enabled: false.",
 		},
 		Subcommands: []cliSub{
-			{Name: "live", Short: "Start, observe and check saved cases against real execution", Subcommands: automationLiveCLISubs()},
-			{Name: "diff", Short: "Compare draft and published definition fields without exposing values", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}}},
+			{Name: "live", Short: "Start, observe and check saved cases against real execution", Subcommands: storedWorkflowLiveCLISubs()},
+			{Name: "diff", Short: "Compare draft and published definition fields without exposing values", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}}},
 			{Name: "check", Short: "Check simulation scenarios and expected step outcomes", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "scenarios", Short: "scenario suite YAML or JSON file", Req: true, Value: "PATH"}, {Name: "require-coverage", Short: "fail on unexcluded coverage hints"}, {Name: "suggest", Short: "write coverage scenario starters to a new file"}, {Name: "suggest-out", Short: "new suggestion file (requires --suggest; defaults beside the suite)", Value: "PATH"}}},
-			{Name: "init", Short: "Create a local automation starter with simulation samples", Flags: []cliFlag{{Name: "template", Short: "automation starter name", Value: "NAME"}, {Name: "path", Short: "new directory (defaults to starter name)", Value: "DIR"}, {Name: "list", Short: "list starters without creating files"}}},
-			{Name: "list", Short: "List automation versions and ownership for an app", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}}},
-			{Name: "get", Short: "Inspect automation state or export a definition", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "definition-out", Short: "export the selected definition as JSON to a new file", Value: "PATH"}, {Name: "published", Short: "export the published definition instead of the draft"}}},
-			{Name: "runs", Short: "List run history for one automation", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "status", Short: "pending, running, awaiting_event, succeeded, failed or dead", Value: "STATUS"}, {Name: "limit", Short: "page size (1..100, default 50)", Value: "N"}, {Name: "offset", Short: "page offset", Value: "N"}, {Name: "created-after", Short: "inclusive RFC3339 creation-time start", Value: "RFC3339"}, {Name: "created-before", Short: "inclusive RFC3339 creation-time end", Value: "RFC3339"}}},
-			{Name: "diagnose", Short: "Diagnose a run belonging to the selected automation", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "run", Short: "workflow run UUID", Req: true, Value: "UUID"}}},
+			{Name: "init", Short: "Create a local stored workflow starter with simulation samples", Flags: []cliFlag{{Name: "template", Short: "stored workflow starter name", Value: "NAME"}, {Name: "path", Short: "new directory (defaults to starter name)", Value: "DIR"}, {Name: "list", Short: "list starters without creating files"}}},
+			{Name: "list", Short: "List stored workflow versions and ownership for an app", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}}},
+			{Name: "get", Short: "Inspect stored workflow state or export a definition", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "definition-out", Short: "export the selected definition as JSON to a new file", Value: "PATH"}, {Name: "published", Short: "export the published definition instead of the draft"}}},
+			{Name: "runs", Short: "List run history for one stored workflow", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "status", Short: "pending, running, awaiting_event, succeeded, failed or dead", Value: "STATUS"}, {Name: "limit", Short: "page size (1..100, default 50)", Value: "N"}, {Name: "offset", Short: "page offset", Value: "N"}, {Name: "created-after", Short: "inclusive RFC3339 creation-time start", Value: "RFC3339"}, {Name: "created-before", Short: "inclusive RFC3339 creation-time end", Value: "RFC3339"}}},
+			{Name: "diagnose", Short: "Diagnose a run belonging to the selected stored workflow", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "run", Short: "workflow run UUID", Req: true, Value: "UUID"}}},
 			{Name: "history", Short: "Inspect retained recovery automation history", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "workflow", Value: "NAME", Short: "native workflow filter"}, {Name: "run", Value: "UUID", Short: "native run filter"}, {Name: "policy-version", Value: "N", Short: "policy version filter"}, {Name: "created-after", Value: "RFC3339", Short: "inclusive start"}, {Name: "created-before", Value: "RFC3339", Short: "inclusive end"}, {Name: "after", Value: "CURSOR", Short: "next page cursor"}, {Name: "limit", Value: "N", Short: "page size (default 25, max 100)"}}},
-			{Name: "health", Short: "Inspect app recovery health or named automation run reliability", Flags: []cliFlag{{Name: "stall-after-seconds", Value: "SECONDS", Short: "app recovery evaluation threshold (default 300)"}, {Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Value: "NAME"}, {Name: "created-after", Short: "inclusive RFC3339 window start (max 30 days)", Value: "RFC3339"}, {Name: "created-before", Short: "inclusive RFC3339 window end", Value: "RFC3339"}}},
+			{Name: "health", Short: "Inspect app recovery health or named stored workflow run reliability", Flags: []cliFlag{{Name: "stall-after-seconds", Value: "SECONDS", Short: "app recovery evaluation threshold (default 300)"}, {Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Value: "NAME"}, {Name: "created-after", Short: "inclusive RFC3339 window start (max 30 days)", Value: "RFC3339"}, {Name: "created-before", Short: "inclusive RFC3339 window end", Value: "RFC3339"}}},
 			{Name: "report", Short: "Summarize workflow recovery outcomes over a time window", Flags: []cliFlag{
 				{Name: "app", Req: true, Value: "SLUG", Short: "app slug"},
 				{Name: "workflow", Value: "NAME", Short: "workflow name filter"},
@@ -2617,8 +2678,8 @@ var cliCommands = []cliCommand{
 				{Name: "created-after", Value: "RFC3339", Short: "inclusive start; excludes --since"},
 				{Name: "created-before", Value: "RFC3339", Short: "inclusive end"},
 			}},
-			{Name: "recover", Short: "Resume selected failed runs with per-run generation checks", Notes: []string{"Reports each run's outcome."}, Flags: []cliFlag{{Name: "plan-out", Short: "save reviewed selection to a new plan file without resuming", Value: "PATH"}, {Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "run", Short: "run UUID and original expected resume count; repeatable, at most 25", Req: true, Value: "UUID:COUNT"}, {Name: "idempotency-key", Short: "stable batch key; reuse for interrupted retries", Req: true, Value: "KEY"}}},
-			{Name: "event-recovery-plan", Short: "Save selected retained automation routing actions for review", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "name", Req: true, Value: "NAME", Short: "automation name"}, {Name: "source", Req: true, Value: "SOURCE", Short: "event source"}, {Name: "event", Req: true, Value: "ID", Short: "selected event ID; repeatable, at most 25"}, {Name: "idempotency-key", Req: true, Value: "KEY", Short: "stable batch key"}, {Name: "out", Req: true, Value: "PATH", Short: "new event plan file"}}},
+			{Name: "recover", Short: "Resume selected failed runs with per-run generation checks", Notes: []string{"Reports each run's outcome."}, Flags: []cliFlag{{Name: "plan-out", Short: "save reviewed selection to a new plan file without resuming", Value: "PATH"}, {Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "run", Short: "run UUID and original expected resume count; repeatable, at most 25", Req: true, Value: "UUID:COUNT"}, {Name: "idempotency-key", Short: "stable batch key; reuse for interrupted retries", Req: true, Value: "KEY"}}},
+			{Name: "event-recovery-plan", Short: "Save selected retained stored workflow routing actions for review", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "name", Req: true, Value: "NAME", Short: "stored workflow name"}, {Name: "source", Req: true, Value: "SOURCE", Short: "event source"}, {Name: "event", Req: true, Value: "ID", Short: "selected event ID; repeatable, at most 25"}, {Name: "idempotency-key", Req: true, Value: "KEY", Short: "stable batch key"}, {Name: "out", Req: true, Value: "PATH", Short: "new event plan file"}}},
 			{Name: "recovery-health", Short: "Inspect recovery execution attention and explicit action hints", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}}},
 
 			{Name: "recovery-policy", Short: "Inspect, preview or update recovery policy", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "file", Value: "PATH", Short: "policy JSON with expected_version"}, {Name: "preview", Short: "preview --file without changing policy"}, {Name: "queue", Short: "inspect automatic retry queue"}, {Name: "control", Value: "pause|resume", Short: "control automatic execution"}, {Name: "reason", Value: "TEXT", Short: "operator control reason"}}},
@@ -2651,26 +2712,26 @@ var cliCommands = []cliCommand{
 			{Name: "failure-recovery-review", Short: "Prepare, inspect, submit or cancel a durable first recovery review", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "failure", Value: "UUID", Short: "captured initial failure"}, {Name: "expected-policy-version", Value: "N", Short: "saved policy version"}, {Name: "review", Value: "UUID", Short: "durable review"}, {Name: "decision", Value: "DECISION", Short: "submit or cancel"}, {Name: "reason", Value: "TEXT", Short: "operator reason"}}},
 			{Name: "failure-recovery-plan", Short: "Preview an initial failure and save a reviewed first recovery plan", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "failure", Req: true, Value: "UUID", Short: "captured initial failure"}, {Name: "policy", Value: "PATH", Short: "candidate policy dry run"}, {Name: "plan-out", Value: "PATH", Short: "new reviewed recovery plan"}, {Name: "key", Value: "KEY", Short: "stable recovery key"}}},
 			{Name: "recovery-retry-plan", Short: "Review recovery failures and save an explicit retry plan", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "job", Req: true, Value: "UUID", Short: "parent recovery job"}, {Name: "position", Value: "N", Short: "reviewed parent item position (repeatable)"}, {Name: "plan-out", Value: "PATH", Short: "new reviewed retry plan file"}, {Name: "key", Value: "KEY", Short: "stable idempotency key for the retry plan"}}},
-			{Name: "recovery-start", Short: "Submit a reviewed automation run plan as a durable server job", Flags: []cliFlag{{Name: "plan", Req: true, Value: "PATH", Short: "reviewed run plan"}, {Name: "rate", Value: "N", Short: "maximum recoveries per second (1..100)"}, {Name: "execution-deadline", Value: "DURATION", Short: "advisory execution deadline (zero disables)"}, {Name: "execution-stall", Value: "DURATION", Short: "no-progress warning threshold (default 15m)"}, {Name: "reason", Value: "TEXT", Short: "optional operator reason"}}},
-			{Name: "event-recovery-start", Short: "Submit a reviewed automation event plan as a durable server job", Flags: []cliFlag{{Name: "plan", Req: true, Value: "PATH", Short: "reviewed event plan"}, {Name: "rate", Value: "N", Short: "maximum recoveries per second (1..100)"}, {Name: "reason", Value: "TEXT", Short: "optional operator reason"}}},
+			{Name: "recovery-start", Short: "Submit a reviewed stored workflow run plan as a durable server job", Flags: []cliFlag{{Name: "plan", Req: true, Value: "PATH", Short: "reviewed run plan"}, {Name: "rate", Value: "N", Short: "maximum recoveries per second (1..100)"}, {Name: "execution-deadline", Value: "DURATION", Short: "advisory execution deadline (zero disables)"}, {Name: "execution-stall", Value: "DURATION", Short: "no-progress warning threshold (default 15m)"}, {Name: "reason", Value: "TEXT", Short: "optional operator reason"}}},
+			{Name: "event-recovery-start", Short: "Submit a reviewed stored workflow event plan as a durable server job", Flags: []cliFlag{{Name: "plan", Req: true, Value: "PATH", Short: "reviewed event plan"}, {Name: "rate", Value: "N", Short: "maximum recoveries per second (1..100)"}, {Name: "reason", Value: "TEXT", Short: "optional operator reason"}}},
 			{Name: "event-recover", Short: "Execute a reviewed event plan with fresh receipt checks and a journal", Flags: []cliFlag{{Name: "plan", Req: true, Value: "PATH", Short: "reviewed event plan"}, {Name: "journal", Req: true, Value: "PATH", Short: "new execution journal"}}},
 			{Name: "recovery-plan", Short: "Execute a saved recovery plan with a durable per-attempt journal", Flags: []cliFlag{{Name: "plan", Short: "reviewed recovery plan file", Req: true, Value: "PATH"}, {Name: "journal", Short: "new journal file for this execution", Req: true, Value: "PATH"}}},
-			{Name: "recovery-preview", Short: "Inspect failed-run recovery and schedule catch-up without writes", Notes: []string{"Includes retained events."}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "from", Short: "RFC3339 event acceptance and schedule preview start", Req: true, Value: "TIME"}, {Name: "until", Short: "RFC3339 end/evaluation time (default now)", Value: "TIME"}, {Name: "limit", Short: "runs per status and event scan page (1..25, default 10)", Value: "N"}, {Name: "run-offset", Short: "offset in each failed/dead run page", Value: "N"}, {Name: "event-after", Short: "retained event preview cursor", Value: "CURSOR"}}},
-			{Name: "failure-policy", Short: "Inspect failure pauses and history, or configure monitoring", Notes: []string{"Also previews a resume."}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "enabled", Short: "enable or disable monitoring; required when configuring", Value: "BOOL"}, {Name: "expected-version", Short: "current failure policy version; required when configuring", Value: "N"}, {Name: "failure-threshold", Short: "terminal failures needed to pause (1..10000, default 3)", Value: "N"}, {Name: "min-completed-runs", Short: "minimum completed outcomes (1..10000, default 5)", Value: "N"}, {Name: "window-seconds", Short: "observation window (60..86400, default 300)", Value: "N"}}},
-			{Name: "failure-resume", Short: "Preview retained work and explicitly clear a failure pause", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-generation", Short: "current failure pause generation", Req: true, Value: "N"}}},
-			{Name: "pause", Short: "Stop future scheduled and event-triggered admissions", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current automation version", Req: true, Value: "N"}}},
-			{Name: "resume", Short: "Resume automatic scheduled and event-triggered admissions", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current automation version", Req: true, Value: "N"}}},
+			{Name: "recovery-preview", Short: "Inspect failed-run recovery and schedule catch-up without writes", Notes: []string{"Includes retained events."}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "from", Short: "RFC3339 event acceptance and schedule preview start", Req: true, Value: "TIME"}, {Name: "until", Short: "RFC3339 end/evaluation time (default now)", Value: "TIME"}, {Name: "limit", Short: "runs per status and event scan page (1..25, default 10)", Value: "N"}, {Name: "run-offset", Short: "offset in each failed/dead run page", Value: "N"}, {Name: "event-after", Short: "retained event preview cursor", Value: "CURSOR"}}},
+			{Name: "failure-policy", Short: "Inspect failure pauses and history, or configure monitoring", Notes: []string{"Also previews a resume."}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "enabled", Short: "enable or disable monitoring; required when configuring", Value: "BOOL"}, {Name: "expected-version", Short: "current failure policy version; required when configuring", Value: "N"}, {Name: "failure-threshold", Short: "terminal failures needed to pause (1..10000, default 3)", Value: "N"}, {Name: "min-completed-runs", Short: "minimum completed outcomes (1..10000, default 5)", Value: "N"}, {Name: "window-seconds", Short: "observation window (60..86400, default 300)", Value: "N"}}},
+			{Name: "failure-resume", Short: "Preview retained work and explicitly clear a failure pause", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "expected-generation", Short: "current failure pause generation", Req: true, Value: "N"}}},
+			{Name: "pause", Short: "Stop future scheduled and event-triggered admissions", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current stored workflow version", Req: true, Value: "N"}}},
+			{Name: "resume", Short: "Resume automatic scheduled and event-triggered admissions", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current stored workflow version", Req: true, Value: "N"}}},
 			{Name: "revisions", Short: "Inspect immutable published snapshots", Subcommands: []cliSub{
-				{Name: "list", Short: "List published revisions for an automation", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "limit", Short: "page size (1..100, default 50)", Value: "N"}, {Name: "offset", Short: "number of revisions to skip", Value: "N"}}},
-				{Name: "show", Short: "Inspect a revision or export its definition", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "revision", Short: "published revision number", Req: true, Value: "N"}, {Name: "definition-out", Short: "export the definition as JSON to a new file", Value: "PATH"}}},
+				{Name: "list", Short: "List published revisions for a stored workflow", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "limit", Short: "page size (1..100, default 50)", Value: "N"}, {Name: "offset", Short: "number of revisions to skip", Value: "N"}}},
+				{Name: "show", Short: "Inspect a revision or export its definition", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "revision", Short: "published revision number", Req: true, Value: "N"}, {Name: "definition-out", Short: "export the definition as JSON to a new file", Value: "PATH"}}},
 			}},
-			{Name: "restore", Short: "Restore a published revision as a draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "revision", Short: "published revision number to restore", Req: true, Value: "N"}, {Name: "expected-version", Short: "current version; use 0 if deleted", Req: true, Value: "N"}}},
-			{Name: "delete", Short: "Delete an automation using its current version", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current automation version", Req: true, Value: "N"}, {Name: "yes", Short: "required explicit confirmation of automation deletion", Req: true, Bool: true}, {Name: "restore-manifest", Short: "allow the current YAML definition to own this automation again"}}},
-			{Name: "validate", Short: "Validate an automation definition without saving it", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}}},
-			{Name: "simulate", Short: "Trace an automation with sample input and mocked outputs", Notes: []string{"Does not run steps."}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "input-file", Short: "sample workflow input JSON file", Value: "PATH"}, {Name: "mock-outputs-file", Short: "JSON object of action outputs keyed by step name", Value: "PATH"}, {Name: "mock-item-outputs-file", Short: "JSON object of for_each output arrays keyed by step name", Value: "PATH"}, {Name: "mock-attempts-file", Short: "JSON object of ordered attempt outcomes keyed by step name", Value: "PATH"}, {Name: "mock-item-attempts-file", Short: "JSON object mapping loops and zero-based item indexes to attempt outcomes", Value: "PATH"}, {Name: "require-complete", Short: "fail if mocks leave steps unresolved"}}},
-			{Name: "apply", Short: "Save an automation definition as a draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "expected-version", Short: "current version; use 0 for a new draft", Req: true, Value: "N"}}},
+			{Name: "restore", Short: "Restore a published revision as a draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "revision", Short: "published revision number to restore", Req: true, Value: "N"}, {Name: "expected-version", Short: "current version; use 0 if deleted", Req: true, Value: "N"}}},
+			{Name: "delete", Short: "Delete a stored workflow using its current version", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current stored workflow version", Req: true, Value: "N"}, {Name: "yes", Short: "required explicit confirmation of stored workflow deletion", Req: true, Bool: true}, {Name: "restore-manifest", Short: "allow the current YAML definition to own this stored workflow again"}}},
+			{Name: "validate", Short: "Validate a stored workflow definition without saving it", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}}},
+			{Name: "simulate", Short: "Trace a stored workflow with sample input and mocked outputs", Notes: []string{"Does not run steps."}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "input-file", Short: "sample workflow input JSON file", Value: "PATH"}, {Name: "mock-outputs-file", Short: "JSON object of action outputs keyed by step name", Value: "PATH"}, {Name: "mock-item-outputs-file", Short: "JSON object of for_each output arrays keyed by step name", Value: "PATH"}, {Name: "mock-attempts-file", Short: "JSON object of ordered attempt outcomes keyed by step name", Value: "PATH"}, {Name: "mock-item-attempts-file", Short: "JSON object mapping loops and zero-based item indexes to attempt outcomes", Value: "PATH"}, {Name: "require-complete", Short: "fail if mocks leave steps unresolved"}}},
+			{Name: "apply", Short: "Save a stored workflow definition as a draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "expected-version", Short: "current version; use 0 for a new draft", Req: true, Value: "N"}}},
 			{Name: "publish-policy", Short: "Inspect or set required server publishing checks", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "mode", Short: "set publishing requirement (admin scope)", Value: "MODE", ClosedSet: []string{"optional", "scenarios", "coverage"}}, {Name: "expected-version", Short: "current policy version (required when setting mode)", Value: "N"}}},
-			{Name: "publish", Short: "Publish the current automation draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current version of the draft", Req: true, Value: "N"}, {Name: "take-over-manifest", Short: "explicitly take over YAML ownership"}, {Name: "scenarios", Short: "check scenarios against the saved draft before publishing", Value: "PATH"}, {Name: "require-coverage", Short: "require coverage before publishing (requires --scenarios)"}}},
+			{Name: "publish", Short: "Publish the current stored workflow draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current version of the draft", Req: true, Value: "N"}, {Name: "take-over-manifest", Short: "explicitly take over YAML ownership"}, {Name: "scenarios", Short: "check scenarios against the saved draft before publishing", Value: "PATH"}, {Name: "require-coverage", Short: "require coverage before publishing (requires --scenarios)"}}},
 		},
 	},
 	{
@@ -3199,12 +3260,21 @@ var cliCommands = []cliCommand{
 		Name:     "dev",
 		DocSlug:  "dev",
 		Short:    "Sync local changes to a developer environment",
-		Examples: []string{"gregale dev --once", "gregale dev --path ./api --once", "gregale dev --all"},
+		Examples: []string{"gregale dev --once", "gregale dev --path ./api --once", "gregale dev --all", "gregale dev --local"},
+		HelpNotes: []string{
+			"--local runs the project's Node, Python and Go functions on this machine with the production adapters and runner, at http://<function>.localhost:<port>, and reloads a function when its files change. Nothing is uploaded.",
+		},
 		Flags: []cliFlag{
 			{Name: "path", Short: "source directory", Value: "DIR"},
+			{Name: "local", Short: "run the project's functions on this machine instead of a remote developer environment"},
+			{Name: "port", Short: "local port for --local (default 8787)", Value: "N"},
+			{Name: "no-reload", Short: "with --local, do not reload functions when their files change"},
+			{Name: "no-remote", Short: "with --local, do not connect to the developer session's database and buckets"},
+			{Name: "offline", Short: "with --local, run Postgres and buckets in Docker instead (with --postgres, --bucket)"},
+			{Name: "reset", Short: "with --local --offline, wipe the local database and bucket files first"},
 			{Name: "all", Short: "run one developer loop per deployable workspace app"},
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
-			{Name: "env-file", Short: "sync KEY=VALUE entries as developer secrets", Value: "PATH"},
+			{Name: "env-file", Short: "sync KEY=VALUE entries as developer secrets (with --local: give them to every function)", Value: "PATH"},
 			{Name: "service-override-file", Short: "sync validated service URLs as developer secrets", Value: "PATH"},
 			{Name: "once", Short: "deploy once and exit"},
 			{Name: "stop", Short: "tear down the developer environment"},
@@ -3253,13 +3323,29 @@ var cliCommands = []cliCommand{
 				"gregale dev trigger invoke --method POST --path /orders --payload @order.json",
 				"gregale dev trigger cron /jobs/nightly",
 				"gregale dev trigger delayed-task --delay 5m --path /reminders",
-			}, Flags: []cliFlag{
-				{Name: "path", Short: "source directory (before the verb)", Value: "DIR"},
-				{Name: "name", Short: "developer-session project name (before the verb)", Value: "PROJECT"},
+				"gregale dev trigger invoke --source ./api --name shop --method GET --path /healthz",
+				"gregale dev trigger --local cron digest",
+				"gregale dev trigger --local invoke users /users/7 --data '{\"id\":7}'",
+			}, Notes: []string{"--source and --name select the developer environment and work before or after the verb. After the verb, --path is the request URL path; before the verb it is the older spelling of --source."}, Flags: []cliFlag{
+				{Name: "local", Short: "call a function served by gregale dev --local, as a cron or async call reaches it"},
+				{Name: "source", Short: "source directory (before or after the verb)", Value: "DIR"},
+				{Name: "name", Short: "developer-session project name (before or after the verb)", Value: "PROJECT"},
+				{Name: "path", Short: "source directory, only before the verb (use --source)", Value: "DIR"},
 			}, Subcommands: []cliSub{
-				{Name: "invoke", Short: "Invoke the developer app"},
+				{Name: "invoke", Short: "Invoke the developer app", Flags: []cliFlag{
+					{Name: "path", Short: "request URL path (defaults to the handler's)", Value: "URL_PATH"},
+					{Name: "method", Short: "HTTP method override", Value: "METHOD"},
+					{Name: "payload", Short: "JSON payload, @file, or - for stdin", Value: "JSON"},
+					{Name: "async", Short: "fire and forget; prints the status URL"},
+				}},
 				{Name: "cron", Short: "POST to a cron route declared for this app in gregale.yaml", Positionals: []string{"[ROUTE]"}},
-				{Name: "delayed-task", Short: "Schedule a delayed task on the developer app"},
+				{Name: "delayed-task", Short: "Schedule a delayed task on the developer app", Flags: []cliFlag{
+					{Name: "path", Short: "request URL path invoked when due (default /)", Value: "URL_PATH"},
+					{Name: "delay", Short: "relative delay such as 30m", Value: "DURATION"},
+					{Name: "scheduled-at", Short: "RFC3339 dispatch time", Value: "RFC3339"},
+					{Name: "method", Short: "HTTP method (default POST)", Value: "METHOD"},
+					{Name: "payload", Short: "JSON payload, @file, or - for stdin", Value: "JSON"},
+				}},
 			}},
 			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},
@@ -5215,6 +5301,7 @@ var cliCommands = []cliCommand{
 			{Name: "verify", Short: "Open authenticator verification in the browser", Positionals: []string{"[<6-digit-code>]"}, Flags: []cliFlag{{Name: "code", Short: "legacy option; enter the code in the browser", Value: "CODE"}}},
 			{Name: "recover", Short: "Open recovery in the browser", Positionals: []string{"[<recovery-code>]"}, Flags: []cliFlag{{Name: "code", Short: "legacy option; enter the code in the browser", Value: "CODE"}}},
 			{Name: "disable", Short: "Open MFA removal in the browser", Flags: []cliFlag{{Name: "password", Short: "legacy option; enter the password in the browser", Value: "PASSWORD"}, {Name: "recovery-code", Short: "legacy option; enter the recovery code in the browser", Value: "CODE"}}},
+			{Name: "rotate", Short: "Open new recovery codes in the browser", Notes: []string{"Your current recovery codes stop working."}},
 		},
 	},
 	{
@@ -5319,11 +5406,15 @@ var cliCommands = []cliCommand{
 					{Name: "agents", Short: "allow or deny agents in the org", Value: "allow|deny", Req: true},
 					{Name: "capabilities", Short: "comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only", Value: "LIST"},
 					{Name: "approvals", Short: "kinds of action every agent must have a person approve: delete, production, credentials, billing, all or none", Value: "LIST"},
+					{Name: "approval-channels", Short: "comma-separated names of your notification channels that also get the org's agents' approval requests; empty for none", Value: "NAMES"},
 				}},
 			}},
 			{Name: "transfer-ownership", Short: "Transfer org ownership", Flags: []cliFlag{
 				orgSlugFlag,
 				{Name: "to", Short: "user ID of the new owner", Value: "USER-ID", Req: true},
+			}},
+			{Name: "leave", Short: "Leave an org you are a member of", Notes: []string{"Owners transfer ownership first. Personal orgs cannot be left."}, Positionals: []string{"ORG_SLUG"}, Flags: []cliFlag{
+				{Name: "yes", Short: "leave without prompting", Bool: true},
 			}},
 			{Name: "seat-usage", Short: "Show seat usage", Flags: []cliFlag{orgSlugFlag}},
 			{Name: "invitations", Short: "Manage org invitations", Subcommands: []cliSub{
@@ -6093,6 +6184,7 @@ var cliCommands = []cliCommand{
 				{Name: "before", Short: "pagination cursor", Value: "ID"},
 				{Name: "source", Short: "only this source", Value: "SOURCE", ClosedSet: []string{"invocation", "trigger", "webhook"}},
 				{Name: "trigger", Short: "only dead letters from this trigger", Value: "ID"},
+				{Name: "unreplayed", Short: "hide events already replayed (by dlq replay or webhook retry)", Bool: true},
 			}},
 			{Name: "inspect", Short: "Inspect one dead-letter event", Positionals: []string{"<app>", "<event-id>"}},
 			{Name: "replay", Short: "Replay one event, or all of them", Notes: []string{"Use --all for every event."}, Positionals: []string{"<app>", "[<event-id>]"}, Flags: []cliFlag{
