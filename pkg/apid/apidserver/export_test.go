@@ -2282,3 +2282,9 @@ func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Re
 func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.getEnvironmentPromotionReceipt(w, r, acct)
 }
+
+// ApplySourceFunctionSettingsForTest runs applySourceFunctionSettings on a
+// server holding only store.
+func ApplySourceFunctionSettingsForTest(ctx context.Context, store state.Store, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec) (state.App, *api.Problem) {
+	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec)
+}
