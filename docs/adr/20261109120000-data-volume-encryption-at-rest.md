@@ -134,3 +134,22 @@ may keep old blocks); on a fresh host the originals were written minutes
 earlier and are few. A volume lost with every Tang key and every recovery
 identity now loses the local Postgres cluster too; the off-host WAL archive
 and base backups (ADR-1344) remain the way back.
+
+## Amendment 2 (2026-11-09): daemon state in /var/lib/faas
+
+Amendment 1 missed `/var/lib/faas`, which holds secrets of its own
+(`audit-hmac.key`, `recovery-hmac.key`, certificates, the `faas_pgproxyd`
+password, log-drain settings) and the zswap swapfile, where frozen tenant
+VMs' memory is written. It joins `/etc/faas/secrets` on every host with an
+encrypted volume, by the same copy, prove, shred and seal.
+
+- It is written continuously, so it moves only while no `faas-*` service is
+  active; otherwise the role stops with the drain-and-stop steps. A new host
+  has none running when the storage role runs.
+- The OCI cache and Grype database are already bind mounts from `/srv/fc`
+  beneath it. The copy stays on one filesystem, steps those mounts aside for
+  the bind and mounts them again from fstab; the proof leaves out whatever
+  lies under them on the boot disk (an OCI cache left there before it moved),
+  which is shredded with the rest. A mount beneath it that fstab does not
+  list stops the move.
+- faas units, `faas-zswap` among them, require the mount.
