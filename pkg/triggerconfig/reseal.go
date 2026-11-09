@@ -38,24 +38,28 @@ func Reseal(kind api.TriggerKind, raw json.RawMessage, domain *age.X25519Identit
 	if plainErr != nil && !hasPlain {
 		return nil, ResealFailed, nil
 	}
-	if !hasPlain {
-		// Opening with no identity succeeds only when nothing is sealed.
-		if _, err := Open(kind, raw, nil); err == nil {
-			return nil, ResealCurrent, nil
-		}
-		_, domainErr := Open(kind, raw, []*age.X25519Identity{domain})
-		_, legacyErr := Open(kind, raw, legacy)
-		if domainErr == nil && (len(legacy) == 0 || legacyErr != nil) {
-			return nil, ResealCurrent, nil
-		}
+	// Opening with no identity succeeds only when nothing is sealed.
+	if !hasPlain && (opens(kind, raw, nil) ||
+		opens(kind, raw, []*age.X25519Identity{domain}) && (len(legacy) == 0 || !opens(kind, raw, legacy))) {
+		return nil, ResealCurrent, nil
 	}
-	opened, err := Open(kind, raw, append([]*age.X25519Identity{domain}, legacy...))
-	if err != nil {
+	all := append([]*age.X25519Identity{domain}, legacy...)
+	if !opens(kind, raw, all) {
 		return nil, ResealFailed, nil
+	}
+	opened, err := Open(kind, raw, all)
+	if err != nil {
+		return nil, ResealFailed, err
 	}
 	sealed, err := Seal(kind, opened, []*age.X25519Recipient{domain.Recipient()})
 	if err != nil {
 		return nil, ResealFailed, err
 	}
 	return sealed, ResealWrite, nil
+}
+
+// opens reports whether every sealed leaf of raw opens with ids.
+func opens(kind api.TriggerKind, raw json.RawMessage, ids []*age.X25519Identity) bool {
+	_, err := Open(kind, raw, ids)
+	return err == nil
 }
