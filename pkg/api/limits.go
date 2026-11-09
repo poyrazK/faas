@@ -17066,12 +17066,17 @@ const (
 //   - AlertWebhookBudget bounds one webhook delivery, retries included
 //     (pkg/webhookout's own policy allows minutes);
 //   - AlertAccountTickBudget is an account's share of one tick: once spent,
-//     its remaining rules wait for the next tick, which starts with them.
+//     its remaining rules wait for the next tick, which starts with them;
+//   - AlertAccountWebhookConcurrency webhook deliveries of one account run
+//     at once, off the evaluation path, so a receiver that fails or never
+//     answers no longer holds the account's next rules for its whole
+//     AlertWebhookBudget (ADR-20261110090000).
 const (
-	AlertEvaluationWorkers = 8
-	AlertObserveBudget     = 15 * time.Second
-	AlertWebhookBudget     = 30 * time.Second
-	AlertAccountTickBudget = 45 * time.Second
+	AlertEvaluationWorkers         = 8
+	AlertObserveBudget             = 15 * time.Second
+	AlertWebhookBudget             = 30 * time.Second
+	AlertAccountTickBudget         = 45 * time.Second
+	AlertAccountWebhookConcurrency = 4
 )
 
 // Alert delivery retention (ADR-20261029203000): meterd deletes settled
