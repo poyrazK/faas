@@ -57,7 +57,7 @@ func releaseInPrivateNetns() error {
 	// off-guest for the release; 127.0.0.1 stays loopback.
 	for _, args := range [][]string{{"link", "set", "lo", "up"}, {"addr", "add", "10.99.0.1/32", "dev", "lo"}} {
 		if out, err := exec.Command("ip", args...).CombinedOutput(); err != nil {
-			return fmt.Errorf("ip %v: %v: %s", args, err, out)
+			return fmt.Errorf("ip %v: %w: %s", args, err, out)
 		}
 	}
 	open := func(host string) (net.Conn, net.Conn, func(), error) {
@@ -103,7 +103,7 @@ func releaseInPrivateNetns() error {
 	_ = offClient.SetReadDeadline(time.Now().Add(time.Second))
 	var timeout net.Error
 	if _, err := offClient.Read(make([]byte, 1)); err == nil || (errors.As(err, &timeout) && timeout.Timeout()) {
-		return fmt.Errorf("off-guest connection still open after release: %v", err)
+		return fmt.Errorf("off-guest connection still open after release: %w", err)
 	}
 	_ = loClient.SetWriteDeadline(time.Now().Add(time.Second))
 	if _, err := loClient.Write([]byte("x")); err != nil {
