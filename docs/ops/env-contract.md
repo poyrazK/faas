@@ -42,6 +42,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_AI_GATEWAY_ENABLED` | apid, outboundd, shared | `default` |  |  | `int` | boot fallback for the ai_gateway platform flag (ADR-1700): optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-991), any other value keeps it closed, unset preserves the TOML setting (default off); ignored once an operator writes platform_flag.ai_gateway |
 | `FAAS_ALERTMANAGER_URL` | apid | `default` |  |  | `` |  |
 | `FAAS_ALERT_EVAL_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_ANALYTICS_ROLLUP_CRASH_MARKER` | apid | `default` |  | /var/lib/faas/apid-analytics-rollups.running | `` | ADR-20261103113952 amendment 4: file apid keeps while its analytics rollup aggregator runs, removed after a clean final flush; a start that finds it marks the minutes the stopped apid may have lost; empty turns it off |
 | `FAAS_ANOMALY_ALERTS_ENABLED` | apid, shared | `default` |  | 0 | `` | ADR-744 operator gate for above_baseline/below_baseline alert comparisons; explicit 1 enables the internal preview; boot fallback for the anomaly_alerts platform flag (ADR-1700), ignored once an operator writes platform_flag.anomaly_alerts |
 | `FAAS_APID_ADVISORY_SOCK` | apid, vmmd, shared | `unit` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_SOCKET` | apid, gatewayd-internal | `default` |  |  | `` |  |
