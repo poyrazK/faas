@@ -22,6 +22,13 @@ import (
 	"time"
 )
 
+// SSEMaxLineBytes bounds one line of a server-sent event stream read by the
+// CLI and SDK. A runtime log line may be up to 1 MiB (logbuf
+// MaxPartialLineBytes) and JSON escaping can grow it up to six times, so 8 MiB
+// carries the largest log frame apid sends. The old 64 KiB cap ended a whole
+// `gregale logs` stream at the first long line (ADR-20261110090000).
+const SSEMaxLineBytes = 8 << 20
+
 // Shared traffic counters bound each admission round trip and aggregate replay.
 const (
 	TrafficCounterOperationTimeout = 100 * time.Millisecond
