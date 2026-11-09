@@ -39,7 +39,8 @@ Options weighed:
 1. **Scope: the data volume.** The `storage` role creates `/srv/fc` as LUKS2
    with XFS inside. The root disk stays plain: it holds the OS, packages and
    configuration, which are rebuildable. Postgres data and
-   `/etc/faas/secrets` move onto the encrypted volume in a follow-up slice.
+   `/etc/faas/secrets` move onto the encrypted volume in a follow-up slice
+   (Amendment 1).
 2. **Unlock: Clevis bound to the OTHER hosts' Tang servers**, Shamir
    threshold 1, so any one reachable peer unlocks the volume. A host never
    binds to its own Tang server: its Tang keys sit on its plain root disk, and
@@ -90,3 +91,44 @@ Options weighed:
   together loses the data on that volume. Slice 1 starts with `/srv/fc`
   because the cost of that loss is lowest there (snapshots are cache,
   ADR-005); Postgres follows once the recovery path has been exercised.
+
+## Amendment 1 (2026-11-09): host secrets and the control plane's Postgres
+
+Slice 2 moves the remaining sensitive data on a host with an encrypted volume
+onto it. Scope chosen: control-plane and compute hosts (the ones with
+`/srv/fc`); the Postgres standby host and database nodes get their own
+encrypted volume in a later slice.
+
+1. **Paths keep their names.** `/etc/faas/secrets` (every host) and, on the
+   control plane, `/var/lib/postgresql` (the cluster) and `/var/lib/pgsql`
+   (WAL archive, local base backups) are bind mounts of
+   `/srv/fc/host-private/<name>`. About sixty readers of `/etc/faas/secrets`,
+   Postgres and its archive command need no change.
+2. **Move, prove, shred.** The first converge copies a path's contents onto
+   the volume (rsync, ownership, modes, ACLs, xattrs and hard links kept),
+   binds it, and compares the hidden original with the copy by checksum. Only
+   an identical copy lets the original be shredded. The shred runs through a
+   non-recursive bind of the filesystem underneath and refuses unless the
+   path is bound from the volume, so it can never reach live data.
+3. **Fail closed when locked.** The empty directory under each mount is made
+   immutable (`chattr +i`). While the volume is locked the bind mounts are
+   absent (`nofail`, `x-systemd.requires-mounts-for=/srv/fc`), and anything
+   that would write there instead (a converge that skips the storage role,
+   apt's `initdb`, a daemon) fails instead of putting secrets or a database
+   on the plain disk. faas units also require `/etc/faas/secrets` and
+   `postgresql`/`postgresql@` require both Postgres paths.
+4. **Live Postgres is never stopped by a converge.** A cluster on the plain
+   disk with more than the template databases makes the role stop with the
+   maintenance-window steps (runbook "Moving a live Postgres"). A fresh
+   cluster is stopped, moved and started.
+5. **auditd.** Its `faas_secrets` watch is loaded before the mount exists at
+   boot; `faas-secrets-audit-reload.service` reloads the rules once
+   `/etc/faas/secrets` is mounted.
+
+Consequences: the plain root disk now keeps only the OS, configuration,
+Tang's own keys and the network keys needed to reach a Tang peer (WireGuard
+or the vRack needs none). `shred` on an SSD is best effort (wear levelling
+may keep old blocks); on a fresh host the originals were written minutes
+earlier and are few. A volume lost with every Tang key and every recovery
+identity now loses the local Postgres cluster too; the off-host WAL archive
+and base backups (ADR-1344) remain the way back.

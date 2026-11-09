@@ -37,6 +37,22 @@ findmnt /srv/fc                                # /dev/mapper/faas-fc-crypt xfs
 systemctl show faas-vmmd -p RequiresMountsFor  # includes /srv/fc
 ```
 
+## What lives on the volume
+
+Besides `/srv/fc`'s own data, these paths are bind mounts of
+`/srv/fc/host-private/<name>` (Amendment 1):
+
+| Path | Hosts |
+|---|---|
+| `/etc/faas/secrets` | every host |
+| `/var/lib/postgresql` (cluster) | control plane |
+| `/var/lib/pgsql` (WAL archive, base backups) | control plane |
+
+`findmnt /etc/faas/secrets` shows `/dev/mapper/faas-fc-crypt[/host-private/secrets]`.
+The directory underneath each is empty and immutable (`lsattr -d` shows `i`),
+so nothing can write secrets or a database to the plain disk while the
+volume is locked.
+
 ## A host came up with /srv/fc not mounted
 
 Every faas unit requires the mount, so the daemons stay stopped and the host
@@ -50,6 +66,8 @@ stays reachable over SSH. Usually no Tang peer answered at boot.
    ```
    sudo clevis luks unlock -d <device> -n faas-fc-crypt
    sudo mount /srv/fc
+   sudo mount -a -t none            # the host-private bind mounts
+   sudo systemctl start postgresql  # control plane
    sudo systemctl start --all 'faas-*.service'
    ```
 
@@ -112,6 +130,45 @@ regen -d <device> -s <slot>`) and, once all have, delete the hidden old keys
 on the rotated host. A host whose root disk was compromised is treated as
 lost: rotate its Tang keys on a fresh install, and rebind every other host.
 
+## Moving a live Postgres
+
+The storage role never stops a control-plane Postgres that holds data; it
+stops with "refuse to move a Postgres that holds data". In a maintenance
+window (the API is down while Postgres is):
+
+1. Confirm the off-host WAL push is current
+   (`/var/lib/pgsql/archive/.offhost-last-success` within a minute) and take a
+   base backup (`sudo systemctl start faas-pg-basebackup.service`).
+2. Stop the database clients, then Postgres: `sudo systemctl stop
+   'faas-*.service' pgbouncer postgresql`.
+3. Converge the host (`bootstrap.yml --limit <host>`). With Postgres stopped
+   the role still sees the databases and refuses, so move the cluster by hand
+   exactly as the role does, for each of `postgresql` and `pgsql`:
+
+   ```
+   sudo install -d -m 0700 /srv/fc/host-private
+   sudo install -d /srv/fc/host-private/postgresql
+   sudo chown --reference=/var/lib/postgresql /srv/fc/host-private/postgresql
+   sudo chmod --reference=/var/lib/postgresql /srv/fc/host-private/postgresql
+   sudo rsync -aHAX --numeric-ids /var/lib/postgresql/ /srv/fc/host-private/postgresql/
+   sudo mount --bind /srv/fc/host-private/postgresql /var/lib/postgresql
+   ```
+
+   then converge again: the role adds the fstab entries, proves the copy,
+   shreds the originals and seals the directories.
+4. Start Postgres and the daemons, and check `findmnt /var/lib/postgresql`.
+
+## Undoing a sealed directory
+
+To put a path back on the plain disk (only when turning disk encryption
+off), reach the directory underneath and clear the flag:
+
+```
+sudo mkdir /run/underlay && sudo mount --bind / /run/underlay
+sudo chattr -i /run/underlay/etc/faas/secrets
+sudo umount /run/underlay && sudo rmdir /run/underlay
+```
+
 ## A format attempt failed halfway
 
 The role formats only a blank volume. If `luksFormat` succeeded but the bind
@@ -123,5 +180,7 @@ and the role stops at "require the Tang binding". It holds no data: wipe it
 
 If every Tang server's keys are gone **and** no operator identity can open the
 recovery file, the volume is lost. For `/srv/fc` that means rebuilding the
-host; snapshots are cache (ADR-005). Keep at least two operator identities in
+host; snapshots are cache (ADR-005). Host secrets come back from CD, and the
+control plane's database from the off-host WAL archive and base backups
+(ADR-1344, `docs/runbooks/ControlPlaneStateBackup.md`). Keep at least two operator identities in
 separate places.
