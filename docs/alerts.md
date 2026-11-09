@@ -253,8 +253,13 @@ printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "error lo
 ```
 
 A line's level comes from a structured `level` or `severity` field when the
-line is JSON, otherwise from common prefixes such as `[ERROR]`, `level=error`
-or `[warn]` in the first 512 bytes. This is the same classification as
+line is JSON (Pino's numeric levels too; `fatal` and `critical` count as
+errors), otherwise from markers such as `[ERROR]`, `[FATAL]`, `level=error`
+or `[warn]` in the first 512 bytes, or from a line that starts the way a
+crash or a default logger does: `ERROR:` and `CRITICAL:` (Python's logging
+and uvicorn), `Traceback (most recent call last):`, `panic:` and
+`fatal error:` (Go), or `TypeError: …` and other `…Error: ` lines (Node's
+uncaught exceptions). This is the same classification as
 `gregale logs --level error`, so the command shows the lines an alert
 counted. A line that only mentions "error" in prose is not counted. Build
 logs are never counted. Log alerts support every alert action, including
