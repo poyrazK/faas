@@ -1260,14 +1260,18 @@ func (m *Manager) tryReserve(state *endpointState) (connectionRefusal, bool) {
 	for {
 		current := m.reserved.Load()
 		if current >= int64(m.cfg.MaxConnections) {
-			return connectionRefusal{}, false
+			return connectionRefusal{scope: api.RealtimeConnectionLimitNode, limit: int64(m.cfg.MaxConnections), observed: current}, false
 		}
 		if m.reserved.CompareAndSwap(current, current+1) {
 			for {
 				endpointCurrent := state.reserved.Load()
-				if state.revoked.Load() || endpointCurrent >= int64(state.config.Load().MaxConnections) {
+				if state.revoked.Load() {
 					m.reserved.Add(-1)
 					return connectionRefusal{}, false
+				}
+				if limit := int64(state.config.Load().MaxConnections); endpointCurrent >= limit {
+					m.reserved.Add(-1)
+					return connectionRefusal{scope: api.RealtimeConnectionLimitEndpoint, limit: limit, observed: endpointCurrent}, false
 				}
 				if state.reserved.CompareAndSwap(endpointCurrent, endpointCurrent+1) {
 					if refusal, ok := m.reserveAccount(state); !ok {
@@ -1293,14 +1297,15 @@ func (m *Manager) countRefusal(r connectionRefusal) {
 	}
 }
 
-// refuseConnection answers a refused reservation: an account limit as an RFC
-// 7807 problem with the limit and observed count, anything else as before.
+// refuseConnection answers a refused reservation: a limit as an RFC 7807
+// problem with the limit and observed count; an endpoint revoked meanwhile
+// answers 404 like one that was never registered.
 func refuseConnection(w http.ResponseWriter, r connectionRefusal) {
 	if r.scope != "" {
 		api.WriteProblem(w, r.problem())
 		return
 	}
-	http.Error(w, "realtime connection limit reached", http.StatusTooManyRequests)
+	http.Error(w, "realtime endpoint not found", http.StatusNotFound)
 }
 
 func (m *Manager) release(state *endpointState) {

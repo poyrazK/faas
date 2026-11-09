@@ -4223,14 +4223,23 @@ func ErrRealtimeWriteRateLimited(perSecond, writes int, retryAfter time.Duration
 const (
 	RealtimeConnectionLimitAccount     = "account"
 	RealtimeConnectionLimitAccountNode = "account_node"
+	// RealtimeConnectionLimitEndpoint is the endpoint's own max_connections.
+	RealtimeConnectionLimitEndpoint = "endpoint"
+	// RealtimeConnectionLimitNode is the realtime node's total capacity.
+	RealtimeConnectionLimitNode = "node"
 )
 
 // ErrRealtimeConnectionLimit reports a refused realtime connection with the
 // limit that applied and the connections observed against it.
 func ErrRealtimeConnectionLimit(scope string, limit, observed int64) *Problem {
 	detail := fmt.Sprintf("Your plan allows %d concurrent realtime connections per account across all endpoints; %d are open. Close idle connections or upgrade the plan.", limit, observed)
-	if scope == RealtimeConnectionLimitAccountNode {
+	switch scope {
+	case RealtimeConnectionLimitAccountNode:
 		detail = fmt.Sprintf("One account may hold at most %d connections on a single realtime node; %d are open on this node. Retry with backoff.", limit, observed)
+	case RealtimeConnectionLimitEndpoint:
+		detail = fmt.Sprintf("This endpoint's max_connections is %d; %d are open. Close idle connections or raise the endpoint's max_connections.", limit, observed)
+	case RealtimeConnectionLimitNode:
+		detail = fmt.Sprintf("This realtime node holds its maximum of %d connections. Retry with backoff.", limit)
 	}
 	return NewProblem(http.StatusTooManyRequests, CodeRealtimeConnectionLimit, "Realtime connection limit reached", detail).
 		WithLimit(limit, observed).
