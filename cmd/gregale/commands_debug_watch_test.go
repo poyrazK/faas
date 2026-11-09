@@ -2,12 +2,14 @@ package main_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -194,4 +196,30 @@ func fileMode(t *testing.T, path string) os.FileMode {
 		t.Fatal(err)
 	}
 	return info.Mode()
+}
+
+// A watch whose polls fail backs off instead of hammering the API at
+// --interval, and never polls sooner than a 429's Retry-After.
+func TestDebugWatchNextWaitBacksOff(t *testing.T) {
+	retryAfter := int64(90)
+	limited := &api.APIError{Problem: api.Problem{Status: 429, RetryAfterSeconds: &retryAfter}}
+	plain := errors.New("connection refused")
+	for _, tc := range []struct {
+		name     string
+		interval time.Duration
+		failures int
+		err      error
+		want     time.Duration
+	}{
+		{"healthy", 2 * time.Second, 0, nil, 2 * time.Second},
+		{"first failure doubles", 2 * time.Second, 1, plain, 4 * time.Second},
+		{"third failure", 2 * time.Second, 3, plain, 16 * time.Second},
+		{"capped at five minutes", 2 * time.Second, 20, plain, 5 * time.Minute},
+		{"long interval is its own cap", 10 * time.Minute, 3, plain, 10 * time.Minute},
+		{"retry-after wins", 2 * time.Second, 1, limited, 90 * time.Second},
+	} {
+		if got := main.DebugWatchNextWait(tc.interval, tc.failures, tc.err); got != tc.want {
+			t.Errorf("%s: got %s, want %s", tc.name, got, tc.want)
+		}
+	}
 }
