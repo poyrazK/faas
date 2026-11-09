@@ -15120,6 +15120,17 @@ const RouteAnalyticsQueryTimeout = 10 * time.Second
 // render; past it the panel is left out and the page renders without it.
 const DashboardRequestAnalyticsTimeout = 5 * time.Second
 
+// apid handles the request telemetry records that arrive together on one
+// stream as a group whose rows commit in one transaction (ADR-127
+// amendment, group commit). A group ends when the gateway half-closes its
+// batch, at RequestTelemetryReceiveGroupMax records (the gateway's batch
+// size), or when no record arrives for RequestTelemetryReceiveGroupWait, so
+// a client that waits for each outcome is still answered.
+const (
+	RequestTelemetryReceiveGroupMax  = 256
+	RequestTelemetryReceiveGroupWait = 2 * time.Millisecond
+)
+
 // RequestAnalyticsSettleLag is how far before now request analytics stops
 // judging telemetry completeness: gateways hold a minute's rows until it
 // closes and flush every few seconds, so the newest minutes are always still
