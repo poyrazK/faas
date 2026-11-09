@@ -379,6 +379,11 @@ setting `service_policy: project` here. An unknown name, key or value fails
 the plan and names the file. A root `gregale.yaml` that holds only the
 `project:` block is not deployed as a service.
 
+To see which file sets a value, run `gregale config explain` with the key,
+for example `gregale config explain services.billing.visibility`. It prints
+the effective value and every layer that can set it, and marks the one that
+wins.
+
 The same settings used to live in `.gregale/project.yaml`. That file still
 works but is deprecated: deploys warn about it, and declaring settings in
 both places fails the plan. Move it with `gregale project import`, which
