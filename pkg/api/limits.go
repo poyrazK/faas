@@ -8147,6 +8147,15 @@ const (
 	// keep waiting for build disk before it fails with the disk-full error
 	// instead of being requeued (H83).
 	BuildDiskCapacityMaxWait = 15 * time.Minute
+	// SnapshotPrimeCapacityMaxWait is how long after its snapshot_prepare
+	// stage started a built deployment keeps waiting for a compute node with
+	// room for its first boot. Inside the window a node-budget refusal
+	// (memory, guest vCPUs, CPU) leaves the deployment snapshotting and the
+	// scheduler's prime recovery retries it each minute; after it the
+	// deployment fails with capacity_unavailable as before. Without the wait
+	// a momentarily full fleet failed a finished build, and the customer had
+	// to rebuild to retry.
+	SnapshotPrimeCapacityMaxWait = 5 * time.Minute
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment
