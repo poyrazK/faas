@@ -92,9 +92,13 @@ Each endpoint uses one client authentication mode:
 
 Browsers cannot set the `Authorization` header on a WebSocket, so a browser
 sends its token as a second requested subprotocol,
-`gregale.realtime.bearer.<token>` (the Node SDK does this for you). This works
-only on an endpoint with `allowed_origins`, and the browser's `Origin` must
-match one of them exactly. Tokens are at most 3,072 bytes.
+`gregale.realtime.bearer.<token>` (the Node SDK does this for you). This is
+part of the [resumable protocol](#resumable-protocol) (preview): the browser
+must also request `gregale.realtime.v2`, the token must be an OIDC JWT or a
+[subscription ticket](#subscription-tickets) (never a `static_bearer` token),
+and until the preview is enabled for your account the handshake is refused.
+It works only on an endpoint with `allowed_origins`, and the browser's
+`Origin` must match one of them exactly. Tokens are at most 3,072 bytes.
 
 Changing how an endpoint admits clients applies to open connections too. When
 you finalize a token rotation, its grace deadline passes, you change the
