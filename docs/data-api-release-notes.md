@@ -3,6 +3,20 @@
 This change completes the current core Data API development slice. It does not
 publish artifacts or establish hosted staging acceptance.
 
+## Health answers follow the engine; liveness checks the process
+
+[ADR 20261109160000](adr/20261109160000-data-api-health-cache-and-liveness.md):
+
+- **Readiness.** `/healthz` reuses only a ready answer, for up to 5 s, and
+  forgets it when the engine restarts, reloads its schema, is snapshotted or
+  restored. A cold boot is no longer held back by a remembered "not yet", and
+  a restored or reloaded API no longer reports ready for an engine that is
+  still starting. `data-api dev` reports every check as it happens.
+- **Liveness.** Data API deploys send `/livez` as the platform's liveness
+  probe (Hobby and above). A saturated pool or a short database outage no
+  longer gets a healthy runtime restarted, with its in-flight requests
+  dropped. Existing deployments switch on their next deploy.
+
 ## Hosted engine fixes: TLS roots and snapshot-safe sessions
 
 [ADR 20261026131131](adr/20261026131131-data-api-hosted-tls-roots-and-snapshot-sessions.md)

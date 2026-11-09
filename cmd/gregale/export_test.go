@@ -2760,3 +2760,6 @@ func ResolveSourceUploadCapForTest(ctx context.Context, c *Client) (mb int, veri
 
 // ForwardAppTaskSession is the shared port-forward / postgres connect relay.
 var ForwardAppTaskSession = forwardAppTaskSession
+
+// DeployDataAPIArchive is the Data API runtime's tarball deploy.
+var DeployDataAPIArchive = deployDataAPIArchive

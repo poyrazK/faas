@@ -3847,6 +3847,19 @@ safe `checks` and an `admission` snapshot. Both bypass request admission and use
 availability; startup failures and engine exit still stop the production runtime.
 Keep deployment health checks on `/healthz`.
 
+A ready `/healthz` answer is reused for up to 5 seconds, so polling a healthy API
+reaches the database at most once per interval; concurrent checks share one run.
+An unready answer is never reused, and an engine restart, schema reload, snapshot
+or restore forgets the cached answer, so readiness never describes an engine that
+is gone. `gregale data-api dev` checks every time.
+
+`data-api deploy` and dashboard setup use `/healthz` for startup readiness and
+`/livez` as the platform's liveness probe (Hobby and above): `/healthz` reports
+SQL readiness, which a saturated pool or a short database outage fails while the
+runtime is healthy, and three failed liveness probes restart the instance. Existing
+deployments switch on their next deploy. See
+[ADR 20261109160000](adr/20261109160000-data-api-health-cache-and-liveness.md).
+
 The observations have deliberately separate meanings:
 
 | Field | Values and meaning |

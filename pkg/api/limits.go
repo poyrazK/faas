@@ -15759,8 +15759,10 @@ const (
 	// everyone. Server keys (trusted backends) are bounded only by the total.
 	DataAPIStorageTransfersPerClient = 2
 	// /healthz is public and its readiness checks reach the database: a
-	// completed result answers further checks for this long, so polling it
-	// asks the database at most once per interval per instance.
+	// completed ready result answers further checks for this long, so polling
+	// a healthy API asks the database at most once per interval per instance.
+	// Unready results are never reused, and engine restarts, schema reloads,
+	// checkpoints and restores forget the cached one (ADR-20261109160000).
 	DataAPIHealthCache = 5 * time.Second
 	// The gateway sends the SQL deadline this much early, so a VM clock that
 	// runs ahead of the database's by up to it still passes the engine's

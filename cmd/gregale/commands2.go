@@ -1986,7 +1986,12 @@ type deployExecution struct {
 	developerSource  *devSourceSyncState
 	// overrideEnv carries non-secret values that belong only to the new
 	// deployment revision. MCP hosting uses it to pin a candidate catalog.
-	overrideEnv         map[string]string
+	overrideEnv map[string]string
+	// livenessProbe replaces the plan-default /healthz liveness probe on a
+	// tarball deploy. The Data API sends /livez: its /healthz reports SQL
+	// readiness, which a busy pool or a database blip fails without the
+	// process being wedged.
+	livenessProbe       *api.DeploymentLivenessProbe
 	extraSourceExcludes []string
 	// Long-lived sessions can finish the same source doctor checks before
 	// presenting their review. Reuse that result instead of repeating prose
@@ -4282,6 +4287,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Companions:               sidecarDefs,
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 			OverrideEnv:              execution.overrideEnv,
+			LivenessProbe:            execution.livenessProbe,
 			OverrideFreeze:           *overrideFreeze,
 			ReleaseAt:                releaseAt,
 			ReleaseNotify:            releaseNotify,
