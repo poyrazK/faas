@@ -52,8 +52,8 @@ type canceler interface {
 type backendKey struct {
 	target     Backend
 	databaseID string
-	pid                uint32
-	secret             []byte
+	pid        uint32
+	secret     []byte
 }
 
 // directCanceler cancels a direct session's backend.

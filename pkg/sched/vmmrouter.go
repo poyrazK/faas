@@ -262,8 +262,8 @@ type VMMRouter struct {
 	// names maps nodeID -> compute_nodes.name, the CN each dial requires of
 	// the vmmd leaf it reaches (ADR-20261108124106).
 	names map[string]string
-	dial             DialFunc
-	tls              *tls.Config
+	dial  DialFunc
+	tls   *tls.Config
 	// outboundRelay is the schedd-local path to outboundd. It is attached to
 	// every per-node execution stream and never travels to vmmd or the guest.
 	outboundRelay     ExecutionOutboundRelay
