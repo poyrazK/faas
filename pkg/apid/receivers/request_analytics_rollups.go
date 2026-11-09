@@ -185,7 +185,9 @@ func (a *RequestAnalyticsRollups) rememberLocked(id uuid.UUID) {
 }
 
 // requestAnalyticsLatencyBucket is the latency_hist index for latencyMS.
-func requestAnalyticsLatencyBucket(latencyMS int) int { return requestanalytics.LatencyBucket(latencyMS) }
+func requestAnalyticsLatencyBucket(latencyMS int) int {
+	return requestanalytics.LatencyBucket(latencyMS)
+}
 
 // Flush writes the pending rollups of the minutes that closed at least
 // RequestAnalyticsRollupMinuteGrace ago. Each minute is then written once,
