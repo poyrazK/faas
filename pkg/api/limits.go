@@ -4153,6 +4153,13 @@ const (
 	// leaves at its own deadline. It covers dialing a fresh control-plane
 	// connection from a compute edge.
 	PublicReadHostLookupTimeout = 2 * time.Second
+	// PublicReadForwardStaleMax is how long a compute edge's forwarder keeps
+	// routing a host by its last mount answer while the refresh runs in the
+	// background or fails (a control-plane database stall). The forwarder
+	// only routes: the control plane checks the bucket again before serving,
+	// so a stale answer delays a newly public mount but never serves a
+	// private one. Past it, a request waits for the lookup again.
+	PublicReadForwardStaleMax = 10 * time.Minute
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
