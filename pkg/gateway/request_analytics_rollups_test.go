@@ -226,13 +226,15 @@ func TestRequestTelemetryCollapseKeepsTheAnalyticsFlagApart(t *testing.T) {
 func TestGatewayRollupsRawLossCostsAnalyticsOnlyWhenUncounted(t *testing.T) {
 	apid := &fakeRollupApid{}
 	clock := &rollupClock{now: time.Date(2026, 11, 9, 12, 0, 10, 0, time.UTC)}
-	recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 1}, nopLog())
+	// Two slots: the loss journal holds as many apps as the ring has slots.
+	recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 2}, nopLog())
 	recorder.EnableAnalyticsRollups(RequestAnalyticsRollupsConfig{Ship: apid.ship, Now: clock.Now}, nopLog())
 	counted, uncounted := uuid.New(), uuid.New()
 	recorder.RecordFromObserve(rollupRow(uncounted, clock.now)) // before the probe: not counted
 	recorder.analytics.tick(t.Context(), false)
+	recorder.RecordFromObserve(rollupRow(counted, clock.now)) // fills the ring
 	recorder.RecordFromObserve(rollupRow(counted, clock.now)) // overwrites the uncounted row
-	recorder.RecordFromObserve(rollupRow(counted, clock.now)) // overwrites the counted row
+	recorder.RecordFromObserve(rollupRow(counted, clock.now)) // overwrites a counted row
 	if recorder.appLosses[uncounted] != 1 || recorder.appLosses[counted] != 1 {
 		t.Fatalf("raw losses = %v, want one each", recorder.appLosses)
 	}
