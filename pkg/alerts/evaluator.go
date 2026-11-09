@@ -210,6 +210,8 @@ type Evaluator struct {
 	accountBudget time.Duration
 	resumeMu      sync.Mutex
 	resume        map[string]string // account → rule its next tick starts with
+	// fireRetries are the fires channels did not take (ADR-20261109120000).
+	fireRetries fireRetries
 	// lastPurge is when RunOnce last purged expired deliveries
 	// (ADR-20261029203000); RunOnce runs on one goroutine.
 	lastPurge time.Time
@@ -399,6 +401,9 @@ type Stats struct {
 	// notices re-sent to channels that had not taken them, and those given
 	// up after AlertChannelResolveRetryWindow (ADR-20261031144636).
 	ChannelResolvesRetried, ChannelResolvesAbandoned int
+	// ChannelFiresRetried counts fires re-sent to channels that had not
+	// taken them while their rule was still firing (ADR-20261109120000).
+	ChannelFiresRetried int
 	// StoodDown counts rules whose episode ended without them recovering:
 	// disabled, no longer covered, or their app deleted
 	// (ADR-20261104142830). ChannelStandDownsDelivered and
@@ -470,6 +475,7 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 	}
 	stats.ReleaseApprovalNotices = e.deliverReleaseApprovalEvents(ctx, e.now())
 	e.standDownStranded(ctx, e.now(), &stats)
+	stats.ChannelFiresRetried = e.retryChannelFires(ctx, e.now())
 	stats.ChannelResolvesRetried, stats.ChannelResolvesAbandoned = e.retryChannelResolves(ctx, e.now())
 	stats.ChannelStandDownsDelivered, stats.ChannelStandDownsAbandoned = e.deliverChannelStandDowns(ctx, e.now())
 	stats.DeliveriesPurged = e.purgeDeliveries(ctx, e.now())
