@@ -444,7 +444,7 @@ func (m *MemStore) ProjectEnvironmentBranchWorkloads(_ context.Context, accountI
 	if err != nil {
 		return nil, err
 	}
-	apps := m.projectCloneAppsLocked(projectID)
+	apps := m.projectCloneAppsLocked(projectID, branch.ParentSlug)
 	scopes, err := m.projectCloneValueScopesLocked(apps, ProjectEnvironmentClone{ProjectID: projectID, SourceSlug: branch.ParentSlug})
 	if err != nil {
 		return nil, err
