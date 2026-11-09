@@ -90,6 +90,12 @@ type SandboxWakeRequest struct {
 	// as drive1 in place of LayerKey; vmmd stages /etc/faas/sandbox.json
 	// on the VM's private copy, so the customer image is never changed.
 	ImageKey string
+	// StartCmd, ReadyCmd and ReadyTimeout are a template's commands, staged
+	// in sandbox.json with ImageKey: guest-init listens only once the ready
+	// command passes, so the wait for the port grows by ReadyTimeout.
+	StartCmd     string
+	ReadyCmd     string
+	ReadyTimeout time.Duration
 }
 
 // WakeSandbox cold-boots one sandbox session VM on the execution-only path
@@ -114,12 +120,20 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		return nil, errors.New("fcvm: the vmm cannot dial sandbox sessions")
 	}
 	layer := req.LayerKey
+	var manifest string
 	if req.ImageKey != "" {
 		layer = req.ImageKey
+		encoded, err := sandboxManifest(req.StartCmd, req.ReadyCmd, req.ReadyTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("fcvm: sandbox manifest: %w", err)
+		}
+		manifest = string(encoded)
+	} else if req.StartCmd != "" || req.ReadyCmd != "" {
+		return nil, errors.New("fcvm: sandbox commands need an image drive")
 	}
 	inst, err := m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, ExecutionOnly: true, sandboxID: req.SandboxID, sandboxRegistries: registries,
-		sandboxImage: req.ImageKey != "", AccountID: req.AccountID, Plan: req.Plan,
+		sandboxManifest: manifest, AccountID: req.AccountID, Plan: req.Plan,
 		BaseKey: req.BaseKey, LayerKey: layer, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		CPUMillicores: req.CPUMillicores, QuietPauseAfter: req.QuietPauseAfter,
 	})
@@ -135,7 +149,7 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		registries && (!inst.Net.SandboxRegistries || !inst.Net.DNSGated) {
 		return destroy(fmt.Errorf("fcvm: sandbox wake did not produce a %s sandbox VM", req.Network))
 	}
-	if err := awaitSandboxListener(ctx, dialer, req.Instance); err != nil {
+	if err := awaitSandboxListener(ctx, dialer, req.Instance, agentRunDialWindow+req.ReadyTimeout); err != nil {
 		return destroy(err)
 	}
 	return inst, nil
@@ -144,8 +158,8 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 // awaitSandboxListener dials the guest's sandbox port until it answers. Wake
 // returns once Firecracker is up, before guest-init listens. The probe
 // connection carries no request; the guest drops it.
-func awaitSandboxListener(ctx context.Context, dialer SandboxDialer, instance string) error {
-	waitCtx, cancel := context.WithTimeout(ctx, agentRunDialWindow)
+func awaitSandboxListener(ctx context.Context, dialer SandboxDialer, instance string, window time.Duration) error {
+	waitCtx, cancel := context.WithTimeout(ctx, window)
 	defer cancel()
 	for {
 		conn, err := dialer.DialSandbox(waitCtx, instance)

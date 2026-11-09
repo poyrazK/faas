@@ -1152,8 +1152,11 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   (sb.workspace_snapshot_id IS NOT NULL AND (ws.id IS NULL OR ws.state <> 'ready' OR ws.delete_requested_at IS NOT NULL))::boolean AS workspace_missing,
   coalesce(CASE WHEN j.status <> 'deleted' AND j.image_materialization_status='ready' THEN j.image_storage_key END,
     tpl.rootfs_key, '')::text AS image_key,
-  (sb.image_ref IS NOT NULL)::boolean AS from_image
+  (sb.image_ref IS NOT NULL)::boolean AS from_image,
+  coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
+  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
+ LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
  LEFT JOIN jobs j ON j.id=sb.image_job_id AND j.account_id=sb.account_id
  LEFT JOIN LATERAL (SELECT d.rootfs_key FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
@@ -1175,6 +1178,9 @@ type GetSandboxSessionClaimRow struct {
 	WorkspaceMissing bool
 	ImageKey         string
 	FromImage        bool
+	StartCmd         string
+	ReadyCmd         string
+	ReadyTimeoutS    int32
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1195,6 +1201,9 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.WorkspaceMissing,
 		&i.ImageKey,
 		&i.FromImage,
+		&i.StartCmd,
+		&i.ReadyCmd,
+		&i.ReadyTimeoutS,
 	)
 	return i, err
 }

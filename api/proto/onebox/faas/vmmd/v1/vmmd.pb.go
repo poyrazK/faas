@@ -14409,9 +14409,15 @@ type RunSandboxStart struct {
 	// jobs/<job>__<artifact>.ext4). When set, vmmd boots it as drive1 in
 	// place of layer_key and stages /etc/faas/sandbox.json on the VM's
 	// private copy.
-	ImageKey      string `protobuf:"bytes,13,opt,name=image_key,json=imageKey,proto3" json:"image_key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ImageKey string `protobuf:"bytes,13,opt,name=image_key,json=imageKey,proto3" json:"image_key,omitempty"`
+	// start_cmd, ready_cmd and ready_timeout_ms are a template session's
+	// commands, staged into sandbox.json with image_key; vmmd waits for the
+	// sandbox port up to ready_timeout_ms longer.
+	StartCmd       string `protobuf:"bytes,14,opt,name=start_cmd,json=startCmd,proto3" json:"start_cmd,omitempty"`
+	ReadyCmd       string `protobuf:"bytes,15,opt,name=ready_cmd,json=readyCmd,proto3" json:"ready_cmd,omitempty"`
+	ReadyTimeoutMs int64  `protobuf:"varint,16,opt,name=ready_timeout_ms,json=readyTimeoutMs,proto3" json:"ready_timeout_ms,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *RunSandboxStart) Reset() {
@@ -14533,6 +14539,27 @@ func (x *RunSandboxStart) GetImageKey() string {
 		return x.ImageKey
 	}
 	return ""
+}
+
+func (x *RunSandboxStart) GetStartCmd() string {
+	if x != nil {
+		return x.StartCmd
+	}
+	return ""
+}
+
+func (x *RunSandboxStart) GetReadyCmd() string {
+	if x != nil {
+		return x.ReadyCmd
+	}
+	return ""
+}
+
+func (x *RunSandboxStart) GetReadyTimeoutMs() int64 {
+	if x != nil {
+		return x.ReadyTimeoutMs
+	}
+	return 0
 }
 
 // RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),
@@ -22181,7 +22208,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05close\x18\x03 \x01(\v2$.onebox.faas.vmmd.v1.RunSandboxCloseH\x00R\x05close\x12R\n" +
 	"\rpersist_grant\x18\x04 \x01(\v2+.onebox.faas.vmmd.v1.RunSandboxPersistGrantH\x00R\fpersistGrant\x12[\n" +
 	"\x10persist_recorded\x18\x05 \x01(\v2..onebox.faas.vmmd.v1.RunSandboxPersistRecordedH\x00R\x0fpersistRecordedB\a\n" +
-	"\x05frame\"\xb5\x03\n" +
+	"\x05frame\"\x99\x04\n" +
 	"\x0fRunSandboxStart\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -22200,7 +22227,10 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	" \x01(\x03R\x11quietPauseAfterMs\x12!\n" +
 	"\fnetwork_mode\x18\v \x01(\tR\vnetworkMode\x12#\n" +
 	"\rworkspace_key\x18\f \x01(\tR\fworkspaceKey\x12\x1b\n" +
-	"\timage_key\x18\r \x01(\tR\bimageKey\"\x12\n" +
+	"\timage_key\x18\r \x01(\tR\bimageKey\x12\x1b\n" +
+	"\tstart_cmd\x18\x0e \x01(\tR\bstartCmd\x12\x1b\n" +
+	"\tready_cmd\x18\x0f \x01(\tR\breadyCmd\x12(\n" +
+	"\x10ready_timeout_ms\x18\x10 \x01(\x03R\x0ereadyTimeoutMs\"\x12\n" +
 	"\x10RunSandboxFreeze\"\x11\n" +
 	"\x0fRunSandboxClose\"\xac\x04\n" +
 	"\x0fRunSandboxEvent\x12?\n" +

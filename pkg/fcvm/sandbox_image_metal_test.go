@@ -107,7 +107,7 @@ func TestMetalSandboxFromASellerImage(t *testing.T) {
 		t.Fatalf("wake: %v", err)
 	}
 	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
-	if !inst.Lease.SandboxImage {
+	if len(inst.Lease.SandboxManifest) == 0 {
 		t.Fatal("the lease does not mark a seller-image session")
 	}
 
@@ -141,5 +141,46 @@ func TestMetalSandboxFromASellerImage(t *testing.T) {
 	}
 	if after := fileSHA256(t, image); after != before {
 		t.Fatal("the cached image changed: staging wrote to it instead of the VM's private copy")
+	}
+}
+
+// A template's start command runs at boot and the session serves only once
+// its ready command passes; one that never passes fails the wake.
+func TestMetalSandboxTemplateCommands(t *testing.T) {
+	kernel := os.Getenv("FAAS_TEST_KERNEL")
+	base := os.Getenv("FAAS_TEST_AGENT_RUN_BASE")
+	imageRoot := os.Getenv("FAAS_TEST_SANDBOX_IMAGE_ROOT")
+	if kernel == "" || base == "" || imageRoot == "" {
+		t.Skip("set FAAS_TEST_KERNEL, FAAS_TEST_AGENT_RUN_BASE and FAAS_TEST_SANDBOX_IMAGE_ROOT")
+	}
+	withCgroupRootAt(t, "/sys/fs/cgroup")
+	image := sellerImageDrive(t, imageRoot)
+	m := NewManager(wire.ExecRunner{}, newMetalVMM(t, 120*time.Second), Paths{Kernel: kernel}, os.Getenv("FAAS_TEST_FC_VERSION"), slog.Default(), nil)
+	ctx := context.Background()
+	wake := func(instance, sandboxID, start, ready string, timeout time.Duration) (*Instance, error) {
+		return m.WakeSandbox(ctx, SandboxWakeRequest{Instance: instance, SandboxID: sandboxID, AccountID: "acct-sandbox", Plan: api.PlanPro,
+			BaseKey: base, LayerKey: sandboxRootLayer(t), ImageKey: image, VcpuCount: 1, MemSizeMiB: 1024, CPUMillicores: 1000,
+			Network: api.SandboxNetworkNone, StartCmd: start, ReadyCmd: ready, ReadyTimeout: timeout})
+	}
+
+	began := time.Now()
+	if _, err := wake("sbx-tpl", "sbx-tpl-1", "echo starting; sleep 3; echo up > /tmp/up; exec sleep 3600", "test -e /tmp/up", 30*time.Second); err != nil {
+		t.Fatalf("wake: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), "sbx-tpl") })
+	if took := time.Since(began); took < 3*time.Second {
+		t.Fatalf("served after %v, before the ready command could pass", took)
+	}
+	out, code := userExec(t, m, "sbx-tpl", "sbx-tpl-1", "cat /tmp/up; cat /tmp/gregale-start.log; for p in /proc/[0-9]*; do tr '\\0' ' ' < $p/cmdline 2>/dev/null; echo; done | grep -q 'sleep 3600' && echo running")
+	if code != 0 || !strings.Contains(out, "up\n") || !strings.Contains(out, "starting") || !strings.Contains(out, "running") {
+		t.Fatalf("after ready: %q exit %d", out, code)
+	}
+	if err := m.Destroy(ctx, "sbx-tpl"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := wake("sbx-tpl-bad", "sbx-tpl-2", "", "false", 3*time.Second); err == nil {
+		_ = m.Destroy(context.Background(), "sbx-tpl-bad")
+		t.Fatal("a session whose ready command never passes served")
 	}
 }

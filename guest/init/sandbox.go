@@ -33,6 +33,10 @@ const (
 	sandboxManifestRelativePath = "etc/faas/sandbox.json"
 	sandboxManifestKind         = "sandbox"
 	sandboxManifestVersion      = 1
+	// sandboxManifestVersionCommands carries a template's start and ready
+	// commands (ADR-20261027090013 step 10); an older guest-init refuses it,
+	// so only sessions that need the commands depend on this one.
+	sandboxManifestVersionCommands = 2
 
 	sandboxWorkspace = "/workspace"
 	sandboxHome      = "/home/app"
@@ -49,22 +53,39 @@ const (
 type sandboxManifest struct {
 	Kind    string `json:"kind"`
 	Version int    `json:"version"`
+	// StartCmd, ReadyCmd and ReadyTimeoutMs are a template's commands
+	// (version 2): the start command runs in the background at boot, and
+	// the session serves once the ready command exits 0.
+	StartCmd       string `json:"start_cmd,omitempty"`
+	ReadyCmd       string `json:"ready_cmd,omitempty"`
+	ReadyTimeoutMs int64  `json:"ready_timeout_ms,omitempty"`
 }
 
 func validateSandboxManifest(data []byte) error {
+	_, err := parseSandboxManifest(data)
+	return err
+}
+
+func parseSandboxManifest(data []byte) (sandboxManifest, error) {
 	var m sandboxManifest
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&m); err != nil {
-		return fmt.Errorf("decode sandbox manifest: %w", err)
+		return m, fmt.Errorf("decode sandbox manifest: %w", err)
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return errors.New("sandbox manifest has trailing data")
+		return m, errors.New("sandbox manifest has trailing data")
 	}
-	if m.Kind != sandboxManifestKind || m.Version != sandboxManifestVersion {
-		return fmt.Errorf("sandbox manifest must be kind %q version %d", sandboxManifestKind, sandboxManifestVersion)
+	commands := m.StartCmd != "" || m.ReadyCmd != "" || m.ReadyTimeoutMs != 0
+	switch {
+	case m.Kind != sandboxManifestKind || m.Version != sandboxManifestVersion && m.Version != sandboxManifestVersionCommands:
+		return m, fmt.Errorf("sandbox manifest must be kind %q version %d or %d", sandboxManifestKind, sandboxManifestVersion, sandboxManifestVersionCommands)
+	case commands && m.Version != sandboxManifestVersionCommands:
+		return m, fmt.Errorf("sandbox manifest commands need version %d", sandboxManifestVersionCommands)
+	case m.ReadyTimeoutMs < 0 || m.ReadyCmd != "" && m.ReadyTimeoutMs == 0:
+		return m, errors.New("sandbox manifest ready command needs a positive ready_timeout_ms")
 	}
-	return nil
+	return m, nil
 }
 
 // sandboxServer runs a session's operations.

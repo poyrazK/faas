@@ -34,6 +34,11 @@ type SandboxClaim struct {
 	// ready. A preset session has neither.
 	ImageKey     string
 	ImageMissing bool
+	// StartCmd, ReadyCmd and ReadyTimeout are a template session's
+	// commands; empty for any other session.
+	StartCmd     string
+	ReadyCmd     string
+	ReadyTimeout time.Duration
 	LeaseToken   string
 	SandboxLease
 }
@@ -85,7 +90,8 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 	}
 	return SandboxClaim{ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
 		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, ImageKey: row.ImageKey,
-		ImageMissing: row.FromImage && row.ImageKey == "", LeaseToken: token,
+		ImageMissing: row.FromImage && row.ImageKey == "", StartCmd: row.StartCmd, ReadyCmd: row.ReadyCmd,
+		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, LeaseToken: token,
 		SandboxLease: SandboxLease{CloseRequested: row.CloseRequested, IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second,
 			ExpiresAt: row.ExpiresAt.Time.UTC()}}, true, nil
 }

@@ -104,7 +104,7 @@ func TestSandboxManifest(t *testing.T) {
 	if err := validateSandboxManifest([]byte(`{"kind":"sandbox","version":1}`)); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{`{"kind":"agent","version":1}`, `{"kind":"sandbox","version":2}`, `{"kind":"sandbox","version":1,"x":1}`,
+	for _, bad := range []string{`{"kind":"agent","version":1}`, `{"kind":"sandbox","version":3}`, `{"kind":"sandbox","version":1,"x":1}`,
 		`{"kind":"sandbox","version":1} {}`, `not json`} {
 		if validateSandboxManifest([]byte(bad)) == nil {
 			t.Errorf("%s was accepted", bad)

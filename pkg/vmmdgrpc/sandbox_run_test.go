@@ -278,3 +278,45 @@ func TestRunSandboxTakesOnlyJobImages(t *testing.T) {
 		cancel()
 	}
 }
+
+// A template's commands reach the wake with its image; commands without an
+// image, or a ready command without a timeout, are refused.
+func TestRunSandboxRelaysTemplateCommands(t *testing.T) {
+	const image = "apps/sbt-0123456789ab/0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10.ext4"
+	for _, tc := range []struct {
+		name                string
+		image, start, ready string
+		timeoutMs           int64
+		ok                  bool
+	}{
+		{"commands", image, "serve", "probe", 60_000, true},
+		{"no image", "", "serve", "", 0, false},
+		{"ready without a timeout", image, "", "probe", 0, false},
+		{"timeout past the limit", image, "", "probe", 601_000, false},
+	} {
+		vmm := newSandboxRunVMM()
+		cli := newSandboxRunClient(t, vmm, true)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		stream, err := cli.RunSandbox(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := sandboxRunStart()
+		s := start.GetStart()
+		s.ImageKey, s.StartCmd, s.ReadyCmd, s.ReadyTimeoutMs = tc.image, tc.start, tc.ready, tc.timeoutMs
+		if err := stream.Send(start); err != nil {
+			t.Fatal(err)
+		}
+		_, err = stream.Recv()
+		vmm.mu.Lock()
+		woken := append([]fcvm.SandboxWakeRequest(nil), vmm.woken...)
+		vmm.mu.Unlock()
+		switch {
+		case tc.ok && (err != nil || len(woken) != 1 || woken[0].StartCmd != "serve" || woken[0].ReadyCmd != "probe" || woken[0].ReadyTimeout != time.Minute):
+			t.Errorf("%s: err %v, woken %+v", tc.name, err, woken)
+		case !tc.ok && (status.Code(err) != codes.InvalidArgument || len(woken) != 0):
+			t.Errorf("%s: err %v, woken %d", tc.name, err, len(woken))
+		}
+		cancel()
+	}
+}

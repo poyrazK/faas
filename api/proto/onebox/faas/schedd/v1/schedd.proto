@@ -1275,6 +1275,12 @@ message SandboxRunStart {
   // cache's jobs/<job>.ext4) the session boots as drive1 in place of the
   // platform sandbox layer; empty for a preset session.
   string image_key = 9;
+  // start_cmd, ready_cmd and ready_timeout_ms are a template session's
+  // commands (ADR-20261027090013 step 10): guest-init runs the start command
+  // at boot and serves once the ready command exits 0.
+  string start_cmd = 10;
+  string ready_cmd = 11;
+  int64 ready_timeout_ms = 12;
 }
 
 message SandboxRunFreeze {}

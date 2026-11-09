@@ -90,6 +90,6 @@ rc=0
 env TMPDIR="$work" FAAS_TEST_KERNEL="$kernel" FAAS_TEST_FC_VERSION="$fc_version" \
   FAAS_TEST_AGENT_RUN_BASE="$work/agent-base.ext4" FAAS_TEST_VMMD_BINARY="$bin/vmmd" \
   FAAS_TEST_SANDBOX_IMAGE_ROOT="$work/image-root" \
-  "$bin/fcvm.metal.test" -test.count=1 -test.run "${RUN:-^TestMetalSandbox(RootStaysInsideTheVM|FromASellerImage)\$}" -test.v -test.timeout 30m || rc=$?
+  "$bin/fcvm.metal.test" -test.count=1 -test.run "${RUN:-^TestMetalSandbox(RootStaysInsideTheVM|FromASellerImage|TemplateCommands)\$}" -test.v -test.timeout 30m || rc=$?
 bash "$dir/leakcheck/leakcheck.sh" || rc=1
 exit "$rc"

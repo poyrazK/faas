@@ -43,6 +43,10 @@ type SandboxAdmission struct {
 	// ImageKey is the seller image's full-rootfs artifact the session
 	// boots in place of the platform sandbox layer; vmmd checks its shape.
 	ImageKey string
+	// StartCmd, ReadyCmd and ReadyTimeout are a template session's commands.
+	StartCmd     string
+	ReadyCmd     string
+	ReadyTimeout time.Duration
 }
 
 // network is the mode the session boots with.
@@ -68,6 +72,9 @@ type SandboxSpec struct {
 	Network         string
 	WorkspaceKey    string
 	ImageKey        string
+	StartCmd        string
+	ReadyCmd        string
+	ReadyTimeout    time.Duration
 }
 
 // SandboxControl is a request agentd sends a live session's VM: a freeze,
@@ -183,7 +190,7 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	spec := SandboxSpec{Instance: placement.Instance, SandboxID: a.SandboxID, AccountID: a.AccountID, Plan: a.Plan,
 		BaseKey: r.cfg.BaseKey, LayerKey: r.cfg.SandboxLayerKey, VCPU: a.VCPU, MemSizeMiB: a.RAMMB,
 		CPUMillicores: a.CPUMillicores, QuietPauseAfter: api.QuietPauseAfterMillis * time.Millisecond, Network: a.network(),
-		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey}
+		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey, StartCmd: a.StartCmd, ReadyCmd: a.ReadyCmd, ReadyTimeout: a.ReadyTimeout}
 	if err := router.RunSandbox(ctx, placement.NodeID, spec, hooks, control); err != nil {
 		return fmt.Errorf("sched: sandbox %s on node %s: %w", a.SandboxID, placement.NodeID, err)
 	}
@@ -235,7 +242,8 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 		Instance: spec.Instance, SandboxId: spec.SandboxID, AccountId: spec.AccountID, Plan: string(spec.Plan),
 		BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB),
 		CpuMillicores: int32(spec.CPUMillicores), QuietPauseAfterMs: spec.QuietPauseAfter.Milliseconds(), NetworkMode: spec.Network,
-		WorkspaceKey: spec.WorkspaceKey, ImageKey: spec.ImageKey,
+		WorkspaceKey: spec.WorkspaceKey, ImageKey: spec.ImageKey, StartCmd: spec.StartCmd, ReadyCmd: spec.ReadyCmd,
+		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(),
 	}}}); err != nil {
 		return liftErr(err)
 	}

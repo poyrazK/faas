@@ -3324,6 +3324,12 @@ message RunSandboxStart {
   // place of layer_key and stages /etc/faas/sandbox.json on the VM's
   // private copy.
   string image_key = 13;
+  // start_cmd, ready_cmd and ready_timeout_ms are a template session's
+  // commands, staged into sandbox.json with image_key; vmmd waits for the
+  // sandbox port up to ready_timeout_ms longer.
+  string start_cmd = 14;
+  string ready_cmd = 15;
+  int64 ready_timeout_ms = 16;
 }
 
 // RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),

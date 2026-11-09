@@ -87,7 +87,7 @@ func TestSandboxFromATemplate(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		id, err := s.CreateSandboxTemplate(ctx, account, name, app, agents.SandboxTemplateSpec{ReadyTimeoutSec: 60})
+		id, err := s.CreateSandboxTemplate(ctx, account, name, app, agents.SandboxTemplateSpec{StartCmd: "serve", ReadyCmd: "probe", ReadyTimeoutSec: 60})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +111,8 @@ func TestSandboxFromATemplate(t *testing.T) {
 		t.Fatalf("template session = %+v", got)
 	}
 	claim, found, err := s.ClaimSandbox(ctx, "agentd", "tok", ttl, maxLive(5))
-	if err != nil || !found || claim.ID != sb.ID || claim.ImageKey != "apps/sbt-0123456789ab/new.ext4" || claim.ImageMissing {
+	if err != nil || !found || claim.ID != sb.ID || claim.ImageKey != "apps/sbt-0123456789ab/new.ext4" || claim.ImageMissing ||
+		claim.StartCmd != "serve" || claim.ReadyCmd != "probe" || claim.ReadyTimeout != time.Minute {
 		t.Fatalf("claim = %+v, %v, %v", claim, found, err)
 	}
 }

@@ -272,7 +272,8 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		Instance: start.GetInstance(), SandboxID: start.GetSandboxId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
 		BaseKey: start.GetBaseKey(), LayerKey: start.GetLayerKey(), VcpuCount: int(start.GetVcpuCount()),
 		MemSizeMiB: int(start.GetMemSizeMib()), CPUMillicores: int(start.GetCpuMillicores()), Network: start.GetNetworkMode(),
-		ImageKey: start.GetImageKey(),
+		ImageKey: start.GetImageKey(), StartCmd: start.GetStartCmd(), ReadyCmd: start.GetReadyCmd(),
+		ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond,
 	}
 	// A schedd from before network modes sends none.
 	if wake.Network == "" {
@@ -289,6 +290,15 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 	// session's drive1, never another app's layer, a base or a snapshot.
 	if wake.ImageKey != "" && !storagekey.IsJobLayer(wake.ImageKey) && !storagekey.IsSandboxTemplateLayer(wake.ImageKey) {
 		return fcvm.SandboxWakeRequest{}, invalid("image_key must be a job image or sandbox template artifact")
+	}
+	// Commands ride in sandbox.json on the private copy of an image drive;
+	// the platform sandbox layer carries none.
+	if (wake.StartCmd != "" || wake.ReadyCmd != "") && wake.ImageKey == "" {
+		return fcvm.SandboxWakeRequest{}, invalid("start_cmd and ready_cmd need image_key")
+	}
+	if wake.ReadyTimeout < 0 || wake.ReadyTimeout > time.Duration(api.SandboxTemplateReadyTimeoutSecMax)*time.Second ||
+		wake.ReadyCmd != "" && wake.ReadyTimeout == 0 {
+		return fcvm.SandboxWakeRequest{}, invalid("ready_timeout_ms is out of range")
 	}
 	ms := start.GetQuietPauseAfterMs()
 	if ms < 0 || ms > api.AgentWaitPauseAfterMaxMillis {

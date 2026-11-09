@@ -79,11 +79,13 @@ func TestVMMClientRelaysAPersist(t *testing.T) {
 			return nil
 		},
 	}
-	spec := sched.SandboxSpec{Instance: "sandbox-1", SandboxID: "1", WorkspaceKey: "agents/workspaces/a/s.tar.gz", ImageKey: "jobs/j.ext4"}
+	spec := sched.SandboxSpec{Instance: "sandbox-1", SandboxID: "1", WorkspaceKey: "agents/workspaces/a/s.tar.gz", ImageKey: "jobs/j.ext4",
+		StartCmd: "serve", ReadyCmd: "probe", ReadyTimeout: 5 * time.Second}
 	if err := sched.NewVMMClient(conn).RunSandbox(ctx, spec, hooks, control); err != nil {
 		t.Fatal(err)
 	}
-	if fake.start.GetWorkspaceKey() != spec.WorkspaceKey || fake.start.GetImageKey() != spec.ImageKey {
+	if fake.start.GetWorkspaceKey() != spec.WorkspaceKey || fake.start.GetImageKey() != spec.ImageKey ||
+		fake.start.GetStartCmd() != "serve" || fake.start.GetReadyCmd() != "probe" || fake.start.GetReadyTimeoutMs() != 5000 {
 		t.Fatalf("start %v", fake.start)
 	}
 	if g := fake.grant; g.GetRequestId() != "r1" || g.GetSnapshotId() != "snap" || g.GetStorageKey() != "k" || g.GetMaxBytes() != 9 || g.GetExpiresAtUnixMs() != 3 {
