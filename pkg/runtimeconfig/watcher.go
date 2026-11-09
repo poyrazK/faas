@@ -67,6 +67,12 @@ const (
 	// the vCPU and CPU budgets, observe admits on memory alone and counts
 	// what those gates would have refused (ADR-20261109172421).
 	KeyCPUAdmission = "cpu_admission"
+	// KeyCPUSizeApps lists the apps, comma-separated IDs or "*", whose CPU
+	// follows instance size instead of plan: one guest vCPU per GB, a
+	// cpu.weight by RAM and no quota but their own (ADR-20261109172421).
+	// Empty keeps every app on its plan. It takes precedence over
+	// KeyGuestVCPUFromCPUApps.
+	KeyCPUSizeApps = "cpu_size_apps"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.

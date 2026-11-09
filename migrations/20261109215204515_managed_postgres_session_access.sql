@@ -1,4 +1,4 @@
--- filename: 20261109191233945_managed_postgres_session_access.sql
+-- filename: 20261109215204515_managed_postgres_session_access.sql
 -- migration-compat: expand
 -- ADR-20261109180000: `session` bindings are serving credentials with
 -- read_write privileges on the direct endpoint, for code that needs session

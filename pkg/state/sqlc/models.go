@@ -6831,6 +6831,7 @@ type Instance struct {
 	CapacityCpuMillicores             int64
 	CapacityVcpu                      int32
 	BookedCpuMillicores               pgtype.Int4
+	BookedVcpu                        pgtype.Int4
 }
 
 type InstanceApplicationStandardAdmission struct {

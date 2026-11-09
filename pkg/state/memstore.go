@@ -245,9 +245,9 @@ type MemStore struct {
 	exclusiveNow                         func() time.Time
 	exclusiveSubmissions                 map[string]string
 	capacityInstanceResources            map[string]capacityResources
-	// instanceBookedCPU mirrors instances.booked_cpu_millicores
-	// (ADR-20261101160231 step 5b).
-	instanceBookedCPU                          map[string]int
+	// instanceBookings mirrors instances.booked_cpu_millicores
+	// (ADR-20261101160231 step 5b) and booked_vcpu (ADR-20261109172421).
+	instanceBookings                           map[string]instanceBooking
 	serviceCapacityProtection                  bool
 	serviceRecovery                            map[string]ServiceRecovery
 	devBridgeSessions                          map[string]devbridge.Session
@@ -7838,7 +7838,7 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 			delete(m.instanceRuntimeConfigReceipts, key)
 			m.deleteSecretRuntimeProcessesLocked(key)
 			delete(m.capacityInstanceResources, key)
-			delete(m.instanceBookedCPU, key)
+			delete(m.instanceBookings, key)
 		}
 	}
 	delete(m.deploymentPolicyStates, id)
@@ -17452,7 +17452,7 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 		delete(m.instanceRuntimeConfigReceipts, row.id)
 		m.deleteSecretRuntimeProcessesLocked(row.id)
 		delete(m.capacityInstanceResources, row.id)
-		delete(m.instanceBookedCPU, row.id)
+		delete(m.instanceBookings, row.id)
 	}
 	return int64(len(candidates)), nil
 }
@@ -17498,7 +17498,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	delete(m.instanceRuntimeConfigReceipts, id)
 	m.deleteSecretRuntimeProcessesLocked(id)
 	delete(m.capacityInstanceResources, id)
-	delete(m.instanceBookedCPU, id)
+	delete(m.instanceBookings, id)
 	return nil
 }
 
@@ -24503,7 +24503,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 			delete(m.instanceRuntimeConfigReceipts, iid)
 			m.deleteSecretRuntimeProcessesLocked(iid)
 			delete(m.capacityInstanceResources, iid)
-			delete(m.instanceBookedCPU, iid)
+			delete(m.instanceBookings, iid)
 		}
 	}
 	for taskID, task := range m.appTasks {
