@@ -72,6 +72,7 @@
     {"path": "orgs", "source": "docs/account.md"},
     {"path": "plans", "source": "docs/plans.md"},
     {"path": "postgres", "source": "docs/postgres.md"},
+    {"path": "preview-databases", "source": "docs/preview-databases.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "preview-environments", "source": "docs/preview-environments.md", "required_text": ["pr-{N}-{slug}"]},
     {"path": "profiling", "source": "docs/profiling.md", "unpublished": "internal capability; not a customer feature"},
     {"path": "queue-pull-leases", "source": "docs/queue-pull-leases.md"},

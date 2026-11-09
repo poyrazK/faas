@@ -35,7 +35,7 @@ usage: scripts/e2e-journeys.sh [flags]
                          builder drive, so lower this when sources change)
   --max-apps N           test apps held at once (default: the account's free app slots)
   --sweep-hours N        first delete e2ej- apps from runs older than N hours (default 3, 0 = off)
-  --github-repo O/N      fixture repository for TestGitHubDeploys (needs gh logged in and
+  --github-repo O/N      fixture repository for TestGitHubDeploys and TestPreviewDatabases (needs gh logged in and
                          the account's Gregale GitHub App able to see it)
   --list                 list journeys and exit
 EOF

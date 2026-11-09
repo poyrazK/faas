@@ -4175,7 +4175,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/postgres",
+      "docs_url": "/docs/preview-databases",
       "acceptance_test": "pkg/apid/apidserver/preview_databases_test.go::TestPreviewDatabasesFollowTheirPreview",
       "parent": "pr-previews",
       "routes": [
