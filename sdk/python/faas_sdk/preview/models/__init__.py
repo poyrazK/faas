@@ -1041,6 +1041,8 @@ from .custom_metric_series_point import CustomMetricSeriesPoint
 from .custom_metric_series_response import CustomMetricSeriesResponse
 from .custom_metric_series_response_kind import CustomMetricSeriesResponseKind
 from .custom_metric_series_response_range import CustomMetricSeriesResponseRange
+from .custom_metric_series_value import CustomMetricSeriesValue
+from .custom_metric_series_value_labels import CustomMetricSeriesValueLabels
 from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
@@ -5927,6 +5929,7 @@ from .trace_span import TraceSpan
 from .trace_span_attributes import TraceSpanAttributes
 from .trace_span_status import TraceSpanStatus
 from .tracing_config import TracingConfig
+from .tracing_forward import TracingForward
 from .traffic_runtime_feature_status import TrafficRuntimeFeatureStatus
 from .traffic_runtime_feature_status_mode import TrafficRuntimeFeatureStatusMode
 from .traffic_runtime_feature_status_state import TrafficRuntimeFeatureStatusState
@@ -7388,6 +7391,8 @@ __all__ = (
     "CustomMetricSeriesResponse",
     "CustomMetricSeriesResponseKind",
     "CustomMetricSeriesResponseRange",
+    "CustomMetricSeriesValue",
+    "CustomMetricSeriesValueLabels",
     "CustomStage",
     "DailyUsageListResponse",
     "DailyUsagePoint",
@@ -11972,6 +11977,7 @@ __all__ = (
     "TraceSpanAttributes",
     "TraceSpanStatus",
     "TracingConfig",
+    "TracingForward",
     "TrafficRuntimeFeatureStatus",
     "TrafficRuntimeFeatureStatusMode",
     "TrafficRuntimeFeatureStatusState",

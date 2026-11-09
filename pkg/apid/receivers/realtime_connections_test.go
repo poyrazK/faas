@@ -54,3 +54,42 @@ func TestSyncConnectionsRPC(t *testing.T) {
 		t.Fatalf("no store err = %v, want Unavailable", err)
 	}
 }
+
+type fakeEndpointConnectionStore struct {
+	fakeConnectionStore
+	endpoints       []state.RealtimeEndpointConnections
+	remoteEndpoints []state.RealtimeEndpointConnections
+}
+
+func (f *fakeEndpointConnectionStore) SyncRealtimeNodeEndpointConnections(_ context.Context, node string, counts []state.RealtimeEndpointConnections) ([]state.RealtimeEndpointConnections, error) {
+	if err := state.ValidateRealtimeEndpointConnectionSync(node, counts); err != nil {
+		return nil, err
+	}
+	f.endpoints = counts
+	return f.remoteEndpoints, nil
+}
+
+// Capped endpoints' counts ride the account sync. A refused endpoint set
+// (as from an apid that predates the field) leaves the account sync working.
+func TestSyncConnectionsRPCCarriesEndpoints(t *testing.T) {
+	a, ep := uuid.NewString(), uuid.NewString()
+	store := &fakeEndpointConnectionStore{remoteEndpoints: []state.RealtimeEndpointConnections{{EndpointID: ep, Connections: 4}}}
+	store.remote = []state.RealtimeAccountConnections{{AccountID: a, Connections: 9}}
+	receiver := &realtimeFleetReceiver{nodes: fakeUsageNodes{}, connections: store, endpointConnections: store}
+	client := newUsageTestClient(t, receiver, "node-a")
+	accounts, endpoints, err := client.SyncRealtimeConnectionsWithEndpoints(t.Context(), nil, []state.RealtimeEndpointConnections{{EndpointID: ep, Connections: 0}})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if len(store.endpoints) != 1 || store.endpoints[0].EndpointID != ep {
+		t.Fatalf("stored endpoints = %+v", store.endpoints)
+	}
+	if len(accounts) != 1 || len(endpoints) != 1 || endpoints[0].Connections != 4 {
+		t.Fatalf("remote = %+v %+v", accounts, endpoints)
+	}
+	refused := newUsageTestClient(t, receiver, "node-a")
+	accounts, endpoints, err = refused.SyncRealtimeConnectionsWithEndpoints(t.Context(), nil, []state.RealtimeEndpointConnections{{EndpointID: "not-a-uuid"}})
+	if err != nil || len(accounts) != 1 || endpoints != nil {
+		t.Fatalf("refused endpoints: accounts %+v endpoints %+v err %v; want the account sync alone", accounts, endpoints, err)
+	}
+}

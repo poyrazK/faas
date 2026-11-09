@@ -610,6 +610,7 @@ func (m *Manager) internalHandler() http.Handler {
 		case strings.HasPrefix(path, "callbacks/dead-letters/"):
 			m.handleCallbackDeadLetterRoute(w, r, strings.TrimPrefix(path, "callbacks/dead-letters/"))
 		case path == "endpoints" && r.Method == http.MethodGet:
+			w.Header().Set(NodePreviewsHeader, strings.Join(m.NodePreviews(), ","))
 			writeJSON(w, http.StatusOK, m.EndpointIDs())
 		case path == "endpoints" && r.Method == http.MethodPost:
 			m.handleEndpointCreate(w, r)

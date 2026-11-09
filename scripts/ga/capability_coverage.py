@@ -232,7 +232,7 @@ RULES = [
     (r"datadog", "Datadog integration"),
     (r"log-drain|drain-analytics|log-analytics", "Log drains"),
     (r"logs?$|^log-|log-archive|tail|logarchive|/logs", "Logs, tail"),
-    (r"metrics|analytics|request-telemetry|telemetry", "App, service and account metrics"),
+    (r"metrics|analytics|request-telemetry|telemetry|long-lived-latency", "App, service and account metrics"),
     # --- data
     (r"ai-gateway|ai-access|aigateway|^ai$|llm|moderation|prompt", "AI gateway"),
     (r"outbound|integration", "Outbound integrations"),

@@ -342,6 +342,7 @@ CREATE TABLE public.instances (
     capacity_cpu_millicores bigint DEFAULT 0 NOT NULL,
     capacity_vcpu integer DEFAULT 0 NOT NULL,
     booked_cpu_millicores integer,
+    booked_vcpu integer,
     CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
     CONSTRAINT instances_capacity_cpu_millicores_check CHECK ((capacity_cpu_millicores >= 0)),
     CONSTRAINT instances_capacity_ram_mb_check CHECK ((capacity_ram_mb >= 0)),
@@ -6766,6 +6767,10 @@ BEGIN
     -- set in the inserting transaction; NULL keeps the app's cpu_millicores.
     NEW.booked_cpu_millicores:=coalesce(NEW.booked_cpu_millicores,
         nullif(current_setting('faas.instance_booked_cpu_millicores',true),'')::integer);
+    -- ADR-20261109172421 step 5: the guest vCPU count the scheduler boots
+    -- this instance with, set in the same transaction; NULL keeps the plan's.
+    NEW.booked_vcpu:=coalesce(NEW.booked_vcpu,
+        nullif(current_setting('faas.instance_booked_vcpu',true),'')::integer);
     SELECT * INTO STRICT p FROM service_capacity_policy WHERE singleton;
     SELECT greatest(a.cpu_millicores,p.startup_cpu),coalesce((p.plan_vcpus->>ac.plan)::integer,4)
       INTO main_cpu,guest_vcpu FROM apps a JOIN app_resource_accounts ac ON ac.app_id=a.id WHERE a.id=NEW.app_id;
@@ -6775,7 +6780,7 @@ BEGIN
         LATERAL jsonb_array_elements(coalesce(d.sidecars,'[]'::jsonb)) sc WHERE d.id=NEW.deployment_id;
     NEW.capacity_ram_mb:=greatest(NEW.capacity_ram_mb,NEW.ram_mb+p.overhead_mb+side_ram);
     NEW.capacity_cpu_millicores:=greatest(NEW.capacity_cpu_millicores,coalesce(NEW.booked_cpu_millicores,main_cpu,p.startup_cpu)+side_cpu);
-    NEW.capacity_vcpu:=greatest(NEW.capacity_vcpu,coalesce(guest_vcpu,1));
+    NEW.capacity_vcpu:=greatest(NEW.capacity_vcpu,coalesce(NEW.booked_vcpu,guest_vcpu,1));
     RETURN NEW;
 END;
 $$;
@@ -21883,7 +21888,7 @@ CREATE FUNCTION public.migration_admission_node_usage(target uuid, omit_instance
  SELECT coalesce(sum(u.ram),0)::bigint,coalesce(sum(u.cpu),0)::bigint,coalesce(sum(u.vcpu),0)::bigint FROM (
   SELECT greatest(i.capacity_ram_mb,i.ram_mb+p.overhead_mb)::bigint AS ram,
    greatest(i.capacity_cpu_millicores,coalesce(i.booked_cpu_millicores,nullif(a.cpu_millicores,0),p.startup_cpu))::bigint AS cpu,
-   greatest(i.capacity_vcpu,CASE WHEN i.app_id IS NULL THEN 1 ELSE coalesce((p.plan_vcpus->>ac.plan)::integer,4) END)::bigint AS vcpu
+   greatest(i.capacity_vcpu,CASE WHEN i.app_id IS NULL THEN 1 ELSE coalesce(i.booked_vcpu,(p.plan_vcpus->>ac.plan)::integer,4) END)::bigint AS vcpu
   FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN accounts ac ON ac.id=a.account_id CROSS JOIN service_capacity_policy p
   WHERE p.singleton AND i.node_id=target AND (omit_instance IS NULL OR i.id<>omit_instance)
    AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
@@ -31473,6 +31478,26 @@ CREATE TABLE public.app_cpu_policy_node_status (
     CONSTRAINT app_cpu_policy_node_status_applied_revision_check CHECK ((applied_revision >= 0)),
     CONSTRAINT app_cpu_policy_node_status_attempted_revision_check CHECK ((attempted_revision >= 0)),
     CONSTRAINT app_cpu_policy_node_status_check CHECK ((attempted_revision >= applied_revision))
+);
+
+
+--
+-- Name: app_custom_metric_series; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_custom_metric_series (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    series_key text NOT NULL,
+    labels jsonb NOT NULL,
+    kind text NOT NULL,
+    value double precision NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT app_custom_metric_series_key_check CHECK ((octet_length(series_key) <= 1024)),
+    CONSTRAINT app_custom_metric_series_kind_check CHECK ((kind = ANY (ARRAY['gauge'::text, 'counter'::text]))),
+    CONSTRAINT app_custom_metric_series_labels_check CHECK ((jsonb_typeof(labels) = 'object'::text)),
+    CONSTRAINT app_custom_metric_series_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT app_custom_metric_series_value_check CHECK (((value >= (0)::double precision) AND (value = value) AND (value < 'Infinity'::double precision)))
 );
 
 
@@ -54857,6 +54882,18 @@ CREATE TABLE public.realtime_node_connections (
 
 
 --
+-- Name: realtime_node_endpoint_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.realtime_node_endpoint_connections (
+    node_name text NOT NULL,
+    endpoint_id uuid NOT NULL,
+    connections integer NOT NULL,
+    CONSTRAINT realtime_node_endpoint_connections_connections_check CHECK ((connections > 0))
+);
+
+
+--
 -- Name: realtime_usage_hours; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55222,6 +55259,25 @@ CREATE TABLE public.request_analytics_minutes (
 --
 
 COMMENT ON TABLE public.request_analytics_minutes IS 'Per-minute request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952).';
+
+
+--
+-- Name: request_analytics_rollup_batches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_analytics_rollup_batches (
+    batch_id uuid NOT NULL,
+    node_id text NOT NULL,
+    applied_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT request_analytics_rollup_batches_node_id_check CHECK ((octet_length(node_id) <= 255))
+);
+
+
+--
+-- Name: TABLE request_analytics_rollup_batches; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.request_analytics_rollup_batches IS 'Gateway analytics rollup batches apid applied; written only by apid, swept only by meterd (ADR-20261103113952 amendment 5).';
 
 
 --
@@ -59841,6 +59897,14 @@ ALTER TABLE ONLY public.app_config_revisions
 
 ALTER TABLE ONLY public.app_cpu_policy_node_status
     ADD CONSTRAINT app_cpu_policy_node_status_pkey PRIMARY KEY (app_id, node_id);
+
+
+--
+-- Name: app_custom_metric_series app_custom_metric_series_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_custom_metric_series
+    ADD CONSTRAINT app_custom_metric_series_pkey PRIMARY KEY (app_id, name, series_key);
 
 
 --
@@ -64817,6 +64881,14 @@ ALTER TABLE ONLY public.instance_snapshot_recovery
 
 ALTER TABLE public.instances
     ADD CONSTRAINT instances_booked_cpu_millicores_check CHECK (((booked_cpu_millicores IS NULL) OR ((booked_cpu_millicores >= 1) AND (booked_cpu_millicores <= 2000)))) NOT VALID;
+
+
+--
+-- Name: instances instances_booked_vcpu_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.instances
+    ADD CONSTRAINT instances_booked_vcpu_check CHECK (((booked_vcpu IS NULL) OR ((booked_vcpu >= 1) AND (booked_vcpu <= 32)))) NOT VALID;
 
 
 --
@@ -70332,6 +70404,14 @@ ALTER TABLE ONLY public.realtime_node_connections
 
 
 --
+-- Name: realtime_node_endpoint_connections realtime_node_endpoint_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_endpoint_connections
+    ADD CONSTRAINT realtime_node_endpoint_connections_pkey PRIMARY KEY (node_name, endpoint_id);
+
+
+--
 -- Name: realtime_usage_hours realtime_usage_hours_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -70425,6 +70505,14 @@ ALTER TABLE ONLY public.request_analytics_hours
 
 ALTER TABLE ONLY public.request_analytics_minutes
     ADD CONSTRAINT request_analytics_minutes_pkey PRIMARY KEY (app_id, bucket_start, dimension_kind, dimension, method, status, deployment_id);
+
+
+--
+-- Name: request_analytics_rollup_batches request_analytics_rollup_batches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_rollup_batches
+    ADD CONSTRAINT request_analytics_rollup_batches_pkey PRIMARY KEY (batch_id);
 
 
 --
@@ -81091,6 +81179,13 @@ CREATE INDEX realtime_node_connections_account ON public.realtime_node_connectio
 
 
 --
+-- Name: realtime_node_endpoint_connections_endpoint; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX realtime_node_endpoint_connections_endpoint ON public.realtime_node_endpoint_connections USING btree (endpoint_id);
+
+
+--
 -- Name: realtime_publisher_credentials_endpoint; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -81270,6 +81365,13 @@ CREATE INDEX request_analytics_hours_bucket_idx ON public.request_analytics_hour
 --
 
 CREATE INDEX request_analytics_minutes_bucket_idx ON public.request_analytics_minutes USING btree (bucket_start);
+
+
+--
+-- Name: request_analytics_rollup_batches_applied_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_analytics_rollup_batches_applied_idx ON public.request_analytics_rollup_batches USING btree (applied_at);
 
 
 --
@@ -91279,6 +91381,14 @@ ALTER TABLE ONLY public.app_cpu_policy_node_status
 
 ALTER TABLE ONLY public.app_cpu_policy_node_status
     ADD CONSTRAINT app_cpu_policy_node_status_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_custom_metric_series app_custom_metric_series_metric_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_custom_metric_series
+    ADD CONSTRAINT app_custom_metric_series_metric_fkey FOREIGN KEY (app_id, name) REFERENCES public.app_custom_metrics(app_id, name) ON DELETE CASCADE;
 
 
 --
@@ -104127,6 +104237,14 @@ ALTER TABLE ONLY public.queue_bindings
 
 ALTER TABLE ONLY public.realtime_node_connections
     ADD CONSTRAINT realtime_node_connections_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.realtime_node_connection_syncs(node_name) ON DELETE CASCADE;
+
+
+--
+-- Name: realtime_node_endpoint_connections realtime_node_endpoint_connections_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_endpoint_connections
+    ADD CONSTRAINT realtime_node_endpoint_connections_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.realtime_node_connection_syncs(node_name) ON DELETE CASCADE;
 
 
 --

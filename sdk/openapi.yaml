@@ -26220,6 +26220,9 @@ components:
         security_revocation: {$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}
         managed_http: {$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}
         managed_circuit: {$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}
+        edge_header_secrets:
+          description: Gateways open sealed edge-rule request header values; until every serving gateway does, new credential values are stored as written. Omitted by older releases.
+          allOf: [{$ref: '#/components/schemas/TrafficRuntimeFeatureStatus'}]
     TrafficRuntimeFeatureStatus:
       description: Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified.
       type: object
@@ -28235,7 +28238,24 @@ components:
           type: string
           enum: [gauge, counter]
           description: "gauge for pushed values (a scaling signal); counter for OTLP cumulative sums, which never drive scaling."
+        series:
+          description: "A labelled metric's series. value is then their aggregate: the sum for counters, the maximum of fresh series for gauges. Absent for an unlabelled metric."
+          type: array
+          items: {$ref: '#/components/schemas/CustomMetricSeriesValue'}
       example: {name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false, kind: gauge}
+    CustomMetricSeriesValue:
+      description: "One labelled series of a custom metric (from OTLP data point attributes)."
+      type: object
+      required: [key, labels, value, observed_at, stale]
+      properties:
+        key: {type: string, description: "Canonical k=v,... form, keys sorted; pass it as labels to the history endpoint.", example: "queue=emails"}
+        labels:
+          type: object
+          additionalProperties: {type: string}
+          example: {queue: emails}
+        value: {type: number}
+        observed_at: {type: string, format: date-time}
+        stale: {type: boolean}
     CustomMetricListResponse:
       description: "The app's gauges, plus the two limits needed to interpret them so debugging does not require reading the docs."
       type: object
@@ -28249,9 +28269,13 @@ components:
           type: integer
           example: 300
         max_metrics:
-          description: "Maximum distinct metric names this app may hold."
+          description: "Maximum distinct metric names this app may hold (per plan)."
           type: integer
-          example: 5
+          example: 50
+        max_series:
+          description: "Maximum labelled series this app may hold across its metrics (per plan); each metric also holds at most 50."
+          type: integer
+          example: 500
     ScalingTarget:
       description: "(metric, value) pair the engine watches for the scale-up trigger. The metric surface is closed, and every member of it is backed by a live source and read by a scheduler trigger. `p99_latency_ms` was removed: it validated for releases with no latency source behind it, and is now rejected with 422 pointing at concurrent_requests. The unset state (null) is the legacy 'engine falls back to autoscale_target_rps' path."
       type: object
@@ -43767,6 +43791,14 @@ components:
       properties:
         enabled: {type: boolean}
         sample_ratio: {type: number, exclusiveMinimum: 0, maximum: 1, default: 1, description: "Fraction of requests whose spans the app exports."}
+        forward: {$ref: '#/components/schemas/TracingForward'}
+        metrics: {type: boolean, default: false, description: "Sends the app's OpenTelemetry metrics to Gregale from inside its instance, stored as its custom metrics (no API key needed). Requires tracing to be enabled and a plan with custom metrics. The managed auto-instrumentation's own metrics count toward the app's metric limit."}
+    TracingForward:
+      description: "Sends a copy of every OpenTelemetry trace and log export the app makes to your own OTLP/HTTP endpoint, from inside the app's instance. Requires tracing to be enabled."
+      type: object
+      properties:
+        endpoint: {type: string, maxLength: 2048, description: "Base OTLP/HTTP URL (http or https, no credentials, query or fragment); /v1/traces and /v1/logs are appended."}
+        headers_secret: {type: string, maxLength: 128, description: "Name of an app secret holding request headers as comma-separated key=value pairs, in the OTEL_EXPORTER_OTLP_HEADERS format."}
     ProfileQuery:
       description: Authorized deployment CPU capture window.
       type: object

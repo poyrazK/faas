@@ -1282,6 +1282,19 @@
     "kind": "operational"
   },
   {
+    "table": "app_custom_metric_series",
+    "columns": [
+      "app_id",
+      "kind",
+      "labels",
+      "name",
+      "observed_at",
+      "series_key",
+      "value"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_custom_metrics",
     "columns": [
       "app_id",
@@ -8394,6 +8407,7 @@
       "application_standard_boot_token",
       "application_standard_promotion_token",
       "booked_cpu_millicores",
+      "booked_vcpu",
       "capacity_cpu_millicores",
       "capacity_ram_mb",
       "capacity_vcpu",
@@ -17509,6 +17523,15 @@
     "kind": "operational"
   },
   {
+    "table": "realtime_node_endpoint_connections",
+    "columns": [
+      "connections",
+      "endpoint_id",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "realtime_usage_hours",
     "columns": [
       "account_id",
@@ -17671,6 +17694,15 @@
     "columns": [
       "app_id",
       "bucket_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_rollup_batches",
+    "columns": [
+      "applied_at",
+      "batch_id",
+      "node_id"
     ],
     "kind": "operational"
   },

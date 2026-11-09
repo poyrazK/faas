@@ -460,45 +460,59 @@ func (m *MemStore) recordInstanceCapacityLocked(ins Instance) {
 	app := m.apps[ins.AppID]
 	dep := m.deployments[ins.DeploymentID]
 	ram, cpu := capacitySidecarResources(dep.Sidecars)
-	limits, _ := api.LimitsFor(m.accounts[app.AccountID].Plan)
-	vcpu := int64(limits.VCPU)
-	if vcpu <= 0 {
-		vcpu = 4
-	}
+	m.capacityInstanceResources[ins.ID] = capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(m.instanceCapacityCPULocked(ins, app)) + cpu, VCPU: m.instanceCapacityVCPULocked(ins, app)}
+}
+
+// instanceCapacityVCPULocked mirrors capture_instance_capacity's vCPUs: the
+// instance's stored guest vCPU count, else its plan's (ADR-20261109172421).
+func (m *MemStore) instanceCapacityVCPULocked(ins Instance, app App) int64 {
 	if ins.AppID == "" {
-		vcpu = 1
+		return 1
 	}
-	m.capacityInstanceResources[ins.ID] = capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(m.instanceCapacityCPULocked(ins, app)) + cpu, VCPU: vcpu}
+	if booked := m.instanceBookings[ins.ID].vcpu; booked > 0 {
+		return int64(booked)
+	}
+	limits, _ := api.LimitsFor(m.accounts[app.AccountID].Plan)
+	if limits.VCPU <= 0 {
+		return 4
+	}
+	return int64(limits.VCPU)
 }
 
 // instanceCapacityCPULocked mirrors capture_instance_capacity's main CPU:
 // the instance's stored booking, else its app's CPU floored at a core.
 func (m *MemStore) instanceCapacityCPULocked(ins Instance, app App) int {
-	if booked := m.instanceBookedCPU[ins.ID]; booked > 0 {
+	if booked := m.instanceBookings[ins.ID].cpu; booked > 0 {
 		return booked
 	}
 	return max(app.CPUMillicores, api.DefaultAppCPUMillicores)
 }
 
+// instanceBooking is what capture_instance_capacity stores on an instance
+// row from its admitting transaction: the CPU booking and the guest vCPU
+// count. Zero keeps the app's and the plan's.
+type instanceBooking struct{ cpu, vcpu int }
+
 // recordInstanceBookedCPULocked mirrors capture_instance_capacity storing
-// ctx's placement booking on a live instance row (ADR-20261101160231 step
-// 5b). It runs before recordInstanceCapacityLocked.
+// ctx's placement bookings on a live instance row (ADR-20261101160231 step
+// 5b, ADR-20261109172421 step 5). It runs before
+// recordInstanceCapacityLocked.
 func (m *MemStore) recordInstanceBookedCPULocked(ctx context.Context, ins Instance) {
-	booked := nodeBookedCPUMillicores(ctx, ins.NodeID)
-	if booked <= 0 || !IsLive(strings.ToLower(ins.State)) {
+	booked := instanceBooking{cpu: nodeBookedCPUMillicores(ctx, ins.NodeID), vcpu: nodeBookedVCPU(ctx, ins.NodeID)}
+	if booked == (instanceBooking{}) || !IsLive(strings.ToLower(ins.State)) {
 		return
 	}
-	if m.instanceBookedCPU == nil {
-		m.instanceBookedCPU = map[string]int{}
+	if m.instanceBookings == nil {
+		m.instanceBookings = map[string]instanceBooking{}
 	}
-	m.instanceBookedCPU[ins.ID] = booked
+	m.instanceBookings[ins.ID] = booked
 }
 
 // instanceCPUBookingLocked is what a live instance books against its node's
 // CPU budget after its startup boost: its stored booking, else its app's
 // configured CPU (the node guard's and placement's sum).
 func (m *MemStore) instanceCPUBookingLocked(ins Instance, app App) int {
-	if booked := m.instanceBookedCPU[ins.ID]; booked > 0 {
+	if booked := m.instanceBookings[ins.ID].cpu; booked > 0 {
 		return booked
 	}
 	if app.CPUMillicores > 0 {
