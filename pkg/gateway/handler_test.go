@@ -644,7 +644,7 @@ func TestRequestIDRoundTrip(t *testing.T) {
 
 func TestRateLimitReturns429(t *testing.T) {
 	h, b, _ := newTestHandler(t)
-	b.setLegacyHot()          // hot path; the rate-limit test doesn't care about wake
+	b.setLegacyHot() // hot path; the rate-limit test doesn't care about wake
 	b.app.Plan = api.PlanFree
 	burst := api.MustLimitsFor(api.PlanFree).RateLimitBurst
 	// A frozen clock stops refill while the loop drains the bucket.
