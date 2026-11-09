@@ -237,3 +237,29 @@ func (fn FunctionSpec) RepositoryDeferredSteps() []RepositoryDeferredStep {
 	}
 	return steps
 }
+
+// FunctionAppManifest is one function's settings as a single-app manifest,
+// for a repository push of its function app (ADR-20261108160000 §4): the
+// runtime and handler, minimum instances, request timeout, queue bindings
+// and event triggers. Cron triggers are left out (nil), because the project
+// reconcile owns a function's crons; RAM, idle timeout, concurrency and env
+// are app settings the caller applies itself.
+func (m *Manifest) FunctionAppManifest(p FunctionPlan) *Manifest {
+	out := &Manifest{
+		Function:      &FunctionConfig{Runtime: p.Runtime, Handler: p.Handler},
+		QueueBindings: p.Spec.QueueBindings,
+	}
+	for _, trigger := range p.Spec.EventTriggers {
+		trigger.App = p.Slug
+		out.EventTriggers = append(out.EventTriggers, trigger)
+	}
+	if p.Spec.MinInstances != nil {
+		floor := *p.Spec.MinInstances
+		out.Scaling = &ScalingConfig{MinInstances: &floor}
+	}
+	if p.Spec.RequestTimeoutS != 0 {
+		timeout := p.Spec.RequestTimeoutS
+		out.Lifecycle = &LifecycleConfig{RequestTimeoutS: &timeout}
+	}
+	return out
+}

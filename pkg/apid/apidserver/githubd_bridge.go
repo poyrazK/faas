@@ -357,7 +357,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if err := bridgeSourcePolicy(g.log, req.SourcePath, app, resource.Plan); err != nil {
 		return nil, err
 	}
-	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, resource.Plan, g.agentSteps != nil && g.agentSteps(acct))
+	function, manifest, manifestProblem := bridgeSourceManifest(req.SourcePath, app, resource.Plan, g.agentSteps != nil && g.agentSteps(acct))
 	if manifestProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)
 	}
@@ -482,6 +482,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		GitHubSourceRef:      req.GithubSourceRef,
 		GitHubInstallationID: req.GithubInstallationId,
 		FunctionRuntime:      functionRuntimeForApp(app),
+		Handler:              function.Plan.Handler,
 		Scope:                req.DeploymentScope,
 		LogSpool:             g.spool,
 		Log:                  g.log,
@@ -548,6 +549,9 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 				return nil, status.Error(codes.FailedPrecondition, api.ErrReleaseApprovalCanaryRequired(app.Slug).Detail)
 			}
 		}
+	}
+	if function.Plan.Runtime != "" {
+		params.FunctionRuntime = function.Plan.Runtime
 	}
 	ctx, _, cronProblem := g.prepareDeliveryCrons(ctx, req, resource, app, manifest, kind, params)
 	if cronProblem != nil {
