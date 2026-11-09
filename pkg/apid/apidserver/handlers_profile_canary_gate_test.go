@@ -13,7 +13,7 @@ import (
 func TestProfileCanaryGateHTTPReadHoldAndOverride(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	ctx := t.Context()
-	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "cpu-gated"})
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "cpu-gated", Manifest: state.AppManifest{Profiling: &api.ProfilingConfig{Enabled: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,8 +39,15 @@ func TestProfileCanaryGateHTTPReadHoldAndOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := "/v1/deployments/" + candidate.ID + "/canary/"
-	read := e.Do(t, http.MethodGet, base+"profile-gate", nil, nil)
+	// Without a profiling backend the evidence can never arrive: the gate
+	// reports why instead of holding (ADR-1155 round 4).
 	var decision api.ProfileCanaryGateDecision
+	unavailable := e.Do(t, http.MethodGet, base+"profile-gate", nil, nil)
+	if unavailable.Code != http.StatusOK || json.Unmarshal(unavailable.Body.Bytes(), &decision) != nil || decision.Status != "unavailable" {
+		t.Fatal(unavailable.Code, unavailable.Body.String())
+	}
+	(*(*e.S()).ProfileBackend()) = &profileCoverageCapture{}
+	read := e.Do(t, http.MethodGet, base+"profile-gate", nil, nil)
 	if read.Code != http.StatusOK || json.Unmarshal(read.Body.Bytes(), &decision) != nil || decision.Status != "collecting" || decision.PolicyRevision != policy.Revision {
 		t.Fatal(read.Code, read.Body.String())
 	}

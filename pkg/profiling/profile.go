@@ -38,6 +38,9 @@ func Parse(data []byte) (*profile.Profile, error) {
 	if len(raw) > api.ProfileMaxExpandedBytes {
 		return nil, fmt.Errorf("expanded profile exceeds limit")
 	}
+	if err := prescanProfile(raw); err != nil {
+		return nil, err
+	}
 	p, err := profile.ParseUncompressed(raw)
 	if err != nil {
 		return nil, fmt.Errorf("parse profile: %w", err)

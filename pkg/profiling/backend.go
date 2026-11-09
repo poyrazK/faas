@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net/http"
@@ -142,14 +143,23 @@ func (b *Pyroscope) QueryHeap(ctx context.Context, tenant, appID, scope string, 
 }
 
 func encodeSeries(principal Principal, identity sampleIdentity, name string, p *profile.Profile) ([]byte, error) {
+	// Pyroscope query deduplication uses series identity and capture time.
+	// Separate VM/process lifetimes must not collapse even when their samples
+	// and timestamps coincide, but a series per lifetime grows without bound
+	// under scale-to-zero, where every wake is a new instance (ADR-1155
+	// round 4). A collector writes to one of ProfileCollectorSlots series and
+	// shifts its timestamps by its own sub-millisecond offset, so two
+	// collectors sharing a slot still never share a capture time.
+	slot, offset := collectorSeries(identity.Collector)
+	p.TimeNanos += offset
 	var encoded bytes.Buffer
-	if err := p.WriteUncompressed(&encoded); err != nil {
+	err := p.WriteUncompressed(&encoded)
+	p.TimeNanos -= offset
+	if err != nil {
 		return nil, fmt.Errorf("encode profile: %w", err)
 	}
-	// Pyroscope query deduplication uses series identity and capture time.
-	// Separate VM/process lifetimes need distinct series even when their
-	// CPU samples and timestamps coincide. No guest label is forwarded.
-	labels := [][2]string{{"__name__", name}, {"service_name", "gregale"}, {"app_id", principal.AppID}, {"deployment_id", principal.DeploymentID}, {"scope", principal.Scope}, {"runtime", principal.Runtime}, {"collector_id", identity.Collector}}
+	// No guest label is forwarded.
+	labels := [][2]string{{"__name__", name}, {"service_name", "gregale"}, {"app_id", principal.AppID}, {"deployment_id", principal.DeploymentID}, {"scope", principal.Scope}, {"runtime", principal.Runtime}, {"collector_slot", slot}}
 	var series []byte
 	for _, label := range labels {
 		var pair []byte
@@ -161,6 +171,13 @@ func encodeSeries(principal Principal, identity sampleIdentity, name string, p *
 	sample = protoBytes(sample, 2, []byte(identity.ID))
 	series = protoBytes(series, 2, sample)
 	return series, nil
+}
+
+// collectorSeries is a collector's bounded series slot and its timestamp
+// offset, below a millisecond, both derived from its opaque identity.
+func collectorSeries(collector string) (slot string, offset int64) {
+	sum := sha256.Sum256([]byte(collector))
+	return strconv.Itoa(int(sum[0]) % api.ProfileCollectorSlots), int64(binary.BigEndian.Uint32(sum[1:5]) % uint32(time.Millisecond))
 }
 
 func (b *Pyroscope) pushSeries(ctx context.Context, tenant string, body []byte) error {

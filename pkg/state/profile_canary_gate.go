@@ -191,12 +191,25 @@ func decideProfileCanaryGate(d Deployment, p api.ProfileDeploymentPolicy, signal
 	return out
 }
 
+// ProfileGateWhenUnavailable reports a gate still waiting for evidence as
+// "unavailable" when reason says the evidence cannot arrive. A gate that
+// already passed or regressed keeps its verdict.
+func ProfileGateWhenUnavailable(decision api.ProfileCanaryGateDecision, reason string) api.ProfileCanaryGateDecision {
+	if reason != "" && (decision.Status == "collecting" || decision.Status == "timed_out") {
+		decision.Status, decision.Reason = "unavailable", reason
+	}
+	return decision
+}
+
 func authorizeProfileGate(decision api.ProfileCanaryGateDecision, params *CanaryAdvanceParams) error {
 	if override := params.ProfileGateOverride; override != nil {
 		if params.RequireSafeReleaseLease || params.ProfileGateRollback || override.ExpectedPolicyRevision != decision.PolicyRevision || len(strings.TrimSpace(override.Reason)) == 0 || !investigationText(override.Reason, api.ProfileGateOverrideMaxReasonBytes) {
 			return fmt.Errorf("%w: profile gate override requires the current policy revision and a bounded reason from a customer request", ErrInvalidArgument)
 		}
 		decision.Status, decision.Reason = "overridden", strings.TrimSpace(override.Reason)
+	}
+	if !params.ProfileGateRollback {
+		decision = ProfileGateWhenUnavailable(decision, params.ProfileGateUnavailable)
 	}
 	if params.ProfileGateDecision != nil {
 		*params.ProfileGateDecision = decision
@@ -205,7 +218,7 @@ func authorizeProfileGate(decision api.ProfileCanaryGateDecision, params *Canary
 		if !params.RequireSafeReleaseLease || decision.Status != "regressed" || !decision.AutoRollback {
 			return &ProfileGateBlockedError{Decision: decision}
 		}
-	} else if decision.Status != "disabled" && decision.Status != "passed" && decision.Status != "overridden" && (decision.Status != "timed_out" || decision.OnTimeout != "continue") {
+	} else if decision.Status != "disabled" && decision.Status != "passed" && decision.Status != "overridden" && decision.Status != "unavailable" && (decision.Status != "timed_out" || decision.OnTimeout != "continue") {
 		return &ProfileGateBlockedError{Decision: decision}
 	}
 	var data map[string]any

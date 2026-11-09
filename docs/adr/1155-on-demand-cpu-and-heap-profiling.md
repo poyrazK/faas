@@ -550,6 +550,53 @@ A third review found these gaps:
 - **`PYTHONPATH`.** The bootstrap appended an empty entry, which Python reads
   as the working directory, when the image set none.
 
+## Amendment: hostile uploads, series and gates (review round 4, 2026-11-04)
+
+A fourth review, of continuous profiling, found these gaps:
+
+- **Parser memory.** `profiling.Parse` bounded compressed and expanded bytes,
+  then counted samples only after `profile.ParseUncompressed` had built every
+  object: a 12 KB gzip of 1.37M one-frame samples (8 MiB) made it allocate
+  268 MiB before refusing. profiled runs four uploads in a 512 MiB unit, so
+  one tenant VM could get it OOM-killed and stop profiling for its node; apid
+  parsed capture blobs the same way. Parse now walks the protobuf first and
+  refuses a profile over the element bounds (`ProfileMaxNodes` samples,
+  locations, functions and mappings, `ProfileMaxStrings`, `ProfileMaxTotalFrames`,
+  `ProfileMaxStackDepth` and `ProfileMaxSampleLabels` per sample,
+  `ProfileMaxTotalLabels`); a profile at the bounds costs about 7 MiB.
+- **Capture merges in apid.** Views, comparisons, downloads and the dashboard
+  page parsed up to eight guest-supplied blobs per kind with no concurrency
+  bound, unlike continuous queries. An apid now runs at most
+  `ProfileCaptureMaxConcurrentMerges` (2) merges and answers others `503`.
+- **vmmd broker.** Any process in a guest can open the profile vsock port. The
+  broker took one of the node's four upload slots before reading the frame, so
+  a VM sending slowly could hold them all, and every connection cost about
+  five database reads before profiled applied any quota. The broker now reads
+  the frame first, admits one connection at a time and
+  `ProfileBrokerUploadsPerInstanceMinute` (600, the largest pool quota) per
+  instance, and reuses an instance's database identity for
+  `ProfileBrokerPrincipalTTL` (10 s) within one VM generation, refusals
+  included. `vmmd_profile_broker_uploads_total{result}` counts the outcomes,
+  which no metric recorded before.
+- **Series per wake.** Each upload's series carried a collector label per
+  instance, generation and process; under scale-to-zero every wake is a new
+  instance, so series grew without bound. Collectors now share
+  `ProfileCollectorSlots` (64) `collector_slot` values per deployment and
+  runtime and shift their timestamps by an offset below a millisecond derived
+  from their identity, so collectors sharing a slot still never share a
+  capture time and are not deduplicated. Coverage still counts collectors from
+  the metadata profile, not the label. Old series remain until retention.
+- **Canary gates without profiling.** A `hold` gate waited for evidence that
+  could not arrive when the installation had no backend (including the
+  documented rollback), the owner's plan lost profiling or the app switched it
+  off, holding the release until an override. Such a gate, still collecting or
+  timed out, now reports `unavailable` with the reason and lets the stage
+  advance; a confirmed regression still holds, and a backend outage still
+  waits.
+- **Python continuous heap.** Continuous heap collection keeps `tracemalloc`
+  on; the docs described its cost only for captures. They now describe it
+  for continuous collection too.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

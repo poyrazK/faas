@@ -569,7 +569,13 @@ profiling:
   kinds: [cpu, heap]
 ```
 
-Each instrumented process reports its live heap once per window.
+Each instrumented process reports its live heap once per window. Python
+traces allocations with `tracemalloc` (32 frames) for as long as continuous
+heap collection is on, not only during a capture: allocation-heavy code runs
+slower and every live traced block costs memory. Tracing stops once the
+process has less than 16 MiB or 5% of its memory left and resumes with the
+next collection epoch (a redeploy, restore or capture). Prefer heap captures
+for Python services where that overhead matters.
 `gregale debug profiles my-app --type heap --release UUID --runtime node22
 --start … --end …` shows the live heap near `--end`: the query is narrowed to
 the last collection window so snapshots are not added together. Heap profiles
@@ -640,12 +646,25 @@ plan's history window. Physical deletion belongs to Pyroscope: configure a
 maximum 14-day backend retention and per-tenant 3/7/14-day overrides where the
 backend supports them. API query restrictions alone do not delete stored data.
 Monitor backend storage and label cardinality before enabling more tenants.
-Each VM lifetime and instrumented process has an opaque collector label so that
-identical captures from separate workers add CPU instead of being deduplicated.
-Retry uploads retain a stable sample ID.
+Each VM lifetime and instrumented process writes to one of 64 series per
+deployment and runtime (the `collector_slot` label) and shifts its timestamps
+by an offset of its own below a millisecond, so identical captures from
+separate workers add CPU instead of being deduplicated while scale-to-zero
+wakes, each a new instance, add no series. Retry uploads retain a stable
+sample ID.
 
 Uploads are bounded to 1 MiB, expansion to 8 MiB, and concurrency to four at the
-bridge, broker and parser. Export is synchronous with a two-second transport
+bridge, broker and parser. Before parsing, a profile is counted: at most
+20,000 samples, locations, functions and mappings, 80,000 strings, 200,000
+stack frames, 256 frames and 64 labels per sample, so a highly compressible
+upload cannot make the parser allocate hundreds of MiB. vmmd's broker reads a
+guest's upload before it takes one of the node's four upload slots, accepts one
+connection at a time and 600 uploads a minute per instance, and reuses an
+instance's identity for 10 seconds within one VM lifetime;
+`vmmd_profile_broker_uploads_total{result}` counts accepted, limited, busy,
+read, protocol, identity and forward outcomes there. apid merges at most two
+captures at once (views, comparisons, downloads and the dashboard page) and
+answers `503` to others. Export is synchronous with a two-second transport
 budget and no unbounded host queue. Collector failure or a full budget drops
 diagnostics. Parked apps retain no collector RAM. Capture windows from before
 the current collection epoch or observed instance lifetime are rejected.
@@ -654,7 +673,9 @@ budget. Select a shorter window if a large merged profile exceeds these bounds.
 
 To roll back, disable the operator flag on apid/vmmd/profiled and disable the
 manifest setting before redeployment. Existing backend data follows its
-retention policy. This rollback changes no billing or application code paths.
+retention policy. This rollback changes no billing or application code paths;
+canary profile gates of affected apps report `unavailable` and stop holding
+releases.
 
 ## Validation and promotion
 
@@ -1342,6 +1363,11 @@ healthy confirmations to pass. Unknown evidence resets that route's streak.
 Insufficient evidence remains inconclusive: `hold` waits for review; explicitly
 choosing `continue` permits advancement after the deadline with inconclusive
 profiling evidence. A confirmed regression remains held regardless of timeout.
+When evidence cannot arrive at all — the installation has no profiling
+backend, the app's plan does not include profiling, or the app switches
+profiling off — a gate still collecting or timed out reports `unavailable`
+with the reason and lets the stage advance instead of holding the release. A
+profiling backend outage is not `unavailable`: the gate waits as configured.
 Other route, health and binding gates still apply.
 
 Inspect the baseline, route streaks, functions and call paths on the deployment

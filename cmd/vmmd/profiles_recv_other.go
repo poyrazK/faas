@@ -4,11 +4,13 @@ package main
 
 import (
 	"context"
+	"log/slog"
+
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
-	"log/slog"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
-func startProfilingReceiver(context.Context, *slog.Logger, *fcvm.Manager, state.Store, *fcvm.JailerVMM) error {
+func startProfilingReceiver(context.Context, *slog.Logger, *fcvm.Manager, state.Store, *fcvm.JailerVMM, prometheus.Registerer) error {
 	return nil
 }

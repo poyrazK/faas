@@ -887,21 +887,41 @@ const (
 	ProfileMaxSymbolBytes           = 4096
 	ProfileMaxTotalFrames           = 200000
 	ProfileMaxNodes                 = 20000
-	ProfileMaxViewNodes             = 5000
-	ProfileMaxViewSymbolBytes       = 256 << 10
-	ProfileMaxCoverageEntries       = 5000
-	ProfileFailureRecordInterval    = time.Minute
-	ProfileMaxChartPoints           = 120
-	ProfileChartMinStep             = time.Minute
-	ProfileMaxConcurrentUploads     = 4
-	ProfileMaxConcurrentQueries     = 4
-	ProfileMaxTrackedAccounts       = 10000
-	ProfileTransportTimeout         = 2 * time.Second
-	ProfileQueryTimeout             = 15 * time.Second
-	ProfileVsockPort                = 1040
-	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
-	ProfileHealthListen             = "127.0.0.1:9160"
-	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+	// A profile is counted before it is parsed (ADR-1155 round 4): the
+	// parser's objects take ~30x the encoded bytes, so element counts, not
+	// bytes, bound its memory.
+	// ProfileCollectorSlots bounds the Pyroscope series per deployment and
+	// runtime: collectors share this many slots instead of one series per
+	// VM lifetime (ADR-1155 round 4).
+	ProfileCollectorSlots        = 64
+	ProfileMaxStrings            = 4 * ProfileMaxNodes
+	ProfileMaxSampleTypes        = 16
+	ProfileMaxSampleLabels       = 64
+	ProfileMaxTotalLabels        = ProfileMaxNodes
+	ProfileMaxViewNodes          = 5000
+	ProfileMaxViewSymbolBytes    = 256 << 10
+	ProfileMaxCoverageEntries    = 5000
+	ProfileFailureRecordInterval = time.Minute
+	ProfileMaxChartPoints        = 120
+	ProfileChartMinStep          = time.Minute
+	ProfileMaxConcurrentUploads  = 4
+	// vmmd's profile broker (ADR-1155 round 4): one guest connection at a
+	// time per instance, read before it takes one of the node's upload
+	// slots, at most ProfileBrokerUploadsPerInstanceMinute per instance per
+	// minute (the largest plan's pool quota), with the database part of its
+	// identity reused for ProfileBrokerPrincipalTTL within a VM generation.
+	ProfileBrokerMaxInFlightPerInstance   = 1
+	ProfileBrokerUploadsPerInstanceMinute = 600
+	ProfileBrokerPrincipalTTL             = 10 * time.Second
+	ProfileBrokerMaxTrackedInstances      = 4096
+	ProfileMaxConcurrentQueries           = 4
+	ProfileMaxTrackedAccounts             = 10000
+	ProfileTransportTimeout               = 2 * time.Second
+	ProfileQueryTimeout                   = 15 * time.Second
+	ProfileVsockPort                      = 1040
+	ProfileLocalEndpoint                  = "http://127.0.0.1:9191"
+	ProfileHealthListen                   = "127.0.0.1:9160"
+	ProfileDefaultSocket                  = "/run/faas/profiled.sock"
 	// ProfileRetryCacheMaxEntries bounds profiled's upload replay cache on a
 	// node. At the bound the oldest entries are evicted: the cache is
 	// best-effort replay protection, so it never refuses an upload.
@@ -1023,6 +1043,10 @@ const (
 	ProfileMutexFraction  = 10
 	// ProfileCaptureDiffMaxNodes bounds a differential flamegraph.
 	ProfileCaptureDiffMaxNodes = 2 * ProfileMaxViewNodes
+	// ProfileCaptureMaxConcurrentMerges bounds how many capture merges (view,
+	// diff, download, dashboard page) one apid parses at once; merges beyond
+	// it are refused as busy rather than queued (ADR-1155 round 4).
+	ProfileCaptureMaxConcurrentMerges = 2
 	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
 	ProfileCaptureMaxConcurrentPerScheduler = 4
 	// ProfileCaptureMaxRunningPerPool bounds the captures of one pool (an

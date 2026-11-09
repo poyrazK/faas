@@ -111,6 +111,7 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		updated, auditID, writeErr = advancer.AdvanceCanary(state.WithRouteGuardRelease(ctx, guards), d.ID, state.CanaryAdvanceParams{
 			ExpectedStep: req.ExpectedStep, TrafficPercent: next.Percent,
 			ProfileGateDecision: &profileDecision, ProfileGateOverride: req.ProfileGateOverride, ProfileGateRollback: profileIntent == 0,
+			ProfileGateUnavailable:    s.profileGateUnavailable(ctx, acct, app),
 			RequireSafeReleaseLease:   requireWorkerLease,
 			RequireCanaryStageElapsed: requireWorkerLease,
 			CanaryStageDuration:       release.StageDwell(current, req.Decision),

@@ -4,11 +4,8 @@ package main
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -19,13 +16,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 // The broker only bounds frames and adds identity. Profile protobuf parsing,
 // decompression and backend traffic happen in the unprivileged profiled daemon.
-func startProfilingReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager, store state.Store, jailer *fcvm.JailerVMM) error {
+func startProfilingReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager, store state.Store, jailer *fcvm.JailerVMM, reg prometheus.Registerer) error {
 	if os.Getenv("FAAS_PROFILING_ENABLED") != "1" {
 		return nil
 	}
@@ -38,47 +36,25 @@ func startProfilingReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Man
 		return fmt.Errorf("profile service connection: %w", err)
 	}
 	go func() { <-ctx.Done(); _ = client.Close() }()
-	slots := make(chan struct{}, api.ProfileMaxConcurrentUploads)
+	broker := newProfileBroker(reg)
+	broker.identity = func(instance string) (string, error) {
+		identity, err := mgr.InstanceProfileIdentity(instance)
+		return identity.Generation, err
+	}
+	broker.resolve = func(ctx context.Context, instance string) (profiling.Principal, error) {
+		return resolveProfilePrincipal(ctx, mgr, store, instance)
+	}
+	broker.send = func(ctx context.Context, e profiling.Envelope) error { return profiling.Send(ctx, client, e) }
 	return jailer.RegisterGuestVsockStreamHandler(api.ProfileVsockPort, func(instance string, conn net.Conn) (string, error) {
 		requestCtx, cancel := context.WithTimeout(ctx, api.ProfileTransportTimeout)
 		defer cancel()
 		_ = conn.SetDeadline(time.Now().Add(api.ProfileTransportTimeout))
-		ack := byte(1)
-		defer func() { _, _ = conn.Write([]byte{ack}) }()
-		select {
-		case slots <- struct{}{}:
-			defer func() { <-slots }()
-		default:
-			return "limited", fmt.Errorf("profile broker busy")
-		}
-		var length [4]byte
-		if _, err := io.ReadFull(conn, length[:]); err != nil {
-			return "read", err
-		}
-		n := binary.BigEndian.Uint32(length[:])
-		if n == 0 || n > api.ProfileMaxFrameBytes {
-			return "protocol", fmt.Errorf("profile frame exceeds bounds")
-		}
-		body := make([]byte, int(n))
-		if _, err := io.ReadFull(conn, body); err != nil {
-			return "read", err
-		}
-		principal, err := resolveProfilePrincipal(requestCtx, mgr, store, instance)
+		ack, result, err := broker.handle(requestCtx, instance, conn)
+		_, _ = conn.Write([]byte{ack})
 		if err != nil {
-			return "identity", err
+			return result, err
 		}
-		var upload profiling.Upload
-		if err := json.Unmarshal(body, &upload); err != nil {
-			return "protocol", fmt.Errorf("invalid profile upload")
-		}
-		if len(upload.Profile) > api.ProfileMaxCompressedBytes {
-			return "protocol", fmt.Errorf("profile payload exceeds bounds")
-		}
-		if err := profiling.Send(requestCtx, client, profiling.Envelope{Principal: principal, Upload: upload}); err != nil {
-			return "forward", err
-		}
-		ack = 0
-		return "accepted", nil
+		return "", nil
 	})
 }
 

@@ -232,3 +232,36 @@ func TestProfileCanaryGatePolicyBounds(t *testing.T) {
 		t.Fatal("unbounded confirmations")
 	}
 }
+
+// A hold gate waiting for evidence that cannot arrive (profiling off for the
+// installation, plan or app) lets the stage advance as "unavailable"; a gate
+// that has already seen a regression still holds.
+func TestProfileCanaryGateUnavailableDoesNotHold(t *testing.T) {
+	m, d, acct, _ := profileGateFixture(t)
+	decision := api.ProfileCanaryGateDecision{}
+	params := state.CanaryAdvanceParams{ExpectedStep: 0, TrafficPercent: 50, ProfileGateDecision: &decision, Audit: state.DeploymentAudit{Kind: state.DeployTrafficChanged, Actor: "account:" + acct}}
+	var blocked *state.ProfileGateBlockedError
+	if _, _, err := m.AdvanceCanary(t.Context(), d.ID, params); !errors.As(err, &blocked) || blocked.Decision.Status != "collecting" {
+		t.Fatalf("collecting hold gate advanced: %v", err)
+	}
+	params.ProfileGateUnavailable = "Continuous profiling is unavailable on this installation."
+	if _, _, err := m.AdvanceCanary(t.Context(), d.ID, params); err != nil {
+		t.Fatalf("gate held a release whose evidence cannot arrive: %v", err)
+	}
+	if decision.Status != "unavailable" || decision.Reason != params.ProfileGateUnavailable {
+		t.Fatalf("decision = %+v", decision)
+	}
+
+	m, d, acct, at := profileGateFixture(t)
+	applyGateWindow(t, m, &at, "regressed")
+	applyGateWindow(t, m, &at, "regressed")
+	params = state.CanaryAdvanceParams{ExpectedStep: 0, TrafficPercent: 50, ProfileGateDecision: &decision, ProfileGateUnavailable: "Continuous profiling is switched off for this app.", Audit: state.DeploymentAudit{Kind: state.DeployTrafficChanged, Actor: "account:" + acct}}
+	if _, _, err := m.AdvanceCanary(t.Context(), d.ID, params); !errors.As(err, &blocked) || blocked.Decision.Status != "regressed" {
+		t.Fatalf("a confirmed regression advanced once profiling went away: %v", err)
+	}
+	for status, want := range map[string]string{"collecting": "unavailable", "timed_out": "unavailable", "passed": "passed", "regressed": "regressed", "disabled": "disabled"} {
+		if got := state.ProfileGateWhenUnavailable(api.ProfileCanaryGateDecision{Status: status}, "off").Status; got != want {
+			t.Errorf("%s with profiling unavailable = %s, want %s", status, got, want)
+		}
+	}
+}

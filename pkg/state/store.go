@@ -380,8 +380,14 @@ type CanaryAdvanceParams struct {
 	ProfileGateDecision *api.ProfileCanaryGateDecision
 	// Only the worker may request a preplanned zero-traffic recovery.
 	ProfileGateRollback bool
-	ExpectedStep        int
-	TrafficPercent      int
+	// ProfileGateUnavailable, when set, is why profile evidence cannot arrive
+	// for this app: no profiling backend, a plan without profiling, or
+	// profiling switched off. A gate still collecting or timed out then
+	// reports "unavailable" and lets the stage advance instead of holding the
+	// release for evidence that will never come (ADR-1155 round 4).
+	ProfileGateUnavailable string
+	ExpectedStep           int
+	TrafficPercent         int
 	// RequireSafeReleaseLease gates an automated worker advance on the
 	// durable meterd lease and rechecks it inside the transaction.
 	RequireSafeReleaseLease bool

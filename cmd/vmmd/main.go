@@ -1596,7 +1596,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// per-instance Firecracker Unix listeners during boot/restore. Registration
 	// remains soft at process startup so diagnostics stay available, but the
 	// receiver health signals below hold /readyz at 503 on failure.
-	if err := startProfilingReceiver(ctx, log, mgr, store, jailer); err != nil {
+	if err := startProfilingReceiver(ctx, log, mgr, store, jailer, ops.Registry()); err != nil {
 		return fmt.Errorf("register profile receiver: %w", err)
 	}
 	closeTraceReceiver, err := startTraceReceiver(ctx, log, mgr, store, jailer)

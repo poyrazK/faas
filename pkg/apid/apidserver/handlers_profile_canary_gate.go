@@ -1,10 +1,28 @@
 package apidserver
 
 import (
+	"context"
+	"net/http"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
-	"net/http"
 )
+
+// profileGateUnavailable is why profile evidence cannot arrive for app, or
+// "" when it can: the installation has no profiling backend, the owner's
+// plan has no profiling, or the app does not enable it (ADR-1155 round 4).
+// A backend outage is not here: evidence resumes when it recovers.
+func (s *server) profileGateUnavailable(ctx context.Context, acct state.Account, app state.App) string {
+	switch {
+	case s.profileBackend == nil:
+		return "Continuous profiling is unavailable on this installation."
+	case !api.MustLimitsFor(s.profilePlan(ctx, acct.Plan, app)).Profiling.Enabled:
+		return "The app's plan does not include profiling."
+	case app.Manifest.Profiling == nil || !app.Manifest.Profiling.Enabled:
+		return "Continuous profiling is switched off for this app."
+	}
+	return ""
+}
 
 func (s *server) getProfileCanaryGate(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	d, app, ok := s.loadCanaryDeployment(w, r, acct)
@@ -22,6 +40,7 @@ func (s *server) getProfileCanaryGate(w http.ResponseWriter, r *http.Request, ac
 		s.profileInvestigationError(w, err)
 		return
 	}
+	out = state.ProfileGateWhenUnavailable(out, s.profileGateUnavailable(r.Context(), acct, app))
 	if out.Signal != nil {
 		s.enrichCanaryProfileSignal(r.Context(), app, out.Signal, &d)
 	}
