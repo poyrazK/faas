@@ -4110,7 +4110,8 @@ groups:
       #
       # Response cascade (docs/ops/FaasCpuStarvation.md §Recover):
       # top-N panel → plan raise for the customer → consider
-      # faas-tenant slice CPUQuota bump (1600% = 16 cores). Memory
+      # faas-tenant slice CPUQuota bump (host threads − reserve,
+      # node_join.yml; ADR-20261109172421 §4). Memory
       # is NOT in scope — the per-VM memory.max is enforced by
       # vmmd via the jailer (spec §11/G6); a starved VM is a CPU
       # signal, not a RAM one.
