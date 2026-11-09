@@ -119,6 +119,8 @@ func TestCmdDebugBundleWritesRedactedInvestigation(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.DebugRequestEvidenceResponse{
 				Request:     api.DebugTelemetryRequestItem{ID: "request-1", Route: "/checkout", Status: 502},
 				Explanation: api.DebugEvidenceExplanation{Headline: "slow request"},
+				Logs:        []api.DebugEvidenceLogLine{{OccurredAt: "2026-11-09T10:00:00Z", Level: "error", Message: "charge failed for Jane Roe, 12 Elm St"}},
+				Spans:       []api.DebugTelemetrySpan{{SpanID: "s1", Name: "SELECT orders", DBStatement: "SELECT * FROM orders WHERE note = ?"}},
 			})
 		case r.URL.Path == "/v1/apps/my-app/debug/regressions":
 			_ = json.NewEncoder(w).Encode(api.DebugRegressionsResponse{
@@ -168,6 +170,14 @@ func TestCmdDebugBundleWritesRedactedInvestigation(t *testing.T) {
 	}
 	if strings.Contains(string(b), "request_body") == false {
 		t.Fatalf("bundle should document excluded request_body field: %s", b)
+	}
+	// The profile excludes raw logs and SQL: log text and span statements are
+	// dropped, their timing and levels kept.
+	if strings.Contains(string(b), "Jane Roe") || strings.Contains(string(b), "FROM orders") {
+		t.Fatalf("bundle kept log text or a statement: %s", b)
+	}
+	if len(bundle.Evidence.Logs) != 1 || bundle.Evidence.Logs[0].Level != "error" || len(bundle.Evidence.Spans) != 1 || bundle.Evidence.Spans[0].Name != "SELECT orders" {
+		t.Fatalf("bundle evidence = %+v, want log timing and spans kept", bundle.Evidence)
 	}
 	if mode := fileMode(t, outPath); mode.Perm() != 0o600 {
 		t.Fatalf("bundle mode = %o, want 600", mode.Perm())
