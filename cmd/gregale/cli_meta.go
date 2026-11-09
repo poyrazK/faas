@@ -6810,6 +6810,11 @@ var cliCommands = []cliCommand{
 			{Name: "get", Short: "Show one effective setting", Positionals: []string{"<api-base|json>"}},
 			{Name: "set", Short: "Persist one non-secret setting", Positionals: []string{"<api-base|json>", "<value>"}},
 			{Name: "list", Short: "Show all effective settings"},
+			{Name: "explain", Short: "Show where a CLI target or project setting comes from", Positionals: []string{"<key>"}, Notes: []string{
+				"Keys: project, app, environment, service_policy, services.<name>.service_policy, services.<name>.visibility, services.<name>.depends_on, api-base, json.",
+				"Lists every layer in precedence order (flag, .gregale/project.json, gregale.yaml `project:`, Compose x-gregale-*, .gregale/project.yaml) and marks the one that wins.",
+				"Runs locally; nothing is uploaded.",
+			}, Examples: []string{"gregale config explain app", "gregale config explain services.api.visibility"}},
 		},
 	},
 	{
