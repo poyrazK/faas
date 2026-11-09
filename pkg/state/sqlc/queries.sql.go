@@ -49412,6 +49412,101 @@ func (q *Queries) ListDueRouteMonitors(ctx context.Context, db DBTX, batchLimit 
 	return items, nil
 }
 
+const listEdgeRuleSetVersionsWithRequestHeaderLiterals = `-- name: ListEdgeRuleSetVersionsWithRequestHeaderLiterals :many
+SELECT v.id, v.app_id, v.version, v.rules, v.rules_sha256 FROM edge_rule_set_versions v
+WHERE v.id > $1::bigint
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v.rules) rule,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(rule->'action'->'headers'->'request_headers') = 'array'
+        THEN rule->'action'->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE rule->>'kind' = 'headers' AND coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+ORDER BY v.id LIMIT $2::integer
+`
+
+type ListEdgeRuleSetVersionsWithRequestHeaderLiteralsParams struct {
+	AfterID  int64
+	RowLimit int32
+}
+
+type ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow struct {
+	ID          int64
+	AppID       pgtype.UUID
+	Version     int32
+	Rules       []byte
+	RulesSha256 string
+}
+
+func (q *Queries) ListEdgeRuleSetVersionsWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEdgeRuleSetVersionsWithRequestHeaderLiteralsParams) ([]ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow, error) {
+	rows, err := db.Query(ctx, listEdgeRuleSetVersionsWithRequestHeaderLiterals, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow{}
+	for rows.Next() {
+		var i ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Version,
+			&i.Rules,
+			&i.RulesSha256,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEdgeRulesWithRequestHeaderLiterals = `-- name: ListEdgeRulesWithRequestHeaderLiterals :many
+
+SELECT r.id, r.action FROM edge_rules r
+WHERE r.kind = 'headers' AND r.id > $1::uuid
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(r.action->'headers'->'request_headers') = 'array'
+        THEN r.action->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+ORDER BY r.id LIMIT $2::integer
+`
+
+type ListEdgeRulesWithRequestHeaderLiteralsParams struct {
+	AfterID  pgtype.UUID
+	RowLimit int32
+}
+
+type ListEdgeRulesWithRequestHeaderLiteralsRow struct {
+	ID     pgtype.UUID
+	Action []byte
+}
+
+// ADR-20261108110000 amendment 2026-11-09: the sealing backfill finds
+// headers rules and rule-set versions that still store a request header value
+// as written. The scan is broad (any literal value); apid applies the
+// credential-name test.
+func (q *Queries) ListEdgeRulesWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEdgeRulesWithRequestHeaderLiteralsParams) ([]ListEdgeRulesWithRequestHeaderLiteralsRow, error) {
+	rows, err := db.Query(ctx, listEdgeRulesWithRequestHeaderLiterals, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEdgeRulesWithRequestHeaderLiteralsRow{}
+	for rows.Next() {
+		var i ListEdgeRulesWithRequestHeaderLiteralsRow
+		if err := rows.Scan(&i.ID, &i.Action); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEgressCircuitCandidates = `-- name: ListEgressCircuitCandidates :many
 SELECT
     u.app_id,
@@ -55742,6 +55837,7 @@ SELECT n.name AS node_name, COALESCE(o.generation, 0)::bigint AS generation, o.r
        COALESCE(o.security_revocation, false)::boolean AS security_revocation,
        COALESCE(o.managed_http, false)::boolean AS managed_http,
        COALESCE(o.managed_circuit, false)::boolean AS managed_circuit,
+       COALESCE(o.edge_header_secrets_boot = o.boot_id, false)::boolean AS edge_header_secrets,
        clock_timestamp()::timestamptz AS database_now
 FROM compute_nodes n LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
 WHERE n.active AND n.role IN ('compute-only', 'compute-node')
@@ -55762,6 +55858,7 @@ type ListServingGatewayTrafficRuntimeRow struct {
 	SecurityRevocation bool
 	ManagedHttp        bool
 	ManagedCircuit     bool
+	EdgeHeaderSecrets  bool
 	DatabaseNow        pgtype.Timestamptz
 }
 
@@ -55787,6 +55884,7 @@ func (q *Queries) ListServingGatewayTrafficRuntime(ctx context.Context, db DBTX,
 			&i.SecurityRevocation,
 			&i.ManagedHttp,
 			&i.ManagedCircuit,
+			&i.EdgeHeaderSecrets,
 			&i.DatabaseNow,
 		); err != nil {
 			return nil, err
@@ -96892,7 +96990,8 @@ WHERE ($2::bigint = 0 OR EXISTS (
 ON CONFLICT (node_name) DO UPDATE SET
     generation = EXCLUDED.generation, boot_id = EXCLUDED.boot_id, reported_at = NULL,
     retry_enabled = false, rate_counter_mode = 'unwired', retry_counter_mode = 'unwired', retry_backend_id = '',
-    deadline_signing = false, policy_snapshot = false, security_revocation = false, managed_http = false, managed_circuit = false
+    deadline_signing = false, policy_snapshot = false, security_revocation = false, managed_http = false, managed_circuit = false,
+    edge_header_secrets_boot = NULL
 WHERE gateway_traffic_runtime_observations.generation = $2::bigint
   AND gateway_traffic_runtime_observations.boot_id <> EXCLUDED.boot_id
 RETURNING generation
@@ -98143,6 +98242,28 @@ func (q *Queries) ReplaceDatabaseStandby(ctx context.Context, db DBTX, arg Repla
 	return result.RowsAffected(), nil
 }
 
+const replaceEdgeRuleSetVersionRules = `-- name: ReplaceEdgeRuleSetVersionRules :execrows
+UPDATE edge_rule_set_versions SET rules = $1::jsonb,
+    rules_sha256 = encode(sha256(convert_to($1::jsonb::text, 'UTF8')), 'hex')
+WHERE id = $2::bigint AND rules_sha256 = $3::text
+`
+
+type ReplaceEdgeRuleSetVersionRulesParams struct {
+	Rules          []byte
+	ID             int64
+	PreviousSha256 string
+}
+
+// The digest is computed as edge_rules_record_set_version computes it, and
+// the row is replaced only if no one changed it since it was read.
+func (q *Queries) ReplaceEdgeRuleSetVersionRules(ctx context.Context, db DBTX, arg ReplaceEdgeRuleSetVersionRulesParams) (int64, error) {
+	result, err := db.Exec(ctx, replaceEdgeRuleSetVersionRules, arg.Rules, arg.ID, arg.PreviousSha256)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const replaceProductionAppWorkloadSettings = `-- name: ReplaceProductionAppWorkloadSettings :exec
 with config as (select (json_populate_record(null::apps, $2::json)).*)
 		update apps a set visibility = c.visibility, type = c.type, runtime = nullif(c.runtime, ''),
@@ -98282,8 +98403,9 @@ UPDATE gateway_traffic_runtime_observations SET reported_at = clock_timestamp(),
     policy_snapshot = $6::boolean,
     security_revocation = $7::boolean,
     managed_http = $8::boolean,
-    managed_circuit = $9::boolean
-WHERE node_name = $10::text AND generation = $11::bigint AND boot_id = $12::uuid
+    managed_circuit = $9::boolean,
+    edge_header_secrets_boot = CASE WHEN $10::boolean THEN boot_id END
+WHERE node_name = $11::text AND generation = $12::bigint AND boot_id = $13::uuid
 `
 
 type ReportGatewayTrafficRuntimeParams struct {
@@ -98296,6 +98418,7 @@ type ReportGatewayTrafficRuntimeParams struct {
 	SecurityRevocation bool
 	ManagedHttp        bool
 	ManagedCircuit     bool
+	EdgeHeaderSecrets  bool
 	NodeName           string
 	Generation         int64
 	BootID             pgtype.UUID
@@ -98312,6 +98435,7 @@ func (q *Queries) ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg 
 		arg.SecurityRevocation,
 		arg.ManagedHttp,
 		arg.ManagedCircuit,
+		arg.EdgeHeaderSecrets,
 		arg.NodeName,
 		arg.Generation,
 		arg.BootID,
