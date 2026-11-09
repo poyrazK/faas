@@ -214,8 +214,13 @@ Each data point becomes a custom metric under the same per-app name cap:
   metric itself holds the aggregate of its series: their **sum** for
   counters, the **maximum** of series refreshed in the last 5 minutes for
   gauges. Alerts, release gates, scaling and the metric's history read that
-  aggregate. `GET /v1/apps/{slug}/custom-metrics` lists each series with its
-  `key`, and the history endpoint takes `?labels=<key>` to chart one series.
+  aggregate unless they name a series. `GET /v1/apps/{slug}/custom-metrics`
+  lists each series with its `key`, and the history endpoint takes
+  `?labels=<key>` to chart one series. To act on one series, give its exact
+  label set: `labels` on a custom scaling target, `custom_metric_labels` on an
+  alert rule (`--metric-label queue=emails` in the CLI) and `labels` on a
+  `custom_metric` or `metric_change` release gate (`--metric-label`). A
+  scaling target on a series reads only gauges, like an unlabelled one.
   A metric holds at most 50 series, and an app at most 100 (Hobby), 500
   (Pro) or 2,000 (Scale). Use attributes with few values (a queue, a route,
   a status class), never a user or request id. Once a metric has labelled

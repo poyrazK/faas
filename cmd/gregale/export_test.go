@@ -2780,3 +2780,6 @@ var (
 
 // MCPConnectOptions builds the options a test passes to MCPHeadlessToolCount.
 type MCPConnectOptions = mcpConnectOptions
+
+// MetricLabelFlags exposes the --metric-label parser.
+var MetricLabelFlags = metricLabelFlags

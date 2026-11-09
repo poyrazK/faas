@@ -206,6 +206,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := validateCustomMetricAlertLabels(req.Metric, req.CustomMetricLabels); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.validateSyntheticCheckAlert(r.Context(), app.ID, req); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -255,6 +259,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		EdgeRuleID:                      req.EdgeRuleID,
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
 		CustomMetricName:                req.CustomMetricName,
+		CustomMetricLabels:              req.CustomMetricLabels,
 		LogQuery:                        logQuery,
 		SLOID:                           req.SLOID,
 		SyntheticCheckID:                req.SyntheticCheckID,
@@ -308,6 +313,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"window_spec":                         row.WindowSpec,
 		"failure_source":                      row.FailureSource,
 		"custom_metric_name":                  row.CustomMetricName,
+		"custom_metric_labels":                row.CustomMetricLabels,
 		"log_query":                           row.LogQuery,
 		"slo_id":                              row.SLOID,
 		"synthetic_check_id":                  row.SyntheticCheckID,
@@ -761,6 +767,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		EdgeRuleID:                      r.EdgeRuleID,
 		FailureSource:                   string(r.FailureSource),
 		CustomMetricName:                r.CustomMetricName,
+		CustomMetricLabels:              r.CustomMetricLabels,
 		LogQuery:                        r.LogQuery,
 		SLOID:                           r.SLOID,
 		SyntheticCheckID:                r.SyntheticCheckID,

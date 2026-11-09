@@ -117,6 +117,7 @@ from .alert_rollback_status import AlertRollbackStatus
 from .alert_rule_response import AlertRuleResponse
 from .alert_rule_response_action import AlertRuleResponseAction
 from .alert_rule_response_comparison import AlertRuleResponseComparison
+from .alert_rule_response_custom_metric_labels import AlertRuleResponseCustomMetricLabels
 from .alert_rule_response_failure_source import AlertRuleResponseFailureSource
 from .alert_rule_response_metric import AlertRuleResponseMetric
 from .alert_rule_response_state import AlertRuleResponseState
@@ -798,6 +799,7 @@ from .create_account_release_webhook_request_retry_policy import CreateAccountRe
 from .create_alert_rule_request import CreateAlertRuleRequest
 from .create_alert_rule_request_action import CreateAlertRuleRequestAction
 from .create_alert_rule_request_comparison import CreateAlertRuleRequestComparison
+from .create_alert_rule_request_custom_metric_labels import CreateAlertRuleRequestCustomMetricLabels
 from .create_alert_rule_request_failure_source import CreateAlertRuleRequestFailureSource
 from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
@@ -995,6 +997,7 @@ from .create_release_freeze_request_kind import CreateReleaseFreezeRequestKind
 from .create_release_gate_request import CreateReleaseGateRequest
 from .create_release_gate_request_comparison import CreateReleaseGateRequestComparison
 from .create_release_gate_request_kind import CreateReleaseGateRequestKind
+from .create_release_gate_request_labels import CreateReleaseGateRequestLabels
 from .create_scenario_objects_request import CreateScenarioObjectsRequest
 from .create_scenario_postgres_request import CreateScenarioPostgresRequest
 from .create_slo_request import CreateSLORequest
@@ -5051,6 +5054,7 @@ from .release_freeze_weekly_days_item import ReleaseFreezeWeeklyDaysItem
 from .release_gate import ReleaseGate
 from .release_gate_comparison import ReleaseGateComparison
 from .release_gate_kind import ReleaseGateKind
+from .release_gate_labels import ReleaseGateLabels
 from .release_gate_result import ReleaseGateResult
 from .release_gate_result_kind import ReleaseGateResultKind
 from .release_outcome_check import ReleaseOutcomeCheck
@@ -6498,6 +6502,7 @@ __all__ = (
     "AlertRuleResponse",
     "AlertRuleResponseAction",
     "AlertRuleResponseComparison",
+    "AlertRuleResponseCustomMetricLabels",
     "AlertRuleResponseFailureSource",
     "AlertRuleResponseMetric",
     "AlertRuleResponseState",
@@ -7165,6 +7170,7 @@ __all__ = (
     "CreateAlertRuleRequest",
     "CreateAlertRuleRequestAction",
     "CreateAlertRuleRequestComparison",
+    "CreateAlertRuleRequestCustomMetricLabels",
     "CreateAlertRuleRequestFailureSource",
     "CreateAlertRuleRequestMetric",
     "CreateAlertRuleRequestWindowSpec",
@@ -7349,6 +7355,7 @@ __all__ = (
     "CreateReleaseGateRequest",
     "CreateReleaseGateRequestComparison",
     "CreateReleaseGateRequestKind",
+    "CreateReleaseGateRequestLabels",
     "CreateScenarioObjectsRequest",
     "CreateScenarioPostgresRequest",
     "CreateSLORequest",
@@ -11124,6 +11131,7 @@ __all__ = (
     "ReleaseGate",
     "ReleaseGateComparison",
     "ReleaseGateKind",
+    "ReleaseGateLabels",
     "ReleaseGateResult",
     "ReleaseGateResultKind",
     "ReleaseOutcomeCheck",

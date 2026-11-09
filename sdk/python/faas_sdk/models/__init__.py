@@ -67,6 +67,7 @@ from .alert_preset_response_window_spec import AlertPresetResponseWindowSpec
 from .alert_rule_response import AlertRuleResponse
 from .alert_rule_response_action import AlertRuleResponseAction
 from .alert_rule_response_comparison import AlertRuleResponseComparison
+from .alert_rule_response_custom_metric_labels import AlertRuleResponseCustomMetricLabels
 from .alert_rule_response_failure_source import AlertRuleResponseFailureSource
 from .alert_rule_response_metric import AlertRuleResponseMetric
 from .alert_rule_response_state import AlertRuleResponseState
@@ -399,6 +400,7 @@ from .create_account_release_webhook_request_retry_policy import CreateAccountRe
 from .create_alert_rule_request import CreateAlertRuleRequest
 from .create_alert_rule_request_action import CreateAlertRuleRequestAction
 from .create_alert_rule_request_comparison import CreateAlertRuleRequestComparison
+from .create_alert_rule_request_custom_metric_labels import CreateAlertRuleRequestCustomMetricLabels
 from .create_alert_rule_request_failure_source import CreateAlertRuleRequestFailureSource
 from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
@@ -2744,6 +2746,7 @@ __all__ = (
     "AlertRuleResponse",
     "AlertRuleResponseAction",
     "AlertRuleResponseComparison",
+    "AlertRuleResponseCustomMetricLabels",
     "AlertRuleResponseFailureSource",
     "AlertRuleResponseMetric",
     "AlertRuleResponseState",
@@ -3074,6 +3077,7 @@ __all__ = (
     "CreateAlertRuleRequest",
     "CreateAlertRuleRequestAction",
     "CreateAlertRuleRequestComparison",
+    "CreateAlertRuleRequestCustomMetricLabels",
     "CreateAlertRuleRequestFailureSource",
     "CreateAlertRuleRequestMetric",
     "CreateAlertRuleRequestWindowSpec",

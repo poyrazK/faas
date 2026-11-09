@@ -386,4 +386,17 @@ OpenTelemetry cumulative sum) is compared on its per-second rate over the
 window. If nothing was pushed in the window, or the metric was deleted, the
 rule is `unknown` and does not fire: a stopped pusher never satisfies a "below"
 rule by silence. These rules are webhook-only and support windows up to `24h`.
+
+A rule on a labelled metric reads its aggregate (the sum of a counter's
+series, the maximum of a gauge's). To watch one series instead, give its exact
+labels with `custom_metric_labels` (`--metric-label key=value`, repeatable):
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "email queue backing up" \
+  --metric custom_metric --custom-metric queue_depth --metric-label queue=emails \
+  --comparison gt --threshold 500 --window-spec 15m \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+A series that stops being pushed leaves the rule `unknown`, as for a whole metric.
 See [custom metrics](scaling-policy.md#custom-metrics) for pushing values.

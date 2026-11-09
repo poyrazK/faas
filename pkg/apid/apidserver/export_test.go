@@ -2282,3 +2282,6 @@ func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Re
 func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.getEnvironmentPromotionReceipt(w, r, acct)
 }
+
+// ValidateCustomMetricAlertLabels exposes the custom_metric rule label check.
+var ValidateCustomMetricAlertLabels = validateCustomMetricAlertLabels
