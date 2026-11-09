@@ -195,6 +195,29 @@ func MatchProtectiveEdgeRulePath(glob, requestPath string) (bool, error) {
 	return false, nil
 }
 
+// NormalizeEdgeRequestPath resolves "." and ".." segments and collapses
+// duplicate slashes in a request path, keeping a trailing slash. The gateway
+// forwards this form to the app and every edge rule sees it
+// (ADR-20261108100000), so a rule picked for /public/../upload, which most
+// frameworks serve as /upload, is a rule for /upload: a higher-priority
+// exception on /public/** can no longer be selected by a form the app never
+// routes. A path that does not start with "/" (OPTIONS *) is returned as
+// given. Backslashes, ";" parameters and case are left alone; gates still
+// match those forms protectively (MatchProtectiveEdgeRulePath).
+func NormalizeEdgeRequestPath(p string) string {
+	if !strings.HasPrefix(p, "/") {
+		return p
+	}
+	if !strings.Contains(p, "//") && !strings.Contains(p, "/.") {
+		return p
+	}
+	cleaned := path.Clean(p)
+	if cleaned != "/" && (strings.HasSuffix(p, "/") || strings.HasSuffix(p, "/.") || strings.HasSuffix(p, "/..")) {
+		cleaned += "/"
+	}
+	return cleaned
+}
+
 // ProtectiveEdgeRulePaths returns the path forms a rule that denies or
 // constrains matches requestPath under (MatchProtectiveEdgeRulePath): the raw
 // path, its dot-segment/duplicate-slash normalized form, that form with each

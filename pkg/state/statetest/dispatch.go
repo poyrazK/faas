@@ -30,8 +30,8 @@ var memDispatched = map[string]bool{
 	"CompleteSnapshotPrimeHandoff":           true,
 	"ListEdgeRulesForApp":                    true,
 	"ApplyConfigRestore":                     true,
-	"EvaluateAutomationFailurePolicies":      true,
-	"GetAutomationFailurePolicy":             true,
+	"EvaluateStoredWorkflowFailurePolicies":  true,
+	"GetStoredWorkflowFailurePolicy":         true,
 	"DefaultCustomDomain":                    true,
 	"DefaultCustomDomains":                   true,
 	"DeploymentWorkerDrainStatus":            true,
@@ -320,22 +320,22 @@ func (s *Mem) ApplyConfigRestore(ctx context.Context, restore state.ConfigRestor
 	return s.MemStore.ApplyConfigRestore(ctx, restore)
 }
 
-func (s *Mem) EvaluateAutomationFailurePolicies(ctx context.Context, owner, after string, limit int, now time.Time) (string, error) {
+func (s *Mem) EvaluateStoredWorkflowFailurePolicies(ctx context.Context, owner, after string, limit int, now time.Time) (string, error) {
 	if o, ok := s.over.(interface {
-		EvaluateAutomationFailurePolicies(context.Context, string, string, int, time.Time) (string, error)
+		EvaluateStoredWorkflowFailurePolicies(context.Context, string, string, int, time.Time) (string, error)
 	}); ok {
-		return o.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+		return o.EvaluateStoredWorkflowFailurePolicies(ctx, owner, after, limit, now)
 	}
-	return s.MemStore.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+	return s.MemStore.EvaluateStoredWorkflowFailurePolicies(ctx, owner, after, limit, now)
 }
 
-func (s *Mem) GetAutomationFailurePolicy(ctx context.Context, appID, name string) (api.AutomationFailurePolicyResponse, error) {
+func (s *Mem) GetStoredWorkflowFailurePolicy(ctx context.Context, appID, name string) (api.StoredWorkflowFailurePolicyResponse, error) {
 	if o, ok := s.over.(interface {
-		GetAutomationFailurePolicy(context.Context, string, string) (api.AutomationFailurePolicyResponse, error)
+		GetStoredWorkflowFailurePolicy(context.Context, string, string) (api.StoredWorkflowFailurePolicyResponse, error)
 	}); ok {
-		return o.GetAutomationFailurePolicy(ctx, appID, name)
+		return o.GetStoredWorkflowFailurePolicy(ctx, appID, name)
 	}
-	return s.MemStore.GetAutomationFailurePolicy(ctx, appID, name)
+	return s.MemStore.GetStoredWorkflowFailurePolicy(ctx, appID, name)
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {

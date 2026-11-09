@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/automationchecks"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/storedworkflowchecks"
 )
 
 const workflowRunSelectCols = `id, app_id, platform_tenant_id, workflow_name, status, current_step, input, output,
@@ -1727,7 +1727,7 @@ func completeWorkflowCallbackTx(ctx context.Context, tx pgx.Tx, tenantID, runID,
 	query := fmt.Sprintf(`SELECT %s FROM workflow_events WHERE id = $1`, workflowEventSelectCols)
 	existing, err := scanWorkflowEventCols(tx.QueryRow(ctx, query, eventID).Scan)
 	if err == nil {
-		if existing.RunID != runID || existing.EventName != eventName || !automationchecks.EqualJSON(existing.Payload, payload) {
+		if existing.RunID != runID || existing.EventName != eventName || !storedworkflowchecks.EqualJSON(existing.Payload, payload) {
 			return false, fmt.Errorf("%w: workflow callback payload differs", ErrConflict)
 		}
 		return true, nil
@@ -1836,7 +1836,7 @@ func insertWorkflowEventTx(ctx context.Context, tx pgx.Tx, tenantID string, e *W
 	existingQuery := fmt.Sprintf(`SELECT %s FROM workflow_events WHERE id = $1`, workflowEventSelectCols)
 	existing, err := scanWorkflowEventCols(tx.QueryRow(ctx, existingQuery, e.ID).Scan)
 	if err == nil {
-		if !sameMemUUID(existing.RunID, e.RunID) || existing.EventName != e.EventName || !automationchecks.EqualJSON(existing.Payload, e.Payload) {
+		if !sameMemUUID(existing.RunID, e.RunID) || existing.EventName != e.EventName || !storedworkflowchecks.EqualJSON(existing.Payload, e.Payload) {
 			return fmt.Errorf("%w: workflow_events.id", ErrConflict)
 		}
 		e.ReceivedAt = existing.ReceivedAt

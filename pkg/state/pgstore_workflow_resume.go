@@ -100,7 +100,7 @@ func resumeWorkflowRunTx(ctx context.Context, tx pgx.Tx, opts WorkflowResumeOpti
 		return nil, nil, 0, ErrWorkflowResumeUnsafe
 	}
 	if err := validateWorkflowOutboundTx(ctx, tx, opts.AppID, opts.AccountID, spec); err != nil {
-		if errors.Is(err, ErrAutomationInvalid) {
+		if errors.Is(err, ErrStoredWorkflowInvalid) {
 			return nil, nil, 0, ErrWorkflowResumeUnavailable
 		}
 		return nil, nil, 0, err

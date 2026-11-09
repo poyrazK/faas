@@ -67,9 +67,9 @@ func TestPGLoginTargetAlertPresetIsNotificationOnly(t *testing.T) {
 	}
 }
 
-func TestPGAutomationBacklogAlertPresetDefaults(t *testing.T) {
+func TestPGStoredWorkflowBacklogAlertPresetDefaults(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
-	preset, err := store.AlertPresetByName(ctx, "automation_backlog")
+	preset, err := store.AlertPresetByName(ctx, "stored_workflow_backlog")
 	if err != nil || preset.Metric != string(state.AlertMetricWorkflowDueAge) || preset.Category != "reliability" || preset.Comparison != "gte" ||
 		preset.Threshold != api.WorkflowBacklogAlertThresholdSeconds || preset.DefaultCooldownMinutes != api.WorkflowBacklogAlertCooldownMinutes ||
 		preset.WindowSpec != "5m" || !preset.EnabledInCatalog || preset.MinimumPlan != "hobby" {
@@ -338,8 +338,8 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 		"new_error":                     true,
 		"daily_spend_eur_1":             true,
 		"slo_burn_rate":                 true,
-		"automation_backlog":            true,
-		"automation_failures":           true,
+		"stored_workflow_backlog":       true,
+		"stored_workflow_failures":      true,
 		"login_target_pressure":         true,
 		"login_target_signal_health":    true,
 		"pre_auth_pressure":             true,
@@ -392,9 +392,9 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 	}
 }
 
-func TestPGAutomationFailureAlertPresetDefaults(t *testing.T) {
+func TestPGStoredWorkflowFailureAlertPresetDefaults(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
-	preset, err := store.AlertPresetByName(ctx, "automation_failures")
+	preset, err := store.AlertPresetByName(ctx, "stored_workflow_failures")
 	if err != nil || preset.Metric != string(state.AlertMetricWorkflowFailures) || preset.Category != "reliability" || preset.Comparison != "gte" ||
 		preset.Threshold != api.WorkflowFailureAlertThreshold || preset.DefaultCooldownMinutes != api.WorkflowFailureAlertCooldownMinutes ||
 		preset.WindowSpec != "5m" || !preset.EnabledInCatalog || preset.MinimumPlan != "hobby" {

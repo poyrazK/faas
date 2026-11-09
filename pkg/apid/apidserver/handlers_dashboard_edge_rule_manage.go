@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -213,7 +214,7 @@ func (s *server) loadDashboardEdgeRuleVersions(r *http.Request, log *slog.Logger
 // edgeRuleEditActionJSON is the rule's action in the shape PATCH accepts:
 // the kind's own object, without the stored {"kind": ..., <kind>: ...} wrapper.
 func edgeRuleEditActionJSON(row state.EdgeRule) string {
-	stored, err := json.Marshal(row.Action)
+	stored, err := json.Marshal(edgerules.RedactHeaderSecrets(row.Action))
 	if err != nil {
 		return ""
 	}

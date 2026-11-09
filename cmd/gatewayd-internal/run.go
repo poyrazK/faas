@@ -2513,6 +2513,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	if len(deps.edgeIdentities) > 0 {
 		identities := deps.edgeIdentities
 		deps.publicAuthUnsealer = newPublicAuthUnsealer(func() []*age.X25519Identity { return identities })
+		if deps.edgeRulesMatcher != nil {
+			deps.edgeRulesMatcher.headerSecretOpener = newEdgeRuleHeaderSecretOpener(identities)
+		}
 	}
 	log.Info("edge seal domain", "domain_identity", len(edgeDomainIdentities) > 0, "identities", len(deps.edgeIdentities))
 	// PR-3 / ADR-125 fleet-wide signing key: try the

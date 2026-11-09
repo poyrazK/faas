@@ -69,10 +69,14 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.totp.reset(acct.ID)
+	remember := r.PostFormValue("remember") == "1" && s.sessionMFAChallengePending(r, acct)
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("dashboard.mfa.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
 		return
+	}
+	if remember {
+		s.rememberBrowser(w, r, acct)
 	}
 	s.audit.Emit(r.Context(), "account.mfa_session_stepped_up", &acct.ID, map[string]any{"via": "dashboard"})
 	s.audit.Emit(r.Context(), "auth.step_up_verified", &acct.ID, map[string]any{
@@ -102,7 +106,8 @@ func (s *server) renderDashboardMFA(w http.ResponseWriter, r *http.Request, acct
 		Title:   "Two-factor authentication",
 		Account: acctViewFrom(acct),
 		Body:    "mfa",
-		Data:    dashboard.MFAChallengeData{CSRFToken: token, Failed: failure != "", Reused: failure == totpCodeReplayed, Enrolled: acct.MFAEnrolled(), Next: next},
+		Data: dashboard.MFAChallengeData{CSRFToken: token, Failed: failure != "", Reused: failure == totpCodeReplayed, Enrolled: acct.MFAEnrolled(), Next: next,
+			OfferRemember: s.canRememberBrowser(acct) && s.sessionMFAChallengePending(r, acct)},
 	}
 	// Render sets these too, but only before the first write; a non-200
 	// status has to be written first.

@@ -93,7 +93,9 @@ enabled switch still decide what it sends.
 Deleting an alert rule — or the SLO, synthetic check or app it watches —
 keeps its incidents, with their acknowledgements and notes. They keep the
 rule's name, an open one is resolved at the delete, and they are removed
-90 days after they resolved.
+90 days after they resolved. Once a deleted app is gone for good (after its
+7-day restore window), its incidents show no app, and only the account
+itself sees them, not organization members or an app's deploy token.
 
 The dashboard shows the same list at **Incidents**, and each incident's page
 has an Acknowledge button and a note form.

@@ -592,7 +592,7 @@
       {{end}}
 
       <h2>Workflows</h2>
-      {{if $.On "automations"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/automations">Build and manage automations →</a></p>{{end}}
+      {{if $.On "stored workflows"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/workflows/stored">Build and manage stored workflows →</a></p>{{end}}
       {{if .Data.Workflows}}
         <p class="muted">Recent durable workflow runs. Inputs and outputs stay in the workflow API; this view is for run state and step diagnostics.</p>
         {{range .Data.Workflows}}
