@@ -119,8 +119,10 @@ encrypted volume in a later slice.
    `postgresql`/`postgresql@` require both Postgres paths.
 4. **Live Postgres is never stopped by a converge.** A cluster on the plain
    disk with more than the template databases makes the role stop with the
-   maintenance-window steps (runbook "Moving a live Postgres"). A fresh
-   cluster is stopped, moved and started.
+   maintenance-window steps (runbook "Moving a live Postgres"). The role
+   never stops Postgres: a running fresh cluster needs `systemctl stop
+   postgresql` and a second converge. On a new host Postgres is not installed
+   when the storage role runs, so neither case arises.
 5. **auditd.** Its `faas_secrets` watch is loaded before the mount exists at
    boot; `faas-secrets-audit-reload.service` reloads the rules once
    `/etc/faas/secrets` is mounted.

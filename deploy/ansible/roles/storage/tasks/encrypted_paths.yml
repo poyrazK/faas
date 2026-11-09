@@ -10,9 +10,10 @@
 # locked nothing (a converge that skips this role, apt's initdb, a daemon)
 # can write secrets or a database onto the plain root disk: it fails instead.
 #
-# A control-plane Postgres that already holds data is never stopped here
-# (docs/runbooks/disk-encryption.md has the maintenance-window move). A fresh
-# cluster, with only the template databases, is moved in place.
+# Postgres is never stopped here. A cluster that holds data needs the
+# maintenance-window move in docs/runbooks/disk-encryption.md; a running fresh
+# cluster (only the template databases) needs a stop and a second converge.
+# On a new host Postgres is not installed yet, so neither applies.
 
 - name: storage — choose the paths that live on the encrypted volume
   ansible.builtin.set_fact:
@@ -73,7 +74,7 @@
       then converge again. Nothing was changed.
   when: faas_storage_pg_databases is not skipped
 
-- name: storage — inspect Postgres before moving its fresh cluster
+- name: storage — inspect whether Postgres is running
   ansible.builtin.command:
     argv: [systemctl, is-active, --quiet, postgresql]
   register: faas_storage_pg_active
@@ -81,13 +82,17 @@
   failed_when: false
   when: faas_storage_pg_databases is not skipped
 
-- name: storage — stop the fresh Postgres cluster for the move
-  ansible.builtin.systemd_service:
-    name: postgresql
-    state: stopped
-  when:
-    - faas_storage_pg_databases is not skipped
-    - faas_storage_pg_active.rc == 0
+# The storage role never stops Postgres: a running cluster, even a fresh one,
+# makes it refuse. The postgres role, later in the play, starts it again.
+- name: storage — refuse to move a running Postgres
+  ansible.builtin.assert:
+    that:
+      - faas_storage_pg_active.rc != 0
+    fail_msg: >-
+      Postgres is running on this host and its (fresh) cluster must move onto
+      the encrypted volume first. Stop the PostgreSQL service by hand and
+      converge again; the postgres role starts it. Nothing was changed.
+  when: faas_storage_pg_databases is not skipped
 
 - name: storage — copy each path onto the encrypted volume
   ansible.builtin.shell: |
@@ -167,13 +172,13 @@
   register: faas_storage_underlay
   changed_when: "'shredded' in faas_storage_underlay.stdout or 'sealed' in faas_storage_underlay.stdout"
 
-- name: storage — start the moved Postgres cluster again
-  ansible.builtin.systemd_service:
-    name: postgresql
-    state: started
-  when:
-    - faas_storage_pg_databases is not skipped
-    - faas_storage_pg_active.rc == 0
+- name: storage — create the faas unit drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
 
 - name: storage — keep faas daemons off unmounted host secrets
   ansible.builtin.copy:
@@ -187,6 +192,16 @@
     group: root
     mode: "0644"
   register: faas_storage_secrets_dropin
+
+- name: storage — create the Postgres drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [postgresql.service, "postgresql@.service"]
+  when: "'control_plane' in group_names"
 
 - name: storage — keep Postgres off an unmounted data directory
   ansible.builtin.copy:

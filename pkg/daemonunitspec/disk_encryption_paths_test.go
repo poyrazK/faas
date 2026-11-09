@@ -48,10 +48,10 @@ func TestEncryptedPathsNeverShredUnprovenDataAndFailClosed(t *testing.T) {
 	tasks := readRepoText(t, "deploy/ansible/roles/storage/tasks/encrypted_paths.yml")
 	order := []string{
 		"refuse to move a Postgres that holds data",
+		"refuse to move a running Postgres",
 		"copy each path onto the encrypted volume",
 		"bind each path from the encrypted volume",
 		"shred the plaintext left under each path and seal it",
-		"start the moved Postgres cluster again",
 	}
 	last := -1
 	for _, name := range order {
@@ -89,7 +89,9 @@ func TestEncryptedPathsNeverShredUnprovenDataAndFailClosed(t *testing.T) {
 			t.Errorf("encrypted_paths.yml lost %q", want)
 		}
 	}
-	if strings.Contains(tasks, "state: restarted") {
-		t.Error("encrypted_paths.yml must never restart a Postgres with data")
+	for _, never := range []string{"state: restarted", "state: stopped", "state: started"} {
+		if strings.Contains(tasks, never) {
+			t.Errorf("encrypted_paths.yml must never stop or start Postgres (%q)", never)
+		}
 	}
 }
