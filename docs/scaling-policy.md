@@ -108,9 +108,10 @@ Things to know:
   rather than its last value, so a dead pusher makes the app scale *down* on
   its other signals instead of holding the fleet at a frozen backlog. Push at
   least twice per window.
-- **Names are capped per app.** Pushing a new value for an existing metric
-  always works; only a *new* name can hit the cap. `DELETE` one to free a
-  slot.
+- **Names are capped per app:** 20 on Hobby, 50 on Pro, 200 on Scale (an
+  organization's app follows the organization's plan). Pushing a new value
+  for an existing metric always works; only a *new* name can hit the cap.
+  `DELETE` one to free a slot.
 - Paid plans only.
 
 When more than one target is declared, Gregale evaluates each independently
@@ -165,6 +166,10 @@ OTEL_EXPORTER_OTLP_METRICS_HEADERS="Authorization=Bearer $GREGALE_METRICS_KEY"
 OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta
 ```
 
+Delta temporality is recommended: when several instances of an app send the
+same counter, their deltas add up, whereas each instance's cumulative total
+would replace the others'.
+
 Both `http/protobuf` and `http/json` work, uncompressed or with gzip
 (`Content-Encoding: gzip`, the OpenTelemetry Collector's default); bodies
 are limited to 1 MiB, also once decompressed.
@@ -179,7 +184,7 @@ Each data point becomes a custom metric under the same per-app name cap:
   a restart, a restore from a snapshot or a new instance changes nothing. A
   cumulative counter is each process's own running total: it is stored as
   sent and only reads correctly from an app that runs a single instance. One
-  export cannot mix delta and cumulative points for a name. A delta export
+  export cannot mix delta and cumulative points for a series. A delta export
   that is retried after a server error can count twice.
 - **Counters stay in the history while they sit idle.** A gauge drops out of
   the history 5 minutes after its last value; a counter's total does not,
@@ -189,11 +194,37 @@ Each data point becomes a custom metric under the same per-app name cap:
 - **Timestamps** may be at most 5 minutes ahead of Gregale's clock. A value
   stamped before the one already stored is ignored, so a delayed export
   cannot move a gauge backwards.
+- **Up-down counters** (non-monotonic sums, such as queue depth or open
+  connections) are stored as gauges. A delta up-down counter moves the
+  stored value, which never goes below 0.
+- **Histograms** (explicit buckets) are stored as five metrics:
+  `<name>_count` and `<name>_sum` (counters) and `<name>_p50`, `<name>_p95`
+  and `<name>_p99` (gauges estimated from the buckets of the newest data
+  point, interpolating inside a bucket). With cumulative temporality the
+  percentiles describe everything since the process started; set
+  `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` to have them
+  describe each export interval. A histogram uses five of the app's names,
+  and its name may be at most 57 characters after normalising.
 - **Names are normalised:** lowercase, with `.`, `-` and `/` turned into `_`,
   so `orders.pending` becomes `orders_pending`.
-- **Rejected:** data points with attributes (each attribute value would be a
-  separate series), non-monotonic sums, histograms, summaries, negative
-  values, timestamps too far ahead, and new names beyond the cap. The response's
+- **Attributes become labels.** A data point may carry up to 3 attributes
+  (string, bool, int or double values of at most 128 bytes; keys normalised
+  like names). Each distinct label set is a *series* of the metric, for
+  example `queue_depth{queue=emails}` and `queue_depth{queue=billing}`. The
+  metric itself holds the aggregate of its series: their **sum** for
+  counters, the **maximum** of series refreshed in the last 5 minutes for
+  gauges. Alerts, release gates, scaling and the metric's history read that
+  aggregate. `GET /v1/apps/{slug}/custom-metrics` lists each series with its
+  `key`, and the history endpoint takes `?labels=<key>` to chart one series.
+  A metric holds at most 50 series, and an app at most 100 (Hobby), 500
+  (Pro) or 2,000 (Scale). Use attributes with few values (a queue, a route,
+  a status class), never a user or request id. Once a metric has labelled
+  series, an unlabelled point for it is stored as the series with no labels.
+- **Rejected:** more than 3 attributes, attributes that are arrays, maps or
+  bytes, exponential histograms, summaries, negative values (except a delta
+  up-down counter's decrease), histograms whose buckets do not add up,
+  unspecified temporality, timestamps too far ahead, new names beyond the
+  cap and new series beyond the series caps. The response's
   `partial_success` says how many points were rejected and why; the rest are
   stored.
 

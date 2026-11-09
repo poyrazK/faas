@@ -40,7 +40,7 @@ func (s *server) renderCustomMetricsDashboard(w http.ResponseWriter, r *http.Req
 
 func (s *server) dashboardCustomMetricsData(r *http.Request, acct state.Account, app state.App) (dashboard.CustomMetricsData, error) {
 	enabled := s.customMetricHistoryEnabled && s.capabilityEnabledFor("custom-metric-history", acct, app)
-	data := dashboard.CustomMetricsData{Enabled: enabled, AppSlug: app.Slug, MaxMetrics: api.MaxCustomMetricsPerApp}
+	data := dashboard.CustomMetricsData{Enabled: enabled, AppSlug: app.Slug, MaxMetrics: s.customMetricLimit(r.Context(), acct.Plan, app)}
 	if !data.Enabled {
 		return data, nil
 	}
@@ -52,7 +52,7 @@ func (s *server) dashboardCustomMetricsData(r *http.Request, acct state.Account,
 	freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
 	for _, row := range rows {
 		item := dashboard.CustomMetricRow{Name: row.Name, Value: row.Value, ObservedAt: row.ObservedAt.UTC(), Fresh: now.Sub(row.ObservedAt) <= freshness}
-		series := s.customMetricSeries(r.Context(), app.ID, row.Name, row.Kind, api.CustomMetricSeriesDefaultRange, now)
+		series := s.customMetricSeries(r.Context(), app.ID, row.Name, "", row.Kind, api.CustomMetricSeriesDefaultRange, now)
 		switch {
 		case series.Source != appmetrics.SourcePrometheus:
 			item.Note = "history unavailable right now"

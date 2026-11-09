@@ -248,7 +248,7 @@ var catalog = map[string]Render{
 	api.CodeBuildInfrastructure: {
 		Title: "Build could not run",
 		Hint:  "a platform problem stopped the build; your code did not cause it",
-		Why:   "the build failed in Gregale's build infrastructure (builder VM, build disk, or control plane) before your build steps could finish",
+		Why:   "the build failed in Gregale's build infrastructure (builder VM, build disk, or control plane), or a toolchain or package registry download the build tooling needs failed upstream, before your build steps could finish",
 		Fix:   "• deploy again; the build is retried from the start\n• if it keeps failing, contact support with the deployment id",
 	},
 	api.CodeAppLayerTooBig: {
