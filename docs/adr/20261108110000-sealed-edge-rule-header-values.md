@@ -70,7 +70,8 @@ seal domain; gatewayd-internal is that domain's only reader.
   any more is kept until then; values are small and bounded by the rule
   count.
 - Environment edge policies (environment-owned `headers` rules) do not accept
-  `secret` yet; their values stay as written.
+  `secret` yet; their values stay as written. (Superseded by the second
+  amendment of 2026-11-09.)
 - Trace output already redacted credential-like values; secret ops have no
   value to show.
 
@@ -124,3 +125,32 @@ masked in responses but readable at rest.
 - A version restored by a rollback holds sealed values once the backfill has
   run; before that it restores the value as written and the next pass seals
   it.
+
+## Amendment 2026-11-09 (2): environment edge policies
+
+**Problem.** Environment-owned `headers` rules refused `secret`, kept
+credential values as written, and the environment policy responses (GET, the
+environment state and its diffs, and trace input) returned them.
+
+**Decision.**
+
+1. **Policy values are sealed as the app's.** A policy belongs to one app and
+   environment, and gatewayd-internal turns it into that app's rules before it
+   opens sealed values, so a policy value is an `edge_rule_header_secrets` row
+   of the app. The write path, the fleet gate and the `secret_id` and
+   `redacted` round-trips are the application rule's. A redacted op takes the
+   stored value of the same header from the rule at the same position first,
+   then from the other stored rules.
+2. **Policy responses leave credential values out**, as rule responses do.
+3. **The background pass seals stored policies** written through the API:
+   through edge-rule convergence on the environment URL, replacing the policy
+   only if its `updated_at` is unchanged. It skips an environment with an
+   active Git source for the app. Those values come from the repository: the
+   GitOps observer compares stored policies field by field with the
+   definition, so a sealed value would read as drift and be rewritten on every
+   apply. A manual write the store refuses as Git-managed is left as well.
+
+**Consequences.** Credentials in Git-managed environment policies stay as
+written at rest, as they are in the repository; responses still leave them
+out. Referencing a secret from the environment definition instead of a
+literal is a separate change.

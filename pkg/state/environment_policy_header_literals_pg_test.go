@@ -23,7 +23,7 @@ func TestPgEnvironmentPolicyHeaderLiterals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "api", Type: state.AppTypeApp,
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-api", Type: state.AppTypeApp,
 		RAMMB: 512, MaxConcurrency: 1, Manifest: state.AppManifest{Port: 8080}})
 	if err != nil {
 		t.Fatal(err)
