@@ -14089,6 +14089,13 @@ type RequestAnalyticsMinute struct {
 	LatencyHistInt4 []int32
 }
 
+// Gateway analytics rollup batches apid applied; written only by apid, swept only by meterd (ADR-20261103113952 amendment 5).
+type RequestAnalyticsRollupBatch struct {
+	BatchID   pgtype.UUID
+	NodeID    string
+	AppliedAt pgtype.Timestamptz
+}
+
 // First minute held in request_analytics_minutes per app; written only by apid (ADR-20261103113952).
 type RequestAnalyticsRollupCoverage struct {
 	AppID             pgtype.UUID

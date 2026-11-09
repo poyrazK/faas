@@ -17674,6 +17674,15 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_rollup_batches",
+    "columns": [
+      "applied_at",
+      "batch_id",
+      "node_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_rollup_coverage",
     "columns": [
       "app_id",
