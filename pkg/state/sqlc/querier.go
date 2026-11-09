@@ -7056,6 +7056,12 @@ type Querier interface {
 	// Analytics backdates a rollup tier's coverage over a span with none
 	// (ADR-20261103113952 amendment 4).
 	RequestTelemetryExistsBetween(ctx context.Context, db DBTX, arg RequestTelemetryExistsBetweenParams) (bool, error)
+	// The regression detector's affected-request count: the requests each
+	// latency bucket represents, per route, over the whole window and in the
+	// regression view. A newest-rows drilldown capped at 10k rows across every
+	// route undercounted busy apps, so a real regression missed the 100-request
+	// floor. latency_ms is a bounded bucket, so the result is small per route.
+	RequestTelemetryLatencyWeightsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryLatencyWeightsByRouteParams) ([]RequestTelemetryLatencyWeightsByRouteRow, error)
 	// One immutable deployment only. Identity joins validate ownership, never
 	// infer a tenant from today's consumer link. Counts precede all output caps.
 	RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, arg RequestTelemetryRouteCustomersParams) ([]RequestTelemetryRouteCustomersRow, error)
@@ -7100,6 +7106,13 @@ type Querier interface {
 	// Public release selectors retain their configured access window. Private
 	// execution retention is resolved only through an owned operation/workload.
 	ResolvePublicProjectRelease(ctx context.Context, db DBTX, arg ResolvePublicProjectReleaseParams) (ResolvePublicProjectReleaseRow, error)
+	// An app's complete detector pass reconfirms every regression it still sees
+	// (UpsertRegressionObservation stamps last_detected_at = now()); whatever of
+	// that app it did not reconfirm is no longer regressed, after a fix or a
+	// rollback included. Resolving here, rather than 24 hours later through
+	// ResolveStaleRegressionObservations, keeps the banner, status and the
+	// resolved webhook current. $2 is the pass start (with clock slack).
+	ResolveRegressionObservationsNotSeenSince(ctx context.Context, db DBTX, arg ResolveRegressionObservationsNotSeenSinceParams) ([]DebugRegressionObservation, error)
 	ResolveRetainedProjectRelease(ctx context.Context, db DBTX, arg ResolveRetainedProjectReleaseParams) (ResolveRetainedProjectReleaseRow, error)
 	// A detector pass that no longer sees a regression resolves the previous
 	// observation. Returning rows lets apid publish one account-scoped event per

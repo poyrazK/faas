@@ -2,12 +2,14 @@ package main_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -119,6 +121,8 @@ func TestCmdDebugBundleWritesRedactedInvestigation(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.DebugRequestEvidenceResponse{
 				Request:     api.DebugTelemetryRequestItem{ID: "request-1", Route: "/checkout", Status: 502},
 				Explanation: api.DebugEvidenceExplanation{Headline: "slow request"},
+				Logs:        []api.DebugEvidenceLogLine{{OccurredAt: "2026-11-09T10:00:00Z", Level: "error", Message: "charge failed for Jane Roe, 12 Elm St"}},
+				Spans:       []api.DebugTelemetrySpan{{SpanID: "s1", Name: "SELECT orders", DBStatement: "SELECT * FROM orders WHERE note = ?"}},
 			})
 		case r.URL.Path == "/v1/apps/my-app/debug/regressions":
 			_ = json.NewEncoder(w).Encode(api.DebugRegressionsResponse{
@@ -169,6 +173,14 @@ func TestCmdDebugBundleWritesRedactedInvestigation(t *testing.T) {
 	if strings.Contains(string(b), "request_body") == false {
 		t.Fatalf("bundle should document excluded request_body field: %s", b)
 	}
+	// The profile excludes raw logs and SQL: log text and span statements are
+	// dropped, their timing and levels kept.
+	if strings.Contains(string(b), "Jane Roe") || strings.Contains(string(b), "FROM orders") {
+		t.Fatalf("bundle kept log text or a statement: %s", b)
+	}
+	if len(bundle.Evidence.Logs) != 1 || bundle.Evidence.Logs[0].Level != "error" || len(bundle.Evidence.Spans) != 1 || bundle.Evidence.Spans[0].Name != "SELECT orders" {
+		t.Fatalf("bundle evidence = %+v, want log timing and spans kept", bundle.Evidence)
+	}
 	if mode := fileMode(t, outPath); mode.Perm() != 0o600 {
 		t.Fatalf("bundle mode = %o, want 600", mode.Perm())
 	}
@@ -184,4 +196,30 @@ func fileMode(t *testing.T, path string) os.FileMode {
 		t.Fatal(err)
 	}
 	return info.Mode()
+}
+
+// A watch whose polls fail backs off instead of hammering the API at
+// --interval, and never polls sooner than a 429's Retry-After.
+func TestDebugWatchNextWaitBacksOff(t *testing.T) {
+	retryAfter := int64(90)
+	limited := &api.APIError{Problem: api.Problem{Status: 429, RetryAfterSeconds: &retryAfter}}
+	plain := errors.New("connection refused")
+	for _, tc := range []struct {
+		name     string
+		interval time.Duration
+		failures int
+		err      error
+		want     time.Duration
+	}{
+		{"healthy", 2 * time.Second, 0, nil, 2 * time.Second},
+		{"first failure doubles", 2 * time.Second, 1, plain, 4 * time.Second},
+		{"third failure", 2 * time.Second, 3, plain, 16 * time.Second},
+		{"capped at five minutes", 2 * time.Second, 20, plain, 5 * time.Minute},
+		{"long interval is its own cap", 10 * time.Minute, 3, plain, 10 * time.Minute},
+		{"retry-after wins", 2 * time.Second, 1, limited, 90 * time.Second},
+	} {
+		if got := main.DebugWatchNextWait(tc.interval, tc.failures, tc.err); got != tc.want {
+			t.Errorf("%s: got %s, want %s", tc.name, got, tc.want)
+		}
+	}
 }

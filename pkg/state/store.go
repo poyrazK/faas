@@ -6688,6 +6688,11 @@ type Store interface {
 	// ListRequestTelemetryByApp.
 	RequestTelemetryByDeployment(ctx context.Context, arg sqlc.RequestTelemetryByDeploymentParams) ([]sqlc.RequestTelemetryByDeploymentRow, error)
 
+	// RequestTelemetryLatencyWeightsByRoute backs the regression detector's
+	// affected-request count: per route and latency bucket, the requests the
+	// deployment served in the window (regression view), with no row cap.
+	RequestTelemetryLatencyWeightsByRoute(ctx context.Context, arg sqlc.RequestTelemetryLatencyWeightsByRouteParams) ([]sqlc.RequestTelemetryLatencyWeightsByRouteRow, error)
+
 	// RequestTelemetryBaselineP95ByRoute backs the regression
 	// detector's per-route p95 baseline lookup. PR-B's cron calls
 	// this per-deployment, then composes the result with
@@ -6733,6 +6738,9 @@ type Store interface {
 	ListActiveRegressionsByApp(ctx context.Context, arg sqlc.ListActiveRegressionsByAppParams) ([]sqlc.ListActiveRegressionsByAppRow, error)
 	ApplyRegressionAction(ctx context.Context, arg sqlc.ApplyRegressionActionParams) (sqlc.DebugRegressionObservation, error)
 	ResolveStaleRegressionObservations(ctx context.Context, arg pgtype.Interval) ([]sqlc.DebugRegressionObservation, error)
+	// ResolveRegressionObservationsNotSeenSince resolves an app's
+	// observations its complete detector pass did not reconfirm.
+	ResolveRegressionObservationsNotSeenSince(ctx context.Context, arg sqlc.ResolveRegressionObservationsNotSeenSinceParams) ([]sqlc.DebugRegressionObservation, error)
 
 	// ListDeploymentsForCompare backs the dashboard compare panel's
 	// two <select> dropdowns. Returns distinct deployment_ids that
