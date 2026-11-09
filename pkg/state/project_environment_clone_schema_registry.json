@@ -1282,6 +1282,19 @@
     "kind": "operational"
   },
   {
+    "table": "app_custom_metric_series",
+    "columns": [
+      "app_id",
+      "kind",
+      "labels",
+      "name",
+      "observed_at",
+      "series_key",
+      "value"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_custom_metrics",
     "columns": [
       "app_id",

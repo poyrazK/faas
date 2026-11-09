@@ -3,6 +3,7 @@ package apidserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -79,8 +81,8 @@ func TestPostOTLPMetrics_ReportsPartialSuccessInJSON(t *testing.T) {
 	e := customHistoryEnv(t)
 	createApp(t, e, "shop")
 	metrics := []*metricspb.Metric{otlpGauge("ok_metric", 1), otlpGauge("negative", -5)}
-	for i := 0; i < api.MaxCustomMetricsPerApp; i++ {
-		metrics = append(metrics, otlpGauge("extra_"+string(rune('a'+i)), 1))
+	for i := 0; i < api.PlanPro.CustomMetricsPerApp(); i++ {
+		metrics = append(metrics, otlpGauge(fmt.Sprintf("extra_%03d", i), 1))
 	}
 	body, err := protojson.Marshal(otlpExport(metrics...))
 	if err != nil {
@@ -131,8 +133,10 @@ func TestPostOTLPMetrics_AdmitsNewNamesOnlyWithinTheLimit(t *testing.T) {
 	if rec.Code != http.StatusOK || proto.Unmarshal(rec.Body.Bytes(), &resp) != nil {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
-	if got := resp.GetPartialSuccess().GetRejectedDataPoints(); got != 99 {
-		t.Fatalf("rejected = %d, want the 99 new names beyond the one free slot", got)
+	limit := api.PlanPro.CustomMetricsPerApp()
+	free := limit - len(known)
+	if got := resp.GetPartialSuccess().GetRejectedDataPoints(); got != int64(100-free) {
+		t.Fatalf("rejected = %d, want the %d new names beyond the %d free slots", got, 100-free, free)
 	}
 	rows, err := e.store.ListCustomMetrics(context.Background(), app.ID)
 	if err != nil {
@@ -142,11 +146,112 @@ func TestPostOTLPMetrics_AdmitsNewNamesOnlyWithinTheLimit(t *testing.T) {
 	for _, row := range rows {
 		values[row.Name] = row.Value
 	}
-	if len(values) != api.MaxCustomMetricsPerApp || values["known_a"] != 9 {
-		t.Fatalf("stored = %v, want the known names (known_a updated) and one new name", values)
+	if len(values) != limit || values["known_a"] != 9 {
+		t.Fatalf("stored = %v, want the known names (known_a updated) and new names up to the plan's %d", values, limit)
 	}
 	if _, ok := values["new_00"]; !ok {
 		t.Fatalf("stored = %v, want the first new name in name order", values)
+	}
+}
+
+// adr: 20261108160000 — delta counters accumulate across exports and a
+// histogram is stored as its five derived series.
+func TestPostOTLPMetrics_DeltasAccumulateAndHistogramsDerive(t *testing.T) {
+	e := customHistoryEnv(t)
+	app := createApp(t, e, "shop")
+	delta := func(v int64) []byte {
+		body, err := proto.Marshal(otlpExport(&metricspb.Metric{Name: "jobs.done", Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
+			IsMonotonic: true, AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA,
+			DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: uint64(time.Now().UnixNano()), Value: &metricspb.NumberDataPoint_AsInt{AsInt: v}}},
+		}}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	for _, v := range []int64{3, 4} {
+		if rec := postOTLP(t, e, "application/x-protobuf", delta(v)); rec.Code != http.StatusOK {
+			t.Fatalf("delta export: %d %s", rec.Code, rec.Body)
+		}
+	}
+	sumValue := 30.0
+	histogram, err := proto.Marshal(otlpExport(&metricspb.Metric{Name: "latency", Data: &metricspb.Metric_Histogram{Histogram: &metricspb.Histogram{
+		AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+		DataPoints: []*metricspb.HistogramDataPoint{{TimeUnixNano: uint64(time.Now().UnixNano()), Count: 4, Sum: &sumValue,
+			ExplicitBounds: []float64{10}, BucketCounts: []uint64{4, 0}}},
+	}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := postOTLP(t, e, "application/x-protobuf", histogram); rec.Code != http.StatusOK {
+		t.Fatalf("histogram export: %d %s", rec.Code, rec.Body)
+	}
+	rows, err := e.store.ListCustomMetrics(context.Background(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]state.CustomMetric{}
+	for _, row := range rows {
+		got[row.Name] = row
+	}
+	if r := got["jobs_done"]; r.Value != 7 || r.Kind != state.CustomMetricKindCounter {
+		t.Fatalf("jobs_done = %+v, want counter 7 accumulated from deltas 3 and 4", r)
+	}
+	for _, name := range []string{"latency_count", "latency_sum", "latency_p50", "latency_p95", "latency_p99"} {
+		if _, ok := got[name]; !ok {
+			t.Fatalf("histogram series %s missing; stored %v", name, got)
+		}
+	}
+	if got["latency_count"].Value != 4 || got["latency_sum"].Value != 30 || got["latency_p50"].Value != 5 {
+		t.Fatalf("histogram series = %+v", got)
+	}
+}
+
+// adr: 20261108160000 — slice C: labelled points are stored as series, the
+// metric row carries their aggregate, a later unlabelled point joins as the
+// ” series, and the list shows the series.
+func TestPostOTLPMetrics_LabelledSeriesAggregate(t *testing.T) {
+	e := customHistoryEnv(t)
+	app := createApp(t, e, "shop")
+	point := func(v float64, queue string) *metricspb.NumberDataPoint {
+		dp := &metricspb.NumberDataPoint{TimeUnixNano: uint64(time.Now().UnixNano()), Value: &metricspb.NumberDataPoint_AsDouble{AsDouble: v}}
+		if queue != "" {
+			dp.Attributes = []*commonpb.KeyValue{{Key: "queue", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: queue}}}}
+		}
+		return dp
+	}
+	send := func(points ...*metricspb.NumberDataPoint) {
+		t.Helper()
+		body, err := proto.Marshal(otlpExport(&metricspb.Metric{Name: "queue.depth", Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: points}}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := postOTLP(t, e, "application/x-protobuf", body)
+		var resp colmetricspb.ExportMetricsServiceResponse
+		if rec.Code != http.StatusOK || proto.Unmarshal(rec.Body.Bytes(), &resp) != nil || resp.GetPartialSuccess().GetRejectedDataPoints() != 0 {
+			t.Fatalf("export: %d %s %v", rec.Code, rec.Body, &resp)
+		}
+	}
+	send(point(4, "emails"), point(9, "billing"))
+	send(point(2, ""))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/apps/shop/custom-metrics", nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	e.h.ServeHTTP(rec, req)
+	var list api.CustomMetricListResponse
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
+	}
+	if len(list.Metrics) != 1 || list.Metrics[0].Value != 9 || len(list.Metrics[0].Series) != 3 || list.MaxSeries != api.PlanPro.CustomMetricSeriesPerApp() {
+		t.Fatalf("list = %+v", list)
+	}
+	if s := list.Metrics[0].Series[1]; s.Key != "queue=billing" || s.Labels["queue"] != "billing" || s.Value != 9 {
+		t.Fatalf("series[1] = %+v", s)
+	}
+	rows, err := e.store.ListCustomMetrics(context.Background(), app.ID)
+	if err != nil || len(rows) != 1 || !rows[0].Labelled {
+		t.Fatalf("rows = %+v, %v", rows, err)
 	}
 }
 
