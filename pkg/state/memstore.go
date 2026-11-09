@@ -9152,6 +9152,9 @@ func (m *MemStore) ListCanaryInFlight(_ context.Context) ([]Deployment, error) {
 		if rolloutState != "pending" && rolloutState != "rolling_out" {
 			continue
 		}
+		if app, ok := m.apps[d.AppID]; ok && (app.Status == AppDeleted || app.DeletedAt != nil) {
+			continue
+		}
 		d.RolloutState = rolloutState
 		out = append(out, d)
 	}
