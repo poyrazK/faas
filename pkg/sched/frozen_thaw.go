@@ -315,11 +315,10 @@ func (e *Engine) abandonThawPublication(ctx context.Context, frozen state.Instan
 // frozen row is outside the node's bookings, so without it a thaw put the
 // VM's plan RAM back past the node's cap unchecked.
 func (e *Engine) thawAdmissionContext(ctx context.Context, nodeID string, vcpu, cpuMillicores int) context.Context {
-	discountVCPU, discountCPU := e.ledger.CPUDiscount(nodeID)
 	return state.WithThawAdmission(ctx, state.NodeAdmission{
 		NodeID: nodeID, ReservationPercent: e.ledger.ReservationPercent(nodeID),
 		ReservationDiscountMB: e.ledger.ReservationDiscountMB(nodeID),
-		Compute:               state.NodeCompute{VCPU: vcpu, CPUMillicores: cpuMillicores, QuietVCPU: discountVCPU, QuietCPUMillicores: discountCPU},
+		Compute:               e.admissionCompute(nodeID, vcpu, cpuMillicores),
 	})
 }
 

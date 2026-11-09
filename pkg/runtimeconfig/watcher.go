@@ -62,6 +62,11 @@ const (
 	// there. Defaults and bounds are in pkg/api/limits.go.
 	KeySnapshotRefresh            = "snapshot_refresh"
 	KeySnapshotRefreshWindowHours = "snapshot_refresh_window_hours"
+
+	// KeyCPUAdmission is schedd's CPU admission: enforce refuses work for
+	// the vCPU and CPU budgets, observe admits on memory alone and counts
+	// what those gates would have refused (ADR-20261109172421).
+	KeyCPUAdmission = "cpu_admission"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.
