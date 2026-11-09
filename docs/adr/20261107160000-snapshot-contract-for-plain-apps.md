@@ -86,6 +86,20 @@ generator (Go `math/rand` and `math/rand/v2`, Java `Random`, `SecureRandom`
 and `Math.random`) replayed. Whether to extend the reseed barrier to those
 runtimes is decided from that evidence, not here.
 
+Measured 2026-11-09 on the native KVM test host (Firecracker, kernel 6.1,
+Go 1.26 probe on Alpine 3.20, Temurin JDK 21):
+
+| Generator | Two restores of one snapshot |
+| --- | --- |
+| Go `crypto/rand` | differed (asserted) |
+| Go `math/rand`, `math/rand/v2` | replayed |
+| Java `SecureRandom` (default `NativePRNG`) | differed |
+| Java `java.util.Random`, `Math.random` | replayed |
+
+Java's default `SecureRandom` on Linux mixes `/dev/urandom` into every draw,
+so it does not replay; an explicitly seeded or `SHA1PRNG` instance has no such
+mixing and is still the app's to reseed. The docs list what replayed.
+
 ## Consequences
 
 - The secret docs no longer ask plain apps for lifecycle work.

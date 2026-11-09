@@ -134,8 +134,12 @@ from the snapshot.
 
 Reseed these yourself, or avoid keeping them across a snapshot:
 
-- generators in other runtimes, such as Go `math/rand`, Java `Random` and
-  `SecureRandom`, Ruby `Random`, and PHP `mt_rand`;
+- generators in other runtimes, such as Go `math/rand` and `math/rand/v2`,
+  Java `Random` and `Math.random`, Ruby `Random`, and PHP `mt_rand`. Two
+  restores of one snapshot return the same Go and Java values (measured,
+  ADR-20261107160000). Go `crypto/rand` and Java's default `SecureRandom`
+  read the kernel on each draw and do not replay; a `SecureRandom` you seed
+  yourself or create as `SHA1PRNG` does;
 - generator objects your code created before the snapshot, such as Python
   `random.Random()` or `numpy.random.default_rng()`;
 - values your code generated before the snapshot, such as a secret, nonce or
