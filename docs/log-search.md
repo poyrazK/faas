@@ -35,6 +35,20 @@ Filters combine: every event shown matches all of them.
 | `--request ID`, `--trace ID` | one request or one distributed trace |
 | `--since`, `--until` | the window: `15m`, `6h`, `3d` or RFC 3339; default the last hour |
 
+## HTTP statuses
+
+An `http` event's status is what Gregale recorded for the request:
+
+- `499` means the client went away before the app answered, for example a
+  browser that navigated away or a check that timed out. It is a client error,
+  not a success and not a server error.
+- When Gregale itself ends a request, such as a `504` when the request budget
+  runs out, the event keeps that status and its error code. The response the
+  client received says `503`, because Cloudflare and Workers pass a platform
+  `503` through unchanged; match it by the `X-Faas-Request-Id` header.
+- A route the app has never answered on this node is grouped as `other`, so
+  arbitrary paths cannot create unlimited routes.
+
 ## Runtime lines
 
 Your app's output lines that are warnings or errors are indexed as `runtime`
