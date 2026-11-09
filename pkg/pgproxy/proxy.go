@@ -51,10 +51,19 @@ type Credentials interface {
 	Forget(databaseID, role string)
 }
 
+// Backend is where a woken database runs: its node's vmmd target and the
+// node's id. The dial accepts only that node's vmmd leaf, because the
+// target alone is a row the node registry lets nodes write
+// (ADR-20261108124106).
+type Backend struct {
+	Target string
+	Node   string
+}
+
 // Waker wakes a database through schedd and records activity on it.
 type Waker interface {
-	// Wake returns the vmmd target of the node running the database.
-	Wake(ctx context.Context, databaseID string) (string, error)
+	// Wake returns the node running the database.
+	Wake(ctx context.Context, databaseID string) (Backend, error)
 	// Touch records activity and the bytes sent to the database's clients
 	// since the last touch (the egress meter). The bytes are reported at
 	// most once: a failed touch drops them.
@@ -63,7 +72,7 @@ type Waker interface {
 
 // SessionDialer opens a byte stream to a database VM's data port.
 type SessionDialer interface {
-	Dial(ctx context.Context, target, databaseID string) (io.ReadWriteCloser, error)
+	Dial(ctx context.Context, backend Backend, databaseID string) (io.ReadWriteCloser, error)
 }
 
 // Config tunes the proxy.

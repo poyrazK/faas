@@ -374,7 +374,7 @@ func cmdEventsRecoveryHealth(args []string) int {
 		}
 		for _, job := range execution.Jobs {
 			if job.Attention != nil {
-				writeAutomationRecoveryAttention(osStdout, positional[0], job.JobID, *job.Attention)
+				writeStoredWorkflowRecoveryAttention(osStdout, positional[0], job.JobID, *job.Attention)
 			}
 			_, _ = fmt.Fprintf(osStdout, "%s | %s | waiting %.0fs | queued/running/retrying: %d/%d/%d | unknown: %d | missing saved results: %d | retain until: %s | notification pending: %t\n", oneLine(job.JobID), oneLine(job.Status), job.WaitAgeSeconds, job.Execution.Queued, job.Execution.Running, job.Execution.Retrying, job.UnknownCount, job.UnresolvedCount, job.RetainUntil.Format(time.RFC3339), job.NotificationPending)
 		}

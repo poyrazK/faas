@@ -83,6 +83,11 @@ func (h dashboardsHost) Sources() dashboards.Sources { return dashboardSources(h
 
 func (h dashboardsHost) Logger() *slog.Logger { return h.s.log }
 
+// Audit records a dashboard change (ADR-20261031144636).
+func (h dashboardsHost) Audit(ctx context.Context, kind string, accountID string, data map[string]any) {
+	h.s.audit.Emit(ctx, kind, &accountID, data)
+}
+
 // dashboardSources reads widget signals through the code behind the per-app
 // endpoints, with the same plan gates.
 type dashboardSources struct{ s *server }

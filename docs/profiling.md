@@ -575,6 +575,14 @@ Each instrumented process reports its live heap once per window.
 the last collection window so snapshots are not added together. Heap profiles
 have no route attribution or deployment comparison.
 
+For Python, continuous heap keeps `tracemalloc` running for as long as heap is
+in `kinds`, not only during a window: allocation-heavy code runs slower and
+the tracer holds memory for every live traced block for the life of the
+process. Continuous collection records 8 frames per allocation (captures you
+start record 32) to keep that cost down, and the low-memory stop above still
+applies. Enable heap continuously for a Python app only while you are chasing
+a leak; a one-off capture costs nothing outside its window.
+
 ## Operator setup
 
 Run a private Pyroscope with tenant enforcement enabled. The integration is

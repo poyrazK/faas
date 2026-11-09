@@ -130,11 +130,30 @@ func (t *translation) reject(n int, reason string) {
 	}
 }
 
-func (t *translation) at(ts uint64) time.Time {
-	if ts > 0 {
-		return time.Unix(0, int64(ts)).UTC()
+// at is a data point's time: now when unset. A time out of range or further
+// ahead than CustomMetricMaxFutureSkewSeconds is refused (ok false): it would
+// keep a stopped pusher's value fresh until then (ADR-20261031144636).
+func (t *translation) at(ts uint64) (time.Time, bool) {
+	if ts == 0 {
+		return t.now, true
 	}
-	return t.now
+	if ts > math.MaxInt64 {
+		return time.Time{}, false
+	}
+	at := time.Unix(0, int64(ts)).UTC()
+	if at.After(t.now.Add(api.CustomMetricMaxFutureSkewSeconds * time.Second)) {
+		return time.Time{}, false
+	}
+	return at, true
+}
+
+// pointAt is at, rejecting the point when its time is refused.
+func (t *translation) pointAt(original string, ts uint64) (time.Time, bool) {
+	at, ok := t.at(ts)
+	if !ok {
+		t.reject(1, fmt.Sprintf("metric %q: timestamps must not be more than %ds in the future", original, api.CustomMetricMaxFutureSkewSeconds))
+	}
+	return at, ok
 }
 
 // set records a value that replaces the stored one; the newest wins.
@@ -159,8 +178,13 @@ func (t *translation) add(s series, kind string, value float64, at time.Time) {
 	t.points[s.id()] = Point{Name: s.name, Kind: kind, Value: value, ObservedAt: at, Delta: true, Labels: s.labels, SeriesKey: s.key}
 }
 
-// record sets or adds by temporality.
+// record sets or adds by temporality. One export cannot mix delta and
+// cumulative points for a series: the result would depend on their order.
 func (t *translation) record(s series, kind string, value float64, at time.Time, delta bool) {
+	if prev, ok := t.points[s.id()]; ok && prev.Delta != delta {
+		t.reject(1, fmt.Sprintf("metric %q: one export cannot mix delta and cumulative points", s.name))
+		return
+	}
 	if delta {
 		t.add(s, kind, value, at)
 	} else {
@@ -188,10 +212,18 @@ func (t *translation) metric(m *metricspb.Metric) {
 		if !data.Sum.GetIsMonotonic() {
 			kind = state.CustomMetricKindGauge
 		}
-		delta := data.Sum.GetAggregationTemporality() == metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA
+		delta, ok := temporality(data.Sum.GetAggregationTemporality())
+		if !ok {
+			t.reject(len(data.Sum.GetDataPoints()), fmt.Sprintf("metric %q: sums need delta or cumulative temporality", m.GetName()))
+			return
+		}
 		t.numbers(m.GetName(), name, data.Sum.GetDataPoints(), kind, delta)
 	case *metricspb.Metric_Histogram:
-		delta := data.Histogram.GetAggregationTemporality() == metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA
+		delta, ok := temporality(data.Histogram.GetAggregationTemporality())
+		if !ok {
+			t.reject(len(data.Histogram.GetDataPoints()), fmt.Sprintf("metric %q: histograms need delta or cumulative temporality", m.GetName()))
+			return
+		}
 		t.histogram(m.GetName(), name, data.Histogram.GetDataPoints(), delta)
 	default:
 		t.reject(dataPointCount(m), fmt.Sprintf("metric %q: exponential histograms and summaries are not supported", m.GetName()))
@@ -219,7 +251,11 @@ func (t *translation) numbers(original, name string, points []*metricspb.NumberD
 			t.reject(1, fmt.Sprintf("metric %q: values must be finite and non-negative", original))
 			continue
 		}
-		t.record(s, kind, value, t.at(dp.GetTimeUnixNano()), delta)
+		at, ok := t.pointAt(original, dp.GetTimeUnixNano())
+		if !ok {
+			continue
+		}
+		t.record(s, kind, value, at, delta)
 	}
 }
 
@@ -244,7 +280,10 @@ func (t *translation) histogram(original, base string, points []*metricspb.Histo
 			t.reject(1, fmt.Sprintf("metric %q: histogram buckets, bounds and sum must be consistent, finite and non-negative", original))
 			continue
 		}
-		at := t.at(dp.GetTimeUnixNano())
+		at, ok := t.pointAt(original, dp.GetTimeUnixNano())
+		if !ok {
+			continue
+		}
 		t.record(s.suffixed(HistogramCountSuffix), state.CustomMetricKindCounter, float64(dp.GetCount()), at, delta)
 		if dp.Sum != nil {
 			t.record(s.suffixed(HistogramSumSuffix), state.CustomMetricKindCounter, dp.GetSum(), at, delta)
@@ -262,7 +301,7 @@ func (t *translation) histogram(original, base string, points []*metricspb.Histo
 		if n.dp.GetCount() == 0 {
 			continue
 		}
-		at := t.at(n.dp.GetTimeUnixNano())
+		at, _ := t.at(n.dp.GetTimeUnixNano()) // already accepted above
 		for _, q := range HistogramQuantiles {
 			t.set(n.s.suffixed(q.Suffix), state.CustomMetricKindGauge, HistogramQuantile(q.Q, n.dp), at)
 		}
@@ -344,6 +383,18 @@ func HistogramQuantile(q float64, dp *metricspb.HistogramDataPoint) float64 {
 		return lower + (upper-lower)*(rank-seen)/float64(c)
 	}
 	return bounds[len(bounds)-1]
+}
+
+// temporality reports whether points are deltas; ok is false when the
+// temporality is unspecified, which says neither.
+func temporality(t metricspb.AggregationTemporality) (delta, ok bool) {
+	switch t {
+	case metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA:
+		return true, true
+	case metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE:
+		return false, true
+	}
+	return false, false
 }
 
 // NormalizeName maps an OTLP metric name (conventionally dotted, e.g.

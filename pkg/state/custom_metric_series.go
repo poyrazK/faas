@@ -208,13 +208,15 @@ func (s *PgStore) ListCustomMetricSeries(ctx context.Context, appID string) ([]C
 	return out, nil
 }
 
-// ListFreshCustomMetricSeries returns at most limit series observed at or
-// after since across all apps, ordered by app, name and key.
+// ListFreshCustomMetricSeries returns at most limit series across all apps,
+// ordered by app, name and key: gauge series observed at or after since, and
+// every counter series, whose total stays true while idle (as
+// ListFreshCustomMetrics, ADR-20261104142830).
 func (s *PgStore) ListFreshCustomMetricSeries(ctx context.Context, since time.Time, limit int) ([]CustomMetricSeriesSample, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT app_id::text, name, series_key, value
 		  FROM app_custom_metric_series
-		 WHERE observed_at >= $1::timestamptz
+		 WHERE observed_at >= $1::timestamptz OR kind = 'counter'
 		 ORDER BY app_id, name, series_key
 		 LIMIT $2::int
 	`, since, limit)
@@ -351,7 +353,7 @@ func (m *MemStore) ListFreshCustomMetricSeries(_ context.Context, since time.Tim
 	for appID, byName := range m.customMetricSeries {
 		for _, rows := range byName {
 			for _, row := range rows {
-				if !row.ObservedAt.Before(since) {
+				if !row.ObservedAt.Before(since) || row.Kind == CustomMetricKindCounter {
 					out = append(out, CustomMetricSeriesSample{AppID: appID, Name: row.Name, SeriesKey: row.SeriesKey, Value: row.Value})
 				}
 			}

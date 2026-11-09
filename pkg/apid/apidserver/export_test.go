@@ -1148,8 +1148,8 @@ func (r *server) ApplySourceRefManifest(p0 context.Context, p1 state.Account, p2
 func (r *server) AssessProfileDeploymentCheck(p0 context.Context, p1 state.ProfileDeploymentCheckWork) (api.ProfileRegressionAssessment, bool) {
 	return r.assessProfileDeploymentCheck(p0, p1)
 }
-func (r *server) AuditAutomationMutation(p0 *http.Request, p1 state.Account, p2 string, p3 string, p4 state.AutomationMutation, p5 state.Automation) {
-	r.auditAutomationMutation(p0, p1, p2, p3, p4, p5)
+func (r *server) AuditStoredWorkflowMutation(p0 *http.Request, p1 state.Account, p2 string, p3 string, p4 state.StoredWorkflowMutation, p5 state.StoredWorkflow) {
+	r.auditStoredWorkflowMutation(p0, p1, p2, p3, p4, p5)
 }
 func (r *server) AutoAdvanceFeatureFlagRollout(p0 context.Context, p1 state.FeatureFlagAutoRolloutCandidate, p2 time.Time) error {
 	return r.autoAdvanceFeatureFlagRollout(p0, p1, p2)
@@ -2055,6 +2055,14 @@ func (r *server) AdvanceSecurityMailClockForTest(d time.Duration) {
 	r.securityMail.mu.Lock()
 	defer r.securityMail.mu.Unlock()
 	r.securityMail.now = func() time.Time { return time.Now().Add(d) }
+	r.ageSharedMailSlots(d)
+}
+
+// ageSharedMailSlots ages the database mail counters of an in-memory store.
+func (r *server) ageSharedMailSlots(d time.Duration) {
+	if m, ok := r.store.(interface{ AgeAccountMailSlotsForTest(time.Duration) }); ok {
+		m.AgeAccountMailSlotsForTest(d)
+	}
 }
 
 // SealOAuthCodeState mints a Connect GitHub state for accountID (H64).
@@ -2188,7 +2196,10 @@ func (r *server) SignInIsNew(ctx context.Context, accountID, ip, ua string) bool
 }
 
 // ResetSecurityMailLimiter forgets every throttled security-mail send.
-func (r *server) ResetSecurityMailLimiter() { r.securityMail = newSecurityMailLimiter() }
+func (r *server) ResetSecurityMailLimiter() {
+	r.securityMail = newSecurityMailLimiter()
+	r.ageSharedMailSlots(-1)
+}
 
 // SetVerificationClock moves the clock the email-verification grace reads.
 func (r *server) SetVerificationClock(now func() time.Time) { r.verificationClock = now }
@@ -2210,6 +2221,12 @@ const OAuthLinkCookie = oauthLinkCookie
 func (r *server) IssueDashboardSession(req *http.Request, accountID string, mfaPending bool) (string, error) {
 	cookie, _, err := r.issueDashboardSession(req.Context(), req, accountID, mfaPending, "password")
 	return cookie, err
+}
+
+// MoveBillingEmails runs the billing email move of a confirmed email change
+// and returns the subjects it could not move.
+func (r *server) MoveBillingEmails(ctx context.Context, change state.EmailChange) []string {
+	return r.moveBillingEmails(ctx, change)
 }
 
 // MFATrustCookie is the remembered-browser cookie name on a plain-HTTP request.

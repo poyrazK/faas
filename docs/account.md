@@ -39,7 +39,10 @@ operation still enforces its own authorization and admission checks.
   authenticator code when two-factor authentication is on. The link mailed to
   the new address is valid for 1 hour; confirming signs out every browser,
   cancels any password-reset link sent to the previous address, and your
-  previous address gets a notice. API keys keep working. Wrong passwords count
+  previous address gets a notice. API keys keep working. Your billing email
+  moves too, and so does the billing email of any organization that billed to
+  your previous address; if the billing provider refuses, you get an email
+  saying which one to update. Wrong passwords count
   against the same per-IP limit as sign-in.
 - **Password:** `gregale account password update` opens the form.
 - **Sign-in methods:** `gregale account provider list` shows whether a password

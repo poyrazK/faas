@@ -176,11 +176,24 @@ are limited to 1 MiB, also once decompressed.
 Each data point becomes a custom metric under the same per-app name cap:
 
 - **Gauges** are stored like a pushed value and can drive scaling.
-- **Monotonic sums** (counters) are stored as counters. Cumulative ones
-  replace the stored total; delta ones are added to it, so either
-  temporality works. Their history shows a per-second rate over 5 minutes,
-  and they never drive scaling, because a total that only grows would mean
-  scaling out for ever.
+- **Monotonic sums** (counters) are stored as counters. Their history shows
+  a per-second rate over 5 minutes, and they never drive scaling, because a
+  total that only grows would mean scaling out for ever.
+- **Send counters with delta temporality.** Each delta is added to a total
+  Gregale keeps, so every instance of your app adds to the same counter, and
+  a restart, a restore from a snapshot or a new instance changes nothing. A
+  cumulative counter is each process's own running total: it is stored as
+  sent and only reads correctly from an app that runs a single instance. One
+  export cannot mix delta and cumulative points for a series. A delta export
+  that is retried after a server error can count twice.
+- **Counters stay in the history while they sit idle.** A gauge drops out of
+  the history 5 minutes after its last value; a counter's total does not,
+  so an increment after a quiet hour still shows in its rate and can fire
+  an alert. A rate needs a value before the increase: add `0` to a counter
+  when the app starts, or its very first increment only starts the series.
+- **Timestamps** may be at most 5 minutes ahead of Gregale's clock. A value
+  stamped before the one already stored is ignored, so a delayed export
+  cannot move a gauge backwards.
 - **Up-down counters** (non-monotonic sums, such as queue depth or open
   connections) are stored as gauges. A delta up-down counter moves the
   stored value, which never goes below 0.
@@ -209,8 +222,9 @@ Each data point becomes a custom metric under the same per-app name cap:
   series, an unlabelled point for it is stored as the series with no labels.
 - **Rejected:** more than 3 attributes, attributes that are arrays, maps or
   bytes, exponential histograms, summaries, negative values (except a delta
-  up-down counter's decrease), histograms whose buckets do not add up, new
-  names beyond the cap and new series beyond the series caps. The response's
+  up-down counter's decrease), histograms whose buckets do not add up,
+  unspecified temporality, timestamps too far ahead, new names beyond the
+  cap and new series beyond the series caps. The response's
   `partial_success` says how many points were rejected and why; the rest are
   stored.
 

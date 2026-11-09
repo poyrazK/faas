@@ -23,3 +23,18 @@ faas_storage_min_bytes: 53687091200
 faas_storage_mount_options: noatime,prjquota
 faas_storage_filesystem: xfs
 faas_storage_label: faas-fc
+
+# ADR-20261109120000 slice 2: with disk encryption on, these paths are
+# bind-mounted from <faas_storage_mount>/<faas_storage_private_subdir>/<name>
+# (tasks/encrypted_paths.yml). Postgres paths apply to control-plane hosts.
+faas_storage_private_subdir: host-private
+faas_storage_encrypted_secret_paths:
+  - {path: /etc/faas/secrets, name: secrets}
+  # Daemon state: HMAC keys, certificates, the pgproxyd password, log drains,
+  # the zswap swapfile (frozen guests' memory). Written continuously, so it
+  # moves only while no faas service runs (quiesce). The OCI cache and Grype
+  # mounts beneath it stay where they are.
+  - {path: /var/lib/faas, name: faas, quiesce: true}
+faas_storage_encrypted_postgres_paths:
+  - {path: /var/lib/postgresql, name: postgresql, postgres: true}
+  - {path: /var/lib/pgsql, name: pgsql, postgres: true}

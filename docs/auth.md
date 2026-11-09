@@ -82,6 +82,12 @@ policy or operator access requires a replacement.
 If your last recovery code remains, use it to reset the authenticator and set
 up a replacement. If neither the device nor codes are available, choose email
 recovery. Its link can be confirmed after the existing 24-hour waiting period.
+If you have lost the device, the codes and the mailbox, contact
+support@gregale.dev. Support checks two independent proofs of ownership (such
+as payment details and a sign-in with your password or linked provider), mails
+the account's address and any co-owners, and after 72 hours without objection
+turns two-factor authentication off; you then sign in, set it up again and,
+if needed, change your email. Support never changes the sign-in email for you.
 To replace your recovery codes while you still have your authenticator, run
 `gregale account mfa rotate` (or use **New recovery codes** on the
 two-factor page) after verifying the session; the previous codes stop working
