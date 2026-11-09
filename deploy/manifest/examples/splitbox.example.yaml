@@ -192,7 +192,9 @@ overlay:
 # rest. It unlocks at boot through the OTHER hosts' Tang servers on the
 # private network; a recovery key sealed to these operator age recipients
 # opens it if every Tang server is gone. Keep the identities off the fleet.
-# Applies to volumes created from now on; see docs/runbooks/disk-encryption.md.
+# Needs overlay.provider static. Applies to volumes created from now on,
+# including the warm standby and database nodes; see
+# docs/runbooks/disk-encryption.md.
 # disk_encryption:
 #   tang_port: 7500
 #   recovery_recipients: ["age1…"]

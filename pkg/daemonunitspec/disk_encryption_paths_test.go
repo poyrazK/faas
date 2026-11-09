@@ -105,7 +105,7 @@ func TestEncryptedPathsNeverShredUnprovenDataAndFailClosed(t *testing.T) {
 		"faas_storage_active_units.stdout_lines | length == 0",
 		"faas_storage_pg_databases.stdout | int <= 3",
 		"bind,nofail,x-systemd.requires-mounts-for={{ faas_storage_mount }}",
-		"RequiresMountsFor={{ faas_storage_encrypted_secret_paths | map(attribute='path') | join(' ') }}",
+		"RequiresMountsFor={{ faas_storage_encrypted_paths | rejectattr('postgres', 'defined') | map(attribute='path') | join(' ') }}",
 		"/etc/systemd/system/{{ item }}.d/10-faas-encrypted-data.conf",
 		`"postgresql@.service"`,
 		"ExecStart=/usr/sbin/augenrules --load",
@@ -118,5 +118,42 @@ func TestEncryptedPathsNeverShredUnprovenDataAndFailClosed(t *testing.T) {
 		if strings.Contains(tasks, never) {
 			t.Errorf("encrypted_paths.yml must never stop or start Postgres (%q)", never)
 		}
+	}
+}
+
+// The warm standby and database nodes run the storage role, with disk
+// encryption only, before anything writes the paths that move: the standby
+// before PostgreSQL, a database node before its release, PKI, Firecracker
+// kernel (in /srv/fc) and database volumes.
+func TestStandbyAndDatabaseNodesEncryptBeforeWriting(t *testing.T) {
+	for _, tc := range []struct {
+		playbook, before string
+	}{
+		{"deploy/ansible/postgres_standby.yml", "- role: postgres\n"},
+		{"deploy/ansible/database_node.yml", "- role: database_node\n"},
+	} {
+		body := readRepoText(t, tc.playbook)
+		storage := strings.Index(body, "- role: storage\n      when: faas_disk_encryption | default(false) | bool")
+		next := strings.Index(body, tc.before)
+		if storage < 0 || next < 0 || storage > next {
+			t.Errorf("%s must run the storage role (gated on faas_disk_encryption) before %q", tc.playbook, strings.TrimSpace(tc.before))
+		}
+		if fc := strings.Index(body, "- role: firecracker"); fc >= 0 && storage > fc {
+			t.Errorf("%s runs firecracker, which writes /srv/fc, before the storage role", tc.playbook)
+		}
+	}
+	tasks := readRepoText(t, "deploy/ansible/roles/storage/tasks/encrypted_paths.yml")
+	for _, want := range []string{
+		"faas_storage_encrypted_database_paths if 'database_nodes' in group_names",
+		"'control_plane' in group_names or 'postgres_standby' in group_names",
+		"rejectattr('postgres', 'defined')",
+	} {
+		if !strings.Contains(tasks, want) {
+			t.Errorf("encrypted_paths.yml lost %q", want)
+		}
+	}
+	defaults := readRepoText(t, "deploy/ansible/roles/storage/defaults/main.yml")
+	if !strings.Contains(defaults, "- {path: /srv/db, name: db, quiesce: true}") {
+		t.Error("database nodes must move /srv/db (volumes and archive), quiesced")
 	}
 }

@@ -153,3 +153,33 @@ encrypted volume, by the same copy, prove, shred and seal.
   which is shredded with the rest. A mount beneath it that fstab does not
   list stops the move.
 - faas units, `faas-zswap` among them, require the mount.
+
+## Amendment 3 (2026-11-09): the warm standby and database nodes
+
+The two remaining holders of database data get the same encrypted `/srv/fc`.
+
+1. **Warm standby** (ADR-1344 §8). `postgres_standby.yml` runs the storage
+   role before PostgreSQL is installed, so the replica, its WAL archive,
+   `/etc/faas/secrets` and `/var/lib/faas` (the staged control-plane files)
+   live on the volume. It unlocks from every control-plane and compute host's
+   Tang server; it serves no Tang itself. A takeover's bootstrap finds the
+   volume in place. In a disaster where the fleet is gone, the standby can
+   still be opened: the operator promoting it opens its volume with the
+   recovery key first (runbook "Opening a volume with the recovery key").
+2. **Database nodes** (ADR-1027). `database_node.yml` runs the storage role
+   before anything writes to the node (release, PKI, the Firecracker kernel
+   in `/srv/fc`, database volumes). `/srv/db`, which holds the customer
+   database volumes and their archive, joins the moved paths, quiesced like
+   `/var/lib/faas`. Database nodes unlock from the control-plane and compute
+   hosts' Tang servers and serve none.
+3. **Tang servers** are the control-plane and compute hosts only. Slice 1
+   listed database hosts as peers although they run no Tang; the renderer now
+   leaves them out, and validation counts at least two Tang servers.
+4. **Static overlay only.** The storage role runs before the overlay role on
+   a fresh host, and boot-time unlock runs before any overlay service, so Tang
+   must be reachable over a provider network that is up by itself.
+   `disk_encryption` now requires `overlay.provider: static` (an OVH vRack).
+
+Both apply only when the manifest has `disk_encryption`, and only to new
+hosts: an existing standby or database node with data on the plain disk is
+refused by the same checks as the control plane (rebuild it on blank disks).
