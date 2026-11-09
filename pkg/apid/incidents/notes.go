@@ -38,7 +38,7 @@ func (s *Service) Acknowledge(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrIncidentResolved())
 		return
 	}
-	note, created, ok := s.addNote(w, r, acct, state.IncidentNote{IncidentID: f.incident.ID, Kind: state.IncidentNoteAcknowledged})
+	note, created, ok := s.addNote(w, r, acct, f, state.IncidentNote{IncidentID: f.incident.ID, Kind: state.IncidentNoteAcknowledged})
 	if !ok {
 		return
 	}
@@ -70,7 +70,7 @@ func (s *Service) AddNote(w http.ResponseWriter, r *http.Request, acct state.Acc
 		s.writeReadErr(w, r, err)
 		return
 	}
-	note, _, ok := s.addNote(w, r, acct, state.IncidentNote{IncidentID: f.incident.ID, Kind: state.IncidentNoteText, Body: body})
+	note, _, ok := s.addNote(w, r, acct, f, state.IncidentNote{IncidentID: f.incident.ID, Kind: state.IncidentNoteText, Body: body})
 	if !ok {
 		return
 	}
@@ -91,14 +91,16 @@ func noteBody(raw string) (string, *api.Problem) {
 	return body, nil
 }
 
-// addNote stores n for the caller and reports whether it is new; an
-// acknowledgement that already existed comes back unchanged.
-func (s *Service) addNote(w http.ResponseWriter, r *http.Request, acct state.Account, n state.IncidentNote) (state.IncidentNote, bool, bool) {
+// addNote stores n under the account that keeps the incident's notes (the
+// caller's, or a teammate's alert incident's owner, ADR-20261109120000) and
+// reports whether it is new; an acknowledgement that already existed comes
+// back unchanged. The author is always the caller.
+func (s *Service) addNote(w http.ResponseWriter, r *http.Request, acct state.Account, f found, n state.IncidentNote) (state.IncidentNote, bool, bool) {
 	author := s.Host.Actor(r, acct)
 	if utf8.RuneCountInString(author) > authorMaxRunes {
 		author = string([]rune(author)[:authorMaxRunes])
 	}
-	n.ID, n.AccountID, n.Author, n.CreatedAt = uuid.NewString(), acct.ID, author, s.now()
+	n.ID, n.AccountID, n.Author, n.CreatedAt = uuid.NewString(), f.noteAccount(acct), author, s.now()
 	saved, err := s.Host.Store().AddIncidentNote(r.Context(), n, api.IncidentNotesPerIncident)
 	var quota *state.IncidentNotesQuotaError
 	switch {
@@ -116,10 +118,11 @@ func (s *Service) addNote(w http.ResponseWriter, r *http.Request, acct state.Acc
 	return saved, saved.ID == n.ID, true
 }
 
-// addNotes attaches the account's notes, oldest first, and marks the
-// incident acknowledged when one of them is the acknowledgement.
-func (s *Service) addNotes(ctx context.Context, acct state.Account, detail *api.IncidentDetail) {
-	notes, err := s.Host.Store().ListIncidentNotes(ctx, acct.ID, detail.Incident.ID, api.IncidentNotesPerIncident)
+// addNotes attaches the notes owner keeps for the incident, oldest first,
+// and marks the incident acknowledged when one of them is the
+// acknowledgement.
+func (s *Service) addNotes(ctx context.Context, owner string, detail *api.IncidentDetail) {
+	notes, err := s.Host.Store().ListIncidentNotes(ctx, owner, detail.Incident.ID, api.IncidentNotesPerIncident)
 	if err != nil {
 		s.Host.Logger().WarnContext(ctx, "incidents: read notes", "incident", detail.Incident.ID, "err", err)
 		detail.UnavailableSources = append(detail.UnavailableSources, "notes")

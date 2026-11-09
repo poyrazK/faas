@@ -3,6 +3,7 @@ package incidents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -18,6 +19,29 @@ import (
 // newest first, so they cover any incident that is open or recent; an old
 // episode of a rule that fired often since shows fewer fires.
 const fireReadRows = 200
+
+// teamEpisode reads an alert episode another account holds, for a teammate
+// (ADR-20261109120000). Only an episode of an existing organization app
+// qualifies; the caller then checks the app is one it may read. Any other
+// episode is state.ErrNotFound.
+func (s *Service) teamEpisode(ctx context.Context, id string) (state.AlertEpisode, error) {
+	team, ok := s.Host.Store().(state.TeamIncidentStore)
+	if !ok {
+		return state.AlertEpisode{}, state.ErrNotFound
+	}
+	ep, err := team.AlertEpisodeByIDAnyAccount(ctx, id)
+	if err != nil {
+		return state.AlertEpisode{}, err
+	}
+	if ep.AppID == "" {
+		return state.AlertEpisode{}, state.ErrNotFound
+	}
+	app, err := s.Host.Store().AppByID(ctx, ep.AppID)
+	if err != nil || app.OrgID == "" {
+		return state.AlertEpisode{}, state.ErrNotFound
+	}
+	return ep, nil
+}
 
 // Get serves GET /v1/incidents/{id}.
 func (s *Service) Get(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -44,7 +68,7 @@ func (s *Service) Detail(ctx context.Context, acct state.Account, id string) (ap
 	if f.incident.Source == api.IncidentSourceAlert {
 		s.addFires(ctx, f.episode, &detail)
 	}
-	s.addNotes(ctx, acct, &detail)
+	s.addNotes(ctx, f.noteAccount(acct), &detail)
 	if f.appID != "" {
 		s.addChanges(ctx, acct, f.appID, &detail)
 	}
@@ -60,6 +84,19 @@ type found struct {
 	episode state.AlertEpisode
 	// updates are a platform incident's status page updates.
 	updates []api.IncidentUpdate
+	// owner is the account that keeps the incident's acknowledgement and
+	// notes: an alert incident's episode account, so a team shares them
+	// (ADR-20261109120000); the caller for any other incident.
+	owner string
+}
+
+// noteAccount is the account whose notes and acknowledgement the incident
+// shows and takes.
+func (f found) noteAccount(acct state.Account) string {
+	if f.owner != "" {
+		return f.owner
+	}
+	return acct.ID
 }
 
 // find loads the incident from the store its id names; another account's
@@ -70,6 +107,9 @@ func (s *Service) find(ctx context.Context, acct state.Account, id string) (foun
 	switch prefix {
 	case alertPrefix:
 		ep, err := store.AlertEpisodeByID(ctx, acct.ID, key)
+		if errors.Is(err, state.ErrNotFound) {
+			ep, err = s.teamEpisode(ctx, key)
+		}
 		if err != nil {
 			return found{}, err
 		}
@@ -77,7 +117,7 @@ func (s *Service) find(ctx context.Context, acct state.Account, id string) (foun
 		if !visible {
 			return found{}, state.ErrNotFound
 		}
-		return found{incident: alertIncident(ep, slug), appID: ep.AppID, episode: ep}, nil
+		return found{incident: alertIncident(ep, slug), appID: ep.AppID, episode: ep, owner: ep.AccountID}, nil
 	case routePrefix:
 		rm, err := store.RouteMonitorIncidentSummaryByID(ctx, acct.ID, key)
 		if err != nil {

@@ -100,6 +100,13 @@ func (s *Service) resolve(ctx context.Context, acct state.Account, w api.Dashboa
 		v.Error = "app unavailable"
 		return v
 	}
+	// The widget reads as the app's owner (ADR-20261109120000): an
+	// organization app follows the organization's plan, and its rows are
+	// held under its creator's account, not the viewer's.
+	if acct, ok = s.Host.AppOwner(ctx, app); !ok {
+		v.Error = "app unavailable"
+		return v
+	}
 	src := s.Host.Sources()
 	if err := src.Released(acct, app, w.Kind); err != nil {
 		v.Error = err.Error()
