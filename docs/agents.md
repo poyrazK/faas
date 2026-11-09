@@ -12,6 +12,19 @@ directly.
 Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
 
+With the Gregale CLI installed, one command sets up Claude Code and Codex:
+
+```sh
+gregale mcp connect
+```
+
+It finds the agents on your machine, asks before changing each one, adds the
+server user-wide, and checks that Gregale answers. `--client codex` picks one,
+`--project` writes this project's `.mcp.json` instead, `--toolsets` selects
+toolsets, and `--dry-run` shows the change first. For an agent with no person
+at a browser, `--headless` mints an agent key, prints it once, and points the
+config at `$GREGALE_AGENT_KEY`. For other clients, add the server yourself:
+
 Claude Code:
 
 ```sh

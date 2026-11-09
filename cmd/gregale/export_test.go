@@ -2760,3 +2760,17 @@ func ResolveSourceUploadCapForTest(ctx context.Context, c *Client) (mb int, veri
 
 // ForwardAppTaskSession is the shared port-forward / postgres connect relay.
 var ForwardAppTaskSession = forwardAppTaskSession
+
+// gregale mcp connect seams (ADR-20261109121411).
+var (
+	MCPConnectLookPath    = &mcpConnectLookPath
+	MCPConnectRun         = &mcpConnectRun
+	MCPConnectInteractive = &mcpConnectInteractive
+	MCPConnectHome        = &mcpConnectHome
+	MCPEndpointCheck      = &mcpEndpointCheck
+	MCPHeadlessToolCount  = &mcpHeadlessToolCount
+	UpsertCodexServer     = upsertCodexServer
+)
+
+// MCPConnectOptions builds the options a test passes to MCPHeadlessToolCount.
+type MCPConnectOptions = mcpConnectOptions
