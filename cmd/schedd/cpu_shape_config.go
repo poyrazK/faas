@@ -14,6 +14,7 @@ import (
 type cpuShapeEngine interface {
 	SetCPUShape(api.CPUShape)
 	SetGuestVCPUFromCPUApps([]string) error
+	SetCPUSizeApps([]string) error
 }
 
 // cpuShapeConfig applies the CPU shape keys (runtimeconfig.CPUShapeKeys) to
@@ -35,11 +36,16 @@ func (c *cpuShapeConfig) apply(key string, value json.RawMessage) (handled bool,
 	if handled, err := next.Apply(key, value); !handled || err != nil {
 		return handled, err
 	}
-	if key == runtimeconfig.KeyGuestVCPUFromCPUApps {
+	switch key {
+	case runtimeconfig.KeyGuestVCPUFromCPUApps:
 		if err := c.engine.SetGuestVCPUFromCPUApps(next.Apps); err != nil {
 			return true, err
 		}
-	} else {
+	case runtimeconfig.KeyCPUSizeApps:
+		if err := c.engine.SetCPUSizeApps(next.SizeApps); err != nil {
+			return true, err
+		}
+	default:
 		c.engine.SetCPUShape(next.Shape)
 	}
 	c.settings = next

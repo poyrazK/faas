@@ -165,6 +165,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		RehearsalRunID: runID,
 		BaseKey:        pinnedBase, LayerKey: request.ArtifactKey,
 		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB),
+		CPUWeight: e.appCPUWeight(app), CPUUncapped: e.cpuBySize(app.ID),
 		CPUMillicores: int32(e.appCPUMillicores(app, limits)), EgressMbit: int32(limits.EgressMbit),
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
