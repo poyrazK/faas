@@ -4970,6 +4970,14 @@ type Querier interface {
 	ObjectBucketAccessGrantGet(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantGetParams) (ObjectBucketAccessGrantGetRow, error)
 	ObjectBucketAccessGrantList(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantListParams) ([]ObjectBucketAccessGrantListRow, error)
 	ObjectBucketAccessGrantUpsert(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantUpsertParams) (int64, error)
+	ObjectBucketAllVersionStartInventory(ctx context.Context, db DBTX, arg ObjectBucketAllVersionStartInventoryParams) error
+	ObjectBucketAllVersionStartUsage(ctx context.Context, db DBTX, bucketID pgtype.UUID) error
+	ObjectBucketAllVersionStartVersioning(ctx context.Context, db DBTX, arg ObjectBucketAllVersionStartVersioningParams) error
+	// ADR-20261107214517: a bucket whose provider reports never-versioned as
+	// Suspended (GCS) starts in all-version accounting while it is still
+	// provisioning and provably empty, so no customer request meets the
+	// conversion fence. Startable only before any accounting row exists.
+	ObjectBucketAllVersionStartable(ctx context.Context, db DBTX, arg ObjectBucketAllVersionStartableParams) (bool, error)
 	ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBucketByNameParams) (ObjectBucket, error)
 	ObjectBucketCORSDelete(ctx context.Context, db DBTX, bucketID pgtype.UUID) error
 	// ADR-20261025202805: a customer's bucket CORS rules.
@@ -4991,6 +4999,7 @@ type Querier interface {
 	ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucketListParams) ([]ObjectBucket, error)
 	ObjectBucketListForKey(ctx context.Context, db DBTX, arg ObjectBucketListForKeyParams) ([]ObjectBucket, error)
 	ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBucketLockAppParams) (pgtype.UUID, error)
+	ObjectBucketLockProvisioning(ctx context.Context, db DBTX, arg ObjectBucketLockProvisioningParams) (pgtype.UUID, error)
 	ObjectBucketMutationFinish(ctx context.Context, db DBTX, arg ObjectBucketMutationFinishParams) (int64, error)
 	ObjectBucketMutationInsert(ctx context.Context, db DBTX, arg ObjectBucketMutationInsertParams) (ObjectBucketMutation, error)
 	// ADR-531: these statements run after ObjectBucketMutationLock in one
