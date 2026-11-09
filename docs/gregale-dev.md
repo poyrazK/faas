@@ -404,18 +404,47 @@ address, for example a VS Code configuration:
 ```
 
 or open `chrome://inspect` and add `127.0.0.1:9229`. Each debugger connection
-is its own tunnel through the API, authenticated with your CLI credentials;
-the inspector port is never published on the app's URL. Only `gregale dev`
-environments accept a debugger, and up to four connections per environment.
+is its own tunnel through the API (`GET /v1/apps/{slug}/debug`, a WebSocket
+served by the gateway, not apid), authenticated with your CLI credentials; the
+inspector port is never published on the app's URL. Attaches and detaches are
+recorded in the audit log (`dev.debugger.attached` / `dev.debugger.detached`).
+Only `gregale dev` environments accept a debugger: the platform marks them
+with `FAAS_DEVELOPER_ENVIRONMENT=1`, and the inspector switch is ignored on any
+other app.
+
+Limits ([`pkg/api/limits.go`](../pkg/api/limits.go)): up to four connections
+per environment, counted per gateway process (a multi-node gateway can admit
+a few more in total); a connection closes after 30 minutes without traffic or
+after 256 MB in either direction. Reattach to continue. The CLI caches the
+`/json` discovery requests that debuggers poll for two seconds, so they do not
+open a tunnel each.
 
 While a debugger is attached the environment does not park, and a process
-paused at a breakpoint is not restarted for failing its liveness probe. A
-request held at a breakpoint is still subject to the edge request deadline,
-so resume within it. A live patch restarts the process and drops the
-debugger; with `"restart": true` VS Code reconnects on its own. Running
-`gregale dev` without `--debug` turns the inspector off again. Only Node.js
-workloads are supported so far; `--debug` cannot be combined with `--once`,
-`--stop`, or `--all`.
+paused at a breakpoint is not restarted for failing its liveness probe. That
+exemption holds only while a debugger connection is open: with `--debug` on
+and nothing attached, a hung process is restarted as usual. A request held at
+a breakpoint is still subject to the edge request deadline, so resume within
+it. A live patch restarts the process and drops the debugger; with
+`"restart": true` VS Code reconnects on its own. Running `gregale dev` without
+`--debug` turns the inspector off again.
+
+The inspector opens in the app's own Node.js process, not in a package-manager
+or watcher wrapper (`npm`, `yarn`, `pnpm`, `nodemon`, `tsx`, `next`,
+`node --watch`, …), so an `npm start` script still debugs the server it
+starts. Functions run on a single worker while a debugger is attached, and a
+worker held at a breakpoint is not replaced when its request times out.
+
+Only Node.js workloads are supported so far: Bun and Deno projects are
+refused. `--debug` cannot be combined with `--once` or `--stop`; a
+`debug: true` in `gregale.yaml` is skipped (with a note) for `--once` and for
+non-Node workloads. With `--all`, set `debug: true` and a distinct
+`debug_port` in each app's `dev:` block:
+
+```yaml
+dev:
+  debug: true
+  debug_port: 9230
+```
 
 ## Watch mode for apps with a build step
 
