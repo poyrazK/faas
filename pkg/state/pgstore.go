@@ -5348,6 +5348,13 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 	if _, err := tx.Exec(ctx, `delete from crons where app_id = $1`, id); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app remove crons: %w", err)
 	}
+	// A deleted app consumes nothing: retire its queue bindings with the app,
+	// as crons go, instead of leaving them enabled until purge (production
+	// 2026-11-09 kept a deleted app's pull binding enabled).
+	if _, err := tx.Exec(ctx, `update queue_bindings set retired_at = $2, enabled = false, updated_at = $2
+		where app_id = $1 and retired_at is null`, id, now); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app retire queue bindings: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `
 		update app_tasks
 		   set status = case when status = 'queued' then 'cancelled' else status end,
@@ -25591,7 +25598,8 @@ func (s *PgStore) ListAppSecretsForAccount(ctx context.Context, accountID string
 func (s *PgStore) CountAppSecrets(ctx context.Context, accountID, appID string) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx,
-		`select count(*) from app_secrets where account_id = $1 and app_id = $2`,
+		`select count(*) from app_secrets where account_id = $1 and app_id = $2
+		   and managed_postgres_binding_id is null and managed_object_storage_credential_id is null`,
 		accountID, appID).Scan(&n)
 	return n, err
 }
