@@ -45,8 +45,8 @@ func (s *Service) SealStoredHeaderValues(ctx context.Context) (HeaderSecretBackf
 	if !ok {
 		return rep, nil
 	}
-	if _, prob := s.headerSecretStore(); prob != nil {
-		return rep, nil
+	if _, ok := s.Host.Store().(state.EdgeRuleHeaderSecretStore); !ok || s.SealHeaderValue == nil {
+		return rep, nil // sealed header values are not wired on this deployment
 	}
 	if !s.FleetOpensHeaderSecrets(ctx) {
 		rep.FleetNotReady = true
