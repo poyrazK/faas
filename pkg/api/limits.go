@@ -3564,6 +3564,23 @@ func ValidCPUAdmission(v string) bool {
 	return v == CPUAdmissionEnforce || v == CPUAdmissionObserve
 }
 
+// SizeCPUWeightMax is the largest cgroup v2 cpu.weight.
+const SizeCPUWeightMax = 10_000
+
+// SizeVCPUs is the guest vCPU count of an instance whose CPU follows its size
+// (ADR-20261109172421): one per GB of instance RAM, at least one. It does not
+// depend on the plan.
+func SizeVCPUs(ramMB int) int {
+	return max(1, (ramMB+1023)/1024)
+}
+
+// SizeCPUWeight is the cpu.weight of such an instance: one per 16 MB of
+// instance RAM (8 at 128 MB, 128 at 2 GB), so a busy host shares CPU by
+// memory.
+func SizeCPUWeight(ramMB int) int {
+	return min(SizeCPUWeightMax, max(1, ramMB/16))
+}
+
 // Snapshot refresh after a release (ADR-20261106214916). schedd's
 // `snapshot_refresh` runtime config is off, shadow (find and count the
 // snapshots a release made stale, boot nothing) or on.

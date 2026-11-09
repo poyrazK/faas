@@ -23,8 +23,12 @@
 - **Related:** ADR-909 (admission by measured memory), ADR-005 (cold boot
   always works), ADR-20261106214916 (snapshot refresh).
 - **Switches:** schedd runtime config `cpu_admission` = `enforce` | `observe`
-  (default `enforce`), and `cpu_model` = `plan` | `size` (default `plan`).
-  Defaults and bounds live in `pkg/api/limits.go`.
+  (default `enforce`), and `cpu_size_apps`: app IDs, or `*` for every app,
+  whose CPU follows size (default empty: every app on its plan). An earlier
+  draft named the second switch `cpu_model` = `plan` | `size`; a list lets
+  test apps go first, `*` is the fleet flip, and `cpu_model` already names a
+  host's CPU signature (ADR-20261024225612). Defaults and bounds live in
+  `pkg/api/limits.go`.
 
 ## Context
 
@@ -151,8 +155,9 @@ Measured problems:
     (`ErrSnapshotVCPUMismatch`). The wake cold-boots through the existing
     fallback (ADR-005).
   - Snapshot refresh re-captures recently active apps in the background:
-    `cpu_model` joins `runtimeconfig.CPUShapeKeys`, so a flip reruns every
-    node's refresh pass.
+    `cpu_size_apps` joins `runtimeconfig.CPUShapeKeys`, so a change reruns
+    every node's refresh pass, and the pass replays its history to find
+    snapshots captured at the old count.
 - **Transition.** While instances stay in the per-plan sub-slices, the
   sub-slices share a busy host equally and each divides its share by its
   instances' weights. That is exact within a plan and close across plans
@@ -189,11 +194,14 @@ schema change ships before its first user.
    - The capacity trigger and `admission_reserve_node` stop refusing on CPU
      (expand/contract migration). Turn it on fleet-wide first: it alone ends
      the canary refusals.
-5. **schedd `cpu_model = size`.**
-   - vCPUs and weight from `ram_mb`, uncapped `cpu.max`.
-   - `capacity_vcpu` holds the booted count.
-   - Order: turn snapshot refresh `on`, try the test apps, then flip the
-     fleet.
+5. **schedd `cpu_size_apps`.**
+   - A listed app: vCPUs and weight from `ram_mb`, uncapped `cpu.max`
+     (`cpu_uncapped`; vmmd keeps a 250 or 500 millicore choice as a cap,
+     also across live CPU policy updates), and a booking of its RAM's CPU
+     baseline. It takes precedence over `guest_vcpu_from_cpu_apps`.
+   - `capacity_vcpu` holds the booted count (a capacity trigger migration,
+     shipped separately).
+   - Order: turn snapshot refresh `on`, list the test apps, then set `*`.
 6. **Retire.** The per-plan CPU fields in `pkg/api/limits.go` (`VCPU`,
    `CPUWeight`, `CPUQuotaUS`, `CPUPeriodUS`), the plan sub-slices, the
    `guest_vcpu_*` and `app_cpu_*` shape keys, and the vCPU budget gate: one
