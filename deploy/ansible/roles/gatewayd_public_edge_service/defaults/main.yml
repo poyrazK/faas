@@ -74,3 +74,5 @@ faas_cloudflared_metrics_addr: 0.0.0.0:20241
 # with margin), and how long systemd waits for it.
 faas_cloudflared_grace_period: 30s
 faas_cloudflared_stop_timeout: 45s
+# The manifest's hot_path.edge_keepalive_per_node sets it.
+faas_internal_keepalive_per_node: false

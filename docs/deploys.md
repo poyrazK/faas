@@ -111,6 +111,10 @@ the upload; after that, deploy again from your source. A build waiting in the
 queue for 6 hours, or a deployment making no progress for 3 hours, fails
 with a stable error code.
 
+When a build finishes while no compute node has room for the app's first
+boot, the deployment waits in `snapshot_prepare` for up to 5 minutes and is
+retried each minute; only then does it fail with `capacity_unavailable`.
+
 ## Waiting and resuming
 
 Interrupted single-app deploys save a local session. Run

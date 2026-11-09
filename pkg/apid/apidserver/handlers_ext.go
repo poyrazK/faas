@@ -1222,6 +1222,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.afterRestoreBudgetProblem(r.Context(), acct.ID, app.ID, req.AfterRestore); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.executionModeApprovalProblem(r.Context(), app, &req); prob != nil {
 		api.WriteProblem(w, prob)
 		return

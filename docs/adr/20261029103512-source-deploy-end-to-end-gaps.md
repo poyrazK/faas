@@ -153,3 +153,17 @@ did not build on the shared runtime because it declares Node 22 (musl runner)
 or a version with no shared base, the fix names the cause and says to
 declare Node 24, whose layer holds only the app. Validation:
 `TestNodeVersionLayerFix`, `TestMarkDeployFailedKeepsAppLayerProblem`.
+
+## Amendment 2 (2026-11-10): a finished build waits for room to boot
+
+schedd failed a deployment the moment snapshot prime was refused by node
+budgets (memory, guest vCPUs or CPU), after its build had already finished;
+production recorded two such failures on 2026-11-08. The customer could only
+deploy again, which rebuilt the source. Now a node-budget refusal within
+`SnapshotPrimeCapacityMaxWait` (5 minutes, `pkg/api/limits.go`) of the
+snapshot_prepare stage's start leaves the deployment snapshotting. The
+refusal happens before any instance exists, and the existing prime recovery
+sweep dispatches the prime again each minute once its 2-minute grace has
+passed, under the same attempt identity. After the window the refusal fails
+the deployment with `capacity_unavailable` as before. Other prime failures
+are unchanged. Validation: `TestFinishFailedPrime_WaitsForNodeCapacity`.

@@ -15,19 +15,29 @@ Operators running Gregale themselves should read the
 
 ## Plans and pricing
 
-Object storage is available on the Hobby, Pro and Scale plans. Each plan
-includes an amount of storage, measured as the average bytes you keep over the
-billing month:
+Object storage is available on every plan. Each plan includes an amount of
+storage, measured as the average bytes you keep over the billing month, and
+has a ceiling on what you can store
+([ADR-20261101214152](adr/20261101214152-object-storage-ceiling-follows-spend-cap.md)):
 
-| Plan | Included storage |
-|---|---|
-| Hobby | 10 GiB |
-| Pro | 50 GiB |
-| Scale | 200 GiB |
+| Plan | Included storage | Storage ceiling |
+|---|---|---|
+| Free | 1 GiB | 1 GiB |
+| Hobby | 10 GiB | 20 GiB |
+| Pro | 50 GiB | 250 GiB |
+| Scale | 200 GiB | 1,000 GiB |
 
-Storage beyond the included amount costs $0.03 per GiB-month. Downloads
-(egress) and requests are not billed. Because storage is averaged, 20 GiB held
-for half a month uses 10 GiB of the allowance. See [plans](plans.md).
+On a paid plan, storage beyond the included amount costs $0.03 per GiB-month,
+up to the ceiling. Free storage is never billed: writes stop at 1 GiB.
+Downloads (egress) and requests are not billed. Because storage is averaged,
+20 GiB held for half a month uses 10 GiB of the allowance. A spend cap lowers
+the ceiling to what it pays for, and support can raise a paid account's
+ceiling. See [plans](plans.md).
+
+A write past the ceiling is refused with `account_bytes`. While an account
+stores more than its ceiling (for example after a downgrade to Free or a lower
+spend cap), downloads are refused with `402 account_bytes`; listing, `HEAD` and
+`DELETE` keep working so you can delete objects to get back under it.
 
 When your account reaches its spend cap, existing buckets keep working within
 your plan's limits. Retained object versions count toward stored bytes until
@@ -269,7 +279,8 @@ environment secrets: `<PREFIX>_ENDPOINT`, `_REGION`, `_BUCKET`,
 defaults to `GREGALE_S3_` and the bucket name in capitals, such as
 `GREGALE_S3_ASSETS`; set another with `--prefix`. Pass them to your
 S3 SDK. The credentials are sealed: they are never printed or returned by the
-API.
+API. These six values, like a managed PostgreSQL `DATABASE_URL`, do not count
+toward your plan's per-app secret limit, which covers only the secrets you set.
 
 To keep the binding next to your code, declare it in `gregale.yaml`:
 

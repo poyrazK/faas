@@ -8037,6 +8037,13 @@ func (m *MemStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, er
 			delete(m.crons, cronID)
 		}
 	}
+	for bindingID, binding := range m.queueBindings {
+		if binding.AppID == id && binding.RetiredAt == nil {
+			retired := now
+			binding.RetiredAt, binding.Enabled, binding.UpdatedAt = &retired, false, now
+			m.queueBindings[bindingID] = binding
+		}
+	}
 	m.cancelDeletedAppPipelineLocked(id, now)
 	// App deletion retires snapshot replicas immediately, but keeps the
 	// snapshot rows available to GC. The PostgreSQL lifecycle trigger uses
@@ -9150,6 +9157,9 @@ func (m *MemStore) ListCanaryInFlight(_ context.Context) ([]Deployment, error) {
 		}
 		rolloutState := NormalizeRolloutState(d.RolloutState)
 		if rolloutState != "pending" && rolloutState != "rolling_out" {
+			continue
+		}
+		if app, ok := m.apps[d.AppID]; ok && (app.Status == AppDeleted || app.DeletedAt != nil) {
 			continue
 		}
 		d.RolloutState = rolloutState
@@ -23494,7 +23504,8 @@ func (m *MemStore) CountAppSecrets(_ context.Context, accountID, appID string) (
 	defer m.mu.Unlock()
 	n := 0
 	for _, s := range m.secrets {
-		if s.AppID == appID && s.AccountID == accountID {
+		// Managed binding values do not consume SecretCountMax (ADR-20261109180000).
+		if s.AppID == appID && s.AccountID == accountID && s.ManagedPostgresBindingID == "" && s.ManagedObjectStorageCredentialID == "" {
 			n++
 		}
 	}

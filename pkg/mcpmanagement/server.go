@@ -233,6 +233,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerPlanReceipts(s, m)
 	registerOperations(s, m)
 	registerResourceInventory(s, m)
+	registerAgentApprovals(s, m)
 	return s, m, nil
 }
 
@@ -338,14 +339,17 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 // ToolError retains stable API codes without returning an entire Problem,
 // which may contain unrelated private fields or upstream response bodies.
 type ToolError struct {
-	SchemaVersion     int      `json:"schema_version"`
-	Code              string   `json:"code"`
-	Status            int      `json:"status,omitempty"`
-	Message           string   `json:"message"`
-	Hint              string   `json:"hint,omitempty"`
-	RetryAfterSeconds *int64   `json:"retry_after_seconds,omitempty"`
-	Outcome           string   `json:"outcome,omitempty"`
-	Recovery          Recovery `json:"recovery"`
+	SchemaVersion     int    `json:"schema_version"`
+	Code              string `json:"code"`
+	Status            int    `json:"status,omitempty"`
+	Message           string `json:"message"`
+	Hint              string `json:"hint,omitempty"`
+	RetryAfterSeconds *int64 `json:"retry_after_seconds,omitempty"`
+	Outcome           string `json:"outcome,omitempty"`
+	// Approval is the agent approval request behind approval_required,
+	// approval_denied or approval_expired (ADR-20261104140058).
+	Approval *toolApproval `json:"approval,omitempty"`
+	Recovery Recovery      `json:"recovery"`
 }
 
 func (m *management) toolError(err error) *mcp.CallToolResult {
@@ -358,6 +362,7 @@ func (m *management) toolError(err error) *mcp.CallToolResult {
 		if p.Message == "" {
 			p.Message = apiErr.Problem.Title
 		}
+		p.Approval = m.toolApprovalFrom(apiErr.Problem.AgentApproval)
 	case errors.As(err, &local):
 		p.Code, p.Message = local.code, local.message
 	case errors.Is(err, context.DeadlineExceeded):
@@ -370,6 +375,9 @@ func (m *management) toolError(err error) *mcp.CallToolResult {
 	p.Hint = safetext.Truncate(m.clean(p.Hint), maxDiagnosticBytes)
 	p.SchemaVersion = recoveryContractVersion
 	p.Recovery = recoveryForError(p)
+	if p.Approval != nil {
+		p.Recovery = m.approvalRecovery(p)
+	}
 	return errorResult(p)
 }
 

@@ -218,7 +218,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 			classes = append(classes, class)
 		}
 	}
-	access := []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration}
+	access := []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration, managedpostgres.CredentialSession}
 	if p.cfg.DataAPI {
 		access = append(access, managedpostgres.CredentialDataAPI)
 	}

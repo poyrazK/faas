@@ -997,6 +997,40 @@ Credentials re-sealed in this step stay domain-only, so:
 - never roll gatewayd-internal back past the first release that carried
   the edge reader.
 
+### 7e. Contract: gatewayd-internal drops the fleet and host keys
+
+Go on once a 7d migration run shows nothing pending. Application-standard
+log destinations still on the fleet key block this step: publish a new
+version of each standard's destination first (its drains follow). Add to
+the local variables file, and converge the compute hosts one at a time:
+
+```yaml
+faas_seal_domain_edge_contracted: true
+```
+
+The role runs `seal-domain migrate --domain edge --check` first and stops
+while a credential still opens with the fleet or host key (`pending`: run
+7d again) or a standard's destination does (`skipped`). It then writes
+`30-faas-seal-domain-edge-contract.conf`, which drops the base unit's
+`fleet.age` and `host.age` and unsets `FAAS_HOST_KEY_PATH`, restarts
+gatewayd-internal and checks `/run/credentials/faas-gatewayd-internal.service`.
+
+Check, on each compute host:
+
+```bash
+sudo ls /run/credentials/faas-gatewayd-internal.service
+journalctl -u faas-gatewayd-internal -b | grep '"edge seal domain"'
+```
+
+- No `fleet.age` or `host.age`; the edge identity and the optional
+  credentials (the log archive key, `host.age.previous`) are still there.
+- gatewayd-internal logs `"domain_identity":true` and `"identities":1`.
+
+Request the test app with its basic-auth credentials and check the drain.
+
+Rollback: set `faas_seal_domain_edge_contracted: false` and converge; the
+role removes the drop-in. Nothing stored changes in this step.
+
 ## 8. Alerting seal domain
 
 meterd on the control plane is the only reader of alert rule webhook
@@ -1444,6 +1478,49 @@ converge. Values re-sealed in this step stay domain-only, so:
 - never remove `delivery.age` from a host that runs schedd;
 - never roll schedd back past the first release that carried the delivery
   reader.
+
+Trigger configs are delivery values too. Releases before the compute
+contract steps sealed them to the fleet key even in domain mode; this
+migration re-seals them (and seals any credential still stored in
+plaintext), and apid now seals new ones to the domain alone.
+
+### 11e. Contract: schedd drops the fleet key (control and delivery)
+
+schedd reads both domains with one set of credentials, so they contract
+together. Go on once 10c has re-sealed the cluster signing key and an 11d
+run shows nothing pending. Add both to the local variables file, then
+converge the compute hosts one at a time and the control plane:
+
+```yaml
+faas_seal_domain_control_contracted: true
+faas_seal_domain_delivery_contracted: true
+```
+
+The role refuses one without the other. Before it changes schedd it runs
+`seal-domain migrate --check` for `control` and `delivery` and stops while
+either finds a value the fleet or host key still opens. It then writes
+`30-faas-seal-domain-schedd-contract.conf`, which drops `fleet.age` and
+loads `host.age` and the signing public key again, restarts schedd and
+checks `/run/credentials/faas-schedd.service`.
+
+Check, on each host:
+
+```bash
+sudo ls /run/credentials/faas-schedd.service
+```
+
+- `faas_seal_domain_control`, `faas_seal_domain_delivery`, `host.age` and
+  `faas_sign_pub` are there; `fleet.age` is not.
+- schedd's journal shows no cluster-key unseal warnings, internal service
+  calls keep working, a test webhook delivers, an execution runs, and a
+  Kafka trigger keeps consuming.
+
+Rollback: set both back to `false` and converge; the role removes the
+drop-in. Nothing stored changes in this step.
+
+With 4g, 6e, 7e, 9e (for s3-gatewayd on compute) and 11e done, no compute
+unit reads `fleet.age`. Node join still installs it until a later change
+stops that.
 
 ## 12. Account seal domain
 

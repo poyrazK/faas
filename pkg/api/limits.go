@@ -2243,6 +2243,12 @@ const OperationScheduleOnceHorizon = 366 * 24 * time.Hour
 const (
 	AfterRestoreHookDefaultTimeoutMS = 500
 	AfterRestoreHookMaxTimeoutMS     = 2000
+	// AfterRestoreHookBoundMaxTimeoutMS is the after_restore cap for an app
+	// with a managed PostgreSQL or object-storage binding (ADR-20261109180000):
+	// reconnecting to a scale-to-zero database across clouds missed 2 s in
+	// production and fell back to a cold boot. It stays inside the host's
+	// five-second resume deadline. apid refuses it for apps without a binding.
+	AfterRestoreHookBoundMaxTimeoutMS = 4000
 )
 
 const (
@@ -4587,7 +4593,7 @@ type Limits struct {
 	// CodePlanLimitSecrets on the next PUT. SecretValueMaxBytes bounds the
 	// plaintext value the customer may PUT — apid rejects larger values
 	// with 413 CodeSecretValueTooLarge before sealing.
-	SecretCountMax      int // max secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100)
+	SecretCountMax      int // max customer-authored secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100); managed binding values do not count (ADR-20261109180000)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
 	// ProjectSecretCountMax bounds the secrets one project environment shares
 	// with its services (ADR-1139); each value uses SecretValueMaxBytes.
@@ -8168,6 +8174,15 @@ const (
 	// keep waiting for build disk before it fails with the disk-full error
 	// instead of being requeued (H83).
 	BuildDiskCapacityMaxWait = 15 * time.Minute
+	// SnapshotPrimeCapacityMaxWait is how long after its snapshot_prepare
+	// stage started a built deployment keeps waiting for a compute node with
+	// room for its first boot. Inside the window a node-budget refusal
+	// (memory, guest vCPUs, CPU) leaves the deployment snapshotting and the
+	// scheduler's prime recovery retries it each minute; after it the
+	// deployment fails with capacity_unavailable as before. Without the wait
+	// a momentarily full fleet failed a finished build, and the customer had
+	// to rebuild to retry.
+	SnapshotPrimeCapacityMaxWait = 5 * time.Minute
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment
