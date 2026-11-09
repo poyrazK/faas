@@ -368,6 +368,16 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("imaged: build signer: %w", err)
 	}
+	// ADR-20261109170000: v2 signatures bind each layer to its storage key.
+	// Operators turn them on once every verifier reads v2.
+	switch format := os.Getenv("FAAS_ARTIFACT_SIGNATURE_FORMAT"); format {
+	case "", "v1":
+	case "v2":
+		signer.WithSignatureV2(true)
+	default:
+		return fmt.Errorf("imaged: FAAS_ARTIFACT_SIGNATURE_FORMAT=%q: want v1 or v2", format)
+	}
+	log.Info("imaged: artifact signature format", "v2", os.Getenv("FAAS_ARTIFACT_SIGNATURE_FORMAT") == "v2")
 	builder.WithSigner(signer)
 	// One per-daemon Prometheus registry, shared by the handler
 	// (OCI-pull observations inside aboveBaseLayers + buildImageLayer)
