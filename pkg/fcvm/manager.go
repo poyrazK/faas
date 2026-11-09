@@ -935,6 +935,9 @@ type Manager struct {
 	// egress on this node (FAAS_EGRESS_DNS_GATING=off). Gating is on by
 	// default; turning it off keeps every other egress control.
 	dnsGatingOff bool
+	// releaseConnectionsOnDestroy resets an app guest's TCP connections
+	// before teardown destroys it (ADR-20261109130000).
+	releaseConnectionsOnDestroy bool
 	// appCPUPolicyUpdates serializes concurrent desired-policy changes so an
 	// older request cannot finish after a newer one and leave existing VMs at
 	// the stale quota. appCPUPolicies is guarded by mu and also fences a Wake
@@ -6742,6 +6745,7 @@ func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instan
 	// A completed teardown retires the record; a failed one keeps this
 	// intent so a successor resumes it (adoption ADR §3).
 	m.beginAdoptionOp(instance, adoptionOpStop)
+	m.releaseConnectionsBeforeDestroy(ctx, inst, exportDir)
 	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
 	m.mu.Lock()
 	inst.awaitingExit = false // Teardown proper refuses grants from here.

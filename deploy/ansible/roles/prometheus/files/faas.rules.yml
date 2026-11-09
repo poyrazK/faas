@@ -1578,6 +1578,31 @@ groups:
           description: "At least one PostgreSQL process was runnable but waiting for a CPU more than 50% of the time (cgroup cpu.pressure) for 15 minutes. Every control-plane daemon queues behind the database while this lasts. The Control plane resources dashboard shows which slice is taking the CPU; the GitHub runners and faas-obs.slice are the usual competitors."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCgroupResources.md"
 
+      # ADR-20261109172421 §6: CPU decides where an instance goes, never
+      # whether it runs, so a CPU-saturated node shows up as slower requests
+      # and this alert instead of capacity refusals. Tenants have used over
+      # 90% of the tenant slice's per-host CPUQuota (host threads less the
+      # platform reserve, node_join.yml) while tenant tasks waited for a CPU
+      # over 20% of the time: the node needs more capacity or fewer hot apps.
+      - alert: FaasNodeCPUSaturated
+        expr: |
+          (
+            rate(faas_cgroup_cpu_usage_seconds_total{cgroup="faas-tenant.slice"}[10m])
+              / faas_cgroup_cpu_quota_cores{cgroup="faas-tenant.slice"} > 0.9
+          )
+          and on(instance)
+          rate(faas_cgroup_pressure_stall_seconds_total{cgroup="faas-tenant.slice",resource="cpu",kind="some"}[10m]) > 0.2
+        for: 15m
+        labels:
+          severity: warn
+          component: node
+          family: cgroup_resources
+          public_status: internal
+        annotations:
+          summary: "Tenants on {{ $labels.instance }} have used over 90% of their CPU for 15m"
+          description: "faas-tenant.slice on {{ $labels.instance }} has run at over 90% of its CPUQuota for 15 minutes while tenant tasks waited for a CPU over 20% of the time. Wakes still land (memory is the only capacity limit, ADR-20261109172421), so requests there get slower instead. Add a node or move hot apps; do not lower the platform reserve to buy tenant CPU."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNodeCPUSaturated.md"
+
       - alert: FaasCgroupMetricsStale
         expr: time() - faas_cgroup_metrics_last_run_timestamp_seconds > 300
         for: 5m
@@ -3721,8 +3746,13 @@ groups:
       # Plan label is the canonical api.Plan string (free|hobby|pro|scale)
       # emitted by meterd's Residency tick (pkg/meter/residency.go).
       # ─────────────────────────────────────────────────────────────────
+      # A plan average from a handful of accounts is one customer's usage,
+      # not a density signal, so the alert waits for five paying customers.
       - alert: FaasResidentGbPerCustomerHigh
-        expr: max by (plan) (meterd_resident_gb_per_customer) > 0.45
+        expr: |
+          max by (plan) (meterd_resident_gb_per_customer) > 0.45
+          and on (plan)
+          max by (plan) (meterd_resident_paying_customers) >= 5
         for: 1h
         labels:
           severity: warn
@@ -3733,7 +3763,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Resident GB per paying customer > 0.45 (plan {{ $labels.plan }})"
-          description: "Plan {{ $labels.plan }} has been above the §12 threshold (0.45 average resident GB / paying customer) for 1h. Spec target is 0.305. Cross-check FaasHighResidentRamPct — fleet RAM pressure is the usual upstream cause."
+          description: "Plan {{ $labels.plan }} has been above the §12 threshold (0.45 average resident GB / paying customer) for 1h with at least five paying customers. Spec target is 0.305. Cross-check FaasHighResidentRamPct — fleet RAM pressure is the usual upstream cause."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResidentGbPerCustomerHigh.md"
 
       # ─────────────────────────────────────────────────────────────────
@@ -3781,9 +3811,13 @@ groups:
           description: "Route {{ $labels.route }} has been below 20% of its 3d trailing average for 15m while still handling > 0.1 rps (so it's not idle). Upstream outage, misdeploy, or auth fault are the canonical causes. Cross-check FaasApiAvailabilityLow — sustained 5xx is the usual upstream cause."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
 
+      # The 0.1 rps floor keeps a near-idle account (or anonymous traffic)
+      # from tripping the ratio with a handful of requests.
       - alert: FaasTrafficSpikeAccount
         expr: |
-          faas_apid_anomaly_score:by_account > 10
+          (faas_apid_anomaly_score:by_account > 10)
+          and on (account_id)
+          (faas_apid_request_rate_5m:by_account > 0.1)
         for: 15m
         labels:
           severity: warn
@@ -3793,7 +3827,7 @@ groups:
           direction: spike
         annotations:
           summary: "Account {{ $labels.account_id }} traffic > 10x its 3d average"
-          description: "Customer {{ $labels.account_id }} has been above 10x its 3d trailing average for 15m. Higher threshold than fleet-wide to suppress per-customer noise. account_id=\"__other__\" is the bounded overflow bucket (issue #278) — drill-down on it means the customer is past the 10k admission cap."
+          description: "Customer {{ $labels.account_id }} has been above 10x its 3d trailing average and 0.1 request/second for 15m. Higher threshold than fleet-wide to suppress per-customer noise. account_id=\"__other__\" is the bounded overflow bucket (issue #278) — drill-down on it means the customer is past the 10k admission cap."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
 
       - alert: FaasTrafficDropAccount
@@ -4101,7 +4135,8 @@ groups:
       #
       # Response cascade (docs/ops/FaasCpuStarvation.md §Recover):
       # top-N panel → plan raise for the customer → consider
-      # faas-tenant slice CPUQuota bump (1600% = 16 cores). Memory
+      # faas-tenant slice CPUQuota bump (host threads − reserve,
+      # node_join.yml; ADR-20261109172421 §4). Memory
       # is NOT in scope — the per-VM memory.max is enforced by
       # vmmd via the jailer (spec §11/G6); a starved VM is a CPU
       # signal, not a RAM one.
@@ -6393,6 +6428,24 @@ groups:
           description: "When the production approval ends, new databases, bindings, restores and resizes close until an operator approves the backend again. Review the backend and set a new FAAS_MANAGED_POSTGRES_PRODUCTION_APPROVED_AT/UNTIL window before it ends."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
 
+      # Two days out the warn becomes a page, the same lead the ADR-1236
+      # near-expiry certificate pages give: renewal is a config change and
+      # an apid restart, and missing it closes provisioning for everyone.
+      - alert: FaasManagedPostgresProductionApprovalImminent
+        expr: |
+          apid_managed_postgres_production_approval_until_timestamp_seconds > time()
+          and
+          apid_managed_postgres_production_approval_until_timestamp_seconds - time() < 2 * 86400
+        for: 10m
+        labels:
+          severity: page
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Production managed PostgreSQL approval ends within 48 hours"
+          description: "The production approval ends in under two days. When it ends, new databases, bindings, restores and resizes close until an operator approves the backend again. Set a new FAAS_MANAGED_POSTGRES_PRODUCTION_APPROVED_AT/UNTIL window and restart apid now."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
       - alert: FaasManagedPostgresProductionApprovalExpired
         expr: |
           apid_managed_postgres_production_approval_until_timestamp_seconds > 0
@@ -6955,14 +7008,19 @@ groups:
   - name: faas_snapshot_drift_audit
     interval: 30s
     rules:
+      # The audit runs hourly and the counter only changes on a tick, so one
+      # failed tick would hold the alert for an hour. Two consecutive
+      # failures mean an hour without a complete inventory. The audit is
+      # bookkeeping: it never starts or stops customer work, so it stays off
+      # the public status page.
       - alert: FaasSnapshotDriftAuditUnavailable
-        expr: schedd_snapshot_disk_drift_consecutive_failures > 0
+        expr: schedd_snapshot_disk_drift_consecutive_failures >= 2
         for: 5m
         labels:
           severity: warn
           component: schedd
           family: snapshot_integrity
-          public_status: degraded
+          public_status: internal
         annotations:
           summary: "Snapshot integrity inventory is unavailable"
           description: "The snapshot drift audit has failed {{ $value }} consecutive times. A zero drift counter is not authoritative until a complete inventory succeeds."
@@ -8346,6 +8404,18 @@ groups:
           summary: "{{ $labels.instance }} has held hosts behind edge-rule fences for 10 minutes"
           description: "gateway_edge_rule_converging_hosts on {{ $labels.instance }} has not dropped to zero for 10m. Those hosts keep serving their current rules. A fence expires 10s after its change is prepared, so one that never clears means changes keep being prepared without being applied."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
+      - alert: FaasEdgeRuleHeaderBackfillStalled
+        expr: max(apid_edge_rule_header_backfill_pending) == 1
+        for: 6h
+        labels:
+          severity: warn
+          component: apid
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "Edge-rule header credentials have stayed unsealed for 6 hours"
+          description: "Every header backfill pass for 6h left credentials stored as written. apid_edge_rule_header_fleet_ready=0 means a serving gateway does not report that it opens sealed values (an old release or a stale report), and apid also stores new credentials as written meanwhile. Otherwise items keep failing or changing; see apid_edge_rule_header_backfill_items_total and the apid log line 'edge rule header backfill pass'."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
       - alert: FaasEdgeRuleJWTFailures
         expr: sum(rate(gateway_edge_rule_match_total{kind="jwt",outcome="failed"}[5m])) * 60 > 5
         for: 5m
@@ -8359,7 +8429,12 @@ groups:
           description: "gateway_edge_rule_match_total{kind=\"jwt\",outcome=\"failed\"} has exceeded 5/min for 5m. Customers are receiving 401s from the JWT gate; check verifier reachability and key rotation before treating it as client error."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleJWTFailures.md"
       - alert: FaasResponseCacheBypassAuthedHigh
-        expr: sum(rate(gateway_response_cache_total{outcome="bypass_authed"}[5m])) / sum(rate(gateway_response_cache_total[5m])) > 0.05
+        # The 0.1 lookups/second floor (30 per 5m) keeps a single
+        # credentialed lookup on an idle cache from reading as 100%.
+        expr: |
+          sum(rate(gateway_response_cache_total{outcome="bypass_authed"}[5m])) / sum(rate(gateway_response_cache_total[5m])) > 0.05
+          and
+          sum(rate(gateway_response_cache_total[5m])) > 0.1
         for: 10m
         labels:
           severity: warn
@@ -8368,7 +8443,7 @@ groups:
           public_status: internal
         annotations:
           summary: "More than 5% of cacheable lookups bypass the cache as authenticated"
-          description: "A cache rule is matching credentialed traffic, so more than 5% of response-cache decisions over 10m bypassed the cache as bypass_authed."
+          description: "A cache rule is matching credentialed traffic, so more than 5% of response-cache decisions over 10m bypassed the cache as bypass_authed, at more than 0.1 lookups per second."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResponseCache.md"
       - alert: FaasResponseCacheStoreSkippedHigh
         expr: sum(rate(gateway_response_cache_total{outcome="store_skipped"}[5m])) / sum(rate(gateway_response_cache_total[5m])) > 0.5

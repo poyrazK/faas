@@ -57,6 +57,8 @@ func (p *requestTelemetryPublisher) stopLocked(ctx context.Context) {
 }
 
 func (p *requestTelemetryPublisher) drainFinal() {
+	// The HTTP drain is over: ship every buffered analytics minute first.
+	p.recorder.analytics.tick(p.finalCtx, true)
 	if p.minutes != nil {
 		p.drainFinalMinutes()
 		return

@@ -80,6 +80,9 @@ import (
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
+// SealNotificationChannel validates a channel create request (ADR-749).
+var SealNotificationChannel = sealChannel
+
 var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
 var DashboardDebugStatusView = dashboardDebugStatusView
 
@@ -2285,3 +2288,6 @@ func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Re
 func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.getEnvironmentPromotionReceipt(w, r, acct)
 }
+
+// SourceLivenessOverrides is a multipart deploy's liveness_probe override.
+var SourceLivenessOverrides = sourceLivenessOverrides

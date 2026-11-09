@@ -176,12 +176,15 @@ Three-step cascade, ordered from least to most disruptive:
      for the affected plan and ship a new release. This is a
      customer-facing change — verify with the §1 financial model
      that the new quota still supports the steady-state plan mix.
-   - **Tenant slice CPUQuota bump**: edit
-     `deploy/ansible/roles/systemd_slices/tasks/main.yml`'s
-     `CPUQuota=1600%` on `faas-tenant.slice` (1600% = 16 vCPU; the
-     §1 model assumes the box has 16 vCPU worth of headroom).
-     Re-run the ansible role. This is a fleet-wide capacity change
-     and must be matched on the spec side via an ADR.
+   - **Tenant slice CPUQuota bump**: on a compute node the quota is
+     (host threads − `faas_tenant_cpu_reserve_threads`) × 100%,
+     written by `deploy/ansible/node_join.yml` into
+     `faas-tenant.slice.d/90-host-capacity.conf` (ADR-20261109172421 §4;
+     the reserve defaults to 2 threads and is a host var). Lower the
+     reserve for that host class and re-run node_join; on a single box
+     the role's base `CPUQuota=1600%` applies. Lowering the reserve
+     takes CPU from gatewayd, vmmd and schedd under load, so check
+     their latency first.
    - **Move the offending customer to a different box**: out of
      scope for this runbook (covered by issue #56, multi-host). The
      migration flow is a separate operational surface.

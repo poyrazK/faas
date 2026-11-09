@@ -237,6 +237,17 @@ func (b *restoreReseedBarrier) register(conn net.Conn) {
 	b.mu.Unlock()
 }
 
+// registeredPIDs is the set of processes currently registered.
+func (b *restoreReseedBarrier) registeredPIDs() map[int]bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pids := make(map[int]bool, len(b.clients))
+	for c := range b.clients {
+		pids[c.pid] = true
+	}
+	return pids
+}
+
 func (b *restoreReseedBarrier) registered() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()

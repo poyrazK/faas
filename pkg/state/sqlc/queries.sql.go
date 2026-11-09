@@ -4633,7 +4633,7 @@ WITH candidate AS (
  AND (h.next_check_at IS NULL OR h.next_check_at <= $1::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= $1::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
+ LIMIT 1 FOR NO KEY UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, $1::timestamptz, $2::text, $1::timestamptz, $3::timestamptz FROM candidate
@@ -4660,6 +4660,10 @@ type ClaimAppHealthRow struct {
 // The insert's account_id foreign key needs a key-share lock on the
 // namespace; taking it here with SKIP LOCKED skips an app whose namespace is
 // mid-apply instead of holding the app row while waiting for it (40P01).
+// The app row is taken FOR NO KEY UPDATE: it still excludes a delete, but not
+// the key-share lock FinishAppHealth's history insert takes through
+// app_health_history.app_id while it holds this app's collection row, which
+// the upsert below waits on when the previous lease has just expired.
 func (q *Queries) ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error) {
 	row := db.QueryRow(ctx, claimAppHealth, arg.CheckedNow, arg.Token, arg.ExpiresAt)
 	var i ClaimAppHealthRow
@@ -49922,6 +49926,60 @@ func (q *Queries) ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUd
 			&i.PublicPort,
 			&i.Protocol,
 			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnvironmentEdgePoliciesWithRequestHeaderLiterals = `-- name: ListEnvironmentEdgePoliciesWithRequestHeaderLiterals :many
+SELECT p.account_id, p.project_id, p.app_id, p.environment_slug, p.rules, p.created_at, p.updated_at
+FROM project_environment_edge_policies p
+WHERE (p.app_id, p.environment_slug) > ($1::uuid, $2::text)
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p.rules) rule,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(rule->'action'->'headers'->'request_headers') = 'array'
+        THEN rule->'action'->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE rule->>'kind' = 'headers' AND coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+  AND NOT EXISTS (
+    SELECT 1 FROM active_environment_git_sources s
+    JOIN project_environments e ON e.id = s.environment_id
+    JOIN environment_gitops_resources r ON r.source_id = s.id
+    WHERE r.app_id = p.app_id AND e.slug = p.environment_slug)
+ORDER BY p.app_id, p.environment_slug LIMIT $3::integer
+`
+
+type ListEnvironmentEdgePoliciesWithRequestHeaderLiteralsParams struct {
+	AfterAppID       pgtype.UUID
+	AfterEnvironment string
+	RowLimit         int32
+}
+
+// Environment edge policies written through the API. An environment with
+// an active Git source for the app is left out: its values come from the
+// repository, and a sealed value would read as drift there.
+func (q *Queries) ListEnvironmentEdgePoliciesWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEnvironmentEdgePoliciesWithRequestHeaderLiteralsParams) ([]ProjectEnvironmentEdgePolicy, error) {
+	rows, err := db.Query(ctx, listEnvironmentEdgePoliciesWithRequestHeaderLiterals, arg.AfterAppID, arg.AfterEnvironment, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentEdgePolicy{}
+	for rows.Next() {
+		var i ProjectEnvironmentEdgePolicy
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.ProjectID,
+			&i.AppID,
+			&i.EnvironmentSlug,
+			&i.Rules,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

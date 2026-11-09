@@ -234,17 +234,3 @@ func RedactHeaderSecrets(action state.EdgeRuleAction) state.EdgeRuleAction {
 	action.Headers = &headers
 	return action
 }
-
-// SecretHeaderOpsProblem refuses sealed header fields in an action that
-// cannot hold them yet (environment edge policies, ADR-20261108110000).
-func SecretHeaderOpsProblem(kind string, action state.EdgeRuleAction) *api.Problem {
-	if kind != string(state.EdgeRuleKindHeaders) || action.Headers == nil {
-		return nil
-	}
-	for _, op := range action.Headers.RequestHeaders {
-		if op.Secret || op.SecretID != "" || op.Redacted {
-			return api.ErrValidation("environment policies do not accept secret header values yet; set the header on an application edge rule")
-		}
-	}
-	return nil
-}

@@ -27,7 +27,7 @@ The API equivalent is `POST /v1/apps/{slug}/slos`; `GET`, `GET .../{id}` and
 | Field | Values |
 |---|---|
 | `sli` | `availability`: share of non-5xx responses among 2xx and 5xx responses (4xx are the client's error and do not count). `latency`: share of requests that finish within the threshold. |
-| `latency_threshold_ms` | Latency SLI only: 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000 or 10000. These are the gateway's histogram buckets, so attainment is counted exactly rather than estimated. |
+| `latency_threshold_ms` | Latency SLI only (a WebSocket, a server-sent event stream or another long-lived response counts the time until its response headers, not how long it stays open): 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000 or 10000. These are the gateway's histogram buckets, so attainment is counted exactly rather than estimated. |
 | `objective_pct` | 90 to 99.99, at most two decimals. |
 | `window_days` | 7 or 30; the budget is measured over this rolling window. |
 
