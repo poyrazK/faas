@@ -117,19 +117,19 @@ func TestThrottleRec_HappyPath(t *testing.T) {
 	if resp.Multiplier != throttlerec.Multiplier {
 		t.Errorf("Multiplier = %v, want %v", resp.Multiplier, throttlerec.Multiplier)
 	}
-	if resp.PlanCeilingRPS != 100 || resp.PlanCeilingBurst != 500 {
-		t.Errorf("PlanCeiling = (%d, %d), want (100, 500)", resp.PlanCeilingRPS, resp.PlanCeilingBurst)
+	if resp.PlanCeilingRPS != 1000 || resp.PlanCeilingBurst != 5000 {
+		t.Errorf("PlanCeiling = (%d, %d), want (1000, 5000)", resp.PlanCeilingRPS, resp.PlanCeilingBurst)
 	}
 }
 
-// TestThrottleRec_PlanCeilingClamp: a route observed at 200 rps
-// on a Pro plan (ceiling 100) gets SuggestedRPS clamped to 100
-// (plan ceiling), not 400 (uncapped 2×). Burst is also clamped.
+// TestThrottleRec_PlanCeilingClamp: a route observed at 2000 rps
+// on a Pro plan (ceiling 1000) gets SuggestedRPS clamped to 1000
+// (plan ceiling), not 4000 (uncapped 2×). Burst is also clamped.
 func TestThrottleRec_PlanCeilingClamp(t *testing.T) {
 	log, _ := captureLog(t)
 	stub := &stubPromQL{fn: func(_, _, _ string) (map[string]map[string]float64, error) {
 		return appRow("app-1", map[string]float64{
-			"GET /hot": 200.0,
+			"GET /hot": 2000.0,
 		}), nil
 	}}
 
@@ -146,15 +146,15 @@ func TestThrottleRec_PlanCeilingClamp(t *testing.T) {
 		t.Fatalf("Suggestions count = %d, want 1", len(resp.Suggestions))
 	}
 	r := resp.Suggestions[0]
-	if r.SuggestedRPS != 100 {
-		t.Errorf("SuggestedRPS = %v, want 100 (plan ceiling)", r.SuggestedRPS)
+	if r.SuggestedRPS != 1000 {
+		t.Errorf("SuggestedRPS = %v, want 1000 (plan ceiling)", r.SuggestedRPS)
 	}
-	// Burst = clamp(ceil(100 * 1.5) = 150, 1, 500) = 150.
-	if r.SuggestedBurst != 150 {
-		t.Errorf("SuggestedBurst = %d, want 150", r.SuggestedBurst)
+	// Burst = clamp(ceil(1000 * 1.5) = 1500, 1, 5000) = 1500.
+	if r.SuggestedBurst != 1500 {
+		t.Errorf("SuggestedBurst = %d, want 1500", r.SuggestedBurst)
 	}
-	if r.ObservedRPS != 200 {
-		t.Errorf("ObservedRPS = %v, want 200 (uncapped)", r.ObservedRPS)
+	if r.ObservedRPS != 2000 {
+		t.Errorf("ObservedRPS = %v, want 2000 (uncapped)", r.ObservedRPS)
 	}
 }
 

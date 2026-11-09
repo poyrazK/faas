@@ -645,10 +645,14 @@ func TestRequestIDRoundTrip(t *testing.T) {
 func TestRateLimitReturns429(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.setLegacyHot()          // hot path; the rate-limit test doesn't care about wake
-	b.app.Plan = api.PlanFree // burst 20
+	b.app.Plan = api.PlanFree
+	burst := api.MustLimitsFor(api.PlanFree).RateLimitBurst
+	// A frozen clock stops refill while the loop drains the bucket.
+	fixed := time.Now()
+	h.WithLimiter(NewLimiterWithClock(func() time.Time { return fixed }))
 
 	got429 := false
-	for i := 0; i < 30; i++ {
+	for i := 0; i < burst+10; i++ {
 		req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -660,7 +664,7 @@ func TestRateLimitReturns429(t *testing.T) {
 			if rec.Header().Get("x-faas-rate-limit-scope") != "app" {
 				t.Error("app-scope 429 should carry x-faas-rate-limit-scope: app")
 			}
-			assertRateLimitedProblem(t, rec, 20)
+			assertRateLimitedProblem(t, rec, int64(burst))
 			break
 		}
 	}
@@ -1082,12 +1086,16 @@ func TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse(t *testing.T) {
 func TestAccountRateLimitReturns429(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.setLegacyHot()
-	b.app.Plan = api.PlanFree // smallest account bucket: 300 RPM
+	b.app.Plan = api.PlanFree // smallest account bucket
 	b.app.AccountID = "acct-rl"
 	h.WithLimiter(NewLimiter().WithNoop()) // bypass per-app scope
+	rpm := api.PlanFree.RateLimitPerAccountRPM()
+	// A frozen clock stops refill while the loop drains the bucket.
+	fixed := time.Now()
+	h.WithAccountLimiter(NewLimiterWithClock(func() time.Time { return fixed }))
 
 	got429 := false
-	for i := 0; i < 350; i++ {
+	for i := 0; i < rpm+50; i++ {
 		req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -1100,12 +1108,12 @@ func TestAccountRateLimitReturns429(t *testing.T) {
 				t.Errorf("account-scope 429 should carry x-faas-rate-limit-scope: account; got %q",
 					rec.Header().Get("x-faas-rate-limit-scope"))
 			}
-			assertRateLimitedProblem(t, rec, 300)
+			assertRateLimitedProblem(t, rec, int64(rpm))
 			break
 		}
 	}
 	if !got429 {
-		t.Error("exceeding the per-account Free burst (300) should yield 429")
+		t.Errorf("exceeding the per-account Free burst (%d) should yield 429", rpm)
 	}
 	// The metric counter for account-scope rejections must have
 	// incremented. Scrape the registry and confirm.
@@ -1422,11 +1430,11 @@ func TestMetricsSpec12(t *testing.T) {
 		t.Errorf("requests_total{404}=%v, want 1", got)
 	}
 
-	// Rate limit (Free plan burst 20, 25 requests): +rate_limited_total{1}.
+	// Rate limit (Free plan burst + 5 requests): +rate_limited_total{1}.
 	h2, b2, _ := newTestHandler(t)
 	h2.SetWakeGateHook()
 	b2.app.Plan = api.PlanFree
-	for i := 0; i < 25; i++ {
+	for i := 0; i < api.MustLimitsFor(api.PlanFree).RateLimitBurst+5; i++ {
 		req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 		rec = httptest.NewRecorder()
 		h2.ServeHTTP(rec, req)
