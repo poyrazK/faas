@@ -2782,3 +2782,5 @@ var (
 
 // MCPConnectOptions builds the options a test passes to MCPHeadlessToolCount.
 type MCPConnectOptions = mcpConnectOptions
+
+var RefuseDevFunctionSet = refuseDevFunctionSet

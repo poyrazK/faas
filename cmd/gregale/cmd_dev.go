@@ -29,6 +29,9 @@ type devSourceConfig struct {
 }
 
 func resolveDevSourceConfig(sourceDir string) (devSourceConfig, error) {
+	if err := refuseDevFunctionSet(sourceDir); err != nil {
+		return devSourceConfig{}, err
+	}
 	resolvedShape, runtime, handler, err := resolveDeployShape(sourceDir, false, false, jsonOutput)
 	if err != nil {
 		return devSourceConfig{}, err

@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	devLocalUsage        = "usage: gregale dev --local [--path DIR] [--port N] [--env-file PATH] [--no-remote | --offline [--postgres] [--bucket NAME]... [--reset]] [--no-reload]"
+	devLocalUsage        = "usage: gregale dev --local [--path DIR] [--name PROJECT] [--port N] [--env-file PATH] [--no-remote | --offline [--postgres] [--bucket NAME]... [--reset]] [--no-reload]"
 	devLocalDefaultPort  = 8787
 	devLocalTokenHeader  = "X-Gregale-Local-Token"
 	devLocalTriggerPath  = "/__gregale/trigger"
@@ -79,6 +79,7 @@ func hasLocalFlag(args []string) ([]string, bool) {
 func cmdDevLocal(args []string) int {
 	fs := newFlagSet("dev --local", flag.ContinueOnError)
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
+	name := fs.String("name", "", "developer-session project name whose database and buckets to use")
 	port := fs.Int("port", devLocalDefaultPort, "local port")
 	envFile := fs.String("env-file", "", "KEY=VALUE file whose entries every function gets")
 	noReload := fs.Bool("no-reload", false, "do not reload functions when their source changes")
@@ -94,6 +95,9 @@ func cmdDevLocal(args []string) int {
 	}
 	if (*postgres || len(buckets) > 0 || *reset) && !*offline {
 		return printErr("Invalid flags", errors.New("--postgres, --bucket and --reset go with --offline; without it the developer session's database and buckets are used"))
+	}
+	if *name != "" && (*offline || *noRemote) {
+		return printErr("Invalid flags", errors.New("--name picks the developer session to connect to; it does nothing with --offline or --no-remote"))
 	}
 	if *offline && *noRemote {
 		return printErr("Invalid flags", errors.New("--offline already skips the developer session; drop --no-remote"))
@@ -123,7 +127,7 @@ func cmdDevLocal(args []string) int {
 			return printErr("Could not start local resources", err)
 		}
 	case !*noRemote:
-		remote = attachDevLocalRemote(ctx, *sourcePath, osStderr)
+		remote = attachDevLocalRemote(ctx, *sourcePath, *name, osStderr)
 	}
 	defer remote.close()
 	baseEnv := devLocalEnv(os.Environ(), remote.Env, fileEnv)
