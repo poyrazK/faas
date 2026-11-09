@@ -130,6 +130,12 @@ fleet runs that release. Rolling back past it means turning the variable off
 first. Every other request stays on HTTP/1.1, so an older gatewayd-public
 behind an h2c-enabled Caddy fails gRPC only.
 
+A new manifest key follows the same rule. An older gregalectl rejects a
+manifest key it does not know, so the deployment manifest gains the key only
+after a release whose gregalectl reads it has shipped; rolling back past that
+release means removing the key first. Feature stages in the manifest, such as
+`service_tcp` (ADR-576), turn on one stage per rollout and off in reverse.
+
 **Headers and trailers between gateways are part of the N±1 contract.**
 gatewayd-public runs on the control-plane host and moves with the
 control-plane stage, so for a whole rollout it sits in front of N-1 compute

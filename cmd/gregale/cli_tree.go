@@ -308,6 +308,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Agents. Hosting verbs and client verbs sit directly under `mcp` today.
 	{"mcp serve", "mcp serve"},
+	{"mcp connect", "mcp connect"},
 	{"mcp connection", "mcp connections"},
 	{"mcp server", "mcp"},
 	{"mcp client tools", "mcp tools"},

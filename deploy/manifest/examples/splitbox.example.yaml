@@ -178,6 +178,24 @@ daemons:
 overlay:
   provider: wireguard
   cidr: 10.42.0.0/24
+  # Bare metal (ADR-20261109100000): with provider "static", name the private
+  # card, e.g. an OVH vRack NIC; private services then accept only on it.
+  # interface: eno2
+
+# Bare metal: limit sshd to the private network and these operator sources
+# (a bastion or VPN). Leave the section out on a cloud whose provider
+# firewall already bounds sshd (GCP IAP).
+# ssh:
+#   allowed_cidrs: ["198.51.100.10/32"]
+
+# Bare metal (ADR-20261109120000): encrypt each host's new /srv/fc volume at
+# rest. It unlocks at boot through the OTHER hosts' Tang servers on the
+# private network; a recovery key sealed to these operator age recipients
+# opens it if every Tang server is gone. Keep the identities off the fleet.
+# Applies to volumes created from now on; see docs/runbooks/disk-encryption.md.
+# disk_encryption:
+#   tang_port: 7500
+#   recovery_recipients: ["age1…"]
 
 # Egress — top-level RFC1918 lateral-movement escape hatch
 # (PR scale-out tier-1 residual Gap #4). The flag's name is

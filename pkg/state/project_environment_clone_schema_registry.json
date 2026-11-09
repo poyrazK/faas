@@ -484,6 +484,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_mail_throttle",
+    "columns": [
+      "account_id",
+      "kind",
+      "last_sent_at",
+      "sent_in_window",
+      "window_started_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "mfa_trusted_browsers",
     "columns": [
       "account_id",
@@ -15077,6 +15088,8 @@
       "commit_sha",
       "installation_id",
       "member_app_ids",
+      "member_pins",
+      "member_pins_head",
       "pr_number",
       "repo_full_name",
       "root_app_id",

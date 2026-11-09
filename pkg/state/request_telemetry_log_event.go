@@ -17,6 +17,22 @@ type RequestTelemetryLogStore interface {
 	InsertRequestTelemetryWithLogEvent(context.Context, sqlc.InsertRequestTelemetryParams, string) error
 }
 
+// RequestTelemetryInsert is one accepted telemetry row and its gateway event
+// ID, for RequestTelemetryBatchLogStore.
+type RequestTelemetryInsert struct {
+	Params  sqlc.InsertRequestTelemetryParams
+	EventID string
+}
+
+// RequestTelemetryBatchLogStore commits a group of telemetry rows and their
+// log projections in one transaction, all or nothing, with the same replay
+// rule per row as RequestTelemetryLogStore (ADR-127 amendment, group
+// commit). A receiver that gets an error writes the rows one by one to learn
+// each row's outcome.
+type RequestTelemetryBatchLogStore interface {
+	InsertRequestTelemetryBatchWithLogEvents(context.Context, []RequestTelemetryInsert) error
+}
+
 func requestTelemetryLogEvent(arg sqlc.InsertRequestTelemetryParams, eventID string) (LogEvent, error) {
 	parsedEventID, err := uuid.Parse(eventID)
 	if err != nil {

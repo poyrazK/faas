@@ -4398,6 +4398,9 @@
       ],
       "docs_url": "/docs/multi-service",
       "acceptance_test": "cmd/e2e/multi_service_project_e2e_test.go::TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName",
+      "settings": [
+        "manifest.project"
+      ],
       "routes": [
         "/dashboard/projects",
         "/v1/orgs/{}/projects",
