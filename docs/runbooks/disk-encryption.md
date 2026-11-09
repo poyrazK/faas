@@ -40,11 +40,12 @@ systemctl show faas-vmmd -p RequiresMountsFor  # includes /srv/fc
 ## What lives on the volume
 
 Besides `/srv/fc`'s own data, these paths are bind mounts of
-`/srv/fc/host-private/<name>` (Amendment 1):
+`/srv/fc/host-private/<name>` (Amendments 1 and 2):
 
 | Path | Hosts |
 |---|---|
 | `/etc/faas/secrets` | every host |
+| `/var/lib/faas` (daemon state, HMAC keys, certs, zswap swapfile) | every host |
 | `/var/lib/postgresql` (cluster) | control plane |
 | `/var/lib/pgsql` (WAL archive, base backups) | control plane |
 
@@ -66,7 +67,7 @@ stays reachable over SSH. Usually no Tang peer answered at boot.
    ```
    sudo clevis luks unlock -d <device> -n faas-fc-crypt
    sudo mount /srv/fc
-   sudo mount -a -t none            # the host-private bind mounts
+   sudo systemctl start local-fs.target remote-fs.target   # the bind mounts, parents first
    sudo systemctl start postgresql  # control plane
    sudo systemctl start --all 'faas-*.service'
    ```
@@ -157,6 +158,16 @@ window (the API is down while Postgres is):
    then converge again: the role adds the fstab entries, proves the copy,
    shreds the originals and seals the directories.
 4. Start Postgres and the daemons, and check `findmnt /var/lib/postgresql`.
+
+## Moving /var/lib/faas on a running host
+
+It moves only while no `faas-*` service runs; the role otherwise stops with
+"refuse to move daemon state while faas services run". New hosts never hit
+this. For a host encrypted before Amendment 2: drain it (compute) or open a
+maintenance window (control plane), `sudo systemctl stop 'faas-*.service'`
+(the zswap swapfile is swapped off with `faas-zswap`), converge, then start
+them again. The OCI cache and Grype mounts beneath it stay on `/srv/fc` and
+are put back on top automatically.
 
 ## Undoing a sealed directory
 
