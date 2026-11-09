@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -216,4 +217,128 @@ func (m *MemStore) ReplaceEdgeRuleSetVersionActions(_ context.Context, v EdgeRul
 		return true, nil
 	}
 	return false, nil
+}
+
+// EnvironmentPolicyHeaderLiteralStore serves the sealing backfill for
+// environment edge policies written through the API (ADR-20261108110000,
+// amendment 2026-11-09). Policies of an environment with an active Git
+// source for the app are not listed.
+type EnvironmentPolicyHeaderLiteralStore interface {
+	ListEnvironmentEdgePoliciesWithRequestHeaderLiterals(ctx context.Context, afterAppID, afterEnvironment string, limit int) ([]ProjectEnvironmentEdgePolicy, error)
+	// ReplaceEnvironmentEdgePolicyRules stores rules in place of policy's
+	// rules only if the policy is unchanged since it was read (same
+	// updated_at). It reports false, changing nothing, otherwise.
+	ReplaceEnvironmentEdgePolicyRules(ctx context.Context, policy ProjectEnvironmentEdgePolicy, rules []ProjectEnvironmentEdgeRule) (bool, error)
+}
+
+func environmentPolicyHeaderLiteral(rules []ProjectEnvironmentEdgeRule) bool {
+	for _, rule := range rules {
+		if rule.Kind == EdgeRuleKindHeaders && requestHeaderLiteral(rule.Action) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *PgStore) ListEnvironmentEdgePoliciesWithRequestHeaderLiterals(ctx context.Context, afterAppID, afterEnvironment string, limit int) ([]ProjectEnvironmentEdgePolicy, error) {
+	if afterAppID == "" {
+		afterAppID = zeroUUID
+	}
+	after, err := parsePgUUID(afterAppID)
+	if err != nil {
+		return nil, fmt.Errorf("state: environment policy cursor: %w", err)
+	}
+	rows, err := sqlc.New().ListEnvironmentEdgePoliciesWithRequestHeaderLiterals(ctx, s.pool, sqlc.ListEnvironmentEdgePoliciesWithRequestHeaderLiteralsParams{
+		AfterAppID: after, AfterEnvironment: afterEnvironment, RowLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("state: list environment policies with header literals: %w", err)
+	}
+	out := make([]ProjectEnvironmentEdgePolicy, 0, len(rows))
+	for _, row := range rows {
+		policy := ProjectEnvironmentEdgePolicy{AccountID: uuidString(row.AccountID), ProjectID: uuidString(row.ProjectID),
+			AppID: uuidString(row.AppID), EnvironmentSlug: row.EnvironmentSlug, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
+		if err := json.Unmarshal(row.Rules, &policy.Rules); err != nil {
+			return nil, fmt.Errorf("state: decode environment policy %s/%s: %w", policy.AppID, policy.EnvironmentSlug, err)
+		}
+		out = append(out, policy)
+	}
+	return out, nil
+}
+
+func (s *PgStore) ReplaceEnvironmentEdgePolicyRules(ctx context.Context, policy ProjectEnvironmentEdgePolicy, rules []ProjectEnvironmentEdgeRule) (bool, error) {
+	next := policy
+	next.Rules = rules
+	if !validProjectEnvironmentEdgeRules(rules) {
+		return false, ErrInvalidArgument
+	}
+	if err := s.validateTrafficProjection(ctx, "environment_edge_policy", environmentEdgeTrafficProjection(next)); err != nil {
+		return false, err
+	}
+	encoded, err := json.Marshal(rules)
+	if err != nil {
+		return false, err
+	}
+	tx, err := s.beginRuleOnlyTrafficPolicyMutation(ctx, uuidToPgtype(policy.AccountID))
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `
+		update project_environment_edge_policies set rules = $3::jsonb, updated_at = now()
+		 where app_id = $1 and environment_slug = $2 and updated_at = $4`,
+		policy.AppID, policy.EnvironmentSlug, encoded, policy.UpdatedAt)
+	if err != nil {
+		return false, mapErr(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return false, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (m *MemStore) ListEnvironmentEdgePoliciesWithRequestHeaderLiterals(_ context.Context, afterAppID, afterEnvironment string, limit int) ([]ProjectEnvironmentEdgePolicy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []ProjectEnvironmentEdgePolicy
+	for _, policy := range m.projectEnvironmentEdgePolicies {
+		if policy.AppID < afterAppID || (policy.AppID == afterAppID && policy.EnvironmentSlug <= afterEnvironment) {
+			continue
+		}
+		if !environmentPolicyHeaderLiteral(policy.Rules) {
+			continue
+		}
+		if source, _ := m.gitOpsGuardScopedWriteLocked(policy.AccountID, policy.AppID, policy.EnvironmentSlug, nil); source != nil {
+			continue // an active Git source covers the app here
+		}
+		policy.Rules = cloneProjectEnvironmentEdgeRules(policy.Rules)
+		out = append(out, policy)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].AppID != out[j].AppID {
+			return out[i].AppID < out[j].AppID
+		}
+		return out[i].EnvironmentSlug < out[j].EnvironmentSlug
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *MemStore) ReplaceEnvironmentEdgePolicyRules(_ context.Context, policy ProjectEnvironmentEdgePolicy, rules []ProjectEnvironmentEdgeRule) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := projectEnvironmentRoutePolicyKey(policy.AppID, policy.EnvironmentSlug)
+	current, ok := m.projectEnvironmentEdgePolicies[key]
+	if !ok || !current.UpdatedAt.Equal(policy.UpdatedAt) {
+		return false, nil
+	}
+	current.Rules = cloneProjectEnvironmentEdgeRules(rules)
+	current.UpdatedAt = time.Now().UTC()
+	m.projectEnvironmentEdgePolicies[key] = current
+	return true, nil
 }
