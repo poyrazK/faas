@@ -428,6 +428,13 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	timings.UserspaceReseedUs = time.Since(stage).Microseconds()
 	timings.ReseedClients = stats.Clients
 	timings.ReseedSlowestUs, timings.ReseedSlowestRuntime = stats.Slowest.Microseconds(), stats.SlowestRuntime
+	// ADR-20261109140000: report, never refuse, interpreter processes the
+	// barrier could not reach.
+	if n, runtimes := unregisteredRuntimeProcesses(); n > 0 {
+		timings.ReseedUnregistered, timings.ReseedUnregisteredRuntimes = n, strings.Join(runtimes, ",")
+		log.Warn("restore: processes not covered by the userspace RNG reseed may repeat random values across wakes",
+			"processes", n, "runtimes", timings.ReseedUnregisteredRuntimes)
+	}
 	stage = time.Now()
 	resumeGuestProfiles()
 	timings.ProfilesUs = time.Since(stage).Microseconds()

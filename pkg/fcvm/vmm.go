@@ -3246,6 +3246,12 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	if guest != nil {
 		attrs = append(attrs, resumeGuestTimingAttrs(*guest, ackWait)...)
 		v.wakePhaseMetrics.ObserveResumeGuestStages(*guest, ackWait)
+		v.wakePhaseMetrics.ObserveReseedUnregistered(*guest)
+		if guest.ReseedUnregistered > 0 {
+			slog.Default().Warn("restore: guest processes not covered by the userspace RNG reseed",
+				"instance", l.Instance, "processes", guest.ReseedUnregistered,
+				"runtimes", guest.ReseedUnregisteredRuntimes, "adr", "ADR-20261109140000")
+		}
 	}
 	slog.Default().Info("resume hook timing", attrs...)
 	return nil
@@ -3275,6 +3281,7 @@ func resumeGuestTimingAttrs(t resumetimingproto.Timings, ackWait time.Duration) 
 		"guest_reseed_clients", t.ReseedClients,
 		"guest_reseed_slowest_us", t.ReseedSlowestUs,
 		"guest_reseed_slowest_runtime", t.ReseedSlowestRuntime,
+		"guest_reseed_unregistered", t.ReseedUnregistered,
 		"guest_profiles_us", t.ProfilesUs,
 		"guest_after_restore_us", t.AfterRestoreUs,
 	}
