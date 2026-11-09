@@ -2287,6 +2287,10 @@ type ScalingTarget struct {
 	// Name is the custom metric this target watches (ADR-202). Set only
 	// when Metric == "custom".
 	Name string
+	// Labels selects one labelled series of Name (ADR-20261108160000 slice
+	// C2); empty reads the metric's aggregate. Stored in the policy jsonb;
+	// omitted when empty so existing policies serialise unchanged.
+	Labels map[string]string `json:",omitempty"`
 }
 
 // CustomMetric is one customer-pushed gauge (ADR-202).

@@ -8493,6 +8493,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 			Metric: sp.Target.Metric,
 			Value:  sp.Target.Value,
 			Name:   sp.Target.Name,
+			Labels: sp.Target.Labels,
 		}
 	}
 	// ADR-194 targets, ADR-195 schedules. These were absent here for the
@@ -8506,7 +8507,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 	// fails if a field is added to either type without being copied here.
 	for _, t := range sp.Targets {
 		out.Targets = append(out.Targets, state.ScalingTarget{
-			Metric: t.Metric, Value: t.Value, Name: t.Name,
+			Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels,
 		})
 	}
 	out.Timezone = sp.Timezone

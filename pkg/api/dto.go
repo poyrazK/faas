@@ -1822,6 +1822,10 @@ type ScalingTarget struct {
 	// kind of accepted-but-inert field this codebase keeps having to
 	// remove.
 	Name string `json:"name,omitempty"`
+	// Labels selects one labelled series of the custom metric
+	// (ADR-20261108160000 slice C2). Empty: the metric's aggregate (the
+	// maximum of its fresh series). Only valid with Metric "custom".
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ScalingSchedule is one recurring window that raises the warm floor
