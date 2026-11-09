@@ -178,6 +178,15 @@ daemons:
 overlay:
   provider: wireguard
   cidr: 10.42.0.0/24
+  # Bare metal (ADR-20261109100000): with provider "static", name the private
+  # card, e.g. an OVH vRack NIC; private services then accept only on it.
+  # interface: eno2
+
+# Bare metal: limit sshd to the private network and these operator sources
+# (a bastion or VPN). Leave the section out on a cloud whose provider
+# firewall already bounds sshd (GCP IAP).
+# ssh:
+#   allowed_cidrs: ["198.51.100.10/32"]
 
 # Egress — top-level RFC1918 lateral-movement escape hatch
 # (PR scale-out tier-1 residual Gap #4). The flag's name is

@@ -212,7 +212,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if targetErr != nil {
 			return nil, fmt.Errorf("host %s schedd target: %w", host.Name, targetErr)
 		}
-		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.DNS.Mode, m.DNS.OriginPull, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
+		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay, m.SSH, m.DNS.Mode, m.DNS.OriginPull, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
 		body += renderDomainLayoutVars(m.DNS)
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
@@ -521,7 +521,7 @@ func writeInventoryGroup(out *bytes.Buffer, group string, hosts []string) {
 	out.WriteByte('\n')
 }
 
-func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewaySynthTarget, scheddTarget, controlPlaneAPIDLoopback string, internalHosts []manifestInternalHost, overlayCIDRs, overlayProvider, publicDNSMode, publicOriginPull, privateDNSMode, privateDNSZone, postgresListenAddress string, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs []string, storageMountpoint string) string {
+func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewaySynthTarget, scheddTarget, controlPlaneAPIDLoopback string, internalHosts []manifestInternalHost, overlayCIDRs string, overlay manifest.Overlay, ssh *manifest.SSH, publicDNSMode, publicOriginPull, privateDNSMode, privateDNSZone, postgresListenAddress string, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs []string, storageMountpoint string) string {
 	var b strings.Builder
 	canonicalNodeName := canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role))
 	fmt.Fprintf(&b, "# Generated from the split-box manifest for %s; do not hand-edit.\n", host.Name)
@@ -535,15 +535,20 @@ func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewayS
 	if storageMountpoint != "" {
 		fmt.Fprintf(&b, "faas_storage_mountpoint: %q\n", storageMountpoint)
 	}
-	fmt.Fprintf(&b, "faas_overlay_provider: %q\n", overlayProvider)
-	switch overlayProvider {
+	fmt.Fprintf(&b, "faas_overlay_provider: %q\n", overlay.Provider)
+	switch overlay.Provider {
 	case "tailscale":
 		b.WriteString("faas_overlay_iface: tailscale0\n")
 	case "wireguard":
 		b.WriteString("faas_overlay_iface: wg0\n")
 	case "static":
-		b.WriteString("faas_overlay_iface: \"{{ ansible_default_ipv4.interface | default('eth0') }}\"\n")
+		if overlay.Interface != "" {
+			fmt.Fprintf(&b, "faas_overlay_iface: %q\n", overlay.Interface)
+		} else {
+			b.WriteString("faas_overlay_iface: \"{{ ansible_default_ipv4.interface | default('eth0') }}\"\n")
+		}
 	}
+	b.WriteString(renderManifestNetworkPolicyVars(overlay, ssh))
 	if host.Role == roleComputeOnly && overlayCIDRs != "" {
 		fmt.Fprintf(&b, "overlay_cidrs: [%q]\n", overlayCIDRs)
 	} else {
@@ -643,6 +648,27 @@ func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewayS
 		} else {
 			fmt.Fprintf(&b, "faas_control_plane_allowed_cidrs: [%s]\n", quotedYAMLList(controlPlaneAllowedCIDRs))
 		}
+	}
+	return b.String()
+}
+
+// renderManifestNetworkPolicyVars carries the bare-metal network boundary
+// (ADR-20261109100000) to the nftables role: the private card private-service
+// traffic must arrive on, and whether sshd answers only the private network
+// and the operator's sources.
+func renderManifestNetworkPolicyVars(overlay manifest.Overlay, ssh *manifest.SSH) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "faas_private_iface: %q\n", overlay.Interface)
+	if ssh == nil {
+		b.WriteString("faas_ssh_restricted: false\n")
+		return b.String()
+	}
+	b.WriteString("faas_ssh_restricted: true\n")
+	fmt.Fprintf(&b, "faas_ssh_private_cidrs: [%q]\n", overlay.CIDR)
+	if len(ssh.AllowedCIDRs) == 0 {
+		b.WriteString("faas_ssh_allowed_cidrs: []\n")
+	} else {
+		fmt.Fprintf(&b, "faas_ssh_allowed_cidrs: [%s]\n", quotedYAMLList(ssh.AllowedCIDRs))
 	}
 	return b.String()
 }
