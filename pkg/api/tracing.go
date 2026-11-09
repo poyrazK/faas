@@ -19,6 +19,11 @@ type TracingConfig struct {
 	// from inside the VM (ADR-20261108100000). A value struct, so tracing
 	// configs stay comparable with ==.
 	Forward TracingForward `json:"forward,omitzero" yaml:"forward,omitempty" toml:"forward,omitempty"`
+	// Metrics, when set, points the app's OpenTelemetry metrics exporter at
+	// the in-guest bridge, which stores them as the app's custom metrics
+	// (ADR-20261108160000 slice B). Opt-in: the managed auto-instrumentation
+	// emits metrics of its own, which count toward the app's metric cap.
+	Metrics bool `json:"metrics,omitempty" yaml:"metrics,omitempty" toml:"metrics,omitempty"`
 }
 
 // TracingForward names the customer's OTLP/HTTP endpoint. Endpoint is the
@@ -88,6 +93,7 @@ const (
 	TraceLocalEndpoint         = "http://" + TraceLocalListen
 	TraceLocalTracesPath       = "/v1/traces"
 	TraceLocalLogsPath         = "/v1/logs"
+	TraceLocalMetricsPath      = "/v1/metrics"
 	TraceMaxFrameBytes         = 512 << 10
 	TraceMaxDecodedBytes       = 4 << 20
 	TraceMaxConcurrentUploads  = 4
@@ -130,10 +136,33 @@ const (
 	TraceMaxLogMessageBytes     = 4096
 )
 
+// TraceCodecMetricsSignal marks a frame that carries an OTLP metrics export
+// (ADR-20261108160000 slice B). Like the logs bit, a host that predates it
+// rejects the frame as an unknown codec, which the SDK does not retry.
+const TraceCodecMetricsSignal byte = 0x40
+
 // SplitTraceCodec separates a frame's codec byte into its payload codec and
-// whether it carries logs.
+// whether it carries logs. A metrics frame keeps its signal bit in base, so
+// a caller that only knows traces and logs rejects it as an unknown codec.
 func SplitTraceCodec(codec byte) (base byte, logs bool) {
 	return codec &^ TraceCodecLogsSignal, codec&TraceCodecLogsSignal != 0
+}
+
+// TraceFrameSignal separates a frame's codec byte into its payload codec and
+// its signal: 0 for traces, TraceCodecLogsSignal or TraceCodecMetricsSignal.
+// ok is false when both signal bits are set.
+func TraceFrameSignal(codec byte) (base, signal byte, ok bool) {
+	logs, metrics := codec&TraceCodecLogsSignal != 0, codec&TraceCodecMetricsSignal != 0
+	base = codec &^ (TraceCodecLogsSignal | TraceCodecMetricsSignal)
+	switch {
+	case logs && metrics:
+		return base, 0, false
+	case logs:
+		return base, TraceCodecLogsSignal, true
+	case metrics:
+		return base, TraceCodecMetricsSignal, true
+	}
+	return base, 0, true
 }
 
 // Guest tracing ack bytes, written once by the host per frame. The guest
@@ -187,6 +216,12 @@ func (c *TracingConfig) Validate(plan Plan) error {
 	}
 	if c.Forward.Enabled() && !c.Enabled {
 		return fmt.Errorf("tracing.forward needs tracing.enabled: true")
+	}
+	if c.Metrics && !c.Enabled {
+		return fmt.Errorf("tracing.metrics needs tracing.enabled: true")
+	}
+	if c.Metrics && !MustLimitsFor(plan).CustomMetricsAllowed {
+		return fmt.Errorf("custom metrics are not included on this plan")
 	}
 	return nil
 }

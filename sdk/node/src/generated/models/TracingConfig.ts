@@ -13,5 +13,9 @@ export type TracingConfig = {
    */
   sample_ratio?: number;
   forward?: TracingForward;
+  /**
+   * Sends the app's OpenTelemetry metrics to Gregale from inside its instance, stored as its custom metrics (no API key needed). Requires tracing to be enabled and a plan with custom metrics. The managed auto-instrumentation's own metrics count toward the app's metric limit.
+   */
+  metrics?: boolean;
 };
 

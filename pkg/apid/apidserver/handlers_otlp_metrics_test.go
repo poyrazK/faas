@@ -3,6 +3,7 @@ package apidserver
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,8 +16,34 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// adr: 20261108160000 — slice B: in-guest metric exports are stored like the
+// public endpoint's, only for the app's own account and with history on.
+func TestGuestMetricsSinkStoresForTheApp(t *testing.T) {
+	e := customHistoryEnv(t)
+	app := createApp(t, e, "shop")
+	sink := guestMetricsSink{s: e.s}
+	ctx := context.Background()
+	accepted, rejected, err := sink.StoreGuestMetrics(ctx, app.AccountID, app.ID, otlpExport(otlpGauge("orders.pending", 4), otlpGauge("bad", -1)))
+	if err != nil || accepted != 1 || rejected != 1 {
+		t.Fatalf("store = %d/%d, %v", accepted, rejected, err)
+	}
+	rows, err := e.store.ListCustomMetrics(ctx, app.ID)
+	if err != nil || len(rows) != 1 || rows[0].Name != "orders_pending" || rows[0].Value != 4 {
+		t.Fatalf("rows = %+v, %v", rows, err)
+	}
+	other := "00000000-0000-0000-0000-000000000001"
+	if _, _, err := sink.StoreGuestMetrics(ctx, other, app.ID, otlpExport(otlpGauge("x", 1))); !errors.Is(err, receivers.ErrGuestMetricsDisabled) {
+		t.Fatalf("other account = %v, want disabled", err)
+	}
+	e.s.customMetricHistoryEnabled = false
+	if _, _, err := sink.StoreGuestMetrics(ctx, app.AccountID, app.ID, otlpExport(otlpGauge("x", 1))); !errors.Is(err, receivers.ErrGuestMetricsDisabled) {
+		t.Fatalf("history off = %v, want disabled", err)
+	}
+}
 
 func otlpExport(metrics ...*metricspb.Metric) *colmetricspb.ExportMetricsServiceRequest {
 	return &colmetricspb.ExportMetricsServiceRequest{ResourceMetrics: []*metricspb.ResourceMetrics{{

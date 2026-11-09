@@ -43,12 +43,16 @@ func (b *traceBridge) tryAcquire() bool {
 func (b *traceBridge) release() { <-b.slots }
 
 // export hands one non-empty export to the forwarder (if any) and to the
-// host, returning the host's ack. signal is 0 for traces and
-// api.TraceCodecLogsSignal for logs; codec carries no signal bit.
+// host, returning the host's ack. signal is 0 for traces,
+// api.TraceCodecLogsSignal for logs or api.TraceCodecMetricsSignal for
+// metrics; codec carries no signal bit.
 func (b *traceBridge) export(ctx context.Context, codec, signal byte, contentType, contentEncoding string, body []byte) (byte, error) {
 	signalPath := api.TraceLocalTracesPath
-	if signal == api.TraceCodecLogsSignal {
+	switch signal {
+	case api.TraceCodecLogsSignal:
 		signalPath = api.TraceLocalLogsPath
+	case api.TraceCodecMetricsSignal:
+		signalPath = api.TraceLocalMetricsPath
 	}
 	b.forward.enqueue(signalPath, contentType, contentEncoding, body)
 	ack, err := b.send(ctx, encodeTraceFrame(codec|signal, body))
@@ -65,6 +69,9 @@ func (b *traceBridge) handler() http.Handler {
 	mux.HandleFunc("POST "+api.TraceLocalTracesPath, func(w http.ResponseWriter, r *http.Request) { b.exportHandler(w, r, 0) })
 	mux.HandleFunc("POST "+api.TraceLocalLogsPath, func(w http.ResponseWriter, r *http.Request) {
 		b.exportHandler(w, r, api.TraceCodecLogsSignal)
+	})
+	mux.HandleFunc("POST "+api.TraceLocalMetricsPath, func(w http.ResponseWriter, r *http.Request) {
+		b.exportHandler(w, r, api.TraceCodecMetricsSignal)
 	})
 	return mux
 }
@@ -222,7 +229,19 @@ func tracingEnvAtPaths(env []string, cfg *api.TracingConfig, nodePath, pythonPat
 	env = setEnvValue(env, "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "http/protobuf")
 	// The bootstraps start an SDK only when this is set.
 	env = setEnvValue(env, "FAAS_TRACING_ENABLED", "1")
-	if !hasEnvKey(env, "OTEL_METRICS_EXPORTER") {
+	switch {
+	case cfg.Metrics && !hasEnvKey(env, "OTEL_METRICS_EXPORTER") && !hasEnvKey(env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"):
+		// tracing.metrics (ADR-20261108160000 slice B): metric exports go to
+		// the bridge and become the app's custom metrics. Delta temporality
+		// so several instances' counters add up instead of replacing each
+		// other, unless the app chose one.
+		env = setEnvValue(env, "OTEL_METRICS_EXPORTER", "otlp")
+		env = setEnvValue(env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", api.TraceLocalEndpoint+api.TraceLocalMetricsPath)
+		env = setEnvValue(env, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
+		if !hasEnvKey(env, "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE") {
+			env = setEnvValue(env, "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE", "delta")
+		}
+	case !hasEnvKey(env, "OTEL_METRICS_EXPORTER"):
 		env = setEnvValue(env, "OTEL_METRICS_EXPORTER", "none")
 	}
 	if !hasEnvKey(env, "OTEL_LOGS_EXPORTER") && !hasEnvKey(env, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") {

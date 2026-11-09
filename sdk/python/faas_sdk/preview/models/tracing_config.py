@@ -29,6 +29,10 @@ class TracingConfig:
     forward: TracingForward | Unset = UNSET
     """Sends a copy of every OpenTelemetry trace and log export the app makes to your own OTLP/HTTP endpoint, from
     inside the app's instance. Requires tracing to be enabled."""
+    metrics: bool | Unset = False
+    """Sends the app's OpenTelemetry metrics to Gregale from inside its instance, stored as its custom metrics (no
+    API key needed). Requires tracing to be enabled and a plan with custom metrics. The managed auto-
+    instrumentation's own metrics count toward the app's metric limit."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +43,8 @@ class TracingConfig:
         forward: dict[str, Any] | Unset = UNSET
         if not isinstance(self.forward, Unset):
             forward = self.forward.to_dict()
+
+        metrics = self.metrics
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -51,6 +57,8 @@ class TracingConfig:
             field_dict["sample_ratio"] = sample_ratio
         if forward is not UNSET:
             field_dict["forward"] = forward
+        if metrics is not UNSET:
+            field_dict["metrics"] = metrics
 
         return field_dict
 
@@ -70,10 +78,13 @@ class TracingConfig:
         else:
             forward = TracingForward.from_dict(_forward)
 
+        metrics = d.pop("metrics", UNSET)
+
         tracing_config = cls(
             enabled=enabled,
             sample_ratio=sample_ratio,
             forward=forward,
+            metrics=metrics,
         )
 
         tracing_config.additional_properties = d

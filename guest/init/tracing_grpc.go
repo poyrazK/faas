@@ -24,6 +24,8 @@ import (
 const (
 	otlpGRPCTracesMethod = "/opentelemetry.proto.collector.trace.v1.TraceService/Export"
 	otlpGRPCLogsMethod   = "/opentelemetry.proto.collector.logs.v1.LogsService/Export"
+	// ADR-20261108160000 slice B.
+	otlpGRPCMetricsMethod = "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export"
 )
 
 // gRPC status codes the receiver answers with.
@@ -75,8 +77,10 @@ func (b *traceBridge) grpcExport(w http.ResponseWriter, r *http.Request) {
 	case otlpGRPCTracesMethod:
 	case otlpGRPCLogsMethod:
 		signal = api.TraceCodecLogsSignal
+	case otlpGRPCMetricsMethod:
+		signal = api.TraceCodecMetricsSignal
 	default:
-		writeGRPCStatus(w, grpcUnimplemented, "only OTLP trace and log Export are served here", false)
+		writeGRPCStatus(w, grpcUnimplemented, "only OTLP trace, log and metric Export are served here", false)
 		return
 	}
 	if !b.tryAcquire() {

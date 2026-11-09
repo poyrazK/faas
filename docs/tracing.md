@@ -223,8 +223,9 @@ tracing:
 gregale env set --app my-api OTLP_HEADERS='Authorization=Bearer%20<token>'
 ```
 
-- Each trace and log export your app makes is sent unchanged to
-  `<endpoint>/v1/traces` or `<endpoint>/v1/logs` over OTLP/HTTP, from inside
+- Each trace and log export your app makes (and metric export, with
+  `tracing.metrics`) is sent unchanged to `<endpoint>/v1/traces`,
+  `<endpoint>/v1/logs` or `<endpoint>/v1/metrics` over OTLP/HTTP, from inside
   the app's instance, in addition to Gregale. Spans keep everything the SDK
   recorded, including the attributes, events and links the debugger does not
   keep.
@@ -247,6 +248,32 @@ gregale env set --app my-api OTLP_HEADERS='Authorization=Bearer%20<token>'
   forwarded copy.
 - Forwarding needs `tracing.enabled`. Apps that configure their own exporter
   (below) are not forwarded, since their exports do not pass through Gregale.
+
+## Sending metrics without an API key
+
+Set `tracing.metrics` to have your app's OpenTelemetry metrics stored as its
+custom metrics, with no API key or exporter configuration:
+
+```yaml
+tracing:
+  enabled: true
+  metrics: true
+```
+
+- Gregale points the metrics exporter at the in-instance receiver
+  (`http://127.0.0.1:4318/v1/metrics`; gRPC on `127.0.0.1:4317` works too) and
+  sets `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` unless your
+  app sets it, so the counters of several instances add up.
+- Metrics are stored with the same rules and per-app name limit as the
+  [OTLP metrics endpoint](scaling-policy.md#send-metrics-with-opentelemetry):
+  you can chart them, alert on them and scale on gauges.
+- The managed Node and Python auto-instrumentation also records metrics of
+  its own (HTTP server and client durations, for example); each histogram
+  uses five of the app's metric names. Points beyond the limit are dropped.
+- Needs `tracing.enabled` and a plan with custom metrics. Without
+  `tracing.metrics`, Gregale turns the SDK's metrics exporter off. An app that
+  sets `OTEL_METRICS_EXPORTER` or `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` keeps
+  its own choice.
 
 ## Using your own collector
 
