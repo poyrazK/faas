@@ -2288,3 +2288,6 @@ func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.R
 func ApplySourceFunctionSettingsForTest(ctx context.Context, store state.Store, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec) (state.App, *api.Problem) {
 	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec)
 }
+
+// WithPendingFunctionSteps exposes withPendingFunctionSteps.
+var WithPendingFunctionSteps = withPendingFunctionSteps

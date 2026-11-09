@@ -460,6 +460,10 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	}
 	kind := eventKindToDeploymentKind(req.EventKind)
 	activity := g.newDeploymentActivity(ctx, acct, app, req)
+	if steps := function.Plan.Spec.RepositoryDeferredSteps(); len(steps) > 0 {
+		withPendingFunctionSteps(activity, steps)
+		g.log.Info("githubd bridge: function settings left to gregale deploy", notifyAppField, app.ID, "steps", len(steps))
+	}
 	params := apidsource.EnqueueParams{
 		OperationDefinitions: sourceOperationSpecs(manifest),
 		Activity:             activity,

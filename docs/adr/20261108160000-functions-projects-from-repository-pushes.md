@@ -69,9 +69,10 @@ workloads cannot be function apps.
    - read `secrets_from_env` (the values come from the deployer's shell,
      which a push does not have; the server never reads secret values from
      the repository).
-   The deployment receipt and the dashboard list each pending step with the
-   function and the `gregale deploy` command that completes it. Existing
-   webhooks, bucket notifications and secrets are left as they are.
+   The push's deploy activity (`pending_steps`, shown in the dashboard's
+   activity feed and `gregale org activity`) lists each one with the
+   `gregale deploy` command that completes it. Existing webhooks, bucket
+   notifications and secrets are left as they are.
 
 6. **Slices.**
    - Slice 1: move the function settings plan (merge, triggers, env,

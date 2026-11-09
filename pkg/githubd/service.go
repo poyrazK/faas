@@ -1151,6 +1151,13 @@ func (s *Service) filterByPath(touched []state.App, changedFiles []string, filte
 	// Shared files can affect every build even when the same push also
 	// changes a file inside one member. Check each path before filtering.
 	for _, path := range changedFiles {
+		// gregale.yaml at the root declares every function of a functions
+		// project (ADR-20261108160000 §3), so a change to it rebuilds every
+		// member even when one is rooted at the repository root.
+		switch path {
+		case "gregale.yaml", "gregale.yml", "gregale.toml":
+			return touched, nil
+		}
 		memberPath := false
 		for _, app := range touched {
 			if app.RootDir == "" || pathIntersectsDir([]string{path}, app.RootDir) {
