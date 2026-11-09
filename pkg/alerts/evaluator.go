@@ -199,6 +199,9 @@ type Evaluator struct {
 	// logContextReleased decides, per account, whether fires carry the
 	// ADR-20261022172052 log context; nil means never.
 	logContextReleased func(ctx context.Context, accountID, appID string) bool
+	// spend reads account_spend_eur's month to date (SetSpend); nil reads
+	// the store's compute overage.
+	spend SpendCents
 	// releaseMetrics counts release notice deliveries; nil records nothing.
 	releaseMetrics *releasemetrics.Metrics
 
@@ -328,7 +331,7 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		log:        o.Log,
 		ops:        o.Ops,
 
-		channels:         o.Channels,
+		channels:         verifiedEmailSender(o.Channels, o.Store),
 		channelOutcome:   o.ChannelOutcome,
 		dashboardBaseURL: o.DashboardBaseURL,
 		releaseMetrics:   o.ReleaseMetrics,
@@ -1144,7 +1147,7 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		// near money fail review" — observed is int64 cents,
 		// compareCents rounds the threshold to cents at the
 		// seam so the comparison is integer-aligned end-to-end.
-		cents, err := e.store.MTDSpendEurCents(ctx, rule.AccountID)
+		cents, err := e.monthSpendCents(ctx, rule.AccountID)
 		if err != nil {
 			e.log.Warn("alerts: mtd spend query",
 				"rule", rule.ID, "err", err)
@@ -1325,8 +1328,31 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		if appmetrics.IsDegradedSource(source) {
 			return 0, false, skipDegraded
 		}
-		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+		breached := compareFloat(observed, rule.Comparison, rule.Threshold)
+		if breached && ratioMetric(rule.Metric) {
+			// A share or percentile of a handful of requests is not
+			// evidence (ADR-20261109120000): one failed wake out of three
+			// requests is a 33% error rate.
+			requests, src := appmetrics.FetchAlertMetric(ctx, e.promQL, e.log, rule.AppID, string(rule.WindowSpec), "request_count")
+			if src != appmetrics.SourcePrometheus {
+				return 0, false, skipDegraded
+			}
+			if requests < api.AlertRatioMinRequests {
+				return observed, false, skipInsufficient
+			}
+		}
+		return observed, breached, ""
 	}
+}
+
+// ratioMetric reports a metric that is a share or a percentile of the
+// window's requests, which a minimum request count guards.
+func ratioMetric(m state.AlertMetric) bool {
+	switch string(m) {
+	case "error_rate_pct", "cold_start_pct", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms":
+		return true
+	}
+	return false
 }
 
 // summariseFailed walks every alertable InvocationSource value and sums

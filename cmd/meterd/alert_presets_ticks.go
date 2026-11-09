@@ -38,6 +38,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -149,14 +150,16 @@ func CertExpiryRefresherLoop(ctx context.Context, p CertExpiryRefresherParams) {
 // AccountSpendAggregatorLoop. The Store is required; Log and
 // Ops are nil-coerced.
 type AccountSpendAggregatorParams struct {
-	Store    state.Store
+	Store state.Store
+	// Provider prices live egress overage; nil leaves egress out.
+	Provider billing.Provider
 	Log      *slog.Logger
 	Ops      *wire.OpsMetrics
 	Interval time.Duration
 }
 
 // AccountSpendAggregatorLoop walks every account every interval,
-// reads MTDSpendEurCents(accountID), and stamps the
+// reads meter.MonthToDateSpendCents, and stamps the
 // meterd_account_spend_eur{account_id} gauge. Billing-currency cents are
 // converted to whole-unit floats so the alert preset's
 // `threshold = 20` comparison (gauge > 20) reads naturally on the
@@ -191,7 +194,9 @@ func AccountSpendAggregatorLoop(ctx context.Context, p AccountSpendAggregatorPar
 			return
 		}
 		for _, a := range accounts {
-			cents, spendErr := p.Store.MTDSpendEurCents(walkCtx, a.ID)
+			// The billing page's figure: compute, egress and object
+			// storage (ADR-20261109120000).
+			cents, spendErr := meter.MonthToDateSpendCents(walkCtx, p.Store, p.Provider, a, time.Now())
 			if spendErr != nil {
 				p.Log.Warn("meterd: MTD spend read failed", "account_id", a.ID, "err", spendErr)
 				continue

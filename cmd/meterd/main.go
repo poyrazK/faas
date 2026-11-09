@@ -1215,6 +1215,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	evaluator.SetRuleRelease(release.ForAccount)
 	evaluator.SetRuleLimits(release.RuleLimits)
 	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))
+	// ADR-20261109120000: the spend alert reads the billing page's figure.
+	evaluator.SetSpend(monthSpend(store, pusher))
 	// ADR-20261022172052: firing app alerts carry what the log ledger shows,
 	// for the accounts the log-search capability flag releases it to
 	// (ADR-20261024222102).
@@ -1419,6 +1421,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	})
 	go AccountSpendAggregatorLoop(ctx, AccountSpendAggregatorParams{
 		Store:    store,
+		Provider: pusher,
 		Log:      log,
 		Ops:      ops,
 		Interval: mc.AccountSpendAggregatorInterval,
