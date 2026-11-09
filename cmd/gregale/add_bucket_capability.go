@@ -21,7 +21,7 @@ type addBucketCapabilities interface {
 func addBucketBindingUnavailable(ctx context.Context, client addBucketCapabilities) error {
 	capabilities, err := client.GetCapabilities(ctx)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // an unreadable capability list never blocks; the server still refuses the bind
 	}
 	for _, capability := range capabilities.Capabilities {
 		if capability.Key != "object-storage-compute" || capability.Enabled {

@@ -451,8 +451,8 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if prob := lifecycleProblem(acct.Plan, lifecycle, mc); prob != nil {
 		return state.App{}, prob
 	}
-	// A new app has no binding yet, so this reads nothing.
-	if prob := s.afterRestoreBudgetProblem(context.Background(), acct.ID, "", lifecycle.AfterRestore); prob != nil {
+	// A new app has no binding yet: only the ordinary cap applies.
+	if prob := unboundAfterRestoreBudgetProblem(lifecycle.AfterRestore); prob != nil {
 		return state.App{}, prob
 	}
 	if prob := lifecycleObserverLinkProblem(req.Slug, lifecycle); prob != nil {

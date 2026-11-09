@@ -27,7 +27,7 @@ func addPostgresUnsupported(ctx context.Context, client addPostgresCapabilities,
 	}
 	capabilities, err := client.GetManagedPostgresCapabilities(ctx, region)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // unreadable capabilities never block; the server still refuses unsupported modes
 	}
 	if len(capabilities.CredentialAccess) > 0 && !slices.Contains(capabilities.CredentialAccess, access) {
 		return fmt.Errorf("--access %s is not available in region %s; available: %s", access, region, strings.Join(capabilities.CredentialAccess, ", "))

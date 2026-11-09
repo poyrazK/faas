@@ -28,6 +28,15 @@ func (s *server) afterRestoreBudgetProblem(ctx context.Context, accountID, appID
 	if bound {
 		return nil
 	}
+	return unboundAfterRestoreBudgetProblem(hook)
+}
+
+// unboundAfterRestoreBudgetProblem is the check for an app known to hold no
+// managed binding, such as one being created: only the ordinary cap applies.
+func unboundAfterRestoreBudgetProblem(hook *api.AfterRestoreHook) *api.Problem {
+	if hook == nil || hook.TimeoutMS <= api.AfterRestoreHookMaxTimeoutMS {
+		return nil
+	}
 	return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid lifecycle configuration",
 		fmt.Sprintf("after_restore.timeout_ms above %d needs a managed PostgreSQL or object-storage binding; this app has none (got %d)",
 			api.AfterRestoreHookMaxTimeoutMS, hook.TimeoutMS)).
