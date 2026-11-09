@@ -90,6 +90,10 @@ type Target struct {
 	RoutingKey string // kind pagerduty
 	Region     string // kind pagerduty
 	Email      string // kind email
+	// AccountID is the channel's account. An email channel sends to that
+	// account's current verified address (ADR-20261109120000); the evaluator
+	// resolves it before sending.
+	AccountID string
 }
 
 // ValidateSlackURL accepts only Slack incoming-webhook URLs.

@@ -36,7 +36,7 @@ func (e *Evaluator) SetChannels(sender ChannelSender, outcome func(kind, outcome
 	if e == nil {
 		return
 	}
-	e.channels, e.channelOutcome = sender, outcome
+	e.channels, e.channelOutcome = e.verifiedEmail(sender), outcome
 }
 
 // notifyChannels sends event to every channel bound to rule (ADR-749),
@@ -204,7 +204,7 @@ func (e *Evaluator) unsealIdentities() []*age.X25519Identity {
 }
 
 func openTarget(ids []*age.X25519Identity, ch state.NotificationChannel) (alertchannels.Target, bool) {
-	t := alertchannels.Target{Kind: ch.Kind, Region: ch.PagerDutyRegion, Email: ch.Email}
+	t := alertchannels.Target{Kind: ch.Kind, Region: ch.PagerDutyRegion, Email: ch.Email, AccountID: ch.AccountID}
 	if ch.Kind == alertchannels.KindEmail {
 		return t, true
 	}
