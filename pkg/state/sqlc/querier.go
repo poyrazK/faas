@@ -7008,7 +7008,9 @@ type Querier interface {
 	// Bounded candidate/stable health summary for the deployment circuit breaker.
 	// `count` weights collapsed telemetry rows; compute request and 5xx totals,
 	// overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
-	// only one row.
+	// only one row. A long-lived session's duration (WebSocket, event or gRPC
+	// stream) is not a request latency: it counts as a request and a 5xx but stays
+	// out of both percentiles (ADR-20261028110044 amendment 7).
 	RequestTelemetryCircuitBreakerSummary(ctx context.Context, db DBTX, arg RequestTelemetryCircuitBreakerSummaryParams) (RequestTelemetryCircuitBreakerSummaryRow, error)
 	// Signal coverage for the customer debugger. Counts are weighted by the
 	// publisher's collapsed-row `count`, while the row totals make the amount

@@ -29,6 +29,18 @@ func requestBudgetExpired(ctx context.Context) bool {
 	return errors.Is(ctx.Err(), context.DeadlineExceeded) || b.Remaining(time.Time{}) <= 0
 }
 
+// requestOutlivedBudget reports whether the ordinary request budget has run
+// out by now, on its own clock. A detached stream keeps running past it; a
+// response that did is a session, not a request (ADR-20261028110044
+// amendment 7).
+func requestOutlivedBudget(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	b, ok := reqbudget.FromContext(ctx)
+	return ok && b.Total > 0 && b.Remaining(time.Time{}) <= 0
+}
+
 // writeRequestBudgetExceededForRequest emits the canonical timeout envelope
 // plus stable edge metadata. The metadata is intentionally outside the JSON
 // body: a Cloudflare Worker can preserve/reconstruct the body while
