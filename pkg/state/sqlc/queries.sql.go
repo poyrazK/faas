@@ -99169,7 +99169,7 @@ WITH filtered AS (
     SELECT dimension,
            method,
            COALESCE(SUM(request_count), 0)::bigint AS requests,
-           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 500), 0)::bigint AS error_requests,
            COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots,
            -- Total gateway-observed request time; route cost is allocated by
            -- this share (ADR-743) because time, not request count, holds RAM.
@@ -99292,7 +99292,7 @@ WITH filtered AS (
     SELECT route,
            method,
            COALESCE(SUM(request_count), 0)::bigint AS requests,
-           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 500), 0)::bigint AS error_requests,
            COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
     FROM filtered
     GROUP BY route, method
@@ -99546,7 +99546,7 @@ WITH filtered AS (
     FROM latency_values
 ), totals AS (
     SELECT COALESCE(SUM(request_count), 0)::bigint AS requests,
-           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 500), 0)::bigint AS error_requests,
            COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
     FROM filtered
 )
@@ -99643,7 +99643,7 @@ WITH buckets AS (
 ), totals AS (
     SELECT bucket_start,
            COALESCE(SUM(request_count), 0)::bigint AS requests,
-           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 500), 0)::bigint AS error_requests,
            COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
     FROM filtered
     GROUP BY bucket_start
@@ -99806,7 +99806,7 @@ WITH buckets AS (
            dimension,
            method,
            COALESCE(SUM(request_count), 0)::bigint AS requests,
-           COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+           COALESCE(SUM(request_count) FILTER (WHERE status >= 500), 0)::bigint AS error_requests,
            COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
     FROM assigned
     GROUP BY bucket_start, dimension, method
@@ -100227,7 +100227,7 @@ SELECT
     COALESCE(SUM(count::bigint) FILTER (WHERE wake_id IS NOT NULL AND wake_id <> ''), 0)::bigint AS wake_evidence_requests,
     COUNT(*) FILTER (WHERE guest_runtime <> '__unknown__' AND guest_outcome <> 'missing')::bigint AS guest_evidence_rows,
     COALESCE(SUM(count::bigint) FILTER (WHERE guest_runtime <> '__unknown__' AND guest_outcome <> 'missing'), 0)::bigint AS guest_evidence_requests,
-    COALESCE(SUM(count::bigint) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
+    COALESCE(SUM(count::bigint) FILTER (WHERE status >= 500), 0)::bigint AS error_requests,
     MIN(received_at) AS oldest_telemetry_at,
     MAX(received_at) AS latest_telemetry_at
 FROM request_telemetry
