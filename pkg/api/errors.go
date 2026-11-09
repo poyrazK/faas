@@ -5122,6 +5122,23 @@ func ErrRealtimeInvalid(reason string) *Problem {
 		"Invalid managed realtime endpoint", reason)
 }
 
+// ErrRealtimeMessageTooLarge refuses a realtime message over a size limit:
+// the endpoint's max_message_bytes or the platform maximum.
+func ErrRealtimeMessageTooLarge(limit, observed int64) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid, "Realtime message too large",
+		fmt.Sprintf("The message is %d bytes; this endpoint accepts at most %d. Send a smaller message or raise the endpoint's max_message_bytes.", observed, limit)).
+		WithByteLimit(limit, observed).
+		WithDocs(docsBase + "/realtime#fair-use-limits")
+}
+
+// ErrRealtimeInvalidText refuses a text realtime message that is not UTF-8.
+// RFC 6455 makes every receiving client drop the socket on such a frame.
+func ErrRealtimeInvalidText() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid, "Invalid realtime text message",
+		"A text message must be valid UTF-8, or clients drop the connection when they receive it. Send other bytes with binary=true.").
+		WithDocs(docsBase + "/realtime#original-protocol")
+}
+
 // ErrRealtimeUnavailable is safe to expose at the public WebSocket proxy.
 // The socket or dial error stays in structured logs; customers receive a
 // stable retryable code without internal paths or host details.

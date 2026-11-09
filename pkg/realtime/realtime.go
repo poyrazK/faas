@@ -24,6 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -76,6 +77,10 @@ var (
 	ErrInvalidDirectMessageID           = errors.New("realtime: invalid direct message ID")
 	ErrDirectMessageReceiptsUnavailable = errors.New("realtime: direct message receipts unavailable")
 	ErrCallbackNotPersisted             = errors.New("realtime: callback was not persisted")
+	// ErrInvalidTextMessage refuses a text message whose bytes are not UTF-8.
+	// RFC 6455 makes clients fail the socket on such a text frame, so one
+	// publish would disconnect every subscriber; send other bytes as binary.
+	ErrInvalidTextMessage = errors.New("realtime: text message is not valid UTF-8; send other bytes as binary")
 )
 
 const maxPendingDirectMessageReceipts = 256
@@ -1804,6 +1809,21 @@ func (c *connection) recordClose(code int, reason string) {
 
 // Send queues one bounded message for a live connection.
 func (m *Manager) Send(ctx context.Context, connectionID string, msg Message) error {
+	if !validTextMessage(msg) {
+		return ErrInvalidTextMessage
+	}
+	return m.sendChecked(ctx, connectionID, msg)
+}
+
+// validTextMessage reports whether msg may be written as its frame type: a
+// text frame must carry UTF-8 (RFC 6455 §8.1).
+func validTextMessage(msg Message) bool {
+	return msg.Binary || utf8.Valid(msg.Data)
+}
+
+// sendChecked is Send for a message whose text encoding the caller already
+// checked once, so a fan-out does not rescan the payload per connection.
+func (m *Manager) sendChecked(ctx context.Context, connectionID string, msg Message) error {
 	c, ok := m.connection(connectionID)
 	if !ok {
 		return ErrConnectionNotFound
@@ -1845,6 +1865,9 @@ func (m *Manager) SendToPrincipal(ctx context.Context, endpointID, principal, me
 	maxMessageBytes := min(int64(api.RealtimePrincipalMessageMaxBytes), endpoint.config.Load().MaxMessageBytes)
 	if int64(len(msg.Data)) > maxMessageBytes {
 		return PrincipalSendStatus{}, fmt.Errorf("realtime: principal message exceeds %d bytes", maxMessageBytes)
+	}
+	if !validTextMessage(msg) {
+		return PrincipalSendStatus{}, ErrInvalidTextMessage
 	}
 	m.mu.RLock()
 	targets := make([]*connection, 0)
@@ -1920,7 +1943,7 @@ func (m *Manager) SendToPrincipal(ctx context.Context, endpointID, principal, me
 				DataBase64: base64.StdEncoding.EncodeToString(msg.Data), Binary: msg.Binary,
 			})
 		} else {
-			err = m.Send(ctx, c.info.ID, msg)
+			err = m.sendChecked(ctx, c.info.ID, msg)
 		}
 		queueStatus := state.ManagedRealtimeDirectQueueQueued
 		switch {
@@ -2219,9 +2242,12 @@ func (m *Manager) PublishWithStatus(ctx context.Context, endpointID, channel str
 	if int64(len(msg.Data)) > maxMessageBytes {
 		return PublishStatus{}, fmt.Errorf("realtime: message exceeds %d bytes", maxMessageBytes)
 	}
+	if !validTextMessage(msg) {
+		return PublishStatus{}, ErrInvalidTextMessage
+	}
 	status := PublishStatus{Subscribers: len(connections)}
 	for _, id := range connections {
-		switch err := m.Send(ctx, id, msg); {
+		switch err := m.sendChecked(ctx, id, msg); {
 		case err == nil:
 			status.Queued++
 		case errors.Is(err, ErrOutboundQueueFull):

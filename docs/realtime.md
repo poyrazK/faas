@@ -142,6 +142,10 @@ accepting the old one for a few minutes while queued callbacks drain.
 
 A client that requests no subprotocol uses the original protocol: your backend
 manages its subscriptions, and messages arrive as plain text or binary frames.
+A text message (`binary` false, the default) must be valid UTF-8: clients drop
+the connection on a text frame that is not, so publish and send refuse one with
+HTTP 400. Send other bytes with `binary: true`. A message larger than the
+endpoint's `max_message_bytes` is refused with HTTP 400 and the limit.
 
 ```bash
 gregale realtime connections my-app EP_ID --principal user-123   # find a user's connections
