@@ -111,9 +111,9 @@ the session under Account → Sessions and contact support@gregale.dev.
 func KeysAfterResetBody(email string, keys []string, accountURL string) (subject, body string) {
 	subject = "Review the API keys on your Gregale account"
 	var b strings.Builder
-	fmt.Fprintf(&b, "Hi,\n\nThe password of %s was reset and every browser was signed out. These API keys\nstill work, because a reset does not revoke keys you created for CI and deploys:\n\n", email)
+	fmt.Fprintf(&b, "Hi,\n\nThe password of %s was reset and every browser was signed out. These API keys\nstill work, because a reset does not revoke keys you created for CI and deploys:\n\n", safeRecipient(email))
 	for _, k := range keys {
-		fmt.Fprintf(&b, "  - %s\n", k)
+		fmt.Fprintf(&b, "  - %s\n", oneLine(k))
 	}
 	fmt.Fprintf(&b, "\nIf you do not recognise one, revoke it now at %s (or run\n`gregale key` and `gregale key delete ID`).\n\n— Gregale\n", accountURL)
 	return subject, b.String()
