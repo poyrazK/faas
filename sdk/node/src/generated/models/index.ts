@@ -3107,6 +3107,7 @@ export type { ThrottleSuggestionsResponse } from './ThrottleSuggestionsResponse.
 export type { Trace } from './Trace.js';
 export type { TraceSpan } from './TraceSpan.js';
 export type { TracingConfig } from './TracingConfig.js';
+export type { TracingForward } from './TracingForward.js';
 export type { TrafficRuntimeFeatureStatus } from './TrafficRuntimeFeatureStatus.js';
 export type { TrafficRuntimeStatus } from './TrafficRuntimeStatus.js';
 export type { TransferOwnershipRequest } from './TransferOwnershipRequest.js';

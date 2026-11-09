@@ -1,6 +1,6 @@
 # ADR-20261108160000: Custom metrics take OTLP deltas, up-down counters, histograms and bounded labels, capped per plan
 
-- **Status:** accepted (slices A and C1 implemented here; B on PR #6788; C2 next)
+- **Status:** accepted (slices A, B and C1 implemented; C2 next)
 - **Date:** 2026-11-08
 - **Amends:** ADR-202 (pushed custom metrics: the flat cap of 5 names per
   app becomes a per-plan cap), ADR-745 (OTLP metrics ingestion: more types
@@ -58,14 +58,26 @@ The user decided (2026-11-08):
 - Docs recommend delta temporality: several instances sending one counter
   add up as deltas, while cumulative totals replace each other.
 
-### Slice B — in-VM metrics (next)
+### Slice B — in-VM metrics (implemented; opt-in `tracing.metrics`)
 
 The guest bridge serves `/v1/metrics` and `MetricsService/Export`, the
 host carries metric frames like trace and log frames, and apid stores them
-through the same translation and caps as the public endpoint. Gregale stops
-forcing `OTEL_METRICS_EXPORTER=none` when tracing is on, and sets delta
-temporality unless the app chose one. `tracing.forward` copies metric
+through the same translation and caps as the public endpoint. With
+`tracing.metrics: true` (user decision 2026-11-08: opt-in, because the
+managed auto-instrumentation's own metrics would otherwise land on every
+traced app's next deploy and fill its cap) Gregale points the metrics
+exporter at the bridge with delta temporality unless the app chose one;
+without it the exporter stays `none`. `tracing.forward` copies metric
 exports too.
+
+- Frames carry `TraceCodecMetricsSignal` (0x40). An older vmmd keeps the bit
+  in the codec and refuses the frame as an unknown codec; a vmmd facing an
+  apid without `SpansWriter.IngestGuestMetrics` gets Unimplemented and
+  refuses permanently, so SDKs never retry into skew.
+- vmmd forwards metric frames only for apps with `tracing.metrics`; apid
+  checks the owner's plan allows custom metrics, applies its own per-account
+  export cap (the log export rate) and stores only for the app's own
+  account.
 
 ### Slice C — labels (C1 implemented; C2 rule label filters next)
 
