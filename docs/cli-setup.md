@@ -3092,7 +3092,9 @@ to make that service the default when you work inside it; the project still
 comes from the root. `app` without `name` targets a standalone app. The lookup
 stops at the Git root. `.gregale/project.json`, written by `gregale link`, still
 overrides the committed target for your checkout and holds your environment;
-`gregale link`, `unlink` and `context set` only ever change that file. A profile selects a connection and credentials;
+`gregale link`, `unlink` and `context set` only ever change that file.
+`gregale config explain app` (or `project`, `environment`) shows which of these
+files the current directory's target comes from. A profile selects a connection and credentials;
 it is not an environment. When `FAAS_API` overrides the profile API address,
 the display explains that credentials are still selected by the profile.
 
