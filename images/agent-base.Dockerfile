@@ -19,7 +19,7 @@
 #
 # Node 22 on Alpine (musl), the same digest as runner-node22: every harness
 # ships a musl build, and the memory experiment measured this base.
-FROM mirror.gcr.io/library/node:22-alpine@sha256:025b8e975a61d94e33abeafaad1255ef44e4898cf1a1b6446860009c72e6d284
+FROM mirror.gcr.io/library/node:22-alpine@sha256:947e5454e08bfe0b8ddda604915ad76275276c774f47da90d0137252c793a778
 # Issue #197 B3.6: mutable tag pinned via images/Dockerfile.lock.
 
 COPY --chmod=0644 images/agent-base/package.json images/agent-base/package-lock.json /opt/gregale/agents/

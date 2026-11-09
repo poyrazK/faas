@@ -12,7 +12,7 @@
 # supplied below for Bash and customer applications.
 FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS busybox
 
-FROM mirror.gcr.io/library/debian:13-slim@sha256:1e1a22175fbf1b32157ddaf0219e1db4e5401fab2b94ed285add64d18587cd2d AS build
+FROM mirror.gcr.io/library/debian:13-slim@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392 AS build
 # Issue #197 B3.5 (extension): pinned via images/Dockerfile.lock, at the same
 # `debian:13-slim` digest as base-debian-parent (ADR 20261023220532 step 4).
 # Debian 13 drops 13 libraries Debian 12 shipped here; `gregalectl audit
