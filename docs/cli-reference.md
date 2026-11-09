@@ -7809,3 +7809,22 @@ Persist one non-secret setting
 
 Show all effective settings
 
+### config explain
+
+Show where a CLI target or project setting comes from
+
+`gregale config explain <key>`
+
+Examples:
+
+```sh
+gregale config explain app
+gregale config explain services.api.visibility
+```
+
+Keys: project, app, environment, service_policy, services.&lt;name&gt;.service_policy, services.&lt;name&gt;.visibility, services.&lt;name&gt;.depends_on, api-base, json.
+
+Lists every layer in precedence order (flag, .gregale/project.json, gregale.yaml `project:`, Compose x-gregale-*, .gregale/project.yaml) and marks the one that wins.
+
+Runs locally; nothing is uploaded.
+

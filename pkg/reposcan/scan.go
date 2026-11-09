@@ -404,6 +404,10 @@ type ScanOptions struct {
 	// workload per function, and nothing else (ADR-20261108160000, the
 	// repository-functions capability). The zero value scans as before.
 	Functions bool
+	// withoutProjectConfig leaves the project block (or the legacy
+	// .gregale/project.yaml) off the workloads, so ExplainProjectSetting can
+	// show what detection alone declares.
+	withoutProjectConfig bool
 }
 
 // ScanWithOptions is Scan with opts. Every caller that scans a project for
@@ -513,11 +517,13 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 	if err := attachProcfileReleaseCommand(fsys, workloads); err != nil {
 		return Result{}, err
 	}
-	projectWarnings, err := applyProjectConfig(fsys, workloads)
-	if err != nil {
-		return Result{}, err
+	if !opts.withoutProjectConfig {
+		projectWarnings, err := applyProjectConfig(fsys, workloads)
+		if err != nil {
+			return Result{}, err
+		}
+		warnings = append(warnings, projectWarnings...)
 	}
-	warnings = append(warnings, projectWarnings...)
 	if opts.HTTPSTransportUnavailable {
 		for _, w := range workloads {
 			if w.ServiceBindingTransport == ServiceBindingTransportHTTPS {

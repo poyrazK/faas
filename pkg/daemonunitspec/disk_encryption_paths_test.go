@@ -12,8 +12,11 @@ import (
 // cluster, WAL archive and local base backups on the control plane.
 func TestEncryptedVolumeHoldsHostSecretsAndPostgres(t *testing.T) {
 	var defaults struct {
-		Subdir   string                        `yaml:"faas_storage_private_subdir"`
-		Secrets  []struct{ Path, Name string } `yaml:"faas_storage_encrypted_secret_paths"`
+		Subdir  string `yaml:"faas_storage_private_subdir"`
+		Secrets []struct {
+			Path, Name string
+			Quiesce    bool
+		} `yaml:"faas_storage_encrypted_secret_paths"`
 		Postgres []struct {
 			Path, Name string
 			Postgres   bool
@@ -22,8 +25,10 @@ func TestEncryptedVolumeHoldsHostSecretsAndPostgres(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(readRepoText(t, "deploy/ansible/roles/storage/defaults/main.yml")), &defaults); err != nil {
 		t.Fatal(err)
 	}
-	if defaults.Subdir != "host-private" || len(defaults.Secrets) != 1 || defaults.Secrets[0].Path != "/etc/faas/secrets" {
-		t.Errorf("host secrets must move to <mount>/host-private/: %+v", defaults)
+	if defaults.Subdir != "host-private" || len(defaults.Secrets) != 2 ||
+		defaults.Secrets[0].Path != "/etc/faas/secrets" || defaults.Secrets[0].Quiesce ||
+		defaults.Secrets[1].Path != "/var/lib/faas" || !defaults.Secrets[1].Quiesce {
+		t.Errorf("host secrets and daemon state (quiesced) must move to <mount>/host-private/: %+v", defaults)
 	}
 	got := map[string]bool{}
 	for _, p := range defaults.Postgres {
@@ -49,8 +54,9 @@ func TestEncryptedPathsNeverShredUnprovenDataAndFailClosed(t *testing.T) {
 	order := []string{
 		"refuse to move a Postgres that holds data",
 		"refuse to move a running Postgres",
+		"refuse to move daemon state while faas services run",
 		"copy each path onto the encrypted volume",
-		"bind each path from the encrypted volume",
+		"keep each bind from the encrypted volume in fstab",
 		"shred the plaintext left under each path and seal it",
 	}
 	last := -1
@@ -77,10 +83,29 @@ func TestEncryptedPathsNeverShredUnprovenDataAndFailClosed(t *testing.T) {
 		}
 		last = i
 	}
+	copyTask := tasks[strings.Index(tasks, "copy each path onto the encrypted volume"):strings.Index(tasks, "keep each bind from the encrypted volume in fstab")]
+	for _, s := range []string{
+		"--one-file-system",
+		"findmnt --fstab -n --mountpoint",
+		`umount "$m"`,
+		`mount --bind "$src" "$target"`,
+		`for m in "${above[@]}"; do mount "$m"; done`,
+	} {
+		if !strings.Contains(copyTask, s) {
+			t.Errorf("the copy must step mounts beneath the path aside and put them back (%q missing)", s)
+		}
+	}
+	if strings.Contains(tasks, "{#") {
+		t.Error(`encrypted_paths.yml must not contain "{#": Jinja reads it as a comment`)
+	}
+	if !strings.Contains(seal, `"--exclude=/${m#"$target"/}/**"`) {
+		t.Error("the proof must leave out what lies under mounts beneath the path")
+	}
 	for _, want := range []string{
+		"faas_storage_active_units.stdout_lines | length == 0",
 		"faas_storage_pg_databases.stdout | int <= 3",
 		"bind,nofail,x-systemd.requires-mounts-for={{ faas_storage_mount }}",
-		"RequiresMountsFor=/etc/faas/secrets",
+		"RequiresMountsFor={{ faas_storage_encrypted_secret_paths | map(attribute='path') | join(' ') }}",
 		"/etc/systemd/system/{{ item }}.d/10-faas-encrypted-data.conf",
 		`"postgresql@.service"`,
 		"ExecStart=/usr/sbin/augenrules --load",

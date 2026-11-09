@@ -30,6 +30,11 @@ faas_storage_label: faas-fc
 faas_storage_private_subdir: host-private
 faas_storage_encrypted_secret_paths:
   - {path: /etc/faas/secrets, name: secrets}
+  # Daemon state: HMAC keys, certificates, the pgproxyd password, log drains,
+  # the zswap swapfile (frozen guests' memory). Written continuously, so it
+  # moves only while no faas service runs (quiesce). The OCI cache and Grype
+  # mounts beneath it stay where they are.
+  - {path: /var/lib/faas, name: faas, quiesce: true}
 faas_storage_encrypted_postgres_paths:
   - {path: /var/lib/postgresql, name: postgresql, postgres: true}
   - {path: /var/lib/pgsql, name: pgsql, postgres: true}
