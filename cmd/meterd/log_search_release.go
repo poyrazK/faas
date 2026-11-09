@@ -17,6 +17,8 @@ const logSearchCapability = "log-search"
 type logSearchReleaseStore interface {
 	AccountByID(ctx context.Context, id string) (state.Account, error)
 	AppByID(ctx context.Context, id string) (state.App, error)
+	// OrgByID resolves an app's owner (state.AppResourceAccount).
+	OrgByID(ctx context.Context, id string) (state.Org, error)
 }
 
 // logSearchRelease decides whether a firing alert carries the
@@ -47,13 +49,15 @@ func (l *logSearchRelease) Released(ctx context.Context, accountID, appID string
 	if !l.enabled {
 		return false
 	}
-	acct, err := l.store.AccountByID(ctx, accountID)
-	if err != nil {
-		return false
-	}
 	app, err := l.store.AppByID(ctx, appID)
 	if err != nil {
 		return false
 	}
-	return l.decider.Enabled(logSearchCapability, platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: app.OrgID})
+	// The app's owner decides, as apid does (ADR-20261109120000): an app an
+	// organization owns follows the organization's plan.
+	owner, err := state.AppResourceAccount(ctx, l.store, app)
+	if err != nil {
+		return false
+	}
+	return l.decider.Enabled(logSearchCapability, platformflags.Subject{AccountID: accountID, Plan: string(owner.Plan), OrgID: app.OrgID})
 }

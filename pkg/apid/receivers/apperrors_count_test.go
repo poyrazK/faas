@@ -327,6 +327,7 @@ type countingAppErrorsStore struct {
 	increments []sqlc.IncrementAppErrorParams
 	kept       int64
 	plan       api.Plan
+	org        *state.Org
 }
 
 func (s *countingAppErrorsStore) IncrementAppError(_ context.Context, arg sqlc.IncrementAppErrorParams) (bool, error) {
@@ -341,6 +342,42 @@ func (s *countingAppErrorsStore) InsertAppErrorRequest(context.Context, sqlc.Ins
 
 func (s *countingAppErrorsStore) AccountByID(_ context.Context, id string) (state.Account, error) {
 	return state.Account{ID: id, Plan: s.plan}, nil
+}
+
+// AppByID places every app in s.org when one is set, else in the account.
+func (s *countingAppErrorsStore) AppByID(_ context.Context, id string) (state.App, error) {
+	app := state.App{ID: id, AccountID: uuid.NewString()}
+	if s.org != nil {
+		app.OrgID = s.org.ID
+	}
+	return app, nil
+}
+
+func (s *countingAppErrorsStore) OrgByID(_ context.Context, id string) (state.Org, error) {
+	if s.org == nil || s.org.ID != id {
+		return state.Org{}, state.ErrNotFound
+	}
+	return *s.org, nil
+}
+
+// adr: 20261109120000 — an app an organization owns keeps request rows up to
+// the organization's plan cap, not the creating member's.
+func TestAppErrorsRequestRowCapFollowsTheAppsOwner(t *testing.T) {
+	org := state.Org{ID: uuid.NewString(), Plan: api.PlanScale, Status: state.OrgStatusActive, ResourceOwnershipEnabled: true}
+	store := &countingAppErrorsStore{plan: api.PlanFree, org: &org}
+	receiver := NewAppErrorsReceiver(store, nil, true)
+	store.kept = int64(api.PlanFree.AppErrorsMaxRequestRowsPerFingerprint())
+	if api.PlanScale.AppErrorsMaxRequestRowsPerFingerprint() <= api.PlanFree.AppErrorsMaxRequestRowsPerFingerprint() {
+		t.Skip("Scale keeps no more request rows than Free")
+	}
+	before := store.kept
+	receiver.HandleOne(context.Background(), &apidpb.IncrementAppErrorRequest{
+		AccountId: uuid.NewString(), AppId: uuid.NewString(), RouteTemplate: "GET /orders",
+		HttpStatus: 500, ErrorClass: "unhandled", Fingerprint: strings.Repeat("b", 64), Count: 1,
+	})
+	if store.kept != before+1 {
+		t.Fatalf("request rows = %d, want a row kept under the organization's Scale cap", store.kept)
+	}
 }
 
 func (s *countingAppErrorsStore) CountAppErrorRequestsForFingerprint(context.Context, sqlc.CountAppErrorRequestsForFingerprintParams) (int64, error) {

@@ -122,11 +122,10 @@ type Dispatcher interface {
 // that crosses the boundary, and Execute is the only method — the
 // evaluator never calls pkg/safedeploy.Orchestrator directly.
 //
-// Concurrency: the evaluator serialises Execute behind dispatchMu,
-// across the accounts it evaluates in parallel. pkg/safedeploy.ActionDispatcher
-// is concurrency-safe today (its only side-effect is a single HTTP
-// call into apid), but the lock keeps the contract honest if a
-// future fan-out becomes multi-goroutine.
+// Concurrency: Execute must be safe for concurrent use. The evaluator
+// calls it from the accounts it evaluates in parallel, one call at a time
+// per account (ADR-20261109120000). pkg/safedeploy.ActionDispatcher is
+// safe: its only side-effect is a single HTTP call into apid.
 type ActionExecutor interface {
 	Execute(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error
 }
@@ -169,7 +168,6 @@ type Evaluator struct {
 	identity   func() *age.X25519Identity // nil = meterd can't unseal; skip with warn
 	identities func() []*age.X25519Identity
 	dispatch   Dispatcher
-	dispatchMu *sync.Mutex // serialises ActionExecutor calls (see ActionExecutor)
 	// actionExec (issue #976 / ADR-122 / SAFE-RELEASES-B) is the
 	// in-process action fan-out surface. Nil-coerced at
 	// construction so the evaluator's behaviour is the same on
@@ -323,7 +321,6 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		pagerDuty:  pagerduty.New(o.PagerDutyHTTPClient),
 		identities: o.Identities,
 		dispatch:   o.Dispatcher,
-		dispatchMu: &sync.Mutex{},
 		newSigner:  o.NewSigner,
 		now:        o.Now,
 		log:        o.Log,
@@ -761,9 +758,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			result.Err = fmt.Errorf("no notification channel accepted the alert (%d attempted)", attempted)
 		}
 		e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
-		e.dispatchMu.Lock()
 		e.runAction(ctx, rule, deliveryID, observed, now, stats)
-		e.dispatchMu.Unlock()
 		return
 	}
 	e.deliverAlert(ctx, rule, deliveryID, observed, payloadMap, now, stats)
@@ -784,13 +779,11 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 	// ClaimAlertFire enforces: a duplicate inside the cool-down
 	// window already returned at the `if !won` branch.
 	//
-	// Serialised behind dispatchMu because the ActionDispatcher's
-	// Execute path may share connection state with the webhook
-	// dispatcher in the future; today the lock is just
-	// precautionary.
-	e.dispatchMu.Lock()
+	// Not serialised across accounts (ADR-20261109120000): one account's
+	// rules run in one goroutine, so actions on an app never overlap, and
+	// a slow action costs only its own account's tick budget. A global
+	// lock here used to hold every account's fires behind one rollback.
 	e.runAction(ctx, rule, deliveryID, observed, now, stats)
-	e.dispatchMu.Unlock()
 
 	// Unseal the webhook secret. A nil identity or a namespace
 	// mismatch is a hard skip — we never dispatch without a valid

@@ -16,6 +16,7 @@ import (
 type logSearchReleaseFake struct {
 	accounts map[string]state.Account
 	apps     map[string]state.App
+	orgs     map[string]state.Org
 }
 
 func (f logSearchReleaseFake) AccountByID(_ context.Context, id string) (state.Account, error) {
@@ -32,14 +33,24 @@ func (f logSearchReleaseFake) AppByID(_ context.Context, id string) (state.App, 
 	return state.App{}, state.ErrNotFound
 }
 
+func (f logSearchReleaseFake) OrgByID(_ context.Context, id string) (state.Org, error) {
+	if org, ok := f.orgs[id]; ok {
+		return org, nil
+	}
+	return state.Org{}, state.ErrNotFound
+}
+
 func TestLogSearchReleaseFollowsSwitchAndCapability(t *testing.T) {
 	yes := true
 	pro := state.Account{ID: "00000000-0000-4000-8000-000000000001", Plan: api.PlanPro}
 	hobby := state.Account{ID: "00000000-0000-4000-8000-000000000002", Plan: api.PlanHobby}
-	gone := "00000000-0000-4000-8000-000000000009"
+	org := state.Org{ID: "00000000-0000-4000-8000-0000000000c1", Plan: api.PlanPro, Status: state.OrgStatusActive, ResourceOwnershipEnabled: true}
 	store := logSearchReleaseFake{
 		accounts: map[string]state.Account{pro.ID: pro, hobby.ID: hobby},
-		apps:     map[string]state.App{"app-pro": {ID: "app-pro", AccountID: pro.ID}, "app-hobby": {ID: "app-hobby", AccountID: hobby.ID}},
+		apps: map[string]state.App{"app-pro": {ID: "app-pro", AccountID: pro.ID}, "app-hobby": {ID: "app-hobby", AccountID: hobby.ID},
+			// A Hobby member's app in a Pro organization that owns its apps.
+			"app-org": {ID: "app-org", AccountID: hobby.ID, OrgID: org.ID}},
+		orgs: map[string]state.Org{org.ID: org},
 	}
 	proOnly := platformflags.Definition{Enabled: true, Rules: []platformflags.Rule{{ID: "pro", Plans: []string{string(api.PlanPro)}, Value: &yes}}}
 	type check struct {
@@ -58,8 +69,12 @@ func TestLogSearchReleaseFollowsSwitchAndCapability(t *testing.T) {
 			checks: []check{{pro.ID, "app-pro", false}, {hobby.ID, "app-hobby", false}}},
 		{name: "a written plan rule releases the accounts it names", env: "1", written: &proOnly,
 			checks: []check{{pro.ID, "app-pro", true}, {hobby.ID, "app-hobby", false}}},
-		{name: "an unreadable account decides off", env: "1", written: &proOnly,
-			checks: []check{{gone, "app-pro", false}}},
+		{name: "an unreadable app decides off", env: "1", written: &proOnly,
+			checks: []check{{pro.ID, "app-gone", false}}},
+		// adr: 20261109120000 — an app its organization owns follows the
+		// organization's plan, not the creating member's.
+		{name: "an organization app follows the organization's plan", env: "1", written: &proOnly,
+			checks: []check{{hobby.ID, "app-org", true}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			flags := platformflags.NewSet(nil)

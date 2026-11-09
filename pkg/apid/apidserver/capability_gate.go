@@ -163,7 +163,9 @@ func (s *server) logSearchReleasedForApp(ctx context.Context, app state.App) boo
 	if s.capGate == nil {
 		return true
 	}
-	acct, err := s.store.AccountByID(ctx, app.AccountID)
+	// The app's owner decides (ADR-20261109120000): an app an organization
+	// owns follows the organization's plan, as its other routes do.
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {
 		s.log.DebugContext(ctx, "log search release: account lookup", "app_id", app.ID, "err", err)
 		return false
