@@ -819,7 +819,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261106214916: after a node takes a release, find the recently
 	// active apps whose snapshots there the release made stale.
 	snapshotRefresher := sched.NewSnapshotRefresher(engine, ops.Registry(), log)
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.CPUShapeKeys...), runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
+	// ADR-20261109172421: cpu_admission observe admits on memory alone and
+	// counts what the vCPU and CPU budgets would have refused.
+	engine.WithCPUAdmissionMetrics(ops.Registry())
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.CPUShapeKeys...), runtimeconfig.RequestConcurrencyKeys...), append(snapshotRefreshKeys, runtimeconfig.KeyCPUAdmission)...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			if handled, err := requestConcurrency.Apply(key, value); handled {
 				if err == nil {
@@ -830,6 +833,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if handled, err := cpuShape.apply(key, value); handled {
 				if err == nil {
 					log.Info("schedd: applied CPU shape setting (ADR-20261101215228)", "key", key, "value", string(value))
+				}
+				return err
+			}
+			if key == runtimeconfig.KeyCPUAdmission {
+				mode, err := runtimeconfig.String(value)
+				if err == nil {
+					err = engine.SetCPUAdmission(mode)
+				}
+				if err == nil {
+					log.Info("schedd: applied CPU admission setting (ADR-20261109172421)", "key", key, "value", string(value))
 				}
 				return err
 			}
