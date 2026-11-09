@@ -166,8 +166,12 @@ type OverageBillerOptions struct {
 	EffectiveFrom time.Time
 	Publish       func(context.Context, OverageChargeStep) error
 	Allowance     OverageAllowance
-	Now           func() time.Time
-	Logger        *slog.Logger
+	// PlanSpans, when set, splits month through at at the subject's plan
+	// changes, oldest first, each with its plan's allowance; each span's usage
+	// is billed against its own allowance (ADR-20261103131742 amendment 2).
+	PlanSpans func(ctx context.Context, subjectID string, month, at time.Time) ([]AllowanceSpan, error)
+	Now       func() time.Time
+	Logger    *slog.Logger
 }
 
 // OverageBiller delivers managed PostgreSQL overage charges.
@@ -296,16 +300,14 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	if allowanceErr != nil {
 		return allowanceErr
 	}
-	billed, target := OverageCharge(snapshot.ComputeUnitSeconds, max(limits.Allowance, subject.Allowance))
 	// Storage past the pool is charged while overage is on, and for the rest
 	// of a month that already charged it, so turning overage off never
 	// lowers the month's cumulative charge.
-	var storageBilled int64
-	if limits.Overage || delivered.BilledStorageByteSeconds > 0 {
-		var storage int64
-		storageBilled, storage = StorageOverageCharge(snapshot.StorageByteSeconds, limits.StorageAllowance, month)
-		target += storage
+	charge, err := b.charge(ctx, subject, limits, month, at, snapshot, limits.Overage || delivered.BilledStorageByteSeconds > 0)
+	if err != nil {
+		return err
 	}
+	billed, target, storageBilled := charge.billedUnitSeconds, charge.millicents, charge.billedStorageByteSeconds
 	if target <= baseline {
 		return nil
 	}
@@ -316,15 +318,39 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	// identical step rather than computing a new one.
 	pending = OveragePendingStep{Provider: b.options.Provider, Live: live, Previous: delivered, Step: OverageChargeStep{
 		SubjectID: subject.SubjectID, PeriodStart: month, At: now,
-		UsedUnitSeconds: snapshot.ComputeUnitSeconds, AllowanceSeconds: max(limits.Allowance, subject.Allowance),
+		UsedUnitSeconds: snapshot.ComputeUnitSeconds, AllowanceSeconds: charge.allowance,
 		BilledUnitSeconds: billed, DeliveredMillicents: baseline, TargetMillicents: target,
-		UsedStorageByteSeconds: snapshot.StorageByteSeconds, StoragePoolBytes: limits.StorageAllowance, BilledStorageByteSeconds: storageBilled}}
+		UsedStorageByteSeconds: snapshot.StorageByteSeconds, StoragePoolBytes: charge.storageAllowance, BilledStorageByteSeconds: storageBilled}}
 	reserved, err := b.billing.ReserveOverage(ctx, pending)
 	if err != nil || !reserved {
 		// Another replica holds this month's step; it sends it.
 		return err
 	}
 	return b.send(ctx, pending, summary)
+}
+
+// charge is the month's charge through at. With the subject's plan spans it
+// bills each span's usage against that span's allowance (ADR-20261103131742
+// amendment 2); without them, the month's usage against the allowance now,
+// or the one recorded when the subject reached it, whichever is larger.
+func (b *OverageBiller) charge(ctx context.Context, subject OverageSubject, limits CapLimits, month, at time.Time, snapshot UsageSnapshot, storage bool) (spanCharge, error) {
+	if reader, ok := b.usage.(UsageBeforeReader); ok && b.options.PlanSpans != nil {
+		spans, err := b.options.PlanSpans(ctx, subject.SubjectID, month, at)
+		if err != nil {
+			return spanCharge{}, err
+		}
+		if len(spans) > 0 {
+			return chargeBySpan(ctx, reader, subject.SubjectID, month, spans, snapshot, storage)
+		}
+	}
+	out := spanCharge{allowance: max(limits.Allowance, subject.Allowance), storageAllowance: limits.StorageAllowance}
+	out.billedUnitSeconds, out.millicents = OverageCharge(snapshot.ComputeUnitSeconds, out.allowance)
+	if storage {
+		var storageMillicents int64
+		out.billedStorageByteSeconds, storageMillicents = StorageOverageCharge(snapshot.StorageByteSeconds, limits.StorageAllowance, month)
+		out.millicents += storageMillicents
+	}
+	return out, nil
 }
 
 // send delivers a reserved step and records it. A failure leaves the step

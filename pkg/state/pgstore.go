@@ -326,6 +326,9 @@ func (s *PgStore) CreateAccount(ctx context.Context, email string, plan api.Plan
 // postSignup / OAuth ladders collapse to the idempotent-signin
 // path on a duplicate email.
 func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params CreateAccountWithPersonalOrgParams) (CreateAccountWithPersonalOrgResult, error) {
+	if err := params.TermsAcceptance.validate(); err != nil {
+		return CreateAccountWithPersonalOrgResult{}, err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: begin tx: %w", err)
@@ -381,6 +384,16 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 		}
 		if changed != 1 {
 			return CreateAccountWithPersonalOrgResult{}, ErrNotFound
+		}
+	}
+	// 4. Terms acceptance, in the same transaction: an account created
+	//    while the Terms are published always has its row.
+	if a := params.TermsAcceptance; a != nil {
+		if _, err := tx.Exec(ctx, `
+			insert into legal_acceptances (account_id, document, version, method)
+			values ($1, $2, $3, $4)
+		`, acct.ID, LegalDocumentTerms, a.Version, a.Method); err != nil {
+			return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: record terms acceptance: %w", mapErr(err))
 		}
 	}
 
@@ -1857,12 +1870,13 @@ func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, 
 
 	// Step 1: lock the old row + verify account + status.
 	var (
-		oldAcct string
-		oldStat string
+		oldAcct    string
+		oldStat    string
+		oldExpired bool
 	)
 	if err := tx.QueryRow(ctx,
-		`select account_id, status from api_keys where id = $1 for update`, oldKeyID).
-		Scan(&oldAcct, &oldStat); err != nil {
+		`select account_id, status, coalesce(expires_at <= now(), false) from api_keys where id = $1 for update`, oldKeyID).
+		Scan(&oldAcct, &oldStat, &oldExpired); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return APIKey{}, APIKey{}, ErrNotFound
 		}
@@ -1873,6 +1887,12 @@ func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, 
 	}
 	if oldStat == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, ErrAPIKeyRevoked
+	}
+	// Expiry is lazy: a key past its deadline keeps status active or grace
+	// until a request presents it. Rotation resets the old key's deadline,
+	// so rotating an expired key would bring it back to life.
+	if oldExpired {
+		return APIKey{}, APIKey{}, ErrAPIKeyExpired
 	}
 
 	// Step 2: read the old row's content (label, scopes) so the
@@ -1909,6 +1929,9 @@ func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, 
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		accountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID, old.ExpiresAt)
 	if err != nil {
+		return APIKey{}, APIKey{}, err
+	}
+	if err := copyKeyProjectLimitTx(ctx, tx, oldKeyID, newKey.ID); err != nil {
 		return APIKey{}, APIKey{}, err
 	}
 
@@ -2173,12 +2196,13 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 
 	// Step 1: lock the old row + verify (id, org_id) + status.
 	var (
-		oldOrg  string
-		oldStat string
+		oldOrg     string
+		oldStat    string
+		oldExpired bool
 	)
 	if err := tx.QueryRow(ctx,
-		`select org_id, status from api_keys where id = $1 for update`, oldKeyID).
-		Scan(&oldOrg, &oldStat); err != nil {
+		`select org_id, status, coalesce(expires_at <= now(), false) from api_keys where id = $1 for update`, oldKeyID).
+		Scan(&oldOrg, &oldStat, &oldExpired); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return APIKey{}, APIKey{}, ErrNotFound
 		}
@@ -2189,6 +2213,12 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 	}
 	if oldStat == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, ErrAPIKeyRevoked
+	}
+	// Expiry is lazy: a key past its deadline keeps status active or grace
+	// until a request presents it. Rotation resets the old key's deadline,
+	// so rotating an expired key would bring it back to life.
+	if oldExpired {
+		return APIKey{}, APIKey{}, ErrAPIKeyExpired
 	}
 
 	// Step 2: read the old row's content (label, scopes, account_id) so the
@@ -2217,6 +2247,9 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID, old.ExpiresAt)
 	if err != nil {
+		return APIKey{}, APIKey{}, err
+	}
+	if err := copyKeyProjectLimitTx(ctx, tx, oldKeyID, newKey.ID); err != nil {
 		return APIKey{}, APIKey{}, err
 	}
 
@@ -2280,12 +2313,13 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 
 	// Step 1: lock the old row + verify (id, org_id) + status.
 	var (
-		oldOrg  string
-		oldStat string
+		oldOrg     string
+		oldStat    string
+		oldExpired bool
 	)
 	if err := tx.QueryRow(ctx,
-		`select org_id, status from api_keys where id = $1 for update`, oldKeyID).
-		Scan(&oldOrg, &oldStat); err != nil {
+		`select org_id, status, coalesce(expires_at <= now(), false) from api_keys where id = $1 for update`, oldKeyID).
+		Scan(&oldOrg, &oldStat, &oldExpired); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return APIKey{}, APIKey{}, ErrNotFound
 		}
@@ -2296,6 +2330,12 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 	}
 	if oldStat == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, ErrAPIKeyRevoked
+	}
+	// Expiry is lazy: a key past its deadline keeps status active or grace
+	// until a request presents it. Rotation resets the old key's deadline,
+	// so rotating an expired key would bring it back to life.
+	if oldExpired {
+		return APIKey{}, APIKey{}, ErrAPIKeyExpired
 	}
 
 	// Step 2: read the old row's content (label, scopes, account_id)
@@ -2323,6 +2363,9 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID,
 		nullString(createdIP), nullString(createdUA), parent, old.ExpiresAt)
 	if err != nil {
+		return APIKey{}, APIKey{}, err
+	}
+	if err := copyKeyProjectLimitTx(ctx, tx, oldKeyID, newKey.ID); err != nil {
 		return APIKey{}, APIKey{}, err
 	}
 
@@ -3411,7 +3454,7 @@ func (s *PgStore) ListInstancesForLifecycleReconciliation(ctx context.Context, n
 		  join apps a on a.id = ac.app_id
 		  join instances i on i.app_id = a.id
 		 where ac.status = 'deleted_pending'
-		   and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','evicting_account_deleting')%[1]s
+		   and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen','evicting_account_deleting')%[1]s
 		)
 		select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
 		       coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
@@ -6389,9 +6432,21 @@ func (s *PgStore) applyProjectReconcileOnce(
 				if marshalErr != nil {
 					return ProjectReconcileResult{}, fmt.Errorf("state: marshal restored project app manifest: %w", marshalErr)
 				}
-				restored, restoreErr := scanApp(tx.QueryRow(ctx, `update apps set status = 'active', deleted_at = null, delete_grace_until = null, root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $6, platform_tenant_required = case when $7 then $8 else platform_tenant_required end, ram_mb = case when $9 and $10 > 0 then $10 else ram_mb end, cpu_millicores = case when $9 and $11 > 0 then $11 else cpu_millicores end, max_concurrency = case when $9 and $12 > 0 then $12 else max_concurrency end where id = $1 returning `+appsSelectColumns, tombstone.ID, tombstone.RootDir, tombstone.WorkloadName, string(tombstone.WorkloadClass), nullString(tombstone.StartCommand), manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired, mutation.SetResources, app.RAMMB, app.CPUMillicores, app.MaxConcurrency))
+				restored, restoreErr := scanApp(tx.QueryRow(ctx, `update apps set status = 'active', deleted_at = null, delete_grace_until = null, root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $6, platform_tenant_required = case when $7 then $8 else platform_tenant_required end, ram_mb = case when $9 and $10 > 0 then $10 else ram_mb end, cpu_millicores = case when $9 and $11 > 0 then $11 else cpu_millicores end, max_concurrency = case when $9 and $12 > 0 then $12 else max_concurrency end where id = $1 and delete_grace_until > now() and purge_claimed_at is null returning `+appsSelectColumns, tombstone.ID, tombstone.RootDir, tombstone.WorkloadName, string(tombstone.WorkloadClass), nullString(tombstone.StartCommand), manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired, mutation.SetResources, app.RAMMB, app.CPUMillicores, app.MaxConcurrency))
+				// scanApp maps no row to ErrNotFound.
+				if errors.Is(restoreErr, ErrNotFound) {
+					// The same guards as RestoreApp: past its grace deadline,
+					// or once the purge has started deleting its artifacts, a
+					// tombstone cannot come back. The workload name stays taken
+					// until the purge removes the row.
+					return ProjectReconcileResult{}, fmt.Errorf("state: workload %q is being purged after deletion: %w", app.WorkloadName, ErrConflict)
+				}
 				if restoreErr != nil {
 					return ProjectReconcileResult{}, mapErr(restoreErr)
+				}
+				// The crons the deletion suspended come back, as in RestoreApp.
+				if _, err := tx.Exec(ctx, `update crons set suspended_reason = '' where app_id = $1 and suspended_reason = $2`, restored.ID, CronSuspendedAppDeleted); err != nil {
+					return ProjectReconcileResult{}, fmt.Errorf("state: restore project app crons: %w", err)
 				}
 				restored, restoreErr = syncProductionWorkloadSpecTx(ctx, tx, restored, projectReconcileSettingsParams(restored, mutation))
 				if restoreErr != nil {
@@ -7743,7 +7798,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	if err := sqlc.New().GuardWorkflowAdmissionSnapshot(ctx, tx, d.AppID); err != nil {
 		return Deployment{}, 0, err
 	}
-	if err := s.checkDeploymentAutomations(ctx, tx, d); err != nil {
+	if err := s.checkDeploymentStoredWorkflows(ctx, tx, d); err != nil {
 		return Deployment{}, 0, err
 	}
 	// 1. Lock the parent apps row. SELECT 1 + FOR UPDATE keeps lock
@@ -10807,7 +10862,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	if dep.EnvironmentWorkloadManaged() || managed {
 		return ErrConflict
 	}
-	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
+	if err := s.checkDeploymentStoredWorkflows(ctx, tx, dep); err != nil {
 		return err
 	}
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, dep.ID); err != nil {
@@ -21719,6 +21774,48 @@ func (s *PgStore) ListEvents(ctx context.Context, subject string, limit int) ([]
 	return out, rows.Err()
 }
 
+// RequestsNotRetained returns how many requests the analytics rollups
+// counted for an app in the whole minutes from bucketFrom to bucketUntil
+// beyond what the debugger kept, and whether the rollups held the app since
+// bucketFrom (RequestAnalyticsCounter).
+func (s *PgStore) RequestsNotRetained(ctx context.Context, appID string, bucketFrom, bucketUntil time.Time) (int64, bool, error) {
+	id, err := uuid.Parse(appID)
+	if err != nil {
+		return 0, false, fmt.Errorf("requests not retained: app id: %w", err)
+	}
+	row, err := sqlc.New().RequestAnalyticsCountedRequests(ctx, s.pool, sqlc.RequestAnalyticsCountedRequestsParams{
+		AppID:       pgtype.UUID{Bytes: id, Valid: true},
+		BucketFrom:  pgtype.Timestamptz{Time: bucketFrom, Valid: true},
+		BucketUntil: pgtype.Timestamptz{Time: bucketUntil, Valid: true},
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	return max(row.Requests-row.Retained, 0), row.CoveredSince.Valid && !row.CoveredSince.Time.After(bucketFrom), nil
+}
+
+// ListEventsBySubjectKind returns one kind of a subject's events since a
+// time, newest first (EventKindLister).
+func (s *PgStore) ListEventsBySubjectKind(ctx context.Context, subject, kind string, since time.Time, limit int) ([]Event, error) {
+	id, err := uuid.Parse(subject)
+	if err != nil {
+		return nil, fmt.Errorf("list events by kind: subject: %w", err)
+	}
+	rows, err := sqlc.New().ListEventsBySubjectKind(ctx, s.pool, sqlc.ListEventsBySubjectKindParams{
+		Subject: pgtype.UUID{Bytes: id, Valid: true}, Kind: kind,
+		At: pgtype.Timestamptz{Time: since, Valid: true}, Limit: int32(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Event, 0, len(rows))
+	for _, row := range rows {
+		subj := uuid.UUID(row.Subject.Bytes)
+		out = append(out, Event{ID: row.ID, At: row.At.Time, Actor: row.Actor, Kind: row.Kind, Subject: &subj, Data: json.RawMessage(row.Data)})
+	}
+	return out, nil
+}
+
 // listCustomerEventsHead and listCustomerEventsTail frame both shapes of the
 // account-wide ListCustomerEvents query; only the kind-prefix predicate
 // differs. $1 account, $2 include anonymous, $3 kind prefix, $4 since,
@@ -23044,12 +23141,13 @@ func (s *PgStore) CreateCreditLedgerEntry(ctx context.Context, e CreditLedgerEnt
 // keeps its cap on its orgs row (ADR-20261030093512).
 func (s *PgStore) GetAccountOverageCapCents(ctx context.Context, accountID string) (int64, bool, error) {
 	var cents *int64
+	var plan string
 	if err := s.pool.QueryRow(ctx,
-		`select overage_cap_cents from accounts where id = $1
+		`select overage_cap_cents, plan from accounts where id = $1
 		 union all
-		 select overage_cap_cents from orgs where id = $1 and not personal_org
+		 select overage_cap_cents, plan from orgs where id = $1 and not personal_org
 		 limit 1`,
-		accountID).Scan(&cents); err != nil {
+		accountID).Scan(&cents, &plan); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Account row gone — treat as no cap so meterd does not
 			// block on a half-deleted account. Different from
@@ -23059,10 +23157,8 @@ func (s *PgStore) GetAccountOverageCapCents(ctx context.Context, accountID strin
 		}
 		return 0, false, err
 	}
-	if cents == nil {
-		return 0, false, nil
-	}
-	return *cents, true, nil
+	capCents, ok := EffectiveOverageCapCents(api.Plan(plan), cents)
+	return capCents, ok, nil
 }
 
 // UpdateAccountOverageCapCents writes accounts.overage_cap_cents for
@@ -23436,22 +23532,26 @@ func sumActiveCents(ctx context.Context, tx pgx.Tx, accountID string) (int64, er
 // Hand-written for the same reason as GetAccountOverageCapCents; the
 // shape is meterd-internal and not on the sqlc public surface.
 func (s *PgStore) LoadAllOverageCapCents(ctx context.Context) (map[string]int64, error) {
+	// A paid subject without a cap is held to its plan's self-service
+	// ceiling (ADR-20261105120000), so its row is read too.
 	rows, err := s.pool.Query(ctx,
-		`select id, overage_cap_cents from accounts where overage_cap_cents is not null
+		`select id, overage_cap_cents, plan from accounts where overage_cap_cents is not null or plan <> 'free'
 		 union all
-		 select id, overage_cap_cents from orgs where overage_cap_cents is not null and not personal_org`)
+		 select id, overage_cap_cents, plan from orgs where (overage_cap_cents is not null or plan <> 'free') and not personal_org`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := map[string]int64{}
 	for rows.Next() {
-		var id string
-		var cents int64
-		if err := rows.Scan(&id, &cents); err != nil {
+		var id, plan string
+		var cents *int64
+		if err := rows.Scan(&id, &cents, &plan); err != nil {
 			return nil, err
 		}
-		out[id] = cents
+		if capCents, ok := EffectiveOverageCapCents(api.Plan(plan), cents); ok {
+			out[id] = capCents
+		}
 	}
 	return out, rows.Err()
 }
@@ -26386,7 +26486,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&onlyAllowDeclaredRoutes, &declaredRoutesBytes, &visibility,
 		&a.RetryPolicyJSON, &securityPolicy, &orgID,
 		&a.RequestRateLimitRPS, &a.RequestRateLimitBurst, &egressPorts,
-		&a.PlatformTenantRequired); err != nil {
+		&a.PlatformTenantRequired, &a.EgressAllowlistRevision); err != nil {
 		return mapErr(err)
 	}
 	a.EgressPorts = egressPortsFromDB(egressPorts)
@@ -26584,7 +26684,11 @@ const appsSelectColumns = `
 	request_rate_limit_rps, request_rate_limit_burst,
 	-- ADR-361: extra egress ports, appended to keep positional scans stable.
 	egress_ports,
-	platform_tenant_required`
+	platform_tenant_required,
+	-- Read with egress_allowlist/egress_ports in one row so a wake request
+	-- can name the revision of the policy it carries; appended to keep
+	-- positional scans stable.
+	egress_allowlist_revision`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`
@@ -28559,7 +28663,7 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		// automation failure history names it as the actor. An override goes
 		// with its author; the history keeps the event without the person.
 		{"deployment_mcp_readiness_overrides", `delete from deployment_mcp_readiness_overrides where created_by = $1`},
-		{"workflow_automation_failure_history", `update workflow_automation_failure_history set actor_account_id = null where actor_account_id = $1`},
+		{"stored_workflow_failure_history", `update stored_workflow_failure_history set actor_account_id = null where actor_account_id = $1`},
 		// Release stages and additions of the account's projects reference
 		// the account, and stages the project, without a cascade.
 		{"project_release_additions", `delete from project_release_additions where account_id = $1`},

@@ -21,7 +21,9 @@ func runnerMains(t *testing.T) map[string]string {
 	}
 	mains := map[string]string{}
 	for _, e := range entries {
-		if !e.IsDir() || e.Name() == "internal" {
+		// local is the library `gregale dev --local` uses to reach the
+		// runner core (ADR-20261107210000), not a runner binary.
+		if !e.IsDir() || e.Name() == "internal" || e.Name() == "local" {
 			continue
 		}
 		body, err := os.ReadFile(filepath.Join(root, e.Name(), "main.go"))

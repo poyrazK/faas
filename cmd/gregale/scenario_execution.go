@@ -97,6 +97,7 @@ func executePreparedTests(client *Client, suite string, scenarios []testPrepared
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), testTerminationSignals()...)
 	defer stop()
+	defer surviveBrokenOutput()()
 	results := runPreparedTestPlans(ctx, client, suite, plans, repeat, failFast, digest)
 	return finishTestRunReports(suite, results, reportPath, junitPath, htmlPath)
 }
@@ -464,6 +465,7 @@ func finishTestRunReports(suite string, results []testRunReceipt, reportPath, ju
 func executeTestReplayPlans(client *Client, plans []testRunPlan, report, junit, html string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), testTerminationSignals()...)
 	defer stop()
+	defer surviveBrokenOutput()()
 	results := runPreparedTestPlans(ctx, client, "", plans, 1, false, "")
 	return finishTestRunReports("", results, report, junit, html)
 }

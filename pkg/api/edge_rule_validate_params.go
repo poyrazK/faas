@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
@@ -264,6 +265,32 @@ func paramScalarType(raw any) (string, bool) {
 		return paramScalarType(picked)
 	}
 	return "", false
+}
+
+// EdgeRuleHeaderParamValues collects the header parameter values a validate
+// rule checks: every declared header's values, with an array kind's values
+// split on commas the way list-valued headers are read. The gateway and the
+// trace share it so a trace reports the gateway's verdict.
+func EdgeRuleHeaderParamValues(h http.Header, kinds map[string]EdgeRuleParamKind) map[string][]string {
+	out := make(map[string][]string, len(kinds))
+	for name, kind := range kinds {
+		raw := h.Values(name)
+		if len(raw) == 0 {
+			continue
+		}
+		if kind.Type != "array" {
+			out[name] = raw
+			continue
+		}
+		var items []string
+		for _, v := range raw {
+			for _, item := range strings.Split(v, ",") {
+				items = append(items, strings.TrimSpace(item))
+			}
+		}
+		out[name] = items
+	}
+	return out
 }
 
 // EdgeRuleParamInstance builds the JSON object validated for one parameter

@@ -719,6 +719,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	hostidentity.Configure(domains)
 	ownedDomainsFunc = domains.OwnedDomains
+	// ADR-20261107180000: the labels of the host names edgednsd manages are
+	// not for customers' apps.
+	api.SetOperatorReservedAppSlugs(strings.Split(deps.getenv("FAAS_RESERVED_APP_SLUGS"), ","))
 
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid")
 	if err != nil {
@@ -852,6 +855,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runAlertRollbackWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runRollbackOn5xxWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runConfigGuardWorker(ctx) })
+		// ADR-20261107220000 §2: agent activity is kept 7 days.
+		go background.Staggered(ctx, background.StartSpread, func() {
+			srv.runAgentActivitySweep(ctx)
+		})
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPostReleaseWatchWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runScheduledReleaseWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runDatabaseSwitchWorker(ctx) })

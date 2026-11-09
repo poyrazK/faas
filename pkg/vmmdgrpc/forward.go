@@ -1535,6 +1535,12 @@ type quietReporter interface {
 	QuietPauseReport(instance string) fcvm.QuietPauseReport
 }
 
+// idleLadderReporter reports the idle ladder level vmmd holds an instance
+// at (ADR-20261107122928).
+type idleLadderReporter interface {
+	IdleLadderLevel(instance string, now time.Time) fcvm.IdleLevel
+}
+
 // addQuietPauseState fills InstanceStats' quiet pause fields: the current
 // pause, so schedd can leave a quiet-paused instance's vCPUs out of the
 // node's active vCPU (ADR-1151), and the last completed pause with the
@@ -1555,6 +1561,13 @@ func (s *Server) addQuietPauseState(row *vmmdpb.InstanceStats) {
 		row.QuietLastPauseStartedAt = timestamppb.New(r.LastStarted)
 		row.QuietLastPauseEndedAt = timestamppb.New(r.LastEnded)
 		row.QuietPausedNsTotal = wrapperspb.Int64(r.PausedTotal.Nanoseconds())
+	}
+	// The ladder level is only meaningful for a guest the row reports
+	// paused: measured admission charges level 2 with the frozen floor.
+	if l, ok := s.vmm.(idleLadderReporter); ok && row.QuietPaused {
+		if level := l.IdleLadderLevel(row.GetInstance(), time.Now()); level > fcvm.IdleRunning {
+			row.IdleLadderLevel = int32(level)
+		}
 	}
 }
 

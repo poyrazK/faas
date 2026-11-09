@@ -140,7 +140,7 @@ func (s *server) revokeSession(w http.ResponseWriter, r *http.Request, acct stat
 			api.CodeValidation, "Invalid session id", "id must be a uuid"))
 		return
 	}
-	if err := middleware.VerifyAuthenticated(s.sessions, r, csrfActionSessionRevoke, acct.ID); err != nil {
+	if err := s.verifySessionCSRF(r, csrfActionSessionRevoke, acct.ID); err != nil {
 		api.WriteProblem(w, csrfMismatchProblem)
 		return
 	}
@@ -175,14 +175,15 @@ func (s *server) revokeSession(w http.ResponseWriter, r *http.Request, acct stat
 // except the calling sid. Returns {"revoked": N}. Current
 // session stays active — the caller keeps their cookie.
 func (s *server) revokeAllSessions(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if err := middleware.VerifyAuthenticated(s.sessions, r, csrfActionSessionsRevokeAll, acct.ID); err != nil {
-		api.WriteProblem(w, csrfMismatchProblem)
-		return
-	}
 	current, ok := sessionFrom(r)
 	if !ok {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
-			api.CodeSessionExpired, "Session expired", "no active session in context"))
+		// An API key (gregale account sessions revoke-all) signs out every
+		// browser. Keys are left alone: the caller's own key may be one.
+		s.revokeAllBrowserSessions(w, r, acct)
+		return
+	}
+	if err := middleware.VerifyAuthenticated(s.sessions, r, csrfActionSessionsRevokeAll, acct.ID); err != nil {
+		api.WriteProblem(w, csrfMismatchProblem)
 		return
 	}
 	n, err := s.store.RevokeAllSessions(r.Context(), acct.ID, current.ID)
@@ -196,6 +197,7 @@ func (s *server) revokeAllSessions(w http.ResponseWriter, r *http.Request, acct 
 	// 2026-10-28 H71). This route takes a dashboard session, so none of them
 	// is the caller's credential.
 	s.revokeInteractiveSignInKeys(r, acct, "sessions_revoke_all")
+	s.forgetTrustedBrowsers(r.Context(), acct.ID, "sign_out_everywhere")
 	if s.audit != nil {
 		s.audit.Emit(r.Context(), "auth.sessions.revoke_all", &acct.ID, map[string]any{
 			"revoked_count": n,

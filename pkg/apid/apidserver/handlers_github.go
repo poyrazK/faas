@@ -274,6 +274,10 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if s.finishOAuthLink(w, r, "github", githubUserEmailID(githubUser), email, true) {
+		return
+	}
+
 	// Provision or fetch the account. Sub-first lookup via the
 	// oauth_links table mirrors the Google handler — the
 	// §11 anti-takeover invariant is the same regardless of the
@@ -282,6 +286,10 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 	acct, err := s.provisionOrFetchOAuthAccount(r, "github", githubUserEmailID(githubUser), email, signupSource(oauthNext(r)))
 	if errors.Is(err, errSignupNetworkCap) {
 		writeSignupNetworkCap(w)
+		return
+	}
+	if errors.Is(err, errOAuthProviderUnlinked) {
+		writeOAuthProviderUnlinked(w, r, "github")
 		return
 	}
 	if err != nil {
@@ -468,8 +476,8 @@ func (s *server) provisionOrFetchOAuthAccount(r *http.Request, provider, sub, em
 	//    now signs in with OAuth").
 	acct, err := s.store.AccountByEmail(ctx, email)
 	if err == nil {
-		if err := s.store.UpsertOAuthLink(ctx, acct.ID, provider, sub, email, true); err != nil {
-			s.log.Error("oauth.upsert_link", "provider", provider, "err", err)
+		if err := s.linkOAuthByEmail(r, acct, provider, sub, email, true); err != nil {
+			return state.Account{}, err
 		}
 		return s.verifyOAuthAccountEmail(ctx, acct)
 	}

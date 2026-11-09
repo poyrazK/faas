@@ -140,6 +140,9 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 			// operator action revoke every active session for the target.
 			revokedSessions, err = s.store.RevokeAllSessions(r.Context(), targetID, uuid.Nil.String())
 		}
+		if err == nil {
+			s.forgetTrustedBrowsers(r.Context(), targetID, "operator_suspend")
+		}
 	case "restore":
 		err = s.store.UpdateAccountStatus(r.Context(), targetID, state.AccountActive)
 		if err == nil {
@@ -147,6 +150,9 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 		}
 	case "revoke-sessions":
 		revokedSessions, err = s.store.RevokeAllSessions(r.Context(), targetID, uuid.Nil.String())
+		if err == nil {
+			s.forgetTrustedBrowsers(r.Context(), targetID, "operator_revoke")
+		}
 	default:
 		err = fmt.Errorf("unsupported account action %q", action)
 	}

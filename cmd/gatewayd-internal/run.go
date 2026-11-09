@@ -2385,7 +2385,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// without code changes — for now production always wires
 	// them when deps.authMw is non-nil (which it always is
 	// outside unit tests).
-	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw)
+	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw, pgStore)
 	if deps.requireAuthnAdapter != nil {
 		deps.keyAuthCache = gateway.NewKeyAuthCache(deps.requireAuthnAdapter)
 		go watchKeyChanges(ctx, pool, deps.keyAuthCache, log)
@@ -2513,6 +2513,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	if len(deps.edgeIdentities) > 0 {
 		identities := deps.edgeIdentities
 		deps.publicAuthUnsealer = newPublicAuthUnsealer(func() []*age.X25519Identity { return identities })
+		if deps.edgeRulesMatcher != nil {
+			deps.edgeRulesMatcher.headerSecretOpener = newEdgeRuleHeaderSecretOpener(identities)
+		}
 	}
 	log.Info("edge seal domain", "domain_identity", len(edgeDomainIdentities) > 0, "identities", len(deps.edgeIdentities))
 	// PR-3 / ADR-125 fleet-wide signing key: try the
@@ -3752,6 +3755,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		)
 		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
 		manager.capabilityAllowed = deps.capabilityAllowed
+		manager.edgeEgress = egressSink.RecordEdgeBytes
 		if cfg.NodeName != "" {
 			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
 		}

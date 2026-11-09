@@ -2,11 +2,13 @@
 package apidserver_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -48,7 +50,7 @@ func TestHandlers_AgentRiskyRequestsNeedAPersonsApproval(t *testing.T) {
 		}
 		return plaintext, key
 	}
-	agent, _ := mint("ci-agent", api.ScopeAgent, api.ScopeAppsRead, api.ScopeDeployWrite)
+	agent, agentKey := mint("ci-agent", api.ScopeAgent, api.ScopeAppsRead, api.ScopeDeployWrite)
 	call := func(key, method, path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(method, path, strings.NewReader(""))
@@ -98,22 +100,52 @@ func TestHandlers_AgentRiskyRequestsNeedAPersonsApproval(t *testing.T) {
 	if page.Code != http.StatusOK || form == "" || !strings.Contains(page.Body.String(), "DELETE /v1/apps/prod-svc") {
 		t.Fatalf("review page = %d %s", page.Code, page.Body)
 	}
-	if denied := apidserver.DecideAgentApprovalForTest(t, srv, first.ID, cookie, form, "deny"); denied.Code != http.StatusOK || !strings.Contains(denied.Body.String(), "You denied") {
+	if denied := apidserver.DecideAgentApprovalWithNoteForTest(t, srv, first.ID, cookie, form, "deny", "keep prod-svc, it serves customers"); denied.Code != http.StatusOK || !strings.Contains(denied.Body.String(), "You denied") {
 		t.Fatalf("deny = %d %s", denied.Code, denied.Body)
 	}
-	second := pending(call(agent, http.MethodDelete, "/v1/apps/prod-svc"))
+	// ADR-20261107140000 §6: repeating a denied request tells the agent no,
+	// with the person's reason, instead of asking again.
+	var refused api.Problem
+	if rec := call(agent, http.MethodDelete, "/v1/apps/prod-svc"); rec.Code != http.StatusForbidden || json.Unmarshal(rec.Body.Bytes(), &refused) != nil ||
+		refused.Code != api.CodeApprovalDenied || refused.AgentApproval == nil || refused.AgentApproval.ID != first.ID ||
+		refused.AgentApproval.Status != api.AgentApprovalDenied || refused.AgentApproval.Note != "keep prod-svc, it serves customers" ||
+		!strings.Contains(refused.Detail, "keep prod-svc, it serves customers") {
+		t.Fatalf("repeating a denied request = %d %s; want 403 approval_denied with the note", rec.Code, rec.Body)
+	}
+	if rec := call(agent, http.MethodGet, "/v1/agent-approvals/"+first.ID); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &polled) != nil ||
+		polled.Status != api.AgentApprovalDenied || polled.Note != "keep prod-svc, it serves customers" {
+		t.Fatalf("agent polls its denied request = %d %s", rec.Code, rec.Body)
+	}
+
+	// A different request (here: the same app with a query) asks afresh.
+	const purge = "/v1/apps/prod-svc?purge=true"
+	second := pending(call(agent, http.MethodDelete, purge))
 	if second.ID == first.ID {
-		t.Fatal("a denied request was reused")
+		t.Fatal("a different request reused the denied one")
 	}
 	_, cookie, form = apidserver.RenderAgentApprovalForTestAs(t, srv, second.ID, email)
 	if approved := apidserver.DecideAgentApprovalForTest(t, srv, second.ID, cookie, form, "approve"); approved.Code != http.StatusOK || !strings.Contains(approved.Body.String(), "You approved") {
 		t.Fatalf("approve = %d %s", approved.Code, approved.Body)
 	}
-	if rec := call(agent, http.MethodDelete, "/v1/apps/prod-svc"); rec.Code == http.StatusPreconditionRequired || rec.Code >= 500 {
+	if rec := call(agent, http.MethodDelete, purge); rec.Code == http.StatusPreconditionRequired || rec.Code >= 500 {
 		t.Fatalf("the approved request = %d %s; want it to reach the handler", rec.Code, rec.Body)
 	}
-	if third := pending(call(agent, http.MethodDelete, "/v1/apps/prod-svc")); third.ID == second.ID {
+	if third := pending(call(agent, http.MethodDelete, purge)); third.ID == second.ID {
 		t.Fatal("an approval allowed a second request")
+	}
+
+	// A request nobody decided in time is reported expired on repeat.
+	emptyBody := sha256.Sum256(nil)
+	if _, err := store.RequestAgentApproval(ctx, state.AgentApproval{
+		KeyID: agentKey.ID, AccountID: acct.ID, Category: api.AgentApprovalDelete, Method: http.MethodDelete,
+		Path: "/v1/apps/keep-svc", BodySHA256: emptyBody[:], ExpiresAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("seed an expired request: %v", err)
+	}
+	var lapsed api.Problem
+	if rec := call(agent, http.MethodDelete, "/v1/apps/keep-svc"); rec.Code != http.StatusGone || json.Unmarshal(rec.Body.Bytes(), &lapsed) != nil ||
+		lapsed.Code != api.CodeApprovalExpired || lapsed.AgentApproval == nil || lapsed.AgentApproval.Status != api.AgentApprovalExpired {
+		t.Fatalf("repeating an expired request = %d %s; want 410 approval_expired", rec.Code, rec.Body)
 	}
 
 	pending(call(agent, http.MethodPost, "/v1/apps/keep-svc/restart"))

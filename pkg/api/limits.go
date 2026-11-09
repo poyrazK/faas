@@ -95,6 +95,43 @@ const (
 	SecurityMailTrackedAccountsMax = 100_000
 )
 
+// EmailVerificationEnforcedFrom is when the 30-day verification grace
+// started to restrict accounts (ADR 20261107103000). An account created
+// before it gets its 30 days from this date, so accounts that were
+// unverified when enforcement shipped are not cut off the day it deploys.
+var EmailVerificationEnforcedFrom = time.Date(2026, time.November, 16, 0, 0, 0, 0, time.UTC)
+
+// An unverified account active in the last EmailVerificationReminderWindow
+// before its deadline is mailed a fresh verification link, at most once per
+// EmailVerificationReminderInterval per apid.
+const (
+	EmailVerificationReminderWindow   = 7 * 24 * time.Hour
+	EmailVerificationReminderInterval = 24 * time.Hour
+)
+
+// Account profile and security notices (ADR 20261107103000). A display name
+// is at most DisplayNameMaxChars characters. A browser sign-in whose device
+// and network match no session of the last NewSignInLookback mails a notice.
+const (
+	DisplayNameMaxChars = 80
+	NewSignInLookback   = 90 * 24 * time.Hour
+)
+
+// The security activity view (ADR 20261108150000) shows at most
+// SecurityActivityMaxEvents events from the last SecurityActivityLookback.
+const (
+	SecurityActivityLookback  = 90 * 24 * time.Hour
+	SecurityActivityMaxEvents = 100
+)
+
+// A browser remembered at the authenticator check (ADR 20261108150000)
+// skips the code at sign-in for MFATrustedBrowserTTL; an account keeps at
+// most MFATrustedBrowsersMax, the oldest forgotten first.
+const (
+	MFATrustedBrowserTTL  = 30 * 24 * time.Hour
+	MFATrustedBrowsersMax = 10
+)
+
 // Queue receive long-polls one account, and one apid in all, may hold at a
 // time; past them a receive answers 429. A receive waits on apid's shared
 // completion listener, not on a database connection, so the caps bound
@@ -165,9 +202,17 @@ const (
 
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one
 // client address, and one network (IPv4 /24, IPv6 /48), may create per day.
+//
+// SignupAccountsPerDay caps the self-service accounts the whole platform
+// creates in any 24 hours (ADR-20261104145353). Each account carries a full
+// Free allowance, and the per-address and per-network caps reset with every
+// new address, so this bounds the Free compute, egress and storage a signup
+// farm can claim in a day. It counts every account created, so an operator-
+// or support-created account uses the same budget.
 const (
 	SignupAccountsPerAddressPerDay = 10
 	SignupAccountsPerNetworkPerDay = 50
+	SignupAccountsPerDay           = 2_000
 )
 
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
@@ -193,6 +238,33 @@ const (
 	MaxPendingAgentApprovals   = 20
 	AgentApprovalBodyBindBytes = 1 << 20
 )
+
+// Agent activity (ADR-20261107220000): an agent key's write requests are
+// kept AgentActivityRetention; a page holds DefaultAgentActivityPage rows
+// unless ?limit asks for up to MaxAgentActivityPage.
+const (
+	AgentActivityRetention   = 7 * 24 * time.Hour
+	DefaultAgentActivityPage = 50
+	MaxAgentActivityPage     = 200
+)
+
+// Agent approval outcomes (ADR-20261107140000 §6): an agent repeating a
+// request denied, or expired, within AgentApprovalOutcomeWindow is told so
+// instead of asking again; a denial note holds at most
+// MaxAgentApprovalNoteChars characters.
+const (
+	AgentApprovalOutcomeWindow = 30 * time.Minute
+	MaxAgentApprovalNoteChars  = 280
+)
+
+// AgentApprovalEmailInterval is the least time between two emails to one
+// person about one agent key's approval requests (ADR-20261107140000 §2).
+const AgentApprovalEmailInterval = 10 * time.Minute
+
+// MaxAgentApprovalChannels is how many notification channels one scope (an
+// account's agents, or an organization's for one admin) may route agent
+// approval requests to (ADR-20261107140000 §3).
+const MaxAgentApprovalChannels = 5
 
 // InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
 // failed-signature deliveries one client IP may send to /v1/hooks a minute
@@ -1268,15 +1340,15 @@ type ProfilingLimits struct {
 }
 
 const (
-	AutomationEventRecoveryReceiptMaxPages = 25
-	AutomationRecoveryPlanMaxBytes         = 64 << 10
-	AutomationRecoveryBatchMaxRuns         = 25
-	AutomationRecoveryPreviewDefaultLimit  = 10
-	AutomationRecoveryPreviewMaxLimit      = 25
-	EventReplayPreviewPageDefault          = 50
-	EventReplayPreviewPageMax              = 100
-	EventReplayPreviewCursorMaxBytes       = 4096
-	EventReplayPreviewReadTimeout          = 5 * time.Second
+	StoredWorkflowEventRecoveryReceiptMaxPages = 25
+	StoredWorkflowRecoveryPlanMaxBytes         = 64 << 10
+	StoredWorkflowRecoveryBatchMaxRuns         = 25
+	StoredWorkflowRecoveryPreviewDefaultLimit  = 10
+	StoredWorkflowRecoveryPreviewMaxLimit      = 25
+	EventReplayPreviewPageDefault              = 50
+	EventReplayPreviewPageMax                  = 100
+	EventReplayPreviewCursorMaxBytes           = 4096
+	EventReplayPreviewReadTimeout              = 5 * time.Second
 )
 
 // Historical backfills pin only the bounded settled-receipt retention window;
@@ -1302,6 +1374,12 @@ const (
 	InvocationRetentionBatch          = 500
 	InvocationRetentionBatchesPerPass = 20
 )
+
+// QueueCompletedPayloadRetention is how long a completed queue message keeps
+// its payload after its ack. Its history row stays for the plan's result
+// retention; failures and dead letters keep their payloads for replay
+// (ADR-20261018101500 amendment 2026-10-31).
+const QueueCompletedPayloadRetention = 24 * time.Hour
 
 // Event job lifecycle (ADR-20261028095548). A running backfill that makes no
 // progress for EventReplayBackfillIdleExpiry ends as expired. A recovery or
@@ -1757,6 +1835,20 @@ const (
 	// RealtimeUsageQueryMaxHours (31 days).
 	RealtimeUsageQueryDefaultHours = 24
 	RealtimeUsageQueryMaxHours     = 744
+)
+
+// QueueStatusCountLimit bounds every count a queue status read or gauge
+// makes: queue state, binding status, the dashboard and schedd's queue
+// gauges. A larger backlog reads as this many (ADR-20261018101500 amendments
+// 2026-10-27 and 2026-10-31).
+const QueueStatusCountLimit = 100_000
+
+// A batch send carries at most QueueSendBatchMaxMessages messages in at most
+// QueueSendBatchMaxBytes of request body; each message still meets its plan's
+// message size (ADR-20261018101500 amendment 2026-10-31).
+const (
+	QueueSendBatchMaxMessages = 100
+	QueueSendBatchMaxBytes    = 8 << 20
 )
 
 // Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
@@ -3964,7 +4056,12 @@ type ObjectStoragePlanLimits struct {
 	// Free 1 GiB, Hobby 2× its included storage, Pro and Scale 5×. Support can
 	// grant a paid account another (ObjectStorageLimitsFor), and the account's
 	// spend cap tightens it (WithSpendCap).
-	MaxAccountBytes       int64
+	MaxAccountBytes int64
+	// MaxMonthlyRequests is the requests the account may make each month
+	// (ADR-20261104145353): Free 50,000, Hobby 500,000, Pro 2,500,000, Scale
+	// 10,000,000. Requests are not billed, so this bounds the provider's
+	// per-request charge: even all writes stay below the plan's price. The
+	// operator policy still applies when it is tighter.
 	MaxMonthlyRequests    int64
 	MaxMonthlyEgressBytes int64
 	// IncludedBytes is average stored bytes over a billing month of
@@ -4219,6 +4316,15 @@ type Limits struct {
 	// hourly count is below it, so production deploys always keep
 	// DeploysPerHour - PreviewDeploysPerHour (ADR-20261028100000).
 	PreviewDeploysPerHour int
+	// BuildMinutesPerMonth is the builder time the account that pays for an
+	// app may use per UTC month across all its apps (ADR-20261104132753).
+	// Builds are free; this bounds how much of the shared builder slots one
+	// account can hold. A build that starts past it is refused with
+	// plan_limit_build_minutes; image deploys build nothing and are not
+	// counted. A running build counts up to now, and no build counts past
+	// BuildTimeoutSeconds (amendment 1). Free 200, Hobby 1,000, Pro 3,000,
+	// Scale 6,000 (owner, 2026-11-07).
+	BuildMinutesPerMonth int
 	// DeveloperApps is the separate cap for expiring `gregale dev`
 	// environments. These sessions do not consume DeployedApps slots.
 	DeveloperApps      int
@@ -4381,12 +4487,18 @@ type Limits struct {
 	EgressMbit int // per-instance egress bandwidth cap via tc
 	// MonthlyEgressGiB is the application egress a month includes: the
 	// host-interface bytes the subject's instances send (state.Usage
-	// NetTxBytes, the egress meter's source). While egress is not billed for
-	// the plan, meterd stops the subject's apps at it until the month ends or
-	// the plan grows; once the egress meter bills live it is the included
-	// allowance and usage above it is overage under the spend cap
-	// (ADR-20261103131742). It matches the plan's object storage egress.
+	// NetTxBytes, the egress meter's source). meterd stops the subject's apps
+	// at it until the month ends or the plan grows, on every plan and even
+	// once the egress meter bills live: usage above it is overage only for a
+	// subject that opted into egress overage, which none can yet
+	// (ADR-20261103131742, ADR-20261104090000). It matches the plan's object
+	// storage egress.
 	MonthlyEgressGiB int64
+	// EgressOverageElectable is whether the plan's billing subject may elect
+	// to pay for egress above MonthlyEgressGiB instead of stopping at it
+	// (PUT /v1/account/egress-overage, ADR-20261104204500). The election takes
+	// effect only while the egress meter bills live; Free never can.
+	EgressOverageElectable bool
 	// EgressNewConnPerSecond / EgressNewConnBurst cap the rate at which a
 	// guest may open new outbound flows (ADR-361). Excess new flows are
 	// dropped in the per-instance forward chain and counted in
@@ -5858,6 +5970,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        10,
 		PreviewDeploysPerHour: 5,
+		BuildMinutesPerMonth:  200,
 		DeveloperApps:         1,
 		MaxConcurrency:        1,
 		RAMMB:                 256,
@@ -5879,7 +5992,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       20,
 		// ADR-1430: 1 GiB included and Free's hard stop; egress capped at
 		// ten times that (ADR-20261031122757).
-		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
+		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyRequests: 50_000, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
 		RateLimitRPS:                   5,
 		RateLimitBurst:                 20,
@@ -6284,6 +6397,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        50,
 		PreviewDeploysPerHour: 25,
+		BuildMinutesPerMonth:  1_000,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
 		RAMMB:                 512,
@@ -6296,7 +6410,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -6305,6 +6419,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 100,
 		EgressMbit:                     25,
 		MonthlyEgressGiB:               100,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         20,
 		EgressNewConnBurst:             80,
 		EgressNewDestinationsPerMinute: 240,
@@ -6731,6 +6846,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        250,
 		PreviewDeploysPerHour: 125,
+		BuildMinutesPerMonth:  3_000,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
 		RAMMB:                 1024,
@@ -6743,7 +6859,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -6754,6 +6870,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 500,
 		EgressMbit:                     100,
 		MonthlyEgressGiB:               500,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         50,
 		EgressNewConnBurst:             200,
 		EgressNewDestinationsPerMinute: 1200,
@@ -7143,6 +7260,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        1000,
 		PreviewDeploysPerHour: 500,
+		BuildMinutesPerMonth:  6_000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
 		RAMMB:                 2048,
@@ -7155,7 +7273,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -7168,6 +7286,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 2000,
 		EgressMbit:                     250,
 		MonthlyEgressGiB:               2000,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         100,
 		EgressNewConnBurst:             400,
 		EgressNewDestinationsPerMinute: 3000,
@@ -7619,6 +7738,56 @@ const (
 	// request (ADR-1151). The instance stays RUNNING and billed. In the
 	// ADR's simulation 2 s fit 2.5x the function apps per node.
 	QuietPauseAfterMillis = 2000
+	// The idle ladder (ADR-20261107122928, proposed): how long a
+	// request-serving instance has had nothing in flight when it reaches
+	// each level. L1 quiet pause, L2 a vmmd-local freeze, L3 and L4 compress
+	// the pages left untouched for that long, and L5 snapshots (parks) the
+	// instance. vmmd's idle_ladder observe mode measures the levels instances
+	// would reach; nothing acts on them yet.
+	IdleLadderQuietPauseAfterMillis = 1000
+	IdleLadderFreezeAfterSeconds    = 10
+	IdleLadderColdAge1Seconds       = 60
+	IdleLadderColdAge2Seconds       = 180
+	IdleLadderSnapshotAfterSeconds  = 600
+	// The idle ladder's activity guard (ADR-20261107122928 §6): an app quiet
+	// pause does not pause counts as idle only when, over the last
+	// IdleLadderQuietPauseAfterMillis, nothing was in flight, its VM cgroup
+	// used at most IdleLadderGuardCPUMaxMillis of CPU and its veth moved at
+	// most IdleLadderGuardNetMaxBytes in each direction.
+	IdleLadderGuardCPUMaxMillis = 10
+	IdleLadderGuardNetMaxBytes  = 512
+	// IdleLadderReservationDiscountMaxPercent bounds the RAM measured
+	// admission leaves out of a node's reservation cap for instances vmmd
+	// holds at the idle ladder's freeze level (ADR-20261107122928): at most
+	// this percent of the node's admission ceiling. With the ADR-909 cap of
+	// MeasuredAdmissionMaxOvercommitPercent, reservations including those
+	// instances reach at most 400% of the ceiling; the measured figure still
+	// bounds what the node holds.
+	IdleLadderReservationDiscountMaxPercent = 200
+	// IdleLadderFreezeLevel is the idle_ladder_level vmmd reports for L2: a
+	// quiet-paused instance quiet for IdleLadderFreezeAfterSeconds, which
+	// measured admission books like a frozen instance.
+	IdleLadderFreezeLevel = 2
+	// Cold-page compression (ADR-20261107122928 §1, §2). vmmd ages a quiet
+	// VM's memory at most once per IdleLadderColdAge1Seconds of wall time,
+	// after the guest ran, so each multi-gen LRU generation spans at least
+	// that long. L3 compresses every generation but the youngest
+	// IdleLadderCold1KeepGenerations, L4 every one but the youngest
+	// IdleLadderCold2KeepGenerations (2 is the fewest the kernel keeps). A
+	// wake from L3/L4 may add at most IdleLadderWakeBudgetMillis, or the
+	// instance's own snapshot restore time if that is shorter; vmmd counts
+	// IdleLadderFaultMicrosPerPage for each page the guest brings back
+	// (measured on nested production-us; re-measure on bare metal, Rollout
+	// step 1). An app whose wake exceeds the budget keeps one more
+	// generation at each level, up to IdleLadderMaxExtraKeepGenerations;
+	// IdleLadderCeilingRelaxWakes wakes in a row under half the budget give
+	// one back.
+	IdleLadderCold1KeepGenerations    = 3
+	IdleLadderCold2KeepGenerations    = 2
+	IdleLadderWakeBudgetMillis        = 100
+	IdleLadderFaultMicrosPerPage      = 21
+	IdleLadderMaxExtraKeepGenerations = 2
+	IdleLadderCeilingRelaxWakes       = 5
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
@@ -7795,12 +7964,18 @@ const (
 	VCPUSlots     = 160
 
 	// Metering (spec §1, §10).
-	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1430)
+	OverageMillicentsPerGBHour = 5_000 // $0.05 per GB-RAM-hour (ADR-20261107192333, amends ADR-1430)
 	// ObjectStorageMillicentsPerGiBMonth is the published rate for average
 	// stored bytes beyond a plan's ObjectStorage.IncludedBytes: $0.03 per
 	// GiB-month (ADR-1430). Requests and egress are free. The operator's
 	// object-storage rate card applies it.
 	ObjectStorageMillicentsPerGiBMonth int64 = 3_000
+	// EgressOverageMillicentsPerGiB is the published rate for application
+	// egress beyond a paid plan's MonthlyEgressGiB: $0.03 per GiB. Only a
+	// subject whose egress overage election covers the hour is billed it,
+	// under its spend cap (ADR-20261104204500); every other subject's apps
+	// stop at the allowance (ADR-20261103131742 amendment 2).
+	EgressOverageMillicentsPerGiB int64 = 3_000
 	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
 	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
 	FinancialEgressMinimumCreditBytes = int64(4096)
@@ -9133,6 +9308,10 @@ const (
 	// than its last value, so an app whose pusher died scales down on its
 	// other signals instead of holding the fleet at a frozen backlog.
 	CustomMetricFreshnessSeconds = 300
+	// CustomMetricMaxFutureSkewSeconds bounds how far ahead of apid's clock
+	// an OTLP data point may be stamped. A later stamp would keep the value
+	// fresh after its pusher stopped (ADR-20261031144636).
+	CustomMetricMaxFutureSkewSeconds = 300
 
 	// CustomMetricExportMaxSeries caps one ADR-745 exporter scrape. The
 	// per-app name cap already bounds the table; this bounds a scrape even
@@ -9867,8 +10046,14 @@ const (
 	// unbounded body exhausted schedd's memory (bug hunt 2026-10-28 H56).
 	TriggerBrokerStatsMaxBytes int64 = 4 << 10
 
-	// Free-tier disk reaper (spec §4.3): zero requests this long => EVICTED_COLD.
+	// Free-tier disk reaper (spec §4.3, ADR-20261105120000): a Free app with
+	// no request, start, park or deployment this long loses its snapshots;
+	// its live app layer stays and the next request cold-boots.
 	FreeTierColdEvictDays = 14
+	// FreeTierColdEvictAppsPerTick bounds the apps one imaged GC tick evicts
+	// (ADR-20261105120000), so a first sweep over a large backlog is spread
+	// over several ticks.
+	FreeTierColdEvictAppsPerTick = 50
 
 	// Instance retention (spec §17 follow-up, PR #74; issue #2415):
 	// STOPPED/FAILED rows are deleted from their terminal_at anchor and
@@ -10310,99 +10495,99 @@ const (
 )
 
 const (
-	AutomationPublishCheckMaxBytes        int64 = 8 * AutomationSimulationRequestMaxBytes
-	AutomationPublishCheckMaxScenarios          = 32
-	AutomationPublishCheckMaxExpectations       = 4096
-	AutomationPublishCheckMaxExclusions         = 256
-	AutomationPublishCheckReceiptTTL            = 30 * time.Minute
+	StoredWorkflowPublishCheckMaxBytes        int64 = 8 * StoredWorkflowSimulationRequestMaxBytes
+	StoredWorkflowPublishCheckMaxScenarios          = 32
+	StoredWorkflowPublishCheckMaxExpectations       = 4096
+	StoredWorkflowPublishCheckMaxExclusions         = 256
+	StoredWorkflowPublishCheckReceiptTTL            = 30 * time.Minute
 
-	AutomationSimulationRequestMaxBytes      int64 = 3 << 20
-	AutomationSimulationResponseMaxBytes     int64 = 4 << 20
-	AutomationSimulationMaxSteps                   = 128
-	AutomationSimulationMaxTraceEntries            = 1024
-	AutomationDefinitionMaxBytes             int64 = 1 << 20
-	AutomationTestSuiteMaxBytes              int64 = AutomationSimulationRequestMaxBytes + AutomationPublishCheckMaxBytes
-	AutomationTestSuiteRequestMaxBytes       int64 = AutomationTestSuiteMaxBytes + 4096
-	AutomationTestReportMaxBytes             int64 = AutomationPublishCheckMaxBytes
-	AutomationLiveMaxExpectations                  = AutomationSimulationMaxSteps
-	AutomationLiveSpecMaxBytes               int64 = AutomationSimulationRequestMaxBytes
-	AutomationLiveStartMaxBytes              int64 = 4096
-	AutomationLiveHistoryLimit                     = 20
-	AutomationLiveReportMaxBytes             int64 = 128 << 10
-	AutomationLiveMaxAttempts                      = WorkflowRetryMaxAttempts * (WorkflowRunMaxResumes + 1)
-	AutomationLiveProgressPollInterval             = 3 * time.Second
-	AutomationLiveProgressRequestTimeout           = 10 * time.Second
-	AutomationLiveProgressMaxRequests              = 100
-	AutomationLiveProgressFormMaxBytes       int64 = 4096
-	AutomationLiveCLIWaitDefault                   = 5 * time.Minute
-	AutomationLiveCLIWaitMax                       = time.Hour
-	AutomationLiveCLIPollMin                       = time.Second
-	AutomationLiveCLIPollMax                       = time.Minute
-	AutomationLiveSuiteMaxCases                    = AutomationPublishCheckMaxScenarios
-	AutomationLiveBaselineNameMaxBytes             = 63
-	AutomationLiveBaselineLimit                    = 20
-	AutomationLiveBaselineLifetimeNameLimit        = 100
-	AutomationLiveBaselineHistoryLimit             = 100
-	AutomationLiveBaselineRequestMaxBytes    int64 = 20 << 10
-	AutomationLiveBaselineReceiptMaxBytes    int64 = 32 << 10
-	AutomationLiveGatePolicyMaxBytes         int64 = 16 << 10
-	AutomationLiveSuiteComparisonMaxCases          = 2 * AutomationLiveSuiteMaxCases
-	AutomationLiveSuiteJournalMaxBytes       int64 = (AutomationLiveReportMaxBytes+AutomationLiveStartMaxBytes)*AutomationLiveSuiteMaxCases + (64 << 10)
-	AutomationLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
-	AutomationLiveSuiteRequestMaxBytes       int64 = 16 << 10
-	AutomationLiveSuiteStartWindow                 = 10 * time.Minute
-	AutomationLiveSuiteFutureClockSkew             = 30 * time.Second
-	AutomationLiveSuiteProtectedWindow             = AutomationLiveSuiteStartWindow + AutomationLiveSuiteFutureClockSkew
-	AutomationLiveSuiteHistoryLimit                = AutomationLiveHistoryLimit
-	AutomationLiveSuiteRetainedLimit               = 100
-	AutomationTestCaseNameMaxBytes                 = 128
-	AutomationTestStepResultsMax                   = AutomationSimulationMaxTraceEntries
+	StoredWorkflowSimulationRequestMaxBytes      int64 = 3 << 20
+	StoredWorkflowSimulationResponseMaxBytes     int64 = 4 << 20
+	StoredWorkflowSimulationMaxSteps                   = 128
+	StoredWorkflowSimulationMaxTraceEntries            = 1024
+	StoredWorkflowDefinitionMaxBytes             int64 = 1 << 20
+	StoredWorkflowTestSuiteMaxBytes              int64 = StoredWorkflowSimulationRequestMaxBytes + StoredWorkflowPublishCheckMaxBytes
+	StoredWorkflowTestSuiteRequestMaxBytes       int64 = StoredWorkflowTestSuiteMaxBytes + 4096
+	StoredWorkflowTestReportMaxBytes             int64 = StoredWorkflowPublishCheckMaxBytes
+	StoredWorkflowLiveMaxExpectations                  = StoredWorkflowSimulationMaxSteps
+	StoredWorkflowLiveSpecMaxBytes               int64 = StoredWorkflowSimulationRequestMaxBytes
+	StoredWorkflowLiveStartMaxBytes              int64 = 4096
+	StoredWorkflowLiveHistoryLimit                     = 20
+	StoredWorkflowLiveReportMaxBytes             int64 = 128 << 10
+	StoredWorkflowLiveMaxAttempts                      = WorkflowRetryMaxAttempts * (WorkflowRunMaxResumes + 1)
+	StoredWorkflowLiveProgressPollInterval             = 3 * time.Second
+	StoredWorkflowLiveProgressRequestTimeout           = 10 * time.Second
+	StoredWorkflowLiveProgressMaxRequests              = 100
+	StoredWorkflowLiveProgressFormMaxBytes       int64 = 4096
+	StoredWorkflowLiveCLIWaitDefault                   = 5 * time.Minute
+	StoredWorkflowLiveCLIWaitMax                       = time.Hour
+	StoredWorkflowLiveCLIPollMin                       = time.Second
+	StoredWorkflowLiveCLIPollMax                       = time.Minute
+	StoredWorkflowLiveSuiteMaxCases                    = StoredWorkflowPublishCheckMaxScenarios
+	StoredWorkflowLiveBaselineNameMaxBytes             = 63
+	StoredWorkflowLiveBaselineLimit                    = 20
+	StoredWorkflowLiveBaselineLifetimeNameLimit        = 100
+	StoredWorkflowLiveBaselineHistoryLimit             = 100
+	StoredWorkflowLiveBaselineRequestMaxBytes    int64 = 20 << 10
+	StoredWorkflowLiveBaselineReceiptMaxBytes    int64 = 32 << 10
+	StoredWorkflowLiveGatePolicyMaxBytes         int64 = 16 << 10
+	StoredWorkflowLiveSuiteComparisonMaxCases          = 2 * StoredWorkflowLiveSuiteMaxCases
+	StoredWorkflowLiveSuiteJournalMaxBytes       int64 = (StoredWorkflowLiveReportMaxBytes+StoredWorkflowLiveStartMaxBytes)*StoredWorkflowLiveSuiteMaxCases + (64 << 10)
+	StoredWorkflowLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
+	StoredWorkflowLiveSuiteRequestMaxBytes       int64 = 16 << 10
+	StoredWorkflowLiveSuiteStartWindow                 = 10 * time.Minute
+	StoredWorkflowLiveSuiteFutureClockSkew             = 30 * time.Second
+	StoredWorkflowLiveSuiteProtectedWindow             = StoredWorkflowLiveSuiteStartWindow + StoredWorkflowLiveSuiteFutureClockSkew
+	StoredWorkflowLiveSuiteHistoryLimit                = StoredWorkflowLiveHistoryLimit
+	StoredWorkflowLiveSuiteRetainedLimit               = 100
+	StoredWorkflowTestCaseNameMaxBytes                 = 128
+	StoredWorkflowTestStepResultsMax                   = StoredWorkflowSimulationMaxTraceEntries
 	// Browser forms percent-encode the definition, sample, cases, and selected
 	// case simulation/output controls.
-	AutomationConsoleFormMaxBytes               int64 = 3*(AutomationDefinitionMaxBytes+2*AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes+WorkflowRunInputMaxBytes+AutomationLiveSpecMaxBytes) + 4096
-	AutomationNameMaxBytes                            = 128
-	WorkflowRunInputMaxBytes                    int64 = 1 << 20
-	WorkflowWebhookBindingMaxBytes              int64 = 64 << 10
-	WorkflowWebhookFilterMaxBytes                     = 32 << 10
-	WorkflowWebhookNameMaxBytes                       = 128
-	WorkflowWebhookEventMaxBytes                      = 256
-	WorkflowAutomationHealthDefaultRange              = 7 * 24 * time.Hour
-	WorkflowAutomationHealthMaxRange                  = 30 * 24 * time.Hour
-	WorkflowAutomationHealthMaxFailureSteps           = 10
-	WorkflowAutomationHealthReadTimeout               = 5 * time.Second
-	WorkflowRunDiagnosticsReadTimeout                 = 5 * time.Second
-	WorkflowSchedulePreviewDefaultCount               = 5
-	WorkflowSchedulePreviewMaxCount                   = 20
-	WorkflowSchedulePreviewReadTimeout                = 5 * time.Second
-	WorkflowBacklogAlertThresholdSeconds              = 300
-	WorkflowBacklogAlertCooldownMinutes               = 30
-	AutomationFailurePolicyMaxCount                   = 10000
-	AutomationFailurePolicyMinWindowSeconds           = 60
-	AutomationFailurePolicyMaxWindowSeconds           = 86400
-	AutomationFailurePolicyDefaultWindowSeconds       = 300
-	AutomationFailurePolicyDefaultThreshold           = 3
-	AutomationFailurePolicyDefaultMinRuns             = 5
-	AutomationFailurePolicyHistoryLimit               = 100
-	AutomationFailurePolicyBatch                      = 100
-	AutomationFailurePolicyRequestMaxBytes      int64 = 4096
-	WorkflowFailureAlertThreshold                     = 1
-	WorkflowFailureAlertCooldownMinutes               = 30
-	WorkflowAlertSnapshotReadTimeout                  = 5 * time.Second
-	WorkflowOutboundBodyMaxBytes                int64 = 1 << 20
-	WorkflowOutboundStepNameMaxBytes                  = 128
-	WorkflowResumeRequestMaxBytes               int64 = 4096
-	WorkflowRunMaxResumes                             = 16
-	WorkflowForEachMaxItems                           = 128
-	WorkflowForEachMaxParallelLimit                   = 16
-	WorkflowForEachNameMaxBytes                       = 64
-	WorkflowForEachMaxInputBytes                int64 = 1 << 20
-	WorkflowForEachMaxOutputBytes               int64 = 1 << 20
-	WorkflowJoinMaxDependencies                       = 128
-	WorkflowGuardMaxBytes                             = 16 << 10
-	WorkflowGuardMaxDepth                             = 8
-	WorkflowGuardMaxNodes                             = 32
-	WorkflowGuardNumberMaxBytes                       = 4096
-	WorkflowGuardNumberMaxExponent                    = 4096
+	StoredWorkflowConsoleFormMaxBytes               int64 = 3*(StoredWorkflowDefinitionMaxBytes+2*StoredWorkflowSimulationRequestMaxBytes+StoredWorkflowPublishCheckMaxBytes+WorkflowRunInputMaxBytes+StoredWorkflowLiveSpecMaxBytes) + 4096
+	StoredWorkflowNameMaxBytes                            = 128
+	WorkflowRunInputMaxBytes                        int64 = 1 << 20
+	WorkflowWebhookBindingMaxBytes                  int64 = 64 << 10
+	WorkflowWebhookFilterMaxBytes                         = 32 << 10
+	WorkflowWebhookNameMaxBytes                           = 128
+	WorkflowWebhookEventMaxBytes                          = 256
+	StoredWorkflowHealthDefaultRange                      = 7 * 24 * time.Hour
+	StoredWorkflowHealthMaxRange                          = 30 * 24 * time.Hour
+	StoredWorkflowHealthMaxFailureSteps                   = 10
+	StoredWorkflowHealthReadTimeout                       = 5 * time.Second
+	WorkflowRunDiagnosticsReadTimeout                     = 5 * time.Second
+	WorkflowSchedulePreviewDefaultCount                   = 5
+	WorkflowSchedulePreviewMaxCount                       = 20
+	WorkflowSchedulePreviewReadTimeout                    = 5 * time.Second
+	WorkflowBacklogAlertThresholdSeconds                  = 300
+	WorkflowBacklogAlertCooldownMinutes                   = 30
+	StoredWorkflowFailurePolicyMaxCount                   = 10000
+	StoredWorkflowFailurePolicyMinWindowSeconds           = 60
+	StoredWorkflowFailurePolicyMaxWindowSeconds           = 86400
+	StoredWorkflowFailurePolicyDefaultWindowSeconds       = 300
+	StoredWorkflowFailurePolicyDefaultThreshold           = 3
+	StoredWorkflowFailurePolicyDefaultMinRuns             = 5
+	StoredWorkflowFailurePolicyHistoryLimit               = 100
+	StoredWorkflowFailurePolicyBatch                      = 100
+	StoredWorkflowFailurePolicyRequestMaxBytes      int64 = 4096
+	WorkflowFailureAlertThreshold                         = 1
+	WorkflowFailureAlertCooldownMinutes                   = 30
+	WorkflowAlertSnapshotReadTimeout                      = 5 * time.Second
+	WorkflowOutboundBodyMaxBytes                    int64 = 1 << 20
+	WorkflowOutboundStepNameMaxBytes                      = 128
+	WorkflowResumeRequestMaxBytes                   int64 = 4096
+	WorkflowRunMaxResumes                                 = 16
+	WorkflowForEachMaxItems                               = 128
+	WorkflowForEachMaxParallelLimit                       = 16
+	WorkflowForEachNameMaxBytes                           = 64
+	WorkflowForEachMaxInputBytes                    int64 = 1 << 20
+	WorkflowForEachMaxOutputBytes                   int64 = 1 << 20
+	WorkflowJoinMaxDependencies                           = 128
+	WorkflowGuardMaxBytes                                 = 16 << 10
+	WorkflowGuardMaxDepth                                 = 8
+	WorkflowGuardMaxNodes                                 = 32
+	WorkflowGuardNumberMaxBytes                           = 4096
+	WorkflowGuardNumberMaxExponent                        = 4096
 
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
@@ -10743,6 +10928,31 @@ func (p Plan) DefaultOverageCapCents() (int64, bool) {
 		return 0, false
 	}
 	return int64(p.PlanIncludedGBHours()) * DefaultOverageCapAllowances * OverageMillicentsPerGBHour / MillicentsPerCent, true
+}
+
+// Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
+// owner's numbers 2026-11-07): Hobby $75, Pro $200, Scale $1,000. A larger
+// cap is an operator change.
+const (
+	HobbyMaxSelfServiceOverageCapCents int64 = 7_500
+	ProMaxSelfServiceOverageCapCents   int64 = 20_000
+	ScaleMaxSelfServiceOverageCapCents int64 = 100_000
+)
+
+// MaxSelfServiceOverageCapCents is the largest spend cap a paid subject may
+// set through the API or dashboard, and the cap a paid subject without one
+// (NULL, saved before ADR-20261105120000) is held to. Free has none: Free
+// stops at its allowance whatever its cap.
+func (p Plan) MaxSelfServiceOverageCapCents() (int64, bool) {
+	switch p {
+	case PlanHobby:
+		return HobbyMaxSelfServiceOverageCapCents, true
+	case PlanPro:
+		return ProMaxSelfServiceOverageCapCents, true
+	case PlanScale:
+		return ScaleMaxSelfServiceOverageCapCents, true
+	}
+	return 0, false
 }
 
 // Valid reports whether p is a known plan.
@@ -12767,6 +12977,16 @@ func (p Plan) DeveloperLeaseMax() time.Duration {
 
 // DeploysPerHour returns the account-wide deploy admission budget for the
 // plan. Unknown plans fail closed.
+// BuildMinutesPerMonth returns the plan's monthly builder-time quota; zero
+// for an unknown plan.
+func (p Plan) BuildMinutesPerMonth() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.BuildMinutesPerMonth
+}
+
 func (p Plan) DeploysPerHour() int {
 	l, ok := LimitsFor(p)
 	if !ok {
@@ -13465,10 +13685,12 @@ const (
 
 	// RequestBudgetDefault is the per-request wall-clock budget the
 	// gateway uses for Functions when no edge-rule kind=budget matches.
-	// A misconfigured deployment that wants a tighter or looser default
-	// can override per-route via kind=budget, or per-plan via the
-	// Limits.RequestBudgetMs accessor.
-	RequestBudgetDefault = 3 * time.Second
+	// It was 3 s (ADR-093) until ADR-20261107190000 raised it to 30 s, the
+	// Free plan's ceiling, because the short default failed ordinary
+	// handlers (a cold database connection, a model call) before their
+	// authors knew a limit existed. Override per-route via kind=budget,
+	// per-app via request_timeout_s, or per-plan via Limits.RequestBudgetMs.
+	RequestBudgetDefault = 30 * time.Second
 	// RequestBudgetAppDefault is the request-mode App wall-clock budget
 	// when no edge-rule kind=budget matches and the plan has no explicit
 	// RequestBudgetMs override. Apps are ordinary HTTP services and need
@@ -13628,10 +13850,10 @@ func (l Limits) RequestBudget() time.Duration {
 
 // RequestBudgetForType returns the effective baseline for an app type.
 //
-// The existing RequestBudget accessor intentionally remains the Function /
-// legacy baseline so control-plane callers and older clients keep their
-// established 3-second contract. Request-mode Apps use the longer default
-// unless the plan carries an explicit RequestBudgetMs override. The returned
+// The existing RequestBudget accessor remains the Function / legacy
+// baseline. Since ADR-20261107190000 Functions and request-mode Apps both
+// default to 30 s; the two constants stay separate so either can move
+// without the other. The returned
 // value is bounded by the plan's effective ceiling, preserving the existing
 // RequestBudgetMaxDuration invariant that an invalid ceiling cannot undercut
 // an explicit plan default.
@@ -14902,26 +15124,44 @@ const RequestAnalyticsSettleLag = 2 * time.Minute
 
 // Request analytics rollups (ADR-20261103113952). apid adds every telemetry
 // row a plan keeps, before the debugger ingest cap, to per-minute rollups
-// and writes them every RequestAnalyticsRollupFlushInterval in statements of
-// at most RequestAnalyticsRollupFlushRowsMax rows. For each app, minute and
-// non-route dimension a flush keeps RequestAnalyticsRollupDimensionsMax
-// distinct values and folds the rest into "__other__". The aggregator counts
+// and, every RequestAnalyticsRollupFlushInterval, writes the minutes that
+// closed at least RequestAnalyticsRollupMinuteGrace ago (amendment 3), in
+// statements of at most RequestAnalyticsRollupFlushRowsMax rows. The grace
+// covers the gateways holding a minute until it closes and flushing every
+// few seconds, and stays inside RequestAnalyticsSettleLag. For each app,
+// minute and non-route dimension the write keeps
+// RequestAnalyticsRollupDimensionsMax distinct values and folds the rest
+// into "__other__". The aggregator counts
 // a replayed event ID once among the last RequestAnalyticsRollupSeenEventsMax
 // rows; a gateway replays a batch within seconds of the original. Past
 // RequestAnalyticsRollupPendingRowsMax buffered rollup rows, because
 // Postgres is failing, new rows are dropped and counted.
 const (
 	RequestAnalyticsRollupFlushInterval = 10 * time.Second
+	RequestAnalyticsRollupMinuteGrace   = 30 * time.Second
 	RequestAnalyticsRollupFlushRowsMax  = 1000
 	RequestAnalyticsRollupDimensionsMax = 50
 	// The buffer holds up to this many values of a kind per app minute
-	// before folding new ones into __other__; the flush keeps the
-	// RequestAnalyticsRollupDimensionsMax busiest of them.
-	RequestAnalyticsRollupDimensionsBufferMax = 4 * RequestAnalyticsRollupDimensionsMax
+	// before folding new ones into __other__; the minute's write keeps the
+	// RequestAnalyticsRollupDimensionsMax busiest of them. Non-route rows
+	// are keyed by value alone, so a value costs one buffered row.
+	RequestAnalyticsRollupDimensionsBufferMax = 10 * RequestAnalyticsRollupDimensionsMax
 	// App minutes whose lost rollups wait to be recorded as gaps.
 	RequestAnalyticsRollupPendingGapsMax = 100_000
 	RequestAnalyticsRollupSeenEventsMax  = 200_000
 	RequestAnalyticsRollupPendingRowsMax = 200_000
+)
+
+// The minute tier is kept RequestAnalyticsMinuteRetention, whatever the plan
+// (ADR-20261103113952 amendment 3); the hourly tier keeps the plan's
+// telemetry retention. An analytics window reaching further back than
+// RequestAnalyticsMinuteReadHorizon starts and ends on whole UTC hours, so
+// that part is read from the hourly tier alone. The hour between the two
+// keeps the minutes a window inside the horizon reads from a sweep that runs
+// once an hour.
+const (
+	RequestAnalyticsMinuteRetention   = 48 * time.Hour
+	RequestAnalyticsMinuteReadHorizon = RequestAnalyticsMinuteRetention - time.Hour
 )
 
 // RequestAnalyticsSampledMeasuresTimeout bounds the raw telemetry read that
@@ -15514,6 +15754,18 @@ const (
 	DataAPIStorageTransfers          = 4
 	DataAPIStorageTransferTimeout    = 120 * time.Second
 	DataAPIStorageSignedURLTTL       = 60 * time.Second
+	// One signed-in user or anonymous visitor holds at most this many of an
+	// instance's transfers, so one slow client cannot keep storage busy for
+	// everyone. Server keys (trusted backends) are bounded only by the total.
+	DataAPIStorageTransfersPerClient = 2
+	// /healthz is public and its readiness checks reach the database: a
+	// completed result answers further checks for this long, so polling it
+	// asks the database at most once per interval per instance.
+	DataAPIHealthCache = 5 * time.Second
+	// The gateway sends the SQL deadline this much early, so a VM clock that
+	// runs ahead of the database's by up to it still passes the engine's
+	// future-horizon check (ADR-1734 amendment 1).
+	DataAPISQLDeadlineClockSkew = 2 * time.Second
 	// Change hooks (ADR-20261022121642), mirrored in the runtime's limits:
 	// events and body bytes per runtime publication, the largest event data
 	// before its rows are dropped, the relay's claim lease, how long one
@@ -16677,6 +16929,17 @@ const (
 	AlertDeliveryPurgeInterval = time.Hour
 )
 
+// Channel recovery notices (ADR-20261031144636): a resolve a notification
+// channel did not take is retried, the wait doubling from a minute up to
+// AlertChannelResolveRetryBackoffMax, for AlertChannelResolveRetryWindow
+// after the rule recovered; each tick retries at most
+// AlertChannelResolveRetryBatch of them.
+const (
+	AlertChannelResolveRetryWindow     = 24 * time.Hour
+	AlertChannelResolveRetryBackoffMax = time.Hour
+	AlertChannelResolveRetryBatch      = 100
+)
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.
@@ -16692,6 +16955,10 @@ const (
 	DashboardsPerAccount   = 20
 	DashboardWidgetsMax    = 24
 	DashboardDefaultWindow = "1h"
+	// DashboardDataReadsPerAccount bounds one account's dashboard data
+	// reads in flight on an apid: each fans out to every widget's
+	// Prometheus queries (ADR-20261104142830).
+	DashboardDataReadsPerAccount = 2
 )
 
 // DashboardWindows are the windows a dashboard widget may read.
@@ -16805,6 +17072,16 @@ const (
 	SyntheticCheckPathMaxBytes     = 512
 	SyntheticCheckRunRetentionDays = 7
 	SyntheticCheckRecentRuns       = 20
+	// SyntheticCheckStaleIntervals: once a check's newest run is older than
+	// this many intervals (paused, its app made internal, or the runner
+	// stopped), its consecutive-failures alert has no current value and goes
+	// unknown instead of re-paging on old failures (ADR-20261031144636).
+	SyntheticCheckStaleIntervals = 2
+	// SyntheticCheckProbesPerAccount bounds one account's probes in flight
+	// from meterd, so one account's slow or hanging app holds at most this
+	// many of the runner's slots and never delays other accounts' checks
+	// (ADR-20261104142830).
+	SyntheticCheckProbesPerAccount = 2
 )
 
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
@@ -17942,6 +18219,18 @@ const (
 	EdgeHostTrackedMax              = 100_000
 	EdgeTLSHandshakesInFlightPerCPU = 128
 	EdgeTLSHandshakeTimeout         = 10 * time.Second
+	// ADR-20261107180000: one client address (an IPv4 address or an IPv6
+	// /64) holds at most EdgeTLSHandshakesInFlightPerAddrMax of those
+	// handshakes at once, an address in Cloudflare's ranges
+	// EdgeTLSHandshakesInFlightPerProxyAddrMax (it carries many clients when
+	// a host is back behind Cloudflare, and the listener does not count it
+	// until its handshake settles), so one address cannot hold every slot
+	// with connections that never finish. A connection must send its
+	// ClientHello within EdgeTLSClientHelloTimeout; the rest of the
+	// handshake keeps EdgeTLSHandshakeTimeout.
+	EdgeTLSHandshakesInFlightPerAddrMax      = 32
+	EdgeTLSHandshakesInFlightPerProxyAddrMax = 64
+	EdgeTLSClientHelloTimeout                = 3 * time.Second
 	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
 	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
 	// the public server's read timeout is the whole request envelope.
@@ -17953,6 +18242,10 @@ const (
 	// (uploads, public reads, OTLP), so direct clients cannot push more at
 	// the control plane than Cloudflare let through.
 	EdgeControlPlaneForwardsInFlightMax = 256
+	// One client address holds at most
+	// EdgeControlPlaneForwardsInFlightPerAddrMax of them, so slow uploads
+	// from one client cannot hold every slot (ADR-20261107180000).
+	EdgeControlPlaneForwardsInFlightPerAddrMax = 16
 )
 
 // The host firewall's backstop for a compute edge's public entry address
@@ -17985,9 +18278,16 @@ const (
 	PublicBlockListRefreshInterval = 30 * time.Second
 )
 
-// Edge certificates (ADR-20261103163954 §3). edgednsd obtains the apps
-// domains' certificate from Let's Encrypt with DNS-01 and renews it
-// EdgeCertificateRenewBefore its expiry, checking every
+// Edge certificates (ADR-20261103163954 §3, ADR-20261108100000). edgednsd
+// obtains the apps domains' certificate from Let's Encrypt with DNS-01 under
+// the EdgeCertificateProfile ACME profile, whose certificates live about 160
+// hours, and renews it EdgeCertificateRenewBefore its expiry: a new one about
+// every 64 hours, about 2.6 of the 5 Let's Encrypt allows for the same names
+// in 7 days, which leaves two for rotating the key after a compromise. A key
+// a compromised compute node copied is good only until its certificate
+// expires. A stored certificate that lives longer than
+// EdgeCertificateLifetimeMax is replaced at once, and an order that returns
+// one is refused. edgednsd checks every
 // EdgeCertificateCheckInterval. A failed order is retried after
 // EdgeCertificateRetryMin, doubling to EdgeCertificateRetryMax: Let's
 // Encrypt allows 5 failed validations per account, hostname and hour, and 5
@@ -17997,8 +18297,10 @@ const (
 // certificate's row is kept EdgeCertificateKeepAfterExpiry past its expiry,
 // so the Certificate Transparency watch can tell ours from anyone else's.
 const (
-	EdgeCertificateRenewBefore     = 30 * 24 * time.Hour
+	EdgeCertificateRenewBefore     = 4 * 24 * time.Hour
 	EdgeCertificateCheckInterval   = time.Hour
+	EdgeCertificateProfile         = "shortlived"
+	EdgeCertificateLifetimeMax     = 7 * 24 * time.Hour
 	EdgeCertificateRetryMin        = time.Hour
 	EdgeCertificateRetryMax        = 12 * time.Hour
 	EdgeCertificateOrderTimeout    = 10 * time.Minute
@@ -18010,6 +18312,11 @@ const (
 	// EdgeCertificateListenRetry.
 	EdgeCertificateReloadInterval = 10 * time.Minute
 	EdgeCertificateListenRetry    = 5 * time.Second
+	// A reload reads at most EdgeCertificateLiveMax live certificates,
+	// newest first: every one is opened, so an unopenable newest row never
+	// hides an older good one (ADR-20261107180000). A cell holds one or two
+	// live certificates per set of names.
+	EdgeCertificateLiveMax = 32
 	// edgednsd's Certificate Transparency watch reads the apps domain's
 	// unexpired issuances from Cert Spotter every
 	// EdgeCertificateTransparencyInterval: without an API key Cert Spotter

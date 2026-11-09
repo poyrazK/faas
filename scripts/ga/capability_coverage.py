@@ -110,6 +110,7 @@ RULES = [
     (r"database-dependency", "Managed Postgres"),
     (r"bucket-dependency", "Object storage"),
     (r"function-spec|function-config", "Function runtimes"),
+    (r"fnadapter", "Function runtimes"),
     (r"worker-spec", "Worker pools"),
     (r"lifecycle-config|healthcheckproto", "Health probes"),
     (r"^manifest\.|release-config", "`gregale.yaml` deploy overrides"),
@@ -201,7 +202,7 @@ RULES = [
     (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags", "Customer feature flags"),
     # --- developer tools
     (r"mcp-management|mcpmanagement|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
-    (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories", "Docs site and trust pages"),
+    (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories|^/(terms|privacy|acceptable-use)$|^legal$|legal[-_]pages|^legal-acceptances$", "Docs site and trust pages"),
     (r"openapi\.(json|yaml)|^/v1/openapi|capabilities|productcap|sdk-coverage|^meta$", "Public OpenAPI spec"),
     (r"^sdk|sdk$|webhook-receiver|idempotency|transport|^client|options$|dto$|codes$|errors$|scopes$|^doc$|streaming$|release-context|^context", "SDKs:"),
     (r"dashboard|templates?/|^index$|^app\.(css|js)|\.js$|^stateless$|email-verification-banner|email-verified|set-password|password-reset|^login$|^profile$", "Web dashboard"),
@@ -244,7 +245,7 @@ RULES = [
     # --- async
     (r"inbound-webhook", "Durable inbound webhooks"),
     (r"webhook|account-release-webhook|delivery-format", "Outbound webhooks"),
-    (r"automation", "Automations:"),
+    (r"stored-workflow|storedworkflow|stored_workflow|workflows/stored", "Stored workflows:"),
     (r"operation|business-(invariant|decision|effect|compensation)|customer-operation", "Operations:"),
     (r"inbox|outbox|messaging|application-message|send$|deliver$", "Application inbox and outbox"),
     (r"worker-pool|^workers$|worker-replica", "Worker pools"),
@@ -310,7 +311,7 @@ RULES = [
     (r"wake-ahead", "Service wake-ahead"),
     (r"autoscal|scale-up|scaling|min-instance|max-instance|max-concurrency|concurrency", "Autoscaling and min instances"),
     (r"prewarm|park|wake", "Manual park / wake"),
-    (r"runner|runtime|function|node22|node24|python3|go124|binary", "Function runtimes"),
+    (r"runner|runtime|function|handler-api|node22|node24|python3|go124|binary", "Function runtimes"),
     (r"firecracker|jailer|isolation|vmm", "Firecracker isolation"),
     (r"scale-to-zero|idle|cold-wake|cold-boot|reaper", "Scale to zero"),
     # --- releases
@@ -348,7 +349,7 @@ RULES = [
     (r"oci|image|container", "Container / OCI image"),
     (r"build|railpack|buildkit", "Builds in builder"),
     (r"upload|tarball|source|deploy", "Source deploys:"),
-    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|^app-slug-holds$|apps-list|apps-new|app-detail", "Apps: create"),
+    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|^app-slug-holds$|^reserved-app-slugs$|apps-list|apps-new|app-detail", "Apps: create"),
 ]
 
 # Checked before everything else, for every source: names a broad rule or the
@@ -360,7 +361,7 @@ PRIORITY_RULES = [
     (r"^signed-urls$", "Object storage"),
     (r"^test$|^scenario-tests$|^scenario-(test|object|postgres)", "Scenario tests"),
     (r"^(project-)?environment-(workload-)?qualification|^project-environment-qualifications$", "Environments and Environment GitOps"),
-    (r"automation-test", "Automations:"),
+    (r"stored-workflow-test", "Stored workflows:"),
     (r"realtime-customer-examples", "Realtime channels"),
     (r"^durableentity$", "Durable entities"),
     (r"^appmetrics$", "App, service and account metrics"),

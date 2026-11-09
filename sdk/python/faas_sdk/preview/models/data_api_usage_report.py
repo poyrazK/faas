@@ -27,8 +27,9 @@ class DataAPIUsageReport:
     report_id: str
     hours: list[DataAPIUsageHour]
     access: DataAPIAccessConfig | Unset = UNSET
-    """Access settings the runtime reports for live reads without a user token, sent after start and hourly. It
-    replaces the stored settings; turning usage reporting off forgets them. Holds key hashes, never keys."""
+    """Access settings the runtime reports for live reads, sent after start and hourly. It replaces the stored
+    settings unless the stored ones come from a runtime process that started later; turning usage reporting off
+    forgets them. Holds key hashes, never keys."""
 
     def to_dict(self) -> dict[str, Any]:
         version: int = self.version

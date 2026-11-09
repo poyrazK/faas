@@ -14,6 +14,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
@@ -116,12 +117,33 @@ func (a storeAuthAdapter) ConsumeAgentApproval(ctx context.Context, binding stat
 	return store.ConsumeAgentApproval(ctx, binding)
 }
 
+func (a storeAuthAdapter) RecentAgentApprovalOutcome(ctx context.Context, binding state.AgentApprovalBinding, window time.Duration) (state.AgentApproval, bool, error) {
+	store, ok := a.Store.(state.AgentApprovalStore)
+	if !ok {
+		return state.AgentApproval{}, false, errNoApprovalStore
+	}
+	return store.RecentAgentApprovalOutcome(ctx, binding, window)
+}
+
 func (a storeAuthAdapter) RequestAgentApproval(ctx context.Context, request state.AgentApproval) (state.AgentApproval, error) {
 	store, ok := a.Store.(state.AgentApprovalStore)
 	if !ok {
 		return state.AgentApproval{}, errNoApprovalStore
 	}
 	return store.RequestAgentApproval(ctx, request)
+}
+
+// An agent key's write requests are recorded (ADR-20261107220000).
+var _ middleware.AgentActivityRecorder = storeAuthAdapter{}
+
+// RecordAgentActivity forwards to the optional activity store; a store
+// without it records nothing.
+func (a storeAuthAdapter) RecordAgentActivity(ctx context.Context, row state.AgentActivity) error {
+	store, ok := a.Store.(state.AgentActivityStore)
+	if !ok {
+		return nil
+	}
+	return store.RecordAgentActivity(ctx, row)
 }
 
 // OrgAgentPolicy forwards the organization's agent policy; a store without

@@ -133,8 +133,11 @@ test('change hooks record committed changes and only the relay reads them', { sk
       { relation_schema: 'api', relation_name: 'audit', op: 'insert', row_key: { id: 7 }, old_row: null, new_row: null, changed: null },
       { relation_schema: 'api', relation_name: 'orders', op: 'delete', row_key: { id: 1 }, old_row: { id: 1, note: 'first', status: 'paid' }, new_row: null, changed: null },
     ], 'no-op and excluded-only updates, rollbacks and skipped writes record nothing; excluded columns never appear')
+    assert.equal((await as(serving, relayClaims, () => serving.query('SELECT count(*)::int AS n FROM api.gregale_change_drops'))).rows[0].n, 1, 'the relay reads the drop note')
     for (const claims of [userClaims, JSON.stringify({ gregale_access: 'server' }), JSON.stringify({ gregale_access: 'anonymous' })]) {
       assert.equal((await as(serving, claims, () => serving.query('SELECT count(*)::int AS n FROM api.gregale_change_events'))).rows[0].n, 0, claims)
+      assert.equal((await as(serving, claims, () => serving.query('SELECT count(*)::int AS n FROM api.gregale_change_drops'))).rows[0].n, 0, claims)
+      await assert.rejects(as(serving, claims, () => serving.query('UPDATE api.gregale_change_drops SET last_dropped_at = NULL RETURNING 1').then(r => { if (!r.rowCount) throw Object.assign(new Error('no rows'), { code: '42501' }) })), error => error.code === '42501')
       await assert.rejects(as(serving, claims, () => serving.query("SELECT * FROM api.gregale_change_claim('r1', 10, 60000)")), error => error.code === '42501')
       await assert.rejects(as(serving, claims, () => serving.query("INSERT INTO api.gregale_change_events (relation_schema, relation_name, op, row_key) VALUES ('api','orders','insert','{}')")), error => error.code === '42501')
     }
@@ -180,7 +183,11 @@ test('change hooks record committed changes and only the relay reads them', { sk
 
   await t.test('the owner retries or discards failed events', async () => {
     await su.query(`SET ROLE ${owner}`)
+    const before = (await su.query('SELECT id, event_key, captured_at FROM api.gregale_change_events')).rows[0]
     assert.equal((await su.query('SELECT gregale_hooks.retry_failed() AS n')).rows[0].n, '1')
+    const after = (await su.query('SELECT id, event_key, captured_at, failed_at FROM api.gregale_change_events')).rows[0]
+    assert.ok(Number(after.id) > Number(before.id), 'a retried event takes a new identifier, after newer events')
+    assert.deepEqual([after.event_key, after.captured_at, after.failed_at], [before.event_key, before.captured_at, null], 'it keeps its event id and time')
     assert.equal((await claim('relay-c')).length, 1)
     await settle('relay-c', [], [{ id: (await su.query('SELECT id FROM api.gregale_change_events')).rows[0].id, code: 'rejected' }])
     assert.equal((await su.query('SELECT gregale_hooks.discard_failed() AS n')).rows[0].n, '1')
@@ -254,4 +261,45 @@ test('capture stops recording at the backlog bound and resumes as changes publis
   await su.query('UPDATE api.gregale_change_events SET failed_at = now(), failure_code = $1', ['rejected'])
   await su.query('INSERT INTO api.orders VALUES (7, $1)', ['new'])
   assert.deepEqual(await recorded(), [2, 3, 6, 7])
+})
+
+// Amendment 3: a change left out at the bound is noted for the relay to
+// report; discard_waiting drops what waits and clears the note; a retried
+// change takes a new identifier, so an old one does not trip the bound.
+test('changes left out at the bound are noted, and the owner can drop what waits', { skip: !admin && 'set DATA_API_CHANGE_HOOKS_PG_URL' }, async t => {
+  const noted = `${db}_drops`
+  const root = await connect(admin, 'postgres')
+  await root.query(`CREATE DATABASE ${noted}`)
+  const su = await connect(admin, noted)
+  t.after(async () => {
+    await su.end().catch(() => {})
+    await root.query(`DROP DATABASE IF EXISTS ${noted} WITH (FORCE)`)
+    await root.end()
+  })
+  const sql = (await readFile(new URL('../change-hooks.sql', import.meta.url), 'utf8')).replaceAll('{{schema}}', 'api').replaceAll('{{backlog_max}}', '3')
+  await su.query('CREATE SCHEMA api')
+  await su.query(sql)
+  await su.query(sql.slice(sql.indexOf('-- gregale:upgrade-begin'), sql.indexOf('-- gregale:upgrade-end')))
+  await su.query('CREATE TABLE api.orders (id int PRIMARY KEY, status text NOT NULL)')
+  await su.query("SELECT gregale_hooks.enable('api.orders')")
+  const note = async () => (await su.query('SELECT last_dropped_at FROM api.gregale_change_drops')).rows
+  assert.deepEqual(await note(), [{ last_dropped_at: null }], 'the upgrade section replays without duplicating the note')
+  for (let id = 1; id <= 3; id++) await su.query('INSERT INTO api.orders VALUES ($1, $2)', [id, 'new'])
+  assert.equal((await note())[0].last_dropped_at, null, 'nothing left out yet')
+  await su.query('INSERT INTO api.orders VALUES (4, $1)', ['new'])
+  const dropped = (await note())[0].last_dropped_at
+  assert.ok(dropped instanceof Date, 'the left-out change is noted')
+  assert.equal((await su.query('SELECT gregale_hooks.discard_waiting() AS n')).rows[0].n, '3')
+  assert.deepEqual(await note(), [{ last_dropped_at: null }])
+  await su.query('INSERT INTO api.orders VALUES (5, $1)', ['new'])
+  assert.equal((await su.query('SELECT count(*)::int AS n FROM api.gregale_change_events')).rows[0].n, 1, 'recording resumes')
+  // A change rejected long ago, retried after many later changes published.
+  await su.query("UPDATE api.gregale_change_events SET failed_at = now(), failure_code = 'rejected'")
+  for (let id = 6; id <= 12; id++) {
+    await su.query('INSERT INTO api.orders VALUES ($1, $2)', [id, 'new'])
+    await su.query('DELETE FROM api.gregale_change_events WHERE failed_at IS NULL')
+  }
+  assert.equal((await su.query('SELECT gregale_hooks.retry_failed() AS n')).rows[0].n, '1')
+  await su.query('INSERT INTO api.orders VALUES (13, $1)', ['new'])
+  assert.equal((await su.query('SELECT count(*)::int AS n FROM api.gregale_change_events')).rows[0].n, 2, 'the retried change does not trip the bound')
 })

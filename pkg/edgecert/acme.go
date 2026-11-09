@@ -16,6 +16,8 @@ import (
 	"github.com/mholt/acmez/v3"
 	"github.com/mholt/acmez/v3/acme"
 	"go.uber.org/zap"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // LetsEncrypt orders certificates from Let's Encrypt with the DNS-01
@@ -84,7 +86,18 @@ func (l *LetsEncrypt) Order(ctx context.Context, key crypto.Signer, names []stri
 	if err != nil {
 		return nil, "", err
 	}
-	certs, err := l.client.ObtainCertificateForSANs(ctx, account, key, names)
+	csr, err := acmez.NewCSR(key, names)
+	if err != nil {
+		return nil, "", fmt.Errorf("edgecert: build the CSR: %w", err)
+	}
+	params, err := acmez.OrderParametersFromCSR(account, csr)
+	if err != nil {
+		return nil, "", fmt.Errorf("edgecert: build the order: %w", err)
+	}
+	// Short-lived certificates (ADR-20261108100000): the client refuses a
+	// profile the CA's directory does not list.
+	params.Profile = api.EdgeCertificateProfile
+	certs, err := l.client.ObtainCertificate(ctx, params)
 	if err != nil {
 		return nil, "", err
 	}

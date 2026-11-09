@@ -34,6 +34,10 @@ var supportBinaryNames = []string{
 	// the signed bundle so compute hosts never rebuild a host-specific kernel
 	// during a production join.
 	"vmlinux",
+	// firecracker-vmm is the release-built Firecracker with the host-owned
+	// virtio-net header patch (ADR-20261108170000). node_join installs it as
+	// the upstream-named binary; releases built before it simply lack it.
+	"firecracker-vmm",
 	// imaged verifies platform base provenance offline against the Sigstore
 	// root its own release shipped, and admits the frozen pre-attestation
 	// digest list without an attestation (ADR-20261029155852).

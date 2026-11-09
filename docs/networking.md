@@ -79,6 +79,34 @@ carries the reason and the stable problem code, for example
 Your app's own gRPC responses, including their `grpc-status` trailers, pass
 through unchanged. gRPC-Web requests are not translated.
 
+## Long-lived streams
+
+A streamed HTTP response lasts at most about 15 minutes (900 seconds) from
+the request, however active it is. This covers server-sent events, chunked
+and NDJSON responses, and gRPC server, client and bidirectional streams. It
+applies on every plan, to calls from the internet and between services alike.
+At the limit the platform ends the stream: the client sees the response or
+RPC end before your app finished it. A quiet stream can end sooner: the
+public edge closes a connection that carries nothing for about 100 seconds,
+so send a heartbeat (an SSE comment line, a no-op message on a gRPC stream) at least
+every 60 seconds.
+
+Write long-lived consumers to reconnect:
+
+- **Server-sent events.** Send an `id:` with each event. A browser
+  `EventSource` reconnects on its own and sends `Last-Event-ID`, so the app
+  can resume from there.
+- **gRPC streams.** Treat a stream that ends early as retryable: open a new
+  RPC and resume from the last message the client processed, such as a watch
+  cursor or offset. Keep unary RPCs for work that must finish in one call.
+- **Longer sessions.** A [WebSocket](#public-websockets) stays open for up to
+  24 hours while it carries traffic, and
+  [managed realtime](realtime.md#long-lived-connections-and-scale-to-zero)
+  holds sparse connections for you.
+
+An open stream counts as an in-flight request, so its instance stays running
+and is billed for as long as the stream is open.
+
 ## Internal services
 
 Apps in the same account reach one another by name, on every plan. There is no
@@ -1023,9 +1051,12 @@ outright.
 
 ### Verifying the caller (preview)
 
-By default a service learns who called it from platform-set headers. Signed
-caller assertions let the target verify that claim itself. They are a preview
-and are not enabled on every installation.
+The platform authorizes every internal call before forwarding it, but by
+default the target is not told which service called: the gateway's caller
+header stays on the node and is removed before the request reaches your code.
+Only the preview markers above reach the target. Signed caller assertions let
+the target learn and verify the caller itself. They are a preview and are not
+enabled on every installation.
 
 Every internal call then carries `X-Faas-Caller-Assertion`: a short-lived
 (30 s) EdDSA JWT stating `sub` = calling app id, `aud` = receiving app id,

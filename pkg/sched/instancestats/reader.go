@@ -84,6 +84,10 @@ type InstanceStat struct {
 	// QuietPaused (ADR-1151) is true while vmmd holds the instance
 	// quiet-paused between requests.
 	QuietPaused bool
+	// IdleLadderLevel (ADR-20261107122928) is the idle ladder level vmmd
+	// holds a quiet-paused instance at: 1 quiet pause, 2 freeze, which
+	// measured admission books at the frozen charge. 0 otherwise.
+	IdleLadderLevel int32
 	// Frozen (ADR-1151) is true while vmmd holds the instance frozen in
 	// place.
 	Frozen bool
@@ -451,8 +455,9 @@ func (r *Reader) SnapshotActivity(now time.Time) map[string]sched.InstanceActivi
 			continue
 		}
 		activity := sched.InstanceActivity{
-			Inflight:    row.InflightRequests,
-			LastRequest: row.LastRequestAt,
+			Inflight:        row.InflightRequests,
+			LastRequest:     row.LastRequestAt,
+			IdleLadderLevel: int(row.IdleLadderLevel),
 		}
 		if row.RSSMB > 0 {
 			activity.ResidentMB = int(row.RSSMB)
