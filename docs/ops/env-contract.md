@@ -89,6 +89,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APP_TASK_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for deployment-attached one-off command dispatch; default off provides a production-safe rollout gate |
 | `FAAS_ARTIFACT_REPLICATOR` | imaged | `envfile` |  |  | `` |  |
 | `FAAS_ARTIFACT_SIGNATURE_FORMAT` | imaged | `default` |  | v1 | `` | ADR-20261109170000: v2 writes layer signatures bound to their storage key, so a signed layer copied over another app's key fails verification; turn on once every schedd and apid reads v2 (the release after the one that taught them); v1 or unset writes the raw signature |
+| `FAAS_ARTIFACT_SIGNER` | imaged | `default` |  | local | `` | ADR-20261109170000: signd sends app layers to the control plane's signd (FAAS_SIGND_TARGET, FAAS_SIGND_TLS_*_PATH with the node's identity leaf) so compute nodes need no signing key for them; local or unset signs with this node's sign.key |
+| `FAAS_SIGND_TARGET` | imaged | `default` |  |  | `` | ADR-20261109170000: tcp:// or dns:// address of the control plane's signd; required when FAAS_ARTIFACT_SIGNER=signd |
 | `FAAS_ARTIFACT_SYNC_TARGET` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
 | `FAAS_ARTIFACT_SYNC_USER` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
 | `FAAS_ASYNC_WAKE_FINALIZE` | schedd | `default` |  |  | `` | optional boolean switch for ADR-20261105090246: a booted wake answers after its RUNNING publication and records its workload class and secret delivery afterwards; production default is off |
