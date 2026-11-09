@@ -100,8 +100,15 @@ func TestDebugRequestResolutionPG(t *testing.T) {
 
 	// A safe-only mirror rule replays the GET but refuses the POST: telemetry
 	// keeps no body, so the replay would repeat a side effect bodyless.
-	mirror, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("2", 64), Scope: "default", Status: state.DeployPending})
+	// Mirror rules join two live deployments in distinct scopes.
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	mirror, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("2", 64), Scope: "mirror", Status: state.DeployPending})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, mirror.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CreateMirrorRuleIfUnderQuota(ctx, state.CreateMirrorRuleParams{

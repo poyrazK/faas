@@ -43,7 +43,7 @@ func stubDevDebugger(t *testing.T, debugging, attached bool) {
 	table := filepath.Join(t.TempDir(), "tcp")
 	body := "  sl  local_address rem_address   st\n"
 	if attached {
-		body += "   0: 0200000A:2405 0100000A:C350 01 00000000:00000000 00:00000000 00000000 0 0 1\n"
+		body += "   0: 0200000A:240D 0100000A:C350 01 00000000:00000000 00:00000000 00000000 0 0 1\n"
 	}
 	if err := os.WriteFile(table, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -75,6 +75,10 @@ func TestDebuggedWorkerSurvivesAPausedRequest(t *testing.T) {
 		t.Fatalf("worker limit while debugging = %d, want 1", workerLimit())
 	}
 	p := slowPool(t)
+	var before testResponse
+	if err := p.invoke(context.Background(), testRequest{Value: "warm"}, &before); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	var paused testResponse
@@ -89,8 +93,8 @@ func TestDebuggedWorkerSurvivesAPausedRequest(t *testing.T) {
 	if err := p.invoke(context.Background(), testRequest{Value: "again"}, &second); err != nil {
 		t.Fatal(err)
 	}
-	if first.Value != "after" || first.PID != second.PID {
-		t.Fatalf("responses %+v then %+v; want the resumed worker to keep serving", first, second)
+	if first.Value != "after" || first.PID != before.PID || second.PID != before.PID {
+		t.Fatalf("responses %+v, %+v, %+v; want the paused worker (pid %d) to resume serving", before, first, second, before.PID)
 	}
 	p.mu.Lock()
 	live := p.live

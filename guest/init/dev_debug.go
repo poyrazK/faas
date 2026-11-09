@@ -123,7 +123,7 @@ func devDebugAttached() bool {
 // devDebugTableHasEstablished scans one /proc/net/tcp{,6} table for an
 // ESTABLISHED (state 01) socket whose local port is port.
 func devDebugTableHasEstablished(path string, port int) bool {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // a fixed /proc/net/tcp{,6} kernel table, not a customer path
 	if err != nil {
 		return false
 	}

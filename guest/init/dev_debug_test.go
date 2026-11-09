@@ -56,8 +56,8 @@ func TestStampDevDebugEnv(t *testing.T) {
 func TestDevDebugAttached(t *testing.T) {
 	dir := t.TempDir()
 	header := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
-	listen := "   0: 00000000:2405 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 101 1 0 100 0 0 10 0\n"
-	established := "   1: 0200000A:2405 0100000A:C350 01 00000000:00000000 00:00000000 00000000     0        0 102 1 0 20 4 30 10 -1\n"
+	listen := "   0: 00000000:240D 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 101 1 0 100 0 0 10 0\n"
+	established := "   1: 0200000A:240D 0100000A:C350 01 00000000:00000000 00:00000000 00000000     0        0 102 1 0 20 4 30 10 -1\n"
 	appConn := "   2: 0200000A:1F90 0100000A:C351 01 00000000:00000000 00:00000000 00000000     0        0 103 1 0 20 4 30 10 -1\n"
 	write := func(name, body string) string {
 		path := filepath.Join(dir, name)
