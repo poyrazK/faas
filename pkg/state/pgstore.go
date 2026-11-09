@@ -9392,6 +9392,11 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		 returning id`, dep.ID, params.Audit.AccountID, string(auditKind), params.Audit.Actor, auditAt, []byte(params.Audit.Data)).Scan(&auditID); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary audit: %w", err)
 	}
+	if dep.CanaryTotalSteps > 0 && persistedStep >= dep.CanaryTotalSteps && dep.RolloutState != "complete" {
+		if err := insertRolloutLifecycleAuditTx(ctx, tx, dep, DeployRolloutCompleted, now); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	updated, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
 		   from deployments where id = $1`, dep.ID))
@@ -11208,6 +11213,12 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 				canary_step_started_at = $2
 			 where id = $1`, id, now); err != nil {
 			return fmt.Errorf("state: mark canary live: %w", err)
+		}
+		// A recovery replay of an already started rollout records nothing new.
+		if dep.RolloutState != "rolling_out" {
+			if err := insertRolloutLifecycleAuditTx(ctx, tx, dep, DeployRolloutStarted, now); err != nil {
+				return err
+			}
 		}
 		newWeights := RedistributeTraffic(siblings, 100-dep.TrafficPercent)
 		for i, sibling := range siblings {
