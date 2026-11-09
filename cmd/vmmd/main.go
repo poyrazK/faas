@@ -1120,6 +1120,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	mgr.WithEgressCircuitBreaker(egressCircuitEnabled)
+	// ADR-20261109130000: reset an app guest's TCP connections before
+	// destroying it, so its databases free the sessions at once.
+	mgr.WithReleaseConnectionsOnDestroy(!cfg.DisableReleaseConnectionsOnDestroy)
 	if egressCircuitEnabled {
 		if store == nil {
 			return fmt.Errorf("vmmd: FAAS_EGRESS_CIRCUIT_BREAKER requires a compute-node database configuration for durable policy")
