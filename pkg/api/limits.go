@@ -6507,7 +6507,7 @@ var planLimits = map[Plan]Limits{
 		CustomMetricsPerApp:  20,
 		// ADR-20261108160000 slice C.
 		CustomMetricSeriesPerApp: 100,
-		MaxInstancesAllowed:  true,
+		MaxInstancesAllowed:      true,
 		// MaxMinInstances (ADR-071): Hobby gets 1 — one warm
 		// instance is the minimum the floor feature exists to
 		// deliver (the customer's "first request never pays the
@@ -6908,7 +6908,7 @@ var planLimits = map[Plan]Limits{
 		CustomMetricsPerApp:   50,
 		// ADR-20261108160000 slice C.
 		CustomMetricSeriesPerApp: 500,
-		MaxInstancesAllowed:   true,
+		MaxInstancesAllowed:      true,
 		// MaxMinInstances (ADR-071): Pro = 3 — covers a small
 		// "always-warm fan-out for a customer-facing API" pattern
 		// without letting one Pro app reserve a quarter of the
@@ -7327,7 +7327,7 @@ var planLimits = map[Plan]Limits{
 		CustomMetricsPerApp:   200,
 		// ADR-20261108160000 slice C.
 		CustomMetricSeriesPerApp: 2000,
-		MaxInstancesAllowed:   true,
+		MaxInstancesAllowed:      true,
 		// MaxMinInstances (ADR-071): Scale = 10 — half of
 		// MaxConcurrency (20). At Scale's 1024 MB instance RAM
 		// and 8 MB overhead, 10 instances resident = 10,320 MB

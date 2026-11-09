@@ -1166,6 +1166,16 @@ type AppCustomMetric struct {
 	Kind       string
 }
 
+type AppCustomMetricSeries struct {
+	AppID      pgtype.UUID
+	Name       string
+	SeriesKey  string
+	Labels     []byte
+	Kind       string
+	Value      float64
+	ObservedAt pgtype.Timestamptz
+}
+
 type AppDefaultDomain struct {
 	AppID     pgtype.UUID
 	Domain    interface{}
