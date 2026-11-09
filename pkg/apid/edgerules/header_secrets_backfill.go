@@ -253,6 +253,10 @@ func (s *Service) RunHeaderSecretBackfill(ctx context.Context, interval time.Dur
 		case <-timer.C:
 		}
 		rep, err := s.SealStoredHeaderValues(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		s.Metrics.headerBackfillPass(rep, err, time.Now())
 		switch {
 		case err != nil:
 			s.Host.Logger().Warn("edge rule header backfill pass failed", "err", err)

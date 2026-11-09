@@ -8346,6 +8346,18 @@ groups:
           summary: "{{ $labels.instance }} has held hosts behind edge-rule fences for 10 minutes"
           description: "gateway_edge_rule_converging_hosts on {{ $labels.instance }} has not dropped to zero for 10m. Those hosts keep serving their current rules. A fence expires 10s after its change is prepared, so one that never clears means changes keep being prepared without being applied."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
+      - alert: FaasEdgeRuleHeaderBackfillStalled
+        expr: max(apid_edge_rule_header_backfill_pending) == 1
+        for: 6h
+        labels:
+          severity: warn
+          component: apid
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "Edge-rule header credentials have stayed unsealed for 6 hours"
+          description: "Every header backfill pass for 6h left credentials stored as written. apid_edge_rule_header_fleet_ready=0 means a serving gateway does not report that it opens sealed values (an old release or a stale report), and apid also stores new credentials as written meanwhile. Otherwise items keep failing or changing; see apid_edge_rule_header_backfill_items_total and the apid log line 'edge rule header backfill pass'."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
       - alert: FaasEdgeRuleJWTFailures
         expr: sum(rate(gateway_edge_rule_match_total{kind="jwt",outcome="failed"}[5m])) * 60 > 5
         for: 5m
