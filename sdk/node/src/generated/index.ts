@@ -585,6 +585,7 @@ export type { CustomMetricRequest } from './models/CustomMetricRequest.js';
 export type { CustomMetricResponse } from './models/CustomMetricResponse.js';
 export type { CustomMetricSeriesPoint } from './models/CustomMetricSeriesPoint.js';
 export type { CustomMetricSeriesResponse } from './models/CustomMetricSeriesResponse.js';
+export type { CustomMetricSeriesValue } from './models/CustomMetricSeriesValue.js';
 export type { CustomStage } from './models/CustomStage.js';
 export type { DailyUsageListResponse } from './models/DailyUsageListResponse.js';
 export type { DailyUsagePoint } from './models/DailyUsagePoint.js';

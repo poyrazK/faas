@@ -19,7 +19,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -38,12 +40,19 @@ import (
 // follows the organization's plan, falling back to the caller's plan when
 // the owner cannot be read or its plan has no custom metrics.
 func (s *server) customMetricLimit(ctx context.Context, fallback api.Plan, app state.App) int {
-	if owner, err := state.AppResourceAccount(ctx, s.store, app); err == nil {
-		if limit := owner.Plan.CustomMetricsPerApp(); limit > 0 {
-			return limit
-		}
+	return s.customMetricCapsFor(ctx, fallback, app).names
+}
+
+// customMetricCaps are an app's custom metric caps: distinct names and
+// labelled series (ADR-20261108160000 slice C).
+type customMetricCaps struct{ names, series int }
+
+func (s *server) customMetricCapsFor(ctx context.Context, fallback api.Plan, app state.App) customMetricCaps {
+	plan := fallback
+	if owner, err := state.AppResourceAccount(ctx, s.store, app); err == nil && owner.Plan.CustomMetricsPerApp() > 0 {
+		plan = owner.Plan
 	}
-	return fallback.CustomMetricsPerApp()
+	return customMetricCaps{names: plan.CustomMetricsPerApp(), series: plan.CustomMetricSeriesPerApp()}
 }
 
 func (s *server) putCustomMetric(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -75,10 +84,10 @@ func (s *server) putCustomMetric(w http.ResponseWriter, r *http.Request, acct st
 	// The store enforces the distinct-name cap inside the insert, not with
 	// a preceding count: two concurrent pushes of two NEW names would both
 	// pass a check-then-insert against a cap of one.
-	limit := s.customMetricLimit(r.Context(), acct.Plan, app)
-	err := s.store.PutCustomMetric(r.Context(), app.ID, name, req.Value, time.Now(), limit)
-	if errors.Is(err, state.ErrCustomMetricLimit) {
-		api.WriteProblem(w, api.ErrCustomMetricLimitReached(limit))
+	caps := s.customMetricCapsFor(r.Context(), acct.Plan, app)
+	err := s.savePushedCustomMetric(r.Context(), app.ID, name, req.Value, caps)
+	if errors.Is(err, state.ErrCustomMetricLimit) || errors.Is(err, state.ErrCustomMetricSeriesLimit) {
+		api.WriteProblem(w, api.ErrCustomMetricLimitReached(caps.names))
 		return
 	}
 	if err != nil {
@@ -88,6 +97,30 @@ func (s *server) putCustomMetric(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// savePushedCustomMetric stores one pushed gauge. For a metric with labelled
+// series (ADR-20261108160000 slice C) the push is its unlabelled series, so
+// the aggregate stays the series' maximum instead of being overwritten.
+func (s *server) savePushedCustomMetric(ctx context.Context, appID, name string, value float64, caps customMetricCaps) error {
+	now := time.Now()
+	if series, ok := s.store.(state.CustomMetricSeriesStore); ok && caps.series > 0 {
+		rows, err := s.store.ListCustomMetrics(ctx, appID)
+		if err != nil {
+			return fmt.Errorf("list custom metrics: %w", err)
+		}
+		for _, row := range rows {
+			if row.Name == name && row.Labelled {
+				return series.PutCustomMetricSeries(ctx, appID, state.CustomMetricSeriesWrite{
+					Name: name, Kind: state.CustomMetricKindGauge, Value: value, ObservedAt: now,
+				}, state.CustomMetricSeriesLimits{
+					Names: caps.names, SeriesPerMetric: api.CustomMetricMaxSeriesPerMetric, SeriesPerApp: caps.series,
+					GaugeFreshness: api.CustomMetricFreshnessSeconds * time.Second,
+				})
+			}
+		}
+	}
+	return s.store.PutCustomMetric(ctx, appID, name, value, now, caps.names)
 }
 
 // listCustomMetrics handles GET /v1/apps/{slug}/metrics.
@@ -108,10 +141,19 @@ func (s *server) listCustomMetrics(w http.ResponseWriter, r *http.Request, acct 
 			"Refresh the page or retry the request in a moment.", err)
 		return
 	}
+	series, err := s.customMetricSeriesByName(r.Context(), app.ID, rows)
+	if err != nil {
+		writeCustomerInternalProblem(w, r, s.log, "list custom metric series",
+			"Gregale could not load custom metrics for this app.",
+			"Refresh the page or retry the request in a moment.", err)
+		return
+	}
+	caps := s.customMetricCapsFor(r.Context(), acct.Plan, app)
 	out := api.CustomMetricListResponse{
 		Metrics:    make([]api.CustomMetricResponse, 0, len(rows)),
 		FreshnessS: api.CustomMetricFreshnessSeconds,
-		MaxMetrics: s.customMetricLimit(r.Context(), acct.Plan, app),
+		MaxMetrics: caps.names,
+		MaxSeries:  caps.series,
 	}
 	now := time.Now()
 	freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
@@ -124,10 +166,47 @@ func (s *server) listCustomMetrics(w http.ResponseWriter, r *http.Request, acct 
 			// Stale is computed here rather than left to the client so
 			// the API and the scheduler cannot disagree about which rows
 			// are driving scaling.
-			Stale: now.Sub(row.ObservedAt) > freshness,
+			Stale:  now.Sub(row.ObservedAt) > freshness,
+			Series: customMetricSeriesValues(series[row.Name], now, freshness),
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// customMetricSeriesByName reads the app's labelled series, grouped by
+// metric name, only when some metric is labelled.
+func (s *server) customMetricSeriesByName(ctx context.Context, appID string, rows []state.CustomMetric) (map[string][]state.CustomMetricSeries, error) {
+	store, ok := s.store.(state.CustomMetricSeriesStore)
+	if !ok || !slices.ContainsFunc(rows, func(m state.CustomMetric) bool { return m.Labelled }) {
+		return nil, nil
+	}
+	all, err := store.ListCustomMetricSeries(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]state.CustomMetricSeries{}
+	for _, row := range all {
+		out[row.Name] = append(out[row.Name], row)
+	}
+	return out, nil
+}
+
+func customMetricSeriesValues(rows []state.CustomMetricSeries, now time.Time, freshness time.Duration) []api.CustomMetricSeriesValue {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]api.CustomMetricSeriesValue, 0, len(rows))
+	for _, row := range rows {
+		labels := row.Labels
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		out = append(out, api.CustomMetricSeriesValue{
+			Key: row.SeriesKey, Labels: labels, Value: row.Value,
+			ObservedAt: row.ObservedAt.UTC(), Stale: now.Sub(row.ObservedAt) > freshness,
+		})
+	}
+	return out
 }
 
 // deleteCustomMetric handles DELETE /v1/apps/{slug}/custom-metrics/{name}.

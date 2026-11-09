@@ -2303,6 +2303,10 @@ type CustomMetric struct {
 	// Kind is CustomMetricKindGauge (ADR-202 pushes) or
 	// CustomMetricKindCounter (ADR-745 OTLP cumulative sums).
 	Kind string
+	// Labelled is true when the metric has labelled series
+	// (ADR-20261108160000 slice C): Value is then their aggregate, the sum
+	// for counters and the maximum of fresh series for gauges.
+	Labelled bool
 }
 
 // MCPTaskHandlerCompatibility is a bounded, payload-free queue summary for a

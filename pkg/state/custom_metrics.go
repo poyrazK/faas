@@ -142,10 +142,12 @@ func (s *PgStore) AddCustomMetricOfKind(ctx context.Context, appID, name, kind s
 // evaluation silently wrong.
 func (s *PgStore) ListCustomMetrics(ctx context.Context, appID string) ([]CustomMetric, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT name, value, observed_at, kind
-		  FROM app_custom_metrics
-		 WHERE app_id = $1::uuid
-		 ORDER BY name
+		SELECT m.name, m.value, m.observed_at, m.kind,
+		       EXISTS (SELECT 1 FROM app_custom_metric_series s
+		                WHERE s.app_id = m.app_id AND s.name = m.name)
+		  FROM app_custom_metrics m
+		 WHERE m.app_id = $1::uuid
+		 ORDER BY m.name
 	`, appID)
 	if err != nil {
 		return nil, fmt.Errorf("state: list custom metrics for app %s: %w", appID, err)
@@ -154,7 +156,7 @@ func (s *PgStore) ListCustomMetrics(ctx context.Context, appID string) ([]Custom
 	out := make([]CustomMetric, 0, 4)
 	for rows.Next() {
 		var m CustomMetric
-		if err := rows.Scan(&m.Name, &m.Value, &m.ObservedAt, &m.Kind); err != nil {
+		if err := rows.Scan(&m.Name, &m.Value, &m.ObservedAt, &m.Kind, &m.Labelled); err != nil {
 			return nil, fmt.Errorf("state: scan custom metric for app %s: %w", appID, err)
 		}
 		out = append(out, m)
@@ -320,18 +322,23 @@ func (m *MemStore) ListCustomMetrics(_ context.Context, appID string) ([]CustomM
 	byName := m.customMetrics[appID]
 	out := make([]CustomMetric, 0, len(byName))
 	for _, v := range byName {
+		v.Labelled = len(m.customMetricSeries[appID][v.Name]) > 0
 		out = append(out, v)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
-// DeleteCustomMetric removes one gauge; a missing name is not an error.
+// DeleteCustomMetric removes one gauge and, as the PgStore foreign key
+// cascades, its series; a missing name is not an error.
 func (m *MemStore) DeleteCustomMetric(_ context.Context, appID, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if byName := m.customMetrics[appID]; byName != nil {
 		delete(byName, name)
+	}
+	if bySeries := m.customMetricSeries[appID]; bySeries != nil {
+		delete(bySeries, name)
 	}
 	return nil
 }

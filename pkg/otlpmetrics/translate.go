@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
@@ -20,13 +21,16 @@ import (
 
 // Point is one metric value to store for a normalised name. A delta point's
 // Value is added to the stored value (ADR-20261108160000); any other point
-// replaces it.
+// replaces it. A point with Labels is one series of its name (slice C), and
+// SeriesKey is the labels' canonical key ("" for the unlabelled series).
 type Point struct {
 	Name       string
 	Kind       string
 	Value      float64
 	ObservedAt time.Time
 	Delta      bool
+	Labels     map[string]string
+	SeriesKey  string
 }
 
 // Result is the translation outcome. Rejected counts data points that were
@@ -66,13 +70,16 @@ const histogramMaxBaseBytes = api.CustomMetricNameMaxBytes - len(HistogramCountS
 //     cumulative, added when delta) and _p50/_p95/_p99 gauges estimated from
 //     the buckets of the newest data point;
 //   - exponential histograms and summaries are rejected;
-//   - data points with attributes are rejected (attributes would multiply the
-//     per-app series and defeat the name cap);
+//   - data point attributes become labels (slice C): at most
+//     api.CustomMetricMaxLabels scalar attributes per point, each distinct
+//     label set a series of the name; other attribute shapes are rejected;
 //   - negative or non-finite values are rejected;
 //   - names are lowercased with '.', '-' and '/' mapped to '_' and must then
 //     satisfy the custom metric name rules;
-//   - the newest data point per name wins, except that delta points of one
-//     name are summed.
+//   - the newest data point per series wins, except that delta points of one
+//     series are summed.
+//
+// Points come back ordered by name, then series key.
 //
 // now stamps points that carry no timestamp.
 func Translate(req *colmetricspb.ExportMetricsServiceRequest, now time.Time) Result {
@@ -84,15 +91,30 @@ func Translate(req *colmetricspb.ExportMetricsServiceRequest, now time.Time) Res
 			}
 		}
 	}
-	names := make([]string, 0, len(t.points))
-	for name := range t.points {
-		names = append(names, name)
+	for _, p := range t.points {
+		t.res.Points = append(t.res.Points, p)
 	}
-	sort.Strings(names)
-	for _, name := range names {
-		t.res.Points = append(t.res.Points, t.points[name])
-	}
+	sort.Slice(t.res.Points, func(i, j int) bool {
+		a, b := t.res.Points[i], t.res.Points[j]
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.SeriesKey < b.SeriesKey
+	})
 	return t.res
+}
+
+// series identifies one point slot: a name and a label set.
+type series struct {
+	name   string
+	key    string
+	labels map[string]string
+}
+
+func (s series) id() string { return s.name + "\x00" + s.key }
+
+func (s series) suffixed(suffix string) series {
+	return series{name: s.name + suffix, key: s.key, labels: s.labels}
 }
 
 type translation struct {
@@ -116,25 +138,44 @@ func (t *translation) at(ts uint64) time.Time {
 }
 
 // set records a value that replaces the stored one; the newest wins.
-func (t *translation) set(name, kind string, value float64, at time.Time) {
-	if prev, ok := t.points[name]; ok && !prev.Delta && !at.After(prev.ObservedAt) {
+func (t *translation) set(s series, kind string, value float64, at time.Time) {
+	if prev, ok := t.points[s.id()]; ok && !prev.Delta && !at.After(prev.ObservedAt) {
 		return
 	}
-	t.points[name] = Point{Name: name, Kind: kind, Value: value, ObservedAt: at}
+	t.points[s.id()] = Point{Name: s.name, Kind: kind, Value: value, ObservedAt: at, Labels: s.labels, SeriesKey: s.key}
 }
 
-// add records a value added to the stored one; deltas of a name are summed.
-func (t *translation) add(name, kind string, value float64, at time.Time) {
-	prev, ok := t.points[name]
+// add records a value added to the stored one; deltas of a series are summed.
+func (t *translation) add(s series, kind string, value float64, at time.Time) {
+	prev, ok := t.points[s.id()]
 	if ok && prev.Delta {
 		prev.Value += value
 		if at.After(prev.ObservedAt) {
 			prev.ObservedAt = at
 		}
-		t.points[name] = prev
+		t.points[s.id()] = prev
 		return
 	}
-	t.points[name] = Point{Name: name, Kind: kind, Value: value, ObservedAt: at, Delta: true}
+	t.points[s.id()] = Point{Name: s.name, Kind: kind, Value: value, ObservedAt: at, Delta: true, Labels: s.labels, SeriesKey: s.key}
+}
+
+// record sets or adds by temporality.
+func (t *translation) record(s series, kind string, value float64, at time.Time, delta bool) {
+	if delta {
+		t.add(s, kind, value, at)
+	} else {
+		t.set(s, kind, value, at)
+	}
+}
+
+// seriesOf resolves a data point's labels, rejecting the point on bad ones.
+func (t *translation) seriesOf(original, name string, attrs []*commonpb.KeyValue) (series, bool) {
+	labels, key, err := Labels(attrs)
+	if err != nil {
+		t.reject(1, fmt.Sprintf("metric %q: %v", original, err))
+		return series{}, false
+	}
+	return series{name: name, key: key, labels: labels}, true
 }
 
 func (t *translation) metric(m *metricspb.Metric) {
@@ -163,8 +204,8 @@ func (t *translation) numbers(original, name string, points []*metricspb.NumberD
 		return
 	}
 	for _, dp := range points {
-		if len(dp.GetAttributes()) > 0 {
-			t.reject(1, fmt.Sprintf("metric %q: data point attributes are not supported", original))
+		s, ok := t.seriesOf(original, name, dp.GetAttributes())
+		if !ok {
 			continue
 		}
 		value := dp.GetAsDouble()
@@ -178,11 +219,7 @@ func (t *translation) numbers(original, name string, points []*metricspb.NumberD
 			t.reject(1, fmt.Sprintf("metric %q: values must be finite and non-negative", original))
 			continue
 		}
-		if delta {
-			t.add(name, kind, value, t.at(dp.GetTimeUnixNano()))
-		} else {
-			t.set(name, kind, value, t.at(dp.GetTimeUnixNano()))
-		}
+		t.record(s, kind, value, t.at(dp.GetTimeUnixNano()), delta)
 	}
 }
 
@@ -191,10 +228,16 @@ func (t *translation) histogram(original, base string, points []*metricspb.Histo
 		t.reject(len(points), fmt.Sprintf("metric %q: a histogram name must normalise to [a-z][a-z0-9_]{0,%d}", original, histogramMaxBaseBytes-1))
 		return
 	}
-	var newest *metricspb.HistogramDataPoint
+	// The percentiles come from each series' newest data point.
+	type newestPoint struct {
+		s  series
+		dp *metricspb.HistogramDataPoint
+	}
+	newest := map[string]newestPoint{}
+	var order []string
 	for _, dp := range points {
-		if len(dp.GetAttributes()) > 0 {
-			t.reject(1, fmt.Sprintf("metric %q: data point attributes are not supported", original))
+		s, ok := t.seriesOf(original, base, dp.GetAttributes())
+		if !ok {
 			continue
 		}
 		if !validHistogramPoint(dp) {
@@ -202,29 +245,27 @@ func (t *translation) histogram(original, base string, points []*metricspb.Histo
 			continue
 		}
 		at := t.at(dp.GetTimeUnixNano())
-		count := float64(dp.GetCount())
-		if delta {
-			t.add(base+HistogramCountSuffix, state.CustomMetricKindCounter, count, at)
-		} else {
-			t.set(base+HistogramCountSuffix, state.CustomMetricKindCounter, count, at)
-		}
+		t.record(s.suffixed(HistogramCountSuffix), state.CustomMetricKindCounter, float64(dp.GetCount()), at, delta)
 		if dp.Sum != nil {
-			if delta {
-				t.add(base+HistogramSumSuffix, state.CustomMetricKindCounter, dp.GetSum(), at)
-			} else {
-				t.set(base+HistogramSumSuffix, state.CustomMetricKindCounter, dp.GetSum(), at)
-			}
+			t.record(s.suffixed(HistogramSumSuffix), state.CustomMetricKindCounter, dp.GetSum(), at, delta)
 		}
-		if newest == nil || dp.GetTimeUnixNano() >= newest.GetTimeUnixNano() {
-			newest = dp
+		prev, seen := newest[s.key]
+		if !seen {
+			order = append(order, s.key)
+		}
+		if !seen || dp.GetTimeUnixNano() >= prev.dp.GetTimeUnixNano() {
+			newest[s.key] = newestPoint{s: s, dp: dp}
 		}
 	}
-	if newest == nil || newest.GetCount() == 0 {
-		return
-	}
-	at := t.at(newest.GetTimeUnixNano())
-	for _, q := range HistogramQuantiles {
-		t.set(base+q.Suffix, state.CustomMetricKindGauge, HistogramQuantile(q.Q, newest), at)
+	for _, key := range order {
+		n := newest[key]
+		if n.dp.GetCount() == 0 {
+			continue
+		}
+		at := t.at(n.dp.GetTimeUnixNano())
+		for _, q := range HistogramQuantiles {
+			t.set(n.s.suffixed(q.Suffix), state.CustomMetricKindGauge, HistogramQuantile(q.Q, n.dp), at)
+		}
 	}
 }
 

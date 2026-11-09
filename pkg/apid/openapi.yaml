@@ -21558,6 +21558,11 @@ paths:
           required: false
           description: History window. Default 24h.
           schema: { type: string, enum: ['1h', '6h', '24h', '7d', '15d'], default: '24h' }
+        - name: labels
+          in: query
+          required: false
+          description: "One labelled series, by the `key` the metric list returns for it (for example `queue=emails`). Omitted: the metric's aggregate."
+          schema: { type: string, maxLength: 1024 }
       responses:
         '200':
           description: The recorded history.
@@ -95183,7 +95188,24 @@ components:
           type: string
           enum: [gauge, counter]
           description: "gauge for pushed values (a scaling signal); counter for OTLP cumulative sums, which never drive scaling."
+        series:
+          description: "A labelled metric's series. value is then their aggregate: the sum for counters, the maximum of fresh series for gauges. Absent for an unlabelled metric."
+          type: array
+          items: { $ref: '#/components/schemas/CustomMetricSeriesValue' }
       example: { name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false, kind: gauge }
+    CustomMetricSeriesValue:
+      description: "One labelled series of a custom metric (from OTLP data point attributes)."
+      type: object
+      required: [key, labels, value, observed_at, stale]
+      properties:
+        key: { type: string, description: "Canonical k=v,... form, keys sorted; pass it as labels to the history endpoint.", example: "queue=emails" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          example: { queue: emails }
+        value: { type: number }
+        observed_at: { type: string, format: date-time }
+        stale: { type: boolean }
     CustomMetricSeriesResponse:
       description: "History of one pushed custom metric. Degraded responses carry null points."
       type: object
@@ -95192,6 +95214,7 @@ components:
         app_id: { type: string }
         name: { type: string }
         kind: { type: string, enum: [gauge, counter], description: "counter histories are a per-second rate of the cumulative count." }
+        labels: { type: string, description: "The series key this history is for; absent for the metric's aggregate." }
         range: { type: string, enum: ['1h', '6h', '24h', '7d', '15d'] }
         step: { type: string, description: "Prometheus step between points." }
         source: { type: string, description: '"prometheus", or "degraded: <reason>" when the metric history could not be read.' }
@@ -95218,9 +95241,13 @@ components:
           type: integer
           example: 300
         max_metrics:
-          description: "Maximum distinct metric names this app may hold."
+          description: "Maximum distinct metric names this app may hold (per plan)."
           type: integer
-          example: 5
+          example: 50
+        max_series:
+          description: "Maximum labelled series this app may hold across its metrics (per plan); each metric also holds at most 50."
+          type: integer
+          example: 500
 
     MCPTaskHandlerCompatibility:
       description: Outstanding task counts and live worker coverage for one tool and handler version.
