@@ -13574,6 +13574,20 @@ const (
 	GatewayWildcardRecoveryPerSecond = 5
 	GatewayWildcardRecoveryBurst     = 50
 	GatewayNewHostLookupMaxWait      = 100 * time.Millisecond
+	// GatewayRequestLogLinesPerSecond and GatewayRequestLogBurst bound the
+	// gateway_request lines one gatewayd-internal writes at Info: a cold
+	// request or any answer but a 2xx (a warm 2xx is a Debug line). A flood
+	// of 404s for names that route nowhere, or an app answering errors at
+	// volume, would otherwise write one line per request. Building them took
+	// about 12% of gatewayd-internal's CPU under a 404 flood on 2026-11-09,
+	// and past journald's per-unit rate limit (10,000 lines per 30 s by
+	// default) journald dropped every line the daemon wrote, warnings
+	// included. A line past the budget is not built;
+	// gateway_request_log_suppressed_total counts it and the next written
+	// line carries suppressed_before. gateway_requests_total still counts
+	// every request.
+	GatewayRequestLogLinesPerSecond = 100
+	GatewayRequestLogBurst          = 1000
 	// The gateway and the edge preload every app slug and verified custom
 	// domain or admitted concrete wildcard host (at most KnownRouteHostsMax
 	// of each), refreshed every KnownRouteHostsRefreshInterval. Concrete names
