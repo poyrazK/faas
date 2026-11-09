@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/connreleaseproto"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/profileproto"
@@ -287,6 +288,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	}
 	if msgType == VsockAppCPULimitMsgType {
 		handleAppCPULimitConn(f, log, hdr[4:], firstCPULimitHandler(onCPULimit))
+		return
+	}
+	if msgType == connreleaseproto.MessageType {
+		handleReleaseConnectionsConn(f, log, hdr[4:])
 		return
 	}
 	if msgType == guestmemproto.MessageType {
