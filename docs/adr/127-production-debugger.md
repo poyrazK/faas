@@ -472,3 +472,44 @@ A second review of the debugger on main found:
   whose window reaches past retention is clamped to the horizon instead of
   expiring. `gregalectl debug pprof` refuses an abstract socket held by a
   non-system, non-daemon uid.
+
+## Amendment (2026-11-09): group commit for request telemetry
+
+### Context
+
+apid answered each telemetry record from a gateway stream on its own, and
+committed each row the plan keeps in its own transaction. A row past the
+plan's ingest cap costs about 2 µs, but an inserted row waits for its own
+WAL flush, one at a time per gateway. Production commits with
+`synchronous_commit = on` and `fdatasync` on network-attached disks, so a
+gateway could deliver only about 300–1,000 inserted rows a second (a local
+benchmark with fsync on measured 67–151 rows/s on a loaded laptop disk).
+Past that the gateway ring overwrites rows, and analytics and the debugger
+lose them.
+
+### Decision
+
+- **Group commit.** The receiver collects the records that arrive together
+  on a stream. A gateway sends a whole batch, then half-closes, so its
+  group is the batch. A group also ends at `RequestTelemetryReceiveGroupMax`
+  (256) records, or when no record arrives for
+  `RequestTelemetryReceiveGroupWait` (2 ms), so a client that waits for
+  each outcome is still answered. Each record's checks (usage, plan,
+  analytics rollups, ingest cap) run as before; the group's rows to insert
+  commit in one transaction, with the same replay rule per row (the log
+  ledger's event ID). Outcomes go back in record order. If the group's
+  transaction fails, its rows are written one by one, so each row still
+  gets its own outcome and one bad row never costs the others theirs. No
+  wire change: older gateways already send a batch before reading outcomes.
+- **Asynchronous commit for telemetry.** Telemetry transactions commit with
+  `SET LOCAL synchronous_commit = off`. Telemetry and its log projection are
+  debugger evidence, never billing: usage has its own outbox and ledger. A
+  Postgres crash may lose the last moments of rows apid already
+  acknowledged; the gateway will not resend them.
+
+### Consequences
+
+- A gateway batch of 256 rows costs one commit instead of 256.
+- A group holds one ingest-gate slot for its whole write, as it uses one
+  connection.
+- A client that waits for each outcome gets it about 2 ms later.

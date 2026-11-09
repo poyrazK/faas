@@ -140,8 +140,12 @@ if os.getenv("FAAS_PROFILING_ENABLED") == "1":
             if "heap" in kinds:
                 import _gregale_heap
                 if not _gregale_heap.low_memory():
-                    # A capture with checkpoints was triggered by low memory.
-                    _start_heap(_gregale_heap.LOW_MEMORY_FRAMES if config.get("checkpoint_seconds", 0) > 0 else None)
+                    # A capture with checkpoints was triggered by low memory;
+                    # continuous collection traces for as long as it is on.
+                    if not config.get("capture"):
+                        _start_heap(_gregale_heap.CONTINUOUS_FRAMES)
+                    else:
+                        _start_heap(_gregale_heap.LOW_MEMORY_FRAMES if config.get("checkpoint_seconds", 0) > 0 else None)
         elif _state["heap"] and _heap_low_memory():
             # Tracing itself must not push the process into an OOM kill:
             # stop it, freeing its traces, and keep the rest of the window.

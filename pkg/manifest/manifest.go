@@ -116,6 +116,10 @@ type Manifest struct {
 	// AllowedCIDRs. Bare-metal fleets with a public address on every host set it.
 	SSH *SSH `yaml:"ssh,omitempty"`
 
+	// DiskEncryption encrypts each host's data volume at rest, unlocked by
+	// the other hosts' Tang servers (ADR-20261109120000). Absent: plain.
+	DiskEncryption *DiskEncryption `yaml:"disk_encryption,omitempty"`
+
 	// DNS is the public-facing hostname contract. apps_domain is the
 	// single source of truth — gatewayd-internal, apid, and the CLI
 	// PrintOK paths all read from it; a value of `gregale.dev` produces
@@ -138,6 +142,10 @@ type Manifest struct {
 	// ManagedPostgres turns on native managed PostgreSQL (ADR-1027) on the
 	// fleet's database hosts (managed_postgres.go).
 	ManagedPostgres *ManagedPostgres `yaml:"managed_postgres,omitempty"`
+
+	// ServiceTCP stages private TCP service addressing (ADR-576) on the
+	// compute-only hosts (service_tcp.go).
+	ServiceTCP *ServiceTCP `yaml:"service_tcp,omitempty"`
 
 	// PostgreSQL is the database cluster configuration. The renderer
 	// needs the role names, the database name, and the migration
@@ -1506,6 +1514,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Daemons.validate()...)
 	errs = append(errs, m.Overlay.validate()...)
 	errs = append(errs, m.SSH.validate()...)
+	errs = append(errs, m.validateDiskEncryption()...)
 	errs = append(errs, m.DNS.validate()...)
 	errs = append(errs, m.PrivateDNS.validate()...)
 	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
@@ -1519,6 +1528,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
 	errs = append(errs, m.validateManagedPostgres()...)
+	errs = append(errs, m.validateServiceTCP()...)
 	errs = append(errs, m.ObjectStorage.validate()...)
 	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
 	errs = append(errs, m.LogArchive.validate()...)

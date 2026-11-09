@@ -6738,6 +6738,10 @@ type Querier interface {
 	RecordRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupCoverageParams) error
 	// ADR-20261103113952 amendment 1: app minutes whose rollups apid lost.
 	RecordRequestAnalyticsRollupGaps(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupGapsParams) error
+	// ADR-20261103113952 amendment 4: after apid stopped without writing its
+	// pending rollups, mark every app minute with raw telemetry in the span it
+	// may have held as lost.
+	RecordRequestAnalyticsRollupGapsFromTelemetry(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupGapsFromTelemetryParams) error
 	// The request-ID journal is independent from sampled request telemetry. Only
 	// insert when the app is still owned by the authenticated account. The
 	// caller-generated record UUID makes an RPC retry idempotent without
@@ -7037,6 +7041,10 @@ type Querier interface {
 	// the platform's own refusals and requests pinned to a deployment are not
 	// the deployment's errors.
 	RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryErrorsByRouteParams) ([]RequestTelemetryErrorsByRouteRow, error)
+	// Whether the app has raw telemetry received in [window_from, window_until).
+	// Analytics backdates a rollup tier's coverage over a span with none
+	// (ADR-20261103113952 amendment 4).
+	RequestTelemetryExistsBetween(ctx context.Context, db DBTX, arg RequestTelemetryExistsBetweenParams) (bool, error)
 	// The regression detector's affected-request count: the requests each
 	// latency bucket represents, per route, over the whole window and in the
 	// regression view. A newest-rows drilldown capped at 10k rows across every

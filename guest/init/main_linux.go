@@ -439,6 +439,11 @@ func boot() error {
 	if apiErr != nil {
 		slog.Default().Warn("env.json could not be loaded; proceeding without api env", "err_kind", errorKind(apiErr))
 	}
+	// ADR-20261107160000: the identity file outlives the environment's
+	// FAAS_INSTANCE_ID, which a snapshot restore cannot change.
+	if err := publishBootInstanceIdentity(apiEnv, time.Now()); err != nil {
+		slog.Default().Warn("instance identity file unavailable", "err", err)
+	}
 	qualificationReceiptToken, qualificationReceiptMACKey, qualificationReceiptErr := takeQualificationConfigReceiptControl(apiEnv)
 	if qualificationReceiptErr != nil {
 		slog.Default().Warn("qualification configuration receipt control is invalid")
@@ -635,6 +640,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
+	env = StampInstanceIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", "/")
 	if trustErr != nil {

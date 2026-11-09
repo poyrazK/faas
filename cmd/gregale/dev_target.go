@@ -67,7 +67,7 @@ func resolveDevTarget(sourcePath, name string) (devTarget, *devTargetError) {
 	var linked localProjectContext
 	var linkedErr error
 	if name == "" {
-		linked, _, linkedErr = linkedProjectContext(sourceDir)
+		linked, _, linkedErr = targetProjectContext(sourceDir)
 	}
 	project, targetErr := selectDevProject(name, sourceDir, linked, linkedErr)
 	if targetErr != nil {

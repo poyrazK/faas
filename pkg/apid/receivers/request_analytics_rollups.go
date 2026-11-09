@@ -3,6 +3,7 @@ package receivers
 import (
 	"context"
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -110,6 +111,9 @@ type RequestAnalyticsRollups struct {
 
 	// now is the flush clock; tests replace it.
 	now func() time.Time
+	// marker is the crash marker path (WithCrashMarker); Run's goroutine
+	// alone uses it.
+	marker string
 }
 
 // NewRequestAnalyticsRollups returns an aggregator writing to store. A nil
@@ -579,6 +583,7 @@ func (a *RequestAnalyticsRollups) Run(ctx context.Context, interval time.Duratio
 	if interval <= 0 {
 		interval = api.RequestAnalyticsRollupFlushInterval
 	}
+	a.recoverFromCrash(ctx, interval)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -587,14 +592,80 @@ func (a *RequestAnalyticsRollups) Run(ctx context.Context, interval time.Duratio
 			final, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollupFinalFlushDeadline)
 			if err := a.flush(final, true); err != nil {
 				a.log.Error("request analytics rollups final flush failed", "err", err)
+			} else if a.marker != "" {
+				// A clean stop: the next start has nothing to mark.
+				_ = os.Remove(a.marker)
 			}
 			cancel()
 			return
 		case <-ticker.C:
-			if err := a.Flush(ctx); err != nil && ctx.Err() == nil {
-				a.log.Warn("request analytics rollups flush failed; keeping rows for the next flush", "err", err)
+			if err := a.Flush(ctx); err != nil {
+				if ctx.Err() == nil {
+					a.log.Warn("request analytics rollups flush failed; keeping rows for the next flush", "err", err)
+				}
+				continue
+			}
+			a.touchMarker()
+		}
+	}
+}
+
+// WithCrashMarker makes Run keep a file at path while it runs, touched at
+// every flush and removed after a clean final flush (amendment 4). When Run
+// starts and finds the file, the previous apid stopped without writing its
+// pending rollups (a crash or a kill), and Run marks the minutes they may
+// have held as lost, so analytics reports those windows incomplete instead
+// of quietly under-counting. An empty path leaves it off.
+func (a *RequestAnalyticsRollups) WithCrashMarker(path string) *RequestAnalyticsRollups {
+	if a != nil {
+		a.marker = path
+	}
+	return a
+}
+
+// recoverFromCrash marks what a previous apid lost and starts the marker.
+// The lost rows are the minutes still pending at the marker's last touch,
+// and rows added after it, so every app minute with raw telemetry from a
+// minute, the grace and a flush interval before that touch until now is
+// marked; apid writes raw rows as they arrive, and an app over its ingest
+// cap still stores its first rows each minute.
+func (a *RequestAnalyticsRollups) recoverFromCrash(ctx context.Context, interval time.Duration) {
+	if a.marker == "" {
+		return
+	}
+	if info, err := os.Stat(a.marker); err == nil {
+		from := info.ModTime().Add(-time.Minute - api.RequestAnalyticsRollupMinuteGrace - interval)
+		if crash, ok := a.store.(state.RequestAnalyticsRollupCrashStore); ok {
+			if err := crash.RecordRequestAnalyticsRollupGapsFromTelemetry(ctx, from, a.now()); err != nil {
+				a.log.Error("request analytics rollups: could not mark the minutes a stopped apid lost", "from", from, "err", err)
+			} else {
+				a.log.Warn("request analytics rollups: the previous apid stopped without its final flush; marked the minutes it may have lost", "from", from)
 			}
 		}
+	}
+	a.touchMarker()
+}
+
+// touchMarker creates or touches the crash marker. A marker that cannot be
+// written turns the feature off for this run rather than failing analytics.
+func (a *RequestAnalyticsRollups) touchMarker() {
+	if a.marker == "" {
+		return
+	}
+	now := a.now()
+	if os.Chtimes(a.marker, now, now) == nil {
+		return
+	}
+	f, err := os.OpenFile(a.marker, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err == nil {
+		err = f.Close()
+	}
+	if err == nil {
+		err = os.Chtimes(a.marker, now, now)
+	}
+	if err != nil {
+		a.log.Warn("request analytics rollups: crash marker unavailable; a crash's lost minutes will not be marked", "path", a.marker, "err", err)
+		a.marker = ""
 	}
 }
 
