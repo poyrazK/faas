@@ -653,6 +653,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				budgetDetached = isLongLivedForward(r)
 				if budgetDetached {
 					recordTrafficStreamDetached(r.Context())
+					if isEventStream(w.Header()) || r.Header.Get("x-faas-protocol") == "grpc" {
+						recordTrafficLongLivedSession(r.Context())
+					}
 					if isEventStream(w.Header()) {
 						// An EventSource reconnects with Last-Event-ID, so a
 						// gateway restart ends it cleanly below rather than
@@ -1096,6 +1099,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// the 24-hour ceiling, and client cancellation.
 				detachBudget()
 				recordTrafficStreamDetached(r.Context())
+				if upgraded {
+					recordTrafficLongLivedSession(r.Context())
+				}
 				upgradeEstablished = true
 			}
 			if upgraded {

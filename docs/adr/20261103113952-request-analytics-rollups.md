@@ -307,3 +307,33 @@ Two more reductions follow in the same change:
    when it updates the row (`request_analytics_hist_add_int4`); a later
    contract migration drops `latency_hist`. That saves about 26% of every
    rollup row.
+
+## Amendment 4 (2026-11-09): coverage over quiet spans, and crash losses
+
+1. **Coverage is backdated over spans with no traffic.** A tier's coverage
+   starts at the app's first rollup minute, and a window starting before it
+   fell back to raw rows. That included every window longer than a new
+   app's age, and every window of an app idle when rollups started, though
+   no raw rows existed before the coverage either: those reads were slow
+   and capped by the debugger's ingest limit for nothing. Readers now ask
+   whether the app has raw telemetry received in `[window start, coverage)`
+   (`RequestTelemetryExistsBetween`, an index probe). When it has none, the
+   tier's coverage reads as starting before the window, for the minute tier
+   and the hourly tier alike, so the hourly tier answers the app's first
+   hour whole. When raw rows exist there, the rollups miss traffic and raw
+   rows answer, as before. The probe runs only for a window that starts
+   before a tier's coverage.
+2. **A crash's lost minutes are marked.** apid holds each minute until 30 s
+   after it closes (amendment 3), so a crash or a kill lost up to about
+   100 s of rollups with nothing recording it, and analytics under-counted
+   those windows as complete. apid now keeps a marker file while its
+   aggregator runs (`/var/lib/faas/apid-analytics-rollups.running`,
+   `FAAS_ANALYTICS_ROLLUP_CRASH_MARKER`), touched at every successful flush
+   and removed after a clean final flush. A start that finds it marks as
+   lost (`request_analytics_rollup_gaps`) every app minute with raw
+   telemetry from a minute, the grace and a flush interval before the
+   marker's last touch until the start. apid writes raw rows as they arrive,
+   and an app over its ingest cap still stores its first rows each minute,
+   so the active apps are found. With more than one apid replica, a crash
+   also marks the minutes the others answered, which errs toward
+   "incomplete". A marker that cannot be written turns this off for the run.

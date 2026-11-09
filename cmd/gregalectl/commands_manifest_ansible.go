@@ -276,10 +276,14 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if gw := m.Egress.TenantGateway; gw != nil && standby.Name == tenantEgressGatewayHost {
 			return nil, fmt.Errorf("postgresql.standby name %q is reserved for the tenant egress gateway", tenantEgressGatewayHost)
 		}
+		standbyDiskVars, err := renderStandbyDiskEncryptionVars(m, standby)
+		if err != nil {
+			return nil, fmt.Errorf("postgresql.standby disk encryption: %w", err)
+		}
 		writeInventoryGroup(&inventory, "postgres_standby", []string{standby.Name})
 		hostVars = append(hostVars, manifestAnsibleFile{
 			Path: filepath.Join(outputDir, "inventory", "host_vars", standby.Name+".yml"),
-			Body: []byte(renderPostgresStandbyHostVars(standby)),
+			Body: []byte(renderPostgresStandbyHostVars(standby) + standbyDiskVars),
 		})
 	}
 	files := []manifestAnsibleFile{{

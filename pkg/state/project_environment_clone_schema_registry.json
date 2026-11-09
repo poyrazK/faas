@@ -7803,6 +7803,7 @@
     "columns": [
       "boot_id",
       "deadline_signing",
+      "edge_header_secrets_boot",
       "generation",
       "managed_circuit",
       "managed_http",
