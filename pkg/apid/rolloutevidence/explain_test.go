@@ -35,7 +35,7 @@ type fakeStore struct {
 	live        []state.Deployment
 	routes      map[string]map[string]routeStats // deployment → route → stats
 	rows        []sqlc.ListRequestTelemetryByAppRow
-	summary     sqlc.RequestTelemetryAnalyticsSummaryRow
+	errorArgs   []sqlc.RequestTelemetryErrorsByRouteParams
 	listed      []sqlc.ListRequestTelemetryByAppParams
 	windows     []pgtype.Timestamptz
 }
@@ -59,6 +59,7 @@ func (f *fakeStore) LiveDeployments(context.Context, string) ([]state.Deployment
 
 func (f *fakeStore) RequestTelemetryErrorsByRoute(_ context.Context, arg sqlc.RequestTelemetryErrorsByRouteParams) ([]sqlc.RequestTelemetryErrorsByRouteRow, error) {
 	f.windows = append(f.windows, arg.ReceivedAt)
+	f.errorArgs = append(f.errorArgs, arg)
 	var out []sqlc.RequestTelemetryErrorsByRouteRow
 	for route, stats := range f.routes[uuid.UUID(arg.DeploymentID.Bytes).String()] {
 		out = append(out, sqlc.RequestTelemetryErrorsByRouteRow{Route: route, Requests: stats.requests, ErrorRequests: stats.errors})
@@ -74,8 +75,14 @@ func (f *fakeStore) RequestTelemetryBaselineP95ByRoute(_ context.Context, arg sq
 	return out, nil
 }
 
-func (f *fakeStore) RequestTelemetryAnalyticsSummary(context.Context, sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, error) {
-	return f.summary, nil
+// RequestTelemetryLatencyWeightsByRoute serves each route's requests at its
+// p95, so a one-route deployment's weighted p95 is that p95.
+func (f *fakeStore) RequestTelemetryLatencyWeightsByRoute(_ context.Context, arg sqlc.RequestTelemetryLatencyWeightsByRouteParams) ([]sqlc.RequestTelemetryLatencyWeightsByRouteRow, error) {
+	var out []sqlc.RequestTelemetryLatencyWeightsByRouteRow
+	for route, stats := range f.routes[uuid.UUID(arg.DeploymentID.Bytes).String()] {
+		out = append(out, sqlc.RequestTelemetryLatencyWeightsByRouteRow{Route: route, LatencyMs: stats.p95, Requests: stats.requests})
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListRequestTelemetryByApp(_ context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error) {

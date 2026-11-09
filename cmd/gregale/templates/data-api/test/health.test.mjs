@@ -29,7 +29,7 @@ async function fixture(t, coordinated = false) {
     for (const server of [gateway, admin]) server.closeAllConnections()
     await Promise.all([gateway, admin].map(server => new Promise(resolve => server.close(resolve))))
   })
-  return { config, state, admin, base: `http://127.0.0.1:${gateway.address().port}` }
+  return { config, state, admin, gateway, base: `http://127.0.0.1:${gateway.address().port}` }
 }
 
 test('liveness needs no engine, database, JWT or admission and readiness distinguishes observations', async t => {
@@ -113,7 +113,28 @@ test('completed checks answer public health polling for the cache interval', asy
   assert.equal((await expired.json()).admission.capacity, 1, 'admission is read live')
 })
 
-test('concurrent hung probes have a total deadline and share bounded engine and refresh work', { timeout: 10000 }, async t => {
+test('an unready answer is never reused, so a starting engine reports ready at once', async t => {
+  const { state, base } = await fixture(t)
+  state.frozen = true
+  state.sql = 503
+  assert.equal((await fetch(base + '/healthz')).status, 503)
+  state.sql = 200
+  assert.equal((await fetch(base + '/healthz')).status, 200, 'the platform readiness probe must not see a remembered "not yet"')
+  assert.equal(state.probes.filter(path => path === '/ready').length, 2)
+})
+
+test('an engine stop, start, reload or restore forgets the cached answer', async t => {
+  const { state, base, gateway } = await fixture(t)
+  state.frozen = true
+  assert.equal((await fetch(base + '/healthz')).status, 200)
+  state.sql = 503
+  assert.equal((await fetch(base + '/healthz')).status, 200, 'within the interval the ready answer is reused')
+  gateway.invalidateHealth()
+  assert.equal((await fetch(base + '/healthz')).status, 503, 'the engine it described is gone')
+  assert.equal(state.probes.filter(path => path === '/ready').length, 2)
+})
+
+test('concurrent hung probes have a total deadline and share bounded engine and refresh work',{ timeout: 10000 }, async t => {
   let release, reads = 0, probes = 0, clock = 0
   const admin = http.createServer(req => { if (req.url === '/ready') probes++ })
   await new Promise(resolve => admin.listen(0, '127.0.0.1', resolve))

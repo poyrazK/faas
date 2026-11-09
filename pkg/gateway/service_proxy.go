@@ -1653,7 +1653,16 @@ func (p *ServiceProxy) WakeTarget(ctx context.Context, appID string, port int) (
 	if len(endpoints) == 0 {
 		return Target{}, ErrNoServiceTarget
 	}
+	// A Node inspector client opens one connection to list targets and
+	// another to attach by target ID, each through its own tunnel. Pick the
+	// same instance every time (lowest instance ID) rather than whichever the
+	// registry lists first, so both land on the process that issued the ID.
 	endpoint := endpoints[0]
+	for _, candidate := range endpoints[1:] {
+		if candidate.InstanceID < endpoint.InstanceID {
+			endpoint = candidate
+		}
+	}
 	return Target{AppID: appID, NodeID: endpoint.NodeID, InstanceID: endpoint.InstanceID, DeploymentID: endpoint.DeploymentID, Port: port}, nil
 }
 

@@ -41304,6 +41304,7 @@ CREATE TABLE public.gateway_traffic_runtime_observations (
     security_revocation boolean DEFAULT false NOT NULL,
     managed_http boolean DEFAULT false NOT NULL,
     managed_circuit boolean DEFAULT false NOT NULL,
+    edge_header_secrets_boot uuid,
     CONSTRAINT gateway_traffic_runtime_observations_check CHECK (((NOT managed_circuit) OR managed_http)),
     CONSTRAINT gateway_traffic_runtime_observations_check1 CHECK ((((retry_counter_mode = ANY (ARRAY['shared'::text, 'redis'::text])) AND (retry_backend_id <> ''::text)) OR ((retry_counter_mode = ANY (ARRAY['local'::text, 'unwired'::text])) AND (retry_backend_id = ''::text)))),
     CONSTRAINT gateway_traffic_runtime_observations_generation_check CHECK ((generation > 0)),
@@ -54852,6 +54853,18 @@ CREATE TABLE public.realtime_node_connections (
     account_id uuid NOT NULL,
     connections integer NOT NULL,
     CONSTRAINT realtime_node_connections_connections_check CHECK ((connections > 0))
+);
+
+
+--
+-- Name: realtime_node_endpoint_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.realtime_node_endpoint_connections (
+    node_name text NOT NULL,
+    endpoint_id uuid NOT NULL,
+    connections integer NOT NULL,
+    CONSTRAINT realtime_node_endpoint_connections_connections_check CHECK ((connections > 0))
 );
 
 
@@ -70331,6 +70344,14 @@ ALTER TABLE ONLY public.realtime_node_connections
 
 
 --
+-- Name: realtime_node_endpoint_connections realtime_node_endpoint_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_endpoint_connections
+    ADD CONSTRAINT realtime_node_endpoint_connections_pkey PRIMARY KEY (node_name, endpoint_id);
+
+
+--
 -- Name: realtime_usage_hours realtime_usage_hours_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81087,6 +81108,13 @@ CREATE INDEX realtime_group_ordering_predecessor ON public.managed_realtime_cons
 --
 
 CREATE INDEX realtime_node_connections_account ON public.realtime_node_connections USING btree (account_id);
+
+
+--
+-- Name: realtime_node_endpoint_connections_endpoint; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX realtime_node_endpoint_connections_endpoint ON public.realtime_node_endpoint_connections USING btree (endpoint_id);
 
 
 --
@@ -104126,6 +104154,14 @@ ALTER TABLE ONLY public.queue_bindings
 
 ALTER TABLE ONLY public.realtime_node_connections
     ADD CONSTRAINT realtime_node_connections_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.realtime_node_connection_syncs(node_name) ON DELETE CASCADE;
+
+
+--
+-- Name: realtime_node_endpoint_connections realtime_node_endpoint_connections_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_endpoint_connections
+    ADD CONSTRAINT realtime_node_endpoint_connections_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.realtime_node_connection_syncs(node_name) ON DELETE CASCADE;
 
 
 --

@@ -66,7 +66,7 @@ func TestVmmdDialerStreamsLargeWrites(t *testing.T) {
 	d := NewVmmdDialerWith(nil, bufDial(t, func(g *grpc.Server) { vmmdpb.RegisterVmmdServer(g, srv) }))
 	defer func() { _ = d.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
-	session, err := d.Dial(ctx, "unix:///run/faas/vmmd.sock", "0f8fad5b-d9cb-469f-a165-70867728950e")
+	session, err := d.Dial(ctx, Backend{Target: "unix:///run/faas/vmmd.sock", Node: "db-1"}, "0f8fad5b-d9cb-469f-a165-70867728950e")
 	cancel() // setup context ending must not end the session
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ type fakeSchedd struct {
 }
 
 func (f *fakeSchedd) WakeDatabase(_ context.Context, req *scheddpb.DatabaseRef) (*scheddpb.DatabaseRuntime, error) {
-	return &scheddpb.DatabaseRuntime{DatabaseId: req.GetDatabaseId(), State: "running", VmmdTarget: f.target}, nil
+	return &scheddpb.DatabaseRuntime{DatabaseId: req.GetDatabaseId(), NodeId: "db-1", State: "running", VmmdTarget: f.target}, nil
 }
 
 func (f *fakeSchedd) TouchDatabase(_ context.Context, req *scheddpb.TouchDatabaseRequest) (*scheddpb.TouchDatabaseResponse, error) {
@@ -111,8 +111,8 @@ func TestScheddWaker(t *testing.T) {
 	}
 	defer func() { _ = conn.Close() }()
 	w := NewScheddWaker(scheddpb.NewScheddClient(conn))
-	if target, err := w.Wake(context.Background(), "db"); err != nil || target != "tcp://10.0.2.10:7443" {
-		t.Fatalf("Wake = %q, %v", target, err)
+	if got, err := w.Wake(context.Background(), "db"); err != nil || got != (Backend{Target: "tcp://10.0.2.10:7443", Node: "db-1"}) {
+		t.Fatalf("Wake = %+v, %v", got, err)
 	}
 	if err := w.Touch(context.Background(), "db", 512); err != nil || srv.touched != "db" || srv.egress != 512 {
 		t.Fatalf("Touch = %v (touched %q, egress %d)", err, srv.touched, srv.egress)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -49,6 +51,66 @@ func (s *fakeRollupStore) RecordRequestAnalyticsRollupGaps(_ context.Context, ga
 	}
 	s.gaps = append(s.gaps, gaps...)
 	return nil
+}
+
+// crashSpans records the spans marked lost after an unclean stop.
+type crashRollupStore struct {
+	fakeRollupStore
+	spans [][2]time.Time
+}
+
+func (s *crashRollupStore) RecordRequestAnalyticsRollupGapsFromTelemetry(_ context.Context, from, until time.Time) error {
+	s.spans = append(s.spans, [2]time.Time{from, until})
+	return nil
+}
+
+// An apid that stopped without its final flush leaves the marker behind;
+// the next start marks the minutes it may have lost, from a minute, the
+// grace and a flush interval before the marker's last touch (amendment 4).
+func TestRequestAnalyticsRollupsMarkWhatACrashLost(t *testing.T) {
+	store := &crashRollupStore{}
+	marker := filepath.Join(t.TempDir(), "rollups.running")
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	crashed := time.Now().Add(-30 * time.Second).Truncate(time.Second)
+	if err := os.Chtimes(marker, crashed, crashed); err != nil {
+		t.Fatal(err)
+	}
+	rollups := NewRequestAnalyticsRollups(store, nil, nil).WithCrashMarker(marker)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	rollups.Run(ctx, 10*time.Second)
+	if len(store.spans) != 1 {
+		t.Fatalf("marked spans = %v, want one", store.spans)
+	}
+	wantFrom := crashed.Add(-time.Minute - api.RequestAnalyticsRollupMinuteGrace - 10*time.Second)
+	if from, until := store.spans[0][0], store.spans[0][1]; !from.Equal(wantFrom) || until.Before(crashed) {
+		t.Fatalf("marked [%s, %s), want from %s until now", from, until, wantFrom)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker after a clean stop: %v, want it removed", err)
+	}
+}
+
+// A clean start marks nothing; a failed final flush keeps the marker so the
+// next start marks that loss.
+func TestRequestAnalyticsRollupsMarkerFollowsTheFinalFlush(t *testing.T) {
+	store := &crashRollupStore{}
+	marker := filepath.Join(t.TempDir(), "rollups.running")
+	rollups := NewRequestAnalyticsRollups(store, nil, nil).WithCrashMarker(marker)
+	rollups.Add(RequestAnalyticsRollupRow{EventID: uuid.New(), AccountID: uuid.New(), AppID: uuid.New(), DeploymentID: uuid.New(),
+		ReceivedAt: time.Now(), Route: "GET /", Method: "GET", Status: 200, LatencyMS: 5, Count: 1})
+	store.err = errors.New("postgres down")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	rollups.Run(ctx, 10*time.Second)
+	if len(store.spans) != 0 {
+		t.Fatalf("a first start marked %v", store.spans)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("marker after a failed final flush: %v, want it kept", err)
+	}
 }
 
 func (s *fakeRollupStore) requests(kind, dimension string) int64 {

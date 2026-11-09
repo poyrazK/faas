@@ -42,6 +42,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_AI_GATEWAY_ENABLED` | apid, outboundd, shared | `default` |  |  | `int` | boot fallback for the ai_gateway platform flag (ADR-1700): optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-991), any other value keeps it closed, unset preserves the TOML setting (default off); ignored once an operator writes platform_flag.ai_gateway |
 | `FAAS_ALERTMANAGER_URL` | apid | `default` |  |  | `` |  |
 | `FAAS_ALERT_EVAL_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_ANALYTICS_ROLLUP_CRASH_MARKER` | apid | `default` |  | /var/lib/faas/apid-analytics-rollups.running | `` | ADR-20261103113952 amendment 4: file apid keeps while its analytics rollup aggregator runs, removed after a clean final flush; a start that finds it marks the minutes the stopped apid may have lost; empty turns it off |
 | `FAAS_ANOMALY_ALERTS_ENABLED` | apid, shared | `default` |  | 0 | `` | ADR-744 operator gate for above_baseline/below_baseline alert comparisons; explicit 1 enables the internal preview; boot fallback for the anomaly_alerts platform flag (ADR-1700), ignored once an operator writes platform_flag.anomaly_alerts |
 | `FAAS_APID_ADVISORY_SOCK` | apid, vmmd, shared | `unit` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_SOCKET` | apid, gatewayd-internal | `default` |  |  | `` |  |
@@ -217,11 +218,12 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DEPLOY_BASE_REF_PYTHON313` | shared | `envfile` |  |  | `` |  |
 | `FAAS_DEPLOY_DOMAIN` | apid, bridged, builderd, gatewayd-internal, gatewayd-public, imaged, schedd, shared | `default` |  | gregale.dev | `` | ADR-20261026100000 domain layout; unset keeps the shared layout; domain of deployment previews and environment hosts; the drop-ins set it from faas_deploy_domain |
 | `FAAS_DEV` | shared, apid | `dev-only` |  |  | `` | must never be set on a production host |
+| `FAAS_DEVELOPER_ENVIRONMENT` | shared | `guest` |  |  | `` | platform-authored workload identity; "1" only in a `gregale dev` environment, injected by the scheduler and never customer-controlled; guest-init honors FAAS_DEV_DEBUG only under it |
 | `FAAS_DEV_BRIDGE_ADDR` | bridged | `default` |  | 127.0.0.1:9098 | `` | loopback-only development relay listener |
 | `FAAS_DEV_BRIDGE_ENABLED` | apid, bridged, gatewayd-internal | `default` |  | 0 | `` | ADR-378 operator gate; explicit 1 on the API, relay and compute gateways |
 | `FAAS_DEV_BRIDGE_GATEWAY_URL` | bridged | `default` |  | http://127.0.0.1:8080 | `` | existing public gateway ingress for scoped development dependencies |
 | `FAAS_DEV_BRIDGE_RELAY_URL` | apid | `dropin` |  | http://127.0.0.1:9098 | `` | API-to-relay loopback hop |
-| `FAAS_DEV_DEBUG` | shared | `guest` |  |  | `` | ADR-741 developer debugger switch; set by `gregale dev --debug` as app env on the developer environment only and read by guest-init, which starts the Node inspector |
+| `FAAS_DEV_DEBUG` | shared | `guest` |  |  | `` | ADR-741 developer debugger switch; set by `gregale dev --debug` as app env on the developer environment only and read by guest-init, which starts the Node inspector only when FAAS_DEVELOPER_ENVIRONMENT=1 |
 | `FAAS_DEV_PATCH_DELIVERY` | apid, vmmd | `dropin` |  | 0 | `` | ADR-740 developer live source patches; 99-faas-dev-patch.conf drop-ins from control_plane_service and vmmd_service (faas_dev_patch_delivery_enabled); both daemons must agree |
 | `FAAS_DEV_TOKEN` | apid | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_DEV_WATCH` | shared | `guest` |  |  | `` | ADR-1170 watch-mode developer image marker; set in the image by the watch-mode build and read by guest-init, which then applies live patches without restarting the development server |
@@ -841,6 +843,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REHEARSAL_WORKER_FAULTS` | apid | `default` |  | 0 | `` | opt-in cooperative worker-termination rehearsals; disabled pending native lifecycle qualification |
 | `FAAS_REKEY_ENABLED` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_REKEY_PROGRESS_FILE` | apid | `default` |  |  | `` |  |
+| `FAAS_RELEASE_CONNECTIONS_ON_DESTROY` | vmmd | `default` |  |  | `` | optional boolean kill switch for resetting an app guest's TCP connections before vmmd destroys it (ADR-20261109130000); production default is enabled |
 | `FAAS_RELEASE_PHASE_ENABLED` | apid, imaged | `default` |  |  | `` | opt-in for pre-boot release commands, set the same on apid and imaged; while off apid refuses deployments declaring a release command with `release_phase_unavailable` and hides the release-commands capability, and imaged fails any that reach it; enable only alongside `FAAS_APP_TASK_DISPATCH=1` on schedd |
 | `FAAS_REQUEST_AUDIT_ENABLED` | gatewayd-internal | `default` |  |  | `` | exact request audit is off by default until the receiver rollout and path-privacy review are complete (ADR-242) |
 | `FAAS_REQUEST_ID_JOURNAL_LOCAL` | gatewayd-internal | `default` |  | 0 | `` | `1` keeps the request-ID journal on this node (state directory `request-journal/`) and answers apid's lookups over the request-telemetry connection, instead of apid storing a control-plane row per request (ADR-20261101085552); turn on only once every apid serves RequestIDLookups |

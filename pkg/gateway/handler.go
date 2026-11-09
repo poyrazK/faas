@@ -2333,7 +2333,7 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 	// The deployment verifier presents a short-lived, random challenge that is
 	// bound to this app and candidate deployment. It must reach the guest health
 	// endpoint even when the customer enables the ordinary API-key gate.
-	if h.authorizedDeploymentSmoke(r, app) {
+	if h.authorizedDeploymentSmoke(r, app) || routeProbePassesPlatformAuth(r) {
 		return true
 	}
 	if !app.RequireAuthn {
@@ -5286,8 +5286,10 @@ func (h *Handler) enforcePublicAuth(w http.ResponseWriter, r *http.Request, rec 
 	}
 	// Platform deployment smoke is independently authenticated by the cached,
 	// app-and-deployment-bound challenge. Requiring customer bearer/basic auth
-	// here would make every protected app impossible to deploy.
-	if h.authorizedDeploymentSmoke(r, app) {
+	// here would make every protected app impossible to deploy. A validated
+	// route probe passes for the same reason: the canary of a protected app
+	// would otherwise roll out without evidence (ADR-847 amendment 2).
+	if h.authorizedDeploymentSmoke(r, app) || routeProbePassesPlatformAuth(r) {
 		return true
 	}
 	// Open → pass-through. The mode validator above keeps this switch
@@ -6633,8 +6635,9 @@ haveApp:
 		return
 	}
 
-	// ADR-847: a route probe pins one live deployment and keeps every customer
-	// auth gate; it is never combined with the smoke bypass.
+	// ADR-847: a route probe pins one live deployment and passes only the
+	// platform's own auth gates (amendment 2); it is never combined with the
+	// smoke bypass.
 	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
 	if deploymentSmoke {
 		probeDeploymentID, probeToken, routeProbe = "", "", false
@@ -7589,6 +7592,9 @@ haveApp:
 	if !deploymentSmoke && !routeProbe && projectReleaseDeploymentID == "" &&
 		(clientRevisionID != "" || app.PinnedDeploymentID != "" && app.PublicEnvironmentID == "") {
 		recordTrafficDeploymentPinned(r.Context())
+	}
+	if !deploymentSmoke && !routeProbe {
+		recordTrafficSelectedDeployment(r.Context(), exactDeploymentID)
 	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
@@ -8781,8 +8787,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		appUUID := appIDFromContext(r.Context())
 		if acctUUID != uuid.Nil && appUUID != uuid.Nil {
 			var deploymentUUID uuid.UUID
-			if target.DeploymentID != "" {
-				deploymentUUID, _ = uuid.Parse(target.DeploymentID)
+			if deploymentID := decision.telemetryDeployment(target, status); deploymentID != "" {
+				deploymentUUID, _ = uuid.Parse(deploymentID)
 			}
 			telemetryRoute := requestTelemetryRouteFrom(r)
 			if telemetryRoute == "" {
@@ -8852,7 +8858,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
 				PlatformRefusal:                      decision.platformRefusal(status),
 				DeploymentPinned:                     decision.deploymentPinned,
-				LongLived:                            decision.streamDetached,
+				LongLived:                            decision.longLived(requestOutlivedBudget(r.Context())),
 				exactSample:                          status >= http.StatusInternalServerError || exactRequestTelemetryFrom(r.Context()),
 			}
 			unbillable := usageUnbillable(r, status)

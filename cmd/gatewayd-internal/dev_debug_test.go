@@ -68,8 +68,42 @@ type devDebugFixture struct {
 	devApp  state.App
 	prodApp state.App
 	targets *fakeDebugTargets
+	audit   *recordingDebugAudit
 	mu      sync.Mutex
 	ports   []int
+}
+
+type recordingDebugAudit struct {
+	mu     sync.Mutex
+	events []recordedDebugAudit
+}
+
+type recordedDebugAudit struct {
+	kind      string
+	accountID string
+	data      map[string]any
+}
+
+func (a *recordingDebugAudit) Emit(_ context.Context, kind string, accountID *string, data map[string]any) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	event := recordedDebugAudit{kind: kind, data: data}
+	if accountID != nil {
+		event.accountID = *accountID
+	}
+	a.events = append(a.events, event)
+}
+
+func (a *recordingDebugAudit) of(kind string) []recordedDebugAudit {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var out []recordedDebugAudit
+	for _, event := range a.events {
+		if event.kind == kind {
+			out = append(out, event)
+		}
+	}
+	return out
 }
 
 func newDevDebugFixture(t *testing.T) *devDebugFixture {
@@ -93,8 +127,8 @@ func newDevDebugFixture(t *testing.T) *devDebugFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &devDebugFixture{key: key, devApp: devApp, prodApp: prodApp, targets: &fakeDebugTargets{}}
-	auth := mwauth.New(store, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), middleware.NewLimiter(middleware.AuthLimitConfig{}), nil)
+	f := &devDebugFixture{key: key, devApp: devApp, prodApp: prodApp, targets: &fakeDebugTargets{}, audit: &recordingDebugAudit{}}
+	auth := mwauth.New(store, nil, nil, f.audit, slog.New(slog.NewTextHandler(io.Discard, nil)), middleware.NewLimiter(middleware.AuthLimitConfig{}), nil)
 	tunnel := &devDebugTunnel{auth: auth, log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		forward: func(_ context.Context, conn net.Conn, target gateway.Target) error {
 			f.mu.Lock()
@@ -141,9 +175,26 @@ func TestDevDebugTunnelReachesInspectorPortOfDeveloperApp(t *testing.T) {
 		t.Fatalf("echo = %q, %v", body, err)
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if len(f.ports) != 1 || f.ports[0] != api.DevDebugNodePort || len(f.targets.woke) != 1 || f.targets.woke[0] != f.devApp.ID {
+		f.mu.Unlock()
 		t.Fatalf("forwarded ports %v, woke %v; want the developer app's inspector port", f.ports, f.targets.woke)
+	}
+	f.mu.Unlock()
+
+	// The session is audited when it attaches and again, with its duration,
+	// when it ends.
+	attached := f.audit.of("dev.debugger.attached")
+	if len(attached) != 1 || attached[0].accountID != f.devApp.AccountID ||
+		attached[0].data["app_id"] != f.devApp.ID || attached[0].data["instance_id"] != "instance-1" || attached[0].data["key_id"] == nil || attached[0].data["key_id"] == "" {
+		t.Fatalf("attach audit = %+v, want one event naming the account, key, app and instance", attached)
+	}
+	_ = socket.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(f.audit.of("dev.debugger.detached")) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if detached := f.audit.of("dev.debugger.detached"); len(detached) != 1 || detached[0].data["duration_ms"] == nil {
+		t.Fatalf("detach audit = %+v, want one event with a duration", detached)
 	}
 }
 
