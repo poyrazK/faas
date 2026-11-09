@@ -4731,6 +4731,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			DeadlineSigning: deps.trafficDeadlines != nil, PolicySnapshot: deps.pool != nil,
 			SecurityRevocation: deps.trafficRevocations != nil,
 			ManagedHTTP:        managedHTTP, ManagedCircuit: managedHTTP && managedCircuitWired,
+			// apid seals edge-rule header values only while every serving
+			// gateway reports that it opens them (ADR-20261108110000).
+			EdgeHeaderSecrets: deps.edgeRulesMatcher != nil && deps.edgeRulesMatcher.headerSecretOpener != nil,
 		}, readyProbe.ReadyFunc(), log)
 		defer stopTrafficObserver()
 	}

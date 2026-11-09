@@ -112,7 +112,7 @@ test("restore coalesces concurrent callbacks and replaces the pool without SQL",
   await assert.rejects(db.query("SELECT 1"), /database_unavailable/);
   await first;
   assert.equal(pools.length, 2); assert.equal(pools[0].ended, 1); assert.equal(db.generation, 1);
-  // ADR-20261109120000: after_restore stays off the network; the first query connects.
+  // ADR-20261109180000: after_restore stays off the network; the first query connects.
   assert.equal(pools[1].clients.length, 0);
   await db.query("SELECT 1");
   assert.deepEqual(pools[1].clients[0].queries.map((q) => q.sql), ["BEGIN READ ONLY", "SELECT set_config('statement_timeout', $1, true)", "SELECT 1", "COMMIT"]);

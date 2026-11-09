@@ -77,7 +77,7 @@ class Database:
                 raise
 
         async def validate(pool, cancel):
-            # after_restore stays off the network (ADR-20261109120000): the pool
+            # after_restore stays off the network (ADR-20261109180000): the pool
             # is lazy (min_size=0), so the first query reconnects and reports
             # database_unavailable itself. Validating here made every wake wait
             # for a scale-to-zero database and missed the hook deadline.

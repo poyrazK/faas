@@ -565,7 +565,7 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | `migration` | Direct required; release tasks only | Schema changes through a stable non-login schema owner; no role/database administration or replication |
 | `read_only` | Replica when available, otherwise pooled/direct primary | Public-schema SELECT and sequence inspection; no sequence advancement, DML, DDL, administration or RLS bypass |
 | `data_api` | Pooled, with direct fallback | `api`-schema DML only for the [Data API](data-api.md); RLS enforced |
-| `session` | Direct required; serving instances | Same as `read_write`; for LISTEN/NOTIFY, session advisory locks, `SET` and SQL `PREPARE` (ADR-20261109120000) |
+| `session` | Direct required; serving instances | Same as `read_write`; for LISTEN/NOTIFY, session advisory locks, `SET` and SQL `PREPARE` (ADR-20261109180000) |
 
 The pooled connection is a transaction pool: each transaction may run on a
 different server session, and a session goes back to the pool between

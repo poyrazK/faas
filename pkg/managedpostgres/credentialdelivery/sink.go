@@ -227,7 +227,7 @@ func selectManagedPostgresEndpoint(access managedpostgres.CredentialAccess, endp
 	}
 	// Auth logins depend on role session defaults and run GoTrue migrations,
 	// so like migration logins they must bypass the transaction pooler.
-	// Session logins exist to keep session features (ADR-20261109120000).
+	// Session logins exist to keep session features (ADR-20261109180000).
 	if access.DirectOnly() {
 		for _, endpoint := range endpoints {
 			if endpoint.Role == managedpostgres.EndpointDirect {

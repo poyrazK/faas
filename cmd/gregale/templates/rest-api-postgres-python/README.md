@@ -95,7 +95,7 @@ requests and invalidates the captured pool. It rereads the latest atomic snapsho
 even at the same revision, builds a fresh lazy pool, and drains old resources
 within a maximum 1.5-second application budget. It runs no SQL: the first query
 connects and reports `database_unavailable` if the database is unreachable, so
-a scale-to-zero database never holds the wake (ADR-20261109120000). Concurrent
+a scale-to-zero database never holds the wake (ADR-20261109180000). Concurrent
 restore calls coalesce. Success reopens admission; a failed snapshot reload or
 drain leaves it closed so Gregale can reject restoration and cold-boot the
 deployment. A later successful hook can recover. `/healthz` still checks the

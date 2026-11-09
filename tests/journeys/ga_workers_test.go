@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,6 +22,7 @@ import (
 func TestWorkers(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
+	journey := t
 	skipHidden(t, hiddenCapabilities(t, tg), "worker-pools")
 	slug := tg.app(t, "worker")
 	s := newStory(t)
@@ -55,7 +57,8 @@ func TestWorkers(t *testing.T) {
 		if b := binding(t); str(b, "mode") != "pull" || !truthy(field(b, "enabled")) {
 			t.Fatalf("gregale.yaml binding = %s, want an enabled pull binding", compact(b))
 		}
-		key = tg.scopedKey(t, "worker-send", "queues:send")
+		// Later steps send with it, so it lives as long as the journey.
+		key, _ = tg.scopedKeyWithID(t, journey, "worker-send", "queues:send")
 	}) {
 		return
 	}
@@ -93,16 +96,75 @@ func TestWorkers(t *testing.T) {
 		})
 		t.Logf("metric worker_drain_seconds=%.0f", time.Since(start).Seconds())
 	})
-	s.check("failed_message_is_dead_lettered", func(t *testing.T) {
+	// The failing message carries a mark so its dead letter can be found.
+	mark := fmt.Sprintf("e2e-%d", time.Now().UnixNano())
+	deadLetter := func(t *testing.T, unreplayed bool) map[string]any {
+		t.Helper()
+		args := []string{"dlq", "list", slug, "--source", "invocation", "--limit", "200"}
+		if unreplayed {
+			args = append(args, "--unreplayed")
+		}
+		res := tg.run(t, time.Minute, args...)
+		if res.exit != 0 {
+			return nil
+		}
+		for _, event := range items(object(t, res.stdout), "events") {
+			if strings.Contains(compact(field(event, "payload")), mark) {
+				return event
+			}
+		}
+		return nil
+	}
+	if !s.step("failed_message_is_dead_lettered", func(t *testing.T) {
 		r := tg.apiCall(http.MethodPost, "/v1/apps/"+slug+"/queues/send",
-			map[string]any{"queue_name": "jobs", "payload": map[string]any{"fail": true}}, key)
+			map[string]any{"queue_name": "jobs", "payload": map[string]any{"fail": true, "mark": mark}}, key)
 		if r.status != http.StatusCreated {
 			t.Fatalf("send: %s", r)
 		}
 		eventually(t, "the failed message reaches the dead letters", 8*time.Minute, 5*time.Second, func() (bool, string) {
 			b := binding(t)
-			return num(b, "dead_letter") >= 1, fmt.Sprintf("dead letters %v, depth %v", field(b, "dead_letter"), field(b, "depth"))
+			return num(b, "dead_letter") >= 1 && deadLetter(t, true) != nil,
+				fmt.Sprintf("dead letters %v, depth %v", field(b, "dead_letter"), field(b, "depth"))
 		})
+	}) {
+		return
+	}
+	s.check("dead_letter_replays", func(t *testing.T) {
+		dead := deadLetter(t, true)
+		if dead == nil {
+			t.Fatalf("`gregale dlq list` lists no dead letter marked %s", mark)
+		}
+		replayed := object(t, tg.ok(t, time.Minute, "dlq", "replay", slug, str(dead, "id")).stdout)
+		if str(replayed, "replayed_at") == "" {
+			t.Fatalf("dlq replay did not record replayed_at: %s", compact(replayed))
+		}
+		// The replay marked the only dead letter replayed. The worker fails
+		// the message again, so the queue redelivering it shows as an
+		// unreplayed dead letter once more.
+		eventually(t, "the replayed message is redelivered and fails again", 8*time.Minute, 5*time.Second, func() (bool, string) {
+			again := deadLetter(t, true)
+			return again != nil, "no unreplayed dead letter yet"
+		})
+	})
+	s.check("redeploy_drains", func(t *testing.T) {
+		before := num(binding(t), "dead_letter")
+		messages := make([]map[string]any, 10)
+		for i := range messages {
+			messages[i] = map[string]any{"payload": map[string]any{"n": i, "redeploy": true}}
+		}
+		r := tg.apiCall(http.MethodPost, "/v1/apps/"+slug+"/queues/send-batch",
+			map[string]any{"queue_name": "jobs", "messages": messages}, key)
+		if r.status != http.StatusOK {
+			t.Fatalf("batch send: %s", r)
+		}
+		tg.deployWith(t, slug, false, "--path", workerSource(t))
+		eventually(t, "the redeployed worker drains the queue", 8*time.Minute, 5*time.Second, func() (bool, string) {
+			b := binding(t)
+			return num(b, "depth") == 0 && num(b, "in_flight") == 0, fmt.Sprintf("depth %v, in flight %v", field(b, "depth"), field(b, "in_flight"))
+		})
+		if after := num(binding(t), "dead_letter"); after != before {
+			t.Fatalf("redeploy dead-lettered %v messages (before %v, after %v)", after-before, before, after)
+		}
 	})
 	s.check("pool_scales_back_to_zero", func(t *testing.T) {
 		eventually(t, "the drained pool scales to zero", 6*time.Minute, 10*time.Second, func() (bool, string) {

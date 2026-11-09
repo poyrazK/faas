@@ -531,9 +531,9 @@ func TestBringUpKeepPausedRejectsUnusableSnapshotWithoutColdBoot(t *testing.T) {
 	}
 }
 
-func (v *fakeVMM) TriggerResumeHook(_ context.Context, l Lease, hostTimeUnixNano int64) error {
+func (v *fakeVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
 	v.mu.Lock()
-	v.resumeHookCalls = append(v.resumeHookCalls, resumeHookCall{Instance: l.Instance, HostTimeUnixNano: hostTimeUnixNano})
+	v.resumeHookCalls = append(v.resumeHookCalls, resumeHookCall{Instance: l.Instance, HostTimeUnixNano: hostTimeUnixNano, Identity: resumeIdentityWireFromContext(ctx)})
 	v.mu.Unlock()
 	// Default: succeed. Tests that exercise the resume-hook error path should
 	// set resumeHookErr (see manager_test.go).
@@ -545,6 +545,8 @@ func (v *fakeVMM) TriggerResumeHook(_ context.Context, l Lease, hostTimeUnixNano
 type resumeHookCall struct {
 	Instance         string
 	HostTimeUnixNano int64
+	// Identity is what the production hook would send (ADR-20261107160000).
+	Identity *resumeIdentityWire
 }
 
 // TestWakeColdBoot_DoesNotInvokeResumeHook pins the post-restore-only

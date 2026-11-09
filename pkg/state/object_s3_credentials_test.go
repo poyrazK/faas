@@ -147,7 +147,7 @@ func objectS3ComputeBindingCreateSuite(t *testing.T, base state.Store) {
 	if _, err := bindings.CreateObjectS3ComputeBinding(ctx, duplicate); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate prefix = %v", err)
 	}
-	// ADR-20261109120000: only customer-authored secrets count toward the
+	// ADR-20261109180000: only customer-authored secrets count toward the
 	// plan limit; the six managed values already stored do not.
 	if count, err := base.CountAppSecrets(ctx, acct.ID, app.ID); err != nil || count != 0 {
 		t.Fatalf("managed values counted as customer secrets: %d, %v", count, err)

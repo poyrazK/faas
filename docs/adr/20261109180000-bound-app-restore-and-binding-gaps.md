@@ -1,4 +1,4 @@
-# ADR-20261109120000: Restore budget for bound apps, session Postgres bindings and binding-gap fixes
+# ADR-20261109180000: Restore budget for bound apps, session Postgres bindings and binding-gap fixes
 
 ## Status
 Accepted. Amends the lifecycle hook caps of spec §4.3 (`after_restore`

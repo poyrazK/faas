@@ -3,6 +3,8 @@ package edgerules
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -16,10 +18,24 @@ import (
 // to app; a redacted op (a credential stored before sealing) seals the value
 // previous holds for the same header. previous is the stored rule on update,
 // nil on create. action is changed in place.
+//
+// A gateway older than sealed values applies an op's empty value, so a value
+// is sealed only while every serving gateway reports that it opens them
+// (amendment 2026-11-09). Until then the value is stored as written, as
+// before sealing; responses still leave it out, and the backfill seals it
+// once the fleet can open it.
 func (s *Service) sealHeaderSecrets(ctx context.Context, app state.App, action *state.EdgeRuleAction, previous *state.EdgeRule) *api.Problem {
+	return s.sealHeaderSecretsWith(ctx, app, action, previous, nil)
+}
+
+// sealHeaderSecretsWith is sealHeaderSecrets with an optional cache of the
+// rows already stored for (app, value), so the backfill stores one row per
+// value however many versions repeat it.
+func (s *Service) sealHeaderSecretsWith(ctx context.Context, app state.App, action *state.EdgeRuleAction, previous *state.EdgeRule, sealed map[string]string) *api.Problem {
 	if action == nil || action.Headers == nil {
 		return nil
 	}
+	fleetChecked, fleetOpens := false, false
 	ops := append([]state.EdgeRuleHeaderOp(nil), action.Headers.RequestHeaders...)
 	for i := range ops {
 		op := &ops[i]
@@ -39,11 +55,23 @@ func (s *Service) sealHeaderSecrets(ctx context.Context, app state.App, action *
 			value = stored
 		}
 		op.Redacted = false
+		if value != "" && !fleetChecked {
+			fleetChecked, fleetOpens = true, s.FleetOpensHeaderSecrets(ctx)
+		}
 		switch {
+		case value != "" && !fleetOpens:
+			op.Value = value
 		case value != "":
-			id, prob := s.storeHeaderSecret(ctx, app, value)
-			if prob != nil {
-				return prob
+			key := app.ID + "\x00" + value
+			id, ok := sealed[key]
+			if !ok {
+				var prob *api.Problem
+				if id, prob = s.storeHeaderSecret(ctx, app, value); prob != nil {
+					return prob
+				}
+				if sealed != nil {
+					sealed[key] = id
+				}
 			}
 			op.Value, op.Secret, op.SecretID = "", true, id
 		case op.SecretID != "":
@@ -73,6 +101,68 @@ func storedHeaderLiteral(previous *state.EdgeRule, name, action string) (string,
 		}
 	}
 	return "", false
+}
+
+// gatewayTrafficReports is the ADR-570 wiring roster the fleet check reads.
+type gatewayTrafficReports interface {
+	ListServingGatewayTrafficRuntime(ctx context.Context) ([]state.ServingGatewayTrafficRuntime, error)
+}
+
+// FleetOpensHeaderSecrets reports whether every serving gateway freshly
+// reported that it opens sealed header values. With no registered serving
+// gateway (a single-box or development install, whose daemons upgrade
+// together) it reports true; a failed read reports false.
+//
+// Every active node with a gateway target counts, including one whose
+// listener heartbeat is stale and which convergence skips: it may still serve.
+func (s *Service) FleetOpensHeaderSecrets(ctx context.Context) bool {
+	all, err := s.Host.Store().ListComputeNodes(ctx, false)
+	if err != nil {
+		s.Host.Logger().Warn("edge rules: serving gateways unavailable; header values stay unsealed for now", "err", err)
+		return false
+	}
+	var nodes []string
+	for _, node := range all {
+		role := ""
+		if node.Role != nil {
+			role = strings.TrimSpace(*node.Role)
+		}
+		if node.Active && (role == "compute-only" || role == "compute-node") &&
+			node.GatewayTargetURL != nil && strings.TrimSpace(*node.GatewayTargetURL) != "" {
+			nodes = append(nodes, node.Name)
+		}
+	}
+	if len(nodes) == 0 {
+		return true
+	}
+	roster, ok := s.Host.Store().(gatewayTrafficReports)
+	if !ok {
+		return false
+	}
+	reports, err := roster.ListServingGatewayTrafficRuntime(ctx)
+	if err != nil {
+		s.Host.Logger().Warn("edge rules: gateway wiring reports unavailable; header values stay unsealed for now", "err", err)
+		return false
+	}
+	return gatewaysOpenHeaderSecrets(nodes, reports)
+}
+
+// gatewaysOpenHeaderSecrets reports whether each node has a fresh report
+// that it opens sealed header values. A node with no report, a stale or
+// retired one, or one from a release that predates sealing does not.
+func gatewaysOpenHeaderSecrets(nodes []string, reports []state.ServingGatewayTrafficRuntime) bool {
+	for _, node := range nodes {
+		i := slices.IndexFunc(reports, func(r state.ServingGatewayTrafficRuntime) bool { return r.NodeName == node })
+		if i < 0 {
+			return false
+		}
+		r := reports[i]
+		if !r.EdgeHeaderSecrets || r.Generation <= 0 || r.ReportedAt.IsZero() || r.DatabaseNow.IsZero() ||
+			r.ReportedAt.After(r.DatabaseNow) || r.ReportedAt.Before(r.DatabaseNow.Add(-api.TrafficRuntimeObservationFreshness)) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) headerSecretStore() (state.EdgeRuleHeaderSecretStore, *api.Problem) {

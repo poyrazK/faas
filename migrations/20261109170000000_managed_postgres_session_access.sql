@@ -1,6 +1,6 @@
 -- filename: 20261109170000000_managed_postgres_session_access.sql
 -- migration-compat: expand
--- ADR-20261109120000: `session` bindings are serving credentials with
+-- ADR-20261109180000: `session` bindings are serving credentials with
 -- read_write privileges on the direct endpoint, for code that needs session
 -- features a transaction pooler cannot keep. They reach serving instances
 -- like read_write, so runtime freshness counts them.

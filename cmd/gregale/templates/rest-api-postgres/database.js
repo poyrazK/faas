@@ -70,7 +70,7 @@ export function createDatabase(poolFactory, {
     return pool;
   }, {
     validate: async (pool, signal) => {
-      // after_restore stays off the network (ADR-20261109120000): the pool
+      // after_restore stays off the network (ADR-20261109180000): the pool
       // connects on first use and that query reports database errors itself.
       // Validating here made every wake wait for a scale-to-zero database.
       if (restoring) return;

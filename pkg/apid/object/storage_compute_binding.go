@@ -205,7 +205,7 @@ func (s *Service) newObjectStorageComputeBinding(ctx context.Context, acct state
 		}
 	}
 	// The binding's six managed values (four of them not secret) do not consume
-	// SecretCountMax; per-bucket credential limits bound them (ADR-20261109120000).
+	// SecretCountMax; per-bucket credential limits bound them (ADR-20261109180000).
 	limits := api.MustLimitsFor(acct.Plan)
 	if !s.ObjectStorageSecretSealReady() {
 		return state.ObjectS3Credential{}, nil, objectstorage.ErrUnavailable

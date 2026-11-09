@@ -1,4 +1,4 @@
-// adr: 20261109120000 — session bindings are serving credentials on the direct endpoint.
+// adr: 20261109180000 — session bindings are serving credentials on the direct endpoint.
 package credentialdelivery_test
 
 import (

@@ -466,7 +466,7 @@ const (
 	// Session logins have read_write privileges but always use the direct
 	// endpoint, for serving code that needs session features a transaction
 	// pooler cannot keep (LISTEN, advisory locks, prepared statements, SET)
-	// (ADR-20261109120000).
+	// (ADR-20261109180000).
 	CredentialSession CredentialAccess = "session"
 )
 

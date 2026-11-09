@@ -6355,6 +6355,15 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 			return Deployment{}, ErrTrafficServingChanged
 		}
 	}
+	current := map[string]int{id: d.TrafficPercent}
+	for otherID, other := range m.deployments {
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive {
+			current[otherID] = other.TrafficPercent
+		}
+	}
+	if err := checkExpectedTrafficWeights(ctx, current); err != nil {
+		return Deployment{}, err
+	}
 
 	// Plan every weight before mutating any row, including upgrade fences.
 	priorPercent := d.TrafficPercent
@@ -23489,7 +23498,7 @@ func (m *MemStore) CountAppSecrets(_ context.Context, accountID, appID string) (
 	defer m.mu.Unlock()
 	n := 0
 	for _, s := range m.secrets {
-		// Managed binding values do not consume SecretCountMax (ADR-20261109120000).
+		// Managed binding values do not consume SecretCountMax (ADR-20261109180000).
 		if s.AppID == appID && s.AccountID == accountID && s.ManagedPostgresBindingID == "" && s.ManagedObjectStorageCredentialID == "" {
 			n++
 		}

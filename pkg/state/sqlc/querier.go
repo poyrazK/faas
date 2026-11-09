@@ -3786,6 +3786,12 @@ type Querier interface {
 	ListDueReleaseApprovalEvents(ctx context.Context, db DBTX, arg ListDueReleaseApprovalEventsParams) ([]ReleaseApprovalEvent, error)
 	ListDueRouteMonitors(ctx context.Context, db DBTX, batchLimit int32) ([]ListDueRouteMonitorsRow, error)
 	ListDueScheduledReleases(ctx context.Context, db DBTX, arg ListDueScheduledReleasesParams) ([]ListDueScheduledReleasesRow, error)
+	ListEdgeRuleSetVersionsWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEdgeRuleSetVersionsWithRequestHeaderLiteralsParams) ([]ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow, error)
+	// ADR-20261108110000 amendment 2026-11-09: the sealing backfill finds
+	// headers rules and rule-set versions that still store a request header value
+	// as written. The scan is broad (any literal value); apid applies the
+	// credential-name test.
+	ListEdgeRulesWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEdgeRulesWithRequestHeaderLiteralsParams) ([]ListEdgeRulesWithRequestHeaderLiteralsRow, error)
 	// ADR-570: replay actual recent probe history after restart. Keep unprobed
 	// opted-in upstreams as NULL samples so retirement differs from no evidence.
 	// Collapse region verdicts sharing one probe timestamp conservatively.
@@ -6738,6 +6744,10 @@ type Querier interface {
 	RecordRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupCoverageParams) error
 	// ADR-20261103113952 amendment 1: app minutes whose rollups apid lost.
 	RecordRequestAnalyticsRollupGaps(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupGapsParams) error
+	// ADR-20261103113952 amendment 4: after apid stopped without writing its
+	// pending rollups, mark every app minute with raw telemetry in the span it
+	// may have held as lost.
+	RecordRequestAnalyticsRollupGapsFromTelemetry(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupGapsFromTelemetryParams) error
 	// The request-ID journal is independent from sampled request telemetry. Only
 	// insert when the app is still owned by the authenticated account. The
 	// caller-generated record UUID makes an RPC retry idempotent without
@@ -6888,6 +6898,9 @@ type Querier interface {
 	ReopenSkippedWorkflowStepsForRetry(ctx context.Context, db DBTX, arg ReopenSkippedWorkflowStepsForRetryParams) (int64, error)
 	ReplaceAccountRecoveryCodes(ctx context.Context, db DBTX, arg ReplaceAccountRecoveryCodesParams) (int64, error)
 	ReplaceDatabaseStandby(ctx context.Context, db DBTX, arg ReplaceDatabaseStandbyParams) (int64, error)
+	// The digest is computed as edge_rules_record_set_version computes it, and
+	// the row is replaced only if no one changed it since it was read.
+	ReplaceEdgeRuleSetVersionRules(ctx context.Context, db DBTX, arg ReplaceEdgeRuleSetVersionRulesParams) (int64, error)
 	ReplaceProductionAppWorkloadSettings(ctx context.Context, db DBTX, arg ReplaceProductionAppWorkloadSettingsParams) error
 	ReplayDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayDeadLetterInvocationParams) (int64, error)
 	ReplayProductionDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayProductionDeadLetterInvocationParams) (int64, error)
@@ -7008,7 +7021,9 @@ type Querier interface {
 	// Bounded candidate/stable health summary for the deployment circuit breaker.
 	// `count` weights collapsed telemetry rows; compute request and 5xx totals,
 	// overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
-	// only one row.
+	// only one row. A long-lived session's duration (WebSocket, event or gRPC
+	// stream) is not a request latency: it counts as a request and a 5xx but stays
+	// out of both percentiles (ADR-20261028110044 amendment 7).
 	RequestTelemetryCircuitBreakerSummary(ctx context.Context, db DBTX, arg RequestTelemetryCircuitBreakerSummaryParams) (RequestTelemetryCircuitBreakerSummaryRow, error)
 	// Signal coverage for the customer debugger. Counts are weighted by the
 	// publisher's collapsed-row `count`, while the row totals make the amount
@@ -7037,6 +7052,10 @@ type Querier interface {
 	// the platform's own refusals and requests pinned to a deployment are not
 	// the deployment's errors.
 	RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryErrorsByRouteParams) ([]RequestTelemetryErrorsByRouteRow, error)
+	// Whether the app has raw telemetry received in [window_from, window_until).
+	// Analytics backdates a rollup tier's coverage over a span with none
+	// (ADR-20261103113952 amendment 4).
+	RequestTelemetryExistsBetween(ctx context.Context, db DBTX, arg RequestTelemetryExistsBetweenParams) (bool, error)
 	// One immutable deployment only. Identity joins validate ownership, never
 	// infer a tenant from today's consumer link. Counts precede all output caps.
 	RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, arg RequestTelemetryRouteCustomersParams) ([]RequestTelemetryRouteCustomersRow, error)

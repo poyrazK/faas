@@ -1,4 +1,4 @@
-// adr: 20261109120000 — a session login gets read_write grants under its own role and marker.
+// adr: 20261109180000 — a session login gets read_write grants under its own role and marker.
 package firecracker
 
 import (

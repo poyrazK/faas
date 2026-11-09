@@ -13,7 +13,7 @@ import (
 
 // afterRestoreBudgetProblem refuses an after_restore timeout above the
 // ordinary 2 s cap unless the app holds a managed PostgreSQL or object-storage
-// binding (ADR-20261109120000). Those apps reconnect to managed services on
+// binding (ADR-20261109180000). Those apps reconnect to managed services on
 // restore; in production the reconnect missed 2 s and every such wake fell
 // back to a cold boot. appID is empty for an app being created, which has no
 // binding yet.

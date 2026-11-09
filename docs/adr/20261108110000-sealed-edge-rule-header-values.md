@@ -73,3 +73,54 @@ seal domain; gatewayd-internal is that domain's only reader.
   `secret` yet; their values stay as written.
 - Trace output already redacted credential-like values; secret ops have no
   value to show.
+
+## Amendment 2026-11-09: sealing follows the fleet, and stored values are sealed
+
+**Problem.** Units release independently and apid upgrades before the
+gateways (docs/release-compatibility.md). A gatewayd-internal older than this
+ADR ignores `secret_id` and applies the op's empty value, so a request reached
+the origin with `Authorization:` set to nothing. That happened for every rule
+apid sealed while an older gateway still served it, and for every sealed rule
+after gateways were rolled back. Values stored before this ADR also stayed
+as written in the database and in up to 100 rule-set versions per app,
+masked in responses but readable at rest.
+
+**Decision.**
+
+1. **Gateways report that they open sealed values.** gatewayd-internal adds
+   `edge_header_secrets` to its traffic runtime report (ADR-570), true only
+   when it holds the edge identities. The column stores the reporting boot,
+   `edge_header_secrets_boot`, and counts only while it equals the row's
+   current `boot_id`: an older gateway's registration resets the columns it
+   knows and replaces the boot, so a rolled-back gateway stops counting.
+2. **apid seals only while every gateway reports it.** Every active compute
+   node with a gateway target needs a fresh report (within
+   `TrafficRuntimeObservationFreshness`), including a node whose listener
+   heartbeat is stale and which edge-rule convergence skips: it may still
+   serve. A deployment with no registered serving gateway (single-box,
+   development) counts as ready; its daemons upgrade together. Until then a
+   value is stored as written, as before this ADR, and still left out of
+   responses (point 5).
+3. **apid seals stored values in the background.** Every
+   `EdgeRuleHeaderSecretBackfillInterval` (15 min, first pass after 2 min),
+   once the fleet is ready, apid seals each credential value a live rule
+   still stores as written. The change goes through edge-rule convergence and
+   only if the rule did not change since it was read; it adds a rule-set
+   version and the audit event `edge_rule.header_values_sealed`. It then
+   rewrites stored rule-set versions in place: only the affected rules'
+   actions change, the digest is recomputed as the version trigger computes
+   it, and a version changed since it was read is left for the next pass. One
+   row is stored per app and value in a pass, however many versions repeat
+   it. Versions of deleted apps are skipped.
+
+**Consequences.**
+
+- During a rollout, credentials written before every gateway is upgraded are
+  stored as written for up to one backfill interval after the last gateway
+  reports.
+- Rolling gateways back to a release older than this ADR still breaks rules
+  sealed earlier; that release cannot read `secret_id`. Roll apid and the
+  gateways back together, or not past this ADR's release.
+- A version restored by a rollback holds sealed values once the backfill has
+  run; before that it restores the value as written and the next pass seals
+  it.

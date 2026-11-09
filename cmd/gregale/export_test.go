@@ -1296,7 +1296,6 @@ var DocsURLForCode = docsURLForCode
 var DocsURLForTemplate = docsURLForTemplate
 var DocsURLForTopic = docsURLForTopic
 var DoctorCheckDurableEntities = doctorCheckDurableEntities
-var DoctorCheckSecretReload = doctorCheckSecretReload
 var DoctorImageAccessError = doctorImageAccessError
 var DoctorImageContractCheck = doctorImageContractCheck
 var DoctorImageHealthcheck = doctorImageHealthcheck
@@ -2769,3 +2768,23 @@ var AddBucketBindingUnavailable = addBucketBindingUnavailable
 // region capability check and its migration-binding hint.
 var AddPostgresUnsupported = addPostgresUnsupported
 var PrintAddPostgresMigrationHint = printAddPostgresMigrationHint
+
+// ADR-20261107180000 `gregale config explain`.
+var (
+	ExplainConfigKey         = explainConfigKey
+	RenderSettingExplanation = renderSettingExplanation
+)
+
+// gregale mcp connect seams (ADR-20261109121411).
+var (
+	MCPConnectLookPath    = &mcpConnectLookPath
+	MCPConnectRun         = &mcpConnectRun
+	MCPConnectInteractive = &mcpConnectInteractive
+	MCPConnectHome        = &mcpConnectHome
+	MCPEndpointCheck      = &mcpEndpointCheck
+	MCPHeadlessToolCount  = &mcpHeadlessToolCount
+	UpsertCodexServer     = upsertCodexServer
+)
+
+// MCPConnectOptions builds the options a test passes to MCPHeadlessToolCount.
+type MCPConnectOptions = mcpConnectOptions

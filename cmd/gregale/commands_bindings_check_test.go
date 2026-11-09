@@ -195,7 +195,7 @@ func TestCmdBindingsCheckScopeAssertAndUnsupportedWaiver(t *testing.T) {
 			}
 			code, stdout, _ := runBindingCheckCLI(t, inventory, "", args...)
 			report := decodeBindingCheckCLI(t, stdout)
-			// ADR-20261109120000: a pull consumer runs in the customer's own
+			// ADR-20261109180000: a pull consumer runs in the customer's own
 			// worker, so the gate skips it with a warning instead of blocking.
 			if code != 0 || !report.Passed || report.Bindings[1].Status != "skipped" || report.Bindings[1].Reason != "pull_consumer_external" ||
 				report.AllowUnsupported != allow || !slices.Contains(bindingCheckCLIWarningCodes(report), "queue_pull_consumer_unverified") {

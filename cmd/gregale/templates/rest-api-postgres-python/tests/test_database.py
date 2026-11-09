@@ -210,7 +210,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         await self.db.query(READINESS_SQL)
 
     async def test_restore_stays_off_the_network_and_the_first_query_reports_unavailable(self):
-        # ADR-20261109120000: a scale-to-zero database must not hold the wake.
+        # ADR-20261109180000: a scale-to-zero database must not hold the wake.
         await self.db.start()
         self.h.bad_validation = True
         self.h.validate_gate = asyncio.Event()  # Any readiness SQL would hang here.

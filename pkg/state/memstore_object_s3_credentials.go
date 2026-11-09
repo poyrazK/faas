@@ -95,7 +95,7 @@ func (m *MemStore) createObjectS3ComputeBindingLocked(req ObjectS3ComputeBinding
 		return ObjectS3Credential{}, ErrConflict
 	}
 	// Managed binding values are bounded by the binding limits, not the plan's
-	// secret count (ADR-20261109120000): only customer-authored secrets count.
+	// secret count (ADR-20261109180000): only customer-authored secrets count.
 	secretCount := 0
 	for _, existing := range m.secrets {
 		if existing.AccountID == c.AccountID && existing.AppID == c.ManagedAppID && existing.ManagedPostgresBindingID == "" && existing.ManagedObjectStorageCredentialID == "" {

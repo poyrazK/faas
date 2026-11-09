@@ -1015,14 +1015,18 @@ const (
 	ProfileMaxChartPoints           = 120
 	ProfileChartMinStep             = time.Minute
 	ProfileMaxConcurrentUploads     = 4
-	ProfileMaxConcurrentQueries     = 4
-	ProfileMaxTrackedAccounts       = 10000
-	ProfileTransportTimeout         = 2 * time.Second
-	ProfileQueryTimeout             = 15 * time.Second
-	ProfileVsockPort                = 1040
-	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
-	ProfileHealthListen             = "127.0.0.1:9160"
-	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+	// ProfileCollectorLabelSlots bounds the Pyroscope collector_id label to a
+	// fixed set per deployment; one value per VM lifetime made a new series on
+	// every wake (profiling review round 4, R4-5).
+	ProfileCollectorLabelSlots  = 32
+	ProfileMaxConcurrentQueries = 4
+	ProfileMaxTrackedAccounts   = 10000
+	ProfileTransportTimeout     = 2 * time.Second
+	ProfileQueryTimeout         = 15 * time.Second
+	ProfileVsockPort            = 1040
+	ProfileLocalEndpoint        = "http://127.0.0.1:9191"
+	ProfileHealthListen         = "127.0.0.1:9160"
+	ProfileDefaultSocket        = "/run/faas/profiled.sock"
 	// ProfileRetryCacheMaxEntries bounds profiled's upload replay cache on a
 	// node. At the bound the oldest entries are evicted: the cache is
 	// best-effort replay protection, so it never refuses an upload.
@@ -2240,7 +2244,7 @@ const (
 	AfterRestoreHookDefaultTimeoutMS = 500
 	AfterRestoreHookMaxTimeoutMS     = 2000
 	// AfterRestoreHookBoundMaxTimeoutMS is the after_restore cap for an app
-	// with a managed PostgreSQL or object-storage binding (ADR-20261109120000):
+	// with a managed PostgreSQL or object-storage binding (ADR-20261109180000):
 	// reconnecting to a scale-to-zero database across clouds missed 2 s in
 	// production and fell back to a cold boot. It stays inside the host's
 	// five-second resume deadline. apid refuses it for apps without a binding.
@@ -4549,7 +4553,7 @@ type Limits struct {
 	// CodePlanLimitSecrets on the next PUT. SecretValueMaxBytes bounds the
 	// plaintext value the customer may PUT — apid rejects larger values
 	// with 413 CodeSecretValueTooLarge before sealing.
-	SecretCountMax      int // max customer-authored secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100); managed binding values do not count (ADR-20261109120000)
+	SecretCountMax      int // max customer-authored secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100); managed binding values do not count (ADR-20261109180000)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
 	// ProjectSecretCountMax bounds the secrets one project environment shares
 	// with its services (ADR-1139); each value uses SecretValueMaxBytes.
@@ -13764,6 +13768,12 @@ const (
 	TrafficRuntimeObservationTimeout   = 250 * time.Millisecond
 	TrafficRuntimeObservationFreshness = 10 * time.Second
 	TrafficRuntimeObservationMaxNodes  = 4096
+	// EdgeRuleHeaderSecretBackfillInterval is how often apid seals the
+	// credential header values edge rules and their versions still store as
+	// written (ADR-20261108110000, amendment 2026-11-09); the first pass waits
+	// EdgeRuleHeaderSecretBackfillStartDelay so gateways can report first.
+	EdgeRuleHeaderSecretBackfillInterval   = 15 * time.Minute
+	EdgeRuleHeaderSecretBackfillStartDelay = 2 * time.Minute
 	// RequestBudgetPlanMax is the largest request budget any plan may allow
 	// (Scale's 15 minutes, ADR-1150). Every per-plan ceiling is clamped to
 	// it, edge-rule and route-requirement budgets are validated against it,
@@ -15121,6 +15131,17 @@ const RouteAnalyticsQueryTimeout = 10 * time.Second
 // on the dashboard app page, which runs several of those reads on every
 // render; past it the panel is left out and the page renders without it.
 const DashboardRequestAnalyticsTimeout = 5 * time.Second
+
+// apid handles the request telemetry records that arrive together on one
+// stream as a group whose rows commit in one transaction (ADR-127
+// amendment, group commit). A group ends when the gateway half-closes its
+// batch, at RequestTelemetryReceiveGroupMax records (the gateway's batch
+// size), or when no record arrives for RequestTelemetryReceiveGroupWait, so
+// a client that waits for each outcome is still answered.
+const (
+	RequestTelemetryReceiveGroupMax  = 256
+	RequestTelemetryReceiveGroupWait = 2 * time.Millisecond
+)
 
 // RequestAnalyticsSettleLag is how far before now request analytics stops
 // judging telemetry completeness: gateways hold a minute's rows until it

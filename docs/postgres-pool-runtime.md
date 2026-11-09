@@ -272,7 +272,7 @@ lifecycle:
   admission. Keep it off the network: build the new pool lazily and let the
   first query connect and report `database_unavailable` itself. A scale-to-zero
   database can take seconds to answer, and a hook that waits for it misses the
-  restore deadline and turns every wake into a cold boot (ADR-20261109120000).
+  restore deadline and turns every wake into a cold boot (ADR-20261109180000).
   An app with a managed Postgres or object storage binding may raise
   `after_restore.timeout_ms` to 4000; other apps are capped at 2000.
 

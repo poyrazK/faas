@@ -1,6 +1,6 @@
 package apidserver_test
 
-// adr: 20261109120000 — after_restore may use up to 4 s only with a managed binding.
+// adr: 20261109180000 — after_restore may use up to 4 s only with a managed binding.
 
 import (
 	"testing"

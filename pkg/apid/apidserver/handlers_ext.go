@@ -2340,6 +2340,10 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	if err := req.ValidateExpectedTraffic(); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -2382,6 +2386,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
 		ctx = state.WithTrafficSplitReleaseLimit(ctx, releaseLimit)
+		ctx = state.WithExpectedTrafficWeights(ctx, req.ExpectedTraffic)
 		var writeErr error
 		if req.ExpectedReview != nil {
 			store, ok := s.store.(state.ReviewedTrafficStore)
@@ -2432,6 +2437,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, trafficguard.PromotionProblem(err))
 		case promotionAttemptProblem(err) != nil:
 			api.WriteProblem(w, promotionAttemptProblem(err))
+		case errors.Is(err, state.ErrTrafficServingChanged) && req.ExpectedTraffic != nil:
+			api.WriteProblem(w, api.ErrTrafficSplitChanged())
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
