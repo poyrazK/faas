@@ -1,4 +1,5 @@
 // adr: 20261101160231
+// adr: 20261109172421
 
 package sched
 
@@ -48,9 +49,31 @@ func (e *Engine) SetGuestVCPUFromCPUApps(entries []string) error {
 	return nil
 }
 
+// SetCPUSizeApps makes the listed apps' CPU follow their instance size
+// instead of their plan (ADR-20261109172421): one guest vCPU per GB of
+// instance RAM, a cpu.weight of one per 16 MB, no CPU quota unless the app
+// chose 250 or 500 millicores, and a booking of their RAM's CPU baseline. An
+// entry is an app ID or "*" for every app; it takes precedence over
+// guest_vcpu_from_cpu_apps. A listed app whose vCPU count changes cold-boots
+// once. schedd sets it from the `cpu_size_apps` runtime-config key.
+func (e *Engine) SetCPUSizeApps(entries []string) error {
+	set, err := parseAppList("cpu_size_apps", entries)
+	if err != nil {
+		return err
+	}
+	e.cpuSizeApps.Store(set)
+	return nil
+}
+
 // parseGuestVCPUApps parses guest_vcpu_from_cpu_apps entries. An empty list
 // is nil: every app on its plan.
 func parseGuestVCPUApps(entries []string) (*guestVCPUAppSet, error) {
+	return parseAppList("guest_vcpu_from_cpu_apps", entries)
+}
+
+// parseAppList parses a runtime-config app list: app IDs, or "*" for every
+// app. An empty list is nil.
+func parseAppList(key string, entries []string) (*guestVCPUAppSet, error) {
 	set := &guestVCPUAppSet{ids: map[string]struct{}{}}
 	for _, entry := range entries {
 		entry = strings.TrimSpace(entry)
@@ -62,7 +85,7 @@ func parseGuestVCPUApps(entries []string) (*guestVCPUAppSet, error) {
 		default:
 			id, err := uuid.Parse(entry)
 			if err != nil {
-				return nil, fmt.Errorf("sched: guest_vcpu_from_cpu_apps: %q is not an app ID or *", entry)
+				return nil, fmt.Errorf("sched: %s: %q is not an app ID or *", key, entry)
 			}
 			set.ids[id.String()] = struct{}{}
 		}
@@ -104,30 +127,76 @@ func (e *Engine) loadCPUShape() api.CPUShape {
 	return api.CPUShape{}
 }
 
-// guestVCPUs is the guest vCPU count app boots and books with: the plan's,
-// or for a listed app one per guest_vcpu_millicores of its CPU ceiling
+// cpuShapeState is everything that shapes an app's CPU: the
+// guest_vcpu_from_cpu_apps and cpu_size_apps lists and the shape.
+type cpuShapeState struct {
+	vcpuApps *guestVCPUAppSet
+	sizeApps *guestVCPUAppSet
+	shape    api.CPUShape
+}
+
+func (e *Engine) loadCPUShapeState() cpuShapeState {
+	return cpuShapeState{vcpuApps: e.guestVCPUApps.Load(), sizeApps: e.cpuSizeApps.Load(), shape: e.loadCPUShape()}
+}
+
+// cpuBySize reports whether app's CPU follows its instance size
+// (ADR-20261109172421).
+func (e *Engine) cpuBySize(appID string) bool {
+	return e.cpuSizeApps.Load().includes(appID)
+}
+
+// guestVCPUs is the guest vCPU count app boots and books with: the plan's;
+// for an app on cpu_size_apps one per GB of instance RAM; or for an app on
+// guest_vcpu_from_cpu_apps one per guest_vcpu_millicores of its CPU ceiling
 // (appCPUMillicores), never more than the plan's.
 func (e *Engine) guestVCPUs(app state.App, limits api.Limits) int {
-	return guestVCPUsUnder(e.guestVCPUApps.Load(), e.loadCPUShape(), app, limits)
+	return guestVCPUsUnder(e.loadCPUShapeState(), app, limits)
 }
 
-// guestVCPUsUnder is the guest vCPU count app boots with under a given list
+// guestVCPUsUnder is the guest vCPU count app boots with under given lists
 // and shape.
-func guestVCPUsUnder(apps *guestVCPUAppSet, shape api.CPUShape, app state.App, limits api.Limits) int {
-	if !apps.includes(app.ID) {
+func guestVCPUsUnder(st cpuShapeState, app state.App, limits api.Limits) int {
+	if st.sizeApps.includes(app.ID) {
+		return api.SizeVCPUs(app.RAMMB)
+	}
+	if !st.vcpuApps.includes(app.ID) {
 		return limits.VCPU
 	}
-	return shape.VCPUs(listedAppCPUMillicores(true, effectiveAppCPUMillicores(app), limits, shape), limits.VCPU)
+	return st.shape.VCPUs(listedAppCPUMillicores(true, effectiveAppCPUMillicores(app), limits, st.shape), limits.VCPU)
 }
 
-// guestVCPUShapeKey renders the list and shape the engine boots with, so a
-// change to either can be seen.
+// guestVCPUShapeKey renders the lists and shape the engine boots with, so a
+// change to any can be seen.
 func (e *Engine) guestVCPUShapeKey() string {
-	return guestVCPUShapeKey(e.guestVCPUApps.Load(), e.loadCPUShape())
+	return guestVCPUShapeKey(e.loadCPUShapeState())
 }
 
-func guestVCPUShapeKey(apps *guestVCPUAppSet, shape api.CPUShape) string {
-	return fmt.Sprintf("%s|%d|%d|%d", apps.key(), shape.BaselineMillicoresPerGB, shape.CeilingFloorMillicores, shape.VCPUMillicores)
+func guestVCPUShapeKey(st cpuShapeState) string {
+	return fmt.Sprintf("%s|%d|%d|%d|size:%s", st.vcpuApps.key(), st.shape.BaselineMillicoresPerGB, st.shape.CeilingFloorMillicores, st.shape.VCPUMillicores, st.sizeApps.key())
+}
+
+// appCPUWeight is the cpu.weight an app instance's AppSpec carries: for an
+// app whose CPU follows its size, one per 16 MB of instance RAM. Such an
+// instance's AppSpec also sets CPUUncapped (cpuBySize): no quota while its
+// ceiling is the app default; vmmd keeps a 250 or 500 millicore choice as a
+// cap. An app on its plan gets zero and false: vmmd keeps the plan's weight
+// and quota.
+func (e *Engine) appCPUWeight(app state.App) int32 {
+	if !e.cpuBySize(app.ID) {
+		return 0
+	}
+	return int32(api.SizeCPUWeight(app.RAMMB)) //nolint:gosec // bounded by SizeCPUWeightMax
+}
+
+// sizeCPUBookingMillicores is what an instance whose CPU follows its size
+// books against a node's CPU: the baseline for its own RAM (its share of a
+// busy host), never more than it can use: its vCPUs, or the cap it chose.
+func sizeCPUBookingMillicores(app state.App, shape api.CPUShape) int {
+	usable := api.SizeVCPUs(app.RAMMB) * 1000
+	if chosen := effectiveAppCPUMillicores(app); chosen < api.DefaultAppCPUMillicores {
+		usable = chosen
+	}
+	return max(1, min(usable, shape.BaselineForPlanRAM(app.RAMMB), api.AppCPUBookingMaxMillicores))
 }
 
 // appCPUMillicores is the sustained CPU ceiling (cpu.max) app boots, books
@@ -137,6 +206,10 @@ func guestVCPUShapeKey(apps *guestVCPUAppSet, shape api.CPUShape) string {
 // 1), unless the ceiling is lower still. Every other app keeps its configured
 // value.
 func (e *Engine) appCPUMillicores(app state.App, limits api.Limits) int {
+	if e.cpuBySize(app.ID) {
+		// The app's own value: vmmd runs the default without a quota.
+		return effectiveAppCPUMillicores(app)
+	}
 	return listedAppCPUMillicores(e.guestVCPUApps.Load().includes(app.ID), effectiveAppCPUMillicores(app), limits, e.loadCPUShape())
 }
 
@@ -146,6 +219,9 @@ func (e *Engine) appCPUMillicores(app state.App, limits api.Limits) int {
 // baseline, 1,000 m per GB of plan RAM: 250 m on Free … 2,000 m on Scale
 // (ADR-20261101160231 step 5b). Every other app books its configured value.
 func (e *Engine) appCPUBookingMillicores(app state.App, limits api.Limits) int {
+	if e.cpuBySize(app.ID) {
+		return sizeCPUBookingMillicores(app, e.loadCPUShape())
+	}
 	ceiling := e.appCPUMillicores(app, limits)
 	if !e.guestVCPUApps.Load().includes(app.ID) || limits.RAMMB <= 0 {
 		return ceiling
@@ -157,7 +233,7 @@ func (e *Engine) appCPUBookingMillicores(app state.App, limits api.Limits) int {
 // appCPUBookingMillicores for a listed app, zero (the app's own value) for
 // every other.
 func (e *Engine) appCPUBookingStamp(app state.App, limits api.Limits) int {
-	if !e.guestVCPUApps.Load().includes(app.ID) {
+	if !e.guestVCPUApps.Load().includes(app.ID) && !e.cpuBySize(app.ID) {
 		return 0
 	}
 	return e.appCPUBookingMillicores(app, limits)
@@ -181,7 +257,9 @@ func listedAppCPUMillicores(listed bool, configured int, limits api.Limits, shap
 // ceiling the app's instances boot with, so the policy push and the wake
 // agree. Only a listed app needs its account's plan.
 func (e *Engine) policyAppCPUMillicores(ctx context.Context, appID string, configured int) (int, error) {
-	if !e.guestVCPUApps.Load().includes(appID) {
+	if e.cpuBySize(appID) || !e.guestVCPUApps.Load().includes(appID) {
+		// An instance whose CPU follows its size takes the configured
+		// value; vmmd runs the default without a quota.
 		return configured, nil
 	}
 	app, err := e.store.AppByID(ctx, appID)
