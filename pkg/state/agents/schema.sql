@@ -259,3 +259,30 @@ CREATE TABLE jobs (
  image_materialization_status text NOT NULL,
  image_materialization_error text
 );
+CREATE TABLE apps (
+ id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ slug text NOT NULL,
+ status text NOT NULL,
+ sandbox_template boolean NOT NULL DEFAULT false
+);
+CREATE TABLE deployments (
+ id uuid NOT NULL,
+ app_id uuid NOT NULL,
+ status text NOT NULL,
+ error text,
+ rootfs_key text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE sandbox_templates (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ account_id uuid NOT NULL,
+ name text NOT NULL,
+ app_id uuid NOT NULL UNIQUE,
+ start_cmd text,
+ ready_cmd text,
+ ready_timeout_s integer NOT NULL DEFAULT 60,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE (account_id, name)
+);

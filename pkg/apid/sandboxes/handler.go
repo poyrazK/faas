@@ -55,6 +55,8 @@ type Handler struct {
 	// seller image and returns its ID and the normalized reference. Nil
 	// makes image sessions sandbox_unsupported.
 	EnsureImage func(ctx context.Context, acct state.Account, image string) (jobID, ref string, prob *api.Problem)
+	// TemplateApps creates and deletes sandbox templates' build apps.
+	TemplateApps TemplateApps
 }
 
 // requestMaxBytes bounds a create or change request.

@@ -46,6 +46,8 @@ func TestAgentsHiddenUntilReleased(t *testing.T) {
 			e.do(t, http.MethodPut, sandbox, nil, nil),
 			e.do(t, http.MethodGet, "/v1/sandbox-snapshots", nil, nil),
 			e.do(t, http.MethodDelete, "/v1/sandbox-snapshots/00000000-0000-4000-8000-0000000000cc", nil, nil),
+			e.do(t, http.MethodGet, "/v1/sandbox-templates", nil, nil),
+			e.do(t, http.MethodPut, "/v1/sandbox-templates/tools", nil, nil),
 			e.do(t, http.MethodGet, sandbox+"/ports", nil, nil),
 		}
 	}

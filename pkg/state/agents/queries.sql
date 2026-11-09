@@ -635,3 +635,41 @@ SELECT sb.account_id::text AS account_id, a.plan, sb.state, coalesce(sb.node_id,
   coalesce(sb.instance_id, '')::text AS instance_id,
   coalesce((SELECT string_agg(p.port::text || ':' || p.visibility, ',' ORDER BY p.port) FROM sandbox_ports p WHERE p.sandbox_id=sb.id), '')::text AS ports
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id WHERE sb.id=sqlc.arg(session_id)::text::uuid;
+
+-- name: InsertSandboxTemplate :one
+-- ADR-20261027090013 templates: apid creates the build app first, then the
+-- template that owns it.
+INSERT INTO sandbox_templates (account_id, name, app_id, start_cmd, ready_cmd, ready_timeout_s)
+VALUES (sqlc.arg(account_id)::text::uuid, sqlc.arg(name)::text, sqlc.arg(app_id)::text::uuid,
+  sqlc.narg(start_cmd)::text, sqlc.narg(ready_cmd)::text, sqlc.arg(ready_timeout_s)::integer)
+ON CONFLICT (account_id, name) DO NOTHING
+RETURNING id::text AS id;
+
+-- name: UpdateSandboxTemplateCommands :execrows
+UPDATE sandbox_templates SET start_cmd=sqlc.narg(start_cmd)::text, ready_cmd=sqlc.narg(ready_cmd)::text,
+  ready_timeout_s=sqlc.arg(ready_timeout_s)::integer, updated_at=now()
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND name=sqlc.arg(name)::text;
+
+-- name: DeleteSandboxTemplate :one
+DELETE FROM sandbox_templates WHERE account_id=sqlc.arg(account_id)::text::uuid AND name=sqlc.arg(name)::text
+RETURNING app_id::text AS app_id;
+
+-- name: ListSandboxTemplates :many
+-- A template with its build app and that app's newest deployment (the build
+-- in progress or last finished) and newest live one (what sessions boot).
+SELECT t.id::text AS id, t.name, t.app_id::text AS app_id, a.slug AS app_slug,
+  coalesce(t.start_cmd,'')::text AS start_cmd, coalesce(t.ready_cmd,'')::text AS ready_cmd, t.ready_timeout_s,
+  t.created_at, t.updated_at,
+  coalesce(latest.id::text,'')::text AS build_id, coalesce(latest.status,'')::text AS build_status,
+  coalesce(latest.error,'')::text AS build_error,
+  coalesce(live.id::text,'')::text AS live_deployment_id, coalesce(live.rootfs_key,'')::text AS live_rootfs_key,
+  live.created_at AS live_built_at
+FROM sandbox_templates t
+JOIN apps a ON a.id = t.app_id
+LEFT JOIN LATERAL (SELECT d.id, d.status, d.error FROM deployments d WHERE d.app_id = t.app_id
+  ORDER BY d.created_at DESC, d.id DESC LIMIT 1) latest ON true
+LEFT JOIN LATERAL (SELECT d.id, d.rootfs_key, d.created_at FROM deployments d WHERE d.app_id = t.app_id
+  AND d.status = 'live' AND d.rootfs_key <> '' ORDER BY d.created_at DESC, d.id DESC LIMIT 1) live ON true
+WHERE t.account_id = sqlc.arg(account_id)::text::uuid
+  AND (sqlc.arg(name)::text = '' OR t.name = sqlc.arg(name)::text)
+ORDER BY t.name;

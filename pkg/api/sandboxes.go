@@ -96,7 +96,84 @@ const (
 	CodeSandboxPortClosed = "sandbox_port_closed"
 	// CodeSandboxPreviewsOff: this installation has no preview domain.
 	CodeSandboxPreviewsOff = "sandbox_previews_off"
+
+	// Templates (ADR-20261027090013 step 10, part three).
+	// CodeSandboxTemplateNotFound: the account has no template of that name.
+	CodeSandboxTemplateNotFound = "sandbox_template_not_found"
+	// CodeSandboxTemplateNotReady: the template has no finished build yet.
+	CodeSandboxTemplateNotReady = "sandbox_template_not_ready"
 )
+
+// SandboxTemplateRequest creates a template, or replaces an existing one's
+// start and ready commands (PUT /v1/sandbox-templates/{name}). Its image is
+// built by deploying a Dockerfile directory to the template's build app.
+type SandboxTemplateRequest struct {
+	// StartCmd runs in the background when a session from the template
+	// boots (e2b.toml start_cmd); ReadyCmd is polled until it exits 0
+	// (ready_cmd), for at most ReadyTimeoutS (default 60), before the
+	// session is ready.
+	StartCmd      string `json:"start_cmd,omitempty"`
+	ReadyCmd      string `json:"ready_cmd,omitempty"`
+	ReadyTimeoutS int    `json:"ready_timeout_s,omitempty"`
+}
+
+// SandboxTemplate is a template and its build state.
+type SandboxTemplate struct {
+	Name string `json:"name"`
+	// App is the slug of the platform-managed app that builds the
+	// template; deploy the Dockerfile directory to it.
+	App           string    `json:"app"`
+	StartCmd      string    `json:"start_cmd,omitempty"`
+	ReadyCmd      string    `json:"ready_cmd,omitempty"`
+	ReadyTimeoutS int       `json:"ready_timeout_s"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	// Ready is true once a build finished; sessions boot the newest
+	// finished build.
+	Ready bool `json:"ready"`
+	// Build is the newest build, if any.
+	Build   *SandboxTemplateBuild `json:"build,omitempty"`
+	BuiltAt *time.Time            `json:"built_at,omitempty"`
+}
+
+// SandboxTemplateBuild is one build of a template: a deployment of its app.
+type SandboxTemplateBuild struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+// SandboxTemplateList is GET /v1/sandbox-templates.
+type SandboxTemplateList struct {
+	Items []SandboxTemplate `json:"items"`
+}
+
+// ErrSandboxTemplateNotFound is a template the account does not have.
+func ErrSandboxTemplateNotFound(name string) *Problem {
+	return NewProblem(http.StatusNotFound, CodeSandboxTemplateNotFound, "Sandbox template not found",
+		fmt.Sprintf("no sandbox template named %q", name))
+}
+
+// ErrSandboxTemplateNotReady is a session from a template with no finished
+// build.
+func ErrSandboxTemplateNotReady(name string) *Problem {
+	return NewProblem(http.StatusConflict, CodeSandboxTemplateNotReady, "Sandbox template not built",
+		fmt.Sprintf("sandbox template %q has no finished build; build it with gregale sandbox template build", name))
+}
+
+// ValidSandboxTemplateName reports a template name: 1-63 lowercase letters,
+// digits and inner hyphens.
+func ValidSandboxTemplateName(name string) bool {
+	if len(name) < 1 || len(name) > 63 || name[0] == '-' || name[len(name)-1] == '-' {
+		return false
+	}
+	for _, c := range name {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
 
 // CreateSandboxRequest creates a sandbox session from a harness preset.
 // Omitted fields take the defaults: the preset's RAM within the plan's

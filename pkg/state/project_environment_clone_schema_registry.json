@@ -2669,6 +2669,7 @@
       "root_dir",
       "route_metrics_enabled",
       "runtime",
+      "sandbox_template",
       "scaling_policy",
       "scaling_policy_revision",
       "security_policy",
@@ -17062,6 +17063,21 @@
       "tenant_id",
       "updated_at",
       "workspace_snapshot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_templates",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "name",
+      "ready_cmd",
+      "ready_timeout_s",
+      "start_cmd",
+      "updated_at"
     ],
     "kind": "operational"
   },

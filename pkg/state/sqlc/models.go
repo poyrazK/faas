@@ -14595,6 +14595,9 @@ type SandboxSession struct {
 	UpdatedAt           pgtype.Timestamptz
 	ClosedAt            pgtype.Timestamptz
 	WorkspaceSnapshotID pgtype.UUID
+	ImageRef            pgtype.Text
+	// ADR-20261027090013: the image-run runner job (ADR-1161) caching the session image; a live session keeps it from eviction.
+	ImageJobID pgtype.UUID
 }
 
 // ADR-20261027090013 step 7 persisted sandbox workspaces; agentd inserts, completes and deletes rows; apid reads them and sets delete_requested_at.

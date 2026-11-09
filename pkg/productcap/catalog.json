@@ -80,6 +80,7 @@
         "/v1/agent-tools",
         "/v1/agents",
         "/v1/sandbox-snapshots",
+        "/v1/sandbox-templates",
         "/v1/sandboxes"
       ],
       "consumers": [

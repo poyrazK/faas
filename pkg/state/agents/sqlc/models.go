@@ -160,6 +160,14 @@ type AgentVersion struct {
 	PauseDuringModelCalls bool
 }
 
+type App struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	Slug            string
+	Status          string
+	SandboxTemplate bool
+}
+
 type AppWebhook struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
@@ -176,6 +184,15 @@ type AppWebhookDelivery struct {
 	Event         string
 	Payload       []byte
 	SourceEventID pgtype.UUID
+}
+
+type Deployment struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	Status    string
+	Error     pgtype.Text
+	RootfsKey string
+	CreatedAt pgtype.Timestamptz
 }
 
 type GithubInstallation struct {
@@ -255,6 +272,18 @@ type SandboxSession struct {
 	WorkspaceSnapshotID pgtype.UUID
 	ImageRef            pgtype.Text
 	ImageJobID          pgtype.UUID
+}
+
+type SandboxTemplate struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	Name          string
+	AppID         pgtype.UUID
+	StartCmd      pgtype.Text
+	ReadyCmd      pgtype.Text
+	ReadyTimeoutS int32
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
 }
 
 type SandboxWorkspaceSnapshot struct {

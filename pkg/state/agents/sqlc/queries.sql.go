@@ -380,6 +380,23 @@ func (q *Queries) DeleteSandboxSnapshot(ctx context.Context, db DBTX, snapshotID
 	return result.RowsAffected(), nil
 }
 
+const deleteSandboxTemplate = `-- name: DeleteSandboxTemplate :one
+DELETE FROM sandbox_templates WHERE account_id=$1::text::uuid AND name=$2::text
+RETURNING app_id::text AS app_id
+`
+
+type DeleteSandboxTemplateParams struct {
+	AccountID string
+	Name      string
+}
+
+func (q *Queries) DeleteSandboxTemplate(ctx context.Context, db DBTX, arg DeleteSandboxTemplateParams) (string, error) {
+	row := db.QueryRow(ctx, deleteSandboxTemplate, arg.AccountID, arg.Name)
+	var app_id string
+	err := row.Scan(&app_id)
+	return app_id, err
+}
+
 const endAgentDeliveryAttempt = `-- name: EndAgentDeliveryAttempt :one
 UPDATE agent_deliveries SET state=$1::text,
   next_attempt_at=now()+make_interval(secs => $2::float8),
@@ -1624,6 +1641,39 @@ func (q *Queries) InsertSandboxSnapshot(ctx context.Context, db DBTX, arg Insert
 	return err
 }
 
+const insertSandboxTemplate = `-- name: InsertSandboxTemplate :one
+INSERT INTO sandbox_templates (account_id, name, app_id, start_cmd, ready_cmd, ready_timeout_s)
+VALUES ($1::text::uuid, $2::text, $3::text::uuid,
+  $4::text, $5::text, $6::integer)
+ON CONFLICT (account_id, name) DO NOTHING
+RETURNING id::text AS id
+`
+
+type InsertSandboxTemplateParams struct {
+	AccountID     string
+	Name          string
+	AppID         string
+	StartCmd      pgtype.Text
+	ReadyCmd      pgtype.Text
+	ReadyTimeoutS int32
+}
+
+// ADR-20261027090013 templates: apid creates the build app first, then the
+// template that owns it.
+func (q *Queries) InsertSandboxTemplate(ctx context.Context, db DBTX, arg InsertSandboxTemplateParams) (string, error) {
+	row := db.QueryRow(ctx, insertSandboxTemplate,
+		arg.AccountID,
+		arg.Name,
+		arg.AppID,
+		arg.StartCmd,
+		arg.ReadyCmd,
+		arg.ReadyTimeoutS,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const listActiveAgents = `-- name: ListActiveAgents :many
 SELECT id::text AS id,name,description,state,latest_version,created_at,updated_at FROM agents
  WHERE account_id=$1::text::uuid AND state='active' AND name>$2::text
@@ -2136,6 +2186,86 @@ func (q *Queries) ListSandboxSnapshots(ctx context.Context, db DBTX, arg ListSan
 			&i.DeleteRequestedAt,
 			&i.CreatedAt,
 			&i.ReadyAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSandboxTemplates = `-- name: ListSandboxTemplates :many
+SELECT t.id::text AS id, t.name, t.app_id::text AS app_id, a.slug AS app_slug,
+  coalesce(t.start_cmd,'')::text AS start_cmd, coalesce(t.ready_cmd,'')::text AS ready_cmd, t.ready_timeout_s,
+  t.created_at, t.updated_at,
+  coalesce(latest.id::text,'')::text AS build_id, coalesce(latest.status,'')::text AS build_status,
+  coalesce(latest.error,'')::text AS build_error,
+  coalesce(live.id::text,'')::text AS live_deployment_id, coalesce(live.rootfs_key,'')::text AS live_rootfs_key,
+  live.created_at AS live_built_at
+FROM sandbox_templates t
+JOIN apps a ON a.id = t.app_id
+LEFT JOIN LATERAL (SELECT d.id, d.status, d.error FROM deployments d WHERE d.app_id = t.app_id
+  ORDER BY d.created_at DESC, d.id DESC LIMIT 1) latest ON true
+LEFT JOIN LATERAL (SELECT d.id, d.rootfs_key, d.created_at FROM deployments d WHERE d.app_id = t.app_id
+  AND d.status = 'live' AND d.rootfs_key <> '' ORDER BY d.created_at DESC, d.id DESC LIMIT 1) live ON true
+WHERE t.account_id = $1::text::uuid
+  AND ($2::text = '' OR t.name = $2::text)
+ORDER BY t.name
+`
+
+type ListSandboxTemplatesParams struct {
+	AccountID string
+	Name      string
+}
+
+type ListSandboxTemplatesRow struct {
+	ID               string
+	Name             string
+	AppID            string
+	AppSlug          string
+	StartCmd         string
+	ReadyCmd         string
+	ReadyTimeoutS    int32
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	BuildID          string
+	BuildStatus      string
+	BuildError       string
+	LiveDeploymentID string
+	LiveRootfsKey    string
+	LiveBuiltAt      pgtype.Timestamptz
+}
+
+// A template with its build app and that app's newest deployment (the build
+// in progress or last finished) and newest live one (what sessions boot).
+func (q *Queries) ListSandboxTemplates(ctx context.Context, db DBTX, arg ListSandboxTemplatesParams) ([]ListSandboxTemplatesRow, error) {
+	rows, err := db.Query(ctx, listSandboxTemplates, arg.AccountID, arg.Name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSandboxTemplatesRow{}
+	for rows.Next() {
+		var i ListSandboxTemplatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.AppID,
+			&i.AppSlug,
+			&i.StartCmd,
+			&i.ReadyCmd,
+			&i.ReadyTimeoutS,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.BuildID,
+			&i.BuildStatus,
+			&i.BuildError,
+			&i.LiveDeploymentID,
+			&i.LiveRootfsKey,
+			&i.LiveBuiltAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2988,6 +3118,34 @@ func (q *Queries) UpdateSandboxSessionTimeouts(ctx context.Context, db DBTX, arg
 		arg.ExpiresAt,
 		arg.SessionID,
 		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateSandboxTemplateCommands = `-- name: UpdateSandboxTemplateCommands :execrows
+UPDATE sandbox_templates SET start_cmd=$1::text, ready_cmd=$2::text,
+  ready_timeout_s=$3::integer, updated_at=now()
+WHERE account_id=$4::text::uuid AND name=$5::text
+`
+
+type UpdateSandboxTemplateCommandsParams struct {
+	StartCmd      pgtype.Text
+	ReadyCmd      pgtype.Text
+	ReadyTimeoutS int32
+	AccountID     string
+	Name          string
+}
+
+func (q *Queries) UpdateSandboxTemplateCommands(ctx context.Context, db DBTX, arg UpdateSandboxTemplateCommandsParams) (int64, error) {
+	result, err := db.Exec(ctx, updateSandboxTemplateCommands,
+		arg.StartCmd,
+		arg.ReadyCmd,
+		arg.ReadyTimeoutS,
+		arg.AccountID,
+		arg.Name,
 	)
 	if err != nil {
 		return 0, err

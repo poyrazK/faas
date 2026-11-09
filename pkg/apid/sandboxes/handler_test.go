@@ -43,6 +43,8 @@ type fakeStore struct {
 	snapshots []agentstore.SandboxSnapshot
 	// ports are exposed ports by session.
 	ports map[string][]agentstore.SandboxPort
+	// templates are sandbox templates by name.
+	templates map[string]agentstore.SandboxTemplate
 }
 
 func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmission) (agentstore.Sandbox, error) {

@@ -556,6 +556,10 @@ const (
 	// inside the same critical section so a TOCTOU race can't slip
 	// past the cap.
 	QuotaErrorKindOpenAPIImports QuotaErrorKind = "openapi_imports"
+	// QuotaErrorKindSandboxTemplates trips when an account would hold more
+	// sandbox templates (their build apps) than Limits.SandboxTemplatesMax
+	// (ADR-20261027090013).
+	QuotaErrorKindSandboxTemplates QuotaErrorKind = "sandbox_templates"
 )
 
 type QuotaError struct {

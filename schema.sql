@@ -1619,6 +1619,7 @@ CREATE TABLE public.apps (
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     github_production_trigger text,
     github_preview_enabled boolean,
+    sandbox_template boolean DEFAULT false NOT NULL,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -55639,6 +55640,34 @@ COMMENT ON COLUMN public.sandbox_sessions.image_job_id IS 'ADR-20261027090013: t
 
 
 --
+-- Name: sandbox_templates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_templates (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    app_id uuid NOT NULL,
+    start_cmd text,
+    ready_cmd text,
+    ready_timeout_s integer DEFAULT 60 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sandbox_templates_name_check CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text)),
+    CONSTRAINT sandbox_templates_ready_cmd_check CHECK (((ready_cmd IS NULL) OR ((char_length(ready_cmd) >= 1) AND (char_length(ready_cmd) <= 4096)))),
+    CONSTRAINT sandbox_templates_ready_timeout_s_check CHECK (((ready_timeout_s >= 1) AND (ready_timeout_s <= 600))),
+    CONSTRAINT sandbox_templates_start_cmd_check CHECK (((start_cmd IS NULL) OR ((char_length(start_cmd) >= 1) AND (char_length(start_cmd) <= 4096))))
+);
+
+
+--
+-- Name: TABLE sandbox_templates; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sandbox_templates IS 'ADR-20261027090013: named sandbox templates; each owns one apps row with sandbox_template = true that builds its image.';
+
+
+--
 -- Name: sandbox_workspace_snapshots; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -69631,6 +69660,30 @@ ALTER TABLE ONLY public.sandbox_ports
 
 ALTER TABLE ONLY public.sandbox_sessions
     ADD CONSTRAINT sandbox_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sandbox_templates sandbox_templates_account_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_templates
+    ADD CONSTRAINT sandbox_templates_account_id_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: sandbox_templates sandbox_templates_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_templates
+    ADD CONSTRAINT sandbox_templates_app_id_key UNIQUE (app_id);
+
+
+--
+-- Name: sandbox_templates sandbox_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_templates
+    ADD CONSTRAINT sandbox_templates_pkey PRIMARY KEY (id);
 
 
 --
@@ -103081,6 +103134,22 @@ ALTER TABLE ONLY public.sandbox_sessions
 
 ALTER TABLE ONLY public.sandbox_sessions
     ADD CONSTRAINT sandbox_sessions_tenant_fkey FOREIGN KEY (account_id, tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_templates sandbox_templates_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_templates
+    ADD CONSTRAINT sandbox_templates_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_templates sandbox_templates_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_templates
+    ADD CONSTRAINT sandbox_templates_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
