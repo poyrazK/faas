@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261109153500000_observe_preset_descriptions.sql
+-- filename: 20261109153512487_observe_preset_descriptions.sql
 
 -- +goose Up
 -- ADR-20261109153000: preset descriptions say what their metrics count. The
