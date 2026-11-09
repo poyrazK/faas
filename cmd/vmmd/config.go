@@ -122,6 +122,11 @@ type Config struct {
 	// returns guest-freed pages to the host. It is on by default on
 	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// DisableRestoreClockRealtime stops advancing a restored guest's
+	// kvm-clock by the time its capture spent parked (ADR-20261109120000).
+	// It is on by default on Firecracker 1.16+ hosts with the tsc
+	// clocksource; FAAS_RESTORE_CLOCK_REALTIME=0 overrides TOML.
+	DisableRestoreClockRealtime bool `toml:"disable_restore_clock_realtime"`
 	// DisableReleaseConnectionsOnDestroy stops asking an app guest to reset
 	// its TCP connections before teardown destroys it (ADR-20261109130000).
 	// It is on by default; FAAS_RELEASE_CONNECTIONS_ON_DESTROY=0 overrides TOML.
@@ -1129,6 +1134,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_FREE_PAGE_REPORTING must be a boolean (got %q)", v)
 		}
 		c.DisableFreePageReporting = !enabled
+	}
+	if v := os.Getenv("FAAS_RESTORE_CLOCK_REALTIME"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_CLOCK_REALTIME must be a boolean (got %q)", v)
+		}
+		c.DisableRestoreClockRealtime = !enabled
 	}
 	if v := os.Getenv("FAAS_RELEASE_CONNECTIONS_ON_DESTROY"); v != "" {
 		enabled, perr := strconv.ParseBool(v)

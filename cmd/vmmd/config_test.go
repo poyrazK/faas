@@ -1059,6 +1059,43 @@ func TestLoadConfig_FreePageReportingSwitch(t *testing.T) {
 	}
 }
 
+// adr: 20261109120000 — the restore clock advance is on by default; TOML can
+// disable it and FAAS_RESTORE_CLOCK_REALTIME overrides TOML in either direction.
+func TestLoadConfig_RestoreClockRealtimeSwitch(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DisableRestoreClockRealtime {
+		t.Fatal("restore clock advance must default to enabled")
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("disable_restore_clock_realtime = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		env      string
+		disabled bool
+	}{{"", true}, {"1", false}, {"true", false}, {"0", true}, {"false", true}} {
+		t.Run("env="+tc.env, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("FAAS_RESTORE_CLOCK_REALTIME", tc.env)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.DisableRestoreClockRealtime != tc.disabled {
+				t.Fatalf("DisableRestoreClockRealtime = %v, want %v", cfg.DisableRestoreClockRealtime, tc.disabled)
+			}
+		})
+	}
+	t.Setenv("FAAS_RESTORE_CLOCK_REALTIME", "sometimes")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_RESTORE_CLOCK_REALTIME") {
+		t.Fatalf("invalid FAAS_RESTORE_CLOCK_REALTIME error = %v, want named validation error", err)
+	}
+}
+
 // adr: 20261109130000 — connection release before destroy is on by default;
 // TOML can disable it and FAAS_RELEASE_CONNECTIONS_ON_DESTROY overrides TOML.
 func TestLoadConfig_ReleaseConnectionsOnDestroySwitch(t *testing.T) {

@@ -852,6 +852,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REQUIRE_SHARED_ARTIFACTS` | shared | `envfile` |  |  | `` |  |
 | `FAAS_RESERVED_APP_SLUGS` | apid | `dropin` |  |  | `` | ADR-20261107180000: the labels of the host names edgednsd manages under the apps domain, <slug>,...; apid refuses them as new apps' names; rendered from public_edge.dns |
 | `FAAS_RESIDENCY_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_RESTORE_CLOCK_REALTIME` | vmmd | `default` |  |  | `` | optional boolean kill switch for advancing a restored guest's monotonic clock by its parked time (ADR-20261109120000); production default is enabled on Firecracker 1.16+ hosts with a tsc clocksource |
 | `FAAS_RESTORE_CONCURRENCY` | vmmd, shared | `default` |  |  | `` | optional snapshot-restore concurrency override (1–64); production default is 3; "shared" covers pkg/e2etest forwarding it |
 | `FAAS_RESTORE_PREFETCH` | vmmd, shared | `default` |  |  | `` | optional boolean kill switch for the ADR-225 restore working-set prefetch; production default is enabled; "shared" covers pkg/e2etest forwarding it |
 | `FAAS_RESTORE_RESEED_THREAD` | vmmd | `default` |  |  | `` | optional boolean switch booting app VMs whose Node processes answer the restore reseed barrier from a native thread (ADR-20261024105607); production default is off |

@@ -122,6 +122,11 @@ func claimVerifiedSnapshotLoad(plan *verifiedSnapshotRestore) error {
 func verifiedSnapshotLoadCommand(spec RestoreSpec, body map[string]any) ([]byte, error) {
 	expected := map[string]any{"snapshot_path": vmstateSnapshotName,
 		"mem_backend": map[string]any{"backend_type": "File", "backend_path": memSnapshotName}, "resume_vm": !spec.KeepPaused}
+	// The clock advance is the VMM's own setting (ADR-20261109120000), not part
+	// of the verified plan; when present it may only be the literal true.
+	if _, ok := body["clock_realtime"]; ok {
+		expected["clock_realtime"] = true
+	}
 	got, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

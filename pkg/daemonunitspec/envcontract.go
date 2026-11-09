@@ -932,6 +932,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REQUIRE_SHARED_ARTIFACTS", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_RESERVED_APP_SLUGS", Owners: []string{"apid"}, Source: EnvSourceDropin, Note: "ADR-20261107180000: the labels of the host names edgednsd manages under the apps domain, <slug>,...; apid refuses them as new apps' names; rendered from public_edge.dns"},
 	{Name: "FAAS_RESIDENCY_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_RESTORE_CLOCK_REALTIME", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean kill switch for advancing a restored guest's monotonic clock by its parked time (ADR-20261109120000); production default is enabled on Firecracker 1.16+ hosts with a tsc clocksource"},
 	{Name: "FAAS_RESTORE_CONCURRENCY", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDefault, Note: "optional snapshot-restore concurrency override (1–64); production default is 3; \"shared\" covers pkg/e2etest forwarding it"},
 	{Name: "FAAS_RESTORE_PREFETCH", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDefault, Note: "optional boolean kill switch for the ADR-225 restore working-set prefetch; production default is enabled; \"shared\" covers pkg/e2etest forwarding it"},
 	{Name: "FAAS_RESTORE_RESEED_THREAD", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean switch booting app VMs whose Node processes answer the restore reseed barrier from a native thread (ADR-20261024105607); production default is off"},
