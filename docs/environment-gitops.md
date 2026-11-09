@@ -681,7 +681,7 @@ exclusive native acceptance requirements remain unchanged. See
 Subscribe an account receiver explicitly to `environment.gitops.changed`:
 
 ```sh
-printf '%s' "$WEBHOOK_SECRET" | gregale webhooks account add \
+printf '%s' "$WEBHOOK_SECRET" | gregale webhook account add \
   --target-url https://alerts.example.test/gregale \
   --event environment.gitops.changed --from-stdin
 ```
