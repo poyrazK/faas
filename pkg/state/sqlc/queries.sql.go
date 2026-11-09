@@ -49935,6 +49935,60 @@ func (q *Queries) ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUd
 	return items, nil
 }
 
+const listEnvironmentEdgePoliciesWithRequestHeaderLiterals = `-- name: ListEnvironmentEdgePoliciesWithRequestHeaderLiterals :many
+SELECT p.account_id, p.project_id, p.app_id, p.environment_slug, p.rules, p.created_at, p.updated_at
+FROM project_environment_edge_policies p
+WHERE (p.app_id, p.environment_slug) > ($1::uuid, $2::text)
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p.rules) rule,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(rule->'action'->'headers'->'request_headers') = 'array'
+        THEN rule->'action'->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE rule->>'kind' = 'headers' AND coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+  AND NOT EXISTS (
+    SELECT 1 FROM active_environment_git_sources s
+    JOIN project_environments e ON e.id = s.environment_id
+    JOIN environment_gitops_resources r ON r.source_id = s.id
+    WHERE r.app_id = p.app_id AND e.slug = p.environment_slug)
+ORDER BY p.app_id, p.environment_slug LIMIT $3::integer
+`
+
+type ListEnvironmentEdgePoliciesWithRequestHeaderLiteralsParams struct {
+	AfterAppID       pgtype.UUID
+	AfterEnvironment string
+	RowLimit         int32
+}
+
+// Environment edge policies written through the API. An environment with
+// an active Git source for the app is left out: its values come from the
+// repository, and a sealed value would read as drift there.
+func (q *Queries) ListEnvironmentEdgePoliciesWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEnvironmentEdgePoliciesWithRequestHeaderLiteralsParams) ([]ProjectEnvironmentEdgePolicy, error) {
+	rows, err := db.Query(ctx, listEnvironmentEdgePoliciesWithRequestHeaderLiterals, arg.AfterAppID, arg.AfterEnvironment, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentEdgePolicy{}
+	for rows.Next() {
+		var i ProjectEnvironmentEdgePolicy
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.ProjectID,
+			&i.AppID,
+			&i.EnvironmentSlug,
+			&i.Rules,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvironmentGitOpsOverrideExpirations = `-- name: ListEnvironmentGitOpsOverrideExpirations :many
 SELECT o.resource, o.field_path, o.expires_at
 FROM environment_management_overrides o JOIN environment_managed_fields f

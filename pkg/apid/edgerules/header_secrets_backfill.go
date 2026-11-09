@@ -24,12 +24,15 @@ type HeaderSecretBackfillReport struct {
 	VersionsChanged  int
 	VersionsFailed   int
 	VersionsNoApp    int
+	PoliciesSealed   int
+	PoliciesChanged  int
+	PoliciesFailed   int
 	SecretRowsStored int
 }
 
 // Pending reports whether the pass left values to seal.
 func (r HeaderSecretBackfillReport) Pending() bool {
-	return r.FleetNotReady || r.RulesChanged+r.RulesFailed+r.VersionsChanged+r.VersionsFailed > 0
+	return r.FleetNotReady || r.RulesChanged+r.RulesFailed+r.VersionsChanged+r.VersionsFailed+r.PoliciesChanged+r.PoliciesFailed > 0
 }
 
 // SealStoredHeaderValues seals the credential header values that rules and
@@ -58,6 +61,11 @@ func (s *Service) SealStoredHeaderValues(ctx context.Context) (HeaderSecretBackf
 	}
 	if err := s.backfillVersions(ctx, literals, sealed, &rep); err != nil {
 		return rep, err
+	}
+	if !rep.FleetNotReady {
+		if err := s.backfillEnvironmentPolicies(ctx, sealed, &rep); err != nil {
+			return rep, err
+		}
 	}
 	rep.SecretRowsStored = len(sealed)
 	return rep, nil
@@ -248,11 +256,13 @@ func (s *Service) RunHeaderSecretBackfill(ctx context.Context, interval time.Dur
 		switch {
 		case err != nil:
 			s.Host.Logger().Warn("edge rule header backfill pass failed", "err", err)
-		case rep.RulesSealed+rep.VersionsSealed > 0 || rep.Pending():
+		case rep.RulesSealed+rep.VersionsSealed+rep.PoliciesSealed > 0 || rep.Pending():
 			s.Host.Logger().Info("edge rule header backfill pass",
 				"fleet_not_ready", rep.FleetNotReady, "rules_sealed", rep.RulesSealed, "rules_changed", rep.RulesChanged,
 				"rules_failed", rep.RulesFailed, "versions_sealed", rep.VersionsSealed, "versions_changed", rep.VersionsChanged,
-				"versions_failed", rep.VersionsFailed, "versions_without_app", rep.VersionsNoApp, "secret_rows", rep.SecretRowsStored)
+				"versions_failed", rep.VersionsFailed, "versions_without_app", rep.VersionsNoApp,
+				"environment_policies_sealed", rep.PoliciesSealed, "environment_policies_changed", rep.PoliciesChanged,
+				"environment_policies_failed", rep.PoliciesFailed, "secret_rows", rep.SecretRowsStored)
 		}
 		timer.Reset(interval)
 	}
