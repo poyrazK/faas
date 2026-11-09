@@ -15,6 +15,7 @@ OUT_OVERRIDE="$TMP_DIR/production-manifest-override.yaml"
 RUNTIME_BASES_ENV="$TMP_DIR/runtime-bases.env"
 BUILDER_DIGEST=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 KERNEL_DIGEST=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+FIRECRACKER_DIGEST=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 
 cat > "$RUNTIME_BASES_ENV" <<'EOF'
 FAAS_DEPLOY_BASE_REF_MINIMAL=ghcr.io/poyrazk/base-minimal@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -32,6 +33,7 @@ bash "$SCRIPT" --template "$TEMPLATE" --git-sha "$SHA" --runtime-bases-env "$RUN
 bash "$SCRIPT" --template "$TEMPLATE" --git-sha "$SHA" \
   --builder-base-digest "sha256:$BUILDER_DIGEST" \
   --kernel-digest "sha256:$KERNEL_DIGEST" \
+  --firecracker-digest "sha256:$FIRECRACKER_DIGEST" \
   --runtime-bases-env "$RUNTIME_BASES_ENV" --output "$OUT_OVERRIDE"
 
 grep -Fqx '  id: pre-1.0-01234567' "$OUT_A"
@@ -43,6 +45,18 @@ if cmp -s "$TEMPLATE" "$OUT_A"; then
 fi
 grep -Fqx "  builder_base_digest: $BUILDER_DIGEST" "$OUT_OVERRIDE"
 grep -Fqx "  kernel_digest: $KERNEL_DIGEST" "$OUT_OVERRIDE"
+grep -Fqx "  firecracker_digest: $FIRECRACKER_DIGEST" "$OUT_OVERRIDE"
+# Without an override the template's upstream digest stays.
+grep -Eq '^  firecracker_digest: [0-9a-f]{64}$' "$OUT_A"
+if grep -Fqx "  firecracker_digest: $FIRECRACKER_DIGEST" "$OUT_A"; then
+  echo "firecracker digest override leaked into the default manifest" >&2
+  exit 1
+fi
+if bash "$SCRIPT" --template "$TEMPLATE" --git-sha "$SHA" --firecracker-digest nothex \
+  --runtime-bases-env "$RUNTIME_BASES_ENV" --output "$TMP_DIR/bad.yaml" 2>/dev/null; then
+  echo "materializer accepted a malformed firecracker digest" >&2
+  exit 1
+fi
 # Every compute daemon whose metrics are discovered by Prometheus must be
 # declared in the production manifest. A missing block renders an empty TOML
 # and silently falls back to loopback, which makes the discovered target down.

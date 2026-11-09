@@ -2,6 +2,8 @@ package alerts
 
 import (
 	"context"
+	"slices"
+	"sort"
 	"sync"
 	"time"
 
@@ -34,6 +36,48 @@ func (e *Evaluator) SetRuleRelease(forAccount func(ctx context.Context, accountI
 // reason "deferred" (the account spent its tick budget) or "not_released"
 // (its plan or capability flags no longer cover the rule). nil records
 // nothing; a nil evaluator ignores it.
+// RuleLimits returns an account's plan caps on alert rules per app and per
+// account; ok is false when the plan cannot be read, and every rule then
+// evaluates.
+type RuleLimits func(ctx context.Context, accountID string) (perApp, perAccount int, ok bool)
+
+// SetRuleLimits applies the account's plan caps to the rules it evaluates
+// (ADR-20261104142830): the API enforces them only when a rule is created,
+// so a downgrade used to leave every rule the old plan allowed running.
+func (e *Evaluator) SetRuleLimits(limits RuleLimits) {
+	if e == nil {
+		return
+	}
+	e.ruleLimits = limits
+}
+
+// overPlanLimits returns the rules past the caps: per app and per account,
+// the oldest enabled rules keep evaluating, so a customer chooses which run
+// by disabling the others.
+func overPlanLimits(rules []state.AlertRule, perApp, perAccount int) map[string]bool {
+	sorted := slices.Clone(rules)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if !sorted[i].CreatedAt.Equal(sorted[j].CreatedAt) {
+			return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
+		}
+		return sorted[i].ID < sorted[j].ID
+	})
+	over := map[string]bool{}
+	byApp := map[string]int{}
+	kept := 0
+	for _, r := range sorted {
+		if r.AppID != "" && byApp[r.AppID] >= perApp || kept >= perAccount {
+			over[r.ID] = true
+			continue
+		}
+		if r.AppID != "" {
+			byApp[r.AppID]++
+		}
+		kept++
+	}
+	return over
+}
+
 func (e *Evaluator) SetRuleOutcome(count func(reason string, n int)) {
 	if e == nil {
 		return
@@ -48,6 +92,7 @@ func (e *Evaluator) recordRuleOutcomes(stats Stats) {
 	}
 	e.ruleOutcome("deferred", stats.Deferred)
 	e.ruleOutcome("not_released", stats.SkippedNotReleased)
+	e.ruleOutcome("over_plan_limit", stats.SkippedOverPlanLimit)
 }
 
 // groupByAccount splits the enabled rules by account, keeping list order.
@@ -102,6 +147,12 @@ func (e *Evaluator) evalAccount(ctx context.Context, rules []state.AlertRule, no
 		return stats
 	}
 	accountID := rules[0].AccountID
+	var over map[string]bool
+	if e.ruleLimits != nil {
+		if perApp, perAccount, ok := e.ruleLimits(ctx, accountID); ok {
+			over = overPlanLimits(rules, perApp, perAccount)
+		}
+	}
 	rules = e.resumeOrder(accountID, rules)
 	var release RuleRelease
 	if e.release != nil {
@@ -119,11 +170,18 @@ func (e *Evaluator) evalAccount(ctx context.Context, rules []state.AlertRule, no
 				"account_id", accountID, "deferred", len(rules)-k, "budget", e.accountBudget)
 			return stats
 		}
+		if over[rule.ID] {
+			stats.SkippedOverPlanLimit++
+			e.standDown(ctx, rule, state.StandDownNotReleased, now, &stats)
+			continue
+		}
 		rctx := ctx
 		if release != nil {
 			evaluate, channels := release(ctx, rule)
 			if !evaluate {
 				stats.SkippedNotReleased++
+				// An episode it had open ends here (ADR-20261104142830).
+				e.standDown(ctx, rule, state.StandDownNotReleased, now, &stats)
 				continue
 			}
 			if !channels {

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const channelsUsage = "usage: gregale alert channel <list|add|test|rm>"
+const channelsUsage = "usage: gregale alert channel <list|add|update|test|rm>"
 
 // cmdChannels implements `gregale channels` (ADR-749): account-level alert
 // destinations in Slack, PagerDuty and email.
@@ -26,6 +27,8 @@ func cmdChannels(args []string) int {
 		return cmdChannelsList(args[1:])
 	case subAdd:
 		return cmdChannelsAdd(args[1:])
+	case "update":
+		return cmdChannelsUpdate(args[1:])
 	case "test":
 		return cmdChannelsTest(args[1:])
 	case subRm:
@@ -119,6 +122,54 @@ func cmdChannelsAdd(args []string) int {
 		return jsonOut(writeJSON(ch))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Added %s channel %s (%s) → %s\nSend a test with: gregale alert channel test %s\n", ch.Kind, ch.Name, ch.ID, ch.Target, ch.ID)
+	return 0
+}
+
+// cmdChannelsUpdate renames a channel or replaces its destination in place
+// (ADR-20261104142830); the new Slack URL or PagerDuty key comes from stdin.
+func cmdChannelsUpdate(args []string) int {
+	fs := newFlagSet("channels update", flag.ContinueOnError)
+	name := fs.String("name", "", "new channel name")
+	stdin := fs.Bool("secret-stdin", false, "read the new Slack webhook URL or PagerDuty routing key from stdin")
+	region := fs.String("pagerduty-region", "", "PagerDuty service region of the new key: us (default) or eu")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 || *name == "" && !*stdin {
+		PrintUsage(os.Stderr, "usage: gregale alert channel update <channel-id> [--name <name>] [--secret-stdin] [--pagerduty-region us|eu]", "channels")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	req := api.UpdateNotificationChannelRequest{PagerDutyRegion: *region}
+	if *name != "" {
+		req.Name = name
+	}
+	if *stdin {
+		current, err := client.GetNotificationChannel(context.Background(), fs.Arg(0))
+		if err != nil {
+			return printErr("Could not read notification channel", err)
+		}
+		secret, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return printErr("Could not read destination", err)
+		}
+		if current.Kind == "slack" {
+			req.SlackWebhookURL = strings.TrimSpace(secret)
+		} else {
+			req.PagerDutyRoutingKey = strings.TrimSpace(secret)
+		}
+	}
+	ch, err := client.UpdateNotificationChannel(context.Background(), fs.Arg(0), req)
+	if err != nil {
+		return printErr("Could not update notification channel", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(ch))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Updated %s channel %s (%s) → %s\nSend a test with: gregale alert channel test %s\n", ch.Kind, ch.Name, ch.ID, ch.Target, ch.ID)
 	return 0
 }
 

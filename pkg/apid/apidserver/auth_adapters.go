@@ -133,6 +133,19 @@ func (a storeAuthAdapter) RequestAgentApproval(ctx context.Context, request stat
 	return store.RequestAgentApproval(ctx, request)
 }
 
+// An agent key's write requests are recorded (ADR-20261107220000).
+var _ middleware.AgentActivityRecorder = storeAuthAdapter{}
+
+// RecordAgentActivity forwards to the optional activity store; a store
+// without it records nothing.
+func (a storeAuthAdapter) RecordAgentActivity(ctx context.Context, row state.AgentActivity) error {
+	store, ok := a.Store.(state.AgentActivityStore)
+	if !ok {
+		return nil
+	}
+	return store.RecordAgentActivity(ctx, row)
+}
+
 // OrgAgentPolicy forwards the organization's agent policy; a store without
 // it has the default policy, with no approval floor.
 func (a storeAuthAdapter) OrgAgentPolicy(ctx context.Context, orgID string) (state.OrgAgentPolicy, error) {

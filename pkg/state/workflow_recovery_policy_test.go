@@ -292,7 +292,7 @@ func TestWorkflowRecoveryPolicySlidingBudget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for i := 0; i < api.AutomationRecoveryBatchMaxRuns; i++ {
+		for i := 0; i < api.StoredWorkflowRecoveryBatchMaxRuns; i++ {
 			current, e := recovery.GetEventRecovery(ctx, app.AccountID, job.ID)
 			if e != nil {
 				t.Fatal(e)

@@ -948,6 +948,22 @@ jobs:
           echo "KERNEL_DIGEST=$KERNEL_DIGEST" >> "$GITHUB_ENV"
           echo "release kernel digest=$KERNEL_DIGEST"
 
+      # ADR-20261108170000: compute nodes run a Firecracker built here from the
+      # pinned upstream commit plus deploy/firecracker/patches (host-owned
+      # virtio-net header), never upstream's release binary. The manifest's
+      # release.firecracker_digest anchors these exact bytes.
+      - name: Build release-pinned patched Firecracker
+        env:
+          FIRECRACKER_FILE: ${{ runner.temp }}/gregale-release/firecracker-vmm
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y musl-tools linux-libc-dev libseccomp-dev
+          scripts/build-firecracker.sh --run-unit-tests --output "$FIRECRACKER_FILE"
+          FIRECRACKER_DIGEST="$(sha256sum "$FIRECRACKER_FILE" | awk '{print $1}')"
+          echo "FIRECRACKER_DIGEST=$FIRECRACKER_DIGEST" >> "$GITHUB_ENV"
+          echo "release firecracker digest=$FIRECRACKER_DIGEST"
+
       - name: Build canonical daemon tarball and SPDX SBOM
         env:
           GH_TOKEN: ${{ github.token }}
@@ -964,6 +980,7 @@ jobs:
           OUT_DIR: ${{ runner.temp }}/gregale-release
           SYFT_BIN: syft
           KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
+          FIRECRACKER_FILE: ${{ runner.temp }}/gregale-release/firecracker-vmm
           SIGSTORE_TRUSTED_ROOT_FILE: ${{ runner.temp }}/sigstore/trusted-root.json
         run: |
           set -euo pipefail
@@ -973,12 +990,14 @@ jobs:
             --git-sha "$GIT_SHA" \
             --builder-base-digest "$BUILDER_BASE_DIGEST" \
             --kernel-digest "$KERNEL_DIGEST" \
+            --firecracker-digest "$FIRECRACKER_DIGEST" \
             --runtime-bases-env "$OUT_DIR/runtime-bases.env" \
             --output "$MANIFEST_FILE"
           MANIFEST_FILE="$MANIFEST_FILE" \
             GIT_SHA="$GIT_SHA" \
             OUT_DIR="$OUT_DIR" \
             KERNEL_FILE="$KERNEL_FILE" \
+            FIRECRACKER_FILE="$FIRECRACKER_FILE" \
             SYFT_BIN="$SYFT_BIN" \
             scripts/build-canonical-tarball.sh
 

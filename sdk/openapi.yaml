@@ -3782,6 +3782,26 @@ paths:
               schema: {$ref: '#/components/schemas/NotificationChannelResponse'}
         '402': {$ref: '#/components/responses/PaymentRequired'}
         '404': {$ref: '#/components/responses/NotFound'}
+    patch:
+      operationId: updateNotificationChannel
+      summary: Rename a notification channel or replace its destination
+      description: "Renames the channel or replaces its Slack webhook URL or PagerDuty routing key in place, so a leaked destination is rotated without unbinding the channel from its rules. The kind never changes; an email channel can only be renamed. A PagerDuty region changes only together with a new routing key. A new destination clears the channel's last error."
+      tags: [alert_rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateNotificationChannelRequest'}
+      responses:
+        '200':
+          description: The updated channel.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationChannelResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '402': {$ref: '#/components/responses/PaymentRequired'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
     delete:
       operationId: deleteNotificationChannel
       summary: Delete a notification channel
@@ -9917,7 +9937,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/AutomationConflict', description: Tenant-required apps must use the tenant-self preview.}
+        '409': {$ref: '#/components/responses/StoredWorkflowConflict', description: Tenant-required apps must use the tenant-self preview.}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServerError'}
   /v1/apps/{slug}/workflows/{name}/runs:
@@ -13747,7 +13767,7 @@ paths:
         durably instead of enqueuing an app invocation. Unmatched events keep
         the ordinary invocation path.
         Terminal callbacks are acknowledged as ignored after verification.
-        An automation-bound endpoint captures its published definition in durable
+        A stored-workflow-bound endpoint captures its published definition in durable
         fanout work. Paused, unpublished or type-unmatched events are durably ignored;
         content filters are evaluated by the scheduler. Provider retries return the
         original receipt; changed content for the same event ID returns 409.
@@ -13795,13 +13815,13 @@ paths:
             application/json:
               schema:
                 anyOf:
-                  - $ref: '#/components/schemas/WebhookAutomationReceiptResponse'
+                  - $ref: '#/components/schemas/WebhookWorkflowReceiptResponse'
                   - $ref: '#/components/schemas/WorkflowCallbackWebhookReceiptResponse'
                   - $ref: '#/components/schemas/InboundWebhookReceiptResponse'
         '400': {$ref: '#/components/responses/InboundWebhookInvalid'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
-          description: Changed content for a retained provider event ID (webhook_automation_conflict).
+          description: Changed content for a retained provider event ID (webhook_workflow_conflict).
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -15559,6 +15579,58 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/self/activity:
+    get:
+      tags: [keys]
+      operationId: agentConnectionSelfActivity
+      summary: Read the calling agent's own activity.
+      description: |
+        The write requests (POST, PUT, PATCH, DELETE) the calling agent key
+        made in the last 7 days, newest first. Only an agent key can call it;
+        a person reads an agent's log by its connection id.
+      parameters:
+        - $ref: '#/components/parameters/AgentActivityBefore'
+        - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the calling agent's write requests, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentActivityResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/{id}/activity:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose activity to read.
+        schema: {type: string}
+    get:
+      tags: [keys]
+      operationId: agentConnectionActivity
+      summary: Read a connected agent's activity.
+      description: |
+        The write requests one of the account's agents made in the last 7
+        days, newest first: when, method, path, response status and the
+        approval request it went through on. Reads and requests the approval
+        gate answered are not listed. An agent key may read only its own.
+      parameters:
+        - $ref: '#/components/parameters/AgentActivityBefore'
+        - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the connected agent's write requests, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentActivityResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/agent-connections/{id}:
     parameters:
       - name: id
@@ -15679,6 +15751,36 @@ paths:
               schema: {$ref: '#/components/schemas/AgentConnectionsRevokeAllResponse'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/agent-connections/{id}/activity:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: API key id of the organization agent whose activity to read.
+        schema: {type: string}
+    get:
+      tags: [orgs, keys]
+      operationId: orgAgentConnectionActivity
+      summary: Read the activity of an agent acting in an organization.
+      description: |
+        The write requests an agent acting in the organization made in the
+        last 7 days, newest first. Owners and admins only; an id that is not
+        one of the organization's agents is 404.
+      parameters:
+        - $ref: '#/components/parameters/AgentActivityBefore'
+        - $ref: '#/components/parameters/AgentActivityLimit'
+      responses:
+        '200':
+          description: One page of the organization agent's write requests, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentActivityResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/orgs/{slug}/agent-connections/{id}:
     parameters:
@@ -20904,6 +21006,18 @@ components:
         type: string
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
   parameters:
+    AgentActivityBefore:
+      name: before
+      in: query
+      required: false
+      description: The `next_before` value of an earlier activity page; omit it for the newest rows.
+      schema: {type: string}
+    AgentActivityLimit:
+      name: limit
+      in: query
+      required: false
+      description: Activity rows per page, 1 to 200. Default 50.
+      schema: {type: integer, minimum: 1, maximum: 200}
     OrgProjectOrganization:
       name: organization
       in: path
@@ -25445,7 +25559,7 @@ components:
           description: Stable reason when enabled is false. Plan restrictions take precedence when both gates deny access. Omitted when enabled; older servers may omit it.
         unavailable_detail:
           type: string
-          description: Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for automation. Omitted when enabled; older servers may omit it.
+          description: Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for stored workflow. Omitted when enabled; older servers may omit it.
     CapabilitiesResponse:
       description: Account-scoped capability registry with resolved entitlement and existing runtime availability gates.
       type: object
@@ -25896,7 +26010,7 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
+          description: "Permission set attached to the exported key. github:manage controls customer GitHub connection stored workflow; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: {type: string, format: date-time}
         last_used_at: {type: [string, "null"], format: date-time}
@@ -28063,6 +28177,26 @@ components:
           type: string
           format: email
           description: "The account's own email address (kind email)."
+    UpdateNotificationChannelRequest:
+      description: "Renames a channel or replaces its destination; set name, the channel's own destination, or both."
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'New name, unique per account.'
+        slack_webhook_url:
+          type: string
+          format: uri
+          description: 'New Slack incoming webhook (kind slack).'
+        pagerduty_routing_key:
+          type: string
+          pattern: '^[A-Za-z0-9]{32}$'
+          description: 'New Events API v2 integration key (kind pagerduty).'
+        pagerduty_region:
+          type: string
+          enum: [us, eu]
+          description: 'PagerDuty service region of the new key (kind pagerduty); default us.'
     NotificationChannelResponse:
       description: 'One alert notification channel.'
       type: object
@@ -30891,7 +31025,7 @@ components:
     WorkflowRecoveryPollingWebhookPayload:
       type: object
       additionalProperties: false
-      description: Historical automation.recovery_polling_status event. Three consecutive deterministic polling failures trigger failed; unchanged code and policy version stay quiet. Recovered proves a successful poll, independently of workflow outcome. Recipients and payload are frozen at capture; use event_id for deduplication.
+      description: Historical stored_workflow.recovery_polling_status event. Three consecutive deterministic polling failures trigger failed; unchanged code and policy version stay quiet. Recovered proves a successful poll, independently of workflow outcome. Recipients and payload are frozen at capture; use event_id for deduplication.
       required: [event_id, app_id, app, scope, policy_version, sequence, state, code, attempts, observed_at, inspection_url, monitoring_only]
       properties:
         event_id: {type: string, format: uuid}
@@ -30969,7 +31103,7 @@ components:
         receiver_webhook_ids: {type: array, items: {type: string, format: uuid}}
     WorkflowRecoveryQueueBlockedWebhookPayload:
       type: object
-      description: Historical automation.recovery_queue_blocked event. Saved-failure retries capture changes in exact parent or child evidence diagnosis and proven clearance, with diagnosis URL and CLI guidance. Initial automatic recovery identifies initial_failure_id. Unchanged blockers stay quiet; recovery identifies cleared evidence rather than successful execution. Capturing this event does not finalize a child, release its execution slot, or authorize another retry. Delivery may occur after the block resolves; stable identity and frozen recipients support receiver deduplication.
+      description: Historical stored_workflow.recovery_queue_blocked event. Saved-failure retries capture changes in exact parent or child evidence diagnosis and proven clearance, with diagnosis URL and CLI guidance. Initial automatic recovery identifies initial_failure_id. Unchanged blockers stay quiet; recovery identifies cleared evidence rather than successful execution. Capturing this event does not finalize a child, release its execution slot, or authorize another retry. Delivery may occur after the block resolves; stable identity and frozen recipients support receiver deduplication.
       required: [event_id, app_id, app, review_id, action_id, policy_version, position, status, reason, observed_at, queue_url, review_status_url]
       properties:
         evidence_kind: {type: string, enum: [parent, child, initial]}
@@ -31028,7 +31162,7 @@ components:
         actions: {type: array, items: {$ref: '#/components/schemas/WorkflowRecoveryAutomaticAction'}}
     WorkflowRecoveryPolicyPausedWebhookPayload:
       type: object
-      description: Historical automation.recovery_policy_paused event emitted once per policy version after repeated proven automatic retry failures. Frozen receivers and stable event identity survive retries and later policy updates.
+      description: Historical stored_workflow.recovery_policy_paused event emitted once per policy version after repeated proven automatic retry failures. Frozen receivers and stable event identity survive retries and later policy updates.
       required: [event_id, app_id, app, policy_version, paused_at, consecutive_failures, reason, policy_url]
       properties:
         event_id: {type: string, format: uuid}
@@ -31083,7 +31217,7 @@ components:
         recovery_notification: {$ref: '#/components/schemas/WorkflowRecoveryHealthNotification'}
     WorkflowRecoveryHealthWebhookPayload:
       type: object
-      description: Historical automation.recovery_health_alert or automation.recovery_health_recovered transition with stable event and incident identities. Recovery targets only original alert receivers still enabled and subscribed to recovery at capture. Delivery can occur after the observed condition changes and does not authorize retries or release slots.
+      description: Historical stored_workflow.recovery_health_alert or stored_workflow.recovery_health_recovered transition with stable event and incident identities. Recovery targets only original alert receivers still enabled and subscribed to recovery at capture. Delivery can occur after the observed condition changes and does not authorize retries or release slots.
       required: [event_id, episode_id, app_id, app, policy_version, status, reason, opened_at, observed_at, pending, outstanding, queue_truncated, health_url]
       properties:
         event_id: {type: string, format: uuid}
@@ -31584,7 +31718,7 @@ components:
         receiver_webhook_ids: {type: array, items: {type: string, format: uuid}}
     WorkflowRecoveryReviewReadyWebhookPayload:
       type: object
-      description: Payload of automation.recovery_review_ready. Carries frozen prepared targets and review commands; approval and application remain explicit. Retries reuse the event identifier and delivery ledger.
+      description: Payload of stored_workflow.recovery_review_ready. Carries frozen prepared targets and review commands; approval and application remain explicit. Retries reuse the event identifier and delivery ledger.
       required: [event_id, review_id, app_id, app, policy_version, prepared_at, observed_at, targets, review_url, status_url, review_command, export_command]
       properties:
         initial_failure_id: {type: string, format: uuid, description: Captured initial failure for parentless reviews. Parent-job reviews carry job_id instead.}
@@ -31613,7 +31747,7 @@ components:
         result: {$ref: '#/components/schemas/WorkflowRecoveryReviewStatus'}
     WorkflowRecoveryReviewFinishedWebhookPayload:
       type: object
-      description: Payload of automation.recovery_review_finished. All actions have proven final outcomes for their frozen generations. This historical result remains valid after review decisions or later retries; receivers deduplicate by event_id.
+      description: Payload of stored_workflow.recovery_review_finished. All actions have proven final outcomes for their frozen generations. This historical result remains valid after review decisions or later retries; receivers deduplicate by event_id.
       required: [event_id, review_id, app_id, app, job_id, policy_version, captured_at, result, review_url, status_url, status_command]
       properties:
         event_id: {type: string, format: uuid}
@@ -38106,6 +38240,32 @@ components:
           type: array
           description: Channel names, in alphabetical order.
           items: {type: string}
+    AgentActivityResponse:
+      type: object
+      description: One page of an agent's write requests, newest first.
+      required: [activity]
+      properties:
+        activity:
+          type: array
+          items: {$ref: '#/components/schemas/AgentActivityEntry'}
+        next_before:
+          type: string
+          description: Pass as `before` to read the next older page; absent on the last page.
+    AgentActivityEntry:
+      type: object
+      description: One write request an agent key made.
+      required: [id, method, path, status, created_at]
+      properties:
+        id: {type: string}
+        method: {type: string, enum: [POST, PUT, PATCH, DELETE]}
+        path:
+          type: string
+          description: The request path, without its query string.
+        status: {type: integer, description: The HTTP status the request was answered with.}
+        approval_id:
+          type: string
+          description: The approval request the write went through on, when it needed one.
+        created_at: {type: string, format: date-time}
     AgentApprovalResponse:
       description: "One request of an agent connection that needed a person's approval."
       type: object
@@ -38151,7 +38311,7 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
+          description: "Closed permission set attached to the key. github:manage controls customer GitHub connection stored workflow; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: {type: [string, "null"], format: date-time}
         created_at: {type: string, format: date-time, example: "2026-07-25T13:25:00Z"}
@@ -38233,7 +38393,7 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
+          description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection stored workflow. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project."}
         approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field."}
@@ -38259,7 +38419,7 @@ components:
         scopes:
           type: array
           items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
-          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
+          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection stored workflow; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project."}
         approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action the organization's agent key must have a person approve; the organization's floor applies on top. Omit for every kind, empty for none."}
@@ -42696,7 +42856,7 @@ components:
       additionalProperties: false
     CreateInboundWebhookEndpointRequest:
       type: object
-      description: Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or automation starts when bound.
+      description: Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events become durable app invocations or stored workflow starts when bound.
       required: [name, provider, signing_secret]
       properties:
         name:
@@ -42746,8 +42906,8 @@ components:
           description: One-time-disclosed public provider URL, present only on create.
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
-    WebhookAutomationReceiptResponse:
-      description: Durable provider event routing decision and automation admission progress.
+    WebhookWorkflowReceiptResponse:
+      description: Durable provider event routing decision and stored workflow admission progress.
       type: object
       required: [receipt_id, endpoint_id, provider_event_id, workflow_name, status, duplicate, accepted_at, event_source, routing_status]
       properties:
@@ -42756,7 +42916,7 @@ components:
         provider_event_id: {type: string}
         workflow_name: {type: string}
         status: {type: string, enum: [accepted, ignored]}
-        ignored_reason: {type: string, enum: [automation_paused, automation_failure_paused, event_filtered, automation_unpublished]}
+        ignored_reason: {type: string, enum: [stored_workflow_paused, stored_workflow_failure_paused, event_filtered, stored_workflow_unpublished]}
         duplicate: {type: boolean}
         accepted_at: {type: string, format: date-time}
         event_source: {type: string}
@@ -42856,7 +43016,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - app.health.changed
               - event_recovery.completed
               - event_recovery.cancelled
@@ -42868,13 +43028,13 @@ components:
               - event_recovery.execution_finished
               - realtime.channel.published
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -43089,7 +43249,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - app.health.changed
               - event_recovery.completed
               - event_recovery.cancelled
@@ -43101,13 +43261,13 @@ components:
               - event_recovery.execution_finished
               - realtime.channel.published
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -43216,7 +43376,7 @@ components:
               - routes.insight.detected
               - routes.insight.resolved
               - workflow.finished
-              - automation.paused
+              - stored_workflow.paused
               - app.health.changed
               - event_recovery.completed
               - event_recovery.cancelled
@@ -43228,13 +43388,13 @@ components:
               - event_recovery.execution_finished
               - realtime.channel.published
               - event_recovery.execution_attention
-              - automation.recovery_review_ready
-              - automation.recovery_review_finished
-              - automation.recovery_policy_paused
-              - automation.recovery_queue_blocked
-              - automation.recovery_health_alert
-              - automation.recovery_health_recovered
-              - automation.recovery_polling_status
+              - stored_workflow.recovery_review_ready
+              - stored_workflow.recovery_review_finished
+              - stored_workflow.recovery_policy_paused
+              - stored_workflow.recovery_queue_blocked
+              - stored_workflow.recovery_health_alert
+              - stored_workflow.recovery_health_recovered
+              - stored_workflow.recovery_polling_status
           maxItems: 32
         retry_policy:
           type: string
@@ -51208,8 +51368,8 @@ components:
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
-    AutomationConflict:
-      description: "code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership."
+    StoredWorkflowConflict:
+      description: "code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership."
       content:
         application/problem+json:
           schema:

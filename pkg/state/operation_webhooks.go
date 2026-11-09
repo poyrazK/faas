@@ -209,7 +209,7 @@ func (s *PgStore) SaveOperationWebhookBinding(ctx context.Context, opts Operatio
 	q := sqlc.New()
 	endpoint, account, app, tenant := mustPgUUID(opts.EndpointID), mustPgUUID(opts.AccountID), mustPgUUID(opts.AppID), mustPgUUID(opts.PlatformTenantID)
 	// The endpoint lock serializes versioned writers, as the routing guard does.
-	if _, err := q.LockWebhookAutomationEndpoint(ctx, tx, sqlc.LockWebhookAutomationEndpointParams{ID: endpoint, AppID: app, AccountID: account}); err != nil {
+	if _, err := q.LockWebhookWorkflowEndpoint(ctx, tx, sqlc.LockWebhookWorkflowEndpointParams{ID: endpoint, AppID: app, AccountID: account}); err != nil {
 		return OperationWebhookBinding{}, mapErr(err)
 	}
 	owner, err := q.OperationWebhookTenantStatus(ctx, tx, sqlc.OperationWebhookTenantStatusParams{AppID: app, AccountID: account, TenantID: tenant})
@@ -431,7 +431,7 @@ func (m *MemStore) SaveOperationWebhookBinding(_ context.Context, opts Operation
 	if prior.Version != opts.ExpectedVersion {
 		return OperationWebhookBinding{}, ErrOperationWebhookVersionConflict
 	}
-	if _, exists := m.webhookAutomationBindings[opts.EndpointID]; exists {
+	if _, exists := m.webhookWorkflowBindings[opts.EndpointID]; exists {
 		return OperationWebhookBinding{}, ErrOperationWebhookRoutingConflict
 	}
 	if _, exists := m.exclusiveTriggerBindings["inbound_webhook\x00"+opts.EndpointID]; exists {

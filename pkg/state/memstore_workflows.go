@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/automationchecks"
+	"github.com/onebox-faas/faas/pkg/storedworkflowchecks"
 )
 
 type workflowRunCreateKey struct {
@@ -1344,7 +1344,7 @@ func (m *MemStore) completeWorkflowCallbackLocked(tenantID, runID, stepName, eve
 			if event.ID != eventID {
 				continue
 			}
-			if event.RunID == runID && event.EventName == eventName && automationchecks.EqualJSON(event.Payload, payload) {
+			if event.RunID == runID && event.EventName == eventName && storedworkflowchecks.EqualJSON(event.Payload, payload) {
 				return true, nil
 			}
 			return false, fmt.Errorf("%w: workflow callback payload differs", ErrConflict)
@@ -1432,7 +1432,7 @@ func (m *MemStore) insertWorkflowEventLocked(tenantID string, e *WorkflowEvent) 
 	for _, events := range m.workflowEvents {
 		for _, existing := range events {
 			if existing.ID == e.ID {
-				if existing.RunID != e.RunID || existing.EventName != e.EventName || !automationchecks.EqualJSON(existing.Payload, e.Payload) {
+				if existing.RunID != e.RunID || existing.EventName != e.EventName || !storedworkflowchecks.EqualJSON(existing.Payload, e.Payload) {
 					return fmt.Errorf("%w: workflow_events.id", ErrConflict)
 				}
 				e.ReceivedAt = existing.ReceivedAt
@@ -1524,7 +1524,7 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 		if r.FinishedAt != nil && !r.FinishedAt.After(threshold) && !retainedByOperation {
 			m.captureWorkflowRecoveryResultLocked(r, time.Now().UTC())
 			delete(m.workflowRuns, id)
-			delete(m.automationLiveVerifications, id)
+			delete(m.storedWorkflowLiveVerifications, id)
 			delete(m.workflowSteps, id)
 			for key := range m.workflowStepAttempts {
 				if key.runID == id {

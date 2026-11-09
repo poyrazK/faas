@@ -11,7 +11,8 @@ ALTER TABLE agent_approval_requests ADD COLUMN IF NOT EXISTS decision_note text;
 -- NOT VALID: new writes are checked at once; every existing row holds NULL.
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_approval_requests_decision_note_check') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_approval_requests_decision_note_check'
+                     AND conrelid = 'agent_approval_requests'::regclass) THEN
         ALTER TABLE agent_approval_requests
             ADD CONSTRAINT agent_approval_requests_decision_note_check
             CHECK (decision_note IS NULL OR (status = 'denied' AND char_length(decision_note) BETWEEN 1 AND 280)) NOT VALID;

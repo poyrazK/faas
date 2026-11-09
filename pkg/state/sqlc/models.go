@@ -231,6 +231,18 @@ type Agent struct {
 	DeletedAt     pgtype.Timestamptz
 }
 
+type AgentActivity struct {
+	ID         pgtype.UUID
+	KeyID      pgtype.UUID
+	AccountID  pgtype.UUID
+	OrgID      pgtype.UUID
+	Method     string
+	Path       string
+	Status     int32
+	ApprovalID pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+}
+
 // ADR-20261107140000 notification channels that get agent approval requests; apid is the only writer.
 type AgentApprovalChannelBinding struct {
 	AccountID pgtype.UUID
@@ -462,6 +474,30 @@ type AgentVersion struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+}
+
+type AlertChannelResolveRetry struct {
+	RuleID        pgtype.UUID
+	ChannelID     pgtype.UUID
+	Observed      float64
+	ResolvedAt    pgtype.Timestamptz
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+}
+
+type AlertChannelStandDown struct {
+	RuleID        pgtype.UUID
+	ChannelID     pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	RuleName      string
+	RuleMetric    string
+	Reason        string
+	QueuedAt      pgtype.Timestamptz
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
 }
 
 type AlertDelivery struct {
@@ -15351,6 +15387,128 @@ type StatusObservationBucket struct {
 	HasTelemetry bool
 }
 
+type StoredWorkflow struct {
+	AppID            pgtype.UUID
+	Name             string
+	Version          int64
+	Draft            []byte
+	Published        []byte
+	PublishedVersion int64
+	Enabled          bool
+	UpdatedAt        pgtype.Timestamptz
+	TestSuite        []byte
+	TestReport       []byte
+}
+
+type StoredWorkflowFailureGuard struct {
+	AppID           pgtype.UUID
+	Name            string
+	Generation      int64
+	MonitoringSince pgtype.Timestamptz
+	PausedAt        pgtype.Timestamptz
+}
+
+type StoredWorkflowFailureHistory struct {
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	Name           string
+	Generation     int64
+	State          string
+	Reason         string
+	RecordedAt     pgtype.Timestamptz
+	Failures       int64
+	CompletedRuns  int64
+	PolicyVersion  int64
+	ActorAccountID pgtype.UUID
+}
+
+type StoredWorkflowFailurePolicy struct {
+	AppID            pgtype.UUID
+	Name             string
+	Version          int64
+	Enabled          bool
+	FailureThreshold int32
+	MinCompletedRuns int32
+	WindowSeconds    int32
+}
+
+type StoredWorkflowLiveBaselinePromotion struct {
+	PromotionID  pgtype.UUID
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+	Revision     int64
+	SuiteID      pgtype.UUID
+	Receipt      []byte
+	PromotedAt   pgtype.Timestamptz
+}
+
+type StoredWorkflowLiveBaselineRetirement struct {
+	RetirementID pgtype.UUID
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+	Receipt      []byte
+}
+
+type StoredWorkflowLiveSuite struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	Name             string
+	WorkflowVersion  int64
+	PublishedVersion int64
+	DeploymentID     pgtype.UUID
+	Cases            []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	Managed          bool
+}
+
+type StoredWorkflowLiveVerification struct {
+	RunID              pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	CaseName           string
+	WorkflowVersion    int64
+	PublishedVersion   int64
+	DeploymentID       pgtype.UUID
+	InputsHash         string
+	LiveTest           []byte
+	IdempotencyKey     string
+	RequestFingerprint []byte
+	Report             []byte
+	CreatedAt          pgtype.Timestamptz
+}
+
+type StoredWorkflowPublishPolicy struct {
+	AppID   pgtype.UUID
+	Mode    string
+	Version int64
+}
+
+type StoredWorkflowPublishReceipt struct {
+	AppID         pgtype.UUID
+	Name          string
+	AccountID     pgtype.UUID
+	ApiKeyID      string
+	TokenHash     string
+	PolicyVersion int64
+	ExpiresAt     pgtype.Timestamptz
+	Evidence      []byte
+}
+
+type StoredWorkflowRevision struct {
+	AppID                pgtype.UUID
+	Name                 string
+	Version              int64
+	Definition           []byte
+	RecordedAt           pgtype.Timestamptz
+	LegacySnapshot       bool
+	PublishedByAccountID pgtype.UUID
+	PublishedByApiKeyID  pgtype.UUID
+	CheckEvidence        []byte
+}
+
 type StripePushDedupe struct {
 	AccountID pgtype.UUID
 	Hour      pgtype.Timestamptz
@@ -15678,128 +15836,6 @@ type WorkerRecovery struct {
 	NextAttemptAt pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	Pools         []byte
-}
-
-type WorkflowAutomationDefinition struct {
-	AppID            pgtype.UUID
-	Name             string
-	Version          int64
-	Draft            []byte
-	Published        []byte
-	PublishedVersion int64
-	Enabled          bool
-	UpdatedAt        pgtype.Timestamptz
-	TestSuite        []byte
-	TestReport       []byte
-}
-
-type WorkflowAutomationFailureGuard struct {
-	AppID           pgtype.UUID
-	Name            string
-	Generation      int64
-	MonitoringSince pgtype.Timestamptz
-	PausedAt        pgtype.Timestamptz
-}
-
-type WorkflowAutomationFailureHistory struct {
-	ID             pgtype.UUID
-	AppID          pgtype.UUID
-	Name           string
-	Generation     int64
-	State          string
-	Reason         string
-	RecordedAt     pgtype.Timestamptz
-	Failures       int64
-	CompletedRuns  int64
-	PolicyVersion  int64
-	ActorAccountID pgtype.UUID
-}
-
-type WorkflowAutomationFailurePolicy struct {
-	AppID            pgtype.UUID
-	Name             string
-	Version          int64
-	Enabled          bool
-	FailureThreshold int32
-	MinCompletedRuns int32
-	WindowSeconds    int32
-}
-
-type WorkflowAutomationLiveBaselinePromotion struct {
-	PromotionID  pgtype.UUID
-	AppID        pgtype.UUID
-	Name         string
-	BaselineName string
-	Revision     int64
-	SuiteID      pgtype.UUID
-	Receipt      []byte
-	PromotedAt   pgtype.Timestamptz
-}
-
-type WorkflowAutomationLiveBaselineRetirement struct {
-	RetirementID pgtype.UUID
-	AppID        pgtype.UUID
-	Name         string
-	BaselineName string
-	Receipt      []byte
-}
-
-type WorkflowAutomationLiveSuite struct {
-	ID                pgtype.UUID
-	AppID             pgtype.UUID
-	Name              string
-	AutomationVersion int64
-	PublishedVersion  int64
-	DeploymentID      pgtype.UUID
-	Cases             []byte
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	Managed           bool
-}
-
-type WorkflowAutomationLiveVerification struct {
-	RunID              pgtype.UUID
-	AppID              pgtype.UUID
-	Name               string
-	CaseName           string
-	AutomationVersion  int64
-	PublishedVersion   int64
-	DeploymentID       pgtype.UUID
-	InputsHash         string
-	LiveTest           []byte
-	IdempotencyKey     string
-	RequestFingerprint []byte
-	Report             []byte
-	CreatedAt          pgtype.Timestamptz
-}
-
-type WorkflowAutomationPublishPolicy struct {
-	AppID   pgtype.UUID
-	Mode    string
-	Version int64
-}
-
-type WorkflowAutomationPublishReceipt struct {
-	AppID         pgtype.UUID
-	Name          string
-	AccountID     pgtype.UUID
-	ApiKeyID      string
-	TokenHash     string
-	PolicyVersion int64
-	ExpiresAt     pgtype.Timestamptz
-	Evidence      []byte
-}
-
-type WorkflowAutomationRevision struct {
-	AppID                pgtype.UUID
-	Name                 string
-	Version              int64
-	Definition           []byte
-	RecordedAt           pgtype.Timestamptz
-	LegacySnapshot       bool
-	PublishedByAccountID pgtype.UUID
-	PublishedByApiKeyID  pgtype.UUID
-	CheckEvidence        []byte
 }
 
 type WorkflowCallbackWebhookBinding struct {
