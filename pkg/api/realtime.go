@@ -560,7 +560,10 @@ func ValidateRealtimeAuth(mode string, hasStaticToken bool, issuer, jwksURL stri
 			return fmt.Errorf("auth_jwks_url must not point to a private or loopback address")
 		}
 	}
-	if len(audience) > 16 || len(algorithms) == 0 || len(algorithms) > 16 {
+	if len(algorithms) == 0 {
+		return fmt.Errorf("auth_algorithms is required for oidc_jwt: name at least one of RS256, RS384, RS512, ES256, ES384 or ES512")
+	}
+	if len(audience) > 16 || len(algorithms) > 16 {
 		return fmt.Errorf("auth_audience and auth_algorithms are bounded to 16 entries")
 	}
 	allowed := map[string]struct{}{"RS256": {}, "RS384": {}, "RS512": {}, "ES256": {}, "ES384": {}, "ES512": {}}
