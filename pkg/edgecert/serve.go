@@ -371,10 +371,26 @@ func (c expiryCollector) Collect(ch chan<- prometheus.Metric) {
 	if set == nil {
 		return
 	}
-	now := c.s.now()
+	// One series per name, for the certificate GetCertificate serves for it:
+	// the covering one that expires last. Two live certificates naming the
+	// same host (a renewal beside the one it replaces) emitted the series
+	// twice, and the duplicate failed the whole scrape with HTTP 500
+	// (rc.331: FaasComputeEdgeUnavailable paged on every node).
+	latest := make(map[string]time.Time)
+	var order []string
 	for _, cert := range set.certs {
 		for _, name := range cert.names {
-			ch <- prometheus.MustNewConstMetric(expiryDesc, prometheus.GaugeValue, cert.notAfter.Sub(now).Seconds(), name)
+			at, seen := latest[name]
+			if !seen {
+				order = append(order, name)
+			}
+			if !seen || cert.notAfter.After(at) {
+				latest[name] = cert.notAfter
+			}
 		}
+	}
+	now := c.s.now()
+	for _, name := range order {
+		ch <- prometheus.MustNewConstMetric(expiryDesc, prometheus.GaugeValue, latest[name].Sub(now).Seconds(), name)
 	}
 }

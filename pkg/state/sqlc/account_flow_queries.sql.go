@@ -404,6 +404,45 @@ func (q *Queries) SetAccountDisplayName(ctx context.Context, db DBTX, arg SetAcc
 	return result.RowsAffected(), nil
 }
 
+const takeAccountMailSlot = `-- name: TakeAccountMailSlot :one
+INSERT INTO account_mail_throttle AS t (account_id, kind, window_started_at, sent_in_window, last_sent_at)
+VALUES ($1, $2::text, clock_timestamp(), 1, clock_timestamp())
+ON CONFLICT (account_id, kind) DO UPDATE SET
+    window_started_at = CASE WHEN t.window_started_at <= clock_timestamp() - make_interval(secs => $3::double precision)
+        THEN clock_timestamp() ELSE t.window_started_at END,
+    sent_in_window = CASE WHEN t.window_started_at <= clock_timestamp() - make_interval(secs => $3::double precision)
+        THEN 1 ELSE t.sent_in_window + 1 END,
+    last_sent_at = clock_timestamp()
+WHERE t.last_sent_at <= clock_timestamp() - make_interval(secs => $4::double precision)
+  AND (t.window_started_at <= clock_timestamp() - make_interval(secs => $3::double precision)
+       OR t.sent_in_window < $5::int)
+RETURNING t.sent_in_window
+`
+
+type TakeAccountMailSlotParams struct {
+	AccountID          pgtype.UUID
+	Kind               string
+	WindowSeconds      float64
+	MinIntervalSeconds float64
+	MaxPerWindow       int32
+}
+
+// Count one mail of kind to the account when its fixed window still has
+// room and the last send is at least min_interval old; no row means the
+// send is throttled (ADR 20261108160000).
+func (q *Queries) TakeAccountMailSlot(ctx context.Context, db DBTX, arg TakeAccountMailSlotParams) (int32, error) {
+	row := db.QueryRow(ctx, takeAccountMailSlot,
+		arg.AccountID,
+		arg.Kind,
+		arg.WindowSeconds,
+		arg.MinIntervalSeconds,
+		arg.MaxPerWindow,
+	)
+	var sent_in_window int32
+	err := row.Scan(&sent_in_window)
+	return sent_in_window, err
+}
+
 const trimMFATrustedBrowsers = `-- name: TrimMFATrustedBrowsers :execrows
 UPDATE mfa_trusted_browsers SET revoked_at=clock_timestamp()
 WHERE id IN (

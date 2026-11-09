@@ -62,6 +62,8 @@ curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \
 
 Only the owner can change it, with MFA and a recent step-up. When the organization already has a subscription, its billing customer moves to the new address first. An address that already pays for another Gregale account or organization is refused with `409 billing_email_in_use`, and so is an upgrade from an organization whose billing email is in use that way. While a member's email is the organization's billing email, that member cannot be removed or delete their account (`409 billing_contact_member`); move the billing email first.
 
+When you change your sign-in email, your own billing customer moves to the new address, and so does the billing email of each organization that billed to your previous address. If the billing provider refuses a move (for example, the new address already pays for another account), that billing email stays as it was and the new address gets an email naming what to update.
+
 ## Spend cap
 
 A spend cap is a hard ceiling on the overage an account is billed in a UTC

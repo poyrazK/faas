@@ -104,6 +104,44 @@ the session under Account → Sessions and contact support@gregale.dev.
 	return subject, body
 }
 
+// OperatorMFAResetBody tells the account that Gregale support turned off
+// its two-factor authentication after an identity check.
+func OperatorMFAResetBody(email string, at time.Time) (subject, body string) {
+	subject = "Gregale support turned off two-factor authentication on your account"
+	body = fmt.Sprintf(`Hi,
+
+At %s Gregale support turned off two-factor authentication for your
+Gregale account (%s), after checking your identity for an account recovery
+request. The authenticator and its recovery codes were removed, every
+browser was signed out and remembered browsers were forgotten. API keys
+keep working.
+
+If you asked for this, sign in and set up two-factor authentication again.
+
+If you did not, contact security@gregale.dev at once: someone may be
+trying to take over your account.
+
+— Gregale
+`, at.UTC().Format("2006-01-02 15:04 UTC"), email)
+	return subject, body
+}
+
+// BillingEmailSyncFailedBody tells the new sign-in address which billing
+// emails could not follow an email change. failed names each subject, such
+// as `organization "Acme" (acme)`.
+func BillingEmailSyncFailedBody(email string, failed []string, docsURL string) (subject, body string) {
+	subject = "Update your Gregale billing email"
+	var b strings.Builder
+	fmt.Fprintf(&b, "Your Gregale sign-in email changed to %s, but the billing email of\n", email)
+	for _, f := range failed {
+		fmt.Fprintf(&b, "  - %s\n", f)
+	}
+	b.WriteString("could not be moved with it, so receipts and payment notices still go to the previous address.\n\n")
+	fmt.Fprintf(&b, "An organization owner can set the billing email with PUT /v1/orgs/{slug}/billing/email (%s).\n", docsURL)
+	b.WriteString("For your personal account, contact support.\n")
+	return subject, b.String()
+}
+
 // CredentialCreatedBody notifies that a new API key or CLI/agent sign-in
 // credential was created on the account. what is a short human phrase such
 // as "An API key" or "A CLI sign-in".

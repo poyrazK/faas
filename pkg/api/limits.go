@@ -239,6 +239,15 @@ const (
 	AgentApprovalBodyBindBytes = 1 << 20
 )
 
+// Agent activity (ADR-20261107220000): an agent key's write requests are
+// kept AgentActivityRetention; a page holds DefaultAgentActivityPage rows
+// unless ?limit asks for up to MaxAgentActivityPage.
+const (
+	AgentActivityRetention   = 7 * 24 * time.Hour
+	DefaultAgentActivityPage = 50
+	MaxAgentActivityPage     = 200
+)
+
 // Agent approval outcomes (ADR-20261107140000 §6): an agent repeating a
 // request denied, or expired, within AgentApprovalOutcomeWindow is told so
 // instead of asking again; a denial note holds at most
@@ -1335,15 +1344,15 @@ type ProfilingLimits struct {
 }
 
 const (
-	AutomationEventRecoveryReceiptMaxPages = 25
-	AutomationRecoveryPlanMaxBytes         = 64 << 10
-	AutomationRecoveryBatchMaxRuns         = 25
-	AutomationRecoveryPreviewDefaultLimit  = 10
-	AutomationRecoveryPreviewMaxLimit      = 25
-	EventReplayPreviewPageDefault          = 50
-	EventReplayPreviewPageMax              = 100
-	EventReplayPreviewCursorMaxBytes       = 4096
-	EventReplayPreviewReadTimeout          = 5 * time.Second
+	StoredWorkflowEventRecoveryReceiptMaxPages = 25
+	StoredWorkflowRecoveryPlanMaxBytes         = 64 << 10
+	StoredWorkflowRecoveryBatchMaxRuns         = 25
+	StoredWorkflowRecoveryPreviewDefaultLimit  = 10
+	StoredWorkflowRecoveryPreviewMaxLimit      = 25
+	EventReplayPreviewPageDefault              = 50
+	EventReplayPreviewPageMax                  = 100
+	EventReplayPreviewCursorMaxBytes           = 4096
+	EventReplayPreviewReadTimeout              = 5 * time.Second
 )
 
 // Historical backfills pin only the bounded settled-receipt retention window;
@@ -9303,6 +9312,10 @@ const (
 	// than its last value, so an app whose pusher died scales down on its
 	// other signals instead of holding the fleet at a frozen backlog.
 	CustomMetricFreshnessSeconds = 300
+	// CustomMetricMaxFutureSkewSeconds bounds how far ahead of apid's clock
+	// an OTLP data point may be stamped. A later stamp would keep the value
+	// fresh after its pusher stopped (ADR-20261031144636).
+	CustomMetricMaxFutureSkewSeconds = 300
 
 	// CustomMetricExportMaxSeries caps one ADR-745 exporter scrape. The
 	// per-app name cap already bounds the table; this bounds a scrape even
@@ -10486,99 +10499,99 @@ const (
 )
 
 const (
-	AutomationPublishCheckMaxBytes        int64 = 8 * AutomationSimulationRequestMaxBytes
-	AutomationPublishCheckMaxScenarios          = 32
-	AutomationPublishCheckMaxExpectations       = 4096
-	AutomationPublishCheckMaxExclusions         = 256
-	AutomationPublishCheckReceiptTTL            = 30 * time.Minute
+	StoredWorkflowPublishCheckMaxBytes        int64 = 8 * StoredWorkflowSimulationRequestMaxBytes
+	StoredWorkflowPublishCheckMaxScenarios          = 32
+	StoredWorkflowPublishCheckMaxExpectations       = 4096
+	StoredWorkflowPublishCheckMaxExclusions         = 256
+	StoredWorkflowPublishCheckReceiptTTL            = 30 * time.Minute
 
-	AutomationSimulationRequestMaxBytes      int64 = 3 << 20
-	AutomationSimulationResponseMaxBytes     int64 = 4 << 20
-	AutomationSimulationMaxSteps                   = 128
-	AutomationSimulationMaxTraceEntries            = 1024
-	AutomationDefinitionMaxBytes             int64 = 1 << 20
-	AutomationTestSuiteMaxBytes              int64 = AutomationSimulationRequestMaxBytes + AutomationPublishCheckMaxBytes
-	AutomationTestSuiteRequestMaxBytes       int64 = AutomationTestSuiteMaxBytes + 4096
-	AutomationTestReportMaxBytes             int64 = AutomationPublishCheckMaxBytes
-	AutomationLiveMaxExpectations                  = AutomationSimulationMaxSteps
-	AutomationLiveSpecMaxBytes               int64 = AutomationSimulationRequestMaxBytes
-	AutomationLiveStartMaxBytes              int64 = 4096
-	AutomationLiveHistoryLimit                     = 20
-	AutomationLiveReportMaxBytes             int64 = 128 << 10
-	AutomationLiveMaxAttempts                      = WorkflowRetryMaxAttempts * (WorkflowRunMaxResumes + 1)
-	AutomationLiveProgressPollInterval             = 3 * time.Second
-	AutomationLiveProgressRequestTimeout           = 10 * time.Second
-	AutomationLiveProgressMaxRequests              = 100
-	AutomationLiveProgressFormMaxBytes       int64 = 4096
-	AutomationLiveCLIWaitDefault                   = 5 * time.Minute
-	AutomationLiveCLIWaitMax                       = time.Hour
-	AutomationLiveCLIPollMin                       = time.Second
-	AutomationLiveCLIPollMax                       = time.Minute
-	AutomationLiveSuiteMaxCases                    = AutomationPublishCheckMaxScenarios
-	AutomationLiveBaselineNameMaxBytes             = 63
-	AutomationLiveBaselineLimit                    = 20
-	AutomationLiveBaselineLifetimeNameLimit        = 100
-	AutomationLiveBaselineHistoryLimit             = 100
-	AutomationLiveBaselineRequestMaxBytes    int64 = 20 << 10
-	AutomationLiveBaselineReceiptMaxBytes    int64 = 32 << 10
-	AutomationLiveGatePolicyMaxBytes         int64 = 16 << 10
-	AutomationLiveSuiteComparisonMaxCases          = 2 * AutomationLiveSuiteMaxCases
-	AutomationLiveSuiteJournalMaxBytes       int64 = (AutomationLiveReportMaxBytes+AutomationLiveStartMaxBytes)*AutomationLiveSuiteMaxCases + (64 << 10)
-	AutomationLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
-	AutomationLiveSuiteRequestMaxBytes       int64 = 16 << 10
-	AutomationLiveSuiteStartWindow                 = 10 * time.Minute
-	AutomationLiveSuiteFutureClockSkew             = 30 * time.Second
-	AutomationLiveSuiteProtectedWindow             = AutomationLiveSuiteStartWindow + AutomationLiveSuiteFutureClockSkew
-	AutomationLiveSuiteHistoryLimit                = AutomationLiveHistoryLimit
-	AutomationLiveSuiteRetainedLimit               = 100
-	AutomationTestCaseNameMaxBytes                 = 128
-	AutomationTestStepResultsMax                   = AutomationSimulationMaxTraceEntries
+	StoredWorkflowSimulationRequestMaxBytes      int64 = 3 << 20
+	StoredWorkflowSimulationResponseMaxBytes     int64 = 4 << 20
+	StoredWorkflowSimulationMaxSteps                   = 128
+	StoredWorkflowSimulationMaxTraceEntries            = 1024
+	StoredWorkflowDefinitionMaxBytes             int64 = 1 << 20
+	StoredWorkflowTestSuiteMaxBytes              int64 = StoredWorkflowSimulationRequestMaxBytes + StoredWorkflowPublishCheckMaxBytes
+	StoredWorkflowTestSuiteRequestMaxBytes       int64 = StoredWorkflowTestSuiteMaxBytes + 4096
+	StoredWorkflowTestReportMaxBytes             int64 = StoredWorkflowPublishCheckMaxBytes
+	StoredWorkflowLiveMaxExpectations                  = StoredWorkflowSimulationMaxSteps
+	StoredWorkflowLiveSpecMaxBytes               int64 = StoredWorkflowSimulationRequestMaxBytes
+	StoredWorkflowLiveStartMaxBytes              int64 = 4096
+	StoredWorkflowLiveHistoryLimit                     = 20
+	StoredWorkflowLiveReportMaxBytes             int64 = 128 << 10
+	StoredWorkflowLiveMaxAttempts                      = WorkflowRetryMaxAttempts * (WorkflowRunMaxResumes + 1)
+	StoredWorkflowLiveProgressPollInterval             = 3 * time.Second
+	StoredWorkflowLiveProgressRequestTimeout           = 10 * time.Second
+	StoredWorkflowLiveProgressMaxRequests              = 100
+	StoredWorkflowLiveProgressFormMaxBytes       int64 = 4096
+	StoredWorkflowLiveCLIWaitDefault                   = 5 * time.Minute
+	StoredWorkflowLiveCLIWaitMax                       = time.Hour
+	StoredWorkflowLiveCLIPollMin                       = time.Second
+	StoredWorkflowLiveCLIPollMax                       = time.Minute
+	StoredWorkflowLiveSuiteMaxCases                    = StoredWorkflowPublishCheckMaxScenarios
+	StoredWorkflowLiveBaselineNameMaxBytes             = 63
+	StoredWorkflowLiveBaselineLimit                    = 20
+	StoredWorkflowLiveBaselineLifetimeNameLimit        = 100
+	StoredWorkflowLiveBaselineHistoryLimit             = 100
+	StoredWorkflowLiveBaselineRequestMaxBytes    int64 = 20 << 10
+	StoredWorkflowLiveBaselineReceiptMaxBytes    int64 = 32 << 10
+	StoredWorkflowLiveGatePolicyMaxBytes         int64 = 16 << 10
+	StoredWorkflowLiveSuiteComparisonMaxCases          = 2 * StoredWorkflowLiveSuiteMaxCases
+	StoredWorkflowLiveSuiteJournalMaxBytes       int64 = (StoredWorkflowLiveReportMaxBytes+StoredWorkflowLiveStartMaxBytes)*StoredWorkflowLiveSuiteMaxCases + (64 << 10)
+	StoredWorkflowLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
+	StoredWorkflowLiveSuiteRequestMaxBytes       int64 = 16 << 10
+	StoredWorkflowLiveSuiteStartWindow                 = 10 * time.Minute
+	StoredWorkflowLiveSuiteFutureClockSkew             = 30 * time.Second
+	StoredWorkflowLiveSuiteProtectedWindow             = StoredWorkflowLiveSuiteStartWindow + StoredWorkflowLiveSuiteFutureClockSkew
+	StoredWorkflowLiveSuiteHistoryLimit                = StoredWorkflowLiveHistoryLimit
+	StoredWorkflowLiveSuiteRetainedLimit               = 100
+	StoredWorkflowTestCaseNameMaxBytes                 = 128
+	StoredWorkflowTestStepResultsMax                   = StoredWorkflowSimulationMaxTraceEntries
 	// Browser forms percent-encode the definition, sample, cases, and selected
 	// case simulation/output controls.
-	AutomationConsoleFormMaxBytes               int64 = 3*(AutomationDefinitionMaxBytes+2*AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes+WorkflowRunInputMaxBytes+AutomationLiveSpecMaxBytes) + 4096
-	AutomationNameMaxBytes                            = 128
-	WorkflowRunInputMaxBytes                    int64 = 1 << 20
-	WorkflowWebhookBindingMaxBytes              int64 = 64 << 10
-	WorkflowWebhookFilterMaxBytes                     = 32 << 10
-	WorkflowWebhookNameMaxBytes                       = 128
-	WorkflowWebhookEventMaxBytes                      = 256
-	WorkflowAutomationHealthDefaultRange              = 7 * 24 * time.Hour
-	WorkflowAutomationHealthMaxRange                  = 30 * 24 * time.Hour
-	WorkflowAutomationHealthMaxFailureSteps           = 10
-	WorkflowAutomationHealthReadTimeout               = 5 * time.Second
-	WorkflowRunDiagnosticsReadTimeout                 = 5 * time.Second
-	WorkflowSchedulePreviewDefaultCount               = 5
-	WorkflowSchedulePreviewMaxCount                   = 20
-	WorkflowSchedulePreviewReadTimeout                = 5 * time.Second
-	WorkflowBacklogAlertThresholdSeconds              = 300
-	WorkflowBacklogAlertCooldownMinutes               = 30
-	AutomationFailurePolicyMaxCount                   = 10000
-	AutomationFailurePolicyMinWindowSeconds           = 60
-	AutomationFailurePolicyMaxWindowSeconds           = 86400
-	AutomationFailurePolicyDefaultWindowSeconds       = 300
-	AutomationFailurePolicyDefaultThreshold           = 3
-	AutomationFailurePolicyDefaultMinRuns             = 5
-	AutomationFailurePolicyHistoryLimit               = 100
-	AutomationFailurePolicyBatch                      = 100
-	AutomationFailurePolicyRequestMaxBytes      int64 = 4096
-	WorkflowFailureAlertThreshold                     = 1
-	WorkflowFailureAlertCooldownMinutes               = 30
-	WorkflowAlertSnapshotReadTimeout                  = 5 * time.Second
-	WorkflowOutboundBodyMaxBytes                int64 = 1 << 20
-	WorkflowOutboundStepNameMaxBytes                  = 128
-	WorkflowResumeRequestMaxBytes               int64 = 4096
-	WorkflowRunMaxResumes                             = 16
-	WorkflowForEachMaxItems                           = 128
-	WorkflowForEachMaxParallelLimit                   = 16
-	WorkflowForEachNameMaxBytes                       = 64
-	WorkflowForEachMaxInputBytes                int64 = 1 << 20
-	WorkflowForEachMaxOutputBytes               int64 = 1 << 20
-	WorkflowJoinMaxDependencies                       = 128
-	WorkflowGuardMaxBytes                             = 16 << 10
-	WorkflowGuardMaxDepth                             = 8
-	WorkflowGuardMaxNodes                             = 32
-	WorkflowGuardNumberMaxBytes                       = 4096
-	WorkflowGuardNumberMaxExponent                    = 4096
+	StoredWorkflowConsoleFormMaxBytes               int64 = 3*(StoredWorkflowDefinitionMaxBytes+2*StoredWorkflowSimulationRequestMaxBytes+StoredWorkflowPublishCheckMaxBytes+WorkflowRunInputMaxBytes+StoredWorkflowLiveSpecMaxBytes) + 4096
+	StoredWorkflowNameMaxBytes                            = 128
+	WorkflowRunInputMaxBytes                        int64 = 1 << 20
+	WorkflowWebhookBindingMaxBytes                  int64 = 64 << 10
+	WorkflowWebhookFilterMaxBytes                         = 32 << 10
+	WorkflowWebhookNameMaxBytes                           = 128
+	WorkflowWebhookEventMaxBytes                          = 256
+	StoredWorkflowHealthDefaultRange                      = 7 * 24 * time.Hour
+	StoredWorkflowHealthMaxRange                          = 30 * 24 * time.Hour
+	StoredWorkflowHealthMaxFailureSteps                   = 10
+	StoredWorkflowHealthReadTimeout                       = 5 * time.Second
+	WorkflowRunDiagnosticsReadTimeout                     = 5 * time.Second
+	WorkflowSchedulePreviewDefaultCount                   = 5
+	WorkflowSchedulePreviewMaxCount                       = 20
+	WorkflowSchedulePreviewReadTimeout                    = 5 * time.Second
+	WorkflowBacklogAlertThresholdSeconds                  = 300
+	WorkflowBacklogAlertCooldownMinutes                   = 30
+	StoredWorkflowFailurePolicyMaxCount                   = 10000
+	StoredWorkflowFailurePolicyMinWindowSeconds           = 60
+	StoredWorkflowFailurePolicyMaxWindowSeconds           = 86400
+	StoredWorkflowFailurePolicyDefaultWindowSeconds       = 300
+	StoredWorkflowFailurePolicyDefaultThreshold           = 3
+	StoredWorkflowFailurePolicyDefaultMinRuns             = 5
+	StoredWorkflowFailurePolicyHistoryLimit               = 100
+	StoredWorkflowFailurePolicyBatch                      = 100
+	StoredWorkflowFailurePolicyRequestMaxBytes      int64 = 4096
+	WorkflowFailureAlertThreshold                         = 1
+	WorkflowFailureAlertCooldownMinutes                   = 30
+	WorkflowAlertSnapshotReadTimeout                      = 5 * time.Second
+	WorkflowOutboundBodyMaxBytes                    int64 = 1 << 20
+	WorkflowOutboundStepNameMaxBytes                      = 128
+	WorkflowResumeRequestMaxBytes                   int64 = 4096
+	WorkflowRunMaxResumes                                 = 16
+	WorkflowForEachMaxItems                               = 128
+	WorkflowForEachMaxParallelLimit                       = 16
+	WorkflowForEachNameMaxBytes                           = 64
+	WorkflowForEachMaxInputBytes                    int64 = 1 << 20
+	WorkflowForEachMaxOutputBytes                   int64 = 1 << 20
+	WorkflowJoinMaxDependencies                           = 128
+	WorkflowGuardMaxBytes                                 = 16 << 10
+	WorkflowGuardMaxDepth                                 = 8
+	WorkflowGuardMaxNodes                                 = 32
+	WorkflowGuardNumberMaxBytes                           = 4096
+	WorkflowGuardNumberMaxExponent                        = 4096
 
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
@@ -16920,6 +16933,17 @@ const (
 	AlertDeliveryPurgeInterval = time.Hour
 )
 
+// Channel recovery notices (ADR-20261031144636): a resolve a notification
+// channel did not take is retried, the wait doubling from a minute up to
+// AlertChannelResolveRetryBackoffMax, for AlertChannelResolveRetryWindow
+// after the rule recovered; each tick retries at most
+// AlertChannelResolveRetryBatch of them.
+const (
+	AlertChannelResolveRetryWindow     = 24 * time.Hour
+	AlertChannelResolveRetryBackoffMax = time.Hour
+	AlertChannelResolveRetryBatch      = 100
+)
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.
@@ -16935,6 +16959,10 @@ const (
 	DashboardsPerAccount   = 20
 	DashboardWidgetsMax    = 24
 	DashboardDefaultWindow = "1h"
+	// DashboardDataReadsPerAccount bounds one account's dashboard data
+	// reads in flight on an apid: each fans out to every widget's
+	// Prometheus queries (ADR-20261104142830).
+	DashboardDataReadsPerAccount = 2
 )
 
 // DashboardWindows are the windows a dashboard widget may read.
@@ -17048,6 +17076,16 @@ const (
 	SyntheticCheckPathMaxBytes     = 512
 	SyntheticCheckRunRetentionDays = 7
 	SyntheticCheckRecentRuns       = 20
+	// SyntheticCheckStaleIntervals: once a check's newest run is older than
+	// this many intervals (paused, its app made internal, or the runner
+	// stopped), its consecutive-failures alert has no current value and goes
+	// unknown instead of re-paging on old failures (ADR-20261031144636).
+	SyntheticCheckStaleIntervals = 2
+	// SyntheticCheckProbesPerAccount bounds one account's probes in flight
+	// from meterd, so one account's slow or hanging app holds at most this
+	// many of the runner's slots and never delays other accounts' checks
+	// (ADR-20261104142830).
+	SyntheticCheckProbesPerAccount = 2
 )
 
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.

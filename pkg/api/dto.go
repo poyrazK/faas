@@ -9149,6 +9149,16 @@ type EdgeRuleHeaderOp struct {
 	Action string `json:"action"`
 	// Template (ADR-968) expands ${name} request values in Value.
 	Template bool `json:"template,omitempty"`
+	// Secret seals Value (ADR-20261108110000): apid stores it encrypted to
+	// the edge seal domain and never returns it. Credential-named request
+	// headers (EdgeRuleHeaderNameIsCredential) are sealed without it.
+	Secret bool `json:"secret,omitempty"`
+	// SecretID names the sealed value of a secret op. Responses carry it;
+	// sending it back with no Value keeps that value.
+	SecretID string `json:"secret_id,omitempty"`
+	// Redacted marks a credential-named value stored before sealing, which
+	// responses leave out. Sending the op back with no Value seals it.
+	Redacted bool `json:"redacted,omitempty"`
 }
 
 // edgeRuleHeaderForbidden is the hard-coded blacklist of header
@@ -9248,9 +9258,18 @@ func (a *EdgeRuleHeadersAction) Validate() *Problem {
 		if p := a.RequestHeaders[i].Validate(); p != nil {
 			return p
 		}
+		if p := a.RequestHeaders[i].validateSecretFields(true); p != nil {
+			return p
+		}
+		if EdgeRuleHeaderOpSealed(a.RequestHeaders[i]) && len(a.RequestHeaders[i].Value) > EdgeRuleHeaderSecretMaxBytes {
+			return ErrValidation(fmt.Sprintf("header %q is sealed and its value must be at most %d bytes", a.RequestHeaders[i].Name, EdgeRuleHeaderSecretMaxBytes))
+		}
 	}
 	for i := range a.ResponseHeaders {
 		if p := a.ResponseHeaders[i].Validate(); p != nil {
+			return p
+		}
+		if p := a.ResponseHeaders[i].validateSecretFields(false); p != nil {
 			return p
 		}
 	}

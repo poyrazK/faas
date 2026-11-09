@@ -19,7 +19,7 @@ T = TypeVar("T", bound="WorkflowRecoveryReviewReadyWebhookPayload")
 
 @_attrs_define
 class WorkflowRecoveryReviewReadyWebhookPayload:
-    """Payload of automation.recovery_review_ready. Carries frozen prepared targets and review commands; approval and
+    """Payload of stored_workflow.recovery_review_ready. Carries frozen prepared targets and review commands; approval and
     application remain explicit. Retries reuse the event identifier and delivery ledger.
 
     """

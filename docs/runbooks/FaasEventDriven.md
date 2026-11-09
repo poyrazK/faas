@@ -25,7 +25,7 @@ Covers `FaasEventRoutingStalled` (page), `FaasEventRoutingSweepSlow`,
 ## How events flow
 
 1. A publish (API, batch, app producer route, platform-tenant route, in-app
-   runtime, commit relay, object storage, inbound webhook automation) writes
+   runtime, commit relay, object storage, inbound webhook stored workflow) writes
    an `event.published` row; a trigger turns it into a receipt in
    `event_fanout_outbox` in the same transaction.
 2. Every schedd runs the routing sweep (`event_fanout` loop work, one slot,
@@ -49,7 +49,7 @@ Covers `FaasEventRoutingStalled` (page), `FaasEventRoutingSweepSlow`,
   `gregalectl flags disable --key events --reason <incident> --yes`. Within
   seconds every customer publish path answers `503 events_paused` with
   `Retry-After`, nothing new is accepted from customers, and schedd routes
-  nothing. Object-storage notifications, inbound webhook automations and
+  nothing. Object-storage notifications, inbound webhook stored workflows and
   commit relay events are still accepted and wait. Invocations already
   admitted finish. `gregalectl flags enable --key events --reason <incident>
   --yes` resumes routing; nothing accepted is lost. Delivery-age limits keep counting while paused.

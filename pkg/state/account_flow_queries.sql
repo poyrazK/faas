@@ -118,3 +118,20 @@ WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id) AND revoked_at IS NULL
 -- name: RevokeAllMFATrustedBrowsers :execrows
 UPDATE mfa_trusted_browsers SET revoked_at=clock_timestamp()
 WHERE account_id=$1 AND revoked_at IS NULL;
+
+-- Count one mail of kind to the account when its fixed window still has
+-- room and the last send is at least min_interval old; no row means the
+-- send is throttled (ADR 20261108160000).
+-- name: TakeAccountMailSlot :one
+INSERT INTO account_mail_throttle AS t (account_id, kind, window_started_at, sent_in_window, last_sent_at)
+VALUES (sqlc.arg(account_id), sqlc.arg(kind)::text, clock_timestamp(), 1, clock_timestamp())
+ON CONFLICT (account_id, kind) DO UPDATE SET
+    window_started_at = CASE WHEN t.window_started_at <= clock_timestamp() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
+        THEN clock_timestamp() ELSE t.window_started_at END,
+    sent_in_window = CASE WHEN t.window_started_at <= clock_timestamp() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
+        THEN 1 ELSE t.sent_in_window + 1 END,
+    last_sent_at = clock_timestamp()
+WHERE t.last_sent_at <= clock_timestamp() - make_interval(secs => sqlc.arg(min_interval_seconds)::double precision)
+  AND (t.window_started_at <= clock_timestamp() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
+       OR t.sent_in_window < sqlc.arg(max_per_window)::int)
+RETURNING t.sent_in_window;

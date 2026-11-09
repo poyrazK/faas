@@ -94,6 +94,21 @@ func (r *observeRelease) ForAccount(ctx context.Context, accountID string) alert
 // Synthetic reports whether a due synthetic check is still probed: its
 // account's plan has per-app metrics (Hobby and above, as creating one needs)
 // and synthetic-checks is released to it.
+// RuleLimits is the account's plan caps on alert rules, so rules a bigger
+// plan allowed stop evaluating after a downgrade (ADR-20261104142830).
+// Unknown or not-live accounts report !ok: ForAccount already decides them.
+func (r *observeRelease) RuleLimits(ctx context.Context, accountID string) (perApp, perAccount int, ok bool) {
+	plan, live, err := r.account(ctx, accountID)
+	if err != nil || !live {
+		return 0, 0, false
+	}
+	limits, known := api.LimitsFor(plan)
+	if !known {
+		return 0, 0, false
+	}
+	return limits.AlertRuleLimitPerApp, limits.AlertRuleLimitPerAccount, true
+}
+
 func (r *observeRelease) Synthetic(ctx context.Context, check state.RunnableSyntheticCheck) bool {
 	plan, live, err := r.account(ctx, check.AccountID)
 	switch {

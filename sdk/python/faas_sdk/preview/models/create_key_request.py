@@ -26,8 +26,8 @@ class CreateKeyRequest:
     label: str | Unset = UNSET
     scopes: list[CreateKeyRequestScopesItem] | Unset = UNSET
     """Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub
-    connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the
-    key access to a logical bucket."""
+    connection stored workflow. Object-storage read/write scopes do not expose data until a storage manager grants
+    the key access to a logical bucket."""
     projects: list[str] | Unset = UNSET
     """Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only
     apps in these projects and cannot carry Postgres scopes. Omit for every project."""

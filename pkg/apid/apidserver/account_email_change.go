@@ -199,6 +199,7 @@ func (s *server) confirmEmailChange(w http.ResponseWriter, r *http.Request) {
 func (s *server) finishEmailChange(r *http.Request, change state.EmailChange) {
 	s.revokeSessionsAfterPasswordChange(r.Context(), change.AccountID, "")
 	s.audit.Emit(r.Context(), "account.email_changed", &change.AccountID, nil)
+	s.moveBillingEmailsInBackground(r.Context(), change)
 	subject, body := mailpkg.EmailChangedNoticeBody(change.OldEmail, change.NewEmail, time.Now())
 	s.sendNoticeInBackground(r.Context(), "email_changed", change.AccountID,
 		Message{To: []string{change.OldEmail}, Subject: subject, TextBody: body})

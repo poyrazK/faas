@@ -2021,6 +2021,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	var workloads map[string]reposcan.Workload
 	var available map[string]struct{}
 	var headValues map[string]map[string]string
+	var keep map[string]previewKeep
 	if sourceReady {
 		reopened, reopenErr := s.reopenLivePullRequestPreview(ctx, ev, install.InstallationID, previewLimits,
 			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
@@ -2084,8 +2085,11 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 		if shortfallErr != nil {
 			return reconcile.Result{}, shortfallErr
 		}
+		// A push rebuilds only the services whose files changed; the others
+		// keep serving their build (ADR-20261108150000).
+		keep = s.previewUnchangedServices(ctx, ev, install.InstallationID, policy, previewed, workloads)
 		if shortfall == "" {
-			shortfall = s.previewDeployShortfall(ctx, account, len(previewed))
+			shortfall = s.previewDeployShortfall(ctx, account, len(previewed)-len(keep))
 		}
 		if shortfall != "" {
 			return reconcile.Result{}, previewSetupFailure("%s", shortfall)
@@ -2305,7 +2309,14 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	// all three and therefore turns every open/synchronize/reopen event into a
 	// real DeploymentKindPreview build.
 	if sourceReady {
-		if parentApp.ProjectID != "" {
+		pinned := s.pinUnchangedPreviews(ctx, state.PRPreviewHead{
+			InstallationID: install.InstallationID,
+			RepoFullName:   ev.Repository.FullName,
+			PRNumber:       ev.Number,
+			CommitSHA:      ev.PullRequest.HeadSHA,
+		}, keep, append([]state.App{created}, siblingPreviews...))
+		// A kept service keeps the configuration of the build it serves.
+		if parentApp.ProjectID != "" && !pinned[created.ID] {
 			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy,
 				headValues[strings.ToLower(parentApp.WorkloadName)], previewPlatformEnv(ev))
 			if err != nil {
@@ -2319,6 +2330,10 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			if refreshErr != nil {
 				return result, fmt.Errorf("githubd: refresh PR dependency %q: %w", dependency.WorkloadName, refreshErr)
 			}
+			if pinned[preview.ID] {
+				result.Added = append(result.Added, preview)
+				continue
+			}
 			if dependency.ProjectID != "" {
 				// An app bound without a project builds as it is, like the root.
 				preview, err = s.applyPRHeadWorkload(ctx, preview, workloads[strings.ToLower(dependency.WorkloadName)], available, policy,
@@ -2330,7 +2345,9 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			toBuild = append(toBuild, preview)
 			result.Added = append(result.Added, preview)
 		}
-		toBuild = append(toBuild, created)
+		if !pinned[created.ID] {
+			toBuild = append(toBuild, created)
+		}
 		project := state.Project{
 			AccountID:        binding.AccountID,
 			RepoFullName:     ev.Repository.FullName,

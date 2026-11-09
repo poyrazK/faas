@@ -425,21 +425,21 @@ const (
 	// Reserved for synthetic principals backed by platform_tenant_access_tokens.
 	// They are deliberately excluded from validScopes and cannot be minted as
 	// account-wide API-key scopes.
-	ScopePlatformTenantUsageRead         = "platform_tenant:usage:read"
-	ScopePlatformTenantStatementsRead    = "platform_tenant:statements:read"
-	ScopePlatformTenantActivationRead    = "platform_tenant:activation:read"
-	ScopePlatformTenantHostnamesManage   = "platform_tenant:hostnames:manage"
-	ScopePlatformTenantCredentialsRead   = "platform_tenant:credentials:read"
-	ScopePlatformTenantCredentialsManage = "platform_tenant:credentials:manage"
-	ScopePlatformTenantConsumersManage   = "platform_tenant:consumers:manage"
-	ScopePlatformTenantInvocationsRead   = "platform_tenant:invocations:read"
-	ScopePlatformTenantInvocationsManage = "platform_tenant:invocations:manage"
-	ScopePlatformTenantOperationsRead    = "platform_tenant:operations:read"
-	ScopePlatformTenantOperationsManage  = "platform_tenant:operations:manage"
-	ScopePlatformTenantEventsRead        = "platform_tenant:events:read"
-	ScopePlatformTenantEventsManage      = "platform_tenant:events:manage"
-	ScopePlatformTenantAutomationsRead   = "platform_tenant:automations:read"
-	ScopePlatformTenantAutomationsManage = "platform_tenant:automations:manage"
+	ScopePlatformTenantUsageRead             = "platform_tenant:usage:read"
+	ScopePlatformTenantStatementsRead        = "platform_tenant:statements:read"
+	ScopePlatformTenantActivationRead        = "platform_tenant:activation:read"
+	ScopePlatformTenantHostnamesManage       = "platform_tenant:hostnames:manage"
+	ScopePlatformTenantCredentialsRead       = "platform_tenant:credentials:read"
+	ScopePlatformTenantCredentialsManage     = "platform_tenant:credentials:manage"
+	ScopePlatformTenantConsumersManage       = "platform_tenant:consumers:manage"
+	ScopePlatformTenantInvocationsRead       = "platform_tenant:invocations:read"
+	ScopePlatformTenantInvocationsManage     = "platform_tenant:invocations:manage"
+	ScopePlatformTenantOperationsRead        = "platform_tenant:operations:read"
+	ScopePlatformTenantOperationsManage      = "platform_tenant:operations:manage"
+	ScopePlatformTenantEventsRead            = "platform_tenant:events:read"
+	ScopePlatformTenantEventsManage          = "platform_tenant:events:manage"
+	ScopePlatformTenantStoredWorkflowsRead   = "platform_tenant:stored_workflows:read"
+	ScopePlatformTenantStoredWorkflowsManage = "platform_tenant:stored_workflows:manage"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The

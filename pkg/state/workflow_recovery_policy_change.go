@@ -55,7 +55,7 @@ func addRecoveryPolicyChangeCandidates(out *api.WorkflowRecoveryPolicyChangePrev
 			budget.Existing[recoveryPolicyTargetKey(d.RunID, d.ResumeCount, d.Action)] = true
 			d.Outcome = "would_prepare"
 		}
-		if len(out.Candidates) < api.AutomationRecoveryBatchMaxRuns {
+		if len(out.Candidates) < api.StoredWorkflowRecoveryBatchMaxRuns {
 			out.Candidates = append(out.Candidates, api.WorkflowRecoveryPolicyChangeCandidate{JobID: job.ID, Decision: d})
 		} else {
 			out.CandidatesTruncated = true
