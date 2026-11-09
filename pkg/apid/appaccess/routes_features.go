@@ -186,7 +186,7 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/database-switches/{id}":         authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/database-switches/{id}/cancel": authz.OrgActionDeployApp,
 	// debug
-	"POST /v1/apps/{slug}/debug/compare":                   authz.OrgActionConfigureApp,
+	"POST /v1/apps/{slug}/debug/compare":                   authz.OrgActionReadAppLogs, // read-only; POST only carries the body
 	"GET /v1/apps/{slug}/debug/coverage":                   authz.OrgActionReadAppLogs,
 	"GET /v1/apps/{slug}/debug/critical-paths":             authz.OrgActionReadAppLogs,
 	"GET /v1/apps/{slug}/debug/dependencies":               authz.OrgActionReadAppLogs,
