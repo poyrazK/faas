@@ -3984,6 +3984,23 @@ WHERE app_id = $1
 ORDER BY received_at DESC
 LIMIT $5;
 
+-- name: RequestTelemetryLatencyWeightsByRoute :many
+-- The regression detector's affected-request count: the requests each
+-- latency bucket represents, per route, over the whole window and in the
+-- regression view. A newest-rows drilldown capped at 10k rows across every
+-- route undercounted busy apps, so a real regression missed the 100-request
+-- floor. latency_ms is a bounded bucket, so the result is small per route.
+SELECT route,
+       latency_ms,
+       SUM(GREATEST(count, 1)::bigint)::bigint AS requests
+FROM request_telemetry
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+  AND NOT platform_refusal AND NOT deployment_pinned AND NOT long_lived AND NOT cold_boot
+GROUP BY route, latency_ms;
+
 -- name: RequestTelemetryCircuitBreakerSummary :one
 -- Bounded candidate/stable health summary for the deployment circuit breaker.
 -- `count` weights collapsed telemetry rows; compute request and 5xx totals,
@@ -4941,6 +4958,25 @@ UPDATE debug_regression_observations
 SET state = 'resolved',
     resolved_at = COALESCE(resolved_at, now())
 WHERE last_detected_at <= now() - $1::interval
+  AND state <> 'resolved'
+RETURNING app_id, deployment_id, route,
+          p95_ms, p95_base_ms, affected_count,
+          regression_factor, first_detected_at, last_detected_at,
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count, review_version;
+
+-- name: ResolveRegressionObservationsNotSeenSince :many
+-- An app's complete detector pass reconfirms every regression it still sees
+-- (UpsertRegressionObservation stamps last_detected_at = now()); whatever of
+-- that app it did not reconfirm is no longer regressed, after a fix or a
+-- rollback included. Resolving here, rather than 24 hours later through
+-- ResolveStaleRegressionObservations, keeps the banner, status and the
+-- resolved webhook current. $2 is the pass start (with clock slack).
+UPDATE debug_regression_observations
+SET state = 'resolved',
+    resolved_at = COALESCE(resolved_at, now())
+WHERE app_id = $1
+  AND last_detected_at < $2
   AND state <> 'resolved'
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,

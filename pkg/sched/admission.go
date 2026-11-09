@@ -65,6 +65,9 @@ type NodeLedger struct {
 	// pressure (ADR 20261030100950): the gates then count its bookings in
 	// full. The engine sets it from its node registry.
 	cpuPressured func(nodeID string, now time.Time) bool
+	// cpuAdmission, observing, lets the vCPU and CPU gates count instead of
+	// refuse (ADR-20261109172421, cpu_admission.go).
+	cpuAdmission *cpuAdmission
 	now          func() time.Time // nil means time.Now; tests set it
 }
 
@@ -151,6 +154,7 @@ func NewNodeLedger() *NodeLedger {
 		perAppEnvironment: map[string]int{},
 		perAppProduction:  map[string]int{},
 		entries:           map[string]*reservation{},
+		cpuAdmission:      newCPUAdmission(),
 	}
 }
 
@@ -238,8 +242,12 @@ func kindCountsConcurrency(kind Kind) bool {
 
 // Request is an admission request for one instance (a wake or a build).
 type Request struct {
-	Instance string
-	AppID    string
+	// ignoreCPUBudgets makes placement skip the vCPU and CPU budget gates:
+	// observing cpu_admission, its retry after a refusal for CPU alone
+	// (ADR-20261109172421).
+	ignoreCPUBudgets bool
+	Instance         string
+	AppID            string
 	// DeploymentID is the target deployment for the wake (ADR-072 /
 	// issue #557 closure). The Engine resolves it from the wake
 	// target before calling Admit — the gateway passes the latest
@@ -548,7 +556,13 @@ func (l *NodeLedger) Admit(r Request) error {
 		pressure = " (node under CPU pressure: every booking counts)"
 	}
 	vcpuUsed := quietEffective(node.usedVCPU, discountVCPU, vcpuCeiling, overcommitCap)
-	if vcpuUsed+r.VCPU > vcpuCeiling && !r.AllowResidentRecovery {
+	// Observing cpu_admission, an over-budget node is counted, not refused:
+	// memory is the only capacity limit (ADR-20261109172421).
+	observeCPU := l.cpuAdmission.observing()
+	vcpuOver := vcpuUsed+r.VCPU > vcpuCeiling && !r.AllowResidentRecovery
+	if vcpuOver && observeCPU {
+		l.cpuAdmission.refusedAt(CPUGateLedgerVCPU)
+	} else if vcpuOver {
 		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
 			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget%s",
 			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling, pressure)), resourceBlocker("node_vcpu", "vcpu", int64(r.VCPU)))
@@ -569,9 +583,10 @@ func (l *NodeLedger) Admit(r Request) error {
 		cpuCeiling -= flexibleAppReserveCPUMillicores
 	}
 	cpuUsed := quietEffective(node.usedCPUMillicores, discountCPU, cpuCeiling, overcommitCap)
-	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
-		cpuUsed+reservedCPU > cpuCeiling &&
-		!r.AllowResidentRecovery {
+	cpuOver := reservedCPU > 0 && r.CPUBudgetMillicores > 0 && cpuUsed+reservedCPU > cpuCeiling && !r.AllowResidentRecovery
+	if cpuOver && observeCPU {
+		l.cpuAdmission.refusedAt(CPUGateLedgerCPU)
+	} else if cpuOver {
 		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
 			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget%s",
 			r.NodeID, cpuUsed, reservedCPU, cpuCeiling, pressure)), resourceBlocker("node_cpu", "cpu_millicores", int64(reservedCPU)))

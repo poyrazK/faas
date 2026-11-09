@@ -17509,6 +17509,15 @@
     "kind": "operational"
   },
   {
+    "table": "realtime_node_endpoint_connections",
+    "columns": [
+      "connections",
+      "endpoint_id",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "realtime_usage_hours",
     "columns": [
       "account_id",

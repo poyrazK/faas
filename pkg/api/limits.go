@@ -3549,6 +3549,21 @@ func ValidGuestVCPUMillicores(v int) bool {
 	return v >= GuestVCPUMillicoresMin && v <= GuestVCPUMillicoresMax
 }
 
+// CPU admission (ADR-20261109172421), schedd's `cpu_admission`. enforce
+// refuses work for the per-node vCPU and physical CPU budgets; observe admits
+// on memory alone and counts what those gates would have refused, so CPU
+// decides where an instance goes, never whether it runs.
+const (
+	CPUAdmissionEnforce = "enforce"
+	CPUAdmissionObserve = "observe"
+	DefaultCPUAdmission = CPUAdmissionEnforce
+)
+
+// ValidCPUAdmission reports whether v is a `cpu_admission` value.
+func ValidCPUAdmission(v string) bool {
+	return v == CPUAdmissionEnforce || v == CPUAdmissionObserve
+}
+
 // Snapshot refresh after a release (ADR-20261106214916). schedd's
 // `snapshot_refresh` runtime config is off, shadow (find and count the
 // snapshots a release made stale, boot nothing) or on.
@@ -3906,7 +3921,10 @@ func RealtimeResumeSubscriptionsPerNodeFor(accountMaxConnections int) int {
 // Each realtimed process reports its per-account connection counts to apid
 // every RealtimeConnectionSyncInterval and learns the other nodes' counts in
 // return. Counts older than RealtimeConnectionSyncStaleAfter are ignored, and a
-// node whose own sync is that stale enforces its local count only.
+// node whose own sync is that stale enforces its local count only. The same
+// sync carries the open connections of each endpoint with its own
+// max_connections (at most RealtimeConnectionSyncMaxEndpoints), so that cap
+// holds across the fleet rather than once per node.
 //
 // RealtimeNodeOutboundBytesDefault bounds the payload bytes queued for clients
 // across a whole node. Each connection may queue up to 4 MiB, so without it
@@ -3924,6 +3942,7 @@ const (
 	RealtimeConnectionSyncInterval        = 5 * time.Second
 	RealtimeConnectionSyncStaleAfter      = 30 * time.Second
 	RealtimeConnectionSyncMaxAccounts     = 10_000
+	RealtimeConnectionSyncMaxEndpoints    = 10_000
 )
 
 // Channel rules (ADR-20261019102657): realtimed authorizes channels from a
@@ -15780,8 +15799,10 @@ const (
 	// everyone. Server keys (trusted backends) are bounded only by the total.
 	DataAPIStorageTransfersPerClient = 2
 	// /healthz is public and its readiness checks reach the database: a
-	// completed result answers further checks for this long, so polling it
-	// asks the database at most once per interval per instance.
+	// completed ready result answers further checks for this long, so polling
+	// a healthy API asks the database at most once per interval per instance.
+	// Unready results are never reused, and engine restarts, schema reloads,
+	// checkpoints and restores forget the cached one (ADR-20261109160000).
 	DataAPIHealthCache = 5 * time.Second
 	// The gateway sends the SQL deadline this much early, so a VM clock that
 	// runs ahead of the database's by up to it still passes the engine's
