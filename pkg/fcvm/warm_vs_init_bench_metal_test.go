@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -164,7 +164,7 @@ func runWarmVsInit(t *testing.T, name, tarball, file, content string, entrypoint
 
 // timedGet times one request on a fresh connection, as the gateway's first
 // request to a woken instance is.
-func timedGet(host string) (time.Duration, error) {
+func timedGet(host netip.Addr) (time.Duration, error) {
 	client := &http.Client{Timeout: 60 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
 	start := time.Now()
 	resp, err := client.Get(fmt.Sprintf("http://%s:8080/work", host))
@@ -179,14 +179,6 @@ func timedGet(host string) (time.Duration, error) {
 		return 0, fmt.Errorf("status %d", resp.StatusCode)
 	}
 	return time.Since(start), nil
-}
-
-func dropPageCache(t *testing.T) {
-	t.Helper()
-	syscall.Sync()
-	if err := os.WriteFile("/proc/sys/vm/drop_caches", []byte("3\n"), 0o200); err != nil {
-		t.Fatalf("drop page cache: %v", err)
-	}
 }
 
 func msf(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
