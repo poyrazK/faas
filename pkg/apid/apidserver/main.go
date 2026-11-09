@@ -2066,6 +2066,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// reconciliation. It retains the local Unix fast path when present.
 		srv.realtime.Owner = resolver
 		srv.realtime.Registrar = resolver
+		srv.realtime.NodesServePreview = resolver.NodesServePreview
 		log.Info("apid: managed realtime leased owner resolver armed", "local_node_id", localNodeID)
 	}
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -270,10 +271,24 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 // previewOn decides one realtime preview for a request: the platform flag
 // once an operator wrote it, otherwise the environment gate.
 func (s *Service) previewOn(r *http.Request, acct state.Account, flagKey string, legacy bool) bool {
-	if s.PreviewReleased == nil {
-		return legacy
+	released := legacy
+	if s.PreviewReleased != nil {
+		released = s.PreviewReleased(r, acct, flagKey, legacy)
 	}
-	return s.PreviewReleased(r, acct, flagKey, legacy)
+	if !released || s.NodesServePreview == nil {
+		return released
+	}
+	node, ok := previewNodeCapability[flagKey]
+	return !ok || s.NodesServePreview(node)
+}
+
+// previewNodeCapability names the node capability each realtime preview
+// flag needs.
+var previewNodeCapability = map[string]string{
+	platformflags.RealtimeResume:    realtime.NodePreviewResume,
+	platformflags.RealtimeTickets:   realtime.NodePreviewTickets,
+	platformflags.RealtimeAccess:    realtime.NodePreviewAccess,
+	platformflags.RealtimeOccupancy: realtime.NodePreviewOccupancy,
 }
 
 // realtimeAccountConnectionLimit is the account's plan allowance of concurrent

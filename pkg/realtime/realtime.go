@@ -271,6 +271,43 @@ func (e Endpoint) occupancyOn(cfg Config) bool {
 	return cfg.OccupancyPreview && e.Preview && (e.Previews == nil || e.Previews.Occupancy)
 }
 
+// NodePreviewsHeader carries, on the endpoint inventory, the realtime
+// previews this node can serve (ADR 20261021080640, amendment of
+// 2026-11-09). apid releases a preview only while every node that answers
+// lists it. A node that predates the header sends none, which apid reads as
+// unknown.
+const NodePreviewsHeader = "X-Faas-Realtime-Node-Previews"
+
+// Node preview names, as NodePreviews lists them.
+const (
+	NodePreviewAccess    = "access"
+	NodePreviewOccupancy = "occupancy"
+	NodePreviewResume    = "resume"
+	NodePreviewTickets   = "tickets"
+)
+
+// NodePreviews lists the previews this node serves for an endpoint apid
+// releases them to: the switch is on and what the feature reads is wired.
+// Tickets ride the v2 protocol, so they also need resume.
+func (m *Manager) NodePreviews() []string {
+	cfg := m.cfg
+	resume := cfg.ResumePreview && cfg.HistoryReader != nil
+	previews := []string{}
+	if cfg.AccessPreview && cfg.AccessReader != nil {
+		previews = append(previews, NodePreviewAccess)
+	}
+	if cfg.OccupancyPreview {
+		previews = append(previews, NodePreviewOccupancy)
+	}
+	if resume {
+		previews = append(previews, NodePreviewResume)
+	}
+	if resume && cfg.TicketPreview && cfg.TicketReader != nil {
+		previews = append(previews, NodePreviewTickets)
+	}
+	return previews
+}
+
 func clonePreviews(p *EndpointPreviews) *EndpointPreviews {
 	if p == nil {
 		return nil
