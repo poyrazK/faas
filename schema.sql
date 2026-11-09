@@ -25599,6 +25599,39 @@ END $$;
 
 
 --
+-- Name: record_request_analytics_coverage(text, uuid, boolean, bigint, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_request_analytics_coverage(node text, boot uuid, counting boolean, unattributed_drops bigint, app_gaps jsonb) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE stamp timestamptz:=clock_timestamp(); gap record;
+BEGIN
+ IF jsonb_typeof(app_gaps) IS DISTINCT FROM 'array' OR unattributed_drops IS NULL OR unattributed_drops<0 OR
+  EXISTS(SELECT 1 FROM jsonb_to_recordset(app_gaps) g(app_id uuid,analytics_dropped_count bigint,analytics_pending_count integer)
+   WHERE app_id IS NULL OR coalesce(analytics_dropped_count,0)<0 OR coalesce(analytics_pending_count,0)<0) THEN
+ RAISE EXCEPTION 'invalid analytics coverage' USING ERRCODE='22023'; END IF;
+ INSERT INTO request_analytics_node_coverage AS old(node_name,boot_id,counting_since,heartbeat_at,unattributed_dropped_total)
+ VALUES(node,boot,CASE WHEN counting THEN stamp END,stamp,unattributed_drops)
+ ON CONFLICT(node_name) DO UPDATE SET boot_id=excluded.boot_id,heartbeat_at=stamp,unattributed_dropped_total=excluded.unattributed_dropped_total,
+ counting_since=CASE WHEN NOT counting THEN NULL
+  WHEN old.counting_since IS NULL OR old.boot_id<>excluded.boot_id OR old.heartbeat_at<stamp-interval '30 seconds'
+   OR excluded.unattributed_dropped_total<>old.unattributed_dropped_total THEN stamp
+  ELSE old.counting_since END;
+ -- Omitted apps have nothing late any more.
+ UPDATE request_analytics_app_gaps SET last_gap_at=stamp,pending_count=0,updated_at=stamp WHERE node_name=node AND pending_count>0;
+ FOR gap IN SELECT g.app_id,coalesce(g.analytics_dropped_count,0) AS dropped,coalesce(g.analytics_pending_count,0) AS pending
+  FROM jsonb_to_recordset(app_gaps) g(app_id uuid,analytics_dropped_count bigint,analytics_pending_count integer) ORDER BY g.app_id LOOP
+ IF (gap.dropped>0 OR gap.pending>0) AND EXISTS(SELECT 1 FROM apps WHERE id=gap.app_id AND status<>'deleted') THEN
+ INSERT INTO request_analytics_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,updated_at)
+ VALUES(node,gap.app_id,stamp,gap.pending,stamp)
+ ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,updated_at=stamp;
+ END IF;
+ END LOOP;
+END $$;
+
+
+--
 -- Name: record_telemetry_coverage(text, uuid, bigint, boolean, integer, bigint, integer, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -25979,6 +26012,62 @@ BEGIN
  NEW.runtime_upgrade_routing_token:=gen_random_uuid();
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: request_analytics_completeness_blockers(uuid, timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.request_analytics_completeness_blockers(target_app uuid, window_from timestamp with time zone, window_until timestamp with time zone) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE blockers jsonb:='[]'; stamp timestamptz:=clock_timestamp();
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM compute_nodes WHERE active) OR EXISTS(SELECT 1 FROM compute_nodes n LEFT JOIN request_telemetry_coverage c ON c.node_name=n.name WHERE n.active AND c.node_name IS NULL) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_coverage_missing'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_coverage c JOIN compute_nodes n ON n.name=c.node_name WHERE n.active AND c.received_at<stamp-interval '30 seconds') THEN
+ blockers:=blockers||jsonb_build_array('telemetry_coverage_stale'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_coverage c JOIN compute_nodes n ON n.name=c.node_name WHERE n.active AND NOT c.enabled) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_disabled'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_coverage c JOIN compute_nodes n ON n.name=c.node_name WHERE n.active AND c.sampling_basis_points<>10000) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_sampled'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_coverage c JOIN compute_nodes n ON n.name=c.node_name WHERE n.active AND c.source_at<window_until) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_ingestion_pending'); END IF;
+ -- Nodes judged by raw delivery.
+ IF EXISTS(SELECT 1 FROM request_telemetry_coverage c JOIN compute_nodes n ON n.name=c.node_name WHERE n.active AND NOT request_analytics_counts_window(c.node_name,window_from)
+  AND (CASE WHEN c.app_scoped THEN c.unattributed_pending_count ELSE c.pending_count END)>0) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_ingestion_pending'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_coverage c JOIN compute_nodes n ON n.name=c.node_name WHERE n.active AND NOT request_analytics_counts_window(c.node_name,window_from)
+  AND (c.healthy_since IS NULL OR c.healthy_since>window_from)) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_window_incomplete'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_app_gaps g JOIN compute_nodes n ON n.name=g.node_name WHERE n.active AND g.app_id=target_app AND g.pending_count>0
+  AND NOT request_analytics_counts_window(g.node_name,window_from)) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_ingestion_pending'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_app_gaps g JOIN compute_nodes n ON n.name=g.node_name WHERE n.active AND g.app_id=target_app AND g.last_gap_at>window_from
+  AND NOT request_analytics_counts_window(g.node_name,window_from)) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_window_incomplete'); END IF;
+ -- Nodes counting analytics themselves.
+ IF EXISTS(SELECT 1 FROM request_analytics_app_gaps g JOIN compute_nodes n ON n.name=g.node_name WHERE n.active AND g.app_id=target_app AND g.pending_count>0
+  AND request_analytics_counts_window(g.node_name,window_from)) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_ingestion_pending'); END IF;
+ IF EXISTS(SELECT 1 FROM request_analytics_app_gaps g JOIN compute_nodes n ON n.name=g.node_name WHERE n.active AND g.app_id=target_app AND g.last_gap_at>window_from
+  AND request_analytics_counts_window(g.node_name,window_from)) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_window_incomplete'); END IF;
+ SELECT coalesce(jsonb_agg(DISTINCT x),'[]') INTO blockers FROM jsonb_array_elements(blockers) x;
+ RETURN blockers;
+END $$;
+
+
+--
+-- Name: request_analytics_counts_window(text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.request_analytics_counts_window(node text, window_from timestamp with time zone) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS(SELECT 1 FROM request_analytics_node_coverage a JOIN request_telemetry_coverage c ON c.node_name=a.node_name
+  WHERE a.node_name=node AND a.boot_id=c.boot_id AND a.counting_since<=window_from AND a.heartbeat_at>=c.received_at)
+$$;
 
 
 --
@@ -55171,6 +55260,29 @@ UNION ALL
 
 
 --
+-- Name: request_analytics_app_gaps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_analytics_app_gaps (
+    node_name text NOT NULL,
+    app_id uuid NOT NULL,
+    last_gap_at timestamp with time zone NOT NULL,
+    pending_count integer NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT request_analytics_app_gaps_check CHECK ((last_gap_at <= updated_at)),
+    CONSTRAINT request_analytics_app_gaps_node_name_check CHECK ((node_name <> ''::text)),
+    CONSTRAINT request_analytics_app_gaps_pending_count_check CHECK ((pending_count >= 0))
+);
+
+
+--
+-- Name: TABLE request_analytics_app_gaps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.request_analytics_app_gaps IS 'Per gateway node and app: the last analytics loss or late rollup and the requests still late (ADR-20261103113952 amendment 6); written only by apid.';
+
+
+--
 -- Name: request_analytics_hours; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55254,6 +55366,30 @@ CREATE TABLE public.request_analytics_minutes (
 --
 
 COMMENT ON TABLE public.request_analytics_minutes IS 'Per-minute request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952).';
+
+
+--
+-- Name: request_analytics_node_coverage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_analytics_node_coverage (
+    node_name text NOT NULL,
+    boot_id uuid NOT NULL,
+    counting_since timestamp with time zone,
+    heartbeat_at timestamp with time zone NOT NULL,
+    unattributed_dropped_total bigint NOT NULL,
+    CONSTRAINT request_analytics_node_coverag_unattributed_dropped_total_check CHECK ((unattributed_dropped_total >= 0)),
+    CONSTRAINT request_analytics_node_coverage_boot_id_check CHECK ((boot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT request_analytics_node_coverage_check CHECK (((counting_since IS NULL) OR (counting_since <= heartbeat_at))),
+    CONSTRAINT request_analytics_node_coverage_node_name_check CHECK ((node_name <> ''::text))
+);
+
+
+--
+-- Name: TABLE request_analytics_node_coverage; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.request_analytics_node_coverage IS 'Per gateway node: since when it has counted every request into analytics rollups without a break (ADR-20261103113952 amendment 6); written only by apid.';
 
 
 --
@@ -70479,6 +70615,14 @@ ALTER TABLE ONLY public.release_secret_key_retirements
 
 
 --
+-- Name: request_analytics_app_gaps request_analytics_app_gaps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_app_gaps
+    ADD CONSTRAINT request_analytics_app_gaps_pkey PRIMARY KEY (node_name, app_id);
+
+
+--
 -- Name: request_analytics_hours request_analytics_hours_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -70492,6 +70636,14 @@ ALTER TABLE ONLY public.request_analytics_hours
 
 ALTER TABLE ONLY public.request_analytics_minutes
     ADD CONSTRAINT request_analytics_minutes_pkey PRIMARY KEY (app_id, bucket_start, dimension_kind, dimension, method, status, deployment_id);
+
+
+--
+-- Name: request_analytics_node_coverage request_analytics_node_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_node_coverage
+    ADD CONSTRAINT request_analytics_node_coverage_pkey PRIMARY KEY (node_name);
 
 
 --
@@ -81338,6 +81490,13 @@ CREATE INDEX release_gate_probe_results_window ON public.release_gate_probe_resu
 --
 
 CREATE INDEX release_outcome_checks_app_idx ON public.release_outcome_checks USING btree (account_id, app_id);
+
+
+--
+-- Name: request_analytics_app_gaps_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_analytics_app_gaps_app_idx ON public.request_analytics_app_gaps USING btree (app_id);
 
 
 --
@@ -104360,6 +104519,14 @@ ALTER TABLE ONLY public.release_gate_probe_results
 
 ALTER TABLE ONLY public.release_outcome_checks
     ADD CONSTRAINT release_outcome_checks_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: request_analytics_app_gaps request_analytics_app_gaps_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_app_gaps
+    ADD CONSTRAINT request_analytics_app_gaps_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

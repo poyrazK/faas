@@ -107,12 +107,15 @@ func TestGatewayRollupsShipClosedMinutesAndResendTheSameBatch(t *testing.T) {
 	if len(apid.sent) != 0 {
 		t.Fatalf("shipped %d batches before the grace passed", len(apid.sent))
 	}
-	if got := g.undelivered()[app]; got != 5 {
-		t.Fatalf("undelivered = %d, want the closed minute's 5 reported pending", got)
+	if got := g.undelivered()[app]; got != 0 {
+		t.Fatalf("undelivered = %d inside the grace, want none late", got)
 	}
 	clock.now = clock.now.Add(api.RequestAnalyticsRollupMinuteGrace)
 	apid.err = errors.New("apid unavailable")
 	g.tick(t.Context(), false)
+	if got := g.undelivered()[app]; got != 5 {
+		t.Fatalf("undelivered = %d, want the unsent minute's 5 late", got)
+	}
 	apid.err = nil
 	g.tick(t.Context(), false)
 	if len(apid.sent) != 2 || apid.sent[0] != apid.sent[1] {
@@ -150,8 +153,8 @@ func TestGatewayRollupsAccountForGivenUpBatches(t *testing.T) {
 		closeMinute(recorder, app, 3)
 		apid.err = ErrRequestAnalyticsRollupBatchRefused
 		recorder.analytics.tick(t.Context(), false)
-		if recorder.appLosses[app] != 3 || len(recorder.analytics.batches) != 0 {
-			t.Fatalf("losses = %v, batches %d; want 3 lost and nothing waiting", recorder.appLosses, len(recorder.analytics.batches))
+		if recorder.analyticsLosses[app] != 3 || len(recorder.appLosses) != 0 || len(recorder.analytics.batches) != 0 {
+			t.Fatalf("analytics losses = %v, raw %v, batches %d; want 3 lost to analytics only", recorder.analyticsLosses, recorder.appLosses, len(recorder.analytics.batches))
 		}
 	})
 	t.Run("past the bound", func(t *testing.T) {
@@ -164,8 +167,8 @@ func TestGatewayRollupsAccountForGivenUpBatches(t *testing.T) {
 		recorder.analytics.tick(t.Context(), false)
 		closeMinute(recorder, second, 1)
 		recorder.analytics.tick(t.Context(), false)
-		if recorder.appLosses[first] != 2 || recorder.appLosses[second] != 0 || len(recorder.analytics.batches) != 1 {
-			t.Fatalf("losses = %v, batches %d; want the oldest batch lost", recorder.appLosses, len(recorder.analytics.batches))
+		if recorder.analyticsLosses[first] != 2 || recorder.analyticsLosses[second] != 0 || len(recorder.analytics.batches) != 1 {
+			t.Fatalf("losses = %v, batches %d; want the oldest batch lost", recorder.analyticsLosses, len(recorder.analytics.batches))
 		}
 	})
 	t.Run("apid stops taking batches", func(t *testing.T) {
@@ -176,7 +179,7 @@ func TestGatewayRollupsAccountForGivenUpBatches(t *testing.T) {
 		closeMinute(recorder, app, 2)
 		apid.err = ErrRequestAnalyticsRollupsUnsupported
 		recorder.analytics.tick(t.Context(), false)
-		if len(recorder.appLosses) != 0 || recorder.analytics.active.Load() || recorder.analytics.agg.Len() != 0 {
+		if len(recorder.analyticsLosses) != 0 || recorder.analytics.active.Load() || recorder.analytics.agg.Len() != 0 {
 			t.Fatalf("losses = %v, active %v; want no loss and counting off", recorder.appLosses, recorder.analytics.active.Load())
 		}
 		recorder.DrainBatch(10)
@@ -215,5 +218,61 @@ func TestRequestTelemetryCollapseKeepsTheAnalyticsFlagApart(t *testing.T) {
 	b.AnalyticsCounted = true
 	if rows := collapseRequestTelemetry([]RequestTelemetryRow{a, b}); len(rows) != 2 {
 		t.Fatalf("collapsed = %d rows, want flagged and unflagged kept apart", len(rows))
+	}
+}
+
+// A raw row the gateway counted and then lost costs the debugger, not
+// analytics; one it did not count costs both (amendment 6).
+func TestGatewayRollupsRawLossCostsAnalyticsOnlyWhenUncounted(t *testing.T) {
+	apid := &fakeRollupApid{}
+	clock := &rollupClock{now: time.Date(2026, 11, 9, 12, 0, 10, 0, time.UTC)}
+	recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 1}, nopLog())
+	recorder.EnableAnalyticsRollups(RequestAnalyticsRollupsConfig{Ship: apid.ship, Now: clock.Now}, nopLog())
+	counted, uncounted := uuid.New(), uuid.New()
+	recorder.RecordFromObserve(rollupRow(uncounted, clock.now)) // before the probe: not counted
+	recorder.analytics.tick(t.Context(), false)
+	recorder.RecordFromObserve(rollupRow(counted, clock.now)) // overwrites the uncounted row
+	recorder.RecordFromObserve(rollupRow(counted, clock.now)) // overwrites the counted row
+	if recorder.appLosses[uncounted] != 1 || recorder.appLosses[counted] != 1 {
+		t.Fatalf("raw losses = %v, want one each", recorder.appLosses)
+	}
+	if recorder.analyticsLosses[uncounted] != 1 || recorder.analyticsLosses[counted] != 0 {
+		t.Fatalf("analytics losses = %v, want only the uncounted row", recorder.analyticsLosses)
+	}
+}
+
+// The heartbeat carries the analytics part apart from raw delivery, and
+// subtracts the analytics deltas a receipt acknowledges.
+func TestGatewayRollupsCoverageReportsAnalyticsApart(t *testing.T) {
+	apid := &fakeRollupApid{err: errors.New("apid down")}
+	clock := &rollupClock{now: time.Date(2026, 11, 9, 12, 0, 10, 0, time.UTC)}
+	recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 64}, nopLog())
+	recorder.EnableAnalyticsRollups(RequestAnalyticsRollupsConfig{Ship: apid.ship, Now: clock.Now}, nopLog())
+	recorder.analytics.active.Store(true)
+	app := uuid.New()
+	for range 4 {
+		recorder.RecordFromObserve(rollupRow(app, clock.now))
+	}
+	recorder.ringMu.Lock()
+	recorder.recordAnalyticsLossLocked(app, 2)
+	recorder.ringMu.Unlock()
+	var reports []RequestTelemetryCoverage
+	publisher := NewRequestTelemetryPublisher(RequestTelemetryPublisherConfig{Enabled: true, Now: clock.Now,
+		OnCoverage: func(_ context.Context, c RequestTelemetryCoverage) error { reports = append(reports, c); return nil },
+	}, recorder, func(context.Context, []RequestTelemetryRow) error { return nil }, nopLog())
+	clock.now = clock.now.Add(time.Minute + api.RequestAnalyticsRollupMinuteGrace)
+	publisher.tick(t.Context()) // raw rows ship; the rollup batch does not
+	if len(reports) != 1 || reports[0].Analytics == nil || !reports[0].Analytics.Counting {
+		t.Fatalf("reports = %+v, want one with a counting analytics part", reports)
+	}
+	if len(reports[0].AppGaps) != 1 {
+		t.Fatalf("gaps = %+v, want one app", reports[0].AppGaps)
+	}
+	gap := reports[0].AppGaps[0]
+	if gap.PendingCount != 0 || gap.DroppedCount != 0 || gap.AnalyticsPendingCount != 4 || gap.AnalyticsDroppedCount != 2 {
+		t.Fatalf("gap = %+v, want raw clean, 4 late and 2 lost for analytics", gap)
+	}
+	if len(recorder.analyticsLosses) != 0 {
+		t.Fatalf("analytics losses after the receipt = %v, want the acknowledged delta gone", recorder.analyticsLosses)
 	}
 }

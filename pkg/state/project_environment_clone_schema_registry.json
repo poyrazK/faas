@@ -17647,6 +17647,17 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_app_gaps",
+    "columns": [
+      "app_id",
+      "last_gap_at",
+      "node_name",
+      "pending_count",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_hours",
     "columns": [
       "account_id",
@@ -17685,6 +17696,17 @@
       "request_time_ms",
       "requests",
       "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_node_coverage",
+    "columns": [
+      "boot_id",
+      "counting_since",
+      "heartbeat_at",
+      "node_name",
+      "unattributed_dropped_total"
     ],
     "kind": "operational"
   },

@@ -14068,6 +14068,15 @@ type ReleaseSecretRekeyDocument struct {
 	Payload []byte
 }
 
+// Per gateway node and app: the last analytics loss or late rollup and the requests still late (ADR-20261103113952 amendment 6); written only by apid.
+type RequestAnalyticsAppGap struct {
+	NodeName     string
+	AppID        pgtype.UUID
+	LastGapAt    pgtype.Timestamptz
+	PendingCount int32
+	UpdatedAt    pgtype.Timestamptz
+}
+
 // Hourly request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952 amendment 2).
 type RequestAnalyticsHour struct {
 	AppID           pgtype.UUID
@@ -14104,6 +14113,15 @@ type RequestAnalyticsMinute struct {
 	LatencyMaxMs    int32
 	LatencyHist     []int64
 	LatencyHistInt4 []int32
+}
+
+// Per gateway node: since when it has counted every request into analytics rollups without a break (ADR-20261103113952 amendment 6); written only by apid.
+type RequestAnalyticsNodeCoverage struct {
+	NodeName                 string
+	BootID                   pgtype.UUID
+	CountingSince            pgtype.Timestamptz
+	HeartbeatAt              pgtype.Timestamptz
+	UnattributedDroppedTotal int64
 }
 
 // Gateway analytics rollup batches apid applied; written only by apid, swept only by meterd (ADR-20261103113952 amendment 5).
