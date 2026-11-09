@@ -92,6 +92,9 @@ type JailerVMM struct {
 	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
 	// nil keeps drive0 on virtio-blk.
 	pmemBase *pmemBaseStore
+	// clockRealtime advances the guest's kvm-clock by the time a capture
+	// spent parked (ADR-20261109120000).
+	clockRealtime restoreClockRealtime
 	// restoreReseedThread boots app VMs with the thread-mode reseed barrier
 	// client (ADR-20261024105607).
 	restoreReseedThread bool
@@ -2375,12 +2378,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tBindTun := time.Now()
-	body := map[string]any{
-		"snapshot_path": stateName,
-		"mem_backend":   map[string]any{"backend_type": "File", "backend_path": memName},
-		"resume_vm":     !spec.KeepPaused,
-	}
+	body := v.snapshotLoadBody(stateName, memName, !spec.KeepPaused)
 	if err = v.loadRestoredSnapshot(ctx, l, root, spec, body); err != nil {
+		v.noteSnapshotLoadError(err)
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
 	if err = v.checkRestoredVCPUs(l, spec.VCPUs); err != nil {
