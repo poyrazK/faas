@@ -32,14 +32,18 @@ func (e *Evaluator) SetRuleRelease(forAccount func(ctx context.Context, accountI
 	e.release = forAccount
 }
 
-// SetRuleOutcome installs a counter of the rules a tick did not evaluate:
-// reason "deferred" (the account spent its tick budget) or "not_released"
-// (its plan or capability flags no longer cover the rule). nil records
-// nothing; a nil evaluator ignores it.
-// RuleLimits returns an account's plan caps on alert rules per app and per
-// account; ok is false when the plan cannot be read, and every rule then
-// evaluates.
-type RuleLimits func(ctx context.Context, accountID string) (perApp, perAccount int, ok bool)
+// RuleLimit is the plan caps that apply to one rule: its owner's caps per app
+// and per billing subject. Subject is the owner the per-account cap counts
+// against: the organization for an app it owns, else the account
+// (ADR-20261109153000), as the API counts when a rule is created.
+type RuleLimit struct {
+	PerApp, PerAccount int
+	Subject            string
+}
+
+// RuleLimits returns the plan caps that apply to rule; ok is false when its
+// owner's plan cannot be read, and the rule then evaluates.
+type RuleLimits func(ctx context.Context, rule state.AlertRule) (limit RuleLimit, ok bool)
 
 // SetRuleLimits applies the account's plan caps to the rules it evaluates
 // (ADR-20261104142830): the API enforces them only when a rule is created,
@@ -51,10 +55,13 @@ func (e *Evaluator) SetRuleLimits(limits RuleLimits) {
 	e.ruleLimits = limits
 }
 
-// overPlanLimits returns the rules past the caps: per app and per account,
-// the oldest enabled rules keep evaluating, so a customer chooses which run
-// by disabling the others.
-func overPlanLimits(rules []state.AlertRule, perApp, perAccount int) map[string]bool {
+// overPlanLimits returns the rules past the caps: per app and per billing
+// subject, the oldest enabled rules keep evaluating, so a customer chooses
+// which run by disabling the others. A rule whose caps cannot be read is never
+// over. One account's tick sees only its own rules, so an organization's
+// subject count covers this account's share of it: the evaluator can only
+// under-count, never stand down a rule the plan allows.
+func overPlanLimits(ctx context.Context, rules []state.AlertRule, limitFor RuleLimits) map[string]bool {
 	sorted := slices.Clone(rules)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		if !sorted[i].CreatedAt.Equal(sorted[j].CreatedAt) {
@@ -64,20 +71,28 @@ func overPlanLimits(rules []state.AlertRule, perApp, perAccount int) map[string]
 	})
 	over := map[string]bool{}
 	byApp := map[string]int{}
-	kept := 0
+	bySubject := map[string]int{}
 	for _, r := range sorted {
-		if r.AppID != "" && byApp[r.AppID] >= perApp || kept >= perAccount {
+		limit, ok := limitFor(ctx, r)
+		if !ok {
+			continue
+		}
+		if r.AppID != "" && byApp[r.AppID] >= limit.PerApp || bySubject[limit.Subject] >= limit.PerAccount {
 			over[r.ID] = true
 			continue
 		}
 		if r.AppID != "" {
 			byApp[r.AppID]++
 		}
-		kept++
+		bySubject[limit.Subject]++
 	}
 	return over
 }
 
+// SetRuleOutcome installs a counter of the rules a tick did not evaluate:
+// reason "deferred" (the account spent its tick budget) or "not_released"
+// (its plan or capability flags no longer cover the rule). nil records
+// nothing; a nil evaluator ignores it.
 func (e *Evaluator) SetRuleOutcome(count func(reason string, n int)) {
 	if e == nil {
 		return
@@ -149,9 +164,7 @@ func (e *Evaluator) evalAccount(ctx context.Context, rules []state.AlertRule, no
 	accountID := rules[0].AccountID
 	var over map[string]bool
 	if e.ruleLimits != nil {
-		if perApp, perAccount, ok := e.ruleLimits(ctx, accountID); ok {
-			over = overPlanLimits(rules, perApp, perAccount)
-		}
+		over = overPlanLimits(ctx, rules, e.ruleLimits)
 	}
 	rules = e.resumeOrder(accountID, rules)
 	var release RuleRelease

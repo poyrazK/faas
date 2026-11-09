@@ -3258,6 +3258,17 @@ func ErrNotificationChannelInUseBy(rules, releases []string) *Problem {
 		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
 }
 
+// ErrPagerDutyKeyHasOpenIncidents refuses replacing a PagerDuty routing key
+// while rules using the channel are firing (ADR-20261109153000): their
+// resolves would go to the new key's service and leave the incidents the
+// old key opened open for good.
+func ErrPagerDutyKeyHasOpenIncidents(rules []string) *Problem {
+	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse, "Channel has open incidents",
+		fmt.Sprintf("%d alert rule(s) using this channel are firing: %s. Their PagerDuty incidents were opened with the current routing key and are closed with it. Wait for them to recover, or disable the rules to close the incidents now, then replace the key.",
+			len(rules), strings.Join(rules, ", "))).
+		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
+}
+
 // ErrEventPublishRateLimited reports a publication of events beyond the
 // account's per-second event publish rate. Nothing was accepted.
 // EventsPausedRetryAfter is the Retry-After a refused publication carries
