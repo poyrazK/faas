@@ -90319,6 +90319,9 @@ components:
         security_revocation: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
         managed_http: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
         managed_circuit: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        edge_header_secrets:
+          description: Gateways open sealed edge-rule request header values; until every serving gateway does, new credential values are stored as written. Omitted by older releases.
+          allOf: [{ $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }]
 
     TrafficRuntimeFeatureStatus:
       description: Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified.

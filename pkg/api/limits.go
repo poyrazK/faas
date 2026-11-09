@@ -17101,6 +17101,14 @@ const (
 	LogProjectionBuildErrorBytes = 1024
 )
 
+// AlertRatioMinRequests is the fewest requests a window must hold before a
+// threshold rule on a share or percentile of them (error_rate_pct,
+// cold_start_pct, latency_p50/p95/p99_ms) fires (ADR-20261109153000). On a
+// scale-to-zero app a window often holds a handful of requests, and one
+// failed wake out of three read as a 33% error rate and paged. Below it the
+// rule reads unknown: too few requests to tell.
+const AlertRatioMinRequests = 10
+
 // Anomaly alert bounds (ADR-744). A baseline rule compares a request metric
 // with the median of its value at the same time of day over the previous
 // AnomalyBaselineDays days.

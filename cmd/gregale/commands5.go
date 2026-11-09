@@ -1299,6 +1299,13 @@ func cmdPlan(args []string) int {
 		}
 		return printErr("Plan change failed", err)
 	}
+	if jsonOutput {
+		// The account as apid returned it: plan, plus plan_change_status,
+		// requested_plan and effective_at when the change is scheduled or
+		// a scheduled change was undone. Scripts branch on these instead
+		// of the human lines below.
+		return jsonOut(writeJSON(updated))
+	}
 	if updated.PlanChangeStatus == "scheduled_change_undone" {
 		PrintOK(osStdout, "Kept the %s subscription: its scheduled cancellation or plan change was undone", updated.Plan)
 		return 0

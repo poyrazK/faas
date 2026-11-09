@@ -30,9 +30,16 @@ type fakeHost struct {
 
 func (h fakeHost) Sources() Sources { return h.sources }
 
+// AppForAccount lets the caller read its own apps and every organization app
+// (a member's view; the real host checks the membership).
 func (h fakeHost) AppForAccount(_ context.Context, acct state.Account, slug string) (state.App, bool) {
 	app, ok := h.apps[slug]
-	return app, ok && app.AccountID == acct.ID
+	return app, ok && (app.AccountID == acct.ID || app.OrgID != "")
+}
+
+// AppOwner is the app's creator account on the Pro plan.
+func (h fakeHost) AppOwner(_ context.Context, app state.App) (state.Account, bool) {
+	return state.Account{ID: app.AccountID, Plan: api.PlanPro}, true
 }
 func (h fakeHost) ShowsDashboard(_ context.Context, _ state.Account, widgets []api.DashboardWidget) bool {
 	for _, w := range widgets {

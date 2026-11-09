@@ -149,7 +149,17 @@ Reseed these yourself, or avoid keeping them across a snapshot:
   from the file named by `FAAS_INSTANCE_IDENTITY_FILE`, which Gregale rewrites
   on every wake ([trace propagation](runtimes/trace-propagation.md#deployment-identity));
 - `Math.random` inside Node worker threads;
-- sidecars that run from their own root filesystem.
+- sidecars that run from their own root filesystem;
+- Bun and Deno, which do not load the Node reseed; Python started with `-S`,
+  `-E` or `-I`, which skips the Python reseed; and any Node or Python process
+  started with a cleared environment. Gregale logs a warning on each wake when
+  it finds such a process running
+  ([ADR-20261109140000](adr/20261109140000-report-processes-the-reseed-barrier-missed.md));
+- OpenSSL copies bundled inside Python packages, such as `psycopg2-binary` and
+  `cryptography` wheels: the reseed reaches only the standard library's `ssl`;
+- ID libraries that keep a random pool or per-process state, such as `nanoid`,
+  the npm `uuid` package's v1, v6 and v7, MongoDB `ObjectId` and Go `rs/xid`: instances
+  restored from one snapshot can generate the same IDs.
 
 Setting `GREGALE_RESTORE_RESEED=off` in the app's environment disables the
 Node and Python reseed. Only do that for an app that never generates tokens,

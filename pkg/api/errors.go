@@ -476,6 +476,9 @@ const (
 	// on a cancelled subscription until the cancellation is undone
 	// (ADR-20261103131742 amendment 1).
 	CodeBillingSubscriptionEnding = "billing_subscription_ending"
+	// CodeBillingAlreadyCancelled refuses a cancellation when the account has
+	// no active subscription, or its subscription is already cancelled.
+	CodeBillingAlreadyCancelled = "billing_already_cancelled"
 	// CodePaymentAuthenticationRequired answers an upgrade whose charge the
 	// customer's bank asked to confirm (3-D Secure). Nothing was charged and
 	// the plan is unchanged (ADR-20261103131742 amendment 1).
@@ -3252,6 +3255,17 @@ func ErrNotificationChannelInUseBy(rules, releases []string) *Problem {
 	}
 	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse, "Notification channel in use",
 		strings.Join(parts, " ")+" Then delete the channel.").
+		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
+}
+
+// ErrPagerDutyKeyHasOpenIncidents refuses replacing a PagerDuty routing key
+// while rules using the channel are firing (ADR-20261109153000): their
+// resolves would go to the new key's service and leave the incidents the
+// old key opened open for good.
+func ErrPagerDutyKeyHasOpenIncidents(rules []string) *Problem {
+	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse, "Channel has open incidents",
+		fmt.Sprintf("%d alert rule(s) using this channel are firing: %s. Their PagerDuty incidents were opened with the current routing key and are closed with it. Wait for them to recover, or disable the rules to close the incidents now, then replace the key.",
+			len(rules), strings.Join(rules, ", "))).
 		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
 }
 
