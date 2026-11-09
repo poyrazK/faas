@@ -336,7 +336,8 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 		values ($1, $2, $3, $4, $5, $6)
 		on conflict (account_id, installation_id, repo_full_name, pr_number)
 		do update set commit_sha = excluded.commit_sha, root_app_id = excluded.root_app_id,
-		member_app_ids = excluded.member_app_ids, closed_at = null, setup_error = null, updated_at = now()`,
+		member_app_ids = excluded.member_app_ids, closed_at = null, setup_error = null,
+		member_pins = null, member_pins_head = null, updated_at = now()`,
 		set.InstallationID, set.RepoFullName, set.PRNumber, set.CommitSHA, set.RootAppID, set.MemberAppIDs); err != nil {
 		return nil, fmt.Errorf("state: replace PR preview set: %w", err)
 	}
