@@ -1096,6 +1096,43 @@ func TestLoadConfig_RestoreClockRealtimeSwitch(t *testing.T) {
 	}
 }
 
+// adr: 20261109130000 — connection release before destroy is on by default;
+// TOML can disable it and FAAS_RELEASE_CONNECTIONS_ON_DESTROY overrides TOML.
+func TestLoadConfig_ReleaseConnectionsOnDestroySwitch(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DisableReleaseConnectionsOnDestroy {
+		t.Fatal("connection release must default to enabled")
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("disable_release_connections_on_destroy = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		env      string
+		disabled bool
+	}{{"", true}, {"1", false}, {"true", false}, {"0", true}, {"false", true}} {
+		t.Run("env="+tc.env, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("FAAS_RELEASE_CONNECTIONS_ON_DESTROY", tc.env)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.DisableReleaseConnectionsOnDestroy != tc.disabled {
+				t.Fatalf("DisableReleaseConnectionsOnDestroy = %v, want %v", cfg.DisableReleaseConnectionsOnDestroy, tc.disabled)
+			}
+		})
+	}
+	t.Setenv("FAAS_RELEASE_CONNECTIONS_ON_DESTROY", "sometimes")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_RELEASE_CONNECTIONS_ON_DESTROY") {
+		t.Fatalf("invalid FAAS_RELEASE_CONNECTIONS_ON_DESTROY error = %v, want named validation error", err)
+	}
+}
+
 // adr: 20261024105607 — the thread-mode reseed barrier client is off by
 // default; TOML can enable it and FAAS_RESTORE_RESEED_THREAD overrides TOML
 // in either direction.

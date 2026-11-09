@@ -841,6 +841,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REHEARSAL_WORKER_FAULTS` | apid | `default` |  | 0 | `` | opt-in cooperative worker-termination rehearsals; disabled pending native lifecycle qualification |
 | `FAAS_REKEY_ENABLED` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_REKEY_PROGRESS_FILE` | apid | `default` |  |  | `` |  |
+| `FAAS_RELEASE_CONNECTIONS_ON_DESTROY` | vmmd | `default` |  |  | `` | optional boolean kill switch for resetting an app guest's TCP connections before vmmd destroys it (ADR-20261109130000); production default is enabled |
 | `FAAS_RELEASE_PHASE_ENABLED` | apid, imaged | `default` |  |  | `` | opt-in for pre-boot release commands, set the same on apid and imaged; while off apid refuses deployments declaring a release command with `release_phase_unavailable` and hides the release-commands capability, and imaged fails any that reach it; enable only alongside `FAAS_APP_TASK_DISPATCH=1` on schedd |
 | `FAAS_REQUEST_AUDIT_ENABLED` | gatewayd-internal | `default` |  |  | `` | exact request audit is off by default until the receiver rollout and path-privacy review are complete (ADR-242) |
 | `FAAS_REQUEST_ID_JOURNAL_LOCAL` | gatewayd-internal | `default` |  | 0 | `` | `1` keeps the request-ID journal on this node (state directory `request-journal/`) and answers apid's lookups over the request-telemetry connection, instead of apid storing a control-plane row per request (ADR-20261101085552); turn on only once every apid serves RequestIDLookups |
