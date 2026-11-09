@@ -371,16 +371,31 @@ func (j *postgresJourney) purge(t *testing.T, name string) {
 	}
 	// A database switch moves the app's bindings to the restored copy, so
 	// the journey does not know every binding's ID: delete what is listed.
-	if ids := j.liveBindings(t, name); len(ids) > 0 {
-		for _, id := range ids {
-			j.tg.run(t, time.Minute, "postgres", "bindings", "delete", id)
+	for _, id := range j.liveBindings(t, name) {
+		j.tg.run(t, time.Minute, "postgres", "bindings", "delete", id)
+	}
+	// Binding deletion is asynchronous and a purge is refused while one is
+	// still live, so retry instead of guessing a delay: a single attempt
+	// after a fixed 30 s sleep left e2ej-*-pg-rb/-rc behind on 2026-11-04.
+	problem := ""
+	deadline := time.Now().Add(pgPurgeWait)
+	for {
+		res := j.tg.run(t, time.Minute, "postgres", "delete", name, "--purge", "--yes")
+		if res.exit == 0 || strings.Contains(res.problem(), "not_found") {
+			return
 		}
-		time.Sleep(30 * time.Second)
+		problem = res.problem()
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(15 * time.Second)
 	}
-	if res := j.tg.run(t, time.Minute, "postgres", "delete", name, "--purge", "--yes"); res.exit != 0 {
-		t.Logf("warning: could not purge %s (%s); delete it by hand: gregale postgres delete %s --purge --yes", name, res.problem(), name)
-	}
+	t.Logf("warning: could not purge %s (%s); the next run's sweeper retries, or: gregale postgres delete %s --purge --yes", name, problem, name)
 }
+
+// pgPurgeWait bounds a cleanup purge waiting for the database's bindings to
+// finish deleting.
+const pgPurgeWait = 5 * time.Minute
 
 // liveBindings lists name's bindings that are not deleted. It is for
 // cleanups, so a failed list returns none.
