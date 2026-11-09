@@ -548,7 +548,8 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - **Eviction:** the image-run LRU skips a runner job with a queued, starting, ready or frozen session (`sandbox_sessions.image_job_id`), so a full cache answers `image_run_cache_full` instead of pulling a live session's image away.
      - **Data path:** agentd passes the image's storage key as `image_key` (schedd `SandboxRunStart` 9, vmmd `RunSandboxStart` 13). vmmd accepts only a job image key (`storagekey.IsJobLayer`), boots it as drive1 in place of the platform sandbox layer, and stages `/etc/faas/sandbox.json` on the VM's private copy of drive1, as job VMs get `job.json`. The cached image is never changed.
      - **Migration** `20261105112618000_sandbox_session_images` (expand): `image_ref` and `image_job_id` on `sandbox_sessions`.
-     - **Not built:** registry credentials for private images on create (image runs take `registry_auth`; sessions use the runner job's stored credential, if any), `pull: always`, and a metal test of an image session.
+     - **Metal test:** `TestMetalSandboxFromASellerImage` (pkg/fcvm, run by `scripts/experiments/agent-runs/metal/run_sandbox_root_metal.sh`) boots a Debian image packed as imaged publishes a job image over the Alpine agent base, and checks the image's root, the staged marker, uid 1000, a writable `/workspace`, root, and that the cached image is unchanged afterwards. It passed on internal-test-1 on 2026-11-09 with leakcheck clean.
+     - **Not built:** registry credentials for private images on create (image runs take `registry_auth`; sessions use the runner job's stored credential, if any), and `pull: always`.
      - The pricing calculator and shadow mode from §13.
 11. Billing, with ADR-20261027090011.
 

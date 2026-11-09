@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Run the sandbox root metal test (pkg/fcvm TestMetalSandboxRootStaysInsideTheVM,
-# ADR-20261027090013 §10) on a shared native KVM host. Run as root.
+# Run the sandbox metal tests (pkg/fcvm TestMetalSandboxRootStaysInsideTheVM,
+# ADR-20261027090013 §10, and TestMetalSandboxFromASellerImage, step 10 part
+# two) on a shared native KVM host. Run as root.
 #
 #   run_sandbox_root_metal.sh DIR
 #
@@ -80,10 +81,15 @@ mkfs.ext4 -q -O '^has_journal' -d "$work/rootfs" -L agent-base -F "$work/agent-b
 rm -rf --one-file-system "$work/rootfs"
 chmod 0644 "$work/agent-base.ext4"
 
+echo "== seller image (Debian, unlike the Alpine agent base)"
+python3 -I "$dir/memory/oci_pull.py" mirror.gcr.io library/debian \
+  sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc "$work/image-root"
+
 echo "== metal test"
 rc=0
 env TMPDIR="$work" FAAS_TEST_KERNEL="$kernel" FAAS_TEST_FC_VERSION="$fc_version" \
   FAAS_TEST_AGENT_RUN_BASE="$work/agent-base.ext4" FAAS_TEST_VMMD_BINARY="$bin/vmmd" \
-  "$bin/fcvm.metal.test" -test.count=1 -test.run "${RUN:-^TestMetalSandboxRootStaysInsideTheVM\$}" -test.v -test.timeout 30m || rc=$?
+  FAAS_TEST_SANDBOX_IMAGE_ROOT="$work/image-root" \
+  "$bin/fcvm.metal.test" -test.count=1 -test.run "${RUN:-^TestMetalSandbox(RootStaysInsideTheVM|FromASellerImage)\$}" -test.v -test.timeout 30m || rc=$?
 bash "$dir/leakcheck/leakcheck.sh" || rc=1
 exit "$rc"
