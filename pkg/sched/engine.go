@@ -5285,9 +5285,39 @@ type placementSnapshot struct {
 	// preferred is nodes less those whose vmmd is restarting under a
 	// notice, when that leaves any (vmmd restart adoption ADR §3).
 	preferred []state.ComputeNode
+	// cpu is the ledger's cpu_admission (ADR-20261109172421).
+	cpu *cpuAdmission
 }
 
+// choose places r. Observing cpu_admission, a refusal for vCPU or CPU alone
+// is retried without those budgets, so a node with memory room is chosen and
+// the refusal is only counted (ADR-20261109172421). The first pass still
+// prefers a node within its CPU budgets.
 func (s placementSnapshot) choose(r Request) (Placement, error) {
+	p, err := s.chooseOnce(r)
+	if err == nil || !s.cpu.observing() || !refusedForCPU(err) {
+		return p, err
+	}
+	r.ignoreCPUBudgets = true
+	if p, err = s.chooseOnce(r); err != nil {
+		return p, err
+	}
+	s.cpu.refusedAt(CPUGatePlacement)
+	return p, nil
+}
+
+// refusedForCPU reports whether a placement refusal names the vCPU or CPU
+// budget.
+func refusedForCPU(err error) bool {
+	for _, b := range admissionBlockers(err) {
+		if b.Code == "node_vcpu" || b.Code == "node_cpu" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s placementSnapshot) chooseOnce(r Request) (Placement, error) {
 	if len(s.preferred) > 0 {
 		if p, err := choosePlacementWithCPU(s.preferred, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r); err == nil {
 			return p, nil
@@ -5395,7 +5425,7 @@ func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (pla
 	}
 	snapshot := placementSnapshot{
 		nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
-		usedCPUMillicores: usedCPUMillicores,
+		usedCPUMillicores: usedCPUMillicores, cpu: e.ledger.cpuAdmission,
 	}
 	if preferred, ok := preferUnnoticed(ctx, e.restartNotices, nodes); ok {
 		snapshot.preferred = preferred
