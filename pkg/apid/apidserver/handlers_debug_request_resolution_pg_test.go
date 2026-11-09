@@ -98,6 +98,26 @@ func TestDebugRequestResolutionPG(t *testing.T) {
 		t.Fatalf("replay by public request ID = %d %s; want 409 %s", rec.Code, rec.Body, api.CodeDebugReplayUnsupported)
 	}
 
+	// A safe-only mirror rule replays the GET but refuses the POST: telemetry
+	// keeps no body, so the replay would repeat a side effect bodyless.
+	mirror, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("2", 64), Scope: "default", Status: state.DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateMirrorRuleIfUnderQuota(ctx, state.CreateMirrorRuleParams{
+		AccountID: app.AccountID, AppID: app.ID, SourceDeploymentID: dep.ID, MirrorDeploymentID: mirror.ID, Percent: 10, Enabled: true,
+	}, api.MustLimitsFor(api.PlanPro)); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/debug/requests/"+second.publicID+"/replay", nil, nil)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "allow_unsafe_methods") {
+		t.Fatalf("POST replay through a safe-only rule = %d %s; want 409 naming allow_unsafe_methods", rec.Code, rec.Body)
+	}
+	rec = e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/debug/requests/"+first.publicID+"/replay", nil, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("GET replay through a safe-only rule = %d %s; want 202", rec.Code, rec.Body)
+	}
+
 	for _, tc := range []struct {
 		route string
 		want  int

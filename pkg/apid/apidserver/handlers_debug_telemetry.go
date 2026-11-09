@@ -2605,6 +2605,16 @@ func (s *server) enqueueDebugReplayForDeployment(ctx context.Context, app state.
 			"Debug replay is unavailable",
 			message)
 	}
+	// Telemetry keeps no request body, so a replay of POST/PUT/PATCH/DELETE
+	// would re-run the side effect with an empty body against a deployment
+	// that usually shares production's data. Like live mirroring, only a rule
+	// that opted into unsafe methods may carry one.
+	if method := strings.ToUpper(strings.TrimSpace(row.Method)); !api.MirrorSafeMethod(method) && !rule.AllowUnsafeMethods {
+		return debugReplayEnqueueResult{}, api.NewProblem(http.StatusConflict,
+			api.CodeDebugReplayUnsupported,
+			"Debug replay is unavailable",
+			fmt.Sprintf("%s requests replay only through a mirror rule with allow_unsafe_methods enabled; the replay has no request body and may repeat a side effect", method))
+	}
 	sourceRequestID := uuidFromPg(row.ID)
 	if row.TraceID.Valid && strings.TrimSpace(row.TraceID.String) != "" {
 		sourceRequestID = strings.TrimSpace(row.TraceID.String)
