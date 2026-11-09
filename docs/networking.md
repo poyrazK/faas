@@ -79,6 +79,34 @@ carries the reason and the stable problem code, for example
 Your app's own gRPC responses, including their `grpc-status` trailers, pass
 through unchanged. gRPC-Web requests are not translated.
 
+## Long-lived streams
+
+A streamed HTTP response lasts at most about 15 minutes (900 seconds) from
+the request, however active it is. This covers server-sent events, chunked
+and NDJSON responses, and gRPC server, client and bidirectional streams. It
+applies on every plan, to calls from the internet and between services alike.
+At the limit the platform ends the stream: the client sees the response or
+RPC end before your app finished it. A quiet stream can end sooner: the
+public edge closes a connection that carries nothing for about 100 seconds,
+so send a heartbeat (an SSE comment line, a no-op message on a gRPC stream) at least
+every 60 seconds.
+
+Write long-lived consumers to reconnect:
+
+- **Server-sent events.** Send an `id:` with each event. A browser
+  `EventSource` reconnects on its own and sends `Last-Event-ID`, so the app
+  can resume from there.
+- **gRPC streams.** Treat a stream that ends early as retryable: open a new
+  RPC and resume from the last message the client processed, such as a watch
+  cursor or offset. Keep unary RPCs for work that must finish in one call.
+- **Longer sessions.** A [WebSocket](#public-websockets) stays open for up to
+  24 hours while it carries traffic, and
+  [managed realtime](realtime.md#long-lived-connections-and-scale-to-zero)
+  holds sparse connections for you.
+
+An open stream counts as an in-flight request, so its instance stays running
+and is billed for as long as the stream is open.
+
 ## Internal services
 
 Apps in the same account reach one another by name, on every plan. There is no
@@ -182,7 +210,7 @@ services:
 ```
 
 A repository without Compose declares the same policy, per-service
-visibility and `depends_on` in `.gregale/project.yaml`
+visibility and `depends_on` in the root `gregale.yaml` `project:` block (formerly `.gregale/project.yaml`)
 ([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md));
 a Compose declaration wins where both set a policy.
 

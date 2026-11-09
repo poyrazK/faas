@@ -1950,6 +1950,20 @@ Only services the latest deploy changed roll back unless --all; services added s
 
 Stops at the first service that fails; run it again to finish.
 
+### project import
+
+Import .gregale/project.yaml into the root gregale.yaml project block
+
+`gregale project import [--dry-run] [<dir>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | print the new gregale.yaml without writing |  |
+
+Runs locally; nothing is uploaded.
+
+The existing gregale.yaml is kept as written; the block is appended and checked against the old file before anything changes.
+
 
 ## build
 
@@ -6368,6 +6382,18 @@ Add a channel; Slack URLs and PagerDuty keys are read from stdin
 | `--pagerduty-region <REGION>` | PagerDuty service region | one of `us` · `eu` |
 | `--email <EMAIL>` | your account email (kind email) |  |
 
+#### alert channel update
+
+Rename a channel or replace its destination; read from stdin
+
+`gregale alert channel update [--name <NAME>] [--secret-stdin] [--pagerduty-region <REGION>] <channel-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | new channel name, unique per account |  |
+| `--secret-stdin` | read the new Slack webhook URL or PagerDuty routing key from stdin |  |
+| `--pagerduty-region <REGION>` | PagerDuty service region of the new key | one of `us` · `eu` |
+
 #### alert channel test
 
 Send a marked test notification
@@ -6730,9 +6756,11 @@ Show sign-ins and security changes
 
 #### account activity list
 
-List sign-ins, credentials and security changes of the last 90 days (newest 100)
+List sign-ins, credential and security changes of the last 90 days
 
 `gregale account activity list`
+
+Shows the newest 100 events.
 
 
 ## org

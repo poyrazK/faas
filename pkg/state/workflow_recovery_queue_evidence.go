@@ -9,7 +9,7 @@ import (
 
 func recoveryQueueEvidence(slug string, d api.WorkflowRetryEvidenceDiagnosis) *api.WorkflowRecoveryQueueEvidence {
 	base := "/v1/apps/" + url.PathEscape(slug) + "/recovery-policy/reviews/" + d.ReviewID + "/actions/" + d.ActionID + "/evidence"
-	command := fmt.Sprintf("gregale automations recovery-retry-evidence --app %s --review %s --action %s", slug, d.ReviewID, d.ActionID)
+	command := fmt.Sprintf("gregale workflow stored recovery-retry-evidence --app %s --review %s --action %s", slug, d.ReviewID, d.ActionID)
 	if d.EvidenceKind == "parent" {
 		base += "/parent"
 		command += " --parent"
@@ -51,5 +51,5 @@ func recoveryInitialQueueEvidence(r api.WorkflowInitialRecoveryReview, d api.Wor
 	if r.SubmittedAt != nil {
 		stage = "submitted"
 	}
-	return &api.WorkflowRecoveryInitialQueueEvidence{Stage: stage, Diagnosis: d, EvidenceURL: "/v1/apps/" + url.PathEscape(r.App) + "/initial-recovery-reviews/" + r.ID + "/evidence", CLICommand: fmt.Sprintf("gregale automations failure-recovery-evidence --app %s --review %s", r.App, r.ID)}
+	return &api.WorkflowRecoveryInitialQueueEvidence{Stage: stage, Diagnosis: d, EvidenceURL: "/v1/apps/" + url.PathEscape(r.App) + "/initial-recovery-reviews/" + r.ID + "/evidence", CLICommand: fmt.Sprintf("gregale workflow stored failure-recovery-evidence --app %s --review %s", r.App, r.ID)}
 }

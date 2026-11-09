@@ -60,6 +60,11 @@ func (s *Service) Read(ctx context.Context, acct state.Account, id string) (api.
 	if err != nil {
 		return api.DashboardData{}, err
 	}
+	release, err := s.Reads.acquire(acct.ID)
+	if err != nil {
+		return api.DashboardData{}, err
+	}
+	defer release()
 	var widgets []api.DashboardWidget
 	_ = json.Unmarshal(row.Widgets, &widgets)
 	now := s.now()

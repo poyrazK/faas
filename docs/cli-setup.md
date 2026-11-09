@@ -3073,9 +3073,26 @@ summary. API/stream failures exit nonzero without a success summary.
 `gregale context` shows the linked project, default app and environment,
 connection profile and API sources, absolute project-context path, and absolute
 connection-configuration path. It explains missing defaults and how selectors
-work: the nearest ancestor `.gregale/project.json` wins, explicit selectors
-supersede linked defaults, and the environment applies only to commands that
-support environment selection. A profile selects a connection and credentials;
+work: explicit selectors win; then the nearest ancestor `.gregale/project.json`;
+then the committed `gregale.yaml`. The environment applies only to commands
+that support environment selection.
+
+A repository can commit its default target so a fresh clone needs no
+`gregale link` ([ADR-20261107180000](adr/20261107180000-one-config-file.md)):
+
+```yaml
+# gregale.yaml at the repository root
+project:
+  name: shop        # project slug
+  app: shop-web     # default app for app-scoped commands
+```
+
+A service directory's own `gregale.yaml` may set `project: {app: shop-billing}`
+to make that service the default when you work inside it; the project still
+comes from the root. `app` without `name` targets a standalone app. The lookup
+stops at the Git root. `.gregale/project.json`, written by `gregale link`, still
+overrides the committed target for your checkout and holds your environment;
+`gregale link`, `unlink` and `context set` only ever change that file. A profile selects a connection and credentials;
 it is not an environment. When `FAAS_API` overrides the profile API address,
 the display explains that credentials are still selected by the profile.
 

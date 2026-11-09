@@ -26,7 +26,7 @@ T = TypeVar("T", bound="WorkflowRecoveryPollingWebhookPayload")
 
 @_attrs_define
 class WorkflowRecoveryPollingWebhookPayload:
-    """Historical automation.recovery_polling_status event. Three consecutive deterministic polling failures trigger
+    """Historical stored_workflow.recovery_polling_status event. Three consecutive deterministic polling failures trigger
     failed; unchanged code and policy version stay quiet. Recovered proves a successful poll, independently of workflow
     outcome. Recipients and payload are frozen at capture; use event_id for deduplication.
 
