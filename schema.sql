@@ -29680,6 +29680,22 @@ CREATE TABLE public.account_email_changes (
 
 
 --
+-- Name: account_mail_throttle; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_mail_throttle (
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    window_started_at timestamp with time zone NOT NULL,
+    sent_in_window integer NOT NULL,
+    last_sent_at timestamp with time zone NOT NULL,
+    CONSTRAINT account_mail_throttle_count_check CHECK (((sent_in_window >= 1) AND (sent_in_window <= 1000))),
+    CONSTRAINT account_mail_throttle_kind_check CHECK ((kind ~ '^[a-z][a-z0-9_]{0,47}$'::text)),
+    CONSTRAINT account_mail_throttle_times_check CHECK ((isfinite(window_started_at) AND isfinite(last_sent_at) AND (last_sent_at >= window_started_at)))
+);
+
+
+--
 -- Name: account_oauth_unlinks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59172,6 +59188,14 @@ ALTER TABLE ONLY public.account_deploy_rate_limits
 
 ALTER TABLE ONLY public.account_email_changes
     ADD CONSTRAINT account_email_changes_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: account_mail_throttle account_mail_throttle_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_mail_throttle
+    ADD CONSTRAINT account_mail_throttle_pkey PRIMARY KEY (account_id, kind);
 
 
 --
@@ -90290,6 +90314,14 @@ ALTER TABLE ONLY public.account_deploy_rate_limits
 
 ALTER TABLE ONLY public.account_email_changes
     ADD CONSTRAINT account_email_changes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_mail_throttle account_mail_throttle_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_mail_throttle
+    ADD CONSTRAINT account_mail_throttle_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

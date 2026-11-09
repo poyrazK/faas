@@ -7728,6 +7728,10 @@ type Querier interface {
 	SyncRealtimeEgressUsage(ctx context.Context, db DBTX, arg SyncRealtimeEgressUsageParams) (int64, error)
 	SynchronousRollbackRequiresBindingCheck(ctx context.Context, db DBTX, arg SynchronousRollbackRequiresBindingCheckParams) (bool, error)
 	SyntheticCheckRunStats(ctx context.Context, db DBTX, arg SyntheticCheckRunStatsParams) (SyntheticCheckRunStatsRow, error)
+	// Count one mail of kind to the account when its fixed window still has
+	// room and the last send is at least min_interval old; no row means the
+	// send is throttled (ADR 20261108160000).
+	TakeAccountMailSlot(ctx context.Context, db DBTX, arg TakeAccountMailSlotParams) (int32, error)
 	TakeManagedPostgresRestoreSlot(ctx context.Context, db DBTX, arg TakeManagedPostgresRestoreSlotParams) (ManagedPostgresDatabase, error)
 	// A fork whose lease expired lost its scheduler. The caller takes the lease,
 	// destroys any instance the fork recorded, and finishes it.
