@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/githubscope"
@@ -52,7 +53,8 @@ func loadPRPreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installation
 	// name, not PR number. Two PRs can point at the same commit, so that check
 	// must represent every open preview set for the commit. The PR comment
 	// still reports only its own environment.
-	setRows, err := pool.Query(ctx, `select pr_number, root_app_id::text, member_app_ids, coalesce(setup_error, '')
+	setRows, err := pool.Query(ctx, `select pr_number, root_app_id::text, member_app_ids, coalesce(setup_error, ''),
+		       case when member_pins_head = commit_sha then member_pins end
 		from pr_preview_sets where installation_id = $1 and repo_full_name = $2
 		  and commit_sha = $3 and closed_at is null and ($4='' or account_id::text=$4) order by pr_number`, installationID, repo, commitSHA, githubscope.Account(ctx))
 	if err != nil {
@@ -61,9 +63,16 @@ func loadPRPreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installation
 	var sets []state.PRPreviewSet
 	for setRows.Next() {
 		var candidate state.PRPreviewSet
-		if err := setRows.Scan(&candidate.PRNumber, &candidate.RootAppID, &candidate.MemberAppIDs, &candidate.SetupError); err != nil {
+		var pins []byte
+		if err := setRows.Scan(&candidate.PRNumber, &candidate.RootAppID, &candidate.MemberAppIDs, &candidate.SetupError, &pins); err != nil {
 			setRows.Close()
 			return previewSetCheck{}, fmt.Errorf("githubd: scan preview set for commit: %w", err)
+		}
+		if len(pins) > 0 {
+			if err := json.Unmarshal(pins, &candidate.MemberCommitSHAs); err != nil {
+				setRows.Close()
+				return previewSetCheck{}, fmt.Errorf("githubd: decode preview set pins: %w", err)
+			}
 		}
 		sets = append(sets, candidate)
 	}
@@ -74,7 +83,7 @@ func loadPRPreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installation
 	setRows.Close()
 	results := make([]previewPRResult, 0, len(sets))
 	for _, candidate := range sets {
-		members, err := loadPRPreviewMembers(ctx, pool, candidate.RootAppID, candidate.PRNumber, candidate.MemberAppIDs, commitSHA)
+		members, err := loadPRPreviewMembers(ctx, pool, candidate.RootAppID, candidate.PRNumber, candidate.MemberAppIDs, commitSHA, candidate.MemberCommitSHAs)
 		if err != nil {
 			return previewSetCheck{}, err
 		}
@@ -96,7 +105,7 @@ func inactivePreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installati
 	if set.CommitSHA != commitSHA {
 		return previewSetCheck{SupersededBy: set.CommitSHA}, nil
 	}
-	members, err := loadPRPreviewMembers(ctx, pool, set.RootAppID, set.PRNumber, set.MemberAppIDs, commitSHA)
+	members, err := loadPRPreviewMembers(ctx, pool, set.RootAppID, set.PRNumber, set.MemberAppIDs, commitSHA, set.MemberCommitSHAs)
 	if err != nil {
 		return previewSetCheck{}, err
 	}
@@ -176,7 +185,16 @@ func combinePreviewSetChecks(prNumber int, results []previewPRResult) previewSet
 	return check
 }
 
-func loadPRPreviewMembers(ctx context.Context, pool *pgxpool.Pool, rootAppID string, prNumber int, memberIDs []string, commitSHA string) ([]previewMemberStatus, error) {
+// A member a push did not rebuild is read at its pinned commit
+// (ADR-20261108150000); every other member at commitSHA.
+func loadPRPreviewMembers(ctx context.Context, pool *pgxpool.Pool, rootAppID string, prNumber int, memberIDs []string, commitSHA string, pins map[string]string) ([]previewMemberStatus, error) {
+	var rawPins []byte
+	if len(pins) > 0 {
+		var err error
+		if rawPins, err = json.Marshal(pins); err != nil {
+			return nil, fmt.Errorf("githubd: encode PR preview pins: %w", err)
+		}
+	}
 	rows, err := pool.Query(ctx, `
 		select expected.app_id,
 		       coalesce(a.slug, ''), coalesce(a.preview_of_slug, ''),
@@ -191,10 +209,11 @@ func loadPRPreviewMembers(ctx context.Context, pool *pgxpool.Pool, rootAppID str
 		  and a.preview_pr_number = $4
 		left join lateral (
 			select id, status from deployments
-			where app_id = a.id and kind = 'preview' and commit_sha = $2
+			where app_id = a.id and kind = 'preview'
+			  and commit_sha = coalesce($5::jsonb ->> expected.app_id, $2)
 			order by created_at desc, id desc limit 1
 		) d on true
-		order by expected.ordinal`, memberIDs, commitSHA, rootAppID, prNumber)
+		order by expected.ordinal`, memberIDs, commitSHA, rootAppID, prNumber, rawPins)
 	if err != nil {
 		return nil, fmt.Errorf("githubd: load PR preview members: %w", err)
 	}
