@@ -8,7 +8,7 @@ App target: a command that takes `--app` and no other arguments also accepts the
 
 Earlier names: commands keep working under the names they had before the command tree (`gregale crons list` is `gregale cron list`); `gregale help --all --operator` lists them, and [The CLI command tree](cli-command-tree.md) maps each one.
 
-Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
+Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. With an agent key, put `--wait-for-approval` before the command to wait for a person to decide a request that needs approval, then retry it once. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
 
 | Command | What it does |
 |---|---|
@@ -814,6 +814,33 @@ Call an app or function once to smoke-test it
 Provision and bind managed resources to an app
 
 `gregale add [<subcommand>]`
+
+### add function
+
+Scaffold a function that declares its own trigger and settings
+
+`gregale add function [--trigger <KIND>] [--lang <LANG>] [--schedule <CRON>] [--queue <NAME>] [--bucket <NAME>] [--provider <PROVIDER>] [--path <DIR>] [--dry-run] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--trigger <KIND>` | what calls the function (default http) | one of `http` · `cron` · `queue` · `bucket` · `webhook` |
+| `--lang <LANG>` | handler language (default: inferred from the project, else node) | one of `node` · `python` |
+| `--schedule <CRON>` | cron schedule for --trigger cron |  |
+| `--queue <NAME>` | queue for --trigger queue (default: the function name) |  |
+| `--bucket <NAME>` | bucket for --trigger bucket |  |
+| `--provider <PROVIDER>` | webhook provider for --trigger webhook | one of `stripe` · `generic` |
+| `--path <DIR>` | project directory |  |
+| `--dry-run` | show the files without writing them |  |
+
+Examples:
+
+```sh
+gregale add function digest --trigger cron --schedule "0 8 * * *"
+gregale add function thumbs --trigger bucket --bucket uploads --lang python
+gregale add function payments --trigger webhook --provider stripe
+```
+
+Writes functions/&lt;name&gt;/ with a handler whose config `gregale deploy` reads without running it, and a test beside it. Nothing is created remotely.
 
 ### add postgres
 
@@ -6341,6 +6368,18 @@ Add a channel; Slack URLs and PagerDuty keys are read from stdin
 | `--pagerduty-region <REGION>` | PagerDuty service region | one of `us` · `eu` |
 | `--email <EMAIL>` | your account email (kind email) |  |
 
+#### alert channel update
+
+Rename a channel or replace its destination; read from stdin
+
+`gregale alert channel update [--name <NAME>] [--secret-stdin] [--pagerduty-region <REGION>] <channel-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | new channel name, unique per account |  |
+| `--secret-stdin` | read the new Slack webhook URL or PagerDuty routing key from stdin |  |
+| `--pagerduty-region <REGION>` | PagerDuty service region of the new key | one of `us` · `eu` |
+
 #### alert channel test
 
 Send a marked test notification
@@ -6561,6 +6600,14 @@ Open MFA removal in the browser
 | `--password <PASSWORD>` | legacy option; enter the password in the browser |  |
 | `--recovery-code <CODE>` | legacy option; enter the recovery code in the browser |  |
 
+#### account mfa rotate
+
+Open new recovery codes in the browser
+
+`gregale account mfa rotate`
+
+Your current recovery codes stop working.
+
 ### account dpa
 
 Print the Data Processing Agreement template
@@ -6616,6 +6663,90 @@ Cancel a pending deletion
 ### account status
 
 Show account status
+
+### account update
+
+Set your display name
+
+`gregale account update [--name <NAME>] [--clear-name]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | display name shown to org members (at most 80 characters) |  |
+| `--clear-name` | remove the display name |  |
+
+### account sessions
+
+List or sign out browser sessions
+
+#### account sessions list
+
+List signed-in browsers
+
+`gregale account sessions list`
+
+#### account sessions revoke
+
+Sign out one browser session, or all of them
+
+`gregale account sessions revoke [--all] [--yes] [SESSION_ID]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | sign out every browser |  |
+| `--yes` | with --all, sign out without prompting |  |
+
+API keys keep working.
+
+### account email
+
+Verify or change your sign-in email
+
+#### account email verify
+
+Send a new email verification link
+
+`gregale account email verify`
+
+#### account email update
+
+Open the sign-in email change form in the browser
+
+`gregale account email update`
+
+A confirmation link goes to the new address.
+
+### account password
+
+Change your password
+
+#### account password update
+
+Open the password change form in the browser
+
+`gregale account password update`
+
+### account provider
+
+Show how you can sign in
+
+#### account provider list
+
+List your password, two-factor and linked Google/GitHub sign-ins
+
+`gregale account provider list`
+
+### account activity
+
+Show sign-ins and security changes
+
+#### account activity list
+
+List sign-ins, credential and security changes of the last 90 days
+
+`gregale account activity list`
+
+Shows the newest 100 events.
 
 
 ## org
@@ -6886,6 +7017,18 @@ Rotate an org API key; the new plaintext is shown once
 |---|---|---|
 | `--org <SLUG>` | organization slug | required |
 | `--label <TEXT>` | new label (empty keeps the current one) |  |
+
+### org leave
+
+Leave an org you are a member of
+
+`gregale org leave [--yes] ORG_SLUG`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | leave without prompting |  |
+
+Owners transfer ownership first. Personal orgs cannot be left.
 
 ### org me
 

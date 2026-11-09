@@ -125,6 +125,13 @@ type DeploymentAppResolver interface {
 	DeploymentAppID(ctx context.Context, deploymentID string) (string, error)
 }
 
+// EdgeRuleAppResolver is the optional store seam that loads the edge rule an
+// agent approval addresses by id, to tell a production app's rule from a
+// preview's (ADR-091 amendment 2026-11-07).
+type EdgeRuleAppResolver interface {
+	GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error)
+}
+
 // deployTokenDeploymentReads are the routes outside /v1/apps/{slug} a deploy
 // token may read, for a deployment of its own app: the ones
 // api.ScopesDeploymentReadSurface admits for deploy:write, which every CLI
@@ -612,6 +619,13 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				if m.limitKeyToProjects(w, r, acct, &key) {
 					return
 				}
+				// ADR-20261107220000: an agent's write requests are
+				// recorded once the handler answers; the approval gate
+				// notes the approval a request went through on.
+				var activity *agentActivityNote
+				if ProjectLimitable(key) && agentWrite(r.Method) {
+					*r = *r.WithContext(withAgentActivityNote(r.Context(), &activity))
+				}
 				// ADR-20261104140058: an agent's risky request waits for a
 				// person's approval.
 				if m.requireAgentApproval(w, r, acct, key) {
@@ -633,6 +647,12 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 							m.Log.Warn("api_key last_used_at touch failed", "key_id", id, "error", err.Error())
 						}
 					}(r.Context(), key.ID, t)
+				}
+				if activity != nil {
+					aw := &activityWriter{ResponseWriter: w}
+					next(aw, r, acct)
+					m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
+					return
 				}
 				next(w, r, acct)
 				return

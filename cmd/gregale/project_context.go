@@ -224,6 +224,19 @@ func linkedAppSlug(start string) (string, error) {
 	return context.App, nil
 }
 
+// linkedProjectSlug returns the linked project's slug, or "" when there is
+// no link or the link is a standalone app.
+func linkedProjectSlug(start string) (string, error) {
+	context, _, err := linkedProjectContext(start)
+	if errors.Is(err, errProjectContextNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return context.Project, nil
+}
+
 func resolveLinkedApp(explicit, start string) (string, error) {
 	if explicit != "" {
 		return explicit, nil

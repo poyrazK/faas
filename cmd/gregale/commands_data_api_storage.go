@@ -44,6 +44,7 @@ type dataAPIStorageReceipt struct {
 	Buckets        []dataAPIStorageBucket `json:"buckets"`
 	Changed        []string               `json:"changed"`
 	Restarted      bool                   `json:"restarted,omitempty"`
+	Parked         bool                   `json:"parked,omitempty"`
 }
 
 // dataAPIStorageBucket is one bucket bound to the Data API app. Name is the
@@ -159,17 +160,20 @@ func cmdDataAPIStorageEnable(args []string) int {
 	}
 	receipt.Buckets = []dataAPIStorageBucket{bound}
 	if !*noRestart {
-		if _, err := client.RestartAppFresh(ctx, app); err != nil {
+		_, parked, err := restartDataAPISettings(ctx, client, app)
+		if err != nil {
 			return printErr("Settings stored; fresh restart failed", err)
 		}
-		receipt.Restarted = true
+		receipt.Restarted, receipt.Parked = !parked, parked
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(receipt))
 	}
 	PrintOK(osStdout, "File storage on for %s: bucket %s is %q in storage routes", app, bound.Bucket, bound.Name)
 	_, _ = fmt.Fprintf(osStdout, "Add the storage_objects table and your policies with a migration (gregale data-api storage export). Until it exists, storage answers 503 storage_unavailable and the rest of the API keeps serving.\n")
-	if !receipt.Restarted {
+	if receipt.Parked {
+		_, _ = fmt.Fprintln(osStdout, dataAPIParkedSettingsNote)
+	} else if !receipt.Restarted {
 		_, _ = fmt.Fprintf(osStdout, "Run gregale data-api refresh %s to apply the settings.\n", app)
 	}
 	return 0
@@ -290,14 +294,18 @@ func cmdDataAPIStorageDisable(args []string) int {
 	}
 	receipt := dataAPIStorageReceipt{App: app, Scope: *scope, Buckets: []dataAPIStorageBucket{}, Changed: []string{"storage"}}
 	if !*noRestart {
-		if _, err := client.RestartAppFresh(ctx, app); err != nil {
+		_, parked, err := restartDataAPISettings(ctx, client, app)
+		if err != nil {
 			return printErr("Settings stored; fresh restart failed", err)
 		}
-		receipt.Restarted = true
+		receipt.Restarted, receipt.Parked = !parked, parked
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(receipt))
 	}
 	PrintOK(osStdout, "File storage off for %s; buckets stay bound and keep their files", app)
+	if receipt.Parked {
+		_, _ = fmt.Fprintln(osStdout, dataAPIParkedSettingsNote)
+	}
 	return 0
 }

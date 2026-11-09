@@ -170,7 +170,9 @@ func TestUnverifiedAccountCannotReachDeployOrBilling_Property(t *testing.T) {
 	}
 }
 
-func TestForgotPasswordSkipsUnverifiedAccount(t *testing.T) {
+// An unverified account's owner who forgot the password gets a magic
+// sign-in link, never a reset link: redeeming it claims the account.
+func TestForgotPasswordSendsUnverifiedAccountAMagicLink(t *testing.T) {
 	store := state.NewMemStore()
 	_, err := store.CreateAccountWithPersonalOrg(context.Background(), state.CreateAccountWithPersonalOrgParams{
 		Email:                    "unverified-reset@example.com",
@@ -191,8 +193,12 @@ func TestForgotPasswordSkipsUnverifiedAccount(t *testing.T) {
 		t.Fatalf("forgot status = %d", rec.Code)
 	}
 	srv.WaitPasswordResetMail()
-	if got := len(mailer.Snapshot()); got != 0 {
-		t.Fatalf("password reset emails = %d, want 0", got)
+	msgs := mailer.Snapshot()
+	if len(msgs) != 1 {
+		t.Fatalf("emails = %d, want 1 magic sign-in link", len(msgs))
+	}
+	if body := msgs[0].TextBody; !strings.Contains(body, "/auth/verify?token=") || strings.Contains(body, "/auth/reset") {
+		t.Fatalf("unverified forgot-password mail is not a magic link:\n%s", body)
 	}
 }
 

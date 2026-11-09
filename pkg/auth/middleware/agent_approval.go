@@ -116,10 +116,11 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeBadRequest, "Unreadable request body", "the request body could not be read"))
 		return true
 	}
-	if _, used, err := gate.ConsumeAgentApproval(ctx, binding); err != nil {
+	if approvalID, used, err := gate.ConsumeAgentApproval(ctx, binding); err != nil {
 		m.storeUnavailable(w, r, err, "could not check the request's approval; retry shortly")
 		return true
 	} else if used {
+		noteApprovalUsed(ctx, approvalID)
 		return false
 	}
 	outcome, decided, err := gate.RecentAgentApprovalOutcome(ctx, binding, api.AgentApprovalOutcomeWindow)
@@ -227,6 +228,20 @@ func (m *Middleware) productionTarget(w http.ResponseWriter, r *http.Request, ta
 		var appID string
 		if appID, err = deployments.DeploymentAppID(ctx, id); err == nil {
 			app, err = apps.AppByID(ctx, appID)
+		}
+	case agentapproval.TargetEdgeRule:
+		rules, okRules := m.Authn.(EdgeRuleAppResolver)
+		apps, okApps := m.Authn.(AppByIDResolver)
+		if !okRules || !okApps {
+			return true, false
+		}
+		id := r.PathValue(firstWildcard(r.Pattern))
+		if uuid.Validate(id) != nil {
+			return false, false
+		}
+		var rule state.EdgeRule
+		if rule, err = rules.GetEdgeRuleByID(ctx, id); err == nil {
+			app, err = apps.AppByID(ctx, rule.AppID)
 		}
 	}
 	if errors.Is(err, state.ErrNotFound) {

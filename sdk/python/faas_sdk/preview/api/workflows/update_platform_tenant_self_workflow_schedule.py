@@ -110,7 +110,7 @@ def sync_detailed(
 ) -> Response[Problem | TenantWorkflowScheduleResponse]:
     """Set this tenant's cadence for an opted-in workflow.
 
-     Requires platform_tenant:automations:manage. expected_version is zero
+     Requires platform_tenant:stored_workflows:manage. expected_version is zero
     to create a tenant override and otherwise must match the current version.
     A stale version returns 409. Omitting timezone or overlap keeps the
     published defaults; enabled defaults to true. The tenant controls only
@@ -154,7 +154,7 @@ def sync(
 ) -> Problem | TenantWorkflowScheduleResponse | None:
     """Set this tenant's cadence for an opted-in workflow.
 
-     Requires platform_tenant:automations:manage. expected_version is zero
+     Requires platform_tenant:stored_workflows:manage. expected_version is zero
     to create a tenant override and otherwise must match the current version.
     A stale version returns 409. Omitting timezone or overlap keeps the
     published defaults; enabled defaults to true. The tenant controls only
@@ -193,7 +193,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | TenantWorkflowScheduleResponse]:
     """Set this tenant's cadence for an opted-in workflow.
 
-     Requires platform_tenant:automations:manage. expected_version is zero
+     Requires platform_tenant:stored_workflows:manage. expected_version is zero
     to create a tenant override and otherwise must match the current version.
     A stale version returns 409. Omitting timezone or overlap keeps the
     published defaults; enabled defaults to true. The tenant controls only
@@ -235,7 +235,7 @@ async def asyncio(
 ) -> Problem | TenantWorkflowScheduleResponse | None:
     """Set this tenant's cadence for an opted-in workflow.
 
-     Requires platform_tenant:automations:manage. expected_version is zero
+     Requires platform_tenant:stored_workflows:manage. expected_version is zero
     to create a tenant override and otherwise must match the current version.
     A stale version returns 409. Omitting timezone or overlap keeps the
     published defaults; enabled defaults to true. The tenant controls only

@@ -1359,6 +1359,11 @@ type App struct {
 	// (sorted, no base ports). Empty for Free/Hobby; Pro and Scale are
 	// capped by api.Plan.EgressExtraPortsMax.
 	EgressPorts []int
+	// EgressAllowlistRevision is apps.egress_allowlist_revision, bumped by
+	// the database on every allowlist or port change. A wake request carries
+	// it so vmmd can tell its cached app policy from a newer one in the
+	// request (0 = unknown, e.g. an App built outside the store).
+	EgressAllowlistRevision int64
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4 that
 	// the app's egress traffic presents on the wire. NULL => no
 	// static IP — egress exits with the host's primary IP (the
@@ -4100,7 +4105,7 @@ const (
 	AppWebhookEventConsumerSignedUp                        AppWebhookEvent = "consumer.signed_up"
 	AppWebhookEventConsumerPlanChanged                     AppWebhookEvent = "consumer.plan_changed"
 	AppWebhookEventConsumerClosed                          AppWebhookEvent = "consumer.closed"
-	AppWebhookEventAutomationPaused                        AppWebhookEvent = "automation.paused"
+	AppWebhookEventStoredWorkflowPaused                    AppWebhookEvent = "stored_workflow.paused"
 	AppWebhookEventRealtimeConsumerGroupLagExceeded        AppWebhookEvent = "realtime.consumer_group.lag_exceeded"
 	AppWebhookEventRealtimeConsumerGroupLagRecovered       AppWebhookEvent = "realtime.consumer_group.lag_recovered"
 	AppWebhookEventRealtimeConsumerGroupDeadLetterExpiring AppWebhookEvent = "realtime.consumer_group.dead_letter_expiring"
@@ -4181,14 +4186,14 @@ const (
 	AppWebhookEventWorkflowFinished                        AppWebhookEvent = "workflow.finished"
 	AppWebhookEventOutboundAIBudgetThreshold               AppWebhookEvent = "outbound.ai_budget.threshold"
 	AppWebhookEventOutboundAIQualityDrift                  AppWebhookEvent = "outbound.ai_quality.drift"
-	AppWebhookEventRecoveryQueueBlocked                    AppWebhookEvent = "automation.recovery_queue_blocked"
-	AppWebhookEventRecoveryHealthAlert                     AppWebhookEvent = "automation.recovery_health_alert"
-	AppWebhookEventRecoveryHealthRecovered                 AppWebhookEvent = "automation.recovery_health_recovered"
-	AppWebhookEventRecoveryPolicyPaused                    AppWebhookEvent = "automation.recovery_policy_paused"
-	AppWebhookEventRecoveryReviewFinished                  AppWebhookEvent = "automation.recovery_review_finished"
-	AppWebhookEventRecoveryReviewReady                     AppWebhookEvent = "automation.recovery_review_ready"
+	AppWebhookEventRecoveryQueueBlocked                    AppWebhookEvent = "stored_workflow.recovery_queue_blocked"
+	AppWebhookEventRecoveryHealthAlert                     AppWebhookEvent = "stored_workflow.recovery_health_alert"
+	AppWebhookEventRecoveryHealthRecovered                 AppWebhookEvent = "stored_workflow.recovery_health_recovered"
+	AppWebhookEventRecoveryPolicyPaused                    AppWebhookEvent = "stored_workflow.recovery_policy_paused"
+	AppWebhookEventRecoveryReviewFinished                  AppWebhookEvent = "stored_workflow.recovery_review_finished"
+	AppWebhookEventRecoveryReviewReady                     AppWebhookEvent = "stored_workflow.recovery_review_ready"
 	AppWebhookEventRecoveryExecutionAttention              AppWebhookEvent = "event_recovery.execution_attention"
-	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "automation.recovery_polling_status"
+	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "stored_workflow.recovery_polling_status"
 	AppWebhookEventEnvironmentGitOpsChanged                AppWebhookEvent = "environment.gitops.changed"
 	AppWebhookEventIssueTrackerSyncAttention               AppWebhookEvent = "issue.tracker_sync.attention"
 	AppWebhookEventIssueTrackerSyncRecovered               AppWebhookEvent = "issue.tracker_sync.recovered"
@@ -4275,7 +4280,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventIssueFrequencyThresholdReached,
 	AppWebhookEventIssueCompoundThresholdReached,
-	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
+	AppWebhookEventWorkflowFinished, AppWebhookEventStoredWorkflowPaused,
 	AppWebhookEventEnvironmentGitOpsChanged,
 }
 
@@ -8259,6 +8264,9 @@ type CreateAccountWithPersonalOrgParams struct {
 	// commits it with the account, personal organization and owner membership.
 	// The credential is never included when creation parameters are serialized.
 	InitialPasswordHash string `json:"-"`
+	// TermsAcceptance, when set, records the Terms of Service version the
+	// account accepted at sign-up in the same transaction (legal_acceptances).
+	TermsAcceptance *TermsAcceptance
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted
@@ -8492,6 +8500,13 @@ type EdgeRuleHeaderOp struct {
 	Value    string `json:"value,omitempty"`
 	Action   string `json:"action"`
 	Template bool   `json:"template,omitempty"` // ADR-968
+	// Secret and SecretID (ADR-20261108110000): the value is sealed in
+	// edge_rule_header_secrets row SecretID and Value is empty.
+	Secret   bool   `json:"secret,omitempty"`
+	SecretID string `json:"secret_id,omitempty"`
+	// Redacted is set only on a response copy whose credential-named value
+	// was stored before sealing; it is never stored.
+	Redacted bool `json:"redacted,omitempty"`
 }
 
 // EdgeRuleHeadersAction mutates request headers BEFORE auth and

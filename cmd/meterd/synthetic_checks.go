@@ -15,8 +15,10 @@ import (
 const syntheticCheckTick = 30 * time.Second
 
 // syntheticCheckConcurrency bounds simultaneous probes from the control
-// plane so a burst of due checks cannot flood the public edge.
-const syntheticCheckConcurrency = 8
+// plane so a burst of due checks cannot flood the public edge. A pass does
+// not wait for its probes, and one account holds at most
+// api.SyntheticCheckProbesPerAccount of these slots (ADR-20261104142830).
+const syntheticCheckConcurrency = 32
 
 // runSyntheticChecks probes due checks until ctx ends. A store that
 // predates ADR-748 disables the runner rather than failing meterd. released
@@ -31,6 +33,7 @@ func runSyntheticChecks(ctx context.Context, store state.Store, appsDomain strin
 	loops.setEnabled(loopSyntheticChecks, true)
 	defer loops.setEnabled(loopSyntheticChecks, false)
 	r := &synthetics.Runner{Store: runs, AppsDomain: appsDomain, Concurrency: syntheticCheckConcurrency, Log: log, Released: released}
+	defer r.Wait()
 	ticker := time.NewTicker(syntheticCheckTick)
 	defer ticker.Stop()
 	for {
@@ -40,11 +43,14 @@ func runSyntheticChecks(ctx context.Context, store state.Store, appsDomain strin
 		loops.add(loopSyntheticChecks, "failed", stats.Failed)
 		loops.add(loopSyntheticChecks, "record_error", stats.RecordErrors)
 		loops.add(loopSyntheticChecks, "not_released", stats.NotReleased)
+		loops.add(loopSyntheticChecks, "deferred", stats.Deferred)
+		loops.setBacklog(loopSyntheticChecks, stats.Backlog)
 		switch {
 		case err != nil:
 			log.Warn("meterd: synthetic checks", "err", err)
-		case stats.Due > 0 || stats.Purged > 0 || stats.NotReleased > 0:
-			log.Info("meterd: synthetic checks", "due", stats.Due, "ok", stats.OK, "failed", stats.Failed,
+		case stats.Due > 0 || stats.OK+stats.Failed > 0 || stats.Purged > 0 || stats.NotReleased > 0:
+			log.Info("meterd: synthetic checks", "due", stats.Due, "started", stats.Started, "deferred", stats.Deferred,
+				"backlog_seconds", int(stats.Backlog.Seconds()), "ok", stats.OK, "failed", stats.Failed,
 				"record_errors", stats.RecordErrors, "not_released", stats.NotReleased, "purged_runs", stats.Purged)
 		}
 		select {

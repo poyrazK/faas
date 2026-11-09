@@ -59,7 +59,20 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 	if len(chans) == 0 {
 		return 0, 0
 	}
-	return e.SendToChannels(ctx, chans, e.channelMessage(ctx, rule, event, observed, now), now)
+	if event == alertchannels.EventFire {
+		// A new incident supersedes a recovery notice a channel never took;
+		// sent now, it would resolve the incident this fire opens.
+		e.clearChannelResolves(ctx, rule.ID)
+		e.clearChannelStandDowns(ctx, rule.ID)
+	}
+	return e.sendToChannels(ctx, chans, e.channelMessage(ctx, rule, event, observed, now), now, func(ch state.NotificationChannel, errMsg string) {
+		if event == alertchannels.EventResolve {
+			e.trackChannelResolve(ctx, rule, ch, observed, now, errMsg)
+		}
+		if errMsg != "" {
+			e.auditChannelFailure(ctx, rule, ch, event, errMsg)
+		}
+	})
 }
 
 // SendToChannels delivers msg to each channel, concurrently and best
@@ -69,6 +82,13 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 // alerting seal domain. It returns how many channels were attempted and
 // delivered.
 func (e *Evaluator) SendToChannels(ctx context.Context, chans []state.NotificationChannel, msg alertchannels.Message, now time.Time) (attempted, delivered int) {
+	return e.sendToChannels(ctx, chans, msg, now, nil)
+}
+
+// sendToChannels is SendToChannels with an optional hook run after each
+// channel's outcome is recorded; rule notifications use it to track resolve
+// retries and audit failures (ADR-20261104142830).
+func (e *Evaluator) sendToChannels(ctx context.Context, chans []state.NotificationChannel, msg alertchannels.Message, now time.Time, after func(ch state.NotificationChannel, errMsg string)) (attempted, delivered int) {
 	if e == nil || e.channels == nil || channelsOff(ctx) || len(chans) == 0 {
 		return 0, 0
 	}
@@ -89,6 +109,9 @@ func (e *Evaluator) SendToChannels(ctx context.Context, chans []state.Notificati
 				outcome, errMsg = ChannelOutcomeFailed, err.Error()
 			}
 			e.recordChannel(ctx, ch, now, errMsg, outcome)
+			if after != nil {
+				after(ch, errMsg)
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			if outcome == ChannelOutcomeDelivered {

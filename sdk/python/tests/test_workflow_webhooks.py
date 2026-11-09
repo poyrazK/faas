@@ -5,16 +5,16 @@ import pytest
 
 from faas_sdk import AuthenticatedClient
 from faas_sdk.preview.api.inbound_webhooks import (
-    delete_webhook_automation_binding,
-    get_webhook_automation_binding,
-    get_webhook_automation_receipt,
-    put_webhook_automation_binding,
+    delete_webhook_workflow_binding,
+    get_webhook_workflow_binding,
+    get_webhook_workflow_receipt,
+    put_webhook_workflow_binding,
     receive_inbound_webhook,
 )
 from faas_sdk.preview.models.create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
 from faas_sdk.preview.models.inbound_webhook_receipt_response import InboundWebhookReceiptResponse
-from faas_sdk.preview.models.put_webhook_automation_binding_request import PutWebhookAutomationBindingRequest
-from faas_sdk.preview.models.webhook_automation_receipt_response import WebhookAutomationReceiptResponse
+from faas_sdk.preview.models.put_webhook_workflow_binding_request import PutWebhookWorkflowBindingRequest
+from faas_sdk.preview.models.webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
 from faas_sdk.preview.models.workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
 
 
@@ -28,7 +28,7 @@ def test_inbound_webhook_sdk_accepts_generic_hmac_provider():
 
 
 @pytest.mark.parametrize("status", ["accepted", "ignored"])
-def test_provider_receipt_selects_automation_model(status):
+def test_provider_receipt_selects_stored_workflow_model(status):
     endpoint = "00000000-0000-0000-0000-000000000001"
     body = {
         "receipt_id": endpoint,
@@ -43,7 +43,7 @@ def test_provider_receipt_selects_automation_model(status):
     }
     client = AuthenticatedClient(base_url="https://api.example.com", token="token")
     parsed = receive_inbound_webhook._parse_response(client=client, response=httpx.Response(202, json=body))
-    assert isinstance(parsed, WebhookAutomationReceiptResponse)
+    assert isinstance(parsed, WebhookWorkflowReceiptResponse)
     assert parsed.provider_event_id == "evt_1"
 
 
@@ -78,7 +78,7 @@ def test_webhook_binding_and_receipt_routes():
         if request.method == "DELETE":
             assert request.url.params["expected_version"] == "7"
             return httpx.Response(204)
-        if request.url.path.endswith("/automation-receipts/evt_1"):
+        if request.url.path.endswith("/workflow-receipts/evt_1"):
             return httpx.Response(
                 200,
                 json={
@@ -94,7 +94,7 @@ def test_webhook_binding_and_receipt_routes():
                     "run_id": endpoint,
                 },
             )
-        assert request.url.path == "/v1/apps/billing/inbound-webhooks/" + endpoint + "/automation-binding"
+        assert request.url.path == "/v1/apps/billing/inbound-webhooks/" + endpoint + "/workflow-binding"
         if request.method == "PUT":
             assert json.loads(request.content) == {
                 "expected_version": 0,
@@ -105,18 +105,18 @@ def test_webhook_binding_and_receipt_routes():
         return httpx.Response(200, json=binding)
 
     client = AuthenticatedClient(base_url="https://api.example.com", token="token")
-    body = PutWebhookAutomationBindingRequest(
+    body = PutWebhookWorkflowBindingRequest(
         expected_version=0, workflow_name="paid", event_type="invoice.*", take_over_delivery=True
     )
     with httpx.Client(base_url="https://api.example.com", transport=httpx.MockTransport(handle)) as transport:
         client.set_httpx_client(transport)
-        saved = put_webhook_automation_binding.sync(slug="billing", id=endpoint, client=client, body=body)
+        saved = put_webhook_workflow_binding.sync(slug="billing", id=endpoint, client=client, body=body)
         assert saved.version == 7
-        assert get_webhook_automation_binding.sync(slug="billing", id=endpoint, client=client).workflow_name == "paid"
-        receipt = get_webhook_automation_receipt.sync(slug="billing", id=endpoint, event_id="evt_1", client=client)
+        assert get_webhook_workflow_binding.sync(slug="billing", id=endpoint, client=client).workflow_name == "paid"
+        receipt = get_webhook_workflow_receipt.sync(slug="billing", id=endpoint, event_id="evt_1", client=client)
         assert str(receipt.run_id) == endpoint
         assert (
-            delete_webhook_automation_binding.sync_detailed(
+            delete_webhook_workflow_binding.sync_detailed(
                 slug="billing", id=endpoint, expected_version=7, client=client
             ).status_code
             == 204

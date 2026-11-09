@@ -160,6 +160,9 @@ type MemStore struct {
 	// egressOverage is each account's or org's egress overage election
 	// (EgressOverageStore, ADR-20261104204500).
 	egressOverage map[string]EgressOverageElection
+	// creditDiscounts are the provider discounts that carry account credit
+	// (CreditDiscountStore), keyed by row id, created on first use.
+	creditDiscounts map[string]CreditDiscount
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
 	totpLastSteps                        map[string]int64
@@ -441,8 +444,10 @@ type MemStore struct {
 	// object storage timeline fence (ADR-20261025111015 amendment).
 	objectStorageTimeline         string
 	acceptedObjectStorageTimeline string
-	alertRuleChannels             map[string][]string // rule id → channel ids (ADR-749)
-	appSLOs                       map[string][]SLO    // app id → definitions (ADR-747), lazily made
+	alertRuleChannels             map[string][]string                               // rule id → channel ids (ADR-749)
+	alertChannelResolveRetries    map[alertChannelRetryKey]AlertChannelResolveRetry // ADR-20261031144636
+	alertChannelStandDowns        map[alertChannelRetryKey]memStandDown             // ADR-20261104142830
+	appSLOs                       map[string][]SLO                                  // app id → definitions (ADR-747), lazily made
 	sloHours                      map[string]map[time.Time]memSLOHour
 	syntheticChecks               map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
 	syntheticRuns                 map[string][]SyntheticCheckRun
@@ -729,29 +734,29 @@ type MemStore struct {
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
-	workflowResumes                   map[string][]WorkflowResume
-	workflowRuns                      map[string]WorkflowRun
-	workflowRunCreateKeys             map[workflowRunCreateKey]workflowRunCreateKeyEntry
-	automationLiveVerifications       map[string]automationLiveRecord
-	automationLiveSuites              map[string]automationLiveSuiteRecord
-	automationLiveBaselines           map[string][]api.AutomationLiveBaseline
-	automationLiveBaselineRetirements map[string]api.AutomationLiveBaselineRetirement
-	workflowSchedules                 map[string]WorkflowScheduleCursor
-	workflowTenantSchedules           map[string]WorkflowScheduleCursor
-	workflowScheduleOccurrences       map[string]WorkflowScheduleOccurrence
-	automationFailurePolicies         map[string]api.AutomationFailurePolicy
-	automationFailureGuards           map[string]automationFailureGuard
-	automationFailureHistory          map[string][]api.AutomationFailureTransition
-	automationPublishPolicies         map[string]api.AutomationPublishPolicy
-	automationPublishReceipts         map[string]automationPublishReceipt
-	automationVersion                 int64
-	automations                       map[string]Automation
-	automationRevisions               map[string][]AutomationRevision
-	workflowSteps                     map[string]map[string]WorkflowStep // run_id → step_name → step
-	workflowStepAttempts              map[workflowStepAttemptKey]WorkflowStepAttempt
-	workflowOperationEffects          map[workflowStepAttemptKey][]workflowOperationStoredEffect
-	workflowEvents                    map[string][]WorkflowEvent // run_id → []WorkflowEvent
-	workflowEventApps                 map[string]string          // run_id → app_id, retained after run cleanup
+	workflowResumes                       map[string][]WorkflowResume
+	workflowRuns                          map[string]WorkflowRun
+	workflowRunCreateKeys                 map[workflowRunCreateKey]workflowRunCreateKeyEntry
+	storedWorkflowLiveVerifications       map[string]storedWorkflowLiveRecord
+	storedWorkflowLiveSuites              map[string]storedWorkflowLiveSuiteRecord
+	storedWorkflowLiveBaselines           map[string][]api.StoredWorkflowLiveBaseline
+	storedWorkflowLiveBaselineRetirements map[string]api.StoredWorkflowLiveBaselineRetirement
+	workflowSchedules                     map[string]WorkflowScheduleCursor
+	workflowTenantSchedules               map[string]WorkflowScheduleCursor
+	workflowScheduleOccurrences           map[string]WorkflowScheduleOccurrence
+	storedWorkflowFailurePolicies         map[string]api.StoredWorkflowFailurePolicy
+	storedWorkflowFailureGuards           map[string]storedWorkflowFailureGuard
+	storedWorkflowFailureHistory          map[string][]api.StoredWorkflowFailureTransition
+	storedWorkflowPublishPolicies         map[string]api.StoredWorkflowPublishPolicy
+	storedWorkflowPublishReceipts         map[string]storedWorkflowPublishReceipt
+	storedWorkflowVersion                 int64
+	storedWorkflows                       map[string]StoredWorkflow
+	storedWorkflowRevisions               map[string][]StoredWorkflowRevision
+	workflowSteps                         map[string]map[string]WorkflowStep // run_id → step_name → step
+	workflowStepAttempts                  map[workflowStepAttemptKey]WorkflowStepAttempt
+	workflowOperationEffects              map[workflowStepAttemptKey][]workflowOperationStoredEffect
+	workflowEvents                        map[string][]WorkflowEvent // run_id → []WorkflowEvent
+	workflowEventApps                     map[string]string          // run_id → app_id, retained after run cleanup
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -821,9 +826,9 @@ type MemStore struct {
 	// (ADR-20261101093517), kept beside the rows so AppWebhook stays as is.
 	appWebhookPreviousSecrets       map[string]appWebhookPreviousSecret
 	inboundWebhookEndpoints         map[string]InboundWebhookEndpoint
-	webhookAutomationBindings       map[string]WebhookAutomationBinding
-	webhookAutomationReceipts       map[string]WebhookAutomationReceipt
-	webhookAutomationRevision       int64
+	webhookWorkflowBindings         map[string]WebhookWorkflowBinding
+	webhookWorkflowReceipts         map[string]WebhookWorkflowReceipt
+	webhookWorkflowRevision         int64
 	workflowCallbackWebhookBindings map[string]WorkflowCallbackWebhookBinding
 	queueBindings                   map[string]QueueBinding
 	managedRealtimeEndpoints        map[string]ManagedRealtimeEndpoint
@@ -884,6 +889,7 @@ type MemStore struct {
 	edgeRules                 map[string]EdgeRule
 	edgeRuleSetVersions       map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-961)
 	edgeRuleLists             map[string]EdgeRuleList         // list id -> list (ADR-963)
+	edgeRuleHeaderSecrets     map[string]EdgeRuleHeaderSecret // secret id -> sealed value (ADR-20261108110000)
 	edgeCrawlerRanges         map[string]EdgeCrawlerRanges    // crawler -> published ranges (ADR-20261022083601)
 	edgeRuleEvents            []EdgeRuleEvent                 // sampled events (ADR-964)
 	edgeRuleEventSeq          int64
@@ -1101,12 +1107,15 @@ type MemStore struct {
 	// OAuth-only accounts have no row; the absence of a row is the
 	// signal that an OAuth-only flow is required to mint a session.
 	accountPasswords map[string]AccountPassword
+	legalAcceptances map[string][]LegalAcceptance
 	// oauthLinks is keyed by (provider + "\x00" + provider_subject)
 	// so the §11 anti-takeover invariant (one OAuth subject per
 	// account) is enforceable in-memory the same way the composite
 	// PK enforces it in Postgres. NUL separator is safe — neither
 	// Google subs nor GitHub IDs contain it.
 	oauthLinks map[string]OAuthLink
+	// accountFlow holds email changes and display names (account_flow.go).
+	accountFlow memAccountFlow
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic
@@ -1407,9 +1416,11 @@ type MemStore struct {
 	agentApprovalNotifications   map[string]*memAgentApprovalNotification
 	agentApprovalEmailLog        map[memEmailLogKey]time.Time
 	agentApprovalChannelBindings []memApprovalChannelBinding
-	orgsBySlug                   map[string]string // lower(slug) -> id
-	memberships                  map[orgAccountKey]OrgMembership
-	invitations                  map[string]OrgInvitation // hex(hash) -> OrgInvitation
+	// ADR-20261107220000: agent keys' write requests.
+	agentActivity []AgentActivity
+	orgsBySlug    map[string]string // lower(slug) -> id
+	memberships   map[orgAccountKey]OrgMembership
+	invitations   map[string]OrgInvitation // hex(hash) -> OrgInvitation
 	// computeNodes mirrors the compute_nodes table; keyed by id (issue
 	// #97 / ADR-025 axis 3). The synthetic 'default-local' row is
 	// seeded by NewMemStore so tests don't have to call
@@ -1940,6 +1951,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		mfaDisableRequests:      map[string]MFADisableRequest{},
 		cliAuthCodes:            map[string]CliAuthCode{},
 		accountPasswords:        map[string]AccountPassword{},
+		legalAcceptances:        map[string][]LegalAcceptance{},
 		oauthLinks:              map[string]OAuthLink{},
 		deploymentLogs:          map[string][]LogEntry{},
 		deploymentSeq:           map[string]int64{},
@@ -2146,6 +2158,9 @@ func (m *MemStore) CreateAccountWithPersonalOrg(ctx context.Context, params Crea
 	if err := ctx.Err(); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, err
 	}
+	if err := params.TermsAcceptance.validate(); err != nil {
+		return CreateAccountWithPersonalOrgResult{}, err
+	}
 
 	// 1. Email uniqueness probe.
 	for _, a := range m.accounts {
@@ -2203,6 +2218,11 @@ func (m *MemStore) CreateAccountWithPersonalOrg(ctx context.Context, params Crea
 		Role:      OrgRoleOwner,
 		JoinedAt:  now,
 	})
+	if a := params.TermsAcceptance; a != nil {
+		m.legalAcceptances[acct.ID] = append(m.legalAcceptances[acct.ID], LegalAcceptance{
+			AccountID: acct.ID, Document: LegalDocumentTerms, Version: a.Version, Method: a.Method, AcceptedAt: now,
+		})
+	}
 	return CreateAccountWithPersonalOrgResult{Account: acct, PersonalOrg: org}, nil
 }
 
@@ -3299,6 +3319,10 @@ func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKe
 	if old.Status == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, ErrAPIKeyRevoked
 	}
+	// Expiry is lazy (see RotateAPIKey): an expired key must not be reopened.
+	if old.ExpiresAt != nil && !old.ExpiresAt.After(time.Now()) {
+		return APIKey{}, APIKey{}, ErrAPIKeyExpired
+	}
 	if newLabel == "" {
 		newLabel = old.Label
 	}
@@ -3322,6 +3346,7 @@ func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKe
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
 	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
+	m.copyKeyProjectLimitLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -3548,6 +3573,10 @@ func (m *MemStore) RotateAPIKey(_ context.Context, accountID, oldKeyID string, n
 	if old.Status == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, ErrAPIKeyRevoked
 	}
+	// Expiry is lazy (see RotateAPIKey): an expired key must not be reopened.
+	if old.ExpiresAt != nil && !old.ExpiresAt.After(time.Now()) {
+		return APIKey{}, APIKey{}, ErrAPIKeyExpired
+	}
 	if newLabel == "" {
 		newLabel = old.Label
 	}
@@ -3567,6 +3596,7 @@ func (m *MemStore) RotateAPIKey(_ context.Context, accountID, oldKeyID string, n
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
 	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
+	m.copyKeyProjectLimitLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -3752,6 +3782,10 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 	if old.Status == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, ErrAPIKeyRevoked
 	}
+	// Expiry is lazy (see RotateAPIKey): an expired key must not be reopened.
+	if old.ExpiresAt != nil && !old.ExpiresAt.After(time.Now()) {
+		return APIKey{}, APIKey{}, ErrAPIKeyExpired
+	}
 	if newLabel == "" {
 		newLabel = old.Label
 	}
@@ -3772,6 +3806,7 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
 	m.copyObjectBucketAccessGrantsLocked(old.ID, newKey.ID)
+	m.copyKeyProjectLimitLocked(old.ID, newKey.ID)
 
 	now := time.Now()
 	if graceWindow == 0 {
@@ -4923,6 +4958,11 @@ func (m *MemStore) ApplyProjectReconcile(
 				}
 			}
 			if tombstone.ID != "" {
+				// The same guards as RestoreApp: a tombstone past its grace
+				// deadline or claimed by the purge cannot come back.
+				if _, claimed := m.appDeletionClaims[tombstone.ID]; claimed || tombstone.DeleteGraceUntil == nil || !tombstone.DeleteGraceUntil.After(time.Now()) {
+					return ProjectReconcileResult{}, fmt.Errorf("state: workload %q is being purged after deletion: %w", app.WorkloadName, ErrConflict)
+				}
 				m.ensureAppOrgLocked(&tombstone)
 				tombstone.RootDir = app.RootDir
 				tombstone.WorkloadName = app.WorkloadName
@@ -4948,6 +4988,14 @@ func (m *MemStore) ApplyProjectReconcile(
 					stagedSpecs = append(stagedSpecs, spec)
 				}
 				stagedApps[tombstone.ID] = tombstone
+				// The crons the deletion suspended come back, as in RestoreApp.
+				for cronID, cron := range stagedCrons {
+					if cron.AppID == tombstone.ID && cron.SuspendedReason == CronSuspendedAppDeleted {
+						restored := cron
+						restored.SuspendedReason = ""
+						stagedCrons[cronID] = anchorCronSchedule(cron, restored, time.Now())
+					}
+				}
 				out.Added = append(out.Added, tombstone)
 				continue
 			}
@@ -7886,6 +7934,8 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	m.deleteEventExecutionLedgerAppLocked(id)
 	m.deleteScenarioWorkerFaultsForAppLocked(id)
+	// alert_rules.app_id ON DELETE CASCADE; the episodes stay (ADR-20261030214500).
+	m.deleteAlertRulesLocked(func(r AlertRule) bool { return r.AppID == id })
 	if purged, ok := m.apps[id]; ok {
 		m.holdSlugLocked(purged.Slug, purged.AccountID)
 	}
@@ -8568,7 +8618,7 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 			}
 		}
 	}
-	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
+	if err := m.checkDeploymentStoredWorkflowsLocked(d); err != nil {
 		return Deployment{}, 0, err
 	}
 	buildGate, gateErr := newBuildDependencyGate(d, d.BuildDependencies, time.Now())
@@ -10255,7 +10305,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 
 		return ErrConflict
 	}
-	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
+	if err := m.checkDeploymentStoredWorkflowsLocked(d); err != nil {
 		return err
 	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
@@ -19439,6 +19489,24 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 	return out, nil
 }
 
+// ListEventsBySubjectKind mirrors PgStore.ListEventsBySubjectKind.
+func (m *MemStore) ListEventsBySubjectKind(_ context.Context, subject, kind string, since time.Time, limit int) ([]Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	subj := parseSubjectID(subject)
+	if subj == nil {
+		return nil, nil
+	}
+	var out []Event
+	for i := len(m.events) - 1; i >= 0 && (limit <= 0 || len(out) < limit); i-- {
+		e := m.events[i]
+		if e.Subject != nil && *e.Subject == *subj && e.Kind == kind && !e.At.Before(since) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 func (m *MemStore) ListCustomerEvents(_ context.Context, filter CustomerEventFilter) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -21251,6 +21319,9 @@ type billingUsageDelivery struct {
 	hour                time.Time
 	quantity            int64
 	deliveredAt         time.Time
+	// source is the usage source that quantified the hour; empty for a
+	// receipt written without one (ADR-20261107105126).
+	source string
 }
 
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
@@ -24840,6 +24911,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 			delete(m.orgs, orgID)
 		}
 	}
+	delete(m.legalAcceptances, id) // ON DELETE CASCADE
 	delete(m.accounts, id)
 	for promotionID := range m.environmentPromotionReceipts {
 		if m.projectEnvironmentPromotions[promotionID].AccountID == id {
@@ -25271,7 +25343,16 @@ func (m *MemStore) deleteAlertRulesLocked(match func(AlertRule) bool) {
 // deleteAlertRuleLocked mirrors the alert_rules delete: its episodes stay
 // (ADR-20261030214500) and everything else of the rule cascades.
 func (m *MemStore) deleteAlertRuleLocked(id string) {
+	// The alert_rules_channel_stand_downs trigger: a deleted rule still owes
+	// its channels the recovery notice of an open episode
+	// (ADR-20261104142830), unless its account is being deleted too.
+	if rule, ok := m.alertRules[id]; ok {
+		if _, live := m.accounts[rule.AccountID]; live {
+			m.queueAlertChannelStandDownsLocked(rule, StandDownDeleted, time.Now().UTC())
+		}
+	}
 	m.keepDeletedRuleEpisodesLocked(m.alertRules[id], time.Now().UTC())
+	m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.rule == id })
 	delete(m.alertRules, id)
 	delete(m.readinessIncidentCursors, id)
 	delete(m.readinessPagerDutyPolicies, id)

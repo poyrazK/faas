@@ -11,6 +11,109 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const billingMeterUsageDeliveryRecordFromSource = `-- name: BillingMeterUsageDeliveryRecordFromSource :exec
+INSERT INTO billing_meter_usage_deliveries (provider, account_id, meter, window_start, quantity, usage_source)
+VALUES ($1::text, $2::uuid, $3::text,
+        $4::timestamptz, $5::bigint, $6::text)
+ON CONFLICT (provider, account_id, meter, window_start) DO NOTHING
+`
+
+type BillingMeterUsageDeliveryRecordFromSourceParams struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	Meter       string
+	WindowStart pgtype.Timestamptz
+	Quantity    int64
+	UsageSource string
+}
+
+// ADR-20261107105126. A secondary-meter delivery receipt with its usage source.
+func (q *Queries) BillingMeterUsageDeliveryRecordFromSource(ctx context.Context, db DBTX, arg BillingMeterUsageDeliveryRecordFromSourceParams) error {
+	_, err := db.Exec(ctx, billingMeterUsageDeliveryRecordFromSource,
+		arg.Provider,
+		arg.AccountID,
+		arg.Meter,
+		arg.WindowStart,
+		arg.Quantity,
+		arg.UsageSource,
+	)
+	return err
+}
+
+const billingMeterUsageDeliverySource = `-- name: BillingMeterUsageDeliverySource :one
+SELECT coalesce(usage_source, '')::text AS usage_source
+FROM billing_meter_usage_deliveries
+WHERE provider = $1::text AND account_id = $2::uuid
+  AND meter = $3::text AND window_start = $4::timestamptz
+`
+
+type BillingMeterUsageDeliverySourceParams struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	Meter       string
+	WindowStart pgtype.Timestamptz
+}
+
+func (q *Queries) BillingMeterUsageDeliverySource(ctx context.Context, db DBTX, arg BillingMeterUsageDeliverySourceParams) (string, error) {
+	row := db.QueryRow(ctx, billingMeterUsageDeliverySource,
+		arg.Provider,
+		arg.AccountID,
+		arg.Meter,
+		arg.WindowStart,
+	)
+	var usage_source string
+	err := row.Scan(&usage_source)
+	return usage_source, err
+}
+
+const billingUsageDeliveryRecordFromSource = `-- name: BillingUsageDeliveryRecordFromSource :exec
+INSERT INTO billing_usage_deliveries (provider, account_id, window_start, mb_seconds, usage_source)
+VALUES ($1::text, $2::uuid, $3::timestamptz,
+        $4::bigint, $5::text)
+ON CONFLICT (provider, account_id, window_start) DO NOTHING
+`
+
+type BillingUsageDeliveryRecordFromSourceParams struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	WindowStart pgtype.Timestamptz
+	MbSeconds   int64
+	UsageSource string
+}
+
+// ADR-20261107105126. A compute delivery receipt with the usage source that
+// quantified its hour; the first receipt for an hour wins.
+func (q *Queries) BillingUsageDeliveryRecordFromSource(ctx context.Context, db DBTX, arg BillingUsageDeliveryRecordFromSourceParams) error {
+	_, err := db.Exec(ctx, billingUsageDeliveryRecordFromSource,
+		arg.Provider,
+		arg.AccountID,
+		arg.WindowStart,
+		arg.MbSeconds,
+		arg.UsageSource,
+	)
+	return err
+}
+
+const billingUsageDeliverySource = `-- name: BillingUsageDeliverySource :one
+SELECT coalesce(usage_source, '')::text AS usage_source
+FROM billing_usage_deliveries
+WHERE provider = $1::text AND account_id = $2::uuid
+  AND window_start = $3::timestamptz
+`
+
+type BillingUsageDeliverySourceParams struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	WindowStart pgtype.Timestamptz
+}
+
+func (q *Queries) BillingUsageDeliverySource(ctx context.Context, db DBTX, arg BillingUsageDeliverySourceParams) (string, error) {
+	row := db.QueryRow(ctx, billingUsageDeliverySource, arg.Provider, arg.AccountID, arg.WindowStart)
+	var usage_source string
+	err := row.Scan(&usage_source)
+	return usage_source, err
+}
+
 const deletedAppIDsInBillingWindow = `-- name: DeletedAppIDsInBillingWindow :many
 SELECT app.id FROM apps app
 WHERE app.status = 'deleted' AND EXISTS (
@@ -220,6 +323,35 @@ func (q *Queries) FinancialLedgerDeliveredComputeMBSeconds(ctx context.Context, 
 	var mb_seconds int64
 	err := row.Scan(&mb_seconds)
 	return mb_seconds, err
+}
+
+const financialLedgerDeliveredEgressBytes = `-- name: FinancialLedgerDeliveredEgressBytes :one
+SELECT coalesce(sum(quantity), 0)::bigint AS quantity
+FROM billing_meter_usage_deliveries
+WHERE provider = $1::text AND account_id = $2::uuid AND meter = 'egress'
+  AND window_start >= $3::timestamptz AND window_start < $4::timestamptz
+`
+
+type FinancialLedgerDeliveredEgressBytesParams struct {
+	Provider  string
+	AccountID pgtype.UUID
+	StartAt   pgtype.Timestamptz
+	EndAt     pgtype.Timestamptz
+}
+
+// ADR-20261019193600. Egress bytes the pusher settled for one provider and
+// account in [start, end), shadow or live; the dual run compares them with
+// the ledger's egress evidence.
+func (q *Queries) FinancialLedgerDeliveredEgressBytes(ctx context.Context, db DBTX, arg FinancialLedgerDeliveredEgressBytesParams) (int64, error) {
+	row := db.QueryRow(ctx, financialLedgerDeliveredEgressBytes,
+		arg.Provider,
+		arg.AccountID,
+		arg.StartAt,
+		arg.EndAt,
+	)
+	var quantity int64
+	err := row.Scan(&quantity)
+	return quantity, err
 }
 
 const financialObjectStorageEstimateGet = `-- name: FinancialObjectStorageEstimateGet :one
@@ -592,6 +724,60 @@ func (q *Queries) FinancialUsageEvidenceList(ctx context.Context, db DBTX, arg F
 	return items, nil
 }
 
+const financialUsageHourly = `-- name: FinancialUsageHourly :many
+SELECT date_trunc('hour', source_start, 'UTC')::timestamptz AS hour, sum(quantity)::bigint AS quantity
+FROM financial_usage_evidence
+WHERE account_id = $1::uuid
+  AND meter = $2::text
+  AND source_start >= $3::timestamptz
+  AND source_end <= $4::timestamptz
+  AND id <= $5::bigint
+GROUP BY 1
+ORDER BY 1
+`
+
+type FinancialUsageHourlyParams struct {
+	AccountID   pgtype.UUID
+	Meter       string
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	ThroughID   int64
+}
+
+type FinancialUsageHourlyRow struct {
+	Hour     pgtype.Timestamptz
+	Quantity int64
+}
+
+// ADR-20261019193600. One meter's ledger evidence summed by the UTC hour its
+// source started in, through one evidence head, so billing rules that run hour
+// by hour can be applied to the ledger.
+func (q *Queries) FinancialUsageHourly(ctx context.Context, db DBTX, arg FinancialUsageHourlyParams) ([]FinancialUsageHourlyRow, error) {
+	rows, err := db.Query(ctx, financialUsageHourly,
+		arg.AccountID,
+		arg.Meter,
+		arg.PeriodStart,
+		arg.PeriodEnd,
+		arg.ThroughID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FinancialUsageHourlyRow{}
+	for rows.Next() {
+		var i FinancialUsageHourlyRow
+		if err := rows.Scan(&i.Hour, &i.Quantity); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const jobInstancesInBillingWindow = `-- name: JobInstancesInBillingWindow :many
 SELECT instance.id, instance.state, instance.ram_mb, job.id AS job_id, job.account_id
 FROM instances instance
@@ -638,6 +824,52 @@ func (q *Queries) JobInstancesInBillingWindow(ctx context.Context, db DBTX, arg 
 			&i.JobID,
 			&i.AccountID,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const usageMinutesHourly = `-- name: UsageMinutesHourly :many
+SELECT date_trunc('hour', minute, 'UTC')::timestamptz AS hour,
+       coalesce(sum(mb_seconds), 0)::bigint AS mb_seconds,
+       coalesce(sum(net_tx_bytes), 0)::bigint AS net_tx_bytes
+FROM usage_minutes
+WHERE account_id = $1::uuid
+  AND minute >= $2::timestamptz
+  AND minute < $3::timestamptz
+GROUP BY 1
+ORDER BY 1
+`
+
+type UsageMinutesHourlyParams struct {
+	AccountID pgtype.UUID
+	StartAt   pgtype.Timestamptz
+	EndAt     pgtype.Timestamptz
+}
+
+type UsageMinutesHourlyRow struct {
+	Hour       pgtype.Timestamptz
+	MbSeconds  int64
+	NetTxBytes int64
+}
+
+// One account's usage_minutes summed by UTC hour: compute MB-seconds and
+// interface egress bytes, so the pusher can apply its hour rules to a month.
+func (q *Queries) UsageMinutesHourly(ctx context.Context, db DBTX, arg UsageMinutesHourlyParams) ([]UsageMinutesHourlyRow, error) {
+	rows, err := db.Query(ctx, usageMinutesHourly, arg.AccountID, arg.StartAt, arg.EndAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageMinutesHourlyRow{}
+	for rows.Next() {
+		var i UsageMinutesHourlyRow
+		if err := rows.Scan(&i.Hour, &i.MbSeconds, &i.NetTxBytes); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

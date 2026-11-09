@@ -111,3 +111,19 @@ A missing or failed restriction read returns 503, never unlimited access. An
 app outside the allowed projects, including an app with no project, returns 403
 before an upload is admitted or a receipt is read. Unlimited keys and allowed
 projects retain upload and receipt access.
+
+## Amendment (2026-11-07): the gateway and key rotation honour the limit
+
+Two more paths authenticate the same keys outside apid's middleware:
+
+- **The gateway's private-app unlock** (`require_authn` and public auth with
+  a bearer key). gatewayd-internal reads the limit of an agent or
+  `mcp-login` key with the key and keeps it in its key cache; a limited key
+  opens only its projects' apps (403 `insufficient_scope`, audited as
+  `instances.authn_scope`). An app-bound credential opens only its app; the
+  gateway had dropped the binding.
+- **Key rotation** copies the predecessor's limit to the successor in the
+  rotation's transaction, on the account and organization paths, so
+  rotating never turns a limited key into an account-wide one.
+
+A gateway reads one primary-key row per agent key on a cache miss.

@@ -2787,6 +2787,25 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return &v
 	}
 	slug := *name
+	// A project deploy names its project from the link's "project", never
+	// from its "app" (ChronoLake finding 25.3).
+	linkedProject := ""
+	if projectRequested && slug == "" && *projectSlug == "" {
+		var linkErr error
+		linkedProject, linkErr = linkedProjectSlug(contextDir)
+		if linkErr != nil {
+			return printErr("Could not read local project context", linkErr)
+		}
+		if linkedProject != "" {
+			// The app slug is unused by a project deploy; a project link
+			// that selects no single workload must not fail here.
+			if app, appErr := linkedAppSlug(contextDir); appErr == nil {
+				slug = app
+			} else {
+				slug = linkedProject
+			}
+		}
+	}
 	if slug == "" {
 		var nameErr error
 		slug, nameErr = linkedDefaultAppName(contextDir)
@@ -3144,7 +3163,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// single-function deploy per entry, before any app or upload exists.
 	if !existingApp && developerSync == nil && !projectRequested && !deployFunction && !deployApp &&
 		*image == "" && *tarball == "" && *templateName == "" && *repo == "" {
-		fnManifest, isFunctionSet, fnErr := functionSetManifest(sourceDir)
+		fnManifest, fnFromCode, isFunctionSet, fnErr := functionSetManifestFromCode(sourceDir)
 		if fnErr != nil {
 			return printErr("Invalid deploy manifest", fnErr)
 		}
@@ -3163,10 +3182,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// --plan/--preview stays local: the fan-out reserved each app
 			// before its child plan refused --runtime (rc.318 field report).
 			if *simplePlan {
-				return functionSetDeploy{cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest, out: osStdout}.printPlan()
+				return functionSetDeploy{cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest, fromCode: fnFromCode, out: osStdout}.printPlan()
 			}
 			return deployFunctionSet(ctx, functionSetDeploy{
-				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest,
+				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest, fromCode: fnFromCode,
 				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,
 				noTriggers: *noTriggers,
 			})
@@ -3197,6 +3216,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			projectName = defaultProjectSlug(*tarball)
 		case *name == "" && *templateName != "":
 			projectName = *templateName
+		case *name == "" && linkedProject != "":
+			projectName = linkedProject
 		case *name == "":
 			// Compose names its project at the top level; a directory
 			// name that differs must not claim another project's apps.

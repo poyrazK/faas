@@ -44,6 +44,11 @@ func validateRealtimeCallbackURL(raw string) *api.Problem {
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return api.ErrRealtimeInvalid("callback_url must be an absolute http:// or https:// URL")
 	}
+	// The URL is stored and returned as plain text; credentials belong in
+	// the sealed callback_auth_token. A fragment never reaches the app.
+	if u.User != nil || u.Fragment != "" {
+		return api.ErrRealtimeInvalid("callback_url must not contain credentials or a fragment; send credentials as callback_auth_token")
+	}
 	return nil
 }
 

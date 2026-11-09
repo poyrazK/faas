@@ -82,6 +82,35 @@ policy or operator access requires a replacement.
 If your last recovery code remains, use it to reset the authenticator and set
 up a replacement. If neither the device nor codes are available, choose email
 recovery. Its link can be confirmed after the existing 24-hour waiting period.
+To replace your recovery codes while you still have your authenticator, run
+`gregale account mfa rotate` (or use **New recovery codes** on the
+two-factor page) after verifying the session; the previous codes stop working
+and you get an email.
+
+At the dashboard sign-in check you can tick **Remember this browser for 30
+days**: that browser then skips the code at sign-in (not for sensitive
+actions) until it expires or you forget it on the account page. Operator
+accounts are always asked. See [account](account.md#profile-sign-in-and-sessions).
+
+## Email verification
+
+A password signup must verify its email address. Until it does, deploying and
+billing changes answer `email_verification_required`. Send a new 24-hour link
+with `gregale account email verify` or the account page's button. After 30
+days unverified the account keeps its data, but password sign-in and existing
+sessions and keys only reach the account page, logout, deletion, the resend and
+the email change (so an address with a typo can be fixed); opening a
+verification link, a magic sign-in link, confirming a new address, or signing
+in with Google or GitHub at the same address lifts the restriction. Accounts
+created before 16 November 2026 get their 30 days from that date
+(`api.EmailVerificationEnforcedFrom`). In the last 7 days before the deadline,
+an account that is still in use (a signed-in browser or an API key) is mailed
+a fresh verification link at most once a day.
+
+If you never verified and forgot your password, use **Forgot password** anyway:
+an unverified account receives a magic sign-in link. Opening it proves the
+address, signs out anything the earlier signup created, and lets you set a new
+password from the account page.
 `gregale org invitation accept TOKEN` opens the invitation in a browser so
 acceptance uses your own session and enabled MFA policy, rather than a CLI key.
 
