@@ -1165,7 +1165,9 @@ func printLocalHelpFlag(w io.Writer, flag cliFlag) {
 	if flag.Req {
 		description += " (required)"
 	}
-	if flag.Repeatable {
+	// Many descriptions already end in "(repeatable)"; saying it twice read
+	// "OIDC audience (repeatable) (repeatable)".
+	if flag.Repeatable && !strings.Contains(description, "(repeatable") {
 		description += " (repeatable)"
 	}
 	label := mdFlagLabel(flag)

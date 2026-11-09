@@ -68,7 +68,7 @@ func cmdRealtimeCreate(args []string) int {
 	var audience, algorithms, origins realtimeStringList
 	var claims realtimeClaimsFlag
 	fs.Var(&audience, "auth-audience", "OIDC audience (repeatable)")
-	fs.Var(&algorithms, "auth-algorithm", "OIDC signing algorithm (repeatable)")
+	fs.Var(&algorithms, "auth-algorithm", "OIDC signing algorithm, required for oidc_jwt (repeatable)")
 	fs.Var(&claims, "auth-claim", "required OIDC claim as KEY=VALUE (repeatable)")
 	fs.Var(&origins, "allowed-origin", "exact browser origin (repeatable)")
 	maxConnections := fs.Int("max-connections", -1, "per-endpoint connection cap (0 inherits daemon default)")

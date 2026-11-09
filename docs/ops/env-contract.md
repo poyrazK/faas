@@ -218,11 +218,12 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DEPLOY_BASE_REF_PYTHON313` | shared | `envfile` |  |  | `` |  |
 | `FAAS_DEPLOY_DOMAIN` | apid, bridged, builderd, gatewayd-internal, gatewayd-public, imaged, schedd, shared | `default` |  | gregale.dev | `` | ADR-20261026100000 domain layout; unset keeps the shared layout; domain of deployment previews and environment hosts; the drop-ins set it from faas_deploy_domain |
 | `FAAS_DEV` | shared, apid | `dev-only` |  |  | `` | must never be set on a production host |
+| `FAAS_DEVELOPER_ENVIRONMENT` | shared | `guest` |  |  | `` | platform-authored workload identity; "1" only in a `gregale dev` environment, injected by the scheduler and never customer-controlled; guest-init honors FAAS_DEV_DEBUG only under it |
 | `FAAS_DEV_BRIDGE_ADDR` | bridged | `default` |  | 127.0.0.1:9098 | `` | loopback-only development relay listener |
 | `FAAS_DEV_BRIDGE_ENABLED` | apid, bridged, gatewayd-internal | `default` |  | 0 | `` | ADR-378 operator gate; explicit 1 on the API, relay and compute gateways |
 | `FAAS_DEV_BRIDGE_GATEWAY_URL` | bridged | `default` |  | http://127.0.0.1:8080 | `` | existing public gateway ingress for scoped development dependencies |
 | `FAAS_DEV_BRIDGE_RELAY_URL` | apid | `dropin` |  | http://127.0.0.1:9098 | `` | API-to-relay loopback hop |
-| `FAAS_DEV_DEBUG` | shared | `guest` |  |  | `` | ADR-741 developer debugger switch; set by `gregale dev --debug` as app env on the developer environment only and read by guest-init, which starts the Node inspector |
+| `FAAS_DEV_DEBUG` | shared | `guest` |  |  | `` | ADR-741 developer debugger switch; set by `gregale dev --debug` as app env on the developer environment only and read by guest-init, which starts the Node inspector only when FAAS_DEVELOPER_ENVIRONMENT=1 |
 | `FAAS_DEV_PATCH_DELIVERY` | apid, vmmd | `dropin` |  | 0 | `` | ADR-740 developer live source patches; 99-faas-dev-patch.conf drop-ins from control_plane_service and vmmd_service (faas_dev_patch_delivery_enabled); both daemons must agree |
 | `FAAS_DEV_TOKEN` | apid | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_DEV_WATCH` | shared | `guest` |  |  | `` | ADR-1170 watch-mode developer image marker; set in the image by the watch-mode build and read by guest-init, which then applies live patches without restarting the development server |

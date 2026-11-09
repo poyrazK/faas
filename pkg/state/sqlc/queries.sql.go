@@ -100302,6 +100302,62 @@ func (q *Queries) RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, ar
 	return items, nil
 }
 
+const requestTelemetryLatencyWeightsByRoute = `-- name: RequestTelemetryLatencyWeightsByRoute :many
+SELECT route,
+       latency_ms,
+       SUM(GREATEST(count, 1)::bigint)::bigint AS requests
+FROM request_telemetry
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+  AND NOT platform_refusal AND NOT deployment_pinned AND NOT long_lived AND NOT cold_boot
+GROUP BY route, latency_ms
+`
+
+type RequestTelemetryLatencyWeightsByRouteParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+}
+
+type RequestTelemetryLatencyWeightsByRouteRow struct {
+	Route     string
+	LatencyMs int32
+	Requests  int64
+}
+
+// The regression detector's affected-request count: the requests each
+// latency bucket represents, per route, over the whole window and in the
+// regression view. A newest-rows drilldown capped at 10k rows across every
+// route undercounted busy apps, so a real regression missed the 100-request
+// floor. latency_ms is a bounded bucket, so the result is small per route.
+func (q *Queries) RequestTelemetryLatencyWeightsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryLatencyWeightsByRouteParams) ([]RequestTelemetryLatencyWeightsByRouteRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryLatencyWeightsByRoute,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryLatencyWeightsByRouteRow{}
+	for rows.Next() {
+		var i RequestTelemetryLatencyWeightsByRouteRow
+		if err := rows.Scan(&i.Route, &i.LatencyMs, &i.Requests); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requestTelemetryRouteCustomers = `-- name: RequestTelemetryRouteCustomers :many
 WITH filtered AS MATERIALIZED (
     SELECT rt.route, rt.method, rt.count::bigint AS requests, rt.received_at,
@@ -100974,6 +101030,71 @@ func (q *Queries) ResolvePublicProjectRelease(ctx context.Context, db DBTX, arg 
 	var i ResolvePublicProjectReleaseRow
 	err := row.Scan(&i.ReleaseID, &i.DeploymentID)
 	return i, err
+}
+
+const resolveRegressionObservationsNotSeenSince = `-- name: ResolveRegressionObservationsNotSeenSince :many
+UPDATE debug_regression_observations
+SET state = 'resolved',
+    resolved_at = COALESCE(resolved_at, now())
+WHERE app_id = $1
+  AND last_detected_at < $2
+  AND state <> 'resolved'
+RETURNING app_id, deployment_id, route,
+          p95_ms, p95_base_ms, affected_count,
+          regression_factor, first_detected_at, last_detected_at,
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count, review_version
+`
+
+type ResolveRegressionObservationsNotSeenSinceParams struct {
+	AppID          pgtype.UUID
+	LastDetectedAt pgtype.Timestamptz
+}
+
+// An app's complete detector pass reconfirms every regression it still sees
+// (UpsertRegressionObservation stamps last_detected_at = now()); whatever of
+// that app it did not reconfirm is no longer regressed, after a fix or a
+// rollback included. Resolving here, rather than 24 hours later through
+// ResolveStaleRegressionObservations, keeps the banner, status and the
+// resolved webhook current. $2 is the pass start (with clock slack).
+func (q *Queries) ResolveRegressionObservationsNotSeenSince(ctx context.Context, db DBTX, arg ResolveRegressionObservationsNotSeenSinceParams) ([]DebugRegressionObservation, error) {
+	rows, err := db.Query(ctx, resolveRegressionObservationsNotSeenSince, arg.AppID, arg.LastDetectedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DebugRegressionObservation{}
+	for rows.Next() {
+		var i DebugRegressionObservation
+		if err := rows.Scan(
+			&i.AppID,
+			&i.DeploymentID,
+			&i.Route,
+			&i.P95Ms,
+			&i.P95BaseMs,
+			&i.AffectedCount,
+			&i.RegressionFactor,
+			&i.FirstDetectedAt,
+			&i.LastDetectedAt,
+			&i.State,
+			&i.AcknowledgedAt,
+			&i.DismissedUntil,
+			&i.ResolvedAt,
+			&i.SuspectedDependency,
+			&i.Kind,
+			&i.ErrorRatePct,
+			&i.ErrorRateBasePct,
+			&i.ErrorCount,
+			&i.ReviewVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const resolveRetainedProjectRelease = `-- name: ResolveRetainedProjectRelease :one

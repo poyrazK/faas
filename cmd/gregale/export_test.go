@@ -2769,6 +2769,8 @@ var AddBucketBindingUnavailable = addBucketBindingUnavailable
 var AddPostgresUnsupported = addPostgresUnsupported
 var PrintAddPostgresMigrationHint = printAddPostgresMigrationHint
 
+var DebugWatchNextWait = debugWatchNextWait
+
 // ADR-20261107180000 `gregale config explain`.
 var (
 	ExplainConfigKey         = explainConfigKey

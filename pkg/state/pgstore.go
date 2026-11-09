@@ -31598,6 +31598,12 @@ func (s *PgStore) RequestTelemetryByDeployment(ctx context.Context, arg sqlc.Req
 	return s.appErrorsQueries().RequestTelemetryByDeployment(ctx, s.pool, arg)
 }
 
+// RequestTelemetryLatencyWeightsByRoute backs the regression detector's
+// affected-request count over the whole window.
+func (s *PgStore) RequestTelemetryLatencyWeightsByRoute(ctx context.Context, arg sqlc.RequestTelemetryLatencyWeightsByRouteParams) ([]sqlc.RequestTelemetryLatencyWeightsByRouteRow, error) {
+	return s.appErrorsQueries().RequestTelemetryLatencyWeightsByRoute(ctx, s.pool, arg)
+}
+
 // RequestTelemetryCircuitBreakerSummary is the bounded per-deployment
 // aggregate used by meterd's canary circuit breaker. It computes weighted
 // request and 5xx totals plus a weighted p95 in Postgres, avoiding transfer of
@@ -31733,6 +31739,12 @@ func (s *PgStore) ApplyRegressionAction(ctx context.Context, arg sqlc.ApplyRegre
 // refreshed by the detector within the supplied interval.
 func (s *PgStore) ResolveStaleRegressionObservations(ctx context.Context, arg pgtype.Interval) ([]sqlc.DebugRegressionObservation, error) {
 	return s.appErrorsQueries().ResolveStaleRegressionObservations(ctx, s.pool, arg)
+}
+
+// ResolveRegressionObservationsNotSeenSince resolves what an app's complete
+// detector pass no longer sees.
+func (s *PgStore) ResolveRegressionObservationsNotSeenSince(ctx context.Context, arg sqlc.ResolveRegressionObservationsNotSeenSinceParams) ([]sqlc.DebugRegressionObservation, error) {
+	return s.appErrorsQueries().ResolveRegressionObservationsNotSeenSince(ctx, s.pool, arg)
 }
 
 // CheckDebugRegressionReadiness verifies the exact relation and parameterized

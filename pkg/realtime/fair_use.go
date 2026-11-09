@@ -37,8 +37,7 @@ type accountConnections struct {
 }
 
 // connectionRefusal explains a refused reservation. A zero value means the
-// node or endpoint limit applied, which predates fair use and keeps its plain
-// response.
+// endpoint was revoked while the connection was being admitted.
 type connectionRefusal struct {
 	scope           string
 	limit, observed int64
