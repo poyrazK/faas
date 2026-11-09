@@ -106,9 +106,13 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 	windowStart := now.Add(-sinceDur)
 	windowEnd := now
 	if decodedCursor.Version != 0 {
-		// A cursor pins both bounds. Reject an old cursor after the plan's
-		// retention horizon rather than allowing it to read aged-out rows.
-		if decodedCursor.WindowEnd.After(now.Add(time.Minute)) || decodedCursor.WindowStart.Before(now.Add(-cap)) {
+		// A cursor pins both bounds. A window wholly past the plan's
+		// retention horizon has expired; one that reaches past it (a
+		// --since equal to the retention, a moment later) is clamped to the
+		// horizon, so page 2 of a full-retention list still works without
+		// reading aged-out rows.
+		start, end, clamped, ok := debugCursorWindow(decodedCursor.WindowStart, decodedCursor.WindowEnd, now, cap)
+		if !ok {
 			api.WriteProblem(w, api.ErrValidation("cursor has expired; restart the request list"))
 			return
 		}
@@ -116,10 +120,9 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, api.ErrValidation("cursor does not match since; restart the request list"))
 			return
 		}
-		windowStart = decodedCursor.WindowStart.UTC()
-		windowEnd = decodedCursor.WindowEnd.UTC()
-		sinceDur = windowEnd.Sub(windowStart)
-		retentionClamped = decodedCursor.RetentionClamped || retentionClamped
+		sinceDur = decodedCursor.WindowEnd.Sub(decodedCursor.WindowStart)
+		windowStart, windowEnd = start, end
+		retentionClamped = decodedCursor.RetentionClamped || retentionClamped || clamped
 	}
 	cursorReceivedAt, cursorID := debugTelemetryCursorParams(decodedCursor)
 	rows, err := s.store.ListRequestTelemetryByApp(r.Context(), sqlc.ListRequestTelemetryByAppParams{
@@ -2726,4 +2729,21 @@ func selectDebugReplayMirrorRule(rules []state.MirrorRule, sourceDeploymentID, r
 		}
 	}
 	return state.MirrorRule{}, false
+}
+
+// debugCursorWindow is the window a request-list cursor reads now. A cursor
+// pins both bounds; a window wholly past the retention horizon (or ending in
+// the future) has expired, and one that reaches past the horizon is clamped
+// to it. A list taken with --since equal to the retention otherwise expired
+// on its very next page, a moment later.
+func debugCursorWindow(start, end, now time.Time, retention time.Duration) (time.Time, time.Time, bool, bool) {
+	horizon := now.Add(-retention)
+	if end.After(now.Add(time.Minute)) || !end.After(horizon) {
+		return time.Time{}, time.Time{}, false, false
+	}
+	start, end = start.UTC(), end.UTC()
+	if start.Before(horizon) {
+		return horizon.UTC(), end, true, true
+	}
+	return start, end, false, true
 }

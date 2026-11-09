@@ -152,7 +152,8 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		sinceRaw = ""
 	}
 	if decodedCursor.Version != 0 {
-		if decodedCursor.WindowEnd.After(now.Add(time.Minute)) || decodedCursor.WindowStart.Before(now.Add(-retention)) {
+		start, end, clamped, ok := debugCursorWindow(decodedCursor.WindowStart, decodedCursor.WindowEnd, now, retention)
+		if !ok {
 			api.WriteProblem(w, api.ErrValidation("cursor has expired; restart the request list"))
 			return
 		}
@@ -160,10 +161,9 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 			api.WriteProblem(w, api.ErrValidation("cursor does not match since; restart the request list"))
 			return
 		}
-		windowStart = decodedCursor.WindowStart.UTC()
-		windowEnd = decodedCursor.WindowEnd.UTC()
-		since = windowEnd.Sub(windowStart)
-		data.WindowClamped = decodedCursor.RetentionClamped || data.WindowClamped
+		since = decodedCursor.WindowEnd.Sub(decodedCursor.WindowStart)
+		windowStart, windowEnd = start, end
+		data.WindowClamped = decodedCursor.RetentionClamped || data.WindowClamped || clamped
 	}
 	data.Since = echoDebugSince(sinceRaw, since)
 	data.WindowStart = windowStart.Format(time.RFC3339Nano)
