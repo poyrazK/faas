@@ -6602,6 +6602,9 @@ var cliCommands = []cliCommand{
 				{Name: "set", Short: "Set KEY=VALUE pairs in every service's pr-preview scope", Positionals: []string{"<project>", "[KEY=VALUE...]"}, Flags: []cliFlag{{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin", Bool: true}}},
 				{Name: "unset", Short: "Remove keys from every service's pr-preview scope", Positionals: []string{"<project>", "<KEY...>"}},
 			}},
+			{Name: "import", Short: "Import .gregale/project.yaml into the root gregale.yaml project block", Notes: []string{"Runs locally; nothing is uploaded.", "The existing gregale.yaml is kept as written; the block is appended and checked against the old file before anything changes."}, Positionals: []string{"[<dir>]"}, Flags: []cliFlag{
+				{Name: "dry-run", Short: "print the new gregale.yaml without writing", Bool: true},
+			}},
 		},
 		Positionals:         []string{"<project-slug>"},
 		CompletionPositions: projectsCLICompletionPositions(),

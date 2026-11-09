@@ -6177,6 +6177,15 @@ func ErrTrafficSplitReleaseLimit(limit, requested int) *Problem {
 // ErrTrafficServingChanged makes a stale promotion actionable without
 // disclosing any deployment the caller has not already been authorized to
 // read through the target app.
+// ErrTrafficSplitChanged is the expected_traffic form of
+// ErrTrafficServingChanged: the split changed after the caller read it.
+func ErrTrafficSplitChanged() *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficServingChanged,
+		"Traffic split changed",
+		"the environment's traffic split no longer matches expected_traffic; run gregale release traffic status and plan the change again.").
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
 func ErrTrafficServingChanged() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficServingChanged,
 		"Production revision changed",

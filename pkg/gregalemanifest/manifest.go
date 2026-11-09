@@ -53,6 +53,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/labels"
+	"github.com/onebox-faas/faas/pkg/projectconfig"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -1597,6 +1598,11 @@ type Manifest struct {
 	// sets these keys and removes none: a key dropped from the manifest stays
 	// until `gregale app label unset` removes it. Labels are not secret.
 	Labels map[string]string `yaml:"labels,omitempty"`
+	// Project holds the repository's project-wide service settings
+	// (ADR-20261107180000). It is meaningful in the repository's root
+	// gregale.yaml, where the scanner applies it; it replaces the
+	// deprecated .gregale/project.yaml. Not part of any app's deployment.
+	Project *projectconfig.Config `yaml:"project,omitempty" json:"-"`
 
 	// FunctionSettings is set on a FunctionAppManifest view: the function's
 	// app settings (RAM, idle timeout, concurrency, env) that a repository
@@ -2301,6 +2307,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	}
 	if err := m.validateRealtime(); err != nil {
 		return err
+	}
+	if m.Project != nil {
+		if err := m.Project.Validate(); err != nil {
+			return fmt.Errorf("project: %w", err)
+		}
 	}
 	if m.Profiling != nil {
 		if err := m.Profiling.Validate(plan); err != nil {

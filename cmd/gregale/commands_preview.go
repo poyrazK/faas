@@ -150,7 +150,7 @@ func previewParentFilter(explicit string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read current directory: %w", err)
 	}
-	linked, _, err := linkedProjectContext(cwd)
+	linked, _, err := targetProjectContext(cwd)
 	if errors.Is(err, errProjectContextNotFound) {
 		return "", nil
 	}

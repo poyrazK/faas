@@ -513,9 +513,11 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 	if err := attachProcfileReleaseCommand(fsys, workloads); err != nil {
 		return Result{}, err
 	}
-	if err := applyProjectConfig(fsys, workloads); err != nil {
+	projectWarnings, err := applyProjectConfig(fsys, workloads)
+	if err != nil {
 		return Result{}, err
 	}
+	warnings = append(warnings, projectWarnings...)
 	if opts.HTTPSTransportUnavailable {
 		for _, w := range workloads {
 			if w.ServiceBindingTransport == ServiceBindingTransportHTTPS {
