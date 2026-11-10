@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -38,18 +37,19 @@ func NewCustomMetricHistory(fetcher PromQL) *CustomMetricHistory {
 // CustomMetricWindow counts the values exported in [since, until) and
 // averages them. Each apid replica exports the same series, so max() folds
 // them. A window with nothing exported has zero samples.
-func (h *CustomMetricHistory) CustomMetricWindow(ctx context.Context, appID, name string, since, until time.Time) (int64, float64, error) {
+func (h *CustomMetricHistory) CustomMetricWindow(ctx context.Context, appID, name, seriesKey string, since, until time.Time) (int64, float64, error) {
 	if h == nil || h.fetcher == nil {
 		return 0, 0, errCustomMetricHistoryUnavailable
 	}
-	if strings.ContainsAny(appID, "\"\n\\") || strings.ContainsAny(name, "\"\n\\") {
+	series, ok := customMetricSelector(appID, name, seriesKey)
+	if !ok {
 		return 0, 0, fmt.Errorf("custom metric history: invalid series selector")
 	}
 	seconds := int64(math.Ceil(until.Sub(since).Seconds()))
 	if seconds < 1 {
 		return 0, 0, nil
 	}
-	selector := fmt.Sprintf(`gregale_app_custom_metric{app=%q,name=%q}[%ds] @ %d`, appID, name, seconds, until.Unix())
+	selector := fmt.Sprintf(`%s[%ds] @ %d`, series, seconds, until.Unix())
 	count, err := h.fetcher.QueryScalar(ctx, fmt.Sprintf(`max(count_over_time(%s)) or vector(0)`, selector))
 	if err != nil {
 		return 0, 0, fmt.Errorf("custom metric history: count: %w", err)

@@ -23,6 +23,39 @@ func TestClassify(t *testing.T) {
 		{"POST /v1/apps/{name}/rollback", api.AgentApprovalProduction, TargetApp},
 		{"PATCH /v1/deployments/{deployment}/traffic", api.AgentApprovalProduction, TargetDeployment},
 		{"POST /v1/deployments/{id}/approvals", api.AgentApprovalProduction, TargetDeployment},
+		// adr: 091 — amendment 2026-11-07: edge-rule writes move or gate traffic.
+		{"POST /v1/apps/{slug}/edge-rules", api.AgentApprovalProduction, TargetApp},
+		{"PATCH /v1/edge-rules/{id}", api.AgentApprovalProduction, TargetEdgeRule},
+		{"POST /v1/edge-rules/{id}/waf-exclusions", api.AgentApprovalProduction, TargetEdgeRule},
+		{"PUT /v1/apps/{slug}/edge-protection/attack-mode", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/apps/{slug}/openapi/apply", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/apps/{slug}/route-policy/apply", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/apps/{slug}/routes/insights/{id}/fix", api.AgentApprovalProduction, TargetApp},
+		{"DELETE /v1/edge-rules/{id}", api.AgentApprovalDelete, TargetNone},
+		// Deploy review 2026-11-10 (D3): project deploys, promotions,
+		// release sets and GitOps sources, in their ServeMux spelling.
+		// Apps/projects review 2026-11-10 (P10): production configuration
+		// reaches traffic at the next wake, like a restart.
+		{"PUT /v1/apps/{slug}/env/{key}", api.AgentApprovalProduction, TargetAppConfig},
+		{"POST /v1/apps/{slug}/env/batch", api.AgentApprovalProduction, TargetAppConfig},
+		{"PUT /v1/apps/{slug}/secrets/{key}", api.AgentApprovalProduction, TargetAppConfig},
+		{"PUT /v1/apps/{slug}/secret-references/{key}", api.AgentApprovalProduction, TargetAppConfig},
+		{"PATCH /v1/apps/{slug}", api.AgentApprovalProduction, TargetApp},
+		{"PUT /v1/projects/{slug}/environments/{environment}/config", api.AgentApprovalProduction, TargetNone},
+		{"PUT /v1/projects/{slug}/environments/{environment}/secrets/{key}", api.AgentApprovalProduction, TargetNone},
+		{"DELETE /v1/apps/{slug}/env/{key}", api.AgentApprovalDelete, TargetNone},
+		{"POST /v1/projects/apply-plan", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/projects/safe-deploy", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/orgs/{organization}/projects/{slug}/deploy", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/projects/{slug}/environments/{environment}/promote", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promote", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/{action}", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/projects/{slug}/environments/{environment}/release-sets/activate", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/projects/{slug}/environments/{environment}/release-sets/rollback", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets", api.AgentApprovalProduction, TargetNone},
+		{"PATCH /v1/projects/{slug}/environments/{environment}/gitops/source", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve", api.AgentApprovalProduction, TargetNone},
 		{"POST /v1/keys", api.AgentApprovalCredentials, TargetNone},
 		{"POST /v1/keys/{id}/rotate", api.AgentApprovalCredentials, TargetNone},
 		{"POST /v1/apps/{slug}/secrets/{key}/rotate", api.AgentApprovalCredentials, TargetNone},
@@ -43,8 +76,6 @@ func TestClassify(t *testing.T) {
 	for _, pattern := range []string{
 		"GET /v1/apps/{slug}",
 		"POST /v1/apps",
-		"PATCH /v1/apps/{slug}",
-		"PUT /v1/apps/{slug}/env/{key}",
 		"DELETE /v1/agent-connections/self",
 		"DELETE /v1/uploads/{id}",
 		"DELETE /v1/dev/sessions/{project}",
@@ -52,6 +83,9 @@ func TestClassify(t *testing.T) {
 		"POST /v1/billing/budgets/preview",
 		"POST /v1/consumer-billing/{slug}/portal",
 		"POST /v1/apps/{slug}/route-policy/plan",
+		"POST /v1/projects/{slug}/environments/{environment}/promotion-preview",
+		"POST /v1/projects/{slug}/environments/{environment}/gitops/plan",
+		"POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare",
 		"DELETE /v1/admin/accounts/{id}",
 	} {
 		if rule, ok := Classify(pattern); ok {
@@ -121,6 +155,13 @@ func TestClassificationCoversTheSpec(t *testing.T) {
 	for pattern := range production {
 		if !ops[pattern] {
 			t.Errorf("%s is listed but is not an operation of api/openapi.yaml", pattern)
+		}
+	}
+	// A route-only entry the spec does carry belongs in production, where
+	// this test guards it against renames.
+	for pattern := range productionRouteOnly {
+		if ops[pattern] {
+			t.Errorf("%s is an operation of api/openapi.yaml; list it in production", pattern)
 		}
 	}
 	for op := range ops {

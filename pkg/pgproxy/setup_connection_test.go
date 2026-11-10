@@ -25,7 +25,7 @@ func TestBackendHandshakeDeadlineClosesDirectAndPooledStreams(t *testing.T) {
 					t.Fatal(err)
 				}
 				creds := &mapCredentials{verifiers: map[string]pgscram.Verifier{id + "|reader": v}}
-				p, err := New(Config{TLS: selfSignedTLS(t), HostSuffix: testSuffix, DecoySecret: []byte(strings.Repeat("k", 32)), HandshakeTimeout: time.Second, WakeTimeout: 40 * time.Millisecond}, creds, setupWaker{}, setupDialer(func(context.Context, string, string) (io.ReadWriteCloser, error) { return backend, nil }), nil)
+				p, err := New(Config{TLS: selfSignedTLS(t), HostSuffix: testSuffix, DecoySecret: []byte(strings.Repeat("k", 32)), HandshakeTimeout: time.Second, WakeTimeout: 40 * time.Millisecond}, creds, setupWaker{}, setupDialer(func(context.Context, Backend, string) (io.ReadWriteCloser, error) { return backend, nil }), nil)
 				if err != nil {
 					t.Fatal(err)
 				}

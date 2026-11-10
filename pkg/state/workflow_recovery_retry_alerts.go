@@ -52,7 +52,7 @@ func automaticEvidenceTransition(app, slug, review string, version int64, e api.
 	count := int64(d.ResumeCount)
 	payload.RunID, payload.ResumeCount, payload.Repairable = d.RunID, &count, &d.Repairable
 	base := "/v1/apps/" + url.PathEscape(slug) + "/recovery-policy/reviews/" + review + "/actions/" + e.ActionID + "/evidence"
-	payload.CLICommand = fmt.Sprintf("gregale automations recovery-retry-evidence --app %s --review %s --action %s", slug, review, e.ActionID)
+	payload.CLICommand = fmt.Sprintf("gregale workflow stored recovery-retry-evidence --app %s --review %s --action %s", slug, review, e.ActionID)
 	if d.EvidenceKind == "parent" {
 		base += "/parent"
 		payload.CLICommand += " --parent"

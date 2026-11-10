@@ -8,7 +8,7 @@ App target: a command that takes `--app` and no other arguments also accepts the
 
 Earlier names: commands keep working under the names they had before the command tree (`gregale crons list` is `gregale cron list`); `gregale help --all --operator` lists them, and [The CLI command tree](cli-command-tree.md) maps each one.
 
-Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
+Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. With an agent key, put `--wait-for-approval` before the command to wait for a person to decide a request that needs approval, then retry it once. Company projects: `gregale --org <slug> <command>` sends project commands to that organization's projects; command-local `--org` options keep their meaning. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
 
 | Command | What it does |
 |---|---|
@@ -89,7 +89,7 @@ gregale menu
 
 Scaffold a project from a built-in template
 
-`gregale init --template <NAME> --path <DIR> [--deploy] [--name <SLUG>] [--secrets-file <PATH>] [--list]`
+`gregale init --template <NAME> --path <DIR> [--deploy] [--name <SLUG>] [--secrets-file <PATH>] [--list] [--no-mcp]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -99,6 +99,7 @@ Scaffold a project from a built-in template
 | `--name <SLUG>` | app slug used with --deploy |  |
 | `--secrets-file <PATH>` | seal KEY=VALUE pairs before the first deployment (requires --deploy) |  |
 | `--list` | list available templates |  |
+| `--no-mcp` | do not write .mcp.json, which offers Gregale&#39;s MCP server to agents opened in the project |  |
 
 Examples:
 
@@ -154,7 +155,7 @@ RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Conne
 | `--name <SLUG>` | app slug (default: source directory name) |  |
 | `--size <SIZE>` | RAM/CPU size for one app; excludes --repo and project deploys | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--profile <SIZE>` | deprecated: use --size |  |
-| `--vcpu <N>` | assert the plan guest vCPU shape (omit to use the plan default) |  |
+| `--vcpu <N>` | assert the guest vCPU count, one per GB of RAM (omit to use the size&#39;s) |  |
 | `--execution-mode <MODE>` | app lifecycle mode | one of `request` · `service` · `worker` · `job` |
 | `--restart-policy <POLICY>` | app restart policy | one of `no` · `on-failure` · `always` · `unless-stopped` |
 | `--startup-deadline-s <SECONDS>` | maximum startup seconds (0 uses plan default) |  |
@@ -815,6 +816,33 @@ Provision and bind managed resources to an app
 
 `gregale add [<subcommand>]`
 
+### add function
+
+Scaffold a function that declares its own trigger and settings
+
+`gregale add function [--trigger <KIND>] [--lang <LANG>] [--schedule <CRON>] [--queue <NAME>] [--bucket <NAME>] [--provider <PROVIDER>] [--path <DIR>] [--dry-run] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--trigger <KIND>` | what calls the function (default http) | one of `http` · `cron` · `queue` · `bucket` · `webhook` |
+| `--lang <LANG>` | handler language (default: inferred from the project, else node) | one of `node` · `python` |
+| `--schedule <CRON>` | cron schedule for --trigger cron |  |
+| `--queue <NAME>` | queue for --trigger queue (default: the function name) |  |
+| `--bucket <NAME>` | bucket for --trigger bucket |  |
+| `--provider <PROVIDER>` | webhook provider for --trigger webhook | one of `stripe` · `generic` |
+| `--path <DIR>` | project directory |  |
+| `--dry-run` | show the files without writing them |  |
+
+Examples:
+
+```sh
+gregale add function digest --trigger cron --schedule "0 8 * * *"
+gregale add function thumbs --trigger bucket --bucket uploads --lang python
+gregale add function payments --trigger webhook --provider stripe
+```
+
+Writes functions/&lt;name&gt;/ with a handler whose config `gregale deploy` reads without running it, and a test beside it. Nothing is created remotely.
+
 ### add postgres
 
 Provision or attach PostgreSQL and inject DATABASE_URL
@@ -833,7 +861,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
 | `--scale-to-zero` | suspend compute when idle |  |
 | `--environment-key <KEY>` | connection environment variable |  |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
 ### add ai
@@ -1326,7 +1354,7 @@ gregale release runtime v42 --app my-function --target RELEASE_ID --json
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale release rollback <status> [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
+`gregale release rollback [status] [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1923,6 +1951,20 @@ Only services the latest deploy changed roll back unless --all; services added s
 
 Stops at the first service that fails; run it again to finish.
 
+### project import
+
+Import .gregale/project.yaml into the root gregale.yaml project block
+
+`gregale project import [--dry-run] [<dir>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | print the new gregale.yaml without writing |  |
+
+Runs locally; nothing is uploaded.
+
+The existing gregale.yaml is kept as written; the block is appended and checked against the old file before anything changes.
+
 
 ## build
 
@@ -2179,7 +2221,7 @@ gregale app delete my-api --yes
 
 Delete an app; restore it within the deletion grace window
 
-`gregale app delete [--dry-run] [--yes] [--quiet] [-q] <slug>`
+`gregale app delete [--dry-run] [--yes] [--quiet] [-q] [--delete-bindings] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2187,6 +2229,7 @@ Delete an app; restore it within the deletion grace window
 | `--yes` | confirm deletion without prompting; required in non-interactive and JSON mode |  |
 | `--quiet` | confirm deletion without prompting (alias of --yes) |  |
 | `-q` | confirm deletion without prompting (alias of --yes) |  |
+| `--delete-bindings` | revoke the app&#39;s managed PostgreSQL bindings first (deleting the app otherwise refuses while any is live) |  |
 
 Also accepted as delete.
 
@@ -2271,7 +2314,7 @@ Show the step-by-step timeline of one app wake
 
 Inspect an app&#39;s resource bindings and credential rotation
 
-`gregale app binding <call|probe-policy|verification|release-policy|service|check|verify> [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
+`gregale app binding [call|probe-policy|verification|release-policy|service|check|verify] [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2494,7 +2537,7 @@ Apply a saved service binding plan if reviewed settings are unchanged
 
 Evaluate recorded binding evidence and runtime freshness for CI
 
-`gregale app binding check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--release <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--queue-require <NAME=consumer_readiness>] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+`gregale app binding check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--release <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--queue-require <NAME=consumer_readiness>] [--require-bindings] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2508,6 +2551,7 @@ Evaluate recorded binding evidence and runtime freshness for CI
 | `--release-policy` | apply stored scope requirements and confirm the policy after every inventory evaluation (read-only) |  |
 | `--object-storage-require <PREFIX=read|write|read_write>` | require recorded storage operation evidence (repeatable; no writes) |  |
 | `--queue-require <NAME=consumer_readiness>` | require recorded push queue readiness (repeatable; connectivity remains partial) |  |
+| `--require-bindings` | fail when no active binding is in scope (default: warn and pass) |  |
 | `--wait` | poll read-only inventory while probes, refreshes or application acknowledgements are pending |  |
 | `--timeout <DURATION>` | maximum waiting or policy-aware preflight time (default 5m) |  |
 | `--poll-interval <DURATION>` | inventory polling interval with --wait (default 1s) |  |
@@ -3649,7 +3693,7 @@ Keeps the rest of the rule&#39;s WAF action and its penalty.
 
 Switch attack mode on, off, or show it
 
-`gregale edge rule attack-mode <set|get> [--app <slug>] [--for <DURATION>] [on|off|status]`
+`gregale edge rule attack-mode [set|get] [--app <slug>] [--for <DURATION>] [on|off|status]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3712,7 +3756,7 @@ Attack mode challenges every visitor to the app for a while (15m to 24h); client
 
 Add a protection recipe&#39;s rule to an app in log mode
 
-`gregale edge rule recipe <apply> [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] [--alert-webhook-url <URL>] [--alert-webhook-secret-stdin] [--alert-webhook-secret <VALUE>] [--alert-threshold <N>] <recipe>`
+`gregale edge rule recipe [apply] [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] [--alert-webhook-url <URL>] [--alert-webhook-secret-stdin] [--alert-webhook-secret <VALUE>] [--alert-threshold <N>] <recipe>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4344,7 +4388,7 @@ Create, attach and restore managed PostgreSQL databases
 
 Durably switch between idle suspension and always-on compute
 
-`gregale postgres compute-policy <set|status> --scale-to-zero <BOOL> --request-id <UUID> <database>`
+`gregale postgres compute-policy [set|status] --scale-to-zero <BOOL> --request-id <UUID> <database>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4372,7 +4416,7 @@ Read compute policy change progress
 
 Durably resize compute; clients may disconnect
 
-`gregale postgres resize <status> --class <CLASS> --request-id <UUID> <database>`
+`gregale postgres resize [status] --class <CLASS> --request-id <UUID> <database>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4511,7 +4555,7 @@ Bind a database to an app by app ID (attach takes slugs)
 | `--app <APP_ID>` | app ID | required |
 | `--env <SCOPE>` | environment scope (also --scope) | required |
 | `--environment-key <KEY>` | environment variable name | required |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
 
 #### postgres bindings get
 
@@ -4555,7 +4599,7 @@ Attach a database to an app
 |---|---|---|
 | `--scope <SCOPE>` | environment scope (defaults to linked project environment, otherwise default) |  |
 | `--env <KEY>` | connection environment variable |  |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
 
 Examples:
 
@@ -4574,7 +4618,7 @@ Schedule requests and commands
 
 Fire one cron immediately or choose and follow a manual request
 
-`gregale cron run <get> [--interactive] [--wait] [--app <SLUG>] [--timeout <DURATION>] [<cron-id>]`
+`gregale cron run [get] [--interactive] [--wait] [--app <SLUG>] [--timeout <DURATION>] [<cron-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5962,7 +6006,7 @@ Create a receiver; omitted signing secret is generated and shown once
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | HTTPS receiver URL | required |
-| `--event <EVENT>` | distinct release event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` |
+| `--event <EVENT>` | distinct account event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |
 | `--from-stdin` | read the signing secret from stdin; mutually exclusive with --secret |  |
 | `--retry-policy <POLICY>` | delivery retry policy | one of `default` · `aggressive` · `none` |
@@ -5983,7 +6027,7 @@ Update a receiver
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | replacement HTTPS receiver URL |  |
-| `--event <EVENT>` | replacement release event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` |
+| `--event <EVENT>` | replacement account event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` |
 | `--enable` | enable the receiver; mutually exclusive with --disable |  |
 | `--disable` | disable the receiver; mutually exclusive with --enable |  |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |
@@ -6174,7 +6218,7 @@ Includes request evidence when available. Usage: running &lt;slug&gt; [--since D
 
 List, watch, triage, or roll back regressions
 
-`gregale debug regressions <watch|ack|acknowledge|dismiss|resolve|reopen|rollback> [--since <DURATION>] [--all] [<slug>]`
+`gregale debug regressions [watch|ack|acknowledge|dismiss|resolve|reopen|rollback] [--since <DURATION>] [--all] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6341,6 +6385,18 @@ Add a channel; Slack URLs and PagerDuty keys are read from stdin
 | `--pagerduty-region <REGION>` | PagerDuty service region | one of `us` · `eu` |
 | `--email <EMAIL>` | your account email (kind email) |  |
 
+#### alert channel update
+
+Rename a channel or replace its destination; read from stdin
+
+`gregale alert channel update [--name <NAME>] [--secret-stdin] [--pagerduty-region <REGION>] <channel-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | new channel name, unique per account |  |
+| `--secret-stdin` | read the new Slack webhook URL or PagerDuty routing key from stdin |  |
+| `--pagerduty-region <REGION>` | PagerDuty service region of the new key | one of `us` · `eu` |
+
 #### alert channel test
 
 Send a marked test notification
@@ -6367,7 +6423,7 @@ List alert rules
 
 Add an alert rule
 
-`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
+`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--metric-label <KEY=VALUE>]... [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6383,6 +6439,7 @@ Add an alert rule
 | `--failure-source <SOURCE>` | any\|cron\|queue\|delayed_task\|async_invoke\|inbound_webhook |  |
 | `--channel <CHANNEL_ID>` | notification channel id (repeatable); with one, the webhook is optional |  |
 | `--custom-metric <NAME>` | Pushed custom metric to watch; required with --metric custom_metric |  |
+| `--metric-label <KEY=VALUE>` | with --custom-metric: watch the series with this label (repeatable) |  |
 | `--log-query <FILTERS>` | Log search filters to count, e.g. level=error&amp;q=timeout; with --metric log_search_matches |  |
 | `--saved-search <NAME>` | Copy a saved log search&#39;s filters; with --metric log_search_matches |  |
 | `--slo <SLO_ID>` | SLO id for slo_budget_burn or slo_budget_remaining_pct |  |
@@ -6435,12 +6492,20 @@ gregale alert deliveries --app my-api --interactive
 
 Update one alert rule
 
-`gregale alert update [--interactive] [--app <slug>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--notify-resolved] [<alert-id>]`
+`gregale alert update [--interactive] [--app <slug>] [--name <NAME>] [--enabled] [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--cooldown-minutes <N>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--notify-resolved] [<alert-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--interactive` | choose a rule, edit current settings, and confirm changes |  |
 | `--app <slug>` | app slug (linked app or picker in interactive mode) |  |
+| `--name <NAME>` | rule name (3..120 chars) |  |
+| `--enabled` | turn the rule on or off (--enabled=false pauses it) |  |
+| `--metric <METRIC>` | metric |  |
+| `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
+| `--threshold <N>` | threshold value |  |
+| `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
+| `--cooldown-minutes <N>` | minutes between repeat notifications of one breach |  |
+| `--webhook-url <URL>` | http(s) webhook URL |  |
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
 | `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the replacement webhook secret from stdin |  |
@@ -6561,6 +6626,14 @@ Open MFA removal in the browser
 | `--password <PASSWORD>` | legacy option; enter the password in the browser |  |
 | `--recovery-code <CODE>` | legacy option; enter the recovery code in the browser |  |
 
+#### account mfa rotate
+
+Open new recovery codes in the browser
+
+`gregale account mfa rotate`
+
+Your current recovery codes stop working.
+
 ### account dpa
 
 Print the Data Processing Agreement template
@@ -6617,6 +6690,90 @@ Cancel a pending deletion
 
 Show account status
 
+### account update
+
+Set your display name
+
+`gregale account update [--name <NAME>] [--clear-name]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | display name shown to org members (at most 80 characters) |  |
+| `--clear-name` | remove the display name |  |
+
+### account sessions
+
+List or sign out browser sessions
+
+#### account sessions list
+
+List signed-in browsers
+
+`gregale account sessions list`
+
+#### account sessions revoke
+
+Sign out one browser session, or all of them
+
+`gregale account sessions revoke [--all] [--yes] [SESSION_ID]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | sign out every browser |  |
+| `--yes` | with --all, sign out without prompting |  |
+
+API keys keep working.
+
+### account email
+
+Verify or change your sign-in email
+
+#### account email verify
+
+Send a new email verification link
+
+`gregale account email verify`
+
+#### account email update
+
+Open the sign-in email change form in the browser
+
+`gregale account email update`
+
+A confirmation link goes to the new address.
+
+### account password
+
+Change your password
+
+#### account password update
+
+Open the password change form in the browser
+
+`gregale account password update`
+
+### account provider
+
+Show how you can sign in
+
+#### account provider list
+
+List your password, two-factor and linked Google/GitHub sign-ins
+
+`gregale account provider list`
+
+### account activity
+
+Show sign-ins and security changes
+
+#### account activity list
+
+List sign-ins, credential and security changes of the last 90 days
+
+`gregale account activity list`
+
+Shows the newest 100 events.
+
 
 ## org
 
@@ -6650,7 +6807,7 @@ Show the org&#39;s agent policy
 
 Allow or deny agents and cap their capabilities
 
-`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>] [--approvals <LIST>]`
+`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>] [--approvals <LIST>] [--approval-channels <NAMES>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6658,6 +6815,7 @@ Allow or deny agents and cap their capabilities
 | `--agents <allow|deny>` | allow or deny agents in the org | required |
 | `--capabilities <LIST>` | comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only |  |
 | `--approvals <LIST>` | kinds of action every agent must have a person approve: delete, production, credentials, billing, all or none |  |
+| `--approval-channels <NAMES>` | comma-separated names of your notification channels that also get the org&#39;s agents&#39; approval requests; empty for none |  |
 
 Examples:
 
@@ -6886,6 +7044,18 @@ Rotate an org API key; the new plaintext is shown once
 | `--org <SLUG>` | organization slug | required |
 | `--label <TEXT>` | new label (empty keeps the current one) |  |
 
+### org leave
+
+Leave an org you are a member of
+
+`gregale org leave [--yes] ORG_SLUG`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | leave without prompting |  |
+
+Owners transfer ownership first. Personal orgs cannot be left.
+
 ### org me
 
 Show current org membership
@@ -6918,7 +7088,7 @@ Read or update the rotation grace window
 | Flag | Meaning | |
 |---|---|---|
 | `--reset` | clear the account override and use the plan default |  |
-| `--days <N>` | new grace window in days (0 or greater) |  |
+| `--days <N>` | new grace window in days (0 to 30) |  |
 
 #### key grace-window set
 
@@ -6929,7 +7099,7 @@ Read or update the rotation grace window
 | Flag | Meaning | |
 |---|---|---|
 | `--reset` | clear the account override and use the plan default |  |
-| `--days <N>` | new grace window in days (0 or greater) |  |
+| `--days <N>` | new grace window in days (0 to 30) |  |
 
 ### key list
 
@@ -7051,13 +7221,69 @@ List issued invoices
 
 ### billing spend-cap
 
-Set or clear a spending cap for usage beyond your plan
+Set the monthly spend cap for usage beyond your plan
 
 `gregale billing spend-cap [--clear] <cents>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--clear` | remove the overage cap |  |
+| `--clear` | remove the cap (Free accounts only; a paid plan keeps one) |  |
+
+A paid plan always keeps a cap, at most Hobby $75, Pro $200 or Scale $1,000; ask support for a higher one.
+
+### billing egress-overage
+
+Show or set billing for egress above the monthly allowance
+
+`gregale billing egress-overage [get|set] [--org <SLUG>] [on|off]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | Use the election of an organization that owns its resources |  |
+
+Examples:
+
+```sh
+gregale billing egress-overage
+gregale billing egress-overage on
+gregale billing egress-overage off --org acme
+```
+
+#### billing egress-overage get
+
+Show or set billing for egress above the monthly allowance
+
+`gregale billing egress-overage get [--org <SLUG>] [on|off]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | Use the election of an organization that owns its resources |  |
+
+Examples:
+
+```sh
+gregale billing egress-overage get
+gregale billing egress-overage get on
+gregale billing egress-overage get off --org acme
+```
+
+#### billing egress-overage set
+
+Show or set billing for egress above the monthly allowance
+
+`gregale billing egress-overage set [--org <SLUG>] [on|off]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | Use the election of an organization that owns its resources |  |
+
+Examples:
+
+```sh
+gregale billing egress-overage set
+gregale billing egress-overage set on
+gregale billing egress-overage set off --org acme
+```
 
 ### billing payment-method
 
@@ -7596,4 +7822,23 @@ Persist one non-secret setting
 ### config list
 
 Show all effective settings
+
+### config explain
+
+Show where a CLI target or project setting comes from
+
+`gregale config explain <key>`
+
+Examples:
+
+```sh
+gregale config explain app
+gregale config explain services.api.visibility
+```
+
+Keys: project, app, environment, service_policy, services.&lt;name&gt;.service_policy, services.&lt;name&gt;.visibility, services.&lt;name&gt;.depends_on, api-base, json.
+
+Lists every layer in precedence order (flag, .gregale/project.json, gregale.yaml `project:`, Compose x-gregale-*, .gregale/project.yaml) and marks the one that wins.
+
+Runs locally; nothing is uploaded.
 

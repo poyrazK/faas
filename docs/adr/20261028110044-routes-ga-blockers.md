@@ -383,3 +383,177 @@ cache on the request path.
 - Until a node's gatewayd runs this release, its rows carry neither flag.
 - An app's first request after a gateway starts can still fold a selected
   route into `__route_other__` while its pins load.
+
+## Amendment 6 (2026-11-04): removal evidence labels, contract reads, clone state
+
+A seventh review found route removal evidence that could miss a removed
+route's traffic, a contract read on the request path, and route monitor state
+registered as clone configuration.
+
+1. **Removal evidence matched one label.** Approval and the cutover gate
+   (`route_removal_check`) counted a removed operation only when telemetry
+   carried its exact method and contract path. Once the app's current OpenAPI
+   document no longer declares the route (the customer uploads the candidate's
+   contract before approval), the gateway labels its requests with the
+   inferred form (`{id}` only for numeric, UUID or hex segments) or the raw
+   path, or folds them into `__route_other__` when the app's 50 labels are
+   taken. HEAD requests to a GET route carry `HEAD`, and contract paths with a
+   trailing slash never matched. Removal could be approved while customers
+   still called the route.
+2. **The declared-route document was read on the request path.** When an
+   app's cached document expired (every 5 minutes), the request that found it
+   expired, and every concurrent one, read it from Postgres under the request's
+   own context with no bound, and a failed read was returned to the request.
+   Apps that only allow declared routes answered 503; other apps silently
+   labeled the request with the inferred form, splitting route health and
+   monitor evidence.
+3. **`route_monitors` registers runtime state as configuration.** Its clone
+   registry entry lists `active_incident_id`, `last_deployment_id`,
+   `last_healthy_deployment`, `customer_recovery_state` and `next_check_at`.
+   Route configuration has no clone capability yet; when it gains one, copying
+   those columns would point a clone at the source's incident and deployments.
+
+**Decision.**
+
+- `route_removal_route_observed` (migration `20261108095332288`) is the one
+  evidence check for approval and the cutover gate. A removed operation
+  matches telemetry whose route fits its template (each `{parameter}` one
+  segment, optional method prefix, optional trailing slash) for its method,
+  with HEAD counted for GET. Rows labeled with an operation the candidate keeps
+  are not the removed route.
+- The gateway labels a request its current contract does not declare with the
+  template of the app's route removal baseline contract, as a declared label
+  that never folds. The baseline only labels; it never admits a request. It
+  loads in the background and never on the request path.
+- The declared-route cache serves an expired document while one background
+  read renews it. Every read is bounded at 2 s and shared by concurrent
+  requests; a failed renewal keeps the document and retries after 10 s. A
+  document the store has not verified for 30 minutes past its TTL is no longer
+  served, so the next request reads and fails closed. Invalidation still drops
+  the document at once.
+- `route_monitors` gains clone capabilities only once a clone starts without
+  the source's runtime state; a test enforces this.
+
+**Consequences.**
+
+- Approval and cutover can block on traffic to a different route of the same
+  shape that the candidate does not declare; declaring that route clears it.
+- Until a gateway learns the baseline (at most one TTL), a removed route can
+  still fold into `__route_other__` on a full label set; the pattern match
+  covers every other label.
+- An app that only allows declared routes keeps its last verified document
+  for up to 30 minutes when the store cannot be read and no change
+  notification arrives.
+
+## Amendment 7 (2026-11-09): production evidence gaps
+
+A read-only review of production (release `7e35c62d41`) found route and
+rollout evidence that production traffic never produced, or produced under
+the wrong deployment.
+
+1. **Every streamed response was long-lived.** A streaming-enabled app's
+   requests carry `x-faas-stream`, and the gateway marked every 2xx/3xx of
+   such an app `long_lived`. 66 of 90 apps stream; 2.65M of 2.67M requests
+   over three days were long-lived, so route health and the production
+   monitor had no latency sample for most apps. The canary circuit breaker
+   (`RequestTelemetryCircuitBreakerSummary`) kept those durations, so a real
+   WebSocket or event stream's session length weighed into its latency
+   comparison.
+2. **Service calls were never labeled.** Service-to-service telemetry rows
+   always carried `__route_other__`. About 70% of a day's requests were
+   internal calls; route health, the monitor and route removal never saw an
+   internal caller of a route.
+3. **A failure before a target was nobody's evidence.** The gateway stamped a
+   row's deployment only from the target that answered. A wake or capacity
+   failure (`wake_response`, `capacity_response`) had none, so it was written
+   with the zero deployment even though routing had selected one: 564 such
+   503s in a week. The circuit breaker, route health, the monitor and the
+   ADR-625 first-wake rollback all read by deployment, and the first-wake
+   window opens only on an attributed request, so a release whose every wake
+   failed was never judged.
+4. **A silent candidate advanced.** The low-traffic advance (ADR-1446)
+   required no 5xx and clean OOM/liveness signals but not a single answer: a
+   candidate that answered none of the probes its predecessor answered
+   advanced after the hold and reached 100%.
+5. **One-off paths took labels.** Inference templated only numeric, UUID and
+   long hex segments, so typed identifiers (`qry_<hex>`), dates and files
+   named by an identifier each became their own route.
+6. **Rollouts never started or completed in the audit.** The safe-deploy
+   orchestrator audited only transitions it made, and the live and advance
+   paths make both, so 14 days of rollouts produced no
+   `deploy.rollout_started` and one `deploy.rollout_completed`; the release
+   timeline never showed either.
+
+**Decision.**
+
+- `long_lived` marks a session: an upgraded socket, an event-stream or gRPC
+  response, or a detached response that outlived the ordinary request
+  budget. Budget detachment itself is unchanged. The circuit breaker's
+  percentiles leave long-lived rows out; they still count as requests and 5xx.
+- A service call's row carries the target app's route label: the declared or
+  removal-baseline template from the target's document, or the inferred path,
+  admitted into the app's bounded label set by the same response rule as
+  public traffic. Templates declared only in `gregale.yaml` are not visible to
+  the service path; such calls use the inferred path.
+- A row with no target carries the deployment routing selected for it (a
+  traffic split, pin or release member). A platform refusal stays
+  unattributed, as amendment 3 decided. Rate limits and auth refusals happen
+  before selection and stay unattributed.
+- The low-traffic advance holds while the predecessor answered probes in the
+  stage and the candidate answered none (`CandidateProbeSilent`); the
+  stuck-rollout guard aborts a rollout held past its bound.
+- Inference also templates a typed identifier (a lowercase prefix of up to
+  eight letters, `_` or `-`, then at least ten letters and digits including a
+  digit) as `{id}`, an ISO date as `{date}`, and a file named by an identifier
+  as `{id}.<extension>`.
+- The live path audits `deploy.rollout_started` when it starts a canary and
+  the advance path audits `deploy.rollout_completed` when it completes one, in
+  the same transaction, under the app's account (actor `system:rollout`).
+
+**Consequences.**
+
+- Latency evidence appears for streaming apps; a canary can now hold or abort
+  on their latency.
+- Internal callers now count toward route health, monitoring and removal
+  evidence and consume the target app's labels.
+- A candidate that cannot wake now aborts on 5xx instead of advancing, and a
+  completed release whose wakes fail rolls back on first-wake 5xx.
+- A canary whose candidate never answers holds until the stuck guard aborts it.
+- Labels change shape for paths with typed identifiers, dates or ID-named
+  files; route selectors written against the old raw labels need updating.
+
+
+## Amendment 8 (2026-11-10): undelivered telemetry and refusals during database stalls
+
+A second production review (2026-11-09) found evidence gaps during database
+stalls on the control plane.
+
+1. **An undelivered batch was one app's gap.** When a gateway exhausted its
+   delivery retries it journaled the dropped rows as per-app losses, which
+   route health and the production monitor ignore by design (amendment 2,
+   for rows a receiver rejects). The windows that lost the rows still read as
+   complete.
+2. **Admission refusals were unmeasured.** A route change clears the
+   gateway's workload admission cache; the next request reads storage and
+   fails closed when it cannot. Those 5-14 s refusals were logged as an
+   unmeasured `body_response`.
+3. **A deleted app's canary kept running.** meterd evaluated the canary of a
+   deleted app (profiling gate `state: not found` every 30 s) until the
+   stuck-rollout guard closed it 30 minutes later.
+4. **Overflow labels failed `routes health suggest`.** Route usage carries
+   `__route_other__` and unlabeled rows; the CLI rejected the whole report.
+
+**Decision.**
+
+- Rows a gateway could not deliver (receiver unreachable, retries exhausted,
+  backlog full) count as unattributed losses and end the node's healthy
+  coverage. Rows the receiver rejects, or that it refused while accepting the
+  rest of their batch, stay the app's loss.
+- The workload admission check is measured as policy time; its refusal is
+  `policy_unavailable` with stage `workload_admission_unavailable` (and
+  `Retry-After: 2`) or `workload_retired`. It still fails closed: serving a
+  stale decision during a storage outage could serve a retired workload, a
+  posture change this amendment does not make.
+- The safe-deploy orchestrator closes a deleted app's rollout on its next
+  tick, and meterd's canary progression skips it.
+- `routes health suggest` skips overflow and unlabeled rows.

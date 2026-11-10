@@ -654,7 +654,7 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 		exclude := make([]string, 0, len(kept))
 		for _, app := range kept {
 			exclude = append(exclude, app.WorkloadName)
-			held[app.ID] = fmt.Sprintf("Kept: %s is not in the Compose file at this commit, and a GitHub push does not remove services. It keeps serving its last release. Deploy with `gregale deploy` or from the dashboard to review and remove it.", app.WorkloadName)
+			held[app.ID] = pushKeptMessage(app)
 		}
 		result, err = s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, exclude)
 		if err != nil {
@@ -814,6 +814,7 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 	if deployProject {
 		s.holdPushOverDeployRate(ctx, project, toEnqueue, held)
 		siblingAddresses = s.pushSiblingAddresses(ctx, tree.FS(), project, scan)
+		s.reportReviewedOnlyProjectSettings(ctx, tree.FS(), changedFiles, filterMode, install.InstallationID, ev.Repository.FullName, ev.After, project, deploymentScope)
 	}
 	// App-bound apps have no project dependency graph and deploy to their
 	// production scope, whichever scope the branch maps the project's to.
@@ -1150,6 +1151,13 @@ func (s *Service) filterByPath(touched []state.App, changedFiles []string, filte
 	// Shared files can affect every build even when the same push also
 	// changes a file inside one member. Check each path before filtering.
 	for _, path := range changedFiles {
+		// gregale.yaml at the root declares every function of a functions
+		// project (ADR-20261108160000 §3), so a change to it rebuilds every
+		// member even when one is rooted at the repository root.
+		switch path {
+		case "gregale.yaml", "gregale.yml", "gregale.toml":
+			return touched, nil
+		}
 		memberPath := false
 		for _, app := range touched {
 			if app.RootDir == "" || pathIntersectsDir([]string{path}, app.RootDir) {
@@ -2020,6 +2028,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	var workloads map[string]reposcan.Workload
 	var available map[string]struct{}
 	var headValues map[string]map[string]string
+	var keep map[string]previewKeep
 	if sourceReady {
 		reopened, reopenErr := s.reopenLivePullRequestPreview(ctx, ev, install.InstallationID, previewLimits,
 			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
@@ -2075,6 +2084,23 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			return reconcile.Result{}, previewSetupFailure("the pull request does not fit the %s plan: %s", account.Plan, strings.Join(reasons, "; "))
 		}
 		headValues = prHeadComposeValues(tree.FS(), scan, s.scanOptions(binding.AccountID), previewLimits)
+		// Refuse before reserving anything: a service that would start without
+		// its datastore, or a set whose builds do not all fit the hour's PR
+		// preview deploys, fails the check with the reason (ADR-20261108140000).
+		previewed := append([]state.App{parentApp}, dependencies...)
+		shortfall, shortfallErr := s.previewDatastoreShortfall(ctx, tree.FS(), binding.AccountID, scan, previewed, headValues)
+		if shortfallErr != nil {
+			return reconcile.Result{}, shortfallErr
+		}
+		// A push rebuilds only the services whose files changed; the others
+		// keep serving their build (ADR-20261108150000).
+		keep = s.previewUnchangedServices(ctx, ev, install.InstallationID, policy, previewed, workloads)
+		if shortfall == "" {
+			shortfall = s.previewDeployShortfall(ctx, account, len(previewed)-len(keep))
+		}
+		if shortfall != "" {
+			return reconcile.Result{}, previewSetupFailure("%s", shortfall)
+		}
 	}
 	// Source fetching and scanning can take longer than a PR head update.
 	// Recheck before the first preview mutation or build reservation.
@@ -2290,7 +2316,14 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	// all three and therefore turns every open/synchronize/reopen event into a
 	// real DeploymentKindPreview build.
 	if sourceReady {
-		if parentApp.ProjectID != "" {
+		pinned := s.pinUnchangedPreviews(ctx, state.PRPreviewHead{
+			InstallationID: install.InstallationID,
+			RepoFullName:   ev.Repository.FullName,
+			PRNumber:       ev.Number,
+			CommitSHA:      ev.PullRequest.HeadSHA,
+		}, keep, append([]state.App{created}, siblingPreviews...))
+		// A kept service keeps the configuration of the build it serves.
+		if parentApp.ProjectID != "" && !pinned[created.ID] {
 			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy,
 				headValues[strings.ToLower(parentApp.WorkloadName)], previewPlatformEnv(ev))
 			if err != nil {
@@ -2304,6 +2337,10 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			if refreshErr != nil {
 				return result, fmt.Errorf("githubd: refresh PR dependency %q: %w", dependency.WorkloadName, refreshErr)
 			}
+			if pinned[preview.ID] {
+				result.Added = append(result.Added, preview)
+				continue
+			}
 			if dependency.ProjectID != "" {
 				// An app bound without a project builds as it is, like the root.
 				preview, err = s.applyPRHeadWorkload(ctx, preview, workloads[strings.ToLower(dependency.WorkloadName)], available, policy,
@@ -2315,7 +2352,9 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			toBuild = append(toBuild, preview)
 			result.Added = append(result.Added, preview)
 		}
-		toBuild = append(toBuild, created)
+		if !pinned[created.ID] {
+			toBuild = append(toBuild, created)
+		}
 		project := state.Project{
 			AccountID:        binding.AccountID,
 			RepoFullName:     ev.Repository.FullName,

@@ -92,8 +92,8 @@ workflow concurrency quota remains shared.
 
 An app owner can add `tenant_configurable: true` to a schedule trigger to let a
 linked customer manage its own cron expression, timezone, overlap behavior, and
-enabled state. The customer token needs `platform_tenant:automations:read` to
-list opted-in schedules and `platform_tenant:automations:manage` to update one:
+enabled state. The customer token needs `platform_tenant:stored_workflows:read` to
+list opted-in schedules and `platform_tenant:stored_workflows:manage` to update one:
 
 ```http
 GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules
@@ -497,6 +497,10 @@ This covers async invokes, queue and inbox messages, delayed tasks, cron runs,
 event deliveries, async edge routes and inbound webhooks. Async invokes and
 delayed tasks can ask for a shorter window with `retention_seconds`
 (`--retention` in the CLI).
+
+A completed queue message keeps its payload for 24 hours after a worker acks
+it; after that its history entry shows `"payload": null`, and its id, timings,
+attempts and outcome stay for the full retention.
 
 Failed and dead-lettered invocations are kept for at least 30 days, so you can
 inspect and replay them from the dead-letter queue (`gregale dlq list <app>`) on

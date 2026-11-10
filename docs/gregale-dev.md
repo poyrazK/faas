@@ -44,6 +44,75 @@ start the developer loop after authentication; it cannot be combined with
 values and destination. TOML manifests require an explicit migration before
 using this YAML writer.
 
+## Run functions on this machine
+
+`gregale dev --local` runs the project's Node, Python and Go functions on
+your computer, with the same adapters and runner code a deployed function
+uses, and reloads a function within a second of saving its files. Nothing is
+uploaded and no login is needed:
+
+```sh
+gregale dev --local
+```
+
+```
+Serving 3 function(s) on this machine (ctrl-c to stop):
+  web       http://web.localhost:8787     node   functions/web
+  users     http://users.localhost:8787   python functions/users
+  digest    http://digest.localhost:8787  node   functions/digest  cron 0 8 * * *
+  http://localhost:8787 routes like the entry address (entry: web)
+```
+
+- Each function has its own address, `http://<name>.localhost:8787`, as it
+  has its own host on Gregale. With an `entry: true` function,
+  `http://localhost:8787` routes by the functions' `routes:`, and a project
+  with one function is also served there. `--port` picks another port.
+- Requests carry the platform's `x-faas-invocation-id` and
+  `x-faas-deadline-ms` headers, and client-sent `x-faas-*` headers are
+  dropped, as on Gregale.
+- If this directory has a developer environment (`gregale dev` created
+  one), local functions use its resources:
+  - **Postgres**: the binding's variable (usually `DATABASE_URL`) points at a
+    local tunnel to the session's database. The CLI makes the TLS connection
+    to the database itself and verifies it as the binding asks, so every
+    driver works with the plain local URL. The tunnel starts a task VM, so it
+    needs app tasks on your plan.
+  - **Buckets**: each bucket's `GREGALE_S3_*` settings use a credential made
+    for this local session and revoked when you stop.
+  - **Secrets** never leave Gregale. The CLI lists the session's secret
+    names that nothing local sets; put their values in an `--env-file`.
+
+  `--no-remote` skips all of this. Without a login or a developer
+  environment, functions run with local settings only.
+- `--offline` runs the resources on your machine in Docker instead, with
+  no Gregale account involved:
+
+  ```sh
+  gregale dev --local --offline --postgres --bucket uploads
+  ```
+
+  `--postgres` starts Postgres 16 and sets `DATABASE_URL`; each `--bucket`
+  creates a bucket in a local S3 gateway (Versity, `versity/versitygw`) and
+  sets its `GREGALE_S3_<NAME>_*` settings. `dev.postgres` and
+  `dev.buckets` in `gregale.yaml` are read too. Data stays in Docker
+  volumes for this project between runs; `--reset` wipes them. The
+  containers listen on loopback only and stop when you stop.
+- Settings layer in this order, later winning: your shell, the session's
+  resources, `--env-file`, then each function's `env:` in `gregale.yaml`.
+- Run a cron or an async call as Gregale would, with
+  `x-faas-invocation-source` set:
+
+  ```sh
+  gregale dev trigger --local cron digest
+  gregale dev trigger --local invoke users /users/7 --data '{"id":7}'
+  ```
+
+- `node`, `python3` and `go` must be installed for their functions. Go
+  functions are rebuilt on save.
+
+A local run has no memory cap, no pause between requests and no snapshot.
+Use `gregale dev` without `--local` to check those on real infrastructure.
+
 ## The development loop
 
 The CLI detects the application shape, uploads the current working tree
@@ -335,18 +404,47 @@ address, for example a VS Code configuration:
 ```
 
 or open `chrome://inspect` and add `127.0.0.1:9229`. Each debugger connection
-is its own tunnel through the API, authenticated with your CLI credentials;
-the inspector port is never published on the app's URL. Only `gregale dev`
-environments accept a debugger, and up to four connections per environment.
+is its own tunnel through the API (`GET /v1/apps/{slug}/debug`, a WebSocket
+served by the gateway, not apid), authenticated with your CLI credentials; the
+inspector port is never published on the app's URL. Attaches and detaches are
+recorded in the audit log (`dev.debugger.attached` / `dev.debugger.detached`).
+Only `gregale dev` environments accept a debugger: the platform marks them
+with `FAAS_DEVELOPER_ENVIRONMENT=1`, and the inspector switch is ignored on any
+other app.
+
+Limits ([`pkg/api/limits.go`](../pkg/api/limits.go)): up to four connections
+per environment, counted per gateway process (a multi-node gateway can admit
+a few more in total); a connection closes after 30 minutes without traffic or
+after 256 MB in either direction. Reattach to continue. The CLI caches the
+`/json` discovery requests that debuggers poll for two seconds, so they do not
+open a tunnel each.
 
 While a debugger is attached the environment does not park, and a process
-paused at a breakpoint is not restarted for failing its liveness probe. A
-request held at a breakpoint is still subject to the edge request deadline,
-so resume within it. A live patch restarts the process and drops the
-debugger; with `"restart": true` VS Code reconnects on its own. Running
-`gregale dev` without `--debug` turns the inspector off again. Only Node.js
-workloads are supported so far; `--debug` cannot be combined with `--once`,
-`--stop`, or `--all`.
+paused at a breakpoint is not restarted for failing its liveness probe. That
+exemption holds only while a debugger connection is open: with `--debug` on
+and nothing attached, a hung process is restarted as usual. A request held at
+a breakpoint is still subject to the edge request deadline, so resume within
+it. A live patch restarts the process and drops the debugger; with
+`"restart": true` VS Code reconnects on its own. Running `gregale dev` without
+`--debug` turns the inspector off again.
+
+The inspector opens in the app's own Node.js process, not in a package-manager
+or watcher wrapper (`npm`, `yarn`, `pnpm`, `nodemon`, `tsx`, `next`,
+`node --watch`, …), so an `npm start` script still debugs the server it
+starts. Functions run on a single worker while a debugger is attached, and a
+worker held at a breakpoint is not replaced when its request times out.
+
+Only Node.js workloads are supported so far: Bun and Deno projects are
+refused. `--debug` cannot be combined with `--once` or `--stop`; a
+`debug: true` in `gregale.yaml` is skipped (with a note) for `--once` and for
+non-Node workloads. With `--all`, set `debug: true` and a distinct
+`debug_port` in each app's `dev:` block:
+
+```yaml
+dev:
+  debug: true
+  debug_port: 9230
+```
 
 ## Watch mode for apps with a build step
 

@@ -96,7 +96,11 @@ is written to the audit log.
 - The CLI prints the review link from the problem, and waits and retries with
   `--wait-for-approval`.
 - The MCP bridge returns the review link to the agent as a tool error with an
-  instruction to retry the same call after approval.
+  instruction to retry the same call after approval. Amended 2026-11-09: the
+  error carries the request in `approval` with an `await_approval` recovery
+  naming `gregale_wait_for_approval`, which waits for the decision and answers
+  `retry_original` or `stop`; `gregale_agent_activity` lists the agent's own
+  write requests (ADR-20261107220000).
 - `gregale key create --approvals`, `gregale org agent policy set --approvals`
   and the agent connection list show and set the categories.
 
@@ -121,3 +125,40 @@ is written to the audit log.
   the repeated request needs no client change.
 - **Approval by API key.** Any key an agent can read could approve its own
   request.
+
+## Amendment (2026-11-10): project routes are production writes
+
+The production list named only app routes, so an agent key with
+`deploy:write` could deploy a whole project, promote an environment,
+activate, deactivate or roll back a release set, or create, change, rebind
+or adopt an environment's GitOps source without a person (deploy review
+2026-11-10, D3). These routes, including their `/v1/orgs/{organization}`
+forms, are now production writes in `pkg/agentapproval`: `projects/apply-plan`,
+`projects/safe-deploy`, the organization project deploy, `environments/{}/promote`,
+promotion actions (abort, recover), promotion rollback and migration
+recovery, `release-sets` (publish, activate, deactivate, rollback) and
+`gitops/source`, `source/rebind`, `adopt`, `overrides` and
+`revisions/approve`. Plans, previews and verification runs stay ungated.
+
+A project environment records no production flag, so these ask on every
+environment (`TargetNone`), staging included; a protected environment keeps
+its own approval token on top. The promotion action route is registered as
+`promotions/{promotion}/{action}` while the spec lists `/abort` and
+`/recover`, so it sits in a separate route-only table that the spec coverage
+test checks does not overlap the spec. Validation: `TestClassify`,
+`TestClassificationCoversTheSpec`, `TestHandlers_AgentProjectWritesNeedApproval`.
+
+## Amendment (2026-11-10): production configuration is a production write
+
+An agent could change a production app's variables, secrets, secret
+references and app settings without approval, though they reach traffic at
+the next wake like a release, while a restart and a config rollback already
+asked (apps/projects review 2026-11-10, P10). These writes now ask in the
+`production` category: `PUT /env/{key}`, `POST /env/batch`,
+`PUT /secrets/{key}` and `PUT /secret-references/{key}` when they target the
+production scope (`?scope=`/`?environment=` empty, `default` or `production`;
+target `TargetAppConfig`), `PATCH /v1/apps/{slug}` on a production app, and
+project environment configuration, shared secrets and workload policies on
+every environment (`TargetNone`, as for the project routes above). Deletes
+keep asking as `delete`; rotating a secret keeps asking as `credentials`.
+Validation: `TestClassify`, `TestProductionConfigScope`.

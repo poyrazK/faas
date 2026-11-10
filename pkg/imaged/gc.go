@@ -199,6 +199,35 @@ func perAppKeepRollbackWindow(rows []state.SnapshotForGC, keepDeployments int) [
 	return drop
 }
 
+// dormantFreeTargets selects every snapshot of the dormant Free apps
+// (spec §4.3 Free-tier disk reaper, ADR-20261105120000) that is not already
+// a target. The live deployment's app layer survives the deletion
+// (deleteSnapshotsAndFiles keeps it), so the next request cold-boots
+// (ADR-005) and re-snapshots. Pure; the input is not mutated.
+func dormantFreeTargets(rows []state.SnapshotForGC, dormant map[string]bool, already []deleteTarget) []deleteTarget {
+	if len(dormant) == 0 {
+		return nil
+	}
+	taken := make(map[string]bool, len(already))
+	for _, t := range already {
+		taken[t.ID] = true
+	}
+	var out []deleteTarget
+	for _, r := range rows {
+		if !dormant[r.AppID] || r.DeletePending || taken[r.ID] {
+			continue
+		}
+		out = append(out, targetForSnapshot(r))
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].AppID != out[j].AppID {
+			return out[i].AppID < out[j].AppID
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
 func targetForSnapshot(r state.SnapshotForGC) deleteTarget {
 	return deleteTarget{
 		ID:                  r.ID,

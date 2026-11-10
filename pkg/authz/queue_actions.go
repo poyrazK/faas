@@ -24,6 +24,7 @@ var queueActions = map[string]OrgAction{
 	"GET /v1/apps/{slug}/queues/peek":                     OrgActionOperateQueues,
 	"GET /v1/apps/{slug}/queues/dead_letter":              OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/send":                    OrgActionOperateQueues,
+	"POST /v1/apps/{slug}/queues/send-batch":              OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/receive":                 OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/{id}/ack":                OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/{queue}/leases":          OrgActionOperateQueues,

@@ -125,6 +125,13 @@ type DeploymentAppResolver interface {
 	DeploymentAppID(ctx context.Context, deploymentID string) (string, error)
 }
 
+// EdgeRuleAppResolver is the optional store seam that loads the edge rule an
+// agent approval addresses by id, to tell a production app's rule from a
+// preview's (ADR-091 amendment 2026-11-07).
+type EdgeRuleAppResolver interface {
+	GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error)
+}
+
 // deployTokenDeploymentReads are the routes outside /v1/apps/{slug} a deploy
 // token may read, for a deployment of its own app: the ones
 // api.ScopesDeploymentReadSurface admits for deploy:write, which every CLI
@@ -612,6 +619,13 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				if m.limitKeyToProjects(w, r, acct, &key) {
 					return
 				}
+				// ADR-20261107220000: an agent's write requests are
+				// recorded once the handler answers; the approval gate
+				// notes the approval a request went through on.
+				var activity *agentActivityNote
+				if ProjectLimitable(key) && agentWrite(r.Method) {
+					*r = *r.WithContext(withAgentActivityNote(r.Context(), &activity))
+				}
 				// ADR-20261104140058: an agent's risky request waits for a
 				// person's approval.
 				if m.requireAgentApproval(w, r, acct, key) {
@@ -633,6 +647,12 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 							m.Log.Warn("api_key last_used_at touch failed", "key_id", id, "error", err.Error())
 						}
 					}(r.Context(), key.ID, t)
+				}
+				if activity != nil {
+					aw := &activityWriter{ResponseWriter: w}
+					next(aw, r, acct)
+					m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
+					return
 				}
 				next(w, r, acct)
 				return
@@ -1144,6 +1164,24 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		}
 		return state.Session{}, true, nil
 	}
+	// (4.5) idle timeout (ADR 20261110120000): a session unused for
+	// api.DashboardSessionIdleTimeout ends, however long its cookie has
+	// left. The row is revoked so the cookie cannot come back to life.
+	if sessionIdle(sess, time.Now()) {
+		if _, revokeErr := m.Lookups.RevokeSession(ctx, env.Sid, env.AccountID); revokeErr != nil && m.Log != nil {
+			m.Log.Warn("idle session revoke failed", "sid", logsanitize.Field(env.Sid), "error", revokeErr.Error())
+		}
+		if m.Audit != nil {
+			m.Audit.Emit(ctx, "auth.session.idle_expired", &env.AccountID, map[string]any{
+				"sid":      env.Sid,
+				"idle_sec": int(api.DashboardSessionIdleTimeout.Seconds()),
+			})
+		}
+		m.clearSessionCookie(w)
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeSessionExpired,
+			"Session expired", "signed out after 48 hours without activity; sign in again"))
+		return state.Session{}, true, nil
+	}
 	// (5) stamp + async touch. Detached; bounded.
 	if t, fire := m.sessionDebounce.shouldTouch(env.Sid, time.Now(), m.sessionTouchWindow()); fire {
 		go func(parentCtx context.Context, sid string, ticket *TouchTicket) {
@@ -1159,6 +1197,17 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 }
 
 const sessionTouchWindow = 5 * time.Minute
+
+// sessionIdle reports whether sess saw no request for
+// api.DashboardSessionIdleTimeout. A row never touched counts from its
+// sign-in.
+func sessionIdle(sess state.Session, now time.Time) bool {
+	last := sess.IssuedAt
+	if sess.LastSeenAt != nil && sess.LastSeenAt.After(last) {
+		last = *sess.LastSeenAt
+	}
+	return !last.IsZero() && now.Sub(last) > api.DashboardSessionIdleTimeout
+}
 
 // sessionTouchDebounce mirrors keyTouchDebounce but keyed on the
 // session id (sid) rather than the API key id. Same pointer-version
@@ -1796,7 +1845,51 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 			"Not found", detail))
 		return true
 	}
+	if appBoundCredentialDeniedRoute(r.Pattern) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, title,
+			"this token deploys its app; it cannot delete or rename the app, send its data elsewhere, mint credentials, or read its debug and crash data. Use an API key for that").
+			WithHint("Create an API key with `gregale key create` for app administration."))
+		return true
+	}
 	return false
+}
+
+// appBoundCredentialDeniedExact and appBoundCredentialDeniedAreas are the
+// /v1/apps/{slug} routes an app-bound credential (a deploy token, or an OIDC
+// bearer exchanged for one app) may not use although deploy:write opens them
+// to API keys: deleting or renaming the app, sending its data elsewhere (log
+// drains, mirrors, outbound webhooks), minting credentials (consumer keys, AI
+// access tokens, issue ingest tokens) and reading or forking its memory
+// (debug requests, crash snapshots, forks). A CI deploy, including a
+// gregale.yaml reconciliation, uses none of them; inbound webhooks are
+// separate routes and stay open.
+var appBoundCredentialDeniedExact = map[string]bool{
+	"DELETE /v1/apps/{slug}":      true,
+	"POST /v1/apps/{slug}/rename": true,
+}
+
+var appBoundCredentialDeniedAreas = map[string]bool{
+	"log-drains": true, "mirrors": true, "webhooks": true,
+	"consumers": true, "ai-access-tokens": true, "issue-ingest-tokens": true,
+	"debug": true, "crash-snapshots": true, "forks": true,
+}
+
+// appBoundCredentialDeniedRoute reports whether the matched route pattern is
+// outside what an app-bound credential may do.
+func appBoundCredentialDeniedRoute(pattern string) bool {
+	if appBoundCredentialDeniedExact[pattern] {
+		return true
+	}
+	_, path, ok := strings.Cut(pattern, " ")
+	if !ok {
+		return false
+	}
+	rest, ok := strings.CutPrefix(path, "/v1/apps/{slug}/")
+	if !ok {
+		return false
+	}
+	area, _, _ := strings.Cut(rest, "/")
+	return appBoundCredentialDeniedAreas[area]
 }
 
 // appBoundPreviewStatusReads are the PR preview status reads an app-bound

@@ -234,6 +234,7 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		auditPayload["expires_at"] = k.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	s.audit.Emit(r.Context(), "api_key.created", &acct.ID, auditPayload)
+	s.noticeCredentialCreated(r, acct, credentialAPIKey, k.Label)
 	resp := orgAPIKeyResponse(k)
 	resp.Prefix = keyPrefix(plaintext)
 	resp.Plaintext = plaintext
@@ -426,6 +427,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 			s.notFound(w, "key already revoked")
 			return
 		}
+		if errors.Is(err, state.ErrAPIKeyExpired) {
+			api.WriteProblem(w, api.ErrAPIKeyExpired())
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("could not rotate key"))
 		return
 	}
@@ -451,6 +456,7 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	s.log.Info("api key rotated",
 		"old_key", oldKey.ID, "new_key", newKey.ID,
 		"account", acct.ID, "org", mem.OrgID, "grace_window_days", graceWindowDays)
+	s.noticeCredentialCreated(r, acct, credentialRotatedKey, newKey.Label)
 
 	resp := api.RotateOrgAPIKeyResponse{
 		Key:          orgAPIKeyResponse(newKey),

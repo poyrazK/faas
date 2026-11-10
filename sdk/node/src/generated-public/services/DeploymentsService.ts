@@ -742,7 +742,9 @@ export class DeploymentsService {
         \`profile_investigation_limit\`.
         `,
         503: `The GitHub integration unreachable or source-ref tarball fetch failed
-        (code: source_ref_unavailable). Retry in ~30s.
+        (code: source_ref_unavailable). Retry in ~30s. A PR preview whose
+        managed PostgreSQL database is still provisioning answers
+        code: preview_database_provisioning; retry after Retry-After.
         `,
       },
     });

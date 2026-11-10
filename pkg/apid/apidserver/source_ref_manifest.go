@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"path"
 	"reflect"
@@ -55,6 +56,7 @@ type sourceRefManifestStaged struct {
 	eventVersionChanges   []sourceRefEventVersionsChange
 	workPolicyChanges     []sourceRefWorkPolicyChange
 	bindingIDs            []string
+	queueBindingChanges   []sourceRefQueueBindingChange
 	scalingChanged        bool
 	previousScalingPolicy *state.ScalingPolicy
 	appliedScalingPolicy  *state.ScalingPolicy
@@ -99,7 +101,7 @@ func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
 	return staged.cronIntent != nil || staged.scalingChanged || staged.retryPolicyChanged || staged.lifecycleChanged || len(staged.edgeRuleChanges) > 0 ||
 		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 || len(staged.triggerWorkChanges) > 0 ||
 		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 || len(staged.eventRetryChanges) > 0 || len(staged.eventVersionChanges) > 0 ||
-		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0 ||
+		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0 || len(staged.queueBindingChanges) > 0 ||
 		len(staged.eventSubscriptionsEnabled) > 0
 }
 
@@ -396,6 +398,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	}
 	staged.bindingIDs = bindingIDs
 	if problem := s.applySourceManifestSettings(ctx, acct, app, m, &staged); problem != nil {
+		return staged, problem
+	}
+	if problem := s.applySourceRefQueueBindings(ctx, acct, app, m.QueueBindings, deploymentScope, &staged); problem != nil {
 		return staged, problem
 	}
 	if len(m.WorkPolicies) > 0 {
@@ -911,8 +916,10 @@ func (s *server) applySourceManifestSettings(ctx context.Context, acct state.Acc
 
 // applyBridgeSourceSettings applies a GitHub deploy's gregale.yaml settings
 // for the githubd bridge, which has no server of its own. It returns the app
-// as it now is and the undo for a failed enqueue.
-func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (state.App, func(context.Context), *api.Problem) {
+// as it now is and the undo for a failed enqueue. push names the environment
+// the push deploys ("" is production) and who pushed; a function's settings
+// follow the environment and are attributed to the pusher.
+func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, push sourcePush) (state.App, func(context.Context), *api.Problem) {
 	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 	baseline, err := s.store.LatestDeployment(ctx, app.ID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -933,6 +940,14 @@ func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Accou
 			app = reloaded
 		}
 	}
+	if m.FunctionSettings != nil {
+		updated, problem := s.applySourceFunctionSettings(ctx, acct, app, *m.FunctionSettings, push)
+		if problem != nil {
+			undo(context.WithoutCancel(ctx))
+			return app, func(context.Context) {}, problem
+		}
+		app = updated
+	}
 	return app, undo, nil
 }
 
@@ -947,6 +962,9 @@ func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account
 		return api.ErrCapacity("could not resolve account plan limits")
 	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
+		return prob
+	}
+	if prob := s.afterRestoreBudgetProblem(ctx, acct.ID, app.ID, req.AfterRestore); prob != nil {
 		return prob
 	}
 	if prob := s.executionModeApprovalProblem(ctx, app, &req); prob != nil {
@@ -1104,7 +1122,13 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 	leftFields, rightFields := *left, *right
 	leftFields.Targets, rightFields.Targets = nil, nil
 	leftFields.Schedules, rightFields.Schedules = nil, nil
-	return reflect.DeepEqual(leftFields, rightFields) && slices.Equal(left.Targets, right.Targets) && slices.Equal(left.Schedules, right.Schedules)
+	return reflect.DeepEqual(leftFields, rightFields) && slices.EqualFunc(left.Targets, right.Targets, scalingTargetsEqual) &&
+		slices.Equal(left.Schedules, right.Schedules)
+}
+
+// scalingTargetsEqual compares targets with nil and empty labels alike.
+func scalingTargetsEqual(a, b state.ScalingTarget) bool {
+	return a.Metric == b.Metric && a.Value == b.Value && a.Name == b.Name && maps.Equal(a.Labels, b.Labels)
 }
 
 func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Problem {
@@ -1154,6 +1178,9 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 				fmt.Sprintf(`{"kind":"updated","app_id":"%s","scaling_changed":true}`, staged.appID))
 		}
+	}
+	if err := s.rollbackSourceRefQueueBindings(ctx, staged); err != nil {
+		errs = append(errs, err)
 	}
 	if staged.lifecycleChanged {
 		if err := s.rollbackSourceRefLifecycle(ctx, staged); err != nil {

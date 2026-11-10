@@ -2,12 +2,43 @@ package liveserver
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
+	"github.com/onebox-faas/faas/pkg/livequery/rest"
 )
+
+func TestLiveReadsApplyTheDataAPIRowSecurityGate(t *testing.T) {
+	secured := rest.Relation{Schema: "api", Name: "messages", RowSecured: true}
+	open := rest.Relation{Schema: "api", Name: "countries"}
+	for _, tc := range []struct {
+		name      string
+		frame     liveproto.ClientFrame
+		relations []rest.Relation
+		refused   bool
+	}{
+		{"user, row-secured", liveproto.ClientFrame{}, []rest.Relation{secured}, false},
+		{"user, embeds an unprotected relation", liveproto.ClientFrame{}, []rest.Relation{secured, open}, true},
+		{"user, exempt", liveproto.ClientFrame{AllowWithoutRLS: []string{"api.countries"}}, []rest.Relation{secured, open}, false},
+		{"user, another schema's exemption", liveproto.ClientFrame{AllowWithoutRLS: []string{"catalog.countries"}}, []rest.Relation{open}, true},
+		{"anonymous, exemptions do not apply", liveproto.ClientFrame{Access: liveproto.AccessAnonymous, AllowWithoutRLS: []string{"api.countries"}}, []rest.Relation{open}, true},
+		{"anonymous, row-secured", liveproto.ClientFrame{Access: liveproto.AccessAnonymous}, []rest.Relation{secured}, false},
+		{"server key", liveproto.ClientFrame{Access: liveproto.AccessServer}, []rest.Relation{open}, false},
+	} {
+		no := rowSecurityRefusal(tc.frame, tc.relations)
+		if (no != nil) != tc.refused {
+			t.Fatalf("%s: refusal = %v", tc.name, no)
+		}
+		if no != nil && (no.code != liveproto.CodeForbidden || !strings.Contains(no.msg, "rls_required: api.countries")) {
+			t.Fatalf("%s: refusal = %+v", tc.name, no)
+		}
+	}
+}
 
 func TestRLSClaimsMatchTheDataAPIGateway(t *testing.T) {
 	canonical, ok := rlsClaims(json.RawMessage(`{"sub":"alice","exp":1,"iat":2,"nbf":3,"jti":"j","tenant":"t1",
-		"gregale_access":"server","gregale_server_key":"a","gregale_sql_deadline":{"version":1},"gregale_refresh_hash":"h","gregale_serving_fingerprint":"f"}`))
+		"gregale_access":"server","gregale_server_key":"a","gregale_storage":"write","gregale_sql_deadline":{"version":1},"gregale_refresh_hash":"h","gregale_serving_fingerprint":"f"}`))
 	if !ok {
 		t.Fatal("valid claims refused")
 	}

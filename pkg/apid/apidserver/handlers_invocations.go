@@ -185,8 +185,10 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// MaxAsyncResultRetentionSeconds by sending an out-of-range
 		// value. RetryPolicy is the typed DTO; marshal to JSON for
 		// the JSONB column.
-		DeadlineAt:             deadlineForRequest(req.DeadlineAt, acct),
-		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts),
+		DeadlineAt: deadlineForRequest(req.DeadlineAt, acct),
+		// The caller receives a failure the app returned, so it ends after
+		// one attempt; platform failures still retry (Hunt 32 H32-65).
+		RetryPolicyJSON:        state.MarkSyncInvokeRetryPolicy(effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts)),
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
@@ -337,6 +339,57 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 		ID:      inv.ID,
 		TraceID: traceID,
 	})
+}
+
+// queueSendBatch sends up to QueueSendBatchMaxMessages messages to one queue,
+// in order, as one API request against the account's budget
+// (ADR-20261018101500 amendment 2026-10-31). Each message passes the same
+// admission as queueSend; the first refusal ends the batch, and the messages
+// after it are not attempted.
+func (s *server) queueSendBatch(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	if limits.MaxQueueDepth == 0 {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("queues", acct.Plan))
+		return
+	}
+	var req api.QueueSendBatchRequest
+	if !decodeJSONLimit(w, r, &req, api.QueueSendBatchMaxBytes) {
+		return
+	}
+	if len(req.Messages) == 0 || len(req.Messages) > api.QueueSendBatchMaxMessages {
+		api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("messages must hold 1 to %d messages; got %d", api.QueueSendBatchMaxMessages, len(req.Messages))))
+		return
+	}
+	resp := api.QueueSendBatchResponse{Results: make([]api.QueueSendBatchResult, len(req.Messages))}
+	var refused *api.Problem
+	for i, message := range req.Messages {
+		resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "not_attempted"}
+		if refused != nil {
+			continue
+		}
+		// A single send's body limit is its message size; a batch checks each.
+		if len(message.Payload) > limits.MaxSourceBytesPerInvocation {
+			refused = api.ErrPlanSourceBytes(limits.MaxSourceBytesPerInvocation, int64(len(message.Payload)))
+			resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "rejected", Problem: refused}
+			continue
+		}
+		inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, message.Payload, "", req.QueueName, req.Environment, req.RetryPolicy, nil)
+		if problem != nil {
+			refused = problem
+			resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "rejected", Problem: problem}
+			continue
+		}
+		resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "accepted", Message: &api.QueueSendResponse{
+			Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID, ID: inv.ID, TraceID: traceID}}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // sendAppMessage is the ergonomic application-inbox facade. It deliberately

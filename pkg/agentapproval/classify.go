@@ -21,6 +21,12 @@ const (
 	TargetApp
 	// TargetDeployment: production only when the {id} deployment's app is.
 	TargetDeployment
+	// TargetEdgeRule: production only when the {id} edge rule's app is.
+	TargetEdgeRule
+	// TargetAppConfig: production only when the {slug} app is a production
+	// app and the write targets its production scope (?scope= or
+	// ?environment= empty, default or production).
+	TargetAppConfig
 )
 
 // Rule is the classification of one route.
@@ -67,7 +73,10 @@ var destructivePosts = map[string]bool{
 	"POST /v1/triggers/{}/records/{}/drop":        true,
 }
 
-// production routes deploy, roll back, restart or move traffic.
+// production routes deploy, roll back, restart or move traffic. Edge-rule
+// writes are here too (ADR-091 amendment 2026-11-07): a route, redirect,
+// maintenance, rewrite or async rule moves or stops a production app's
+// traffic as surely as a rollback, and a gate edit opens or closes it.
 var production = map[string]Target{
 	"POST /v1/apps/{}/deployments":                         TargetApp,
 	"POST /v1/apps/{}/deployments/source-ref":              TargetApp,
@@ -78,12 +87,69 @@ var production = map[string]Target{
 	"POST /v1/apps/{}/rollouts/recover":                    TargetApp,
 	"POST /v1/apps/{}/restart":                             TargetApp,
 	"POST /v1/apps/{}/edge-rules/rollback":                 TargetApp,
+	"POST /v1/apps/{}/edge-rules":                          TargetApp,
+	"PATCH /v1/edge-rules/{}":                              TargetEdgeRule,
+	"POST /v1/edge-rules/{}/waf-exclusions":                TargetEdgeRule,
+	"PUT /v1/apps/{}/edge-protection/attack-mode":          TargetApp,
+	"POST /v1/apps/{}/openapi/apply":                       TargetApp,
+	"POST /v1/apps/{}/route-policy/apply":                  TargetApp,
+	"POST /v1/apps/{}/routes/insights/{}/fix":              TargetApp,
 	"PATCH /v1/deployments/{}/traffic":                     TargetDeployment,
 	"POST /v1/deployments/{}/promote":                      TargetDeployment,
 	"POST /v1/deployments/{}/promote-with-application-ack": TargetDeployment,
 	"POST /v1/deployments/{}/canary/advance":               TargetDeployment,
 	"POST /v1/deployments/{}/retry":                        TargetDeployment,
 	"POST /v1/deployments/{}/approvals":                    TargetDeployment,
+
+	// Project deploys, environment promotions, release sets and GitOps
+	// sources deploy or move traffic for every app of an environment
+	// (deploy review 2026-11-10, D3). An environment records no production
+	// flag, so these ask on every environment (TargetNone); protected
+	// environments keep their own approval token on top.
+	"POST /v1/projects/apply-plan":                                                 TargetNone,
+	"POST /v1/projects/safe-deploy":                                                TargetNone,
+	"POST /v1/projects/{}/environments/{}/promote":                                 TargetNone,
+	"POST /v1/projects/{}/environments/{}/promotions/{}/rollback":                  TargetNone,
+	"POST /v1/projects/{}/environments/{}/promotions/{}/recover-migration":         TargetNone,
+	"POST /v1/projects/{}/environments/{}/release-sets":                            TargetNone,
+	"POST /v1/projects/{}/environments/{}/release-sets/activate":                   TargetNone,
+	"POST /v1/projects/{}/environments/{}/release-sets/deactivate":                 TargetNone,
+	"POST /v1/projects/{}/environments/{}/release-sets/rollback":                   TargetNone,
+	"POST /v1/projects/{}/environments/{}/gitops/source":                           TargetNone,
+	"PATCH /v1/projects/{}/environments/{}/gitops/source":                          TargetNone,
+	"POST /v1/projects/{}/environments/{}/gitops/source/rebind":                    TargetNone,
+	"POST /v1/projects/{}/environments/{}/gitops/adopt":                            TargetNone,
+	"POST /v1/projects/{}/environments/{}/gitops/overrides":                        TargetNone,
+	"POST /v1/projects/{}/environments/{}/gitops/revisions/approve":                TargetNone,
+	"POST /v1/orgs/{}/projects/{}/deploy":                                          TargetNone,
+	"POST /v1/orgs/{}/projects/{}/environments/{}/promote":                         TargetNone,
+	"POST /v1/orgs/{}/projects/{}/environments/{}/promotions/{}/rollback":          TargetNone,
+	"POST /v1/orgs/{}/projects/{}/environments/{}/promotions/{}/recover-migration": TargetNone,
+	"POST /v1/orgs/{}/projects/{}/environments/{}/release-sets":                    TargetNone,
+
+	// Configuration reaches production at the next wake like a release, so a
+	// production variable, secret or app setting asks as a restart and a
+	// config rollback already did (apps/projects review 2026-11-10, P10).
+	// Deletes ask as the delete category.
+	"PUT /v1/apps/{}/env/{}":                                            TargetAppConfig,
+	"POST /v1/apps/{}/env/batch":                                        TargetAppConfig,
+	"PUT /v1/apps/{}/secrets/{}":                                        TargetAppConfig,
+	"PUT /v1/apps/{}/secret-references/{}":                              TargetAppConfig,
+	"PATCH /v1/apps/{}":                                                 TargetApp,
+	"PUT /v1/projects/{}/environments/{}/config":                        TargetNone,
+	"PUT /v1/projects/{}/environments/{}/secrets/{}":                    TargetNone,
+	"PUT /v1/orgs/{}/projects/{}/environments/{}/config":                TargetNone,
+	"PUT /v1/projects/{}/environments/{}/workloads/{}/policies":         TargetNone,
+	"PUT /v1/orgs/{}/projects/{}/environments/{}/workloads/{}/policies": TargetNone,
+}
+
+// productionRouteOnly are production routes whose ServeMux pattern differs
+// from api/openapi.yaml: the promotion action route the spec writes as /abort
+// and /recover. The gate classifies the ServeMux pattern, so these are listed
+// as registered.
+var productionRouteOnly = map[string]Target{
+	"POST /v1/orgs/{}/projects/{}/environments/{}/promotions/{}/{}": TargetNone,
+	"POST /v1/projects/{}/environments/{}/promotions/{}/{}":         TargetNone,
 }
 
 // credentials mint keys and tokens; every POST ending in /rotate or
@@ -134,6 +200,9 @@ func Classify(pattern string) (Rule, bool) {
 		return Rule{Category: api.AgentApprovalCredentials}, true
 	}
 	if target, ok := production[key]; ok {
+		return Rule{Category: api.AgentApprovalProduction, Target: target}, true
+	}
+	if target, ok := productionRouteOnly[key]; ok {
 		return Rule{Category: api.AgentApprovalProduction, Target: target}, true
 	}
 	return Rule{}, false

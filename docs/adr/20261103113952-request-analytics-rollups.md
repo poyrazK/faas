@@ -230,3 +230,205 @@ A review of long windows found three more problems.
    on raw-row windows they run unbounded. A failure leaves out
    `deployment_costs` or the route deployment splits, logs a warning, and
    sets `sampled_measures` to `omitted`. A cancelled request still fails.
+
+## Amendment 3 (2026-11-07): smaller rollups
+
+A size review found the minute tier holding about 2.8 GB a day for one app
+at 100 requests/s (689 bytes per row on Postgres 16, 2,840 rows a minute),
+so about 20 GB at Pro's 7-day retention and 39 GB at Scale's 14 days: about
+half the raw telemetry it was meant to replace. Two causes, both fixed:
+
+1. **Dimension rows were split by status and deployment.** Every
+   `country`, `referrer_host`, `ua_family` and `consumer_id` row carried the
+   request's HTTP status and deployment in its key, as route rows do. No
+   reader uses either for those kinds: `group_by=status` and the deployment
+   splits read route rows only, and error counts are a column. apid now
+   writes those rows with status `0` and the nil deployment, so a value is
+   one row per minute. Route rows keep their method, status and deployment.
+   Migration `20261107164340118` lets the status CHECK of both tiers accept
+   `0` on non-route rows (added `NOT VALID`, validated, then the old CHECK
+   dropped); the previous release writes rows it accepts and reads status on
+   route rows only. Rows written before the upgrade age out with retention;
+   readers merge old and new rows of a value as they already merge groups.
+2. **The top-N fold was per flush, not per minute.** Each 10-second flush
+   kept its own busiest `RequestAnalyticsRollupDimensionsMax` values, so a
+   minute stored up to six different sets (about 180 consumers instead of
+   50), and each minute row was upserted about six times. apid now writes a
+   minute once, at the first flush after it closed
+   `RequestAnalyticsRollupMinuteGrace` (30 s) ago, with one fold over the
+   whole minute; rows of a minute that arrive later are added by the next
+   flush. The grace covers gateways holding a minute until it closes, and
+   the minute is still inside `RequestAnalyticsSettleLag`, which readers
+   already report as arriving. A clean shutdown writes the open minutes too.
+   An apid crash now loses up to about 100 s of rollups instead of 10 s;
+   the debugger's raw rows are unaffected. The per-minute value buffer is
+   `RequestAnalyticsRollupDimensionsBufferMax` (now 500), as a value costs
+   one buffered row.
+
+With the same traffic mix, a minute is now 358 rows written once (538 with a
+canary's second deployment), against 2,840 rows from 6,952 upserts: about
+8x less storage and 19x fewer row writes, in both tiers. The hourly tier is
+derived from the same rows, so each hour row is now updated once a minute
+instead of every flush.
+
+Two more reductions follow in the same change:
+
+3. **Minutes are kept 48 hours.** The hourly tier already answers every
+   whole hour of a window, so minute rows matter only for a window's partial
+   edge hours. meterd now sweeps minute rows past
+   `RequestAnalyticsMinuteRetention` (48 h) on every plan, or sooner when the
+   plan's telemetry retention is shorter; hour rows keep the plan ladder.
+   An analytics window whose start or end lies past
+   `RequestAnalyticsMinuteReadHorizon` (47 h, an hour of margin for the
+   hourly sweep) is widened to whole UTC hours: its start moves back to the
+   hour, or forward when that hour precedes the plan's retention, and its
+   end moves forward to the next hour; ends inside the horizon stay as asked,
+   so a recent window still ends now. The response's `from` and `until` show
+   the window answered. Past the horizon the rollups answer only a start the
+   hourly tier holds (on the hour, at or after its coverage); otherwise the
+   read falls back to raw rows, as before coverage. For a 14-day Scale app
+   at 100 requests/s, the minute tier drops from about 5 GB to about 0.7 GB.
+   An apid of the previous release reading a long window during the rollout
+   finds its first partial hour's minutes swept and under-counts that hour.
+   A single cutoff for nearly every row also lets each sweep batch take the
+   oldest rows off the bucket index, instead of walking past Scale rows that
+   Pro and Hobby cutoffs leave behind.
+4. **Integer histograms, expand step.** `latency_hist` is 45 `bigint`s,
+   360 of a row's 689 bytes, but a bucket counts one app's requests in one
+   minute or hour. Migration `20261107175452204` adds the nullable
+   `latency_hist_int4 integer[]` to both tiers, makes `latency_hist`
+   nullable, and requires a row to hold at least one of them. Readers add the
+   two columns bucket by bucket, and this release's writer, adding to a row
+   whose `latency_hist` is NULL, starts from zeros. The writer still writes
+   `latency_hist`: a previous-release reader scans NULL histogram buckets as
+   errors, so a release that wrote integers alone would fail its analytics
+   reads during the rollout or after a rollback. The next release's writer
+   fills `latency_hist_int4` alone and folds a row's bigint histogram into it
+   when it updates the row (`request_analytics_hist_add_int4`); a later
+   contract migration drops `latency_hist`. That saves about 26% of every
+   rollup row.
+
+## Amendment 4 (2026-11-09): coverage over quiet spans, and crash losses
+
+1. **Coverage is backdated over spans with no traffic.** A tier's coverage
+   starts at the app's first rollup minute, and a window starting before it
+   fell back to raw rows. That included every window longer than a new
+   app's age, and every window of an app idle when rollups started, though
+   no raw rows existed before the coverage either: those reads were slow
+   and capped by the debugger's ingest limit for nothing. Readers now ask
+   whether the app has raw telemetry received in `[window start, coverage)`
+   (`RequestTelemetryExistsBetween`, an index probe). When it has none, the
+   tier's coverage reads as starting before the window, for the minute tier
+   and the hourly tier alike, so the hourly tier answers the app's first
+   hour whole. When raw rows exist there, the rollups miss traffic and raw
+   rows answer, as before. The probe runs only for a window that starts
+   before a tier's coverage.
+2. **A crash's lost minutes are marked.** apid holds each minute until 30 s
+   after it closes (amendment 3), so a crash or a kill lost up to about
+   100 s of rollups with nothing recording it, and analytics under-counted
+   those windows as complete. apid now keeps a marker file while its
+   aggregator runs (`/var/lib/faas/apid-analytics-rollups.running`,
+   `FAAS_ANALYTICS_ROLLUP_CRASH_MARKER`), touched at every successful flush
+   and removed after a clean final flush. A start that finds it marks as
+   lost (`request_analytics_rollup_gaps`) every app minute with raw
+   telemetry from a minute, the grace and a flush interval before the
+   marker's last touch until the start. apid writes raw rows as they arrive,
+   and an app over its ingest cap still stores its first rows each minute,
+   so the active apps are found. With more than one apid replica, a crash
+   also marks the minutes the others answered, which errs toward
+   "incomplete". A marker that cannot be written turns this off for the run.
+
+## Amendment 5 (2026-11-09): the gateway counts its own requests
+
+apid counted a request only when its raw telemetry row reached apid. A row
+the gateway's 4096-row ring overwrote under a burst, or one dropped after
+its retries while apid was slow or down, was lost to analytics as well as to
+the debugger, and the minute was marked incomplete. Analytics counts are
+cheap to keep exactly; raw rows are not.
+
+1. **Counted at record time.** With `FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS=1`
+   the gateway counts each request into a per-minute rollup as it records it,
+   before the ring, with the aggregator apid uses (`pkg/requestanalytics`):
+   the same route rows, folded kinds, top-50 fold and latency histogram. It
+   buffers at most `RequestAnalyticsGatewayRollupRowsMax` rows; a request
+   that does not fit is left for apid to count.
+2. **`analytics_counted` on raw rows.** A raw row the gateway counted is
+   shipped with `analytics_counted` set, and apid does not count it again.
+   Raw rows still ship as before and the debugger's ingest cap still applies
+   to them; only the counting moved.
+3. **Batches applied once.** The gateway ships each minute 30 s after it
+   closes (the grace of amendment 3), in batches of at most
+   `RequestAnalyticsRollupBatchRowsMax` rows through
+   `RequestTelemetry.AddRequestAnalyticsRollups`. Each batch carries a
+   `batch_id`. apid claims it in `request_analytics_rollup_batches` in the
+   same transaction as the rollup upserts, so a batch resent after a lost
+   answer adds nothing. meterd deletes ledger rows after a day, far past any
+   resend. apid leaves out the rows of apps whose plan keeps no telemetry,
+   as its own counting does, and rejects rows that break the minute tier's
+   contract.
+4. **Failures.** A batch apid could not apply is resent with the same
+   `batch_id` on later ticks. Past `RequestAnalyticsGatewayRollupBatchesMax`
+   waiting batches, or when apid refuses a batch (`InvalidArgument`), the
+   batch is given up and its requests are reported as lost per app in the
+   gateway's coverage heartbeat, so the minutes read as incomplete. Requests
+   in closed minutes not yet acknowledged are reported as pending, so apid
+   does not call a minute complete before its rollup lands. The gateway
+   ships every buffered minute in its bounded final flush.
+5. **Rollout and rollback.** Deploy order puts apid first. A gateway counts
+   nothing until apid answers an empty batch: an apid that predates the RPC,
+   or one without rollups, answers `Unimplemented`, and the gateway asks
+   again every `RequestAnalyticsGatewayRollupProbeInterval` while apid keeps
+   counting raw rows. When apid starts answering `Unimplemented` later (a
+   rollback), the gateway stops counting and discards its buffer without
+   reporting a loss: the older apid ignores `analytics_counted` and counts
+   those rows itself.
+6. **What this does not fix.** A gateway crash loses its buffered minutes,
+   up to about 90 s, where the raw ring held a few seconds; its last
+   heartbeat reported them as pending. With apid replicas on mixed versions
+   during an apid rollout, a row an older replica receives is counted there
+   and in the gateway's batch. Gateway counting stays off by default until a
+   production check compares its counts with apid's.
+
+Metrics: `gateway_request_analytics_rollup_requests_total{outcome}`
+(`shipped`, `lost`).
+
+## Amendment 6 (2026-11-09): analytics completeness apart from raw delivery
+
+Analytics judged a window complete with the raw coverage heartbeats route
+removal reads: any raw row a gateway lost, or still held, marked the window
+incomplete. With gateway counting (amendment 5) a lost raw row the gateway
+had counted leaves the rollups whole, so analytics reported windows as
+incomplete that were not. Amendment 5 also added the requests of every
+closed but unsent rollup minute to the raw pending count, which would have
+held raw completeness and route removal "pending" for 30 s of every minute;
+that is removed.
+
+1. **The gateway reports an analytics part.** Each heartbeat of a gateway
+   with `FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS=1` carries whether it is
+   counting, its cumulative analytics losses it cannot attribute to an app,
+   and per app `analytics_dropped_count` and `analytics_pending_count`. An
+   analytics loss is a rollup batch given up, or a lost raw row the gateway
+   did not count (counting off, buffer full); a lost raw row it counted is
+   a raw loss only. Analytics pending is rollups past their send time (a
+   minute plus the 30 s grace) and not yet acknowledged, and raw rows the
+   gateway did not count still waiting to ship. A batch given up no longer
+   counts as a raw loss: its raw rows shipped.
+2. **apid records it with the raw heartbeat**, in the same transaction
+   (`record_request_analytics_coverage`): `request_analytics_node_coverage`
+   keeps since when each node has counted without a break, restarting it on
+   a reboot, a 30 s heartbeat gap, an unattributed analytics loss or counting
+   turned off; `request_analytics_app_gaps` keeps each app's last analytics
+   loss or late rollup, as `request_telemetry_app_gaps` does for raw rows.
+   Counting reads as off on an apid without rollups. The raw tables and
+   `route_removal_coverage_blockers` are unchanged.
+3. **Analytics answered by rollups reads
+   `request_analytics_completeness_blockers`.** Every active node must
+   report, fresh, enabled, unsampled and caught up to the window's end, as
+   before. A node whose latest heartbeat carried an analytics part showing it
+   counting since before the window is then judged by its analytics gaps;
+   any other node by raw delivery, exactly as before. Analytics answered by
+   raw rows keeps raw completeness: there a lost raw row is a missing
+   request.
+4. **Rollout.** A heartbeat without the analytics part, from an older
+   gateway, or recorded by an older apid, leaves the node judged by raw
+   delivery. The migration only adds tables and functions.

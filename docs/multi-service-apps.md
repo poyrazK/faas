@@ -245,10 +245,16 @@ A Compose service that publishes `ports:` gets a public URL. One without
 no public URL. So is one whose ports are all bound to a loopback address, such
 as `127.0.0.1:8081:8080`, which Docker publishes only on your own machine; the
 plan warns, and removing the address publishes it. Other services are public unless
-[`.gregale/project.yaml`](#without-a-compose-file) says `visibility: internal`.
+the root [`gregale.yaml` `project:` block](#without-a-compose-file) says `visibility: internal`.
 The plan lists every public service under **Public on the internet** and marks
-the rest `visibility=internal`. Visibility is set when the app is created; see
-[networking](networking.md) for changing it later.
+the rest `visibility=internal`. A production deploy also makes an existing
+service internal once Compose stops publishing its ports, and the plan says
+so: removing `ports:` takes a service off the internet. The reverse is never
+automatic: a service that starts publishing ports stays internal, and the plan
+says how to publish it (`gregale app <slug> --visibility public`). A deploy to a
+named environment changes no visibility, which is app-wide. See
+[networking](networking.md) for changing it by hand
+([ADR-20261107090000](adr/20261107090000-preview-markers-reach-services-and-compose-visibility.md)).
 
 A service listens on the container side of its first `ports:` mapping: with
 `ports: ["8080:3000"]`, Gregale sends requests to port 3000 and, unless you set
@@ -292,7 +298,8 @@ A call stays in its caller's environment: production reaches the production
 deployment of `billing`, and a `staging` workload reaches the `staging`
 deployment. When `billing` has no deployment in that environment, the call is
 refused with 403 rather than sent to production; deploy `billing` to the
-environment first. During
+environment first. A deploy to the environment that leaves out a dependency it
+does not have there says so in its plan. During
 development, `gregale dev --all` runs every service in its own developer
 environment, and the same names reach those environments instead of
 production ([gregale dev](gregale-dev.md#call-the-other-apps)).
@@ -334,10 +341,14 @@ services:
     x-gregale-app-protocol: grpc   # http1 (default), http2 or grpc
 ```
 
-Each deploy sets the app's protocol to the declared value; a service that
+Each production deploy sets the app's protocol to the declared value, and a
+deploy to a named environment sets it on the services it creates; the protocol
+is app-wide, so a stage deploy leaves an existing app's alone. A service that
 declares none keeps the protocol set with
 `gregale app update <app> --app-protocol`. gRPC needs the Hobby plan or
-above, and the plan refuses it on Free.
+above, and the plan refuses it on Free. A streaming RPC between services, like
+any streamed response, ends after about 15 minutes; clients reconnect and
+resume ([long-lived streams](networking.md#long-lived-streams)).
 
 Plain TCP between services (Redis, PostgreSQL and other non-HTTP protocols)
 is off unless your operator has enabled it; see
@@ -345,26 +356,39 @@ is off unless your operator has enabled it; see
 
 ## Without a Compose file
 
-A repository without Compose declares the same things in
-`.gregale/project.yaml` at its root
-([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)):
+A repository without Compose declares the same things in the `project:` block
+of the `gregale.yaml` at its root
+([ADR-20261107180000](adr/20261107180000-one-config-file.md)):
 
 ```yaml
-service_policy: project        # project, declared or account, for every service
-services:
-  billing:
-    visibility: internal       # no public URL; set when the app is created
-    depends_on: [ledger]       # billing gets GREGALE_SERVICE_LEDGER_URL
-  admin:
-    service_policy: declared   # admin may call only what it declares
+project:
+  service_policy: project        # project, declared or account, for every service
+  services:
+    billing:
+      visibility: internal       # no public URL; set when the app is created
+      depends_on: [ledger]       # billing gets GREGALE_SERVICE_LEDGER_URL
+    admin:
+      service_policy: declared   # admin may call only what it declares
 ```
 
-Service names are the ones the plan shows. The file also applies to Compose
+Service names are the ones the plan shows. The block also applies to Compose
 services, but Compose stays the more specific source: a Compose
 `x-gregale-service-policy` wins, and `depends_on` lists from both are merged.
 A project created before the `project` policy became the default switches by
 setting `service_policy: project` here. An unknown name, key or value fails
-the plan and names the file.
+the plan and names the file. A root `gregale.yaml` that holds only the
+`project:` block is not deployed as a service.
+
+To see which file sets a value, run `gregale config explain` with the key,
+for example `gregale config explain services.billing.visibility`. It prints
+the effective value and every layer that can set it, and marks the one that
+wins.
+
+The same settings used to live in `.gregale/project.yaml`. That file still
+works but is deprecated: deploys warn about it, and declaring settings in
+both places fails the plan. Move it with `gregale project import`, which
+appends the block to your `gregale.yaml` without changing the rest of the
+file and deletes the old one (`--dry-run` prints the result first).
 
 ## Configuration
 
@@ -377,8 +401,12 @@ gregale env set --app shop-api LOG_LEVEL=info
 gregale env set --app shop-api STRIPE_KEY=sk_live_…
 ```
 
-or pass a `--secrets-file` to `gregale deploy`, which supplies its keys to every
-selected service.
+or pass a `--secrets-file` to `gregale deploy`. Each key goes only to the
+selected services whose Compose `environment:` names it, so one service's
+credentials do not reach the others. A key no service names goes to every
+selected service that has no value for it yet. A value that has not changed is
+not rewritten, and every service's secret limit is checked before the first
+write ([ADR-20261108090000](adr/20261108090000-project-deploy-config-correctness.md)).
 
 A value every service needs, such as a shared API key or log level, can be set
 once for the project instead of once per service. Every service of the

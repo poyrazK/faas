@@ -17,7 +17,8 @@ package fcvm
 // InstanceStats, where measured admission charges its memory with the frozen
 // floor. The guest stays
 // quiet-paused and resumes on the next request as before; L2 changes only
-// how admission counts it. The deeper levels are not built yet.
+// how admission counts it. With compression on, L3 and L4 compress the cold
+// pages of an instance held paused (idle_compress.go); L5 is schedd's park.
 //
 // Lock order: m.mu is released before idleMu is taken; idleMu is a leaf.
 
@@ -102,10 +103,17 @@ type IdleLadderConfig struct {
 	// ladder only observes. On needs quiet pause (WithQuietPause, not in
 	// observe mode).
 	On bool
+	// Apps quiet-pauses apps marked IdleLadderGuardedPause behind the
+	// activity guard (idle_ladder_apps.go). It needs On, CPU and Net.
+	Apps bool
 	// CPU and Net feed the activity guard (idle_ladder_guard.go); without
 	// both it stays off.
 	CPU IdleLadderCPU
 	Net IdleLadderNet
+	// Compress applies L3 and L4: it compresses the cold pages of instances
+	// quiet pause holds paused (idle_compress.go). It needs On.
+	Compress        bool
+	CompressMetrics *IdleCompressMetrics
 }
 
 // WithIdleLadder enables the idle ladder. Without it RunIdleLadderObserve
@@ -114,6 +122,9 @@ func (m *Manager) WithIdleLadder(cfg IdleLadderConfig) *Manager {
 	m.idleActivity = cfg.Activity
 	m.idleMetrics = cfg.Metrics
 	m.idleLadderOn = cfg.On
+	m.idleAppsOn = cfg.On && cfg.Apps
+	m.idleCompressOn = cfg.On && cfg.Compress
+	m.idleCompressMetrics = cfg.CompressMetrics
 	m.idleCPU, m.idleNet = cfg.CPU, cfg.Net
 	m.idleTick = cfg.Tick
 	if m.idleTick <= 0 {
@@ -149,6 +160,9 @@ type idleLadderCandidate struct {
 	lease  Lease
 	frozen bool
 	tail   bool
+	// quietPaused is whether quiet pause holds a guarded app paused now,
+	// read before idleMu (idle_ladder_apps.go).
+	quietPaused bool
 	// guarded marks an app quiet pause does not pause: the activity guard
 	// decides whether it is idle.
 	guarded bool
@@ -166,7 +180,9 @@ func (m *Manager) RunIdleLadderObserve(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.idleLadderPass(time.Now())
+			for _, r := range m.idleLadderPass(time.Now()) {
+				m.idleInboundResume(ctx, r)
+			}
 		}
 	}
 }
@@ -186,7 +202,9 @@ func (m *Manager) idleLadderEligibleLocked(id string, inst *Instance) bool {
 }
 
 // idleLadderPass samples every eligible instance's idle time once.
-func (m *Manager) idleLadderPass(now time.Time) {
+// It returns the guarded apps to resume because traffic reached them while
+// paused (idle_ladder_apps.go).
+func (m *Manager) idleLadderPass(now time.Time) (resume []idleAppResume) {
 	m.mu.Lock()
 	candidates := make([]idleLadderCandidate, 0, len(m.live))
 	for id, inst := range m.live {
@@ -198,6 +216,13 @@ func (m *Manager) idleLadderPass(now time.Time) {
 		}
 	}
 	m.mu.Unlock()
+	if m.idleAppsOn {
+		for i := range candidates {
+			if candidates[i].inst.IdleLadderGuardedPause {
+				candidates[i].quietPaused, _ = m.QuietGate(candidates[i].id)
+			}
+		}
+	}
 
 	m.idleMu.Lock()
 	defer m.idleMu.Unlock()
@@ -218,12 +243,16 @@ func (m *Manager) idleLadderPass(now time.Time) {
 			m.idleStates[c.id] = st
 		}
 		m.idleLadderSample(st, c, now, step)
+		if cause, ok := m.idleInboundReached(st, c); ok {
+			resume = append(resume, idleAppResume{id: c.id, cause: cause})
+		}
 	}
 	for id := range m.idleStates {
 		if !current[id] {
 			delete(m.idleStates, id)
 		}
 	}
+	return resume
 }
 
 // idleLadderSample advances one instance's idle gap. A gap ends when
@@ -267,13 +296,17 @@ func (m *Manager) quietPauseAfter(inst *Instance) time.Duration {
 	if m.idleLadderOn && after > 0 {
 		after = min(after, api.IdleLadderQuietPauseAfterMillis*time.Millisecond)
 	}
+	if after <= 0 && m.idleAppsOn && m.idleGuardOn() && inst.IdleLadderGuardedPause {
+		after = api.IdleLadderQuietPauseAfterMillis * time.Millisecond
+	}
 	return after
 }
 
 // IdleLadderLevel is the level vmmd holds an instance at while idle_ladder is
 // on: IdleQuietPause while quiet pause holds it paused, IdleFreeze once it
-// has also had nothing in flight for IdleLadderFreezeAfterSeconds. The deeper
-// levels are not built, so IdleFreeze is the most it reports. It is
+// has also had nothing in flight for IdleLadderFreezeAfterSeconds, and
+// IdleCold1 or IdleCold2 once compression took its cold pages in this pause
+// (idle_compress.go). It is
 // IdleRunning when the ladder is off and for an instance that is running, is
 // an agent run, or whose last pause failed (its state is unknown).
 func (m *Manager) IdleLadderLevel(instance string, now time.Time) IdleLevel {
@@ -289,6 +322,9 @@ func (m *Manager) IdleLadderLevel(instance string, now time.Time) IdleLevel {
 	st.mu.Unlock()
 	if !paused || since.IsZero() {
 		return IdleRunning
+	}
+	if level := st.coldLevel(); level >= IdleCold1 {
+		return level
 	}
 	from := st.seenAt
 	if _, last, ok := m.quietActivity.Quiet(instance); ok && last.After(from) {
@@ -350,6 +386,10 @@ type IdleLadderMetrics struct {
 	guardResumes   *prometheus.CounterVec
 	guardDurations prometheus.Histogram
 	guardHeld      *prometheus.CounterVec
+
+	// appResumes counts guarded apps resumed outside the forward path
+	// (idle_ladder_apps.go).
+	appResumes *prometheus.CounterVec
 }
 
 // NewIdleLadderMetrics registers vmmd_idle_ladder_observed_instances,
@@ -399,6 +439,10 @@ func NewIdleLadderMetrics(reg prometheus.Registerer) *IdleLadderMetrics {
 			Name: "vmmd_idle_ladder_guard_observed_mb_seconds_total",
 			Help: "Billable MB-seconds (VM RAM + 8 MB) of the pauses the activity guard would have made, by plan: what unbilled pauses of apps would not bill (ADR-20261107122928, observe mode).",
 		}, []string{"plan"}),
+		appResumes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "vmmd_idle_ladder_app_resumes_total",
+			Help: "Apps the idle ladder paused behind its activity guard that vmmd resumed outside a request, by cause: inbound (traffic reached the guest) or no_counters (the guard lost its CPU or veth counters) (ADR-20261107122928).",
+		}, []string{"cause"}),
 	}
 	for l := IdleQuietPause; l < idleLevelCount; l++ {
 		m.wakes.WithLabelValues(l.String())
@@ -406,7 +450,10 @@ func NewIdleLadderMetrics(reg prometheus.Registerer) *IdleLadderMetrics {
 	for _, cause := range []string{idleGuardEndRequest, idleGuardEndInbound, idleGuardEndBackground, idleGuardEndFrozen} {
 		m.guardResumes.WithLabelValues(cause)
 	}
-	reg.MustRegister(m, m.wakes, m.gaps, m.unbilled, m.guardPauses, m.guardResumes, m.guardDurations, m.guardHeld)
+	for _, cause := range []string{idleAppResumeInbound, idleAppResumeNoCounters} {
+		m.appResumes.WithLabelValues(cause)
+	}
+	reg.MustRegister(m, m.wakes, m.gaps, m.unbilled, m.guardPauses, m.guardResumes, m.guardDurations, m.guardHeld, m.appResumes)
 	return m
 }
 
@@ -471,4 +518,10 @@ func (q *IdleLadderMetrics) observeGuardHeld(l Lease, d time.Duration) {
 		return
 	}
 	q.guardHeld.WithLabelValues(string(l.Plan)).Add(float64(l.MemoryMaxMiB+api.PerVMOverheadMB) * d.Seconds())
+}
+
+func (q *IdleLadderMetrics) observeAppResume(cause string) {
+	if q != nil {
+		q.appResumes.WithLabelValues(cause).Inc()
+	}
 }

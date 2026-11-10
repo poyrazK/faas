@@ -44,6 +44,12 @@ overage on ([Compute overage](#compute-overage)):
 - the pool doubles, and storage past the plan's pool, averaged over the
   month, costs $0.50 per GiB-month.
 
+Data your databases send counts toward your plan's monthly egress allowance
+together with your apps' egress (Free 10 GiB, Hobby 100 GiB, Pro 500 GiB,
+Scale 2,000 GiB; see [plans](plans.md)). Once the two together reach it, your
+databases stop and refuse connections until the month ends or the plan grows.
+Egress overage does not extend this for databases yet.
+
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
 scale-to-zero are rejected until a separately priced entitlement exists.
@@ -498,7 +504,8 @@ them.
 | `postgres_majors` | Comma-separated majors offered. Default `14,15,16,17,18`. |
 | `port`, `tls_mode`, `database_name` | Connection details in issued URLs. Defaults `5432`, `verify-full`, `gregale`. |
 
-`data_api_enabled` issues Data API logins, as on Neon. Service classes have
+`data_api_enabled` issues Data API logins and `session_enabled` session
+logins, as on Neon. Service classes have
 fixed shapes:
 
 - `development`: 1 vCPU and 512 MiB.
@@ -535,6 +542,10 @@ credential mode and the dedicated `api` schema. See the
 [Data API guide](data-api.md) for JWT authentication, RLS policies, type export
 and schema refresh. Neon advertises this mode only when the backend explicitly
 sets `data_api_enabled: true` and passes fresh qualification for that configuration.
+The direct `session` mode follows the same rule with `session_enabled: true`;
+its qualification probe proves that a session advisory lock outlives its
+statement, LISTEN receives NOTIFY, and revocation ends the login
+(ADR-20261110120000).
 
 Neon's create-project operation is non-idempotent. The adapter never retries
 that POST at the HTTP layer. It assigns a deterministic, hashed project name,
@@ -565,6 +576,7 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | `migration` | Direct required; release tasks only | Schema changes through a stable non-login schema owner; no role/database administration or replication |
 | `read_only` | Replica when available, otherwise pooled/direct primary | Public-schema SELECT and sequence inspection; no sequence advancement, DML, DDL, administration or RLS bypass |
 | `data_api` | Pooled, with direct fallback | `api`-schema DML only for the [Data API](data-api.md); RLS enforced |
+| `session` | Direct required; serving instances; role `CONNECTION LIMIT 42` | Same as `read_write`; for LISTEN/NOTIFY, session advisory locks, `SET` and SQL `PREPARE` (ADR-20261109180000, ADR-20261110120000) |
 
 The pooled connection is a transaction pool: each transaction may run on a
 different server session, and a session goes back to the pool between

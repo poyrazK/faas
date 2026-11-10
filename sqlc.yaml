@@ -29,6 +29,17 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_empty_slices: true
+  # signd's build claims and the signatures it records (ADR-20261109170000).
+  - engine: "postgresql"
+    queries: "pkg/signd/signpg/queries.sql"
+    schema: "pkg/signd/signpg/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/signd/signpg/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   # Hosted management MCP bridge state and lease (ADR-20261026195952).
   - engine: "postgresql"
     queries: "pkg/mcpmanagement/statepg/queries.sql"
@@ -218,11 +229,12 @@ sql:
 
   - engine: "postgresql"
     queries:
+      - "pkg/state/account_flow_queries.sql"
       - "pkg/state/agent_connection_queries.sql"
       - "pkg/state/github_connection_queries.sql"
       - "pkg/state/audit_anchor_queries.sql"
       - "pkg/state/audit_outbox_delivery_queries.sql"
-      - "pkg/state/automation_live_queries.sql"
+      - "pkg/state/stored_workflow_live_queries.sql"
       - "pkg/state/billing_run_product_queries.sql"
       - "pkg/state/binding_verification_run_queries.sql"
       - "pkg/state/build_coalescing_queries.sql"
@@ -243,6 +255,7 @@ sql:
       - "pkg/state/source_spool_queries.sql"
       - "pkg/state/dev_source_patch_queries.sql"
       - "pkg/state/edge_rule_replay_retention_queries.sql"
+      - "pkg/state/credit_discount_queries.sql"
       - "pkg/state/email_verification_queries.sql"
       - "pkg/state/entity_outbox_delivery_queries.sql"
       - "pkg/state/environment_source_job_queries.sql"
@@ -299,6 +312,7 @@ sql:
       - "pkg/state/issue_tracker_links_queries.sql"
       - "pkg/state/job_log_retention_queries.sql"
       - "pkg/state/agent_approval_queries.sql"
+      - "pkg/state/agent_activity_queries.sql"
       - "pkg/state/key_project_limit_queries.sql"
       - "pkg/state/keyed_replay_queries.sql"
       - "pkg/state/managed_postgres_cutover_activation_queries.sql"
@@ -398,6 +412,7 @@ sql:
       - "pkg/state/scenario_suspend_queries.sql"
       - "pkg/state/scenario_work_queries.sql"
       - "pkg/state/scenario_worker_fault_queries.sql"
+      - "pkg/state/free_dormant_queries.sql"
       - "pkg/state/scheduled_release_queries.sql"
       - "pkg/state/scoped_telemetry_queries.sql"
       - "pkg/state/secret_rekey_queries.sql"

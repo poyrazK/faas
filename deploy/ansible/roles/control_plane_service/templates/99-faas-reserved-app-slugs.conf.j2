@@ -1,0 +1,5 @@
+# Managed by Ansible. ADR-20261107180000: the labels of the host names
+# edgednsd manages under the apps domain (public_edge.dns) are the platform's;
+# apid refuses them as new apps' names. An app that already has one keeps it.
+[Service]
+Environment=FAAS_RESERVED_APP_SLUGS={{ faas_reserved_app_slugs | default([]) | join(',') }}

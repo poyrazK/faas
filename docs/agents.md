@@ -12,6 +12,30 @@ directly.
 Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
 
+With the Gregale CLI installed, one command sets up Claude Code, Codex,
+Cursor, VS Code and Windsurf, and prints the steps for Claude Desktop:
+
+```sh
+gregale mcp connect
+```
+
+It finds the agents on your machine, asks before changing each one, adds the
+server user-wide, and checks that Gregale answers. `--client codex` picks one,
+`--project` writes this project's `.mcp.json` instead, `--toolsets` selects
+toolsets, and `--dry-run` shows the change first. For an agent with no person
+at a browser, `--headless` mints an agent key, prints it once, and points the
+config at `$GREGALE_AGENT_KEY`. When an agent does not see Gregale,
+`gregale mcp connect --check` changes nothing and names the fix for each
+problem: the client's config, this project's `.mcp.json`, the agent key, your
+connected agents and approval requests waiting for you. Projects made with
+`gregale init` include a `.mcp.json`, so agents opened there are offered
+Gregale (`--no-mcp` leaves it out). For an agent in GitHub Actions, `gregale mcp connect --ci --repo OWNER/NAME`
+mints an agent key, stores it as the repository secret `GREGALE_AGENT_KEY`
+with `gh` (it is never shown), and writes `.github/workflows/gregale-agent.yml`
+for you to commit. The key needs your approval for deletes, production
+changes, credentials and billing unless you pass `--approvals`. For other
+clients, add the server yourself:
+
 Claude Code:
 
 ```sh
@@ -108,6 +132,80 @@ Before a change, the agent can call `gregale_preflight` (in the `release`
 toolset) with `deploy`, `restart`, `scale` or `env_change` to learn whether
 its credential and connection allow it. A yes isn't a guarantee: quotas and
 the exact request are checked again when the change runs.
+
+## Approve an agent's risky requests
+
+An agent key, and an agent you connect to the hosted MCP server, must ask a
+person before it deletes something, deploys or rolls back a production app,
+creates or rotates credentials, or changes billing. Previews are not
+gated. Project deploys, environment promotions, release-set changes and GitOps
+source changes count as production on every environment, because an
+environment does not say whether it serves production. Changing a production
+app's variables, secrets, secret references or settings also counts as
+production, because the app runs with them at its next wake; the same writes
+in a stage scope do not ask. Project environment configuration, shared
+secrets and workload policies ask on every environment. Choose the categories
+when you create the key:
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write --approvals delete,billing
+```
+
+`--approvals` takes `delete`, `production`, `credentials`, `billing`, `all`
+(the default) or `none`. An organization can require categories for every
+agent acting in it with `gregale org agent policy set --approvals`.
+
+When a request needs approval, Gregale answers `428 approval_required` with
+a review link. The agent shows you the link; you open it signed in to the
+dashboard and approve or deny. Only the member who connected the agent, or an
+owner or admin of its organization, can decide, and only from a signed-in
+session, never with an API key. After you approve, the agent repeats exactly
+the same request once. A request expires 30 minutes after it was made.
+
+The CLI prints the review link with the error. Put `--wait-for-approval`
+before the command (or set `GREGALE_WAIT_FOR_APPROVAL=1`) to have it wait
+for your decision and repeat the request once when you approve:
+
+```sh
+gregale --non-interactive --wait-for-approval app delete demo --yes
+```
+
+If you deny, you can give the agent a reason. When the agent repeats a
+request you denied, or one that expired, within 30 minutes, it gets
+`403 approval_denied` (with your reason) or `410 approval_expired` instead of
+a new link, so it knows to stop and ask you. `GET /v1/agent-approvals/{id}`
+shows a request's status.
+
+To hear about requests when nobody is watching the agent, subscribe an
+account webhook to `agent.approval.requested`, `agent.approval.approved` and
+`agent.approval.denied`:
+
+```sh
+gregale webhook account add --target-url https://example.com/approvals \
+  --event agent.approval.requested --event agent.approval.denied
+```
+
+Each event names the request, the key, the category, the method and path,
+and, for a new request, its review link. It never includes the request body.
+
+## See what an agent changed
+
+Gregale keeps each agent's write requests (`POST`, `PUT`, `PATCH` and
+`DELETE`) for 7 days: when, method, path, the response status, and the
+approval request it went through on, if any. Reads are not listed, and
+neither are requests waiting for approval. Request bodies are never kept.
+
+```sh
+gregale mcp connection list                 # find the agent's id
+gregale mcp connection activity <id>
+gregale mcp connection activity <id> --org acme   # an agent acting in an organization
+```
+
+You can read the activity of agents you connected; owners and admins of an
+organization can read the activity of every agent acting in it. An agent reads
+its own with `gregale mcp connection activity --self`, for example to check
+what it already did before repeating work. Pages hold 50 rows; pass the
+printed `--cursor` value for older ones.
 
 ## Run the CLI non-interactively
 

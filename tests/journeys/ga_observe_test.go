@@ -18,7 +18,7 @@ import (
 // Gregale Observe: alerts and notification channels, custom metrics and
 // OTLP ingest, SLOs and synthetic checks.
 
-// TestTailAnalyticsAndMetrics streams `gregale invocation watch` while traffic flows to
+// TestTailAnalyticsAndMetrics follows `gregale logs --follow` while traffic flows to
 // the shared probe, then reads request analytics and account metrics
 // (rows 118, 121).
 func TestTailAnalyticsAndMetrics(t *testing.T) {
@@ -33,17 +33,20 @@ func TestTailAnalyticsAndMetrics(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// tail streams until interrupted; the timeout ends it.
-			res = tg.run(t, 45*time.Second, "invocation", "watch", slug)
+			// The live log stream runs until interrupted; the timeout ends
+			// it. `invocation watch` follows async invocations, not the
+			// app's output, so it proved nothing about a log tail.
+			res = tg.run(t, 45*time.Second, "logs", slug, "--follow")
 		}()
 		time.Sleep(5 * time.Second)
+		marker := fmt.Sprintf("tail-%d", time.Now().UnixNano())
 		for range 10 {
-			get(base + "/")
+			get(base + "/log?marker=" + marker)
 			time.Sleep(2 * time.Second)
 		}
 		wg.Wait()
-		if len(strings.TrimSpace(string(res.stdout))) == 0 {
-			t.Fatalf("gregale invocation watch printed nothing during 10 requests: %s", res.problem())
+		if !strings.Contains(string(res.stdout), "e2e-probe-marker "+marker) {
+			t.Fatalf("gregale logs --follow did not stream the marker line logged by 10 requests: %s\n%s", res.problem(), tail(string(res.stdout), 400))
 		}
 		t.Logf("tail: %s", tail(string(res.stdout), 400))
 	})

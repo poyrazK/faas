@@ -264,7 +264,6 @@ LatestDeployment
 LatestHeartbeatStats
 LatestParkedDeploymentForApp
 LatestSnapshotBytes
-LatestSupersededDeployment
 ListAPIConsumersForApp
 ListAPIKeys
 ListAccountCredits
@@ -462,7 +461,6 @@ PutManagedObjectStorageSecret
 PutManagedPostgresSecret
 QueueDeadLetter
 QueuePeek
-QueueState
 ReadActiveInstanceForWakeID
 ReadMFASecret
 ReapExpiredUploadSessions
@@ -501,7 +499,9 @@ RequestTelemetryBaselineP95ByRoute
 RequestTelemetryByDeployment
 RequestTelemetryCoverage
 RequestTelemetryErrorsByRoute
+RequestTelemetryLatencyWeightsByRoute
 ResetAppWebhookDeliveryFromDead
+ResolveRegressionObservationsNotSeenSince
 ResolveStaleRegressionObservations
 ResolveStatusIncident
 RetireRuntimeSnapshot

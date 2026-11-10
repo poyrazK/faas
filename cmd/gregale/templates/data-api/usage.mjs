@@ -9,7 +9,13 @@ import { limits } from './config.mjs'
 // The access settings the platform applies to this app's live reads without a
 // user token (ADR 20261016151947): exposed schemas, the public-read allowlist and
 // server-key hashes with their permissions. Never a key.
-export function accessReport(config) {
+//
+// started_at is this process's start: the platform keeps the settings of the
+// newest process, so an older one (restored from an older snapshot, or still
+// running beside a fresh restart) cannot bring back a revoked key. Snapshot
+// copies keep their process's start. allow_without_rls lets live reads apply
+// the same row-security gate (ADR 20261026140223).
+export function accessReport(config, startedAt = new Date()) {
   const name = entry => `${entry.schema}.${entry.name ?? entry.relation}`
   const permissions = p => ({ access: p.access, ...(p.relations ? { relations: p.relations.map(name) } : {}),
     ...(p.rpcs ? { rpcs: p.rpcs.map(name) } : {}), subjects: p.subjects })
@@ -17,7 +23,9 @@ export function accessReport(config) {
     // Live reads verify user tokens against the same issuer (ADR-20261016151947).
     ...(config.auth ? { auth: { issuer: config.auth.issuer, jwks_url: config.auth.jwks.href, audience: config.auth.audience } } : {}),
     ...(config.publicRead ? { public_read: config.publicRead.map(name) } : {}),
-    ...(config.serverKeys ? { server_keys: config.serverKeys.map(k => ({ slot: k.slot, sha256: k.hash.toString('hex'), ...(k.permissions ? { permissions: permissions(k.permissions) } : {}) })) } : {}) }
+    ...(config.serverKeys ? { server_keys: config.serverKeys.map(k => ({ slot: k.slot, sha256: k.hash.toString('hex'), ...(k.permissions ? { permissions: permissions(k.permissions) } : {}) })) } : {}),
+    ...(config.allowWithoutRLS ? { allow_without_rls: config.allowWithoutRLS.map(name) } : {}),
+    started_at: startedAt.toISOString() }
 }
 
 const hourMs = 3600000
@@ -178,5 +186,18 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
 
   if (config.caps || access !== null) schedule(0)
   return Object.freeze({ start, capReached, report, stop: () => { stopped = true; clearTimeout(timer) },
-    flush: async () => { clearTimeout(timer); timer = null; await report() } })
+    // flush reports now, waiting at most waitMs when given; a report cut
+    // short keeps running, and one still in flight keeps its id.
+    flush: async waitMs => {
+      clearTimeout(timer); timer = null
+      const sent = report()
+      if (waitMs === undefined) return await sent
+      // The bound stays referenced: with a hung report and nothing else
+      // holding the event loop (shutdown, tests), an unref'd bound lets the
+      // loop end with this flush still pending. It is cleared below, so it
+      // holds the process for at most waitMs.
+      let bound
+      await Promise.race([sent, new Promise(resolve => { bound = setTimeout(resolve, Math.max(0, waitMs)) })])
+      clearTimeout(bound)
+    } })
 }

@@ -64,7 +64,9 @@ func Run(t *testing.T, open Open) {
 		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
 		{"non_uuid_invocation_identity_is_unowned", testNonUUIDInvocationIdentityIsUnowned},
 		{"deployment_secret_reload_signal_survives_read", testDeploymentSecretReloadSignalSurvivesRead},
+		{"deployment_before_checkpoint_hook_survives_read", testDeploymentBeforeCheckpointHookSurvivesRead},
 		{"rollback_on_5xx_candidates_track_the_opt_in", testRollbackOn5xxCandidates},
+		{"reverted_release_is_not_a_rollback_target", testRevertedReleaseIsNotARollbackTarget},
 		{"config_revisions_and_guards_track_each_write", testConfigRevisionsAndGuards},
 		{"config_restore_is_atomic_and_compares_observed_state", testAtomicConfigRestore},
 		{"config_restore_guard_commits_secrets_and_outcome", testAtomicGuardRestore},
@@ -83,6 +85,8 @@ func Run(t *testing.T, open Open) {
 		{"database_switch_cancel_hold_and_account_cap", testDatabaseSwitchCancelHoldAndAccountCap},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
+		{"custom_metric_deltas_accumulate", testCustomMetricDeltaContract},
+		{"custom_metric_series_aggregate", testCustomMetricSeriesContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
 		{"targeted_build_claim_fences_a_second_claimer", testTargetedBuildClaimFencesASecondClaimer},
@@ -183,6 +187,7 @@ func Run(t *testing.T, open Open) {
 		{"oidc_project_repository_bindings", testOIDCProjectRepositoryBindings},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
+		{"project_reconcile_adopts_cli_function_app", testProjectReconcileAdoptsFunctionApp},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},
 		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
 		{"project_environment_route_policy_is_scoped_and_replaceable", testProjectEnvironmentRoutePolicy},
@@ -213,6 +218,7 @@ func Run(t *testing.T, open Open) {
 		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
 		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
 		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},
+		{"completed_queue_payloads_are_trimmed_after_their_retention", testQueuePayloadTrim},
 		{"trigger_record_states_by_items", testTriggerRecordStatesByItems},
 		{"trigger_record_claims_renew_while_dispatching", testTriggerRecordClaimRenewal},
 		{"trigger_record_operator_verbs_are_scoped", testTriggerRecordOperatorScope},
@@ -4303,10 +4309,13 @@ func testAccountCredits(t *testing.T, fx *Fixture) {
 // into a Go zero would report "no overage allowed" for an account that
 // never set a cap, and stop billing that should happen.
 func testOverageCap(t *testing.T, fx *Fixture) {
-	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+	// An unset cap reads as the plan's effective cap: none on Free, the
+	// plan's self-service ceiling on a paid plan (ADR-20261105120000).
+	unsetCents, unsetOK := state.EffectiveOverageCapCents(fx.Account.Plan, nil)
+	if cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
 		t.Fatalf("GetAccountOverageCapCents(unset): %v", err)
-	} else if ok {
-		t.Error("a fresh account reported a cap; want ok=false (no cap)")
+	} else if ok != unsetOK || (ok && cents != unsetCents) {
+		t.Errorf("a fresh account reported (%d, %v); want the plan's effective cap (%d, %v)", cents, ok, unsetCents, unsetOK)
 	}
 
 	zero := int64(0)
@@ -4334,10 +4343,10 @@ func testOverageCap(t *testing.T, fx *Fixture) {
 	if err := fx.Store.UpdateAccountOverageCapCents(fx.Ctx, fx.Account.ID, nil); err != nil {
 		t.Fatalf("UpdateAccountOverageCapCents(nil): %v", err)
 	}
-	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+	if cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
 		t.Fatalf("GetAccountOverageCapCents(cleared): %v", err)
-	} else if ok {
-		t.Error("cap still reported after clearing with nil; want ok=false")
+	} else if ok != unsetOK || (ok && cents != unsetCents) {
+		t.Errorf("cleared cap read back as (%d, %v); want the plan's effective cap (%d, %v)", cents, ok, unsetCents, unsetOK)
 	}
 }
 
@@ -4560,6 +4569,172 @@ func testCustomMetricsContract(t *testing.T, fx *Fixture) {
 	// intent is "this metric is gone", which is already true.
 	if err := fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "never_existed"); err != nil {
 		t.Errorf("delete of a missing name = %v, want nil", err)
+	}
+}
+
+// testCustomMetricSeriesContract pins ADR-20261108160000 slice C on both
+// stores: series aggregate into the metric row (counters summed, gauges the
+// max of fresh series), deltas add per series, the caps refuse new series
+// and names, a kind change drops the old series, and deleting the metric
+// removes its series.
+func testCustomMetricSeriesContract(t *testing.T, fx *Fixture) {
+	t.Helper()
+	store, ok := fx.Store.(state.CustomMetricSeriesStore)
+	if !ok {
+		t.Fatal("store does not implement CustomMetricSeriesStore")
+	}
+	at := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	lim := state.CustomMetricSeriesLimits{Names: 2, SeriesPerMetric: 2, SeriesPerApp: 4, GaugeFreshness: 5 * time.Minute}
+	put := func(name, kind, key string, value float64, delta bool, when time.Time) error {
+		var labels map[string]string
+		if key != "" {
+			k, v, _ := strings.Cut(key, "=")
+			labels = map[string]string{k: v}
+		}
+		return store.PutCustomMetricSeries(fx.Ctx, fx.App.ID, state.CustomMetricSeriesWrite{
+			Name: name, SeriesKey: key, Labels: labels, Kind: kind, Value: value, Delta: delta, ObservedAt: when,
+		}, lim)
+	}
+	metric := func(name string) state.CustomMetric {
+		t.Helper()
+		rows, err := fx.Store.ListCustomMetrics(fx.Ctx, fx.App.ID)
+		if err != nil {
+			t.Fatalf("ListCustomMetrics: %v", err)
+		}
+		for _, row := range rows {
+			if row.Name == name {
+				return row
+			}
+		}
+		t.Fatalf("%s not stored", name)
+		return state.CustomMetric{}
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Counter series sum; deltas add per series.
+	must(put("jobs_total", state.CustomMetricKindCounter, "queue=emails", 3, true, at))
+	must(put("jobs_total", state.CustomMetricKindCounter, "queue=emails", 4, true, at.Add(time.Second)))
+	must(put("jobs_total", state.CustomMetricKindCounter, "queue=billing", 10, false, at))
+	if got := metric("jobs_total"); got.Value != 17 || !got.Labelled || got.Kind != state.CustomMetricKindCounter || !got.ObservedAt.UTC().Equal(at.Add(time.Second)) {
+		t.Fatalf("counter aggregate = %+v, want 17 labelled at the newest series", got)
+	}
+	// Per-metric cap.
+	if err := put("jobs_total", state.CustomMetricKindCounter, "queue=other", 1, false, at); !errors.Is(err, state.ErrCustomMetricSeriesLimit) {
+		t.Fatalf("third series of a metric = %v, want ErrCustomMetricSeriesLimit", err)
+	}
+
+	// Gauge series: the max of fresh series; a stale one stops counting.
+	must(put("depth", state.CustomMetricKindGauge, "queue=a", 50, false, at))
+	must(put("depth", state.CustomMetricKindGauge, "queue=b", 8, false, at.Add(10*time.Minute)))
+	if got := metric("depth"); got.Value != 8 {
+		t.Fatalf("gauge aggregate = %v, want 8 (the 50 is stale)", got.Value)
+	}
+	// Per-app cap: a fifth series is refused even with room in the metric.
+	lim.SeriesPerMetric = 10
+	if err := put("depth", state.CustomMetricKindGauge, "queue=c", 1, false, at); !errors.Is(err, state.ErrCustomMetricSeriesLimit) {
+		t.Fatalf("series beyond the app cap = %v, want ErrCustomMetricSeriesLimit", err)
+	}
+	lim.SeriesPerMetric = 2
+	// Name cap applies to a labelled write too.
+	if err := put("third_name", state.CustomMetricKindGauge, "k=v", 1, false, at); !errors.Is(err, state.ErrCustomMetricLimit) {
+		t.Fatalf("third name = %v, want ErrCustomMetricLimit", err)
+	}
+
+	series, err := store.ListCustomMetricSeries(fx.Ctx, fx.App.ID)
+	if err != nil || len(series) != 4 || series[0].Name != "depth" || series[0].SeriesKey != "queue=a" || series[0].Labels["queue"] != "a" {
+		t.Fatalf("series = %+v, %v", series, err)
+	}
+	fresh, err := store.ListFreshCustomMetricSeries(fx.Ctx, at.Add(5*time.Minute), 10)
+	// The stale gauge series is left out; counter series always export.
+	if err != nil || len(fresh) != 3 || fresh[0].SeriesKey != "queue=b" || fresh[0].Value != 8 ||
+		fresh[1].Name != "jobs_total" || fresh[2].Name != "jobs_total" {
+		t.Fatalf("fresh series = %+v, %v", fresh, err)
+	}
+
+	// A kind change drops the old series.
+	must(put("depth", state.CustomMetricKindCounter, "queue=a", 2, false, at.Add(11*time.Minute)))
+	if got := metric("depth"); got.Value != 2 || got.Kind != state.CustomMetricKindCounter {
+		t.Fatalf("after kind change = %+v", got)
+	}
+
+	// Deleting the metric deletes its series.
+	must(fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "jobs_total"))
+	series, err = store.ListCustomMetricSeries(fx.Ctx, fx.App.ID)
+	if err != nil || len(series) != 1 || series[0].Name != "depth" {
+		t.Fatalf("after delete = %+v, %v", series, err)
+	}
+}
+
+// testCustomMetricDeltaContract pins ADR-20261108160000 on both stores: OTLP
+// deltas add to the stored value of the same kind, a kind change restarts
+// it, the total never goes below zero, the newest timestamp is kept, and the
+// distinct-name cap applies as for a plain push.
+func testCustomMetricDeltaContract(t *testing.T, fx *Fixture) {
+	t.Helper()
+	deltas, ok := fx.Store.(state.CustomMetricDeltaStore)
+	if !ok {
+		t.Fatal("store does not implement CustomMetricDeltaStore")
+	}
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	value := func(name string) state.CustomMetric {
+		t.Helper()
+		rows, err := fx.Store.ListCustomMetrics(fx.Ctx, fx.App.ID)
+		if err != nil {
+			t.Fatalf("ListCustomMetrics: %v", err)
+		}
+		for _, row := range rows {
+			if row.Name == name {
+				return row
+			}
+		}
+		t.Fatalf("%s not stored", name)
+		return state.CustomMetric{}
+	}
+	add := func(name, kind string, delta float64, when time.Time) error {
+		return deltas.AddCustomMetricOfKind(fx.Ctx, fx.App.ID, name, kind, delta, when, 2)
+	}
+
+	if err := add("requests_total", state.CustomMetricKindCounter, 3, at); err != nil {
+		t.Fatalf("first delta: %v", err)
+	}
+	if err := add("requests_total", state.CustomMetricKindCounter, 4, at.Add(time.Minute)); err != nil {
+		t.Fatalf("second delta: %v", err)
+	}
+	// An older export arriving late still adds, but does not move time back.
+	if err := add("requests_total", state.CustomMetricKindCounter, 1, at); err != nil {
+		t.Fatalf("late delta: %v", err)
+	}
+	if got := value("requests_total"); got.Value != 8 || got.Kind != state.CustomMetricKindCounter || !got.ObservedAt.UTC().Equal(at.Add(time.Minute)) {
+		t.Fatalf("requests_total = %+v, want counter 8 observed at the newest delta", got)
+	}
+
+	// A delta up-down counter moves a gauge and stops at zero.
+	if err := add("connections", state.CustomMetricKindGauge, 2, at); err != nil {
+		t.Fatalf("gauge delta: %v", err)
+	}
+	if err := add("connections", state.CustomMetricKindGauge, -5, at.Add(time.Second)); err != nil {
+		t.Fatalf("negative gauge delta: %v", err)
+	}
+	if got := value("connections"); got.Value != 0 {
+		t.Fatalf("connections = %v, want floored at 0", got.Value)
+	}
+
+	// The cap counts names as a plain push does.
+	if err := add("third_name", state.CustomMetricKindCounter, 1, at); !errors.Is(err, state.ErrCustomMetricLimit) {
+		t.Fatalf("third name at cap 2 = %v, want ErrCustomMetricLimit", err)
+	}
+
+	// A kind change restarts the total from the delta.
+	if err := add("connections", state.CustomMetricKindCounter, 6, at.Add(2*time.Second)); err != nil {
+		t.Fatalf("kind change: %v", err)
+	}
+	if got := value("connections"); got.Value != 6 || got.Kind != state.CustomMetricKindCounter {
+		t.Fatalf("after kind change = %+v, want counter 6", got)
 	}
 }
 

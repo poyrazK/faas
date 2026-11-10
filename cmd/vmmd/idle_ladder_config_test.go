@@ -66,3 +66,35 @@ func TestLoadConfig_IdleLadderOnNeedsQuietPause(t *testing.T) {
 		t.Fatalf("IdleLadder = %q, want on", cfg.IdleLadder)
 	}
 }
+
+// adr: 20261107122928 — the guarded pause of apps is off by default, needs
+// idle_ladder = on, and FAAS_IDLE_LADDER_APPS overrides TOML.
+func TestLoadConfig_IdleLadderApps(t *testing.T) {
+	dir := t.TempDir()
+	on := filepath.Join(dir, "on.toml")
+	if err := os.WriteFile(on, []byte("idle_ladder = \"on\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(on)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.IdleLadderApps {
+		t.Fatal("idle_ladder_apps must default to off")
+	}
+	t.Setenv("FAAS_IDLE_LADDER_APPS", "true")
+	if cfg, err = LoadConfig(on); err != nil || !cfg.IdleLadderApps {
+		t.Fatalf("FAAS_IDLE_LADDER_APPS=true: apps = %v, err %v", cfg != nil && cfg.IdleLadderApps, err)
+	}
+	observe := filepath.Join(dir, "observe.toml")
+	if err := os.WriteFile(observe, []byte("idle_ladder = \"observe\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(observe); err == nil || !strings.Contains(err.Error(), "idle_ladder_apps") {
+		t.Fatalf("idle_ladder_apps with observe: err = %v, want refused", err)
+	}
+	t.Setenv("FAAS_IDLE_LADDER_APPS", "sometimes")
+	if _, err := LoadConfig(on); err == nil || !strings.Contains(err.Error(), "FAAS_IDLE_LADDER_APPS") {
+		t.Fatalf("invalid FAAS_IDLE_LADDER_APPS: err = %v, want a named validation error", err)
+	}
+}

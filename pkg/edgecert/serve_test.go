@@ -4,6 +4,7 @@ package edgecert_test
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgecert"
 )
 
@@ -36,13 +38,17 @@ func stored(t *testing.T, ca *fakeCA, names []string, id *age.X25519Identity, ro
 	return edgecert.Stored{ID: rowID, Names: c.Names, ChainPEM: c.ChainPEM, KeySealed: c.KeySealed, NotBefore: c.NotBefore, NotAfter: c.NotAfter}
 }
 
-func newServed(t *testing.T, store edgecert.LiveStore, ids ...*age.X25519Identity) *edgecert.Served {
+// newServed serves production certificates whose chains verify against
+// ca's root.
+func newServed(t *testing.T, ca *fakeCA, store edgecert.LiveStore, ids ...*age.X25519Identity) *edgecert.Served {
 	t.Helper()
 	s, err := edgecert.NewServed(edgecert.CALetsEncrypt, ids, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s
+	roots := x509.NewCertPool()
+	roots.AddCert(ca.cert)
+	return s.WithRoots(roots)
 }
 
 func serverName(s *edgecert.Served, name string) (*tls.Certificate, error) {
@@ -54,7 +60,7 @@ func serverName(s *edgecert.Served, name string) (*tls.Certificate, error) {
 func TestServedServesTheWildcardItOpened(t *testing.T) {
 	ca, id := newFakeCA(t), newIdentity(t)
 	store := &liveStore{rows: []edgecert.Stored{stored(t, ca, wildcard, id, 1)}}
-	s := newServed(t, store, id)
+	s := newServed(t, ca, store, id)
 	if s.Loaded() {
 		t.Fatal("loaded before Load")
 	}
@@ -86,7 +92,7 @@ func TestServedKeepsItsCertificateUntilABetterOneLoads(t *testing.T) {
 	ca, id := newFakeCA(t), newIdentity(t)
 	first := stored(t, ca, wildcard, id, 1)
 	store := &liveStore{rows: []edgecert.Stored{first}}
-	s := newServed(t, store, id)
+	s := newServed(t, ca, store, id)
 	if _, err := s.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +137,7 @@ func TestServedPrefersTheLongerLastingCertificate(t *testing.T) {
 	short := stored(t, ca, []string{"app.gregale.dev"}, id, 1)
 	ca.now = ca.now.Add(time.Hour)
 	long := stored(t, ca, wildcard, id, 2)
-	s := newServed(t, &liveStore{rows: []edgecert.Stored{short, long}}, id)
+	s := newServed(t, ca, &liveStore{rows: []edgecert.Stored{short, long}}, id)
 	if _, err := s.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +149,7 @@ func TestServedPrefersTheLongerLastingCertificate(t *testing.T) {
 func TestServedReportsTimeLeftPerName(t *testing.T) {
 	ca, id := newFakeCA(t), newIdentity(t)
 	row := stored(t, ca, wildcard, id, 1)
-	s := newServed(t, &liveStore{rows: []edgecert.Stored{row}}, id)
+	s := newServed(t, ca, &liveStore{rows: []edgecert.Stored{row}}, id)
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(s.Collectors()...)
 	if n, err := testutil.GatherAndCount(reg, "edge_certificate_expiry_seconds"); err != nil || n != 0 {
@@ -178,4 +184,110 @@ func TestNewServedNeedsAnIdentityAndAKnownCA(t *testing.T) {
 	if _, err := edgecert.NewServed("zerossl", []*age.X25519Identity{newIdentity(t)}, &liveStore{}, log); err == nil {
 		t.Fatal("an unknown CA accepted")
 	}
+}
+
+// ADR-20261107180000: a row is not trusted for what the certificate says.
+// The edge serves a leaf for the leaf's own names and reports the leaf's own
+// expiry, whatever names and dates the row claims.
+func TestServedTrustsTheLeafNotTheRow(t *testing.T) {
+	ca, id := newFakeCA(t), newIdentity(t)
+	row := stored(t, ca, []string{"app.gregale.dev"}, id, 1)
+	row.Names = wildcard
+	row.NotAfter = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := newServed(t, ca, &liveStore{rows: []edgecert.Stored{row}}, id)
+	if _, err := s.Load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := serverName(s, "other.gregale.dev"); err == nil {
+		t.Fatal("served a name only the row claims")
+	}
+	if _, err := serverName(s, "app.gregale.dev"); err != nil {
+		t.Fatalf("the leaf's own name: %v", err)
+	}
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(s.Collectors()...)
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range families {
+		if f.GetName() != "edge_certificate_expiry_seconds" {
+			continue
+		}
+		found = true
+		m := f.GetMetric()
+		if len(m) != 1 || m[0].GetLabel()[0].GetValue() != "app.gregale.dev" || m[0].GetGauge().GetValue() > api.EdgeCertificateLifetimeMax.Seconds() {
+			t.Fatalf("expiry = %v, want the leaf's name and its short-lived validity", m)
+		}
+	}
+	if !found {
+		t.Fatal("no edge_certificate_expiry_seconds")
+	}
+}
+
+// A newest row the edge cannot open does not hide an older one it can, so a
+// restarted edge still becomes ready (R8-2, R8-3).
+func TestServedFallsBackPastARowItCannotOpen(t *testing.T) {
+	ca, id := newFakeCA(t), newIdentity(t)
+	good := stored(t, ca, wildcard, id, 1)
+	ca.now = ca.now.Add(time.Hour)
+	unopenable := stored(t, ca, wildcard, newIdentity(t), 2)
+	s := newServed(t, ca, &liveStore{rows: []edgecert.Stored{unopenable, good}}, id)
+	if _, err := s.Load(t.Context()); err != nil || !s.Loaded() {
+		t.Fatalf("Load = %v, loaded %v", err, s.Loaded())
+	}
+	if _, err := serverName(s, "app.gregale.dev"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A production certificate must chain to a trusted root and be valid now;
+// a row that claims otherwise is refused.
+func TestServedRefusesAnUntrustedOrExpiredLeaf(t *testing.T) {
+	ca, id := newFakeCA(t), newIdentity(t)
+	untrusted := stored(t, newFakeCA(t), wildcard, id, 1)
+	ca.now = time.Now().Add(-200 * 24 * time.Hour)
+	expired := stored(t, ca, wildcard, id, 2)
+	expired.NotAfter = time.Now().Add(24 * time.Hour)
+	for name, row := range map[string]edgecert.Stored{"untrusted chain": untrusted, "expired leaf": expired} {
+		s := newServed(t, ca, &liveStore{rows: []edgecert.Stored{row}}, id)
+		if _, err := s.Load(t.Context()); err == nil || s.Loaded() {
+			t.Errorf("%s: loaded", name)
+		}
+	}
+}
+
+// Two live certificates for the same name (a renewal stored beside the one it
+// replaces) report that name once, with the expiry of the certificate served
+// for it. The duplicate series failed the whole /metrics scrape on rc.331.
+func TestExpiryReportsEachNameOnceForTheServedCertificate(t *testing.T) {
+	ca, id := newFakeCA(t), newIdentity(t)
+	older := stored(t, ca, wildcard, id, 1)
+	newer := stored(t, ca, wildcard, id, 2)
+	if older.NotAfter.After(newer.NotAfter) {
+		older, newer = newer, older
+	}
+	s := newServed(t, ca, &liveStore{rows: []edgecert.Stored{newer, older}}, id)
+	if _, err := s.Load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(s.Collectors()...)
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather with two certificates for one name: %v", err)
+	}
+	for _, f := range families {
+		if f.GetName() != "edge_certificate_expiry_seconds" {
+			continue
+		}
+		m := f.GetMetric()
+		left := time.Until(newer.NotAfter).Seconds()
+		if len(m) != 1 || m[0].GetLabel()[0].GetValue() != "*.gregale.dev" || m[0].GetGauge().GetValue() > left+1 || m[0].GetGauge().GetValue() < left-60 {
+			t.Fatalf("expiry = %v, want one series of about %.0f s (the later certificate)", m, left)
+		}
+		return
+	}
+	t.Fatal("no edge_certificate_expiry_seconds")
 }

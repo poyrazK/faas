@@ -1,0 +1,60 @@
+// adr: 20261109172421
+
+package sched_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
+)
+
+// A wake books the guest vCPU count the instance boots with in the node's
+// durable vCPU sum: its size's, not its plan's (ADR-20261109172421).
+func TestAppInstanceBooksItsBootedVCPUs(t *testing.T) {
+	ctx := context.Background()
+	mem := state.NewMemStore()
+	existing, err := mem.ListComputeNodes(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range existing {
+		if err := mem.MarkComputeNodeInactive(ctx, n.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := &failoverFleet{store: mem, ctx: ctx, vmm: newRefusingVMM(nil), ops: wire.NewOpsMetrics("schedd")}
+	node, err := mem.CreateComputeNode(ctx, state.ComputeNode{
+		Name: "booked-vcpu", TargetURL: "tcp://10.0.5.3:7000",
+		VPCPUs: 80, MemMB: 16384, MaxConcurrency: 50, AdmissionCeilingMB: 8192, VCPUBudget: 640, Active: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.nodes = append(f.nodes, node)
+	f.e = sched.XNewEngine(t, mem, f.vmm, &sched.FakeNotifier{}, "1.10.0").
+		WithOwnerNodeID(node.ID).WithOpsMetrics(f.ops)
+	used := func() int64 {
+		t.Helper()
+		got, err := mem.ComputeNodeUsedVCPUByNode(ctx, []string{node.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got[node.ID]
+	}
+
+	app := f.app(t, api.PlanPro, 256, 1)
+	want := sched.AppVCPUs(app)
+	if want != 1 || want >= api.MustLimitsFor(api.PlanPro).VCPU {
+		t.Fatalf("a 256 MB app boots %d vCPUs, want 1, fewer than the plan's for this test", want)
+	}
+	if _, err := f.e.Wake(ctx, app.ID, "", "", sched.TriggerCronSched); err != nil {
+		t.Fatalf("wake: %v", err)
+	}
+	if got := used(); got != int64(want) {
+		t.Fatalf("the instance books %d vCPU, want the %d it boots with", got, want)
+	}
+}

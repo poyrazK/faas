@@ -292,7 +292,7 @@ func TestEngineEnvironmentQualificationRuntimeRevocationAndFailureCleanup(t *tes
 				if err := restarted.SeedLedger(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				if restarted.ledger.ResidentRAM() != 512+api.PerVMOverheadMB || restarted.ledger.UsedCPUMillicoresForNode(ins.NodeID) != startupCPUBoostQuota(api.PlanPro, 250) {
+				if restarted.ledger.ResidentRAM() != 512+api.PerVMOverheadMB || restarted.ledger.UsedCPUMillicoresForNode(ins.NodeID) != startupCPUBoostQuota(250) {
 					t.Fatal("restart lost uncertain VM memory or startup CPU reservation")
 				}
 				return

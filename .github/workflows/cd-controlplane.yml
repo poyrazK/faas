@@ -458,6 +458,11 @@ jobs:
           '
 
       - name: Build immutable release bundle
+        env:
+          # Per-environment billing switch: disabled (public-beta default) or
+          # live. scripts/ci/faas_billing_mode.sh validates it and stages the
+          # same value for Ansible so both renders of the drop-in match.
+          FAAS_BILLING_MODE_SETTING: ${{ vars.FAAS_BILLING_MODE }}
         run: |
           set -euo pipefail
           # Same umask as the canonical download step: see there.
@@ -592,6 +597,9 @@ jobs:
             deploy/ansible/roles/edgednsd_service/files/faas-edgednsd.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-edgednsd.service"
           install -m 0644 \
+            deploy/ansible/roles/signd_service/files/faas-signd.service \
+            "${BUNDLE_ROOT}/optional-systemd/faas-signd.service"
+          install -m 0644 \
             deploy/ansible/roles/control_plane_service/files/faas-mcp-bridge.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-mcp-bridge.service"
           # Files required before deployctl can activate outboundd. Keep the
@@ -609,11 +617,13 @@ jobs:
           [Service]
           Environment=FAAS_OUTBOUNDD_ROLE=control-plane
           EOF
+          billing_mode="$(bash scripts/ci/faas_billing_mode.sh resolve)"
           for service in faas-apid faas-meterd; do
             cat > "${BUNDLE_ROOT}/systemd/${service}.service.d/zz-faas-billing-mode.conf" <<'EOF'
           [Service]
-          Environment=FAAS_BILLING_MODE=disabled
+          Environment=FAAS_BILLING_MODE=@FAAS_BILLING_MODE@
           EOF
+            sed -i "s/@FAAS_BILLING_MODE@/${billing_mode}/" "${BUNDLE_ROOT}/systemd/${service}.service.d/zz-faas-billing-mode.conf"
           done
           cat > "${BUNDLE_ROOT}/systemd/faas-apid.service.d/zz-faas-public-status.conf" <<'EOF'
           [Service]
@@ -881,7 +891,10 @@ jobs:
           EDGEDNSD_CF_TOKEN: ${{ secrets.EDGEDNSD_CF_TOKEN }}
           POSTGRES_RUNTIME_ROLES_ENABLED: ${{ vars.POSTGRES_RUNTIME_ROLES_ENABLED }}
           POSTGRES_OWNER_CONTRACT_ENABLED: ${{ vars.POSTGRES_OWNER_CONTRACT_ENABLED }}
+          POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
+          POSTGRES_COMPUTE_ROLE_KEY: ${{ secrets.POSTGRES_COMPUTE_ROLE_KEY }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
+          FAAS_BILLING_MODE_SETTING: ${{ vars.FAAS_BILLING_MODE }}
         run: |
           set -euo pipefail
           if [[ ! -f deploy/ansible/control_plane_converge.yml ]]; then
@@ -912,12 +925,23 @@ jobs:
           if [[ -f scripts/ci/faas_environment_vars.sh ]]; then
             bash scripts/ci/faas_environment_vars.sh "$work/vars.yml"
           fi
+          # The environment's FAAS_BILLING_MODE, so Ansible renders the drop-in
+          # the bundle installs. A release cut before the script stages none.
+          if [[ -f scripts/ci/faas_billing_mode.sh ]]; then
+            bash scripts/ci/faas_billing_mode.sh vars "$work/vars.yml"
+          fi
           # ADR-20261023104734: daemons log in as their own runtime roles when
           # the environment variable POSTGRES_RUNTIME_ROLES_ENABLED is true
           # (step 1); POSTGRES_OWNER_CONTRACT_ENABLED then leaves the owner to
           # root alone (step 2). A release cut before the script stages nothing.
           if [[ -f scripts/ci/postgres_runtime_roles_vars.sh ]]; then
             bash scripts/ci/postgres_runtime_roles_vars.sh "$work/vars.yml"
+          fi
+          # ADR-20261023104734 step 3: one role per compute daemon; the roles'
+          # SCRAM verifiers derive from POSTGRES_COMPUTE_ROLE_KEY. Off unless
+          # POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED is true.
+          if [[ -f scripts/ci/compute_db_roles.py ]]; then
+            python3 -I scripts/ci/compute_db_roles.py verifiers "$work/vars.yml"
           fi
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
@@ -1060,7 +1084,16 @@ jobs:
           trap - EXIT
 
           ident_file="$(sudo -u postgres psql -X -A -t -c 'show ident_file')"
-          if ! grep -qE '^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$' "$ident_file"; then
+          # ADR-20261023104734 step 2: once the postgres role has contracted
+          # the owner (its marker beside pg_ident.conf), only root may map to
+          # `faas`; outboundd logs in as faas_outboundd. Drop the legacy line
+          # instead of adding it back.
+          if [[ -e "$(dirname "$ident_file")/faas-owner-contracted" ]]; then
+            if grep -qE '^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$' "$ident_file"; then
+              sed -i -E '/^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$/d' "$ident_file"
+              systemctl reload postgresql@16-main.service
+            fi
+          elif ! grep -qE '^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$' "$ident_file"; then
             printf 'faas_map  faas-outboundd  faas\n' >> "$ident_file"
             systemctl reload postgresql@16-main.service
           fi
@@ -1418,6 +1451,55 @@ jobs:
           exit 1
           REMOTE
 
+      # signd_service converges before the release activates, so it can only
+      # start signd once the binary is current. This step starts (or
+      # restarts) it from the release just activated and waits for its
+      # listener (ADR-20261109170000). Without the role's drop-in signd is off.
+      - name: Restart configured artifact signer
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} "bash -s -- '${RELEASE_ID}'" <<'REMOTE'
+          set -euo pipefail
+          release_id="$1"
+          dropin=/etc/systemd/system/faas-signd.service.d/50-faas-signd.conf
+          source_unit="/opt/faas/releases/${release_id}/optional-systemd/faas-signd.service"
+          installed_unit=/etc/systemd/system/faas-signd.service
+
+          if [[ ! -s "$dropin" ]]; then
+            echo "faas-signd is not configured; compute nodes keep signing locally"
+            exit 0
+          fi
+          test -f "$source_unit"
+          test -x "/opt/faas/releases/${release_id}/bin/signd"
+          if [[ -L "$installed_unit" || ( -e "$installed_unit" && ! -f "$installed_unit" ) ]]; then
+            echo "faas-signd unit path is not a regular file" >&2
+            exit 1
+          fi
+          staged_unit="${installed_unit}.new-${release_id}"
+          trap 'rm -f -- "$staged_unit"' EXIT
+          install -o root -g root -m 0644 "$source_unit" "$staged_unit"
+          mv -Tf "$staged_unit" "$installed_unit"
+          trap - EXIT
+
+          listen="$(sed -n 's/^Environment=FAAS_SIGND_LISTEN=tcp:\/\///p' "$dropin" | tail -1)"
+          port="${listen##*:}"
+          [[ "$port" =~ ^[0-9]+$ ]]
+          systemctl daemon-reload
+          systemctl reset-failed faas-signd.service || true
+          systemctl enable faas-signd.service
+          systemctl restart faas-signd.service
+          for attempt in $(seq 1 30); do
+            if systemctl is-active --quiet faas-signd.service &&
+               ss -Hltn "sport = :${port}" | grep -q .; then
+              exit 0
+            fi
+            sleep 2
+          done
+          journalctl -u faas-signd.service -n 100 --no-pager >&2
+          exit 1
+          REMOTE
+
       - name: Converge Prometheus config and rules
         run: |
           set -euo pipefail
@@ -1745,7 +1827,10 @@ jobs:
           EDGEDNSD_CF_TOKEN: ${{ secrets.EDGEDNSD_CF_TOKEN }}
           POSTGRES_RUNTIME_ROLES_ENABLED: ${{ vars.POSTGRES_RUNTIME_ROLES_ENABLED }}
           POSTGRES_OWNER_CONTRACT_ENABLED: ${{ vars.POSTGRES_OWNER_CONTRACT_ENABLED }}
+          POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
+          POSTGRES_COMPUTE_ROLE_KEY: ${{ secrets.POSTGRES_COMPUTE_ROLE_KEY }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
+          FAAS_BILLING_MODE_SETTING: ${{ vars.FAAS_BILLING_MODE }}
           HOSTED_RUNNER: ${{ inputs.hosted_runner }}
           ROLES: ${{ steps.plan.outputs.roles }}
         run: |
@@ -1778,12 +1863,23 @@ jobs:
           if [[ -f scripts/ci/faas_environment_vars.sh ]]; then
             bash scripts/ci/faas_environment_vars.sh "$work/vars.yml"
           fi
+          # The environment's FAAS_BILLING_MODE, so Ansible renders the drop-in
+          # the bundle installs. A release cut before the script stages none.
+          if [[ -f scripts/ci/faas_billing_mode.sh ]]; then
+            bash scripts/ci/faas_billing_mode.sh vars "$work/vars.yml"
+          fi
           # ADR-20261023104734: daemons log in as their own runtime roles when
           # the environment variable POSTGRES_RUNTIME_ROLES_ENABLED is true
           # (step 1); POSTGRES_OWNER_CONTRACT_ENABLED then leaves the owner to
           # root alone (step 2). A release cut before the script stages nothing.
           if [[ -f scripts/ci/postgres_runtime_roles_vars.sh ]]; then
             bash scripts/ci/postgres_runtime_roles_vars.sh "$work/vars.yml"
+          fi
+          # ADR-20261023104734 step 3: one role per compute daemon; the roles'
+          # SCRAM verifiers derive from POSTGRES_COMPUTE_ROLE_KEY. Off unless
+          # POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED is true.
+          if [[ -f scripts/ci/compute_db_roles.py ]]; then
+            python3 -I scripts/ci/compute_db_roles.py verifiers "$work/vars.yml"
           fi
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"

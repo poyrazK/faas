@@ -338,7 +338,17 @@ const (
 	PlatformDeploymentTagEnv     = "FAAS_DEPLOYMENT_TAG"
 	PlatformDeploymentCreatedEnv = "FAAS_DEPLOYMENT_CREATED_AT"
 	PlatformImageDigestEnv       = "FAAS_IMAGE_DIGEST"
+	// PlatformDeveloperEnvironmentEnv is "1" in a `gregale dev` environment
+	// and empty everywhere else. guest-init starts the developer debugger
+	// (DevDebugEnv, ADR-741) only under it, so the switch set on a
+	// production app through env, secrets or the manifest is inert.
+	PlatformDeveloperEnvironmentEnv = "FAAS_DEVELOPER_ENVIRONMENT"
 )
+
+// PublicAPIURLEnv names the installation's public API URL in a workload's
+// environment. The SDK queue consumers read it; an app may set its own
+// (ADR-20261018101500 amendment 2026-10-31).
+const PublicAPIURLEnv = "GREGALE_API_URL"
 
 // IsPlatformIdentityEnvKey identifies keys that are owned by Gregale rather
 // than by the customer app. It is shared by the scheduler and guest-init so
@@ -348,11 +358,20 @@ func IsPlatformIdentityEnvKey(key string) bool {
 	case PlatformAppIDEnv, PlatformDeploymentIDEnv, PlatformTenantIDEnv,
 		PlatformInstanceIDEnv, PlatformNodeIDEnv, PlatformRegionEnv,
 		PlatformCommitSHAEnv, PlatformDeploymentTagEnv,
-		PlatformDeploymentCreatedEnv, PlatformImageDigestEnv:
+		PlatformDeploymentCreatedEnv, PlatformImageDigestEnv,
+		PlatformDeveloperEnvironmentEnv:
 		return true
 	default:
 		return false
 	}
+}
+
+// PlatformProvidedEnvKey reports keys Gregale sets itself: the listener
+// port, platform settings, service URLs and identity. A managed binding may
+// not claim one (ADR-20261110120000): guest-init drops identity keys and the
+// others would shadow platform settings.
+func PlatformProvidedEnvKey(key string) bool {
+	return key == "PORT" || strings.HasPrefix(key, "GREGALE_") || strings.HasPrefix(key, "FAAS_") || IsPlatformIdentityEnvKey(key)
 }
 
 // IsInvocationAttemptHeader identifies volatile dispatch metadata, never guest identity or deduplication keys.

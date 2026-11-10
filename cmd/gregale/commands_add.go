@@ -58,7 +58,7 @@ type addBucketBindingResult struct {
 
 func cmdAdd(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale add <postgres|bucket|datadog|ai>", "add")
+		PrintUsage(os.Stderr, "usage: gregale add <postgres|bucket|datadog|ai|function>", "add")
 		return 1
 	}
 	switch args[0] {
@@ -70,6 +70,8 @@ func cmdAdd(args []string) int {
 		return cmdAddDatadog(args[1:])
 	case "ai":
 		return cmdAddAI(args[1:])
+	case "function":
+		return cmdAddFunction(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown add resource %q\n", args[0])
 		return unknownSubcommandChoices(os.Stderr, "add", nestedCliCommand("add"), args[0])
@@ -144,6 +146,11 @@ func cmdAddBucket(args []string) int {
 	}
 	bucketCreated := false
 	if !found {
+		// add bucket always binds; on a plan without compute bindings the bind
+		// step is refused, so refuse before leaving an unattached bucket.
+		if problem := addBucketBindingUnavailable(ctx, client); problem != nil {
+			return printErr("Cannot attach a bucket to this app", problem)
+		}
 		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("bucket", appName, name, *scope))
 		bucket, err = client.CreateObjectBucket(createCtx, appName, api.CreateObjectBucketRequest{
 			Name: name, Scope: strings.TrimSpace(*scope), Region: strings.TrimSpace(*region), Public: *public, ServeAt: strings.TrimSpace(*serveAt),
@@ -319,7 +326,7 @@ func cmdAddPostgres(args []string) int {
 	scaleToZero := fs.Bool("scale-to-zero", true, "suspend compute when idle")
 	storage := fs.Int64("storage-bytes", 0, "storage limit in bytes (0 uses plan allowance)")
 	restoreWindow := fs.Int64("restore-window-seconds", 0, "point-in-time restore window (0 uses plan allowance)")
-	access := fs.String("access", "read_write", "credential access: read_write|read_only|migration|data_api|auth")
+	access := fs.String("access", "read_write", "credential access: read_write|read_only|migration|data_api|session")
 	waitTimeout := fs.Duration("wait-timeout", addResourceDefaultWait, "maximum time to wait for the database and binding to become ready")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -329,7 +336,7 @@ func cmdAddPostgres(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	*scope = resolvedScope
-	usage := "usage: gregale add postgres [NAME] --app APP [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only|migration|data_api|auth] [--wait-timeout DURATION]"
+	usage := "usage: gregale add postgres [NAME] --app APP [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only|migration|data_api|session] [--wait-timeout DURATION]"
 	if fs.NArg() != 0 && fs.NArg() != 1 {
 		PrintUsage(os.Stderr, usage, "add")
 		return 1
@@ -391,6 +398,9 @@ func cmdAddPostgres(args []string) int {
 			printCommandValidation(os.Stderr, "add postgres: no managed database named %q exists yet; pass --region REGION to create it, or --database REF to attach an existing one\n", name)
 			return 1
 		}
+		if err := addPostgresUnsupported(ctx, client, *region, *access, *availability, true); err != nil {
+			return printErr("Cannot create managed PostgreSQL database", err)
+		}
 		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("database", appName, name, *scope, *environmentKey))
 		database, err = client.CreateManagedPostgresDatabase(createCtx, api.CreateManagedPostgresDatabaseRequest{
 			Name: name, Region: strings.TrimSpace(*region), PostgresMajor: *major,
@@ -413,6 +423,11 @@ func cmdAddPostgres(args []string) int {
 	database, err = waitForManagedPostgresDatabase(ctx, client, database, *waitTimeout)
 	if err != nil {
 		return printErr("Managed PostgreSQL database is not ready", err)
+	}
+	if !databaseCreated {
+		if err := addPostgresUnsupported(ctx, client, database.Region, *access, *availability, false); err != nil {
+			return printErr("Cannot attach managed PostgreSQL database", err)
+		}
 	}
 	bindingIsNew := postgresBindingIsNew(ctx, client, database.ID, app.ID, strings.TrimSpace(*scope), strings.TrimSpace(*environmentKey))
 	bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("binding", app.ID, database.ID, *scope, *environmentKey))
@@ -444,6 +459,7 @@ func cmdAddPostgres(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s as %s (%s).\n", database.Name, appName, binding.EnvironmentKey, binding.Scope)
 	if bindingIsNew {
 		printPostgresBindingDelivery(osStdout, appName, binding.EnvironmentKey, binding.Access)
+		printAddPostgresMigrationHint(osStdout, database.Name, appName, binding.Scope, binding.Access)
 	}
 	return 0
 }

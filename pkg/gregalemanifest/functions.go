@@ -55,13 +55,19 @@ type FunctionSpec struct {
 	// triggers are added and updated, never removed, as on any deploy.
 	QueueBindings []QueueBinding `yaml:"queue_bindings,omitempty"`
 	EventTriggers []EventTrigger `yaml:"event_triggers,omitempty"`
+
+	// Hooks are the snapshot hooks the handler declares in code (init,
+	// before_snapshot, after_restore), read by the plan without running it
+	// (ADR-20261110190000). Never set from yaml.
+	Hooks []string `yaml:"-"`
 }
 
 // HasPreDeploySettings reports whether the function sets anything that must
 // be on its app before the deployment is built: RAM and concurrency shape
 // the build, and env and secrets reach the first wake.
 func (fn FunctionSpec) HasPreDeploySettings() bool {
-	return fn.RAMMB != 0 || fn.RequestTimeoutS != 0 || fn.Concurrency != 0 || len(fn.Env) > 0 || fn.PruneEnv || len(fn.SecretsFromEnv) > 0
+	return fn.RAMMB != 0 || fn.RequestTimeoutS != 0 || fn.Concurrency != 0 || len(fn.Env) > 0 || fn.PruneEnv || len(fn.SecretsFromEnv) > 0 ||
+		len(fn.Hooks) > 0
 }
 
 // FunctionBucketEvent routes object-storage notifications for one bucket to

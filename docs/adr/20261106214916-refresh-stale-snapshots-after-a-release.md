@@ -45,8 +45,12 @@ The customer is not billed for this work.
 1. **What starts a pass.** A node's `compute_nodes.release_id` changes (the
    release install stamps it), and once per node when schedd starts, since
    schedd restarts during a release. schedd runs one refresh pass for that
-   node. A pass for a base, kernel or Firecracker change made outside a
-   release, started by an operator, is a later addition.
+   node. Every node is also passed again when `snapshot_refresh` changes
+   mode, so turning
+   `shadow` into `on` refreshes what the shadow pass found without waiting
+   for the next release (added 2026-11-10). A pass for a base, kernel or
+   Firecracker change made outside a release, started by an operator, is a
+   later addition.
 2. **Which snapshots.** For each app with a gateway wake in the last
    `snapshot_refresh_window_hours` (default 168), schedd asks the node's vmmd
    whether the app's live snapshot would restore there. A new
@@ -55,6 +59,21 @@ The customer is not billed for this work.
    without starting a VM and answers `current`, `stale` or `unknown`.
    Only `stale` is refreshed. The check stays exact: a pass that asks too
    often costs a lookup, never a wrong restore.
+   Before asking, schedd checks the vCPU count. A snapshot does not record
+   the count it was captured with, and vmmd learns it only by restoring one
+   (`ErrSnapshotVCPUMismatch`). The candidate's parked instance does: its
+   `instances.capacity_vcpu` is the count it booted or restored with, and
+   so the count of the snapshot it captured or restored from. A count other
+   than the one the app boots with now is stale (detail
+   `vcpu_count_changed`) without asking vmmd; no recorded count leaves the
+   restore check to decide.
+   *Amended 2026-11-10 (ADR-20261109172421 step 6):* while the vCPU count
+   came from runtime config (`guest_vcpu_from_cpu_apps` and its three shape
+   keys, then `cpu_size_apps`), a change to those keys passed every node
+   again, and schedd replayed their revisions to date a snapshot's count.
+   Every app instance's count now follows its size, so the keys are retired
+   and the instance row answers instead, including for an instance booted
+   before a change and parked after it.
 3. **Skipped.** schedd does not refresh:
    - apps with a live instance (they are recaptured after they park);
    - suspended, deleting or dunning-blocked accounts, and paused or deleted

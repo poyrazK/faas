@@ -61,4 +61,13 @@ type Service struct {
 
 	// Metrics counts convergence skips and failures; nil records nothing.
 	Metrics *Metrics
+
+	// SealHeaderValue seals a secret request header value to the edge seal
+	// domain (ADR-20261108110000); nil refuses secret header values.
+	SealHeaderValue func(plaintext string) ([]byte, error)
+
+	// EnvironmentPolicyHost names the stable environment URL whose rules an
+	// environment edge policy changes, for the backfill's convergence; nil
+	// leaves environment policies to their next write.
+	EnvironmentPolicyHost func(ctx context.Context, policy state.ProjectEnvironmentEdgePolicy) (string, error)
 }

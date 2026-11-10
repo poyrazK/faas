@@ -76,6 +76,7 @@ func TestPushPendingFundedEgressDelivery(t *testing.T) {
 				t.Fatal(err)
 			}
 			provider := &fundedEgressProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}, policy: billing.MeterUsagePolicy{Mode: billing.MeterDeliveryLive, EffectiveFrom: month, UnitQuantity: 1 << 30, MillicentsPerUnit: 2000}}
+			electEgressOverage(t, ctx, store, acct.ID)
 			if scenario == "above_rate" || scenario == "deleted_policy" {
 				provider.policy.MillicentsPerUnit = 4000
 			}

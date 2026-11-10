@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -396,15 +397,11 @@ func startupDeadlineForApp(app state.App, plan api.Plan) int32 {
 }
 
 // startupCPUBoostQuota mirrors VMMD's bounded startup profile so placement and
-// the node ledger reserve the same temporary peak that cpu.max will enforce.
-func startupCPUBoostQuota(plan api.Plan, configured int) int {
-	period := plan.CPUPeriodUS()
-	quota := plan.CPUQuotaUS()
-	if period <= 0 || quota <= 0 {
-		return configured
-	}
-	planCeiling := int(int64(quota) * 1000 / int64(period))
-	return max(configured, min(api.DefaultAppCPUMillicores, planCeiling))
+// the node ledger reserve the same temporary peak that cpu.max will enforce:
+// one core, or the configured ceiling when it is higher. It never depends on
+// the plan (ADR-20261109172421; the plan ceiling was one core on every plan).
+func startupCPUBoostQuota(configured int) int {
+	return max(configured, api.DefaultAppCPUMillicores)
 }
 
 // executionModeForApp resolves the manifest default before crossing the
@@ -455,6 +452,9 @@ type Engine struct {
 	// capabilities holds a capability's background work while its platform
 	// flag is off for the owning account (ADR-20261023115741); nil allows all.
 	capabilities *capflags.Decider
+	// idleLadderRelease decides quiet_pause_unbilled for an app's account
+	// when idle_ladder_idle_out is on (ADR-20261107122928); nil holds none.
+	idleLadderRelease func(platformflags.Subject) bool
 	// profileCaptureMetrics records on-demand captures (ADR-1155); nil records nothing.
 	profileCaptureMetrics *wire.ProfileCaptureMetrics
 	capabilitySubjects    capabilitySubjects
@@ -525,6 +525,10 @@ type Engine struct {
 	// Wired via WithOwnerNodeID after NewEngine; nil-safe so
 	// pre-Phase-2 tests stay green.
 	ownerNodeID string
+
+	// publicAPIURL is this installation's public API, handed to workloads
+	// as GREGALE_API_URL (WithPublicAPIURL). Empty leaves the SDK default.
+	publicAPIURL string
 
 	// tracer is the OTel Tracer that emits sched.wake + vmmd.create_*
 	// spans (issue #555 PR-3). nil = no spans emitted (the OTel
@@ -717,13 +721,6 @@ type Engine struct {
 	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
 	// from functions to request-mode apps.
 	frozenTierApps atomic.Bool
-	// guestVCPUApps (runtime config `guest_vcpu_from_cpu_apps`) lists the
-	// apps whose guest vCPU count follows their CPU quota
-	// (ADR-20261101160231, ADR-20261101215228).
-	guestVCPUApps atomic.Pointer[guestVCPUAppSet]
-	// cpuShape holds the runtime-config values that shape a listed app's CPU
-	// (ADR-20261101215228); nil is the compiled shape.
-	cpuShape atomic.Pointer[api.CPUShape]
 	// frozenTierWorkers (schedd `frozen_tier_workers`) lets a worker pool
 	// freeze its surplus workers and thaw them before booting new ones
 	// (ADR-20261019103000).
@@ -1513,6 +1510,31 @@ func (e *Engine) WithOwnerNodeID(nodeID string) *Engine {
 	return e
 }
 
+// WithPublicAPIURL sets the public API URL workloads receive as
+// GREGALE_API_URL. The SDK queue consumers otherwise call
+// https://api.gregale.dev, which does not accept another installation's
+// workload tokens (ADR-20261018101500 amendment 2026-10-31).
+func (e *Engine) WithPublicAPIURL(url string) *Engine {
+	if e != nil {
+		e.publicAPIURL = strings.TrimRight(strings.TrimSpace(url), "/")
+	}
+	return e
+}
+
+// withPublicAPIURL adds GREGALE_API_URL to a workload's platform env unless
+// the app sets it itself.
+func (e *Engine) withPublicAPIURL(env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
+	if e == nil || e.publicAPIURL == "" {
+		return env
+	}
+	for _, entry := range env {
+		if entry.Key == api.PublicAPIURLEnv {
+			return env
+		}
+	}
+	return append(env, fcvm.APIEnvEntry{Key: api.PublicAPIURLEnv, Value: e.publicAPIURL})
+}
+
 // WithRecoveryArbiter wires the single per-tick decision policy
 // (Workstream B / issue #1184 / ADR-137). Task #61 folds the
 // live_migrator + deadnode_reconciler paths through the arbiter;
@@ -2261,7 +2283,13 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 	}
 	if refreshRuntimeConfig {
 		out, err = e.refreshRuntimeConfigRolling(ctx, appID, wakeID)
-		if err == nil && out.Instance != nil && wakeID != "" {
+		idle := errors.Is(err, errRuntimeRefreshIdle)
+		if idle {
+			// Nothing runs the previous credentials, so a pending rotation
+			// is complete (ADR-20261110120000).
+			err = nil
+		}
+		if err == nil && (out.Instance != nil || idle) && wakeID != "" {
 			if rotations, ok := e.store.(state.ObjectS3CredentialRotationStore); ok {
 				if finishErr := rotations.FinalizeObjectS3CredentialRotationsForApp(ctx, appID, wakeID); finishErr != nil {
 					return out, fmt.Errorf("sched: retire previous object-storage credentials for app %s: %w", appID, finishErr)
@@ -3369,9 +3397,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// ADR-1162: explicit-deployment admissions (min-instance floors,
 		// service replicas, workers, per-deployment wakes) skip the request
 		// gates but not the account spend cap; otherwise always-on capacity
-		// keeps running past the cap. Deployment smoke verifies a release and
-		// mirror instances are never metered, so both stay exempt.
-		if !deploymentSmoke && mode != string(state.InstanceModeMirror) {
+		// keeps running past the cap. Deployment smoke verifies a release, so
+		// it stays exempt; mirror VMs bill (ADR-20261104145353) and stop at
+		// the cap like any other capacity.
+		if !deploymentSmoke {
 			if reached, observed, capped := e.admitSpendCap(ctx, &app); reached {
 				outcome, obsCents, capCents = wakeOverageCapReached, observed, capped
 			}
@@ -3665,18 +3694,18 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			e.log.Debug("upstream affinity refresh failed; using legacy chooser", "app", logsanitize.Field(appID), "err", rerr)
 		}
 	}
-	configuredCPU := e.appCPUBookingMillicores(app, limits)
+	configuredCPU := appCPUBookingMillicores(app)
 	startupCPU := configuredCPU
 	if !dep.DisableStartupCPUBoost {
-		startupCPU = startupCPUBoostQuota(acct.Plan, configuredCPU)
+		startupCPU = startupCPUBoostQuota(configuredCPU)
 	}
 	placementRequest := Request{
 		AppID:                      appID,
 		Plan:                       acct.Plan,
 		RAMMB:                      app.RAMMB,
-		VCPU:                       e.guestVCPUs(app, limits),
+		VCPU:                       appVCPUs(app),
 		CPUMillicores:              startupCPU,
-		BookedCPUMillicores:        e.appCPUBookingStamp(app, limits),
+		BookedCPUMillicores:        appCPUBookingMillicores(app),
 		MaxConcurrency:             app.MaxConcurrency,
 		PreferredNodeID:            warmHint,
 		PreferredNodeIDs:           snapshotNodes,
@@ -3823,7 +3852,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		EnvironmentKey:        environmentKey,
 		ProductionEnvironment: productionEnvironment,
-		RAMMB:                 app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		RAMMB:                 app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
 		// revision alongside the one already serving needs the same
@@ -4042,7 +4071,8 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(e.appCPUMillicores(app, limits)),
+		VCPUCount: int32(appVCPUs(app)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(appCPUMillicores(app)),
+		CPUWeight: appCPUWeight(app), CPUUncapped: true,
 		EgressMbit: int32(limits.EgressMbit), RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
@@ -4059,10 +4089,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
-		APIEnv: appendPlatformIdentity(
+		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(
 			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
-		),
+		)),
 		// ADR-031: surface the per-app egress allowlist on the
 		// wake wire. vmmd translates the CIDRs into the per-netns
 		// forward chain. Empty slice = no allowlist rule (current
@@ -4073,6 +4103,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// old netns — same contract as RAMMB and MaxConcurrency.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:                 app.EgressPorts,
+		EgressRevision:              app.EgressAllowlistRevision,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
@@ -4108,6 +4139,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
 		QuietPauseAfterMS:        quietPauseAfterMS(app, mode, privateNetwork.NetworkID),
 		IdleLadderEligible:       pauseTierWorkload(app, mode, privateNetwork.NetworkID),
+		IdleLadderGuardedPause:   idleLadderGuardedPause(app, mode, privateNetwork.NetworkID),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -4478,7 +4510,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	configuredBootCPU := int(bootInput.spec.CPUMillicores)
 	startupBootCPU := configuredBootCPU
 	if !bootInput.spec.DisableStartupCPUBoost {
-		startupBootCPU = startupCPUBoostQuota(bootInput.spec.Plan, configuredBootCPU)
+		startupBootCPU = startupCPUBoostQuota(configuredBootCPU)
 	}
 	if startupBootCPU > configuredBootCPU {
 		// vmmd's readiness boundary is inside the RPC; using response time plus
@@ -5249,9 +5281,40 @@ type placementSnapshot struct {
 	// preferred is nodes less those whose vmmd is restarting under a
 	// notice, when that leaves any (vmmd restart adoption ADR §3).
 	preferred []state.ComputeNode
+	// cpu counts what the CPU budgets would have refused
+	// (ADR-20261109172421).
+	cpu *cpuAdmission
 }
 
+// choose places r. CPU decides where, never whether (ADR-20261109172421):
+// the first pass prefers a node within its vCPU and CPU budgets, and a
+// refusal for those alone is retried without them, so a node with memory
+// room is chosen and the refusal is only counted.
 func (s placementSnapshot) choose(r Request) (Placement, error) {
+	p, err := s.chooseOnce(r)
+	if err == nil || !refusedForCPU(err) {
+		return p, err
+	}
+	r.ignoreCPUBudgets = true
+	if p, err = s.chooseOnce(r); err != nil {
+		return p, err
+	}
+	s.cpu.refusedAt(CPUGatePlacement)
+	return p, nil
+}
+
+// refusedForCPU reports whether a placement refusal names the vCPU or CPU
+// budget.
+func refusedForCPU(err error) bool {
+	for _, b := range admissionBlockers(err) {
+		if b.Code == "node_vcpu" || b.Code == "node_cpu" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s placementSnapshot) chooseOnce(r Request) (Placement, error) {
 	if len(s.preferred) > 0 {
 		if p, err := choosePlacementWithCPU(s.preferred, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r); err == nil {
 			return p, nil
@@ -5359,7 +5422,7 @@ func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (pla
 	}
 	snapshot := placementSnapshot{
 		nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
-		usedCPUMillicores: usedCPUMillicores,
+		usedCPUMillicores: usedCPUMillicores, cpu: e.ledger.cpuAdmission,
 	}
 	if preferred, ok := preferUnnoticed(ctx, e.restartNotices, nodes); ok {
 		snapshot.preferred = preferred
@@ -5571,18 +5634,16 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 			"app_id", appID, "ram_mb", app.RAMMB)
 		return nil
 	}
-	acct, err := state.AppResourceAccount(ctx, e.store, app)
-	if err != nil {
+	if _, err := state.AppResourceAccount(ctx, e.store, app); err != nil {
 		return fmt.Errorf("sched: claim unplaced: lookup account: %w", err)
 	}
 	placement, ok := e.chooseOwnerByLoad(ctx, app)
 	if !ok {
-		limits := api.MustLimitsFor(acct.Plan)
 		placement, err = e.choosePlacementLocked(ctx, Request{
 			AppID:          appID,
 			RAMMB:          app.RAMMB,
-			VCPU:           e.guestVCPUs(app, limits),
-			CPUMillicores:  e.appCPUBookingMillicores(app, limits),
+			VCPU:           appVCPUs(app),
+			CPUMillicores:  appCPUBookingMillicores(app),
 			MaxConcurrency: app.MaxConcurrency,
 		})
 		if err != nil {
@@ -6158,9 +6219,11 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		WakeID:             ins.WakeID,
 		BaseKey:            pinnedBase,
 		LayerKey:           layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount:          int32(e.guestVCPUs(app, limits)),
+		VCPUCount:          int32(appVCPUs(app)),
+		CPUWeight:          appCPUWeight(app),
+		CPUUncapped:        true,
 		MemSizeMiB:         int32(app.RAMMB),
-		CPUMillicores:      int32(e.appCPUMillicores(app, limits)),
+		CPUMillicores:      int32(appCPUMillicores(app)),
 		EgressMbit:         int32(limits.EgressMbit),
 		RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: migration must preserve the same readiness budget as the
@@ -6178,7 +6241,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		MainDependsOn:          mainDependencies,
 		// ADR-590: plaintext and sealed inputs share one owned snapshot.
 		// A lookup failure aborts migration before booting incomplete config.
-		APIEnv: appendPlatformIdentity(
+		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(
 			runtimeValues.APIEnv,
 			app, dep, acct, ins.NodeID, ins.ID, func() string {
 				if node, err := e.store.ComputeNodeByID(ctx, ins.NodeID); err == nil {
@@ -6186,11 +6249,12 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 				}
 				return ""
 			}(),
-		),
+		)),
 		// ADR-031: per-app egress allowlist; same CIDR-string
 		// flattening as the Wake path.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:                 app.EgressPorts,
+		EgressRevision:              app.EgressAllowlistRevision,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
@@ -6214,6 +6278,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
 		QuietPauseAfterMS:        quietPauseAfterMS(app, ins.Mode, privateNetwork.NetworkID),
 		IdleLadderEligible:       pauseTierWorkload(app, ins.Mode, privateNetwork.NetworkID),
+		IdleLadderGuardedPause:   idleLadderGuardedPause(app, ins.Mode, privateNetwork.NetworkID),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22", "python312"). The sched sources it
 		// from the apps row at Wake time and threads it onto
@@ -6912,15 +6977,15 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	// ceiling and there's no other active node.
 	// Keep the initial snapshot near the app's assigned node when it fits.
 	// The chooser still enforces liveness and CPU/RAM admission.
-	primeConfiguredCPU := e.appCPUBookingMillicores(app, limits)
+	primeConfiguredCPU := appCPUBookingMillicores(app)
 	primeStartupCPU := primeConfiguredCPU
 	if !dep.DisableStartupCPUBoost {
-		primeStartupCPU = startupCPUBoostQuota(acct.Plan, primeConfiguredCPU)
+		primeStartupCPU = startupCPUBoostQuota(primeConfiguredCPU)
 	}
 	primePlacementRequest := Request{
 		AppID: appID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
-		BookedCPUMillicores: e.appCPUBookingStamp(app, limits),
+		RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
+		BookedCPUMillicores: appCPUBookingMillicores(app),
 		PreferredNodeID:     app.NodeID,
 	}
 	// Prime is a wake-shape event (gaps analysis 2026-07-23): the
@@ -6984,7 +7049,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		Kind:                KindSnapshotPrime,
 		NodeID:              placement.NodeID,
 		NodeCeilingMB:       placement.CeilingMB,
@@ -7800,6 +7865,11 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 		return 0, fmt.Errorf("sched: deleted-app reconcile: empty app id")
 	}
 	app, err := e.store.AppByID(ctx, appID)
+	if errors.Is(err, state.ErrNotFound) {
+		// The purge already removed the app and its instance rows, so there
+		// is nothing left to stop.
+		return 0, nil
+	}
 	if err != nil {
 		return 0, fmt.Errorf("sched: deleted-app reconcile: load app %s: %w", appID, err)
 	}
@@ -8337,8 +8407,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		limits, ok := api.LimitsFor(acct.Plan)
-		if !ok {
+		if _, ok := api.LimitsFor(acct.Plan); !ok {
 			continue
 		}
 		instances, err := e.liveInstancesForApp(ctx, app.ID)
@@ -8388,7 +8457,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
 				ProductionEnvironment: policy.production,
-				RAMMB:                 ins.RAMMB, VCPU: e.guestVCPUs(policy.app, limits), CPUMillicores: e.appCPUBookingMillicores(policy.app, limits), MaxConcurrency: policy.app.MaxConcurrency,
+				RAMMB:                 ins.RAMMB, VCPU: appVCPUs(policy.app), CPUMillicores: appCPUBookingMillicores(policy.app), MaxConcurrency: policy.app.MaxConcurrency,
 				// Recovery must account for all already-resident serving rows,
 				// including overlap and capacity above a subsequently lowered cap.
 				// This does not authorize new capacity: the rows are already
@@ -8411,7 +8480,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 
 			if until, ok := startupCPUBoosts[ins.ID]; ok {
-				request.CPUStartupBoostMillicores = startupCPUBoostQuota(acct.Plan, request.CPUMillicores)
+				request.CPUStartupBoostMillicores = startupCPUBoostQuota(request.CPUMillicores)
 				request.CPUStartupBoostUntil = until
 			}
 			if err := e.ledger.Admit(request); err != nil {
@@ -8612,7 +8681,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// with the app's current machine configuration. Retire the old VM instead;
 	// the next request cold-boots the current shape and produces a compatible
 	// snapshot on its next park.
-	app, err := state.AppForInstance(ctx, e.store, ins)
+	app, dep, err := appForInstanceAndDeployment(ctx, e.store, ins)
 	if err != nil {
 		// A deleted environment tombstones its deployments before its VMs
 		// finish retiring. Such a VM must never publish into a recreated
@@ -8631,6 +8700,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		}
 		return fmt.Errorf("sched: park: load deployment app shape: %w", err)
 	}
+	app = withBuiltLifecycle(app, dep)
 	frozenFunction := functionlifetime.NativeQualificationBuild && app.Type == "function" && (app.Runtime == "node22" || app.Runtime == "node24")
 	if frozenFunction {
 		undoFreeze, err := e.freezeFunctionForPark(ctx, ins)

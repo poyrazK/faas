@@ -66,12 +66,12 @@ type countingWaker struct {
 	fail           atomic.Bool
 }
 
-func (w *countingWaker) Wake(context.Context, string) (string, error) {
+func (w *countingWaker) Wake(context.Context, string) (Backend, error) {
 	w.wakes.Add(1)
 	if w.fail.Load() {
-		return "", errors.New("no capacity")
+		return Backend{}, errors.New("no capacity")
 	}
-	return "backend", nil
+	return Backend{Target: "backend", Node: "db-node"}, nil
 }
 
 func (w *countingWaker) Touch(_ context.Context, _ string, egress int64) error {
@@ -84,7 +84,7 @@ func (w *countingWaker) Touch(_ context.Context, _ string, egress int64) error {
 // PostgreSQL directly.
 type tcpDialer struct{ addr string }
 
-func (d tcpDialer) Dial(ctx context.Context, _, _ string) (io.ReadWriteCloser, error) {
+func (d tcpDialer) Dial(ctx context.Context, _ Backend, _ string) (io.ReadWriteCloser, error) {
 	var nd net.Dialer
 	return nd.DialContext(ctx, "tcp", d.addr)
 }

@@ -921,6 +921,13 @@ message AppSpec {
   // forbidden ports again before rendering the per-instance egress_ports
   // set. Empty = base ports only.
   repeated uint32 egress_ports = 29;
+  // egress_revision is apps.egress_allowlist_revision for the
+  // egress_allowlist and egress_ports above, read in the same row. vmmd keeps
+  // the last policy schedd pushed per app and lays it over wake requests;
+  // when this revision is newer than that cached policy the request's own
+  // policy wins (a wake right after an egress change while the app was
+  // parked). 0 = unknown (older schedd): the cache wins as before.
+  int64 egress_revision = 40;
   // liveness_probe_json is the deployment's validated primary-app
   // liveness_probe override (ADR-078), carried like readiness_probe_json.
   // Empty keeps the plan defaults. production-us hunt #8: without this field
@@ -955,6 +962,22 @@ message AppSpec {
   // would reach; nothing is paused because of it. False (an older schedd)
   // leaves the instance out unless quiet_pause_after_ms is set.
   bool idle_ladder_eligible = 38;
+  // ADR-20261107122928 §6: the instance is a request-serving app that
+  // declared no pause and is not a function, so vmmd may quiet-pause it
+  // between requests behind the idle ladder's activity guard when its
+  // idle_ladder_apps switch is on. An app that declared when_idle or never
+  // keeps what it declared. False (an older schedd) never pauses it.
+  bool idle_ladder_guarded_pause = 39;
+  // ADR-20261109172421: the instance's cgroup cpu.weight, its share of a busy
+  // host (schedd sends max(1, ram_mb / 16)). 0 (an older schedd) gets that
+  // weight from mem_size_mib. vmmd refuses a value above 10000.
+  int32 cpu_weight = 41;
+  // ADR-20261109172421: the instance runs with host cpu.max = max and no
+  // startup boost, so it may use any idle host CPU up to its vCPUs.
+  // cpu_millicores still sizes guest workload partitions. vmmd runs every
+  // app instance this way whatever the field says (ADR-20261109172421 step
+  // 6.3); it stays for an older schedd.
+  bool cpu_uncapped = 42;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's

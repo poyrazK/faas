@@ -63,6 +63,22 @@ const (
 	VmmdRelayClient          = "vmmd.faas"
 )
 
+// FeatureArtifactSigner is the control-plane artifact signer's mTLS
+// (ADR-20261109170000): signd's server leaf on the control plane, and
+// imaged's client leaf on each compute node. imaged verifies signd as
+// signd.faas; signd accepts a client only when its CN is a registered
+// compute node and signs only for the node building the deployment, so the
+// client leaf carries the node's identity (RoleUsesNodeIdentity).
+const FeatureArtifactSigner = "artifact-signer"
+
+// Artifact signer leaf identities. The client leaf's CN is the compute
+// node's name; ImagedSigndClient is only its placeholder in the role table.
+const (
+	SigndServerName      = "signd.faas"
+	ImagedSigndClient    = "imaged.faas"
+	SigndClientDirectory = "signd-client"
+)
+
 // SharedDirectoryFeatureLeaf reports whether a feature leaf may sit in a
 // required leaf's directory: only vmmd's relay client leaf does.
 func SharedDirectoryFeatureLeaf(role Role) bool {
@@ -71,7 +87,7 @@ func SharedDirectoryFeatureLeaf(role Role) bool {
 
 // Features lists the known feature-leaf sets.
 func Features() []string {
-	return []string{FeatureLiveQueries, FeaturePlatformLogs, FeatureOutboundRelay}
+	return []string{FeatureLiveQueries, FeaturePlatformLogs, FeatureOutboundRelay, FeatureArtifactSigner}
 }
 
 // FeatureRoles returns the leaves a host of boxRole carries for feature, or
@@ -94,6 +110,9 @@ func FeatureRoles(feature, boxRole string) []Role {
 	case FeatureOutboundRelay:
 		controlPlane = []Role{{CommonName: OutbounddRelayServerName, Kind: KindServer, Directory: "outboundd", Filename: "server", AltNames: ProductionSANs(OutbounddRelayServerName)}}
 		compute = []Role{{CommonName: VmmdRelayClient, Kind: KindClient, Directory: "vmmd", Filename: "outboundd-client", AltNames: ProductionSANs(VmmdRelayClient)}}
+	case FeatureArtifactSigner:
+		controlPlane = []Role{{CommonName: SigndServerName, Kind: KindServer, Directory: "signd", Filename: "server", AltNames: ProductionSANs(SigndServerName)}}
+		compute = []Role{{CommonName: ImagedSigndClient, Kind: KindClient, Directory: SigndClientDirectory, Filename: "imaged", AltNames: ProductionSANs(ImagedSigndClient)}}
 	default:
 		return nil
 	}

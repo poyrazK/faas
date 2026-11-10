@@ -392,6 +392,13 @@ type AppSpec struct {
 	// forbidden ports again before rendering the per-instance egress_ports
 	// set. Empty = base ports only.
 	EgressPorts []uint32 `protobuf:"varint,29,rep,packed,name=egress_ports,json=egressPorts,proto3" json:"egress_ports,omitempty"`
+	// egress_revision is apps.egress_allowlist_revision for the
+	// egress_allowlist and egress_ports above, read in the same row. vmmd keeps
+	// the last policy schedd pushed per app and lays it over wake requests;
+	// when this revision is newer than that cached policy the request's own
+	// policy wins (a wake right after an egress change while the app was
+	// parked). 0 = unknown (older schedd): the cache wins as before.
+	EgressRevision int64 `protobuf:"varint,40,opt,name=egress_revision,json=egressRevision,proto3" json:"egress_revision,omitempty"`
 	// liveness_probe_json is the deployment's validated primary-app
 	// liveness_probe override (ADR-078), carried like readiness_probe_json.
 	// Empty keeps the plan defaults. production-us hunt #8: without this field
@@ -426,8 +433,24 @@ type AppSpec struct {
 	// would reach; nothing is paused because of it. False (an older schedd)
 	// leaves the instance out unless quiet_pause_after_ms is set.
 	IdleLadderEligible bool `protobuf:"varint,38,opt,name=idle_ladder_eligible,json=idleLadderEligible,proto3" json:"idle_ladder_eligible,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// ADR-20261107122928 §6: the instance is a request-serving app that
+	// declared no pause and is not a function, so vmmd may quiet-pause it
+	// between requests behind the idle ladder's activity guard when its
+	// idle_ladder_apps switch is on. An app that declared when_idle or never
+	// keeps what it declared. False (an older schedd) never pauses it.
+	IdleLadderGuardedPause bool `protobuf:"varint,39,opt,name=idle_ladder_guarded_pause,json=idleLadderGuardedPause,proto3" json:"idle_ladder_guarded_pause,omitempty"`
+	// ADR-20261109172421: the instance's cgroup cpu.weight, its share of a busy
+	// host (schedd sends max(1, ram_mb / 16)). 0 (an older schedd) gets that
+	// weight from mem_size_mib. vmmd refuses a value above 10000.
+	CpuWeight int32 `protobuf:"varint,41,opt,name=cpu_weight,json=cpuWeight,proto3" json:"cpu_weight,omitempty"`
+	// ADR-20261109172421: the instance runs with host cpu.max = max and no
+	// startup boost, so it may use any idle host CPU up to its vCPUs.
+	// cpu_millicores still sizes guest workload partitions. vmmd runs every
+	// app instance this way whatever the field says (ADR-20261109172421 step
+	// 6.3); it stays for an older schedd.
+	CpuUncapped   bool `protobuf:"varint,42,opt,name=cpu_uncapped,json=cpuUncapped,proto3" json:"cpu_uncapped,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -684,6 +707,13 @@ func (x *AppSpec) GetEgressPorts() []uint32 {
 	return nil
 }
 
+func (x *AppSpec) GetEgressRevision() int64 {
+	if x != nil {
+		return x.EgressRevision
+	}
+	return 0
+}
+
 func (x *AppSpec) GetLivenessProbeJson() string {
 	if x != nil {
 		return x.LivenessProbeJson
@@ -722,6 +752,27 @@ func (x *AppSpec) GetRequestConcurrency() int32 {
 func (x *AppSpec) GetIdleLadderEligible() bool {
 	if x != nil {
 		return x.IdleLadderEligible
+	}
+	return false
+}
+
+func (x *AppSpec) GetIdleLadderGuardedPause() bool {
+	if x != nil {
+		return x.IdleLadderGuardedPause
+	}
+	return false
+}
+
+func (x *AppSpec) GetCpuWeight() int32 {
+	if x != nil {
+		return x.CpuWeight
+	}
+	return 0
+}
+
+func (x *AppSpec) GetCpuUncapped() bool {
+	if x != nil {
+		return x.CpuUncapped
 	}
 	return false
 }
@@ -19879,7 +19930,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x8f\x0e\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xb5\x0f\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -19917,7 +19968,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1eprivate_network_firewall_rules\x18\x17 \x03(\v2/.onebox.faas.vmmd.v1.PrivateNetworkFirewallRuleR\x1bprivateNetworkFirewallRules\x129\n" +
 	"\x19disable_startup_cpu_boost\x18\x18 \x01(\bR\x16disableStartupCpuBoost\x12O\n" +
 	"\x0fmain_depends_on\x18\x1c \x03(\v2'.onebox.faas.vmmd.v1.WorkloadDependencyR\rmainDependsOn\x12!\n" +
-	"\fegress_ports\x18\x1d \x03(\rR\vegressPorts\x12.\n" +
+	"\fegress_ports\x18\x1d \x03(\rR\vegressPorts\x12'\n" +
+	"\x0fegress_revision\x18( \x01(\x03R\x0eegressRevision\x12.\n" +
 	"\x13liveness_probe_json\x18\x1f \x01(\tR\x11livenessProbeJson\x12/\n" +
 	"\x14quiet_pause_after_ms\x18  \x01(\x03R\x11quietPauseAfterMs\x12\x1e\n" +
 	"\n" +
@@ -19925,7 +19977,11 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"quarantine\x124\n" +
 	"\x16static_egress_excluded\x18$ \x01(\bR\x14staticEgressExcluded\x12/\n" +
 	"\x13request_concurrency\x18% \x01(\x05R\x12requestConcurrency\x120\n" +
-	"\x14idle_ladder_eligible\x18& \x01(\bR\x12idleLadderEligible\"\x92\b\n" +
+	"\x14idle_ladder_eligible\x18& \x01(\bR\x12idleLadderEligible\x129\n" +
+	"\x19idle_ladder_guarded_pause\x18' \x01(\bR\x16idleLadderGuardedPause\x12\x1d\n" +
+	"\n" +
+	"cpu_weight\x18) \x01(\x05R\tcpuWeight\x12!\n" +
+	"\fcpu_uncapped\x18* \x01(\bR\vcpuUncapped\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +

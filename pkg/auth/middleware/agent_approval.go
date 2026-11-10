@@ -22,6 +22,7 @@ import (
 type AgentApprovalGate interface {
 	APIKeyApprovalCategories(ctx context.Context, keyID string) ([]string, bool, error)
 	ConsumeAgentApproval(ctx context.Context, binding state.AgentApprovalBinding) (string, bool, error)
+	RecentAgentApprovalOutcome(ctx context.Context, binding state.AgentApprovalBinding, window time.Duration) (state.AgentApproval, bool, error)
 	RequestAgentApproval(ctx context.Context, request state.AgentApproval) (state.AgentApproval, error)
 }
 
@@ -115,16 +116,29 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeBadRequest, "Unreadable request body", "the request body could not be read"))
 		return true
 	}
-	if _, used, err := gate.ConsumeAgentApproval(ctx, binding); err != nil {
+	if approvalID, used, err := gate.ConsumeAgentApproval(ctx, binding); err != nil {
 		m.storeUnavailable(w, r, err, "could not check the request's approval; retry shortly")
 		return true
 	} else if used {
+		noteApprovalUsed(ctx, approvalID)
 		return false
 	}
+	outcome, decided, err := gate.RecentAgentApprovalOutcome(ctx, binding, api.AgentApprovalOutcomeWindow)
+	if err != nil {
+		m.storeUnavailable(w, r, err, "could not check the request's approval; retry shortly")
+		return true
+	}
+	if decided {
+		m.writeApprovalOutcome(w, acct, key, outcome)
+		return true
+	}
+	// The id is chosen here so a new request's webhook event can carry its
+	// review link (ADR-20261107140000 §4).
+	id := uuid.NewString()
 	request, err := gate.RequestAgentApproval(ctx, state.AgentApproval{
-		KeyID: key.ID, AccountID: key.AccountID, OrgID: key.OrgID, Category: rule.Category,
+		ID: id, KeyID: key.ID, AccountID: key.AccountID, OrgID: key.OrgID, Category: rule.Category,
 		Method: binding.Method, Path: binding.Path, BodySHA256: binding.BodySHA256,
-		ExpiresAt: time.Now().Add(api.AgentApprovalTTL),
+		ExpiresAt: time.Now().Add(api.AgentApprovalTTL), ReviewURL: m.reviewURL(id), AgentName: key.Label,
 	})
 	if errors.Is(err, state.ErrTooManyAgentApprovals) {
 		limit, observed := int64(api.MaxPendingAgentApprovals), int64(api.MaxPendingAgentApprovals)
@@ -136,10 +150,7 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		m.storeUnavailable(w, r, err, "could not record the approval request; retry shortly")
 		return true
 	}
-	reviewURL := ""
-	if m.ApprovalReviewURL != nil {
-		reviewURL = m.ApprovalReviewURL(request.ID)
-	}
+	reviewURL := m.reviewURL(request.ID)
 	problem := api.NewProblem(http.StatusPreconditionRequired, api.CodeApprovalRequired, "Approval required",
 		"this "+rule.Category+" request needs a person's approval: ask them to open "+reviewURL+", then repeat the same request").
 		WithHint("Show the person the review link and wait; after they approve, repeat exactly the same request once.")
@@ -151,6 +162,60 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 	return true
 }
 
+// reviewURL is the page where a person decides request id; empty when the
+// server has none configured.
+func (m *Middleware) reviewURL(id string) string {
+	if m.ApprovalReviewURL == nil {
+		return ""
+	}
+	return m.ApprovalReviewURL(id)
+}
+
+// writeApprovalOutcome tells an agent that repeats a denied or expired
+// request what happened, so it stops asking (ADR-20261107140000 §6).
+func (m *Middleware) writeApprovalOutcome(w http.ResponseWriter, acct state.Account, key state.APIKey, outcome state.AgentApproval) {
+	reviewURL := m.reviewURL(outcome.ID)
+	retryAt := outcome.DecidedAt
+	status := api.AgentApprovalDenied
+	if outcome.Status != api.AgentApprovalDenied {
+		retryAt, status = outcome.ExpiresAt, api.AgentApprovalExpired
+	}
+	retryAt = retryAt.Add(api.AgentApprovalOutcomeWindow).UTC()
+	var problem *api.Problem
+	if status == api.AgentApprovalDenied {
+		detail := "a person denied this " + outcome.Category + " request"
+		if outcome.Note != "" {
+			detail += ": " + outcome.Note
+		}
+		problem = api.NewProblem(http.StatusForbidden, api.CodeApprovalDenied, "Approval denied", detail).
+			WithHint("Do not repeat this request. Tell the person, and change what you are doing; repeating it after " + retryAt.Format(time.RFC3339) + " asks again.")
+	} else {
+		problem = api.NewProblem(http.StatusGone, api.CodeApprovalExpired, "Approval expired",
+			"nobody approved this "+outcome.Category+" request in time, or its approval went unused").
+			WithHint("Ask the person whether to go ahead; repeating it after " + retryAt.Format(time.RFC3339) + " asks again.")
+	}
+	problem.AgentApproval = &api.AgentApprovalPendingInfo{
+		ID: outcome.ID, Category: outcome.Category, ReviewURL: reviewURL,
+		ExpiresAt: outcome.ExpiresAt.UTC().Format(time.RFC3339), Status: status, Note: outcome.Note,
+	}
+	if m.Log != nil {
+		m.Log.Info("agent_approval.outcome", "key_id", key.ID, "account_id", acct.ID, "category", outcome.Category, "approval_id", outcome.ID, "status", status)
+	}
+	api.WriteProblem(w, problem)
+}
+
+// productionConfigScope reports whether a config write targets the app's
+// production scope: env and secret routes name it in ?scope=, secret
+// references in ?environment=; both default to production.
+func productionConfigScope(r *http.Request) bool {
+	query := r.URL.Query()
+	scope := query.Get("scope")
+	if scope == "" {
+		scope = query.Get("environment")
+	}
+	return state.IsProductionScope(scope)
+}
+
 // productionTarget reports whether the request's app is a production app. It
 // reports answered when it has written an error.
 func (m *Middleware) productionTarget(w http.ResponseWriter, r *http.Request, target agentapproval.Target) (production, answered bool) {
@@ -159,6 +224,12 @@ func (m *Middleware) productionTarget(w http.ResponseWriter, r *http.Request, ta
 	var err error
 	switch target {
 	case agentapproval.TargetApp:
+		app, err = m.Authn.AppBySlug(ctx, r.PathValue(firstWildcard(r.Pattern)))
+	case agentapproval.TargetAppConfig:
+		// A stage-scope write never reaches production traffic.
+		if !productionConfigScope(r) {
+			return false, false
+		}
 		app, err = m.Authn.AppBySlug(ctx, r.PathValue(firstWildcard(r.Pattern)))
 	case agentapproval.TargetDeployment:
 		deployments, okDeployments := m.Authn.(DeploymentAppResolver)
@@ -175,6 +246,20 @@ func (m *Middleware) productionTarget(w http.ResponseWriter, r *http.Request, ta
 		var appID string
 		if appID, err = deployments.DeploymentAppID(ctx, id); err == nil {
 			app, err = apps.AppByID(ctx, appID)
+		}
+	case agentapproval.TargetEdgeRule:
+		rules, okRules := m.Authn.(EdgeRuleAppResolver)
+		apps, okApps := m.Authn.(AppByIDResolver)
+		if !okRules || !okApps {
+			return true, false
+		}
+		id := r.PathValue(firstWildcard(r.Pattern))
+		if uuid.Validate(id) != nil {
+			return false, false
+		}
+		var rule state.EdgeRule
+		if rule, err = rules.GetEdgeRuleByID(ctx, id); err == nil {
+			app, err = apps.AppByID(ctx, rule.AppID)
 		}
 	}
 	if errors.Is(err, state.ErrNotFound) {

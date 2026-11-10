@@ -109,6 +109,12 @@ the file (docs/adr/20261018084150-unit-lane-expand-migrations.md):
                                     release may apply it ahead of restarts
     -- migration-compat: contract   only a full release applies it
 
+  dynamic-ddl
+      EXECUTE assembles a RENAME or DROP at run time (format() or string
+      concatenation), so the previous release's references to its objects
+      are not checked. A contract change. Write the statements literally, or
+      waive naming why the previous release does not read the objects.
+
   compat-marker
       The marker is missing, repeated or neither value; or a migration
       marked expand makes a contract change (a drop or rename of anything
@@ -176,7 +182,7 @@ COMPAT_VALUES = ("expand", "contract")
 # whether or not code references the object and whether or not they are
 # waived: a waiver is a reviewer's judgment, which a full release carries.
 CONTRACT_RULES = frozenset({
-    "drop-table", "drop-column", "rename-table", "rename-column", "column-type", "not-null", "contract-statement",
+    "drop-table", "drop-column", "rename-table", "rename-column", "column-type", "not-null", "contract-statement", "dynamic-ddl",
 })
 # Rules the unit lane relies on to apply a migration with nobody watching:
 # fail fast instead of queueing traffic, and run at all.
@@ -583,8 +589,41 @@ def lint_context(path: str, text: str, catalogue: Catalogue, referenced) -> Cont
         ctx.do_block = None if body is None else do_block(body)
         for stmt in expand(top):
             lint_statement(ctx, stmt)
+    lint_dynamic_ddl(ctx, up, first_line)
     lint_migration_locks(ctx)
     return ctx
+
+
+# A RENAME or DROP assembled at run time (EXECUTE format(...) or a string
+# concatenation inside a function or DO block) names its objects in values
+# the linter cannot resolve. A literal EXECUTE 'DROP INDEX x' (the invalid-
+# index guard) still names its object and is not matched.
+DYNAMIC_DDL = re.compile(r"\bEXECUTE\b(?P<stmt>[^;]*)", re.IGNORECASE)
+DYNAMIC_DDL_VERB = re.compile(r"\b(?P<verb>RENAME|DROP)\b", re.IGNORECASE)
+DYNAMIC_DDL_BUILT = re.compile(r"\bformat\s*\(|\|\|", re.IGNORECASE)
+
+
+def lint_dynamic_ddl(ctx: Context, up: str, first_line: int) -> None:
+    """dynamic-ddl: a RENAME or DROP the migration builds with EXECUTE.
+    The previous-release reference check cannot see its objects, so the
+    previous release kept reading eleven renamed tables until restarted and
+    deployments failed for five minutes (20261107145315064, prod 2026-11-09).
+    Write the statements literally, or waive naming what the previous release
+    reads instead."""
+    seen: set[int] = set()
+    for m in DYNAMIC_DDL.finditer(up):
+        stmt = m.group("stmt")
+        verb = DYNAMIC_DDL_VERB.search(stmt)
+        if verb is None or DYNAMIC_DDL_BUILT.search(stmt) is None:
+            continue
+        line = first_line + up.count("\n", 0, m.start())
+        if line in seen:
+            continue
+        seen.add(line)
+        ctx.add(line, "dynamic-ddl", "*",
+                f"EXECUTE builds a {verb.group('verb').upper()} at run time, so the previous release's references to the "
+                "objects it changes are not checked. Write each RENAME/DROP as a literal statement, or waive with "
+                "`-- migration-lint: allow dynamic-ddl: <why the previous release does not read them>`.")
 
 
 def churn_line(changes: list[tuple[int, str, int]]) -> int | None:

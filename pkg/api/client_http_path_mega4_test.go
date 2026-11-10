@@ -332,8 +332,6 @@ func TestClient_CookieOnlyCapabilitiesPaths_Mega4(t *testing.T) {
 
 	c := NewClient(srv.URL, "t")
 	paths := []string{
-		"/v1/auth/sessions",
-		"/v1/auth/sessions/foo",
 		"/v1/auth/capabilities",
 		"/v1/auth/capabilities/bar",
 	}
@@ -433,7 +431,7 @@ func TestClient_TokenStillSetOnCookieOnlyPath_Mega4(t *testing.T) {
 	// Build a request manually via the cookie-only gate and verify
 	// Authorization header was set BEFORE the gate returned the
 	// CodeUnsupportedByCLI error.
-	if err := c.do(context.Background(), "POST", "/v1/auth/sessions", nil, nil); err == nil {
+	if err := c.do(context.Background(), "POST", "/v1/auth/capabilities", nil, nil); err == nil {
 		t.Error("cookie-only: err=nil")
 	}
 }

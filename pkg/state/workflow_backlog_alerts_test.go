@@ -97,7 +97,7 @@ func TestWorkflowBacklogSignalsMatchQueueHealth(t *testing.T) {
 						state.QueueHealthRunning(t, store, state.QueueHealthRun(t, store, app, "other", "", now, 0))
 					}
 				}
-				health, err := store.(state.WorkflowAutomationHealthStore).GetWorkflowAutomationHealth(t.Context(), app.ID, "backlog", now.Add(-time.Hour), now)
+				health, err := store.(state.StoredWorkflowHealthStore).GetStoredWorkflowHealth(t.Context(), app.ID, "backlog", now.Add(-time.Hour), now)
 				if err != nil {
 					t.Fatal(err)
 				}

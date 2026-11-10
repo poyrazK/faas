@@ -7,15 +7,18 @@ package main
 // connections a second, TLS handshakes in progress and requests a second.
 // It also holds a request body to a minimum rate and caps the requests the
 // edge forwards to the control plane. The values are in pkg/api/limits.go.
-// Off unless FAAS_EDGE_CLIENT_LIMITS=1.
+// Off unless FAAS_EDGE_CLIENT_LIMITS=1. With them on, FAAS_EDGE_OVERLOAD adds
+// the node-wide overload level (ADR-20261110123517).
 
 import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"runtime"
 	"strings"
 
@@ -35,6 +38,12 @@ const (
 	// CF-Connecting-IP, which the edge trusts only with the zone's client
 	// certificate.
 	edgeProxyCIDRsEnv = "FAAS_EDGE_PROXY_CIDRS"
+	// edgeOverloadEnv is the overload level's mode (ADR-20261110123517):
+	// off, observe or on. It needs the client limits on.
+	edgeOverloadEnv = "FAAS_EDGE_OVERLOAD"
+	// gatewayInternalUnit is gatewayd-internal's unit, a sibling of the
+	// edge's in the same slice, whose CPU counts toward the gateways' share.
+	gatewayInternalUnit = "faas-gatewayd-internal.service"
 )
 
 // edgeClientLimits switches the per-address limits on. The request rate
@@ -47,11 +56,24 @@ type edgeClientLimits struct {
 	on      bool
 	proxies []netip.Prefix
 	refused *prometheus.CounterVec
+	// known holds the hosts that served an app's answer, shared by the
+	// per-host limit and the overload level's unknown-host step.
+	known *clientlimit.KnownHosts
+	// overload is the node-wide overload level, nil when off
+	// (ADR-20261110123517).
+	overload *clientlimit.Overload
 }
 
 func edgeClientLimitsFromEnv(mode publicEdgeMode, getenv func(string) string) (edgeClientLimits, error) {
+	overload, err := clientlimit.ParseOverloadMode(getenv(edgeOverloadEnv))
+	if err != nil {
+		return edgeClientLimits{}, fmt.Errorf("gatewayd-public: %s: %w", edgeOverloadEnv, err)
+	}
 	switch v := strings.TrimSpace(getenv(edgeClientLimitsEnv)); v {
 	case "", "0":
+		if overload != clientlimit.OverloadOff {
+			return edgeClientLimits{}, fmt.Errorf("gatewayd-public: %s=%s needs %s=1", edgeOverloadEnv, overload, edgeClientLimitsEnv)
+		}
 		return edgeClientLimits{}, nil
 	case "1":
 		if mode != edgeModeCompute {
@@ -61,10 +83,43 @@ func edgeClientLimitsFromEnv(mode publicEdgeMode, getenv func(string) string) (e
 		if err != nil {
 			return edgeClientLimits{}, err
 		}
-		return edgeClientLimits{on: true, proxies: proxies}, nil
+		l := edgeClientLimits{on: true, proxies: proxies, known: clientlimit.NewKnownHosts(api.EdgeHostTrackedMax, nil)}
+		if overload != clientlimit.OverloadOff {
+			l.overload = clientlimit.NewOverload(clientlimit.OverloadConfig{
+				Mode:       overload,
+				Thresholds: clientlimit.DefaultOverloadThresholds(),
+				CPUs:       runtime.GOMAXPROCS(0),
+			})
+		}
+		return l, nil
 	default:
 		return edgeClientLimits{}, fmt.Errorf("gatewayd-public: %s=%q, want 0 or 1", edgeClientLimitsEnv, v)
 	}
+}
+
+// runOverload follows the node's signals into the overload level until ctx
+// ends, exporting each tick to m. It does nothing when the level is off.
+func (l edgeClientLimits) runOverload(ctx context.Context, m *edgeMetrics, log *slog.Logger) {
+	if l.overload == nil {
+		return
+	}
+	sampler := &clientlimit.NodeSampler{
+		Window:       api.EdgeOverloadWindow,
+		PressurePath: "/proc/pressure/cpu",
+		CPUs:         runtime.NumCPU(),
+	}
+	if self, err := os.ReadFile("/proc/self/cgroup"); err == nil {
+		sampler.CgroupStats, err = clientlimit.GatewayCgroupStats(self, "/sys/fs/cgroup", gatewayInternalUnit)
+		if err != nil {
+			log.Warn("gatewayd-public: overload level reads no gateway CPU share", "err", err)
+		}
+	} else {
+		log.Warn("gatewayd-public: overload level reads no gateway CPU share", "err", err)
+	}
+	log.Info("gatewayd-public: overload level", "mode", l.overload.Mode().String(), "cgroups", sampler.CgroupStats)
+	go l.overload.Run(ctx, sampler.Sample, api.EdgeOverloadTick, m.observeOverload, func(err error) {
+		log.Warn("gatewayd-public: overload level reads a signal as zero", "err", err)
+	})
 }
 
 // parseEdgeProxyCIDRs reads a comma-separated prefix list, empty for none.
@@ -116,7 +171,22 @@ func (l edgeClientLimits) hosts(h http.Handler) http.Handler {
 		Burst:           api.EdgeHostRequestsBurst,
 		TrackedAddrsMax: api.EdgeHostTrackedMax,
 	}
-	return clientlimit.Hosts(h, limits, edgeRequestHost, l.count, nil)
+	return clientlimit.HostsWithKnown(h, limits, l.known, edgeRequestHost, l.count, nil)
+}
+
+// shed refuses requests while the edge sheds load (ADR-20261110123517 §3–4),
+// behind the per-address limit and in front of the per-host one, whose known
+// hosts it reads.
+func (l edgeClientLimits) shed(h http.Handler, trusted []netip.Prefix) http.Handler {
+	if !l.on || l.overload == nil {
+		return h
+	}
+	clientAddr := func(r *http.Request) (netip.Addr, bool) {
+		ip, _ := gateway.CanonicalForwardingContext(r, trusted)
+		addr, err := netip.ParseAddr(ip)
+		return addr, err == nil
+	}
+	return clientlimit.Shed(h, l.overload, clientAddr, edgeRequestHost, l.known, l.count)
 }
 
 // edgeRequestHost is r's hostname, lowercased, without a port or a trailing
@@ -139,12 +209,18 @@ func (l edgeClientLimits) body(h http.Handler) http.Handler {
 	return clientlimit.BodyRate(h, api.EdgeClientBodyMinBytesPerWindow, api.EdgeClientBodyRateWindow, isGRPC, l.count)
 }
 
-// forwards caps the requests this edge forwards to the control plane at once.
-func (l edgeClientLimits) forwards(h http.Handler) http.Handler {
+// forwards caps the requests this edge forwards to the control plane at
+// once, and each client address's share of them (ADR-20261107180000).
+func (l edgeClientLimits) forwards(h http.Handler, trusted []netip.Prefix) http.Handler {
 	if !l.on || h == nil {
 		return h
 	}
-	return clientlimit.InFlight(h, api.EdgeControlPlaneForwardsInFlightMax, l.count)
+	clientAddr := func(r *http.Request) (netip.Addr, bool) {
+		ip, _ := gateway.CanonicalForwardingContext(r, trusted)
+		addr, err := netip.ParseAddr(ip)
+		return addr, err == nil
+	}
+	return clientlimit.InFlight(h, api.EdgeControlPlaneForwardsInFlightMax, api.EdgeControlPlaneForwardsInFlightPerAddrMax, clientAddr, l.count)
 }
 
 // isGRPC reports whether r is a gRPC call, whose client stream may idle.
@@ -167,9 +243,16 @@ func (l edgeClientLimits) tlsListener(ctx context.Context, raw net.Listener, cfg
 		TrackedAddrsMax: api.EdgeClientTrackedAddrsMax,
 		Exempt:          l.proxies,
 	}, l.count, nil)
+	// ADR-20261107180000: one address may hold only its share of the
+	// handshakes in progress, a proxy's address included, and a connection
+	// that sends no ClientHello gives its slot back quickly.
+	cfg = clientlimit.ExtendOnClientHello(cfg, api.EdgeTLSHandshakeTimeout)
 	return clientlimit.NewHandshakeGate(ctx, tls.NewListener(limited, cfg),
 		api.EdgeTLSHandshakesInFlightPerCPU*runtime.GOMAXPROCS(0), api.EdgeTLSHandshakeTimeout, l.count, failed).
-		WithSettle(func(tc *tls.Conn) bool { return l.settle(limited, tc) })
+		WithPerAddress(api.EdgeTLSHandshakesInFlightPerAddrMax, api.EdgeTLSHandshakesInFlightPerProxyAddrMax, l.proxies).
+		WithClientHelloTimeout(api.EdgeTLSClientHelloTimeout).
+		WithSettle(func(tc *tls.Conn) bool { return l.settle(limited, tc) }).
+		WithOverload(l.overload)
 }
 
 // settle keeps a connection from Cloudflare's ranges exempt only when it

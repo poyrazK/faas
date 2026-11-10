@@ -28,7 +28,7 @@ export type PlanResponse = {
    * Hash of the non-secret environment configuration bound into this plan
    */
   environment_config_hash?: string;
-  scan_source: 'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'workspace' | 'convention' | 'single' | 'unknown';
+  scan_source: 'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'workspace' | 'convention' | 'single' | 'unknown' | 'functions';
   tier: string;
   workloads: Array<PlanWorkload>;
   managed: Array<PlanManaged>;

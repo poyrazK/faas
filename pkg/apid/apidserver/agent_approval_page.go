@@ -98,7 +98,8 @@ func (h *cliAuthHandlers) postAgentApprovalPage(w http.ResponseWriter, r *http.R
 	}
 	approve := r.PostForm.Get("decision") == "approve"
 	store := h.srv.store.(state.AgentApprovalStore)
-	if err := store.DecideAgentApproval(r.Context(), approval.ID, approve, acct.ID); err != nil {
+	note := r.PostForm.Get("note") // shown to the agent on a denial (ADR-20261107140000 §6)
+	if err := store.DecideAgentApproval(r.Context(), approval.ID, approve, acct.ID, note); err != nil {
 		w.WriteHeader(http.StatusConflict)
 		message := "This request was already decided or has expired."
 		if !errors.Is(err, state.ErrNotFound) {
@@ -114,6 +115,7 @@ func (h *cliAuthHandlers) postAgentApprovalPage(w http.ResponseWriter, r *http.R
 	h.srv.audit.Emit(r.Context(), kind, &acct.ID, map[string]any{
 		"approval_id": approval.ID, "key_id": approval.KeyID, "org_id": approval.OrgID, "category": approval.Category,
 		"method": approval.Method, "path": approval.Path, "connected_by": approval.AccountID,
+		"note_given": !approve && strings.TrimSpace(note) != "",
 	})
 	if approve {
 		h.renderAgentApproval(w, r, map[string]any{"Approved": true, "ExpiresAt": approval.ExpiresAt.UTC().Format(time.RFC1123)})

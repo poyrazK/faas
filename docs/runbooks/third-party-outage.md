@@ -80,8 +80,13 @@ resuming.
 
 ## 5. ACME certificate authority
 
-Existing certificates keep working. Renewals start 30 days before expiry, so
-a CA outage only matters if it lasts longer than the renewal window. Watch
+Existing certificates keep working. Custom-domain renewals start 30 days
+before expiry, so a CA outage only matters for them if it lasts longer than
+that. The apps domains' certificate is short-lived (ADR-20261108100000): it
+renews 4 days before expiry, so a Let's Encrypt outage longer than about
+4 days makes it expire and every direct client of the compute edges fail its
+handshake. Watch
+[FaasEdgeCertificate.md](FaasEdgeCertificate.md) closely during one. Watch
 [FaasTLSCertExpiryWarn.md](FaasTLSCertExpiryWarn.md) and
 [FaasCustomDomainTLS.md](FaasCustomDomainTLS.md). New custom domains stay
 pending until the CA returns. Do not raise retry rates: that turns an outage

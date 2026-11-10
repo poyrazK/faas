@@ -73,6 +73,10 @@ func TestPgListSnapshotRefreshCandidates(t *testing.T) {
 	if !got[0].ParkedAt.After(got[1].ParkedAt) || now.Sub(got[0].ParkedAt) > time.Hour+time.Minute {
 		t.Fatalf("node a candidates not newest park first: %+v", got)
 	}
+	// The parked instance's start: when its vCPU count was chosen.
+	if d := got[0].ParkedAt.Sub(got[0].StartedAt); d < time.Minute-time.Second || d > time.Minute+time.Second {
+		t.Fatalf("node a candidate started at %v, parked at %v; want a minute before the park", got[0].StartedAt, got[0].ParkedAt)
+	}
 	if b, err := s.ListSnapshotRefreshCandidates(ctx, nodeB, since, 10); err != nil || len(b) != 1 || b[0].AppID != moved {
 		t.Fatalf("node b candidates = %+v (err %v), want only the app that last parked there", b, err)
 	}

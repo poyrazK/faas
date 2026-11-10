@@ -111,3 +111,37 @@ A missing or failed restriction read returns 503, never unlimited access. An
 app outside the allowed projects, including an app with no project, returns 403
 before an upload is admitted or a receipt is read. Unlimited keys and allowed
 projects retain upload and receipt access.
+
+## Amendment (2026-11-07): the gateway and key rotation honour the limit
+
+Two more paths authenticate the same keys outside apid's middleware:
+
+- **The gateway's private-app unlock** (`require_authn` and public auth with
+  a bearer key). gatewayd-internal reads the limit of an agent or
+  `mcp-login` key with the key and keeps it in its key cache; a limited key
+  opens only its projects' apps (403 `insufficient_scope`, audited as
+  `instances.authn_scope`). An app-bound credential opens only its app; the
+  gateway had dropped the binding.
+- **Key rotation** copies the predecessor's limit to the successor in the
+  rotation's transaction, on the account and organization paths, so
+  rotating never turns a limited key into an account-wide one.
+
+A gateway reads one primary-key row per agent key on a cache miss.
+
+## Amendment (2026-11-10): company projects
+
+Company projects live under `/v1/orgs/{organization}/projects/{slug}`, and
+their slugs are unique only within the company. Limits on them did not work:
+
+- **Minting** an organization's key resolved project slugs among the
+  creator's own projects, so a company project answered 404. It now looks in
+  the key's organization first.
+- **Using** the key: the middleware knew only `/v1/apps/{slug}` and
+  `/v1/projects/{slug}`, so every organization project and app route
+  answered 403 "Key limited to projects". Now an organization project route
+  resolves its project within `{organization}` and passes only a project in
+  the limit. `/v1/orgs/{organization}/apps/{slug}` routes are checked like
+  `/v1/apps/{slug}`; app slugs are unique across accounts. Anything outside
+  the limit answers 404.
+- **Listing:** `GET /v1/orgs/{organization}/projects` lists only the key's
+  projects.

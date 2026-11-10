@@ -89,10 +89,9 @@ func admitAccountingInstance(t *testing.T, s state.Store, e *Engine, app state.A
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits, _ := api.LimitsFor(api.PlanPro)
 	if err := e.Ledger().Admit(Request{
 		Instance: i.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
+		RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: appCPUBookingMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, NodeID: i.NodeID,
 	}); err != nil {
 		t.Fatal(err)
@@ -109,14 +108,15 @@ func assertAccountingRetained(t *testing.T, s state.Store, e *Engine, i state.In
 	if err != nil || fresh.State != i.State {
 		t.Fatalf("resident state changed before confirmed teardown: row=%+v err=%v", fresh, err)
 	}
-	limits, _ := api.LimitsFor(api.PlanPro)
+	// An instance books its size's vCPUs and CPU (ADR-20261109172421).
+	size := state.App{RAMMB: i.RAMMB}
 	conc := 0
 	if state.State(i.State).CountsForConcurrency() {
 		conc = 1
 	}
 	if !e.Ledger().ResidentFor(i.ID) || e.Ledger().ResidentRAMForNode(i.NodeID) != i.RAMMB+api.PerVMOverheadMB ||
-		e.Ledger().UsedVCPUForNode(i.NodeID) != limits.VCPU ||
-		e.Ledger().UsedCPUMillicoresForNode(i.NodeID) != api.DefaultAppCPUMillicores ||
+		e.Ledger().UsedVCPUForNode(i.NodeID) != appVCPUs(size) ||
+		e.Ledger().UsedCPUMillicoresForNode(i.NodeID) != appCPUBookingMillicores(size) ||
 		e.Ledger().Concurrency(i.AppID) != conc || e.Ledger().ConcurrencyForDeployment(i.AppID, i.DeploymentID) != conc {
 		t.Fatalf("lost reservation: resident=%v RAM=%d vCPU=%d CPU=%d concurrency=%d", e.Ledger().ResidentFor(i.ID),
 			e.Ledger().ResidentRAMForNode(i.NodeID), e.Ledger().UsedVCPUForNode(i.NodeID),

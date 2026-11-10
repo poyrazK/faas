@@ -75,7 +75,7 @@ type Config struct {
 	EgressMeterID        string `toml:"egress_meter_id"`
 	// EgressMillicentsPerGiB is the catalog price for one GiB above the
 	// calendar-month allowance. Polar prices have cent precision, so runtime
-	// validation rejects values that are not a whole number of euro cents.
+	// validation rejects values that are not a whole number of US cents.
 	EgressMillicentsPerGiB int64 `toml:"egress_millicents_per_gib"`
 	// Included egress is configured explicitly per paid plan. No defaults are
 	// guessed: shadow/live startup fails until all three values are positive.
@@ -92,7 +92,7 @@ type Config struct {
 	ObjectStorageBillingFrom string `toml:"object_storage_billing_from"`
 	// ObjectStorageUsageEventName and ObjectStorageMeterID identify a third
 	// Polar meter that sums metadata.charge_millicents. Each meter unit costs
-	// 0.001 euro cents, preserving Gregale's integer-millicent ledger exactly.
+	// 0.001 US cents, preserving Gregale's integer-millicent ledger exactly.
 	ObjectStorageUsageEventName string `toml:"object_storage_usage_event_name"`
 	ObjectStorageMeterID        string `toml:"object_storage_meter_id"`
 	// ManagedPostgresBillingMode gates managed PostgreSQL overage charges
@@ -130,6 +130,9 @@ func (c *Config) Defaults() {
 	}
 	if c.EgressUsageEventName == "" {
 		c.EgressUsageEventName = DefaultEgressUsageEventName
+	}
+	if c.EgressMillicentsPerGiB == 0 {
+		c.EgressMillicentsPerGiB = api.EgressOverageMillicentsPerGiB
 	}
 	// The included egress a plan bills from is the egress meterd stops the
 	// plan at while egress is unbilled (ADR-20261103131742); an unset value

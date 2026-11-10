@@ -398,6 +398,10 @@ func validRouteHealthSuggestionSince(value string) bool {
 	return false
 }
 
+// routeOverflowLabel is the gateway's reserved label for requests beyond the
+// per-app route cap and for undeclared routes it does not template.
+const routeOverflowLabel = "__route_other__"
+
 func buildRouteHealthSuggestionReport(usage api.RouteCustomerUsageResponse, slug, deployment, groupBy string, limit int) (routeHealthSuggestionReport, error) {
 	from, fromErr := time.Parse(time.RFC3339Nano, usage.From)
 	until, untilErr := time.Parse(time.RFC3339Nano, usage.Until)
@@ -411,6 +415,11 @@ func buildRouteHealthSuggestionReport(usage api.RouteCustomerUsageResponse, slug
 	seen := map[string]bool{}
 	zero := int64(0)
 	for _, row := range usage.Routes {
+		if row.Route == "" || row.Route == routeOverflowLabel {
+			// Unlabeled and overflow traffic is real usage but names no
+			// selectable route, so it cannot become a health selector.
+			continue
+		}
 		path, ok := strings.CutPrefix(row.Route, row.Method+" ")
 		if !ok || row.Requests <= 0 || row.IdentifiedRequests < 0 || row.AnonymousRequests < 0 ||
 			row.UnresolvedIdentityRequests < 0 || row.ConsumerCount < 0 || row.PlatformTenantCount < 0 ||

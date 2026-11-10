@@ -128,7 +128,10 @@ changing the domain.
 
 A domain is attached to one app, and edge rules send parts of it to other apps
 in the same account. Declare the layout in `gregale.yaml` so it deploys with
-the code:
+the code. A reviewed deploy (`gregale deploy`, the dashboard) applies it; a
+GitHub push that changes it deploys its services but not the routes, and a
+failed `gregale / <project> (project settings)` check says to run a reviewed
+deploy ([ADR-20261108090000](adr/20261108090000-project-deploy-config-correctness.md)):
 
 ```yaml
 routes:

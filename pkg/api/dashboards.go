@@ -118,8 +118,8 @@ func (c *Client) GetDashboardData(ctx context.Context, id string) (DashboardData
 
 // ErrDashboardsUnavailable is the FAAS_CUSTOM_DASHBOARDS_ENABLED gate's answer.
 func ErrDashboardsUnavailable() *Problem {
-	return NewProblem(http.StatusServiceUnavailable, "dashboards_unavailable", "Custom dashboards unavailable",
-		"the custom dashboards preview is not enabled").WithHint(PreviewNotEnabledHint)
+	return ErrPreviewNotEnabled("dashboards_unavailable", "Custom dashboards unavailable",
+		"the custom dashboards preview is not enabled")
 }
 
 // ErrDashboardNotFound names a dashboard the account does not have.
@@ -135,6 +135,16 @@ func ErrDashboardQuota(limit, observed int) *Problem {
 	l, o := int64(limit), int64(observed)
 	p.Limit, p.Observed = &l, &o
 	return p.WithDocs(docsBase + "/dashboards").WithHint("delete one with `gregale dashboards delete`")
+}
+
+// ErrDashboardDataBusy is a 429 while the account already has limit
+// dashboard reads in flight (ADR-20261104142830).
+func ErrDashboardDataBusy(limit int) *Problem {
+	p := NewProblem(http.StatusTooManyRequests, "dashboard_data_busy", "Too many dashboard reads",
+		fmt.Sprintf("this account already has %d dashboard reads in progress; refresh in a few seconds", limit))
+	l := int64(limit)
+	p.Limit, p.Observed = &l, &l
+	return p.WithDocs(docsBase+"/dashboards").WithHeader("Retry-After", "2")
 }
 
 // ErrDashboardInvalid rejects a dashboard definition.

@@ -55,8 +55,14 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 		t.Fatalf("opening the link verified the account (err=%v)", err)
 	}
 
+	// The post verifies only from a browser signed in to the account.
+	tok, err := apidserver.MintDashboardSession(t.Context(), store, *srv.Sessions(), acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := &http.Cookie{Name: apidserver.SessionCookie, Value: tok}
 	verifyRec := httptest.NewRecorder()
-	h.ServeHTTP(verifyRec, verifyEmailPost(apidserver.EmailVerificationPath, token))
+	h.ServeHTTP(verifyRec, verifyEmailPost(apidserver.EmailVerificationPath, token, cookie))
 	if verifyRec.Code != http.StatusOK {
 		t.Fatalf("verify status = %d: %s", verifyRec.Code, verifyRec.Body.String())
 	}
@@ -69,7 +75,7 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 	}
 
 	replayRec := httptest.NewRecorder()
-	h.ServeHTTP(replayRec, verifyEmailPost(apidserver.EmailVerificationPath, token))
+	h.ServeHTTP(replayRec, verifyEmailPost(apidserver.EmailVerificationPath, token, cookie))
 	if replayRec.Code != http.StatusGone {
 		t.Fatalf("replay status = %d, want 410", replayRec.Code)
 	}
@@ -77,9 +83,12 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 
 // verifyEmailPost is the confirmation page's form post of a verification
 // token.
-func verifyEmailPost(target, token string) *http.Request {
+func verifyEmailPost(target, token string, cookies ...*http.Cookie) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, target, strings.NewReader("token="+token))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		r.AddCookie(c)
+	}
 	return r
 }
 
@@ -170,7 +179,9 @@ func TestUnverifiedAccountCannotReachDeployOrBilling_Property(t *testing.T) {
 	}
 }
 
-func TestForgotPasswordSkipsUnverifiedAccount(t *testing.T) {
+// An unverified account's owner who forgot the password gets a magic
+// sign-in link, never a reset link: redeeming it claims the account.
+func TestForgotPasswordSendsUnverifiedAccountAMagicLink(t *testing.T) {
 	store := state.NewMemStore()
 	_, err := store.CreateAccountWithPersonalOrg(context.Background(), state.CreateAccountWithPersonalOrgParams{
 		Email:                    "unverified-reset@example.com",
@@ -191,8 +202,12 @@ func TestForgotPasswordSkipsUnverifiedAccount(t *testing.T) {
 		t.Fatalf("forgot status = %d", rec.Code)
 	}
 	srv.WaitPasswordResetMail()
-	if got := len(mailer.Snapshot()); got != 0 {
-		t.Fatalf("password reset emails = %d, want 0", got)
+	msgs := mailer.Snapshot()
+	if len(msgs) != 1 {
+		t.Fatalf("emails = %d, want 1 magic sign-in link", len(msgs))
+	}
+	if body := msgs[0].TextBody; !strings.Contains(body, "/auth/verify?token=") || strings.Contains(body, "/auth/reset") {
+		t.Fatalf("unverified forgot-password mail is not a magic link:\n%s", body)
 	}
 }
 

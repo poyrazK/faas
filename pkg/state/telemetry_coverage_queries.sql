@@ -9,3 +9,10 @@ SELECT lock_route_removal_coverage(sqlc.arg(app_id)::uuid);
 
 -- name: RouteRemovalCoverageBlockers :one
 SELECT route_removal_coverage_blockers(sqlc.arg(app_id)::uuid,sqlc.arg(window_from)::timestamptz, sqlc.arg(window_until)::timestamptz)::jsonb;
+
+-- name: RecordRequestAnalyticsCoverage :exec
+SELECT record_request_analytics_coverage(sqlc.arg(node_name)::text, sqlc.arg(boot_id)::uuid, sqlc.arg(counting)::boolean,
+ sqlc.arg(unattributed_dropped_total)::bigint, sqlc.arg(app_gaps)::jsonb);
+
+-- name: RequestAnalyticsCompletenessBlockers :one
+SELECT request_analytics_completeness_blockers(sqlc.arg(app_id)::uuid,sqlc.arg(window_from)::timestamptz, sqlc.arg(window_until)::timestamptz)::jsonb;

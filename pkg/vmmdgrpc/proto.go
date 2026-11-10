@@ -376,7 +376,10 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		VcpuCount:     int(app.GetVcpuCount()),
 		MemSizeMiB:    int(app.GetMemSizeMib()),
 		CPUMillicores: int(app.GetCpuMillicores()),
-		EgressMbit:    int(app.GetEgressMbit()),
+		// ADR-20261109172421: the busy-host share and the uncapped quota.
+		CPUWeight:   int(app.GetCpuWeight()),
+		CPUUncapped: app.GetCpuUncapped(),
+		EgressMbit:  int(app.GetEgressMbit()),
 		// ADR-20261101215228: negative values are ignored (plan bound).
 		RequestConcurrency: max(0, int(app.GetRequestConcurrency())),
 		SealedEnvEntries:   sealedFromProto(app.GetSealedEnv()),
@@ -393,6 +396,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// Wake. Empty slice = no allowlist rule (current behaviour).
 		EgressAllowlist:             app.GetEgressAllowlist(),
 		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
+		EgressRevision:              app.GetEgressRevision(),
 		Quarantine:                  app.GetQuarantine(),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
@@ -435,6 +439,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
 		IdleLadderEligible:       app.GetIdleLadderEligible(),
+		IdleLadderGuardedPause:   app.GetIdleLadderGuardedPause(),
 		// ADR-138: carry the per-app readiness budget to vmmd. 0 is
 		// retained for pre-M3 callers, which use vmmd.readyTimeout.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
@@ -565,6 +570,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		VcpuCount:        int(app.GetVcpuCount()),
 		MemSizeMiB:       int(app.GetMemSizeMib()),
 		CPUMillicores:    int(app.GetCpuMillicores()),
+		CPUWeight:        int(app.GetCpuWeight()),
+		CPUUncapped:      app.GetCpuUncapped(),
 		EgressMbit:       int(app.GetEgressMbit()),
 		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
 		// Issue #395 / ADR-045: see toWakeRequest's APIEnvEntries
@@ -575,6 +582,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// mirrors it so deploy primes the same egress policy.
 		EgressAllowlist:             app.GetEgressAllowlist(),
 		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
+		EgressRevision:              app.GetEgressRevision(),
 		Quarantine:                  app.GetQuarantine(),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
@@ -612,6 +620,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
 		IdleLadderEligible:       app.GetIdleLadderEligible(),
+		IdleLadderGuardedPause:   app.GetIdleLadderGuardedPause(),
 		// ADR-138: cold-boot mirrors the snapshot wake's readiness budget.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
 		DisableStartupCPUBoost: app.GetDisableStartupCpuBoost(),

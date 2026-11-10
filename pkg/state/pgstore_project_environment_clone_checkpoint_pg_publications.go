@@ -252,7 +252,16 @@ func (s *PgStore) PublishProjectEnvironmentCloneCheckpointPgBindings(ctx context
 			if err != nil {
 				return mapErr(err)
 			}
-			if count >= int64(limits.SecretCountMax) {
+			// Managed values do not count toward the customer-secret cap
+			// (ADR-20261110120000).
+			if count > int64(limits.SecretCountMax) {
+				return ErrQuotaExceeded
+			}
+			bindings, err := q.CountLiveManagedPostgresBindingsForApp(ctx, tx, mustPgUUID(c.AppID))
+			if err != nil {
+				return mapErr(err)
+			}
+			if limits.PostgresBindingsPerAppMax > 0 && bindings >= int64(limits.PostgresBindingsPerAppMax) {
 				return ErrQuotaExceeded
 			}
 			if _, err = q.InsertProjectEnvironmentClonePostgresBinding(ctx, tx, sqlc.InsertProjectEnvironmentClonePostgresBindingParams{ID: mustPgUUID(c.TargetBindingID), AccountID: mustPgUUID(op.AccountID), DatabaseID: mustPgUUID(c.Runtime.Verification.Isolation.OwnerID), AppID: mustPgUUID(c.AppID), Scope: c.Scope, EnvironmentKey: c.EnvironmentKey, Access: c.Access}); err != nil {

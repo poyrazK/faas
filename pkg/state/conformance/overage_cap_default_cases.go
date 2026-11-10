@@ -64,7 +64,9 @@ func testOverageCapDefaultFollowsThePlan(t *testing.T, fx *Fixture) {
 		t.Fatalf("UpdateAccountOverageCapCents(nil): %v", err)
 	}
 	move(api.PlanPro)
-	expect("cleared cap across an upgrade", 0, false)
+	// A paid plan holds a cleared cap to its ceiling (ADR-20261105120000).
+	proCeiling, _ := api.PlanPro.MaxSelfServiceOverageCapCents()
+	expect("cleared cap across an upgrade", proCeiling, true)
 }
 
 // testOrgSpendCap pins ADR-20261030093512: an organization that owns its
@@ -113,7 +115,8 @@ func testOrgSpendCap(t *testing.T, fx *Fixture) {
 	if err := s.UpdateAccountOverageCapCents(ctx, org.ID, nil); err != nil {
 		t.Fatalf("UpdateAccountOverageCapCents(nil): %v", err)
 	}
-	expect("cleared", 0, false)
+	ceiling, _ := api.PlanPro.MaxSelfServiceOverageCapCents()
+	expect("cleared", ceiling, true)
 
 	holds, ok := s.(state.SpendCapHoldStore)
 	if !ok {

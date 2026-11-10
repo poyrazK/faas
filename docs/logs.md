@@ -169,4 +169,4 @@ gregale logs drain health my-api <drain-id>
   ([ADR-20261104085150](adr/20261104085150-log-volume-allowance.md)).
 - A log drain delivers at most 1 MiB of lines a second (bursts to 4 MiB);
   lines past that are dropped and counted in `health`.
-- Logs have no separate charge.
+- Logs have no separate charge. Bytes a drain delivers count toward the app's monthly egress, like the app's own traffic ([plans](plans.md#what-each-limit-means)).

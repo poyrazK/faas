@@ -197,6 +197,35 @@ func validateIdleTimeout(v int, limits api.Limits) *api.Problem {
 	return nil
 }
 
+// validateWorkerPlan refuses a worker the plan cannot run
+// (ADR-20261018101500 amendment 2026-10-31): a request that makes the app a
+// worker on a plan without workers, or whose worker bounds pass the plan's
+// running-worker cap. The pool would otherwise cap it silently, or on Free
+// never start it.
+func validateWorkerPlan(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
+	mode := app.Manifest.ExecutionMode
+	if req.ExecutionMode != nil {
+		mode = *req.ExecutionMode
+	}
+	if mode != api.ExecutionModeWorker || (req.ExecutionMode == nil && req.WorkerReplicas == nil) {
+		return nil
+	}
+	want := 1
+	if req.WorkerReplicas != nil {
+		// The package declares a float64 max (handlers_dashboard.go), so the
+		// builtin is not reachable here.
+		for _, n := range []int{req.WorkerReplicas.Min, req.WorkerReplicas.Max} {
+			if n > want {
+				want = n
+			}
+		}
+	}
+	if want > limits.WorkerReplicasMax {
+		return api.ErrPlanWorkerReplicas(acct.Plan, limits.WorkerReplicasMax, want)
+	}
+	return nil
+}
+
 // validatePerInstanceConcurrency gates and bounds
 // scaling_policy.per_instance_concurrency (ADR-20261022203523). Until the
 // account is listed in FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS the field is
@@ -241,6 +270,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if prob := validateIdleTimeout(*req.IdleTimeoutS, limits); prob != nil {
 			return prob
 		}
+	}
+	if prob := validateWorkerPlan(req, acct, limits, app); prob != nil {
+		return prob
 	}
 	// The app-wide edge bucket is a tightening-only runtime policy. Zero
 	// restores the plan default; a positive override cannot exceed the plan
@@ -1187,6 +1219,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.afterRestoreBudgetProblem(r.Context(), acct.ID, app.ID, req.AfterRestore); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -2304,6 +2340,10 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	if err := req.ValidateExpectedTraffic(); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -2346,6 +2386,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
 		ctx = state.WithTrafficSplitReleaseLimit(ctx, releaseLimit)
+		ctx = state.WithExpectedTrafficWeights(ctx, req.ExpectedTraffic)
 		var writeErr error
 		if req.ExpectedReview != nil {
 			store, ok := s.store.(state.ReviewedTrafficStore)
@@ -2396,6 +2437,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, trafficguard.PromotionProblem(err))
 		case promotionAttemptProblem(err) != nil:
 			api.WriteProblem(w, promotionAttemptProblem(err))
+		case errors.Is(err, state.ErrTrafficServingChanged) && req.ExpectedTraffic != nil:
+			api.WriteProblem(w, api.ErrTrafficSplitChanged())
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
@@ -5137,6 +5180,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		s.audit.Emit(r.Context(), "api_key.created", &acct.ID, newPayload)
 	}
+	s.noticeCredentialCreated(r, acct, credentialAPIKey, k.Label)
 	resp := api.APIKeyResponse{
 		ID:        k.ID,
 		OrgID:     k.OrgID,
@@ -5356,6 +5400,10 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 			s.notFound(w, "key already revoked")
 			return
 		}
+		if errors.Is(err, state.ErrAPIKeyExpired) {
+			api.WriteProblem(w, api.ErrAPIKeyExpired())
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("could not rotate key"))
 		return
 	}
@@ -5385,6 +5433,7 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"created_ua":         bindUA,
 		"parent_key_id":      oldKey.ID,
 	})
+	s.noticeCredentialCreated(r, acct, credentialRotatedKey, newKey.Label)
 	s.log.Info("key rotated",
 		"old_key", oldKey.ID, "new_key", newKey.ID,
 		"account", acct.ID, "grace_window_days", graceWindowDays)
@@ -5414,10 +5463,19 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // handler is the only caller; nil-safe when the cache is nil
 // (legacy tests that pre-date the cache field).
 func (s *server) resolveGraceWindow(ctx context.Context, accountID string) (*int, error) {
+	var days *int
+	var err error
 	if s.graceWindowCache == nil {
-		return s.store.GetAccountKeyGraceWindow(ctx, accountID)
+		days, err = s.store.GetAccountKeyGraceWindow(ctx, accountID)
+	} else {
+		days, err = s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
 	}
-	return s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
+	// A value saved before the cap existed is held to it (ADR 20261109120000).
+	if err == nil && days != nil && *days > api.APIKeyGraceWindowMaxDays {
+		capped := api.APIKeyGraceWindowMaxDays
+		days = &capped
+	}
+	return days, err
 }
 
 // --- usage -----------------------------------------------------------------
@@ -5667,9 +5725,10 @@ func (s *server) raiseOverageCap(w http.ResponseWriter, r *http.Request, acct st
 			"Bad request", err.Error()))
 		return
 	}
-	if req.OverageCapCents != nil && *req.OverageCapCents < 0 {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"overage_cap_cents must be >= 0 or null", "negative values are rejected"))
+	// ADR-20261105120000: a paid subject keeps a cap, at most its plan's
+	// self-service ceiling.
+	if problem := api.OverageCapProblem(acct.Plan, req.OverageCapCents); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	updated, err := s.raiseOverageCapSvc(r.Context(), acct, req.OverageCapCents)
@@ -8447,6 +8506,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 			Metric: sp.Target.Metric,
 			Value:  sp.Target.Value,
 			Name:   sp.Target.Name,
+			Labels: sp.Target.Labels,
 		}
 	}
 	// ADR-194 targets, ADR-195 schedules. These were absent here for the
@@ -8460,7 +8520,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 	// fails if a field is added to either type without being copied here.
 	for _, t := range sp.Targets {
 		out.Targets = append(out.Targets, state.ScalingTarget{
-			Metric: t.Metric, Value: t.Value, Name: t.Name,
+			Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels,
 		})
 	}
 	out.Timezone = sp.Timezone

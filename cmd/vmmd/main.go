@@ -975,6 +975,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-907: Firecracker before 1.14 rejects the balloon field, so an
 	// older or undetected binary boots without it.
 	freePageReporting := !cfg.DisableFreePageReporting && fcvm.FreePageReportingSupported(fcVersion)
+	// ADR-20261109120000: advance a restored guest's monotonic clock by the
+	// parked time. Firecracker 1.16+ only, and only where KVM records the
+	// realtime clock flag in captures (a tsc host clocksource).
+	restoreClockRealtime := !cfg.DisableRestoreClockRealtime && fcvm.ClockRealtimeSupported(fcVersion) && fcvm.HostClocksourceTSC()
 	// ADR-908: pmem needs Firecracker 1.16+, and native recovery stages
 	// images through its own journal, which has no pmem slot yet.
 	pmemBaseDir := ""
@@ -996,6 +1000,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRestoreConcurrency(cfg.RestoreConcurrency).
 		WithRestorePrefetch(!cfg.DisableRestorePrefetch).
 		WithFreePageReporting(freePageReporting).
+		WithRestoreClockRealtime(restoreClockRealtime).
 		WithCPUTemplate(cfg.CPUTemplate).
 		WithPmemBase(pmemBaseDir).
 		WithRestoreReseedThread(cfg.RestoreReseedThread).
@@ -1017,7 +1022,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ops.IncLogDropped("slow_subscriber")
 		})
 	log.Info("vmmd: snapshot restore concurrency configured", "limit", cfg.RestoreConcurrency,
-		"working_set_prefetch", !cfg.DisableRestorePrefetch, "free_page_reporting", freePageReporting, "pmem_base_dir", pmemBaseDir,
+		"working_set_prefetch", !cfg.DisableRestorePrefetch, "free_page_reporting", freePageReporting, "restore_clock_realtime", restoreClockRealtime, "pmem_base_dir", pmemBaseDir,
 		"cpu_template", cfg.CPUTemplate)
 	if deps.prepareJailHelper != nil {
 		if err := deps.prepareJailHelper(jailer); err != nil {
@@ -1120,6 +1125,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	mgr.WithEgressCircuitBreaker(egressCircuitEnabled)
+	// ADR-20261109130000: reset an app guest's TCP connections before
+	// destroying it, so its databases free the sessions at once.
+	mgr.WithReleaseConnectionsOnDestroy(!cfg.DisableReleaseConnectionsOnDestroy)
 	if egressCircuitEnabled {
 		if store == nil {
 			return fmt.Errorf("vmmd: FAAS_EGRESS_CIRCUIT_BREAKER requires a compute-node database configuration for durable policy")
@@ -1429,14 +1437,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Activity: activityTracker,
 			Metrics:  fcvm.NewIdleLadderMetrics(ops.Registry()),
 			On:       on,
+			Apps:     cfg.IdleLadderApps,
 			// The activity guard (ADR §6) watches apps quiet pause does not
 			// pause: their VM CPU and veth bytes.
 			CPU: agentWaitCPU{cache: cpuCache},
 			Net: idleLadderNet{cache: netCache},
+			// L3/L4: compress quiet-paused VMs' cold pages (LoadConfig
+			// refuses it without on).
+			Compress:        cfg.IdleLadderCompress,
+			CompressMetrics: fcvm.NewIdleCompressMetrics(ops.Registry()),
 		})
 		go mgr.RunIdleLadderObserve(ctx)
+		go mgr.RunIdleLadderCompress(ctx)
 		if on {
-			log.Info("idle ladder on (ADR-20261107122928): quiet pause at 1 s, L2 reported at 10 s quiet")
+			log.Info("idle ladder on (ADR-20261107122928): quiet pause at 1 s, L2 reported at 10 s quiet",
+				"guarded_app_pause", cfg.IdleLadderApps, "cold_compression", cfg.IdleLadderCompress)
 		} else {
 			log.Info("idle ladder observe mode enabled (ADR-20261107122928): measuring ladder levels, pausing nothing")
 		}

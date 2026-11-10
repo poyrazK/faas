@@ -292,3 +292,28 @@ func TestControlSealedClusterKey(t *testing.T) {
 		t.Fatal("verify passed on a node without the control identity")
 	}
 }
+
+// TestVerifyWithoutTheFleetIdentity pins the retired fleet key on compute
+// nodes (ADR 20261022111812): with no fleet identity, verify proves the
+// cluster key with the control identity alone and refuses without one.
+func TestVerifyWithoutTheFleetIdentity(t *testing.T) {
+	control, _ := age.GenerateX25519Identity()
+	privatePEM, publicPEM, kid := signingKey(t)
+	blob, err := secretbox.SealBytes(control.Recipient(), "internal_svc", privatePEM, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{cluster: state.ClusterSigningKey{ID: 1, KeyID: kid, PublicKeyPEM: string(publicPEM), SealedBlob: blob}}
+	host, _ := age.GenerateX25519Identity()
+	report, err := Verify(context.Background(), store, nil, host, []*age.X25519Identity{control})
+	if err != nil || !report.Ready || !report.FleetRetired || report.ProbeOK || report.ClusterKID != kid || report.FleetRecipient != "" {
+		t.Fatalf("retired verify = %+v, %v", report, err)
+	}
+	if _, err := Verify(context.Background(), store, nil, host, nil); err == nil {
+		t.Fatal("retired verify passed without the control identity")
+	}
+	other, _ := age.GenerateX25519Identity()
+	if _, err := Verify(context.Background(), store, nil, host, []*age.X25519Identity{other}); err == nil {
+		t.Fatal("retired verify passed with a control identity that does not open the cluster key")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -20,7 +21,44 @@ const (
 	debugWatchMinInterval     = 250 * time.Millisecond
 	debugWatchMaxInterval     = time.Hour
 	debugWatchSeenCap         = 10_000
+	// debugWatchMaxPages bounds how far one poll pages back to reach the
+	// requests it already showed (ADR-127 amendment 2026-11-05).
+	debugWatchMaxPages = 5
 )
+
+// debugWatchPoll reads the newest page and, after the first poll, keeps
+// paging while a whole page is new: a burst bigger than one page would
+// otherwise push requests past the page between polls. missed reports that
+// the watch stopped at debugWatchMaxPages with requests still unread. The
+// first poll shows only the newest page, as before.
+func debugWatchPoll(ctx context.Context, client *api.Client, slug string, opts api.DebugTelemetryListOptions, seen map[string]string, follow bool) (api.DebugTelemetryListResponse, bool, error) {
+	resp, err := client.ListAppDebugRequestsWithOptions(ctx, slug, opts)
+	if err != nil || !follow {
+		return resp, false, err
+	}
+	for page := 1; ; page++ {
+		// Pages are newest first: once the oldest row read so far was shown
+		// before, everything newer has been read.
+		if len(resp.Requests) == 0 || resp.NextCursor == "" {
+			return resp, false, nil
+		}
+		if _, shown := seen[resp.Requests[len(resp.Requests)-1].ID]; shown {
+			return resp, false, nil
+		}
+		if page == debugWatchMaxPages {
+			return resp, true, nil
+		}
+		next := opts
+		next.Cursor = resp.NextCursor
+		more, err := client.ListAppDebugRequestsWithOptions(ctx, slug, next)
+		if err != nil {
+			return resp, false, err
+		}
+		resp.Requests = append(resp.Requests, more.Requests...)
+		resp.NextCursor = more.NextCursor
+		opts = next
+	}
+}
 
 // debugWatchEvent is the line-oriented machine format emitted by the watch
 // commands. Keeping the poll timestamp and event kind in every line lets a
@@ -89,7 +127,8 @@ func cmdDebugRequestsWatch(args []string) int {
 func runDebugRequestsWatch(ctx context.Context, client *api.Client, slug string, opts api.DebugTelemetryListOptions, interval time.Duration, once bool) int {
 	seen := make(map[string]string)
 	seenOrder := make([]string, 0, debugWatchSeenCap)
-	poll := 0
+	poll, failures := 0, 0
+	var pollErr error
 	if !jsonOutput {
 		_, _ = fmt.Fprintf(osStdout, "Watching debugger requests for %s (every %s). Ctrl-C to exit.\n", slug, interval)
 	}
@@ -97,7 +136,16 @@ func runDebugRequestsWatch(ctx context.Context, client *api.Client, slug string,
 		if err := ctx.Err(); err != nil {
 			return 130
 		}
-		resp, err := client.ListAppDebugRequestsWithOptions(ctx, slug, opts)
+		resp, missed, err := debugWatchPoll(ctx, client, slug, opts, seen, poll > 0)
+		if err == nil && missed {
+			// More arrived since the last poll than the watch could page
+			// through: say so instead of silently skipping requests.
+			if jsonOutput {
+				_ = writeDebugWatchEvent(debugWatchEvent{Type: "gap", ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Since: resp.Since})
+			} else {
+				_, _ = fmt.Fprintf(os.Stderr, "debug requests watch: more requests arrived than %d pages of %d; older ones were skipped (raise --limit or narrow the filters)\n", debugWatchMaxPages, opts.Limit)
+			}
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return 130
@@ -105,8 +153,10 @@ func runDebugRequestsWatch(ctx context.Context, client *api.Client, slug string,
 			if poll == 0 {
 				return printErr("Could not list debug requests", err)
 			}
-			_, _ = fmt.Fprintf(os.Stderr, "debug requests watch: poll %d: %v (continuing)\n", poll+1, err)
+			failures, pollErr = failures+1, err
+			_, _ = fmt.Fprintf(os.Stderr, "debug requests watch: poll %d: %v (retrying in %s)\n", poll+1, err, debugWatchNextWait(interval, failures, err))
 		} else {
+			failures = 0
 			changed := make([]api.DebugTelemetryRequestItem, 0, len(resp.Requests))
 			for _, request := range resp.Requests {
 				fingerprint := debugWatchFingerprint(request)
@@ -143,7 +193,7 @@ func runDebugRequestsWatch(ctx context.Context, client *api.Client, slug string,
 		if once {
 			return 0
 		}
-		if !waitDebugWatch(ctx, interval) {
+		if !waitDebugWatch(ctx, debugWatchNextWait(interval, failures, pollErr)) {
 			return 130
 		}
 	}
@@ -315,7 +365,8 @@ func runDebugRegressionsStream(ctx context.Context, client *api.Client, slug str
 
 func runDebugRegressionsWatchAll(ctx context.Context, client *api.Client, since string, interval time.Duration, once bool) int {
 	seen := make(map[string]string)
-	poll := 0
+	poll, failures := 0, 0
+	var pollErr error
 	if !jsonOutput {
 		_, _ = fmt.Fprintf(osStdout, "Watching debugger regressions for every app (every %s). Ctrl-C to exit.\n", interval)
 	}
@@ -331,15 +382,23 @@ func runDebugRegressionsWatchAll(ctx context.Context, client *api.Client, since 
 			if poll == 0 {
 				return printErr("Could not list apps for debugger regressions", err)
 			}
-			_, _ = fmt.Fprintf(os.Stderr, "debug regressions watch: poll %d: %v (continuing)\n", poll+1, err)
+			failures, pollErr = failures+1, err
+			_, _ = fmt.Fprintf(os.Stderr, "debug regressions watch: poll %d: %v (retrying in %s)\n", poll+1, err, debugWatchNextWait(interval, failures, err))
 		} else {
 			current := make(map[string]string)
 			changed := make([]struct {
 				app  string
 				item api.DebugRegressionItem
 			}, 0)
+			// The poll makes one request per app, so a rate limit stops the
+			// rest of this pass and the whole watch backs off.
+			var appErr, limited error
 			for _, app := range apps {
-				resp, err := client.ListAppDebugRegressions(ctx, app.Slug, since)
+				var resp api.DebugRegressionsResponse
+				err := limited
+				if err == nil {
+					resp, err = client.ListAppDebugRegressions(ctx, app.Slug, since)
+				}
 				if err != nil {
 					// Preserve the previous state for an app whose poll
 					// failed; otherwise a transient 5xx would look like a
@@ -350,7 +409,13 @@ func runDebugRegressionsWatchAll(ctx context.Context, client *api.Client, since 
 							current[key] = fingerprint
 						}
 					}
-					_, _ = fmt.Fprintf(os.Stderr, "debug regressions watch %s: %v\n", app.Slug, err)
+					if limited == nil {
+						_, _ = fmt.Fprintf(os.Stderr, "debug regressions watch %s: %v\n", app.Slug, err)
+					}
+					appErr = err
+					if debugWatchRateLimited(err) {
+						limited = err
+					}
 					continue
 				}
 				for _, regression := range resp.Regressions {
@@ -364,6 +429,11 @@ func runDebugRegressionsWatchAll(ctx context.Context, client *api.Client, since 
 						}{app: app.Slug, item: regression})
 					}
 				}
+			}
+			if appErr != nil {
+				failures, pollErr = failures+1, appErr
+			} else {
+				failures = 0
 			}
 			cleared := make([]string, 0)
 			for key := range seen {
@@ -406,7 +476,7 @@ func runDebugRegressionsWatchAll(ctx context.Context, client *api.Client, since 
 		if once {
 			return 0
 		}
-		if !waitDebugWatch(ctx, interval) {
+		if !waitDebugWatch(ctx, debugWatchNextWait(interval, failures, pollErr)) {
 			return 130
 		}
 	}
@@ -423,7 +493,8 @@ func splitDebugFleetRegressionWatchKey(key string) (string, string) {
 
 func runDebugRegressionsWatch(ctx context.Context, client *api.Client, slug, since string, interval time.Duration, once bool) int {
 	seen := make(map[string]string)
-	poll := 0
+	poll, failures := 0, 0
+	var pollErr error
 	if !jsonOutput {
 		_, _ = fmt.Fprintf(osStdout, "Watching debugger regressions for %s (every %s). Ctrl-C to exit.\n", slug, interval)
 	}
@@ -439,8 +510,10 @@ func runDebugRegressionsWatch(ctx context.Context, client *api.Client, slug, sin
 			if poll == 0 {
 				return printErr("Could not list regressions", err)
 			}
-			_, _ = fmt.Fprintf(os.Stderr, "debug regressions watch: poll %d: %v (continuing)\n", poll+1, err)
+			failures, pollErr = failures+1, err
+			_, _ = fmt.Fprintf(os.Stderr, "debug regressions watch: poll %d: %v (retrying in %s)\n", poll+1, err, debugWatchNextWait(interval, failures, err))
 		} else {
+			failures = 0
 			observedAt := time.Now().UTC().Format(time.RFC3339Nano)
 			current := make(map[string]string, len(resp.Regressions))
 			changed := make([]api.DebugRegressionItem, 0, len(resp.Regressions))
@@ -489,7 +562,7 @@ func runDebugRegressionsWatch(ctx context.Context, client *api.Client, slug, sin
 		if once {
 			return 0
 		}
-		if !waitDebugWatch(ctx, interval) {
+		if !waitDebugWatch(ctx, debugWatchNextWait(interval, failures, pollErr)) {
 			return 130
 		}
 	}
@@ -500,6 +573,37 @@ func validateDebugWatchInterval(interval time.Duration) error {
 		return fmt.Errorf("--interval must be between %s and %s (got %s)", debugWatchMinInterval, debugWatchMaxInterval, interval)
 	}
 	return nil
+}
+
+// debugWatchMaxBackoff caps the back-off after failed polls (or the
+// interval, when that is longer).
+const debugWatchMaxBackoff = 5 * time.Minute
+
+// debugWatchNextWait is the wait before the next poll: the interval while
+// polls succeed, doubling per consecutive failure up to debugWatchMaxBackoff,
+// and never shorter than a 429's Retry-After. A watch that kept polling at
+// --interval through rate limits only kept itself rate limited.
+func debugWatchNextWait(interval time.Duration, failures int, err error) time.Duration {
+	if failures <= 0 {
+		return interval
+	}
+	ceiling := max(debugWatchMaxBackoff, interval)
+	delay := interval
+	for i := 0; i < failures && delay < ceiling; i++ {
+		delay *= 2
+	}
+	delay = min(delay, ceiling)
+	if retryAfter := traceWatchRetryAfter(err); retryAfter != nil && *retryAfter > 0 {
+		hint := min(time.Duration(*retryAfter)*time.Second, time.Hour)
+		delay = max(delay, hint)
+	}
+	return delay
+}
+
+// debugWatchRateLimited reports a 429 from the API.
+func debugWatchRateLimited(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusTooManyRequests
 }
 
 func waitDebugWatch(ctx context.Context, interval time.Duration) bool {

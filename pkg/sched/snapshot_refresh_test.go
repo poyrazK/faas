@@ -48,6 +48,7 @@ type refreshFixture struct {
 	store        *state.MemStore
 	vmm          *refreshCheckVMM
 	boots        *sched.FakeVMM
+	engine       *sched.Engine
 	refresher    *sched.SnapshotRefresher
 	nodeA, nodeB state.ComputeNode
 }
@@ -67,8 +68,8 @@ func newRefreshFixture(t *testing.T) *refreshFixture {
 		}
 		*n = node
 	}
-	e := sched.XNewEngine(t, f.store, f.vmm, &sched.FakeNotifier{}, "1.10.0")
-	f.refresher = sched.NewSnapshotRefresher(e, nil, nil)
+	f.engine = sched.XNewEngine(t, f.store, f.vmm, &sched.FakeNotifier{}, "1.10.0")
+	f.refresher = sched.NewSnapshotRefresher(f.engine, nil, nil)
 	return f
 }
 
@@ -217,6 +218,29 @@ func TestSnapshotRefreshTickRunsOncePerRelease(t *testing.T) {
 	f.refresher.Tick(f.ctx)
 	if len(f.vmm.asked) != 4 || f.vmm.asked[3] != f.nodeA.ID+"|"+keyA {
 		t.Fatalf("after vmmd answered: asked %v, want node a retried once", f.vmm.asked)
+	}
+}
+
+// Turning shadow into on runs the pass again for the same release, so what
+// the shadow pass found is refreshed without waiting for the next release.
+func TestSnapshotRefreshTickRunsAgainWhenShadowTurnsOn(t *testing.T) {
+	f := newRefreshFixture(t)
+	f.shadow(t)
+	_, key := f.app(t, f.nodeA.ID, time.Hour, state.Snapshot{})
+	f.vmm.verdicts[key] = sched.SnapshotBackingCurrent
+
+	f.refresher.Tick(f.ctx)
+	f.refresher.Tick(f.ctx)
+	if len(f.vmm.asked) != 1 {
+		t.Fatalf("shadow: vmmd asked %v, want one pass", f.vmm.asked)
+	}
+	if err := f.refresher.SetMode(api.SnapshotRefreshOn); err != nil {
+		t.Fatal(err)
+	}
+	f.refresher.Tick(f.ctx)
+	f.refresher.Tick(f.ctx)
+	if len(f.vmm.asked) != 2 {
+		t.Fatalf("on: vmmd asked %v, want one more pass for the same release", f.vmm.asked)
 	}
 }
 
