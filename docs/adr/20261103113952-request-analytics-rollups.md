@@ -391,3 +391,44 @@ cheap to keep exactly; raw rows are not.
 
 Metrics: `gateway_request_analytics_rollup_requests_total{outcome}`
 (`shipped`, `lost`).
+
+## Amendment 6 (2026-11-09): analytics completeness apart from raw delivery
+
+Analytics judged a window complete with the raw coverage heartbeats route
+removal reads: any raw row a gateway lost, or still held, marked the window
+incomplete. With gateway counting (amendment 5) a lost raw row the gateway
+had counted leaves the rollups whole, so analytics reported windows as
+incomplete that were not. Amendment 5 also added the requests of every
+closed but unsent rollup minute to the raw pending count, which would have
+held raw completeness and route removal "pending" for 30 s of every minute;
+that is removed.
+
+1. **The gateway reports an analytics part.** Each heartbeat of a gateway
+   with `FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS=1` carries whether it is
+   counting, its cumulative analytics losses it cannot attribute to an app,
+   and per app `analytics_dropped_count` and `analytics_pending_count`. An
+   analytics loss is a rollup batch given up, or a lost raw row the gateway
+   did not count (counting off, buffer full); a lost raw row it counted is
+   a raw loss only. Analytics pending is rollups past their send time (a
+   minute plus the 30 s grace) and not yet acknowledged, and raw rows the
+   gateway did not count still waiting to ship. A batch given up no longer
+   counts as a raw loss: its raw rows shipped.
+2. **apid records it with the raw heartbeat**, in the same transaction
+   (`record_request_analytics_coverage`): `request_analytics_node_coverage`
+   keeps since when each node has counted without a break, restarting it on
+   a reboot, a 30 s heartbeat gap, an unattributed analytics loss or counting
+   turned off; `request_analytics_app_gaps` keeps each app's last analytics
+   loss or late rollup, as `request_telemetry_app_gaps` does for raw rows.
+   Counting reads as off on an apid without rollups. The raw tables and
+   `route_removal_coverage_blockers` are unchanged.
+3. **Analytics answered by rollups reads
+   `request_analytics_completeness_blockers`.** Every active node must
+   report, fresh, enabled, unsampled and caught up to the window's end, as
+   before. A node whose latest heartbeat carried an analytics part showing it
+   counting since before the window is then judged by its analytics gaps;
+   any other node by raw delivery, exactly as before. Analytics answered by
+   raw rows keeps raw completeness: there a lost raw row is a missing
+   request.
+4. **Rollout.** A heartbeat without the analytics part, from an older
+   gateway, or recorded by an older apid, leaves the node judged by raw
+   delivery. The migration only adds tables and functions.

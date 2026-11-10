@@ -244,14 +244,17 @@ func (g *requestAnalyticsRollups) lose(rows []state.RequestAnalyticsRollup) {
 	}
 }
 
-// undelivered sums, per app, the requests of closed minutes not yet
-// acknowledged by apid. Coverage reports them as pending, so apid does not
-// call a minute complete before its rollup lands.
+// undelivered sums, per app, the requests of minutes past their send time
+// (closed RequestAnalyticsRollupMinuteGrace ago) not yet acknowledged by
+// apid. Coverage reports them as late analytics (amendment 6), so apid does
+// not call a minute complete before its rollup lands.
 func (g *requestAnalyticsRollups) undelivered() map[uuid.UUID]int64 {
 	if g == nil {
 		return nil
 	}
-	out := g.agg.PendingRequests(g.cfg.Now().Add(-time.Minute).Unix())
+	// Minutes inside their grace are not late: analytics does not judge
+	// the newest RequestAnalyticsSettleLag.
+	out := g.agg.PendingRequests(g.cfg.Now().Add(-time.Minute - api.RequestAnalyticsRollupMinuteGrace).Unix())
 	for _, b := range g.batches {
 		for app, n := range rollupRequestsByApp(b.rows) {
 			out[app] += n
