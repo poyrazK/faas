@@ -130,6 +130,15 @@ alloy_security_audit_drop_types:
 # python3), nft, and the platform's own binaries under /opt/faas. Any other
 # program doing so raises host_config_write_unattended.
 alloy_security_unattended_writer_exes: '/usr/lib/systemd/systemd|/usr/bin/systemctl|/usr/bin/dpkg|/usr/bin/perl[0-9.]*|/usr/bin/python3[0-9.]*|/usr/sbin/nft|/opt/faas/.*'
+# The tetragon role's export (ADR-20261110183000), readable by the adm group.
+# A host without Tetragon has no file to match; the source then idles.
+alloy_security_tetragon_log: /var/log/tetragon/tetragon.log
+# Programs that open /etc/faas/secrets as part of normal operation: systemd
+# (LoadCredential), the platform's binaries, gregalectl, Ansible's python3
+# and the disk-encryption and backup tools. Any other program raises
+# tetragon_secret_open; a jailer uid raises tetragon_jailed_secret_open
+# whatever the program.
+alloy_security_tetragon_secret_reader_exes: '/usr/lib/systemd/systemd|/opt/faas/.*|/usr/local/bin/gregalectl|/usr/bin/python3[0-9.]*|/usr/bin/age|/usr/bin/clevis.*|/usr/bin/cryptsetup|/usr/sbin/cryptsetup|/usr/bin/rclone'
 # Ansible runs its modules with python3, so reads of /etc/faas/secrets by
 # python3 in a login session are deploys; anything else in a login session
 # is a person or a tool reading a secret by hand.

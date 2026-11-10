@@ -30,6 +30,9 @@ const (
 	capHoldNone     = ""
 	capHoldCeiling  = "ceiling"
 	capHoldInactive = "inactive"
+	// capHoldEgress holds a subject whose databases and apps together sent
+	// its plan's monthly egress allowance (ADR-20261110160000).
+	capHoldEgress = "egress"
 )
 
 // Why the sweep holds one database of a subject.

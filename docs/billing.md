@@ -69,20 +69,26 @@ When you change your sign-in email, your own billing customer moves to the new a
 A spend cap is a hard ceiling on the overage an account is billed in a UTC
 calendar month. The included GB-RAM-hours are not counted against it.
 
-A paid plan starts with a cap of one more allowance of overage: Hobby $2,
-Pro $10, Scale $30. The cap is set when the account moves from Free to a paid
+A paid plan starts with a cap of one more allowance of overage: Hobby $10,
+Pro $50, Scale $150. The cap is set when the account moves from Free to a paid
 plan, and a cap still at its plan's default follows plan changes; on Free it
-is removed. A cap you set or clear yourself is kept across plan changes.
+is removed. A cap you set yourself is kept across plan changes, lowered to the
+new plan's ceiling when it is above it.
+
+A paid plan always has a cap. You can set it anywhere from $0 up to the plan's
+ceiling: Hobby $75, Pro $200, Scale $1,000. Ask support for a higher cap.
 
 ```bash
 gregale billing spend-cap 500      # cap overage at $5.00 this month
-gregale billing spend-cap --clear  # remove the cap
+gregale billing spend-cap          # show the current cap
 ```
 
-`POST /v1/account/overage-cap` with `{"overage_cap_cents": 500}` (or `null`
-to clear) does the same. It needs the `admin` scope, like plan and billing
+`POST /v1/account/overage-cap` with `{"overage_cap_cents": 500}` does the
+same. On a paid plan, a cap above the ceiling is refused with
+`422 overage_cap_above_max` and clearing it (`null`) with
+`422 overage_cap_required`. It needs the `admin` scope, like plan and billing
 changes: a deploy-scoped key, such as a CI key or an MCP connection allowed to
-write, cannot raise or remove the cap. A cap of 0 is a pause switch: it counts as reached
+write, cannot raise the cap. A cap of 0 is a pause switch: it counts as reached
 immediately, so the account's workloads stop even within the included
 allowance.
 
@@ -109,7 +115,7 @@ When the month's overage reaches the cap:
 When the cap first stops your workloads in a month, Gregale emails the
 account with the cap and the month's overage.
 
-Raising or clearing the cap, or the start of the next month, lets workloads
+Raising the cap, or the start of the next month, lets workloads
 wake again on the next request or scheduler tick. If you change plans during
 a month, each plan's included GB-RAM-hours count for the share of the month
 you held it: a whole month on Pro includes 1,000 GB-h, and half a month on

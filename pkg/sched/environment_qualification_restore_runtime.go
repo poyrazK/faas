@@ -100,7 +100,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 	cpu := effectiveAppCPUMillicores(app)
 	startupCPU := cpu
 	if !dep.DisableStartupCPUBoost {
-		startupCPU = startupCPUBoostQuota(acct.Plan, cpu)
+		startupCPU = startupCPUBoostQuota(cpu)
 	}
 	req := Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
 		VCPU: appVCPUs(app), CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID}

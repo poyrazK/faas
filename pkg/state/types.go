@@ -2878,6 +2878,13 @@ type Deployment struct {
 	// legacy deployment whose support has not been recorded yet.
 	SecretReloadSignal      string `json:"-"`
 	SecretReloadSignalKnown bool   `json:"-"`
+	// BeforeCheckpointHook records whether imaged stamped a before_checkpoint
+	// hook into this deployment's guest manifest. The guest only knows the
+	// hook its own layer was built with, so parks of this deployment must
+	// follow this value, not the app's current manifest (H32-49). Known is
+	// false for deployments built before the column existed.
+	BeforeCheckpointHook      bool `json:"-"`
+	BeforeCheckpointHookKnown bool `json:"-"`
 	// RuntimeBase is the shared runner base a source-built container app's
 	// layer was built for ("" for the app's own base). imaged stamps it with
 	// the deployment's source rootfs; schedd boots that base

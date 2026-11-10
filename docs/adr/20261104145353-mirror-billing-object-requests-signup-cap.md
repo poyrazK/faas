@@ -89,3 +89,19 @@ The round 6 cost-control audit found three gaps.
   launch.
 - **Not decided here.** Disposable-email blocking and a card or phone check
   before Free compute starts are left to the owner.
+
+## Amendment 1 (2026-11-10): the cap counts verified accounts
+
+- **Problem.** The count included accounts that never verified their email.
+  At 10 accounts per address and 50 per network a day, about 40 networks
+  could create 2,000 unverified accounts and close sign-up for everyone for
+  24 hours, although those accounts cannot deploy and claim no Free
+  allowance.
+- **Decision.** The cap counts accounts created in the last 24 hours that
+  have verified their email (`CountVerifiedAccountsCreatedSince`). Sign-ups
+  with Google or GitHub arrive verified and count at once; a password or
+  magic-link sign-up counts once its owner verifies.
+- **Consequence.** Verified accounts in a day can pass the cap by the
+  accounts still waiting to verify when it was reached. Unverified creation
+  stays bounded by the per-address and per-network caps and the shared mail
+  limits.

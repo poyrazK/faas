@@ -75,7 +75,8 @@ operation still enforces its own authorization and admission checks.
   the API).
 - **Sessions:** `gregale account sessions list`, `gregale account sessions
   revoke SESSION_ID`, or `--all` to sign out every browser. A sign-in from a
-  browser and network none of your recent sessions used sends an email.
+  browser and network none of your recent sessions used sends an email. A
+  browser session lasts at most 7 days and ends after 48 hours without use.
 - **Remembered browsers:** with two-factor authentication on, tick **Remember
   this browser for 30 days** when you enter the sign-in code, and that browser
   skips the code at sign-in until then. Sensitive actions still ask for a

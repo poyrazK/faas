@@ -1164,6 +1164,24 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		}
 		return state.Session{}, true, nil
 	}
+	// (4.5) idle timeout (ADR 20261110120000): a session unused for
+	// api.DashboardSessionIdleTimeout ends, however long its cookie has
+	// left. The row is revoked so the cookie cannot come back to life.
+	if sessionIdle(sess, time.Now()) {
+		if _, revokeErr := m.Lookups.RevokeSession(ctx, env.Sid, env.AccountID); revokeErr != nil && m.Log != nil {
+			m.Log.Warn("idle session revoke failed", "sid", logsanitize.Field(env.Sid), "error", revokeErr.Error())
+		}
+		if m.Audit != nil {
+			m.Audit.Emit(ctx, "auth.session.idle_expired", &env.AccountID, map[string]any{
+				"sid":      env.Sid,
+				"idle_sec": int(api.DashboardSessionIdleTimeout.Seconds()),
+			})
+		}
+		m.clearSessionCookie(w)
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeSessionExpired,
+			"Session expired", "signed out after 48 hours without activity; sign in again"))
+		return state.Session{}, true, nil
+	}
 	// (5) stamp + async touch. Detached; bounded.
 	if t, fire := m.sessionDebounce.shouldTouch(env.Sid, time.Now(), m.sessionTouchWindow()); fire {
 		go func(parentCtx context.Context, sid string, ticket *TouchTicket) {
@@ -1179,6 +1197,17 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 }
 
 const sessionTouchWindow = 5 * time.Minute
+
+// sessionIdle reports whether sess saw no request for
+// api.DashboardSessionIdleTimeout. A row never touched counts from its
+// sign-in.
+func sessionIdle(sess state.Session, now time.Time) bool {
+	last := sess.IssuedAt
+	if sess.LastSeenAt != nil && sess.LastSeenAt.After(last) {
+		last = *sess.LastSeenAt
+	}
+	return !last.IsZero() && now.Sub(last) > api.DashboardSessionIdleTimeout
+}
 
 // sessionTouchDebounce mirrors keyTouchDebounce but keyed on the
 // session id (sid) rather than the API key id. Same pointer-version

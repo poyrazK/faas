@@ -49,7 +49,7 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
-	if !s.totpAttemptAllowed(w, acct) {
+	if !s.totpAttemptAllowed(w, r, acct) {
 		return
 	}
 	secret := readSealedSecret(s, w, r, acct.ID)
@@ -68,7 +68,7 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 		s.renderDashboardMFA(w, r, acct, http.StatusUnauthorized, reason, dashboardMFANext(r.PostFormValue("next")))
 		return
 	}
-	s.totp.reset(acct.ID)
+	s.resetTOTPAttempts(r.Context(), acct.ID)
 	remember := r.PostFormValue("remember") == "1" && s.sessionMFAChallengePending(r, acct)
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("dashboard.mfa.reissue_cookie", "err", err.Error())

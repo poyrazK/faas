@@ -100,7 +100,7 @@
     "go_modules": ["go.mod", "go.sum"],
     "migrations": ["migrations/"],
     "deploy": ["deploy/"],
-    "control_plane_bundle": ["pkg/promqlrules/data_placement.yaml", "docs/DPA.md"],
+    "control_plane_bundle": ["pkg/promqlrules/data_placement.yaml", "docs/DPA.md", "scripts/ci/faas_billing_mode.sh"],
     "release_contents": [
       "scripts/build-canonical-tarball.sh",
       "scripts/materialize-release-manifest.sh",
@@ -152,7 +152,6 @@
       "deploy/ansible/node_join_contract_probe.yml"
     ],
     "blocking": [
-      "deploy/ansible/.cache/",
       "deploy/ansible/control_plane_converge.yml",
       "deploy/ansible/cp_state_restore.yml",
       "deploy/ansible/database_node.yml",
