@@ -13673,6 +13673,11 @@ const (
 	TrafficServicePolicyReadTimeout = 250 * time.Millisecond
 	TrafficPublicRoutingReadTimeout = 250 * time.Millisecond
 	TrafficPublicHostReadTimeout    = 250 * time.Millisecond
+	// TrafficPolicySnapshotCancelGrace is how long a policy snapshot whose
+	// caller gave up waits for PostgreSQL to answer the cancel request it
+	// sent. An answered cancel keeps the connection; past the grace pgx
+	// closes it, as it did at the caller's deadline before.
+	TrafficPolicySnapshotCancelGrace = 200 * time.Millisecond
 	// TrafficPublicRoutingColdReadTimeout bounds the routing read of an app
 	// the gateway holds no admissible view for, usually an idle app's first
 	// request. Its first attempt keeps TrafficPublicRoutingReadTimeout; a
