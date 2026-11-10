@@ -117,7 +117,10 @@ in with Google or GitHub at the same address lifts the restriction. Accounts
 created before 16 November 2026 get their 30 days from that date
 (`api.EmailVerificationEnforcedFrom`). In the last 7 days before the deadline,
 an account that is still in use (a signed-in browser or an API key) is mailed
-a fresh verification link at most once a day.
+a fresh verification link at most once a day. An account still unverified 60
+days after sign-up (counted from 16 November 2026 for older accounts) that
+never created an app and has no billing is scheduled for deletion: its
+address is mailed and it can be restored for 30 days.
 
 If you never verified and forgot your password, use **Forgot password** anyway:
 an unverified account receives a magic sign-in link. Opening it proves the

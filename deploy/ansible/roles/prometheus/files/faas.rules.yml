@@ -954,6 +954,33 @@ groups:
           description: "Someone presented a decoy credential that belongs to no account. Whoever holds it has read the place it was planted, usually the secret store. Start the customer secret store compromise runbook; the security.honeytoken_presented audit event names the honeytoken and the caller."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHoneytokenPresented.md"
 
+  # ADR 20261110120000: account sign-up and security mail. The fleet cap
+  # (api.SignupAccountsPerDay) refuses every new customer once reached, and a
+  # dropped security mail is a password reset, sign-in link, verification or
+  # account notice the customer never gets.
+  - name: account_flow
+    rules:
+      - alert: FaasSignupFleetCapReached
+        expr: sum(increase(apid_signups_capped_total{scope="fleet"}[15m])) > 0
+        labels:
+          severity: warn
+          component: apid
+          family: account_flow
+        annotations:
+          summary: "The platform's daily sign-up cap is refusing new accounts"
+          description: "{{ $value | humanize }} sign-ups were refused in 15 minutes because the platform created api.SignupAccountsPerDay accounts in the last 24 hours. Either a sign-up farm is running or real demand outgrew the cap; check auth.signup and auth.signup_fleet_cap audit events before raising it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSignupFleetCapReached.md"
+      - alert: FaasSecurityMailDropped
+        expr: sum(increase(apid_background_mail_dropped_total[15m])) > 0
+        labels:
+          severity: warn
+          component: apid
+          family: account_flow
+        annotations:
+          summary: "apid dropped security mail because its mail pool was full"
+          description: "{{ $value | humanize }} password reset, sign-in link, verification or account notice mails were not sent in 15 minutes: every slot of apid's background mail pool was busy. Customers asked for mail and got none."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSecurityMailDropped.md"
+
   # ADR 20261024014500: every reader daemon counts the sealed values it
   # opens. A daemon in an attacker's hands can be made to open secrets in
   # bulk, or to try envelopes its keys do not open.

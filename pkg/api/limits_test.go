@@ -52,21 +52,12 @@ func TestLimitsEphemeralDiskMaxAliasesAppLayerCap(t *testing.T) {
 	}
 }
 
-func TestPlanResourceShapesMatchLimits(t *testing.T) {
-	if len(PlanResourceShapes) != len(Plans) {
-		t.Fatalf("plan resource shape count = %d, want %d", len(PlanResourceShapes), len(Plans))
-	}
+// Function executions still boot at VCPUPerPlan; it stays in lock-step with
+// the Limits table until both go (ADR-20261109172421 step 6.4).
+func TestVCPUPerPlanMatchesLimits(t *testing.T) {
 	for _, plan := range Plans {
-		shape, ok := PlanResourceShapeFor(plan)
-		if !ok {
-			t.Fatalf("missing resource shape for %s", plan)
-		}
-		limits := MustLimitsFor(plan)
-		if shape.RAMMB != limits.RAMMB {
-			t.Errorf("%s shape RAM = %d, want limits RAM %d", plan, shape.RAMMB, limits.RAMMB)
-		}
-		if shape.VCPU != limits.VCPU || VCPUPerPlan[plan] != limits.VCPU {
-			t.Errorf("%s shape vCPU = %d/map %d, want limits vCPU %d", plan, shape.VCPU, VCPUPerPlan[plan], limits.VCPU)
+		if limits := MustLimitsFor(plan); VCPUPerPlan[plan] != limits.VCPU {
+			t.Errorf("%s VCPUPerPlan = %d, want limits vCPU %d", plan, VCPUPerPlan[plan], limits.VCPU)
 		}
 	}
 }
