@@ -464,7 +464,11 @@ func alertDeliverySummary(d api.AlertDeliveryResponse) string {
 	if !d.DeliveredAt.IsZero() {
 		at = d.DeliveredAt
 	}
-	summary := fmt.Sprintf("%s at %s (fired %s, attempts %d", d.Status, at.UTC().Format(time.RFC3339), d.FiredAt.UTC().Format(time.RFC3339), d.AttemptCount)
+	summary := fmt.Sprintf("%s at %s (", d.Status, at.UTC().Format(time.RFC3339))
+	if !at.Equal(d.FiredAt) {
+		summary += fmt.Sprintf("fired %s, ", d.FiredAt.UTC().Format(time.RFC3339))
+	}
+	summary += fmt.Sprintf("attempts %d", d.AttemptCount)
 	if d.LastStatusCode > 0 {
 		summary += fmt.Sprintf(", http %d", d.LastStatusCode)
 	}

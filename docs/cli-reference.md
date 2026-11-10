@@ -6488,12 +6488,20 @@ gregale alert deliveries --app my-api --interactive
 
 Update one alert rule
 
-`gregale alert update [--interactive] [--app <slug>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--notify-resolved] [<alert-id>]`
+`gregale alert update [--interactive] [--app <slug>] [--name <NAME>] [--enabled] [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--cooldown-minutes <N>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--notify-resolved] [<alert-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--interactive` | choose a rule, edit current settings, and confirm changes |  |
 | `--app <slug>` | app slug (linked app or picker in interactive mode) |  |
+| `--name <NAME>` | rule name (3..120 chars) |  |
+| `--enabled` | turn the rule on or off (--enabled=false pauses it) |  |
+| `--metric <METRIC>` | metric |  |
+| `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
+| `--threshold <N>` | threshold value |  |
+| `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
+| `--cooldown-minutes <N>` | minutes between repeat notifications of one breach |  |
+| `--webhook-url <URL>` | http(s) webhook URL |  |
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
 | `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the replacement webhook secret from stdin |  |

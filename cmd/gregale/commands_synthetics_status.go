@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -19,14 +20,18 @@ func cmdSyntheticsStatus(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert check status --app <slug> <check-id>", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check status --app <slug> <check-id|name>", "synthetics")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	check, err := client.GetSyntheticCheck(context.Background(), *slug, fs.Arg(0))
+	id, err := resolveSyntheticCheckRef(context.Background(), client, *slug, fs.Arg(0))
+	if err != nil {
+		return printErr("Could not fetch synthetic check", err)
+	}
+	check, err := client.GetSyntheticCheck(context.Background(), *slug, id)
 	if err != nil {
 		return printErr("Could not fetch synthetic check", err)
 	}
@@ -74,4 +79,22 @@ func fmtUptime(v *float64) string {
 		return "—"
 	}
 	return fmt.Sprintf("%.2f%%", *v)
+}
+
+// resolveSyntheticCheckRef accepts a check's id or its name: `check list`
+// shows names first and status refused them (production, 2026-11-09).
+func resolveSyntheticCheckRef(ctx context.Context, client *api.Client, slug, ref string) (string, error) {
+	if uuid.Validate(ref) == nil {
+		return ref, nil
+	}
+	checks, err := client.ListSyntheticChecks(ctx, slug)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range checks {
+		if c.Name == ref {
+			return c.ID, nil
+		}
+	}
+	return "", fmt.Errorf("no check named %q on %s; see gregale alert check list --app %s", ref, slug, slug)
 }
