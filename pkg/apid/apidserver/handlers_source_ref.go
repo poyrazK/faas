@@ -59,6 +59,8 @@ import (
 //   - streamSourceTarball     — gRPC streaming + cap-bound + spool
 //   - auditSourceRefDeploy    — emits deploy.source_ref {…} + log
 //   - isValidRef              — ref-shape guard before the gRPC fetch
+//
+//nolint:contextcheck // From the GitHub fetch on, r carries a context detached from the deploy-submission budget under the upload commit's size-scaled bound (deploy review 2026-11-10, E1); idempotentDeploy replays the outcome.
 func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
 	if !ok {
