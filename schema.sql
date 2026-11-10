@@ -8126,6 +8126,13 @@ BEGIN
                 RETURN NEW;
             END IF;
         END IF;
+        -- Deleting a cron detaches its run history (Hunt 32 H32-46): a
+        -- terminal task may drop its cron_id and nothing else, so its
+        -- outcome evidence stays immutable.
+        IF OLD.cron_id IS NOT NULL AND NEW.cron_id IS NULL
+           AND (to_jsonb(NEW) - 'cron_id') = (to_jsonb(OLD) - 'cron_id') THEN
+            RETURN NEW;
+        END IF;
         IF NEW IS DISTINCT FROM OLD THEN
             RAISE EXCEPTION 'terminal app task % is immutable', OLD.id USING ERRCODE = '23514';
         END IF;
