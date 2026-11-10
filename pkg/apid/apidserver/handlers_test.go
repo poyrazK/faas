@@ -198,8 +198,8 @@ func TestCreateApp_AppliesDefaults(t *testing.T) {
 	if want := api.MustLimitsFor(api.PlanPro).RAMMB; out.RAMMB != want {
 		t.Errorf("RAM default = %d, want %d (pro)", out.RAMMB, want)
 	}
-	if out.VCPU != api.VCPUPerPlan[api.PlanPro] {
-		t.Errorf("guest vCPU default = %d, want %d (pro)", out.VCPU, api.VCPUPerPlan[api.PlanPro])
+	if out.VCPU != api.SizeVCPUs(out.RAMMB) {
+		t.Errorf("guest vCPU default = %d, want %d (its size's)", out.VCPU, api.SizeVCPUs(out.RAMMB))
 	}
 	if out.MaxConcurrency != 1 {
 		t.Errorf("MaxConcurrency default = %d, want 1", out.MaxConcurrency)
@@ -222,7 +222,7 @@ func TestCreateAppDefaultRAMIsCappedForScale(t *testing.T) {
 		want int
 	}{
 		{"no size", api.CreateAppRequest{Slug: "scale-default"}, api.StandaloneAppDefaultMaxRAMMB},
-		{"explicit vcpu", api.CreateAppRequest{Slug: "scale-shape", VCPU: 4}, api.MustLimitsFor(api.PlanScale).RAMMB},
+		{"explicit vcpu", api.CreateAppRequest{Slug: "scale-shape", VCPU: api.SizeVCPUs(api.MustLimitsFor(api.PlanScale).RAMMB)}, api.MustLimitsFor(api.PlanScale).RAMMB},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := e.Do(t, "POST", "/v1/apps", tc.req, nil)
@@ -257,7 +257,7 @@ func TestCreateApp_ExplicitRamAndConcur(t *testing.T) {
 func TestCreateApp_ExplicitCPURAMPair(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanScale)
 	good := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{
-		Slug: "cpu-ram-shape", RAMMB: api.MustLimitsFor(api.PlanScale).RAMMB, VCPU: 4,
+		Slug: "cpu-ram-shape", RAMMB: api.MustLimitsFor(api.PlanScale).RAMMB, VCPU: 2,
 	}, nil)
 	if good.Code != http.StatusCreated {
 		t.Fatalf("canonical pair: %d %s", good.Code, good.Body)
@@ -266,7 +266,7 @@ func TestCreateApp_ExplicitCPURAMPair(t *testing.T) {
 	if err := json.Unmarshal(good.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode canonical pair: %v", err)
 	}
-	if out.VCPU != 4 || out.EffectiveLimits.GuestVCPUs != 4 {
+	if out.VCPU != 2 || out.EffectiveLimits.GuestVCPUs != 2 {
 		t.Fatalf("vCPU shape = %+v, want 4", out)
 	}
 
@@ -274,7 +274,7 @@ func TestCreateApp_ExplicitCPURAMPair(t *testing.T) {
 		Slug: "cpu-ram-invalid", RAMMB: 128, VCPU: 8,
 	}, nil)
 	apidserver.AssertProblem(t, bad, http.StatusUnprocessableEntity, api.CodeInvalidCPURAMPair)
-	if !strings.Contains(bad.Body.String(), "invalid (ram_mb, vcpu) pair for plan") {
+	if !strings.Contains(bad.Body.String(), "invalid (ram_mb, vcpu) pair on plan") {
 		t.Fatalf("invalid pair response = %s", bad.Body.String())
 	}
 }

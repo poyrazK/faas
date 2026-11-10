@@ -2735,6 +2735,9 @@ type Store interface {
 	// the deployment so the secret-status surface can determine which active
 	// authorized runtimes can participate in an application reload barrier.
 	SetDeploymentSecretReloadSignal(ctx context.Context, id, signal string) error
+	// SetDeploymentBeforeCheckpointHook records whether the deployment's built
+	// guest manifest carries a before_checkpoint hook (H32-49).
+	SetDeploymentBeforeCheckpointHook(ctx context.Context, id string, hook bool) error
 	LatestDeployment(ctx context.Context, appID string) (Deployment, error)
 	// DeploymentOrdinal (issue #976 / ADR-122 / SAFE-RELEASES-C.2)
 	// returns the per-app 1-based ordinal of the deployment row,
