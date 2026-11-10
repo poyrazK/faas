@@ -158,6 +158,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	delete(m.processGenerations, lease.Instance)
 	delete(m.processStartedAt, lease.Instance)
 	delete(m.waking, lease.Instance)
+	delete(m.bootingEgress, lease.Instance)
 	delete(m.live, lease.Instance)
 	delete(m.functionStarting, lease.Instance)
 	if m.functionActivity != nil {

@@ -68,3 +68,16 @@ Release review round 16 found two gaps in how release commands run.
 - A release command that failed with an exit code is not uncertain: its output says what happened. The rollback guard above already counts it as crossed.
 
 Tests: conformance cases `release_commands_run_one_at_a_time_per_scope` and `outpaced_queued_release_command_is_cancelled` (MemStore and Postgres); imaged tests for the retirement and the uncertain refusal; apidserver and CLI tests for the check.
+
+## Amendment (2026-11-10): platform failures of the release task are not the command's
+
+A release task that schedd could not run or observe (`restore_failed`,
+`restore_timeout`, `execution_transport_failed`, `guest_protocol_error`,
+`attach_unroutable`) failed its deployment as `release_command_failed`, telling
+the customer their command failed; production recorded two on 2026-11-05
+("app task environment could not be prepared"). imaged now fails such a
+deployment with `release_infrastructure_failed` and whycopy guidance to deploy
+again. A non-zero exit, a command timeout, a cancellation and refusals tied to
+the account or a database cutover keep `release_command_failed`. The previous
+release keeps serving in every case. Validation:
+`TestReleaseTaskFailureNamesWhoFailed`.

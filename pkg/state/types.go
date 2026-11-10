@@ -7840,6 +7840,9 @@ const (
 	ProjectScanSourceConvention ProjectScanSource = "convention"
 	ProjectScanSourceSingle     ProjectScanSource = "single"
 	ProjectScanSourceUnknown    ProjectScanSource = "unknown"
+	// ProjectScanSourceFunctions is a gregale.yaml functions project
+	// (ADR-20261108160000), a declared source like compose.
+	ProjectScanSourceFunctions ProjectScanSource = "functions"
 	// ProjectScanSourceWorkspaces is the plural form the
 	// reconcile.Service.DeriveScanSource helper returns for
 	// projects whose root tree enumerates a workspaces section
@@ -7885,6 +7888,7 @@ const (
 	scanSourceRankRender     scanSourceRank = 8
 	scanSourceRankK8s        scanSourceRank = 8
 	scanSourceRankCompose    scanSourceRank = 8
+	scanSourceRankFunctions  scanSourceRank = 8
 )
 
 func tierRank(s ProjectScanSource) scanSourceRank {
@@ -7899,6 +7903,8 @@ func tierRank(s ProjectScanSource) scanSourceRank {
 		return scanSourceRankFly
 	case ProjectScanSourceServerless:
 		return scanSourceRankServerless
+	case ProjectScanSourceFunctions:
+		return scanSourceRankFunctions
 	case ProjectScanSourceProcfile:
 		return scanSourceRankProcfile
 	case ProjectScanSourceWorkspace:

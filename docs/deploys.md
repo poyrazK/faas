@@ -415,6 +415,12 @@ rollout, so the old code always runs against the new schema for a while.
 Write migrations that the previous release can live with: add columns and
 tables first, and remove what the old code uses only in a later release.
 
+If the command exits non-zero or times out, the deployment fails with
+`release_command_failed`. If Gregale could not run the command or read its
+result (the task's environment could not be prepared, or its result channel
+broke), it fails with `release_infrastructure_failed`; deploy again. In both
+cases the previous release keeps serving.
+
 Release commands of one app run one at a time per environment, oldest first.
 If you deploy again while a release's command is still waiting to start, the
 newer release replaces it and the older command never runs. A command that
