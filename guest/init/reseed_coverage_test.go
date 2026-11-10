@@ -63,3 +63,25 @@ func TestRegisteredPIDs(t *testing.T) {
 		t.Fatalf("registeredPIDs = %v", got)
 	}
 }
+
+// ADR-20261110170000: Go ID libraries keep per-process random state.
+func TestGoIDLibrary(t *testing.T) {
+	for path, want := range map[string]string{
+		"github.com/rs/xid":                          "github.com/rs/xid",
+		"go.mongodb.org/mongo-driver":                "go.mongodb.org/mongo-driver",
+		"go.mongodb.org/mongo-driver/v2":             "go.mongodb.org/mongo-driver",
+		"go.opentelemetry.io/otel/sdk":               "go.opentelemetry.io/otel/sdk",
+		"go.opentelemetry.io/otel/sdk/metric":        "go.opentelemetry.io/otel/sdk",
+		"go.opentelemetry.io/otel":                   "",
+		"github.com/rs/xidx":                         "",
+		"github.com/google/uuid":                     "",
+		"go.mongodb.org/mongo-driver-something-else": "",
+	} {
+		if got := goIDLibrary(path); got != want {
+			t.Errorf("goIDLibrary(%q) = %q, want %q", path, got, want)
+		}
+	}
+	if got := sortedKeys(map[string]bool{"b": true, "a": true}); !reflect.DeepEqual(got, []string{"a", "b"}) {
+		t.Errorf("sortedKeys = %v", got)
+	}
+}

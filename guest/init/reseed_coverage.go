@@ -92,3 +92,30 @@ func unregisteredRuntimes(candidates []reseedCandidate, registered map[int]bool)
 	sort.Strings(labels)
 	return count, labels
 }
+
+// goIDLibraries are module path prefixes of Go ID generators that keep
+// per-process random state (ADR-20261110170000).
+var goIDLibraries = []string{
+	"github.com/rs/xid",
+	"go.mongodb.org/mongo-driver",
+	"go.opentelemetry.io/otel/sdk",
+}
+
+// goIDLibrary returns the known ID library a module path belongs to, or "".
+func goIDLibrary(modulePath string) string {
+	for _, lib := range goIDLibraries {
+		if modulePath == lib || strings.HasPrefix(modulePath, lib+"/") {
+			return lib
+		}
+	}
+	return ""
+}
+
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
