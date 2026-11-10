@@ -2797,3 +2797,9 @@ var RefuseDevFunctionSet = refuseDevFunctionSet
 
 // MetricLabelFlags exposes the --metric-label parser.
 var MetricLabelFlags = metricLabelFlags
+
+// ValidateSubscriptionCapacityCommandBudget exposes the receipt budget check.
+var ValidateSubscriptionCapacityCommandBudget = validateSubscriptionCapacityCommandBudget
+
+// ActivityDisplayTime exposes the org activity / keys list time formatter.
+var ActivityDisplayTime = activityDisplayTime

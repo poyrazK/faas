@@ -16911,6 +16911,12 @@ const (
 	EventDeliveryHealthWatchCountMax        int64 = 9007199254740991
 )
 
+// EventDeliveryObservationClockSkew is how far a server observed_at may run
+// ahead of the CLI's clock before a capacity snapshot or receipt budget counts
+// as future-dated. Client clocks are commonly a few hundred milliseconds off
+// NTP; without a tolerance every read on such a machine fails (Hunt 32 H32-74).
+const EventDeliveryObservationClockSkew = 5 * time.Second
+
 // EventDeadlineInvestigationAlertFileMaxBytes bounds one saved CLI alert object.
 const EventDeadlineInvestigationAlertFileMaxBytes = 64 << 10
 
