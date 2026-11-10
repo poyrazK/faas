@@ -2814,3 +2814,7 @@ var CmdEdgeRuleListsRm = cmdEdgeRuleListsRm
 var CmdAppScaling = cmdAppScaling
 var CmdEventsSchemaRollout = cmdEventsSchemaRollout
 var CmdOrgsSeatUsage = cmdOrgsSeatUsage
+
+type CustomerOperationTypesResult = customerOperationTypesResult
+
+var CustomerOperationTypesMessage = customerOperationTypesMessage

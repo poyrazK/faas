@@ -5608,10 +5608,13 @@ func ErrDeploySignatureInvalid(detail string) *Problem {
 
 // ErrSecurityPostureBlocked is returned when the app's explicit security
 // policy prevents a deploy until its high-severity findings are remediated.
-func ErrSecurityPostureBlocked(codes string) *Problem {
+// The hint names the CLI command; the detail alone sent CLI users to a raw
+// API path (Hunt 32 H32-82).
+func ErrSecurityPostureBlocked(slug, codes string) *Problem {
 	return NewProblem(http.StatusForbidden, CodeSecurityPostureBlocked,
 		"Security posture blocks this deploy",
 		"security_policy=enforce and high-severity findings remain: "+codes+"; review GET /v1/apps/{slug}/security and remediate the findings").
+		WithHint("Run gregale app " + slug + " security to see the findings.").
 		WithDocs(docsBase + "/security#deploy-enforcement")
 }
 
