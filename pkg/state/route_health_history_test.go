@@ -203,7 +203,7 @@ func TestRouteHealthHistoryPostgresAtomicityAndRecovery(t *testing.T) {
 				if scenario != "default" {
 					current, _ := s.DeploymentByID(t.Context(), d.ID)
 					audits, _ := s.ListDeploymentAudit(t.Context(), d.ID, 10)
-					if current.CanaryStep != 0 || current.TrafficPercent != 1 || len(trafficChangeAudits(audits)) != 0 {
+					if current.CanaryStep != 0 || current.TrafficPercent != 1 || len(advanceAudits(audits)) != 0 {
 						t.Fatal("failed transaction retained traffic or audit")
 					}
 				}
@@ -275,7 +275,7 @@ func TestRouteHealthHistoryPostgresAtomicityAndRecovery(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(old, first) {
 				t.Fatal("current telemetry changed saved evidence", err)
 			}
-			audits := trafficChangeAudits(mustDeploymentAudits(t, s, d.ID))
+			audits := advanceAudits(mustDeploymentAudits(t, s, d.ID))
 			var fields struct {
 				RouteHealth api.RouteHealthDecision `json:"route_health"`
 			}
@@ -380,13 +380,13 @@ func routeHealthDecisionsEqual(a, b api.RouteHealthDecision) bool {
 	return a == b
 }
 
-// trafficChangeAudits keeps the traffic-change rows an advance writes. Going
-// live also audits deploy.rollout_started (ADR-20261028110044 amendment 7),
-// which is not the advance under test.
-func trafficChangeAudits(audits []state.DeploymentAudit) []state.DeploymentAudit {
+// advanceAudits drops the rollout lifecycle rows (deploy.rollout_started and
+// deploy.rollout_completed, ADR-20261028110044 amendment 7) that going live
+// writes, leaving the rows the advance, hold or recovery under test wrote.
+func advanceAudits(audits []state.DeploymentAudit) []state.DeploymentAudit {
 	var out []state.DeploymentAudit
 	for _, audit := range audits {
-		if audit.Kind == state.DeployTrafficChanged {
+		if audit.Kind != state.DeployRolloutStarted && audit.Kind != state.DeployRolloutCompleted {
 			out = append(out, audit)
 		}
 	}

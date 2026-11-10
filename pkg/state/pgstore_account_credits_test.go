@@ -290,10 +290,11 @@ func TestPgStoreCurrentMonthOverageCents_Formula(t *testing.T) {
 	}
 	appID := uuid.NewString()
 	instID := uuid.NewString()
-	// Hobby includes 50 GB-hours. Twelve additional GB-hours should be
-	// billed at one cent per GB-hour.
-	const wantCents = int64(12)
-	mbSeconds := int64(api.PlanHobby.PlanIncludedGBHours()+int(wantCents)) * api.SecondsPerGBHour
+	// Twelve GB-hours beyond the Hobby allowance are billed at the overage
+	// rate in the limits table ($0.05/GB-h since ADR-20261107192333).
+	const extraGBHours = int64(12)
+	wantCents := extraGBHours * api.OverageMillicentsPerGBHour / api.MillicentsPerCent
+	mbSeconds := (int64(api.PlanHobby.PlanIncludedGBHours()) + extraGBHours) * api.SecondsPerGBHour
 	now := time.Now().UTC()
 	if err := store.AppendUsage(ctx, acct.ID, appID, instID, now, mbSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("append: %v", err)
