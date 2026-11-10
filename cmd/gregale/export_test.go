@@ -2806,3 +2806,6 @@ func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
 }, slug, sourceDir, handler string) error {
 	return applyFunctionHookLifecycle(ctx, client, slug, sourceDir, handler)
 }
+
+// WorkerNoInstancesLine exposes the empty worker pool explanation.
+var WorkerNoInstancesLine = workerNoInstancesLine
