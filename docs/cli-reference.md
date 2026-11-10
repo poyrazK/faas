@@ -7213,13 +7213,15 @@ List issued invoices
 
 ### billing spend-cap
 
-Set or clear a spending cap for usage beyond your plan
+Set the monthly spend cap for usage beyond your plan
 
 `gregale billing spend-cap [--clear] <cents>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--clear` | remove the overage cap |  |
+| `--clear` | remove the cap (Free accounts only; a paid plan keeps one) |  |
+
+A paid plan always keeps a cap, at most Hobby $75, Pro $200 or Scale $1,000; ask support for a higher one.
 
 ### billing egress-overage
 

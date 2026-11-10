@@ -21,7 +21,7 @@ These numbers come from the financial model and are **not negotiable at implemen
 | Tenant RAM budget | 56 GB | `schedd` admission |
 | RAM utilization ceiling | 85 % of tenant budget (47.6 GB) | `schedd` headroom guard |
 | Per-VM overhead budget | 8 MB (VMM + jailer + TAP slack) | `schedd` accounting |
-| CPU overcommit | 8× (160 vCPU slots) | `schedd` admission |
+| CPU | Follows instance size: 1 vCPU per GB, weight by memory, no per-instance cap; never an admission limit (ADR-20261109172421) | `schedd` placement prefers nodes with CPU room |
 | Disk reserve (OS, kernels, base images, logs) | 60 GB | LVM layout §8 |
 | Snapshot budget | 452 GB | `imaged` GC + quotas |
 | Fleet average snapshot size target | 130 MB | telemetry alert §12; quotas §8 |
@@ -424,7 +424,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 **Owns:** the instance state machine (§6), admission control, idle reaper, eviction, cron.
 
 - **Admission (wake or build):** grant iff
-  `resident_ram_mb + request_mb + 8 ≤ 0.85 × 56_000` **and** plan concurrent count not exceeded **and** vCPU slots (160) not exhausted. Builds request from the same guard but are also capped by the build semaphore (§9). Denial → `gatewayd-internal` serves `503 capacity` (alert fires long before customers see this; see §12).
+  `resident_ram_mb + request_mb + 8 ≤ 0.85 × 56_000` **and** plan concurrent count not exceeded. CPU never refuses work: placement prefers a node within its vCPU and CPU budgets, and an admission past them is counted (`schedd_cpu_admission_would_refuse_total`), not refused (ADR-20261109172421). Builds request from the same guard but are also capped by the build semaphore (§9). Denial → `gatewayd-internal` serves `503 capacity` (alert fires long before customers see this; see §12).
 - **`AdmitInstance` RPC (issue #168):** `gatewayd-internal` can ask schedd to admit ONE additional instance for an app, bypassing the Phase-1 fast-path shortcut. The cap is enforced atomically by the same ledger as `Wake`; the response carries an `at_capacity` typed result so the gateway can distinguish "we refused because you're already at cap" (no FAILED row written) from a real failure (RAM headroom, chooser, store). The gRPC surface is additive — see ADR-018 update.
 - **Idle reaper:** every 10 s, park instances with `now − last_request_at > idle_timeout(plan)`. Defaults: Free 60 s, Hobby 60 s, Pro 300 s, Scale 600 s; functions 30 s on every plan (ADR-974). Configurable down to 10 s, not above plan default × 2.
 - **Aggressive reaper (ADR-038, issue #171):** every 10 s, *alongside* the idle reaper, a fast-cooldown path parks the surplus above `max(min_instances, desired + 1)` where `desired = ceil(windowed_rps / autoscale_target_rps)` from a per-app 5 × 1 s rolling RPS mirror (`pkg/sched/recentload/`). The `+1` is a hysteresis buffer so a brief RPS wobble doesn't wake-then-park. Scope: apps with `max_concurrency > 1` and `autoscale_target_rps > 0`; single-instance apps and apps without an autoscale target stay on the idle reaper only. Per-tick cap of 8 parks per app to prevent a single tick from blocking the reaper for `8 × ~150 ms ≈ 1.2 s` during a sudden scale-down storm. Default ON; `FAAS_REAPER_AGGRESSIVE=false` (schedd.toml `reaper_aggressive = false`) disables in-place — the mirror, metric, and audit row stay live so diagnosis continues. G7 (OpenConns > 0) and `MinInstanceAge` (30 s) protections still apply. Acceptance: 5-instance burst → 0 rps parks back to ≤ `min_instances + 1` within 30 s (three 10 s ticks). Audit row `events.kind='reaper_scale_down'` is emitted once per app per tick that parks ≥ 1 instance with `{app, desired, parked[], reason: "traffic_dropped", now}` in `data jsonb`.
@@ -438,11 +438,11 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 
 **Owns:** everything that touches `/usr/bin/firecracker` and the jailer. The only root-privileged component (CAP_NET_ADMIN + file ownership); drops per-VM work to the jailer immediately.
 
-- One firecracker process per instance, always via **jailer**: unique uid/gid per instance (range 20000–29999, recycled), chroot `/srv/fc/jail/{instance}`, cgroup v2 scope `faas-tenant.slice/vm-{instance}.scope` with `memory.max = plan_mb + 8 MB`, `cpu.weight` by plan, pids ≤ 64.
+- One firecracker process per instance, always via **jailer**: unique uid/gid per instance (range 20000–29999, recycled), chroot `/srv/fc/jail/{instance}`, cgroup v2 scope `faas-tenant.slice/vm-{instance}.scope` with `memory.max = plan_mb + 8 MB`, `cpu.weight` = memory MB / 16 and no `cpu.max` quota unless the app chose 250 or 500 millicores (ADR-20261109172421), pids ≤ 64.
 - API: gRPC `CreateFromSnapshot(app, instance)`, `CreateColdBoot(app, instance)`, `Pause+Snapshot(instance)`, `Destroy(instance)`, `Stats()`.
 - Snapshot create: pause VM → `PUT /snapshot/create` (full; memory file + vmstate) → fsync → destroy VM → record `snapshot_bytes`. Diff snapshots: not v1.
 - Restore: create netns + TAP (§7) → jailer spawn → `PUT /snapshot/load` (`mem_backend: File`) → resume → guest agent re-seeds entropy + steps clock (§4.8) → readiness.
-- Boot config (cold path): kernel 6.18 LTS built from the pinned Firecracker guest config (ADR-983), `console=off quiet`, **two virtio-blk drives** (drive0 shared base rootfs read-only; drive1 app layer — §4.6), one virtio-net, `mem_size_mib = plan`, `vcpu_count` = 2 (Scale: 4), MMDS off, balloon never inflated and used only for free page reporting on Firecracker 1.14+ (ADR-907), entropy: virtio-rng. The canonical plan RAM/vCPU pairs are Free `(128, 2)`, Hobby `(256, 2)`, Pro `(512, 2)`, and Scale `(1024, 4)`; see ADR-173. `POST /v1/apps` may assert this pair with `vcpu`, but vCPU remains plan-derived and is not a per-app override.
+- Boot config (cold path): kernel 6.18 LTS built from the pinned Firecracker guest config (ADR-983), `console=off quiet`, **two virtio-blk drives** (drive0 shared base rootfs read-only; drive1 app layer — §4.6), one virtio-net, `mem_size_mib` = the instance's memory, `vcpu_count` = max(1, ⌈memory / 1024 MB⌉) (ADR-20261109172421), MMDS off, balloon never inflated and used only for free page reporting on Firecracker 1.14+ (ADR-907), entropy: virtio-rng. ADR-173's plan RAM/vCPU pairs (Free `(128, 2)`, Hobby `(256, 2)`, Pro `(512, 2)`, Scale `(1024, 4)`) no longer set the boot vCPU count; `POST /v1/apps` still accepts them in `vcpu` until the per-plan fields go (ADR-20261109172421 step 6.4). vCPU is not a per-app override.
 - **Firecracker version pinning:** snapshots are only guaranteed to load on the Firecracker version that made them. `snapshots.fc_version` column; on FC upgrade, mark all snapshots stale — apps lazily re-snapshot via cold boot on next wake (this is why ADR-005 requires cold boot to always work).
 - **Backing image pinning (ADR-510):** a snapshot's RAM holds the guest kernel's page cache and ext4 metadata for drive0, so it may only be restored onto the exact kernel and read-only base it was captured with. vmmd records their content digests in the capture's `…/backing` object and refuses a restore whose identity is missing or differs, before any VM process starts; the wake cold-boots and schedd marks the snapshot stale. The shared base is a logical key that a release refresh replaces in place, so every base change retires the snapshots taken on the previous one.
 
@@ -2238,7 +2238,10 @@ post-readiness tail, then restores the configured sustained quota. The
 scheduler reserves the temporary peak through a persisted deadline and counts
 it in fleet CPU placement until expiry. `wake.cpu_boost_tail` records quota
 exposure, not measured consumption or billable usage. The deployment opt-out
-disables both phases. See [ADR-168](adr/168-cold-boot-startup-cpu.md).
+disables both phases. See [ADR-168](adr/168-cold-boot-startup-cpu.md). An
+instance without a CPU quota (ADR-20261109172421: every app at the default
+ceiling) already has every CPU a boost could lend and skips it; only apps that
+chose 250 or 500 millicores get one.
 
 nftables tenant egress (excerpt):
 

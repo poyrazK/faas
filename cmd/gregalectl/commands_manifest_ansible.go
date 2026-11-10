@@ -232,6 +232,11 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		body += databases.hostVars(host, hostScheddTarget)
 		body += renderServiceTCPVars(m.ServiceTCP, host)
 		body += renderComputeEdgeVars(m.PublicEdge, host, postgresListenAddress, computeAllowedCIDRs)
+		exactVars, exactErr := renderExactPeerVars(m.Fleet.Hosts, host)
+		if exactErr != nil {
+			return nil, exactErr
+		}
+		body += exactVars
 		body += renderHotPathVars(m.HotPath, host)
 		if host.Role == roleControlPlane {
 			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts, m.DNS.AppsDomain)

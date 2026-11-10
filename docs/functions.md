@@ -357,6 +357,11 @@ A push to a branch mapped to another environment (staging, for example) sets
 each function's `env` in that environment only, and `prune_env` removes only
 that environment's variables. RAM, timeouts and concurrency belong to the
 function in every environment, so only a production push changes them.
+A push's env changes are one config revision attributed to the pusher
+(`github:<login>`): `gregale env history` lists it and config rollback can undo
+it, and every setting a push changes appears in the audit log and your
+organization's activity. In a protected environment a push does not change
+env; it fails for that function and asks for a reviewed `gregale deploy`.
 
 A push runs unattended, so it leaves three steps for a person: creating an
 inbound webhook endpoint (its URL is shown once), changing bucket

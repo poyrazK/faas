@@ -33,6 +33,33 @@ func ValidateObjectStoragePricing(registry *objectstorage.Registry) error {
 	return nil
 }
 
+// ErrObjectStorageOverageUnbilled refuses a production apid that bills
+// customers while object storage, which lets paid plans store past their
+// included amount up to the plan ceiling, would never bill that overage.
+var ErrObjectStorageOverageUnbilled = errors.New("apid: object storage is configured but its overage is not billed; set the Polar object_storage_billing_mode to live (FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE=live) before billing goes live in production")
+
+// RequireBilledObjectStorage refuses production billing whose object storage
+// overage would go unbilled. Paid plans store past their included storage up
+// to the plan ceiling (Pro 250 GiB against 50 included) whatever the Polar
+// object_storage_billing_mode says, so with the mode off or shadow that
+// storage is free. It applies only in production (FAAS_ENVIRONMENT=production),
+// with a provider that can bill object storage and a registry with a backend:
+// a deployment without object storage, or one that has not turned billing on,
+// is unaffected (billing launch review 2026-11-10, B3).
+func RequireBilledObjectStorage(provider billing.Provider, registry *objectstorage.Registry, production bool) error {
+	if !production || len(registry.Backends()) == 0 {
+		return nil
+	}
+	sink, ok := provider.(billing.ObjectStorageLineItemSink)
+	if !ok {
+		return nil
+	}
+	if policy, enabled := sink.ObjectStorageLineItemPolicy(); !enabled || policy.Mode != billing.MeterDeliveryLive {
+		return ErrObjectStorageOverageUnbilled
+	}
+	return nil
+}
+
 func ValidateObjectStorageBillingSetup(provider billing.Provider, registry *objectstorage.Registry) error {
 	sink, ok := provider.(billing.ObjectStorageLineItemSink)
 	if !ok {

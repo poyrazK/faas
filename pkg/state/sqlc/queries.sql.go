@@ -8489,16 +8489,33 @@ WHERE app_id=$2::uuid AND status IN ('superseded','failed','cancelled')
  AND created_at<$3::timestamptz AND deleted_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=deployments.id)
  AND id NOT IN (SELECT id FROM (SELECT id,row_number() OVER(PARTITION BY app_id ORDER BY created_at DESC,id) rn FROM deployments WHERE app_id=$2::uuid) recent WHERE rn<=2)
+ -- A superseded deployment in its scope's rollback window (the newest
+ -- rollback_generations live or superseded deployments, as
+ -- LayerArtifactHasReferences counts them) stays: failed attempts must not
+ -- push rollback targets out of the window.
+ AND NOT (status='superseded' AND (
+   SELECT count(*) FROM deployments n
+    WHERE n.app_id=deployments.app_id
+      AND COALESCE(NULLIF(n.scope,''),'default')=COALESCE(NULLIF(deployments.scope,''),'default')
+      AND n.deleted_at IS NULL AND n.status IN ('live','superseded')
+      AND (n.created_at>deployments.created_at OR (n.created_at=deployments.created_at AND n.id>deployments.id))
+ ) < $4::int)
 `
 
 type ClearObsoleteDeploymentsRetainingRecoveryParams struct {
-	DeletedAt pgtype.Timestamptz
-	AppID     pgtype.UUID
-	OlderThan pgtype.Timestamptz
+	DeletedAt           pgtype.Timestamptz
+	AppID               pgtype.UUID
+	OlderThan           pgtype.Timestamptz
+	RollbackGenerations int32
 }
 
 func (q *Queries) ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error) {
-	result, err := db.Exec(ctx, clearObsoleteDeploymentsRetainingRecovery, arg.DeletedAt, arg.AppID, arg.OlderThan)
+	result, err := db.Exec(ctx, clearObsoleteDeploymentsRetainingRecovery,
+		arg.DeletedAt,
+		arg.AppID,
+		arg.OlderThan,
+		arg.RollbackGenerations,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -11053,19 +11070,6 @@ func (q *Queries) CopyRetryDeploymentWorkloadSpec(ctx context.Context, db DBTX, 
 	return err
 }
 
-const countAccountsCreatedSince = `-- name: CountAccountsCreatedSince :one
-select count(*)::bigint from accounts where created_at >= $1::timestamptz
-`
-
-// Accounts created at or after since (ADR-20261104145353: the platform-wide
-// daily sign-up cap). Read only on a sign-up attempt.
-func (q *Queries) CountAccountsCreatedSince(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
-	row := db.QueryRow(ctx, countAccountsCreatedSince, since)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const countActiveAppForks = `-- name: CountActiveAppForks :one
 SELECT count(*) FILTER (WHERE app_id = $1::uuid)::integer AS app_active,
        count(*)::integer AS account_active
@@ -11410,6 +11414,19 @@ WHERE account_id=$1::text::uuid AND state IN ('pending','running')
 
 func (q *Queries) CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error) {
 	row := db.QueryRow(ctx, countExclusiveWorkPending, accountID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countLiveManagedPostgresBindingsForApp = `-- name: CountLiveManagedPostgresBindingsForApp :one
+SELECT count(*) FROM managed_postgres_bindings WHERE app_id=$1 AND state<>'deleted'
+`
+
+// ADR-20261110120000: the plan's PostgresBindingsPerAppMax counts every
+// binding of the app that is not deleted.
+func (q *Queries) CountLiveManagedPostgresBindingsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countLiveManagedPostgresBindingsForApp, appID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -11871,6 +11888,21 @@ WHERE project_id = $1::uuid AND status IN ('pending','capturing','copying','publ
 
 func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperationsForProject(ctx context.Context, db DBTX, projectID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, countUnfinishedProjectEnvironmentCloneOperationsForProject, projectID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countVerifiedAccountsCreatedSince = `-- name: CountVerifiedAccountsCreatedSince :one
+select count(*)::bigint from accounts
+ where created_at >= $1::timestamptz and email_verified_at is not null
+`
+
+// Accounts created at or after since that have verified their email
+// (ADR-20261104145353 amendment 1: the platform-wide daily sign-up cap counts
+// the accounts that can use a Free allowance). Read only on a sign-up attempt.
+func (q *Queries) CountVerifiedAccountsCreatedSince(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
+	row := db.QueryRow(ctx, countVerifiedAccountsCreatedSince, since)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -76851,7 +76883,7 @@ FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id
 JOIN project_environments e ON e.id=g.environment_id
 JOIN managed_postgres_bindings b ON b.app_id=q.app_id AND b.scope=e.slug AND b.state='ready'
- AND b.access IN ('read_write','read_only','migration') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
+ AND b.access IN ('read_write','read_only','migration','session') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
 JOIN app_secrets s ON s.app_id=q.app_id AND s.scope=e.slug AND s.key=b.environment_key
  AND s.managed_postgres_binding_id=b.id AND s.managed_credential_generation=b.credential_generation AND s.delivery_version IS NOT NULL
 JOIN managed_postgres_databases d ON d.id=b.database_id AND d.deleted_at IS NULL

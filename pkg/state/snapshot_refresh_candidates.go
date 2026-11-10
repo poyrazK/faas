@@ -19,6 +19,10 @@ type SnapshotRefreshCandidate struct {
 	// It booted, or restored, at the guest vCPU count schedd chose then, so
 	// the snapshot it captured or restored from has that count.
 	StartedAt time.Time
+	// VCPUs is the guest vCPU count that parked instance booked with
+	// (instances.capacity_vcpu); the snapshot it captured or restored from
+	// has that count. Zero when unrecorded.
+	VCPUs int
 	// Live is true when the app has an instance in a live state anywhere.
 	// Such an app is recaptured when it parks; a pass skips it.
 	Live bool
@@ -40,9 +44,9 @@ func (s *PgStore) ListSnapshotRefreshCandidates(ctx context.Context, nodeID stri
 		return nil, nil
 	}
 	rows, err := s.pool.Query(ctx,
-		`select p.app_id::text, p.deployment_id::text, p.parked_at, p.started_at,
+		`select p.app_id::text, p.deployment_id::text, p.parked_at, p.started_at, p.capacity_vcpu,
 		        exists (select 1 from instances l where l.app_id = p.app_id and l.state = any($4::text[]))
-		   from (select distinct on (app_id) app_id, deployment_id, node_id, parked_at, started_at
+		   from (select distinct on (app_id) app_id, deployment_id, node_id, parked_at, started_at, capacity_vcpu
 		           from instances
 		          where app_id is not null
 		            and state = 'parked'
@@ -64,7 +68,7 @@ func (s *PgStore) ListSnapshotRefreshCandidates(ctx context.Context, nodeID stri
 	for rows.Next() {
 		var c SnapshotRefreshCandidate
 		var startedAt *time.Time
-		if err := rows.Scan(&c.AppID, &c.DeploymentID, &c.ParkedAt, &startedAt, &c.Live); err != nil {
+		if err := rows.Scan(&c.AppID, &c.DeploymentID, &c.ParkedAt, &startedAt, &c.VCPUs, &c.Live); err != nil {
 			return nil, err
 		}
 		if startedAt != nil {
@@ -103,7 +107,8 @@ func (m *MemStore) ListSnapshotRefreshCandidates(_ context.Context, nodeID strin
 	var out []SnapshotRefreshCandidate
 	for appID, ins := range latest {
 		if ins.NodeID == nodeID {
-			out = append(out, SnapshotRefreshCandidate{AppID: appID, DeploymentID: ins.DeploymentID, ParkedAt: ins.ParkedAt, StartedAt: ins.StartedAt, Live: live[appID]})
+			out = append(out, SnapshotRefreshCandidate{AppID: appID, DeploymentID: ins.DeploymentID, ParkedAt: ins.ParkedAt, StartedAt: ins.StartedAt,
+				VCPUs: m.instanceBookings[ins.ID].vcpu, Live: live[appID]})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

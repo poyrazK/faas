@@ -72,10 +72,7 @@ type Observation struct {
 //
 //	ratio = (throttle_delta) / (throttle_delta + usage_delta)
 //
-// computed across the last two observations. The wire-side
-// vmmd_cpu_throttle_ratio{slice} gauge is the FaasCpuStarvation
-// alert source; the slice label is the per-instance ratio
-// averaged across all instances of the slice by the vmmd sampler.
+// computed across the last two observations.
 // Valid follows the same contract as the other fields — false on
 // baseline / regression / clock-skew.
 type Reading struct {
