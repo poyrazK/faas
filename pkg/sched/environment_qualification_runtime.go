@@ -76,7 +76,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	cpu := effectiveAppCPUMillicores(app)
 	startupCPU := cpu
 	if !dep.DisableStartupCPUBoost {
-		startupCPU = startupCPUBoostQuota(acct.Plan, cpu)
+		startupCPU = startupCPUBoostQuota(cpu)
 	}
 	preferredNodeID := app.NodeID
 	graphNodeID, graphNodePinned := ctx.Value(qualificationGraphDispatchNodeContextKey{}).(string)

@@ -130,13 +130,12 @@ func TestAdmit_StartupCPUBoostCountsAgainstPhysicalBudget(t *testing.T) {
 	}
 }
 
+// The startup boost is one core on every plan, or the configured ceiling
+// when it is higher (ADR-20261109172421).
 func TestStartupCPUBoostQuotaMatchesVMMDProfile(t *testing.T) {
-	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
-		if got := sched.StartupCPUBoostQuota(plan, 250); got != api.DefaultAppCPUMillicores {
-			t.Errorf("startupCPUBoostQuota(%s, 250) = %d, want %d", plan, got, api.DefaultAppCPUMillicores)
-		}
-		if got := sched.StartupCPUBoostQuota(plan, 1000); got != 1000 {
-			t.Errorf("startupCPUBoostQuota(%s, 1000) = %d, want configured quota 1000", plan, got)
+	for configured, want := range map[int]int{250: api.DefaultAppCPUMillicores, 1000: 1000, 2000: 2000} {
+		if got := sched.StartupCPUBoostQuota(configured); got != want {
+			t.Errorf("startupCPUBoostQuota(%d) = %d, want %d", configured, got, want)
 		}
 	}
 }

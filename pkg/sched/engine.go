@@ -397,15 +397,11 @@ func startupDeadlineForApp(app state.App, plan api.Plan) int32 {
 }
 
 // startupCPUBoostQuota mirrors VMMD's bounded startup profile so placement and
-// the node ledger reserve the same temporary peak that cpu.max will enforce.
-func startupCPUBoostQuota(plan api.Plan, configured int) int {
-	period := plan.CPUPeriodUS()
-	quota := plan.CPUQuotaUS()
-	if period <= 0 || quota <= 0 {
-		return configured
-	}
-	planCeiling := int(int64(quota) * 1000 / int64(period))
-	return max(configured, min(api.DefaultAppCPUMillicores, planCeiling))
+// the node ledger reserve the same temporary peak that cpu.max will enforce:
+// one core, or the configured ceiling when it is higher. It never depends on
+// the plan (ADR-20261109172421; the plan ceiling was one core on every plan).
+func startupCPUBoostQuota(configured int) int {
+	return max(configured, api.DefaultAppCPUMillicores)
 }
 
 // executionModeForApp resolves the manifest default before crossing the
@@ -3701,7 +3697,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	configuredCPU := appCPUBookingMillicores(app)
 	startupCPU := configuredCPU
 	if !dep.DisableStartupCPUBoost {
-		startupCPU = startupCPUBoostQuota(acct.Plan, configuredCPU)
+		startupCPU = startupCPUBoostQuota(configuredCPU)
 	}
 	placementRequest := Request{
 		AppID:                      appID,
@@ -4514,7 +4510,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	configuredBootCPU := int(bootInput.spec.CPUMillicores)
 	startupBootCPU := configuredBootCPU
 	if !bootInput.spec.DisableStartupCPUBoost {
-		startupBootCPU = startupCPUBoostQuota(bootInput.spec.Plan, configuredBootCPU)
+		startupBootCPU = startupCPUBoostQuota(configuredBootCPU)
 	}
 	if startupBootCPU > configuredBootCPU {
 		// vmmd's readiness boundary is inside the RPC; using response time plus
@@ -6984,7 +6980,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	primeConfiguredCPU := appCPUBookingMillicores(app)
 	primeStartupCPU := primeConfiguredCPU
 	if !dep.DisableStartupCPUBoost {
-		primeStartupCPU = startupCPUBoostQuota(acct.Plan, primeConfiguredCPU)
+		primeStartupCPU = startupCPUBoostQuota(primeConfiguredCPU)
 	}
 	primePlacementRequest := Request{
 		AppID: appID, Plan: acct.Plan,
@@ -8484,7 +8480,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 
 			if until, ok := startupCPUBoosts[ins.ID]; ok {
-				request.CPUStartupBoostMillicores = startupCPUBoostQuota(acct.Plan, request.CPUMillicores)
+				request.CPUStartupBoostMillicores = startupCPUBoostQuota(request.CPUMillicores)
 				request.CPUStartupBoostUntil = until
 			}
 			if err := e.ledger.Admit(request); err != nil {

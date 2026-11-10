@@ -3450,29 +3450,9 @@ func CustomDomainLimitsFor(p Plan) (perApp, perAccount int, ok bool) {
 	}
 }
 
-// PlanResourceShape is the canonical RAM/vCPU pair advertised for a plan.
-// Guest vCPU topology is plan-derived in v1 (ADR-014 and ADR-152); it is not
-// a persisted per-app override. RAM can still be selected below the plan cap
-// through the existing resource-profile contract. The shape is therefore the
-// pair used when a caller explicitly supplies both values, while omitted vCPU
-// continues to preserve the legacy plan default.
-type PlanResourceShape struct {
-	Plan  Plan
-	RAMMB int
-	VCPU  int
-}
-
-// PlanResourceShapes is the single joint RAM/vCPU table used by API
-// validation and documentation. Keep this ordered with Plans.
-var PlanResourceShapes = []PlanResourceShape{
-	{Plan: PlanFree, RAMMB: 256, VCPU: 2},
-	{Plan: PlanHobby, RAMMB: 512, VCPU: 2},
-	{Plan: PlanPro, RAMMB: 1024, VCPU: 2},
-	{Plan: PlanScale, RAMMB: 2048, VCPU: 4},
-}
-
-// VCPUPerPlan exposes the plan-derived guest topology to SDK and CLI callers.
-// Keep it in lock-step with PlanResourceShapes and the Limits table below.
+// VCPUPerPlan is the guest vCPU count a function execution boots with. App
+// instances follow their size instead (ADR-20261109172421); this goes with
+// the Limits table's VCPU once executions do too. Keep the two in lock-step.
 var VCPUPerPlan = map[Plan]int{
 	PlanFree:  2,
 	PlanHobby: 2,
@@ -3770,18 +3750,6 @@ const (
 	BlockRateLimitBurstMB  = 256
 	BlockRateLimitBurstOps = 20000
 )
-
-// PlanResourceShapeFor returns the canonical joint shape for p. The bool is
-// false for an unknown plan so callers fail closed instead of inheriting a
-// higher-tier topology.
-func PlanResourceShapeFor(p Plan) (PlanResourceShape, bool) {
-	for _, shape := range PlanResourceShapes {
-		if shape.Plan == p {
-			return shape, true
-		}
-	}
-	return PlanResourceShape{}, false
-}
 
 // planRank maps a Plan to its rank (Free=0 … Scale=3). The lookup
 // returns -1 for any unknown plan so a closed-set drift surfaces
