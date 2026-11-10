@@ -52575,6 +52575,38 @@ func (q *Queries) ListManagedPostgresLifecycleUsageDatabases(ctx context.Context
 	return items, nil
 }
 
+const listManagedPostgresPlanExcessSince = `-- name: ListManagedPostgresPlanExcessSince :many
+SELECT database_id,recorded_at FROM managed_postgres_plan_excess_notices
+WHERE database_id=ANY($1::uuid[])
+`
+
+type ListManagedPostgresPlanExcessSinceRow struct {
+	DatabaseID pgtype.UUID
+	RecordedAt pgtype.Timestamptz
+}
+
+// ADR-20261110184700: when each database was first suspended past its plan,
+// the clock its deletion runs on.
+func (q *Queries) ListManagedPostgresPlanExcessSince(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ListManagedPostgresPlanExcessSinceRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresPlanExcessSince, databaseIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListManagedPostgresPlanExcessSinceRow{}
+	for rows.Next() {
+		var i ListManagedPostgresPlanExcessSinceRow
+		if err := rows.Scan(&i.DatabaseID, &i.RecordedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedPostgresPreviewDatabasePage = `-- name: ListManagedPostgresPreviewDatabasePage :many
 SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number FROM managed_postgres_databases
 WHERE preview_source_database_id IS NOT NULL AND deleted_at IS NULL AND id>$1::uuid

@@ -318,6 +318,14 @@ type CapEnforcerOptions struct {
 	// until it links an email to the notice or the notice is a day old, so
 	// it must mail a notice at most once. Nil sends no email.
 	NotifyPlanExcess func(ctx context.Context, notice PlanExcessNotice) error
+	// PlanExcessDeleteMode deletes databases suspended past their plan for
+	// api.ManagedPostgresPlanExcessDeleteAfter (ADR-20261110184700 slice 2):
+	// off (the zero value), shadow or on. It acts only on databases this
+	// sweep suspended, so only while PlanExcessMode and Mode are on.
+	PlanExcessDeleteMode CapEnforcementMode
+	// DeletePlanExcess schedules one such database's delete with the grace
+	// period. Nil leaves `on` logging like shadow.
+	DeletePlanExcess PlanExcessDeleteFunc
 	// Egress returns a subject's plan egress allowance and what its apps
 	// already sent this UTC month (ADR-20261110160000). Database egress
 	// counts toward the same allowance: once the two reach it, the sweep
@@ -412,6 +420,15 @@ type CapSweepSummary struct {
 	PlanExcessScopesShared    int
 	PlanExcessNoticed         int
 	PlanExcessNotifyFailed    int
+	// PlanExcessDelete* count the deletion pass (ADR-20261110184700): due
+	// databases, deletes scheduled, ones only logged in shadow, ones waiting
+	// for bindings to go, and failures.
+	PlanExcessDeleteMode      CapEnforcementMode
+	PlanExcessDeleteDue       int
+	PlanExcessDeleteScheduled int
+	PlanExcessDeleteShadowed  int
+	PlanExcessDeleteWaiting   int
+	PlanExcessDeleteFailed    int
 
 	// Compute holds (ADR-20261025094915 amendment 2026-11-05): databases
 	// held after the sweep, and the holds it placed, released or only
@@ -437,6 +454,9 @@ type CapEnforcer struct {
 	planExcess  CapEnforcementMode
 	planNotify  func(context.Context, PlanExcessNotice) error
 	egress      EgressAllowanceFunc
+
+	planExcessDelete CapEnforcementMode
+	planDelete       PlanExcessDeleteFunc
 }
 
 func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOptions) (*CapEnforcer, error) {
@@ -480,6 +500,13 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 	default:
 		return nil, ErrInvalid
 	}
+	switch options.PlanExcessDeleteMode {
+	case "":
+		options.PlanExcessDeleteMode = CapEnforcementOff
+	case CapEnforcementOff, CapEnforcementShadow, CapEnforcementOn:
+	default:
+		return nil, ErrInvalid
+	}
 	if options.BatchSize == 0 {
 		options.BatchSize = defaultUsageBatchSize
 	}
@@ -496,7 +523,7 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 		registry: registry, store: store, mode: options.Mode, storageMode: options.StorageMode, ceiling: options.Ceiling,
 		now: options.Now, logger: options.Logger, observe: options.Observe, notify: options.Notify,
 		batchSize: options.BatchSize, planExcess: options.PlanExcessMode, planNotify: options.NotifyPlanExcess,
-		egress: options.Egress,
+		egress: options.Egress, planExcessDelete: options.PlanExcessDeleteMode, planDelete: options.DeletePlanExcess,
 	}, nil
 }
 
@@ -505,6 +532,7 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err error) {
 	ctx = WithBackgroundRequests(ctx)
 	summary.Mode, summary.StorageMode, summary.PlanExcessMode = e.mode, e.storageMode, e.planExcess
+	summary.PlanExcessDeleteMode = e.planExcessDelete
 	defer func() {
 		summary.CompletedAt = e.now().UTC()
 		if e.observe != nil {
@@ -732,6 +760,7 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	}
 	if e.planExcessEnforced() && len(failures) == 0 {
 		e.recordPlanExcessNotices(ctx, databases, suspended, now, summary)
+		e.deletePlanExcess(ctx, accountID, databases, suspended, limits.Inactive, now, summary)
 	}
 	return errors.Join(failures...)
 }

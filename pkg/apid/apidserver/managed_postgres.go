@@ -319,6 +319,11 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, nil, err
 	}
 	reconciler.SetRestoreSlots(restoreSlots)
+	// ADR-20261110184700: a database past its plan for 30 days loses its
+	// bindings and enters the delete grace period.
+	capEnforcer.SetPlanExcessDelete(func(ctx context.Context, database managedpostgres.Database) (bool, error) {
+		return service.RetirePastPlan(ctx, bindingService, database)
+	})
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
 		IncludeProvisioning: operationsGate,
 		Observe: func(ob managedpostgres.BindingReconcileObservation) {
@@ -405,15 +410,20 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	if err != nil {
 		return nil, err
 	}
+	planExcessDeleteMode, err := managedpostgres.ParsePlanExcessDeleteMode(getenv(managedpostgres.PlanExcessDeleteEnv))
+	if err != nil {
+		return nil, err
+	}
 	options := managedpostgres.CapEnforcerOptions{
-		Mode:             mode,
-		StorageMode:      storageMode,
-		PlanExcessMode:   planExcessMode,
-		Logger:           log,
-		Notify:           hooks.notifyCap(),
-		NotifyPlanExcess: hooks.notifyPlanExcess(),
-		Ceiling:          managedPostgresCapLimits(store, accountStore, hooks.overage()),
-		Egress:           hooks.egress(),
+		Mode:                 mode,
+		StorageMode:          storageMode,
+		PlanExcessMode:       planExcessMode,
+		PlanExcessDeleteMode: planExcessDeleteMode,
+		Logger:               log,
+		Notify:               hooks.notifyCap(),
+		NotifyPlanExcess:     hooks.notifyPlanExcess(),
+		Ceiling:              managedPostgresCapLimits(store, accountStore, hooks.overage()),
+		Egress:               hooks.egress(),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
 		if err := managedPostgresCapNoticeReady(getenv); err != nil {

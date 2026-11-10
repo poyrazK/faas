@@ -1,6 +1,6 @@
 # ADR-20261110184700: The Free plan includes no managed PostgreSQL, and databases past their plan are deleted after 30 days
 
-- **Status:** accepted (owner, 2026-11-10: "Can we remove database service from free tier?", then "yes, do both with 30 days", on the billing launch review). Slice 1 built.
+- **Status:** accepted (owner, 2026-11-10: "Can we remove database service from free tier?", then "yes, do both with 30 days", on the billing launch review). Slices 1 and 2 built; the reminder email is later.
 - **Date:** 2026-11-10
 - **Owner:** apid and managed PostgreSQL maintainers
 - **Amends:**
@@ -70,8 +70,16 @@ when parallel changes pick the next number.
   - after that the reconciler purges the provider resource.
   An undone delete returns the database to ready while it is still past the
   plan. The next sweep suspends it again and starts a new 30-day clock.
-- **Notices.** The suspension email says when the database will be deleted.
-  A reminder goes out 7 days before.
+- **Freshness.** The pass runs inside the cap sweep, right after the sweep
+  has confirmed which databases are past the plan. A database that an
+  upgrade made fit since the last sweep is never deleted on a stale notice.
+  A suspended, abuse-held or deleting account is left to its own lifecycle.
+- **Notices.** While deletion is `on`, the suspension email gives the
+  deletion date and says how to recover the database. The payload gains
+  `delete_at`, omitted when deletion is off. An older apid rejects unknown
+  payload keys, so deletion turns `on` only after every apid runs this
+  release. A reminder email 7 days before is a later slice. It needs its own
+  mail template.
 - **Rollout.** `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_DELETE=off|shadow|on`
   defaults to `shadow`, which logs the databases it would delete. `on` takes
   effect only while the plan excess sweep itself is `on`.

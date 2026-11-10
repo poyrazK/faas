@@ -180,6 +180,9 @@ func (e *CapEnforcer) mailPlanExcessNotices(ctx context.Context, summary *CapSwe
 		return
 	}
 	for _, notice := range notices {
+		if e.planExcessDelete == CapEnforcementOn && e.planDelete != nil {
+			notice.DeleteAt = PlanExcessDeleteAt(notice.RecordedAt)
+		}
 		if err := e.planNotify(ctx, notice); err != nil {
 			summary.PlanExcessNotifyFailed++
 			e.logger.Warn("managed postgres plan excess email not queued", "database", notice.DatabaseID, "error", err)

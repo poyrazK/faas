@@ -267,25 +267,7 @@ func (w *RestoreSlotSweeper) mailNotices(ctx context.Context, summary *RestoreSl
 // revokeBindings deletes the copy's live bindings. It reports whether any are
 // still on their way out.
 func (w *RestoreSlotSweeper) revokeBindings(ctx context.Context, database Database) (bool, error) {
-	bindings, err := w.bindings.List(ctx, database.AccountID, database.ID)
-	if err != nil {
-		return false, err
-	}
-	pending := false
-	for _, binding := range bindings {
-		switch binding.State {
-		case BindingStateDeleted:
-			continue
-		case BindingStateDeleting:
-			pending = true
-			continue
-		}
-		if _, err := w.bindings.Delete(ctx, database.AccountID, binding.ID); err != nil {
-			return true, err
-		}
-		pending = true
-	}
-	return pending, nil
+	return revokeDatabaseBindings(ctx, w.bindings, database)
 }
 
 // restoreSlotRoom reports whether a slot holder fits inside its subject's

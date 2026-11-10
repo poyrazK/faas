@@ -15890,6 +15890,12 @@ INSERT INTO managed_postgres_plan_excess_notices(database_id,reason,recorded_at)
 VALUES(sqlc.arg(database_id)::uuid,sqlc.arg(reason)::text,sqlc.arg(recorded_at)::timestamptz)
 ON CONFLICT (database_id) DO NOTHING;
 
+-- name: ListManagedPostgresPlanExcessSince :many
+-- ADR-20261110184700: when each database was first suspended past its plan,
+-- the clock its deletion runs on.
+SELECT database_id,recorded_at FROM managed_postgres_plan_excess_notices
+WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]);
+
 -- name: ListUnmailedManagedPostgresPlanExcessNotices :many
 -- The notices still to mail: recorded after since, not yet linked to an
 -- intent, for databases not being deleted.
