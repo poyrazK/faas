@@ -79554,6 +79554,13 @@ CREATE INDEX object_storage_multipart_retry_idx ON public.object_storage_multipa
 
 
 --
+-- Name: object_storage_multipart_uncompleted_bucket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_multipart_uncompleted_bucket_idx ON public.object_storage_multipart_uploads USING btree (bucket_id, id) WHERE (state <> 'completed'::text);
+
+
+--
 -- Name: object_storage_request_metrics_period_idx; Type: INDEX; Schema: public; Owner: -
 --
 

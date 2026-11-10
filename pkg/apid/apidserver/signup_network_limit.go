@@ -78,7 +78,12 @@ func (l *signupNetworkLimiter) record(ip string) {
 // and each new account is counted by method and source.
 func (s *server) createSignupAccount(r *http.Request, method, source string, params state.CreateAccountWithPersonalOrgParams) (state.CreateAccountWithPersonalOrgResult, error) {
 	ip := clientIPFromRequest(r)
-	if !s.signups.allow(ip) || s.signupFleetCapped(r) {
+	if !s.signups.allow(ip) {
+		s.signupMetrics.observeCapped(signupCapNetwork)
+		s.audit.Emit(r.Context(), "auth.signup_network_cap", nil, map[string]any{"ip": ip})
+		return state.CreateAccountWithPersonalOrgResult{}, errSignupNetworkCap
+	}
+	if s.signupFleetCapped(r) {
 		s.audit.Emit(r.Context(), "auth.signup_network_cap", nil, map[string]any{"ip": ip})
 		return state.CreateAccountWithPersonalOrgResult{}, errSignupNetworkCap
 	}
@@ -102,8 +107,12 @@ func (s *server) createSignupAccount(r *http.Request, method, source string, par
 // creation.
 func (s *server) signupNetworkCapped(r *http.Request) bool {
 	ip := clientIPFromRequest(r)
-	if s.signups.allow(ip) && !s.signupFleetCapped(r) {
+	networkOK := s.signups.allow(ip)
+	if networkOK && !s.signupFleetCapped(r) {
 		return false
+	}
+	if !networkOK {
+		s.signupMetrics.observeCapped(signupCapNetwork)
 	}
 	s.audit.Emit(r.Context(), "auth.signup_network_cap", nil, map[string]any{"ip": ip})
 	return true
@@ -133,6 +142,7 @@ func (s *server) signupFleetCapped(r *http.Request) bool {
 	if n < api.SignupAccountsPerDay {
 		return false
 	}
+	s.signupMetrics.observeCapped(signupCapFleet)
 	s.audit.Emit(r.Context(), "auth.signup_fleet_cap", nil, map[string]any{"accounts_last_24h": n})
 	return true
 }

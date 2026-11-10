@@ -5905,6 +5905,11 @@ DELETE FROM object_storage_ceiling_grants WHERE owner_id=$1;
 SELECT account_id FROM object_buckets WHERE id=$1;
 
 -- name: ObjectUsageBuckets :many
+-- Every bucket billed to one usage subject, with its usage. A subject is
+-- always a bucket's org or its account, so the account_id/org_id prefilter
+-- narrows by their indexes without changing the result. The subject function
+-- alone cannot use an index (its EXISTS keeps it from inlining): it scanned
+-- every bucket on the platform, under the account lock of every object write.
 SELECT b.*, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
 u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token, u.inventory_scope,
 COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
@@ -5921,7 +5926,8 @@ FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = sqlc.arg(period_start)
 LEFT JOIN object_storage_gateway_storage s ON s.bucket_id = b.id AND s.period_start = sqlc.arg(period_start)
-WHERE object_storage_usage_subject(b.org_id,b.account_id,sqlc.arg(period_start)) = sqlc.arg(account_id);
+WHERE (b.account_id = sqlc.arg(account_id) OR b.org_id = sqlc.arg(account_id))
+AND object_storage_usage_subject(b.org_id,b.account_id,sqlc.arg(period_start)) = sqlc.arg(account_id);
 
 -- name: ObjectStorageGatewayStorageOpen :execrows
 -- ADR-20261024132844: one row per live bucket for the current UTC month. A

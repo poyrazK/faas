@@ -5503,8 +5503,7 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int, guestVCPU ...int) *P
 // ValidateAppConfig keeps existing callers source-compatible while allowing
 // create-time callers to opt into the joint contract.
 func ValidateAppCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
-	shape, ok := PlanResourceShapeFor(l.Plan)
-	if !ok || guestVCPU != shape.VCPU || ramMB != shape.RAMMB {
+	if guestVCPU != SizeVCPUs(ramMB) {
 		return ErrInvalidCPURAMPair(l, ramMB, guestVCPU)
 	}
 	return nil
