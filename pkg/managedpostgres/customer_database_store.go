@@ -100,6 +100,13 @@ func databaseFromSQL(row sqlc.ManagedPostgresDatabase) Database {
 	if row.RestoreSlotUntil.Valid {
 		database.RestoreSlotUntil = row.RestoreSlotUntil.Time
 	}
+	if row.Previews != string(PreviewsOff) {
+		database.Previews = PreviewMode(row.Previews)
+	}
+	if row.PreviewSourceDatabaseID.Valid {
+		database.Preview = PreviewOwner{SourceDatabaseID: databaseUUID(row.PreviewSourceDatabaseID),
+			EnvironmentID: row.PreviewEnvironmentID.String, PRNumber: int(row.PreviewPrNumber.Int32)}
+	}
 	return database
 }
 

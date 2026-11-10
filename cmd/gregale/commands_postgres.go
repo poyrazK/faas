@@ -55,6 +55,8 @@ func cmdPostgres(args []string) int {
 		// `restore` is point-in-time restore into a new database, so bringing
 		// back a deleted one is `recover`; `undelete` is the API's word.
 		return cmdPostgresUndelete(args[1:])
+	case "previews":
+		return cmdPostgresPreviews(args[1:])
 	case "compute-policy":
 		return cmdPostgresComputePolicy(args[1:])
 	case "compute-policy-status":

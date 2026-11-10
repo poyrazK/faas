@@ -127,6 +127,12 @@ func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Already enrolled", "call /v1/account/mfa/disable before re-enrolling"))
 		return
 	}
+	// Confirming asks for the current password. Without one, a stolen
+	// session could add an authenticator that locks the owner out, so it
+	// must have signed in recently (ADR 20261110100000).
+	if !s.mfaEnrollFirstFactorReady(w, r, acct) {
+		return
+	}
 	// mfaRecipient stays nil when apid boots without an age identity;
 	// calling it panicked (a recovered 500) instead of reporting 503. The
 	// TOTP secret is an account value (ADR 20261022111812).

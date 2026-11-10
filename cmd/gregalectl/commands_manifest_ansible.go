@@ -238,6 +238,11 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		}
 		body += renderComputeObjectGatewayVars(m.ObjectStorage, host)
 		body += renderLogArchiveVars(m.LogArchive)
+		signerVars, signerErr := renderArtifactSignerVars(m.ArtifactSigner, m.Fleet.Hosts, host)
+		if signerErr != nil {
+			return nil, fmt.Errorf("host %s artifact signer: %w", host.Name, signerErr)
+		}
+		body += signerVars
 		body += renderWorkloadIdentityVars(m.WorkloadIdentity)
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
 			gatewayVars, gwErr := renderTenantEgressGatewayVars(m.Egress.TenantGateway, canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role)))
@@ -379,6 +384,36 @@ func renderLogArchiveVars(l manifest.LogArchive) string {
 		fmt.Fprintf(&b, "faas_log_archive_auth_mode: %q\n", l.Auth)
 	}
 	return b.String()
+}
+
+// renderArtifactSignerVars turns the manifest's artifact_signer on
+// (ADR-20261109170000): the control plane runs signd on its private address,
+// and every compute node's imaged signs app layers through it. signd stays on
+// the private network, so the address is the control plane's manifest
+// address, never a public one.
+func renderArtifactSignerVars(a manifest.ArtifactSigner, hosts []manifest.Host, host manifest.Host) (string, error) {
+	if !a.Enabled || (host.Role != roleControlPlane && host.Role != roleComputeOnly) {
+		return "", nil
+	}
+	var cp string
+	for _, h := range hosts {
+		if h.Role == roleControlPlane {
+			address, _, err := manifest.ParseHostPort(h.Address)
+			if err != nil {
+				return "", fmt.Errorf("control plane %s address: %w", h.Name, err)
+			}
+			cp = address
+			break
+		}
+	}
+	if cp == "" {
+		return "", fmt.Errorf("artifact_signer needs a control-plane host with a private address")
+	}
+	target := "tcp://" + net.JoinHostPort(cp, strconv.Itoa(a.ListenPort()))
+	if host.Role == roleControlPlane {
+		return fmt.Sprintf("faas_signd_listen: %q\n", target), nil
+	}
+	return fmt.Sprintf("faas_imaged_signd_target: %q\nfaas_compute_sign_key_retired: %t\n", target, a.RetireComputeKey), nil
 }
 
 func renderScheddListenVars(m *manifest.Manifest) string {

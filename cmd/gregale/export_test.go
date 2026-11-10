@@ -1315,6 +1315,7 @@ var EndpointRecoveryReport = endpointRecoveryReport
 var EndpointRecoverySpec = endpointRecoverySpec
 var EnsurePostgresEgress = ensurePostgresEgress
 var EnsureSourceRefApp = ensureSourceRefApp
+var DeployPreviewSource = deployPreviewSource
 var ErrAuth = errAuth
 var EnvCreate = envCreate
 var EnvPull = envPull
