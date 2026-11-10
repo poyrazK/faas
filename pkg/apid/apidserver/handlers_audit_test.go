@@ -295,17 +295,17 @@ func TestAuditEvents_ListEndpointRespectsSince(t *testing.T) {
 	if err := json.Unmarshal(listRec.Body.Bytes(), &list); err != nil {
 		t.Fatalf("decode list: %v body=%s", err, listRec.Body.String())
 	}
-	// We expect exactly the "second" key.created to come back; the
-	// "first" was emitted before cutoff so it must be excluded. Creating
-	// a key also writes credential-notice rows (ADR 20261108150000).
-	var created int
-	for _, ev := range list.Events {
-		if ev.Kind == "key.created" {
-			created++
+	// We expect exactly the "second" key.created to come back; the "first"
+	// was emitted before cutoff so it must be excluded. Creating a key also
+	// records its credential notice (#6796), which this filter ignores.
+	var created []api.AuditEventResponse
+	for _, event := range list.Events {
+		if event.Kind == "key.created" {
+			created = append(created, event)
 		}
 	}
-	if created != 1 {
-		t.Fatalf("got %d key.created events, want 1 (only events at >= cutoff); events=%+v", created, list.Events)
+	if len(created) != 1 {
+		t.Fatalf("got %d key.created events, want 1 (only events at >= cutoff); events=%+v", len(created), list.Events)
 	}
 }
 

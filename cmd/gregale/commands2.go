@@ -1032,11 +1032,12 @@ func cmdAppsRm(args []string) int {
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
 	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
 	fs.BoolVar(quiet, "quiet", false, "suppress confirmation prompt")
+	deleteBindings := fs.Bool("delete-bindings", false, "revoke the app's managed PostgreSQL bindings first (deleting the app otherwise refuses while any is live)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale app delete <slug> [--dry-run|-q|--quiet|--yes]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app delete <slug> [--dry-run|-q|--quiet|--yes] [--delete-bindings]", "apps")
 		return 1
 	}
 	if code := requireAutomationConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
@@ -1066,15 +1067,42 @@ func cmdAppsRm(args []string) int {
 			return 130
 		}
 	}
+	var revoked []string
+	if *deleteBindings {
+		ctx := context.Background()
+		app, err := client.GetApp(ctx, slug)
+		if err != nil {
+			return printErr("Could not read the app", err)
+		}
+		bindings, err := appPostgresBindings(ctx, client, slug, app.ID)
+		if err != nil {
+			return printErr("Could not list the app's database bindings", err)
+		}
+		revoked, _, err = revokeDataAPIBindings(ctx, client, bindings)
+		if err != nil {
+			return printErr("Could not revoke a database binding", err)
+		}
+	}
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
+		if !*deleteBindings && strings.Contains(err.Error(), "app_has_postgres_bindings") {
+			err = fmt.Errorf("%w; rerun with --delete-bindings to revoke them first", err)
+		}
 		return printErr("Could not delete app", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(map[string]any{
+		out := map[string]any{
 			"slug":    slug,
 			"status":  "deleted",
 			"deleted": true,
-		}))
+		}
+		if *deleteBindings {
+			out["revoked_bindings"] = revoked
+		}
+		return jsonOut(writeJSON(out))
+	}
+	if len(revoked) > 0 {
+		PrintOK(osStdout, "Revoked %d database binding(s) and deleted %s", len(revoked), slug)
+		return 0
 	}
 	PrintOK(osStdout, "Deleted %s", slug)
 	return 0
@@ -1986,7 +2014,12 @@ type deployExecution struct {
 	developerSource  *devSourceSyncState
 	// overrideEnv carries non-secret values that belong only to the new
 	// deployment revision. MCP hosting uses it to pin a candidate catalog.
-	overrideEnv         map[string]string
+	overrideEnv map[string]string
+	// livenessProbe replaces the plan-default /healthz liveness probe on a
+	// tarball deploy. The Data API sends /livez: its /healthz reports SQL
+	// readiness, which a busy pool or a database blip fails without the
+	// process being wedged.
+	livenessProbe       *api.DeploymentLivenessProbe
 	extraSourceExcludes []string
 	// Long-lived sessions can finish the same source doctor checks before
 	// presenting their review. Reuse that result instead of repeating prose
@@ -4282,6 +4315,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Companions:               sidecarDefs,
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 			OverrideEnv:              execution.overrideEnv,
+			LivenessProbe:            execution.livenessProbe,
 			OverrideFreeze:           *overrideFreeze,
 			ReleaseAt:                releaseAt,
 			ReleaseNotify:            releaseNotify,

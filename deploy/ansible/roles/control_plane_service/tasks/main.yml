@@ -448,6 +448,13 @@
     state: absent
   when: faas_environment | length == 0
 
+# Public-beta billing activation switch. The release unit defaults to live;
+# this role overrides it until the launch-date transition. This drop-in and
+# zz-faas-public-status.conf must render byte-for-byte what the signed
+# control-plane bundle installs (cd-controlplane.yml): deployctl hands apid
+# off only while no unit input changed since it started, so two different
+# renders of one file restart apid on every release and fail the API gate.
+# pkg/daemonunitspec TestAnsibleAndBundleRenderTheSameControlPlaneDropIns.
 - name: control_plane_service — set public-beta billing mode
   notify:
     - restart faas-apid
@@ -468,6 +475,7 @@
 - name: control_plane_service — converge the app outbound relay (ADR-989)
   ansible.builtin.include_tasks: outbound_relay.yml
 
+# Managed here and in the signed bundle; keep both renders identical (above).
 - name: control_plane_service — set public status launch boundary
   notify: restart faas-apid
   ansible.builtin.template:

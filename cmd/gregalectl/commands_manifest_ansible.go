@@ -232,6 +232,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		body += databases.hostVars(host, hostScheddTarget)
 		body += renderServiceTCPVars(m.ServiceTCP, host)
 		body += renderComputeEdgeVars(m.PublicEdge, host, postgresListenAddress, computeAllowedCIDRs)
+		body += renderHotPathVars(m.HotPath, host)
 		if host.Role == roleControlPlane {
 			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts, m.DNS.AppsDomain)
 		}
@@ -276,10 +277,14 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if gw := m.Egress.TenantGateway; gw != nil && standby.Name == tenantEgressGatewayHost {
 			return nil, fmt.Errorf("postgresql.standby name %q is reserved for the tenant egress gateway", tenantEgressGatewayHost)
 		}
+		standbyDiskVars, err := renderStandbyDiskEncryptionVars(m, standby)
+		if err != nil {
+			return nil, fmt.Errorf("postgresql.standby disk encryption: %w", err)
+		}
 		writeInventoryGroup(&inventory, "postgres_standby", []string{standby.Name})
 		hostVars = append(hostVars, manifestAnsibleFile{
 			Path: filepath.Join(outputDir, "inventory", "host_vars", standby.Name+".yml"),
-			Body: []byte(renderPostgresStandbyHostVars(standby)),
+			Body: []byte(renderPostgresStandbyHostVars(standby) + standbyDiskVars),
 		})
 	}
 	files := []manifestAnsibleFile{{
@@ -847,6 +852,36 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, control
 		if cert := edgeCertificate(edge); edge.DirectEntry() && cert != nil && cert.Serve != "" {
 			b.WriteString("faas_edge_public_tls_cert_source: \"database\"\n")
 			fmt.Fprintf(&b, "faas_edge_public_tls_cert_ca: %q\n", cert.Serve)
+		}
+	}
+	return b.String()
+}
+
+// renderHotPathVars hands each compute node the request- and wake-path
+// switches its roles turn into drop-ins (manifest.HotPath). The control plane
+// runs none of the daemons they touch on the request path.
+func renderHotPathVars(h manifest.HotPath, host manifest.Host) string {
+	if host.Role != roleComputeOnly {
+		return ""
+	}
+	var b strings.Builder
+	for _, v := range []struct {
+		on   bool
+		vars []string
+	}{
+		{h.LocalRequestIDJournal, []string{"faas_request_id_journal_local"}},
+		{h.RequestTelemetryMinuteCollapse, []string{"faas_request_telemetry_minute_collapse"}},
+		{h.LocalVMMDDataSocket, []string{"faas_vmmd_local_data_socket", "faas_gateway_local_vmmd_socket"}},
+		{h.EdgeKeepAlivePerNode, []string{"faas_internal_keepalive_per_node"}},
+		{h.FrozenTier, []string{"faas_schedd_frozen_tier"}},
+		{h.FrozenFastPath, []string{"faas_schedd_frozen_fast_path"}},
+		{h.OwnerCache, []string{"faas_schedd_owner_cache"}},
+	} {
+		if !v.on {
+			continue
+		}
+		for _, name := range v.vars {
+			b.WriteString(name + ": true\n")
 		}
 	}
 	return b.String()

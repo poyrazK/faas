@@ -10,7 +10,13 @@ SLO and synthetic check alerts need the plans those features need); they
 resume when you upgrade. The same holds for rules past your plan's rule
 limits after a downgrade: per app and per account, your oldest enabled rules
 keep running and the rest wait, so disable the ones you can do without to
-choose which run.
+choose which run. On an organization's app, the organization's plan and
+limits decide, not those of the member who created the rule.
+
+Rules on an error rate, cold-start share or latency percentile fire only
+when the window holds at least 10 requests: one failed wake out of three
+requests is not a 33% error rate worth a page. With fewer, the rule is
+`unknown` for that read.
 
 ## Configure an alert
 
@@ -25,6 +31,8 @@ gregale alert delete --app APP_ID ALERT_ID
 ```
 
 Useful presets include availability, latency, error rate, out-of-memory, certificate expiry, quota, and spend. Use the preset as a starting point; narrow the threshold and notification window in the generated configuration when needed.
+
+The spend preset (`account_spend_eur`; the name predates USD billing, and the threshold is in your billing currency) compares this month's charges beyond your plan, the overage the billing page shows: compute, egress once you have elected egress overage, and object storage.
 
 For stored workflows, the opt-in `stored_workflow_backlog` preset sends a webhook when
 due work has waited at least five minutes. It covers overdue timers, event or
@@ -127,7 +135,13 @@ gregale alert channel list
 - Slack URLs must be `https://hooks.slack.com/services/…`; PagerDuty
   notifications go only to PagerDuty's Events API. Both destinations are
   sealed at rest and never shown again; `list` shows a short hint instead.
-- Email channels can only send to the account's own email address for now.
+- Email channels can only send to the account's own email address for now,
+  and only once that address is verified. They follow the account: after you
+  change your email address, alerts go to the new one.
+- A PagerDuty routing key cannot be replaced while a rule using the channel
+  is firing: its incident was opened with the current key and is closed with
+  it. Wait for the rule to recover, or disable it to close the incident,
+  then replace the key. Renaming the channel is always allowed.
 - `list` shows each channel's last successful delivery or last error, so a
   revoked Slack webhook shows up before an incident does.
 - An account can send 10 test messages a minute across its channels; more
@@ -146,8 +160,9 @@ closes the incident the fire opened, and Slack and email get a "Resolved"
 message. Each channel is delivered to independently, so a broken Slack
 webhook never delays PagerDuty, the rule's webhook, or a rollback action.
 A notice a channel refuses with a 5xx or 429, or cannot be reached for, is
-retried for a few seconds. After that a fire is sent again after the rule's
-cool-down while the breach lasts, and a resolve is retried with backoff (a
+retried for a few seconds. After that a fire is retried while the rule is
+still firing (30 seconds, doubling, at most five minutes apart) until its
+cool-down ends, when the next fire takes over, and a resolve is retried with backoff (a
 minute, doubling, at most an hour apart) for up to a day, so a PagerDuty
 incident is not left open by a short outage; a new fire of the rule replaces
 the pending resolve. Every failed channel notice is recorded in the audit log
@@ -253,8 +268,13 @@ printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "error lo
 ```
 
 A line's level comes from a structured `level` or `severity` field when the
-line is JSON, otherwise from common prefixes such as `[ERROR]`, `level=error`
-or `[warn]` in the first 512 bytes. This is the same classification as
+line is JSON (Pino's numeric levels too; `fatal` and `critical` count as
+errors), otherwise from markers such as `[ERROR]`, `[FATAL]`, `level=error`
+or `[warn]` in the first 512 bytes, or from a line that starts the way a
+crash or a default logger does: `ERROR:` and `CRITICAL:` (Python's logging
+and uvicorn), `Traceback (most recent call last):`, `panic:` and
+`fatal error:` (Go), or `TypeError: …` and other `…Error: ` lines (Node's
+uncaught exceptions). This is the same classification as
 `gregale logs --level error`, so the command shows the lines an alert
 counted. A line that only mentions "error" in prose is not counted. Build
 logs are never counted. Log alerts support every alert action, including
@@ -386,4 +406,17 @@ OpenTelemetry cumulative sum) is compared on its per-second rate over the
 window. If nothing was pushed in the window, or the metric was deleted, the
 rule is `unknown` and does not fire: a stopped pusher never satisfies a "below"
 rule by silence. These rules are webhook-only and support windows up to `24h`.
+
+A rule on a labelled metric reads its aggregate (the sum of a counter's
+series, the maximum of a gauge's). To watch one series instead, give its exact
+labels with `custom_metric_labels` (`--metric-label key=value`, repeatable):
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "email queue backing up" \
+  --metric custom_metric --custom-metric queue_depth --metric-label queue=emails \
+  --comparison gt --threshold 500 --window-spec 15m \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+A series that stops being pushed leaves the rule `unknown`, as for a whole metric.
 See [custom metrics](scaling-policy.md#custom-metrics) for pushing values.

@@ -40,13 +40,18 @@ systemctl show faas-vmmd -p RequiresMountsFor  # includes /srv/fc
 ## What lives on the volume
 
 Besides `/srv/fc`'s own data, these paths are bind mounts of
-`/srv/fc/host-private/<name>` (Amendment 1):
+`/srv/fc/host-private/<name>` (Amendments 1 to 3):
 
 | Path | Hosts |
 |---|---|
 | `/etc/faas/secrets` | every host |
-| `/var/lib/postgresql` (cluster) | control plane |
-| `/var/lib/pgsql` (WAL archive, base backups) | control plane |
+| `/var/lib/faas` (daemon state, HMAC keys, certs, zswap swapfile) | every host |
+| `/var/lib/postgresql` (cluster) | control plane, warm standby |
+| `/var/lib/pgsql` (WAL archive, base backups) | control plane, warm standby |
+| `/srv/db` (customer database volumes, archive) | database nodes |
+
+Control-plane and compute hosts run Tang. Database nodes and the warm standby
+only unlock from them.
 
 `findmnt /etc/faas/secrets` shows `/dev/mapper/faas-fc-crypt[/host-private/secrets]`.
 The directory underneath each is empty and immutable (`lsattr -d` shows `i`),
@@ -66,7 +71,7 @@ stays reachable over SSH. Usually no Tang peer answered at boot.
    ```
    sudo clevis luks unlock -d <device> -n faas-fc-crypt
    sudo mount /srv/fc
-   sudo mount -a -t none            # the host-private bind mounts
+   sudo systemctl start local-fs.target remote-fs.target   # the bind mounts, parents first
    sudo systemctl start postgresql  # control plane
    sudo systemctl start --all 'faas-*.service'
    ```
@@ -130,6 +135,13 @@ regen -d <device> -s <slot>`) and, once all have, delete the hidden old keys
 on the rotated host. A host whose root disk was compromised is treated as
 lost: rotate its Tang keys on a fresh install, and rebind every other host.
 
+## Promoting the standby without the fleet
+
+The standby unlocks from the fleet's Tang servers. If the fleet is gone and
+the standby has rebooted, `/srv/fc` stays locked: open it with the recovery
+key (above) and `sudo systemctl start local-fs.target remote-fs.target`
+before following `docs/runbooks/FaasPostgresStandby.md`.
+
 ## Moving a live Postgres
 
 The storage role never stops a control-plane Postgres that holds data; it
@@ -157,6 +169,16 @@ window (the API is down while Postgres is):
    then converge again: the role adds the fstab entries, proves the copy,
    shreds the originals and seals the directories.
 4. Start Postgres and the daemons, and check `findmnt /var/lib/postgresql`.
+
+## Moving /var/lib/faas on a running host
+
+It moves only while no `faas-*` service runs; the role otherwise stops with
+"refuse to move daemon state while faas services run". New hosts never hit
+this. For a host encrypted before Amendment 2: drain it (compute) or open a
+maintenance window (control plane), `sudo systemctl stop 'faas-*.service'`
+(the zswap swapfile is swapped off with `faas-zswap`), converge, then start
+them again. The OCI cache and Grype mounts beneath it stay on `/srv/fc` and
+are put back on top automatically.
 
 ## Undoing a sealed directory
 

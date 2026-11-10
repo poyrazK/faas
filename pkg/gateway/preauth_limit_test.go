@@ -361,22 +361,24 @@ func TestPreAuthRateLimitClampsAfterPlanDowngrade(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.setLegacyHot()
 	b.app.Plan = api.PlanFree
-	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: 100, Burst: 500}
+	// A Pro-sized config left on a Free app clamps to Free's burst.
+	pro, free := api.MustLimitsFor(api.PlanPro), api.MustLimitsFor(api.PlanFree)
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitEnforce, RequestsPerSecond: pro.RateLimitRPS, Burst: pro.RateLimitBurst}
 	fixed := time.Now()
 	h.preAuthLimiter.now = func() time.Time { return fixed }
-	for i := 0; i < 21; i++ {
+	for i := 0; i <= free.RateLimitBurst; i++ {
 		req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
 		req.Header.Set("X-Forwarded-For", "192.0.2.1")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		want := http.StatusOK
-		if i == 20 {
+		if i == free.RateLimitBurst {
 			want = http.StatusTooManyRequests
 		}
 		if rec.Code != want {
 			t.Fatalf("request %d = %d, want %d: %s", i+1, rec.Code, want, rec.Body.String())
 		}
-		if i == 20 && rec.Header().Get("x-faas-rate-limit-scope") != "pre-auth" {
+		if i == free.RateLimitBurst && rec.Header().Get("x-faas-rate-limit-scope") != "pre-auth" {
 			t.Fatalf("downgraded app used %q scope, want pre-auth", rec.Header().Get("x-faas-rate-limit-scope"))
 		}
 	}

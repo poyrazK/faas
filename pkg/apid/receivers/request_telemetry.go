@@ -541,8 +541,11 @@ func (r *requestTelemetryReceiver) prepareOne(ctx context.Context, req *apidpb.I
 
 	// ---- 3. Analytics rollups ----
 	// Every row the plan keeps counts toward analytics, including the rows
-	// the debugger's ingest cap below turns away (ADR-20261103113952).
-	r.addRollup(req, accountID, appID, deploymentID, eventID, count, consumerID)
+	// the debugger's ingest cap below turns away (ADR-20261103113952),
+	// unless its gateway counted it into its own rollups (amendment 5).
+	if !req.GetAnalyticsCounted() {
+		r.addRollup(req, accountID, appID, deploymentID, eventID, count, consumerID)
+	}
 
 	// ---- 4. Per-account token bucket check ----
 	// Each row is charged to its app as well, so one busy app cannot use

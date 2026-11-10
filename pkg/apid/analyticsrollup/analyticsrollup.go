@@ -30,8 +30,9 @@ type Reader = state.RequestAnalyticsRollupReader
 // Minutes are kept only RequestAnalyticsMinuteRetention (amendment 3), so a
 // window starting past RequestAnalyticsMinuteReadHorizon is covered only
 // when it starts on a whole hour the hourly tier holds; the apid window
-// parser aligns such windows, ends included. Any error, or a store without
-// rollups, means no.
+// parser aligns such windows, ends included. A tier's coverage is backdated
+// over a span with no raw telemetry (effectiveSince). Any error, or a store
+// without rollups, means no.
 func Covers(ctx context.Context, store any, appID string, from time.Time) (Reader, bool) {
 	reader, ok := coversMinutes(ctx, store, appID, from)
 	if !ok || !from.Before(time.Now().Add(-api.RequestAnalyticsMinuteReadHorizon)) {
@@ -40,6 +41,9 @@ func Covers(ctx context.Context, store any, appID string, from time.Time) (Reade
 	id, _ := uuid.Parse(appID)
 	hoursSince, has, err := reader.RequestAnalyticsRollupHoursCoverage(ctx, id)
 	if err != nil || !has || !from.Equal(from.UTC().Truncate(time.Hour)) {
+		return reader, false
+	}
+	if hoursSince, err = effectiveSince(ctx, reader, id, from, hoursSince); err != nil {
 		return reader, false
 	}
 	return reader, !from.Before(ceilHour(hoursSince.Add(api.RequestAnalyticsSettleLag)))
@@ -58,7 +62,26 @@ func coversMinutes(ctx context.Context, store any, appID string, from time.Time)
 	if err != nil || !ok {
 		return nil, false
 	}
+	if since, err = effectiveSince(ctx, reader, id, from, since); err != nil {
+		return nil, false
+	}
 	return reader, !from.Before(since.Add(api.RequestAnalyticsSettleLag))
+}
+
+// effectiveSince backdates a tier's coverage to before from when the app
+// has no raw telemetry received in [from, since): it had no traffic there
+// that the tier misses, so the tier answers that span too (amendment 4).
+// Without it a new app, or one idle when rollups started, read slow and
+// ingest-capped raw rows for every window longer than its rollups' age.
+func effectiveSince(ctx context.Context, reader Reader, id uuid.UUID, from, since time.Time) (time.Time, error) {
+	if !from.Before(since) {
+		return since, nil
+	}
+	has, err := reader.RequestTelemetryExistsBetween(ctx, id, from, since)
+	if err != nil || has {
+		return since, err
+	}
+	return from.Add(-api.RequestAnalyticsSettleLag), nil
 }
 
 // WindowIncompleteGap is the analytics telemetry gap reason for requests
@@ -155,6 +178,11 @@ func hourRange(ctx context.Context, reader Reader, appID string, from, until tim
 	if id, err := uuid.Parse(appID); err == nil {
 		if since, ok, err = reader.RequestAnalyticsRollupHoursCoverage(ctx, id); err != nil {
 			return pgtype.Timestamptz{}, pgtype.Timestamptz{}, err
+		}
+		if ok {
+			if since, err = effectiveSince(ctx, reader, id, from, since); err != nil {
+				return pgtype.Timestamptz{}, pgtype.Timestamptz{}, err
+			}
 		}
 	}
 	hf, hu := HourRange(from, until, since, ok)

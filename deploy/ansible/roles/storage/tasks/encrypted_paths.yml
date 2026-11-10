@@ -1,6 +1,6 @@
 ---
-# ADR-20261109120000 slice 2: host secrets and the control plane's Postgres
-# live on the encrypted data volume.
+# ADR-20261109120000 slices 2-3: host secrets, daemon state (/var/lib/faas)
+# and the control plane's Postgres live on the encrypted data volume.
 #
 # Each path keeps its name (~60 readers of /etc/faas/secrets, Postgres and
 # its WAL archive need no change): /srv/fc/host-private/<name> is
@@ -13,13 +13,21 @@
 # Postgres is never stopped here. A cluster that holds data needs the
 # maintenance-window move in docs/runbooks/disk-encryption.md; a running fresh
 # cluster (only the template databases) needs a stop and a second converge.
-# On a new host Postgres is not installed yet, so neither applies.
+# On a new host Postgres is not installed yet, so neither applies. Likewise a
+# quiesce path (/var/lib/faas) moves only while no faas service is running.
+#
+# Mounts already beneath a path (the OCI cache and Grype database under
+# /var/lib/faas) are not copied: they are unmounted for the bind and mounted
+# again from fstab on top of it, and their contents are left out of the proof.
 
 - name: storage — choose the paths that live on the encrypted volume
   ansible.builtin.set_fact:
+    faas_storage_holds_postgres: "{{ 'control_plane' in group_names or 'postgres_standby' in group_names }}"
     faas_storage_encrypted_paths: >-
       {{ faas_storage_encrypted_secret_paths
-         + (faas_storage_encrypted_postgres_paths if 'control_plane' in group_names else []) }}
+         + (faas_storage_encrypted_database_paths if 'database_nodes' in group_names else [])
+         + (faas_storage_encrypted_postgres_paths
+            if ('control_plane' in group_names or 'postgres_standby' in group_names) else []) }}
 
 - name: storage — install the copy tool
   ansible.builtin.apt:
@@ -67,7 +75,7 @@
     that:
       - faas_storage_pg_databases.stdout | int <= 3
     fail_msg: >-
-      The control-plane Postgres on this host holds data on the plain disk
+      The Postgres on this host holds data on the plain disk
       ({{ faas_storage_pg_databases.stdout }} databases). It is not stopped
       automatically: move it in a maintenance window as
       docs/runbooks/disk-encryption.md ("Moving a live Postgres") describes,
@@ -94,6 +102,28 @@
       converge again; the postgres role starts it. Nothing was changed.
   when: faas_storage_pg_databases is not skipped
 
+- name: storage — list the faas services running
+  ansible.builtin.shell: |
+    set -euo pipefail
+    systemctl list-units --type=service --state=active --no-legend --plain 'faas-*.service' | awk '{print $1}'
+  args:
+    executable: /bin/bash
+  register: faas_storage_active_units
+  changed_when: false
+  when: faas_storage_paths_to_move | selectattr('quiesce', 'defined') | list | length > 0
+
+- name: storage — refuse to move daemon state while faas services run
+  ansible.builtin.assert:
+    that:
+      - faas_storage_active_units.stdout_lines | length == 0
+    fail_msg: >-
+      {{ faas_storage_paths_to_move | selectattr('quiesce', 'defined') | map(attribute='path') | join(', ') }}
+      must move onto the encrypted volume while no faas service writes to it,
+      and these run: {{ faas_storage_active_units.stdout_lines | join(', ') }}.
+      Drain the host, stop them, and converge again
+      (docs/runbooks/disk-encryption.md). Nothing was changed.
+  when: faas_storage_active_units is not skipped
+
 - name: storage — copy each path onto the encrypted volume
   ansible.builtin.shell: |
     set -euo pipefail
@@ -108,10 +138,22 @@
       install -d "$src"
       chown --reference="$target" "$src"
       chmod --reference="$target" "$src"
-      rsync --archive --hard-links --acls --xattrs --numeric-ids "$target/" "$src/"
+      rsync --archive --hard-links --acls --xattrs --numeric-ids --one-file-system "$target/" "$src/"
     else
       install -d -m 0755 -o root -g root "$src" "$target"
     fi
+    # Mounts beneath the path step aside for the bind and return on top of it.
+    mapfile -t below < <(findmnt -rn -o TARGET | awk -v p="$target/" 'index($0, p) == 1' | sort -r)
+    mapfile -t above < <(printf '%s\n' "${below[@]}" | sort | sed '/^$/d')
+    for m in "${below[@]}"; do
+      findmnt --fstab -n --mountpoint "$m" > /dev/null || {
+        echo "$m is mounted beneath $target but not in fstab, so it could not be put back; refusing" >&2
+        exit 3
+      }
+    done
+    for m in "${below[@]}"; do umount "$m"; done
+    mount --bind "$src" "$target"
+    for m in "${above[@]}"; do mount "$m"; done
   args:
     executable: /bin/bash
   loop: "{{ faas_storage_paths_to_move }}"
@@ -119,7 +161,7 @@
     label: "{{ item.path }}"
   changed_when: true
 
-- name: storage — bind each path from the encrypted volume
+- name: storage — keep each bind from the encrypted volume in fstab
   ansible.posix.mount:
     path: "{{ item.path }}"
     src: "{{ faas_storage_mount }}/{{ faas_storage_private_subdir }}/{{ item.name }}"
@@ -127,7 +169,7 @@
     opts: "bind,nofail,x-systemd.requires-mounts-for={{ faas_storage_mount }}"
     dump: "0"
     passno: "0"
-    state: mounted
+    state: present
   loop: "{{ faas_storage_encrypted_paths }}"
   loop_control:
     label: "{{ item.path }}"
@@ -148,9 +190,15 @@
     under="$view/${target#"${parent_fs%/}"/}"
     [ -d "$under" ] || { echo "no underlying $under" >&2; exit 4; }
     [ "$(stat -c %d "$under")" != "$(stat -c %d "$src")" ] || { echo "underlay resolves to the volume" >&2; exit 4; }
+    # What lies under a mount beneath the path (e.g. an OCI cache left on the
+    # boot disk before it moved to /srv/fc) was never copied: leave it out of
+    # the proof. It is shredded with the rest.
+    excludes=()
+    while read -r m; do excludes+=("--exclude=/${m#"$target"/}/**"); done \
+      < <(findmnt -rn -o TARGET | awk -v p="$target/" 'index($0, p) == 1')
     if [ -n "$(find "$under" -mindepth 1 -print -quit)" ]; then
       if lsattr -d "$under" | awk '{print $1}' | grep -q i; then chattr -i "$under"; fi
-      diff="$(rsync --archive --hard-links --acls --xattrs --numeric-ids --checksum --dry-run --itemize-changes "$under/" "$src/" | grep -v '^\.d' || true)"
+      diff="$(rsync --archive --hard-links --acls --xattrs --numeric-ids --checksum --dry-run --itemize-changes "${excludes[@]}" "$under/" "$src/" | grep -v '^\.d' || true)"
       if [ -n "$diff" ]; then
         echo "the copy on the volume differs from $target underneath; not shredding:" >&2
         echo "$diff" >&2
@@ -180,14 +228,14 @@
     group: root
     mode: "0755"
 
-- name: storage — keep faas daemons off unmounted host secrets
+- name: storage — keep faas daemons off unmounted host secrets and state
   ansible.builtin.copy:
     dest: /etc/systemd/system/faas-.service.d/11-faas-encrypted-secrets.conf
     content: |
-      # Managed by Gregale (storage, ADR-20261109120000). Host secrets live on
-      # the encrypted data volume, bind-mounted here.
+      # Managed by Gregale (storage, ADR-20261109120000). Host secrets and
+      # daemon state live on the encrypted data volume, bind-mounted here.
       [Unit]
-      RequiresMountsFor=/etc/faas/secrets
+      RequiresMountsFor={{ faas_storage_encrypted_paths | rejectattr('postgres', 'defined') | map(attribute='path') | join(' ') }}
     owner: root
     group: root
     mode: "0644"
@@ -201,7 +249,7 @@
     group: root
     mode: "0755"
   loop: [postgresql.service, "postgresql@.service"]
-  when: "'control_plane' in group_names"
+  when: faas_storage_holds_postgres | bool
 
 - name: storage — keep Postgres off an unmounted data directory
   ansible.builtin.copy:
@@ -216,7 +264,7 @@
     mode: "0644"
   loop: [postgresql.service, "postgresql@.service"]
   register: faas_storage_pg_dropin
-  when: "'control_plane' in group_names"
+  when: faas_storage_holds_postgres | bool
 
 # auditd loads its rules early in boot, before /etc/faas/secrets is mounted;
 # reload them once it is, so the faas_secrets watch covers the mounted tree.

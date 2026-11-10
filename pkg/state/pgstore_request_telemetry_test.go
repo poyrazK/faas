@@ -763,16 +763,21 @@ func TestPgStoreRequestTelemetry_CircuitBreakerSummaryIncludesColdBootP95(t *tes
 	if err := store.AppendUsage(ctx, accountID, appID, instance.ID, now.Truncate(time.Minute), 0, 12, 500_000, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("AppendUsage: %v", err)
 	}
+	// Long-lived sessions (ADR-20261028110044 amendment 7) count as requests
+	// and 5xx but their durations stay out of both percentiles.
 	rows := []struct {
-		status   int32
-		latency  int32
-		coldBoot bool
-		count    int32
+		status    int32
+		latency   int32
+		coldBoot  bool
+		longLived bool
+		count     int32
 	}{
 		{status: 200, latency: 10, count: 9},
 		{status: 500, latency: 100, coldBoot: true, count: 2},
 		{status: 200, latency: 200, coldBoot: true, count: 2},
 		{status: 200, latency: 300, count: 1},
+		{status: 200, latency: 60_000, longLived: true, count: 3},
+		{status: 503, latency: 90_000, coldBoot: true, longLived: true, count: 1},
 	}
 	for i, sample := range rows {
 		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
@@ -784,6 +789,7 @@ func TestPgStoreRequestTelemetry_CircuitBreakerSummaryIncludesColdBootP95(t *tes
 			Status:       sample.status,
 			LatencyMs:    sample.latency,
 			ColdBoot:     sample.coldBoot,
+			LongLived:    sample.longLived,
 			ReceivedAt:   pgtype.Timestamptz{Time: now.Add(time.Duration(i) * time.Second), Valid: true},
 			Count:        sample.count,
 			UaFamily:     "__unknown__",
@@ -799,11 +805,11 @@ func TestPgStoreRequestTelemetry_CircuitBreakerSummaryIncludesColdBootP95(t *tes
 	if err != nil {
 		t.Fatalf("RequestTelemetryCircuitBreakerSummary: %v", err)
 	}
-	if requests != 14 || serverErrors != 2 || p95 != 300 {
-		t.Errorf("overall summary = requests:%d errors:%d p95:%g, want 14/2/300", requests, serverErrors, p95)
+	if requests != 18 || serverErrors != 3 || p95 != 300 {
+		t.Errorf("overall summary = requests:%d errors:%d p95:%g, want 18/3/300", requests, serverErrors, p95)
 	}
-	if coldBootRequests != 4 || coldBootP95 != 200 {
-		t.Errorf("cold-boot summary = requests:%d p95:%g, want 4/200", coldBootRequests, coldBootP95)
+	if coldBootRequests != 5 || coldBootP95 != 200 {
+		t.Errorf("cold-boot summary = requests:%d p95:%g, want 5/200", coldBootRequests, coldBootP95)
 	}
 	if cpuUsec != 500_000 || cpuRequests != 12 {
 		t.Errorf("CPU/request summary = cpu_usec:%d requests:%d, want 500000/12", cpuUsec, cpuRequests)

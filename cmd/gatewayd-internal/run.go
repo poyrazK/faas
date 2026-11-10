@@ -568,6 +568,14 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	if !ok {
 		return inv, 0, fmt.Errorf("gateway synth: debug replay mirror rule is unavailable")
 	}
+	// apid's sanitized corpus endpoint gates unsafe methods on the caller's
+	// explicit flag; a telemetry replay carries no body and needs the rule's
+	// own opt-in, exactly as live mirroring does. Re-checked here because the
+	// rule may have changed since the replay was queued.
+	sanitizedPayload := metadata[api.DebugReplaySanitizedPayloadHeader] == "true"
+	if !sanitizedPayload && !rule.AllowUnsafeMethods && !api.MirrorSafeMethod(strings.ToUpper(inv.Method)) {
+		return inv, 0, fmt.Errorf("%w: debug replay of %s needs a mirror rule with allow_unsafe_methods", schedpkg.ErrPermanentInvoke, inv.Method)
+	}
 	target, err := a.scheduleReplayTarget(ctx, appID, rule)
 	if err != nil {
 		return inv, 0, err
@@ -577,7 +585,6 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	// Platform metadata is consumed at this boundary. A legacy telemetry
 	// replay is bodyless; only apid's sanitized batch endpoint stamps the
 	// marker that permits its bounded JSON body and filtered headers through.
-	sanitizedPayload := metadata[api.DebugReplaySanitizedPayloadHeader] == "true"
 	if !sanitizedPayload {
 		mirrorInv.Payload = nil
 	}
@@ -620,7 +627,13 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	hasExpectedBody := len(sourceBodyHash) == sha256.Size
 	bodyDiff := hasExpectedBody && statusCode != 0 && !bytes.Equal(sourceBodyHash, mirrorBodyHash)
 	crashed := statusCode == 0 || statusCode >= http.StatusInternalServerError
-	comparisonIncomplete := statusCode == 0 || (sourceStatus == 0 && !hasExpectedBody)
+	// A bodyless replay of a method that usually carries a body is not the
+	// original request, so its status is no evidence of a difference.
+	bodylessBodyMethod := !sanitizedPayload && !api.MirrorSafeMethod(strings.ToUpper(inv.Method)) && !strings.EqualFold(inv.Method, http.MethodDelete)
+	if bodylessBodyMethod {
+		statusDiff = false
+	}
+	comparisonIncomplete := statusCode == 0 || (sourceStatus == 0 && !hasExpectedBody) || bodylessBodyMethod
 	result := api.DebugReplayComparison{
 		SourceDeploymentID:   metadata[api.DebugReplayDeploymentIDHeader],
 		MirrorDeploymentID:   rule.MirrorDeploymentID,
@@ -3554,6 +3567,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					DeploymentTag:                        row.DeploymentTag,
 					DeploymentCreatedAt:                  row.DeploymentCreatedAt,
 					ImageDigest:                          row.ImageDigest,
+					AnalyticsCounted:                     row.AnalyticsCounted,
 				}
 				if row.Count < 1 {
 					req.Count = 1
@@ -3606,6 +3620,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}
 		}()
+		if requestTelemetryEnabled && osGetenv("FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS") == "1" {
+			// The gateway counts requests into per-minute rollups itself
+			// (ADR-20261103113952 amendment 5). The publisher actor runs
+			// the shipping, so it shares rtCli with the other RPCs.
+			recorder.EnableAnalyticsRollups(gateway.RequestAnalyticsRollupsConfig{
+				Ship: func(ctx context.Context, batchID uuid.UUID, rows []state.RequestAnalyticsRollup) error {
+					if rtTLSErr != nil {
+						return rtTLSErr
+					}
+					ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+					defer cancel()
+					if rtCli == nil {
+						var err error
+						rtCli, err = apidgrpc.DialRequestTelemetry(ctx, apidRTTarget, rtTLS)
+						if err != nil {
+							return fmt.Errorf("open request_telemetry client: %w", err)
+						}
+					}
+					return shipAnalyticsRollups(ctx, rtCli, batchID, coverageNode, rows)
+				},
+				OnShipped: deps.metrics.AddRequestAnalyticsRollupShipped,
+				OnLost:    deps.metrics.AddRequestAnalyticsRollupLost,
+			}, log)
+		}
 		// Wake the publisher as the recorder approaches capacity so the
 		// normal five-second ticker is only the idle fallback.
 		recorder.SetWakeHook(publisher.Wake)
@@ -4731,6 +4769,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			DeadlineSigning: deps.trafficDeadlines != nil, PolicySnapshot: deps.pool != nil,
 			SecurityRevocation: deps.trafficRevocations != nil,
 			ManagedHTTP:        managedHTTP, ManagedCircuit: managedHTTP && managedCircuitWired,
+			// apid seals edge-rule header values only while every serving
+			// gateway reports that it opens them (ADR-20261108110000).
+			EdgeHeaderSecrets: deps.edgeRulesMatcher != nil && deps.edgeRulesMatcher.headerSecretOpener != nil,
 		}, readyProbe.ReadyFunc(), log)
 		defer stopTrafficObserver()
 	}

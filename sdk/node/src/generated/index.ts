@@ -545,6 +545,7 @@ export type { CustomMetricRequest } from './models/CustomMetricRequest.js';
 export type { CustomMetricResponse } from './models/CustomMetricResponse.js';
 export type { CustomMetricSeriesPoint } from './models/CustomMetricSeriesPoint.js';
 export type { CustomMetricSeriesResponse } from './models/CustomMetricSeriesResponse.js';
+export type { CustomMetricSeriesValue } from './models/CustomMetricSeriesValue.js';
 export type { CustomStage } from './models/CustomStage.js';
 export type { DailyUsageListResponse } from './models/DailyUsageListResponse.js';
 export type { DailyUsagePoint } from './models/DailyUsagePoint.js';
@@ -3112,6 +3113,7 @@ export type { ThrottleSuggestionsResponse } from './models/ThrottleSuggestionsRe
 export type { Trace } from './models/Trace.js';
 export type { TraceSpan } from './models/TraceSpan.js';
 export type { TracingConfig } from './models/TracingConfig.js';
+export type { TracingForward } from './models/TracingForward.js';
 export type { TrafficRuntimeFeatureStatus } from './models/TrafficRuntimeFeatureStatus.js';
 export type { TrafficRuntimeStatus } from './models/TrafficRuntimeStatus.js';
 export type { TransferOwnershipRequest } from './models/TransferOwnershipRequest.js';

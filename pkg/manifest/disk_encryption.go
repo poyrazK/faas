@@ -54,10 +54,31 @@ func (m *Manifest) validateDiskEncryption() Errors {
 		}
 	}
 	// A host never unlocks from its own Tang server: its keys sit on the
-	// plain root disk beside the volume they would open.
-	if len(m.Fleet.Hosts) < 2 {
+	// plain root disk beside the volume they would open. Control-plane and
+	// compute hosts serve Tang; database hosts and the standby only unlock.
+	if len(TangServers(m.Fleet.Hosts)) < 2 {
 		errs = append(errs, Error{"disk_encryption",
-			"needs at least two hosts: each host unlocks from the other hosts' Tang servers"})
+			"needs at least two control-plane or compute hosts: each unlocks from the other hosts' Tang servers"})
+	}
+	// Tang is reached over the private network before anything else runs,
+	// at boot and on a fresh host (the storage role runs before the overlay
+	// role). Only a provider network that is up by itself (static: an OVH
+	// vRack, a cloud VPC) gives that.
+	if m.Overlay.Provider != "static" {
+		errs = append(errs, Error{"disk_encryption",
+			fmt.Sprintf("needs overlay.provider static (a provider private network up at boot), not %q: volumes unlock over it before the overlay starts", m.Overlay.Provider)})
 	}
 	return errs
+}
+
+// TangServers are the hosts that run a Tang key server: every fleet host
+// except database hosts, which only unlock from them.
+func TangServers(hosts []Host) []Host {
+	var out []Host
+	for _, h := range hosts {
+		if h.Role != RoleDatabase {
+			out = append(out, h)
+		}
+	}
+	return out
 }

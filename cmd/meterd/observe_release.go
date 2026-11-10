@@ -14,19 +14,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// observeReleaseTTL is how long a read account plan or app organization is
-// reused; a plan change or a moved app reaches meterd's decisions within it.
+// observeReleaseTTL is how long a read owner is reused; a plan change or a
+// moved app reaches meterd's decisions within it.
 const observeReleaseTTL = time.Minute
 
 // observeRelease decides which customer observability work meterd still does
-// for an account (ADR-20261028101615): alert rules and channel deliveries, and
-// synthetic probes. It follows the account's plan, as apid's create checks do,
-// and the capability flags (ADR-20261023115741), so a downgraded account or a
-// capability an operator switched off stops costing the customer wakes and
-// stops paging. A suspended account, or one pending deletion, gets neither
-// (ADR-20261029203000): its apps do not serve, so probes would only fail and
-// page it. A failed read keeps the work running: a database hiccup must never
-// silence alerts.
+// (ADR-20261028101615): alert rules and channel deliveries, synthetic probes
+// and SLO rollups. It follows the plan and status of the work's owner, as
+// apid's create checks do (ADR-20261109153000): an app an organization owns
+// follows the organization, any other app and every account-wide rule follow
+// the account. It also follows the capability flags (ADR-20261023115741), so
+// a downgraded owner or a capability an operator switched off stops costing
+// the customer wakes and stops paging. A suspended owner, or one pending
+// deletion, gets none of it (ADR-20261029203000): its apps do not serve, so
+// probes would only fail and page it. A failed read keeps the work running: a
+// database hiccup must never silence alerts.
 type observeRelease struct {
 	flags   *platformflags.Set
 	decider *capflags.Decider
@@ -34,17 +36,18 @@ type observeRelease struct {
 	now     func() time.Time
 
 	mu       sync.Mutex
-	accounts map[string]releaseAccount
-	apps     map[string]releaseApp
+	accounts map[string]releaseOwner
+	apps     map[string]releaseOwner
 }
 
-type releaseAccount struct {
+// releaseOwner is what the decisions read about the owner of some work.
+type releaseOwner struct {
 	plan api.Plan
 	live bool
-	at   time.Time
-}
-
-type releaseApp struct {
+	// subject is the billing subject the plan's per-account caps count
+	// against: the organization that owns an app, else the account.
+	subject string
+	// orgID is the organization of an app, for organization flag rules.
 	orgID string
 	at    time.Time
 }
@@ -55,31 +58,32 @@ func newObserveRelease(flags *platformflags.Set, store logSearchReleaseStore) (*
 		return nil, fmt.Errorf("meterd: load capability catalog: %w", err)
 	}
 	return &observeRelease{flags: flags, decider: decider, store: store, now: time.Now,
-		accounts: map[string]releaseAccount{}, apps: map[string]releaseApp{}}, nil
+		accounts: map[string]releaseOwner{}, apps: map[string]releaseOwner{}}, nil
 }
 
-// ForAccount is the alerts.RuleRelease for one account's tick. nil (evaluate
-// everything) when the account cannot be read.
-func (r *observeRelease) ForAccount(ctx context.Context, accountID string) alerts.RuleRelease {
-	plan, live, err := r.account(ctx, accountID)
-	switch {
-	case err != nil:
-		return nil
-	case !live:
-		return func(context.Context, state.AlertRule) (bool, bool) { return false, false }
-	}
-	if limits, ok := api.LimitsFor(plan); !ok || limits.AlertRuleLimitPerApp == 0 {
-		return func(context.Context, state.AlertRule) (bool, bool) { return false, false }
-	}
+// ForAccount is the alerts.RuleRelease for one account's tick. Each rule is
+// decided by its own owner: one account can hold rules on its personal apps
+// and on apps of organizations it created them in.
+func (r *observeRelease) ForAccount(context.Context, string) alerts.RuleRelease {
 	return func(ctx context.Context, rule state.AlertRule) (bool, bool) {
-		subject := platformflags.Subject{AccountID: accountID, Plan: string(plan), OrgID: r.orgOf(ctx, rule.AppID)}
+		owner, err := r.owner(ctx, rule.AccountID, rule.AppID)
+		switch {
+		case err != nil:
+			return true, true
+		case !owner.live:
+			return false, false
+		}
+		if limits, ok := api.LimitsFor(owner.plan); !ok || limits.AlertRuleLimitPerApp == 0 {
+			return false, false
+		}
+		subject := platformflags.Subject{AccountID: rule.AccountID, Plan: string(owner.plan), OrgID: owner.orgID}
 		metric := string(rule.Metric)
 		switch {
 		case !r.allows("alerts", subject):
 			return false, false
-		case metric == api.AlertRuleMetricCustomMetric && !plan.CustomMetricsAllowed():
+		case metric == api.AlertRuleMetricCustomMetric && !owner.plan.CustomMetricsAllowed():
 			return false, false
-		case (api.IsSLOAlertMetric(metric) || api.IsSyntheticCheckAlertMetric(metric)) && !plan.PerAppMetricsAllowed():
+		case (api.IsSLOAlertMetric(metric) || api.IsSyntheticCheckAlertMetric(metric)) && !owner.plan.PerAppMetricsAllowed():
 			return false, false
 		}
 		// anomaly_alerts is not decided here: its flag only refuses creating or
@@ -91,48 +95,49 @@ func (r *observeRelease) ForAccount(ctx context.Context, accountID string) alert
 	}
 }
 
-// Synthetic reports whether a due synthetic check is still probed: its
-// account's plan has per-app metrics (Hobby and above, as creating one needs)
-// and synthetic-checks is released to it.
-// RuleLimits is the account's plan caps on alert rules, so rules a bigger
-// plan allowed stop evaluating after a downgrade (ADR-20261104142830).
-// Unknown or not-live accounts report !ok: ForAccount already decides them.
-func (r *observeRelease) RuleLimits(ctx context.Context, accountID string) (perApp, perAccount int, ok bool) {
-	plan, live, err := r.account(ctx, accountID)
-	if err != nil || !live {
-		return 0, 0, false
+// RuleLimits is the plan caps on alert rules that apply to rule, so rules a
+// bigger plan allowed stop evaluating after a downgrade (ADR-20261104142830).
+// They are the owner's caps, counted per billing subject (ADR-20261109153000).
+// An unreadable or not-live owner reports !ok: ForAccount already decides it.
+func (r *observeRelease) RuleLimits(ctx context.Context, rule state.AlertRule) (alerts.RuleLimit, bool) {
+	owner, err := r.owner(ctx, rule.AccountID, rule.AppID)
+	if err != nil || !owner.live {
+		return alerts.RuleLimit{}, false
 	}
-	limits, known := api.LimitsFor(plan)
+	limits, known := api.LimitsFor(owner.plan)
 	if !known {
-		return 0, 0, false
+		return alerts.RuleLimit{}, false
 	}
-	return limits.AlertRuleLimitPerApp, limits.AlertRuleLimitPerAccount, true
+	return alerts.RuleLimit{PerApp: limits.AlertRuleLimitPerApp, PerAccount: limits.AlertRuleLimitPerAccount, Subject: owner.subject}, true
 }
 
+// Synthetic reports whether a due synthetic check is still probed: its
+// owner's plan has per-app metrics (Hobby and above, as creating one needs)
+// and synthetic-checks is released to it.
 func (r *observeRelease) Synthetic(ctx context.Context, check state.RunnableSyntheticCheck) bool {
-	plan, live, err := r.account(ctx, check.AccountID)
+	owner, err := r.owner(ctx, check.AccountID, check.AppID)
 	switch {
 	case err != nil:
 		return true
-	case !live, !plan.PerAppMetricsAllowed():
+	case !owner.live, !owner.plan.PerAppMetricsAllowed():
 		return false
 	}
-	subject := platformflags.Subject{AccountID: check.AccountID, Plan: string(plan), OrgID: r.orgOf(ctx, check.AppID)}
+	subject := platformflags.Subject{AccountID: check.AccountID, Plan: string(owner.plan), OrgID: owner.orgID}
 	return r.allows("synthetic-checks", subject)
 }
 
-// SLO reports whether an SLO still gets hourly rollups: its account is live,
+// SLO reports whether an SLO still gets hourly rollups: its owner is live,
 // its plan has per-app metrics (as creating one needs) and custom-slos is
 // released to it (ADR-20261029203000).
 func (r *observeRelease) SLO(ctx context.Context, def state.SLO) bool {
-	plan, live, err := r.account(ctx, def.AccountID)
+	owner, err := r.owner(ctx, def.AccountID, def.AppID)
 	switch {
 	case err != nil:
 		return true
-	case !live, !plan.PerAppMetricsAllowed():
+	case !owner.live, !owner.plan.PerAppMetricsAllowed():
 		return false
 	}
-	subject := platformflags.Subject{AccountID: def.AccountID, Plan: string(plan), OrgID: r.orgOf(ctx, def.AppID)}
+	subject := platformflags.Subject{AccountID: def.AccountID, Plan: string(owner.plan), OrgID: owner.orgID}
 	return r.allows("custom-slos", subject)
 }
 
@@ -151,51 +156,74 @@ func (r *observeRelease) allows(capability string, subject platformflags.Subject
 	return r.decider.Enabled(capability, subject)
 }
 
-// account reads an account's plan through the cache; live is false for an
-// account that no longer exists, is suspended, or is pending deletion.
-func (r *observeRelease) account(ctx context.Context, id string) (api.Plan, bool, error) {
-	now := r.now()
-	r.mu.Lock()
-	cached, ok := r.accounts[id]
-	r.mu.Unlock()
-	if ok && now.Sub(cached.at) < observeReleaseTTL {
-		return cached.plan, cached.live, nil
-	}
-	acct, err := r.store.AccountByID(ctx, id)
-	switch {
-	case errors.Is(err, state.ErrNotFound):
-		cached = releaseAccount{live: false, at: now}
-	case err != nil:
-		return "", false, err
-	default:
-		live := acct.Status != state.AccountSuspended && acct.Status != state.AccountDeletedPending
-		cached = releaseAccount{plan: acct.Plan, live: live, at: now}
-	}
-	r.mu.Lock()
-	r.accounts[id] = cached
-	r.mu.Unlock()
-	return cached.plan, cached.live, nil
-}
-
-// orgOf is the organization an app belongs to, for organization rules; "" for
-// account-wide rules, personal apps, and apps that cannot be read.
-func (r *observeRelease) orgOf(ctx context.Context, appID string) string {
+// owner reads, through the cache, who owns work on appID for accountID: the
+// app's resource owner (state.AppResourceAccount, as apid decides), or the
+// account for account-wide work and for an app that is already gone. live is
+// false for an owner that no longer exists, is suspended, or is pending
+// deletion.
+func (r *observeRelease) owner(ctx context.Context, accountID, appID string) (releaseOwner, error) {
 	if appID == "" {
-		return ""
+		return r.account(ctx, accountID)
 	}
 	now := r.now()
 	r.mu.Lock()
 	cached, ok := r.apps[appID]
 	r.mu.Unlock()
 	if ok && now.Sub(cached.at) < observeReleaseTTL {
-		return cached.orgID
+		return cached, nil
 	}
 	app, err := r.store.AppByID(ctx, appID)
+	if errors.Is(err, state.ErrNotFound) {
+		return r.account(ctx, accountID)
+	}
 	if err != nil {
-		return ""
+		return releaseOwner{}, err
+	}
+	acct, err := state.AppResourceAccount(ctx, r.store, app)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		cached = releaseOwner{live: false, at: now}
+	case err != nil:
+		return releaseOwner{}, err
+	default:
+		cached = ownerOf(acct, now)
+		cached.orgID = app.OrgID
 	}
 	r.mu.Lock()
-	r.apps[appID] = releaseApp{orgID: app.OrgID, at: now}
+	r.apps[appID] = cached
 	r.mu.Unlock()
-	return app.OrgID
+	return cached, nil
+}
+
+// account reads an account's plan through the cache.
+func (r *observeRelease) account(ctx context.Context, id string) (releaseOwner, error) {
+	now := r.now()
+	r.mu.Lock()
+	cached, ok := r.accounts[id]
+	r.mu.Unlock()
+	if ok && now.Sub(cached.at) < observeReleaseTTL {
+		return cached, nil
+	}
+	acct, err := r.store.AccountByID(ctx, id)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		cached = releaseOwner{live: false, at: now}
+	case err != nil:
+		return releaseOwner{}, err
+	default:
+		cached = ownerOf(acct, now)
+	}
+	r.mu.Lock()
+	r.accounts[id] = cached
+	r.mu.Unlock()
+	return cached, nil
+}
+
+func ownerOf(acct state.Account, at time.Time) releaseOwner {
+	return releaseOwner{
+		plan:    acct.Plan,
+		live:    acct.Status != state.AccountSuspended && acct.Status != state.AccountDeletedPending,
+		subject: acct.ResourceOwnerID(),
+		at:      at,
+	}
 }

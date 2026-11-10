@@ -232,7 +232,7 @@ RULES = [
     (r"datadog", "Datadog integration"),
     (r"log-drain|drain-analytics|log-analytics", "Log drains"),
     (r"logs?$|^log-|log-archive|tail|logarchive|/logs", "Logs, tail"),
-    (r"metrics|analytics|request-telemetry|telemetry", "App, service and account metrics"),
+    (r"metrics|analytics|request-telemetry|telemetry|long-lived-latency", "App, service and account metrics"),
     # --- data
     (r"ai-gateway|ai-access|aigateway|^ai$|llm|moderation|prompt", "AI gateway"),
     (r"outbound|integration", "Outbound integrations"),
@@ -392,6 +392,9 @@ INFRA_RULES = [
     r"^edge-placement(-routing)?$",
     # ADR-20261102081618 §5: local first for an app on several nodes.
     r"^edge-local-first$",
+    # Manifest hot_path: the compute edge keeps connections to each node's
+    # gatewayd-internal alive.
+    r"^internal-keepalive-per-node$",
     # ADR-20261102081618: the records that send Cloudflare to the compute edges.
     r"^edgednsd?(-.*)?$",
     # ADR-20261103163954: what stands in front of a compute edge's TLS listener.

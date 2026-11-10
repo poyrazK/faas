@@ -3,6 +3,8 @@
 Covers `FaasCgroupMemoryNearLimit`, `FaasCgroupOOMKill`,
 `FaasPostgresCPUStalled` and `FaasCgroupMetricsStale` (family
 `cgroup_resources`, ADR-20261023124955). All are warnings for the daily review.
+`FaasNodeCPUSaturated`, in the same family, has its own runbook:
+[FaasNodeCPUSaturated](FaasNodeCPUSaturated.md).
 
 `faas-cgroup-metrics` (role `cgroup_metrics`) writes the cgroup v2 numbers to
 the node_exporter textfile collector every 30 s:

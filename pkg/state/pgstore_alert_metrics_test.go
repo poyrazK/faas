@@ -196,7 +196,8 @@ func TestPg_MTDSpendEurCents_ReflectsMonthToDateUsage(t *testing.T) {
 		t.Fatalf("spend with no usage = %d cents; want 0", got)
 	}
 
-	// Pro includes 250 GB-h; 12 GB-h beyond it is 12 cents of overage.
+	// 12 GB-h beyond the Pro allowance, priced at the overage rate in the
+	// limits table ($0.05/GB-h since ADR-20261107192333: 60 cents).
 	included := int64(api.PlanPro.PlanIncludedGBHours()) * api.SecondsPerGBHour
 	if err := s.AppendUsage(ctx, acctID, appID, uuid.NewString(), now.Truncate(time.Minute), included+12*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("AppendUsage: %v", err)
@@ -205,8 +206,8 @@ func TestPg_MTDSpendEurCents_ReflectsMonthToDateUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MTDSpendEurCents: %v", err)
 	}
-	if got != 12 {
-		t.Fatalf("spend = %d cents; want 12 (12 GB-h beyond the Pro allowance)", got)
+	if want := 12 * api.OverageMillicentsPerGBHour / api.MillicentsPerCent; got != want {
+		t.Fatalf("spend = %d cents; want %d (12 GB-h beyond the Pro allowance)", got, want)
 	}
 }
 
