@@ -15,6 +15,7 @@ package apidserver
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -277,11 +278,10 @@ func (s *server) handleClearObsoleteDeployments(w http.ResponseWriter, r *http.R
 			"invalid clear-obsolete body", "body must be JSON with an optional older_than"))
 		return
 	}
-	olderThan := 168 * time.Hour
-	if req.OlderThan != "" {
-		if d, err := time.ParseDuration(req.OlderThan); err == nil {
-			olderThan = d
-		}
+	olderThan, prob := clearObsoleteOlderThan(req.OlderThan)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	count, err := s.store.ClearObsoleteDeployments(r.Context(), app.ID, time.Now().UTC().Add(-olderThan))
 	if err != nil {
@@ -297,4 +297,20 @@ func (s *server) handleClearObsoleteDeployments(w http.ResponseWriter, r *http.R
 	// asked, the store found nothing).
 	reconcile.EmitClearObsoleteDeployments(r.Context(), s.audit.pkgAuditor(), acct.ID, app.ID, count, olderThan.String())
 	writeJSON(w, http.StatusOK, map[string]any{"app_slug": app.Slug, "count": count, "older_than": olderThan.String()})
+}
+
+// clearObsoleteOlderThan parses clear-obsolete's older_than: a Go duration,
+// zero or more, 168h when omitted. An unreadable value used to fall back to
+// 168h silently, and a negative one moved the cutoff into the future, which
+// cleared every eligible deployment.
+func clearObsoleteOlderThan(raw string) (time.Duration, *api.Problem) {
+	if raw == "" {
+		return 168 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "invalid older_than",
+			fmt.Sprintf("older_than %q must be a non-negative duration such as 168h", raw))
+	}
+	return d, nil
 }
