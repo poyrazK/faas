@@ -4534,6 +4534,51 @@ Restore a database to a new database
 | `--name <NAME>` | name for the restored database | required |
 | `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
 
+### postgres branch
+
+Make, list and delete copy-on-write branches of a database
+
+Examples:
+
+```sh
+gregale postgres branch orders pr-42 --ttl 2h
+gregale postgres attach pr-42 my-api-pr-42 --env DATABASE_URL
+gregale postgres branch delete orders pr-42 --yes
+```
+
+A branch is a restore: a new database that shares its source&#39;s storage until written to. `gregale postgres branch &lt;database&gt; &lt;name&gt;` is `branch create`.
+
+It counts toward the plan&#39;s database limit like any restore, and may take the one restore slot past it.
+
+With --ttl the branch&#39;s bindings are revoked and it is purged when the TTL ends; the source is never touched.
+
+#### postgres branch create
+
+Branch a database from its latest point or a chosen time
+
+`gregale postgres branch create [--since <live|TIMESTAMP>] [--ttl <DURATION>] <database> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <live|TIMESTAMP>` | live (default) or an RFC3339 time inside the source&#39;s restore range (also --from) |  |
+| `--ttl <DURATION>` | purge the branch this long after it is created, from 5m to 30d (e.g. 2h, 7d) |  |
+
+#### postgres branch list
+
+List a database&#39;s branches
+
+`gregale postgres branch list <database>`
+
+#### postgres branch delete
+
+Purge a branch; refuses databases that are not its branches
+
+`gregale postgres branch delete [--yes] <database> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
+
 ### postgres bindings
 
 Manage app database bindings
