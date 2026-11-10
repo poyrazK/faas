@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process'
 import { once, EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
+import { liveHealth } from './live-health.mjs'
 
 const enabled = Boolean(process.env.DATA_API_TEST_DATABASE_URL && process.env.DATA_API_POSTGREST_BIN && process.env.DATA_API_RUNTIME_DIR)
 async function probePort() {
@@ -85,7 +86,7 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   await startEngine()
   t.diagnostic('pool fixture: engine ready')
   const records = []
-  gateway = createServer(config, async token => ({ sub: token, exp: 9999999999 }), upstreamPort, readyPort, record => records.push(record))
+  gateway = createServer(liveHealth(config), async token => ({ sub: token, exp: 9999999999 }), upstreamPort, readyPort, record => records.push(record))
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${gateway.address().port}`
   const healthy = await (await fetch(base + '/healthz')).json()

@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { readFile, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { liveHealth } from './live-health.mjs'
 import { verifyRPC, verifyRPCPolicy } from './rpc.mjs'
 import { browserOrigins, verifyBrowserCORS } from './browser-cors.mjs'
 import { createHash } from 'node:crypto'
@@ -190,7 +191,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const { privateKey, publicKey } = await generateKeyPair('ES256')
   const jwk = await exportJWK(publicKey)
   const gatewayLogs = []
-  gateway = createServer(config, tokenVerifier(config.auth, createLocalJWKSet({ keys: [jwk] })), upstream, ready, record => gatewayLogs.push(record))
+  gateway = createServer(liveHealth(config), tokenVerifier(config.auth, createLocalJWKSet({ keys: [jwk] })), upstream, ready, record => gatewayLogs.push(record))
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
   const url = `http://127.0.0.1:${gateway.address().port}`
   let available = false

@@ -4,6 +4,7 @@ import net from 'node:net'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { pathToFileURL } from 'node:url'
+import { liveHealth } from './live-health.mjs'
 import { createRequire } from 'node:module'
 
 const enabled = Boolean(process.env.DATA_API_TEST_DATABASE_URL && process.env.DATA_API_POSTGREST_BIN && process.env.DATA_API_RUNTIME_DIR)
@@ -75,7 +76,7 @@ test('real SQL saturation never executes expired or cancelled queued writes and 
     try { return (await fetch(`http://127.0.0.1:${readyPort}/ready`)).status === 200 } catch { return false }
   })
   const records = []
-  gateway = createServer(config, async token => ({ sub: token, exp: 9999999999 }), upstreamPort, readyPort, record => records.push(record))
+  gateway = createServer(liveHealth(config), async token => ({ sub: token, exp: 9999999999 }), upstreamPort, readyPort, record => records.push(record))
   let arrivals = 0
   gateway.on('request', () => arrivals++)
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
