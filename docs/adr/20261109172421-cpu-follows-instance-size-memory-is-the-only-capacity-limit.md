@@ -205,7 +205,25 @@ schema change ships before its first user.
 6. **Retire.** The per-plan CPU fields in `pkg/api/limits.go` (`VCPU`,
    `CPUWeight`, `CPUQuotaUS`, `CPUPeriodUS`), the plan sub-slices, the
    `guest_vcpu_*` and `app_cpu_*` shape keys, and the vCPU budget gate: one
-   release after the flip.
+   release after the flip (`cpu_size_apps = *` in prod 2026-11-10 09:35Z).
+   Units release independently, so it lands in this order:
+   1. schedd: every app instance's CPU follows its size. `cpu_size_apps`,
+      `guest_vcpu_from_cpu_apps`, `guest_vcpu_millicores` and the two
+      `app_cpu_*` keys become read-only catalog entries that no daemon
+      reads. Snapshot refresh dates a snapshot's vCPU count from its
+      instance row (ADR-20261106214916 §2) instead of replaying those keys.
+   2. schedd and Postgres: the CPU admission gates go (`cpu_admission`,
+      placement's and the ledger's vCPU and CPU budgets,
+      `admission_reserve_node`'s CPU resources); CPU stays telemetry.
+   3. vmmd drops its plan CPU fallback (plan `cpu.max`, weight and startup
+      boost for app instances). It ships a release after 1, once every
+      schedd sends `cpu_weight` and `cpu_uncapped`.
+   4. The per-plan fields in `pkg/api/limits.go`, the API and CLI fields
+      that show them, and the SQL `plan_vcpus` fallbacks.
+   5. The flat hierarchy: app instances directly under `faas-tenant.slice`,
+      with vmmd still adopting VMs in the old sub-slices for a release.
+   6. The dead `FaasCpuStarvation` alert (nothing feeds its throttle
+      ratio) and the spec text.
 7. **Customer docs and plan pages** ("CPU follows memory: 1 vCPU per GB,
    bursts to idle CPU") once the change is tested on prod.
 

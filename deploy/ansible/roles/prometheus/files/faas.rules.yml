@@ -4114,46 +4114,6 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFailedLoginSpike.md"
 
       # ─────────────────────────────────────────────────────────────────
-      # Per-plan CPU starvation (issue #301, ADR-044).
-      # Source: vmmd_cpu_throttle_ratio{slice} gauge (NOT
-      # node_cpu_cgroup_throttled_seconds_total — that one is the
-      # kernel counter without a usage denominator). The gauge is
-      # computed inside vmmd as throttle_delta / (throttle_delta +
-      # usage_delta) over the per-tick 5m window and labelled by the
-      # per-plan cgroup sub-slice (tenant-free|tenant-hobby|tenant-pro|
-      # tenant-scale). The slice label is the alert's fan-out key;
-      # Alertmanager groups by [alertname, slice] so a single plan
-      # starving fires one page with the slice in the summary.
-      #
-      # Threshold: > 80% throttle ratio for 5m — literal from the
-      # issue. The 5m window debounces a single hot-loop arrival
-      # (one tenant scales up → ratio spikes for 30s → falls) while
-      # still paging on a sustained saturation event. Severity: warn
-      # because CPU starvation ≠ customer action failing (the
-      # cgroup's cpu.max just caps their slice); the response is
-      # operator-side capacity work, not a customer-facing outage.
-      #
-      # Response cascade (docs/ops/FaasCpuStarvation.md §Recover):
-      # top-N panel → plan raise for the customer → consider
-      # faas-tenant slice CPUQuota bump (host threads − reserve,
-      # node_join.yml; ADR-20261109172421 §4). Memory
-      # is NOT in scope — the per-VM memory.max is enforced by
-      # vmmd via the jailer (spec §11/G6); a starved VM is a CPU
-      # signal, not a RAM one.
-      # ─────────────────────────────────────────────────────────────────
-      - alert: FaasCpuStarvation
-        expr: vmmd_cpu_throttle_ratio{slice=~"tenant-.*"} > 0.8
-        for: 5m
-        labels:
-          severity: warn
-          component: vmmd
-          family: cpu_starvation
-        annotations:
-          summary: "Tenant slice {{ $labels.slice }} throttled > 80% for 5m"
-          description: "Plan sub-slice {{ $labels.slice }} has been > 80% throttled over the rolling 5-minute window for 5m (issue #301 / ADR-044). The cpu.max quota for that plan is saturated; quiescent workloads are preempted. Cross-check the top-throttled-apps Grafana panel for which (account_id, app_id) is the dominant offender, then follow docs/runbooks/FaasCpuStarvation.md §Recover."
-          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCpuStarvation.md"
-
-      # ─────────────────────────────────────────────────────────────────
       # githubd path-filter posture (issue #432 phase 5 follow-up /
       # ADR-050 §109). The counter githubd_path_filter_total{mode}
       # ticks once per inbound push webhook. After the path-filter

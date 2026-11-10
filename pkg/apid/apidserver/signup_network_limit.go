@@ -114,8 +114,9 @@ func writeSignupNetworkCap(w http.ResponseWriter) {
 }
 
 // signupFleetCapped reports whether the platform created its daily share of
-// accounts, api.SignupAccountsPerDay in the last 24 hours
-// (ADR-20261104145353). Every new account carries a full Free allowance and
+// verified accounts, api.SignupAccountsPerDay in the last 24 hours
+// (ADR-20261104145353 amendment 1: unverified accounts claim no Free
+// allowance and do not count). Every new account carries a full Free allowance and
 // the per-address caps reset with each new address, so this bounds what a
 // signup farm can claim. A store without the count, or a failed read, admits:
 // the per-address and per-network caps still apply.
@@ -124,7 +125,7 @@ func (s *server) signupFleetCapped(r *http.Request) bool {
 	if !ok {
 		return false
 	}
-	n, err := counter.CountAccountsCreatedSince(r.Context(), timeNow().Add(-24*time.Hour))
+	n, err := counter.CountVerifiedAccountsCreatedSince(r.Context(), timeNow().Add(-24*time.Hour))
 	if err != nil {
 		s.log.Warn("apid: sign-up fleet count failed; admitting", "err", err)
 		return false

@@ -17,7 +17,7 @@ func (s *server) sourceDeploymentApp(r *http.Request, acct state.Account, app st
 		if problem := validateUpdateApp(&req, acct, api.MustLimitsFor(acct.Plan), app); problem != nil {
 			return app, problem
 		}
-		if problem := s.afterRestoreBudgetProblem(r.Context(), acct.ID, app.ID, req.AfterRestore); problem != nil {
+		if problem := s.manifestAfterRestoreBudgetProblem(r.Context(), acct.ID, app, manifest, req.AfterRestore); problem != nil {
 			return app, problem
 		}
 		if problem := s.executionModeApprovalProblem(r.Context(), app, &req); problem != nil {

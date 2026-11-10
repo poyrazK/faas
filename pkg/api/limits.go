@@ -215,12 +215,13 @@ const (
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one
 // client address, and one network (IPv4 /24, IPv6 /48), may create per day.
 //
-// SignupAccountsPerDay caps the self-service accounts the whole platform
-// creates in any 24 hours (ADR-20261104145353). Each account carries a full
-// Free allowance, and the per-address and per-network caps reset with every
-// new address, so this bounds the Free compute, egress and storage a signup
-// farm can claim in a day. It counts every account created, so an operator-
-// or support-created account uses the same budget.
+// SignupAccountsPerDay caps the verified self-service accounts the whole
+// platform creates in any 24 hours (ADR-20261104145353 amendment 1). Each
+// verified account carries a full Free allowance, and the per-address and
+// per-network caps reset with every new address, so this bounds the Free
+// compute, egress and storage a signup farm can claim in a day. Unverified
+// accounts cannot deploy and do not count. An operator- or support-created
+// verified account uses the same budget.
 const (
 	SignupAccountsPerAddressPerDay = 10
 	SignupAccountsPerNetworkPerDay = 50
@@ -4645,6 +4646,12 @@ type Limits struct {
 	// ProjectSecretCountMax bounds the secrets one project environment shares
 	// with its services (ADR-1139); each value uses SecretValueMaxBytes.
 	ProjectSecretCountMax int // (Free 8, Hobby 25, Pro 50, Scale 100)
+	// PostgresBindingsPerAppMax bounds the live managed PostgreSQL bindings
+	// one app holds across every scope. Each binding issues its own provider
+	// role, so the count is capped on its own now that managed values left
+	// SecretCountMax (ADR-20261110120000); the values equal the bound
+	// SecretCountMax used to impose.
+	PostgresBindingsPerAppMax int // (Free 8, Hobby 25, Pro 50, Scale 100)
 
 	// Customer env vars (issue #395 / ADR-045). Plaintext per-app store
 	// for non-sensitive runtime config (LOG_LEVEL, FEATURE_X, etc.). The
@@ -6115,6 +6122,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   16,
 		SecretCountMax:                 8,
 		ProjectSecretCountMax:          8,
+		PostgresBindingsPerAppMax:      8,
 		SecretValueMaxBytes:            4 * 1024,
 		EnvVarsMax:                     16,
 		EnvValueMaxBytes:               4 * 1024,
@@ -6537,6 +6545,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   64,
 		SecretCountMax:                 25,
 		ProjectSecretCountMax:          25,
+		PostgresBindingsPerAppMax:      25,
 		SecretValueMaxBytes:            8 * 1024,
 		EnvVarsMax:                     32,
 		EnvValueMaxBytes:               8 * 1024,
@@ -6991,6 +7000,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   256,
 		SecretCountMax:                 50,
 		ProjectSecretCountMax:          50,
+		PostgresBindingsPerAppMax:      50,
 		SecretValueMaxBytes:            16 * 1024,
 		EnvVarsMax:                     64,
 		EnvValueMaxBytes:               16 * 1024,
@@ -7410,6 +7420,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   1024,
 		SecretCountMax:                 100,
 		ProjectSecretCountMax:          100,
+		PostgresBindingsPerAppMax:      100,
 		SecretValueMaxBytes:            32 * 1024,
 		EnvVarsMax:                     256,
 		EnvValueMaxBytes:               32 * 1024,
@@ -14221,6 +14232,13 @@ func (l Limits) PostgresPoolMax(requestedPerInstanceConcurrency int) int {
 // PostgresPoolMaxAccepted is the largest GREGALE_POSTGRES_POOL_MAX the SDKs
 // and the binding check accept; a larger value is ignored as unset.
 const PostgresPoolMaxAccepted = 1000
+
+// SessionBindingConnectionLimit is the role CONNECTION LIMIT of a `session`
+// login (ADR-20261110120000): 2 direct connections × (Scale concurrency 20 +
+// rollout 1). Session bindings are for session features (LISTEN/NOTIFY,
+// session advisory locks), not bulk query traffic, which belongs on a pooled
+// read_write binding; without a limit one binding could exhaust the compute.
+const SessionBindingConnectionLimit = 42
 
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a

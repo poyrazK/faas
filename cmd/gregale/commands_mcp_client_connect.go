@@ -76,7 +76,7 @@ type mcpConnectSummary struct {
 	Clients  []mcpConnectResult `json:"clients"`
 }
 
-const mcpConnectUsage = "usage: gregale mcp connect [--client claude-code|codex|cursor|vscode|windsurf|claude-desktop]... [--project] [--toolsets LIST] [--headless] [--force] [--dry-run] [--yes] | --check"
+const mcpConnectUsage = "usage: gregale mcp connect [--client claude-code|codex|cursor|vscode|windsurf|claude-desktop]... [--project] [--toolsets LIST] [--headless] [--force] [--dry-run] [--yes] | --check | --ci [--repo OWNER/NAME] [--scopes LIST] [--approvals LIST] [--force] [--dry-run]"
 
 func cmdMCPConnect(args []string) int {
 	fs := newFlagSet("mcp connect", flag.ContinueOnError)
@@ -89,13 +89,25 @@ func cmdMCPConnect(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "print what would be written without changing anything")
 	yes := fs.Bool("yes", false, "connect every detected client without asking")
 	check := fs.Bool("check", false, "only check why an agent does not see Gregale; changes nothing")
-	flags, positional := splitArgsForFlags(args, "project", "headless", "force", "dry-run", "yes", "check")
+	ci := fs.Bool("ci", false, "set up an agent in GitHub Actions: mint an agent key, store it as a repository secret with gh, write a workflow")
+	repo := fs.String("repo", "", "GitHub repository for --ci, OWNER/NAME (default: the current clone's)")
+	scopes := fs.String("scopes", api.ScopeAgent+","+api.ScopeDeployWrite, "agent key scopes for --ci")
+	approvals := fs.String("approvals", "", "kinds of action the --ci key needs approval for (default: every kind; none to act alone)")
+	flags, positional := splitArgsForFlags(args, "project", "headless", "force", "dry-run", "yes", "check", "ci")
 	if err := fs.Parse(flags); err != nil || len(positional) != 0 {
 		PrintUsage(os.Stderr, mcpConnectUsage, "mcp")
 		return 1
 	}
 	if *check {
 		return runMCPConnectCheck()
+	}
+	if *ci {
+		cats, err := approvalsFlag(fs, *approvals)
+		if err != nil {
+			return printErr("Invalid --approvals", err)
+		}
+		return runMCPConnectCI(mcpConnectCIOptions{Repo: strings.TrimSpace(*repo), Scopes: splitList(*scopes), Approvals: cats,
+			Force: *force, DryRun: *dryRun, URL: strings.TrimRight(apiBase(), "/") + "/mcp"})
 	}
 	opts := mcpConnectOptions{URL: strings.TrimRight(apiBase(), "/") + "/mcp", Toolsets: strings.TrimSpace(*toolsets),
 		Project: *project, Headless: *headless, Force: *force, DryRun: *dryRun}
@@ -436,10 +448,6 @@ func mcpConnectHeaders(opts mcpConnectOptions, keyRef string) []string {
 }
 
 func mintConnectAgentKey(clients []string) (api.APIKeyResponse, error) {
-	client, err := authedClient()
-	if err != nil {
-		return api.APIKeyResponse{}, err
-	}
 	host, _ := os.Hostname()
 	label := "mcp-" + strings.Join(clients, "-")
 	if host != "" {
@@ -448,9 +456,7 @@ func mintConnectAgentKey(clients []string) (api.APIKeyResponse, error) {
 	if len(label) > 64 {
 		label = label[:64]
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return client.CreateKeyWith(ctx, api.CreateKeyRequest{Label: label, Scopes: []string{api.ScopeAgent, api.ScopeDeployWrite}})
+	return mintAgentKey(label, []string{api.ScopeAgent, api.ScopeDeployWrite}, nil)
 }
 
 func printMCPConnectSummary(s mcpConnectSummary, key string, opts mcpConnectOptions) int {

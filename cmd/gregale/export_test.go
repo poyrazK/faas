@@ -2786,6 +2786,7 @@ var (
 	MCPConnectHome        = &mcpConnectHome
 	MCPEndpointCheck      = &mcpEndpointCheck
 	MCPHeadlessToolCount  = &mcpHeadlessToolCount
+	MCPConnectRunStdin    = &mcpConnectRunStdin
 	UpsertCodexServer     = upsertCodexServer
 )
 
