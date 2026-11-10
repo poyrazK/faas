@@ -3,23 +3,12 @@ package otlpmetrics
 import (
 	"fmt"
 	"math"
-	"regexp"
-	"sort"
 	"strconv"
-	"strings"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
-
-// labelKeyPattern matches a normalised label key: a Prometheus-safe
-// identifier, the shape of a metric name but allowed to start with '_'.
-var labelKeyPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
-
-// seriesKeyEscaper escapes the separators of the canonical series key, so
-// "k=v,k=v" is unambiguous whatever the values contain.
-var seriesKeyEscaper = strings.NewReplacer("%", "%25", ",", "%2C", "=", "%3D")
 
 // Labels converts a data point's attributes into a custom metric label set
 // (ADR-20261108160000 slice C) and its canonical series key: "k=v,..." with
@@ -37,7 +26,7 @@ func Labels(attrs []*commonpb.KeyValue) (map[string]string, string, error) {
 	labels := make(map[string]string, len(attrs))
 	for _, kv := range attrs {
 		key := NormalizeName(kv.GetKey())
-		if !labelKeyPattern.MatchString(key) {
+		if !api.ValidCustomMetricLabelKey(key) {
 			return nil, "", fmt.Errorf("attribute %q must normalise to [a-z_][a-z0-9_]{0,62}", kv.GetKey())
 		}
 		if _, dup := labels[key]; dup {
@@ -57,19 +46,7 @@ func Labels(attrs []*commonpb.KeyValue) (map[string]string, string, error) {
 
 // SeriesKey is the canonical key of a label set; "" for none.
 func SeriesKey(labels map[string]string) string {
-	if len(labels) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(labels))
-	for k := range labels {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, len(keys))
-	for i, k := range keys {
-		parts[i] = k + "=" + seriesKeyEscaper.Replace(labels[k])
-	}
-	return strings.Join(parts, ",")
+	return api.CustomMetricSeriesKey(labels)
 }
 
 func scalarString(v *commonpb.AnyValue) (string, bool) {

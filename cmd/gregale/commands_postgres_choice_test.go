@@ -25,7 +25,7 @@ func TestPostgresCommandsNameInvalidChoices(t *testing.T) {
 		{name: "create availability", run: main.CmdPostgresCreate, args: []string{"orders", "--region", "us-east-2", "--availability", "multi_zone"},
 			want: `invalid --availability "multi_zone" (want single_zone|high_availability)`},
 		{name: "attach access", run: main.CmdPostgresAttach, args: []string{"orders", "api", "--scope", "production", "--access", "admin"},
-			want: `invalid --access "admin" (want read_write|read_only|migration|data_api)`},
+			want: `invalid --access "admin" (want read_write|read_only|migration|data_api|session)`},
 		{name: "bindings create access", run: main.CmdPostgresBindingsCreate, args: []string{"db-1", "--app", "app-1", "--scope", "production", "--environment-key", "DATABASE_URL", "--access", "superuser"},
 			want: `invalid --access "superuser"`},
 		{name: "resize class", run: main.CmdPostgresResize, args: []string{"orders", "--class", "huge", "--request-id", requestID},
@@ -55,7 +55,7 @@ func TestPostgresCommandsNameInvalidChoices(t *testing.T) {
 	_ = main.CaptureStderrSwap(t, &stderr, func() int {
 		return main.CmdPostgresAttach([]string{"orders", "api", "--scope", "production", "--access", "admin"})
 	})
-	if !strings.Contains(stderr.String(), `(want read_write|read_only|migration|data_api|auth)`) {
+	if !strings.Contains(stderr.String(), `(want read_write|read_only|migration|data_api|session|auth)`) {
 		t.Fatalf("with Auth on, stderr = %q", stderr.String())
 	}
 }

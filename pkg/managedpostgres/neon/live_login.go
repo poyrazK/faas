@@ -296,12 +296,12 @@ func (m *sqlLiveLogins) Revoke(ctx context.Context, owner managedpostgres.Creden
 // bindingMarkers are the markers of the binding logins a live query may read
 // as in role's database.
 func bindingMarkers(role credentialRole) []string {
-	out := make([]string, 0, 6)
+	out := make([]string, 0, 8)
 	for _, scope := range []string{role.scope, role.liveLegacyScope} {
 		if scope == "" {
 			continue
 		}
-		for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadOnly, managedpostgres.CredentialReadWrite, managedpostgres.CredentialDataAPI} {
+		for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadOnly, managedpostgres.CredentialReadWrite, managedpostgres.CredentialDataAPI, managedpostgres.CredentialSession} {
 			out = append(out, "gregale:credential:v1:"+scope+":"+string(access))
 		}
 	}

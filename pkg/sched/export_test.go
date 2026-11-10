@@ -1403,3 +1403,15 @@ func XChooseWithCPUAdmission(nodes []state.ComputeNode, usedMB, usedVCPU, usedCP
 	p, err := placementSnapshot{nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU, usedCPUMillicores: usedCPU, cpu: c}.choose(r)
 	return p, promtestutil.ToFloat64(c.wouldRefuse.WithLabelValues(CPUGatePlacement)), err
 }
+
+// NodeBudgetRefusal builds the scheduler's node-budget refusal carrying the
+// given blockers, as placement returns it.
+func NodeBudgetRefusal(detail string, blockers ...api.WorkerAdmissionBlocker) error {
+	return explainAdmission(api.ErrCapacity(detail), blockers...)
+}
+
+// FinishFailedPrime reaches the decision dispatchPrime makes after a prime
+// failed its retries.
+func (r *Loop) FinishFailedPrime(ctx context.Context, appID, deploymentID string, err error) {
+	r.finishFailedPrime(ctx, appID, deploymentID, 1, err)
+}

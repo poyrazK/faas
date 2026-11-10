@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/e2etest/financialfixture"
@@ -20,7 +21,7 @@ import (
 // counts it as a duplicate of the first event (sandbox, 2026-10-29); the
 // fixture must too, while still refusing a replay whose quantity changed.
 func TestFinancialFixtureReplayIgnoresDeliveryTimestamp(t *testing.T) {
-	fixture := financialfixture.NewProvider(t, 2000)
+	fixture := financialfixture.NewProvider(t, api.EgressOverageMillicentsPerGiB)
 	ingest := func(timestamp string, mbSeconds int64) (int, string) {
 		t.Helper()
 		body := fmt.Sprintf(`{"events":[{"external_id":"faas-usage-a-2026-10-28T00:00:00Z","name":"faas_ram_usage","external_customer_id":"a","timestamp":%q,"metadata":{"mb_seconds":%d,"window_start":"2026-10-28T00:00:00Z"}}]}`, timestamp, mbSeconds)
@@ -58,7 +59,9 @@ func TestFinancialFixtureReplayIgnoresDeliveryTimestamp(t *testing.T) {
 // Catalog drift must fail at the real daemon startup boundary before the
 // PostgreSQL reconciliation and outage scenarios need to build meterd.
 func TestFinancialFixtureCatalogPassesMeterdPreflight(t *testing.T) {
-	for _, rate := range []int64{2000, 4000} {
+	// meterd accepts only the published egress rate (ADR-20261103131742
+	// amendment 2): the fixture's catalog must pass, a drifted one must not.
+	for _, rate := range []int64{api.EgressOverageMillicentsPerGiB, api.EgressOverageMillicentsPerGiB + 1000} {
 		t.Run(fmt.Sprint(rate), func(t *testing.T) {
 			fixture := financialfixture.NewProvider(t, rate)
 			values := make(map[string]string)
@@ -69,6 +72,12 @@ func TestFinancialFixtureCatalogPassesMeterdPreflight(t *testing.T) {
 			env := func(key string) string { return values[key] }
 			cfg := loader.ApplyBillingEnvOverlay(&loader.RootBillingConfig{}, env)
 			provider, name, err := loader.LoadProviderForMeterd(cfg, env, state.NewMemStore(), nil)
+			if rate != api.EgressOverageMillicentsPerGiB {
+				if err == nil {
+					t.Fatal("meterd accepted an unpublished egress rate")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("fixture catalog refused by meterd: %v", err)
 			}

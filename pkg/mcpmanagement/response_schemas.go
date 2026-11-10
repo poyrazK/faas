@@ -11,7 +11,7 @@ import (
 
 var planStatuses = []string{"planned", "running", "accepted", "completed", "promoted", "awaiting_approval", "refused", "partial", "interrupted", "cancelled", "cancellation_requested", "outcome_unknown"}
 var provisionStatuses = []string{"planned", "running", "completed", "failed", "interrupted", "cancelled", "cancellation_requested"}
-var recoveryActions = []string{"none", "retry_same_plan", "retry_read", "replan", "inspect", "request_access"}
+var recoveryActions = []string{"none", "retry_same_plan", "retry_read", "replan", "inspect", "request_access", "await_approval", "retry_original", "stop"}
 
 func recoverySchema() map[string]any {
 	return map[string]any{"type": "object", "required": []string{"action"}, "additionalProperties": false,
