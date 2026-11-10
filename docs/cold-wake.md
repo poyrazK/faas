@@ -197,6 +197,29 @@ whole idle timeout and must not resume with them delayed, or `between_requests`
 for a request-driven app that does no work between requests. Worker, service
 and job execution modes accept only `never`, because they never idle out.
 
+## Warm snapshots (opt-in, Pro and Scale)
+
+By default every wake restores the snapshot Gregale takes right after your app
+becomes ready, before it has served a request. Pro and Scale apps can opt in to
+a second, warm snapshot, taken when an instance parks after it has served a few
+requests (5 by default, `--warm-snapshot-min-requests`) and been ready for a
+while (2 s, `--warm-snapshot-min-ms`). Wakes then skip your framework's warm-up
+work (JIT compilation, caches filled on first use).
+
+```sh
+gregale app update shop-api --warm-snapshot
+```
+
+A warm snapshot is taken once and reused by every later wake and every instance
+until the next deploy. It carries whatever those first requests left in
+memory: in-memory sessions, caches, rate-limit counters and per-user data, and
+files under `/tmp`, which lives in memory. Every woken instance starts from
+that same state, and anything written after the capture is lost at each park.
+Opt in only when your app keeps no per-user or per-request state in memory or
+`/tmp`. Apps created before 2026-11-10 on Pro or Scale were opted in by
+default and keep that setting; `--no-warm-snapshot` turns it off
+([ADR-20261110180000](adr/20261110180000-warm-snapshots-are-opt-in.md)).
+
 ## Opting out: keep N instances warm (Pro, Scale)
 
 On the Pro and Scale plans you can pin a number of instances
