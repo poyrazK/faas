@@ -8200,6 +8200,14 @@ const (
 	// a momentarily full fleet failed a finished build, and the customer had
 	// to rebuild to retry.
 	SnapshotPrimeCapacityMaxWait = 5 * time.Minute
+	// AppTaskCapacityMaxWait is how long after it was created an app task (a
+	// release command, a one-off task) keeps waiting for a compute node with
+	// room for its environment. Inside the window a node-budget refusal
+	// (memory, guest vCPUs, CPU) leaves the task restoring and the lease sweep
+	// requeues it; after it the task fails with capacity_unavailable. Without
+	// the wait a momentarily full fleet failed the release, and its deployment
+	// with it (production, 2026-11-05).
+	AppTaskCapacityMaxWait = 5 * time.Minute
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment

@@ -26,6 +26,8 @@ func TestReleaseTaskFailureNamesWhoFailed(t *testing.T) {
 	}{
 		{name: "environment could not be prepared", status: state.AppTaskFailed, code: "restore_failed",
 			message: "app task environment could not be prepared", wantCode: api.CodeReleaseInfrastructure, wantHint: true},
+		{name: "no node had room after the capacity wait", status: state.AppTaskFailed, code: "capacity_unavailable",
+			message: "no compute node had room for the app task environment", wantCode: api.CodeReleaseInfrastructure, wantHint: true},
 		{name: "result channel closed", status: state.AppTaskFailed, code: "execution_transport_failed",
 			message: "app task result channel closed unexpectedly", wantCode: api.CodeReleaseInfrastructure, wantHint: true},
 		{name: "command exited non-zero", status: state.AppTaskFailed, code: "command_failed",

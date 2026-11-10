@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -335,8 +336,17 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 			c.log.Info("schedd: app task left for its owning node", "task_id", task.ID, "node_id", c.config.NodeID)
 			return nil
 		}
+		if c.restoreAwaitsCapacity(task, restoreErr) {
+			// No command was dispatched. Leave the restoring lease to the sweep,
+			// which requeues the task; the next claim places it again.
+			c.log.Info("schedd: app task waits for node capacity; the lease sweep requeues it",
+				"task_id", task.ID, "max_wait", api.AppTaskCapacityMaxWait)
+			return nil
+		}
 		if restoreTimedOut {
 			code, message = "restore_timeout", "app task environment preparation timed out"
+		} else if customerCapacityProblem(restoreErr) != nil {
+			code, message = appTaskCapacityFailureCode, appTaskCapacityFailureMessage
 		} else if errors.Is(restoreErr, ErrAppTaskAccountInactive) {
 			code, message = accountInactiveFailureCode, accountInactiveFailureMessage
 		} else if errors.Is(restoreErr, state.ErrManagedPostgresAdmissionFenced) {
@@ -643,6 +653,18 @@ func waitAppTaskInterval(ctx context.Context, interval time.Duration) bool {
 	}
 }
 
+// restoreAwaitsCapacity reports whether a restore that node budgets refused
+// (memory, guest vCPUs, CPU) should wait for capacity instead of failing the
+// task: it does while the task is younger than api.AppTaskCapacityMaxWait.
+// The refusal happens at placement, before a VM or a command exists, so the
+// sweep can requeue the restoring lease safely, as for a held budget.
+func (c *AppTaskCoordinator) restoreAwaitsCapacity(task state.AppTask, err error) bool {
+	if customerCapacityProblem(err) == nil || task.CreatedAt.IsZero() {
+		return false
+	}
+	return c.now().Sub(task.CreatedAt) < api.AppTaskCapacityMaxWait
+}
+
 func appTaskErrorClass(err error) string {
 	switch {
 	case err == nil:
@@ -653,6 +675,8 @@ func appTaskErrorClass(err error) string {
 		return "timeout"
 	case errors.Is(err, state.ErrAppTaskLeaseLost):
 		return "lease_lost"
+	case customerCapacityProblem(err) != nil:
+		return "capacity"
 	default:
 		return "internal"
 	}

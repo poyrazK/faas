@@ -167,3 +167,21 @@ sweep dispatches the prime again each minute once its 2-minute grace has
 passed, under the same attempt identity. After the window the refusal fails
 the deployment with `capacity_unavailable` as before. Other prime failures
 are unchanged. Validation: `TestFinishFailedPrime_WaitsForNodeCapacity`.
+
+## Amendment 3 (2026-11-10): a release task waits for room too
+
+A deployment's release task (and any app task) failed for good the moment
+placement refused its environment for node budgets: schedd recorded
+`restore_failed` before any VM or command existed, and the deployment
+failed. Production recorded eight such refusals on compute-1 between 21:04
+and 21:09 on 2026-11-05, two of them failing chronolake-gateway's releases.
+Now a node-budget refusal within `AppTaskCapacityMaxWait` (5 minutes from the
+task's creation, `pkg/api/limits.go`) leaves the task restoring, as a held
+financial budget already does, and the lease sweep requeues it for the next
+claim; requeued restores do not count as attempts. After the window the task
+fails with the new failure code `capacity_unavailable`, which imaged reports
+as `release_infrastructure_failed` (ADR-1448 amendment). The coordinator's
+log class for such refusals is `capacity`, so operators can tell them from
+other preparation failures without logging error text.
+Validation: `TestAppTaskCoordinatorWaitsForNodeCapacity`,
+`TestReleaseTaskFailureNamesWhoFailed`.

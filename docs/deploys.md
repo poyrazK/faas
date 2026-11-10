@@ -114,6 +114,9 @@ with a stable error code.
 When a build finishes while no compute node has room for the app's first
 boot, the deployment waits in `snapshot_prepare` for up to 5 minutes and is
 retried each minute; only then does it fail with `capacity_unavailable`.
+A release command waits the same way: while no node has room for its task
+environment, the task is requeued for up to 5 minutes from its creation, and
+only then fails the deployment with `release_infrastructure_failed`.
 
 ## Waiting and resuming
 
