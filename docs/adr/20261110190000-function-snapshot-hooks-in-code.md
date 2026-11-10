@@ -89,13 +89,18 @@ function cannot do well today is react to the snapshot itself:
 ## Slices
 
 1. Adapters call the three hooks (Node and Python), report them in the ready
-   line, and run `init` before ready; the ordinary runner fans
-   `beforeSnapshot` and `afterRestore` out to every worker. Unit tests and a
+   line (`function_hooks_version: 1`), and run `init` before ready; the
+   ordinary runner answers guest-init on reserved paths
+   (`/__gregale/function/before-snapshot`, `/__gregale/function/after-restore`)
+   by broadcasting the hook to every worker, exclusive or shared, and refuses
+   when a worker's adapter does not advertise hooks. Adapter, worker-pool and
+   runner tests.
+2. Static hook detection, the lifecycle wiring to the reserved paths and the
+   one-source check at deploy (CLI and repository pushes share
+   `pkg/gregalemanifest`), `function_init_failed`, `--plan` output, and a
    metal test that restores one snapshot into two instances with two workers
-   each.
-2. Static hook detection, the lifecycle wiring and the one-source check at
-   deploy (CLI and repository pushes share `pkg/gregalemanifest`),
-   `function_init_failed`, `--plan` output.
+   each (guest-init calls the reserved paths only once this slice wires
+   them).
 3. Docs (functions.md, handler-api.md, cold-wake.md), TypeScript and Python
    types in the SDKs, `init` under `gregale dev --local`, and a journey.
 
