@@ -125,7 +125,7 @@ func (b *unavailableAdmissionBackend) CheckWorkloadAdmission(context.Context, st
 	return b.err
 }
 
-// A refused admission is policy time with a named stage, not an unmeasured
+// adr: 20261028110044 amendment 8 — a refused admission is policy time with a named stage, not an unmeasured
 // "body_response" (prod 2026-11-09), and only a storage failure invites a retry.
 func TestWorkloadAdmissionRefusalIsAttributed(t *testing.T) {
 	for _, tc := range []struct {
