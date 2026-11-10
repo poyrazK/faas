@@ -182,15 +182,15 @@ var adoptionInstanceInventory = map[string]string{
 	"EgressFloodDropsPerMin":          "reset",
 	"StaticEgressExcluded":            "rebuilt",
 	"networkPolicyMu":                 "reset",
-	"resolvedEgress":                  "rebuilt",  // surviving nft entries retain their remaining lifetimes
-	"resolvedEgressGeneration":        "reset",    // restart invalidates outstanding DNS grants
+	"resolvedEgress":                  "rebuilt", // surviving nft entries retain their remaining lifetimes
+	"resolvedEgressGeneration":        "reset",   // restart invalidates outstanding DNS grants
 	"booting":                         "reset",   // only set on a booting network owner, which is never adopted
-	"awaitingExit":                    "reset",    // only set while a teardown call waits on the guest
-	"egressAllowlistUncertain":        "reset",    // adopted guests re-prove their journaled allowlist
-	"egressPortsUncertain":            "reset",    // adopted guests read the surviving port sets
-	"databaseEgress":                  "rebuilt",  // surviving egress_db pairs retain their remaining lifetimes
-	"TailCount":                       "reset",    // the host only ever sees decrements
-	"tailSecondsAccum":                "reset",    // informational, not billed
+	"awaitingExit":                    "reset",   // only set while a teardown call waits on the guest
+	"egressAllowlistUncertain":        "reset",   // adopted guests re-prove their journaled allowlist
+	"egressPortsUncertain":            "reset",   // adopted guests read the surviving port sets
+	"databaseEgress":                  "rebuilt", // surviving egress_db pairs retain their remaining lifetimes
+	"TailCount":                       "reset",   // the host only ever sees decrements
+	"tailSecondsAccum":                "reset",   // informational, not billed
 	"adoptionVCPUs":                   "rebuilt",
 	"adoptionMemSizeMiB":              "rebuilt",
 	"adoptionOp":                      "reset", // resolved before adoption (slice 3)
