@@ -90,6 +90,14 @@ type RestoreDatabaseRequest struct {
 	// giving it the restore slot: a database switch's copy becomes the
 	// app's database, and the slot's end would revoke its bindings.
 	WithinLimit bool
+	// Latest restores from the most recent point apid can name: its clock
+	// minus LatestRestoreLag (ADR-20261106103654). PointInTime must be zero.
+	// Repeating a latest restore adopts the copy of the same source and TTL
+	// under that name, whatever point it was taken at.
+	Latest bool
+	// TTL, when set, ends the copy at its creation plus TTL: the branch
+	// sweep purges it then. It must be within [MinBranchTTL, MaxBranchTTL].
+	TTL time.Duration
 }
 
 type RestoreSourceDefinition struct {
@@ -288,7 +296,13 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if !s.operationsEnabled() {
 		return Database{}, false, ErrProvisioningClosed
 	}
-	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() {
+	if request.Latest {
+		if !request.PointInTime.IsZero() {
+			return Database{}, false, ErrInvalid
+		}
+		request.PointInTime = s.now().Add(-LatestRestoreLag)
+	}
+	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() || !validBranchTTL(request.TTL) {
 		return Database{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
@@ -320,7 +334,8 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		if _, err := s.Get(ctx, existing.AccountID, existing.ID); err != nil {
 			return Database{}, false, err
 		}
-		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !existing.RestorePointInTime.Equal(request.PointInTime) {
+		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !request.Latest && !existing.RestorePointInTime.Equal(request.PointInTime) ||
+			!branchExpiryMatches(existing, request.TTL) {
 			return Database{}, false, ErrConflict
 		}
 		if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(existing, source) {
@@ -352,6 +367,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	// such a point only after the target is reserved, leaving a failed row
 	// on the account's database quota (production-us hunt #9).
 	if request.PointInTime.Before(source.CreatedAt) {
+		if request.Latest {
+			return Database{}, false, fmt.Errorf("%w: the source database was created less than %s ago; retry in a few seconds", ErrInvalid, LatestRestoreLag)
+		}
 		return Database{}, false, fmt.Errorf("%w: point in time is before the source database was created (%s)", ErrInvalid, source.CreatedAt.UTC().Format(time.RFC3339))
 	}
 	// A major upgrade preserves the older major's recovery archive. Persist
@@ -367,6 +385,10 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if request.WithinLimit {
 		ctx = reserveWithinLimit(ctx)
 	}
+	var expiresAt time.Time
+	if request.TTL > 0 {
+		expiresAt = now.Add(request.TTL)
+	}
 	database, created, err := s.store.Reserve(ctx, Database{
 		ID:                      s.newID(),
 		AccountID:               request.AccountID,
@@ -378,6 +400,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		RestoreSourceDatabaseID: source.ID,
 		RestoreSourceResourceID: databaseDataResource(source),
 		RestorePointInTime:      request.PointInTime.UTC(),
+		ExpiresAt:               expiresAt,
 		State:                   StateProvisioning,
 		DesiredGeneration:       1,
 		CreatedAt:               now,
@@ -386,7 +409,8 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if err != nil {
 		return Database{}, false, quotaDetail(err, reservationLimit)
 	}
-	if database.RestoreSourceDatabaseID != request.SourceDatabaseID || !database.RestorePointInTime.Equal(request.PointInTime.UTC()) {
+	if database.RestoreSourceDatabaseID != request.SourceDatabaseID || !request.Latest && !database.RestorePointInTime.Equal(request.PointInTime.UTC()) ||
+		!branchExpiryMatches(database, request.TTL) {
 		return Database{}, false, ErrConflict
 	}
 	if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(database, source) {
