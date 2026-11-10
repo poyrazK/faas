@@ -1816,7 +1816,51 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 			"Not found", detail))
 		return true
 	}
+	if appBoundCredentialDeniedRoute(r.Pattern) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, title,
+			"this token deploys its app; it cannot delete or rename the app, send its data elsewhere, mint credentials, or read its debug and crash data. Use an API key for that").
+			WithHint("Create an API key with `gregale key create` for app administration."))
+		return true
+	}
 	return false
+}
+
+// appBoundCredentialDeniedExact and appBoundCredentialDeniedAreas are the
+// /v1/apps/{slug} routes an app-bound credential (a deploy token, or an OIDC
+// bearer exchanged for one app) may not use although deploy:write opens them
+// to API keys: deleting or renaming the app, sending its data elsewhere (log
+// drains, mirrors, outbound webhooks), minting credentials (consumer keys, AI
+// access tokens, issue ingest tokens) and reading or forking its memory
+// (debug requests, crash snapshots, forks). A CI deploy, including a
+// gregale.yaml reconciliation, uses none of them; inbound webhooks are
+// separate routes and stay open.
+var appBoundCredentialDeniedExact = map[string]bool{
+	"DELETE /v1/apps/{slug}":      true,
+	"POST /v1/apps/{slug}/rename": true,
+}
+
+var appBoundCredentialDeniedAreas = map[string]bool{
+	"log-drains": true, "mirrors": true, "webhooks": true,
+	"consumers": true, "ai-access-tokens": true, "issue-ingest-tokens": true,
+	"debug": true, "crash-snapshots": true, "forks": true,
+}
+
+// appBoundCredentialDeniedRoute reports whether the matched route pattern is
+// outside what an app-bound credential may do.
+func appBoundCredentialDeniedRoute(pattern string) bool {
+	if appBoundCredentialDeniedExact[pattern] {
+		return true
+	}
+	_, path, ok := strings.Cut(pattern, " ")
+	if !ok {
+		return false
+	}
+	rest, ok := strings.CutPrefix(path, "/v1/apps/{slug}/")
+	if !ok {
+		return false
+	}
+	area, _, _ := strings.Cut(rest, "/")
+	return appBoundCredentialDeniedAreas[area]
 }
 
 // appBoundPreviewStatusReads are the PR preview status reads an app-bound
