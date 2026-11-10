@@ -1071,6 +1071,17 @@ Revision numbers are per app, so `v41` of one app is unrelated to `v41` of
 another. Numbers may skip values: preview deploys and retries consume them
 too.
 
+## Cancel
+
+`gregale release cancel <id>` stops a deployment that is still pending,
+building, imaging or snapshotting. A live deployment cannot be cancelled
+(`deployment_cancel_live_forbidden`); roll back to an earlier one with
+`gregale deploys rollback` instead.
+
+`gregale release hide <id>` hides a finished deployment from lists. It does
+not stop anything, so a deployment that is still in progress is refused with
+`deployment_hide_in_flight`: cancel it first, then hide it.
+
 ## Deployment aliases
 
 A deployment alias gives one exact revision a stable hostname of its own:

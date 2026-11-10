@@ -287,7 +287,7 @@ func testServiceCapacityRecovery(t *testing.T, fx *Fixture) {
 }
 
 // ADR-422: a smaller survivor sets the protected limit; total RAM alone is
-// insufficient. Guest CPU and startup CPU are independent placement bounds.
+// insufficient. Memory is the only bound (ADR-20261109172421).
 func testServiceCapacityHeterogeneous(t *testing.T, fx *Fixture) {
 	nodes, err := fx.Store.NodeList(fx.Ctx, "")
 	if err != nil {
@@ -328,7 +328,8 @@ func testServiceCapacityHeterogeneous(t *testing.T, fx *Fixture) {
 }
 
 // ADR-422: explicit zero sidecar CPU inherits the startup quota, just like an
-// omitted value. CPU alone can exhaust the protected capacity.
+// omitted value. CPU is reported but never exhausts the protected capacity:
+// memory is the only capacity limit (ADR-20261109172421).
 func testServiceCapacitySidecarCPU(t *testing.T, fx *Fixture) {
 	capacityFleet(t, fx)
 	a, err := fx.Store.CreateApp(fx.Ctx, capacityApp(fx, 4))
@@ -339,18 +340,22 @@ func testServiceCapacitySidecarCPU(t *testing.T, fx *Fixture) {
 		t.Fatal(err)
 	}
 	r, err := fx.Store.ServiceCapacityProtection(fx.Ctx)
-	if err != nil || r.State != "protected" || r.ReplicaCPUMillicores != 2000 || r.FailoverSlots != 4 {
+	if err != nil || r.State != "protected" || r.ReplicaCPUMillicores != 2000 || r.FailoverSlots != 8 {
 		t.Fatalf("sidecar CPU certificate: %+v %v", r, err)
 	}
+	if _, err := fx.Store.CreateApp(fx.Ctx, capacityApp(fx, 4)); err != nil {
+		t.Fatalf("CPU refused a replica memory fits: %v", err)
+	}
 	if _, err := fx.Store.CreateApp(fx.Ctx, capacityApp(fx, 1)); state.ServiceCapacityProblem(err) == nil {
-		t.Fatalf("sidecar CPU overcommitted: %v", err)
+		t.Fatalf("memory overcommitted: %v", err)
 	}
 }
 
 // ADR-422: a plan downgrade does not resize an already-running guest. Its
 // admitted topology remains reserved until the instance releases resources:
-// a guest booted at 4 vCPUs (before its size set the count,
-// ADR-20261109172421) keeps them while its size's demand is one.
+// a guest admitted with 1 GB and 4 vCPUs (before its app shrank to 512 MB
+// and its size set the count, ADR-20261109172421) keeps both. Only its
+// memory sizes the slots; its vCPUs are reported.
 func testServiceCapacityAdmittedShape(t *testing.T, fx *Fixture) {
 	fleet := capacityFleet(t, fx)
 	a, err := fx.Store.CreateApp(fx.Ctx, capacityApp(fx, 2))
@@ -361,19 +366,19 @@ func testServiceCapacityAdmittedShape(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ins, err := fx.Store.CreateInstanceWithMode(bookedVCPUContext(fx, fleet[0], 4), a.ID, d.ID, string(state.StateRunning), 512, fleet[0].ID, uuid.NewString(), string(state.InstanceModeService))
+	ins, err := fx.Store.CreateInstanceWithMode(bookedVCPUContext(fx, fleet[0], 4), a.ID, d.ID, string(state.StateRunning), 1024, fleet[0].ID, uuid.NewString(), string(state.InstanceModeService))
 	if err != nil {
 		t.Fatal(err)
 	}
 	r, err := fx.Store.ServiceCapacityProtection(fx.Ctx)
-	if err != nil || r.ReplicaVCPU != 4 || r.FailoverSlots != 4 {
+	if err != nil || r.ReplicaRAMMB != 1024+api.PerVMOverheadMB || r.ReplicaVCPU != 4 || r.FailoverSlots != 4 {
 		t.Fatalf("running guest lost its admitted topology: %+v %v", r, err)
 	}
 	if err := fx.Store.UpdateInstanceState(fx.Ctx, ins.ID, string(state.StateFailed)); err != nil {
 		t.Fatal(err)
 	}
 	r, err = fx.Store.ServiceCapacityProtection(fx.Ctx)
-	if err != nil || r.ReplicaVCPU != int64(api.SizeVCPUs(512)) || r.FailoverSlots != 8 {
+	if err != nil || r.ReplicaRAMMB != 512+api.PerVMOverheadMB || r.ReplicaVCPU != int64(api.SizeVCPUs(512)) || r.FailoverSlots != 8 {
 		t.Fatalf("released guest retained capacity: %+v %v", r, err)
 	}
 }
@@ -419,10 +424,10 @@ func refuseCapacityTransition(t *testing.T, fx *Fixture, ins state.Instance, nex
 	}
 }
 
-// ADR-422: promoting a warm guest booted at a larger topology than its
-// size's (4 vCPUs from before ADR-20261109172421) retains that topology.
-// Reclassification must validate the larger recovery slot even when the
-// host's physical resource totals do not change.
+// ADR-422: promoting a warm guest admitted larger than its app (1 GB before
+// the app shrank to 512 MB) retains that topology. Reclassification must
+// validate the larger recovery slot even when the host's physical resource
+// totals do not change. Only memory sizes slots (ADR-20261109172421).
 func testServiceCapacityWarmPromotionShape(t *testing.T, fx *Fixture) {
 	fleet := capacityFleet(t, fx)
 	if _, err := fx.Store.SetServiceCapacityProtection(fx.Ctx, false); err != nil {
@@ -436,12 +441,12 @@ func testServiceCapacityWarmPromotionShape(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ins, err := fx.Store.CreateInstanceWithMode(bookedVCPUContext(fx, fleet[0], 4), a.ID, d.ID, string(state.StateWarm), 512, fleet[0].ID, uuid.NewString(), string(state.InstanceModeService))
+	ins, err := fx.Store.CreateInstanceWithMode(fx.Ctx, a.ID, d.ID, string(state.StateWarm), 1024, fleet[0].ID, uuid.NewString(), string(state.InstanceModeService))
 	if err != nil {
 		t.Fatal(err)
 	}
 	r, err := fx.Store.SetServiceCapacityProtection(fx.Ctx, true)
-	if err != nil || r.State != "protected" || r.ReservedReplicas != 5 || r.ReplicaVCPU != int64(api.SizeVCPUs(512)) || r.FailoverSlots != 7 {
+	if err != nil || r.State != "protected" || r.ReservedReplicas != 5 || r.ReplicaRAMMB != 512+api.PerVMOverheadMB || r.FailoverSlots != 6 {
 		t.Fatalf("warm guest certificate: %+v %v", r, err)
 	}
 	refuseCapacityTransition(t, fx, ins, state.StateRunning)
@@ -456,7 +461,7 @@ func testServiceCapacityWarmPromotionShape(t *testing.T, fx *Fixture) {
 		t.Fatalf("protected promotion refused: %v", err)
 	}
 	r, err = fx.Store.ServiceCapacityProtection(fx.Ctx)
-	if err != nil || r.State != "protected" || r.ReplicaVCPU != 4 || r.FailoverSlots != 4 {
+	if err != nil || r.State != "protected" || r.ReplicaRAMMB != 1024+api.PerVMOverheadMB || r.FailoverSlots != 4 {
 		t.Fatalf("promoted guest lost original topology: %+v %v", r, err)
 	}
 }

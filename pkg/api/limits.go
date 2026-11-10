@@ -5535,17 +5535,21 @@ type Limits struct {
 	// body has more entries.
 	PublicAuthIPAllowlistMaxEntries int
 
-	// WarmSnapshotEnabled (issue #470 / ADR-055) is the plan-gated
-	// default for the per-app two-tier snapshot flag. Free/Hobby =
-	// false (warm-tier apps keep both warm.snap + init.snap, which
-	// is +130 MB per app on the parked disk budget — Hobby's pricing
-	// tier is too cheap for that). Pro/Scale = true (the doubled
-	// parked footprint is inside the 452 GB budget). Apid's
-	// updateApp handler rejects Free/Hobby PATCH-true with
-	// 403 plan_warm_snapshot_not_allowed; the default is applied
-	// at CreateApp time so a Pro customer's brand-new app gets a
-	// warm.snap without an extra PATCH.
+	// WarmSnapshotEnabled (issue #470 / ADR-055) is the plan gate for
+	// the per-app two-tier snapshot flag (Plan.WarmSnapshotAllowed).
+	// Free/Hobby = false (warm-tier apps keep both warm.snap +
+	// init.snap, which is +130 MB per app on the parked disk budget —
+	// Hobby's pricing tier is too cheap for that). Pro/Scale = true
+	// (the doubled parked footprint is inside the 452 GB budget).
+	// Apid's updateApp handler rejects Free/Hobby PATCH-true with
+	// 403 plan_warm_snapshot_not_allowed.
 	WarmSnapshotEnabled bool
+	// WarmSnapshotNewAppDefault is the warm_snapshot_enabled value a
+	// new app gets when the create request does not set one. False on
+	// every plan (ADR-20261110180000): a warm snapshot keeps the memory
+	// and /tmp an instance built while serving its first requests and
+	// restores it in every later wake and instance, so an app opts in.
+	WarmSnapshotNewAppDefault bool
 	// WarmPoolAllowed (issue #1056 / ADR-074) permits a customer to
 	// retain paused warm-pool VMs. Free is disabled; Hobby and above
 	// may opt in with an app-level warm_pool_size setting.
@@ -7275,7 +7279,7 @@ var planLimits = map[Plan]Limits{
 		// breakdown by default).
 		RouteMetricsEnabled: true,
 		// Warm-snapshot (issue #470 / ADR-055): Pro is the first
-		// tier where warm-snapshot is on by default. Per the issue
+		// tier that may opt in (off by default, ADR-20261110180000). Per the issue
 		// body's acceptance: "for a Pro+ app that has served ≥5
 		// successful requests ≥2 s after first-ready, restore
 		// from warm.snap should be ≤50 % of init.snap p50".
@@ -12036,22 +12040,14 @@ const (
 	RoutePlanPriorityMax = 10000
 )
 
-// WarmSnapshotEnabled reports whether the plan's default for the
-// per-app two-tier snapshot flag is on. Pro/Scale return true; Free /
-// Hobby return false. The accessor is fail-closed — an unknown plan
-// reads as false, matching the Free default. Used by buildApp in
-// cmd/apid/handlers.go to populate a brand-new app's flag.
-//
-// Issue #470 / ADR-055: the equivalent gate ("can the customer opt in
-// to warm-snapshot?") lives on WarmSnapshotAllowed (separate method
-// below) so Free + Hobby PATCH-true can be rejected cleanly without
-// conflating the default and the gate.
-func (p Plan) WarmSnapshotEnabled() bool {
+// WarmSnapshotNewAppDefault is the warm-snapshot flag a new app gets when
+// its create request does not set one (ADR-20261110180000: opt-in).
+func (p Plan) WarmSnapshotNewAppDefault() bool {
 	l, ok := LimitsFor(p)
 	if !ok {
 		return false
 	}
-	return l.WarmSnapshotEnabled
+	return l.WarmSnapshotNewAppDefault
 }
 
 // WarmSnapshotAllowed reports whether the plan permits a customer to

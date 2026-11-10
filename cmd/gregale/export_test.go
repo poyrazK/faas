@@ -2798,3 +2798,11 @@ var RefuseDevFunctionSet = refuseDevFunctionSet
 
 // MetricLabelFlags exposes the --metric-label parser.
 var MetricLabelFlags = metricLabelFlags
+
+// ApplyFunctionHookLifecycleForTest exposes applyFunctionHookLifecycle.
+func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
+	GetApp(ctx context.Context, slug string) (api.AppResponse, error)
+	UpdateApp(ctx context.Context, slug string, req api.UpdateAppRequest) (api.AppResponse, error)
+}, slug, sourceDir, handler string) error {
+	return applyFunctionHookLifecycle(ctx, client, slug, sourceDir, handler)
+}

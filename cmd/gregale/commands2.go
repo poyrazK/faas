@@ -4156,6 +4156,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := deployManifestObjectStorageBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 		return printErr("Manifest object-storage bindings failed", err)
 	}
+	// Lifecycle is app-wide, so only a production deploy changes it, as a
+	// production push does (ADR-20261110190000 §5).
+	if resolvedShape == shapeFunction && *environment == "" && *image == "" {
+		if err := applyFunctionHookLifecycle(ctx, client, slug, sourceDir, deployHandler); err != nil {
+			return printErr("Could not apply snapshot hooks", err)
+		}
+	}
 	if len(deploySecrets) > 0 {
 		if err := setDeploySecretsWithScope(ctx, client, slug, deploySecrets, *environment); err != nil {
 			return printErr("Could not configure --secrets-file", err)

@@ -24,6 +24,11 @@ type HotPath struct {
 	// gatewayd-internal alive per node (FAAS_INTERNAL_KEEPALIVE_PER_NODE).
 	// Needs public_edge.compute_nodes.
 	EdgeKeepAlivePerNode bool `yaml:"edge_keepalive_per_node,omitempty"`
+	// EdgeBinaryHop makes each compute edge send the requests for its own
+	// node's gatewayd-internal in binary HTTP (ADR-20261110081523;
+	// FAAS_EDGE_INTERNAL_HOP=binary). Needs edge_keepalive_per_node, whose
+	// transport carries it.
+	EdgeBinaryHop bool `yaml:"edge_binary_hop,omitempty"`
 	// FrozenTier, FrozenFastPath and OwnerCache are schedd's wake-path
 	// switches (FAAS_FROZEN_TIER, FAAS_FROZEN_FAST_PATH, FAAS_OWNER_CACHE).
 	// The fast path needs the tier.
@@ -36,6 +41,9 @@ func (h HotPath) validate(edge PublicEdge) Errors {
 	var errs Errors
 	if h.EdgeKeepAlivePerNode && !edge.ComputeNodes {
 		errs = append(errs, Error{"hot_path.edge_keepalive_per_node", "needs public_edge.compute_nodes: only compute edges dial gatewayd-internal per node"})
+	}
+	if h.EdgeBinaryHop && !h.EdgeKeepAlivePerNode {
+		errs = append(errs, Error{"hot_path.edge_binary_hop", "needs hot_path.edge_keepalive_per_node: the binary hop rides its per-node transport"})
 	}
 	if h.FrozenFastPath && !h.FrozenTier {
 		errs = append(errs, Error{"hot_path.frozen_fast_path", "needs hot_path.frozen_tier: the fast path wakes frozen instances"})
