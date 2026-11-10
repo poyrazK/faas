@@ -66,6 +66,9 @@ type CreateBindingRequest struct {
 	Scope             string
 	EnvironmentKey    string
 	Access            CredentialAccess
+	// PreviewSetup marks apid's PR preview setup, the only caller that may
+	// bind a PR preview environment's database (ADR-20261102123523).
+	PreviewSetup bool
 }
 
 func NewBindingService(registry *Registry, databases Store, bindings BindingStore, sink CredentialSink, options BindingServiceOptions) (*BindingService, error) {
@@ -145,6 +148,9 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	database, err := customerDatabase(ctx, s.databases, bindingRequestNamespace(request), request.DatabaseID)
 	if err != nil {
 		return Binding{}, false, err
+	}
+	if !database.Preview.IsZero() && !request.PreviewSetup {
+		return Binding{}, false, ErrPreviewDatabase
 	}
 	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
 	if err != nil {

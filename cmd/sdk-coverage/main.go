@@ -244,6 +244,9 @@ var routeExclude = map[string]bool{
 	// Mirror across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 	"POST /v1/postgres/databases/{id}/upgrade":              true,
 	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": true,
+	// ADR-20261102123523 PR preview databases, behind the preview-databases
+	// capability until launch.
+	"PUT /v1/postgres/databases/{id}/previews": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly

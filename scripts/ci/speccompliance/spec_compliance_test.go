@@ -216,6 +216,9 @@ var routeExclude = map[string]bool{
 	// Mirror across this list AND cmd/sdk-coverage/main.go::routeExclude.
 	"POST /v1/postgres/databases/{id}/upgrade":              true,
 	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": true,
+	// ADR-20261102123523 PR preview databases: behind the preview-databases
+	// capability until launch. Mirror in cmd/sdk-coverage/main.go::routeExclude.
+	"PUT /v1/postgres/databases/{id}/previews": true,
 
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
@@ -804,6 +807,8 @@ var dtoExclude = map[string]bool{
 	"StatusPage":                        true, // GET /status/slo.json (public status)
 	"SessionsRevokeRequest":             true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
 	"ManagedPostgresPlanLimits":         true, // internal plan policy, not a wire DTO
+	"ManagedPostgresPreviewOwner":       true, // ADR-20261102123523 preview-databases capability; documented at launch
+	"SetManagedPostgresPreviewsRequest": true, // ADR-20261102123523 preview-databases capability; documented at launch
 	"RealtimeLimits":                    true, // internal plan policy, not a wire DTO
 	"ExecutionSnapshotShape":            true, // internal snapshot compatibility key, not a wire DTO
 	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
@@ -1603,10 +1608,12 @@ var previewFieldExclude = map[string]map[string]bool{
 	// ADR-20261031100025: labels on apps, databases, crons and jobs, behind the
 	// resource-labels capability; the PATCH .../labels routes document them
 	// until beta.
-	"AppResponse":             {"labels": true},
-	"CronResponse":            {"labels": true},
-	"JobResponse":             {"labels": true},
-	"ManagedPostgresDatabase": {"labels": true},
+	"AppResponse":  {"labels": true},
+	"CronResponse": {"labels": true},
+	"JobResponse":  {"labels": true},
+	// ADR-20261102123523: PR preview databases, behind the preview-databases
+	// capability until launch.
+	"ManagedPostgresDatabase": {"labels": true, "previews": true, "preview": true},
 }
 
 func testSchemasParity(t *testing.T, root string, spec *specDoc) {

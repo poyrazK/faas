@@ -120,6 +120,9 @@ func QuotaProblem(err error) (status int, code, title string) {
 	if errors.Is(err, ErrRestoreSlotInUse) {
 		return 403, "managed_postgres_restore_slot_in_use", "Another restored database holds the restore slot"
 	}
+	if errors.Is(err, ErrPreviewDatabaseLimit) {
+		return 403, "managed_postgres_preview_database_limit", "PR preview database limit reached"
+	}
 	if errors.Is(err, ErrUsageLimitReached) {
 		return 403, "managed_postgres_usage_limit_reached", "Managed PostgreSQL monthly usage limit reached"
 	}
@@ -1154,6 +1157,12 @@ type Database struct {
 	// slot past its owner's database limit (ADR-20261031123259): when it
 	// passes with no room, the database's delete is scheduled.
 	RestoreSlotUntil time.Time
+	// Previews is what this database gives PR preview environments
+	// (ADR-20261102123523); empty reads as off.
+	Previews PreviewMode
+	// Preview names the PR preview environment that owns this database; it
+	// is zero for every other database.
+	Preview PreviewOwner
 }
 
 // RestoreRange is the span a point-in-time restore from d can target at now:
