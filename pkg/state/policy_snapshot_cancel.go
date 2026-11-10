@@ -50,8 +50,9 @@ var policySnapshotCancelSettle = 100 * time.Millisecond
 // policySnapshotCancelRequestTimeout bounds the cancel request's own dial.
 const policySnapshotCancelRequestTimeout = 2 * time.Second
 
-func startPolicySnapshotCancel(caller context.Context) *policySnapshotCancel {
-	ctx, cancel := context.WithCancel(context.WithoutCancel(caller))
+// startPolicySnapshotCancel watches caller for a snapshot whose statements run
+// on ctx, a context detached from caller that cancel ends.
+func startPolicySnapshotCancel(caller, ctx context.Context, cancel context.CancelFunc) *policySnapshotCancel {
 	c := &policySnapshotCancel{caller: caller, ctx: ctx, cancel: cancel, sent: make(chan struct{})}
 	c.stop = context.AfterFunc(caller, c.callerDone)
 	return c
@@ -135,34 +136,44 @@ func (c *policySnapshotCancel) callerErr(err error) error {
 	return err
 }
 
-// policySnapshotTx runs every statement on the snapshot's detached context;
-// the context a reader passes is the caller's, whose deadline would close the
-// connection.
+// policySnapshotTx runs every statement without the deadline of the context
+// a reader passes, which is the caller's and would close the connection. The
+// statement keeps that context's values and ends with the snapshot's own
+// detached context instead.
 type policySnapshotTx struct {
 	pgx.Tx
 	ctx context.Context
 }
 
-func (t policySnapshotTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	return t.Tx.Exec(t.ctx, sql, args...)
+// statementContext is ctx without its deadline, ended with the snapshot. The
+// snapshot's context always ends when the snapshot finishes, which releases
+// the AfterFunc.
+func (t policySnapshotTx) statementContext(ctx context.Context) context.Context {
+	statement, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	context.AfterFunc(t.ctx, cancel)
+	return statement
 }
 
-func (t policySnapshotTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
-	return t.Tx.Query(t.ctx, sql, args...)
+func (t policySnapshotTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	return t.Tx.Exec(t.statementContext(ctx), sql, args...)
 }
 
-func (t policySnapshotTx) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
-	return t.Tx.QueryRow(t.ctx, sql, args...)
+func (t policySnapshotTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	return t.Tx.Query(t.statementContext(ctx), sql, args...)
 }
 
-func (t policySnapshotTx) SendBatch(_ context.Context, b *pgx.Batch) pgx.BatchResults {
-	return t.Tx.SendBatch(t.ctx, b)
+func (t policySnapshotTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return t.Tx.QueryRow(t.statementContext(ctx), sql, args...)
 }
 
-func (t policySnapshotTx) Prepare(_ context.Context, name, sql string) (*pgconn.StatementDescription, error) {
-	return t.Tx.Prepare(t.ctx, name, sql)
+func (t policySnapshotTx) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults {
+	return t.Tx.SendBatch(t.statementContext(ctx), b)
 }
 
-func (t policySnapshotTx) CopyFrom(_ context.Context, table pgx.Identifier, columns []string, src pgx.CopyFromSource) (int64, error) {
-	return t.Tx.CopyFrom(t.ctx, table, columns, src)
+func (t policySnapshotTx) Prepare(ctx context.Context, name, sql string) (*pgconn.StatementDescription, error) {
+	return t.Tx.Prepare(t.statementContext(ctx), name, sql)
+}
+
+func (t policySnapshotTx) CopyFrom(ctx context.Context, table pgx.Identifier, columns []string, src pgx.CopyFromSource) (int64, error) {
+	return t.Tx.CopyFrom(t.statementContext(ctx), table, columns, src)
 }

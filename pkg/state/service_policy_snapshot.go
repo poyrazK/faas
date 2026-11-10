@@ -36,13 +36,14 @@ func (s *PgStore) WithServicePolicySnapshot(ctx context.Context, read func(Servi
 	}
 	// The caller's deadline cancels the running statement rather than
 	// closing the connection (policy_snapshot_cancel.go).
-	snapshot := startPolicySnapshotCancel(ctx)
-	tx, err := s.pool.BeginTx(snapshot.ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	snapshotCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	snapshot := startPolicySnapshotCancel(ctx, snapshotCtx, cancel)
+	tx, err := s.pool.BeginTx(snapshotCtx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return snapshot.finish(nil, fmt.Errorf("begin service policy snapshot: %w", err))
 	}
 	snapshot.attach(tx)
-	return snapshot.finish(tx, read(servicePolicyReader{tx: policySnapshotTx{Tx: tx, ctx: snapshot.ctx}}))
+	return snapshot.finish(tx, read(servicePolicyReader{tx: policySnapshotTx{Tx: tx, ctx: snapshotCtx}}))
 }
 
 type servicePolicyReader struct{ tx pgx.Tx }
