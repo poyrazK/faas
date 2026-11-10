@@ -241,6 +241,7 @@ type AgentActivity struct {
 	Status     int32
 	ApprovalID pgtype.UUID
 	CreatedAt  pgtype.Timestamptz
+	Reason     pgtype.Text
 }
 
 // ADR-20261107140000 notification channels that get agent approval requests; apid is the only writer.
@@ -293,6 +294,7 @@ type AgentApprovalRequest struct {
 	ConsumedAt   pgtype.Timestamptz
 	ExpiresAt    pgtype.Timestamptz
 	DecisionNote pgtype.Text
+	Reason       pgtype.Text
 }
 
 // ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.

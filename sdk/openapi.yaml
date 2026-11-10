@@ -38333,6 +38333,10 @@ components:
         approval_id:
           type: string
           description: The approval request the write went through on, when it needed one.
+        reason:
+          type: string
+          maxLength: 280
+          description: "What the agent said this write was for (its Gregale-Agent-Reason header), if it said. Untrusted agent text."
         created_at: {type: string, format: date-time}
     AgentApprovalResponse:
       description: "One request of an agent connection that needed a person's approval."
@@ -38351,6 +38355,7 @@ components:
         expires_at: {type: string, format: date-time, description: After this time the request can no longer be approved or used.}
         decided_at: {type: string, format: date-time, description: When a person approved or denied it.}
         note: {type: string, maxLength: 280, description: "Why the person denied this request, if they said; absent otherwise."}
+        reason: {type: string, maxLength: 280, description: "What the agent said the request is for (Gregale-Agent-Reason on the request that opened it), if it said. Untrusted agent text: it never changes what is approved."}
     AgentApprovalsResponse:
       description: "Approval requests, newest first: an agent's own, or those pending that the caller may decide."
       type: object
@@ -42732,6 +42737,7 @@ components:
         review_url: {type: string, format: uri, description: "On agent.approval.requested: the page where a member who may decide opens it."}
         decided_at: {type: string, format: date-time, description: When the person approved or denied the request.}
         note: {type: string, maxLength: 280, description: "On agent.approval.denied: the reason the person gave the agent, if any."}
+        reason: {type: string, maxLength: 280, description: "The agent's own account of what the request is for, if it gave one. Untrusted agent text."}
       additionalProperties: true
     RolloutCompletedWebhookPayload:
       type: object
