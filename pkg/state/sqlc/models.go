@@ -4193,6 +4193,7 @@ type Deployment struct {
 	MailFailureSuccessRevision pgtype.Int8
 	PromotedAt                 pgtype.Timestamptz
 	RollbackReleaseReview      []byte
+	BeforeCheckpointHook       pgtype.Bool
 }
 
 type DeploymentAlias struct {
