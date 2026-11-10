@@ -55,3 +55,28 @@ rows for account-scoped matching and ordinary async delivery. The app-scoped
 `gregale events subscriptions <app>` command expose the reconciled result so a
 customer can verify the router configuration without opening deployment
 artifacts.
+
+## Amendment (2026-11-07): filter size and depth caps
+
+Events hunt #9 found subscription filters bounded only by the 1 MiB source
+manifest, while the publish trigger copies every candidate recipient's filter
+into the event's `recipient_snapshot`. A few apps with 1 MiB catch-all filters
+made every event in the account, including uncharged `gregale.*` platform
+events, store megabytes of filter copies.
+
+The snapshot keeps the filter: routing evaluates it against the event from the
+snapshot, so membership stays the one captured at publish time. Filters are
+bounded instead. A filter persisted as a subscription must be at most
+`EventSubscriptionFilterMaxBytes` (8,192) bytes as compact JSON and at most
+`EventSubscriptionFilterMaxDepth` (8) levels of object/array nesting, the
+top-level object counting as 1. The manifest validator enforces both on every
+path that applies `event_triggers` (deploys, stage deploys, project and GitHub
+deploys, batch trigger create) and returns `422
+event_subscription_filter_too_large` or `event_subscription_filter_too_deep`
+with the limit and observed value; the store repeats the check before it
+writes. `event_subscriptions` carries a `NOT VALID` CHECK on
+`octet_length(filter::text) <= 16384` (twice the API cap, since jsonb's text
+form adds a space after each `:` and `,`). Evaluation of stored filters is not
+capped, so subscriptions created before the cap keep matching until they are
+declared again. Realistic filters are tens of bytes and three or four levels
+deep; 8 KiB matches the realtime consumer-group filter cap.

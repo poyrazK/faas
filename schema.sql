@@ -64076,6 +64076,14 @@ ALTER TABLE ONLY public.event_subscription_work_bindings
 
 
 --
+-- Name: event_subscriptions event_subscriptions_filter_size_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.event_subscriptions
+    ADD CONSTRAINT event_subscriptions_filter_size_chk CHECK ((octet_length((filter)::text) <= 16384)) NOT VALID;
+
+
+--
 -- Name: event_subscriptions event_subscriptions_id_app_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
