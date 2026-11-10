@@ -56,9 +56,13 @@ const (
 	restoreReseedHelloWait  = 2 * time.Second
 	restoreReseedMaxLine    = 256
 	restoreReseedNonceSize  = 32
+	// restoreReseedJavaAgent is the Java agent jar (ADR-20261110150000),
+	// built reproducibly from rngpreload/java by
+	// scripts/rng/build-java-reseed-agent.sh.
+	restoreReseedJavaAgent = "java-reseed.jar"
 )
 
-//go:embed rngpreload/node-reseed.cjs rngpreload/reseed.node rngpreload/python/sitecustomize.py
+//go:embed rngpreload/node-reseed.cjs rngpreload/reseed.node rngpreload/python/sitecustomize.py rngpreload/java-reseed.jar
 var restoreReseedAssets embed.FS
 
 // restoreReseedEnabled is set once the socket and assets are in place. Env
@@ -70,7 +74,8 @@ var restoreReseedEnabled atomic.Bool
 // api.RestoreReseedThreadBootArg.
 var restoreReseedThread atomic.Bool
 
-// StampRestoreReseedEnv injects the Node and Python preloads. A workload may
+// StampRestoreReseedEnv injects the Node and Python preloads and the Java
+// agent (ADR-20261110150000). A workload may
 // opt out with GREGALE_RESTORE_RESEED=off, which the docs flag as unsafe for
 // any snapshot-restored app that generates secrets or nonces.
 func StampRestoreReseedEnv(env []string) []string {
@@ -111,8 +116,15 @@ func stampRestoreReseedEnv(env []string, assetDir, socketPath string) []string {
 			pythonPath = pythonDir + string(os.PathListSeparator) + pythonPath
 		}
 	}
+	// Every JVM loads the agent from JAVA_TOOL_OPTIONS (ADR-20261110150000).
+	javaAgent := "-javaagent:" + filepath.Join(assetDir, restoreReseedJavaAgent)
+	javaOptions := envValue(env, "JAVA_TOOL_OPTIONS")
+	if !strings.Contains(javaOptions, javaAgent) {
+		javaOptions = strings.TrimSpace(javaOptions + " " + javaAgent)
+	}
 	env = setEnvValue(env, "NODE_OPTIONS", nodeOptions)
 	env = setEnvValue(env, "PYTHONPATH", pythonPath)
+	env = setEnvValue(env, "JAVA_TOOL_OPTIONS", javaOptions)
 	return setEnvValue(env, restoreReseedSocketEnv, socketPath)
 }
 
@@ -152,6 +164,7 @@ func writeRestoreReseedAssets(dir string) error {
 		"node-reseed.cjs":         "rngpreload/node-reseed.cjs",
 		"reseed.node":             "rngpreload/reseed.node",
 		"python/sitecustomize.py": "rngpreload/python/sitecustomize.py",
+		restoreReseedJavaAgent:    "rngpreload/" + restoreReseedJavaAgent,
 	}
 	for dst, src := range files {
 		body, err := restoreReseedAssets.ReadFile(src)

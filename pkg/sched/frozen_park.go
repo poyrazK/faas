@@ -148,6 +148,7 @@ func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance, early bo
 // snapshot the capture then refused, on every idle period: low-traffic
 // functions never froze (Hunt 12 H12-52).
 func (e *Engine) warmCapturePending(ctx context.Context, app state.App, ins state.Instance, dep state.Deployment) bool {
+	app = withBuiltLifecycle(app, dep)
 	if !app.WarmSnapshotEnabled || !warmCaptureInstanceGatesOpen(app, ins, time.Now()) {
 		return false
 	}
