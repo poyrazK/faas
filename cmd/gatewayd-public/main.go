@@ -558,12 +558,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	probe.SetReadyObserver(func(ready bool, reason string) {
 		opsMetrics.MarkReady("gatewayd-public", ready, reason)
 	})
-	// Issue #555 PR-3: mount otelhttp.NewTransport so the outbound
-	// request to gatewayd-internal carries the same trace context
-	// (gateway.route span). The wrapper sits UNDER the proxy's
-	// RoundTripper so the inbound span context is propagated on the
-	// outbound hop.
-	proxy.Transport = otelhttp.NewTransport(proxy.Transport)
+	// The hop to gatewayd-internal carries no otelhttp.Transport. The proxy
+	// injects the edge's span context itself (InternalReverseProxy), so
+	// gateway.request stays on the edge's trace. The wrapper only added a
+	// client span and, in otelhttp v0.72, built metric attribute sets on
+	// every request even though no meter provider is installed: 47 µs of
+	// the edge's 550 µs per 404 on gregale-compute-1 (2026-11-10).
 
 	// ADR-093 / PR-B: end-to-end request budgets. The BudgetMiddleware
 	// stamps a per-request deadline onto r.Context() before the proxy
