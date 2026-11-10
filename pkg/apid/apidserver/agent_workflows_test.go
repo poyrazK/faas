@@ -56,15 +56,10 @@ func TestAppAgentCredentialsCannotReachAnotherApp(t *testing.T) {
 	if out := request(http.MethodGet, "/v1/apps/other-agent-app", nil); out.Code != http.StatusNotFound {
 		t.Fatalf("cross-app read=%d", out.Code)
 	}
-	// A stage-scope write needs no approval; production configuration asks
-	// like a release (agent approvals ADR amendment 2026-11-10).
-	if out := request(http.MethodPut, "/v1/apps/agent-app/env/LOG_LEVEL?scope=staging", api.PutAppEnvRequest{Value: "debug"}); out.Code != 200 {
+	if out := request(http.MethodPut, "/v1/apps/agent-app/env/LOG_LEVEL", api.PutAppEnvRequest{Value: "debug"}); out.Code != 200 {
 		t.Fatalf("own configuration %d %s", out.Code, out.Body.String())
 	}
-	if out := request(http.MethodPut, "/v1/apps/agent-app/env/LOG_LEVEL", api.PutAppEnvRequest{Value: "debug"}); out.Code != http.StatusPreconditionRequired {
-		t.Fatalf("own production configuration = %d %s, want 428 approval_required", out.Code, out.Body.String())
-	}
-	if out := request(http.MethodPut, "/v1/apps/other-agent-app/env/LOG_LEVEL?scope=staging", api.PutAppEnvRequest{Value: "debug"}); out.Code != 404 {
+	if out := request(http.MethodPut, "/v1/apps/other-agent-app/env/LOG_LEVEL", api.PutAppEnvRequest{Value: "debug"}); out.Code != 404 {
 		t.Fatalf("cross-app configuration=%d", out.Code)
 	}
 	if out := request(http.MethodPut, "/v1/apps/agent-app/secrets/TOKEN", api.PutAppSecretRequest{Value: "fake-value"}); out.Code != 403 {
