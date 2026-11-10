@@ -38,7 +38,7 @@ func (s *server) keyProjects(ctx context.Context, acct state.Account, orgID stri
 	}
 	projects := make([]state.Project, 0, len(slugs))
 	for _, slug := range slugs {
-		project, err := s.store.ProjectBySlug(ctx, acct.ID, slug)
+		project, err := s.keyProject(ctx, acct, orgID, slug)
 		if errors.Is(err, state.ErrNotFound) || err == nil && orgID != "" && project.OrgID != "" && project.OrgID != orgID {
 			return nil, projectNotFound(slug)
 		}
@@ -48,6 +48,32 @@ func (s *server) keyProjects(ctx context.Context, acct state.Account, orgID stri
 		projects = append(projects, project)
 	}
 	return projects, nil
+}
+
+// keyProject resolves a project slug a key is limited to. A company key names
+// its organization's projects, which an adopted company stores under its own
+// namespace, so the slug resolves in the organization; a personal key's slug
+// resolves in the caller's namespace (apps/projects review 2026-11-10, P2).
+func (s *server) keyProject(ctx context.Context, acct state.Account, orgID, slug string) (state.Project, error) {
+	if orgID != "" {
+		org, err := s.store.OrgByID(ctx, orgID)
+		if err != nil {
+			return state.Project{}, err
+		}
+		if !org.Personal {
+			project, err := s.store.ProjectByOrgSlug(ctx, orgID, slug)
+			if err != nil {
+				return project, err
+			}
+			// A key limited to a project must not outlive the member's
+			// view of it: the company project must be in the key's org.
+			if project.OrgID != orgID {
+				return state.Project{}, state.ErrNotFound
+			}
+			return project, nil
+		}
+	}
+	return s.store.ProjectBySlug(ctx, acct.ID, slug)
 }
 
 // limitKeyToProjects records a new key's project limit. When it cannot, it
