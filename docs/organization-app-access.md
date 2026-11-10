@@ -170,10 +170,16 @@ After billing adoption, deployment-rate admission shares the company's budget
 across these resource namespaces. Existing personal deployment windows stay with
 the individual account.
 
-The remaining reviewed project/environment paths mirror the existing APIs below
+Every reviewed project/environment path is also served below
 `/v1/orgs/{organization}/projects/{slug}`: environment inventories and creation,
-configuration/diffs, release sets, qualifications, promotion previews, approvals,
-promotions, rollbacks, source settings and deletion. The exact permission list is
+configuration/diffs, shared secrets, release sets (publish, activate,
+deactivate, rollback, staging and verification runs), feature flags, release
+secrets, deployment readiness, qualifications, promotion previews, approvals,
+promotions, rollbacks, source settings and deletion. Use these paths for a
+company project: `/v1/projects/{slug}` resolves the slug in your own
+namespace, which never holds an adopted company's projects. A key limited to
+projects reaches its company projects through these paths and the
+organization project list. The exact permission list is
 [`projectaccess/routes.go`](../pkg/apid/projectaccess/routes.go). Legacy project
 URLs and dashboard lists also enforce departure and role changes.
 
