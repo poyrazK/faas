@@ -2154,6 +2154,13 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 	if !app.OnlyAllowDeclaredRoutes {
 		return false
 	}
+	// The gateway answers the app's health path itself without a VM, so it
+	// is not app surface the gate protects; refusing it broke uptime
+	// monitors on apps that turned the gate on (Hunt 32 H32-48, ADR-091
+	// amendment 2026-11-10). A health path that wakes the app stays gated.
+	if h.answersHealthAtEdge(r, app, requestPath) {
+		return false
+	}
 	if h.declaredRoutes == nil {
 		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,

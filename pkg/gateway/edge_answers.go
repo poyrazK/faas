@@ -262,6 +262,21 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 	return false
 }
 
+// edgeHealthPath reports whether path is the app's health path and the
+// gateway, not the app, answers it.
+func (h *Handler) edgeHealthPath(r *http.Request, app App, path string) bool {
+	return path == normalizeHealthPath(app.HealthPath) && !app.HealthPathWakes && !h.authorizedDeploymentSmoke(r, app)
+}
+
+// answersHealthAtEdge reports whether serveGatedEdgeAnswer will answer this
+// request from the gateway without a VM.
+func (h *Handler) answersHealthAtEdge(r *http.Request, app App, path string) bool {
+	if h == nil || r == nil || hasDevBridgeScope(r.Context()) {
+		return false
+	}
+	return (r.Method == http.MethodGet || r.Method == http.MethodHead) && h.edgeHealthPath(r, app, path)
+}
+
 // serveGatedEdgeAnswer answers the app's health path and a parked app's
 // HEAD / without a VM. It runs after the edge access gates (ip, geo, jwt,
 // maintenance, challenge, penalty box) and before rate limits and wake
@@ -272,7 +287,7 @@ func (h *Handler) serveGatedEdgeAnswer(w http.ResponseWriter, r *http.Request, a
 	if h == nil || r == nil || hasDevBridgeScope(r.Context()) {
 		return false
 	}
-	if path == normalizeHealthPath(app.HealthPath) && !app.HealthPathWakes && !h.authorizedDeploymentSmoke(r, app) {
+	if h.edgeHealthPath(r, app, path) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			return false
 		}
