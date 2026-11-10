@@ -115,8 +115,11 @@ When a build finishes while no compute node has room for the app's first
 boot, the deployment waits in `snapshot_prepare` for up to 5 minutes and is
 retried each minute; only then does it fail with `capacity_unavailable`.
 A release command waits the same way: while no node has room for its task
-environment, the task is requeued for up to 5 minutes from its creation, and
-only then fails the deployment with `release_infrastructure_failed`.
+environment, the task returns to the queue and is placed again every 20
+seconds, for up to 5 minutes from the first refusal, and only then fails the
+deployment with `release_infrastructure_failed`. One-off commands such as
+`gregale app exec`, and command crons, do not wait; they fail at once with
+`capacity_unavailable`.
 
 ## Waiting and resuming
 

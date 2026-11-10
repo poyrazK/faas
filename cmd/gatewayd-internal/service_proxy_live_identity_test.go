@@ -223,6 +223,9 @@ func TestBootingServiceCallerRequiresMatchingBootingRow(t *testing.T) {
 		{"other deployment", func(f *liveCallerFixture) { f.instance.DeploymentID = "other" }, false},
 		{"other node", func(f *liveCallerFixture) { f.instance.NodeID = "other-node" }, false},
 		{"app task slot", func(f *liveCallerFixture) { f.live.AppTask = true }, false},
+		// vmmd reports a booting managed probe without its app-task flag
+		// (booting_egress.go); its task id names no instance row.
+		{"booting app task", func(f *liveCallerFixture) { f.live.InstanceId = "task-1" }, false},
 		{"unattributed slot", func(f *liveCallerFixture) { f.live.AppId, f.live.DeploymentId = "", "" }, false},
 		{"stale serving row wins", func(f *liveCallerFixture) {
 			f.rows = []state.Instance{{AppID: "stale-tenant", DeploymentID: "stale-deployment"}}

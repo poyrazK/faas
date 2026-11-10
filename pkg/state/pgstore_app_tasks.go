@@ -865,6 +865,41 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 	return task, nil
 }
 
+var _ AppTaskCapacityDeferrer = (*PgStore)(nil)
+
+func (s *PgStore) DeferAppTaskForCapacity(ctx context.Context, taskID, leaseToken string, at, retryAt time.Time, maxWait time.Duration) (time.Time, bool, error) {
+	if taskID == "" || leaseToken == "" || at.IsZero() || retryAt.Before(at) || maxWait <= 0 {
+		return time.Time{}, false, ErrAppTaskInvalid
+	}
+	at, retryAt = at.UTC(), retryAt.UTC()
+	q := sqlc.New()
+	started, err := q.DeferAppTaskForCapacity(ctx, s.pool, sqlc.DeferAppTaskForCapacityParams{
+		ID: taskID, Token: leaseToken,
+		At:      pgtype.Timestamptz{Time: at, Valid: true},
+		RetryAt: pgtype.Timestamptz{Time: retryAt, Valid: true},
+		MaxWait: pgtype.Interval{Microseconds: maxWait.Microseconds(), Valid: true},
+	})
+	if err == nil {
+		return started.Time.UTC(), true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, mapErr(err)
+	}
+	// Not deferred: tell a lost lease apart from a wait that is over.
+	current, err := scanAppTask(s.pool.QueryRow(ctx, `select `+appTaskSelectColumns+` from app_tasks where id = $1`, taskID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, ErrAppTaskLeaseLost
+	}
+	if err != nil {
+		return time.Time{}, false, mapErr(err)
+	}
+	if current.Status != AppTaskRestoring || current.LeaseToken == nil || *current.LeaseToken != leaseToken ||
+		current.CancelRequested != nil || current.LeaseExpiresAt == nil || !current.LeaseExpiresAt.After(at) {
+		return time.Time{}, false, ErrAppTaskLeaseLost
+	}
+	return time.Time{}, false, nil
+}
+
 func (s *PgStore) RenewAppTaskLease(ctx context.Context, taskID, leaseToken string, renewedAt time.Time, leaseDuration time.Duration) error {
 	if taskID == "" || leaseToken == "" || renewedAt.IsZero() || leaseDuration <= 0 {
 		return ErrAppTaskInvalid

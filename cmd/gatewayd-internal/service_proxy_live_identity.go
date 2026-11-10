@@ -87,11 +87,10 @@ func serviceProxyLiveIdentity(ctx context.Context, store serviceProxyLiveIdentit
 // readiness check that depends on a sibling service failed the deployment.
 // vmmd already owns the address for the booting guest (booting_egress.go);
 // its row must name the same app and deployment on this node and still be
-// booting. It answers no identity on any mismatch.
+// booting. It answers no identity on any mismatch. A booting app task reaches
+// here without its app-task flag, but its id names no instance row, so it
+// still has no service identity before publication.
 func bootingServiceCaller(ctx context.Context, store serviceProxyLiveIdentityStore, live *vmmdpb.ResolveServiceCallerResponse, nodeName, nodeID, hostIP string) ([]state.Instance, error) {
-	if live.GetAppTask() || live.GetAppId() == "" || live.GetDeploymentId() == "" {
-		return nil, nil
-	}
 	instance, err := store.InstanceByID(ctx, live.GetInstanceId())
 	if errors.Is(err, state.ErrNotFound) {
 		return nil, nil
@@ -104,7 +103,7 @@ func bootingServiceCaller(ctx context.Context, store serviceProxyLiveIdentitySto
 	default:
 		return nil, nil
 	}
-	if instance.ID != live.GetInstanceId() || instance.AppID != live.GetAppId() || instance.DeploymentID != live.GetDeploymentId() ||
+	if instance.AppID != live.GetAppId() || instance.DeploymentID != live.GetDeploymentId() ||
 		nodeID == "" || instance.NodeID != nodeID {
 		return nil, nil
 	}

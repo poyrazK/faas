@@ -15023,7 +15023,7 @@ FROM candidate WHERE task.id=candidate.id RETURNING task.*;
 
 -- name: MarkUnfencedAppTaskRunning :one
 UPDATE app_tasks SET status='running',started_at=sqlc.arg(started_at)::timestamptz,attempt_count=attempt_count+1,
-retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=sqlc.arg(started_at)
+retry_at=NULL,capacity_wait_started_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=sqlc.arg(started_at)
 WHERE id=sqlc.arg(id)::text::uuid AND status='restoring' AND lease_token=sqlc.arg(token)::text::uuid
 AND cancel_requested_at IS NULL AND lease_expires_at>sqlc.arg(started_at)
 AND EXISTS(SELECT 1 FROM project_migration_task_admission admission WHERE admission.id=app_tasks.id)
@@ -15031,6 +15031,20 @@ AND NOT financial_app_command_held(app_id,deployment_id,sqlc.arg(started_at)::ti
 AND (start_deadline_at IS NULL OR start_deadline_at>=sqlc.arg(started_at) OR EXISTS (
  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
 RETURNING *;
+
+-- name: DeferAppTaskForCapacity :one
+-- ADR-20261029103512 amendment 3: node budgets refused a release command's
+-- placement before any VM or command existed. Return it to the queue until
+-- retry_at while the wait that began at its first refusal is younger than
+-- max_wait; no row means the wait is over or the lease was lost.
+UPDATE app_tasks SET status='queued',retry_at=sqlc.arg(retry_at)::timestamptz,
+lease_token=NULL,lease_owner=NULL,lease_expires_at=NULL,
+capacity_wait_started_at=coalesce(capacity_wait_started_at,sqlc.arg(at)::timestamptz),updated_at=sqlc.arg(at)
+WHERE id=sqlc.arg(id)::text::uuid AND status='restoring' AND lease_token=sqlc.arg(token)::text::uuid
+AND kind='release' AND started_at IS NULL AND cancel_requested_at IS NULL
+AND lease_expires_at>sqlc.arg(at)::timestamptz
+AND coalesce(capacity_wait_started_at,sqlc.arg(at)::timestamptz)>sqlc.arg(at)::timestamptz-sqlc.arg(max_wait)::interval
+RETURNING capacity_wait_started_at;
 
 -- name: LockManagedPostgresCutoverDatabases :many
 SELECT * FROM managed_postgres_databases

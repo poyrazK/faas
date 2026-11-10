@@ -8200,14 +8200,19 @@ const (
 	// a momentarily full fleet failed a finished build, and the customer had
 	// to rebuild to retry.
 	SnapshotPrimeCapacityMaxWait = 5 * time.Minute
-	// AppTaskCapacityMaxWait is how long after it was created an app task (a
-	// release command, a one-off task) keeps waiting for a compute node with
-	// room for its environment. Inside the window a node-budget refusal
-	// (memory, guest vCPUs, CPU) leaves the task restoring and the lease sweep
-	// requeues it; after it the task fails with capacity_unavailable. Without
-	// the wait a momentarily full fleet failed the release, and its deployment
-	// with it (production, 2026-11-05).
-	AppTaskCapacityMaxWait = 5 * time.Minute
+	// AppTaskCapacityMaxWait is how long after node budgets first refused it
+	// a release command keeps waiting for a compute node with room for its
+	// environment (ADR-20261029103512 amendment 3). Inside the window schedd
+	// returns the task to the queue for AppTaskCapacityRetryDelay; after it
+	// the task fails with capacity_unavailable. Other app tasks (one-off and
+	// interactive commands, crons) fail at once, as before. Without the wait
+	// a momentarily full fleet failed the release, and its deployment with it
+	// (production, 2026-11-05). It matches the first-boot wait of the same
+	// deployment.
+	AppTaskCapacityMaxWait = SnapshotPrimeCapacityMaxWait
+	// AppTaskCapacityRetryDelay is how long a release command that node
+	// budgets refused waits in the queue before schedd places it again.
+	AppTaskCapacityRetryDelay = 20 * time.Second
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment

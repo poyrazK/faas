@@ -336,12 +336,8 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 			c.log.Info("schedd: app task left for its owning node", "task_id", task.ID, "node_id", c.config.NodeID)
 			return nil
 		}
-		if c.restoreAwaitsCapacity(task, restoreErr) {
-			// No command was dispatched. Leave the restoring lease to the sweep,
-			// which requeues the task; the next claim places it again.
-			c.log.Info("schedd: app task waits for node capacity; the lease sweep requeues it",
-				"task_id", task.ID, "max_wait", api.AppTaskCapacityMaxWait)
-			return nil
+		if handled, err := c.deferForCapacity(parent, task, restoreErr); handled {
+			return err
 		}
 		if restoreTimedOut {
 			code, message = "restore_timeout", "app task environment preparation timed out"
@@ -653,16 +649,39 @@ func waitAppTaskInterval(ctx context.Context, interval time.Duration) bool {
 	}
 }
 
-// restoreAwaitsCapacity reports whether a restore that node budgets refused
-// (memory, guest vCPUs, CPU) should wait for capacity instead of failing the
-// task: it does while the task is younger than api.AppTaskCapacityMaxWait.
-// The refusal happens at placement, before a VM or a command exists, so the
-// sweep can requeue the restoring lease safely, as for a held budget.
-func (c *AppTaskCoordinator) restoreAwaitsCapacity(task state.AppTask, err error) bool {
-	if customerCapacityProblem(err) == nil || task.CreatedAt.IsZero() {
-		return false
+// deferForCapacity returns a release command that node budgets refused
+// (memory, guest vCPUs, CPU) to the queue for api.AppTaskCapacityRetryDelay
+// instead of failing it, while api.AppTaskCapacityMaxWait has not passed since
+// its first refusal (ADR-20261029103512 amendment 3). The refusal happens at
+// placement, before a VM or a command exists, so placing it again is safe.
+// handled is false when the caller should fail the task: another error, a
+// task that is not a release, a store without the requeue, or a wait that is
+// over. Other app tasks fail at once; an interactive session must not hang.
+func (c *AppTaskCoordinator) deferForCapacity(ctx context.Context, task state.AppTask, restoreErr error) (bool, error) {
+	if customerCapacityProblem(restoreErr) == nil || task.Kind != state.AppTaskKindRelease || task.LeaseToken == nil {
+		return false, nil
 	}
-	return c.now().Sub(task.CreatedAt) < api.AppTaskCapacityMaxWait
+	deferrer, ok := c.store.(state.AppTaskCapacityDeferrer)
+	if !ok {
+		return false, nil
+	}
+	at := c.now().UTC()
+	waitStartedAt, deferred, err := deferrer.DeferAppTaskForCapacity(ctx, task.ID, *task.LeaseToken, at,
+		at.Add(api.AppTaskCapacityRetryDelay), api.AppTaskCapacityMaxWait)
+	switch {
+	case errors.Is(err, state.ErrAppTaskLeaseLost):
+		// Cancelled or swept meanwhile; whoever holds the task now owns it.
+		c.log.Info("schedd: app task lease lost while waiting for node capacity", "task_id", task.ID)
+		return true, nil
+	case err != nil:
+		// The restoring lease stays; the sweep requeues it once it expires.
+		return true, fmt.Errorf("defer app task %s for node capacity: %w", task.ID, err)
+	case !deferred:
+		return false, nil
+	}
+	c.log.Info("schedd: release command waits for node capacity", "task_id", task.ID,
+		"retry_in", api.AppTaskCapacityRetryDelay, "waiting_since", waitStartedAt, "max_wait", api.AppTaskCapacityMaxWait)
+	return true, nil
 }
 
 func appTaskErrorClass(err error) string {

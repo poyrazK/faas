@@ -1025,6 +1025,11 @@ type Querier interface {
 	DecrementInstanceTailCount(ctx context.Context, db DBTX, arg DecrementInstanceTailCountParams) error
 	// The recipient was emailed about this key recently: wait for the window.
 	DeferAgentApprovalNotification(ctx context.Context, db DBTX, arg DeferAgentApprovalNotificationParams) error
+	// ADR-20261029103512 amendment 3: node budgets refused a release command's
+	// placement before any VM or command existed. Return it to the queue until
+	// retry_at while the wait that began at its first refusal is younger than
+	// max_wait; no row means the wait is over or the lease was lost.
+	DeferAppTaskForCapacity(ctx context.Context, db DBTX, arg DeferAppTaskForCapacityParams) (pgtype.Timestamptz, error)
 	// Requeues a running claim to wait for an identical build. Fenced like
 	// RequeueBuildIfClaim: a stale worker cannot defer a newer claim.
 	DeferBuildBehind(ctx context.Context, db DBTX, arg DeferBuildBehindParams) (int64, error)

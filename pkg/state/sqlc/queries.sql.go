@@ -7021,7 +7021,7 @@ WITH candidate AS (
 UPDATE app_tasks task SET status='restoring',lease_token=gen_random_uuid(),lease_owner=$1::text,
 lease_expires_at=$2::timestamptz,retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,
 exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=$3
-FROM candidate WHERE task.id=candidate.id RETURNING task.id, task.account_id, task.app_id, task.deployment_id, task.kind, task.command, task.command_shell, task.deployment_scope, task.artifact_key, task.image_digest, task.status, task.timeout_seconds, task.max_output_bytes, task.lease_token, task.lease_owner, task.lease_expires_at, task.cancel_requested_at, task.stdout_tail, task.stderr_tail, task.output_truncated, task.exit_code, task.failure_code, task.failure_message, task.started_at, task.finished_at, task.created_at, task.updated_at, task.cron_id, task.scheduled_for, task.retry_max, task.retry_backoff_seconds, task.attempt_count, task.retry_at, task.failure_rules, task.occurrence_id, task.start_deadline_at, task.work_decision, task.outcome_code, task.exclusive_operation_id, task.exclusive_generation, task.binding_verification
+FROM candidate WHERE task.id=candidate.id RETURNING task.id, task.account_id, task.app_id, task.deployment_id, task.kind, task.command, task.command_shell, task.deployment_scope, task.artifact_key, task.image_digest, task.status, task.timeout_seconds, task.max_output_bytes, task.lease_token, task.lease_owner, task.lease_expires_at, task.cancel_requested_at, task.stdout_tail, task.stderr_tail, task.output_truncated, task.exit_code, task.failure_code, task.failure_message, task.started_at, task.finished_at, task.created_at, task.updated_at, task.cron_id, task.scheduled_for, task.retry_max, task.retry_backoff_seconds, task.attempt_count, task.retry_at, task.failure_rules, task.occurrence_id, task.start_deadline_at, task.work_decision, task.outcome_code, task.exclusive_operation_id, task.exclusive_generation, task.binding_verification, task.capacity_wait_started_at
 `
 
 type ClaimNextUnfencedAppTaskParams struct {
@@ -7081,6 +7081,7 @@ func (q *Queries) ClaimNextUnfencedAppTask(ctx context.Context, db DBTX, arg Cla
 		&i.ExclusiveOperationID,
 		&i.ExclusiveGeneration,
 		&i.BindingVerification,
+		&i.CapacityWaitStartedAt,
 	)
 	return i, err
 }
@@ -13000,7 +13001,7 @@ const createMigrationContractTask = `-- name: CreateMigrationContractTask :one
 INSERT INTO app_tasks(id,account_id,app_id,deployment_id,kind,command,command_shell,deployment_scope,artifact_key,image_digest,status,timeout_seconds,max_output_bytes,retry_max,retry_backoff_seconds,start_deadline_at)
 SELECT $1::text::uuid,a.account_id,a.id,d.id,'manual',$2::text[],true,'production',d.rootfs_key,d.image_digest,'queued',$3::integer,$4::integer,0,$5::integer,$6::timestamptz
 FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=$7::text::uuid AND d.app_id=$8::text::uuid
-AND a.account_id=$9::text::uuid AND a.status='active' AND d.status='live' AND d.scope='production' AND d.rootfs_key<>'' AND d.image_digest<>'' RETURNING id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification
+AND a.account_id=$9::text::uuid AND a.status='active' AND d.status='live' AND d.scope='production' AND d.rootfs_key<>'' AND d.image_digest<>'' RETURNING id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification, capacity_wait_started_at
 `
 
 type CreateMigrationContractTaskParams struct {
@@ -13070,6 +13071,7 @@ func (q *Queries) CreateMigrationContractTask(ctx context.Context, db DBTX, arg 
 		&i.ExclusiveOperationID,
 		&i.ExclusiveGeneration,
 		&i.BindingVerification,
+		&i.CapacityWaitStartedAt,
 	)
 	return i, err
 }
@@ -13231,7 +13233,7 @@ WHERE a.id = $5 AND a.account_id = $6
  AND a.status <> 'deleted' AND d.id = $7
  AND d.status = 'live' AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> '' AND d.image_digest <> ''
 FOR SHARE OF a, d
-RETURNING app_tasks.id, app_tasks.account_id, app_tasks.app_id, app_tasks.deployment_id, app_tasks.kind, app_tasks.command, app_tasks.command_shell, app_tasks.deployment_scope, app_tasks.artifact_key, app_tasks.image_digest, app_tasks.status, app_tasks.timeout_seconds, app_tasks.max_output_bytes, app_tasks.lease_token, app_tasks.lease_owner, app_tasks.lease_expires_at, app_tasks.cancel_requested_at, app_tasks.stdout_tail, app_tasks.stderr_tail, app_tasks.output_truncated, app_tasks.exit_code, app_tasks.failure_code, app_tasks.failure_message, app_tasks.started_at, app_tasks.finished_at, app_tasks.created_at, app_tasks.updated_at, app_tasks.cron_id, app_tasks.scheduled_for, app_tasks.retry_max, app_tasks.retry_backoff_seconds, app_tasks.attempt_count, app_tasks.retry_at, app_tasks.failure_rules, app_tasks.occurrence_id, app_tasks.start_deadline_at, app_tasks.work_decision, app_tasks.outcome_code, app_tasks.exclusive_operation_id, app_tasks.exclusive_generation, app_tasks.binding_verification
+RETURNING app_tasks.id, app_tasks.account_id, app_tasks.app_id, app_tasks.deployment_id, app_tasks.kind, app_tasks.command, app_tasks.command_shell, app_tasks.deployment_scope, app_tasks.artifact_key, app_tasks.image_digest, app_tasks.status, app_tasks.timeout_seconds, app_tasks.max_output_bytes, app_tasks.lease_token, app_tasks.lease_owner, app_tasks.lease_expires_at, app_tasks.cancel_requested_at, app_tasks.stdout_tail, app_tasks.stderr_tail, app_tasks.output_truncated, app_tasks.exit_code, app_tasks.failure_code, app_tasks.failure_message, app_tasks.started_at, app_tasks.finished_at, app_tasks.created_at, app_tasks.updated_at, app_tasks.cron_id, app_tasks.scheduled_for, app_tasks.retry_max, app_tasks.retry_backoff_seconds, app_tasks.attempt_count, app_tasks.retry_at, app_tasks.failure_rules, app_tasks.occurrence_id, app_tasks.start_deadline_at, app_tasks.work_decision, app_tasks.outcome_code, app_tasks.exclusive_operation_id, app_tasks.exclusive_generation, app_tasks.binding_verification, app_tasks.capacity_wait_started_at
 `
 
 type CreateServiceBindingSmokeTaskParams struct {
@@ -13297,6 +13299,7 @@ func (q *Queries) CreateServiceBindingSmokeTask(ctx context.Context, db DBTX, ar
 		&i.ExclusiveOperationID,
 		&i.ExclusiveGeneration,
 		&i.BindingVerification,
+		&i.CapacityWaitStartedAt,
 	)
 	return i, err
 }
@@ -14676,6 +14679,42 @@ type DecrementInstanceTailCountParams struct {
 func (q *Queries) DecrementInstanceTailCount(ctx context.Context, db DBTX, arg DecrementInstanceTailCountParams) error {
 	_, err := db.Exec(ctx, decrementInstanceTailCount, arg.ID, arg.TailCount)
 	return err
+}
+
+const deferAppTaskForCapacity = `-- name: DeferAppTaskForCapacity :one
+UPDATE app_tasks SET status='queued',retry_at=$1::timestamptz,
+lease_token=NULL,lease_owner=NULL,lease_expires_at=NULL,
+capacity_wait_started_at=coalesce(capacity_wait_started_at,$2::timestamptz),updated_at=$2
+WHERE id=$3::text::uuid AND status='restoring' AND lease_token=$4::text::uuid
+AND kind='release' AND started_at IS NULL AND cancel_requested_at IS NULL
+AND lease_expires_at>$2::timestamptz
+AND coalesce(capacity_wait_started_at,$2::timestamptz)>$2::timestamptz-$5::interval
+RETURNING capacity_wait_started_at
+`
+
+type DeferAppTaskForCapacityParams struct {
+	RetryAt pgtype.Timestamptz
+	At      pgtype.Timestamptz
+	ID      string
+	Token   string
+	MaxWait pgtype.Interval
+}
+
+// ADR-20261029103512 amendment 3: node budgets refused a release command's
+// placement before any VM or command existed. Return it to the queue until
+// retry_at while the wait that began at its first refusal is younger than
+// max_wait; no row means the wait is over or the lease was lost.
+func (q *Queries) DeferAppTaskForCapacity(ctx context.Context, db DBTX, arg DeferAppTaskForCapacityParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, deferAppTaskForCapacity,
+		arg.RetryAt,
+		arg.At,
+		arg.ID,
+		arg.Token,
+		arg.MaxWait,
+	)
+	var capacity_wait_started_at pgtype.Timestamptz
+	err := row.Scan(&capacity_wait_started_at)
+	return capacity_wait_started_at, err
 }
 
 const deferNotificationClaim = `-- name: DeferNotificationClaim :execrows
@@ -65258,14 +65297,14 @@ func (q *Queries) MarkTriggerRecordSucceeded(ctx context.Context, db DBTX, id pg
 
 const markUnfencedAppTaskRunning = `-- name: MarkUnfencedAppTaskRunning :one
 UPDATE app_tasks SET status='running',started_at=$1::timestamptz,attempt_count=attempt_count+1,
-retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=$1
+retry_at=NULL,capacity_wait_started_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=$1
 WHERE id=$2::text::uuid AND status='restoring' AND lease_token=$3::text::uuid
 AND cancel_requested_at IS NULL AND lease_expires_at>$1
 AND EXISTS(SELECT 1 FROM project_migration_task_admission admission WHERE admission.id=app_tasks.id)
 AND NOT financial_app_command_held(app_id,deployment_id,$1::timestamptz)
 AND (start_deadline_at IS NULL OR start_deadline_at>=$1 OR EXISTS (
  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
-RETURNING id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification
+RETURNING id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification, capacity_wait_started_at
 `
 
 type MarkUnfencedAppTaskRunningParams struct {
@@ -65319,6 +65358,7 @@ func (q *Queries) MarkUnfencedAppTaskRunning(ctx context.Context, db DBTX, arg M
 		&i.ExclusiveOperationID,
 		&i.ExclusiveGeneration,
 		&i.BindingVerification,
+		&i.CapacityWaitStartedAt,
 	)
 	return i, err
 }
@@ -85982,7 +86022,7 @@ func (q *Queries) ReadMigrationContract(ctx context.Context, db DBTX, arg ReadMi
 }
 
 const readMigrationContractTask = `-- name: ReadMigrationContractTask :one
-SELECT id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification FROM app_tasks WHERE id=$1::text::uuid
+SELECT id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification, capacity_wait_started_at FROM app_tasks WHERE id=$1::text::uuid
 `
 
 func (q *Queries) ReadMigrationContractTask(ctx context.Context, db DBTX, id string) (AppTask, error) {
@@ -86030,6 +86070,7 @@ func (q *Queries) ReadMigrationContractTask(ctx context.Context, db DBTX, id str
 		&i.ExclusiveOperationID,
 		&i.ExclusiveGeneration,
 		&i.BindingVerification,
+		&i.CapacityWaitStartedAt,
 	)
 	return i, err
 }
@@ -86116,7 +86157,7 @@ func (q *Queries) ReadMigrationRecoveryForTask(ctx context.Context, db DBTX, tas
 }
 
 const readMigrationTaskForUpdate = `-- name: ReadMigrationTaskForUpdate :one
-SELECT id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification FROM app_tasks WHERE id=$1::text::uuid FOR UPDATE
+SELECT id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification, capacity_wait_started_at FROM app_tasks WHERE id=$1::text::uuid FOR UPDATE
 `
 
 func (q *Queries) ReadMigrationTaskForUpdate(ctx context.Context, db DBTX, id string) (AppTask, error) {
@@ -86164,6 +86205,7 @@ func (q *Queries) ReadMigrationTaskForUpdate(ctx context.Context, db DBTX, id st
 		&i.ExclusiveOperationID,
 		&i.ExclusiveGeneration,
 		&i.BindingVerification,
+		&i.CapacityWaitStartedAt,
 	)
 	return i, err
 }
@@ -109467,7 +109509,7 @@ func (q *Queries) UDPListenerByPublicPort(ctx context.Context, db DBTX, publicPo
 }
 
 const uncertainReleaseTask = `-- name: UncertainReleaseTask :one
-SELECT prior.id, prior.account_id, prior.app_id, prior.deployment_id, prior.kind, prior.command, prior.command_shell, prior.deployment_scope, prior.artifact_key, prior.image_digest, prior.status, prior.timeout_seconds, prior.max_output_bytes, prior.lease_token, prior.lease_owner, prior.lease_expires_at, prior.cancel_requested_at, prior.stdout_tail, prior.stderr_tail, prior.output_truncated, prior.exit_code, prior.failure_code, prior.failure_message, prior.started_at, prior.finished_at, prior.created_at, prior.updated_at, prior.cron_id, prior.scheduled_for, prior.retry_max, prior.retry_backoff_seconds, prior.attempt_count, prior.retry_at, prior.failure_rules, prior.occurrence_id, prior.start_deadline_at, prior.work_decision, prior.outcome_code, prior.exclusive_operation_id, prior.exclusive_generation, prior.binding_verification FROM app_tasks prior
+SELECT prior.id, prior.account_id, prior.app_id, prior.deployment_id, prior.kind, prior.command, prior.command_shell, prior.deployment_scope, prior.artifact_key, prior.image_digest, prior.status, prior.timeout_seconds, prior.max_output_bytes, prior.lease_token, prior.lease_owner, prior.lease_expires_at, prior.cancel_requested_at, prior.stdout_tail, prior.stderr_tail, prior.output_truncated, prior.exit_code, prior.failure_code, prior.failure_message, prior.started_at, prior.finished_at, prior.created_at, prior.updated_at, prior.cron_id, prior.scheduled_for, prior.retry_max, prior.retry_backoff_seconds, prior.attempt_count, prior.retry_at, prior.failure_rules, prior.occurrence_id, prior.start_deadline_at, prior.work_decision, prior.outcome_code, prior.exclusive_operation_id, prior.exclusive_generation, prior.binding_verification, prior.capacity_wait_started_at FROM app_tasks prior
 WHERE prior.account_id=$1::text::uuid AND prior.app_id=$2::text::uuid
  AND prior.kind='release' AND prior.deployment_id<>$3::text::uuid
  AND coalesce(nullif(prior.deployment_scope,''),'default')=$4::text
@@ -109542,6 +109584,7 @@ func (q *Queries) UncertainReleaseTask(ctx context.Context, db DBTX, arg Uncerta
 		&i.ExclusiveOperationID,
 		&i.ExclusiveGeneration,
 		&i.BindingVerification,
+		&i.CapacityWaitStartedAt,
 	)
 	return i, err
 }

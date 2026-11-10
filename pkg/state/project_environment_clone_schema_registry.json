@@ -2237,6 +2237,7 @@
       "attempt_count",
       "binding_verification",
       "cancel_requested_at",
+      "capacity_wait_started_at",
       "command",
       "command_shell",
       "created_at",

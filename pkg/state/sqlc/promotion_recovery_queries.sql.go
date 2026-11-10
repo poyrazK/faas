@@ -173,7 +173,7 @@ func (q *Queries) ReadPromotionRecovery(ctx context.Context, db DBTX, arg ReadPr
 }
 
 const readPromotionRecoveryTask = `-- name: ReadPromotionRecoveryTask :one
-SELECT id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification FROM app_tasks WHERE id=$1::text::uuid
+SELECT id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification, capacity_wait_started_at FROM app_tasks WHERE id=$1::text::uuid
 `
 
 func (q *Queries) ReadPromotionRecoveryTask(ctx context.Context, db DBTX, taskID string) (AppTask, error) {
@@ -221,6 +221,7 @@ func (q *Queries) ReadPromotionRecoveryTask(ctx context.Context, db DBTX, taskID
 		&i.ExclusiveOperationID,
 		&i.ExclusiveGeneration,
 		&i.BindingVerification,
+		&i.CapacityWaitStartedAt,
 	)
 	return i, err
 }

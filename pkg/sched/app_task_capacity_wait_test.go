@@ -2,90 +2,159 @@ package sched_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// newCapacityWaitAppTask is newNodeOwnedAppTask with the task's creation time
-// under the test's control.
-func newCapacityWaitAppTask(t *testing.T, nodeID string, createdAt time.Time) (*state.MemStore, state.AppTask) {
+const capacityWaitNode = "11111111-1111-4111-8111-111111111111"
+
+func capacityRefusingBackend() nodeClaimBackend {
+	refusal := sched.NodeBudgetRefusal("placement: no active compute_node fits",
+		api.WorkerAdmissionBlocker{Code: "node_vcpu", Resource: "vcpu", Requested: ptrInt64(4)})
+	return nodeClaimBackend(func(context.Context, sched.AppTaskRestoreRequest) (sched.AppTaskSession, error) {
+		return nil, refusal
+	})
+}
+
+func processCapacityRefusal(t *testing.T, store *state.MemStore, task state.AppTask) state.AppTask {
 	t.Helper()
-	ctx := context.Background()
-	store := state.NewMemStore()
-	account, err := store.CreateAccount(ctx, "app-task-capacity-wait@example.com", api.PlanPro)
+	processed, err := sched.NewAppTaskCoordinator(store, capacityRefusingBackend(), nodeClaimConfig(capacityWaitNode), nil).
+		ProcessNext(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("ProcessNext = %v, %v; want one claim without error", processed, err)
+	}
+	got, err := store.AppTaskByID(context.Background(), task.AccountID, task.AppID, task.ID)
 	if err != nil {
-		t.Fatalf("CreateAccount: %v", err)
+		t.Fatalf("AppTaskByID: %v", err)
 	}
-	limits := api.MustLimitsFor(api.PlanPro)
-	app, err := store.CreateAppIfUnderQuota(ctx, state.App{
-		AccountID: account.ID, Slug: "app-task-capacity-wait", Type: state.AppTypeApp, NodeID: nodeID,
-		Runtime: "node22", RAMMB: limits.RAMMB, MaxConcurrency: limits.MaxConcurrency, IdleTimeoutS: limits.IdleTimeoutS,
-	}, limits)
-	if err != nil {
-		t.Fatalf("CreateAppIfUnderQuota: %v", err)
+	return got
+}
+
+func wantCapacityFailure(t *testing.T, got state.AppTask) {
+	t.Helper()
+	if got.Status != state.AppTaskFailed || got.FailureCode == nil || *got.FailureCode != "capacity_unavailable" {
+		t.Fatalf("task = %s (failure %v); want failed with capacity_unavailable", got.Status, got.FailureCode)
 	}
-	deployment, err := store.CreateDeployment(ctx, state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:app-task-capacity-wait", Status: state.DeployLive,
-	})
-	if err != nil {
-		t.Fatalf("CreateDeployment: %v", err)
-	}
-	if err := store.SetDeploymentRootfs(ctx, deployment.ID, "/tmp/app-task.ext4", "apps/app-task/capacity-wait.ext4", 4096); err != nil {
-		t.Fatalf("SetDeploymentRootfs: %v", err)
-	}
-	task, err := store.CreateAppTask(ctx, state.CreateAppTaskParams{
-		AccountID: account.ID, AppID: app.ID, DeploymentID: deployment.ID,
-		Kind: state.AppTaskKindManual, Command: []string{"/bin/true"}, CreatedAt: createdAt,
-	})
-	if err != nil {
-		t.Fatalf("CreateAppTask: %v", err)
-	}
-	return store, task
 }
 
 // A release task whose environment no node had room for failed for good, and
 // its deployment with it, though no command had run (production 2026-11-05:
-// eight placement refusals on compute-1 within five minutes). Inside
-// api.AppTaskCapacityMaxWait the refusal now leaves the task restoring for the
-// lease sweep to requeue; after it the task fails as capacity_unavailable, a
-// platform code imaged reports as release_infrastructure_failed.
-func TestAppTaskCoordinatorWaitsForNodeCapacity(t *testing.T) {
-	const node = "11111111-1111-4111-8111-111111111111"
-	refusal := sched.NodeBudgetRefusal("placement: no active compute_node fits",
-		api.WorkerAdmissionBlocker{Code: "node_vcpu", Resource: "vcpu", Requested: ptrInt64(4)})
-	backend := nodeClaimBackend(func(context.Context, sched.AppTaskRestoreRequest) (sched.AppTaskSession, error) {
-		return nil, refusal
-	})
-	for _, tc := range []struct {
-		name     string
-		age      time.Duration
-		wantWait bool
-	}{
-		{name: "inside the window", age: time.Second, wantWait: true},
-		{name: "after the window", age: api.AppTaskCapacityMaxWait + time.Minute, wantWait: false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			store, task := newCapacityWaitAppTask(t, node, time.Now().UTC().Add(-tc.age))
-			processed, err := sched.NewAppTaskCoordinator(store, backend, nodeClaimConfig(node), nil).ProcessNext(context.Background())
-			if err != nil || !processed {
-				t.Fatalf("ProcessNext = %v, %v; want one claim without error", processed, err)
-			}
-			got, err := store.AppTaskByID(context.Background(), task.AccountID, task.AppID, task.ID)
-			if err != nil {
-				t.Fatalf("AppTaskByID: %v", err)
-			}
-			if tc.wantWait {
-				if got.Status != state.AppTaskRestoring || got.FailureCode != nil {
-					t.Fatalf("task = %s (failure %v); want restoring without failure", got.Status, got.FailureCode)
+// eight placement refusals on compute-1 within five minutes). schedd now
+// returns it to the queue for api.AppTaskCapacityRetryDelay, without a
+// failure, so the next claim places it again (ADR-20261029103512 amendment 3).
+func TestAppTaskCoordinatorRequeuesReleaseRefusedForCapacity(t *testing.T) {
+	store, task := newNodeOwnedAppTaskOfKind(t, capacityWaitNode, state.AppTaskKindRelease)
+	before := time.Now().UTC()
+	got := processCapacityRefusal(t, store, task)
+	if got.Status != state.AppTaskQueued || got.FailureCode != nil || got.LeaseToken != nil {
+		t.Fatalf("task = %s (failure %v, lease %v); want queued without failure or lease", got.Status, got.FailureCode, got.LeaseToken)
+	}
+	if got.RetryAt == nil || got.RetryAt.Before(before.Add(api.AppTaskCapacityRetryDelay)) {
+		t.Fatalf("retry_at = %v; want at least %s from now", got.RetryAt, api.AppTaskCapacityRetryDelay)
+	}
+	if _, err := store.ClaimNextAppTask(context.Background(), "other", before, time.Minute); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("claim before retry_at = %v; want ErrNotFound", err)
+	}
+	if claimed, err := store.ClaimNextAppTask(context.Background(), "other", *got.RetryAt, time.Minute); err != nil || claimed.ID != task.ID {
+		t.Fatalf("claim at retry_at = %v, %v; want the task again", claimed.ID, err)
+	}
+}
+
+// The wait is bounded from the first refusal, not from the task's creation:
+// once api.AppTaskCapacityMaxWait has passed the release fails as
+// capacity_unavailable, a platform code imaged reports as
+// release_infrastructure_failed.
+func TestAppTaskCoordinatorFailsReleaseAfterCapacityWait(t *testing.T) {
+	store, task := newNodeOwnedAppTaskOfKind(t, capacityWaitNode, state.AppTaskKindRelease)
+	ctx := context.Background()
+	firstRefusal := time.Now().UTC().Add(-api.AppTaskCapacityMaxWait - time.Minute)
+	// Record a first refusal that lies beyond the window.
+	claimed, err := store.ClaimNextAppTask(ctx, "earlier-schedd", time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimNextAppTask: %v", err)
+	}
+	started, deferred, err := store.DeferAppTaskForCapacity(ctx, task.ID, *claimed.LeaseToken, firstRefusal,
+		firstRefusal.Add(api.AppTaskCapacityRetryDelay), api.AppTaskCapacityMaxWait)
+	if err != nil || !deferred || !started.Equal(firstRefusal) {
+		t.Fatalf("first refusal = %v, %v, %v; want deferred from %v", started, deferred, err, firstRefusal)
+	}
+	wantCapacityFailure(t, processCapacityRefusal(t, store, task))
+}
+
+// Only release commands wait: a one-off or interactive command fails at once,
+// so `gregale app exec` does not hang on a full fleet.
+func TestAppTaskCoordinatorFailsManualTaskRefusedForCapacity(t *testing.T) {
+	store, task := newNodeOwnedAppTaskOfKind(t, capacityWaitNode, state.AppTaskKindManual)
+	wantCapacityFailure(t, processCapacityRefusal(t, store, task))
+}
+
+// The store contract on both backends: a deferral needs the current restoring
+// lease, keeps the first refusal's time across requeues, ends once the window
+// has passed, never applies to other task kinds, and a run clears the wait.
+func TestDeferAppTaskForCapacityContract(t *testing.T) {
+	for _, backend := range []string{"memory", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			ctx := context.Background()
+			newStore := func() state.Store {
+				if backend == "postgres" {
+					return state.NewPgStore(pgtest.OpenMigrated(t))
 				}
-				return
+				return state.NewMemStore()
 			}
-			if got.Status != state.AppTaskFailed || got.FailureCode == nil || *got.FailureCode != "capacity_unavailable" {
-				t.Fatalf("task = %s (failure %v); want failed with capacity_unavailable", got.Status, got.FailureCode)
+			store := newStore()
+			deferrer := store.(state.AppTaskCapacityDeferrer)
+			task := newNodeOwnedAppTaskIn(t, store, "", state.AppTaskKindRelease)
+			at := time.Now().UTC().Truncate(time.Microsecond)
+			claim := func(at time.Time) string {
+				t.Helper()
+				claimed, err := store.ClaimNextAppTask(ctx, "schedd", at, time.Minute)
+				if err != nil || claimed.ID != task.ID || claimed.LeaseToken == nil {
+					t.Fatalf("ClaimNextAppTask(%v) = %v, %v", at, claimed.ID, err)
+				}
+				return *claimed.LeaseToken
+			}
+			lease := claim(at)
+			if _, deferred, err := deferrer.DeferAppTaskForCapacity(ctx, task.ID, "00000000-0000-4000-8000-000000000000", at,
+				at.Add(time.Second), time.Minute); !errors.Is(err, state.ErrAppTaskLeaseLost) || deferred {
+				t.Fatalf("stale lease = %v, %v; want ErrAppTaskLeaseLost", deferred, err)
+			}
+			started, deferred, err := deferrer.DeferAppTaskForCapacity(ctx, task.ID, lease, at, at.Add(time.Second), time.Minute)
+			if err != nil || !deferred || !started.Equal(at) {
+				t.Fatalf("first refusal = %v, %v, %v; want deferred from %v", started, deferred, err, at)
+			}
+			if _, err := store.ClaimNextAppTask(ctx, "schedd", at, time.Minute); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("claim before retry_at = %v; want ErrNotFound", err)
+			}
+			second := at.Add(30 * time.Second)
+			lease = claim(second)
+			if started, deferred, err := deferrer.DeferAppTaskForCapacity(ctx, task.ID, lease, second, second.Add(time.Second), time.Minute); err != nil || !deferred || !started.Equal(at) {
+				t.Fatalf("second refusal = %v, %v, %v; want deferred, still from %v", started, deferred, err, at)
+			}
+			late := at.Add(time.Minute)
+			lease = claim(late)
+			if _, deferred, err := deferrer.DeferAppTaskForCapacity(ctx, task.ID, lease, late, late.Add(time.Second), time.Minute); err != nil || deferred {
+				t.Fatalf("refusal after the window = %v, %v; want not deferred", deferred, err)
+			}
+			if got, err := store.MarkAppTaskRunning(ctx, task.ID, lease, late); err != nil || got.Status != state.AppTaskRunning {
+				t.Fatalf("MarkAppTaskRunning = %v, %v", got.Status, err)
+			}
+
+			other := newStore()
+			manual := newNodeOwnedAppTaskIn(t, other, "", state.AppTaskKindManual)
+			at = time.Now().UTC().Truncate(time.Microsecond)
+			claimed, err := other.ClaimNextAppTask(ctx, "schedd", at, time.Minute)
+			if err != nil || claimed.ID != manual.ID {
+				t.Fatalf("claim manual = %v, %v", claimed.ID, err)
+			}
+			if _, deferred, err := other.(state.AppTaskCapacityDeferrer).DeferAppTaskForCapacity(ctx, manual.ID, *claimed.LeaseToken, at,
+				at.Add(time.Second), time.Minute); err != nil || deferred {
+				t.Fatalf("manual task = %v, %v; want not deferred", deferred, err)
 			}
 		})
 	}

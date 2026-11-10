@@ -175,13 +175,32 @@ placement refused its environment for node budgets: schedd recorded
 `restore_failed` before any VM or command existed, and the deployment
 failed. Production recorded eight such refusals on compute-1 between 21:04
 and 21:09 on 2026-11-05, two of them failing chronolake-gateway's releases.
-Now a node-budget refusal within `AppTaskCapacityMaxWait` (5 minutes from the
-task's creation, `pkg/api/limits.go`) leaves the task restoring, as a held
-financial budget already does, and the lease sweep requeues it for the next
-claim; requeued restores do not count as attempts. After the window the task
-fails with the new failure code `capacity_unavailable`, which imaged reports
-as `release_infrastructure_failed` (ADR-1448 amendment). The coordinator's
-log class for such refusals is `capacity`, so operators can tell them from
-other preparation failures without logging error text.
-Validation: `TestAppTaskCoordinatorWaitsForNodeCapacity`,
+
+Now schedd returns a release task that node budgets refused (memory, guest
+vCPUs, CPU) to the queue explicitly: `DeferAppTaskForCapacity` releases the
+restoring lease and sets `retry_at` `AppTaskCapacityRetryDelay` (20 s) ahead,
+which the claim already honours. The new column
+`app_tasks.capacity_wait_started_at` records the first refusal, so the wait,
+`AppTaskCapacityMaxWait` (equal to `SnapshotPrimeCapacityMaxWait`, 5 minutes,
+`pkg/api/limits.go`), is measured from when the task first could not be
+placed, not from its creation: a release queued behind another release of the
+same app still gets the whole wait. A run clears the column. Requeues do not
+count as attempts and do not wait for lease expiry or the crash sweep. After
+the window the task fails with the new failure code `capacity_unavailable`,
+which imaged reports as `release_infrastructure_failed` (ADR-1448 amendment).
+
+Only release commands wait. One-off, interactive and cron commands fail at
+once with `capacity_unavailable`: an attached `gregale app exec` must not
+hang, and a cron has its own retry policy. The coordinator counts a node
+budget refusal under the operation outcome `capacity`, not `error`, so a full
+fleet does not fire `FaasAppTaskOperationsFailing`; its log class is
+`capacity` too.
+
+The column is expand-only (`migrations/20261110093132000_app_task_capacity_wait.sql`).
+An older schedd ignores it and fails a refused task at once, as before; a
+newer schedd beside an older one sees no wait recorded and starts one.
+Validation: `TestDeferAppTaskForCapacityContract` (memory and PostgreSQL),
+`TestAppTaskCoordinatorRequeuesReleaseRefusedForCapacity`,
+`TestAppTaskCoordinatorFailsReleaseAfterCapacityWait`,
+`TestAppTaskCoordinatorFailsManualTaskRefusedForCapacity`,
 `TestReleaseTaskFailureNamesWhoFailed`.

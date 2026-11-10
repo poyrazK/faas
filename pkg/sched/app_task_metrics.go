@@ -35,7 +35,7 @@ type AppTaskMetrics struct {
 func NewAppTaskMetrics(reg prometheus.Registerer, enabled bool, concurrency int) *AppTaskMetrics {
 	config := normalizeAppTaskCoordinatorConfig(AppTaskCoordinatorConfig{MaxConcurrent: concurrency})
 	m := &AppTaskMetrics{now: time.Now, observing: true, enabled: enabled, capacity: config.MaxConcurrent,
-		operations: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "schedd_app_task_operations_total", Help: "Actual coordinator calls by bounded operation and return outcome. Execute success includes customer verdicts; canceled and lease_lost are separate from errors."}, []string{"operation", "outcome"}),
+		operations: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "schedd_app_task_operations_total", Help: "Actual coordinator calls by bounded operation and return outcome. Execute success includes customer verdicts; canceled, lease_lost and capacity (node budgets refused placement) are separate from errors."}, []string{"operation", "outcome"}),
 		recovery:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "schedd_app_task_recovery_total", Help: "Durable changes reported by successful sweeps. Requeued restores are safe before dispatch; failed runs have uncertain command outcomes. Policy retries not represented in sweep results are not inferred."}, []string{"outcome"}),
 		results:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "schedd_app_task_results_total", Help: "Successful completion acknowledgements by kind and returned durable status, including queued policy retries. Not command delivery or infrastructure failure counters; excludes sweeper changes."}, []string{"kind", "status"}),
 	}
@@ -223,6 +223,10 @@ func (m *AppTaskMetrics) operation(ctx context.Context, op string, err error) {
 		outcome = "cancellation_pending"
 	case errors.Is(err, state.ErrAppTaskLeaseLost):
 		outcome = "lease_lost"
+	case customerCapacityProblem(err) != nil:
+		// Node budgets refused placement: fleet capacity, not a schedd fault,
+		// and outside the operation error ratio (FaasAppTaskOperationsFailing).
+		outcome = "capacity"
 	case err != nil:
 		outcome = "error"
 	}
