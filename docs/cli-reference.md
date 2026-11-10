@@ -682,12 +682,13 @@ Change a drain&#39;s URL or credential, or pause and resume it
 
 Delete a log drain
 
-`gregale logs drain delete [--app <SLUG>] --id <ID> [<slug>]`
+`gregale logs drain delete [--app <SLUG>] --id <ID> [--yes] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug |  |
 | `--id <ID>` | log drain id | required |
+| `--yes` | confirm deletion without prompting |  |
 
 
 ## status

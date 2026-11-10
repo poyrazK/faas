@@ -1305,7 +1305,6 @@ var EdgePolicySummary = edgePolicySummary
 var EdgeRuleValidateFlagsVisited = edgeRuleValidateFlagsVisited
 var EditDistance = editDistance
 var EffectiveKeyring = effectiveKeyring
-var EgressAllowlistChangeNeedsRestart = egressAllowlistChangeNeedsRestart
 var EmitInspectWatchEvent = emitInspectWatchEvent
 var EmptyPilotTextSHA256 = emptyPilotTextSHA256
 var EncodeCustomerOperationReceipt = encodeCustomerOperationReceipt
@@ -2821,3 +2820,9 @@ var CmdOrgsSeatUsage = cmdOrgsSeatUsage
 type CustomerOperationTypesResult = customerOperationTypesResult
 
 var CustomerOperationTypesMessage = customerOperationTypesMessage
+
+// WorkerNoInstancesLine exposes the empty worker pool explanation.
+var WorkerNoInstancesLine = workerNoInstancesLine
+
+// PrintPublicURLs exposes the plan's public URL list (H32-30).
+var PrintPublicURLs = printPublicURLs

@@ -4845,6 +4845,11 @@ func cmdPark(args []string) int {
 		}))
 	}
 	PrintOK(osStdout, "Parked (cold)")
+	if app, getErr := client.GetApp(context.Background(), args[0]); getErr == nil && (inspectExecutionMode(app) == api.ExecutionModeWorker || app.WorkloadClass == "worker") {
+		// A parked worker pool does not autoscale on its backlog (H8-23):
+		// say how it comes back (Hunt 32 H32-32).
+		PrintWarn(osStderr, "%s is a worker pool: it stays parked, whatever its queue backlog, until `gregale app wake %s`", args[0], args[0])
+	}
 	return 0
 }
 

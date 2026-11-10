@@ -69,6 +69,11 @@ func TestReleaseTaskFailureNamesWhoFailed(t *testing.T) {
 			if hasHint := candidate.ErrorHint != ""; hasHint != tc.wantHint {
 				t.Fatalf("candidate hint = %q, want present=%v", candidate.ErrorHint, tc.wantHint)
 			}
+			// Hunt 32 H32-12: a failed command names its exit code and the
+			// task receipt that holds its output.
+			if tc.exitCode != nil && (!strings.Contains(candidate.Error, "exit code 1") || !strings.Contains(candidate.Error, "/tasks/"+task.ID)) {
+				t.Fatalf("candidate error = %q, want the exit code and the task receipt", candidate.Error)
+			}
 			previous, _ := fx.store.DeploymentByID(ctx, fx.previous.ID)
 			if previous.Status != state.DeployLive {
 				t.Fatalf("previous deployment status = %q, want live", previous.Status)
