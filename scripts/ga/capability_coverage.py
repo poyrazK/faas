@@ -140,6 +140,8 @@ RULES = [
     (r"^credhash$", "INFRA"),
     # ADR-20261109170000: signd's record of the layers it signed.
     (r"^artifact-signatures$", "INFRA"),
+    # ADR-20261109170000: signd's listener and imaged's signd target.
+    (r"^signd-", "INFRA"),
     # Compile-on-first-use regexps for package-level patterns
     # (ADR-20261101215228 measurement); no capability of its own.
     (r"^lazyregexp$", "INFRA"),
