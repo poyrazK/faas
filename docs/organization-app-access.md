@@ -177,7 +177,19 @@ promotions, rollbacks, source settings and deletion. The exact permission list i
 [`projectaccess/routes.go`](../pkg/apid/projectaccess/routes.go). Legacy project
 URLs and dashboard lists also enforce departure and role changes.
 
-GitHub/GitOps administration, async-route manifest bindings, resource/environment
+A company project links its repository through the company's own GitHub
+installation, never a member's personal one
+([ADR-20261110200000](adr/20261110200000-organization-owned-github-installations.md)).
+An owner or admin connects it from Connect GitHub with the company selected
+(the form's `organization` field); the role is checked again when GitHub
+returns. An installation belongs to one Gregale owner, so disconnect it from a
+personal account before connecting it for the company. Owners and admins then
+set `repo_full_name` with `PATCH /v1/orgs/{organization}/projects/{slug}`;
+members list the company's installations at
+`GET /v1/orgs/{organization}/github/installations`. A member leaving does not
+disconnect it.
+
+Other GitHub/GitOps administration, async-route manifest bindings, resource/environment
 cloning, browser approval exchange and other unreviewed integrations remain
 outside the reviewed project surface. Shared uploads reject async-route bindings
 before resolving personal services. Managed PostgreSQL bindings use the company
