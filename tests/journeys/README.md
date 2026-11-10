@@ -67,6 +67,10 @@ to the journeys and steps that test it, and lists what is not covered.
 enables `TestGitHubDeploys` and `TestPreviewDatabases` against a fixture
 repository the account's GitHub App installation can see (e.g.
 `poyrazK/gregale-e2e-fixture`).
+`--github-functions-repo` enables `TestFunctionsProjectFromGitHub`, which
+deploys a functions project from a second, dedicated fixture repository and
+rewrites its `gregale.yaml` and `functions/` on `main`; it also skips until
+the account has the `repository-functions` capability.
 
 To run `TestGitHubDeploysSharedInstallation`, independently connect that same
 GitHub installation in a second Gregale fixture account and set

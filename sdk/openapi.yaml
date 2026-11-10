@@ -35259,7 +35259,7 @@ components:
         detector:
           type: string
           description: "closed vocabulary — the detector that won identity for this workload"
-          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
           example: compose
         marker:
           type: string
@@ -35282,7 +35282,7 @@ components:
             get its own workload?" — it merged into the compose `web`.
           items:
             type: string
-            enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+            enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
           example: [procfile]
     PlanDetectionWarning:
       description: |
@@ -35297,7 +35297,7 @@ components:
           description: "Workload affected by the decision; omitted for source-wide warnings."
         detector:
           type: string
-          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
         marker:
           type: string
           description: "Concrete source marker associated with the detector decision."
@@ -35451,7 +35451,7 @@ components:
         environment_config_hash: {type: string, pattern: '^[a-f0-9]{64}$', description: "Hash of the non-secret environment configuration bound into this plan"}
         scan_source:
           type: string
-          enum: [compose, procfile, k8s, render, fly, serverless, workspace, convention, single, unknown]
+          enum: [compose, procfile, k8s, render, fly, serverless, workspace, convention, single, unknown, functions]
         tier: {type: string}
         workloads:
           type: array

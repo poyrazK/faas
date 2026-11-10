@@ -4826,6 +4826,20 @@
       ]
     },
     {
+      "id": "repository-functions",
+      "name": "Functions projects from repository pushes",
+      "category": "delivery",
+      "description": "Deploy a gregale.yaml functions project from a connected repository, one function app per function.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261108160000-functions-projects-from-repository-pushes",
+      "acceptance_test": "pkg/reposcan/functions_test.go::TestScanFunctionsProject",
+      "parent": "projects",
+      "consumers": [
+        "githubd"
+      ]
+    },
+    {
       "id": "request-retry",
       "name": "Request retry",
       "category": "edge",

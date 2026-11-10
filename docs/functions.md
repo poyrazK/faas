@@ -167,8 +167,8 @@ With the SDK installed you can use the typed helpers instead:
   the entry sets is kept and the code fills only the rest. Any cron trigger
   for the function in `triggers:` replaces the code's `cron`.
 - `gregale deploy --plan` and every deploy list the settings that came from
-  code. Repository deploys connected through GitHub do not read config in
-  code yet.
+  code. Pushes to a connected repository read config in code too where your
+  account can [deploy functions from GitHub](#deploy-a-functions-project-from-github).
 
 ### Functions sharing one source tree
 
@@ -300,15 +300,60 @@ named. Add a custom domain to the entry app and deploy again to route it too.
 
 Pass `--no-triggers` to deploy code without changing crons, bucket events or
 webhooks. A function removed from the list keeps its app; the deploy names
-it, and `gregale app list --yes <slug>` deletes it.
+it, and `gregale app delete <slug> --yes` deletes it.
 
 A manifest with `functions:` holds only `functions`, cron `triggers` and
 `schema_version`. Other sections apply to a single app, so configure them per
-function after deploying. `functions:` is applied by `gregale deploy`:
-repository deploys connected through GitHub ignore it for a function app and
-refuse it for any other app. The design is recorded in
+function after deploying. `functions:` is applied by `gregale deploy`, and by
+pushes to a connected repository where your account can
+[deploy functions from GitHub](#deploy-a-functions-project-from-github);
+otherwise a repository deploy ignores it for a function app and refuses it for
+any other app. The design is recorded in
 [ADR-985](adr/985-multi-function-projects.md); per-function settings and
 routes in [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).
+
+### Deploy a functions project from GitHub
+
+A functions project can deploy from its GitHub repository instead of a
+checkout. This is rolling out: `gregale feature list` shows whether your
+account has **Functions projects from repository pushes**
+(`repository-functions`). Without it, use `gregale deploy` from a checkout.
+
+Connect the repository through the Gregale GitHub App, then deploy it once as a
+project:
+
+```bash
+gregale deploy --repo octo/shop --ref main --project
+```
+
+The project's production branch is `main` unless you pass
+`--production-branch`. Gregale reads `gregale.yaml` and any `functions/<name>/` handlers at that
+commit, shows the plan, and creates one function app per function with the
+same `<project>-<name>` slugs `gregale deploy` uses. Function apps a checkout
+deploy already created are adopted, not duplicated, and an adopted app does
+not count against your app limit a second time.
+
+After that, every push to the production branch:
+
+- deploys each function whose root changed, and every function when the
+  root `gregale.yaml` changed;
+- creates an app for a function new to the repository;
+- applies each function's settings as `gregale deploy` does: RAM, request and
+  idle timeouts, minimum instances, concurrency, non-secret `env` (and
+  `prune_env`), cron, queue bindings, event triggers and the entry function's
+  routes, including config in code;
+- keeps the app of a function the repository no longer declares. Its GitHub
+  check says it was kept and names `gregale app delete <slug> --yes`.
+
+A push runs unattended, so it leaves three steps for a person: creating an
+inbound webhook endpoint (its URL is shown once), changing bucket
+notifications (they need MFA), and reading `secrets_from_env` (the values come
+from your shell, and Gregale never reads secrets from the repository).
+Existing webhooks, bucket notifications and secrets stay as they are. The
+push's deploy activity lists each step left, and running `gregale deploy` from
+a checkout completes them; `gregale org activity` and the dashboard's
+activity feed show it. The design is recorded in
+[ADR-20261108160000](adr/20261108160000-functions-projects-from-repository-pushes.md).
 
 ## Concurrent requests per worker
 

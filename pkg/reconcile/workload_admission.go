@@ -164,7 +164,7 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 			continue
 		}
 		seen[slug] = workload.RootDir
-		if app, exists := bySlug[slug]; exists &&
+		if app, exists := bySlug[slug]; exists && !adoptableFunctionApp(app, workload) &&
 			(projectID == "" || app.ProjectID != projectID || !member(app, workload) || app.PreviewOfSlug != "") {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q conflicts with existing app slug %q outside this project member",
@@ -207,4 +207,12 @@ func validateWorkloadAdmissionWithManaged(workloads []reposcan.Workload, managed
 		return nil
 	}
 	return fmt.Errorf("%w: %s", ErrInvalidWorkloadPlan, strings.Join(reasons, "; "))
+}
+
+// adoptableFunctionApp reports whether app is a function app of the
+// account outside any project that a function workload takes over: the app
+// `gregale deploy` made under the same slug (ADR-20261108160000 §1).
+func adoptableFunctionApp(app state.App, workload reposcan.Workload) bool {
+	return workload.Function != nil && app.Type == state.AppTypeFunction && app.ProjectID == "" &&
+		app.Status != state.AppDeleted && app.PreviewOfSlug == ""
 }
