@@ -196,6 +196,15 @@ never admits it, so `image/*` does not admit `image/svg+xml`. A route on a
 public bucket mount cannot list an active type at all, and such uploads are
 refused with `415`, because the file would be served on your app's hostname.
 
+Objects read through `s3.gregale.dev` never run as pages there, because every
+customer shares that host. Every response carries
+`X-Content-Type-Options: nosniff`, and an object without a type is served as
+`application/octet-stream`. An active type keeps its `Content-Type` but is
+served as an attachment (keeping a stored filename) with a sandboxing
+`Content-Security-Policy`, including when a presigned URL asks for another
+`response-content-type`. To host pages, serve a public bucket on your app's own
+hostname.
+
 ## Use an S3 SDK
 
 Each bucket can have S3 credentials that work with standard S3 tools:

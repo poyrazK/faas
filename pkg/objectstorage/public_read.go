@@ -164,7 +164,13 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid object path", http.StatusBadRequest)
 			return
 		}
-		h.log.Warn("public object lookup failed", "host", r.Host, "path", r.URL.Path)
+		// The request falls through to the app, so a mount path is answered
+		// by the app until the lookup recovers; say why (audit OS-12).
+		if errors.Is(err, context.Canceled) {
+			h.log.Debug("public object lookup abandoned by the client", "host", r.Host, "path", r.URL.Path)
+		} else {
+			h.log.Warn("public object lookup failed", "host", r.Host, "path", r.URL.Path, "err", err)
+		}
 		h.next.ServeHTTP(w, r)
 		return
 	}
