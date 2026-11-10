@@ -6475,7 +6475,7 @@ var cliCommands = []cliCommand{
 			{Name: "environments", Aliases: []string{"envs"}, Short: "Manage project environments, releases and promotions", Notes: []string{"Qualify binds probes to release, config and secret revisions."}, Subcommands: []cliSub{
 				{Name: "list", Aliases: []string{"ls"}, Short: "List environments", Positionals: []string{"<project-slug>"}},
 				{Name: "create", Short: "Create or clone an environment"},
-				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Req: true, Short: "confirm environment deletion"}}},
+				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Req: true, Short: "confirm environment deletion"}}},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
 				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},
