@@ -27,7 +27,13 @@ export const afterRestore = async () => {};`, []string{"before_snapshot", "after
   // afterRestore() {}
   name: "afterRestore()",
 };`, nil},
-		{"no hooks", "handler.js", `export default { async fetch() { return new Response("ok"); } };`, nil},
+		{"jsdoc typed export", "handler.js", `/** @type {import('@gregale/sdk-node').FunctionSnapshotHooks & {fetch(request: Request): Promise<Response>}} */
+export default {
+  /** @param {import('@gregale/sdk-node').FunctionHookContext} ctx */
+  async beforeSnapshot(ctx) {},
+  async fetch(request) { return new Response('ok'); },
+};`, []string{"before_snapshot"}},
+		{"no hooks", "handler.js",`export default { async fetch() { return new Response("ok"); } };`, nil},
 		{"python module functions", "handler.py", `import asyncio
 
 async def init():
