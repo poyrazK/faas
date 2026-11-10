@@ -15223,22 +15223,24 @@ type ScheduleOccurrence struct {
 }
 
 type ScheduledRelease struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	AppID             pgtype.UUID
-	DeploymentID      pgtype.UUID
-	ReleaseAt         pgtype.Timestamptz
-	Canary            []byte
-	NotifyChannelIds  []pgtype.UUID
-	OverrideFreeze    string
-	OverrideFreezeIds []pgtype.UUID
-	State             string
-	OutcomeCode       string
-	OutcomeDetail     string
-	ScheduledBy       string
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	StartedAt         pgtype.Timestamptz
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	DeploymentID         pgtype.UUID
+	ReleaseAt            pgtype.Timestamptz
+	Canary               []byte
+	NotifyChannelIds     []pgtype.UUID
+	OverrideFreeze       string
+	OverrideFreezeIds    []pgtype.UUID
+	State                string
+	OutcomeCode          string
+	OutcomeDetail        string
+	ScheduledBy          string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	StartedAt            pgtype.Timestamptz
+	ScheduledByAccountID pgtype.UUID
+	ScheduledByKeyID     pgtype.UUID
 }
 
 // One non-secret secretbox probe per seal domain, sealed to the domain recipient alone (ADR 20261022111812).

@@ -154,6 +154,12 @@ func (s *server) scheduleStartChecks(ctx context.Context, sr state.ScheduledRele
 	if blocking := schedule.UnoverriddenFreezes(active, sr.OverrideFreezeIDs); len(blocking) > 0 {
 		return schedule.Blocked(api.CodeReleaseFrozen, freeze.Summary(app.Slug, blocking)), nil
 	}
+	if decision, ok := schedule.SchedulerStanding(ctx, s.store, sr, app, active, now); !ok {
+		if decision.Action == schedule.ActionEnd {
+			s.log.Warn("scheduled releases: scheduler may no longer release it", "schedule", sr.ID, "scheduled_by", sr.ScheduledBy)
+		}
+		return decision, nil
+	}
 	ladder, p := s.scheduleLadder(sr, siblings)
 	if p != nil {
 		return schedule.Blocked(schedule.CodeStartRefused, p.Detail), nil

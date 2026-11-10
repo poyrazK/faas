@@ -159,6 +159,44 @@ func TestScheduledReleaseIsBlockedByAFreezeCreatedAfterIt(t *testing.T) {
 	apidserver.AssertProblem(t, rec, http.StatusNotFound, api.CodeScheduledReleaseNotFound)
 }
 
+// adr: 20261021152201 — amendment 2026-11-10: a schedule records who made it,
+// and the worker refuses to start it once that key is gone.
+func TestScheduledReleaseIsBlockedWhenItsSchedulerLosesAccess(t *testing.T) {
+	f := newScheduleFixture(t, "sched-revoked")
+	e := f.e
+	parked := f.parked(t, 'c')
+	at := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
+	var sr api.ScheduledRelease
+	if rec := guardDo(t, e, http.MethodPut, "/v1/deployments/"+parked.ID+"/schedule",
+		api.ScheduleReleaseRequest{ReleaseAt: at.Format(time.RFC3339), Canary: &api.CanaryPresetSpec{Preset: "none"}}, &sr); rec.Code != http.StatusOK {
+		t.Fatalf("schedule = %d %s", rec.Code, rec.Body)
+	}
+	store := *e.Store()
+	ctx := context.Background()
+	recorded, err := store.LatestScheduledRelease(ctx, parked.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorded.ScheduledByAccountID != e.Acct().ID || recorded.ScheduledByKeyID == "" {
+		t.Fatalf("recorded scheduler = %q / %q, want the caller's account and key", recorded.ScheduledByAccountID, recorded.ScheduledByKeyID)
+	}
+	if err := store.DeleteAPIKey(ctx, e.Acct().ID, recorded.ScheduledByKeyID); err != nil {
+		t.Fatal(err)
+	}
+	(*e.S()).StartDueScheduledReleases(ctx, at.Add(time.Second))
+	if d := f.read(t, parked.ID); d.TrafficPercent != 0 {
+		t.Fatalf("release whose scheduler lost access took %d%% traffic", d.TrafficPercent)
+	}
+	blocked, err := store.LatestScheduledRelease(ctx, parked.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked.State != state.ScheduledReleaseBlocked || blocked.OutcomeCode != "scheduler_lost_access" ||
+		!strings.Contains(blocked.OutcomeDetail, "its API key was deleted") {
+		t.Fatalf("schedule = %s/%s %q, want blocked by scheduler_lost_access", blocked.State, blocked.OutcomeCode, blocked.OutcomeDetail)
+	}
+}
+
 func TestScheduleValidationFreezePreviewAndCancel(t *testing.T) {
 	f := newScheduleFixture(t, "sched-rules")
 	e := f.e
