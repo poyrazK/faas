@@ -299,6 +299,45 @@ func (q *Queries) ListAccountOAuthLinks(ctx context.Context, db DBTX, accountID 
 	return items, nil
 }
 
+const listExpiredUnverifiedAccounts = `-- name: ListExpiredUnverifiedAccounts :many
+SELECT a.id FROM accounts a
+WHERE a.status='active' AND a.email_verified_at IS NULL
+  AND greatest(a.created_at, $1::timestamptz) < $2::timestamptz
+  AND a.plan='free' AND coalesce(a.provider_customer_id,'')='' AND coalesce(a.stripe_subscription_item,'')=''
+  AND NOT EXISTS (SELECT 1 FROM apps p WHERE p.account_id=a.id)
+ORDER BY a.created_at
+LIMIT $3
+`
+
+type ListExpiredUnverifiedAccountsParams struct {
+	EnforcedFrom pgtype.Timestamptz
+	Cutoff       pgtype.Timestamptz
+	MaxRows      int32
+}
+
+// Accounts never verified long after signup (ADR 20261110120000): still
+// active, no app ever created and no billing customer. The grace clock
+// starts at signup or at enforced_from, whichever is later.
+func (q *Queries) ListExpiredUnverifiedAccounts(ctx context.Context, db DBTX, arg ListExpiredUnverifiedAccountsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listExpiredUnverifiedAccounts, arg.EnforcedFrom, arg.Cutoff, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMFATrustedBrowsers = `-- name: ListMFATrustedBrowsers :many
 SELECT id, ua_family, created_ip, created_at, expires_at, last_used_at
 FROM mfa_trusted_browsers

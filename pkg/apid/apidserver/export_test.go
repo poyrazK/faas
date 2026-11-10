@@ -2075,6 +2075,9 @@ func AgeSignInsForTest(t testing.TB, d time.Duration) {
 	t.Cleanup(func() { recentSignInNow = prev })
 }
 
+// ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
+func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int { return r.expireUnverifiedAccounts(ctx) }
+
 // OperatorRevertEmail exposes the operator email revert.
 var OperatorRevertEmail = (*server).operatorRevertEmail
 

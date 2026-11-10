@@ -855,6 +855,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runAlertRollbackWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runRollbackOn5xxWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runConfigGuardWorker(ctx) })
+		// ADR 20261110120000: never-verified accounts that hold nothing
+		// are scheduled for deletion 60 days after signup.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runUnverifiedAccountExpiry(ctx) })
 		// ADR-20261107220000 §2: agent activity is kept 7 days.
 		go background.Staggered(ctx, background.StartSpread, func() {
 			srv.runAgentActivitySweep(ctx)
