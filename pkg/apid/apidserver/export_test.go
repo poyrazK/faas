@@ -2386,3 +2386,6 @@ func (r *server) ManagedPostgresEgressAllowance(ctx context.Context, subjectID s
 func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provider {
 	return &usageSummaryEgressProvider{mode: mode}
 }
+
+// PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
+var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode
