@@ -592,6 +592,9 @@ jobs:
             deploy/ansible/roles/edgednsd_service/files/faas-edgednsd.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-edgednsd.service"
           install -m 0644 \
+            deploy/ansible/roles/signd_service/files/faas-signd.service \
+            "${BUNDLE_ROOT}/optional-systemd/faas-signd.service"
+          install -m 0644 \
             deploy/ansible/roles/control_plane_service/files/faas-mcp-bridge.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-mcp-bridge.service"
           # Files required before deployctl can activate outboundd. Keep the
@@ -1432,6 +1435,55 @@ jobs:
             sleep 2
           done
           journalctl -u faas-edgednsd.service -n 100 --no-pager >&2
+          exit 1
+          REMOTE
+
+      # signd_service converges before the release activates, so it can only
+      # start signd once the binary is current. This step starts (or
+      # restarts) it from the release just activated and waits for its
+      # listener (ADR-20261109170000). Without the role's drop-in signd is off.
+      - name: Restart configured artifact signer
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} "bash -s -- '${RELEASE_ID}'" <<'REMOTE'
+          set -euo pipefail
+          release_id="$1"
+          dropin=/etc/systemd/system/faas-signd.service.d/50-faas-signd.conf
+          source_unit="/opt/faas/releases/${release_id}/optional-systemd/faas-signd.service"
+          installed_unit=/etc/systemd/system/faas-signd.service
+
+          if [[ ! -s "$dropin" ]]; then
+            echo "faas-signd is not configured; compute nodes keep signing locally"
+            exit 0
+          fi
+          test -f "$source_unit"
+          test -x "/opt/faas/releases/${release_id}/bin/signd"
+          if [[ -L "$installed_unit" || ( -e "$installed_unit" && ! -f "$installed_unit" ) ]]; then
+            echo "faas-signd unit path is not a regular file" >&2
+            exit 1
+          fi
+          staged_unit="${installed_unit}.new-${release_id}"
+          trap 'rm -f -- "$staged_unit"' EXIT
+          install -o root -g root -m 0644 "$source_unit" "$staged_unit"
+          mv -Tf "$staged_unit" "$installed_unit"
+          trap - EXIT
+
+          listen="$(sed -n 's/^Environment=FAAS_SIGND_LISTEN=tcp:\/\///p' "$dropin" | tail -1)"
+          port="${listen##*:}"
+          [[ "$port" =~ ^[0-9]+$ ]]
+          systemctl daemon-reload
+          systemctl reset-failed faas-signd.service || true
+          systemctl enable faas-signd.service
+          systemctl restart faas-signd.service
+          for attempt in $(seq 1 30); do
+            if systemctl is-active --quiet faas-signd.service &&
+               ss -Hltn "sport = :${port}" | grep -q .; then
+              exit 0
+            fi
+            sleep 2
+          done
+          journalctl -u faas-signd.service -n 100 --no-pager >&2
           exit 1
           REMOTE
 
