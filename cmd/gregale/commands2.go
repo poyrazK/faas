@@ -1855,7 +1855,21 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 	if err := m.Validate(); err != nil {
 		return err
 	}
-	return reconcileQueueBindings(ctx, client, slug, m.QueueBindings, "pull", "worker")
+	mode, class := manifestQueueBindingDefaults(m)
+	return reconcileQueueBindings(ctx, client, slug, m.QueueBindings, mode, class)
+}
+
+// manifestQueueBindingDefaults is the mode and workload class an app's
+// queue_bindings take when an entry omits them, as the server defaults them:
+// a function app (a `function:` block) consumes by push as an HTTP workload,
+// like an entry under `functions:`; every other app pulls as a worker. A
+// function app's bindings used to default to pull/worker and failed with
+// "workload_class \"worker\" does not match app workload class \"http\"".
+func manifestQueueBindingDefaults(m *gregalemanifest.Manifest) (string, string) {
+	if m != nil && m.Function != nil {
+		return "push", "http"
+	}
+	return "pull", "worker"
 }
 
 // reconcileQueueBindings makes an app's default-environment queue bindings

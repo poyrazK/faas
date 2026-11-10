@@ -71,6 +71,21 @@ func validateQueueBindingTarget(mode, class string, app state.App) *api.Problem 
 	return nil
 }
 
+// queueBindingDefaults is the mode and workload class a binding takes when
+// the request omits them: push/http for an HTTP function app, which can only
+// consume by push, and pull/worker for every other app. The pull/worker
+// default used to apply to functions too, so the command the CLI and the
+// queue setup error suggested for a function app (`gregale queue bindings
+// create <app> --name q --queue-name q`) failed with "workload_class
+// \"worker\" does not match app workload class \"http\"" (production-us
+// 2026-11-07).
+func queueBindingDefaults(app state.App) (string, string) {
+	if app.Type == state.AppTypeFunction && queueBindingAppClass(app) == state.WorkloadClassHTTP {
+		return "push", string(state.WorkloadClassHTTP)
+	}
+	return "pull", string(state.WorkloadClassWorker)
+}
+
 // queueBindingAppClass matches the store's binding check (see
 // state.QueueBindingAppClass) so apid rejects exactly what the store would.
 func queueBindingAppClass(app state.App) state.WorkloadClass {
@@ -315,9 +330,10 @@ func (s *server) createQueueBinding(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
+	defaultMode, defaultClass := queueBindingDefaults(app)
 	mode := req.Mode
 	if mode == "" {
-		mode = "pull"
+		mode = defaultMode
 	}
 	if prob := validateQueueBindingMode(mode); prob != nil {
 		api.WriteProblem(w, prob)
@@ -325,7 +341,7 @@ func (s *server) createQueueBinding(w http.ResponseWriter, r *http.Request, acct
 	}
 	class := req.WorkloadClass
 	if class == "" {
-		class = string(state.WorkloadClassWorker)
+		class = defaultClass
 	}
 	if prob := validateQueueBindingTarget(mode, class, app); prob != nil {
 		api.WriteProblem(w, prob)
