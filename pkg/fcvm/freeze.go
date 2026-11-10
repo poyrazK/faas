@@ -359,9 +359,34 @@ func (m *Manager) isFrozen(inst *Instance) bool {
 
 func (m *Manager) clearFrozen(inst *Instance) {
 	m.mu.Lock()
-	inst.Frozen, inst.FrozenSince = false, time.Time{}
+	endFrozenLocked(inst, time.Now())
 	m.mu.Unlock()
 	m.markAdoptionDirty(inst.Lease.Instance)
+}
+
+// endFrozenLocked ends an instance's freeze, adding it to FrozenTotal. The
+// caller holds Manager.mu.
+func endFrozenLocked(inst *Instance, now time.Time) {
+	if inst.Frozen && !inst.FrozenSince.IsZero() && now.After(inst.FrozenSince) {
+		inst.FrozenTotal += now.Sub(inst.FrozenSince)
+	}
+	inst.Frozen, inst.FrozenSince = false, time.Time{}
+}
+
+// FrozenTime is an instance's time frozen so far: its completed freezes and
+// the current one, up to now.
+func (m *Manager) FrozenTime(instance string, now time.Time) time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst := m.live[instance]
+	if inst == nil {
+		return 0
+	}
+	total := inst.FrozenTotal
+	if inst.Frozen && !inst.FrozenSince.IsZero() && now.After(inst.FrozenSince) {
+		total += now.Sub(inst.FrozenSince)
+	}
+	return total
 }
 
 // FrozenState reports whether an instance is frozen and since when, for

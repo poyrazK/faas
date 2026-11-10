@@ -527,6 +527,30 @@ UPDATE sandbox_sessions SET lease_expires_at=now()+make_interval(secs=>sqlc.arg(
 UPDATE sandbox_sessions SET state=CASE WHEN sqlc.arg(frozen)::boolean THEN 'frozen' ELSE 'ready' END, updated_at=now()
  WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('ready','frozen');
 
+-- name: RecordSandboxSessionUsage :execrows
+-- ADR-20261027090013 step 11: vmmd's cumulative usage of the session VM,
+-- while the lease is held and the session has a VM. A record never replaces
+-- a later one (a reordered or replayed frame), nor a final one.
+INSERT INTO sandbox_session_usage AS u (sandbox_id, account_id, method, samples, expected_samples, measured_ms, paused_ms,
+    frozen_ms, private_mb_ms, unpaused_private_mb_ms, billable_mb_ms, peak_private_mb, cold_boot, final)
+SELECT s.id, s.account_id, sqlc.arg(method)::smallint, sqlc.arg(samples)::integer, sqlc.arg(expected_samples)::integer,
+       sqlc.arg(measured_ms)::bigint, sqlc.arg(paused_ms)::bigint, sqlc.arg(frozen_ms)::bigint, sqlc.arg(private_mb_ms)::bigint,
+       sqlc.arg(unpaused_private_mb_ms)::bigint, sqlc.arg(billable_mb_ms)::bigint, sqlc.arg(peak_private_mb)::bigint,
+       sqlc.arg(cold_boot)::boolean, sqlc.arg(final)::boolean
+  FROM sandbox_sessions s
+ WHERE s.id=sqlc.arg(session_id)::text::uuid AND s.lease_token=sqlc.arg(lease_token)::text AND s.state IN ('ready','frozen')
+ON CONFLICT (sandbox_id) DO UPDATE SET method=excluded.method, samples=excluded.samples, expected_samples=excluded.expected_samples,
+       measured_ms=excluded.measured_ms, paused_ms=excluded.paused_ms, frozen_ms=excluded.frozen_ms,
+       private_mb_ms=excluded.private_mb_ms, unpaused_private_mb_ms=excluded.unpaused_private_mb_ms,
+       billable_mb_ms=excluded.billable_mb_ms, peak_private_mb=excluded.peak_private_mb, cold_boot=excluded.cold_boot,
+       final=excluded.final, updated_at=now()
+ WHERE NOT u.final AND excluded.measured_ms >= u.measured_ms;
+
+-- name: GetSandboxSessionUsage :one
+SELECT method, samples, expected_samples, measured_ms, paused_ms, frozen_ms, private_mb_ms, unpaused_private_mb_ms,
+       billable_mb_ms, peak_private_mb, cold_boot, final
+  FROM sandbox_session_usage WHERE sandbox_id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
 -- name: RequeueSandboxSession :execrows
 -- Only a starting session, which has no VM, goes back to the queue.
 UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL, updated_at=now()

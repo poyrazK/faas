@@ -102,6 +102,9 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_PersistDone{PersistDone: &scheddpb.SandboxRunPersistDone{
 				RequestId: d.RequestID, SnapshotId: d.SnapshotID, Bytes: d.Bytes, Sha256: d.SHA256, Failed: d.Failed}}})
 		},
+		Usage: func(_ context.Context, u sched.AgentRunUsage) error {
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Usage{Usage: agentRunUsageToProto(u)}})
+		},
 	}
 	opErr = s.sandboxRuns.RunSandbox(ctx, admission, placed, hooks, frames.control)
 	if opErr != nil {

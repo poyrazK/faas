@@ -60,16 +60,16 @@ type AgentRunHooks struct {
 // vmmdpb.AgentRunUsage, whose comments give each field's meaning.
 type AgentRunUsage struct {
 	Method, Samples, ExpectedSamples                                          int
-	MeasuredMillis, PausedMillis                                              int64
+	MeasuredMillis, PausedMillis, FrozenMillis                                int64
 	PrivateMBMillis, UnpausedPrivateMBMillis, BillableMBMillis, PeakPrivateMB int64
-	ColdBoot                                                                  bool
+	ColdBoot, Final                                                           bool
 }
 
 func agentRunUsageFromProto(u *vmmdpb.AgentRunUsage) AgentRunUsage {
 	return AgentRunUsage{Method: int(u.GetMethod()), Samples: int(u.GetSamples()), ExpectedSamples: int(u.GetExpectedSamples()),
 		MeasuredMillis: u.GetMeasuredMs(), PausedMillis: u.GetPausedMs(), PrivateMBMillis: u.GetPrivateMbMs(),
 		UnpausedPrivateMBMillis: u.GetUnpausedPrivateMbMs(), BillableMBMillis: u.GetBillableMbMs(),
-		PeakPrivateMB: u.GetPeakPrivateMb(), ColdBoot: u.GetColdBoot()}
+		PeakPrivateMB: u.GetPeakPrivateMb(), ColdBoot: u.GetColdBoot(), FrozenMillis: u.GetFrozenMs(), Final: u.GetFinal()}
 }
 
 type agentRunVMMClient interface {

@@ -41,6 +41,7 @@ type SandboxStore interface {
 	CompleteSandboxSnapshot(ctx context.Context, id string, bytes int64, sha256 string) error
 	DeleteSandboxSnapshot(ctx context.Context, id string) error
 	SweepableSandboxSnapshots(ctx context.Context, pendingTTL time.Duration, limit int) ([]agentstore.SweepableSandboxSnapshot, error)
+	RecordSandboxUsage(ctx context.Context, id, token string, u agentstore.SandboxUsage) (bool, error)
 }
 
 // SandboxSchedd opens RunSandbox streams; scheddpb.ScheddClient implements
@@ -96,18 +97,19 @@ const (
 
 // Sandboxes drives one replica's sandbox sessions.
 type Sandboxes struct {
-	store  SandboxStore
-	schedd SandboxSchedd
-	cfg    Config
-	scfg   SandboxConfig
-	log    *slog.Logger
-	now    func() time.Time
+	store   SandboxStore
+	schedd  SandboxSchedd
+	cfg     Config
+	scfg    SandboxConfig
+	log     *slog.Logger
+	metrics *Metrics
+	now     func() time.Time
 }
 
 // NewSandboxes returns a replica's session driver; cfg is the replica's
 // lease and poll configuration.
 func (a *Agentd) NewSandboxes(store SandboxStore, schedd SandboxSchedd, scfg SandboxConfig) *Sandboxes {
-	return &Sandboxes{store: store, schedd: schedd, cfg: a.cfg, scfg: scfg.withDefaults(), log: a.log, now: time.Now}
+	return &Sandboxes{store: store, schedd: schedd, cfg: a.cfg, scfg: scfg.withDefaults(), log: a.log, metrics: a.metrics, now: time.Now}
 }
 
 // Run claims and holds sessions until ctx ends, and sweeps their expired
@@ -208,6 +210,9 @@ type session struct {
 	// persists maps each workspace persist's request to the snapshot
 	// reserved for it, so a report names only this session's reservations.
 	persists map[string]string
+	// usage is the last usage record counted in the metrics; records are
+	// cumulative, so each adds its growth.
+	usage agentstore.SandboxUsage
 }
 
 type sessionEnd struct{ state, code, message string }
@@ -363,6 +368,8 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 			go s.grantPersist(ctx, ss, ev.GetPersistRequested().GetRequestId(), send)
 		case ev.GetPersistDone() != nil:
 			go s.recordPersist(ctx, ss, ev.GetPersistDone(), send)
+		case ev.GetUsage() != nil:
+			s.recordUsage(ctx, ss, ev.GetUsage())
 		}
 	}
 }
@@ -457,4 +464,26 @@ func (s *Sandboxes) requeue(ctx context.Context, claim agentstore.SandboxClaim, 
 		return
 	}
 	s.log.Info("agentd: sandbox requeued", "sandbox_id", claim.ID, "cause", status.Code(cause).String())
+}
+
+// recordUsage keeps vmmd's cumulative usage of the session VM
+// (ADR-20261027090013 step 11; not billed yet) and counts its growth. A
+// failed write is logged: the next record carries the same totals.
+func (s *Sandboxes) recordUsage(ctx context.Context, ss *session, u *scheddpb.AgentRunUsage) {
+	usage := agentstore.SandboxUsage{Usage: agentstore.Usage{Method: int(u.GetMethod()), Samples: int(u.GetSamples()),
+		ExpectedSamples: int(u.GetExpectedSamples()), MeasuredMillis: u.GetMeasuredMs(), PausedMillis: u.GetPausedMs(),
+		PrivateMBMillis: u.GetPrivateMbMs(), UnpausedPrivateMBMillis: u.GetUnpausedPrivateMbMs(), BillableMBMillis: u.GetBillableMbMs(),
+		PeakPrivateMB: u.GetPeakPrivateMb(), ColdBoot: u.GetColdBoot()}, FrozenMillis: u.GetFrozenMs(), Final: u.GetFinal()}
+	ss.mu.Lock()
+	prev := ss.usage
+	if usage.MeasuredMillis >= prev.MeasuredMillis {
+		ss.usage = usage
+	}
+	ss.mu.Unlock()
+	if usage.MeasuredMillis >= prev.MeasuredMillis {
+		s.metrics.sandboxUsed(prev, usage)
+	}
+	if _, err := s.store.RecordSandboxUsage(ctx, ss.claim.ID, ss.claim.LeaseToken, usage); err != nil {
+		s.log.Warn("agentd: record sandbox usage", "sandbox_id", ss.claim.ID, "err", err)
+	}
 }

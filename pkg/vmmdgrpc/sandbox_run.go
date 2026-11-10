@@ -29,6 +29,12 @@ type SandboxVMMAPI interface {
 	Destroy(context.Context, string) error
 }
 
+// sandboxMeter measures a session VM's usage (ADR-20261027090013 step 11).
+// *fcvm.Manager implements it; a VMM without it reports no usage.
+type sandboxMeter interface {
+	MeterSandbox(instance string) fcvm.SandboxUsageMeter
+}
+
 const (
 	// sandboxActivityEvery bounds how often RunSandbox reports activity.
 	sandboxActivityEvery = time.Second
@@ -54,6 +60,8 @@ type sandboxActivity struct {
 	outbox   chan *vmmdpb.RunSandboxEvent
 	done     chan struct{}
 	persists sandboxPersists
+	// usage measures the VM, or is nil when the VMM cannot.
+	usage fcvm.SandboxUsageMeter
 }
 
 func newSandboxActivity(sandboxID string, plan api.Plan) *sandboxActivity {
@@ -140,6 +148,9 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		}
 	}
 	act := newSandboxActivity(wake.SandboxID, wake.Plan)
+	if meter, ok := s.vmm.(sandboxMeter); ok {
+		act.usage = meter.MeterSandbox(wake.Instance)
+	}
 	s.sandboxRuns.Store(wake.Instance, act)
 	defer func() {
 		close(act.done)
@@ -176,6 +187,18 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 	}()
 	ticker := time.NewTicker(sandboxActivityEvery)
 	defer ticker.Stop()
+	usageEvery := s.sandboxUsageEvery
+	if usageEvery <= 0 {
+		usageEvery = api.SandboxUsageReportSec * time.Second
+	}
+	usageTick := time.NewTicker(usageEvery)
+	defer usageTick.Stop()
+	stopped := false
+	defer func() {
+		if act.usage != nil && !stopped {
+			act.usage.Stop()
+		}
+	}()
 	for {
 		var ev *vmmdpb.RunSandboxEvent
 		select {
@@ -189,6 +212,15 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 		case msg := <-frames:
 			switch {
 			case msg.GetClose() != nil:
+				// The last record goes out before the stream ends, so a
+				// closed session's usage is complete.
+				if act.usage != nil {
+					stopped = true
+					u := act.usage.Stop()
+					ev := sandboxUsageEvent(&u)
+					ev.GetUsage().Final = true
+					return stream.Send(ev)
+				}
 				return nil
 			case msg.GetFreeze() != nil:
 				ev = s.freezeSandbox(ctx, instance)
@@ -204,6 +236,11 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 			if report, changed := act.report(); changed {
 				ev = &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Activity{Activity: report}}
 			}
+		case <-usageTick.C:
+			if act.usage != nil {
+				u := act.usage.Snapshot()
+				ev = sandboxUsageEvent(&u)
+			}
 		}
 		if ev == nil {
 			continue
@@ -212,6 +249,10 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 			return err
 		}
 	}
+}
+
+func sandboxUsageEvent(u *fcvm.AgentRunUsage) *vmmdpb.RunSandboxEvent {
+	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Usage{Usage: agentRunUsageToProto(u)}}
 }
 
 // freezeSandbox pauses the idle VM in place. A call in flight refuses the

@@ -101,7 +101,7 @@ func agentRunUsageToProto(u sched.AgentRunUsage) *scheddpb.AgentRunUsage {
 	return &scheddpb.AgentRunUsage{Method: int32(u.Method), Samples: int32(u.Samples), ExpectedSamples: int32(u.ExpectedSamples),
 		MeasuredMs: u.MeasuredMillis, PausedMs: u.PausedMillis, PrivateMbMs: u.PrivateMBMillis,
 		UnpausedPrivateMbMs: u.UnpausedPrivateMBMillis, BillableMbMs: u.BillableMBMillis, PeakPrivateMb: u.PeakPrivateMB,
-		ColdBoot: u.ColdBoot}
+		ColdBoot: u.ColdBoot, FrozenMs: u.FrozenMillis, Final: u.Final}
 }
 
 func agentRunStartFromProto(start *scheddpb.AgentRunStart) (sched.AgentRunAdmission, agentrunproto.Request, error) {

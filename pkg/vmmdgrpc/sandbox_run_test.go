@@ -320,3 +320,82 @@ func TestRunSandboxRelaysTemplateCommands(t *testing.T) {
 		cancel()
 	}
 }
+
+// sandboxUsageVMM measures its session VM with a meter whose record grows
+// on every read.
+type sandboxUsageVMM struct {
+	*sandboxRunVMM
+	meter *fakeSandboxMeter
+}
+
+type fakeSandboxMeter struct {
+	mu      sync.Mutex
+	reads   int64
+	stopped bool
+}
+
+func (f *fakeSandboxMeter) Snapshot() fcvm.AgentRunUsage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reads++
+	return fcvm.AgentRunUsage{Method: 1, Samples: int(f.reads), ExpectedSamples: int(f.reads), MeasuredMillis: f.reads * 1000,
+		PausedMillis: 500, FrozenMillis: 200, BillableMBMillis: f.reads * 264_000}
+}
+
+func (f *fakeSandboxMeter) Stop() fcvm.AgentRunUsage {
+	u := f.Snapshot()
+	f.mu.Lock()
+	f.stopped = true
+	f.mu.Unlock()
+	return u
+}
+
+func (v *sandboxUsageVMM) MeterSandbox(instance string) fcvm.SandboxUsageMeter {
+	if instance != "sbx-vm" {
+		return nil
+	}
+	return v.meter
+}
+
+// adr: 20261027090013 step 11 — vmmd reports a session VM's cumulative usage
+// while it runs, and a final record before the stream ends on close.
+func TestRunSandboxReportsUsage(t *testing.T) {
+	vmm := &sandboxUsageVMM{sandboxRunVMM: newSandboxRunVMM(), meter: &fakeSandboxMeter{}}
+	srv := grpc.NewServer()
+	vmmdgrpc.New(vmm, wire.NewOpsMetrics("vmmd_sandbox_usage_test"), "1.0.0", nil).WithAgentRuns(true).
+		WithSandboxUsageEvery(20 * time.Millisecond).Register(srv)
+	lis := bufconn.Listen(1 << 20)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
+	conn, err := grpc.NewClient("passthrough://bufnet", grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	stream := bootSandbox(t, vmmdpb.NewVmmdClient(conn))
+	first := recvUntil(t, stream, func(ev *vmmdpb.RunSandboxEvent) bool { return ev.GetUsage() != nil }).GetUsage()
+	second := recvUntil(t, stream, func(ev *vmmdpb.RunSandboxEvent) bool { return ev.GetUsage() != nil }).GetUsage()
+	if first.GetFinal() || second.GetMeasuredMs() <= first.GetMeasuredMs() || second.GetFrozenMs() != 200 || second.GetPausedMs() != 500 {
+		t.Fatalf("periodic usage = %v then %v", first, second)
+	}
+	if err := stream.Send(&vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_Close{Close: &vmmdpb.RunSandboxClose{}}}); err != nil {
+		t.Fatal(err)
+	}
+	last := recvUntil(t, stream, func(ev *vmmdpb.RunSandboxEvent) bool { return ev.GetUsage().GetFinal() }).GetUsage()
+	if last.GetMeasuredMs() <= second.GetMeasuredMs() {
+		t.Fatalf("final usage %v is older than %v", last, second)
+	}
+	if _, err := stream.Recv(); err == nil {
+		t.Fatal("the stream outlived the final usage")
+	}
+	vmm.meter.mu.Lock()
+	stopped := vmm.meter.stopped
+	vmm.meter.mu.Unlock()
+	if !stopped {
+		t.Fatal("the meter was not stopped")
+	}
+	if _, destroyed, _, _ := vmm.state(); len(destroyed) != 1 {
+		t.Fatalf("destroyed %v", destroyed)
+	}
+}

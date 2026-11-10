@@ -565,6 +565,16 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - **Synchronous only:** there is no `AsyncSandbox`. A background command's `on_stdout`/`on_stderr` run while the caller waits on the handle or iterates it, because the client starts no threads.
      - **Transport:** `urllib` with redirects refused, so the bearer never follows a redirect; tests inject a fake transport, and one test drives the real one against a local HTTP server.
 11. Billing, with ADR-20261027090011.
+   - **As built, part one: measurement, not billed (local branch, no PR yet).** Each session VM is measured by ADR-20261027090011's Measurement for its whole life, from boot to close.
+     - **What is measured.** vmmd's `MeterSandbox` (pkg/fcvm) samples private memory (`anon` + `shmem`) every `AgentRunUsageSampleMillis`, as for a run VM, through the same meter. Quiet-paused and frozen seconds are paused time, which is never billable (§5, D15). A freeze first ends any quiet pause, so the two never overlap. fcvm keeps a frozen ledger for this (`Instance.FrozenTotal`, `Manager.FrozenTime`). The record is method 1, with `frozen_ms`, the frozen part of `paused_ms`.
+     - **Reporting.** A session lives for hours, so vmmd sends a cumulative `usage` frame on `RunSandbox` every `SandboxUsageReportSec` (60 s), and a last one marked `final` before the stream ends on close. A vmmd that dies loses at most one interval. schedd relays the frame (`SandboxRunEvent.usage`), reusing `AgentRunUsage` with the new fields 11 (`frozen_ms`) and 12 (`final`).
+     - **Record.** agentd keeps the latest record in `sandbox_session_usage` (migration `20261110122433816`, expand), fenced on the session's lease while it is `ready` or `frozen`. An older record never replaces a newer one, and nothing replaces the final one.
+     - **Metrics:** `sandbox_session_billed_gb_seconds_total` (the billable measure; nothing bills it yet) and `sandbox_session_paused_seconds_total`, on the agent runs dashboard.
+     - **Tested:** fcvm meter and frozen ledger, the vmmd stream (periodic and final frames), the schedd relay at both ends, the store's fence and ordering on scratch PG, and agentd recording the final record at close. **Not tested on metal.** The metal tests owed by ADR-20261027090011 cover the sampling itself.
+   - **Not built yet:**
+     - **meterd's `agent` meter kind and the conversion `k`.** These are shared with agent runs (ADR-20261027090011 rollout step 3), and wait on the financial model setting `k` and the floor.
+     - **Snapshot storage pricing.** Persisted workspace bytes are counted against `SandboxSnapshotBytesPerAccount` but not billed; that needs a price.
+     - Statement and tenant-statement lines.
 
 Long-lived paused sessions (E2B-style memory pause) need their own ADR.
 

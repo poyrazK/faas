@@ -62,6 +62,11 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: "WAKE_COLD_BOOT", BootMs: 700}}}); err != nil {
 		return err
 	}
+	// vmmd's usage of the session VM, cumulative (step 11).
+	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Usage{Usage: &scheddpb.AgentRunUsage{
+		Method: 1, Samples: 1, ExpectedSamples: 1, MeasuredMs: 1000, BillableMbMs: 264_000, PeakPrivateMb: 100}}}); err != nil {
+		return err
+	}
 	if script == "lose-vm" {
 		time.Sleep(50 * time.Millisecond)
 		return status.Error(codes.Unavailable, "vmmd went away")
@@ -87,7 +92,9 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 			f.mu.Lock()
 			f.closes++
 			f.mu.Unlock()
-			return nil
+			return stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Usage{Usage: &scheddpb.AgentRunUsage{
+				Method: 1, Samples: 4, ExpectedSamples: 4, MeasuredMs: 4000, PausedMs: 2000, FrozenMs: 1000, BillableMbMs: 528_000,
+				PeakPrivateMb: 300, Final: true}}})
 		}
 	}
 }
@@ -187,6 +194,14 @@ func TestSandboxReadyThenClosedOnRequest(t *testing.T) {
 	starts, _, closes := fake.counts()
 	if starts != 1 || closes != 1 {
 		t.Fatalf("%d starts, %d closes", starts, closes)
+	}
+	// adr: 20261027090013 step 11 — the final usage record, sent at close,
+	// is kept before the session ends.
+	usage, found, err := store.SandboxSessionUsage(context.Background(), account, id)
+	want := agentstore.SandboxUsage{Usage: agentstore.Usage{Method: 1, Samples: 4, ExpectedSamples: 4, MeasuredMillis: 4000,
+		PausedMillis: 2000, BillableMBMillis: 528_000, PeakPrivateMB: 300}, FrozenMillis: 1000, Final: true}
+	if err != nil || !found || usage != want {
+		t.Fatalf("usage = %+v %v %v", usage, found, err)
 	}
 	if start := fake.starts[0]; start.GetPlan() != "pro" || start.GetRamMb() != 1024 || start.GetVcpu() < 1 || start.GetCpuMillicores() != start.GetVcpu()*1000 {
 		t.Fatalf("start = %v", start)

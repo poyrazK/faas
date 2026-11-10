@@ -144,6 +144,9 @@ type SandboxHooks struct {
 	// PersistRequested and PersistDone relay a workspace persist's events.
 	PersistRequested func(ctx context.Context, requestID string) error
 	PersistDone      func(ctx context.Context, d SandboxPersistDone) error
+	// Usage relays vmmd's cumulative usage of the session VM
+	// (ADR-20261027090013 step 11).
+	Usage func(ctx context.Context, u AgentRunUsage) error
 }
 
 type sandboxVMMClient interface {
@@ -330,6 +333,10 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 				d := event.GetPersistDone()
 				err = hooks.PersistDone(ctx, SandboxPersistDone{RequestID: d.GetRequestId(), SnapshotID: d.GetSnapshotId(),
 					Bytes: d.GetBytes(), SHA256: d.GetSha256(), Failed: d.GetFailed()})
+			}
+		case event.GetUsage() != nil:
+			if hooks.Usage != nil {
+				err = hooks.Usage(ctx, agentRunUsageFromProto(event.GetUsage()))
 			}
 		default:
 			return errors.New("sched: sandbox stream returned an empty event")

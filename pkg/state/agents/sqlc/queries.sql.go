@@ -1208,6 +1208,52 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 	return i, err
 }
 
+const getSandboxSessionUsage = `-- name: GetSandboxSessionUsage :one
+SELECT method, samples, expected_samples, measured_ms, paused_ms, frozen_ms, private_mb_ms, unpaused_private_mb_ms,
+       billable_mb_ms, peak_private_mb, cold_boot, final
+  FROM sandbox_session_usage WHERE sandbox_id=$1::text::uuid AND account_id=$2::text::uuid
+`
+
+type GetSandboxSessionUsageParams struct {
+	SessionID string
+	AccountID string
+}
+
+type GetSandboxSessionUsageRow struct {
+	Method              int16
+	Samples             int32
+	ExpectedSamples     int32
+	MeasuredMs          int64
+	PausedMs            int64
+	FrozenMs            int64
+	PrivateMbMs         int64
+	UnpausedPrivateMbMs int64
+	BillableMbMs        int64
+	PeakPrivateMb       int64
+	ColdBoot            bool
+	Final               bool
+}
+
+func (q *Queries) GetSandboxSessionUsage(ctx context.Context, db DBTX, arg GetSandboxSessionUsageParams) (GetSandboxSessionUsageRow, error) {
+	row := db.QueryRow(ctx, getSandboxSessionUsage, arg.SessionID, arg.AccountID)
+	var i GetSandboxSessionUsageRow
+	err := row.Scan(
+		&i.Method,
+		&i.Samples,
+		&i.ExpectedSamples,
+		&i.MeasuredMs,
+		&i.PausedMs,
+		&i.FrozenMs,
+		&i.PrivateMbMs,
+		&i.UnpausedPrivateMbMs,
+		&i.BillableMbMs,
+		&i.PeakPrivateMb,
+		&i.ColdBoot,
+		&i.Final,
+	)
+	return i, err
+}
+
 const getSandboxSnapshot = `-- name: GetSandboxSnapshot :one
 SELECT id::text AS id,account_id::text AS account_id,sandbox_id::text AS sandbox_id,state,storage_key,reserved_bytes,
   coalesce(bytes, 0)::bigint AS bytes,coalesce(sha256, '')::text AS sha256,expires_at,delete_requested_at,created_at,ready_at
@@ -2672,6 +2718,66 @@ func (q *Queries) RecordAgentRunUsage(ctx context.Context, db DBTX, arg RecordAg
 		arg.PeakPrivateMb,
 		arg.ColdBoot,
 		arg.RunID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordSandboxSessionUsage = `-- name: RecordSandboxSessionUsage :execrows
+INSERT INTO sandbox_session_usage AS u (sandbox_id, account_id, method, samples, expected_samples, measured_ms, paused_ms,
+    frozen_ms, private_mb_ms, unpaused_private_mb_ms, billable_mb_ms, peak_private_mb, cold_boot, final)
+SELECT s.id, s.account_id, $1::smallint, $2::integer, $3::integer,
+       $4::bigint, $5::bigint, $6::bigint, $7::bigint,
+       $8::bigint, $9::bigint, $10::bigint,
+       $11::boolean, $12::boolean
+  FROM sandbox_sessions s
+ WHERE s.id=$13::text::uuid AND s.lease_token=$14::text AND s.state IN ('ready','frozen')
+ON CONFLICT (sandbox_id) DO UPDATE SET method=excluded.method, samples=excluded.samples, expected_samples=excluded.expected_samples,
+       measured_ms=excluded.measured_ms, paused_ms=excluded.paused_ms, frozen_ms=excluded.frozen_ms,
+       private_mb_ms=excluded.private_mb_ms, unpaused_private_mb_ms=excluded.unpaused_private_mb_ms,
+       billable_mb_ms=excluded.billable_mb_ms, peak_private_mb=excluded.peak_private_mb, cold_boot=excluded.cold_boot,
+       final=excluded.final, updated_at=now()
+ WHERE NOT u.final AND excluded.measured_ms >= u.measured_ms
+`
+
+type RecordSandboxSessionUsageParams struct {
+	Method              int16
+	Samples             int32
+	ExpectedSamples     int32
+	MeasuredMs          int64
+	PausedMs            int64
+	FrozenMs            int64
+	PrivateMbMs         int64
+	UnpausedPrivateMbMs int64
+	BillableMbMs        int64
+	PeakPrivateMb       int64
+	ColdBoot            bool
+	Final               bool
+	SessionID           string
+	LeaseToken          string
+}
+
+// ADR-20261027090013 step 11: vmmd's cumulative usage of the session VM,
+// while the lease is held and the session has a VM. A record never replaces
+// a later one (a reordered or replayed frame), nor a final one.
+func (q *Queries) RecordSandboxSessionUsage(ctx context.Context, db DBTX, arg RecordSandboxSessionUsageParams) (int64, error) {
+	result, err := db.Exec(ctx, recordSandboxSessionUsage,
+		arg.Method,
+		arg.Samples,
+		arg.ExpectedSamples,
+		arg.MeasuredMs,
+		arg.PausedMs,
+		arg.FrozenMs,
+		arg.PrivateMbMs,
+		arg.UnpausedPrivateMbMs,
+		arg.BillableMbMs,
+		arg.PeakPrivateMb,
+		arg.ColdBoot,
+		arg.Final,
+		arg.SessionID,
 		arg.LeaseToken,
 	)
 	if err != nil {

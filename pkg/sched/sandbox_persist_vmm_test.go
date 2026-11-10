@@ -31,6 +31,9 @@ func (v *persistVmmd) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 	}
 	v.start = first.GetStart()
 	_ = stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Booted{Booted: &vmmdpb.RunSandboxBooted{BootMs: 5}}})
+	// Step 11: the session VM's usage is relayed too.
+	_ = stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Usage{Usage: &vmmdpb.AgentRunUsage{Method: 1, Samples: 2,
+		ExpectedSamples: 2, MeasuredMs: 2000, PausedMs: 900, FrozenMs: 400, BillableMbMs: 290_000, Final: true}}})
 	_ = stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_PersistRequested{PersistRequested: &vmmdpb.RunSandboxPersistRequested{RequestId: "r1"}}})
 	msg, err := stream.Recv()
 	if err != nil || msg.GetPersistGrant() == nil {
@@ -66,7 +69,12 @@ func TestVMMClientRelaysAPersist(t *testing.T) {
 	defer cancel()
 	control := make(chan sched.SandboxControl, 4)
 	var done sched.SandboxPersistDone
+	var usage sched.AgentRunUsage
 	hooks := sched.SandboxHooks{
+		Usage: func(_ context.Context, u sched.AgentRunUsage) error {
+			usage = u
+			return nil
+		},
 		PersistRequested: func(_ context.Context, id string) error {
 			control <- sched.SandboxControl{Op: sched.SandboxOpPersistGrant, PersistGrant: &sched.SandboxPersistGrant{
 				RequestID: id, SnapshotID: "snap", StorageKey: "k", MaxBytes: 9, ExpiresAtUnixMs: 3}}
@@ -90,6 +98,10 @@ func TestVMMClientRelaysAPersist(t *testing.T) {
 	}
 	if g := fake.grant; g.GetRequestId() != "r1" || g.GetSnapshotId() != "snap" || g.GetStorageKey() != "k" || g.GetMaxBytes() != 9 || g.GetExpiresAtUnixMs() != 3 {
 		t.Fatalf("grant %v", g)
+	}
+	if want := (sched.AgentRunUsage{Method: 1, Samples: 2, ExpectedSamples: 2, MeasuredMillis: 2000, PausedMillis: 900, FrozenMillis: 400,
+		BillableMBMillis: 290_000, Final: true}); usage != want {
+		t.Fatalf("usage %+v, want %+v", usage, want)
 	}
 	if done.RequestID != "r1" || done.Bytes != 7 || done.SHA256 != "ff" || !fake.recorded.GetRecorded() {
 		t.Fatalf("done %+v, recorded %v", done, fake.recorded)

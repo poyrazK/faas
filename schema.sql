@@ -55576,6 +55576,47 @@ COMMENT ON TABLE public.sandbox_ports IS 'ADR-20261027090013 §11 exposed sandbo
 
 
 --
+-- Name: sandbox_session_usage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_session_usage (
+    sandbox_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    method smallint NOT NULL,
+    samples integer NOT NULL,
+    expected_samples integer NOT NULL,
+    measured_ms bigint NOT NULL,
+    paused_ms bigint NOT NULL,
+    frozen_ms bigint NOT NULL,
+    private_mb_ms bigint NOT NULL,
+    unpaused_private_mb_ms bigint NOT NULL,
+    billable_mb_ms bigint NOT NULL,
+    peak_private_mb bigint NOT NULL,
+    cold_boot boolean NOT NULL,
+    final boolean DEFAULT false NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sandbox_session_usage_billable_mb_ms_check CHECK ((billable_mb_ms >= 0)),
+    CONSTRAINT sandbox_session_usage_check CHECK ((expected_samples >= samples)),
+    CONSTRAINT sandbox_session_usage_check1 CHECK (((paused_ms >= 0) AND (paused_ms <= measured_ms))),
+    CONSTRAINT sandbox_session_usage_check2 CHECK (((frozen_ms >= 0) AND (frozen_ms <= paused_ms))),
+    CONSTRAINT sandbox_session_usage_check3 CHECK (((unpaused_private_mb_ms >= 0) AND (unpaused_private_mb_ms <= private_mb_ms))),
+    CONSTRAINT sandbox_session_usage_measured_ms_check CHECK ((measured_ms >= 0)),
+    CONSTRAINT sandbox_session_usage_method_check CHECK ((method >= 1)),
+    CONSTRAINT sandbox_session_usage_peak_private_mb_check CHECK ((peak_private_mb >= 0)),
+    CONSTRAINT sandbox_session_usage_private_mb_ms_check CHECK ((private_mb_ms >= 0)),
+    CONSTRAINT sandbox_session_usage_samples_check CHECK ((samples >= 0))
+);
+
+
+--
+-- Name: TABLE sandbox_session_usage; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sandbox_session_usage IS 'ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd''s usage frames; not billed yet.';
+
+
+--
 -- Name: sandbox_sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -69663,6 +69704,14 @@ ALTER TABLE ONLY public.sandbox_ports
 
 
 --
+-- Name: sandbox_session_usage sandbox_session_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_usage
+    ADD CONSTRAINT sandbox_session_usage_pkey PRIMARY KEY (sandbox_id);
+
+
+--
 -- Name: sandbox_sessions sandbox_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80200,6 +80249,13 @@ CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations
 --
 
 CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verifications USING btree (next_attempt_at, created_at, operation_id) WHERE (phase = 'pending'::text);
+
+
+--
+-- Name: sandbox_session_usage_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_session_usage_account_idx ON public.sandbox_session_usage USING btree (account_id, updated_at DESC);
 
 
 --
@@ -103118,6 +103174,22 @@ ALTER TABLE ONLY public.sandbox_ports
 
 ALTER TABLE ONLY public.sandbox_ports
     ADD CONSTRAINT sandbox_ports_sandbox_id_fkey FOREIGN KEY (sandbox_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_session_usage sandbox_session_usage_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_usage
+    ADD CONSTRAINT sandbox_session_usage_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_session_usage sandbox_session_usage_sandbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_usage
+    ADD CONSTRAINT sandbox_session_usage_sandbox_id_fkey FOREIGN KEY (sandbox_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
 
 
 --

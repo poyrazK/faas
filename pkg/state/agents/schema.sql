@@ -230,6 +230,24 @@ CREATE TABLE sandbox_sessions (
  image_ref text,
  image_job_id uuid
 );
+CREATE TABLE sandbox_session_usage (
+ sandbox_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ method smallint NOT NULL,
+ samples integer NOT NULL,
+ expected_samples integer NOT NULL,
+ measured_ms bigint NOT NULL,
+ paused_ms bigint NOT NULL,
+ frozen_ms bigint NOT NULL,
+ private_mb_ms bigint NOT NULL,
+ unpaused_private_mb_ms bigint NOT NULL,
+ billable_mb_ms bigint NOT NULL,
+ peak_private_mb bigint NOT NULL,
+ cold_boot boolean NOT NULL,
+ final boolean NOT NULL DEFAULT false,
+ recorded_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE sandbox_workspace_snapshots (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL,

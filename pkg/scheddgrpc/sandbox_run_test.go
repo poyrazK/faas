@@ -54,6 +54,9 @@ func (f *fakeSandboxRunner) RunSandbox(ctx context.Context, a sched.SandboxAdmis
 		case req := <-control:
 			switch req.Op {
 			case sched.SandboxOpClose:
+				// vmmd's final usage record goes up before the stream ends.
+				_ = hooks.Usage(ctx, sched.AgentRunUsage{Method: 1, Samples: 3, ExpectedSamples: 3, MeasuredMillis: 3000,
+					PausedMillis: 1500, FrozenMillis: 1000, BillableMBMillis: 396_000, Final: true})
 				return nil
 			case sched.SandboxOpPersistGrant:
 				g := req.PersistGrant
@@ -139,6 +142,10 @@ func TestRunSandboxWaitsForProceedAndRelays(t *testing.T) {
 		t.Fatalf("after freeze: %v, %v; want thawed", ev, err)
 	}
 	send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Close{Close: &scheddpb.SandboxRunClose{}}})
+	ev, err = stream.Recv()
+	if u := ev.GetUsage(); err != nil || !u.GetFinal() || u.GetMeasuredMs() != 3000 || u.GetFrozenMs() != 1000 || u.GetBillableMbMs() != 396_000 {
+		t.Fatalf("after close: %v, %v; want the final usage", ev, err)
+	}
 	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
 		t.Fatalf("close ended with %v, want a clean end", err)
 	}

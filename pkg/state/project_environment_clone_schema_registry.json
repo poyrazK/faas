@@ -17035,6 +17035,28 @@
     "kind": "operational"
   },
   {
+    "table": "sandbox_session_usage",
+    "columns": [
+      "account_id",
+      "billable_mb_ms",
+      "cold_boot",
+      "expected_samples",
+      "final",
+      "frozen_ms",
+      "measured_ms",
+      "method",
+      "paused_ms",
+      "peak_private_mb",
+      "private_mb_ms",
+      "recorded_at",
+      "samples",
+      "sandbox_id",
+      "unpaused_private_mb_ms",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "sandbox_sessions",
     "columns": [
       "account_id",

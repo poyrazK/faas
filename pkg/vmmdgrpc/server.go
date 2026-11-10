@@ -280,6 +280,9 @@ type Server struct {
 	// keeps (ADR-20261027090013 §5), keyed by instance. The zero value is
 	// ready to use.
 	sandboxRuns sync.Map
+	// sandboxUsageEvery is how often RunSandbox reports a session's usage;
+	// zero is api.SandboxUsageReportSec. Tests shorten it.
+	sandboxUsageEvery time.Duration
 	// sandboxStorage keeps persisted sandbox workspaces (ADR-20261027090013
 	// step 7); nil persists none. See WithSandboxWorkspaces.
 	sandboxStorage storage.StorageBackend

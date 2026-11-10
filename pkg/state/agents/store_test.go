@@ -80,7 +80,7 @@ var agentMigrations = []string{"20261029093503390_agent_runs.sql", "202610290935
 	"20261102075456168_agent_run_callbacks.sql", "20261104123540000_sandbox_sessions.sql",
 	"20261104194554000_sandbox_workspace_snapshots.sql", "20261105081450000_sandbox_ports.sql",
 	"20261105112618000_sandbox_session_images.sql", "20261109202124000_sandbox_templates.sql",
-	"20261109211935000_sandbox_session_templates.sql"}
+	"20261109211935000_sandbox_session_templates.sql", "20261110122433816_sandbox_session_usage.sql"}
 
 func spec() agents.VersionSpec {
 	return agents.VersionSpec{Harness: agents.Harness{Preset: "codex"}, PromptTemplate: "Triage {{event.title}}", TimeoutSec: 300}

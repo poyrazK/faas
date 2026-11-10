@@ -487,6 +487,9 @@ type Instance struct {
 	// Manager.mu. Not to be confused with Paused, a warm-pool restore.
 	Frozen      bool
 	FrozenSince time.Time
+	// FrozenTotal sums this instance's completed freezes, for the sandbox
+	// session meter (sandbox_usage.go). Guarded by Manager.mu.
+	FrozenTotal time.Duration
 	// freezing is non-nil while a Freeze decides and pauses, and closes once
 	// that freeze has settled either way. Guarded by Manager.mu.
 	freezing chan struct{}

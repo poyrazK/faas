@@ -2927,6 +2927,11 @@ message AgentRunUsage {
   int64 peak_private_mb = 9;
   // cold_boot is true when the VM booted its image, not a snapshot.
   bool cold_boot = 10;
+  // frozen_ms is the part of paused_ms a sandbox session VM spent frozen
+  // (ADR-20261027090013 §5); a run is never frozen.
+  int64 frozen_ms = 11;
+  // final marks a sandbox session's last record, sent at close.
+  bool final = 12;
 }
 
 message RunAgentBooted {
@@ -3349,6 +3354,11 @@ message RunSandboxEvent {
     RunSandboxThawed thawed = 5;
     RunSandboxPersistRequested persist_requested = 6;
     RunSandboxPersistDone persist_done = 7;
+    // usage is the session VM's measured memory so far (ADR-20261027090011
+    // Measurement, with frozen seconds paused), sent each
+    // SandboxUsageReportSec and once more before the stream ends on close.
+    // Each frame is cumulative and supersedes the last.
+    AgentRunUsage usage = 8;
   }
 }
 
