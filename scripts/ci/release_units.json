@@ -35,6 +35,10 @@
       "lane": "control-plane",
       "services": [{"name": "edgednsd", "optional": true}]
     },
+    "signd": {
+      "lane": "control-plane",
+      "services": [{"name": "signd", "optional": true}]
+    },
     "bridged": {
       "lane": "control-plane",
       "services": [{"name": "bridged", "optional": true}]
