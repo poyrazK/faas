@@ -48,6 +48,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
           WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        # The builder-base job's name is an expression. GitHub renders it only
+        # for a job that ran; a skipped job keeps the raw `${{ ... }}` text, so
+        # match the job by its name prefix or a skip reads as a missing job.
         run: |
           set -euo pipefail
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
@@ -55,7 +58,7 @@ jobs:
             builder_conclusion="$(
               gh api \
                 "repos/${GITHUB_REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID}/jobs?per_page=100" \
-                --jq '.jobs[] | select(.name == "builder-base (linux/amd64 + linux/arm64)") | .conclusion' |
+                --jq '.jobs[] | select(.name | startswith("builder-base (")) | .conclusion' |
                 tail -n 1
             )"
             case "$builder_conclusion" in
@@ -77,7 +80,7 @@ jobs:
               builder_conclusion="$(
                 gh api \
                   "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
-                  --jq '.jobs[] | select(.name == "builder-base (linux/amd64 + linux/arm64)") | .conclusion' |
+                  --jq '.jobs[] | select(.name | startswith("builder-base (")) | .conclusion' |
                   tail -n 1
               )"
               if [[ "$builder_conclusion" == "success" ]]; then
