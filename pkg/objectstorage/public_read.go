@@ -39,6 +39,10 @@ type PublicReadConfig struct {
 	// decisions and batches their counts (ADR-20261030075301 step 2). Build
 	// it with the registry's AnonymousReadPolicy.
 	ReadAdmitter *ReadAdmitter
+	// ClientKey names the client making an anonymous read, for the
+	// per-client rate limit (object storage audit OS-5): the canonical client
+	// address behind the trusted ingress. Nil or an empty key skips it.
+	ClientKey func(*http.Request) string
 	// Transfers paces object bodies to the edge's part of its node's port
 	// share on a compute node; nil leaves them unpaced (ADR-20261031122757
 	// step 7).
@@ -78,6 +82,8 @@ type publicReadHandler struct {
 	lookups     singleflight.Group
 	hostLookups *HostLookupBudget
 	limiters    *publicReadLimiters
+	clients     *publicReadLimiters
+	clientKey   func(*http.Request) string
 }
 
 // NewPublicReadHandler mounts ready public buckets on app hostnames. A route
@@ -124,6 +130,7 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 		appsDomain: appsDomain, next: c.Next,
 		client: c.HTTPClient, now: c.Now, log: c.Log,
 		mounts: newPublicMountCache(), hostLookups: c.HostLookups, limiters: newPublicReadLimiters(),
+		clients: newPublicReadClientLimiters(), clientKey: c.ClientKey,
 	}, nil
 }
 
@@ -184,6 +191,22 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "object storage usage is temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	// A query string never selects another object, so one that would miss
+	// the CDN's cache is sent to the bare path before anything is counted:
+	// cache-busting queries cannot spend the owner's budget (audit OS-5).
+	if r.URL.RawQuery != "" {
+		w.Header().Set("Location", r.URL.EscapedPath())
+		w.Header().Set("Cache-Control", publicQueryRedirectCacheControl)
+		w.WriteHeader(http.StatusMovedPermanently)
+		return
+	}
+	if h.clientKey != nil {
+		if client := h.clientKey(r); client != "" && !h.clients.allow(bucket.ID+"\x00"+client) {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "too many requests for this public bucket from this client", http.StatusTooManyRequests)
+			return
+		}
+	}
 	if !h.limiters.allow(bucket.ID) {
 		w.Header().Set("Retry-After", "1")
 		http.Error(w, "too many requests for this public bucket", http.StatusTooManyRequests)
@@ -228,6 +251,9 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		if response.StatusCode == http.StatusNotFound {
+			if read != nil {
+				h.readAdmitter.RefundRead(*read)
+			}
 			http.NotFound(w, r)
 		} else {
 			http.Error(w, "object storage is temporarily unavailable", http.StatusServiceUnavailable)
@@ -529,6 +555,10 @@ func copyPublicObjectHeaders(dst, src http.Header) {
 		dst.Set("Content-Security-Policy", publicObjectSandboxCSP)
 	}
 }
+
+// publicQueryRedirectCacheControl lets the CDN keep a query redirect, so
+// repeated cache-busting queries are answered at the edge.
+const publicQueryRedirectCacheControl = "public, max-age=3600"
 
 // publicObjectSandboxCSP runs an SVG or XML object opened directly with no
 // script and no access to the app's origin. An <img> or CSS use is

@@ -4172,6 +4172,15 @@ const (
 	PublicObjectReadRatePerBucket  = 100
 	PublicObjectReadBurstPerBucket = 200
 	MaxPublicObjectReadLimiters    = 10_000
+	// PublicObjectReadRatePerClient bounds one client address's anonymous
+	// reads of one bucket per gatewayd-public process (burst
+	// PublicObjectReadBurstPerClient), so a single stranger cannot spend a
+	// bucket's whole rate and the owner's anonymous share with it (object
+	// storage audit OS-5). At most MaxPublicObjectReadClientLimiters
+	// address-bucket pairs are tracked.
+	PublicObjectReadRatePerClient     = 10
+	PublicObjectReadBurstPerClient    = 50
+	MaxPublicObjectReadClientLimiters = 100_000
 	// PublicObjectReadMaxAgeSeconds bounds how long a CDN or browser may keep
 	// a public object without revalidating, so a delete or overwrite takes
 	// effect within minutes rather than a year (H9-S144).
