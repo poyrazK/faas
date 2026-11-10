@@ -154,15 +154,15 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			}
 			controlPlaneAPIDLoopback = "http://" + net.JoinHostPort(address, "8081")
 			postgresListenAddress = address
-			controlPlaneAllowedCIDRs = appendHostCIDR(controlPlaneAllowedCIDRs, address, m.Overlay.CIDR)
+			controlPlaneAllowedCIDRs = appendHostCIDR(controlPlaneAllowedCIDRs, firewallAddress(fleetHost, address), m.Overlay.CIDR)
 		}
 		if fleetHost.Role == roleComputeOnly {
 			address, _, parseErr := manifest.ParseHostPort(fleetHost.Address)
 			if parseErr != nil {
 				return nil, fmt.Errorf("host %s postgres allow address: %w", fleetHost.Name, parseErr)
 			}
-			postgresAllowedCIDRs = appendHostCIDR(postgresAllowedCIDRs, address, m.Overlay.CIDR)
-			computeAllowedCIDRs = appendHostCIDR(computeAllowedCIDRs, address, m.Overlay.CIDR)
+			postgresAllowedCIDRs = appendHostCIDR(postgresAllowedCIDRs, firewallAddress(fleetHost, address), m.Overlay.CIDR)
+			computeAllowedCIDRs = appendHostCIDR(computeAllowedCIDRs, firewallAddress(fleetHost, address), m.Overlay.CIDR)
 			if gatewaySynthTarget == "" {
 				// Schedd runs on the control plane. It targets the local
 				// public gateway, which then uses the same DB-backed compute
@@ -460,6 +460,17 @@ func manifestScheddTarget(m *manifest.Manifest, host manifest.Host, controlPlane
 // rendering, so the manifest's declared overlay CIDR becomes the explicit
 // private-network boundary; this keeps hostname-based fleets functional
 // without copying an address into generated Ansible files.
+// firewallAddress is the address a host's firewall rules admit for h
+// (ADR-20261110120000): its private IPv4 when the manifest names one, else
+// address, which appendHostCIDR widens to the overlay subnet when it is not
+// an IP literal.
+func firewallAddress(h manifest.Host, address string) string {
+	if private := h.PrivateAddress(); private != "" {
+		return private
+	}
+	return address
+}
+
 func appendHostCIDR(values []string, address, overlayCIDR string) []string {
 	value := overlayCIDR
 	if _, err := netip.ParseAddr(address); err == nil {

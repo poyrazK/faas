@@ -37,8 +37,11 @@ const manifestControlPlanePostgresPort = 5432
 const manifestDatabaseRoutePort = 10083
 
 type manifestDatabase struct {
-	host     manifest.Host
-	address  string
+	host    manifest.Host
+	address string
+	// firewall is the address other hosts' firewalls admit for this node
+	// (ADR-20261110120000).
+	firewall string
 	vmmdPort int
 	// instanceID tags pgproxyd's cancel keys: 1.. in manifest order.
 	instanceID int
@@ -53,6 +56,8 @@ type manifestDatabases struct {
 	// schedd listener, which pgproxyd wakes databases through.
 	controlPlane string
 	scheddPort   int
+	// controlPlaneFirewall is the control plane's address in firewall rules.
+	controlPlaneFirewall string
 }
 
 func renderManifestDatabases(m *manifest.Manifest) (manifestDatabases, error) {
@@ -64,6 +69,7 @@ func renderManifestDatabases(m *manifest.Manifest) (manifestDatabases, error) {
 				return manifestDatabases{}, fmt.Errorf("control plane %s: %w", h.Name, err)
 			}
 			out.controlPlane, out.scheddPort = address, port
+			out.controlPlaneFirewall = firewallAddress(h, address)
 		}
 	}
 	for i, h := range m.Fleet.DatabaseHosts() {
@@ -74,7 +80,7 @@ func renderManifestDatabases(m *manifest.Manifest) (manifestDatabases, error) {
 		if h.Database == nil || m.ManagedPostgres == nil {
 			return manifestDatabases{}, fmt.Errorf("database host %s needs its database block and managed_postgres", h.Name)
 		}
-		out.nodes = append(out.nodes, manifestDatabase{host: h, address: address, vmmdPort: port, instanceID: i + 1})
+		out.nodes = append(out.nodes, manifestDatabase{host: h, address: address, firewall: firewallAddress(h, address), vmmdPort: port, instanceID: i + 1})
 	}
 	return out, nil
 }
@@ -134,7 +140,7 @@ func (d manifestDatabases) controlPlaneVars() string {
 			}
 			fmt.Fprintf(&b, "      postgres_majors: [%s]\n", strings.Join(majors, ", "))
 		}
-		cidrs = appendHostCIDR(cidrs, n.address, d.overlayCIDR)
+		cidrs = appendHostCIDR(cidrs, n.firewall, d.overlayCIDR)
 	}
 	// pgproxyd reads role verifiers as faas_pgproxyd from these sources,
 	// and the control plane's firewall admits them to PostgreSQL and
@@ -178,7 +184,7 @@ func (d manifestDatabases) nodeVars(host manifest.Host, scheddTarget string) str
 		net.JoinHostPort(d.controlPlane, strconv.Itoa(manifestControlPlanePostgresPort)))
 	fmt.Fprintf(&b, "pgproxyd_instance_id: %d\n", self.instanceID)
 	fmt.Fprintf(&b, "database_node_metrics_host: %q\n", urlHost(self.address))
-	fmt.Fprintf(&b, "database_node_metrics_cidrs: [%s]\n", quotedYAMLList(appendHostCIDR(nil, d.controlPlane, d.overlayCIDR)))
+	fmt.Fprintf(&b, "database_node_metrics_cidrs: [%s]\n", quotedYAMLList(appendHostCIDR(nil, d.controlPlaneFirewall, d.overlayCIDR)))
 	var peers []manifestDatabase
 	for _, n := range d.serving() {
 		if n.host.Name != host.Name {
