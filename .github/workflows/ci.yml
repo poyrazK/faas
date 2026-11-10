@@ -2392,7 +2392,9 @@ jobs:
 
   workflow-operation-starter-browser:
     name: customer Operations starters (Chromium + packed SDK)
-    runs-on: ubuntu-latest
+    # Playwright 1.57 ships no Chromium for ubuntu-26.04 (ubuntu-latest since
+    # Nov 2026); pin the image until the SDK's Playwright supports it.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
