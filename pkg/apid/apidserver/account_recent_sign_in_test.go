@@ -121,3 +121,41 @@ func TestRecentSessionChangesPasswordlessAccount(t *testing.T) {
 		t.Errorf("notices to the current address: change requested %v, provider removed %v", requested, removed)
 	}
 }
+
+// An operator revert moves the account back, signs out every browser and
+// mails the restored address (ADR 20261110100000).
+func TestOperatorRevertEmail(t *testing.T) {
+	srv, mailer, store := apidserver.V1AuthTestHarness(t)
+	acct, _ := flowAccountKey(t, store, "revert-me@example.com", true)
+	flow := store.(state.AccountFlowStore)
+	hash := api.HashToken([]byte("operator-revert-email-change-token"))
+	if err := flow.IssueEmailChange(t.Context(), hash, acct.ID, "taker@example.net", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.ConsumeEmailChange(t.Context(), hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateSession(t.Context(), "11111111-1111-4111-8111-111111111111", acct.ID, "192.0.2.9", "taker"); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/ops/accounts/"+acct.ID+"/revert-email", nil)
+	revoked, problem, err := apidserver.OperatorRevertEmail(srv, req, acct.ID)
+	if err != nil || problem != nil || revoked != 1 {
+		t.Fatalf("revert = %d sessions, problem %v, err %v", revoked, problem, err)
+	}
+	after, err := store.AccountByID(t.Context(), acct.ID)
+	if err != nil || after.Email != "revert-me@example.com" {
+		t.Fatalf("email after revert = %q (err %v)", after.Email, err)
+	}
+	if _, problem, _ := apidserver.OperatorRevertEmail(srv, req, acct.ID); problem == nil || problem.Status != http.StatusConflict {
+		t.Errorf("second revert = %v, want 409", problem)
+	}
+	srv.WaitPasswordResetMail()
+	var noticed bool
+	for _, m := range mailer.Snapshot() {
+		noticed = noticed || (m.To[0] == "revert-me@example.com" && strings.Contains(m.Subject, "restored your sign-in email"))
+	}
+	if !noticed {
+		t.Error("the restored address got no notice")
+	}
+}
