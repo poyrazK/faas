@@ -154,6 +154,11 @@ func (s *server) rollbackConfig(w http.ResponseWriter, r *http.Request, acct sta
 	if !ok {
 		return
 	}
+	// A rollback writes variables like a batch (ADR-20261019071733 amendment 11).
+	if problem := protectedEnvironmentConfigProblem(r.Context(), s.store, app.AccountID, app.ProjectID, scope); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if problem := validateReviewedConfigRollback(req, app.ID, scope); problem != nil {
 		api.WriteProblem(w, problem)
 		return

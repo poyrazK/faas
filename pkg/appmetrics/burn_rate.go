@@ -48,9 +48,11 @@ func FetchSLOBurnRate(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		return 0, SourceDegradedPrefix + "invalid app id"
 	}
 
+	// The class-based duration series exist from an app's first request, so
+	// rate() sees its first 5xx (ADR-20261110090000).
 	errorBudget := 1 - APIAvailabilitySLO
 	shortQ := fmt.Sprintf(
-		`(sum(rate(gateway_requests_total{app=%q,code=~"5.."}[%s])) / sum(rate(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) / %g and sum(increase(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) >= %d) or vector(0)`,
+		`(sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s])) / sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s])) / %g and sum(increase(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s])) >= %d) or vector(0)`,
 		appID, SLOBurnRateShortWindow, appID, SLOBurnRateShortWindow, errorBudget,
 		appID, SLOBurnRateShortWindow, SLOBurnRateMinRequests)
 	short, err := fetcher.QueryScalar(ctx, shortQ)
@@ -59,7 +61,7 @@ func FetchSLOBurnRate(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 	}
 
 	longQ := fmt.Sprintf(
-		`(sum(rate(gateway_requests_total{app=%q,code=~"5.."}[%s])) / sum(rate(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) / %g and sum(increase(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) >= %d) or vector(0)`,
+		`(sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s])) / sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s])) / %g and sum(increase(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s])) >= %d) or vector(0)`,
 		appID, SLOBurnRateLongWindow, appID, SLOBurnRateLongWindow, errorBudget,
 		appID, SLOBurnRateLongWindow, SLOBurnRateMinRequests)
 	long, err := fetcher.QueryScalar(ctx, longQ)

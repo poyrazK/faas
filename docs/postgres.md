@@ -175,6 +175,7 @@ Choose the credential with `--access`:
 | `read_only` | Read-only queries, for example `--env READ_DATABASE_URL`. |
 | `migration` | Schema changes. Only the release task receives it, never the serving instances. |
 | `data_api` | The [Data API](data-api.md). |
+| `session` | The same privileges as `read_write` over a direct connection, for serving code that needs session state. |
 
 `read_write` and `data_api` URLs, and `read_only` ones unless they reach a
 replica, go through a connection pooler in transaction mode. Session state does not carry from one transaction to the
@@ -185,7 +186,24 @@ next, so these don't work through it:
 - SQL-level `PREPARE` (driver prepared statements work);
 - temporary tables kept across transactions.
 
-A `migration` binding connects directly and supports all of them.
+A `migration` binding connects directly and supports all of them, but only the
+release task receives it. When the serving app itself needs one of them, bind
+a `session` credential instead:
+
+```sh
+gregale postgres attach orders my-api --access session --env SESSION_DATABASE_URL
+```
+
+Each serving instance then holds its own server connections, so keep its pool
+small: a `session` login allows at most 42 connections across every instance
+of the app (2 per instance at Scale concurrency), and further connections are
+refused with "too many connections for role". Keep ordinary query traffic on a
+pooled `read_write` binding. `session` is offered only where the database
+backend has qualified it (`gregale postgres capabilities` lists it).
+
+An app holds at most 8 managed PostgreSQL bindings on Free, 25 on Hobby, 50 on
+Pro and 100 on Scale. A binding's environment key must start with a letter and
+may not be `PORT` or start with `GREGALE_` or `FAAS_`, which the platform sets.
 
 Run migrations as a release task, with a Procfile `release: npm run migrate` or
 `release.command` in `gregale.yaml`, and point the migration tool at a

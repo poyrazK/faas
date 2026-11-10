@@ -439,8 +439,18 @@ type AppSpec struct {
 	// idle_ladder_apps switch is on. An app that declared when_idle or never
 	// keeps what it declared. False (an older schedd) never pauses it.
 	IdleLadderGuardedPause bool `protobuf:"varint,39,opt,name=idle_ladder_guarded_pause,json=idleLadderGuardedPause,proto3" json:"idle_ladder_guarded_pause,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// ADR-20261109172421: the instance's cgroup cpu.weight, its share of a busy
+	// host (schedd sends max(1, ram_mb / 16)). 0 (an older schedd) gets that
+	// weight from mem_size_mib. vmmd refuses a value above 10000.
+	CpuWeight int32 `protobuf:"varint,41,opt,name=cpu_weight,json=cpuWeight,proto3" json:"cpu_weight,omitempty"`
+	// ADR-20261109172421: the instance runs with host cpu.max = max and no
+	// startup boost, so it may use any idle host CPU up to its vCPUs.
+	// cpu_millicores still sizes guest workload partitions. vmmd runs every
+	// app instance this way whatever the field says (ADR-20261109172421 step
+	// 6.3); it stays for an older schedd.
+	CpuUncapped   bool `protobuf:"varint,42,opt,name=cpu_uncapped,json=cpuUncapped,proto3" json:"cpu_uncapped,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -749,6 +759,20 @@ func (x *AppSpec) GetIdleLadderEligible() bool {
 func (x *AppSpec) GetIdleLadderGuardedPause() bool {
 	if x != nil {
 		return x.IdleLadderGuardedPause
+	}
+	return false
+}
+
+func (x *AppSpec) GetCpuWeight() int32 {
+	if x != nil {
+		return x.CpuWeight
+	}
+	return 0
+}
+
+func (x *AppSpec) GetCpuUncapped() bool {
+	if x != nil {
+		return x.CpuUncapped
 	}
 	return false
 }
@@ -19906,7 +19930,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xf3\x0e\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xb5\x0f\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -19954,7 +19978,10 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x16static_egress_excluded\x18$ \x01(\bR\x14staticEgressExcluded\x12/\n" +
 	"\x13request_concurrency\x18% \x01(\x05R\x12requestConcurrency\x120\n" +
 	"\x14idle_ladder_eligible\x18& \x01(\bR\x12idleLadderEligible\x129\n" +
-	"\x19idle_ladder_guarded_pause\x18' \x01(\bR\x16idleLadderGuardedPause\"\x92\b\n" +
+	"\x19idle_ladder_guarded_pause\x18' \x01(\bR\x16idleLadderGuardedPause\x12\x1d\n" +
+	"\n" +
+	"cpu_weight\x18) \x01(\x05R\tcpuWeight\x12!\n" +
+	"\fcpu_uncapped\x18* \x01(\bR\vcpuUncapped\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +

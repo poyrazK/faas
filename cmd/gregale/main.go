@@ -59,6 +59,8 @@ func topLevelUsage(showAll, showOperator bool) string {
 	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
 	b.WriteString("                         Interactive-only commands retain human prompts.\n")
 	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
+	b.WriteString("  --org SLUG             Run project commands on a company's projects (before\n")
+	b.WriteString("                         the command), e.g. gregale --org acme deploy --project.\n")
 	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
 	b.WriteString("  --wait-for-approval    When an agent key's request needs a person's approval,\n")
 	b.WriteString("                         wait for the decision and retry once (before the\n")
@@ -115,9 +117,12 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
-	previousAutomation, previousWait := nonInteractive, approvalWaitEnabled
-	defer func() { nonInteractive, approvalWaitEnabled = previousAutomation, previousWait }()
+	previousAutomation, previousWait, previousOrg := nonInteractive, approvalWaitEnabled, projectOrganization
+	defer func() {
+		nonInteractive, approvalWaitEnabled, projectOrganization = previousAutomation, previousWait, previousOrg
+	}()
 	nonInteractive = false
+	projectOrganization = ""
 	approvalWaitEnabled = os.Getenv("GREGALE_WAIT_FOR_APPROVAL") == "1"
 	previousInsecureWarned := insecureAPIWarned
 	defer func() { insecureAPIWarned = previousInsecureWarned }()
@@ -1165,7 +1170,9 @@ func printLocalHelpFlag(w io.Writer, flag cliFlag) {
 	if flag.Req {
 		description += " (required)"
 	}
-	if flag.Repeatable {
+	// Many descriptions already end in "(repeatable)"; saying it twice read
+	// "OIDC audience (repeatable) (repeatable)".
+	if flag.Repeatable && !strings.Contains(description, "(repeatable") {
 		description += " (repeatable)"
 	}
 	label := mdFlagLabel(flag)

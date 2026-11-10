@@ -949,6 +949,13 @@ UPDATE deployments
    SET secret_reload_signal = sqlc.arg(signal)::text
  WHERE id = sqlc.arg(id)::uuid;
 
+-- name: SetDeploymentBeforeCheckpointHook :execrows
+-- imaged records whether it stamped a before_checkpoint hook into the
+-- deployment's guest manifest; NULL stays for deployments built earlier.
+UPDATE deployments
+   SET before_checkpoint_hook = sqlc.arg(hook)::boolean
+ WHERE id = sqlc.arg(id)::uuid;
+
 -- name: SumAccountCreditRefundReversal :one
 SELECT coalesce(sum(delta_cents), 0)::bigint AS reversed_cents
 FROM credit_ledger
@@ -2204,10 +2211,12 @@ select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at
 from instances where app_id = $1 order by started_at desc;
 
--- name: CountAccountsCreatedSince :one
--- Accounts created at or after since (ADR-20261104145353: the platform-wide
--- daily sign-up cap). Read only on a sign-up attempt.
-select count(*)::bigint from accounts where created_at >= sqlc.arg(since)::timestamptz;
+-- name: CountVerifiedAccountsCreatedSince :one
+-- Accounts created at or after since that have verified their email
+-- (ADR-20261104145353 amendment 1: the platform-wide daily sign-up cap counts
+-- the accounts that can use a Free allowance). Read only on a sign-up attempt.
+select count(*)::bigint from accounts
+ where created_at >= sqlc.arg(since)::timestamptz and email_verified_at is not null;
 
 -- name: ListFirstSuccessfulRequestsForAccountsCreatedSince :many
 -- Operator beta funnel: one bounded aggregate read replaces an N+1
@@ -3984,16 +3993,37 @@ WHERE app_id = $1
 ORDER BY received_at DESC
 LIMIT $5;
 
+-- name: RequestTelemetryLatencyWeightsByRoute :many
+-- The regression detector's affected-request count: the requests each
+-- latency bucket represents, per route, over the whole window and in the
+-- regression view. A newest-rows drilldown capped at 10k rows across every
+-- route undercounted busy apps, so a real regression missed the 100-request
+-- floor. latency_ms is a bounded bucket, so the result is small per route.
+SELECT route,
+       latency_ms,
+       SUM(GREATEST(count, 1)::bigint)::bigint AS requests
+FROM request_telemetry
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+  AND NOT platform_refusal AND NOT deployment_pinned AND NOT long_lived AND NOT cold_boot
+GROUP BY route, latency_ms;
+
 -- name: RequestTelemetryCircuitBreakerSummary :one
 -- Bounded candidate/stable health summary for the deployment circuit breaker.
 -- `count` weights collapsed telemetry rows; compute request and 5xx totals,
 -- overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
--- only one row.
+-- only one row. A long-lived session's duration (WebSocket, event or gRPC
+-- stream) is not a request latency: it counts as a request and a 5xx but stays
+-- out of both percentiles (ADR-20261028110044 amendment 7).
 WITH weighted AS (
     SELECT latency_ms,
            SUM(count::bigint) AS requests,
            SUM(count::bigint) FILTER (WHERE status >= 500 AND status < 600) AS server_errors,
-           SUM(count::bigint) FILTER (WHERE cold_boot) AS cold_boot_requests
+           SUM(count::bigint) FILTER (WHERE cold_boot) AS cold_boot_requests,
+           COALESCE(SUM(count::bigint) FILTER (WHERE NOT long_lived), 0) AS latency_requests,
+           COALESCE(SUM(count::bigint) FILTER (WHERE cold_boot AND NOT long_lived), 0) AS cold_boot_latency_requests
       FROM request_telemetry
      WHERE app_id = sqlc.arg('app_id')::uuid
        AND deployment_id = sqlc.arg('deployment_id')::uuid
@@ -4019,16 +4049,16 @@ WITH weighted AS (
              requests,
              server_errors,
              cold_boot_requests,
-             SUM(requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
-             SUM(requests) OVER () AS total,
-             SUM(cold_boot_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cold_boot_cumulative,
-             SUM(cold_boot_requests) OVER () AS cold_boot_total
+             SUM(latency_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+             SUM(latency_requests) OVER () AS total,
+             SUM(cold_boot_latency_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cold_boot_cumulative,
+             SUM(cold_boot_latency_requests) OVER () AS cold_boot_total
         FROM weighted
 ), summary AS (
     SELECT COALESCE(SUM(requests), 0)::bigint AS requests,
            COALESCE(SUM(server_errors), 0)::bigint AS server_errors,
            COALESCE(
-               MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint),
+               MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint AND total > 0),
                0
            )::double precision AS p95_latency_ms,
            COALESCE(SUM(cold_boot_requests), 0)::bigint AS cold_boot_requests,
@@ -4050,6 +4080,63 @@ SELECT summary.requests,
        cpu_usage.cpu_requests
   FROM summary
  CROSS JOIN cpu_usage;
+
+-- name: RequestTelemetrySharedRouteLatency :one
+-- Release and predecessor p95 over only the method+route pairs both served in
+-- their windows (ADR-1445 amendment 2026-11-10, Hunt 32 H32-33). The
+-- post-release watch reads it only after the whole-app p95 regressed, so a
+-- route the predecessor never served in its baseline cannot roll a release
+-- back on its own. Weighted by `count`; long-lived sessions stay out of the
+-- percentiles as in RequestTelemetryCircuitBreakerSummary. Both windows use
+-- request_telemetry_app_dep_received_idx.
+WITH release_rows AS (
+    SELECT method, route, latency_ms, SUM(count::bigint) AS requests
+      FROM request_telemetry
+     WHERE app_id = sqlc.arg('app_id')::uuid
+       AND deployment_id = sqlc.arg('release_id')::uuid
+       AND received_at >= sqlc.arg('release_since')::timestamptz
+       AND received_at < sqlc.arg('release_until')::timestamptz
+       AND NOT long_lived
+     GROUP BY method, route, latency_ms
+), baseline_rows AS (
+    SELECT method, route, latency_ms, SUM(count::bigint) AS requests
+      FROM request_telemetry
+     WHERE app_id = sqlc.arg('app_id')::uuid
+       AND deployment_id = sqlc.arg('baseline_id')::uuid
+       AND received_at >= sqlc.arg('baseline_since')::timestamptz
+       AND received_at < sqlc.arg('baseline_until')::timestamptz
+       AND NOT long_lived
+     GROUP BY method, route, latency_ms
+), shared AS (
+    SELECT method, route FROM release_rows
+    INTERSECT
+    SELECT method, route FROM baseline_rows
+), weighted AS (
+    SELECT 'release'::text AS side, r.latency_ms, SUM(r.requests) AS requests
+      FROM release_rows AS r
+      JOIN shared USING (method, route)
+     GROUP BY r.latency_ms
+    UNION ALL
+    SELECT 'baseline'::text AS side, b.latency_ms, SUM(b.requests) AS requests
+      FROM baseline_rows AS b
+      JOIN shared USING (method, route)
+     GROUP BY b.latency_ms
+), ranked AS (
+    SELECT side,
+           latency_ms,
+           SUM(requests) OVER (PARTITION BY side ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(requests) OVER (PARTITION BY side) AS total
+      FROM weighted
+)
+SELECT COALESCE(MAX(total) FILTER (WHERE side = 'release'), 0)::bigint AS release_requests,
+       COALESCE(MIN(latency_ms) FILTER (
+           WHERE side = 'release' AND cumulative >= CEIL(total * 0.95)
+       ), 0)::double precision AS release_p95_latency_ms,
+       COALESCE(MAX(total) FILTER (WHERE side = 'baseline'), 0)::bigint AS baseline_requests,
+       COALESCE(MIN(latency_ms) FILTER (
+           WHERE side = 'baseline' AND cumulative >= CEIL(total * 0.95)
+       ), 0)::double precision AS baseline_p95_latency_ms
+  FROM ranked;
 
 -- name: RequestTelemetryBaselineP95ByRoute :many
 -- Per-route p50/p95/p99 latency + represented request count for the
@@ -4944,6 +5031,25 @@ RETURNING app_id, deployment_id, route,
           state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
           kind, error_rate_pct, error_rate_base_pct, error_count, review_version;
 
+-- name: ResolveRegressionObservationsNotSeenSince :many
+-- An app's complete detector pass reconfirms every regression it still sees
+-- (UpsertRegressionObservation stamps last_detected_at = now()); whatever of
+-- that app it did not reconfirm is no longer regressed, after a fix or a
+-- rollback included. Resolving here, rather than 24 hours later through
+-- ResolveStaleRegressionObservations, keeps the banner, status and the
+-- resolved webhook current. $2 is the pass start (with clock slack).
+UPDATE debug_regression_observations
+SET state = 'resolved',
+    resolved_at = COALESCE(resolved_at, now())
+WHERE app_id = $1
+  AND last_detected_at < $2
+  AND state <> 'resolved'
+RETURNING app_id, deployment_id, route,
+          p95_ms, p95_base_ms, affected_count,
+          regression_factor, first_detected_at, last_detected_at,
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count, review_version;
+
 -- name: ListDeploymentsForCompare :many
 -- Backs the dashboard compare panel's two `<select>` dropdowns: "pick
 -- source deployment" and "pick mirror deployment". GROUP BY on
@@ -5799,6 +5905,11 @@ DELETE FROM object_storage_ceiling_grants WHERE owner_id=$1;
 SELECT account_id FROM object_buckets WHERE id=$1;
 
 -- name: ObjectUsageBuckets :many
+-- Every bucket billed to one usage subject, with its usage. A subject is
+-- always a bucket's org or its account, so the account_id/org_id prefilter
+-- narrows by their indexes without changing the result. The subject function
+-- alone cannot use an index (its EXISTS keeps it from inlining): it scanned
+-- every bucket on the platform, under the account lock of every object write.
 SELECT b.*, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
 u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token, u.inventory_scope,
 COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
@@ -5815,7 +5926,8 @@ FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = sqlc.arg(period_start)
 LEFT JOIN object_storage_gateway_storage s ON s.bucket_id = b.id AND s.period_start = sqlc.arg(period_start)
-WHERE object_storage_usage_subject(b.org_id,b.account_id,sqlc.arg(period_start)) = sqlc.arg(account_id);
+WHERE (b.account_id = sqlc.arg(account_id) OR b.org_id = sqlc.arg(account_id))
+AND object_storage_usage_subject(b.org_id,b.account_id,sqlc.arg(period_start)) = sqlc.arg(account_id);
 
 -- name: ObjectStorageGatewayStorageOpen :execrows
 -- ADR-20261024132844: one row per live bucket for the current UTC month. A
@@ -5946,11 +6058,17 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
 
 -- name: ObjectInventoriesDue :many
 -- A bucket whose listing is unfinished is due at once (ADR-20261030100835).
-SELECT b.* FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+-- The sweep's queue leaves out the buckets it already took (skip) and marks a
+-- long listing: one that continues, or a bucket whose last inventory counted
+-- more than long_keys keys (ADR-20261110151628 §1).
+SELECT sqlc.embed(b), (l.listing OR COALESCE(u.observed_keys, 0) > sqlc.arg(long_keys)::bigint)::boolean AS long_listing
+FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM object_storage_inventory_scans s WHERE s.bucket_id=b.id AND s.pages > 0 AND NOT s.complete
+  AND s.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND s.started_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second') AS listing) l
 WHERE b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning'))
-AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes' OR EXISTS (SELECT 1 FROM object_storage_inventory_scans s WHERE s.bucket_id=b.id AND s.pages > 0 AND NOT s.complete
-  AND s.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND s.started_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second'))
+AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes' OR l.listing)
 AND (u.lease_until IS NULL OR u.lease_until < now())
+AND NOT (b.id = ANY(COALESCE(sqlc.arg(skip)::uuid[], '{}')))
 ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT sqlc.arg(row_limit);
 
 -- name: ObjectInventoryClaim :execrows
@@ -6201,7 +6319,8 @@ WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
 FOR UPDATE OF a;
 
 -- name: ObjectS3BindingSecretCount :one
-SELECT count(*) FROM app_secrets WHERE account_id=$1 AND app_id=$2;
+SELECT count(*) FROM app_secrets WHERE account_id=$1 AND app_id=$2
+  AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL;
 
 -- name: ObjectS3BindingSecretInsert :one
 INSERT INTO app_secrets (account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_object_storage_credential_id)
@@ -7606,6 +7725,11 @@ SELECT pg_advisory_xact_lock(managed_secret_target_lock_key(sqlc.arg(app_id)::uu
 -- name: ProjectEnvironmentCloneSecretTargetExists :one
 SELECT EXISTS(SELECT 1 FROM app_secrets WHERE app_id=$1 AND scope=$2 AND key=$3)::boolean;
 
+-- name: CountLiveManagedPostgresBindingsForApp :one
+-- ADR-20261110120000: the plan's PostgresBindingsPerAppMax counts every
+-- binding of the app that is not deleted.
+SELECT count(*) FROM managed_postgres_bindings WHERE app_id=$1 AND state<>'deleted';
+
 -- name: ManagedPostgresBindingDatabaseID :one
 SELECT database_id,database_account_id FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2;
 
@@ -8499,8 +8623,12 @@ SELECT
      WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='dispatching'
        AND w.lease_expires_at IS NOT NULL AND w.lease_expires_at>now()
      LIMIT sqlc.arg(row_limit)::integer) leased)::bigint AS in_flight,
+  -- Open dead letters only; purge and replay leave the row dead_letter
+  -- (Hunt 32 H32-45).
   (SELECT count(*) FROM (SELECT 1 FROM production_invocation_work w
      WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='dead_letter'
+       AND EXISTS (SELECT 1 FROM dead_letter_events e
+                   WHERE e.source='invocation' AND e.source_id=w.id AND e.replayed_at IS NULL)
      LIMIT sqlc.arg(row_limit)::integer) dead)::bigint AS dead_letter,
   (SELECT min(first.created_at) FROM names n CROSS JOIN LATERAL (
      SELECT w.created_at FROM production_invocation_work w
@@ -9171,6 +9299,56 @@ SELECT e.scope_kind, e.scope_id, e.revision, e.revoked
 FROM traffic_security_epochs e JOIN requested r
     ON e.scope_kind = r.scope_kind AND e.scope_id = r.scope_id;
 
+-- ADR-20261108110000 amendment 2026-11-09: the sealing backfill finds
+-- headers rules and rule-set versions that still store a request header value
+-- as written. The scan is broad (any literal value); apid applies the
+-- credential-name test.
+
+-- name: ListEdgeRulesWithRequestHeaderLiterals :many
+SELECT r.id, r.action FROM edge_rules r
+WHERE r.kind = 'headers' AND r.id > sqlc.arg(after_id)::uuid
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(r.action->'headers'->'request_headers') = 'array'
+        THEN r.action->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+ORDER BY r.id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ListEdgeRuleSetVersionsWithRequestHeaderLiterals :many
+SELECT v.id, v.app_id, v.version, v.rules, v.rules_sha256 FROM edge_rule_set_versions v
+WHERE v.id > sqlc.arg(after_id)::bigint
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v.rules) rule,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(rule->'action'->'headers'->'request_headers') = 'array'
+        THEN rule->'action'->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE rule->>'kind' = 'headers' AND coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+ORDER BY v.id LIMIT sqlc.arg(row_limit)::integer;
+
+-- Environment edge policies written through the API. An environment with
+-- an active Git source for the app is left out: its values come from the
+-- repository, and a sealed value would read as drift there.
+-- name: ListEnvironmentEdgePoliciesWithRequestHeaderLiterals :many
+SELECT p.account_id, p.project_id, p.app_id, p.environment_slug, p.rules, p.created_at, p.updated_at
+FROM project_environment_edge_policies p
+WHERE (p.app_id, p.environment_slug) > (sqlc.arg(after_app_id)::uuid, sqlc.arg(after_environment)::text)
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p.rules) rule,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(rule->'action'->'headers'->'request_headers') = 'array'
+        THEN rule->'action'->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE rule->>'kind' = 'headers' AND coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+  AND NOT EXISTS (
+    SELECT 1 FROM active_environment_git_sources s
+    JOIN project_environments e ON e.id = s.environment_id
+    JOIN environment_gitops_resources r ON r.source_id = s.id
+    WHERE r.app_id = p.app_id AND e.slug = p.environment_slug)
+ORDER BY p.app_id, p.environment_slug LIMIT sqlc.arg(row_limit)::integer;
+
+-- The digest is computed as edge_rules_record_set_version computes it, and
+-- the row is replaced only if no one changed it since it was read.
+-- name: ReplaceEdgeRuleSetVersionRules :execrows
+UPDATE edge_rule_set_versions SET rules = sqlc.arg(rules)::jsonb,
+    rules_sha256 = encode(sha256(convert_to(sqlc.arg(rules)::jsonb::text, 'UTF8')), 'hex')
+WHERE id = sqlc.arg(id)::bigint AND rules_sha256 = sqlc.arg(previous_sha256)::text;
+
 -- ADR-570: generation-fenced gateway wiring observations.
 
 -- name: ReadGatewayTrafficRuntimeEpoch :one
@@ -9192,7 +9370,8 @@ WHERE (sqlc.arg(expected_generation)::bigint = 0 OR EXISTS (
 ON CONFLICT (node_name) DO UPDATE SET
     generation = EXCLUDED.generation, boot_id = EXCLUDED.boot_id, reported_at = NULL,
     retry_enabled = false, rate_counter_mode = 'unwired', retry_counter_mode = 'unwired', retry_backend_id = '',
-    deadline_signing = false, policy_snapshot = false, security_revocation = false, managed_http = false, managed_circuit = false
+    deadline_signing = false, policy_snapshot = false, security_revocation = false, managed_http = false, managed_circuit = false,
+    edge_header_secrets_boot = NULL
 WHERE gateway_traffic_runtime_observations.generation = sqlc.arg(expected_generation)::bigint
   AND gateway_traffic_runtime_observations.boot_id <> EXCLUDED.boot_id
 RETURNING generation;
@@ -9207,7 +9386,8 @@ UPDATE gateway_traffic_runtime_observations SET reported_at = clock_timestamp(),
     policy_snapshot = sqlc.arg(policy_snapshot)::boolean,
     security_revocation = sqlc.arg(security_revocation)::boolean,
     managed_http = sqlc.arg(managed_http)::boolean,
-    managed_circuit = sqlc.arg(managed_circuit)::boolean
+    managed_circuit = sqlc.arg(managed_circuit)::boolean,
+    edge_header_secrets_boot = CASE WHEN sqlc.arg(edge_header_secrets)::boolean THEN boot_id END
 WHERE node_name = sqlc.arg(node_name)::text AND generation = sqlc.arg(generation)::bigint AND boot_id = sqlc.arg(boot_id)::uuid;
 
 -- name: RetireGatewayTrafficRuntime :execrows
@@ -9225,6 +9405,7 @@ SELECT n.name AS node_name, COALESCE(o.generation, 0)::bigint AS generation, o.r
        COALESCE(o.security_revocation, false)::boolean AS security_revocation,
        COALESCE(o.managed_http, false)::boolean AS managed_http,
        COALESCE(o.managed_circuit, false)::boolean AS managed_circuit,
+       COALESCE(o.edge_header_secrets_boot = o.boot_id, false)::boolean AS edge_header_secrets,
        clock_timestamp()::timestamptz AS database_now
 FROM compute_nodes n LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
 WHERE n.active AND n.role IN ('compute-only', 'compute-node')
@@ -13781,7 +13962,7 @@ with b as (
   select id, account_id, queue_name, deployment_scope from queue_bindings
   where id=sqlc.arg(binding_id)::uuid and app_id=sqlc.arg(app_id)::uuid
 ), owned as (
-  select i.state, i.lease_expires_at from invocations i, b
+  select i.id, i.state, i.lease_expires_at from invocations i, b
   where i.app_id=sqlc.arg(app_id)::uuid and i.account_id=b.account_id and i.source='queue'
     and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
     and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
@@ -13802,8 +13983,13 @@ select
   (select count(*) from (
      select 1 from owned where state='dispatching' and lease_expires_at > now()
      limit sqlc.arg(row_limit)::integer) leased)::bigint as in_flight,
+  -- A dead-lettered message counts while its dead letter is open: `dlq
+  -- purge` deletes the event and replay marks it, but both leave the
+  -- invocation in dead_letter (Hunt 32 H32-45: dead_letter=2 after purge).
   (select count(*) from (
-     select 1 from owned where state='dead_letter'
+     select 1 from owned o where o.state='dead_letter'
+       and exists (select 1 from dead_letter_events e
+                   where e.source='invocation' and e.source_id=o.id and e.replayed_at is null)
      limit sqlc.arg(row_limit)::integer) dead)::bigint as dead_letter,
   (select min(first.created_at) from (
      (select i.created_at from invocations i, b
@@ -15602,8 +15788,11 @@ ORDER BY CASE WHEN state='deleting' AND purge_after>sqlc.arg(at)::timestamptz AN
 -- name: CountManagedPostgresLifecycleDatabases :one
 -- A delete that can no longer be undone frees the database, including a source
 -- kept for its restore copies (ADR-20261103091657).
+-- A PR preview environment's database is outside the plan's database limit
+-- (ADR-20261102123523) and is counted by CountManagedPostgresPreviewDatabases.
 SELECT ((SELECT count(*) FROM managed_postgres_databases d
- WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL))
+ WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL)
+ AND d.preview_source_database_id IS NULL)
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r
  JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=sqlc.arg(account_id)::uuid
@@ -15642,6 +15831,49 @@ ORDER BY d.restore_slot_until, d.id LIMIT sqlc.arg(batch_size);
 -- name: ClearManagedPostgresRestoreSlot :execrows
 UPDATE managed_postgres_databases SET restore_slot_until=NULL,updated_at=sqlc.arg(at)::timestamptz
 WHERE id=sqlc.arg(id)::uuid AND restore_slot_until IS NOT NULL;
+
+-- name: SetManagedPostgresDatabasePreviews :one
+-- ADR-20261102123523: what a database gives PR preview environments. A
+-- preview database cannot have previews of its own.
+UPDATE managed_postgres_databases SET previews=sqlc.arg(previews)::text,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND state NOT IN ('deleting','deleted')
+ AND preview_source_database_id IS NULL
+RETURNING *;
+
+-- name: FindManagedPostgresPreviewDatabase :one
+-- The undeleted database one PR preview environment owns for one source.
+SELECT * FROM managed_postgres_databases
+WHERE preview_source_database_id=sqlc.arg(source_database_id)::uuid AND preview_environment_id=sqlc.arg(environment_id)::text
+ AND preview_pr_number=sqlc.arg(pr_number)::integer AND deleted_at IS NULL;
+
+-- name: SetManagedPostgresPreviewOwner :one
+UPDATE managed_postgres_databases SET preview_source_database_id=sqlc.arg(source_database_id)::uuid,
+ preview_environment_id=sqlc.arg(environment_id)::text, preview_pr_number=sqlc.arg(pr_number)::integer
+WHERE id=sqlc.arg(id)::uuid RETURNING *;
+
+-- name: CountManagedPostgresPreviewDatabases :one
+-- The reservation owner's undeleted PR preview databases, read under its
+-- reservation lock. The owner is the organization for an organization
+-- owner, otherwise the account's usage subject, as in the reservation counts.
+SELECT count(*)::bigint AS count FROM managed_postgres_databases d
+WHERE d.preview_source_database_id IS NOT NULL AND d.state<>'deleted'
+ AND CASE WHEN sqlc.narg(org_id)::uuid IS NOT NULL THEN d.org_id=sqlc.narg(org_id)::uuid
+     ELSE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid END;
+
+-- name: ListManagedPostgresPreviewDatabases :many
+-- The undeleted databases one PR preview environment owns.
+SELECT * FROM managed_postgres_databases
+WHERE account_id=sqlc.arg(account_id)::uuid AND preview_environment_id=sqlc.arg(environment_id)::text
+ AND preview_pr_number=sqlc.arg(pr_number)::integer AND deleted_at IS NULL
+ORDER BY created_at,id;
+
+-- name: ListManagedPostgresPreviewDatabasePage :many
+-- ADR-20261102123523: the preview-database sweep's page of undeleted preview
+-- databases across accounts, in ID order after after_id.
+SELECT * FROM managed_postgres_databases
+WHERE preview_source_database_id IS NOT NULL AND deleted_at IS NULL AND id>sqlc.arg(after_id)::uuid
+ORDER BY id
+LIMIT sqlc.arg(page_size)::integer;
 
 -- name: RecordManagedPostgresRestoreSlotNotice :execrows
 -- ADR-20261031123259: one notice per copy and kind; the first sweep to reach
@@ -19106,6 +19338,9 @@ WHERE d.id=sqlc.arg(deployment_id)::uuid RETURNING status::text;
 SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid
 AND d.deleted_at IS NULL
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
+-- A release an automatic guard reverted (ADR-625, ADR-1445) is never an
+-- implicit target either; `rollback --to` can still name it.
+AND d.last_auto_rollback_reason IS NULL
 AND (sqlc.narg(scope)::text IS NULL OR d.scope=sqlc.narg(scope)::text)
 AND (sqlc.narg(current_deployment_id)::uuid IS NULL OR d.id<>sqlc.narg(current_deployment_id)::uuid)
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
@@ -19119,6 +19354,9 @@ ORDER BY coalesce(d.serving_ended_at,d.created_at) DESC,d.created_at DESC,d.id D
 SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
 AND d.deleted_at IS NULL
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
+-- A release an automatic guard reverted (ADR-625, ADR-1445) is never an
+-- implicit target either; `rollback --to` can still name it.
+AND d.last_auto_rollback_reason IS NULL
 AND d.id<>sqlc.arg(current_deployment_id)::uuid
 AND NOT d.environment_workload_held
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
@@ -20883,7 +21121,7 @@ SELECT wake_id,
   WHEN position('reason=telemetry_missing' in last_error)>0 THEN 'telemetry_missing'
   WHEN position('reason=requests_active' in last_error)>0 THEN 'requests_active'
   WHEN position('reason=quiet_period_not_elapsed' in last_error)>0 THEN 'quiet_period_not_elapsed'
-  WHEN position('app_startup_crash' in o.last_error) > 0 THEN 'app_startup_crash'
+  WHEN position('app_startup_crash' in last_error)>0 THEN 'app_startup_crash'
   ELSE 'restart_attempt_failed' END::text AS failure_reason,
  created_at AS requested_at,delivered_at AS completed_at
 FROM latest WHERE state<>'delivered' ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(row_limit);
@@ -21020,10 +21258,10 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved))
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved),sqlc.narg(custom_metric_labels)::jsonb)
 RETURNING *;
 
 -- name: UpdateCustomerAlertRule :one
@@ -22904,6 +23142,7 @@ SELECT jsonb_build_object(
  'project_environment_promotion_workloads.restored_target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE restored_target_deployment_id=sqlc.arg(deployment_id)::uuid::text),
  'project_environment_promotion_workloads.source_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE source_deployment_id=sqlc.arg(deployment_id)::uuid::text),
  'project_environment_promotion_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE target_deployment_id=sqlc.arg(deployment_id)::uuid::text),
+ 'request_analytics_hours.deployment_id', (SELECT count(*) FROM request_analytics_hours WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'request_analytics_minutes.deployment_id', (SELECT count(*) FROM request_analytics_minutes WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'release_outcome_checks.deployment_id', (SELECT count(*) FROM release_outcome_checks WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'request_audit_events.deployment_id', (SELECT count(*) FROM request_audit_events WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
@@ -23309,6 +23548,10 @@ FROM current_run selected JOIN apps a ON a.id=selected.app_id JOIN app_resource_
 -- The insert's account_id foreign key needs a key-share lock on the
 -- namespace; taking it here with SKIP LOCKED skips an app whose namespace is
 -- mid-apply instead of holding the app row while waiting for it (40P01).
+-- The app row is taken FOR NO KEY UPDATE: it still excludes a delete, but not
+-- the key-share lock FinishAppHealth's history insert takes through
+-- app_health_history.app_id while it holds this app's collection row, which
+-- the upsert below waits on when the previous lease has just expired.
 WITH candidate AS (
  SELECT a.id, a.account_id FROM apps a
  JOIN app_resource_accounts acct ON acct.app_id = a.id
@@ -23319,7 +23562,7 @@ WITH candidate AS (
  AND (h.next_check_at IS NULL OR h.next_check_at <= sqlc.arg(checked_now)::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= sqlc.arg(checked_now)::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
+ LIMIT 1 FOR NO KEY UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, sqlc.arg(checked_now)::timestamptz, sqlc.arg(token)::text, sqlc.arg(checked_now)::timestamptz, sqlc.arg(expires_at)::timestamptz FROM candidate
@@ -27959,7 +28202,7 @@ FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id
 JOIN project_environments e ON e.id=g.environment_id
 JOIN managed_postgres_bindings b ON b.app_id=q.app_id AND b.scope=e.slug AND b.state='ready'
- AND b.access IN ('read_write','read_only','migration') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
+ AND b.access IN ('read_write','read_only','migration','session') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
 JOIN app_secrets s ON s.app_id=q.app_id AND s.scope=e.slug AND s.key=b.environment_key
  AND s.managed_postgres_binding_id=b.id AND s.managed_credential_generation=b.credential_generation AND s.delivery_version IS NOT NULL
 JOIN managed_postgres_databases d ON d.id=b.database_id AND d.deleted_at IS NULL
@@ -28299,7 +28542,8 @@ SELECT * FROM managed_postgres_bindings WHERE id=$1;
 
 -- name: CountManagedPostgresOrgDatabases :one
 -- Counts as CountManagedPostgresLifecycleDatabases does.
-SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=sqlc.arg(org_id)::uuid AND state<>'deleted' AND NOT (state='deleting' AND purge_after IS NULL))
+SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=sqlc.arg(org_id)::uuid AND state<>'deleted' AND NOT (state='deleting' AND purge_after IS NULL)
+ AND d.preview_source_database_id IS NULL)
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE p.org_id=sqlc.arg(org_id)::uuid AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count;
 
@@ -28612,7 +28856,18 @@ UPDATE deployments SET deleted_at=sqlc.arg(deleted_at)::timestamptz,deleted_by_p
 WHERE app_id=sqlc.arg(app_id)::uuid AND status IN ('superseded','failed','cancelled')
  AND created_at<sqlc.arg(older_than)::timestamptz AND deleted_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=deployments.id)
- AND id NOT IN (SELECT id FROM (SELECT id,row_number() OVER(PARTITION BY app_id ORDER BY created_at DESC,id) rn FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid) recent WHERE rn<=2);
+ AND id NOT IN (SELECT id FROM (SELECT id,row_number() OVER(PARTITION BY app_id ORDER BY created_at DESC,id) rn FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid) recent WHERE rn<=2)
+ -- A superseded deployment in its scope's rollback window (the newest
+ -- rollback_generations live or superseded deployments, as
+ -- LayerArtifactHasReferences counts them) stays: failed attempts must not
+ -- push rollback targets out of the window.
+ AND NOT (status='superseded' AND (
+   SELECT count(*) FROM deployments n
+    WHERE n.app_id=deployments.app_id
+      AND COALESCE(NULLIF(n.scope,''),'default')=COALESCE(NULLIF(deployments.scope,''),'default')
+      AND n.deleted_at IS NULL AND n.status IN ('live','superseded')
+      AND (n.created_at>deployments.created_at OR (n.created_at=deployments.created_at AND n.id>deployments.id))
+ ) < sqlc.arg(rollback_generations)::int);
 
 -- name: ReadEnvironmentRecoveryServingHistory :one
 SELECT served_at FROM environment_recovery_serving_history WHERE graph_id=sqlc.arg(graph_id)::uuid;

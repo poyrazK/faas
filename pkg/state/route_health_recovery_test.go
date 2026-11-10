@@ -112,6 +112,7 @@ func TestRouteHealthAutomaticRecoveryCommitsExactEvidenceAndDeduplicates(t *test
 		t.Fatal("exact predecessor not restored", stable, err)
 	}
 	audits, err := s.ListDeploymentAudit(t.Context(), d.ID, 10)
+	audits = advanceAudits(audits)
 	if err != nil || len(audits) != 1 || audits[0].Kind != state.DeployRolledBack || audits[0].Actor != "meterd:route_health_recovery" || !strings.Contains(string(audits[0].Data), entry.ID) {
 		t.Fatal("recovery audit", audits, err)
 	}
@@ -352,7 +353,7 @@ func TestRouteHealthAutomaticRecoveryRollsBackEveryWrite(t *testing.T) {
 				t.Fatal("failed recovery retained evidence", err)
 			}
 			audits, err := s.ListDeploymentAudit(t.Context(), d.ID, 10)
-			if err != nil || len(audits) != 0 {
+			if err != nil || len(advanceAudits(audits)) != 0 {
 				t.Fatal("failed recovery retained audit", err)
 			}
 			_, err = sqlc.New().ReadRouteHealthNotificationState(t.Context(), pool, sqlc.ReadRouteHealthNotificationStateParams{AccountID: a.ID, AppID: app.ID, DeploymentID: d.ID})

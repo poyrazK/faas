@@ -522,7 +522,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	nodeInfos := make([]sched.ComputeNodeInfo, 0, len(nodes))
 	for _, n := range nodes {
-		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
+		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, Name: n.Name, TargetURL: n.TargetURL})
 	}
 	// The clone ownership recorders serve only full environment clones
 	// (ADR-590). They run while full_environment_clones_enabled is on, which
@@ -615,7 +615,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		row, err := store.ComputeNodeByID(rctx, nodeID)
 		switch {
 		case err == nil:
-			vmmRouter.Refresh(nodeID, row.TargetURL)
+			vmmRouter.RefreshNode(nodeID, row.TargetURL, row.Name)
 			nodeRegistry.Refresh(row)
 			warnCPUIdentities()
 			return nil
@@ -812,24 +812,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-1155: on-demand profile capture outcomes, queue waits and the
 	// automatic captures schedd skips, for the capture alerts.
 	engine.WithProfileCaptureMetrics(wire.NewProfileCaptureMetrics(ops.Registry()))
-	// ADR-20261101215228: the values that shape a listed app's CPU, and the
-	// list itself, are runtime config.
-	cpuShape := &cpuShapeConfig{engine: engine}
 	requestConcurrency := &runtimeconfig.RequestConcurrency{}
 	// ADR-20261106214916: after a node takes a release, find the recently
 	// active apps whose snapshots there the release made stale.
 	snapshotRefresher := sched.NewSnapshotRefresher(engine, ops.Registry(), log)
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.CPUShapeKeys...), runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
+	// ADR-20261109172421: memory is the only capacity limit; count what the
+	// vCPU and CPU budgets would have refused.
+	engine.WithCPUAdmissionMetrics(ops.Registry())
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			if handled, err := requestConcurrency.Apply(key, value); handled {
 				if err == nil {
 					log.Info("schedd: applied request limit setting (ADR-20261101215228)", "key", key, "value", string(value))
-				}
-				return err
-			}
-			if handled, err := cpuShape.apply(key, value); handled {
-				if err == nil {
-					log.Info("schedd: applied CPU shape setting (ADR-20261101215228)", "key", key, "value", string(value))
 				}
 				return err
 			}

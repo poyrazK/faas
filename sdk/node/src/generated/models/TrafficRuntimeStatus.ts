@@ -22,5 +22,9 @@ export type TrafficRuntimeStatus = {
   security_revocation: TrafficRuntimeFeatureStatus;
   managed_http: TrafficRuntimeFeatureStatus;
   managed_circuit: TrafficRuntimeFeatureStatus;
+  /**
+   * Gateways open sealed edge-rule request header values; until every serving gateway does, new credential values are stored as written. Omitted by older releases.
+   */
+  edge_header_secrets?: TrafficRuntimeFeatureStatus;
 };
 

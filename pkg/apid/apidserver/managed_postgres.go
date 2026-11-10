@@ -49,6 +49,9 @@ type managedPostgresHooks struct {
 	// NotifyPlanExcess queues the email for a database suspended past its
 	// plan (ADR-20261102125208).
 	NotifyPlanExcess func(context.Context, managedpostgres.PlanExcessNotice) error
+	// Egress reads a subject's plan egress allowance and its apps' egress
+	// this month, shared with its databases (ADR-20261110160000).
+	Egress managedpostgres.EgressAllowanceFunc
 }
 
 func (h *managedPostgresHooks) charges() billing.ManagedPostgresChargeSink {
@@ -98,6 +101,13 @@ func (h *managedPostgresHooks) notifyCap() func(context.Context, managedpostgres
 		return nil
 	}
 	return h.NotifyCap
+}
+
+func (h *managedPostgresHooks) egress() managedpostgres.EgressAllowanceFunc {
+	if h == nil {
+		return nil
+	}
+	return h.Egress
 }
 
 func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
@@ -285,6 +295,22 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
 		ProvisioningEnabled: operationsGate,
 		ProvisioningAllowed: provisioningAllowed,
+		// ADR-20261110120000: each binding issues a provider role, so the
+		// plan bounds live bindings per app (PostgresBindingsPerAppMax).
+		MaxBindingsPerApp: func(ctx context.Context, accountID string) (int, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
+			if err != nil {
+				return 0, err
+			}
+			limits, ok := api.LimitsFor(api.Plan(account.Plan))
+			if !ok || limits.PostgresBindingsPerAppMax <= 0 {
+				return 0, managedpostgres.ErrNotInPlan
+			}
+			return limits.PostgresBindingsPerAppMax, nil
+		},
+		// ADR-20261110120000: a binding's app secret would be refused by the
+		// release-secret trigger, leaving the binding retrying hourly.
+		ReleaseSecretsPinned: accountStore.ReleaseSecretsPinned,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -392,6 +418,7 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		Notify:           hooks.notifyCap(),
 		NotifyPlanExcess: hooks.notifyPlanExcess(),
 		Ceiling:          managedPostgresCapLimits(store, accountStore, hooks.overage()),
+		Egress:           hooks.egress(),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
 		if err := managedPostgresCapNoticeReady(getenv); err != nil {

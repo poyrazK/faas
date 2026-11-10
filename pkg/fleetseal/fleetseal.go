@@ -67,6 +67,12 @@ type VerificationReport struct {
 	// ClusterKeySealedTo names the identity that opened the cluster key:
 	// "fleet", or "control" once it is sealed to the control seal domain.
 	ClusterKeySealedTo string `json:"cluster_key_sealed_to,omitempty"`
+	// FleetRetired reports a node that holds no fleet identity: every
+	// compute domain is contracted and node join no longer stages fleet.age
+	// (ADR 20261022111812, "Retiring the fleet key on compute nodes"). It
+	// proves the cluster key with the control identity alone; the seal-domain
+	// probes, verified by the seal_domains role, replace the customer probe.
+	FleetRetired bool `json:"fleet_retired,omitempty"`
 }
 
 // Migrate re-seals the singleton cluster key and every customer app secret
@@ -200,9 +206,15 @@ func Migrate(ctx context.Context, store Store, fleet *age.X25519Identity, legacy
 // adoption retained a distinct per-host identity. Once the cluster key is
 // sealed to the control seal domain (ADR 20261022111812), the control
 // identities open it instead; a node without them fails, as its schedd would.
+//
+// A nil fleet identity is a node whose fleet key is retired: control must
+// then open the cluster key, and the customer probe is not checked.
 func Verify(ctx context.Context, store Store, fleet, host *age.X25519Identity, control []*age.X25519Identity) (VerificationReport, error) {
-	if store == nil || fleet == nil {
-		return VerificationReport{}, errors.New("fleetseal: store and fleet identity are required")
+	if store == nil {
+		return VerificationReport{}, errors.New("fleetseal: store is required")
+	}
+	if fleet == nil {
+		return verifyRetired(ctx, store, host, control)
 	}
 	report := VerificationReport{FleetRecipient: fleet.Recipient().String()}
 	if host != nil {
@@ -242,28 +254,63 @@ func Verify(ctx context.Context, store Store, fleet, host *age.X25519Identity, c
 	if err != nil {
 		return report, fmt.Errorf("fleetseal: cluster signing key opens with neither the fleet nor a control identity: %w", err)
 	}
+	if err := proveClusterKey(&report, cluster, ns, plaintext); err != nil {
+		return report, err
+	}
+	report.Ready = report.ProbeOK && report.JWTRoundTripOK && (host == nil || report.HostIdentityKept)
+	return report, nil
+}
+
+// verifyRetired is Verify on a node without the fleet identity.
+func verifyRetired(ctx context.Context, store Store, host *age.X25519Identity, control []*age.X25519Identity) (VerificationReport, error) {
+	report := VerificationReport{FleetRetired: true}
+	if len(control) == 0 {
+		return report, errors.New("fleetseal: a node without the fleet identity needs the control seal-domain identity")
+	}
+	if host != nil {
+		report.HostRecipient = host.Recipient().String()
+		report.HostIdentityKept = true
+	}
+	cluster, err := store.LoadClusterSigningKey(ctx)
+	if err != nil {
+		return report, fmt.Errorf("fleetseal: load cluster key: %w", err)
+	}
+	ns, plaintext, err := secretbox.OpenBytesMulti(control, cluster.SealedBlob)
+	if err != nil {
+		return report, fmt.Errorf("fleetseal: cluster signing key does not open with the control identity: %w", err)
+	}
+	report.ClusterKeySealedTo = "control"
+	if err := proveClusterKey(&report, cluster, ns, plaintext); err != nil {
+		return report, err
+	}
+	report.Ready = report.JWTRoundTripOK
+	return report, nil
+}
+
+// proveClusterKey checks the opened cluster key against its public half and
+// round-trips an internal-service token with it. It zeroes plaintext.
+func proveClusterKey(report *VerificationReport, cluster state.ClusterSigningKey, ns string, plaintext []byte) error {
 	if ns != clusterSigningNamespace {
 		zero(plaintext)
-		return report, fmt.Errorf("fleetseal: cluster signing namespace %q, want %s", ns, clusterSigningNamespace)
+		return fmt.Errorf("fleetseal: cluster signing namespace %q, want %s", ns, clusterSigningNamespace)
 	}
 	priv, pub, err := parseAndMatchClusterKey(plaintext, cluster.PublicKeyPEM, cluster.KeyID)
 	zero(plaintext)
 	if err != nil {
-		return report, err
+		return err
 	}
 	report.ClusterKID = cluster.KeyID
 	token, err := internalsvc.Mint("schedd", 30*time.Second, map[string]any{"fleet_probe": true}, priv, cluster.KeyID)
 	if err != nil {
-		return report, fmt.Errorf("fleetseal: mint shared-kid token: %w", err)
+		return fmt.Errorf("fleetseal: mint shared-kid token: %w", err)
 	}
 	if subject, err := internalsvc.Verify(token, map[string]ed25519.PublicKey{"schedd": pub}); err != nil {
-		return report, fmt.Errorf("fleetseal: verify shared-kid token: %w", err)
+		return fmt.Errorf("fleetseal: verify shared-kid token: %w", err)
 	} else if subject != "schedd" {
-		return report, fmt.Errorf("fleetseal: verify shared-kid token returned subject %q", subject)
+		return fmt.Errorf("fleetseal: verify shared-kid token returned subject %q", subject)
 	}
 	report.JWTRoundTripOK = true
-	report.Ready = report.ProbeOK && report.JWTRoundTripOK && (host == nil || report.HostIdentityKept)
-	return report, nil
+	return nil
 }
 
 // createClusterSigningKey generates the fleet's Ed25519 cluster signing key

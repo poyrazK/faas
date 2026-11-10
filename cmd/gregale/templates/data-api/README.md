@@ -216,6 +216,10 @@ evidence, refresh state and current admission counts. Failed SQL checks leave
 database connectivity unknown; they can also reflect a saturated pool. A known
 refresh pause remains separate from an unavailable reader. Probes have a bounded
 two-second observation deadline and share in-flight work without adding SQL pools.
+A ready answer is reused for up to five seconds; an unready one never is, and an
+engine restart, schema reload, snapshot or restore forgets it. The platform's
+liveness probe uses `/livez`, so a busy pool or a database blip never restarts a
+healthy runtime.
 
 `/healthz` also includes a `pool` observation with `checked_at`. A bounded private
 engine metrics read reports capacity, existing idle (`available`) connections,

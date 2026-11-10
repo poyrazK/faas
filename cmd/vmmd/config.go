@@ -122,6 +122,15 @@ type Config struct {
 	// returns guest-freed pages to the host. It is on by default on
 	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// DisableRestoreClockRealtime stops advancing a restored guest's
+	// kvm-clock by the time its capture spent parked (ADR-20261109120000).
+	// It is on by default on Firecracker 1.16+ hosts with the tsc
+	// clocksource; FAAS_RESTORE_CLOCK_REALTIME=0 overrides TOML.
+	DisableRestoreClockRealtime bool `toml:"disable_restore_clock_realtime"`
+	// DisableReleaseConnectionsOnDestroy stops asking an app guest to reset
+	// its TCP connections before teardown destroys it (ADR-20261109130000).
+	// It is on by default; FAAS_RELEASE_CONNECTIONS_ON_DESTROY=0 overrides TOML.
+	DisableReleaseConnectionsOnDestroy bool `toml:"disable_release_connections_on_destroy"`
 	// RestoreReseedThread boots app VMs whose Node processes answer the
 	// restore reseed barrier from a native thread instead of their event
 	// loop (ADR-20261024105607). Off by default; FAAS_RESTORE_RESEED_THREAD
@@ -478,6 +487,16 @@ type ComputeNodeConfig struct {
 	// rebuilds. Both are supplied by the vmmd systemd egress drop-in.
 	PrivateIngressCIDRs    []string `toml:"private_ingress_cidrs"`
 	PrivateIngressTCPPorts []int    `toml:"private_ingress_tcp_ports"`
+	// PrivateControlIngressCIDRs, when set, replaces PrivateIngressCIDRs as
+	// the sources of the control-plane rule: the control plane's exact
+	// addresses (ADR-20261110120000). PrivateIngressCIDRs keeps the wider
+	// list for a vmmd that predates these fields.
+	PrivateControlIngressCIDRs []string `toml:"private_control_ingress_cidrs"`
+	// PrivatePeerIngressCIDRs and PrivatePeerIngressTCPPorts admit the other
+	// compute nodes to the ports they use on this one (vmmd forwards, schedd
+	// wakes), as the boot policy's compute-peer rule does.
+	PrivatePeerIngressCIDRs    []string `toml:"private_peer_ingress_cidrs"`
+	PrivatePeerIngressTCPPorts []int    `toml:"private_peer_ingress_tcp_ports"`
 	// PublicIngressCIDRs, when set, restricts the public 80/443 accept to
 	// these sources, as the nftables role does for
 	// faas_cloudflare_origin_only. The vmmd egress drop-in supplies
@@ -880,6 +899,19 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_PUBLIC_INGRESS_CIDRS"); v != "" {
 		c.ComputeNode.PublicIngressCIDRs = splitNonEmpty(v)
 	}
+	if v := os.Getenv("FAAS_PRIVATE_CONTROL_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PrivateControlIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_PEER_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PrivatePeerIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS"); v != "" {
+		ports, perr := parseTCPPorts(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS %q invalid: %w", v, perr)
+		}
+		c.ComputeNode.PrivatePeerIngressTCPPorts = ports
+	}
 	if v := os.Getenv("FAAS_PUBLIC_ENTRY_ADDRS"); v != "" {
 		c.ComputeNode.PublicEntryAddrs = splitNonEmpty(v)
 	}
@@ -1126,6 +1158,20 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.DisableFreePageReporting = !enabled
 	}
+	if v := os.Getenv("FAAS_RESTORE_CLOCK_REALTIME"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_CLOCK_REALTIME must be a boolean (got %q)", v)
+		}
+		c.DisableRestoreClockRealtime = !enabled
+	}
+	if v := os.Getenv("FAAS_RELEASE_CONNECTIONS_ON_DESTROY"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RELEASE_CONNECTIONS_ON_DESTROY must be a boolean (got %q)", v)
+		}
+		c.DisableReleaseConnectionsOnDestroy = !enabled
+	}
 	// A shared acceptance host runs several vmmd builds over time; each test
 	// run points its own vmmd at a private journal so a record written by a
 	// newer build cannot stop an older one from starting.
@@ -1277,6 +1323,9 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: private_ingress_tcp_ports contains invalid TCP port %d", port)
 		}
 	}
+	if err := validatePrivatePeerIngress(&c.ComputeNode); err != nil {
+		return nil, err
+	}
 	for i, raw := range c.ComputeNode.PublicIngressCIDRs {
 		prefix, perr := netip.ParsePrefix(strings.TrimSpace(raw))
 		if perr != nil {
@@ -1425,16 +1474,12 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 	}
 	policy.TenantEgressIface = strings.TrimSpace(cfg.TenantEgressIface)
 	policy.MasqueradeCIDR = bridge.Masked().String()
-	for _, raw := range cfg.PrivateIngressCIDRs {
-		prefix, err := netip.ParsePrefix(raw)
-		if err != nil {
-			continue // LoadConfig validates; retain a safe pure helper for tests.
-		}
-		policy.PrivateInputAllowRules = append(policy.PrivateInputAllowRules, netns.PrivateInputAllowRule{
-			Source: prefix.Masked(),
-			Ports:  append([]int(nil), cfg.PrivateIngressTCPPorts...),
-		})
+	controlSources := cfg.PrivateIngressCIDRs
+	if len(cfg.PrivateControlIngressCIDRs) > 0 {
+		controlSources = cfg.PrivateControlIngressCIDRs
 	}
+	policy.PrivateInputAllowRules = appendPrivateInputRules(policy.PrivateInputAllowRules, controlSources, cfg.PrivateIngressTCPPorts)
+	policy.PrivateInputAllowRules = appendPrivateInputRules(policy.PrivateInputAllowRules, cfg.PrivatePeerIngressCIDRs, cfg.PrivatePeerIngressTCPPorts)
 	for _, raw := range cfg.PublicIngressCIDRs {
 		if prefix, err := netip.ParsePrefix(raw); err == nil {
 			policy.PublicInputSourceCIDRs = append(policy.PublicInputSourceCIDRs, prefix.Masked())

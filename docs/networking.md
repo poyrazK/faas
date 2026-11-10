@@ -210,7 +210,7 @@ services:
 ```
 
 A repository without Compose declares the same policy, per-service
-visibility and `depends_on` in `.gregale/project.yaml`
+visibility and `depends_on` in the root `gregale.yaml` `project:` block (formerly `.gregale/project.yaml`)
 ([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md));
 a Compose declaration wins where both set a policy.
 
@@ -276,8 +276,10 @@ read failures preserve other results and make inventory incomplete.
 
 The endpoint requires app read access and completed MFA for browser sessions.
 PostgreSQL metadata additionally requires `managed-postgres:read`; storage
-metadata requires `storage:manage`, matching the existing compute-binding read
-surface. An admin key or authenticated session has the existing full access.
+metadata requires `storage:read` or `storage:manage`, as does listing compute
+bindings; neither returns a credential, so a least-privilege CI key can run
+`gregale app binding check`. An admin key or authenticated session has the
+existing full access.
 Insufficient resource permissions omit that section without reading it.
 
 If a section or consumer status cannot be read, the API returns HTTP 200 with

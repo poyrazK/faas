@@ -93,8 +93,7 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 	}
 	deleted := 0
 	for _, row := range rows {
-		mu := acquireUploadSessionLock(row.ID)
-		mu.Lock()
+		unlock := lockUploadSession(row.ID)
 		// The scan ran outside the session lock. A commit that started
 		// before expiry may have completed while we waited; its source
 		// must retain the normal builder-consumption grace period.
@@ -104,11 +103,11 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 				log.Warn("upload session reaper: candidate reload failed", "upload_id", row.ID, "err", getErr)
 				uploadSessionReaperFailedTotal().Inc()
 			}
-			mu.Unlock()
+			unlock()
 			continue
 		}
 		if current.Status != "open" || !uploadSessionExpired(current) {
-			mu.Unlock()
+			unlock()
 			continue
 		}
 		row.PartPath = current.PartPath
@@ -125,7 +124,7 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 				log.Warn("upload session reaper: .part remove failed, will retry next sweep",
 					"upload_id", row.ID, "path", row.PartPath, "err", rmErr)
 				uploadSessionReaperFailedTotal().Inc()
-				mu.Unlock()
+				unlock()
 				continue
 			}
 		}
@@ -139,13 +138,13 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 						"upload_id", row.ID, "err", clearErr)
 					uploadSessionReaperFailedTotal().Inc()
 				}
-				mu.Unlock()
+				unlock()
 				continue
 			}
 			log.Warn("upload session reaper: expire failed",
 				"upload_id", row.ID, "err", err)
 			uploadSessionReaperFailedTotal().Inc()
-			mu.Unlock()
+			unlock()
 			continue
 		}
 		if clearErr := s.store.ClearUploadSessionPartPath(ctx, row.ID); clearErr != nil && !errors.Is(clearErr, state.ErrNotFound) {
@@ -153,7 +152,7 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 				"upload_id", row.ID, "err", clearErr)
 			uploadSessionReaperFailedTotal().Inc()
 		}
-		mu.Unlock()
+		unlock()
 		deleted++
 		uploadSessionExpiredTotal().Inc()
 	}
@@ -177,23 +176,22 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 		if row.PartPath == "" {
 			continue
 		}
-		mu := acquireUploadSessionLock(row.ID)
-		mu.Lock()
+		unlock := lockUploadSession(row.ID)
 		if rmErr := removeUploadPart(row.PartPath); rmErr != nil && !os.IsNotExist(rmErr) {
 			log.Warn("upload session reaper: stale .part remove failed",
 				"upload_id", row.ID, "path", row.PartPath, "err", rmErr)
 			uploadSessionReaperFailedTotal().Inc()
-			mu.Unlock()
+			unlock()
 			continue
 		}
 		if clearErr := s.store.ClearUploadSessionPartPath(ctx, row.ID); clearErr != nil && !errors.Is(clearErr, state.ErrNotFound) {
 			log.Warn("upload session reaper: clear stale part path failed",
 				"upload_id", row.ID, "err", clearErr)
 			uploadSessionReaperFailedTotal().Inc()
-			mu.Unlock()
+			unlock()
 			continue
 		}
-		mu.Unlock()
+		unlock()
 		staleDeleted++
 	}
 	if staleDeleted > 0 {

@@ -21,6 +21,17 @@
     update_cache: true
     cache_valid_time: 3600
 
+# Debian's default for the postgres home. On an encrypted host the storage
+# role created this directory before the package existed
+# (ADR-20261109120000); elsewhere it is already so.
+- name: postgres — own the cluster root as Debian ships it
+  ansible.builtin.file:
+    path: /var/lib/postgresql
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0755"
+
 - name: postgres — discover installed cluster major version
   ansible.builtin.find:
     paths: /etc/postgresql
@@ -414,6 +425,9 @@
       faas_map faas-outboundd faas_outboundd
       faas_map faas-bridged faas_bridged
       faas_map faas-mcp-bridge faas_mcp_bridge
+      # ADR-20261109170000: signd logs in only as faas_signd, never as the
+      # owner: it reads build claims and inserts artifact_signatures rows.
+      faas_map faas-signd   faas_signd
   register: pg_ident
   failed_when: false
   notify: reload postgresql

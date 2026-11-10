@@ -440,3 +440,90 @@ A second review of the debugger on main found:
 
 - Latency regressions are about warm requests; a slower cold boot shows in debug status and wake evidence, not as a route regression.
 - Dependency percentiles still weight a folded row's one traced sample by its request count: a bucket's requests share route, status and latency bucket.
+
+## Amendment (2026-11-09): replay safety, span privacy and detector accuracy
+
+### Decision
+
+- **Unsafe replays need the rule's opt-in.** Replaying a POST, PUT, PATCH or
+  DELETE through a mirror rule without `allow_unsafe_methods` is refused (409
+  `debug_replay_unsupported` in apid; a permanent failure in the gateway if
+  one is enqueued anyway). A body-carrying replay whose body was not retained
+  is marked comparison-incomplete rather than reporting a status diff.
+- **Spans keep only what the debugger reads.** Ingestion keeps an allowlist of
+  dependency-classification, failure-class and status-code attributes plus
+  the platform's `gregale.*` families, reduces `url.full`/`http.url` to the
+  origin, and widens statement normalization (dollar-quoted, hex, quoted
+  values, JSON-shaped statements; cache commands keep only the verb). Debug
+  bundles omit log messages and statements.
+- **Detector counts the whole window.** The affected-request count reads
+  per-route weighted latency buckets for the window
+  (`RequestTelemetryLatencyWeightsByRoute`) instead of the newest 10k rows;
+  baseline routes are capped by volume, busiest first; and a pass that
+  completed resolves observations it no longer detected
+  (`ResolveRegressionObservationsNotSeenSince`), so a fixed regression stops
+  showing as open.
+- **`debug status`** counts errors in the regression view, reports the
+  request-weighted warm p95 of the serving deployments, and scans recent
+  failures per serving deployment.
+- **Access and clients.** `POST /debug/compare` is read-only and needs the
+  app-logs read permission. `debug … watch` backs off exponentially on failed polls (to
+  5 minutes or the interval) and honours `Retry-After`. A request-list cursor
+  whose window reaches past retention is clamped to the horizon instead of
+  expiring. `gregalectl debug pprof` refuses an abstract socket held by a
+  non-system, non-daemon uid.
+
+## Amendment (2026-11-09): group commit for request telemetry
+
+### Context
+
+apid answered each telemetry record from a gateway stream on its own, and
+committed each row the plan keeps in its own transaction. A row past the
+plan's ingest cap costs about 2 µs, but an inserted row waits for its own
+WAL flush, one at a time per gateway. Production commits with
+`synchronous_commit = on` and `fdatasync` on network-attached disks, so a
+gateway could deliver only about 300–1,000 inserted rows a second (a local
+benchmark with fsync on measured 67–151 rows/s on a loaded laptop disk).
+Past that the gateway ring overwrites rows, and analytics and the debugger
+lose them.
+
+### Decision
+
+- **Group commit.** The receiver collects the records that arrive together
+  on a stream. A gateway sends a whole batch, then half-closes, so its
+  group is the batch. A group also ends at `RequestTelemetryReceiveGroupMax`
+  (256) records, or when no record arrives for
+  `RequestTelemetryReceiveGroupWait` (2 ms), so a client that waits for
+  each outcome is still answered. Each record's checks (usage, plan,
+  analytics rollups, ingest cap) run as before; the group's rows to insert
+  commit in one transaction, with the same replay rule per row (the log
+  ledger's event ID). Outcomes go back in record order. If the group's
+  transaction fails, its rows are written one by one, so each row still
+  gets its own outcome and one bad row never costs the others theirs. No
+  wire change: older gateways already send a batch before reading outcomes.
+- **Asynchronous commit for telemetry.** Telemetry transactions commit with
+  `SET LOCAL synchronous_commit = off`. Telemetry and its log projection are
+  debugger evidence, never billing: usage has its own outbox and ledger. A
+  Postgres crash may lose the last moments of rows apid already
+  acknowledged; the gateway will not resend them.
+
+### Consequences
+
+- A gateway batch of 256 rows costs one commit instead of 256.
+- A group holds one ingest-gate slot for its whole write, as it uses one
+  connection.
+- A client that waits for each outcome gets it about 2 ms later.
+
+## Amendment (2026-11-10): traced requests keep their rows
+
+Exact samples were capped at five a bucket-minute for server errors and
+traced requests alike (amendment 2026-10-31). Past five, a traced request
+folded into the bucket, its guest spans found no row, and the span writer
+dropped them after three tries: ~190 traces a day across two production
+nodes, every hour.
+
+**Decision.** Status is part of the bucket key, so the cap is chosen per
+bucket: a 5xx bucket keeps five exact rows, any other bucket keeps
+`api.GatewayRequestTelemetryTracedExactPerBucket` (30) traced requests a
+minute. Request counts are unchanged; a traced app writes up to 30 rows per
+bucket-minute instead of 5.

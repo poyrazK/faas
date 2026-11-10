@@ -1822,6 +1822,10 @@ type ScalingTarget struct {
 	// kind of accepted-but-inert field this codebase keeps having to
 	// remove.
 	Name string `json:"name,omitempty"`
+	// Labels selects one labelled series of the custom metric
+	// (ADR-20261108160000 slice C2). Empty: the metric's aggregate (the
+	// maximum of its fresh series). Only valid with Metric "custom".
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ScalingSchedule is one recurring window that raises the warm floor
@@ -1959,6 +1963,13 @@ type AppEffectiveLimits struct {
 	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
 	RequestBodyMaxBytes    int64 `json:"request_body_max_bytes"`
+	// IdleTimeoutS is the idle timeout the reaper applies: the app's own
+	// setting, or its type's default, clamped to the plan bounds (spec §4.3).
+	IdleTimeoutS int `json:"idle_timeout_s,omitempty"`
+	// Pause is when the platform may pause the VM (ADR-1151): the declared
+	// value, or the default for the app's type. Apps attached to a private
+	// network are never paused whatever they declare.
+	Pause string `json:"pause,omitempty"`
 }
 
 // AppConfiguredResources is the resource shape selected for an app. It is
@@ -3882,6 +3893,42 @@ type UpdateDeploymentTrafficRequest struct {
 	// An explicit empty id requires no live sibling with positive traffic.
 	ExpectedServingDeploymentID *string                     `json:"expected_serving_deployment_id,omitempty"`
 	ExpectedMCPAccessPolicy     *MCPAccessPolicyExpectation `json:"expected_mcp_access_policy,omitempty"`
+	// ExpectedTraffic makes the change conditional on the split it was planned
+	// from: every live release in the deployment's environment with positive
+	// traffic, mapped to its percent. Any difference at write time is a 409
+	// traffic_serving_changed.
+	ExpectedTraffic map[string]int `json:"expected_traffic,omitempty"`
+}
+
+// MaxExpectedTrafficReleases bounds expected_traffic; no split serves more
+// releases than an app's largest concurrency.
+const MaxExpectedTrafficReleases = 100
+
+// ValidateExpectedTraffic checks the bounds of an expected_traffic map.
+func (r UpdateDeploymentTrafficRequest) ValidateExpectedTraffic() error {
+	if r.ExpectedTraffic == nil {
+		return nil
+	}
+	if len(r.ExpectedTraffic) == 0 || len(r.ExpectedTraffic) > MaxExpectedTrafficReleases {
+		return fmt.Errorf("expected_traffic must name between 1 and %d releases", MaxExpectedTrafficReleases)
+	}
+	if r.ExpectedServingDeploymentID != nil || r.ExpectedReview != nil {
+		return fmt.Errorf("expected_traffic cannot be combined with expected_serving_deployment_id or expected_review")
+	}
+	sum := 0
+	for id, percent := range r.ExpectedTraffic {
+		if _, err := uuid.Parse(id); err != nil {
+			return fmt.Errorf("expected_traffic key %q is not a deployment id", id)
+		}
+		if percent < 1 || percent > 100 {
+			return fmt.Errorf("expected_traffic percent for %s must be between 1 and 100", id)
+		}
+		sum += percent
+	}
+	if sum != 100 {
+		return fmt.Errorf("expected_traffic percents must sum to 100, got %d", sum)
+	}
+	return nil
 }
 
 // AdvanceCanaryRequest is the compare-and-swap body for
@@ -4098,6 +4145,19 @@ func ParseMirrorWindow(s string) (MirrorWindowDuration, error) {
 		return MirrorWindow7d, nil
 	}
 	return 0, errInvalidMirrorWindow
+}
+
+// MirrorSafeMethod reports whether a method is mirrored and replayed without
+// the mirror rule's allow_unsafe_methods opt-in: GET, HEAD and OPTIONS. Live
+// mirroring, debugger replay and the replay dispatcher share it, so a rule
+// that opted out of side effects is never replayed with one.
+func MirrorSafeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
 }
 
 // MirrorAlwaysStrippedHeaders is the set of headers the gateway
@@ -5443,8 +5503,7 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int, guestVCPU ...int) *P
 // ValidateAppConfig keeps existing callers source-compatible while allowing
 // create-time callers to opt into the joint contract.
 func ValidateAppCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
-	shape, ok := PlanResourceShapeFor(l.Plan)
-	if !ok || guestVCPU != shape.VCPU || ramMB != shape.RAMMB {
+	if guestVCPU != SizeVCPUs(ramMB) {
 		return ErrInvalidCPURAMPair(l, ramMB, guestVCPU)
 	}
 	return nil
@@ -6020,9 +6079,12 @@ type LogQueryEvent struct {
 	Level        string    `json:"level,omitempty"`
 	Stream       string    `json:"stream,omitempty"`
 	Message      string    `json:"message"`
-	LatencyMS    int       `json:"latency_ms,omitempty"`
-	Count        int       `json:"count,omitempty"`
-	ColdBoot     bool      `json:"cold_boot,omitempty"`
+	// LatencyMS is set on every HTTP row, 0 ms included, and absent on rows
+	// with no latency (runtime and build lines). A plain omitempty int dropped
+	// the field from 0 ms requests (ADR-20261110090000).
+	LatencyMS *int `json:"latency_ms,omitempty"`
+	Count     int  `json:"count,omitempty"`
+	ColdBoot  bool `json:"cold_boot,omitempty"`
 }
 
 // AccountTraceLookupResponse is the tenant-scoped correlation envelope used
@@ -13518,6 +13580,20 @@ type CustomMetricResponse struct {
 	// Kind is "gauge" (pushed, a scaling signal) or "counter" (an ADR-745
 	// OTLP cumulative sum, charted as a rate and never a scaling signal).
 	Kind string `json:"kind,omitempty"`
+	// Series lists a labelled metric's series (ADR-20261108160000 slice C);
+	// Value is then their aggregate: the sum for counters, the maximum of
+	// fresh series for gauges. Empty for an unlabelled metric.
+	Series []CustomMetricSeriesValue `json:"series,omitempty"`
+}
+
+// CustomMetricSeriesValue is one labelled series' latest value. Key is the
+// canonical "k=v,..." form accepted by the history endpoint's labels query.
+type CustomMetricSeriesValue struct {
+	Key        string            `json:"key"`
+	Labels     map[string]string `json:"labels"`
+	Value      float64           `json:"value"`
+	ObservedAt time.Time         `json:"observed_at"`
+	Stale      bool              `json:"stale"`
 }
 
 // CustomMetricListResponse carries the rows plus the two limits an operator
@@ -13527,6 +13603,8 @@ type CustomMetricListResponse struct {
 	Metrics    []CustomMetricResponse `json:"metrics"`
 	FreshnessS int                    `json:"freshness_seconds"`
 	MaxMetrics int                    `json:"max_metrics"`
+	// MaxSeries is the app's cap on labelled series (slice C).
+	MaxSeries int `json:"max_series,omitempty"`
 }
 
 // EgressFlowLogEntry is one ADR-371 egress flow log row: a destination

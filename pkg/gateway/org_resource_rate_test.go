@@ -19,7 +19,7 @@ func TestOrgResourceRequestBudgetSpansCreatorNamespaces(t *testing.T) {
 	fixed := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 	h.WithAccountLimiter(NewLimiterWithClock(func() time.Time { return fixed }))
 	// Alternating namespaces must still drain one aggregate company bucket.
-	for i := 0; i < 350; i++ {
+	for i := 0; i < api.PlanFree.RateLimitPerAccountRPM()+50; i++ {
 		backend.app.AccountID = []string{"creator-a", "creator-b"}[i%2]
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil))

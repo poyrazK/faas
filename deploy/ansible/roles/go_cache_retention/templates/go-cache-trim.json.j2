@@ -1,0 +1,8 @@
+{
+  "filesystem": {{ go_cache_trim_filesystem | to_json }},
+  "high_water_percent": {{ go_cache_trim_high_water_percent | float }},
+  "low_water_percent": {{ go_cache_trim_low_water_percent | float }},
+  "lock_path": {{ go_cache_trim_lock_path | to_json }},
+  "cache_globs": {{ go_cache_trim_globs | to_json }},
+  "age_steps_hours": {{ go_cache_trim_age_steps_hours | to_json }}
+}

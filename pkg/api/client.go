@@ -124,6 +124,9 @@ var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/capabilities(/.*)?|/dashboard/
 type Client struct {
 	baseURL string
 	token   string
+	// projectOrg routes /v1/projects calls to a company's projects
+	// (WithProjectOrganization).
+	projectOrg string
 
 	http       *http.Client // 30s default — used for every JSON call
 	deployHTTP *http.Client // optional, used by DeployMultipart
@@ -335,6 +338,10 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			"the gregale CLI cannot reach this route — use the dashboard at "+docsBase+"/dashboards#sessions",
 		).WithDocs(docsBase + "/cli#cookie-only-routes")
 	}
+	path, err := c.projectRoute(path)
+	if err != nil {
+		return err
+	}
 	var payload []byte
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -542,6 +549,10 @@ func (c *Client) doBytesWithHeader(ctx context.Context, method, path string, bod
 			return nil, fmt.Errorf("marshal request: %w", err)
 		}
 		r = bytes.NewReader(b)
+	}
+	path, err := c.projectRoute(path)
+	if err != nil {
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, r)
 	if err != nil {
@@ -1932,7 +1943,11 @@ func (c *Client) ScanProjectWithBindingEnvironment(
 	if err := w.Close(); err != nil {
 		return PlanResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/projects/scan", &b)
+	scanPath, err := c.projectRoute("/v1/projects/scan")
+	if err != nil {
+		return PlanResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+scanPath, &b)
 	if err != nil {
 		return PlanResponse{}, err
 	}
@@ -2088,7 +2103,11 @@ func (c *Client) applyProjectPlan(
 	if err := w.Close(); err != nil {
 		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
-	endpoint := c.baseURL + projectApplyRequestPath(ctx)
+	applyPath, err := c.projectRoute(projectApplyRequestPath(ctx))
+	if err != nil {
+		return ApplyResponse{}, err
+	}
+	endpoint := c.baseURL + applyPath
 	if planToken != "" {
 		endpoint += "?plan_token=" + url.QueryEscape(planToken)
 	}
@@ -2497,6 +2516,14 @@ func (c *Client) DeleteProject(ctx context.Context, slug string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug), nil, nil)
 }
 
+// DeleteProjectDetachingServices deletes a project whose services may still
+// call each other by service name: the caller confirms they no longer do, so
+// the API's 409 project_services_call_each_other refusal is waived
+// (ADR-20261104221217).
+func (c *Client) DeleteProjectDetachingServices(ctx context.Context, slug string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug)+"?detach_services=true", nil, nil)
+}
+
 func writeProjectTenantPolicy(w *multipart.Writer, policy []*bool) error {
 	if len(policy) == 0 || policy[0] == nil {
 		return nil
@@ -2750,6 +2777,15 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 	var out DeploymentResponse
 	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
 		UpdateDeploymentTrafficRequest{TrafficPercent: percent}, &out)
+}
+
+// PatchDeploymentTrafficIfSplit updates traffic only if the environment's
+// split still matches expected (live release ID → positive percent) at the
+// transaction boundary; otherwise apid answers 409 traffic_serving_changed.
+func (c *Client) PatchDeploymentTrafficIfSplit(ctx context.Context, id string, percent int, expected map[string]int) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
+		UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedTraffic: expected}, &out)
 }
 
 // PatchDeploymentTrafficIfServing updates traffic only if the named live

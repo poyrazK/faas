@@ -41,7 +41,7 @@ func (m *Manager) resolvedEgressRefusalLocked(inst *Instance, source netip.Addr,
 	switch {
 	case owner.InstanceID == "" || owner.NetworkGeneration == "":
 		return "owner not captured"
-	case inst == nil || m.live[owner.InstanceID] != inst:
+	case inst == nil || m.resolvedEgressOwnerLocked(owner.InstanceID) != inst:
 		return "instance is not live"
 	case m.pendingCleanup[owner.InstanceID] != nil && !inst.awaitingExit:
 		return "teardown started"
@@ -86,7 +86,7 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ow
 	source = source.Unmap()
 	m.mu.Lock()
 	id := owner.InstanceID
-	inst := m.live[id]
+	inst := m.resolvedEgressOwnerLocked(id)
 	if reason := m.resolvedEgressRefusalLocked(inst, source, owner); reason != "" {
 		m.mu.Unlock()
 		return resolvedEgressRefused{reason}
@@ -141,12 +141,21 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ow
 		m.mu.Unlock()
 		return err
 	}
-	nc, appID := inst.Net, inst.AppID
+	nc, appID, generation, booting := inst.Net, inst.AppID, inst.nativeGeneration, inst.booting
 	m.mu.Unlock()
 	if len(add) == 0 && len(addDatabase) == 0 {
 		return nil
 	}
-	ctx, err := m.nativeInstanceNetworkContext(ctx, id, inst.nativeGeneration)
+	if booting && generation == "" {
+		// The VM's native owner is journalled once bringUp starts it; a
+		// lookup before that has nothing to grant on yet. The policy lock
+		// serializes this stamp with other grants to the same owner.
+		if err := m.stampNativeInstanceGeneration(inst); err != nil {
+			return resolvedEgressRefused{"booting VM has no native owner yet"}
+		}
+		generation = inst.nativeGeneration
+	}
+	ctx, err := m.nativeInstanceNetworkContext(ctx, id, generation)
 	if err != nil {
 		return err
 	}
@@ -155,7 +164,7 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ow
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if cur, ok := m.live[id]; ok && cur == inst {
+	if cur := m.resolvedEgressOwnerLocked(id); cur == inst {
 		if inst.resolvedEgress == nil {
 			inst.resolvedEgress = make(map[netip.Addr]time.Time, len(add))
 		}

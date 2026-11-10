@@ -113,6 +113,8 @@ env:
   PROM_VERSION: "2.54.1"
   PROM_TARBALL_SHA256_LINUX_AMD64: "31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e62924f"
 
+# GitHub-hosted jobs pin ubuntu-24.04: ubuntu-latest became ubuntu-26.04 in
+# Nov 2026, which has no postgresql-16 package and no Playwright 1.57 Chromium.
 jobs:
   storage-node-starter:
     uses: ./.github/workflows/storage-node-starter.yml
@@ -162,7 +164,7 @@ jobs:
   # cd-digitalocean.yml still resolves if anyone re-enables it.
   go-lint:
     name: Go lint (shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -221,7 +223,7 @@ jobs:
     name: lint + build
     needs: go-lint
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # go vet ./... alone takes 37-45 min at GOMAXPROCS=2; 60 cancelled two
     # of three nightly runs on 2026-11-07.
     timeout-minutes: 90
@@ -507,6 +509,9 @@ jobs:
       - name: canary artifact retention gate
         run: make canary-artifact-retention-test
 
+      - name: go cache retention gate
+        run: make go-cache-retention-test
+
       - name: serving probe gate
         run: make serving-probe-test
 
@@ -658,7 +663,7 @@ jobs:
   # pkg/e2etest (its fixture SQL must run against a real migrated schema)
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations ${{ matrix.part }}/4)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -850,7 +855,7 @@ jobs:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     if: always()
     needs: [unit-tests-pg-1]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -870,7 +875,7 @@ jobs:
   # tests several times slower under -race and coverage.
   unit-tests-pg-1-pgclone:
     name: unit tests (pg shard 1 — apidserver environment clone ${{ matrix.part }}/4)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -964,7 +969,7 @@ jobs:
   # Go's registered list guards against silently omitting a new test family.
   unit-tests-state:
     name: unit tests (state shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Eight shards keep each near 10-15 min of tests: with four, shard 3 alone
     # needed ~20 min and hit the 20m go test timeout (runs 39174391154 and
     # 39181126528); with six, shard 5 took 1185 s and then timed out (runs
@@ -1070,7 +1075,7 @@ jobs:
   # services. The state package itself runs in unit-tests-state above.
   unit-tests-pg-2:
     name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -1372,7 +1377,7 @@ jobs:
   state-coverage:
     name: pkg/state coverage gate (all shards)
     needs: [unit-tests-state, unit-tests-pg-2, unit-tests-pg-1, unit-tests-pg-1-pgclone]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1393,7 +1398,7 @@ jobs:
   # and additionally execute all traffic PG requirements against a real store.
   traffic-platform:
     name: traffic platform (unit + PostgreSQL evidence)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     defaults:
       run:
@@ -1502,7 +1507,7 @@ jobs:
     name: unit tests (pg shard 2a — state/reconcile/reposcan)
     if: always()
     needs: [unit-tests-state, unit-tests-pg-2, state-coverage]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -1522,7 +1527,7 @@ jobs:
   # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
   unit-tests-pure-1:
     name: unit tests (pure Go shard 1 — sched/fcvm/gateway)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Race compilation plus the scheduler suite can consume ten minutes.
     # Leave room for the coverage gate and upload after the tests pass.
     # The memory-bounded pkg/sched compile below roughly doubles that
@@ -1632,7 +1637,7 @@ jobs:
   # Shard 4 (pure Go light): all remaining packages. No Postgres needed.
   unit-tests-pure-2:
     name: unit tests (pure Go shard 2 — light packages)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # This job runs the package shard and property suite sequentially. Each
     # Go command has its own 10-minute test timeout, so the job budget must
     # leave time for both commands plus setup, coverage, and cleanup. The
@@ -1709,7 +1714,7 @@ jobs:
 
   container-contract:
     name: portable container contracts (strict)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -1830,7 +1835,7 @@ jobs:
     # step, unchanged; the former job names are kept as section markers
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The complete cold-run gate sequence can exhaust 30 minutes at the
     # final watchdog rule check. Retain time for every contract and safety
     # gate after bounded APID compilation, SQLC, vulnerability and Ansible.
@@ -2251,7 +2256,7 @@ jobs:
   # block, and xargs fails the step if any fixture fails.
   promtool-fixtures:
     name: promtool rule fixtures (shard ${{ matrix.shard }}/2)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -2298,7 +2303,7 @@ jobs:
   # Node SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-node:
     name: sdk-node (gen-check + smoke + unit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2352,7 +2357,7 @@ jobs:
 
   issue-slack-bridge:
     name: Issues Slack bridge (PostgreSQL receipts + bundle)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -2392,7 +2397,7 @@ jobs:
 
   workflow-operation-starter-browser:
     name: customer Operations starters (Chromium + packed SDK)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -2415,7 +2420,7 @@ jobs:
 
   customer-operation-starters:
     name: customer Operations starters (generated types + packed SDK)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -2453,7 +2458,7 @@ jobs:
   # Required database tests must run; unit-only SDK jobs skip these fixtures.
   operation-sdk-acceptance:
     name: operations (transaction + HTTP recovery + cross-SDK)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -2516,7 +2521,7 @@ jobs:
   # verified customer targeting or refresh after inactivity.
   flags-acceptance:
     name: flags (customer release + request evidence)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Measured 25 min on a green run (2026-10-19) and over 30 min under runner load
     # (run 39345797073): the suite passes but cold compilation of the SDK,
     # flags and apidserver packages dominates.
@@ -2565,7 +2570,7 @@ jobs:
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The storage starter acceptance suite alone runs several minutes; the job
     # took 9.4 of 10 minutes on run 39169411988 and was cancelled on the next.
     timeout-minutes: 20
@@ -2631,7 +2636,7 @@ jobs:
 
   outbound-pool-load:
     name: outbound resilience (deadlines and pool load)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -2695,7 +2700,7 @@ jobs:
     # and otherwise queue forever — our org doesn't have them provisioned,
     # so the job sat QUEUED for ~19 h without starting.
     name: load (1k rps hot-path)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Cold module-download retries and race compilation exhausted the former
     # five-minute job budget. Leave room before the unchanged 10m Go test
     # timeout; the 1k rps latency assertions and runner remain unchanged.
@@ -2789,7 +2794,7 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     name: migration IDs, apply and replay
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       full-suite-needed: ${{ steps.migration-impact.outputs.needed }}
@@ -2959,7 +2964,7 @@ jobs:
     name: migration history (shard ${{ matrix.shard }})
     needs: migration-checks
     if: needs.migration-checks.outputs.full-suite-needed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 70
     strategy:
       fail-fast: false
@@ -3050,7 +3055,7 @@ jobs:
     name: migrations (IDs + apply)
     if: always()
     needs: [migration-checks, migrations-full]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -3079,7 +3084,7 @@ jobs:
     # dedicated job. Keep this separate from the name-sharded e2e jobs so a
     # new TestBootContract_* cannot compile successfully without ever running.
     name: boot-contract (production config)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
       postgres:
@@ -3129,7 +3134,7 @@ jobs:
 
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The test command has a 40m package timeout; leave runner cleanup
     # headroom so slow shared runners fail with the test result instead of
     # being cancelled by the job budget first. The test steps took 10-18
@@ -3228,7 +3233,7 @@ jobs:
 
   e2e-shard2:
     name: e2e (shard 2 — 15 tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     services:
       postgres:
@@ -3312,7 +3317,7 @@ jobs:
 
   e2e-shard3:
     name: e2e (shard 3 — 24 tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     services:
       postgres:
@@ -3396,7 +3401,7 @@ jobs:
 
   e2e-shard4:
     name: e2e (shard 4 — 22 tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     services:
       postgres:

@@ -1240,7 +1240,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 				s.log.Warn("apid: roll back project service settings", "app_id", app.ID, "err", rbErr)
 			}
 			s.log.Warn("apid: apply enqueue build failed", "app_id", app.ID, "slug", app.Slug, "project_id", project.ID, "err", enqErr)
-			res.Error = "enqueue failed (server logs carry the detail)"
+			res.Error = projectApplyEnqueueError(r, enqErr)
 			out = append(out, res)
 			continue
 		}
@@ -3233,6 +3233,7 @@ func (s *server) projectScanOptions(acct state.Account) reposcan.ScanOptions {
 		KubernetesManifests:       s.capGate == nil || s.capGate.Enabled(reposcan.KubernetesManifestsCapability, subject),
 		HTTPSTransportUnavailable: !s.privateServiceHTTPS(acct),
 		ResourceLabels:            s.capGate == nil || s.capGate.Enabled(resourcelabels.Capability, subject),
+		Functions:                 s.capGate == nil || s.capGate.Enabled(reposcan.RepositoryFunctionsCapability, subject),
 	}
 }
 
@@ -3241,4 +3242,25 @@ func (s *server) projectScanOptions(acct state.Account) reposcan.ScanOptions {
 // gate (unit tests) it is on.
 func (s *server) privateServiceHTTPS(acct state.Account) bool {
 	return s.capGate == nil || s.capGate.Enabled(api.PrivateServiceHTTPSCapability, platformflags.Subject{AccountID: acct.ID})
+}
+
+// projectApplyEnqueueError is the customer-facing reason a workload of a
+// project apply was not queued. Hunt 32 H32-34: a control-plane stall showed
+// only "enqueue failed (server logs carry the detail)", with no cause, no
+// hint that a retry would work and no request id to quote. A Problem from
+// admission is customer-safe and is shown as is; anything else stays generic
+// (it can carry row ids and spool paths) but names the request.
+func projectApplyEnqueueError(r *http.Request, err error) string {
+	requestID := middleware.RequestIDFrom(r)
+	if problem := api.AsProblem(err); problem != nil && problem.Title != "" {
+		reason := problem.Title
+		if problem.Detail != "" {
+			reason += ": " + problem.Detail
+		}
+		return fmt.Sprintf("not queued: %s (request %s)", reason, requestID)
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return fmt.Sprintf("not queued: the control plane was busy; nothing was deployed for this workload, so retry the deploy (request %s)", requestID)
+	}
+	return fmt.Sprintf("enqueue failed; nothing was deployed for this workload. Retry, and quote request %s if it fails again", requestID)
 }

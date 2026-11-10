@@ -21,7 +21,7 @@ import (
 
 func cmdProjects(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects <list|info|update|environments|rm|rollback|preview-secrets>", "projects")
+		PrintUsage(os.Stderr, "usage: gregale projects <list|info|update|environments|rm|rollback|preview-secrets|import>", "projects")
 		return 1
 	}
 	switch args[0] {
@@ -39,6 +39,8 @@ func cmdProjects(args []string) int {
 		return cmdProjectsRollback(args[1:])
 	case "preview-secrets":
 		return cmdProjectsPreviewSecrets(args[1:])
+	case "import":
+		return cmdProjectsImport(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown projects subcommand %q\n", args[0])
 		return unknownSubcommandChoices(os.Stderr, "projects", nestedCliCommand("projects"), args[0])
@@ -47,7 +49,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|secrets|routes|policies|queues|diff|preview|promote|status|rollback|abort|recover|recover-migration>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|delete|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|secrets|routes|policies|queues|diff|preview|promote|status|rollback|abort|recover|recover-migration>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -55,6 +57,8 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentsList(args[1:])
 	case "create":
 		return cmdProjectsEnvironmentCreate(args[1:])
+	case "delete", "rm":
+		return cmdProjectsEnvironmentDelete(args[1:])
 	case "protect":
 		return cmdProjectsEnvironmentProtection(args[1:], true)
 	case "unprotect":
@@ -1015,6 +1019,35 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 	return renderProjectEnvironment(environment)
 }
 
+// cmdProjectsEnvironmentDelete removes a non-production environment (Hunt 32
+// H32-36: the API existed but the CLI had no command, so a stage environment
+// could not be removed). apid refuses protected and production environments
+// and ones with live or in-progress deployments.
+func cmdProjectsEnvironmentDelete(args []string) int {
+	flags, positional := splitArgsForFlags(args, "yes")
+	fs := newFlagSet("projects-environments-delete", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "confirm environment deletion")
+	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !*yes {
+		PrintUsage(os.Stderr, "usage: gregale environment delete <project-slug> <environment-slug> --yes", "projects environments")
+		return 1
+	}
+	if !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
+		return printErr("Invalid environment", fmt.Errorf("project and environment slugs must use lowercase letters, numbers, and internal hyphens"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	if err := client.DeleteProjectEnvironment(context.Background(), positional[0], positional[1]); err != nil {
+		return printErr("Could not delete environment", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"project": positional[0], "environment": positional[1], "deleted": true}))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Deleted environment %s of project %s\n", positional[1], positional[0])
+	return 0
+}
+
 func cmdProjectsEnvironmentProtection(args []string, protected bool) int {
 	if len(args) != 2 || !api.ValidProjectSlug(args[0]) || !api.ValidProjectEnvironmentSlug(args[1]) {
 		verb := "unprotect"
@@ -1169,7 +1202,11 @@ func cmdProjectsRemove(args []string) int {
 			"deleting %s detaches its services, and these calls stop working: %s. Delete the services instead (gregale app delete), or add --detach-services if they no longer call each other by name",
 			positional[0], strings.Join(calls, ", ")))
 	}
-	if err := client.DeleteProject(context.Background(), positional[0]); err != nil {
+	deleteProject := client.DeleteProject
+	if *detach {
+		deleteProject = client.DeleteProjectDetachingServices
+	}
+	if err := deleteProject(context.Background(), positional[0]); err != nil {
 		return printErr("Could not delete project", err)
 	}
 	if jsonOutput {

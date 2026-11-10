@@ -594,6 +594,7 @@ type AlertRule struct {
 	LogQuery                        pgtype.Text
 	CreatedByAccountID              pgtype.UUID
 	NotifyResolved                  bool
+	CustomMetricLabels              []byte
 }
 
 type AlertRuleChannel struct {
@@ -1166,6 +1167,16 @@ type AppCustomMetric struct {
 	Kind       string
 }
 
+type AppCustomMetricSeries struct {
+	AppID      pgtype.UUID
+	Name       string
+	SeriesKey  string
+	Labels     []byte
+	Kind       string
+	Value      float64
+	ObservedAt pgtype.Timestamptz
+}
+
 type AppDefaultDomain struct {
 	AppID     pgtype.UUID
 	Domain    interface{}
@@ -1637,6 +1648,7 @@ type AppReleaseGate struct {
 	SyntheticCheckID  pgtype.UUID
 	MaxFailurePercent pgtype.Int4
 	MaxChangePercent  pgtype.Int4
+	MetricLabels      []byte
 }
 
 type AppResourceAccount struct {
@@ -2244,6 +2256,16 @@ type ApplicationStandardVersion struct {
 	Description    string
 	CreatedBy      pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
+}
+
+type ArtifactSignature struct {
+	StorageKey      string
+	Digest          string
+	Bytes           int64
+	DeploymentID    pgtype.UUID
+	NodeName        string
+	SignatureFormat string
+	SignedAt        pgtype.Timestamptz
 }
 
 type AuditEventOutbox struct {
@@ -4171,6 +4193,7 @@ type Deployment struct {
 	MailFailureSuccessRevision pgtype.Int8
 	PromotedAt                 pgtype.Timestamptz
 	RollbackReleaseReview      []byte
+	BeforeCheckpointHook       pgtype.Bool
 }
 
 type DeploymentAlias struct {
@@ -6435,19 +6458,20 @@ type GatewayTrafficPolicyObservation struct {
 }
 
 type GatewayTrafficRuntimeObservation struct {
-	NodeName           string
-	Generation         int64
-	BootID             pgtype.UUID
-	ReportedAt         pgtype.Timestamptz
-	RetryEnabled       bool
-	RateCounterMode    string
-	RetryCounterMode   string
-	RetryBackendID     string
-	DeadlineSigning    bool
-	PolicySnapshot     bool
-	SecurityRevocation bool
-	ManagedHttp        bool
-	ManagedCircuit     bool
+	NodeName              string
+	Generation            int64
+	BootID                pgtype.UUID
+	ReportedAt            pgtype.Timestamptz
+	RetryEnabled          bool
+	RateCounterMode       string
+	RetryCounterMode      string
+	RetryBackendID        string
+	DeadlineSigning       bool
+	PolicySnapshot        bool
+	SecurityRevocation    bool
+	ManagedHttp           bool
+	ManagedCircuit        bool
+	EdgeHeaderSecretsBoot pgtype.UUID
 }
 
 type GdprRequest struct {
@@ -6820,6 +6844,7 @@ type Instance struct {
 	CapacityCpuMillicores             int64
 	CapacityVcpu                      int32
 	BookedCpuMillicores               pgtype.Int4
+	BookedVcpu                        pgtype.Int4
 }
 
 type InstanceApplicationStandardAdmission struct {
@@ -8627,6 +8652,10 @@ type ManagedPostgresDatabase struct {
 	PurgeAfter                  pgtype.Timestamptz
 	RestoreSlotUntil            pgtype.Timestamptz
 	Labels                      []byte
+	Previews                    string
+	PreviewSourceDatabaseID     pgtype.UUID
+	PreviewEnvironmentID        pgtype.Text
+	PreviewPrNumber             pgtype.Int4
 }
 
 type ManagedPostgresDatabaseEndpoint struct {
@@ -11949,6 +11978,8 @@ type PrPreviewSet struct {
 	UpdatedAt      pgtype.Timestamptz
 	SetupError     pgtype.Text
 	AccountID      pgtype.UUID
+	MemberPins     []byte
+	MemberPinsHead pgtype.Text
 }
 
 type PrewarmIntent struct {
@@ -13907,6 +13938,12 @@ type RealtimeNodeConnectionSync struct {
 	SyncedAt pgtype.Timestamptz
 }
 
+type RealtimeNodeEndpointConnection struct {
+	NodeName    string
+	EndpointID  pgtype.UUID
+	Connections int32
+}
+
 type RealtimeUsageHour struct {
 	EndpointID            pgtype.UUID
 	Hour                  pgtype.Timestamptz
@@ -14049,6 +14086,15 @@ type ReleaseSecretRekeyDocument struct {
 	Payload []byte
 }
 
+// Per gateway node and app: the last analytics loss or late rollup and the requests still late (ADR-20261103113952 amendment 6); written only by apid.
+type RequestAnalyticsAppGap struct {
+	NodeName     string
+	AppID        pgtype.UUID
+	LastGapAt    pgtype.Timestamptz
+	PendingCount int32
+	UpdatedAt    pgtype.Timestamptz
+}
+
 // Hourly request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952 amendment 2).
 type RequestAnalyticsHour struct {
 	AppID           pgtype.UUID
@@ -14085,6 +14131,22 @@ type RequestAnalyticsMinute struct {
 	LatencyMaxMs    int32
 	LatencyHist     []int64
 	LatencyHistInt4 []int32
+}
+
+// Per gateway node: since when it has counted every request into analytics rollups without a break (ADR-20261103113952 amendment 6); written only by apid.
+type RequestAnalyticsNodeCoverage struct {
+	NodeName                 string
+	BootID                   pgtype.UUID
+	CountingSince            pgtype.Timestamptz
+	HeartbeatAt              pgtype.Timestamptz
+	UnattributedDroppedTotal int64
+}
+
+// Gateway analytics rollup batches apid applied; written only by apid, swept only by meterd (ADR-20261103113952 amendment 5).
+type RequestAnalyticsRollupBatch struct {
+	BatchID   pgtype.UUID
+	NodeID    string
+	AppliedAt pgtype.Timestamptz
 }
 
 // First minute held in request_analytics_minutes per app; written only by apid (ADR-20261103113952).

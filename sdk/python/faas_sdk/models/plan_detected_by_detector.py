@@ -1,11 +1,14 @@
 from typing import Literal
 
-PlanDetectedByDetector = Literal["app_yaml", "compose", "fly", "k8s", "other", "procfile", "render", "serverless"]
+PlanDetectedByDetector = Literal[
+    "app_yaml", "compose", "fly", "functions", "k8s", "other", "procfile", "render", "serverless"
+]
 
 PLAN_DETECTED_BY_DETECTOR_VALUES: set[PlanDetectedByDetector] = {
     "app_yaml",
     "compose",
     "fly",
+    "functions",
     "k8s",
     "other",
     "procfile",

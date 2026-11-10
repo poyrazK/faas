@@ -135,3 +135,63 @@ WHERE t.last_sent_at <= clock_timestamp() - make_interval(secs => sqlc.arg(min_i
   AND (t.window_started_at <= clock_timestamp() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
        OR t.sent_in_window < sqlc.arg(max_per_window)::int)
 RETURNING t.sent_in_window;
+
+-- Grants an account started that a recovery must end (ADR 20261109120000):
+-- pending email changes, org invitations it created, and CLI or agent
+-- sign-in codes approved but not yet exchanged for a key.
+-- name: EndAccountPendingEmailChanges :execrows
+DELETE FROM account_email_changes WHERE account_id=$1 AND consumed_at IS NULL;
+
+-- name: EndAccountPendingInvitations :execrows
+UPDATE org_invitations SET revoked_at=clock_timestamp()
+WHERE invited_by_account_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL;
+
+-- name: EndAccountApprovedCliCodes :execrows
+UPDATE cli_auth_codes SET status='expired'
+WHERE account_id=$1 AND status='consumed' AND consumed_at IS NULL;
+
+-- Operator revert of the last confirmed email change (ADR 20261110100000).
+-- Applies only while the account still has the address that change moved it
+-- to, so it cannot run twice or undo a later change. Like the change itself,
+-- it spends account-bound links mailed while the account had that address.
+-- A unique violation (the old address now belongs to another account) rolls
+-- the statement back.
+-- name: RevertLastAccountEmailChange :one
+WITH last_change AS MATERIALIZED (
+    SELECT c.account_id, c.old_email, c.new_email FROM account_email_changes c
+    WHERE c.account_id=sqlc.arg(account_id) AND c.consumed_at IS NOT NULL
+      AND c.consumed_at > clock_timestamp() - make_interval(secs => sqlc.arg(within_secs)::float8)
+    ORDER BY c.consumed_at DESC LIMIT 1
+), target AS MATERIALIZED (
+    SELECT a.id, l.old_email, l.new_email FROM accounts a JOIN last_change l ON l.account_id=a.id
+    WHERE lower(a.email::text)=l.new_email
+    FOR UPDATE OF a
+), spent_logins AS (
+    UPDATE login_tokens t SET consumed_at=clock_timestamp()
+    FROM target x WHERE t.account_id=x.id AND t.consumed_at IS NULL
+    RETURNING t.account_id
+), spent_mfa_disables AS (
+    UPDATE mfa_disable_requests m SET consumed_at=clock_timestamp()
+    FROM target x WHERE m.account_id=x.id AND m.consumed_at IS NULL
+    RETURNING m.account_id
+)
+UPDATE accounts a SET email=x.old_email, email_verified_at=clock_timestamp()
+FROM target x WHERE a.id=x.id
+RETURNING a.id, x.old_email, x.new_email;
+
+-- Accounts never verified long after signup (ADR 20261110120000): still
+-- active, no app ever created and no billing customer. The grace clock
+-- starts at signup or at enforced_from, whichever is later.
+-- name: ListExpiredUnverifiedAccounts :many
+SELECT a.id FROM accounts a
+WHERE a.status='active' AND a.email_verified_at IS NULL
+  AND greatest(a.created_at, sqlc.arg(enforced_from)::timestamptz) < sqlc.arg(cutoff)::timestamptz
+  AND a.plan='free' AND coalesce(a.provider_customer_id,'')='' AND coalesce(a.stripe_subscription_item,'')=''
+  AND NOT EXISTS (SELECT 1 FROM apps p WHERE p.account_id=a.id)
+ORDER BY a.created_at
+LIMIT sqlc.arg(max_rows);
+
+-- A correct authenticator code clears the account's counted attempts
+-- (ADR 20261110120000).
+-- name: ClearAccountMailSlot :exec
+DELETE FROM account_mail_throttle WHERE account_id=$1 AND kind=$2;

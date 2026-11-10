@@ -308,6 +308,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Agents. Hosting verbs and client verbs sit directly under `mcp` today.
 	{"mcp serve", "mcp serve"},
+	{"mcp connect", "mcp connect"},
 	{"mcp connection", "mcp connections"},
 	{"mcp server", "mcp"},
 	{"mcp client tools", "mcp tools"},
@@ -604,6 +605,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"postgres compute-policy set", "postgres compute-policy"},
 	{"postgres compute-policy status", "postgres compute-policy-status"},
 	{"postgres resize status", "postgres resize-status"},
+	// ADR-20261102123523: what a database gives PR previews is a setting.
+	{"postgres previews set", "postgres previews"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.
