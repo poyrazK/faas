@@ -41,6 +41,10 @@ marker. The hook's work adds to wake latency, so keep it short. Redeploy after
 changing the lifecycle configuration; existing snapshots retain the manifest
 from their deployment.
 
+A Node or Python function can declare these hooks as methods in its handler
+file instead; the deploy wires them for you
+([snapshot hooks](functions.md#snapshot-hooks)).
+
 ## Prepare application state before a snapshot
 
 If your app must flush or release in-memory state before Gregale captures a

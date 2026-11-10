@@ -1895,6 +1895,15 @@ const (
 	// Distinct from app_startup_timeout (still running, never ready) and
 	// app_not_listening (running, nothing bound).
 	CodeAppStartupCrash = "app_startup_crash"
+	// CodeFunctionInitFailed means a function's init hook threw
+	// before its worker became ready (ADR-20261110190000); an init that never
+	// finishes is an app_startup_timeout. The adapter's
+	// FunctionInitFailedMarker line in the workload output names it; it is
+	// otherwise an app_startup_crash, and customer-caused like one.
+	CodeFunctionInitFailed = "function_init_failed"
+	// FunctionInitFailedMarker begins the line the Node and Python function
+	// adapters print to stderr when init fails (pkg/fnadapter).
+	FunctionInitFailedMarker = "gregale: function init failed:"
 	// CodeExecutionModeConflict means the workload's startup behavior
 	// contradicts its declared execution mode: a worker that bound a port or
 	// exited, or a job that served. Customer-caused, like app_startup_crash.
@@ -2431,6 +2440,7 @@ func StatusForCode(code string) int {
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
 		CodeAppStartupCrash,
+		CodeFunctionInitFailed,
 		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,

@@ -15,7 +15,8 @@ Fields that gregale.yaml also sets take its value.
 
 from __future__ import annotations
 
-from typing import Any, Callable, TypeVar
+import threading
+from typing import Any, Callable, Protocol, TypeVar
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -62,4 +63,22 @@ def function(**config: Any) -> Callable[[F], F]:
     return decorate
 
 
-__all__ = ("FUNCTION_CONFIG_KEYS", "function")
+class FunctionHookContext(Protocol):
+    """What a snapshot hook receives when it takes an argument
+    (ADR-20261110190000).
+
+    Declare the hooks as module functions in the handler file, sync or
+    async; ``gregale deploy`` finds them without importing it:
+
+        async def init(ctx: FunctionHookContext): ...            # before ready
+        async def before_snapshot(ctx: FunctionHookContext): ... # 500 ms
+        async def after_restore(ctx: FunctionHookContext): ...   # 500 ms
+    """
+
+    #: "init", "before_snapshot" or "after_restore".
+    hook: str
+    #: Set if the call is cancelled.
+    cancelled: threading.Event
+
+
+__all__ = ("FUNCTION_CONFIG_KEYS", "FunctionHookContext", "function")
