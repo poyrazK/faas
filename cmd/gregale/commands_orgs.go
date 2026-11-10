@@ -226,14 +226,19 @@ func cmdOrgsCreate(args []string) int {
 	fs := newFlagSet("orgs create", flag.ContinueOnError)
 	slug := fs.String("slug", "", "org slug (required; lowercase alphanumeric + dashes)")
 	name := fs.String("name", "", "display name (required)")
-	if err := fs.Parse(args); err != nil {
+	// `org create acme --name "Acme"` names the slug positionally, as
+	// `org get <slug>` does; it stopped parsing at the slug and reported
+	// the flags as positional arguments (Hunt 32 H32-6).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	if *slug == "" && fs.NArg() == 1 {
+		*slug = fs.Arg(0)
+	} else if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *name == "" {
-		PrintUsage(os.Stderr, "usage: gregale org create --slug <slug> --name <display>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org create [--slug] <slug> --name <display>", "orgs")
 		return 1
 	}
 	client, err := authedClient()

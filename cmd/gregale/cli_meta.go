@@ -3246,7 +3246,9 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug to attach to", Req: true, Value: "SLUG"},
 				{Name: "environment", Short: "project environment to route this domain to", Value: "SLUG"},
 			}},
-			{Name: subRm, Short: "Remove a custom domain binding", Positionals: []string{"<domain>"}},
+			{Name: subRm, Short: "Remove a custom domain binding", Positionals: []string{"<domain>"}, Flags: []cliFlag{
+				{Name: "yes", Bool: true, Short: "confirm removal without prompting"},
+			}},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default", Positionals: []string{"<domain>"}},
 			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status", Notes: []string{"Exits nonzero while pending.", "Checks ownership and routing immediately; --wait waits for HTTPS readiness."}, Positionals: []string{"<domain>"}, Flags: []cliFlag{
 				{Name: "wait", Short: "wait for verified ownership, correct routing, and HTTPS"},
@@ -4188,6 +4190,7 @@ var cliCommands = []cliCommand{
 				"gregale edge rule update RULE_ID --kind validate --validate-schema @schema.json --validate-mode block",
 				"gregale edge rule update RULE_ID --kind validate --validate-mode observe",
 			}, Flags: []cliFlag{
+				{Name: "app", Short: "app the rule belongs to (optional; checked before updating)", Value: "SLUG"},
 				{Name: "match-host", Short: "new host to match; @app covers every host the app serves", Value: "HOST"},
 				{Name: "match-path", Short: "new path to match", Value: "PATH"},
 				{Name: "match-method", Short: "replacement HTTP method (repeatable)", Value: "METHOD", Repeatable: true},
@@ -5363,8 +5366,8 @@ var cliCommands = []cliCommand{
 				}},
 			}},
 			{Name: "ls", Aliases: []string{"list"}, Short: "List orgs"},
-			{Name: "create", Short: "Create an org", Flags: []cliFlag{
-				{Name: "slug", Short: "org slug (lowercase alphanumeric + dashes)", Value: "SLUG", Req: true},
+			{Name: "create", Short: "Create an org", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "slug", Short: "org slug, or the first argument (lowercase alphanumeric + dashes)", Value: "SLUG"},
 				{Name: "name", Short: "display name", Value: "TEXT", Req: true},
 			}},
 			{Name: "info", Short: "Show one org", Positionals: []string{"<slug>"}},
