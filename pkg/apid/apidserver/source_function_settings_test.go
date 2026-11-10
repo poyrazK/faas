@@ -48,6 +48,16 @@ func TestApplySourceFunctionSettings(t *testing.T) {
 	if len(env) != 1 || env[0].Key != "MODE" || env[0].Value != "prod" {
 		t.Errorf("env = %+v, want only MODE=prod", env)
 	}
+	// The push's env change is one config revision attributed to the pusher,
+	// so `gregale env history` shows it and config rollback can undo it.
+	revisions, err := store.ListConfigRevisions(ctx, app.ID, state.DefaultEnvScope, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(revisions) == 0 || revisions[0].Source != state.ConfigSourceEnvBatch || revisions[0].Actor != "github:octocat" ||
+		revisions[0].Variables["MODE"] != "prod" || revisions[0].Variables["STALE"] != "" {
+		t.Errorf("latest revision = %+v, want env.batch by github:octocat with MODE=prod and no STALE", revisions)
+	}
 
 	// A RAM above the plan is refused with PATCH's validation.
 	over := spec

@@ -108,9 +108,9 @@ type githubdBridge struct {
 	previewDatabases func(context.Context, state.Account, api.Plan, state.App) error
 }
 
-// bridgeSettingsApplier is server.applyBridgeSourceSettings. scope is the
-// environment the push deploys ("" is production).
-type bridgeSettingsApplier func(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, scope string) (state.App, func(context.Context), *api.Problem)
+// bridgeSettingsApplier is server.applyBridgeSourceSettings. push names the
+// environment the push deploys ("" is production) and who pushed.
+type bridgeSettingsApplier func(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, push sourcePush) (state.App, func(context.Context), *api.Problem)
 
 // checkSourcePlanLimit refuses a GitHub build whose source is above the
 // account's plan limit. githubd fetches every push with Scale's limits, so
@@ -580,7 +580,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	params.SourcePath = spooled
 	undoSettings := func(context.Context) {}
 	if g.applySettings != nil && manifest != nil {
-		updated, undo, problem := g.applySettings(ctx, resource, app, pushSettingsManifest(manifest, params), req.DeploymentScope)
+		updated, undo, problem := g.applySettings(ctx, resource, app, pushSettingsManifest(manifest, params), sourcePush{Scope: req.DeploymentScope, Pusher: req.Pusher})
 		if problem != nil {
 			if spooled != req.SourcePath {
 				_ = os.Remove(spooled)
@@ -944,14 +944,6 @@ func previewDatabasesStatus(err error) error {
 	}
 }
 
-// prepareDeliveryCrons stages the crons a push's gregale.yaml declares for the
-// app, as a source deploy of the same commit does (crons audit 2026-11-01):
-// pushes ignored them. They activate when the deployment goes live. A PR
-// preview, a non-production scope and a release staged without traffic do not
-// stage crons, as on the source API. An intent whose deployment was never
-// created is left in place: it activates nothing, the app's next push
-// supersedes it, and githubd retrying the delivery prepares it again (a
-// cancelled intent would refuse that retry).
 // pushSettingsManifest drops a function's settings from a release staged
 // without traffic: its RAM, idle timeout, concurrency and env take effect at
 // the environment's next wake, so a staged release would change what the live
@@ -967,6 +959,14 @@ func pushSettingsManifest(manifest *gregalemanifest.Manifest, params apidsource.
 	return &withoutFunction
 }
 
+// prepareDeliveryCrons stages the crons a push's gregale.yaml declares for the
+// app, as a source deploy of the same commit does (crons audit 2026-11-01):
+// pushes ignored them. They activate when the deployment goes live. A PR
+// preview, a non-production scope and a release staged without traffic do not
+// stage crons, as on the source API. An intent whose deployment was never
+// created is left in place: it activates nothing, the app's next push
+// supersedes it, and githubd retrying the delivery prepares it again (a
+// cancelled intent would refuse that retry).
 func (g *githubdBridge) prepareDeliveryCrons(ctx context.Context, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, manifest *gregalemanifest.Manifest, kind state.DeploymentKind, params apidsource.EnqueueParams) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {
 	staged := params.TrafficPercentExplicit && params.TrafficPercent == 0 && params.CanaryTotalSteps == 0
 	production := req.DeploymentScope == "" || req.DeploymentScope == state.DefaultEnvScope

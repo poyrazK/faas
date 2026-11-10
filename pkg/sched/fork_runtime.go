@@ -80,15 +80,14 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 		return ForkRestore{}, err
 	}
 	choice := wakeSnapshotChoice{snap: snap, ok: true}
-	limits := api.MustLimitsFor(acct.Plan)
 	// ADR-20261024225612: a fork restores snap, so placement must narrow to
 	// nodes whose CPU can carry it — vmmd has no CPU backstop (Hunt 25 H25-2).
 	// Without this a fork (or a pinned crash capture) could land on an
 	// incompatible node and fault on resume.
 	restoreSnap := snap
 	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits),
-		CPUMillicores: e.appCPUBookingMillicores(app, limits), MaxConcurrency: app.MaxConcurrency,
+		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: appVCPUs(app),
+		CPUMillicores: appCPUBookingMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID, restoreSnapshot: &restoreSnap,
 	})
 	if err != nil {
@@ -101,7 +100,7 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	}
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: e.appCPUBookingMillicores(app, limits),
+		RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: appCPUBookingMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindFork, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
 		CPUBudgetMillicores: placement.CPUBudgetMillicores,
@@ -176,9 +175,9 @@ func (e *Engine) bootFork(ctx context.Context, ins state.Instance, app state.App
 	limits := api.MustLimitsFor(acct.Plan)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), //nolint:gosec // plan-bounded
-		CPUWeight: e.appCPUWeight(app), CPUUncapped: e.cpuBySize(app.ID),
-		CPUMillicores: int32(e.appCPUMillicores(app, limits)), EgressMbit: int32(limits.EgressMbit), //nolint:gosec // plan-bounded
+		VCPUCount: int32(appVCPUs(app)), MemSizeMiB: int32(app.RAMMB), //nolint:gosec // plan-bounded
+		CPUWeight: appCPUWeight(app), CPUUncapped: true,
+		CPUMillicores: int32(appCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit), //nolint:gosec // plan-bounded
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
 		Port: deploymentRuntimePort(dep), HealthcheckPath: healthcheckPathForApp(dep, app),

@@ -1280,8 +1280,9 @@ func TestGetApp_SurfacesEffectiveLimits(t *testing.T) {
 			if got.MemoryLimitMB != out.RAMMB || got.PlanMemoryMaxMB != limits.RAMMB {
 				t.Errorf("memory limits = %d/%d, want %d/%d", got.MemoryLimitMB, got.PlanMemoryMaxMB, out.RAMMB, limits.RAMMB)
 			}
-			if got.GuestVCPUs != limits.VCPU || got.CPULimitMillicores != limits.CPUQuotaUS*1000/limits.CPUPeriodUS {
-				t.Errorf("cpu limits = %d vCPU/%dm, want %d/%dm", got.GuestVCPUs, got.CPULimitMillicores, limits.VCPU, limits.CPUQuotaUS*1000/limits.CPUPeriodUS)
+			if got.GuestVCPUs != api.SizeVCPUs(out.RAMMB) || got.CPUWeight != api.SizeCPUWeight(out.RAMMB) || got.CPULimitMillicores != api.DefaultAppCPUMillicores {
+				t.Errorf("cpu limits = %d vCPU/weight %d/%dm, want its size's %d/%d/%dm", got.GuestVCPUs, got.CPUWeight, got.CPULimitMillicores,
+					api.SizeVCPUs(out.RAMMB), api.SizeCPUWeight(out.RAMMB), api.DefaultAppCPUMillicores)
 			}
 			if got.MaxInstances != out.MaxConcurrency || got.ConcurrencyPerInstance != limits.ConcurrencyPerVMBound {
 				t.Errorf("scaling limits = %d/%d, want %d/%d", got.MaxInstances, got.ConcurrencyPerInstance, out.MaxConcurrency, limits.ConcurrencyPerVMBound)

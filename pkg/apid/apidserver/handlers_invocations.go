@@ -185,8 +185,10 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// MaxAsyncResultRetentionSeconds by sending an out-of-range
 		// value. RetryPolicy is the typed DTO; marshal to JSON for
 		// the JSONB column.
-		DeadlineAt:             deadlineForRequest(req.DeadlineAt, acct),
-		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts),
+		DeadlineAt: deadlineForRequest(req.DeadlineAt, acct),
+		// The caller receives a failure the app returned, so it ends after
+		// one attempt; platform failures still retry (Hunt 32 H32-65).
+		RetryPolicyJSON:        state.MarkSyncInvokeRetryPolicy(effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts)),
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,

@@ -86,6 +86,10 @@ var SealNotificationChannel = sealChannel
 var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
 var DashboardDebugStatusView = dashboardDebugStatusView
 
+// ManifestDeclaresManagedBinding is the deploy-time bound-app check
+// (ADR-20261110120000).
+var ManifestDeclaresManagedBinding = manifestDeclaresManagedBinding
+
 // Package-level types
 type AffectedPartition = affectedPartition
 type AnnotationForm = annotationForm
@@ -2075,6 +2079,24 @@ func AgeSignInsForTest(t testing.TB, d time.Duration) {
 	t.Cleanup(func() { recentSignInNow = prev })
 }
 
+// ReserveTOTPAttempt counts one TOTP attempt; zero means allowed.
+func (r *server) ReserveTOTPAttempt(ctx context.Context, accountID string) time.Duration {
+	return r.reserveTOTPAttempt(ctx, accountID)
+}
+
+// ResetTOTPAttempts clears the counted TOTP attempts.
+func (r *server) ResetTOTPAttempts(ctx context.Context, accountID string) {
+	r.resetTOTPAttempts(ctx, accountID)
+}
+
+// TOTPMaxFailures is the per-account TOTP attempt limit.
+const TOTPMaxFailures = totpMaxFailures
+
+// ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
+func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
+	return r.expireUnverifiedAccounts(ctx)
+}
+
 // OperatorRevertEmail exposes the operator email revert.
 var OperatorRevertEmail = (*server).operatorRevertEmail
 
@@ -2328,7 +2350,7 @@ func AppEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 // ApplySourceFunctionSettingsForTest runs applySourceFunctionSettings on a
 // server holding only store.
 func ApplySourceFunctionSettingsForTest(ctx context.Context, store state.Store, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec, scope string) (state.App, *api.Problem) {
-	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec, scope)
+	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec, sourcePush{Scope: scope, Pusher: "octocat"})
 }
 
 // WithPendingFunctionSteps exposes withPendingFunctionSteps.

@@ -397,15 +397,11 @@ func startupDeadlineForApp(app state.App, plan api.Plan) int32 {
 }
 
 // startupCPUBoostQuota mirrors VMMD's bounded startup profile so placement and
-// the node ledger reserve the same temporary peak that cpu.max will enforce.
-func startupCPUBoostQuota(plan api.Plan, configured int) int {
-	period := plan.CPUPeriodUS()
-	quota := plan.CPUQuotaUS()
-	if period <= 0 || quota <= 0 {
-		return configured
-	}
-	planCeiling := int(int64(quota) * 1000 / int64(period))
-	return max(configured, min(api.DefaultAppCPUMillicores, planCeiling))
+// the node ledger reserve the same temporary peak that cpu.max will enforce:
+// one core, or the configured ceiling when it is higher. It never depends on
+// the plan (ADR-20261109172421; the plan ceiling was one core on every plan).
+func startupCPUBoostQuota(configured int) int {
+	return max(configured, api.DefaultAppCPUMillicores)
 }
 
 // executionModeForApp resolves the manifest default before crossing the
@@ -725,16 +721,6 @@ type Engine struct {
 	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
 	// from functions to request-mode apps.
 	frozenTierApps atomic.Bool
-	// guestVCPUApps (runtime config `guest_vcpu_from_cpu_apps`) lists the
-	// apps whose guest vCPU count follows their CPU quota
-	// (ADR-20261101160231, ADR-20261101215228).
-	guestVCPUApps atomic.Pointer[guestVCPUAppSet]
-	// cpuSizeApps (runtime config `cpu_size_apps`) lists the apps whose CPU
-	// follows instance size instead of plan (ADR-20261109172421).
-	cpuSizeApps atomic.Pointer[guestVCPUAppSet]
-	// cpuShape holds the runtime-config values that shape a listed app's CPU
-	// (ADR-20261101215228); nil is the compiled shape.
-	cpuShape atomic.Pointer[api.CPUShape]
 	// frozenTierWorkers (schedd `frozen_tier_workers`) lets a worker pool
 	// freeze its surplus workers and thaw them before booting new ones
 	// (ADR-20261019103000).
@@ -2297,7 +2283,13 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 	}
 	if refreshRuntimeConfig {
 		out, err = e.refreshRuntimeConfigRolling(ctx, appID, wakeID)
-		if err == nil && out.Instance != nil && wakeID != "" {
+		idle := errors.Is(err, errRuntimeRefreshIdle)
+		if idle {
+			// Nothing runs the previous credentials, so a pending rotation
+			// is complete (ADR-20261110120000).
+			err = nil
+		}
+		if err == nil && (out.Instance != nil || idle) && wakeID != "" {
 			if rotations, ok := e.store.(state.ObjectS3CredentialRotationStore); ok {
 				if finishErr := rotations.FinalizeObjectS3CredentialRotationsForApp(ctx, appID, wakeID); finishErr != nil {
 					return out, fmt.Errorf("sched: retire previous object-storage credentials for app %s: %w", appID, finishErr)
@@ -3702,18 +3694,18 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			e.log.Debug("upstream affinity refresh failed; using legacy chooser", "app", logsanitize.Field(appID), "err", rerr)
 		}
 	}
-	configuredCPU := e.appCPUBookingMillicores(app, limits)
+	configuredCPU := appCPUBookingMillicores(app)
 	startupCPU := configuredCPU
 	if !dep.DisableStartupCPUBoost {
-		startupCPU = startupCPUBoostQuota(acct.Plan, configuredCPU)
+		startupCPU = startupCPUBoostQuota(configuredCPU)
 	}
 	placementRequest := Request{
 		AppID:                      appID,
 		Plan:                       acct.Plan,
 		RAMMB:                      app.RAMMB,
-		VCPU:                       e.guestVCPUs(app, limits),
+		VCPU:                       appVCPUs(app),
 		CPUMillicores:              startupCPU,
-		BookedCPUMillicores:        e.appCPUBookingStamp(app, limits),
+		BookedCPUMillicores:        appCPUBookingMillicores(app),
 		MaxConcurrency:             app.MaxConcurrency,
 		PreferredNodeID:            warmHint,
 		PreferredNodeIDs:           snapshotNodes,
@@ -3860,7 +3852,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		EnvironmentKey:        environmentKey,
 		ProductionEnvironment: productionEnvironment,
-		RAMMB:                 app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		RAMMB:                 app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
 		// revision alongside the one already serving needs the same
@@ -4079,8 +4071,8 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(e.appCPUMillicores(app, limits)),
-		CPUWeight: e.appCPUWeight(app), CPUUncapped: e.cpuBySize(app.ID),
+		VCPUCount: int32(appVCPUs(app)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(appCPUMillicores(app)),
+		CPUWeight: appCPUWeight(app), CPUUncapped: true,
 		EgressMbit: int32(limits.EgressMbit), RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
@@ -4518,7 +4510,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	configuredBootCPU := int(bootInput.spec.CPUMillicores)
 	startupBootCPU := configuredBootCPU
 	if !bootInput.spec.DisableStartupCPUBoost {
-		startupBootCPU = startupCPUBoostQuota(bootInput.spec.Plan, configuredBootCPU)
+		startupBootCPU = startupCPUBoostQuota(configuredBootCPU)
 	}
 	if startupBootCPU > configuredBootCPU {
 		// vmmd's readiness boundary is inside the RPC; using response time plus
@@ -5289,17 +5281,18 @@ type placementSnapshot struct {
 	// preferred is nodes less those whose vmmd is restarting under a
 	// notice, when that leaves any (vmmd restart adoption ADR §3).
 	preferred []state.ComputeNode
-	// cpu is the ledger's cpu_admission (ADR-20261109172421).
+	// cpu counts what the CPU budgets would have refused
+	// (ADR-20261109172421).
 	cpu *cpuAdmission
 }
 
-// choose places r. Observing cpu_admission, a refusal for vCPU or CPU alone
-// is retried without those budgets, so a node with memory room is chosen and
-// the refusal is only counted (ADR-20261109172421). The first pass still
-// prefers a node within its CPU budgets.
+// choose places r. CPU decides where, never whether (ADR-20261109172421):
+// the first pass prefers a node within its vCPU and CPU budgets, and a
+// refusal for those alone is retried without them, so a node with memory
+// room is chosen and the refusal is only counted.
 func (s placementSnapshot) choose(r Request) (Placement, error) {
 	p, err := s.chooseOnce(r)
-	if err == nil || !s.cpu.observing() || !refusedForCPU(err) {
+	if err == nil || !refusedForCPU(err) {
 		return p, err
 	}
 	r.ignoreCPUBudgets = true
@@ -5641,18 +5634,16 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 			"app_id", appID, "ram_mb", app.RAMMB)
 		return nil
 	}
-	acct, err := state.AppResourceAccount(ctx, e.store, app)
-	if err != nil {
+	if _, err := state.AppResourceAccount(ctx, e.store, app); err != nil {
 		return fmt.Errorf("sched: claim unplaced: lookup account: %w", err)
 	}
 	placement, ok := e.chooseOwnerByLoad(ctx, app)
 	if !ok {
-		limits := api.MustLimitsFor(acct.Plan)
 		placement, err = e.choosePlacementLocked(ctx, Request{
 			AppID:          appID,
 			RAMMB:          app.RAMMB,
-			VCPU:           e.guestVCPUs(app, limits),
-			CPUMillicores:  e.appCPUBookingMillicores(app, limits),
+			VCPU:           appVCPUs(app),
+			CPUMillicores:  appCPUBookingMillicores(app),
 			MaxConcurrency: app.MaxConcurrency,
 		})
 		if err != nil {
@@ -6228,11 +6219,11 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		WakeID:             ins.WakeID,
 		BaseKey:            pinnedBase,
 		LayerKey:           layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount:          int32(e.guestVCPUs(app, limits)),
-		CPUWeight:          e.appCPUWeight(app),
-		CPUUncapped:        e.cpuBySize(app.ID),
+		VCPUCount:          int32(appVCPUs(app)),
+		CPUWeight:          appCPUWeight(app),
+		CPUUncapped:        true,
 		MemSizeMiB:         int32(app.RAMMB),
-		CPUMillicores:      int32(e.appCPUMillicores(app, limits)),
+		CPUMillicores:      int32(appCPUMillicores(app)),
 		EgressMbit:         int32(limits.EgressMbit),
 		RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: migration must preserve the same readiness budget as the
@@ -6986,15 +6977,15 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	// ceiling and there's no other active node.
 	// Keep the initial snapshot near the app's assigned node when it fits.
 	// The chooser still enforces liveness and CPU/RAM admission.
-	primeConfiguredCPU := e.appCPUBookingMillicores(app, limits)
+	primeConfiguredCPU := appCPUBookingMillicores(app)
 	primeStartupCPU := primeConfiguredCPU
 	if !dep.DisableStartupCPUBoost {
-		primeStartupCPU = startupCPUBoostQuota(acct.Plan, primeConfiguredCPU)
+		primeStartupCPU = startupCPUBoostQuota(primeConfiguredCPU)
 	}
 	primePlacementRequest := Request{
 		AppID: appID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
-		BookedCPUMillicores: e.appCPUBookingStamp(app, limits),
+		RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
+		BookedCPUMillicores: appCPUBookingMillicores(app),
 		PreferredNodeID:     app.NodeID,
 	}
 	// Prime is a wake-shape event (gaps analysis 2026-07-23): the
@@ -7058,7 +7049,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		Kind:                KindSnapshotPrime,
 		NodeID:              placement.NodeID,
 		NodeCeilingMB:       placement.CeilingMB,
@@ -8416,8 +8407,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		limits, ok := api.LimitsFor(acct.Plan)
-		if !ok {
+		if _, ok := api.LimitsFor(acct.Plan); !ok {
 			continue
 		}
 		instances, err := e.liveInstancesForApp(ctx, app.ID)
@@ -8467,7 +8457,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
 				ProductionEnvironment: policy.production,
-				RAMMB:                 ins.RAMMB, VCPU: e.guestVCPUs(policy.app, limits), CPUMillicores: e.appCPUBookingMillicores(policy.app, limits), MaxConcurrency: policy.app.MaxConcurrency,
+				RAMMB:                 ins.RAMMB, VCPU: appVCPUs(policy.app), CPUMillicores: appCPUBookingMillicores(policy.app), MaxConcurrency: policy.app.MaxConcurrency,
 				// Recovery must account for all already-resident serving rows,
 				// including overlap and capacity above a subsequently lowered cap.
 				// This does not authorize new capacity: the rows are already
@@ -8490,7 +8480,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 
 			if until, ok := startupCPUBoosts[ins.ID]; ok {
-				request.CPUStartupBoostMillicores = startupCPUBoostQuota(acct.Plan, request.CPUMillicores)
+				request.CPUStartupBoostMillicores = startupCPUBoostQuota(request.CPUMillicores)
 				request.CPUStartupBoostUntil = until
 			}
 			if err := e.ledger.Admit(request); err != nil {
@@ -8691,7 +8681,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// with the app's current machine configuration. Retire the old VM instead;
 	// the next request cold-boots the current shape and produces a compatible
 	// snapshot on its next park.
-	app, err := state.AppForInstance(ctx, e.store, ins)
+	app, dep, err := appForInstanceAndDeployment(ctx, e.store, ins)
 	if err != nil {
 		// A deleted environment tombstones its deployments before its VMs
 		// finish retiring. Such a VM must never publish into a recreated
@@ -8710,6 +8700,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		}
 		return fmt.Errorf("sched: park: load deployment app shape: %w", err)
 	}
+	app = withBuiltLifecycle(app, dep)
 	frozenFunction := functionlifetime.NativeQualificationBuild && app.Type == "function" && (app.Runtime == "node22" || app.Runtime == "node24")
 	if frozenFunction {
 		undoFreeze, err := e.freezeFunctionForPark(ctx, ins)
