@@ -125,7 +125,7 @@ func testServiceCapacityIntent(t *testing.T, fx *Fixture) {
 		t.Fatal(err)
 	}
 	r, err := fx.Store.ServiceCapacityProtection(fx.Ctx)
-	if err != nil || r.State != "protected" || r.ReservedReplicas != 8 || r.FailoverSlots != 8 || r.ReplicaRAMMB != 520 || r.ReplicaCPUMillicores != 1000 || r.ReplicaVCPU != 2 {
+	if err != nil || r.State != "protected" || r.ReservedReplicas != 8 || r.FailoverSlots != 8 || r.ReplicaRAMMB != 520 || r.ReplicaCPUMillicores != 1000 || r.ReplicaVCPU != int64(api.SizeVCPUs(512)) {
 		t.Fatalf("reservation: %+v %v", r, err)
 	}
 	if _, err := fx.Store.CreateApp(fx.Ctx, capacityApp(fx, 1)); state.ServiceCapacityProblem(err) == nil {
@@ -348,12 +348,11 @@ func testServiceCapacitySidecarCPU(t *testing.T, fx *Fixture) {
 }
 
 // ADR-422: a plan downgrade does not resize an already-running guest. Its
-// admitted topology remains reserved until the instance releases resources.
+// admitted topology remains reserved until the instance releases resources:
+// a guest booted at 4 vCPUs (before its size set the count,
+// ADR-20261109172421) keeps them while its size's demand is one.
 func testServiceCapacityAdmittedShape(t *testing.T, fx *Fixture) {
 	fleet := capacityFleet(t, fx)
-	if err := fx.Store.UpdateAccountPlan(fx.Ctx, fx.Account.ID, api.PlanScale); err != nil {
-		t.Fatal(err)
-	}
 	a, err := fx.Store.CreateApp(fx.Ctx, capacityApp(fx, 2))
 	if err != nil {
 		t.Fatal(err)
@@ -362,24 +361,27 @@ func testServiceCapacityAdmittedShape(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ins, err := fx.Store.CreateInstanceWithMode(fx.Ctx, a.ID, d.ID, string(state.StateRunning), 512, fleet[0].ID, uuid.NewString(), string(state.InstanceModeService))
+	ins, err := fx.Store.CreateInstanceWithMode(bookedVCPUContext(fx, fleet[0], 4), a.ID, d.ID, string(state.StateRunning), 512, fleet[0].ID, uuid.NewString(), string(state.InstanceModeService))
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fx.Store.UpdateAccountPlan(fx.Ctx, fx.Account.ID, api.PlanPro); err != nil {
 		t.Fatal(err)
 	}
 	r, err := fx.Store.ServiceCapacityProtection(fx.Ctx)
 	if err != nil || r.ReplicaVCPU != 4 || r.FailoverSlots != 4 {
-		t.Fatalf("running guest shrank on plan update: %+v %v", r, err)
+		t.Fatalf("running guest lost its admitted topology: %+v %v", r, err)
 	}
 	if err := fx.Store.UpdateInstanceState(fx.Ctx, ins.ID, string(state.StateFailed)); err != nil {
 		t.Fatal(err)
 	}
 	r, err = fx.Store.ServiceCapacityProtection(fx.Ctx)
-	if err != nil || r.ReplicaVCPU != 2 || r.FailoverSlots != 8 {
+	if err != nil || r.ReplicaVCPU != int64(api.SizeVCPUs(512)) || r.FailoverSlots != 8 {
 		t.Fatalf("released guest retained capacity: %+v %v", r, err)
 	}
+}
+
+// bookedVCPUContext admits an instance on node as booted with vcpu guest
+// vCPUs (ADR-20261109172421 step 5).
+func bookedVCPUContext(fx *Fixture, node state.ComputeNode, vcpu int) context.Context {
+	return state.WithNodeAdmission(fx.Ctx, state.NodeAdmission{NodeID: node.ID, Generation: node.LifecycleGeneration, BookedVCPU: vcpu})
 }
 
 func refuseCapacityTransition(t *testing.T, fx *Fixture, ins state.Instance, next state.State) {
@@ -417,15 +419,13 @@ func refuseCapacityTransition(t *testing.T, fx *Fixture, ins state.Instance, nex
 	}
 }
 
-// ADR-422: promoting a warm guest after a plan downgrade retains its original
-// topology. Reclassification must validate the larger recovery slot even when
-// the host's physical resource totals do not change.
+// ADR-422: promoting a warm guest booted at a larger topology than its
+// size's (4 vCPUs from before ADR-20261109172421) retains that topology.
+// Reclassification must validate the larger recovery slot even when the
+// host's physical resource totals do not change.
 func testServiceCapacityWarmPromotionShape(t *testing.T, fx *Fixture) {
 	fleet := capacityFleet(t, fx)
 	if _, err := fx.Store.SetServiceCapacityProtection(fx.Ctx, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := fx.Store.UpdateAccountPlan(fx.Ctx, fx.Account.ID, api.PlanScale); err != nil {
 		t.Fatal(err)
 	}
 	a, err := fx.Store.CreateApp(fx.Ctx, capacityApp(fx, 5))
@@ -436,15 +436,12 @@ func testServiceCapacityWarmPromotionShape(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ins, err := fx.Store.CreateInstanceWithMode(fx.Ctx, a.ID, d.ID, string(state.StateWarm), 512, fleet[0].ID, uuid.NewString(), string(state.InstanceModeService))
+	ins, err := fx.Store.CreateInstanceWithMode(bookedVCPUContext(fx, fleet[0], 4), a.ID, d.ID, string(state.StateWarm), 512, fleet[0].ID, uuid.NewString(), string(state.InstanceModeService))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fx.Store.UpdateAccountPlan(fx.Ctx, fx.Account.ID, api.PlanPro); err != nil {
-		t.Fatal(err)
-	}
 	r, err := fx.Store.SetServiceCapacityProtection(fx.Ctx, true)
-	if err != nil || r.State != "protected" || r.ReservedReplicas != 5 || r.ReplicaVCPU != 2 || r.FailoverSlots != 6 {
+	if err != nil || r.State != "protected" || r.ReservedReplicas != 5 || r.ReplicaVCPU != int64(api.SizeVCPUs(512)) || r.FailoverSlots != 7 {
 		t.Fatalf("warm guest certificate: %+v %v", r, err)
 	}
 	refuseCapacityTransition(t, fx, ins, state.StateRunning)
