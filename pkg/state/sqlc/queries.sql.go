@@ -11053,19 +11053,6 @@ func (q *Queries) CopyRetryDeploymentWorkloadSpec(ctx context.Context, db DBTX, 
 	return err
 }
 
-const countAccountsCreatedSince = `-- name: CountAccountsCreatedSince :one
-select count(*)::bigint from accounts where created_at >= $1::timestamptz
-`
-
-// Accounts created at or after since (ADR-20261104145353: the platform-wide
-// daily sign-up cap). Read only on a sign-up attempt.
-func (q *Queries) CountAccountsCreatedSince(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
-	row := db.QueryRow(ctx, countAccountsCreatedSince, since)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const countActiveAppForks = `-- name: CountActiveAppForks :one
 SELECT count(*) FILTER (WHERE app_id = $1::uuid)::integer AS app_active,
        count(*)::integer AS account_active
@@ -11871,6 +11858,21 @@ WHERE project_id = $1::uuid AND status IN ('pending','capturing','copying','publ
 
 func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperationsForProject(ctx context.Context, db DBTX, projectID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, countUnfinishedProjectEnvironmentCloneOperationsForProject, projectID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countVerifiedAccountsCreatedSince = `-- name: CountVerifiedAccountsCreatedSince :one
+select count(*)::bigint from accounts
+ where created_at >= $1::timestamptz and email_verified_at is not null
+`
+
+// Accounts created at or after since that have verified their email
+// (ADR-20261104145353 amendment 1: the platform-wide daily sign-up cap counts
+// the accounts that can use a Free allowance). Read only on a sign-up attempt.
+func (q *Queries) CountVerifiedAccountsCreatedSince(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
+	row := db.QueryRow(ctx, countVerifiedAccountsCreatedSince, since)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
