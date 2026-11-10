@@ -39,8 +39,11 @@ func NewClient(rpc signdpb.SigndClient, objects storage.StorageBackend, local La
 func (c *Client) Sign(ctx context.Context, layerKey, sigKey string) error {
 	deploymentID, ok := DeploymentOfLayerKey(layerKey)
 	if !ok {
+		// Runtime bases and the agent layer: no verifier checks their
+		// signature, so a node without the signing key publishes them
+		// unsigned (ADR-20261109170000 slice 3).
 		if c.local == nil {
-			return fmt.Errorf("signd: %q is not an app layer and this node has no local signer", layerKey)
+			return nil
 		}
 		return c.local.Sign(ctx, layerKey, sigKey)
 	}

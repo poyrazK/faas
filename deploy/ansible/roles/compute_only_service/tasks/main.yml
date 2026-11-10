@@ -771,16 +771,22 @@
 # so the tripwire travels with the imaged daemon it protects. apid does
 # NOT read sign.key, so a false-positive failure on fsn-1 would be a
 # bug, not a signal.
+#
+# ADR-20261109170000: once faas_compute_sign_key_retired is set, signd on the
+# control plane holds the key and this node must not: the tripwire flips to
+# "the file is gone".
 - name: compute_only_service — assert sign.key mode is 0440 root:faas (Tier 3)
   ansible.builtin.stat:
     path: /etc/faas/secrets/sign.key
   register: faas_sign_key_stat
   failed_when:
     - >-
-      not faas_sign_key_stat.stat.exists
-      or faas_sign_key_stat.stat.mode != "0440"
-      or faas_sign_key_stat.stat.pw_name != "root"
-      or faas_sign_key_stat.stat.gr_name != "faas"
+      (faas_sign_key_stat.stat.exists)
+      if (faas_compute_sign_key_retired | default(false) | bool) else
+      (not faas_sign_key_stat.stat.exists
+       or faas_sign_key_stat.stat.mode != "0440"
+       or faas_sign_key_stat.stat.pw_name != "root"
+       or faas_sign_key_stat.stat.gr_name != "faas")
 
 - name: compute_only_service — assert sign-pub.pem mode is 0444 root:root (Tier 3)
   ansible.builtin.stat:
