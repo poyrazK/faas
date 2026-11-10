@@ -73441,6 +73441,41 @@ func (q *Queries) ObjectS3CredentialRotationStampStage(ctx context.Context, db D
 	return rotation_stamped_at, err
 }
 
+const objectS3CredentialRotationsPendingForBucket = `-- name: ObjectS3CredentialRotationsPendingForBucket :many
+SELECT rotation_parent_id::text AS binding_id, rotation_wake_id::text AS wake_id FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND rotation_parent_id IS NOT NULL AND status='active'
+`
+
+type ObjectS3CredentialRotationsPendingForBucketParams struct {
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+type ObjectS3CredentialRotationsPendingForBucketRow struct {
+	BindingID string
+	WakeID    string
+}
+
+func (q *Queries) ObjectS3CredentialRotationsPendingForBucket(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationsPendingForBucketParams) ([]ObjectS3CredentialRotationsPendingForBucketRow, error) {
+	rows, err := db.Query(ctx, objectS3CredentialRotationsPendingForBucket, arg.AccountID, arg.BucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectS3CredentialRotationsPendingForBucketRow{}
+	for rows.Next() {
+		var i ObjectS3CredentialRotationsPendingForBucketRow
+		if err := rows.Scan(&i.BindingID, &i.WakeID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const objectS3CredentialTouch = `-- name: ObjectS3CredentialTouch :execrows
 UPDATE object_storage_s3_credentials
 SET last_used_at=$1::timestamptz
