@@ -835,6 +835,34 @@ func (p UsagePolicy) LineItems(snapshot UsageSnapshot) ([]UsageLineItem, error) 
 	return items, nil
 }
 
+// lastObservedAt is the snapshot's reported observation time: the oldest
+// observation of a live database, since freshness waits on the slowest one.
+// A deleted database's coverage is final and never ages into a freshness
+// requirement, so its last observation (often months old) is left out; with
+// only deleted databases the newest observation is reported, and a live
+// database not observed yet reports none. Hunt 32 H32-4: `postgres usage`
+// said fresh with observed_at from a database deleted the month before.
+func lastObservedAt(databases []UsageProgress) time.Time {
+	var oldestLive, newestTerminal time.Time
+	live := false
+	for _, progress := range databases {
+		if progress.Terminal {
+			if progress.ObservedAt.After(newestTerminal) {
+				newestTerminal = progress.ObservedAt
+			}
+			continue
+		}
+		if !live || progress.ObservedAt.Before(oldestLive) {
+			oldestLive = progress.ObservedAt
+		}
+		live = true
+	}
+	if live {
+		return oldestLive
+	}
+	return newestTerminal
+}
+
 func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
 	if !policy.Enabled {
 		return false

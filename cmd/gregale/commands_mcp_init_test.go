@@ -37,6 +37,11 @@ func TestCmdMCPInitMaterializesEachLanguage(t *testing.T) {
 				if _, err := os.Stat(filepath.Join(dest, "main.go.tmpl")); !os.IsNotExist(err) {
 					t.Errorf("Go source template was left beside generated source: %v", err)
 				}
+				// Hunt 32 H32-75: `start: go run .` replaced the compiled
+				// binary and crashed on a runtime without a Go toolchain.
+				if manifest, err := os.ReadFile(filepath.Join(dest, "gregale.yaml")); err != nil || strings.Contains(string(manifest), "start:") {
+					t.Errorf("Go starter gregale.yaml = %q, %v; want no start command", manifest, err)
+				}
 				module, err := os.ReadFile(filepath.Join(dest, "go.mod"))
 				if _, err := os.Stat(filepath.Join(dest, "tasks.go.tmpl")); !os.IsNotExist(err) {
 					t.Errorf("Go task source template was left beside generated source: %v", err)
