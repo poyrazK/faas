@@ -7439,7 +7439,7 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 			return true, 1
 		}
 		if e.Data != "" {
-			if archive != nil && !retainedLineMatches(e.Data, filter.Grep) {
+			if archive != nil && (!retainedLineMatches(e.Data, filter.Grep) || !retainedLineLevelMatches(e.Data, filter.Level)) {
 				return false, 0
 			}
 			printedLines++
