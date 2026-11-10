@@ -120,8 +120,10 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 	_, _ = fmt.Fprintf(w, "App:        %s\n", response.Slug)
 	_, _ = fmt.Fprintf(w, "Group by:   %s\n", response.GroupBy)
 	_, _ = fmt.Fprintf(w, "Window:     %s (%s to %s)\n", response.Since, analyticsWindowTime(response.From), analyticsWindowTime(response.Until))
-	_, _ = fmt.Fprintf(w, "Requests:   %d\n", response.Requests)
-	_, _ = fmt.Fprintf(w, "Errors:     %d (%.2f%%)\n", response.ErrorRequests, response.ErrorRatePct)
+	// Recorded request log, so it can trail the gateway counters that
+	// `gregale metric <app>` reads; errors here include 4xx (Hunt 32 H32-27).
+	_, _ = fmt.Fprintf(w, "Requests:   %d (recorded request log)\n", response.Requests)
+	_, _ = fmt.Fprintf(w, "Errors:     %d (%.2f%%, 4xx and 5xx)\n", response.ErrorRequests, response.ErrorRatePct)
 	_, _ = fmt.Fprintf(w, "Cold boots: %d\n", response.ColdBoots)
 	_, _ = fmt.Fprintf(w, "Latency:    p50=%dms p95=%dms p99=%dms\n", response.P50MS, response.P95MS, response.P99MS)
 	if len(response.Groups) == 0 {
