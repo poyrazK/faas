@@ -176,6 +176,12 @@ func managedPostgresView(database managedpostgres.Database) api.ManagedPostgresD
 	if earliest, latest, ok := database.RestoreRange(time.Now().UTC()); ok {
 		out.RestoreRange = &api.ManagedPostgresRestoreRange{Earliest: earliest.UTC().Format(time.RFC3339Nano), Latest: latest.UTC().Format(time.RFC3339Nano)}
 	}
+	if database.Previews != "" && database.Previews != managedpostgres.PreviewsOff {
+		out.Previews = string(database.Previews)
+	}
+	if !database.Preview.IsZero() {
+		out.Preview = &api.ManagedPostgresPreviewOwner{SourceDatabaseID: database.Preview.SourceDatabaseID, PRNumber: database.Preview.PRNumber}
+	}
 	return out
 }
 
@@ -493,10 +499,13 @@ func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var database managedpostgres.Database
-	if purge {
-		database, err = s.managedPostgres.Delete(r.Context(), acct.ID, r.PathValue("id"))
+	if previewDatabase, ok := s.previewDatabase(r.Context(), acct, r.PathValue("id")); ok {
+		// A PR preview environment's database has no undo window
+		// (ADR-20261102123523); the next preview build sets it up again.
+		purge = true
+		database, err = s.previewDatabaseManager().Purge(r.Context(), acct.ID, previewDatabase.ID)
 	} else {
-		database, err = s.managedPostgres.ScheduleDelete(r.Context(), acct.ID, r.PathValue("id"))
+		database, err = s.deleteCustomerManagedPostgresDatabase(r.Context(), acct, r.PathValue("id"), purge)
 	}
 	if err != nil {
 		managedPostgresProblem(w, err)
@@ -512,6 +521,18 @@ func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		})
 	}
 	writeJSON(w, http.StatusOK, managedPostgresView(database))
+}
+
+// deleteCustomerManagedPostgresDatabase deletes a customer's database, its
+// PR preview copies first (ADR-20261102123523 decision 4).
+func (s *server) deleteCustomerManagedPostgresDatabase(ctx context.Context, acct state.Account, id string, purge bool) (managedpostgres.Database, error) {
+	if err := s.purgePreviewCopies(ctx, acct, id); err != nil {
+		return managedpostgres.Database{}, err
+	}
+	if purge {
+		return s.managedPostgres.Delete(ctx, acct.ID, id)
+	}
+	return s.managedPostgres.ScheduleDelete(ctx, acct.ID, id)
 }
 
 func managedPostgresPurgeParam(r *http.Request) (bool, error) {

@@ -51,5 +51,4 @@ not as `503 capacity_unavailable`.
 
 ## Related
 
-- `FaasCpuStarvation`: per-plan sub-slice throttling (ADR-044).
 - [FaasCgroupResources](FaasCgroupResources.md): the other per-slice alerts.

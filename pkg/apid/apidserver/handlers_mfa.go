@@ -127,6 +127,12 @@ func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Already enrolled", "call /v1/account/mfa/disable before re-enrolling"))
 		return
 	}
+	// Confirming asks for the current password. Without one, a stolen
+	// session could add an authenticator that locks the owner out, so it
+	// must have signed in recently (ADR 20261110100000).
+	if !s.mfaEnrollFirstFactorReady(w, r, acct) {
+		return
+	}
 	// mfaRecipient stays nil when apid boots without an age identity;
 	// calling it panicked (a recovered 500) instead of reporting 503. The
 	// TOTP secret is an account value (ADR 20261022111812).
@@ -220,7 +226,7 @@ func (s *server) mfaConfirm(w http.ResponseWriter, r *http.Request, acct state.A
 	if !s.confirmMFAFirstFactor(w, r, acct, req.CurrentPassword) {
 		return
 	}
-	if !s.totpAttemptAllowed(w, acct) {
+	if !s.totpAttemptAllowed(w, r, acct) {
 		return
 	}
 	if s.tryMFAEnabledAlert(w, r, acct, req.Totp) {
@@ -261,7 +267,7 @@ func (s *server) confirmInlineMFA(w http.ResponseWriter, r *http.Request, acct s
 }
 
 func (s *server) finishMFAConfirmation(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	s.totp.reset(acct.ID) // a correct code clears the counted attempts
+	s.resetTOTPAttempts(r.Context(), acct.ID) // a correct code clears the counted attempts
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		// Cookie re-issue failure is non-fatal — the customer's
 		// enrollment landed; the next request will trip
@@ -302,7 +308,7 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Invalid request", "malformed JSON body"))
 		return
 	}
-	if !s.totpAttemptAllowed(w, acct) {
+	if !s.totpAttemptAllowed(w, r, acct) {
 		return
 	}
 	secret := readSealedSecret(s, w, r, acct.ID)
@@ -324,7 +330,7 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode, "Invalid code", detail))
 		return
 	}
-	s.totp.reset(acct.ID)
+	s.resetTOTPAttempts(r.Context(), acct.ID)
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("mfa.verify.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
@@ -1151,8 +1157,8 @@ func consumeRecoveryCode(ctx context.Context, st consumeRecoveryCodeSelector, ac
 
 // totpAttemptAllowed counts a TOTP attempt, or answers 429 while the account
 // has used up its attempts (totp_guard.go).
-func (s *server) totpAttemptAllowed(w http.ResponseWriter, acct state.Account) bool {
-	wait := s.totp.reserve(acct.ID, time.Now())
+func (s *server) totpAttemptAllowed(w http.ResponseWriter, r *http.Request, acct state.Account) bool {
+	wait := s.reserveTOTPAttempt(r.Context(), acct.ID)
 	if wait <= 0 {
 		return true
 	}

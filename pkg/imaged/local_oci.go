@@ -725,6 +725,9 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		return fmt.Errorf("imaged: persist local OCI secret reload support: %w", err)
 	}
+	if err := h.store.SetDeploymentBeforeCheckpointHook(ctx, dep.ID, manifest.BeforeCheckpoint != nil); err != nil {
+		return fmt.Errorf("imaged: persist local OCI before_checkpoint hook: %w", err)
+	}
 
 	be, err := h.storageFor()
 	if err != nil {

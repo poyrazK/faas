@@ -916,8 +916,10 @@ func (s *server) applySourceManifestSettings(ctx context.Context, acct state.Acc
 
 // applyBridgeSourceSettings applies a GitHub deploy's gregale.yaml settings
 // for the githubd bridge, which has no server of its own. It returns the app
-// as it now is and the undo for a failed enqueue.
-func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (state.App, func(context.Context), *api.Problem) {
+// as it now is and the undo for a failed enqueue. push names the environment
+// the push deploys ("" is production) and who pushed; a function's settings
+// follow the environment and are attributed to the pusher.
+func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, push sourcePush) (state.App, func(context.Context), *api.Problem) {
 	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 	baseline, err := s.store.LatestDeployment(ctx, app.ID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -939,7 +941,7 @@ func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Accou
 		}
 	}
 	if m.FunctionSettings != nil {
-		updated, problem := s.applySourceFunctionSettings(ctx, acct, app, *m.FunctionSettings)
+		updated, problem := s.applySourceFunctionSettings(ctx, acct, app, *m.FunctionSettings, push)
 		if problem != nil {
 			undo(context.WithoutCancel(ctx))
 			return app, func(context.Context) {}, problem

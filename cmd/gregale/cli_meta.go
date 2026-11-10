@@ -3091,7 +3091,7 @@ var cliCommands = []cliCommand{
 			{Name: "name", Group: "App and resources", Common: true, Short: "app slug (default: source directory name)", Value: "SLUG"},
 			{Name: "size", Group: "App and resources", Short: "RAM/CPU size for one app; excludes --repo and project deploys", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
 			{Name: "profile", Group: "App and resources", Short: "deprecated: use --size", Value: "SIZE"},
-			{Name: "vcpu", Group: "App and resources", Short: "assert the plan guest vCPU shape (omit to use the plan default)", Value: "N"},
+			{Name: "vcpu", Group: "App and resources", Short: "assert the guest vCPU count, one per GB of RAM (omit to use the size's)", Value: "N"},
 			{Name: "execution-mode", Group: "App and resources", Short: "app lifecycle mode", Value: "MODE", ClosedSet: []string{"request", "service", "worker", "job"}},
 			{Name: "restart-policy", Group: "App and resources", Short: "app restart policy", Value: "POLICY", ClosedSet: []string{"no", "on-failure", "always", "unless-stopped"}},
 			{Name: "startup-deadline-s", Group: "App and resources", Short: "maximum startup seconds (0 uses plan default)", Value: "SECONDS"},
@@ -4762,6 +4762,7 @@ var cliCommands = []cliCommand{
 			{Name: "name", Short: "app slug used with --deploy", Value: "SLUG"},
 			{Name: "secrets-file", Short: "seal KEY=VALUE pairs before the first deployment (requires --deploy)", Value: "PATH"},
 			{Name: "list", Short: "list available templates"},
+			{Name: "no-mcp", Short: "do not write .mcp.json, which offers Gregale's MCP server to agents opened in the project"},
 		},
 	},
 	{
@@ -5443,8 +5444,9 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "overage-cap",
 		DocSlug:     "overage-cap",
-		Short:       "Set or clear a spending cap for usage beyond your plan",
-		Flags:       []cliFlag{{Name: "clear", Short: "remove the overage cap"}},
+		Short:       "Set the monthly spend cap for usage beyond your plan",
+		HelpNotes:   []string{"A paid plan always keeps a cap, at most Hobby $75, Pro $200 or Scale $1,000; ask support for a higher one."},
+		Flags:       []cliFlag{{Name: "clear", Short: "remove the cap (Free accounts only; a paid plan keeps one)"}},
 		Positionals: []string{"<cents>"},
 	},
 	{
@@ -6038,6 +6040,11 @@ var cliCommands = []cliCommand{
 				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"},
 			}, Notes: []string{"The database stops at once; `gregale postgres recover` brings it back until its restorable_until.", "A deleted database still counts toward the plan's database limit until it is purged."}, Examples: []string{"gregale postgres delete orders", "gregale postgres delete orders --purge"}},
 			{Name: "recover", Short: "Bring back a deleted managed PostgreSQL database", Positionals: []string{"<database>"}, Notes: []string{"Works until the database's restorable_until, 7 days after the delete; a purged database is gone."}, Examples: []string{"gregale postgres recover orders"}},
+			{Name: "previews", Short: "Give each PR preview environment its own database (preview)", Positionals: []string{"<database>", "empty|copy|off"},
+				Notes: []string{"empty: every PR preview of an app bound to the database gets its own empty database, bound with the same environment keys and access and removed with the preview. The PR's release command migrates it.",
+					"copy: each PR preview environment gets a copy of the database as of its setup, kept across pushes. Code under review can read it; it needs the database's restore window.",
+					"off: previews get no database; existing preview databases go with their pull requests."},
+				Examples: []string{"gregale postgres previews set orders empty", "gregale postgres previews set orders copy"}},
 			{Name: "compute-policy", Short: "Durably switch between idle suspension and always-on compute", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "scale-to-zero", Short: "true for idle suspension, false for always-on", Req: true, Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},

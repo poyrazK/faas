@@ -154,6 +154,8 @@ func accountFormError(status int, code string) string {
 	switch {
 	case code == api.CodeStepUpRequired:
 		return "step_up"
+	case code == api.CodeRecentSignInRequired:
+		return recentSignInFlashKey
 	case code == api.CodeMFARequired:
 		return "mfa"
 	case status == http.StatusUnauthorized:
@@ -167,6 +169,10 @@ func accountFormError(status int, code string) string {
 }
 
 func redirectAccountError(w http.ResponseWriter, r *http.Request, key string) {
+	if key == recentSignInFlashKey {
+		redirectRecentSignIn(w, r)
+		return
+	}
 	http.Redirect(w, r, accountPagePath+"?account_error="+url.QueryEscape(key), http.StatusSeeOther)
 }
 
@@ -252,6 +258,9 @@ func (s *server) dashboardUnlinkProvider(w http.ResponseWriter, r *http.Request)
 			redirectAccountError(w, r, "step_up")
 			return
 		}
+	} else if !s.requireRecentSignIn(&capturedResponse{header: http.Header{}}, r, acct, "sign_in_method_unlink") {
+		redirectRecentSignIn(w, r)
+		return
 	}
 	if problem := s.unlinkProvider(r.Context(), acct, strings.ToLower(r.PathValue("provider"))); problem != nil {
 		redirectAccountError(w, r, accountFormError(problem.Status, problem.Code))

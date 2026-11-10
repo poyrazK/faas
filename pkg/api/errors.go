@@ -550,6 +550,11 @@ const (
 	// mirrors CodeCapacity / CodeBuildXXX — the failure is transient
 	// and the customer's CLI/CI will retry on the backoff.
 	CodeSourceRefUnavailable = "source_ref_unavailable"
+	// CodePreviewDatabaseProvisioning is the 503 a deployment into a PR
+	// preview answers while the preview's managed PostgreSQL databases are
+	// still provisioning (ADR-20261102123523): its release command needs
+	// their URLs. Retry-After says when to send it again; the CLI waits.
+	CodePreviewDatabaseProvisioning = "preview_database_provisioning"
 	// ADR-570: connection-circuit enforcement availability and revision errors.
 	CodeEgressCircuitUnavailable = "egress_circuit_unavailable"
 	CodeEgressCircuitDisabled    = "egress_circuit_disabled"
@@ -857,6 +862,10 @@ const (
 	// (with reason: "missing"|"expired", ttl_sec) is the load-
 	// bearing security signal; the wire code is the UX affordance.
 	CodeStepUpRequired = "step_up_required"
+	// CodeRecentSignInRequired is returned when an account change whose
+	// only proof is the browser session comes from a session older than
+	// RecentSignInWindow (ADR 20261110100000): sign in again, then retry.
+	CodeRecentSignInRequired = "recent_sign_in_required"
 	// CodeMFAInvalidCode is returned when /confirm, /verify, or
 	// /recover validate a presented TOTP code / recovery code and
 	// the comparison fails. The audit Emit fires regardless.
@@ -2886,18 +2895,14 @@ func ErrInvalidAppRAM(requestedMB int) *Problem {
 		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB))
 }
 
-// ErrInvalidCPURAMPair rejects an explicit guest topology that does not match
-// the plan's canonical RAM/vCPU shape. Guest vCPU is plan-derived in v1, so
-// the pair is validated without introducing a per-app database column.
+// ErrInvalidCPURAMPair rejects an explicit guest vCPU count that is not its
+// size's: one vCPU per GB of ram_mb, at least one (ADR-20261109172421). Guest
+// vCPU is derived, so the pair is validated without a per-app column.
 func ErrInvalidCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
-	shape, ok := PlanResourceShapeFor(l.Plan)
-	if !ok {
-		shape = PlanResourceShape{Plan: l.Plan, RAMMB: l.RAMMB, VCPU: l.VCPU}
-	}
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidCPURAMPair,
 		"Invalid CPU/RAM pair",
-		fmt.Sprintf("invalid (ram_mb, vcpu) pair for plan %s: expected (%d, %d), received (%d, %d). Omit vcpu to use the plan default.",
-			l.Plan, shape.RAMMB, shape.VCPU, ramMB, guestVCPU)).
+		fmt.Sprintf("invalid (ram_mb, vcpu) pair on plan %s: an instance of %d MB has %d vCPU (one per GB), received %d. Omit vcpu to use the size's.",
+			l.Plan, ramMB, SizeVCPUs(ramMB), guestVCPU)).
 		WithDocs(docsBase + "/plans#resources")
 }
 
@@ -3383,6 +3388,15 @@ func ErrStepUpRequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeStepUpRequired,
 		"Step-up required",
 		"step-up MFA required for this action: complete /v1/account/mfa/verify to refresh")
+}
+
+// ErrRecentSignInRequired asks a browser to sign in again before an account
+// change it can prove with nothing but its session.
+func ErrRecentSignInRequired() *Problem {
+	return NewProblem(http.StatusForbidden, CodeRecentSignInRequired,
+		"Sign in again",
+		fmt.Sprintf("this change needs a sign-in from the last %d minutes; sign in again, then retry", int(RecentSignInWindow.Minutes()))).
+		WithDocs(docsBase + "/auth")
 }
 
 // ErrBillingNotImplemented is returned by an apid handler when the selected
@@ -7106,6 +7120,20 @@ func ErrSourceRefUnavailable(reason string) *Problem {
 		"Source-ref fetch unavailable",
 		reason).
 		WithDocs(docsBase + "/build/source-ref#errors")
+}
+
+// PreviewDatabaseRetryAfter is the Retry-After of
+// ErrPreviewDatabaseProvisioning.
+const PreviewDatabaseRetryAfter = 10 * time.Second
+
+// ErrPreviewDatabaseProvisioning holds a deployment into a PR preview until
+// the preview's managed PostgreSQL databases are ready (ADR-20261102123523).
+func ErrPreviewDatabaseProvisioning() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodePreviewDatabaseProvisioning,
+		"Preview database provisioning",
+		"The preview's managed PostgreSQL database is still provisioning; retry after the indicated delay.").
+		WithDocs(docsBase+"/preview-databases").
+		WithHeader("Retry-After", strconv.Itoa(int(PreviewDatabaseRetryAfter.Seconds())))
 }
 
 // ErrSourceRefStale is returned when a caller binds an immutable source SHA

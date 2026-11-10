@@ -717,6 +717,11 @@ func (s *server) accountChangeProof(w http.ResponseWriter, r *http.Request, acct
 		return "current_password", true, true
 	}
 
+	// Neither a password nor an authenticator: the session is the only
+	// proof, so it must be a recent sign-in (ADR 20261110100000).
+	if !s.requireRecentSignIn(w, r, acct, path) {
+		return "", false, false
+	}
 	return "session", false, true
 }
 

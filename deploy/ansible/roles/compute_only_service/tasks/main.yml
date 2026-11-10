@@ -621,6 +621,29 @@
     mode: "0644"
   when: (faas_box_role | default('single-box')) == 'compute-only'
 
+# ADR-20261109170000: sign app layers through the control plane's signd once
+# faas_imaged_signd_target is set; empty keeps the node's own signer.
+- name: compute_only_service — converge imaged's signd client leaf
+  ansible.builtin.include_tasks: signd_client.yml
+  when: faas_imaged_signd_target | default('') | length > 0
+
+- name: compute_only_service — install imaged's signd drop-in
+  notify: restart faas-imaged
+  ansible.builtin.template:
+    src: zz-faas-signd-client.conf.j2
+    dest: /etc/systemd/system/faas-imaged.service.d/zz-faas-signd-client.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_imaged_signd_target | default('') | length > 0
+
+- name: compute_only_service — remove imaged's signd drop-in while signd is off
+  notify: restart faas-imaged
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-imaged.service.d/zz-faas-signd-client.conf
+    state: absent
+  when: faas_imaged_signd_target | default('') | length == 0
+
 # Runtime bases embed guest/init as PID 1. Keep the source release-managed;
 # an old /usr/local/bin/faas-guest-init can otherwise survive a daemon rollout
 # and make every newly staged base boot with stale guest code.
@@ -787,6 +810,36 @@
        or faas_sign_key_stat.stat.mode != "0440"
        or faas_sign_key_stat.stat.pw_name != "root"
        or faas_sign_key_stat.stat.gr_name != "faas")
+
+# ADR 20261022111812: once faas_compute_fleet_key_retired is set, no compute
+# reader loads the fleet identity. Node join stops staging it; a converge
+# without node join removes any copy left on the node, since one would open
+# every fleet-sealed value again. The guard matches node join's.
+- name: compute_only_service — require every compute seal domain contracted before retiring the fleet key
+  ansible.builtin.assert:
+    that:
+      - faas_seal_domain_runtime_contracted | default(false) | bool
+      - faas_seal_domain_build_contracted | default(false) | bool
+      - faas_seal_domain_edge_contracted | default(false) | bool
+      - faas_seal_domain_control_contracted | default(false) | bool
+      - faas_seal_domain_delivery_contracted | default(false) | bool
+      - >-
+        not (faas_object_gateway_on_compute_nodes | default(false) | bool)
+        or (faas_seal_domain_storage_contracted | default(false) | bool)
+    fail_msg: >-
+      faas_compute_fleet_key_retired removes fleet.age, but a compute reader
+      still loads it: contract runtime, build, edge, control and delivery
+      (and storage when s3-gatewayd runs on compute nodes) first.
+  when: faas_compute_fleet_key_retired | default(false) | bool
+
+- name: compute_only_service — remove the retired fleet identity
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/faas/secrets/fleet.age
+    - /etc/faas/secrets/fleet.age.previous
+  when: faas_compute_fleet_key_retired | default(false) | bool
 
 - name: compute_only_service — assert sign-pub.pem mode is 0444 root:root (Tier 3)
   ansible.builtin.stat:

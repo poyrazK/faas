@@ -13,14 +13,21 @@ layers are now bound to their storage key.
 
 ## 2. Turn signd on
 
-1. Control plane: set `faas_signd_listen: "tcp://<control plane private
-   address>:8097"` and converge. The control-plane CD then starts signd from
-   the active release.
-2. Check signd:
+1. In the deployment manifest, set:
+   ```yaml
+   artifact_signer:
+     enabled: true        # port defaults to 8097
+   ```
+   `gregalectl manifest ansible` then renders two variables:
+   - `faas_signd_listen: tcp://<control plane address>:8097` for the control
+     plane;
+   - `faas_imaged_signd_target`, with the same address, for every compute
+     node.
+2. Converge the control plane. Its CD then starts signd from the active
+   release. Check signd:
    - `systemctl status faas-signd` shows it active;
    - `journalctl -u faas-signd` shows `signd: serving`.
-3. Compute nodes: set `faas_imaged_signd_target` to the same address and
-   converge, one node first.
+3. Converge the compute nodes, one node first.
 4. Deploy an app built on that node. Then check:
    - signd's log shows `signd: signed artifact` for its layer;
    - this query returns a row:
@@ -60,13 +67,15 @@ The pass is idempotent. Rerun it until it reports `converted 0` and no problems.
 
 ## 4. Remove sign.key from the compute nodes
 
-Once every compute node runs with `faas_imaged_signd_target` and step 3 is
-clean:
-- stop staging `COMPUTE_SIGN_KEY` in compute CD;
-- delete `/etc/faas/secrets/sign.key` on each compute node.
+Once every compute node signs through signd and step 3 is clean, set
+`retire_compute_key: true` under `artifact_signer` and run node join on each
+compute node. It removes `/etc/faas/secrets/sign.key`. It also refuses to run
+on a node without `faas_imaged_signd_target`, so it can't strand imaged without
+a signer. The compute role then checks that the file stays gone.
 
 imaged in signd mode doesn't read the file, so removing it changes nothing
-for running builds.
+for running builds. Compute CD still requires the `COMPUTE_SIGN_KEY` secret
+until the release that refuses v1 drops it (step 5).
 
 ## 5. Refuse v1 (a later release)
 
@@ -75,7 +84,9 @@ accepting v1 signatures. That is a code change in its own release.
 
 ## Rollback
 
-- **Step 2:** clear `faas_imaged_signd_target` on the compute nodes and
-  converge. imaged needs `sign.key` back first, so do this before step 4.
+- **Step 2:** set `artifact_signer.enabled: false` and converge the compute
+  nodes, then the control plane. imaged needs `sign.key` again, so either do
+  this before step 4, or first clear `retire_compute_key` and rerun node join
+  to stage the key back.
 - **Step 3:** v2 signatures are read by every release since the v2-verifier
   one, so there is nothing to undo.

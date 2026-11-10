@@ -6326,6 +6326,9 @@ func (s *PgStore) applyProjectReconcileOnce(
 	// adopt maps a function workload to the same-account function app
 	// outside any project that already holds its slug: `gregale deploy`
 	// made it, and the repository takes it over (ADR-20261108160000 §1).
+	// The app must also have the project's owner (the same org, or both
+	// personal): project apps share the project's org_id, and adoption never
+	// moves an app between a personal and a company owner.
 	adopt := make(map[string]string)
 	removeIDs := make(map[string]bool)
 	for _, mutation := range mutations {
@@ -6339,10 +6342,10 @@ func (s *PgStore) applyProjectReconcileOnce(
 			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
 				return ProjectReconcileResult{}, ErrConflict
 			}
-			var collisionID, collisionAccount, collisionProject, collisionType string
-			if err := tx.QueryRow(ctx, `select id::text, account_id::text, coalesce(project_id::text, ''), type from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID, &collisionAccount, &collisionProject, &collisionType); err == nil {
+			var collisionID, collisionAccount, collisionOrg, collisionProject, collisionType string
+			if err := tx.QueryRow(ctx, `select id::text, account_id::text, coalesce(org_id::text, ''), coalesce(project_id::text, ''), type from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID, &collisionAccount, &collisionOrg, &collisionProject, &collisionType); err == nil {
 				switch {
-				case mutation.App.Type == AppTypeFunction && collisionType == string(AppTypeFunction) && collisionAccount == storedProject.AccountID && collisionProject == "":
+				case mutation.App.Type == AppTypeFunction && collisionType == string(AppTypeFunction) && collisionAccount == storedProject.AccountID && collisionOrg == storedProject.OrgID && collisionProject == "":
 					adopt[mutation.App.WorkloadName] = collisionID
 					continue
 				case !removeIDs[collisionID]:
@@ -6441,7 +6444,7 @@ func (s *PgStore) applyProjectReconcileOnce(
 			app := mutation.App
 			app.AccountID, app.ProjectID, app.OrgID = storedProject.AccountID, storedProject.ID, storedProject.OrgID
 			if id := adopt[app.WorkloadName]; id != "" {
-				adopted, err := scanApp(tx.QueryRow(ctx, `update apps set project_id = $2, root_dir = $3, workload_name = $4, workload_class = $5 where id = $1 and account_id = $6 and project_id is null and type = 'function' and status <> 'deleted' returning `+appsSelectColumns, id, project.ID, app.RootDir, app.WorkloadName, string(app.WorkloadClass), storedProject.AccountID))
+				adopted, err := scanApp(tx.QueryRow(ctx, `update apps set project_id = $2, root_dir = $3, workload_name = $4, workload_class = $5 where id = $1 and account_id = $6 and coalesce(org_id::text, '') = $7 and project_id is null and type = 'function' and status <> 'deleted' returning `+appsSelectColumns, id, project.ID, app.RootDir, app.WorkloadName, string(app.WorkloadClass), storedProject.AccountID, storedProject.OrgID))
 				if err != nil {
 					return ProjectReconcileResult{}, mapErr(err)
 				}
@@ -11709,7 +11712,7 @@ func (s *PgStore) ClearObsoleteDeployments(ctx context.Context, appID string, ol
 	// column — `deployments` carries `created_at` as its FIFO
 	// tiebreaker. (Surfaced in CI round-5 dispatch 32671691532
 	// pg-shard-2 — SQLSTATE 42703 column does not exist.)
-	countRows, err := sqlc.New().ClearObsoleteDeploymentsRetainingRecovery(ctx, tx, sqlc.ClearObsoleteDeploymentsRetainingRecoveryParams{AppID: mustPgUUID(appID), OlderThan: gitOpsTime(olderThan), DeletedAt: gitOpsTime(now)})
+	countRows, err := sqlc.New().ClearObsoleteDeploymentsRetainingRecovery(ctx, tx, sqlc.ClearObsoleteDeploymentsRetainingRecoveryParams{AppID: mustPgUUID(appID), OlderThan: gitOpsTime(olderThan), DeletedAt: gitOpsTime(now), RollbackGenerations: int32(api.SnapshotRollbackRetentionDeployments)})
 
 	if err != nil {
 		return 0, fmt.Errorf("ClearObsoleteDeployments: bulk update: %w", err)
@@ -25846,6 +25849,23 @@ func (s *PgStore) SetDeploymentSecretReloadSignal(ctx context.Context, id, signa
 	return nil
 }
 
+// SetDeploymentBeforeCheckpointHook records whether imaged stamped a
+// before_checkpoint hook into the deployment's guest manifest (H32-49).
+func (s *PgStore) SetDeploymentBeforeCheckpointHook(ctx context.Context, id string, hook bool) error {
+	if id == "" {
+		return ErrInvalidArgument
+	}
+	updated, err := sqlc.New().SetDeploymentBeforeCheckpointHook(ctx, s.pool,
+		sqlc.SetDeploymentBeforeCheckpointHookParams{ID: mustPgUUID(id), Hook: hook})
+	if err != nil {
+		return mapErr(err)
+	}
+	if updated == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *PgStore) SetDeploymentSidecarSecretReloadSignal(ctx context.Context, deploymentID, sidecarName, signal string) error {
 	if deploymentID == "" || sidecarName == "" || !ValidSecretRuntimeWorkloadName(sidecarName) || !validSecretReloadSignal(signal) {
 		return ErrInvalidArgument
@@ -26845,7 +26865,7 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
 		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
 	coalesce(environment_workload_runtime::text,''),
-	environment_workload_held, secret_reload_signal, runtime_base`
+	environment_workload_held, secret_reload_signal, runtime_base, before_checkpoint_hook`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -26906,7 +26926,7 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
 		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
 	coalesce(d.environment_workload_runtime::text,''),
-	d.environment_workload_held, d.secret_reload_signal, d.runtime_base`
+	d.environment_workload_held, d.secret_reload_signal, d.runtime_base, d.before_checkpoint_hook`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -26930,6 +26950,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 	var kind, statusStr string
 	var environmentWorkloadHeld bool
 	var secretReloadSignal *string
+	var beforeCheckpointHook *bool
 	var scanStatus *string
 	var scannedAt *time.Time
 	var parkedAt *time.Time
@@ -27029,7 +27050,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.APIHostingReceipt,
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
-		&d.EnvironmentWorkloadRuntime, &environmentWorkloadHeld, &secretReloadSignal, &d.RuntimeBase,
+		&d.EnvironmentWorkloadRuntime, &environmentWorkloadHeld, &secretReloadSignal, &d.RuntimeBase, &beforeCheckpointHook,
 	); err != nil {
 		return mapErr(err)
 	}
@@ -27041,6 +27062,9 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 	// prime failed with "deployment runtime value owner or grants changed".
 	if secretReloadSignal != nil {
 		d.SecretReloadSignal, d.SecretReloadSignalKnown = *secretReloadSignal, true
+	}
+	if beforeCheckpointHook != nil {
+		d.BeforeCheckpointHook, d.BeforeCheckpointHookKnown = *beforeCheckpointHook, true
 	}
 	if rootfsPath != nil {
 		d.RootfsPath = *rootfsPath
@@ -31659,6 +31683,42 @@ func (s *PgStore) RequestTelemetryCircuitBreakerSummary(ctx context.Context, app
 		return 0, 0, 0, 0, 0, 0, 0, err
 	}
 	return row.Requests, row.ServerErrors, row.P95LatencyMs, row.ColdBootRequests, row.ColdBootP95LatencyMs, row.CpuUsec, row.CpuRequests, nil
+}
+
+// SharedRouteLatency is the post-release watch's latency sample restricted to
+// the method+route pairs both a release and its predecessor served.
+type SharedRouteLatency struct {
+	ReleaseRequests      int64
+	ReleaseP95LatencyMS  float64
+	BaselineRequests     int64
+	BaselineP95LatencyMS float64
+}
+
+// RequestTelemetrySharedRouteLatency backs the post-release watch's
+// shared-route latency check (ADR-1445 amendment 2026-11-10). Like the
+// circuit-breaker summary it stays outside state.Store; apid discovers it as
+// an optional reader.
+func (s *PgStore) RequestTelemetrySharedRouteLatency(ctx context.Context, appID, releaseID string, releaseSince, releaseUntil time.Time, baselineID string, baselineSince, baselineUntil time.Time) (SharedRouteLatency, error) {
+	ids := make([]pgtype.UUID, 0, 3)
+	for _, id := range []string{appID, releaseID, baselineID} {
+		parsed, err := uuid.Parse(id)
+		if err != nil {
+			return SharedRouteLatency{}, fmt.Errorf("state: shared-route latency parse id %q: %w", id, err)
+		}
+		ids = append(ids, pgtype.UUID{Bytes: parsed, Valid: true})
+	}
+	row, err := s.appErrorsQueries().RequestTelemetrySharedRouteLatency(ctx, s.pool, sqlc.RequestTelemetrySharedRouteLatencyParams{
+		AppID: ids[0], ReleaseID: ids[1], BaselineID: ids[2],
+		ReleaseSince:  pgtype.Timestamptz{Time: releaseSince, Valid: true},
+		ReleaseUntil:  pgtype.Timestamptz{Time: releaseUntil, Valid: true},
+		BaselineSince: pgtype.Timestamptz{Time: baselineSince, Valid: true},
+		BaselineUntil: pgtype.Timestamptz{Time: baselineUntil, Valid: true},
+	})
+	if err != nil {
+		return SharedRouteLatency{}, fmt.Errorf("state: shared-route latency app=%s release=%s baseline=%s: %w", appID, releaseID, baselineID, err)
+	}
+	return SharedRouteLatency{ReleaseRequests: row.ReleaseRequests, ReleaseP95LatencyMS: row.ReleaseP95LatencyMs,
+		BaselineRequests: row.BaselineRequests, BaselineP95LatencyMS: row.BaselineP95LatencyMs}, nil
 }
 
 // RequestTelemetryBaselineP95ByRoute backs the regression detector's

@@ -11,9 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
+	"gopkg.in/yaml.v3"
 )
 
 // mcpConnectFixture fakes the machine `gregale mcp connect` runs on: which
@@ -25,7 +27,12 @@ type mcpConnectFixture struct {
 	claudeHas  string // URL of an existing Claude Code entry, "" for none
 	calls      []string
 	keyCreates int
+	keyRequest api.CreateKeyRequest // the last key minted
 	api        *httptest.Server
+	// connections and approvals answer GET /v1/agent-connections and
+	// /v1/agent-approvals for mcp connect --check.
+	connections []api.AgentConnectionResponse
+	approvals   []api.AgentApprovalResponse
 }
 
 func newMCPConnectFixture(t *testing.T, binaries ...string) *mcpConnectFixture {
@@ -40,6 +47,7 @@ func newMCPConnectFixture(t *testing.T, binaries ...string) *mcpConnectFixture {
 			f.keyCreates++
 			var req api.CreateKeyRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.keyRequest = req
 			if !strings.Contains(strings.Join(req.Scopes, ","), api.ScopeAgent) {
 				t.Errorf("minted key scopes = %v, want agent", req.Scopes)
 			}
@@ -47,11 +55,22 @@ func newMCPConnectFixture(t *testing.T, binaries ...string) *mcpConnectFixture {
 			_ = json.NewEncoder(w).Encode(api.APIKeyResponse{ID: "key-1", Plaintext: "fp_live_agentsecret"})
 			return
 		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agent-connections":
+			_ = json.NewEncoder(w).Encode(api.AgentConnectionsResponse{Items: f.connections})
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agent-approvals":
+			_ = json.NewEncoder(w).Encode(api.AgentApprovalsResponse{Items: f.approvals})
+			return
+		}
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(f.api.Close)
 	t.Setenv("FAAS_API", f.api.URL)
 	t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
+	// VS Code's Linux config follows XDG_CONFIG_HOME; keep it in the fake home.
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(f.home, ".config"))
+	t.Setenv("APPDATA", filepath.Join(f.home, "AppData"))
 	oldLook, oldRun, oldInter, oldHome := *main.MCPConnectLookPath, *main.MCPConnectRun, *main.MCPConnectInteractive, *main.MCPConnectHome
 	oldCheck, oldCount := *main.MCPEndpointCheck, *main.MCPHeadlessToolCount
 	t.Cleanup(func() {
@@ -221,7 +240,7 @@ func TestMCPConnectRefusals(t *testing.T) {
 	if code, _, errOut := f.run(t, "--yes"); code != 1 || !strings.Contains(errOut, "Claude Code") {
 		t.Fatalf("no client found = %d\n%s", code, errOut)
 	}
-	if code, _, errOut := f.run(t, "--client", "cursor"); code != 1 || !strings.Contains(errOut, "claude-code") {
+	if code, _, errOut := f.run(t, "--client", "atom"); code != 1 || !strings.Contains(errOut, "claude-code") {
 		t.Fatalf("unknown client = %d\n%s", code, errOut)
 	}
 	if code, out, _ := f.run(t, "--client", "codex", "--project"); code != 0 || !strings.Contains(out, "skipped") {
@@ -245,4 +264,406 @@ func containsPrefix(calls []string, prefix string) bool {
 		}
 	}
 	return false
+}
+
+func (f *mcpConnectFixture) runArgs(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	oldOut, oldErr := *main.OsStdout, *main.OsStderr
+	*main.OsStdout, *main.OsStderr = &stdout, &stderr
+	code := main.Run(args)
+	*main.OsStdout, *main.OsStderr = oldOut, oldErr
+	return code, stdout.String(), stderr.String()
+}
+
+func (f *mcpConnectFixture) check(t *testing.T) (int, map[string]map[string]string) {
+	t.Helper()
+	code, out, errOut := f.runArgs(t, "--json", "mcp", "connect", "--check")
+	var report struct {
+		Checks []map[string]string `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("--check --json: %v\nstdout:%s\nstderr:%s", err, out, errOut)
+	}
+	byName := map[string]map[string]string{}
+	for _, c := range report.Checks {
+		byName[c["check"]] = c
+	}
+	return code, byName
+}
+
+// mcp connect --check (ADR-20261109121411 §5): every check passes or warns
+// on a machine that is set up; only unexpired approval requests count.
+func TestMCPConnectCheckHealthySetup(t *testing.T) {
+	f := newMCPConnectFixture(t, "claude", "codex")
+	url := f.api.URL + "/mcp"
+	f.claudeHas = url
+	if err := os.MkdirAll(filepath.Join(f.home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	codex := "[mcp_servers.gregale]\nurl = \"" + url + "\"\nbearer_token_env_var = \"GREGALE_AGENT_KEY\"\n"
+	if err := os.WriteFile(filepath.Join(f.home, ".codex", "config.toml"), []byte(codex), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GREGALE_AGENT_KEY", "fp_live_agentsecret")
+	t.Chdir(t.TempDir())
+	soon := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	f.connections = []api.AgentConnectionResponse{{ID: "c1", Label: "ci-agent", ExpiresAt: soon}}
+	f.approvals = []api.AgentApprovalResponse{
+		{ID: "old", Status: api.AgentApprovalPending, Method: "DELETE", Path: "/v1/apps/x", ExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), ReviewURL: "https://review/old"},
+		{ID: "ap1", Status: api.AgentApprovalPending, Method: "DELETE", Path: "/v1/apps/y", ExpiresAt: soon, ReviewURL: "https://review/ap1"},
+	}
+	code, checks := f.check(t)
+	if code != 0 {
+		t.Fatalf("exit %d, checks %v", code, checks)
+	}
+	for name, want := range map[string]string{"endpoint": "ok", "claude-code": "ok", "codex": "ok", "project": "skip", "agent_key": "ok", "connections": "warn", "approvals": "warn"} {
+		if checks[name]["status"] != want {
+			t.Errorf("%s = %v, want %s", name, checks[name], want)
+		}
+	}
+	if !strings.Contains(checks["agent_key"]["detail"], "24 tools") || !strings.Contains(checks["connections"]["detail"], "ci-agent") {
+		t.Errorf("details: %v %v", checks["agent_key"], checks["connections"])
+	}
+	if a := checks["approvals"]; !strings.Contains(a["detail"], "1 request") || !strings.Contains(a["fix"], "https://review/ap1") {
+		t.Errorf("approvals = %v; want only the unexpired request and its review link", a)
+	}
+	if _, ok := checks["setup"]; ok {
+		t.Error("a set-up machine reported setup")
+	}
+}
+
+func TestMCPConnectCheckNothingSetUp(t *testing.T) {
+	f := newMCPConnectFixture(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("GREGALE_AGENT_KEY", "")
+	code, checks := f.check(t)
+	if code != 1 || checks["setup"]["status"] != "fail" || checks["setup"]["fix"] != "gregale mcp connect" {
+		t.Fatalf("exit %d setup %v", code, checks["setup"])
+	}
+	if checks["claude-code"]["status"] != "skip" || checks["codex"]["status"] != "skip" || checks["agent_key"]["status"] != "skip" {
+		t.Fatalf("checks = %v", checks)
+	}
+}
+
+func TestMCPConnectCheckAgentKeyProblems(t *testing.T) {
+	f := newMCPConnectFixture(t, "claude")
+	dir := t.TempDir()
+	t.Chdir(dir)
+	project := `{"mcpServers":{"gregale":{"type":"http","url":"` + f.api.URL + `/mcp","headers":{"Authorization":"Bearer ${GREGALE_AGENT_KEY}"}}}}`
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(project), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GREGALE_AGENT_KEY", "")
+	code, checks := f.check(t)
+	if code != 1 || checks["project"]["status"] != "ok" || checks["agent_key"]["status"] != "fail" || !strings.Contains(checks["agent_key"]["detail"], "not set") {
+		t.Fatalf("unset key: exit %d %v %v", code, checks["project"], checks["agent_key"])
+	}
+	if checks["claude-code"]["status"] != "warn" {
+		t.Fatalf("claude-code without an entry = %v, want warn", checks["claude-code"])
+	}
+	t.Setenv("GREGALE_AGENT_KEY", "fp_live_revoked")
+	*main.MCPHeadlessToolCount = func(main.MCPConnectOptions, string) int { return 0 }
+	if code, checks := f.check(t); code != 1 || !strings.Contains(checks["agent_key"]["detail"], "refused") {
+		t.Fatalf("refused key: exit %d %v", code, checks["agent_key"])
+	}
+}
+
+// gregale init offers Gregale's MCP server to agents opened in the project
+// (ADR-20261109121411 §6); --no-mcp leaves it out.
+func TestInitWritesProjectMCPConfig(t *testing.T) {
+	f := newMCPConnectFixture(t)
+	dir := filepath.Join(t.TempDir(), "app")
+	code, out, errOut := f.runArgs(t, "--json", "init", "--template", "hello-node", "--path", dir)
+	if code != 0 {
+		t.Fatalf("init exit %d: %s", code, errOut)
+	}
+	var receipt struct {
+		MCPConfig string `json:"mcp_config"`
+	}
+	_ = json.Unmarshal([]byte(out), &receipt)
+	data, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil || receipt.MCPConfig != filepath.Join(dir, ".mcp.json") {
+		t.Fatalf("receipt %+v (stdout %s), read err %v", receipt, out, err)
+	}
+	var config struct {
+		MCPServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if g := config.MCPServers["gregale"]; g["url"] != f.api.URL+"/mcp" || g["type"] != "http" || len(g) != 2 {
+		t.Fatalf(".mcp.json = %s", data)
+	}
+
+	other := filepath.Join(t.TempDir(), "app")
+	if code, _, errOut := f.runArgs(t, "init", "--template", "hello-node", "--path", other, "--no-mcp"); code != 0 {
+		t.Fatalf("init --no-mcp exit %d: %s", code, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(other, ".mcp.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("--no-mcp wrote .mcp.json (%v)", err)
+	}
+}
+
+// Cursor, VS Code and Windsurf get a gregale entry in their JSON config,
+// keeping every other key and its order (ADR-20261109121411 §7).
+func TestMCPConnectCursorKeepsTheRestOfTheConfig(t *testing.T) {
+	f := newMCPConnectFixture(t, "cursor")
+	path := filepath.Join(f.home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const before = `{"zeta": 1, "mcpServers": {"other": {"command": "other"}}, "alpha": [1, 2]}`
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := f.run(t, "--client", "cursor")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+	got, _ := os.ReadFile(path)
+	want := "{\n  \"zeta\": 1,\n  \"mcpServers\": {\n    \"other\": {\n      \"command\": \"other\"\n    },\n    \"gregale\": {\n      \"url\": \"" + f.api.URL + "/mcp\"\n    }\n  },\n  \"alpha\": [\n    1,\n    2\n  ]\n}\n"
+	if string(got) != want {
+		t.Fatalf("mcp.json =\n%s\nwant\n%s", got, want)
+	}
+	if code, out, _ := f.run(t, "--client", "cursor"); code != 0 || !strings.Contains(out, "already connected") {
+		t.Fatalf("second run = %d\n%s", code, out)
+	}
+	if code, out, _ := f.run(t, "--client", "cursor", "--toolsets", "core,operate"); code != 1 || !strings.Contains(out, "--force") {
+		t.Fatalf("a different entry = %d\n%s; want a conflict", code, out)
+	}
+	if code, _, _ := f.run(t, "--client", "cursor", "--toolsets", "core,operate", "--force"); code != 0 {
+		t.Fatal("--force failed")
+	}
+	got, _ = os.ReadFile(path)
+	if !strings.Contains(string(got), `"Gregale-MCP-Toolsets": "core,operate"`) || strings.Count(string(got), `"gregale"`) != 1 || !strings.HasPrefix(string(got), "{\n  \"zeta\": 1,") {
+		t.Fatalf("after --force:\n%s", got)
+	}
+}
+
+func TestMCPConnectVSCodeProjectAndWindsurfHeadless(t *testing.T) {
+	f := newMCPConnectFixture(t, "code", "windsurf")
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if code, out, errOut := f.run(t, "--client", "vscode", "--project"); code != 0 {
+		t.Fatalf("vscode --project exit %d\n%s\n%s", code, out, errOut)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".vscode", "mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vscode struct {
+		Servers map[string]map[string]any `json:"servers"`
+	}
+	if err := json.Unmarshal(data, &vscode); err != nil || vscode.Servers["gregale"]["type"] != "http" || vscode.Servers["gregale"]["url"] != f.api.URL+"/mcp" {
+		t.Fatalf(".vscode/mcp.json = %s (%v)", data, err)
+	}
+	if code, out, _ := f.run(t, "--client", "windsurf", "--project"); code != 0 || !strings.Contains(out, "skipped") {
+		t.Fatalf("windsurf --project = %d\n%s", code, out)
+	}
+
+	code, out, errOut := f.run(t, "--client", "windsurf", "--headless")
+	if code != 0 {
+		t.Fatalf("windsurf --headless exit %d\n%s\n%s", code, out, errOut)
+	}
+	data, err = os.ReadFile(filepath.Join(f.home, ".codeium", "windsurf", "mcp_config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var windsurf struct {
+		MCPServers map[string]struct {
+			ServerURL string            `json:"serverUrl"`
+			Headers   map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &windsurf); err != nil {
+		t.Fatal(err)
+	}
+	g := windsurf.MCPServers["gregale"]
+	if g.ServerURL != f.api.URL+"/mcp" || g.Headers["Authorization"] != "Bearer ${env:GREGALE_AGENT_KEY}" || strings.Contains(string(data), "fp_live_agentsecret") {
+		t.Fatalf("mcp_config.json = %s", data)
+	}
+}
+
+func TestMCPConnectRefusesJSONWithComments(t *testing.T) {
+	f := newMCPConnectFixture(t, "cursor")
+	path := filepath.Join(f.home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const before = "{\n  // my servers\n  \"mcpServers\": {}\n}\n"
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := f.run(t, "--client", "cursor")
+	if code != 1 || !strings.Contains(out, "not plain JSON") || !strings.Contains(out, `"gregale"`) {
+		t.Fatalf("exit %d\n%s; want a refusal with the entry to add", code, out)
+	}
+	if got, _ := os.ReadFile(path); string(got) != before {
+		t.Fatalf("a commented config was rewritten:\n%s", got)
+	}
+}
+
+func TestMCPConnectClaudeDesktopPrintsSteps(t *testing.T) {
+	f := newMCPConnectFixture(t)
+	code, out, _ := f.run(t, "--client", "claude-desktop")
+	if code != 0 || !strings.Contains(out, "Claude Desktop: manual") || !strings.Contains(out, "Settings → Connectors") || !strings.Contains(out, f.api.URL+"/mcp") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+}
+
+func TestMCPConnectCheckJSONClients(t *testing.T) {
+	f := newMCPConnectFixture(t, "cursor", "windsurf")
+	t.Chdir(t.TempDir())
+	t.Setenv("GREGALE_AGENT_KEY", "")
+	if code, _, errOut := f.run(t, "--client", "cursor"); code != 0 {
+		t.Fatalf("connect cursor: %s", errOut)
+	}
+	code, checks := f.check(t)
+	if code != 0 || checks["cursor"]["status"] != "ok" || checks["windsurf"]["status"] != "warn" || checks["vscode"]["status"] != "skip" || checks["claude-desktop"]["status"] != "skip" {
+		t.Fatalf("exit %d checks %v", code, checks)
+	}
+}
+
+// ghFake answers the gh commands `mcp connect --ci` runs.
+type ghFake struct {
+	secrets []string // names gh secret list reports
+	calls   []string
+	stored  map[string]string // secret name -> value read on stdin
+	noAuth  bool
+}
+
+func (f *mcpConnectFixture) withGH(t *testing.T, gh *ghFake) {
+	t.Helper()
+	f.binaries["gh"] = true
+	gh.stored = map[string]string{}
+	oldRun, oldStdin := *main.MCPConnectRun, *main.MCPConnectRunStdin
+	t.Cleanup(func() { *main.MCPConnectRun, *main.MCPConnectRunStdin = oldRun, oldStdin })
+	*main.MCPConnectRun = func(name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		gh.calls = append(gh.calls, call)
+		switch {
+		case call == "gh auth status":
+			if gh.noAuth {
+				return "You are not logged into any GitHub hosts", errors.New("exit status 1")
+			}
+			return "Logged in", nil
+		case strings.HasPrefix(call, "gh repo view"):
+			return "acme/api\n", nil
+		case strings.HasPrefix(call, "gh secret list"):
+			var list []map[string]string
+			for _, s := range gh.secrets {
+				list = append(list, map[string]string{"name": s})
+			}
+			data, _ := json.Marshal(list)
+			return string(data), nil
+		}
+		return oldRun(name, args...)
+	}
+	*main.MCPConnectRunStdin = func(stdin, name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		gh.calls = append(gh.calls, call)
+		if strings.HasPrefix(call, "gh secret set ") {
+			gh.stored[args[2]] = stdin
+		}
+		return "", nil
+	}
+}
+
+// mcp connect --ci (ADR-20261109121411 §8): the key goes to gh on stdin and
+// nowhere else; the workflow is written once.
+func TestMCPConnectCI(t *testing.T) {
+	f := newMCPConnectFixture(t)
+	gh := &ghFake{}
+	f.withGH(t, gh)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	code, out, errOut := f.run(t, "--ci")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+	if gh.stored["GREGALE_AGENT_KEY"] != "fp_live_agentsecret" || !containsCall(gh.calls, "gh secret set GREGALE_AGENT_KEY --repo acme/api") {
+		t.Fatalf("gh calls %v stored %v", gh.calls, gh.stored)
+	}
+	for _, c := range gh.calls {
+		if strings.Contains(c, "fp_live_agentsecret") {
+			t.Fatalf("the key was passed as an argument: %s", c)
+		}
+	}
+	if strings.Contains(out+errOut, "fp_live_agentsecret") {
+		t.Fatalf("the key was printed:\n%s%s", out, errOut)
+	}
+	if f.keyRequest.Label != "ci-acme-api" || strings.Join(f.keyRequest.Scopes, ",") != "agent,deploy:write" || f.keyRequest.ApprovalCategories != nil {
+		t.Fatalf("key request = %+v; want agent,deploy:write with the default approvals", f.keyRequest)
+	}
+	workflow, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", "gregale-agent.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		On   map[string]any `yaml:"on"`
+		Jobs map[string]struct {
+			Env   map[string]string `yaml:"env"`
+			Steps []map[string]any  `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(workflow, &parsed); err != nil {
+		t.Fatalf("the workflow is not valid YAML: %v\n%s", err, workflow)
+	}
+	if job := parsed.Jobs["agent"]; job.Env["GREGALE_AGENT_KEY"] != "${{ secrets.GREGALE_AGENT_KEY }}" || len(job.Steps) != 3 || parsed.On["workflow_dispatch"] == nil {
+		t.Fatalf("workflow = %+v", parsed)
+	}
+	for _, want := range []string{"secrets.GREGALE_AGENT_KEY", f.api.URL + "/mcp", "workflow_dispatch", "--mcp-config"} {
+		if !strings.Contains(string(workflow), want) {
+			t.Fatalf("workflow lacks %q:\n%s", want, workflow)
+		}
+	}
+	if !strings.Contains(out, "gh workflow run gregale-agent.yml --repo acme/api") {
+		t.Fatalf("output:\n%s", out)
+	}
+
+	// A second run refuses to replace the secret; --force mints a new key,
+	// stores it and rewrites the workflow.
+	gh.secrets = []string{"GREGALE_AGENT_KEY"}
+	if code, _, errOut := f.run(t, "--ci"); code == 0 || !strings.Contains(errOut, "--force") {
+		t.Fatalf("existing secret: exit %d %s", code, errOut)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".github", "workflows", "gregale-agent.yml"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := f.run(t, "--ci", "--repo", "acme/web", "--approvals", "none", "--force"); code != 0 {
+		t.Fatalf("--force exit %d\n%s\n%s", code, out, errOut)
+	}
+	if f.keyCreates != 2 || f.keyRequest.ApprovalCategories == nil || len(*f.keyRequest.ApprovalCategories) != 0 || f.keyRequest.Label != "ci-acme-web" {
+		t.Fatalf("second key = %+v (%d minted)", f.keyRequest, f.keyCreates)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, ".github", "workflows", "gregale-agent.yml")); string(data) == "mine\n" {
+		t.Fatal("--force kept the old workflow")
+	}
+}
+
+func TestMCPConnectCIRefusals(t *testing.T) {
+	f := newMCPConnectFixture(t)
+	t.Chdir(t.TempDir())
+	if code, _, errOut := f.run(t, "--ci"); code == 0 || !strings.Contains(errOut, "cli.github.com") {
+		t.Fatalf("no gh: exit %d %s", code, errOut)
+	}
+	gh := &ghFake{noAuth: true}
+	f.withGH(t, gh)
+	if code, _, errOut := f.run(t, "--ci"); code == 0 || !strings.Contains(errOut, "gh auth login") {
+		t.Fatalf("not signed in: exit %d %s", code, errOut)
+	}
+	gh.noAuth = false
+	if code, _, errOut := f.run(t, "--ci", "--repo", "not a repo"); code == 0 || !strings.Contains(errOut, "OWNER/NAME") {
+		t.Fatalf("bad repo: exit %d %s", code, errOut)
+	}
+	code, out, _ := f.run(t, "--ci", "--dry-run")
+	if code != 0 || !strings.Contains(out, "Dry run") || f.keyCreates != 0 || len(gh.stored) != 0 || fileExistsT(".github/workflows/gregale-agent.yml") {
+		t.Fatalf("dry run: exit %d, %d keys, stored %v\n%s", code, f.keyCreates, gh.stored, out)
+	}
+}
+
+func fileExistsT(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

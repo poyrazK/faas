@@ -243,6 +243,10 @@
       when:
         - faas_edgednsd_managed | default(false) | bool
         - faas_cp_converge_roles | default(none) is none or 'edgednsd_service' in faas_cp_converge_roles
+    # ADR-20261109170000: the artifact signer. Off (and removed) while
+    # faas_signd_listen is empty.
+    - role: signd_service
+      when: faas_cp_converge_roles | default(none) is none or 'signd_service' in faas_cp_converge_roles
     # ADR-20261023104734 contract amendment: after every role that installs a
     # unit running as the shared `faas` OS user, move those units to faas_shared.
     - role: postgres_shared_runtime_role
@@ -337,6 +341,9 @@
     - role: builderd_service
     - role: compute_only_service
     - role: profiled_service
+    # ADR-20261110183000: observe-only runtime detection; off until
+    # faas_tetragon_enabled. Before alloy, so its export directory exists.
+    - role: tetragon
     # ADR-20261023124955 §2: ship this node's platform journal to Loki on the
     # control plane, with a Promtail leaf issued by the control plane's CA.
     - role: platform_logs_pki

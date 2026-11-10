@@ -12612,7 +12612,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          description: 'An API key was used, or a recent authenticator verification is required (`step_up_required`).'
+          description: 'An API key was used, a recent authenticator verification is required (`step_up_required`), or, on an account with neither a password nor an authenticator, the browser session signed in more than 15 minutes ago (`recent_sign_in_required`): sign in again.'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -12674,6 +12674,9 @@ paths:
       responses:
         '204': { description: Sign-in method unlinked. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'A recent authenticator verification is required (`step_up_required`), or, without an authenticator, the browser session signed in more than 15 minutes ago (`recent_sign_in_required`): sign in again.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '404':
           description: The provider is not linked to this account.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
@@ -13107,6 +13110,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/MFAEnrollResponse'
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'An API key was used, or the account has no password and the browser session signed in more than 15 minutes ago (`recent_sign_in_required`): sign in again.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '409':
           description: Already enrolled. Call /v1/account/mfa/disable first.
           content:
@@ -26841,7 +26847,9 @@ paths:
         '503':
           description: |
             The GitHub integration unreachable or source-ref tarball fetch failed
-            (code: source_ref_unavailable). Retry in ~30s.
+            (code: source_ref_unavailable). Retry in ~30s. A PR preview whose
+            managed PostgreSQL database is still provisioning answers
+            code: preview_database_provisioning; retry after Retry-After.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
