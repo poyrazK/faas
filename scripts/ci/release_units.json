@@ -177,6 +177,7 @@
       "deploy/ansible/roles/database_vmmd/",
       "deploy/ansible/roles/dbbackupd_service/",
       "deploy/ansible/roles/github_actions_runner/",
+      "deploy/ansible/roles/go_cache_retention/",
       "deploy/ansible/roles/metal-h2c-acceptance/",
       "deploy/ansible/roles/native_acceptance_host/",
       "deploy/ansible/roles/pgproxyd_service/",

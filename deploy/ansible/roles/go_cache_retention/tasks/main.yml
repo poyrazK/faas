@@ -1,0 +1,57 @@
+- name: go_cache_retention — create configuration directory
+  ansible.builtin.file:
+    path: /etc/faas
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Mode only, as in canary_artifact_retention: node_exporter may not be
+# installed on an acceptance host.
+- name: go_cache_retention — create node exporter textfile directory
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    mode: "0775"
+
+- name: go_cache_retention — install trim helper
+  ansible.builtin.copy:
+    src: faas-go-cache-trim
+    dest: /usr/local/sbin/faas-go-cache-trim
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: go_cache_retention — render policy
+  ansible.builtin.template:
+    src: go-cache-trim.json.j2
+    dest: /etc/faas/go-cache-trim.json
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: go_cache_retention — install trim service
+  ansible.builtin.copy:
+    src: faas-go-cache-trim.service
+    dest: /etc/systemd/system/faas-go-cache-trim.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: daemon-reload go cache retention
+
+- name: go_cache_retention — install trim timer
+  ansible.builtin.copy:
+    src: faas-go-cache-trim.timer
+    dest: /etc/systemd/system/faas-go-cache-trim.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: daemon-reload go cache retention
+
+- name: go_cache_retention — enable periodic trim
+  ansible.builtin.systemd:
+    name: faas-go-cache-trim.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  failed_when: false

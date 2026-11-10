@@ -592,6 +592,17 @@ var MustCreateAlertRule = mustCreateAlertRule
 var MustSeedApp = mustSeedApp
 var MustSeedAppFor = mustSeedAppFor
 var MustSeedDeployment = mustSeedDeployment
+var LockUploadSession = lockUploadSession
+
+// UploadSessionLockTracked reports whether key still has an entry in the
+// upload-session lock map.
+func UploadSessionLockTracked(key string) bool {
+	uploadSessionLocksMu.Lock()
+	defer uploadSessionLocksMu.Unlock()
+	_, ok := uploadSessionLocks[key]
+	return ok
+}
+
 var MustSeedEdgeRuleApp = mustSeedEdgeRuleApp
 var NearestRunningTelemetryRow = nearestRunningTelemetryRow
 var NewAppSecretCredentialSink = newAppSecretCredentialSink
