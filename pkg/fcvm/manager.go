@@ -3901,6 +3901,15 @@ type WakeRequest struct {
 	StartupDeadlineS int
 	// DisableStartupCPUBoost opts out of the bounded startup CPU allowance.
 	DisableStartupCPUBoost bool
+	// CPUWeight is the instance's cgroup cpu.weight (ADR-20261109172421);
+	// 0 keeps the plan's weight. The json tag keeps the checkpoint wake
+	// commitment of a request without it unchanged.
+	CPUWeight int `json:",omitempty"`
+	// CPUUncapped runs the instance with cpu.max = max and no startup boost
+	// while CPUMillicores is the app default; an app's 250 or 500 millicore
+	// choice stays a cap, also after a live CPU policy update
+	// (ADR-20261109172421). False keeps the CPUMillicores quota.
+	CPUUncapped bool `json:",omitempty"`
 	// ExecutionMode is the declared lifecycle mode used to constrain the
 	// cold-boot characterization result. Empty preserves legacy inference.
 	ExecutionMode string
@@ -4258,6 +4267,10 @@ type ColdBootRequest struct {
 	StartupDeadlineS int
 	// DisableStartupCPUBoost is forwarded to WakeRequest.
 	DisableStartupCPUBoost bool
+	// CPUWeight and CPUUncapped are forwarded to WakeRequest
+	// (ADR-20261109172421).
+	CPUWeight   int
+	CPUUncapped bool
 	// ExecutionMode is forwarded to WakeRequest. Empty preserves legacy
 	// characterization inference for direct callers predating ADR-137.
 	ExecutionMode string
@@ -4318,6 +4331,8 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		StartupDeadlineS:         req.StartupDeadlineS,
 		DisableStartupCPUBoost:   req.DisableStartupCPUBoost,
+		CPUWeight:                req.CPUWeight,
+		CPUUncapped:              req.CPUUncapped,
 		ExecutionMode:            req.ExecutionMode,
 		// PR #470-FU-B: forward the runtime id so the framework-ready
 		// receipt handler can label the warmup histogram. See
@@ -4705,6 +4720,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if m.nativeVMM() != nil && !req.Plan.Valid() {
 		return nil, fmt.Errorf("wake %s: invalid plan %q", req.Instance, req.Plan)
 	}
+	if req.CPUWeight < 0 || req.CPUWeight > MaxCPUWeight {
+		return nil, fmt.Errorf("wake %s: invalid cpu_weight %d (ADR-20261109172421)", req.Instance, req.CPUWeight)
+	}
 	ctx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
 	if err != nil {
 		return nil, err
@@ -4847,6 +4865,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.MemoryMaxMiB = wakeGuestMemoryMiB(req)
 	lease.CPUMillicores = req.CPUMillicores
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
+	lease.CPUWeight = req.CPUWeight
+	lease.CPUUncapped = req.CPUUncapped
 	lease.AppPort = req.Port
 	m.mu.Lock()
 	if m.waking == nil {

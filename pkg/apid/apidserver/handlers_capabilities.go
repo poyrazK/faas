@@ -47,6 +47,16 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			// imaged fails a release command while FAAS_RELEASE_PHASE_ENABLED
 			// is off, so it is advertised only when apid says it is on.
 			available = !s.releasePhaseOff
+		case "queue-pull-leases", "outbound-integrations":
+			// Pull leases and the outbound relay authenticate the instance with
+			// a vmmd-signed workload-identity token. ADR-1141 provisioning
+			// installs apid's cluster JWKS with vmmd's key; without it every
+			// lease is refused and every relay call is answered 503, so the
+			// feature is not advertised (found in production 2026-11-09).
+			available = s.workloadVerifier != nil
+			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
+				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
+			}
 		case "custom-domains":
 			// production-us hunt #8: with ADR-520 on-demand TLS off, a
 			// customer hostname can never obtain a certificate or reach

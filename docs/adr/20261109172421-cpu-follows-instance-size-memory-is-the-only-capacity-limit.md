@@ -23,8 +23,12 @@
 - **Related:** ADR-909 (admission by measured memory), ADR-005 (cold boot
   always works), ADR-20261106214916 (snapshot refresh).
 - **Switches:** schedd runtime config `cpu_admission` = `enforce` | `observe`
-  (default `enforce`), and `cpu_model` = `plan` | `size` (default `plan`).
-  Defaults and bounds live in `pkg/api/limits.go`.
+  (default `enforce`), and `cpu_size_apps`: app IDs, or `*` for every app,
+  whose CPU follows size (default empty: every app on its plan). An earlier
+  draft named the second switch `cpu_model` = `plan` | `size`; a list lets
+  test apps go first, `*` is the fleet flip, and `cpu_model` already names a
+  host's CPU signature (ADR-20261024225612). Defaults and bounds live in
+  `pkg/api/limits.go`.
 
 ## Context
 
@@ -78,8 +82,10 @@ Measured problems:
    - Builders, jobs, data-repair sandboxes and agent runs keep their own CPU
      rules.
 3. **A busy host shares CPU by memory.**
-   - Every app instance sits directly under `faas-tenant.slice`; the
-     per-plan sub-slices are retired.
+   - Plan priority between instances ends. Until vmmd's cgroup paths stop
+     depending on the plan, instances stay in the per-plan sub-slices, which
+     all get the same `CPUWeight` (see Rollout 2–3). The end state is every
+     app instance directly under `faas-tenant.slice`.
    - Each instance gets `cpu.weight = max(1, ram_mb / 16)`: 8 at 128 MB, 32
      at 512 MB, 128 at 2 GB.
    - Under contention each instance therefore gets at least
@@ -149,11 +155,13 @@ Measured problems:
     (`ErrSnapshotVCPUMismatch`). The wake cold-boots through the existing
     fallback (ADR-005).
   - Snapshot refresh re-captures recently active apps in the background:
-    `cpu_model` joins `runtimeconfig.CPUShapeKeys`, so a flip reruns every
-    node's refresh pass.
-- **Transition.** Instances started under a per-plan sub-slice keep it until
-  they park (at most the plan's idle timeout). Meanwhile they compete as their
-  sub-slice's weight.
+    `cpu_size_apps` joins `runtimeconfig.CPUShapeKeys`, so a change reruns
+    every node's refresh pass, and the pass replays its history to find
+    snapshots captured at the old count.
+- **Transition.** While instances stay in the per-plan sub-slices, the
+  sub-slices share a busy host equally and each divides its share by its
+  instances' weights. That is exact within a plan and close across plans
+  while one plan holds most instances; it ends with the flat hierarchy.
 - **Abuse.** A CPU-burning tenant only gets idle CPU and cannot take another
   instance's share. Sustained high CPU per app is measured, and a guard is
   added only if needed.
@@ -165,23 +173,35 @@ schema change ships before its first user.
 
 1. **This ADR.**
 2. **vmmd.**
-   - Accepts two new optional wake and cold-boot fields: `cpu_weight` and
-     `cpu_uncapped` (`omitempty`; absent keeps today's behavior).
-   - With them, it places the instance directly under `faas-tenant.slice`,
-     writes the weight, and leaves `cpu.max` at `max`. Not sent by schedd yet.
-3. **Deploy.** Per-host tenant `CPUQuota` with the platform reserve, in
-   `90-host-capacity.conf`.
+   - Accepts two new optional `AppSpec` fields, `cpu_weight` and
+     `cpu_uncapped` (absent keeps today's behavior), on restores and cold
+     boots.
+   - With them, the jailer scope gets the instance's weight, `cpu.max` is
+     `max` and there is no startup boost; the cgroup fence repairs to those
+     values. Not sent by schedd yet.
+   - The instance stays in its plan's sub-slice: vmmd derives every cgroup
+     path, and the plan of a VM recovered after a restart, from the plan.
+     Moving to the flat hierarchy needs that derivation changed first (a
+     later step).
+3. **Deploy.**
+   - Per-host tenant `CPUQuota` with the platform reserve, in
+     `90-host-capacity.conf`.
+   - The four per-plan sub-slices get the same `CPUWeight`, ending plan
+     priority.
 4. **schedd `cpu_admission = observe`.**
    - CPU gates log and count what they would have refused
      (`schedd_cpu_admission_would_refuse_total{gate}`) and admit on memory.
    - The capacity trigger and `admission_reserve_node` stop refusing on CPU
      (expand/contract migration). Turn it on fleet-wide first: it alone ends
      the canary refusals.
-5. **schedd `cpu_model = size`.**
-   - vCPUs and weight from `ram_mb`, uncapped `cpu.max`.
-   - `capacity_vcpu` holds the booted count.
-   - Order: turn snapshot refresh `on`, try the test apps, then flip the
-     fleet.
+5. **schedd `cpu_size_apps`.**
+   - A listed app: vCPUs and weight from `ram_mb`, uncapped `cpu.max`
+     (`cpu_uncapped`; vmmd keeps a 250 or 500 millicore choice as a cap,
+     also across live CPU policy updates), and a booking of its RAM's CPU
+     baseline. It takes precedence over `guest_vcpu_from_cpu_apps`.
+   - `capacity_vcpu` holds the booted count (a capacity trigger migration,
+     shipped separately).
+   - Order: turn snapshot refresh `on`, list the test apps, then set `*`.
 6. **Retire.** The per-plan CPU fields in `pkg/api/limits.go` (`VCPU`,
    `CPUWeight`, `CPUQuotaUS`, `CPUPeriodUS`), the plan sub-slices, the
    `guest_vcpu_*` and `app_cpu_*` shape keys, and the vCPU budget gate: one

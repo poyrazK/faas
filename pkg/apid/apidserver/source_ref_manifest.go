@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"path"
 	"reflect"
@@ -953,6 +954,9 @@ func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
 		return prob
 	}
+	if prob := s.afterRestoreBudgetProblem(ctx, acct.ID, app.ID, req.AfterRestore); prob != nil {
+		return prob
+	}
 	if prob := s.executionModeApprovalProblem(ctx, app, &req); prob != nil {
 		return prob
 	}
@@ -1108,7 +1112,13 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 	leftFields, rightFields := *left, *right
 	leftFields.Targets, rightFields.Targets = nil, nil
 	leftFields.Schedules, rightFields.Schedules = nil, nil
-	return reflect.DeepEqual(leftFields, rightFields) && slices.Equal(left.Targets, right.Targets) && slices.Equal(left.Schedules, right.Schedules)
+	return reflect.DeepEqual(leftFields, rightFields) && slices.EqualFunc(left.Targets, right.Targets, scalingTargetsEqual) &&
+		slices.Equal(left.Schedules, right.Schedules)
+}
+
+// scalingTargetsEqual compares targets with nil and empty labels alike.
+func scalingTargetsEqual(a, b state.ScalingTarget) bool {
+	return a.Metric == b.Metric && a.Value == b.Value && a.Name == b.Name && maps.Equal(a.Labels, b.Labels)
 }
 
 func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Problem {

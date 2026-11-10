@@ -24710,7 +24710,7 @@ components:
         postgres_majors: {type: array, items: {type: integer, minimum: 12, maximum: 99}}
         service_classes: {type: array, items: {type: string, enum: [development, burstable, production]}}
         availability: {type: array, items: {type: string, enum: [single_zone, high_availability]}}
-        credential_access: {type: array, items: {type: string, enum: [read_write, read_only, migration, data_api, auth]}}
+        credential_access: {type: array, items: {type: string, enum: [read_write, read_only, migration, data_api, auth, session]}}
         scale_to_zero: {type: boolean}
         always_on: {type: boolean}
         pooled_connections: {type: boolean}
@@ -24907,7 +24907,7 @@ components:
         app_id: {type: string, minLength: 1, maxLength: 128}
         scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
         environment_key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$'}
-        access: {type: string, enum: [read_write, read_only, migration, data_api, auth]}
+        access: {type: string, enum: [read_write, read_only, migration, data_api, auth, session]}
         credential_generation: {type: integer, format: int64, minimum: 1}
         rotation_pending: {type: boolean, description: The previous provider credential remains valid until the rolling app runtime refresh completes.}
         state: {type: string, enum: [provisioning, ready, deleting, retiring, failed, deleted]}
@@ -25016,7 +25016,7 @@ components:
         app_id: {type: string, minLength: 1, maxLength: 128}
         scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
         environment_key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$'}
-        access: {type: string, enum: [read_write, read_only, migration, data_api, auth], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved.}
+        access: {type: string, enum: [read_write, read_only, migration, data_api, auth, session], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved.}
     ObjectStoragePolicy:
       description: Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit gateway_safety_v1 requires a coverage start, proxied transfers, billing off and no cost ceiling; all other budgets remain positive and finite.
       type: object
@@ -28291,6 +28291,11 @@ components:
           type: string
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           example: orders_pending
+        labels:
+          description: "custom targets only: watch the one labelled gauge series of the metric with exactly these labels instead of its aggregate. Keys match ^[a-z_][a-z0-9_]{0,62}$."
+          type: object
+          maxProperties: 3
+          additionalProperties: {type: string, maxLength: 128}
         value:
           description: "Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside `targets` it must be > 0. queue_depth requires a positive per-worker backlog budget, and cpu is capped at 100."
           type: number
@@ -36088,6 +36093,11 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'The pushed custom metric a custom_metric rule watches. Present only when metric is custom_metric.'
           example: orders_pending
+        custom_metric_labels:
+          type: object
+          additionalProperties: {type: string, maxLength: 128}
+          maxProperties: 3
+          description: 'The labelled series a custom_metric rule watches: the series with exactly these labels. Absent when the rule watches the aggregate.'
         log_query:
           type: string
           description: 'The canonical log search filters a log_search_matches rule counts. Present only when metric is log_search_matches.'
@@ -36188,6 +36198,11 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h.'
           example: orders_pending
+        custom_metric_labels:
+          type: object
+          additionalProperties: {type: string, maxLength: 128}
+          maxProperties: 3
+          description: 'custom_metric rules only: watch the one labelled series with exactly these labels instead of the aggregate (counters summed, gauges max across series). Keys match ^[a-z_][a-z0-9_]{0,62}$.'
         log_query:
           type: string
           maxLength: 2048
@@ -43791,6 +43806,14 @@ components:
       properties:
         enabled: {type: boolean}
         sample_ratio: {type: number, exclusiveMinimum: 0, maximum: 1, default: 1, description: "Fraction of requests whose spans the app exports."}
+        forward: {$ref: '#/components/schemas/TracingForward'}
+        metrics: {type: boolean, default: false, description: "Sends the app's OpenTelemetry metrics to Gregale from inside its instance, stored as its custom metrics (no API key needed). Requires tracing to be enabled and a plan with custom metrics. The managed auto-instrumentation's own metrics count toward the app's metric limit."}
+    TracingForward:
+      description: "Sends a copy of every OpenTelemetry trace and log export the app makes to your own OTLP/HTTP endpoint, from inside the app's instance. Requires tracing to be enabled."
+      type: object
+      properties:
+        endpoint: {type: string, maxLength: 2048, description: "Base OTLP/HTTP URL (http or https, no credentials, query or fragment); /v1/traces and /v1/logs are appended."}
+        headers_secret: {type: string, maxLength: 128, description: "Name of an app secret holding request headers as comma-separated key=value pairs, in the OTEL_EXPORTER_OTLP_HEADERS format."}
     ProfileQuery:
       description: Authorized deployment CPU capture window.
       type: object

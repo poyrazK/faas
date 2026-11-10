@@ -54,7 +54,7 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 		connectionLimit: request.ConnectionLimit,
 		authOwner:       "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
 		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
-		database: p.databaseName, access: request.Access, legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID}
+		database: p.databaseName, access: request.Access.Privileges(), legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID}
 }
 
 func (m *sqlCredentialRoles) connection(ctx context.Context, material managedpostgres.CredentialMaterial) (*pgx.Conn, error) {

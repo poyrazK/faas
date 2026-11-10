@@ -294,7 +294,7 @@ func runSealDomainMigrate(args []string) error {
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
 	bindAccounts := fs.Bool("bind-accounts", false, "runtime only: re-seal every stored runtime secret bound to the account that owns it (ADR-20261023173624)")
 	runtimeSigningKey := fs.String("runtime-signing-key", "", "runtime only: apid's runtime secret signing key; signs what this re-seals (ADR 20261028161502)")
-	check := fs.Bool("check", false, "outbound, storage, alerting, source, build and runtime only: write nothing, and fail while a value still opens with the fleet or host identity (run before its readers drop them)")
+	check := fs.Bool("check", false, "every domain but account: write nothing, and fail while a value still opens with the fleet or host identity (run before its readers drop them)")
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -305,9 +305,10 @@ func runSealDomainMigrate(args []string) error {
 	}
 	if *check {
 		switch d {
-		case sealdomain.Outbound, sealdomain.Storage, sealdomain.Alerting, sealdomain.Source, sealdomain.Build, sealdomain.Runtime:
+		case sealdomain.Outbound, sealdomain.Storage, sealdomain.Alerting, sealdomain.Source, sealdomain.Build, sealdomain.Runtime,
+			sealdomain.Edge, sealdomain.Delivery, sealdomain.Control:
 		default:
-			return errors.New("--check applies to --domain outbound, storage, alerting, source, build and runtime only in this release")
+			return errors.New("--check applies to --domain outbound, storage, alerting, source, build, runtime, edge, delivery and control only in this release")
 		}
 		return runSealDomainCheck(*dsn, *dbEnv, d, *dir, *fleetKey, *hostKey, *jsonOut || jsonOutput)
 	}
@@ -456,6 +457,12 @@ func runSealDomainCheck(dsn, dbEnv string, d sealdomain.Domain, dir, fleetKey, h
 		report, err = sealmigrate.CheckBuild(ctx, store, domain, legacy)
 	case sealdomain.Runtime:
 		report, err = sealmigrate.CheckRuntime(ctx, store, domain, legacy)
+	case sealdomain.Edge:
+		report, err = sealmigrate.CheckEdge(ctx, store, domain, legacy)
+	case sealdomain.Delivery:
+		report, err = sealmigrate.CheckDelivery(ctx, store, domain, legacy)
+	case sealdomain.Control:
+		report, err = sealmigrate.CheckControl(ctx, store, domain, legacy)
 	default:
 		report, err = sealmigrate.CheckOutbound(ctx, store, domain, legacy)
 	}
@@ -493,6 +500,8 @@ func skippedReason(d sealdomain.Domain) string {
 		return "unexpired GitHub install tokens sealed before the domain; they expire within the hour and githubd seals their successors to the domain"
 	case sealdomain.Build:
 		return "unexpired crash captures imaged encrypts or stages with the fleet key; vmmd seals new ones at the source, and these expire within seven days"
+	case sealdomain.Edge:
+		return "application-standard log destinations are immutable versions sealed before the domain; publish a new version of each standard's destination (its drains follow)"
 	case sealdomain.Runtime:
 		return "short-lived copies (an open config guard's replaced secrets, a cutover's unpublished credentials) and crash capture keys sealed before the domain; they clear as guards close, cutovers finish and captures expire"
 	}

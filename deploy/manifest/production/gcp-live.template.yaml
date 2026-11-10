@@ -175,6 +175,11 @@ public_edge:
   # ADR-20261031105055: Cloudflare sends almost every request to one
   # connector; each edge hands a host to the node that last served it.
   placement_routing: true
+  # ADR-20261102081618 §5: spread each app host over every node it runs on,
+  # and serve from the node's own instances first. On by hand since
+  # 2026-11-02 (60-faas-edge-node-set.conf, 60-faas-edge-local-first.conf).
+  placement_node_set: true
+  local_first: true
   # ADR-20261102081618: the edges also take TLS on 443 at their forwarded
   # address, beside the tunnel. The role writes the listener and removes the
   # hand-placed 60-faas-edge-direct.conf it replaces.
@@ -210,6 +215,21 @@ public_edge:
       transparency:
         domain: gregale.dev
         allow_names: ["gregale.dev", "*.gregale.dev", "operations.gregale.dev"]
+
+# Request- and wake-path switches on the compute nodes, each measured on
+# production by hand before it moved here (2026-11-06): the node journals
+# request IDs and collapses request telemetry per minute (control-plane
+# statements per request 0.21 -> 0.13), the edge keeps connections to each
+# node's gatewayd-internal, gatewayd-internal reaches vmmd on its local
+# socket, and schedd runs the frozen tier with its fast path and owner cache.
+hot_path:
+  local_request_id_journal: true
+  request_telemetry_minute_collapse: true
+  local_vmmd_data_socket: true
+  edge_keepalive_per_node: true
+  frozen_tier: true
+  frozen_fast_path: true
+  owner_cache: true
 
 # Customer log archive (pkg/logarchive). Keyless: every node's attached
 # service account holds roles/storage.objectUser on the bucket, whose

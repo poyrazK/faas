@@ -113,7 +113,7 @@ COMMENT ON ROLE %[1]s IS 'gregale:credential:v1:%[4]s:%[5]s';
 BEGIN;
 GRANT CONNECT ON DATABASE %[2]s TO %[1]s;
 `, role, database)
-	switch access {
+	switch access.Privileges() {
 	case managedpostgres.CredentialMigration:
 		fmt.Fprintf(&b, "GRANT %[2]s TO %[1]s;\nALTER ROLE %[1]s SET role TO %[2]s;\n", role, schemaOwner)
 	case managedpostgres.CredentialReadOnly:

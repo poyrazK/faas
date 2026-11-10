@@ -1,6 +1,6 @@
 # ADR-20261108160000: Custom metrics take OTLP deltas, up-down counters, histograms and bounded labels, capped per plan
 
-- **Status:** accepted (slices A and C1 implemented here; B on PR #6788; C2 next)
+- **Status:** accepted (slices A, B, C1 and C2 implemented)
 - **Date:** 2026-11-08
 - **Amends:** ADR-202 (pushed custom metrics: the flat cap of 5 names per
   app becomes a per-plan cap), ADR-745 (OTLP metrics ingestion: more types
@@ -58,16 +58,28 @@ The user decided (2026-11-08):
 - Docs recommend delta temporality: several instances sending one counter
   add up as deltas, while cumulative totals replace each other.
 
-### Slice B — in-VM metrics (next)
+### Slice B — in-VM metrics (implemented; opt-in `tracing.metrics`)
 
 The guest bridge serves `/v1/metrics` and `MetricsService/Export`, the
 host carries metric frames like trace and log frames, and apid stores them
-through the same translation and caps as the public endpoint. Gregale stops
-forcing `OTEL_METRICS_EXPORTER=none` when tracing is on, and sets delta
-temporality unless the app chose one. `tracing.forward` copies metric
+through the same translation and caps as the public endpoint. With
+`tracing.metrics: true` (user decision 2026-11-08: opt-in, because the
+managed auto-instrumentation's own metrics would otherwise land on every
+traced app's next deploy and fill its cap) Gregale points the metrics
+exporter at the bridge with delta temporality unless the app chose one;
+without it the exporter stays `none`. `tracing.forward` copies metric
 exports too.
 
-### Slice C — labels (C1 implemented; C2 rule label filters next)
+- Frames carry `TraceCodecMetricsSignal` (0x40). An older vmmd keeps the bit
+  in the codec and refuses the frame as an unknown codec; a vmmd facing an
+  apid without `SpansWriter.IngestGuestMetrics` gets Unimplemented and
+  refuses permanently, so SDKs never retry into skew.
+- vmmd forwards metric frames only for apps with `tracing.metrics`; apid
+  checks the owner's plan allows custom metrics, applies its own per-account
+  export cap (the log export rate) and stores only for the app's own
+  account.
+
+### Slice C — labels (C1 and C2 implemented)
 
 Each metric name may carry up to 3 label keys and a bounded number of label
 combinations; each combination is a series stored and exported with its
@@ -106,8 +118,23 @@ C1 (this change):
   endpoint returns each metric's series and `max_series`; the history
   endpoint takes `?labels=<key>`.
 
-C2 (next): an optional label filter on alert rules, release gates and
-scaling targets that read one series instead of the aggregate.
+C2: an optional label filter selects one series instead of the aggregate.
+The filter is the series' exact label set, matched by its canonical key:
+
+- **Scaling targets:** `labels` on a custom target; schedd reads that
+  gauge series from `app_custom_metric_series` (a counter series is
+  ignored, as for the aggregate).
+- **Alert rules:** `alert_rules.custom_metric_labels` (jsonb, NULL for the
+  aggregate; CHECK: only with `metric = 'custom_metric'`). The evaluator
+  queries `gregale_app_custom_metric_series{labels="<key>"}` instead of
+  `gregale_app_custom_metric`; a series no longer exported is insufficient.
+  Like the metric name, the filter is set at create time.
+- **Release gates:** `app_release_gates.metric_labels` (CHECK: only on
+  `custom_metric` and `metric_change` gates). Gate evidence reads the
+  series' history from Prometheus, or the stored series row without it.
+
+Filters take at most 3 labels with keys shaped like normalised attribute
+keys and values of at most 128 bytes, the same bounds as ingestion.
 
 ## Consequences
 

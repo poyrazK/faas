@@ -1547,6 +1547,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	}
 	if rule.CustomMetricName != "" {
 		m["custom_metric_name"] = rule.CustomMetricName
+		if len(rule.CustomMetricLabels) > 0 {
+			m["custom_metric_labels"] = rule.CustomMetricLabels
+		}
 	}
 	if rule.LogQuery != "" {
 		m["log_query"] = rule.LogQuery

@@ -139,6 +139,10 @@ type Manifest struct {
 	// platform zone. Today that is customer custom domains (ADR-520).
 	PublicEdge PublicEdge `yaml:"public_edge,omitempty"`
 
+	// HotPath turns on the compute nodes' request- and wake-path switches
+	// (hot_path.go).
+	HotPath HotPath `yaml:"hot_path,omitempty"`
+
 	// ManagedPostgres turns on native managed PostgreSQL (ADR-1027) on the
 	// fleet's database hosts (managed_postgres.go).
 	ManagedPostgres *ManagedPostgres `yaml:"managed_postgres,omitempty"`
@@ -1519,6 +1523,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PrivateDNS.validate()...)
 	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
 	errs = append(errs, m.PublicEdge.validate(m.Fleet.Hosts)...)
+	errs = append(errs, m.HotPath.validate(m.PublicEdge)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
 	errs = append(errs, m.validatePostgresStandby()...)

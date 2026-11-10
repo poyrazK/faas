@@ -1,4 +1,4 @@
-// adr: 20261102081618, 20261103163954
+// adr: 20261102081618, 20261103163954, 20261101085552
 package daemonunitspec
 
 import (
@@ -38,6 +38,54 @@ print(env.from_string(pathlib.Path(sys.argv[1]).read_text()).render(**json.loads
 			template: filepath.Join(roles, "gatewayd_public_edge_service", "templates", "99-faas-edge.conf.j2"),
 			variable: "faas_edge_client_limits",
 			line:     "Environment=FAAS_EDGE_CLIENT_LIMITS=1\n",
+			base:     map[string]any{"faas_edge_control_plane_target": "http://10.42.0.1:8090"},
+		},
+		{
+			template: filepath.Join(roles, "gatewayd_internal_service", "templates", "99-faas-role.conf.j2"),
+			variable: "faas_request_id_journal_local",
+			line:     "Environment=FAAS_REQUEST_ID_JOURNAL_LOCAL=1\n",
+			base:     map[string]any{"faas_box_role": "compute-only"},
+		},
+		{
+			template: filepath.Join(roles, "gatewayd_internal_service", "templates", "99-faas-role.conf.j2"),
+			variable: "faas_request_telemetry_minute_collapse",
+			line:     "Environment=FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE=1\n",
+			base:     map[string]any{"faas_box_role": "compute-only"},
+		},
+		{
+			template: filepath.Join(roles, "gatewayd_internal_service", "templates", "99-faas-role.conf.j2"),
+			variable: "faas_gateway_local_vmmd_socket",
+			line:     "Environment=FAAS_GATEWAY_LOCAL_VMMD_SOCKET=1\n",
+			base:     map[string]any{"faas_box_role": "compute-only"},
+		},
+		{
+			template: filepath.Join(roles, "vmmd_service", "templates", "99-faas-role.conf.j2"),
+			variable: "faas_vmmd_local_data_socket",
+			line:     "Environment=FAAS_VMMD_LOCAL_DATA_SOCKET=1\n",
+			base:     map[string]any{"faas_box_role": "compute-only"},
+		},
+		{
+			template: filepath.Join(roles, "compute_only_service", "templates", "99-faas-schedd-role.conf.j2"),
+			variable: "faas_schedd_frozen_tier",
+			line:     "Environment=FAAS_FROZEN_TIER=true\n",
+			base:     map[string]any{"faas_box_role": "compute-only"},
+		},
+		{
+			template: filepath.Join(roles, "compute_only_service", "templates", "99-faas-schedd-role.conf.j2"),
+			variable: "faas_schedd_frozen_fast_path",
+			line:     "Environment=FAAS_FROZEN_FAST_PATH=true\n",
+			base:     map[string]any{"faas_box_role": "compute-only"},
+		},
+		{
+			template: filepath.Join(roles, "compute_only_service", "templates", "99-faas-schedd-role.conf.j2"),
+			variable: "faas_schedd_owner_cache",
+			line:     "Environment=FAAS_OWNER_CACHE=true\n",
+			base:     map[string]any{"faas_box_role": "compute-only"},
+		},
+		{
+			template: filepath.Join(roles, "gatewayd_public_edge_service", "templates", "99-faas-edge.conf.j2"),
+			variable: "faas_internal_keepalive_per_node",
+			line:     "Environment=FAAS_INTERNAL_KEEPALIVE_PER_NODE=1\n",
 			base:     map[string]any{"faas_edge_control_plane_target": "http://10.42.0.1:8090"},
 		},
 		{

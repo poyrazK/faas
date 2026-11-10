@@ -729,6 +729,9 @@ type Engine struct {
 	// apps whose guest vCPU count follows their CPU quota
 	// (ADR-20261101160231, ADR-20261101215228).
 	guestVCPUApps atomic.Pointer[guestVCPUAppSet]
+	// cpuSizeApps (runtime config `cpu_size_apps`) lists the apps whose CPU
+	// follows instance size instead of plan (ADR-20261109172421).
+	cpuSizeApps atomic.Pointer[guestVCPUAppSet]
 	// cpuShape holds the runtime-config values that shape a listed app's CPU
 	// (ADR-20261101215228); nil is the compiled shape.
 	cpuShape atomic.Pointer[api.CPUShape]
@@ -4077,6 +4080,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(e.appCPUMillicores(app, limits)),
+		CPUWeight: e.appCPUWeight(app), CPUUncapped: e.cpuBySize(app.ID),
 		EgressMbit: int32(limits.EgressMbit), RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
@@ -6225,6 +6229,8 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		BaseKey:            pinnedBase,
 		LayerKey:           layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount:          int32(e.guestVCPUs(app, limits)),
+		CPUWeight:          e.appCPUWeight(app),
+		CPUUncapped:        e.cpuBySize(app.ID),
 		MemSizeMiB:         int32(app.RAMMB),
 		CPUMillicores:      int32(e.appCPUMillicores(app, limits)),
 		EgressMbit:         int32(limits.EgressMbit),

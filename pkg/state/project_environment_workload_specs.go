@@ -357,6 +357,10 @@ var workloadAppFieldPolicies = map[string]WorkloadFieldPolicy{
 	"CORSDefaultEnabled":        WorkloadFieldCopy,
 	"CORSDefaultOrigins":        WorkloadFieldCopy,
 	"CreatedAt":                 WorkloadFieldOperational,
+
+	// The database's own counter for EgressAllowlist and EgressPorts
+	// (#6742); a clone's row starts its own.
+	"EgressAllowlistRevision": WorkloadFieldOperational,
 }
 
 func WorkloadAppFieldPolicies() map[string]WorkloadFieldPolicy {

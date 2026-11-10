@@ -2278,15 +2278,28 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 				"app", appID, "deployment", deploymentID, "attempt", attempt, "err", err)
 		}
 		if err != nil {
-			if snapshotPrimeInterruptedByShutdown(ctx, err) {
-				l.log.Info("sched: snapshot prime interrupted by daemon shutdown; leaving deployment recoverable",
-					"app", appID, "deployment", deploymentID, "err", err)
-				return
-			}
-			l.log.Warn("sched: prime failed", "app", appID, "deployment", deploymentID, "attempts", attempts, "err", err)
-			l.engine.markPrimeFailed(ctx, deploymentID, err)
+			l.finishFailedPrime(ctx, appID, deploymentID, attempts, err)
 		}
 	})
+}
+
+// finishFailedPrime decides what a prime that failed after its retries does
+// to the deployment: a shutdown or a node-capacity refusal inside
+// api.SnapshotPrimeCapacityMaxWait leaves it snapshotting for prime recovery;
+// anything else fails it.
+func (l *Loop) finishFailedPrime(ctx context.Context, appID, deploymentID string, attempts int, err error) {
+	if snapshotPrimeInterruptedByShutdown(ctx, err) {
+		l.log.Info("sched: snapshot prime interrupted by daemon shutdown; leaving deployment recoverable",
+			"app", appID, "deployment", deploymentID, "err", err)
+		return
+	}
+	if l.engine.primeAwaitsCapacity(ctx, deploymentID, err) {
+		l.log.Info("sched: snapshot prime refused for node capacity; prime recovery will retry",
+			"app", appID, "deployment", deploymentID, "max_wait", api.SnapshotPrimeCapacityMaxWait, "err", err)
+		return
+	}
+	l.log.Warn("sched: prime failed", "app", appID, "deployment", deploymentID, "attempts", attempts, "err", err)
+	l.engine.markPrimeFailed(ctx, deploymentID, err)
 }
 
 // waitPrimes blocks until every task dispatched off the loop has
