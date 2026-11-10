@@ -1,0 +1,114 @@
+name: Seal-domain key escrow
+
+# ADR-20261110210000 §2: moves the fleet and seal-domain private identities
+# from GitHub environment secrets into the control plane's root-only key
+# escrow (/etc/faas/secrets/key-escrow), so CD can run with
+# SEAL_DOMAIN_KEY_SOURCE=escrow and the secrets can be deleted. Run it once
+# per environment, then follow docs/runbooks/seal-domain-key-escrow.md.
+#
+# It never prints an identity, never replaces an escrowed identity with a
+# different one, and runs only from main (the environment's branch policy).
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: "Environment whose secrets to escrow on its control plane"
+        required: true
+        type: choice
+        options: [production, production-us]
+      mode:
+        description: "status lists the escrow; put escrows every set secret; rotate/retire act on one domain"
+        required: true
+        type: choice
+        default: status
+        options: [status, put, rotate, retire]
+      domain:
+        description: "rotate/retire only: the seal domain"
+        required: false
+        type: choice
+        default: none
+        options: [none, outbound, source, alerting, storage, control, delivery, account, runtime, build, edge, edge_tls]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.deploy_environment }}-key-escrow
+  cancel-in-progress: false
+
+jobs:
+  escrow:
+    name: Key escrow (${{ inputs.mode }})
+    if: github.repository == 'poyrazK/faas' && github.ref == 'refs/heads/main'
+    environment: ${{ inputs.deploy_environment }}
+    runs-on: ${{ fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
+    timeout-minutes: 10
+    env:
+      CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+      CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+      COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+      MODE: ${{ inputs.mode }}
+      DOMAIN: ${{ inputs.domain }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Escrow the private identities
+        env:
+          FLEET_AGE_KEY: ${{ inputs.mode == 'put' && secrets.FLEET_AGE_KEY || '' }}
+          SEAL_DOMAIN_OUTBOUND_AGE_KEY: ${{ inputs.mode == 'put' && secrets.SEAL_DOMAIN_OUTBOUND_AGE_KEY || '' }}
+          SEAL_DOMAIN_SOURCE_AGE_KEY: ${{ inputs.mode == 'put' && secrets.SEAL_DOMAIN_SOURCE_AGE_KEY || '' }}
+          SEAL_DOMAIN_ALERTING_AGE_KEY: ${{ inputs.mode == 'put' && secrets.SEAL_DOMAIN_ALERTING_AGE_KEY || '' }}
+          SEAL_DOMAIN_STORAGE_AGE_KEY: ${{ inputs.mode == 'put' && secrets.SEAL_DOMAIN_STORAGE_AGE_KEY || '' }}
+          SEAL_DOMAIN_CONTROL_AGE_KEY: ${{ inputs.mode == 'put' && secrets.SEAL_DOMAIN_CONTROL_AGE_KEY || '' }}
+          SEAL_DOMAIN_DELIVERY_AGE_KEY: ${{ inputs.mode == 'put' && secrets.SEAL_DOMAIN_DELIVERY_AGE_KEY || '' }}
+          SEAL_DOMAIN_ACCOUNT_AGE_KEY: ${{ inputs.mode == 'put' && secrets.SEAL_DOMAIN_ACCOUNT_AGE_KEY || '' }}
+          SEAL_DOMAIN_RUNTIME_AGE_KEY: ${{ inputs.mode == 'put' && secrets.SEAL_DOMAIN_RUNTIME_AGE_KEY || '' }}
+          SEAL_DOMAIN_BUILD_AGE_KEY: ${{ inputs.mode == 'put' && secrets.SEAL_DOMAIN_BUILD_AGE_KEY || '' }}
+          SEAL_DOMAIN_EDGE_AGE_KEY: ${{ inputs.mode == 'put' && secrets.SEAL_DOMAIN_EDGE_AGE_KEY || '' }}
+          SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ inputs.mode == 'put' && secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY || '' }}
+        run: |
+          set -euo pipefail
+          for name in CP_HOST CP_SSH_KEY COMPUTE_KNOWN_HOSTS; do
+            [[ -n "${!name:-}" ]] || { echo "::error::$name is not set in the environment" >&2; exit 1; }
+          done
+          work="$RUNNER_TEMP/key-escrow-ssh"
+          rm -rf -- "$work"
+          install -d -m 0700 "$work"
+          trap 'rm -rf -- "$work"' EXIT
+          printf '%s\n' "$CP_SSH_KEY" > "$work/key"
+          chmod 0600 "$work/key"
+          # Trust the control plane only with a host key pinned in
+          # COMPUTE_KNOWN_HOSTS, as the CD workflows do.
+          : > "$work/known_hosts"
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
+          while read -r _ key_type host_key; do
+            [[ -n "${host_key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$host_key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$host_key" >> "$work/known_hosts"
+            fi
+          done <<<"$scanned"
+          [[ -s "$work/known_hosts" ]] || { echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2; exit 1; }
+          export KEY_ESCROW_HOST="$CP_HOST" KEY_ESCROW_SSH_KEY="$work/key" KEY_ESCROW_KNOWN_HOSTS="$work/known_hosts"
+          names=(fleet outbound source alerting storage control delivery account runtime build edge edge_tls)
+          case "$MODE" in
+            put)
+              scripts/ci/key_escrow.sh put "${names[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+              ;;
+            rotate | retire)
+              [[ "$DOMAIN" != none ]] || { echo "::error::mode $MODE needs a domain" >&2; exit 1; }
+              # rotate prints only the new public recipient. Set it as the
+              # SEAL_DOMAIN_<DOMAIN>_AGE_RECIPIENT secret, roll out, re-seal,
+              # then retire (docs/runbooks/seal-domain-key-escrow.md).
+              scripts/ci/key_escrow.sh "$MODE" "$DOMAIN" | tee -a "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac
+          {
+            echo
+            echo "### Key escrow on the ${{ inputs.deploy_environment }} control plane"
+            echo
+            scripts/ci/key_escrow.sh status "${names[@]}" | sed 's/^/- /'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

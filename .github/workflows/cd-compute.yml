@@ -735,6 +735,14 @@ jobs:
       # ADR-831 amendment 17: one browser-challenge signing key for every
       # gateway of the environment (openssl rand -hex 32).
       GATEWAYD_EDGE_CHALLENGE_KEY: ${{ secrets.GATEWAYD_EDGE_CHALLENGE_KEY }}
+      # ADR-20261110210000 §2: with the environment variable
+      # SEAL_DOMAIN_KEY_SOURCE=escrow, the fleet and seal-domain private
+      # identities come from the control plane's key escrow over SSH, not
+      # from the FLEET_AGE_KEY / SEAL_DOMAIN_*_AGE_KEY secrets, which must
+      # then be deleted (scripts/ci/seal_domain_vars.sh refuses otherwise).
+      SEAL_DOMAIN_KEY_SOURCE: ${{ vars.SEAL_DOMAIN_KEY_SOURCE }}
+      KEY_ESCROW_HOST: ${{ vars.SEAL_DOMAIN_KEY_SOURCE == 'escrow' && (secrets.CP_HOST || secrets.DO_HOST) || '' }}
+      KEY_ESCROW_SSH_KEY_VALUE: ${{ vars.SEAL_DOMAIN_KEY_SOURCE == 'escrow' && (secrets.CP_SSH_KEY || secrets.DO_SSH_KEY) || '' }}
 
     steps:
       - name: Check out the release source and Ansible roles
@@ -922,14 +930,53 @@ jobs:
           GCP_FLEET_BUNDLE_ACCESS_TOKEN: ${{ steps.fleet_bundle_auth.outputs.access_token }}
         run: |
           set -euo pipefail
-          for required in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV COMPUTE_IMAGED_STORAGE_ENV \
-            COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY \
-            FLEET_AGE_KEY FLEET_AGE_RECIPIENT; do
+          required_secrets=(COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV COMPUTE_IMAGED_STORAGE_ENV
+            COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY FLEET_AGE_RECIPIENT)
+          case "${SEAL_DOMAIN_KEY_SOURCE:-secrets}" in
+            secrets) required_secrets+=(FLEET_AGE_KEY) ;;
+            escrow) required_secrets+=(KEY_ESCROW_HOST KEY_ESCROW_SSH_KEY_VALUE) ;;
+            *)
+              echo "::error::environment variable SEAL_DOMAIN_KEY_SOURCE is '${SEAL_DOMAIN_KEY_SOURCE}'; want secrets or escrow" >&2
+              exit 1
+              ;;
+          esac
+          for required in "${required_secrets[@]}"; do
             [[ -n "${!required:-}" ]] || {
               echo "::error::production secret $required is not configured" >&2
               exit 1
             }
           done
+          # ADR-20261110210000 §2: fetch the private identities this node
+          # needs from the control plane's key escrow, over SSH pinned to
+          # COMPUTE_KNOWN_HOSTS. They exist on this runner only for the step.
+          escrow_dir=""
+          if [[ "${SEAL_DOMAIN_KEY_SOURCE:-secrets}" == escrow ]]; then
+            if [[ ! -f scripts/ci/key_escrow.sh ]]; then
+              echo "::error::release ${RELEASE_ID:-unknown} predates the key escrow (ADR-20261110210000); deploy a newer release, or set SEAL_DOMAIN_KEY_SOURCE back to secrets only after restoring the private-identity secrets" >&2
+              exit 1
+            fi
+            escrow_work="$RUNNER_TEMP/key-escrow-ssh"
+            escrow_dir="$RUNNER_TEMP/key-escrow"
+            rm -rf -- "$escrow_work" "$escrow_dir"
+            install -d -m 0700 "$escrow_work"
+            trap 'rm -rf -- "$escrow_work" "$escrow_dir"' EXIT
+            printf '%s\n' "$KEY_ESCROW_SSH_KEY_VALUE" > "$escrow_work/key"
+            chmod 0600 "$escrow_work/key"
+            : > "$escrow_work/known_hosts"
+            while read -r _ key_type host_key; do
+              [[ -n "${host_key:-}" ]] || continue
+              if awk -v t="$key_type" -v k="$host_key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+                printf '%s %s %s\n' "$KEY_ESCROW_HOST" "$key_type" "$host_key" >> "$escrow_work/known_hosts"
+              fi
+            done < <(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$KEY_ESCROW_HOST" 2>/dev/null || true)
+            [[ -s "$escrow_work/known_hosts" ]] || {
+              echo "::error::the key escrow host presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
+              exit 1
+            }
+            mapfile -t escrow_names < <(scripts/ci/seal_domain_vars.sh --identities compute)
+            KEY_ESCROW_SSH_KEY="$escrow_work/key" KEY_ESCROW_KNOWN_HOSTS="$escrow_work/known_hosts" \
+              scripts/ci/key_escrow.sh fetch "$escrow_dir" fleet "${escrow_names[@]}"
+          fi
           if [[ "$PKI_SOURCE_KIND" == "secret" && -z "${COMPUTE_PKI_TARBALL_B64:-}" ]]; then
             echo "::error::production secret COMPUTE_PKI_TARBALL_B64 is not configured" >&2
             exit 1
@@ -978,7 +1025,11 @@ jobs:
           printf '%s\n' "$COMPUTE_VERIFY_KEY" > "$ARTIFACT_DIR/sign-pub.pem"
           # Keep the age identity byte-exact: the strict fleet-seal parser
           # rejects a trailing newline in the secret key.
-          printf '%s' "$FLEET_AGE_KEY" > "$ARTIFACT_DIR/fleet.age"
+          if [[ -n "$escrow_dir" ]]; then
+            install -m 0600 "$escrow_dir/fleet.age" "$ARTIFACT_DIR/fleet.age"
+          else
+            printf '%s' "$FLEET_AGE_KEY" > "$ARTIFACT_DIR/fleet.age"
+          fi
           printf '%s' "$FLEET_AGE_RECIPIENT" > "$ARTIFACT_DIR/fleet.age.pub"
           chmod 0400 "$ARTIFACT_DIR/fleet.age"
           chmod 0444 "$ARTIFACT_DIR/fleet.age.pub"
@@ -1075,7 +1126,8 @@ jobs:
           # ADR 20261022111812: the join's seal_domains role stages the compute
           # seal-domain identities (runtime, build, edge, control) held as SEAL_DOMAIN_*
           # secrets and proves them before the node is activated.
-          scripts/ci/seal_domain_vars.sh compute "$ARTIFACT_DIR/seal-domains" "$ARTIFACT_DIR/ansible-vars.yml"
+          SEAL_DOMAIN_ESCROW_DIR="$escrow_dir" \
+            scripts/ci/seal_domain_vars.sh compute "$ARTIFACT_DIR/seal-domains" "$ARTIFACT_DIR/ansible-vars.yml"
           # ADR-831 amendment 17 and ADR-20261102191500: the
           # GATEWAYD_EDGE_CHALLENGE_KEY secret is the gateway fleet key every
           # gateway signs challenges and deadlines with; the staging script

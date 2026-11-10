@@ -366,6 +366,7 @@ jobs:
           bash scripts/ci/unit_deploy_test.sh
           bash scripts/ci/check_edge_store_test.sh
           bash scripts/ci/seal_domain_vars_test.sh
+          bash scripts/ci/key_escrow_test.sh
           bash scripts/ci/edge_challenge_key_vars_test.sh
           bash scripts/ci/edgednsd_vars_test.sh
           bash scripts/ci/postgres_runtime_roles_vars_test.sh

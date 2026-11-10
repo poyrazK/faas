@@ -103,13 +103,28 @@ inside the HSM where section 5 applies, and is never exported in plaintext.
 CI keeps only public recipients (`SEAL_DOMAIN_<D>_AGE_RECIPIENT`) and the
 non-secret wrapped blobs of section 5.
 
-- `seal_domain_vars.sh` stops staging identities. A rollout that finds a
-  `SEAL_DOMAIN_<D>_AGE_KEY` or `FLEET_AGE_KEY` secret fails, telling the
-  operator to delete it.
-- `gregalectl seal-domain init` and `rotate` run on a control-plane host,
-  write the new identity into the HSM (or, before slice 4, to
-  `/etc/faas/secrets/domains/` on the control plane only), and print the
-  recipient for the GitHub environment.
+- **Key escrow (implemented in slice 2).** The private identities live in
+  `/etc/faas/secrets/key-escrow/<name>.age` on the control-plane host
+  (`0700`/`0400` root, loaded by no daemon). With the environment variable
+  `SEAL_DOMAIN_KEY_SOURCE=escrow`, `cd-compute` and `cd-controlplane` fetch
+  only the identities the role being deployed needs
+  (`seal_domain_vars.sh --identities`), over SSH pinned to
+  `COMPUTE_KNOWN_HOSTS`, use them for that step and delete them.
+  `scripts/ci/key_escrow.sh` is the only client; identities travel on the SSH
+  channel, never in a command line.
+- A rollout in escrow mode that still finds a `SEAL_DOMAIN_<D>_AGE_KEY` or
+  `FLEET_AGE_KEY` secret fails, telling the operator to delete it. A release
+  that predates the escrow fails closed instead of falling back.
+- The one-shot workflow `seal-domain-key-escrow.yml` (main only) moves
+  today's secrets into the escrow (`put`, never replacing a different
+  identity), lists it (`status`), and rotates: `rotate` runs `gregalectl
+  seal-domain init` on the control plane, keeps the old identity as
+  `<d>.age.previous` (fetched and staged as the role's
+  `*_previous_identity_src` for the ADR-057 overlap) and prints only the new
+  recipient; `retire` drops the previous identity after the re-seal.
+  `docs/runbooks/seal-domain-key-escrow.md` is the procedure.
+- The escrow is the key store secretd uses in slice 3 and the HSM wraps in
+  slice 4.
 - Once every domain has moved, the GitHub secrets `FLEET_AGE_KEY` and
   `SEAL_DOMAIN_*_AGE_KEY` are deleted and the keys they held are rotated:
   they were readable by any production job, so they are treated as exposed.
@@ -185,11 +200,23 @@ secret_grants(id, node_id, app_id, deployment_id, instance_wake_id,
   runs; build: the build timeout). A drained or fenced node's grants are
   revoked with it.
 
-Slice 1 finds the control-plane point that admits each placement today.
-If a placement is currently decided only on a compute node (node-local
-schedd for an owner-node wake, see ADR-20261110120000, firewall admits exact fleet peers), that decision moves
-behind a control-plane admission call before `runtime` can move. This is
-the prerequisite the rest depends on.
+**Finding (2026-11-10): no control-plane admission point exists today.**
+Every compute node runs its own schedd (M9,
+`pkg/daemonunitspec/registry.go`), and gatewayd-internal wakes through the
+owning node's schedd (ADR-20261110120000). An app's owner node is chosen by
+whichever schedd wins `ClaimUnplaced` (`pkg/sched/owner_choice.go`,
+`ChooseOwnerNode`, "every schedd computes the same answer from the same
+rows"), compute schedds included, and the instance row is written by the
+node that boots it (`pkg/sched/engine.go` `createInstanceWithWakeRetry`).
+Both are rows `faas_runtime` can write. So slice 1 is not "issue a grant at
+the existing admission point" but "move owner assignment to the control
+plane": the control-plane schedd alone assigns owners (in a table
+`faas_runtime` cannot write) and issues grants for them, and compute schedds
+only wake apps assigned to their node. A rooted node then receives only
+apps the control plane chose to give it: it cannot target a specific
+tenant, and per-node budgets bound how many it gets. This is the
+prerequisite the rest depends on, and its shape is an owner decision
+recorded before slice 1 starts.
 
 What a rooted node still gets: the plaintext of workloads placed on it
 while it is compromised, which it could read from guest memory anyway.
@@ -265,7 +292,7 @@ Operations:
 |---|---|---|
 | 0 | GitHub environment policy + tag ruleset (done, §1); enable `faas_compute_fleet_key_retired` in prod; OIDC condition check | — |
 | 1 | Placement grants: `secret_grants`, `faas_grantor`, REVOKE for `faas_runtime`, control-plane admission point for every wake/build/edge placement | — |
-| 2 | CI holds recipients only: `seal_domain_vars.sh` refuses private identities; `gregalectl seal-domain init/rotate` on the control plane; delete the GitHub secrets; rotate | 3 for compute domains |
+| 2 | CI holds recipients only: key escrow on the control plane, `SEAL_DOMAIN_KEY_SOURCE=escrow`, escrow/rotate workflow, runbook (code in this PR); then the owner escrows, deletes the GitHub secrets and rotates | — |
 | 3 | `secretd` + `OpenWorkloadSecrets` + audit + alerts; move `runtime`, then `build`, `edge`, `delivery`; `control` behind signd; node join stops staging, verify refuses leftovers | 1 |
 | 4 | HSM hardware, ceremony runbook, Tier A wrapped identities for every control-plane reader, measurements | — |
 | 5 | Tier B envelope v3 + re-seal of every sealed column | 4 |
