@@ -2,9 +2,10 @@ package api
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Custom metric labels (ADR-20261108160000 slice C). A labelled metric's
@@ -16,7 +17,7 @@ import (
 
 // customMetricLabelKeyPattern is a normalised label key: a Prometheus-safe
 // identifier, the shape of a metric name but allowed to start with '_'.
-var customMetricLabelKeyPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+var customMetricLabelKeyPattern = lazyregexp.New(`^[a-z_][a-z0-9_]{0,62}$`)
 
 var customMetricSeriesKeyEscaper = strings.NewReplacer("%", "%25", ",", "%2C", "=", "%3D")
 
