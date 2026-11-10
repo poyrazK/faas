@@ -29,7 +29,12 @@ config at `$GREGALE_AGENT_KEY`. When an agent does not see Gregale,
 problem: the client's config, this project's `.mcp.json`, the agent key, your
 connected agents and approval requests waiting for you. Projects made with
 `gregale init` include a `.mcp.json`, so agents opened there are offered
-Gregale (`--no-mcp` leaves it out). For other clients, add the server yourself:
+Gregale (`--no-mcp` leaves it out). For an agent in GitHub Actions, `gregale mcp connect --ci --repo OWNER/NAME`
+mints an agent key, stores it as the repository secret `GREGALE_AGENT_KEY`
+with `gh` (it is never shown), and writes `.github/workflows/gregale-agent.yml`
+for you to commit. The key needs your approval for deletes, production
+changes, credentials and billing unless you pass `--approvals`. For other
+clients, add the server yourself:
 
 Claude Code:
 
