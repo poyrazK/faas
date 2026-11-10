@@ -399,6 +399,9 @@ INFRA_RULES = [
     # Manifest hot_path: the compute edge keeps connections to each node's
     # gatewayd-internal alive.
     r"^internal-keepalive-per-node$",
+    # ADR-20261110081523: binary HTTP on that hop, its switch and its codec.
+    r"^edge-internal-hop$",
+    r"^binhttp$",
     # ADR-20261102081618: the records that send Cloudflare to the compute edges.
     r"^edgednsd?(-.*)?$",
     # ADR-20261109170000: the control plane's artifact signer.
@@ -407,6 +410,8 @@ INFRA_RULES = [
     r"^edge-public-front$",
     # ADR-20261103163954 §4: the compute edge's per-client-address limits.
     r"^edge-client-limits$",
+    # ADR-20261110123517: the compute edge sheds load when its node is overloaded.
+    r"^edge-overload$",
     # ADR-20261103163954 §4: Cloudflare's ranges skip those connection limits.
     r"^edge-proxy-cidrs$",
 ]

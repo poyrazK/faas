@@ -250,6 +250,8 @@ type functionSetPlanItem struct {
 	Runtime string `json:"runtime"`
 	Handler string `json:"handler"`
 	Root    string `json:"root"`
+	// Hooks are the snapshot hooks the handler declares (ADR-20261110190000).
+	Hooks []string `json:"hooks,omitempty"`
 }
 
 // printPlan shows the function set without login, upload or remote state.
@@ -260,7 +262,7 @@ func (d functionSetDeploy) printPlan() int {
 	}
 	plan := functionSetPlan{Inference: "local", DeployCommand: "gregale deploy", Functions: make([]functionSetPlanItem, 0, len(planned))}
 	for _, fn := range planned {
-		plan.Functions = append(plan.Functions, functionSetPlanItem{Name: fn.spec.Name, App: fn.slug, Runtime: fn.runtime, Handler: fn.handler, Root: fn.root})
+		plan.Functions = append(plan.Functions, functionSetPlanItem{Name: fn.spec.Name, App: fn.slug, Runtime: fn.runtime, Handler: fn.handler, Root: fn.root, Hooks: fn.spec.Hooks})
 	}
 	for _, src := range d.fromCode {
 		plan.ConfigFromCode = append(plan.ConfigFromCode, functionConfigFromCode{Function: src.Function, File: src.File, Keys: src.Keys, Discovered: src.Discovered})
@@ -273,8 +275,26 @@ func (d functionSetDeploy) printPlan() int {
 		_, _ = fmt.Fprintf(d.out, "  %-20s %-28s %-10s %s\n", fn.Name, fn.App, fn.Runtime, fn.Root)
 	}
 	d.printConfigFromCode()
+	printSnapshotHooks(d.out, planned)
 	_, _ = fmt.Fprintf(d.out, "\nDeploy them: %s\nCompare with remote state: gregale deploy --dry-run\n", plan.DeployCommand)
 	return 0
+}
+
+// printSnapshotHooks lists the snapshot hooks each function declares in code
+// (ADR-20261110190000): the deploy wires beforeSnapshot and afterRestore to
+// the runner, and init runs before each worker is ready.
+func printSnapshotHooks(out io.Writer, planned []plannedFunction) {
+	header := false
+	for _, fn := range planned {
+		if len(fn.spec.Hooks) == 0 {
+			continue
+		}
+		if !header {
+			_, _ = fmt.Fprintln(out, "\nSnapshot hooks in code:")
+			header = true
+		}
+		_, _ = fmt.Fprintf(out, "  %-20s %s\n", fn.spec.Name, strings.Join(fn.spec.Hooks, ", "))
+	}
 }
 
 // printConfigFromCode names each setting read from a handler file, so a
@@ -456,7 +476,17 @@ func (d functionSetDeploy) applySettings(ctx context.Context, client functionSet
 	if err != nil {
 		return fmt.Errorf("read app %s: %w", fn.slug, err)
 	}
-	if update, changed := fn.spec.AppSettingsUpdate(app); changed {
+	update, changed := fn.spec.AppSettingsUpdate(app)
+	// Snapshot hooks declared in code point the app's lifecycle at the
+	// runner (ADR-20261110190000 §5); the deployment is built with them.
+	after, before, hooksChanged, err := fn.spec.HookLifecycleUpdate(app.Manifest.AfterRestore, app.Manifest.BeforeCheckpoint)
+	if err != nil {
+		return err
+	}
+	if hooksChanged {
+		update.AfterRestore, update.BeforeCheckpoint, changed = after, before, true
+	}
+	if changed {
 		if _, err := client.UpdateApp(ctx, fn.slug, update); err != nil {
 			return fmt.Errorf("update app settings: %w", err)
 		}

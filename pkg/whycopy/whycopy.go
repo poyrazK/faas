@@ -188,6 +188,12 @@ var catalog = map[string]Render{
 		Why:   "your app's process exited before it accepted traffic, after any restarts its restart policy allows; the last lines it printed are in the error detail",
 		Fix:   "• read the error in the detail (`gregale logs <slug>` has the full startup log)\n• run the start command locally with the same environment to reproduce\n• check that every required env var and secret is set (`gregale secrets list --app <slug>`)",
 	},
+	api.CodeFunctionInitFailed: {
+		Title: "Function init failed",
+		Hint:  "your function's init hook failed before it became ready",
+		Why:   "init runs in every worker before the worker is ready, so the deployment is not snapshotted with setup half done; it threw, and its error is in the detail (an init that never finishes fails as app_startup_timeout instead)",
+		Fix:   "• read the error in the detail (`gregale logs <slug>` has the full startup log)\n• run the function with `gregale dev --local` to reproduce\n• keep init to setup that can finish within the startup deadline, and check every env var and secret it reads is set",
+	},
 	api.CodeExecutionModeConflict: {
 		Title: "Execution mode conflict",
 		Hint:  "your app did not behave like its execution mode",

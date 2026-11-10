@@ -93,6 +93,10 @@ func (m *Middleware) limitKeyToProjects(w http.ResponseWriter, r *http.Request, 
 		// App slugs are unique across accounts, so an organization's app
 		// route resolves the app the same way.
 		return m.refuseAppOutsideProjects(w, r, key)
+	case projectRoutePattern(r.Pattern) && OrganizationSlug(r) != "":
+		// apid's org project mirror dispatched an organization path to the
+		// personal handler; the project is the organization's.
+		return m.refuseOrgProjectOutsideLimit(w, r, key)
 	case projectRoutePattern(r.Pattern):
 		return m.refuseProjectOutsideLimit(w, r, acct, key)
 	case orgProjectRoutePattern(r.Pattern):
@@ -141,7 +145,7 @@ func (m *Middleware) refuseOrgProjectOutsideLimit(w http.ResponseWriter, r *http
 	if !ok {
 		return notFound()
 	}
-	org, err := resolver.OrgBySlug(r.Context(), r.PathValue("organization"))
+	org, err := resolver.OrgBySlug(r.Context(), OrganizationSlug(r))
 	if err == nil {
 		var project state.Project
 		if project, err = resolver.ProjectByOrgSlug(r.Context(), org.ID, r.PathValue("slug")); err == nil {

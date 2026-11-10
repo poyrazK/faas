@@ -32,6 +32,15 @@ func (h projectSecretsHost) DisplayValueHash(ownerID, stored string) string {
 	return displayValueHash(ownerID, stored)
 }
 
+// ProtectedConfigProblem refuses a shared-secret value written into a
+// protected environment other than production (ADR-20261019071733
+// amendment 11).
+func (h projectSecretsHost) ProtectedConfigProblem(ctx context.Context, accountID, projectID, environment string) *api.Problem {
+	return protectedEnvironmentConfigProblem(ctx, h.s.store, accountID, projectID, environment)
+}
+
+var _ projectsecrets.ProtectedConfigGuard = projectSecretsHost{}
+
 func (s *server) projectSecrets() projectsecrets.Service {
 	return projectsecrets.Service{Host: projectSecretsHost{s}}
 }

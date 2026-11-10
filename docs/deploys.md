@@ -1071,6 +1071,32 @@ Revision numbers are per app, so `v41` of one app is unrelated to `v41` of
 another. Numbers may skip values: preview deploys and retries consume them
 too.
 
+## Cancel
+
+`gregale release cancel <id>` stops a deployment that is still pending,
+building, imaging or snapshotting. A live deployment cannot be cancelled
+(`deployment_cancel_live_forbidden`); roll back to an earlier one with
+`gregale deploys rollback` instead.
+
+`gregale release hide <id>` hides a finished deployment from lists. It does
+not stop anything, so a deployment that is still in progress is refused with
+`deployment_hide_in_flight`: cancel it first, then hide it.
+
+## Deployment aliases
+
+A deployment alias gives one exact revision a stable hostname of its own:
+
+```bash
+gregale release alias set --app my-api --name candidate --release v44
+```
+
+An alias can point only at a live or in-progress deployment, and that
+deployment's build is kept while the alias exists. Each app can have 5
+aliases on Free, 10 on Hobby, 25 on Pro and 50 on Scale. Setting a new alias
+above the limit fails with `plan_limit_deployment_aliases` (403), which reports
+the limit and the current count; re-pointing an existing alias always works,
+so delete one (`gregale release alias delete`) to make room.
+
 ## Dark deployments
 
 Stage a revision, wait until it is ready, and keep production traffic on the

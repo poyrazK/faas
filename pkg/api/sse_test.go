@@ -139,6 +139,34 @@ func (b *blockingReader) Read(p []byte) (int, error) {
 	return 0, io.EOF
 }
 
+// A runtime log line can be up to 1 MiB; one long line must not end the
+// stream and lose every frame after it (ADR-20261110090000).
+func TestSSEDecoder_LongLogLineKeepsStreamOpen(t *testing.T) {
+	long := strings.Repeat("x", 1<<20)
+	src := strings.NewReader(
+		"event: log\ndata: {\"line\":\"" + long + "\"}\n\n" +
+			"event: log\ndata: {\"line\":\"after\"}\n\n",
+	)
+	dec := NewDecoder(src)
+	defer dec.Close()
+	for i, want := range []int{len(long) + len(`{"line":""}`), len(`{"line":"after"}`)} {
+		select {
+		case got, ok := <-dec.Events():
+			if !ok {
+				t.Fatalf("frame %d: channel closed early: %v", i, <-dec.Errors())
+			}
+			if len(got.Data) != want {
+				t.Fatalf("frame %d data length = %d, want %d", i, len(got.Data), want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("frame %d: timed out", i)
+		}
+	}
+	if err := <-dec.Errors(); !errors.Is(err, io.EOF) {
+		t.Fatalf("Errors() = %v, want io.EOF", err)
+	}
+}
+
 // TestSSEDecoder_HandlesEmptyFrames pins the spec edge case: a
 // blank line with no preceding field produces no Event. The CLI
 // relies on this so the heartbeat `: ping\n\n` shape doesn't

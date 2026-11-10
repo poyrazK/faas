@@ -6969,7 +6969,7 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		if len(tail) > 0 {
 			detail += ": " + string(tail)
 		}
-		return true, api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+		return true, startupCrashProblem(report.LogTail, detail)
 	}
 
 	switch executionMode {
@@ -7222,9 +7222,19 @@ func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 	// and exited. Without it the guest itself failed (overlay, pivot, init),
 	// which stays a platform failure (production-us hunt #9, H9-106).
 	if supervisedWorkloadExited(lines) {
-		return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+		return startupCrashProblem(strings.Join(lines, "\n"), detail)
 	}
 	return errors.New(detail)
+}
+
+// startupCrashProblem names a workload that exited during startup. A
+// function whose init hook failed says so in its output, and gets its own
+// code (ADR-20261110190000).
+func startupCrashProblem(output, detail string) *api.Problem {
+	if strings.Contains(output, api.FunctionInitFailedMarker) {
+		return api.NewProblem(422, api.CodeFunctionInitFailed, "function init failed", detail)
+	}
+	return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
 }
 
 // supervisedWorkloadMarkers are guest-init's own console lines for a

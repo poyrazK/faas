@@ -8659,6 +8659,7 @@ haveApp:
 // routeLabelSet; the empty-string sentinels mirror the
 // `gateway_requests_total{app="-"}` pattern.
 func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold bool, target Target) {
+	status = observedStatus(r, status)
 	code := statusClass(status)
 	requestID := requestIDFrom(r)
 	// Read the stashed route label BEFORE the sentinel-coercion
@@ -8678,7 +8679,12 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// "now() — now()").
 	elapsed := observedLatency(r, status, time.Since(startTime(r)))
 	h.observeMCPRequest(r, status, appID, elapsed)
-	if h.metrics != nil {
+	// A route probe (ADR-847) writes no customer telemetry, and the app's
+	// request series are customer telemetry too: a rollout's probes (twenty a
+	// minute) inflated an app's request count tenfold and diluted its error
+	// rate, SLOs and error-rate alerts (ADR-20261110090000). The canary
+	// counts probe results from its own record.
+	if h.metrics != nil && !isRouteProbe(r.Context()) {
 		// Use placeholder labels for the unknown-host path so 404s show up on
 		// the dashboard under a sentinel app_id (e.g. "-" or "").
 		if appID == "" {
@@ -10184,7 +10190,7 @@ func writeWakeError(w http.ResponseWriter, err error) {
 // 502: Cloudflare replaces 502 bodies.
 func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
 	switch p.Code {
-	case api.CodeAppStartupCrash, api.CodeAppNotListening, api.CodeAppStartupTimeout,
+	case api.CodeAppStartupCrash, api.CodeFunctionInitFailed, api.CodeAppNotListening, api.CodeAppStartupTimeout,
 		api.CodeAppLoopbackBound, api.CodeAppRuntimeOOM, api.CodeAppArchMismatch, api.CodeDeployFailed:
 		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App failed to start",
 			"the app's process did not become ready; its owner can find the cause in the app's logs and deployment status"), true
