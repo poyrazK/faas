@@ -80,7 +80,7 @@ func managedPostgresNotConfiguredProblem(w http.ResponseWriter) {
 }
 
 // managedPostgresNotInPlan reports whether the owner's plan includes no
-// managed PostgreSQL: Free (ADR-20261110180000), or an unknown plan. Every
+// managed PostgreSQL: Free (ADR-20261110184700), or an unknown plan. Every
 // create path checks it: the create route, Compose and dev databases here,
 // and the service's admission for the rest, restores and pipeline mirrors
 // included (bug hunt 33 H1).

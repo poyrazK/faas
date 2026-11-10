@@ -227,7 +227,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			// Every create and restore path admits here, so the plan
 			// refusal the create route makes also covers Compose, dev,
 			// pipeline mirrors and restores (bug hunt 33 H1,
-			// ADR-20261110180000).
+			// ADR-20261110184700).
 			if managedPostgresNotInPlan(api.Plan(account.Plan)) {
 				if metrics != nil {
 					metrics.ObserveAdmission(managedpostgres.ErrNotInPlan)

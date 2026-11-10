@@ -1,4 +1,4 @@
-# ADR-20261110180000: The Free plan includes no managed PostgreSQL, and databases past their plan are deleted after 30 days
+# ADR-20261110184700: The Free plan includes no managed PostgreSQL, and databases past their plan are deleted after 30 days
 
 - **Status:** accepted (owner, 2026-11-10: "Can we remove database service from free tier?", then "yes, do both with 30 days", on the billing launch review). Slice 1 built.
 - **Date:** 2026-11-10

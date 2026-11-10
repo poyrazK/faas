@@ -1,6 +1,6 @@
 // adr: 1350 — managed PostgreSQL plan entitlements follow the October 2026
 // COGS report.
-// adr: 20261110180000 — the Free plan includes no managed PostgreSQL.
+// adr: 20261110184700 — the Free plan includes no managed PostgreSQL.
 package api
 
 import "testing"

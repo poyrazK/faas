@@ -12,7 +12,7 @@ import (
 
 // Bug hunt 33 H1: the create route refused Free-plan databases unless compute
 // caps were enforced, but Compose and dev databases did not, so a Free account
-// got an uncapped database through either. ADR-20261110180000: Free includes
+// got an uncapped database through either. ADR-20261110184700: Free includes
 // no managed PostgreSQL, so every path refuses it whatever the cap mode.
 func TestFreePlanComposeAndDevDatabasesAreNotInPlan(t *testing.T) {
 	env := apidserver.NewSourceRefTestServer(t, api.PlanFree, "free-db-gate", 9033)

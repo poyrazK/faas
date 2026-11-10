@@ -29,7 +29,7 @@ database reservation boundary:
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
 The Free plan includes no managed PostgreSQL
-([ADR-20261110180000](adr/20261110180000-free-plan-includes-no-managed-postgres.md)):
+([ADR-20261110184700](adr/20261110184700-free-plan-includes-no-managed-postgres.md)):
 `gregale postgres create`, `gregale dev --postgres`, pipeline mirrors and
 restores answer `403 managed_postgres_not_in_plan` on Free, whatever the cap
 enforcement mode, and a Compose `postgres` service is not provisioned (the

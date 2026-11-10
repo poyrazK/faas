@@ -7,7 +7,7 @@ import "time"
 // these plan limits.
 type ManagedPostgresPlanLimits struct {
 	// NotIncluded marks a plan that includes no managed PostgreSQL at all
-	// (Free, ADR-20261110180000): it creates none, and every database its
+	// (Free, ADR-20261110184700): it creates none, and every database its
 	// subject still holds, say after a paid plan ended, is past the plan.
 	// The zero value with DatabasesMax 0 is an unknown plan instead, which
 	// suspends nothing.
@@ -39,7 +39,7 @@ const (
 
 // managedPostgresPlanLimits follows the October 2026 COGS report (ADR-1430):
 // databases, highest service class, pooled storage and monthly compute units.
-// Free includes no managed PostgreSQL (ADR-20261110180000).
+// Free includes no managed PostgreSQL (ADR-20261110184700).
 var managedPostgresPlanLimits = map[Plan]ManagedPostgresPlanLimits{
 	PlanFree: {NotIncluded: true},
 	PlanHobby: {DatabasesMax: 1, StorageLimitBytes: managedPostgresGiB, MonthlyComputeUnitSeconds: 25 * managedPostgresComputeUnitHour,
