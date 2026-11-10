@@ -36,6 +36,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -64,6 +65,9 @@ type initReceipt struct {
 	Path     string `json:"path"`
 	Status   string `json:"status"`
 	Deployed bool   `json:"deployed,omitempty"`
+	// MCPConfig is the .mcp.json init wrote, so agents opened in the
+	// project are offered Gregale's MCP server (ADR-20261109121411 §6).
+	MCPConfig string `json:"mcp_config,omitempty"`
 }
 
 // initCmdDocsTopic identifies the CLI help topic passed to PrintUsage.
@@ -80,6 +84,7 @@ func cmdInit(args []string) int {
 	name := fs.String("name", "", "app slug to pass to --deploy (default: derive from --path basename)")
 	secretsFile := fs.String("secrets-file", "", "read KEY=VALUE pairs and set them before the first deployment (requires --deploy)")
 	list := fs.Bool("list", false, "print available templates grouped by category and exit")
+	noMCP := fs.Bool("no-mcp", false, "do not write .mcp.json")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -127,6 +132,7 @@ func cmdInit(args []string) int {
 	if what, capability, hidden := hiddenManifestCapability(context.Background(), *tpl, ""); hidden && !jsonOutput {
 		_, _ = fmt.Fprintf(osStderr, "warning: %s uses %s, which is not enabled for this account; gregale deploy will refuse it (see gregale feature list --early-access)\n", what, capability)
 	}
+	initWriteMCP = !*noMCP
 	return runCmdInitWithSecrets(*tpl, *dest, *deploy, *name, *secretsFile, osStdout, os.Stderr)
 }
 
@@ -300,9 +306,13 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	if err := templates.Materialize(tpl, absDest); err != nil {
 		return printErr("Could not write template into "+absDest, err)
 	}
+	mcpConfig, err := writeProjectMCPConfig(absDest)
+	if err != nil {
+		return printErr("Could not write .mcp.json", err)
+	}
 	if jsonOutput {
 		if !deploy {
-			return writeInitJSON(stdout, initReceipt{Template: tpl, Path: absDest, Status: "created"})
+			return writeInitJSON(stdout, initReceipt{Template: tpl, Path: absDest, Status: "created", MCPConfig: mcpConfig})
 		}
 		// The deploy composite has its own JSON receipt. Suppress that
 		// nested output so `init --json --deploy` still emits exactly one
@@ -325,7 +335,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 		if code != 0 {
 			return code
 		}
-		return writeInitJSON(stdout, initReceipt{Template: tpl, Path: absDest, Status: "created", Deployed: true})
+		return writeInitJSON(stdout, initReceipt{Template: tpl, Path: absDest, Status: "created", Deployed: true, MCPConfig: mcpConfig})
 	}
 
 	// Step 6: surface the customer's next steps. Per-template
@@ -333,6 +343,9 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	// guide for the selected runtime/workflow so a plain function scaffold
 	// does not send customers to unrelated storage documentation.
 	PrintProgress(stdout, "Wrote %s template to %s", tpl, absDest)
+	if mcpConfig != "" {
+		PrintProgress(stdout, "Wrote .mcp.json: agents opened here are offered Gregale's MCP server")
+	}
 	PrintProgress(stdout, "Next:")
 	for _, line := range nextStepsFor(tpl) {
 		// The steps are written with a <dest> placeholder; show the
@@ -690,4 +703,33 @@ func nextStepsFor(tpl string) []string {
 			"  cd <dest> && gregale deploy",
 		}
 	}
+}
+
+// initWriteMCP is cleared by `gregale init --no-mcp`.
+var initWriteMCP = true
+
+// writeProjectMCPConfig adds a .mcp.json naming Gregale's hosted MCP server,
+// so Claude Code and Cursor offer it to anyone who opens the project. It
+// holds no secret: the agent signs in through the browser. A template that
+// ships its own .mcp.json keeps it. Returns the path written, or "".
+func writeProjectMCPConfig(dest string) (string, error) {
+	if !initWriteMCP {
+		return "", nil
+	}
+	path := filepath.Join(dest, ".mcp.json")
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	config := map[string]any{"mcpServers": map[string]any{mcpServerName: map[string]any{
+		"type": "http",
+		"url":  strings.TrimRight(apiBase(), "/") + "/mcp",
+	}}}
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }

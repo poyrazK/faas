@@ -4762,6 +4762,7 @@ var cliCommands = []cliCommand{
 			{Name: "name", Short: "app slug used with --deploy", Value: "SLUG"},
 			{Name: "secrets-file", Short: "seal KEY=VALUE pairs before the first deployment (requires --deploy)", Value: "PATH"},
 			{Name: "list", Short: "list available templates"},
+			{Name: "no-mcp", Short: "do not write .mcp.json, which offers Gregale's MCP server to agents opened in the project"},
 		},
 	},
 	{
