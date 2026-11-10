@@ -1305,7 +1305,6 @@ var EdgePolicySummary = edgePolicySummary
 var EdgeRuleValidateFlagsVisited = edgeRuleValidateFlagsVisited
 var EditDistance = editDistance
 var EffectiveKeyring = effectiveKeyring
-var EgressAllowlistChangeNeedsRestart = egressAllowlistChangeNeedsRestart
 var EmitInspectWatchEvent = emitInspectWatchEvent
 var EmptyPilotTextSHA256 = emptyPilotTextSHA256
 var EncodeCustomerOperationReceipt = encodeCustomerOperationReceipt
