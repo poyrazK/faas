@@ -142,30 +142,6 @@ func (s *Service) RetirePastPlan(ctx context.Context, bindings RestoreSlotBindin
 	return false, nil
 }
 
-// revokeDatabaseBindings deletes the database's live bindings. It reports
-// pending while any binding is not yet gone.
-func revokeDatabaseBindings(ctx context.Context, bindings RestoreSlotBindings, database Database) (bool, error) {
-	items, err := bindings.List(ctx, database.AccountID, database.ID)
-	if err != nil {
-		return false, err
-	}
-	pending := false
-	for _, binding := range items {
-		switch binding.State {
-		case BindingStateDeleted:
-			continue
-		case BindingStateDeleting:
-			pending = true
-			continue
-		}
-		if _, err := bindings.Delete(ctx, database.AccountID, binding.ID); err != nil {
-			return true, err
-		}
-		pending = true
-	}
-	return pending, nil
-}
-
 // PlanExcessSince implements PlanExcessSinceStore.
 func (s *PostgresStore) PlanExcessSince(ctx context.Context, databaseIDs []string) (map[string]time.Time, error) {
 	ids := make([]pgtype.UUID, 0, len(databaseIDs))

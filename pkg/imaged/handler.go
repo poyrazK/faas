@@ -2298,7 +2298,7 @@ func (h *Handler) applyReleaseTaskOutcome(ctx context.Context, dep state.Deploym
 		if task.Status == state.AppTaskFailed && task.FailureCode != nil && releaseTaskInfrastructureFailure(*task.FailureCode) {
 			// The platform could not run or observe the command; the
 			// customer's command is not what failed.
-			explained := whycopy.Decorate(&api.Problem{Code: api.CodeReleaseInfrastructure}, api.CodeReleaseInfrastructure, nil)
+			explained := whycopy.Decorate(&api.Problem{Code: api.CodeReleaseInfrastructure}, api.CodeReleaseInfrastructure, *task.FailureCode)
 			_, err = h.store.SetDeploymentFailedEx(ctx, dep.ID, api.CodeReleaseInfrastructure, detail, explained.Hint, explained.Why, explained.Fix, nil)
 		} else {
 			_, err = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeReleaseCommandFailed, detail)

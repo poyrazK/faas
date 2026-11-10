@@ -270,6 +270,30 @@ func (w *RestoreSlotSweeper) revokeBindings(ctx context.Context, database Databa
 	return revokeDatabaseBindings(ctx, w.bindings, database)
 }
 
+// revokeDatabaseBindings deletes a database's live bindings before an
+// automatic delete. It reports whether any are still on their way out.
+func revokeDatabaseBindings(ctx context.Context, service RestoreSlotBindings, database Database) (bool, error) {
+	bindings, err := service.List(ctx, database.AccountID, database.ID)
+	if err != nil {
+		return false, err
+	}
+	pending := false
+	for _, binding := range bindings {
+		switch binding.State {
+		case BindingStateDeleted:
+			continue
+		case BindingStateDeleting:
+			pending = true
+			continue
+		}
+		if _, err := service.Delete(ctx, database.AccountID, binding.ID); err != nil {
+			return true, err
+		}
+		pending = true
+	}
+	return pending, nil
+}
+
 // restoreSlotRoom reports whether a slot holder fits inside its subject's
 // database limit: the subject's other databases leave room for it.
 func (s *Service) restoreSlotRoom(ctx context.Context, store RestoreSlotStore, subjectID string) (bool, error) {

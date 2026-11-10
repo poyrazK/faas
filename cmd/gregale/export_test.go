@@ -2799,6 +2799,9 @@ var RefuseDevFunctionSet = refuseDevFunctionSet
 // MetricLabelFlags exposes the --metric-label parser.
 var MetricLabelFlags = metricLabelFlags
 
+// ManifestDeclaredBindings exposes the bindings check manifest reader (ADR-20261110213000).
+var ManifestDeclaredBindings = manifestDeclaredBindings
+
 // ApplyFunctionHookLifecycleForTest exposes applyFunctionHookLifecycle.
 func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
 	GetApp(ctx context.Context, slug string) (api.AppResponse, error)

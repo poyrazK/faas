@@ -10,6 +10,10 @@ export type ConnectionBudgetDemand = {
   data_api_resident_estimate: number;
   data_api_wake_estimate: number;
   auth_wake_estimate: number;
+  /**
+   * The session role connection limit per session binding; two roles while a binding rotates.
+   */
+  session_connection_ceiling?: number;
   control_headroom: number;
   migration_headroom: number;
   modeled_peak_connections: number;
