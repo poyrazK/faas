@@ -2123,6 +2123,7 @@ func (s *server) scanService(
 				slug = w.Name
 			}
 			pw.PublicURL = "https://" + slug + "." + strings.TrimPrefix(s.domain, ".")
+			pw.PublicAuthMode = planWorkloadPublicAuthMode(existing, acct.Plan)
 		}
 		required, err := projectsetup.RequiredNames(os.DirFS(req.ScanDir), w.RootDir)
 		if err != nil {
@@ -3263,4 +3264,19 @@ func projectApplyEnqueueError(r *http.Request, err error) string {
 		return fmt.Sprintf("not queued: the control plane was busy; nothing was deployed for this workload, so retry the deploy (request %s)", requestID)
 	}
 	return fmt.Sprintf("enqueue failed; nothing was deployed for this workload. Retry, and quote request %s if it fails again", requestID)
+}
+
+// planWorkloadPublicAuthMode is the public URL auth an app will have after
+// apply: its own mode, or the plan default for a new app. Open is omitted.
+// The plan listed a Pro app as "Public on the internet" while its URL answered
+// 401 for want of an API key (Hunt 32 H32-30).
+func planWorkloadPublicAuthMode(existing *state.App, plan api.Plan) string {
+	mode := plan.PublicAuthModeDefault()
+	if existing != nil {
+		mode = existing.PublicAuthMode
+	}
+	if mode == "" || mode == api.AppPublicAuthModeOpen {
+		return ""
+	}
+	return mode
 }

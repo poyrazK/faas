@@ -2375,3 +2375,6 @@ var SourceLivenessOverrides = sourceLivenessOverrides
 
 // ValidateCustomMetricAlertLabels exposes the custom_metric rule label check.
 var ValidateCustomMetricAlertLabels = validateCustomMetricAlertLabels
+
+// PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
+var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode

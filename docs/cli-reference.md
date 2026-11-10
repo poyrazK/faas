@@ -682,12 +682,13 @@ Change a drain&#39;s URL or credential, or pause and resume it
 
 Delete a log drain
 
-`gregale logs drain delete [--app <SLUG>] --id <ID> [<slug>]`
+`gregale logs drain delete [--app <SLUG>] --id <ID> [--yes] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug |  |
 | `--id <ID>` | log drain id | required |
+| `--yes` | confirm deletion without prompting |  |
 
 
 ## status
@@ -2537,7 +2538,7 @@ Apply a saved service binding plan if reviewed settings are unchanged
 
 Evaluate recorded binding evidence and runtime freshness for CI
 
-`gregale app binding check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--release <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--queue-require <NAME=consumer_readiness>] [--require-bindings] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+`gregale app binding check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--release <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--queue-require <NAME=consumer_readiness>] [--require-bindings] [--ignore-manifest] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2552,6 +2553,7 @@ Evaluate recorded binding evidence and runtime freshness for CI
 | `--object-storage-require <PREFIX=read|write|read_write>` | require recorded storage operation evidence (repeatable; no writes) |  |
 | `--queue-require <NAME=consumer_readiness>` | require recorded push queue readiness (repeatable; connectivity remains partial) |  |
 | `--require-bindings` | fail when no active binding is in scope (default: warn and pass) |  |
+| `--ignore-manifest` | do not require the databases ./gregale.yaml declares for the app |  |
 | `--wait` | poll read-only inventory while probes, refreshes or application acknowledgements are pending |  |
 | `--timeout <DURATION>` | maximum waiting or policy-aware preflight time (default 5m) |  |
 | `--poll-interval <DURATION>` | inventory polling interval with --wait (default 1s) |  |
