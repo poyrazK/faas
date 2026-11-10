@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -89,6 +91,64 @@ func TestMetalSandboxWarmSnapshot(t *testing.T) {
 			t.Fatalf("restores share an RNG stream: %v", rands)
 		}
 		for _, id := range []string{"sbx-restore-1", "sbx-restore-2"} {
+			if err := m.Destroy(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("a registries restore gets its own network and egress rules", func(t *testing.T) {
+		capture := machine("sbx-reg-capture", "sbx-reg-capture-1")
+		capture.Network = api.SandboxNetworkRegistries
+		snap, _, err := m.CaptureSandboxSnapshot(ctx, SandboxCapture{Namespace: "sandbox-preset-metal", CaptureID: "capture-reg", Wake: capture})
+		if err != nil {
+			t.Fatalf("capture: %v", err)
+		}
+		if snap.Networkless {
+			t.Fatal("a registries capture is networkless")
+		}
+		none := machine("sbx-reg-none", "sbx-reg-none-1")
+		none.Snapshot = snap
+		if _, err := m.WakeSandbox(ctx, none); err == nil {
+			_ = m.Destroy(context.Background(), none.Instance)
+			t.Fatal("a none session restored a networked snapshot")
+		}
+		seen := map[string]string{}
+		for _, id := range []string{"sbx-reg-1", "sbx-reg-2"} {
+			req := machine(id, id+"-session")
+			req.Network, req.Snapshot = api.SandboxNetworkRegistries, snap
+			inst := restore(t, req)
+			if !inst.Net.SandboxRegistries || !inst.Net.DNSGated || inst.Net.Netns == "" {
+				t.Fatalf("%s: network %+v", id, inst.Net)
+			}
+			if other, dup := seen[inst.Net.Netns]; dup {
+				t.Fatalf("%s shares netns %s with %s", id, inst.Net.Netns, other)
+			}
+			seen[inst.Net.Netns] = id
+			if out, _ := rootExec(t, m, id, id+"-session", "ip -4 -o addr show eth0; ping -c 2 -W 1 "+netns.GuestGateway+" >/dev/null 2>&1 && echo answered"); !strings.Contains(out, netns.GuestIP+"/") || !strings.Contains(out, "answered") {
+				t.Fatalf("%s: no network after the restore:\n%s", id, out)
+			}
+			public := netip.MustParseAddr("1.1.1.1")
+			if err := m.AllowResolvedEgressNamed(ctx, inst.Net.HostIP, "registry.npmjs.org", []netip.Addr{public}, time.Minute, 0); err != nil {
+				t.Fatal(err)
+			}
+			out, code := rootExec(t, m, id, id+"-session", `python3 -c '
+import socket
+for host, port in [("1.1.1.1", 443), ("1.1.1.1", 25), ("169.254.169.254", 80), ("10.100.0.1", 22)]:
+    s = socket.socket(); s.settimeout(3)
+    try:
+        s.connect((host, port)); print(host, port, "open")
+    except Exception:
+        print(host, port, "closed")
+    finally:
+        s.close()
+'`)
+			want := "1.1.1.1 443 open\n1.1.1.1 25 closed\n169.254.169.254 80 closed\n10.100.0.1 22 closed\n"
+			if code != 0 || out != want {
+				t.Fatalf("%s: egress after the restore (exit %d):\n%s", id, code, out)
+			}
+		}
+		for _, id := range []string{"sbx-reg-1", "sbx-reg-2"} {
 			if err := m.Destroy(ctx, id); err != nil {
 				t.Fatal(err)
 			}
