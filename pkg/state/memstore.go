@@ -4861,22 +4861,34 @@ func (m *MemStore) ApplyProjectReconcile(
 		workloadKeys[app.WorkloadName] = id
 	}
 	newSlugs := make(map[string]bool)
+	adopt := make(map[string]string)
 	for _, mutation := range mutations {
 		switch mutation.Op {
 		case "create":
 			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
 				return ProjectReconcileResult{}, ErrConflict
 			}
-			creates++
 			key := mutation.App.WorkloadName
 			if _, exists := workloadKeys[key]; exists {
 				return ProjectReconcileResult{}, ErrConflict
 			}
 			workloadKeys[key] = mutation.App.ID
+			adopted := false
 			for _, existing := range stagedApps {
-				if existing.Status != AppDeleted && existing.Slug == mutation.App.Slug && !removeIDs[existing.ID] {
-					return ProjectReconcileResult{}, ErrConflict
+				if existing.Status == AppDeleted || existing.Slug != mutation.App.Slug || removeIDs[existing.ID] {
+					continue
 				}
+				// A function app `gregale deploy` made outside any project is
+				// taken over by the repository (ADR-20261108160000 §1).
+				if mutation.App.Type == AppTypeFunction && existing.Type == AppTypeFunction && existing.AccountID == storedProject.AccountID && existing.ProjectID == "" {
+					adopt[key] = existing.ID
+					adopted = true
+					continue
+				}
+				return ProjectReconcileResult{}, ErrConflict
+			}
+			if !adopted {
+				creates++
 			}
 			if newSlugs[mutation.App.Slug] {
 				return ProjectReconcileResult{}, ErrConflict
@@ -4954,6 +4966,14 @@ func (m *MemStore) ApplyProjectReconcile(
 		switch mutation.Op {
 		case "create":
 			app := mutation.App
+			if id := adopt[app.WorkloadName]; id != "" {
+				adopted := stagedApps[id]
+				adopted.ProjectID = project.ID
+				adopted.RootDir, adopted.WorkloadName, adopted.WorkloadClass = app.RootDir, app.WorkloadName, app.WorkloadClass
+				stagedApps[id] = adopted
+				out.Added = append(out.Added, adopted)
+				continue
+			}
 			var tombstone App
 			for _, existing := range stagedApps {
 				if existing.AccountID == project.AccountID && existing.ProjectID == project.ID &&

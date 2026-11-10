@@ -5958,6 +5958,19 @@
     }
   },
   {
+    "table": "artifact_signatures",
+    "columns": [
+      "bytes",
+      "deployment_id",
+      "digest",
+      "node_name",
+      "signature_format",
+      "signed_at",
+      "storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "edge_tls_certificates",
     "columns": [
       "account_uri",

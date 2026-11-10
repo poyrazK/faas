@@ -25,7 +25,7 @@ BEGIN
 	END IF;
 	ALTER ROLE faas_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 	FOREACH r IN ARRAY ARRAY['faas_apid', 'faas_schedd', 'faas_meterd', 'faas_githubd',
-		'faas_outboundd', 'faas_bridged', 'faas_mcp_bridge', 'faas_shared'] LOOP
+		'faas_outboundd', 'faas_bridged', 'faas_mcp_bridge', 'faas_shared', 'faas_signd'] LOOP
 		IF to_regrole(r) IS NULL THEN
 			EXECUTE format('CREATE ROLE %I LOGIN', r);
 		END IF;
@@ -85,6 +85,14 @@ BEGIN
 	IF to_regclass('public.edge_tls_certificates') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE ON public.edge_tls_certificates FROM faas_runtime;
 		GRANT INSERT, DELETE ON public.edge_tls_certificates TO faas_shared;
+	END IF;
+	-- ADR-20261109170000: a row in artifact_signatures is the control plane's
+	-- word that a node built that layer for that deployment, and signd signs
+	-- each key once. Only faas_signd, the control plane's signd, inserts one;
+	-- nobody updates or deletes a row.
+	IF to_regclass('public.artifact_signatures') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE ON public.artifact_signatures FROM faas_runtime;
+		GRANT SELECT, INSERT ON public.artifact_signatures TO faas_signd;
 	END IF;
 END
 $$;

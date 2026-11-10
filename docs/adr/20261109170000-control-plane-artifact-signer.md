@@ -126,6 +126,30 @@ signd signs with one active key and publishes `sign-pub.pem` plus the
 previous public key during an overlap. Verifiers accept both. Rotation no
 longer touches compute nodes beyond the public key.
 
+## Implementation
+
+- **Slice 1** (v2 format, verifiers accept v1 and v2,
+  `FAAS_ARTIFACT_SIGNATURE_FORMAT`): `pkg/cosign`.
+- **Slice 2** (signd, off until configured):
+  - `api/proto/onebox/faas/signd/v1` defines `SignArtifact`.
+  - `pkg/signd` holds the policy (section 3), the client imaged uses, and
+    `signpg`, its own sqlc store.
+  - `cmd/signd` is the daemon. It listens on TCP with mutual TLS only, and
+    its handshake admits only registered compute nodes (`PGNodeVerifier`).
+  - Migration `20261109220714634` creates `artifact_signatures`. Only
+    `faas_signd` may insert, and `runtime-roles.sql` repeats the grant on
+    every converge. signd's OS user `faas-signd` maps to `faas_signd` and
+    never to the owner.
+  - The leaves are the pkg/pki feature `artifact-signer`, issued by
+    `gregalectl pki feature`: signd's server leaf (`signd.faas`) and
+    imaged's client leaf under `signd-client/`, whose CN is the node's name.
+  - imaged sends app and sidecar layers to signd when
+    `FAAS_ARTIFACT_SIGNER=signd` and `FAAS_SIGND_TARGET` / `FAAS_SIGND_TLS_*`
+    are set. Runtime bases and the agent layer, which no verifier checks
+    today, keep the node's local signer until slice 3 decides them.
+- **Next:** signd's unit, release entry and converge; the re-sign pass; then
+  dropping `sign.key` from compute nodes, and refusing v1 at N+1.
+
 ## Consequences
 
 - Root on a compute node can no longer sign arbitrary layers, re-sign stored

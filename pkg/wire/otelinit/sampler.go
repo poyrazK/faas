@@ -259,3 +259,36 @@ func extractDeploymentID(attrs []attribute.KeyValue) string {
 	}
 	return ""
 }
+
+// DependencySpanAttribute marks a span as a call to a dependency
+// (gregale.dependency.type). Such spans feed platform views that are not a
+// sample: the retained service-proxy and outbound spans gatewayd-internal
+// writes through apid, and the service map built from them.
+const DependencySpanAttribute = "gregale.dependency.type"
+
+// dependencyAlways records every dependency span and leaves every other span
+// to next. A dependency span is often the child of a request span the head
+// ratio dropped (the caller forwards the gateway's traceparent), so next's
+// parent-based rule alone would drop it too.
+type dependencyAlways struct{ next sdktrace.Sampler }
+
+// NewDependencyAlways wraps next so dependency spans are always recorded.
+func NewDependencyAlways(next sdktrace.Sampler) sdktrace.Sampler {
+	return dependencyAlways{next: next}
+}
+
+func (s dependencyAlways) ShouldSample(p sdktrace.SamplingParameters) sdktrace.SamplingResult {
+	for _, a := range p.Attributes {
+		if a.Key == DependencySpanAttribute {
+			return sdktrace.SamplingResult{
+				Decision:   sdktrace.RecordAndSample,
+				Tracestate: oteltrace.SpanContextFromContext(p.ParentContext).TraceState(),
+			}
+		}
+	}
+	return s.next.ShouldSample(p)
+}
+
+func (s dependencyAlways) Description() string {
+	return fmt.Sprintf("DependencyAlways{%s}", s.next.Description())
+}

@@ -1963,6 +1963,13 @@ type AppEffectiveLimits struct {
 	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
 	RequestBodyMaxBytes    int64 `json:"request_body_max_bytes"`
+	// IdleTimeoutS is the idle timeout the reaper applies: the app's own
+	// setting, or its type's default, clamped to the plan bounds (spec §4.3).
+	IdleTimeoutS int `json:"idle_timeout_s,omitempty"`
+	// Pause is when the platform may pause the VM (ADR-1151): the declared
+	// value, or the default for the app's type. Apps attached to a private
+	// network are never paused whatever they declare.
+	Pause string `json:"pause,omitempty"`
 }
 
 // AppConfiguredResources is the resource shape selected for an app. It is

@@ -187,6 +187,7 @@ from .app_costs_response import AppCostsResponse
 from .app_deploy_settings_condition import AppDeploySettingsCondition
 from .app_deploy_settings_condition_expected_settings import AppDeploySettingsConditionExpectedSettings
 from .app_effective_limits import AppEffectiveLimits
+from .app_effective_limits_pause import AppEffectiveLimitsPause
 from .app_env_list_response import AppEnvListResponse
 from .app_env_list_response_env_by_scope import AppEnvListResponseEnvByScope
 from .app_env_response import AppEnvResponse
@@ -6574,6 +6575,7 @@ __all__ = (
     "AppDeploySettingsCondition",
     "AppDeploySettingsConditionExpectedSettings",
     "AppEffectiveLimits",
+    "AppEffectiveLimitsPause",
     "AppEnvListResponse",
     "AppEnvListResponseEnvByScope",
     "AppEnvResponse",

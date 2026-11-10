@@ -2297,6 +2297,20 @@ func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.R
 	s.getEnvironmentPromotionReceipt(w, r, acct)
 }
 
+// AppEffectiveLimits exposes appEffectiveLimits.
+func AppEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
+	return appEffectiveLimits(a, plan)
+}
+
+// ApplySourceFunctionSettingsForTest runs applySourceFunctionSettings on a
+// server holding only store.
+func ApplySourceFunctionSettingsForTest(ctx context.Context, store state.Store, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec) (state.App, *api.Problem) {
+	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec)
+}
+
+// WithPendingFunctionSteps exposes withPendingFunctionSteps.
+var WithPendingFunctionSteps = withPendingFunctionSteps
+
 // SourceLivenessOverrides is a multipart deploy's liveness_probe override.
 var SourceLivenessOverrides = sourceLivenessOverrides
 
