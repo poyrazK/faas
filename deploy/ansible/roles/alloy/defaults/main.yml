@@ -59,6 +59,7 @@ alloy_journal_units:
   - faas-cgroup-metrics.service
   - faas-kernel-lockdown.service
   - faas-canary-artifact-sweep.service
+  - faas-release-integrity.service
   - faas-cp-state-backup.service
   - faas-audit-anchor.service
   - faas-audit-verify.service
@@ -106,6 +107,8 @@ alloy_security_identifiers:
   - chage
   - gpasswd
   - chsh
+  # ADR-20261110183000: release integrity failures (gregalectl release verify).
+  - faas-release-integrity
 # Kernel messages at notice (5) or more severe; lockdown refusals are
 # notices. Bridge and tap port changes are info and stay local.
 alloy_security_kernel_max_priority: 5

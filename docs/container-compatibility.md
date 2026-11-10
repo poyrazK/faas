@@ -172,9 +172,16 @@ Reseed these yourself, or avoid keeping them across a snapshot:
   ([ADR-20261109140000](adr/20261109140000-report-processes-the-reseed-barrier-missed.md));
 - OpenSSL copies bundled inside Python packages, such as `psycopg2-binary` and
   `cryptography` wheels: the reseed reaches only the standard library's `ssl`;
-- ID libraries that keep a random pool or per-process state, such as `nanoid`,
-  the npm `uuid` package's v1, v6 and v7, MongoDB `ObjectId` and Go `rs/xid`: instances
-  restored from one snapshot can generate the same IDs.
+- ID libraries that keep a random pool or per-process state, other than the
+  ones Gregale resets: instances restored from one snapshot can generate the
+  same IDs. Gregale resets npm `uuid` (its random pool and its v1, v6 and v7
+  state), `nanoid` and `bson` `ObjectId` in Node, and `bson` `ObjectId` in
+  Python, on every restore
+  ([ADR-20261110170000](adr/20261110170000-restore-resets-id-library-state.md)).
+  Copies bundled into one file by esbuild or webpack, ES modules on Node older
+  than 22.15, and Go libraries are not reset: Go `rs/xid`, the MongoDB Go
+  driver's `ObjectID` and the OpenTelemetry Go SDK's trace IDs repeat, and
+  Gregale logs a warning on each wake of a Go app that uses them.
 
 Setting `GREGALE_RESTORE_RESEED=off` in the app's environment disables the
 Node, Python and Java reseed. Only do that for an app that never generates tokens,

@@ -93,3 +93,38 @@ func goExecutable(path string) bool {
 	_, err := buildinfo.ReadFile(path)
 	return err == nil
 }
+
+// goIDLibraryModules lists the Go modules, in Go workload processes, whose
+// IDs repeat across instances restored from one snapshot (ADR-20261110170000):
+// rs/xid and the MongoDB driver's ObjectID draw a per-process random value
+// once, and the OpenTelemetry SDK seeds its trace and span ID generator once.
+// Nothing outside the program can reset them.
+func goIDLibraryModules(procRoot string, self int) []string {
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return nil
+	}
+	selfExe, _ := os.Readlink(filepath.Join(procRoot, strconv.Itoa(self), "exe"))
+	found := map[string]bool{}
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid == self || pid == 1 {
+			continue
+		}
+		dir := filepath.Join(procRoot, e.Name())
+		exe, err := os.Readlink(filepath.Join(dir, "exe"))
+		if err != nil || exe == selfExe || !stampedForReseed(dir) {
+			continue
+		}
+		info, err := buildinfo.ReadFile(filepath.Join(dir, "exe"))
+		if err != nil {
+			continue
+		}
+		for _, dep := range info.Deps {
+			if module := goIDLibrary(dep.Path); module != "" {
+				found[module] = true
+			}
+		}
+	}
+	return sortedKeys(found)
+}
