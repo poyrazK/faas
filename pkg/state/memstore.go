@@ -4877,8 +4877,9 @@ func (m *MemStore) ApplyProjectReconcile(
 					continue
 				}
 				// A function app `gregale deploy` made outside any project is
-				// taken over by the repository (ADR-20261108160000 §1).
-				if mutation.App.Type == AppTypeFunction && existing.Type == AppTypeFunction && existing.AccountID == storedProject.AccountID && existing.ProjectID == "" {
+				// taken over by the repository (ADR-20261108160000 §1), only
+				// when it has the project's owner (same org, or both personal).
+				if mutation.App.Type == AppTypeFunction && existing.Type == AppTypeFunction && existing.AccountID == storedProject.AccountID && existing.OrgID == storedProject.OrgID && existing.ProjectID == "" {
 					adopt[key] = existing.ID
 					adopted = true
 					continue
