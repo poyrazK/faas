@@ -215,12 +215,13 @@ const (
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one
 // client address, and one network (IPv4 /24, IPv6 /48), may create per day.
 //
-// SignupAccountsPerDay caps the self-service accounts the whole platform
-// creates in any 24 hours (ADR-20261104145353). Each account carries a full
-// Free allowance, and the per-address and per-network caps reset with every
-// new address, so this bounds the Free compute, egress and storage a signup
-// farm can claim in a day. It counts every account created, so an operator-
-// or support-created account uses the same budget.
+// SignupAccountsPerDay caps the verified self-service accounts the whole
+// platform creates in any 24 hours (ADR-20261104145353 amendment 1). Each
+// verified account carries a full Free allowance, and the per-address and
+// per-network caps reset with every new address, so this bounds the Free
+// compute, egress and storage a signup farm can claim in a day. Unverified
+// accounts cannot deploy and do not count. An operator- or support-created
+// verified account uses the same budget.
 const (
 	SignupAccountsPerAddressPerDay = 10
 	SignupAccountsPerNetworkPerDay = 50
