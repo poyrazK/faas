@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"debug/buildinfo"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +18,7 @@ func scanReseedCandidates(procRoot string, self int) []reseedCandidate {
 	if err != nil {
 		return nil
 	}
+	selfExe, _ := os.Readlink(filepath.Join(procRoot, strconv.Itoa(self), "exe"))
 	var out []reseedCandidate
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
@@ -25,10 +27,19 @@ func scanReseedCandidates(procRoot string, self int) []reseedCandidate {
 		}
 		dir := filepath.Join(procRoot, e.Name())
 		exe, err := os.Readlink(filepath.Join(dir, "exe"))
-		if err != nil || reseedRuntimeForExe(exe) == "" {
+		if err != nil {
 			continue
 		}
 		c := reseedCandidate{pid: pid, exe: exe}
+		if reseedRuntimeForExe(exe) == "" {
+			// A Go executable is named by nothing in its path. Only a
+			// workload process (guest-init stamped the barrier socket into
+			// its environment) counts, never guest-init's own helpers.
+			if exe == selfExe || !stampedForReseed(dir) || !goExecutable(filepath.Join(dir, "exe")) {
+				continue
+			}
+			c.runtime = "go"
+		}
 		if cmdline, err := os.ReadFile(filepath.Join(dir, "cmdline")); err == nil {
 			if args := bytes.Split(bytes.TrimRight(cmdline, "\x00"), []byte{0}); len(args) > 1 {
 				c.entry = string(args[1])
@@ -65,4 +76,20 @@ func unregisteredRuntimeProcesses() (int, []string) {
 		return 0, nil
 	}
 	return unregisteredRuntimes(scanReseedCandidates("/proc", os.Getpid()), b.registeredPIDs())
+}
+
+// stampedForReseed reports whether guest-init stamped the barrier socket into
+// the process environment, which marks a workload process.
+func stampedForReseed(dir string) bool {
+	environ, err := os.ReadFile(filepath.Join(dir, "environ"))
+	if err != nil {
+		return false
+	}
+	return bytes.Contains(append([]byte{0}, environ...), []byte("\x00"+restoreReseedSocketEnv+"="))
+}
+
+// goExecutable reports whether the executable carries Go build information.
+func goExecutable(path string) bool {
+	_, err := buildinfo.ReadFile(path)
+	return err == nil
 }
