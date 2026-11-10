@@ -2808,3 +2808,6 @@ func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
 
 // WorkerNoInstancesLine exposes the empty worker pool explanation.
 var WorkerNoInstancesLine = workerNoInstancesLine
+
+// PrintPublicURLs exposes the plan's public URL list (H32-30).
+var PrintPublicURLs = printPublicURLs
