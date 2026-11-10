@@ -58,9 +58,31 @@ must carry the same sources as the boot ruleset.
 5. The `*_allowed_cidrs` lists stay as they are for every other reader
    (pg_hba, gatewayd-public trusted ingress, fail2ban, the app edge).
 
-Listeners still bind `0.0.0.0` where they did; binding the private address is
-a separate change for listeners without loopback clients. Per-node object-store
-credentials follow the S3 artifact store (#6724).
+Per-node object-store credentials follow the S3 artifact store (#6724).
+
+### Amendment (2026-11-10): private listeners bind the private address
+
+The control plane's two wildcard listeners that only compute nodes dial, by
+name, now bind the address those names resolve to: apid's AppErrors listener
+(9093, `apid.faas`) and githubd's source-ref listener (50053, `githubd.faas`).
+Their drop-ins replace `0.0.0.0` with the host's private address from the same
+chain `/etc/hosts` uses. They do so only when the gathered
+`all_ipv4_addresses` contains that address; otherwise they keep `0.0.0.0`, so a
+run without facts never leaves apid unable to bind (apid exits when this
+listener fails). The generated variables and role assertions are unchanged.
+
+Not changed, with the reasons:
+
+- vmmd 50051 and gatewayd-internal 8080 have loopback clients (the node-local
+  schedd dials `127.0.0.1:50051`; the scheduler's synth path and the compute
+  edge dial `127.0.0.1:8080`).
+- gatewayd-internal's egress (9092) and private control (9097) listeners pass
+  their sockets to a successor on release. A successor binding a new address
+  while the predecessor still holds the wildcard fails with "address already
+  in use", which restarted fsn-3 on 2026-10-25.
+
+Binding a listener does not choose who reaches it; the firewall does. These
+binds only keep the listeners off the public card if the ruleset is ever lost.
 
 ## Consequences
 
