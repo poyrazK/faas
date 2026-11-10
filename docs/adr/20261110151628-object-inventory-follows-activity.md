@@ -53,9 +53,10 @@ in flight: "a held bucket cannot grow, so a past inventory holds"
 
 - **No batch barrier.** Workers draw due buckets from one queue. A worker that
   finishes claims the next due bucket at once instead of waiting for the rest
-  of its batch. The sweep stops claiming after
-  `ObjectStorageInventorySweepBudget` (40 s). Attempts in flight finish under
-  their own 45 s timeout.
+  of its batch. After `ObjectStorageInventorySweepBudget` (40 s) the sweep
+  starts no long listing. Short buckets fill the time the long listings in
+  flight still take (under their own 45 s timeout), so the sweep never
+  outlasts its longest listing and its workers do not idle meanwhile.
 - **No idle minute while work is due.** A sweep that stopped on its budget
   with buckets still due is followed by the next one immediately. The loop
   waits its minute, or for `InventoryWake`, only when nothing is due.
@@ -129,6 +130,25 @@ in flight: "a held bucket cannot grow, so a past inventory holds"
 4. Quiet freshness and verification cadence behind `object_inventory_quiet`.
    Run in `shadow` for a week, then `on` with the owner's go-ahead.
 5. Re-measure and record the result here.
+
+## Step 1 result (2026-11-10)
+
+`TestInventorySweepCapacity` on the new sweep, at 200 ms per page
+([evidence](../ops/evidence/20261110-object-inventory-capacity/REPORT.md#after-step-1-2026-11-10)):
+
+- **Small buckets:** 1,505 per 40 s sweep, listers 93% busy. The next sweep
+  starts at once, so about 32,000 one-page buckets stay inside 900 s, up from
+  about 10,800.
+- **Steady state with 16 large buckets** (listed before, 500,000 keys each):
+  795–1,205 small buckets per sweep with the listers 94–96% busy, and 4
+  large listings advancing each sweep. Main's sweep, measured the same way,
+  refreshed 49–99 at 15–17% busy and then waited a minute.
+- **Pass criteria.** Small-only cycle under 50 s: met (about 40 s). Listers at
+  least 75% busy with large listings: met in steady state (94–96%). The
+  original mixed scenario, whose 16 buckets were full but never listed,
+  stayed at 68–82%. A bucket with no inventory has unknown size, so its first
+  45 s listing takes a short worker. In production that happens only to a
+  bucket that is new (and empty) or restored full.
 
 ## Consequences
 

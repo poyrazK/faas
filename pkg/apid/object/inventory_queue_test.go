@@ -59,12 +59,13 @@ func TestInventoryQueueCapsLongListings(t *testing.T) {
 	for range api.ObjectStorageInventorySweepConcurrency {
 		wg.Go(func() {
 			for {
-				b, long, ok := q.next(t.Context())
+				take, ok := q.next(t.Context())
 				if !ok {
 					return
 				}
+				long := take.long
 				mu.Lock()
-				handed[b.ID]++
+				handed[take.bucket.ID]++
 				if long {
 					active++
 					most = max(most, active)
@@ -82,7 +83,7 @@ func TestInventoryQueueCapsLongListings(t *testing.T) {
 				} else if shortDone.Add(1) == shorts {
 					close(release)
 				}
-				q.done(long)
+				q.done(take)
 			}
 		})
 	}
@@ -111,20 +112,62 @@ func TestInventoryQueueStopsOnRepeatsAndDeadline(t *testing.T) {
 	q := newInventoryQueue(fixedDue(rows, true), time.Now().Add(time.Minute))
 	var got []string
 	for {
-		b, _, ok := q.next(t.Context())
+		take, ok := q.next(t.Context())
 		if !ok {
 			break
 		}
-		got = append(got, b.ID)
-		q.done(false)
+		got = append(got, take.bucket.ID)
+		q.done(take)
 	}
 	if !slices.Equal(got, []string{"a", "b"}) || q.pending() {
 		t.Fatal("repeats", got, q.pending())
 	}
 
 	late := newInventoryQueue(fixedDue(rows, false), time.Now().Add(-time.Second))
-	if _, _, ok := late.next(t.Context()); ok || !late.pending() {
+	if _, ok := late.next(t.Context()); ok || !late.pending() {
 		t.Fatal("a sweep past its budget took work or reported none left")
+	}
+}
+
+// TestInventoryQueueFillsTheTail: past the budget no long listing starts,
+// short buckets keep the workers busy while an attempt that started before
+// the budget is still in flight (a long listing, or the first listing of a
+// bucket whose size is not known yet), and the sweep stops once none is.
+func TestInventoryQueueFillsTheTail(t *testing.T) {
+	rows := []state.ObjectInventoryDue{
+		{Bucket: state.ObjectBucket{ID: "long-1"}, Long: true},
+		{Bucket: state.ObjectBucket{ID: "unknown-1"}},
+		{Bucket: state.ObjectBucket{ID: "short-1"}},
+		{Bucket: state.ObjectBucket{ID: "short-2"}},
+		{Bucket: state.ObjectBucket{ID: "short-3"}},
+	}
+	q := newInventoryQueue(fixedDue(rows, false), time.Now().Add(time.Minute))
+	long, ok := q.next(t.Context())
+	if !ok || !long.long || long.bucket.ID != "long-1" {
+		t.Fatal("first take", long, ok)
+	}
+	unknown, ok := q.next(t.Context())
+	if !ok || unknown.long || unknown.bucket.ID != "unknown-1" {
+		t.Fatal("second take", unknown, ok)
+	}
+	q.deadline = time.Now().Add(-time.Second) // the budget passes while both list
+	take := func(want string) {
+		t.Helper()
+		got, ok := q.next(t.Context())
+		if !ok || got.long || got.bucket.ID != want {
+			t.Fatalf("past the budget: took %+v, %v; want short %s", got, ok, want)
+		}
+		q.done(got)
+	}
+	take("short-1")
+	q.done(long) // the long listing finishes; the first listing still runs
+	take("short-2")
+	q.done(unknown)
+	if got, ok := q.next(t.Context()); ok {
+		t.Fatal("handed out work after every attempt from before the budget finished", got)
+	}
+	if !q.pending() {
+		t.Fatal("short-3 is still due")
 	}
 }
 

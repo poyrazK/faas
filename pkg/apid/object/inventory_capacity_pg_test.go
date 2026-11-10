@@ -30,14 +30,14 @@ import (
 // input to ADR-20261110151628. Each scenario seeds more due buckets than one
 // sweep can reach and runs the real sweep (reconcileObjectInventories) once or
 // twice. It reads wall-clock time, so it runs only when
-// FAAS_INVENTORY_CAPACITY=1 (about seven minutes):
+// FAAS_INVENTORY_CAPACITY=1 (about ten minutes):
 //
 //	FAAS_INVENTORY_CAPACITY=1 DATABASE_URL=... go test -run '^TestInventorySweepCapacity$' -v ./pkg/apid/object
 //
 // Results: docs/ops/evidence/20261110-object-inventory-capacity/REPORT.md.
 func TestInventorySweepCapacity(t *testing.T) {
 	if os.Getenv("FAAS_INVENTORY_CAPACITY") == "" {
-		t.Skip("set FAAS_INVENTORY_CAPACITY=1 to measure inventory sweep capacity (wall-clock, ~7 min)")
+		t.Skip("set FAAS_INVENTORY_CAPACITY=1 to measure inventory sweep capacity (wall-clock, ~10 min)")
 	}
 	scenarios := []struct {
 		name         string
@@ -45,19 +45,42 @@ func TestInventorySweepCapacity(t *testing.T) {
 		small, large int
 		largePages   int
 		sweeps       int
+		// listed marks every bucket listed 10 minutes ago with its key
+		// count, as in production, where only a new (empty) bucket has no
+		// inventory. Without it the large buckets' first listing is of
+		// unknown size.
+		listed bool
 	}{
 		{name: "small-100ms", latency: 100 * time.Millisecond, small: 4000, sweeps: 1},
 		{name: "small-200ms", latency: 200 * time.Millisecond, small: 3000, sweeps: 1},
 		{name: "small-300ms", latency: 300 * time.Millisecond, small: 2000, sweeps: 1},
 		{name: "mixed-200ms", latency: 200 * time.Millisecond, small: 2000, large: 16, largePages: 500, sweeps: 2},
+		{name: "steady-200ms", latency: 200 * time.Millisecond, small: 2000, large: 16, largePages: 500, sweeps: 2, listed: true},
 	}
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
-			st := state.NewPgStore(pgtest.OpenMigrated(t))
+			pool := pgtest.OpenMigrated(t)
+			st := state.NewPgStore(pool)
 			lister := &latencyLister{latency: sc.latency, keys: map[string]int{}}
 			svc, err := seedInventoryCapacity(t, st, lister, sc.small, sc.large, sc.largePages)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if sc.listed {
+				var large []string
+				for name, keys := range lister.keys {
+					if keys > 3 {
+						large = append(large, name)
+					}
+				}
+				if _, err = pool.Exec(t.Context(), `INSERT INTO object_storage_bucket_usage (bucket_id, baseline_bytes, baseline_keys, observed_bytes, observed_keys, observed_at, attempt_at)
+SELECT b.id, k, k, k, k, now() - interval '10 minutes', now() - interval '10 minutes'
+FROM object_buckets b CROSS JOIN LATERAL (SELECT CASE WHEN b.physical_name = ANY($1::text[]) THEN $2::bigint ELSE 3 END AS k) n
+ON CONFLICT (bucket_id) DO UPDATE SET baseline_bytes = EXCLUDED.baseline_bytes, baseline_keys = EXCLUDED.baseline_keys,
+observed_bytes = EXCLUDED.observed_bytes, observed_keys = EXCLUDED.observed_keys, observed_at = EXCLUDED.observed_at, attempt_at = EXCLUDED.attempt_at`,
+					large, int64(sc.largePages*api.MaxObjectS3ListItems)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			due := time.Now()
 			if _, err = st.DueObjectInventories(t.Context(), api.ObjectStorageInventorySweepBatch); err != nil {

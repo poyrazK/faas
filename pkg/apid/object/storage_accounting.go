@@ -194,8 +194,9 @@ func (s *Service) ReconcileObjectInventories(ctx context.Context, observe func(s
 // reconcileObjectInventories runs one sweep: up to
 // ObjectStorageInventorySweepConcurrency workers each take the next due
 // bucket as soon as they finish one, until nothing is due or
-// ObjectStorageInventorySweepBudget has passed; attempts in flight then finish
-// under their own timeout (ADR-20261110151628 §1). It reports more when work
+// ObjectStorageInventorySweepBudget has passed. Short buckets then fill the
+// time the attempts already in flight take under their own timeout
+// (ADR-20261110151628 §1). It reports more when work
 // was still due, or a long listing advanced without finishing, so the loop
 // runs the next sweep at once. page, when set, counts each provider listing
 // page.
@@ -223,12 +224,12 @@ func (s *Service) reconcileObjectInventories(ctx context.Context, observe func(s
 	for range api.ObjectStorageInventorySweepConcurrency {
 		wg.Go(func() {
 			for {
-				b, long, ok := q.next(ctx)
+				take, ok := q.next(ctx)
 				if !ok {
 					return
 				}
-				err := s.reconcileObjectInventory(ctx, st, b, report, page)
-				q.done(long)
+				err := s.reconcileObjectInventory(ctx, st, take.bucket, report, page)
+				q.done(take)
 				if err != nil {
 					q.fail(err)
 				}

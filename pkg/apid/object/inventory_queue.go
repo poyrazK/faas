@@ -18,7 +18,10 @@ type inventoryDueFunc func(ctx context.Context, limit int32, skip []string) ([]s
 // (ADR-20261110151628 §1). It reads the due list a page at a time and never
 // hands out a bucket twice in one sweep. At most
 // api.ObjectStorageInventoryLongListingWorkers long listings run at once.
-// Once the sweep's deadline passes, or a store read fails, it hands out
+// Once the sweep's deadline passes it starts no long listing, and hands out
+// short buckets only while an attempt that started before the deadline is
+// still in flight, so the sweep never outlasts its longest attempt but its
+// workers do not idle meanwhile. After a store read fails it hands out
 // nothing more.
 type inventoryQueue struct {
 	due      inventoryDueFunc
@@ -29,9 +32,16 @@ type inventoryQueue struct {
 	short, long []state.ObjectBucket
 	seen        map[string]bool
 	longActive  int
+	early       int  // attempts handed out before the deadline, still in flight
 	drained     bool // nothing is due that this sweep has not taken
 	expired     bool
 	err         error
+}
+
+// inventoryTake is one bucket handed to a worker, returned to done.
+type inventoryTake struct {
+	bucket      state.ObjectBucket
+	long, early bool
 }
 
 func newInventoryQueue(due inventoryDueFunc, deadline time.Time) *inventoryQueue {
@@ -57,44 +67,69 @@ func (q *inventoryQueue) run(ctx context.Context) (stop func()) {
 	}
 }
 
-// next returns the next bucket to inventory and whether it is a long listing.
-// It reports false when the sweep should stop taking work.
-func (q *inventoryQueue) next(ctx context.Context) (state.ObjectBucket, bool, bool) {
+// next returns the next bucket to inventory. It reports false when the sweep
+// should stop taking work.
+func (q *inventoryQueue) next(ctx context.Context) (inventoryTake, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for {
-		if q.expired || q.err != nil || ctx.Err() != nil || !time.Now().Before(q.deadline) {
-			return state.ObjectBucket{}, false, false
+		if q.err != nil || ctx.Err() != nil {
+			return inventoryTake{}, false
+		}
+		if q.expired || !time.Now().Before(q.deadline) {
+			if q.early == 0 {
+				return inventoryTake{}, false
+			}
+			if len(q.short) > 0 {
+				return q.takeLocked(false, false), true
+			}
+			if !q.drained {
+				q.refillLocked(ctx)
+				continue
+			}
+			return inventoryTake{}, false
 		}
 		if len(q.long) > 0 && q.longActive < api.ObjectStorageInventoryLongListingWorkers {
-			b := q.long[0]
-			q.long = q.long[1:]
-			q.longActive++
-			return b, true, true
+			return q.takeLocked(true, true), true
 		}
 		if len(q.short) > 0 {
-			b := q.short[0]
-			q.short = q.short[1:]
-			return b, false, true
+			return q.takeLocked(false, true), true
 		}
 		if !q.drained {
 			q.refillLocked(ctx)
 			continue
 		}
 		if len(q.long) == 0 {
-			return state.ObjectBucket{}, false, false
+			return inventoryTake{}, false
 		}
 		// Only long listings remain and their slots are taken.
 		q.wake.Wait()
 	}
 }
 
-// done releases a long listing's slot.
-func (q *inventoryQueue) done(long bool) {
+func (q *inventoryQueue) takeLocked(long, early bool) inventoryTake {
+	t := inventoryTake{long: long, early: early}
+	if long {
+		t.bucket, q.long = q.long[0], q.long[1:]
+		q.longActive++
+	} else {
+		t.bucket, q.short = q.short[0], q.short[1:]
+	}
+	if early {
+		q.early++
+	}
+	return t
+}
+
+// done returns a finished take's long-listing slot.
+func (q *inventoryQueue) done(t inventoryTake) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if long {
+	if t.long {
 		q.longActive--
+	}
+	if t.early {
+		q.early--
 	}
 	q.wake.Broadcast()
 }
