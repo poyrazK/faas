@@ -170,10 +170,16 @@ After billing adoption, deployment-rate admission shares the company's budget
 across these resource namespaces. Existing personal deployment windows stay with
 the individual account.
 
-The remaining reviewed project/environment paths mirror the existing APIs below
+Every reviewed project/environment path is also served below
 `/v1/orgs/{organization}/projects/{slug}`: environment inventories and creation,
-configuration/diffs, release sets, qualifications, promotion previews, approvals,
-promotions, rollbacks, source settings and deletion. The exact permission list is
+configuration/diffs, shared secrets, release sets (publish, activate,
+deactivate, rollback, staging and verification runs), feature flags, release
+secrets, deployment readiness, qualifications, promotion previews, approvals,
+promotions, rollbacks, source settings and deletion. Use these paths for a
+company project: `/v1/projects/{slug}` resolves the slug in your own
+namespace, which never holds an adopted company's projects. A key limited to
+projects reaches its company projects through these paths and the
+organization project list. The exact permission list is
 [`projectaccess/routes.go`](../pkg/apid/projectaccess/routes.go). Legacy project
 URLs and dashboard lists also enforce departure and role changes.
 
@@ -188,6 +194,11 @@ Go clients provide organization project methods such as `GetOrgProject`,
 `CreateOrgProjectEnvironment`, `DeployOrgProject`, `PromoteOrgProjectEnvironment`
 and `RollbackOrgProjectEnvironmentPromotion`. Generated Node/Python project
 clients include the organization routes. Personal clients retain their URLs.
+`Client.WithProjectOrganization("acme")` sends every project call of an existing
+client to the company's routes. In the CLI, put `--org` before the command:
+`gregale --org acme deploy --project`, `gregale --org acme projects list`. The
+reviewed-plan (`apply-plan`), safe-release and source-ref scan entry points have
+no company form; with `--org` the CLI refuses them before sending a request.
 See [ADR-202610171905](adr/202610171905-organization-project-ownership.md) for migration and
 acceptance requirements.
 

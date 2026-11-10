@@ -140,7 +140,12 @@ person before it deletes something, deploys or rolls back a production app,
 creates or rotates credentials, or changes billing. Previews are not
 gated. Project deploys, environment promotions, release-set changes and GitOps
 source changes count as production on every environment, because an
-environment does not say whether it serves production. Choose the categories when you create the key:
+environment does not say whether it serves production. Changing a production
+app's variables, secrets, secret references or settings also counts as
+production, because the app runs with them at its next wake; the same writes
+in a stage scope do not ask. Project environment configuration, shared
+secrets and workload policies ask on every environment. Choose the categories
+when you create the key:
 
 ```sh
 gregale key create ci-agent --scopes agent,deploy:write --approvals delete,billing

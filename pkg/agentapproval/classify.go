@@ -23,6 +23,10 @@ const (
 	TargetDeployment
 	// TargetEdgeRule: production only when the {id} edge rule's app is.
 	TargetEdgeRule
+	// TargetAppConfig: production only when the {slug} app is a production
+	// app and the write targets its production scope (?scope= or
+	// ?environment= empty, default or production).
+	TargetAppConfig
 )
 
 // Rule is the classification of one route.
@@ -122,6 +126,21 @@ var production = map[string]Target{
 	"POST /v1/orgs/{}/projects/{}/environments/{}/promotions/{}/rollback":          TargetNone,
 	"POST /v1/orgs/{}/projects/{}/environments/{}/promotions/{}/recover-migration": TargetNone,
 	"POST /v1/orgs/{}/projects/{}/environments/{}/release-sets":                    TargetNone,
+
+	// Configuration reaches production at the next wake like a release, so a
+	// production variable, secret or app setting asks as a restart and a
+	// config rollback already did (apps/projects review 2026-11-10, P10).
+	// Deletes ask as the delete category.
+	"PUT /v1/apps/{}/env/{}":                                            TargetAppConfig,
+	"POST /v1/apps/{}/env/batch":                                        TargetAppConfig,
+	"PUT /v1/apps/{}/secrets/{}":                                        TargetAppConfig,
+	"PUT /v1/apps/{}/secret-references/{}":                              TargetAppConfig,
+	"PATCH /v1/apps/{}":                                                 TargetApp,
+	"PUT /v1/projects/{}/environments/{}/config":                        TargetNone,
+	"PUT /v1/projects/{}/environments/{}/secrets/{}":                    TargetNone,
+	"PUT /v1/orgs/{}/projects/{}/environments/{}/config":                TargetNone,
+	"PUT /v1/projects/{}/environments/{}/workloads/{}/policies":         TargetNone,
+	"PUT /v1/orgs/{}/projects/{}/environments/{}/workloads/{}/policies": TargetNone,
 }
 
 // productionRouteOnly are production routes whose ServeMux pattern differs

@@ -11710,11 +11710,23 @@ paths:
       tags: [projects]
       operationId: deleteProject
       summary: Delete a project and detach its live workloads.
-      description: The apps remain live. Their project_id is cleared by the database foreign-key action.
+      description: |
+        The apps remain live. Their project_id is cleared by the database
+        foreign-key action. While the project's services call each other by
+        service name, deletion is refused with 409
+        project_services_call_each_other, because detached services no longer
+        resolve those names; pass detach_services=true once they do not.
+      parameters:
+        - name: detach_services
+          in: query
+          required: false
+          description: Confirms the project's services no longer call each other by service name.
+          schema: {type: boolean}
       responses:
         '204': {description: Project deleted.}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/projects/{slug}/environments/{environment}/config:
     parameters:
