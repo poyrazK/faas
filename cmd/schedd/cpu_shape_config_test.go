@@ -12,8 +12,9 @@ import (
 )
 
 type fakeCPUShapeEngine struct {
-	shape api.CPUShape
-	apps  []string
+	shape    api.CPUShape
+	apps     []string
+	sizeApps []string
 }
 
 func (f *fakeCPUShapeEngine) SetCPUShape(s api.CPUShape) { f.shape = s }
@@ -25,6 +26,16 @@ func (f *fakeCPUShapeEngine) SetGuestVCPUFromCPUApps(apps []string) error {
 		}
 	}
 	f.apps = apps
+	return nil
+}
+
+func (f *fakeCPUShapeEngine) SetCPUSizeApps(apps []string) error {
+	for _, a := range apps {
+		if a == "bad" {
+			return errors.New("bad entry")
+		}
+	}
+	f.sizeApps = apps
 	return nil
 }
 
@@ -40,11 +51,14 @@ func TestCPUShapeConfigAppliesTheKeys(t *testing.T) {
 		{runtimeconfig.KeyAppCPUCeilingFloorMillicores, "500", true, false},
 		{runtimeconfig.KeyGuestVCPUMillicores, "2000", true, false},
 		{runtimeconfig.KeyGuestVCPUFromCPUApps, `"*,0b6f8c1e-2f6a-4c55-9d38-3c1f0c5e7a11"`, true, false},
+		{runtimeconfig.KeyCPUSizeApps, `"0b6f8c1e-2f6a-4c55-9d38-3c1f0c5e7a11"`, true, false},
 		// Out of bounds or the wrong shape: refused, last value kept.
 		{runtimeconfig.KeyAppCPUBaselineMillicoresPerGB, "100", true, true},
 		{runtimeconfig.KeyAppCPUCeilingFloorMillicores, "750", true, true},
 		{runtimeconfig.KeyGuestVCPUMillicores, `"1000"`, true, true},
 		{runtimeconfig.KeyGuestVCPUFromCPUApps, `"bad"`, true, true},
+		{runtimeconfig.KeyCPUSizeApps, `"bad"`, true, true},
+		{runtimeconfig.KeyCPUSizeApps, `7`, true, true},
 		{runtimeconfig.KeyDataPlacement, "true", false, false},
 	}
 	for _, step := range steps {
@@ -59,5 +73,8 @@ func TestCPUShapeConfigAppliesTheKeys(t *testing.T) {
 	}
 	if len(engine.apps) != 2 || engine.apps[0] != "*" {
 		t.Errorf("apps = %v, want the two listed entries", engine.apps)
+	}
+	if len(engine.sizeApps) != 1 || engine.sizeApps[0] != "0b6f8c1e-2f6a-4c55-9d38-3c1f0c5e7a11" {
+		t.Errorf("size apps = %v, want the one listed app", engine.sizeApps)
 	}
 }

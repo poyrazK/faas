@@ -238,3 +238,10 @@ JOIN apps a ON a.id = rt.app_id
 WHERE rt.received_at >= sqlc.arg(window_from)::timestamptz
   AND rt.received_at <  sqlc.arg(window_until)::timestamptz
 ON CONFLICT (app_id, bucket_start) DO NOTHING;
+
+-- name: ClaimRequestAnalyticsRollupBatch :execrows
+-- ADR-20261103113952 amendment 5: record a gateway rollup batch in the
+-- transaction that applies it; 0 rows means the batch was applied before.
+INSERT INTO request_analytics_rollup_batches (batch_id, node_id)
+VALUES (sqlc.arg(batch_id), sqlc.arg(node_id))
+ON CONFLICT (batch_id) DO NOTHING;

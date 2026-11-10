@@ -122,11 +122,10 @@ type Dispatcher interface {
 // that crosses the boundary, and Execute is the only method — the
 // evaluator never calls pkg/safedeploy.Orchestrator directly.
 //
-// Concurrency: the evaluator serialises Execute behind dispatchMu,
-// across the accounts it evaluates in parallel. pkg/safedeploy.ActionDispatcher
-// is concurrency-safe today (its only side-effect is a single HTTP
-// call into apid), but the lock keeps the contract honest if a
-// future fan-out becomes multi-goroutine.
+// Concurrency: Execute must be safe for concurrent use. The evaluator
+// calls it from the accounts it evaluates in parallel, one call at a time
+// per account (ADR-20261109153000). pkg/safedeploy.ActionDispatcher is
+// safe: its only side-effect is a single HTTP call into apid.
 type ActionExecutor interface {
 	Execute(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error
 }
@@ -169,7 +168,6 @@ type Evaluator struct {
 	identity   func() *age.X25519Identity // nil = meterd can't unseal; skip with warn
 	identities func() []*age.X25519Identity
 	dispatch   Dispatcher
-	dispatchMu *sync.Mutex // serialises ActionExecutor calls (see ActionExecutor)
 	// actionExec (issue #976 / ADR-122 / SAFE-RELEASES-B) is the
 	// in-process action fan-out surface. Nil-coerced at
 	// construction so the evaluator's behaviour is the same on
@@ -201,6 +199,9 @@ type Evaluator struct {
 	// logContextReleased decides, per account, whether fires carry the
 	// ADR-20261022172052 log context; nil means never.
 	logContextReleased func(ctx context.Context, accountID, appID string) bool
+	// spend reads account_spend_eur's month to date (SetSpend); nil reads
+	// the store's compute overage.
+	spend SpendCents
 	// releaseMetrics counts release notice deliveries; nil records nothing.
 	releaseMetrics *releasemetrics.Metrics
 
@@ -212,6 +213,8 @@ type Evaluator struct {
 	accountBudget time.Duration
 	resumeMu      sync.Mutex
 	resume        map[string]string // account → rule its next tick starts with
+	// fireRetries are the fires channels did not take (ADR-20261109153000).
+	fireRetries fireRetries
 	// lastPurge is when RunOnce last purged expired deliveries
 	// (ADR-20261029203000); RunOnce runs on one goroutine.
 	lastPurge time.Time
@@ -323,13 +326,12 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		pagerDuty:  pagerduty.New(o.PagerDutyHTTPClient),
 		identities: o.Identities,
 		dispatch:   o.Dispatcher,
-		dispatchMu: &sync.Mutex{},
 		newSigner:  o.NewSigner,
 		now:        o.Now,
 		log:        o.Log,
 		ops:        o.Ops,
 
-		channels:         o.Channels,
+		channels:         verifiedEmailSender(o.Channels, o.Store),
 		channelOutcome:   o.ChannelOutcome,
 		dashboardBaseURL: o.DashboardBaseURL,
 		releaseMetrics:   o.ReleaseMetrics,
@@ -402,6 +404,9 @@ type Stats struct {
 	// notices re-sent to channels that had not taken them, and those given
 	// up after AlertChannelResolveRetryWindow (ADR-20261031144636).
 	ChannelResolvesRetried, ChannelResolvesAbandoned int
+	// ChannelFiresRetried counts fires re-sent to channels that had not
+	// taken them while their rule was still firing (ADR-20261109153000).
+	ChannelFiresRetried int
 	// StoodDown counts rules whose episode ended without them recovering:
 	// disabled, no longer covered, or their app deleted
 	// (ADR-20261104142830). ChannelStandDownsDelivered and
@@ -473,6 +478,7 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 	}
 	stats.ReleaseApprovalNotices = e.deliverReleaseApprovalEvents(ctx, e.now())
 	e.standDownStranded(ctx, e.now(), &stats)
+	stats.ChannelFiresRetried = e.retryChannelFires(ctx, e.now())
 	stats.ChannelResolvesRetried, stats.ChannelResolvesAbandoned = e.retryChannelResolves(ctx, e.now())
 	stats.ChannelStandDownsDelivered, stats.ChannelStandDownsAbandoned = e.deliverChannelStandDowns(ctx, e.now())
 	stats.DeliveriesPurged = e.purgeDeliveries(ctx, e.now())
@@ -761,9 +767,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			result.Err = fmt.Errorf("no notification channel accepted the alert (%d attempted)", attempted)
 		}
 		e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
-		e.dispatchMu.Lock()
 		e.runAction(ctx, rule, deliveryID, observed, now, stats)
-		e.dispatchMu.Unlock()
 		return
 	}
 	e.deliverAlert(ctx, rule, deliveryID, observed, payloadMap, now, stats)
@@ -784,13 +788,11 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 	// ClaimAlertFire enforces: a duplicate inside the cool-down
 	// window already returned at the `if !won` branch.
 	//
-	// Serialised behind dispatchMu because the ActionDispatcher's
-	// Execute path may share connection state with the webhook
-	// dispatcher in the future; today the lock is just
-	// precautionary.
-	e.dispatchMu.Lock()
+	// Not serialised across accounts (ADR-20261109153000): one account's
+	// rules run in one goroutine, so actions on an app never overlap, and
+	// a slow action costs only its own account's tick budget. A global
+	// lock here used to hold every account's fires behind one rollback.
 	e.runAction(ctx, rule, deliveryID, observed, now, stats)
-	e.dispatchMu.Unlock()
 
 	// Unseal the webhook secret. A nil identity or a namespace
 	// mismatch is a hard skip — we never dispatch without a valid
@@ -1145,7 +1147,7 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		// near money fail review" — observed is int64 cents,
 		// compareCents rounds the threshold to cents at the
 		// seam so the comparison is integer-aligned end-to-end.
-		cents, err := e.store.MTDSpendEurCents(ctx, rule.AccountID)
+		cents, err := e.monthSpendCents(ctx, rule.AccountID)
 		if err != nil {
 			e.log.Warn("alerts: mtd spend query",
 				"rule", rule.ID, "err", err)
@@ -1326,8 +1328,31 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		if appmetrics.IsDegradedSource(source) {
 			return 0, false, skipDegraded
 		}
-		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+		breached := compareFloat(observed, rule.Comparison, rule.Threshold)
+		if breached && ratioMetric(rule.Metric) {
+			// A share or percentile of a handful of requests is not
+			// evidence (ADR-20261109153000): one failed wake out of three
+			// requests is a 33% error rate.
+			requests, src := appmetrics.FetchAlertMetric(ctx, e.promQL, e.log, rule.AppID, string(rule.WindowSpec), "request_count")
+			if src != appmetrics.SourcePrometheus {
+				return 0, false, skipDegraded
+			}
+			if requests < api.AlertRatioMinRequests {
+				return observed, false, skipInsufficient
+			}
+		}
+		return observed, breached, ""
 	}
+}
+
+// ratioMetric reports a metric that is a share or a percentile of the
+// window's requests, which a minimum request count guards.
+func ratioMetric(m state.AlertMetric) bool {
+	switch string(m) {
+	case "error_rate_pct", "cold_start_pct", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms":
+		return true
+	}
+	return false
 }
 
 // summariseFailed walks every alertable InvocationSource value and sums
@@ -1522,6 +1547,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	}
 	if rule.CustomMetricName != "" {
 		m["custom_metric_name"] = rule.CustomMetricName
+		if len(rule.CustomMetricLabels) > 0 {
+			m["custom_metric_labels"] = rule.CustomMetricLabels
+		}
 	}
 	if rule.LogQuery != "" {
 		m["log_query"] = rule.LogQuery

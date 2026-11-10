@@ -21,6 +21,11 @@
 //   POST /hook        alert webhook receiver: 200 only when the delivery's
 //                     X-Faas-Alert-Signature verifies against E2E_HOOK_SECRET
 //                     (412 without the secret, 401 on a bad signature)
+//   GET  /outbound-echo/* outbound provider stand-in: method, path and the
+//                     SHA-256 of the Authorization it received, never the value
+//   GET  /outbound?integration=ID&route=echo|denied  calls a managed outbound
+//                     integration through GREGALE_OUTBOUND_URL on a fixed path
+//                     (never a caller-chosen target) and reports the answer
 
 import http from "node:http";
 import net from "node:net";
@@ -151,8 +156,42 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+// Fixed relay paths for /outbound: echo fits the journey integration's
+// route policy (/outbound-echo), denied does not.
+const outboundRoutes = { echo: "/outbound-echo/call", denied: "/outbound-denied" };
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+async function callOutbound(integration, route) {
+  const base = process.env.GREGALE_OUTBOUND_URL || "";
+  if (!base) {
+    return { configured: false };
+  }
+  try {
+    const r = await fetch(`${base.replace(/\/+$/, "")}/i/${integration}${outboundRoutes[route]}`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    const text = (await r.text()).slice(0, 4096);
+    let body = text;
+    try {
+      body = JSON.parse(text);
+    } catch {}
+    return { configured: true, status: r.status, body };
+  } catch (err) {
+    return { configured: true, error: String(err) };
+  }
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, "http://probe.invalid");
+  if (url.pathname.startsWith("/outbound-echo/")) {
+    const auth = req.headers.authorization;
+    return json(res, 200, {
+      echo: true,
+      method: req.method,
+      path: url.pathname,
+      authorization_sha256: auth ? createHash("sha256").update(auth).digest("hex") : null,
+    });
+  }
   switch (url.pathname) {
     case "/":
       return json(res, 200, { app: "gregale-e2e-probe", version, uptime_ms: Date.now() - started });
@@ -241,6 +280,15 @@ const server = http.createServer((req, res) => {
         });
         json(res, 200, out);
       });
+      return;
+    }
+    case "/outbound": {
+      const integration = url.searchParams.get("integration") || "";
+      const route = url.searchParams.get("route") || "";
+      if (!uuidPattern.test(integration) || !Object.hasOwn(outboundRoutes, route)) {
+        return json(res, 400, { error: "integration must be a UUID and route echo or denied" });
+      }
+      callOutbound(integration, route).then((out) => json(res, 200, out));
       return;
     }
     case "/entropy":

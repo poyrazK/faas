@@ -820,6 +820,7 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
 	bash deploy/scripts/cloudflare-s3-tunnel_test.sh
 	bash tests/load/s3-gateway/run_test.sh
+	bash tests/load/edge/run_test.sh
 	bash deploy/scripts/cloudflare-app-dns_test.sh
 	bash deploy/scripts/cloudflare-origin-pull_test.sh
 	bash deploy/scripts/gcp-compute-edge-address_test.sh

@@ -203,6 +203,19 @@
     path: /etc/systemd/system/faas-gatewayd-public-edge.service.d/60-faas-edge-direct.conf
     state: absent
 
+# Manifest hot_path: these switches were first turned on by hand on
+# production (2026-11-06). 99-faas-edge.conf now carries them, so the hand-made
+# drop-ins go; left behind they would keep a switch on after the manifest
+# turned it off.
+- name: gatewayd_public_edge_service — remove the hand-made hot-path drop-ins
+  notify: restart faas-gatewayd-public-edge
+  ansible.builtin.file:
+    path: "/etc/systemd/system/faas-gatewayd-public-edge.service.d/{{ item }}"
+    state: absent
+  loop:
+    - 60-faas-edge-node-set.conf
+    - 62-faas-internal-keepalive.conf
+
 - name: gatewayd_public_edge_service — install domain layout drop-in (ADR-20261026100000)
   notify: restart faas-gatewayd-public-edge
   ansible.builtin.template:

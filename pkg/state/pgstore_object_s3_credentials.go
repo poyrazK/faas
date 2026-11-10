@@ -111,7 +111,7 @@ func insertObjectS3ComputeBindingTx(ctx context.Context, tx pgx.Tx, req ObjectS3
 	if err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
-	if credentialCount >= int64(req.MaxCredentialsPerBucket) || secretCount+int64(len(req.Secrets)) > int64(req.MaxSecretsPerApp) {
+	if credentialCount >= int64(req.MaxCredentialsPerBucket) || secretCount > int64(req.MaxSecretsPerApp) {
 		return ObjectS3Credential{}, ErrConflict
 	}
 	row, err := q.ObjectS3CredentialInsert(ctx, tx, sqlc.ObjectS3CredentialInsertParams{

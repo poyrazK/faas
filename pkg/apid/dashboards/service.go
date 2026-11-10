@@ -25,8 +25,14 @@ import (
 
 // Host is what dashboards need from apid.
 type Host interface {
-	// AppForAccount returns the account's app by slug, or false.
+	// AppForAccount returns an app by slug that the request's principal
+	// may read, or false: the account's own, or an app of one of its
+	// organizations a teammate created (ADR-20261109153000).
 	AppForAccount(ctx context.Context, acct state.Account, slug string) (state.App, bool)
+	// AppOwner is the account a widget on app reads as: the app's resource
+	// owner (state.AppResourceAccount), whose plan gates the widget and
+	// whose namespace holds the app's rows.
+	AppOwner(ctx context.Context, app state.App) (state.Account, bool)
 	// ShowsDashboard reports whether the request's credential may see a
 	// dashboard with these widgets: a key bound to one app or company sees
 	// only dashboards whose widgets all name apps it may see.

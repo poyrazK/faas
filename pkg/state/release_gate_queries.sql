@@ -5,14 +5,15 @@
 INSERT INTO app_release_gates (
   id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events,
   metric_name, comparison, threshold, min_samples, created_by, created_at,
-  synthetic_check_id, max_failure_percent, max_change_percent
+  synthetic_check_id, max_failure_percent, max_change_percent, metric_labels
 )
 SELECT sqlc.arg(id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(name)::text,
   sqlc.arg(kind)::text, sqlc.narg(slo_id)::uuid, sqlc.narg(max_burn_rate)::integer,
   sqlc.narg(max_new_groups)::integer, sqlc.narg(min_events)::integer, sqlc.narg(metric_name)::text,
   sqlc.narg(comparison)::text, sqlc.narg(threshold)::double precision, sqlc.arg(min_samples)::integer,
   sqlc.arg(created_by)::text, sqlc.arg(now)::timestamptz,
-  sqlc.narg(synthetic_check_id)::uuid, sqlc.narg(max_failure_percent)::integer, sqlc.narg(max_change_percent)::integer
+  sqlc.narg(synthetic_check_id)::uuid, sqlc.narg(max_failure_percent)::integer, sqlc.narg(max_change_percent)::integer,
+  sqlc.narg(metric_labels)::jsonb
 WHERE (SELECT count(*) FROM app_release_gates g WHERE g.app_id = sqlc.arg(app_id)::uuid) < sqlc.arg(max_gates)::bigint
 RETURNING *;
 
@@ -58,6 +59,16 @@ SELECT COUNT(*)::bigint AS samples, COALESCE(AVG(value), 0)::double precision AS
   FROM app_custom_metrics
  WHERE app_id = sqlc.arg(app_id)::uuid
    AND name = sqlc.arg(name)::text
+   AND observed_at >= sqlc.arg(since)::timestamptz
+   AND observed_at < sqlc.arg(until)::timestamptz;
+
+-- name: ReleaseGateCustomMetricSeriesWindow :one
+-- ADR-20261108160000 slice C2: the latest value of one labelled series.
+SELECT COUNT(*)::bigint AS samples, COALESCE(AVG(value), 0)::double precision AS average
+  FROM app_custom_metric_series
+ WHERE app_id = sqlc.arg(app_id)::uuid
+   AND name = sqlc.arg(name)::text
+   AND series_key = sqlc.arg(series_key)::text
    AND observed_at >= sqlc.arg(since)::timestamptz
    AND observed_at < sqlc.arg(until)::timestamptz;
 

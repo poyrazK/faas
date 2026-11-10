@@ -1142,6 +1142,9 @@ type Handler struct {
 	MirrorMaxConcurrentPerRule int64
 	// log may be nil (defaults to slog.Default()).
 	log *slog.Logger
+	// requestLogBudget bounds the Info-level gateway_request lines
+	// (api.GatewayRequestLogLinesPerSecond); nil writes every line.
+	requestLogBudget *requestLogBudget
 	// appsSuffix is the configured public suffix (e.g. ".gregale.dev").
 	// Non-empty enables a pre-Lookup host suffix check that 404s anything
 	// outside it (spec §4.1 noise filter). Custom domains (Pro+) bypass this
@@ -1583,6 +1586,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		headHeaders:        newEdgeHeadHeaderCache(),
 		appFreezes:         newAppFreezes(),
 		log:                log,
+		requestLogBudget:   newRequestLogBudget(),
 		wakePageCycles:     make(map[string]*wakePageCycle),
 		consumerKeyTouches: newConsumerKeyToucher(),
 		// mirrorSlots is sync.Map (zero value ready); the cap is
@@ -6357,6 +6361,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			(code >= http.StatusOK && code < http.StatusBadRequest && isLongLivedForward(r))
 	}
 	defer rec.stopTrafficResponse()
+	r = r.WithContext(withResponseRecorder(r.Context(), rec))
 	w = rec
 	// ADR-1505: the commit is armed once a monetized request is about to be
 	// forwarded; at exit it completes or aborts the response.
@@ -8671,7 +8676,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// ServeHTTP (issue #273 / ADR-042 fixed the WithStartTime dead-code
 	// bug so this is now request-received → handler-return, not
 	// "now() — now()").
-	elapsed := time.Since(startTime(r))
+	elapsed := observedLatency(r, status, time.Since(startTime(r)))
 	h.observeMCPRequest(r, status, appID, elapsed)
 	if h.metrics != nil {
 		// Use placeholder labels for the unknown-host path so 404s show up on
@@ -8740,8 +8745,14 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// but recomputes; `elapsed` was already measured above.
 	// A warm 2xx is logged at Debug, which production does not write: build
 	// the line's attributes only when the handler will take it.
+	// An Info line also spends the request-log budget: past it the line is
+	// not built (see requestLogBudget).
 	decision := trafficDecisionEvidence(r.Context(), status, false)
-	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), requestLogLevel(code, cold)) {
+	level := requestLogLevel(code, cold)
+	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), level) && h.requestLogBudget.admit(level, h.metrics) {
+		if suppressed := h.requestLogBudget.takeSuppressed(); suppressed > 0 {
+			requestLog = requestLog.With("suppressed_before", suppressed)
+		}
 		if decision.path != "" {
 			requestLog = requestLog.With(decision.logAttribute())
 		}
@@ -9334,8 +9345,11 @@ func (h *Handler) RoutesFor(appID string) (routes []string, overflowed bool) {
 // streaming path).
 type statusRecorder struct {
 	http.ResponseWriter
-	status                   int
-	wroteHeader              bool
+	status      int
+	wroteHeader bool
+	// headerAt is when the response headers were committed: a long-lived
+	// response's latency (ADR-20261109153000).
+	headerAt                 time.Time
 	request                  *http.Request
 	Bytes                    int64
 	ContentType              string
@@ -9448,6 +9462,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 	if !s.wroteHeader {
 		s.status = code
 		s.wroteHeader = true
+		s.headerAt = time.Now()
 		s.mirrorSourceCapture.writeHeader(code)
 		// Issue #471: capture the upstream Content-Type at header
 		// commit time so the post-proxy site can detect a buffered

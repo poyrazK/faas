@@ -1132,6 +1132,14 @@ func (e *Engine) AppCPUMillicores(app state.App, limits api.Limits) int {
 	return e.appCPUMillicores(app, limits)
 }
 
+// AppCPUWeight, CPUBySize and PolicyAppCPUMillicores expose CPU that follows
+// instance size (ADR-20261109172421).
+func (e *Engine) AppCPUWeight(app state.App) int32 { return e.appCPUWeight(app) }
+func (e *Engine) CPUBySize(appID string) bool      { return e.cpuBySize(appID) }
+func (e *Engine) PolicyAppCPUMillicores(ctx context.Context, appID string, configured int) (int, error) {
+	return e.policyAppCPUMillicores(ctx, appID, configured)
+}
+
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
 func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {
@@ -1394,4 +1402,16 @@ func XChooseWithCPUAdmission(nodes []state.ComputeNode, usedMB, usedVCPU, usedCP
 	c.observe.Store(observe)
 	p, err := placementSnapshot{nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU, usedCPUMillicores: usedCPU, cpu: c}.choose(r)
 	return p, promtestutil.ToFloat64(c.wouldRefuse.WithLabelValues(CPUGatePlacement)), err
+}
+
+// NodeBudgetRefusal builds the scheduler's node-budget refusal carrying the
+// given blockers, as placement returns it.
+func NodeBudgetRefusal(detail string, blockers ...api.WorkerAdmissionBlocker) error {
+	return explainAdmission(api.ErrCapacity(detail), blockers...)
+}
+
+// FinishFailedPrime reaches the decision dispatchPrime makes after a prime
+// failed its retries.
+func (r *Loop) FinishFailedPrime(ctx context.Context, appID, deploymentID string, err error) {
+	r.finishFailedPrime(ctx, appID, deploymentID, 1, err)
 }

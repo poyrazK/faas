@@ -324,6 +324,7 @@ func RetentionOnceRequestAnalyticsMinutes(ctx context.Context, db retentionExece
 		{"rollup", retentionRequestAnalyticsMinutesBatchSQL},
 		{"hourly rollup", retentionRequestAnalyticsHoursBatchSQL},
 		{"rollup gap", retentionRequestAnalyticsRollupGapsBatchSQL},
+		{"rollup batch ledger", retentionRequestAnalyticsRollupBatchesBatchSQL},
 	} {
 		n, err := retentionBatches(ctx, db, sweep.sql)
 		total += n
@@ -333,6 +334,18 @@ func RetentionOnceRequestAnalyticsMinutes(ctx context.Context, db retentionExece
 	}
 	return total, nil
 }
+
+// retentionRequestAnalyticsRollupBatchesBatchSQL sweeps the gateway rollup
+// batch ledger past a day (ADR-20261103113952 amendment 5); a gateway
+// resends a batch within seconds to minutes, so an older batch_id is never
+// seen again. The table is not partitioned, so ctid is unique.
+const retentionRequestAnalyticsRollupBatchesBatchSQL = `DELETE FROM public.request_analytics_rollup_batches
+                                                        WHERE ctid IN (
+                                                            SELECT ctid FROM public.request_analytics_rollup_batches
+                                                            WHERE applied_at < now() - interval '1 day'
+                                                            ORDER BY applied_at
+                                                            LIMIT $1
+                                                        )`
 
 // retentionRequestAnalyticsRollupGapsBatchSQL sweeps lost-rollup markers
 // past the longest telemetry retention (Scale's 14 days), which no analytics

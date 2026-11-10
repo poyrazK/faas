@@ -227,7 +227,7 @@ func (p *Provider) credentialMaterial(ctx context.Context, projectID, branchID, 
 	var pooledResponse connectionURIResponse
 	// Migration and auth logins run DDL and rely on the role's session
 	// defaults (SET role, search_path), so they never use the pooler.
-	if access == managedpostgres.CredentialMigration || access == managedpostgres.CredentialAuth {
+	if access.DirectOnly() {
 		if err := p.connectionURI(ctx, projectID, branchID, roleName, false, &directResponse); err != nil {
 			return managedpostgres.CredentialMaterial{}, err
 		}

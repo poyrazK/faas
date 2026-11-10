@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/connreleaseproto"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/profileproto"
@@ -289,6 +290,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		handleAppCPULimitConn(f, log, hdr[4:], firstCPULimitHandler(onCPULimit))
 		return
 	}
+	if msgType == connreleaseproto.MessageType {
+		handleReleaseConnectionsConn(f, log, hdr[4:])
+		return
+	}
 	if msgType == guestmemproto.MessageType {
 		handleMemoryStatsConn(f, log, hdr[4:])
 		return
@@ -423,6 +428,13 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	timings.UserspaceReseedUs = time.Since(stage).Microseconds()
 	timings.ReseedClients = stats.Clients
 	timings.ReseedSlowestUs, timings.ReseedSlowestRuntime = stats.Slowest.Microseconds(), stats.SlowestRuntime
+	// ADR-20261109140000: report, never refuse, interpreter processes the
+	// barrier could not reach.
+	if n, runtimes := unregisteredRuntimeProcesses(); n > 0 {
+		timings.ReseedUnregistered, timings.ReseedUnregisteredRuntimes = n, strings.Join(runtimes, ",")
+		log.Warn("restore: processes not covered by the userspace RNG reseed may repeat random values across wakes",
+			"processes", n, "runtimes", timings.ReseedUnregisteredRuntimes)
+	}
 	stage = time.Now()
 	resumeGuestProfiles()
 	timings.ProfilesUs = time.Since(stage).Microseconds()

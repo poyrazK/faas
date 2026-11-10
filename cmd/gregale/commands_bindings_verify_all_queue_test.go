@@ -162,7 +162,7 @@ func TestAllBindingQueueVerification(t *testing.T) {
 				if publishes != 0 || !strings.Contains(out, "queue_canary_context_unavailable") {
 					t.Fatalf("misleading release eligibility: %s", out)
 				}
-			case "disabled", "outside scope":
+			case "disabled", "outside scope", "pull":
 				if code != 0 || report.Skipped != 1 || report.Passed != 1 {
 					t.Fatalf("code=%d report=%s", code, out)
 				}
@@ -170,7 +170,7 @@ func TestAllBindingQueueVerification(t *testing.T) {
 				if code != 0 || report.Unsupported == 0 || report.Coverage != "partial" || tasks != 1 {
 					t.Fatalf("code=%d report=%s", code, out)
 				}
-				reason := map[string]string{"no consent": "queue_publish_consent_required", "unsupported handler": "queue_handler_unsupported", "pull": "queue_delivery_unsupported", "paused": "queue_consumer_not_ready", "ambiguous": "queue_binding_ambiguous"}[scenario]
+				reason := map[string]string{"no consent": "queue_publish_consent_required", "unsupported handler": "queue_handler_unsupported", "paused": "queue_consumer_not_ready", "ambiguous": "queue_binding_ambiguous"}[scenario]
 				if !strings.Contains(out, reason) {
 					t.Fatalf("missing reason %s: %s", reason, out)
 				}

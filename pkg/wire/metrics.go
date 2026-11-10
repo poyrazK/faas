@@ -1289,6 +1289,10 @@ type OpsMetrics struct {
 	// in the pre-instantiation loop below so every plan label surfaces
 	// in /metrics from the moment the daemon boots.
 	residentGBPerCustomer *prometheus.GaugeVec
+	// residentPayingCustomers: the per-plan paying-customer count behind
+	// residentGBPerCustomer, so FaasResidentGbPerCustomerHigh can skip a
+	// plan whose average comes from one or two accounts.
+	residentPayingCustomers *prometheus.GaugeVec
 	// billingCapExceededTotal: counter incremented by meterd's quota
 	// tick every time the per-account overage_cap_cents is met and
 	// the overage-row insert is skipped (issue #279). Labelled by
@@ -3236,6 +3240,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_resident_gb_per_customer",
 		Help: "Month-to-date GB-RAM-hours divided by elapsed UTC-month hours and paying-customer count, per plan (ADR-031). Spec §12 target 0.305 (≈312 MB/customer); > 0.45 warns. Emitted by meterd once per ResidencyInterval.",
 	}, []string{"plan"})
+	residentPayingCustomers := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_resident_paying_customers",
+		Help: "Paying customers per plan counted by the last residency tick: the divisor of resident_gb_per_customer. Emitted by meterd once per ResidencyInterval.",
+	}, []string{"plan"})
 	billingCapExceededTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_billing_cap_exceeded_total",
 		Help: "Count of meterd quota ticks where accounts.overage_cap_cents was met and the overage-row insert was skipped (issue #279). Per-plan label so the §12 dashboard can split cap hits across plans. A non-zero rate is informational: a cap-hit account is operating as designed (the customer hit the operator-set monthly ceiling), not a failure mode.",
@@ -4081,7 +4089,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
 		buildExportCleanupTotal, buildExportCleanupErrors, buildExportBytes, builderSliceOOMKills,
-		residentGBPerCustomer, billingCapExceededTotal,
+		residentGBPerCustomer, residentPayingCustomers, billingCapExceededTotal,
 		meterdFloorAppliedTotal, meteredMBSecondsTotal,
 		// ADR-123 alert-preset signal series — PR-A (3) + PR-B (2). Each
 		// backs one of the 8 alert_presets catalog rows. Without
@@ -5432,6 +5440,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// least one plan tick has fired (ADR-031).
 	for _, plan := range api.Plans {
 		residentGBPerCustomer.WithLabelValues(string(plan))
+		residentPayingCustomers.WithLabelValues(string(plan))
 	}
 	// Pre-instantiate the closed plan set for the billingCapExceeded
 	// counter (issue #279). Same precedent as residentGBPerCustomer
@@ -5774,6 +5783,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		buildExportBytes:                     buildExportBytes,
 		builderSliceOOMKills:                 builderSliceOOMKills,
 		residentGBPerCustomer:                residentGBPerCustomer,
+		residentPayingCustomers:              residentPayingCustomers,
 		billingCapExceededTotal:              billingCapExceededTotal,
 		meterdFloorAppliedTotal:              meterdFloorAppliedTotal,
 		meteredMBSecondsTotal:                meteredMBSecondsTotal,
@@ -8985,6 +8995,15 @@ func (m *OpsMetrics) SetResidentGBPerCustomer(plan string, gb float64) {
 		return
 	}
 	m.residentGBPerCustomer.WithLabelValues(plan).Set(gb)
+}
+
+// SetResidentPayingCustomers writes the per-plan paying-customer count
+// behind SetResidentGBPerCustomer. Safe on a nil receiver.
+func (m *OpsMetrics) SetResidentPayingCustomers(plan string, n int) {
+	if m == nil {
+		return
+	}
+	m.residentPayingCustomers.WithLabelValues(plan).Set(float64(n))
 }
 
 // BillingCapExceededTotal is the per-plan counter the meterd quota
