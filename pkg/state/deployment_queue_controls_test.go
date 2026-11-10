@@ -240,6 +240,17 @@ func TestStore_ClearObsoleteDeployments_Happy(t *testing.T) {
 		}
 		_ = dep
 	}
+	// Only terminal rows are obsolete; fail all three so the oldest, outside
+	// the two-newest window, is cleared.
+	all, err := store.ListDeploymentsForApp(ctx, appID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForApp: %v", err)
+	}
+	for _, d := range all {
+		if err := store.UpdateDeploymentStatus(ctx, d.ID, state.DeployFailed, "test"); err != nil {
+			t.Fatalf("fail %s: %v", d.ID, err)
+		}
+	}
 	// olderThan = future (now + 1h) ⇒ all rows qualify
 	count, err := store.ClearObsoleteDeployments(ctx, appID, time.Now().Add(time.Hour))
 	if err != nil {
