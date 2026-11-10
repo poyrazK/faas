@@ -583,6 +583,9 @@ func (f *fakeVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.Execute
 func (f *fakeVmmdClient) ExecuteExecutionBrokerStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ExecuteExecutionBrokerRequest, vmmdpb.ExecuteExecutionBrokerEvent], error) {
 	return nil, status.Error(codes.Unimplemented, "execution broker stream is not used by gateway tests")
 }
+func (f *fakeVmmdClient) CaptureSandboxSnapshot(context.Context, *vmmdpb.CaptureSandboxSnapshotRequest, ...grpc.CallOption) (*vmmdpb.CaptureAgentSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "sandbox sessions are not used by gateway tests")
+}
 func (f *fakeVmmdClient) RunSandbox(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.RunSandboxRequest, vmmdpb.RunSandboxEvent], error) {
 	return nil, status.Error(codes.Unimplemented, "sandbox sessions are not used by gateway tests")
 }

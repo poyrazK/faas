@@ -72,8 +72,18 @@ func TestCallerPolicyCoversEveryMethod(t *testing.T) {
 	for _, s := range desc.Streams {
 		methods = append(methods, "/"+desc.ServiceName+"/"+s.StreamName)
 	}
+	// Sandbox session calls carry a session token only the gateway checks
+	// (ADR-20261027090013), so schedd's certificate is refused them.
+	gatewayOnly := map[string]bool{
+		vmmdpb.Vmmd_SandboxCall_FullMethodName:             true,
+		vmmdpb.Vmmd_PersistSandboxWorkspace_FullMethodName: true,
+	}
 	for _, m := range methods {
-		if vmmdCallerPolicy[m]&callerSchedd == 0 {
+		want := callerSchedd
+		if gatewayOnly[m] {
+			want = callerGateway
+		}
+		if vmmdCallerPolicy[m]&want == 0 {
 			t.Errorf("%s has no caller policy, or schedd may not call it", m)
 		}
 	}

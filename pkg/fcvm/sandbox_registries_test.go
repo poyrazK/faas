@@ -56,17 +56,18 @@ func TestRegistriesSandboxBootsDNSGatedOn443(t *testing.T) {
 	}
 
 	source := nc.HostIP
+	owner := resolvedOwner(t, m, source)
 	addr := []netip.Addr{netip.MustParseAddr("198.51.100.20")}
 	before := run.inputRuns
 	for _, name := range []string{"", "example.com", "evilgithub.com"} {
-		if err := m.AllowResolvedEgressNamed(t.Context(), source, name, addr, time.Minute, 0); err != nil || run.inputRuns != before {
+		if err := m.AllowResolvedEgressNamed(t.Context(), source, owner, name, addr, time.Minute, 0); err != nil || run.inputRuns != before {
 			t.Fatalf("%q opened egress (runs %d, err %v)", name, run.inputRuns-before, err)
 		}
 	}
-	if err := m.AllowResolvedEgress(t.Context(), source, addr, time.Minute, 0); err != nil || run.inputRuns != before {
+	if err := m.AllowResolvedEgress(t.Context(), source, owner, addr, time.Minute, 0); err != nil || run.inputRuns != before {
 		t.Fatalf("an unnamed answer opened egress (runs %d, err %v)", run.inputRuns-before, err)
 	}
-	if err := m.AllowResolvedEgressNamed(t.Context(), source, "registry.npmjs.org", addr, time.Minute, 0); err != nil || run.inputRuns != before+1 ||
+	if err := m.AllowResolvedEgressNamed(t.Context(), source, owner, "registry.npmjs.org", addr, time.Minute, 0); err != nil || run.inputRuns != before+1 ||
 		!strings.Contains(string(run.input), "egress_resolved { 198.51.100.20") {
 		t.Fatalf("a registry answer did not open egress (runs %d, err %v):\n%s", run.inputRuns-before, err, run.input)
 	}

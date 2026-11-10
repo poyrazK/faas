@@ -83,6 +83,8 @@ func (s *sandboxServer) supervise(ctx context.Context, req sandboxproto.Request,
 	timeout := time.NewTimer(time.Duration(req.TimeoutMillis) * time.Millisecond)
 	defer timeout.Stop()
 	var escalate <-chan time.Time
+	// ended stops being selected once the session ends: one kill is enough.
+	ended := ctx.Done()
 	kill := func() {
 		killed = true
 		_ = proc.signal(syscall.SIGKILL)
@@ -113,9 +115,9 @@ func (s *sandboxServer) supervise(ctx context.Context, req sandboxproto.Request,
 			escalate = time.After(sandboxproto.StopGrace)
 		case <-escalate:
 			_ = proc.signal(syscall.SIGKILL)
-		case <-ctx.Done():
+		case <-ended:
 			kill()
-			ctx = context.Background()
+			ended = nil
 		}
 	}
 }
