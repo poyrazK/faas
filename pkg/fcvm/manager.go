@@ -425,6 +425,9 @@ func (w *wakePhases) attrs() []any {
 
 type Instance struct {
 	resolvedEgressGeneration string // immutable once captured, guarded by Manager.mu
+	// booting marks a network owner registered before publication
+	// (booting_egress.go); it is never in live.
+	booting bool
 	// awaitingExit: teardown has recorded its cleanup intent but is waiting
 	// for the guest to exit by itself (a builder finishing its build), so
 	// its DNS answers are still granted. Guarded by Manager.mu.
@@ -772,6 +775,10 @@ type Instance struct {
 	// set on a claimed warm instance. Recorded in the adoption block.
 	// Guarded by Manager.mu.
 	warmSpare bool
+	// resumeIdentity is the identity schedd assigned this instance at wake.
+	// Every later resume hook carries it (ADR-20261107160000): a warm-pool
+	// restore sends no hook until it is promoted.
+	resumeIdentity ResumeIdentity
 }
 
 // LiveEgressInstance is the minimal live-instance view needed by vmmd's
@@ -931,6 +938,9 @@ type Manager struct {
 	// egress on this node (FAAS_EGRESS_DNS_GATING=off). Gating is on by
 	// default; turning it off keeps every other egress control.
 	dnsGatingOff bool
+	// releaseConnectionsOnDestroy resets an app guest's TCP connections
+	// before teardown destroys it (ADR-20261109130000).
+	releaseConnectionsOnDestroy bool
 	// appCPUPolicyUpdates serializes concurrent desired-policy changes so an
 	// older request cannot finish after a newer one and leave existing VMs at
 	// the stale quota. appCPUPolicies is guarded by mu and also fences a Wake
@@ -992,6 +1002,10 @@ type Manager struct {
 	// request's runtime identity so a booting guest can register its
 	// secret execution before exec (ADR-508), ahead of publication.
 	waking map[string]wakingInstance
+	// bootingEgress is the network owner of each booting guest whose
+	// namespace exists, until publication or teardown (booting_egress.go).
+	// Guarded by mu.
+	bootingEgress map[string]*Instance
 	// provenWorkers holds the deployments whose declared worker passed the
 	// full characterization window on this node; their later cold boots
 	// use the short window (ADR-20261018101500). Guarded by mu. Losing it on restart
@@ -3894,6 +3908,15 @@ type WakeRequest struct {
 	StartupDeadlineS int
 	// DisableStartupCPUBoost opts out of the bounded startup CPU allowance.
 	DisableStartupCPUBoost bool
+	// CPUWeight is the instance's cgroup cpu.weight (ADR-20261109172421);
+	// 0 keeps the plan's weight. The json tag keeps the checkpoint wake
+	// commitment of a request without it unchanged.
+	CPUWeight int `json:",omitempty"`
+	// CPUUncapped runs the instance with cpu.max = max and no startup boost
+	// while CPUMillicores is the app default; an app's 250 or 500 millicore
+	// choice stays a cap, also after a live CPU policy update
+	// (ADR-20261109172421). False keeps the CPUMillicores quota.
+	CPUUncapped bool `json:",omitempty"`
 	// ExecutionMode is the declared lifecycle mode used to constrain the
 	// cold-boot characterization result. Empty preserves legacy inference.
 	ExecutionMode string
@@ -4251,6 +4274,10 @@ type ColdBootRequest struct {
 	StartupDeadlineS int
 	// DisableStartupCPUBoost is forwarded to WakeRequest.
 	DisableStartupCPUBoost bool
+	// CPUWeight and CPUUncapped are forwarded to WakeRequest
+	// (ADR-20261109172421).
+	CPUWeight   int
+	CPUUncapped bool
 	// ExecutionMode is forwarded to WakeRequest. Empty preserves legacy
 	// characterization inference for direct callers predating ADR-137.
 	ExecutionMode string
@@ -4311,6 +4338,8 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		StartupDeadlineS:         req.StartupDeadlineS,
 		DisableStartupCPUBoost:   req.DisableStartupCPUBoost,
+		CPUWeight:                req.CPUWeight,
+		CPUUncapped:              req.CPUUncapped,
 		ExecutionMode:            req.ExecutionMode,
 		// PR #470-FU-B: forward the runtime id so the framework-ready
 		// receipt handler can label the warmup histogram. See
@@ -4698,6 +4727,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if m.nativeVMM() != nil && !req.Plan.Valid() {
 		return nil, fmt.Errorf("wake %s: invalid plan %q", req.Instance, req.Plan)
 	}
+	if req.CPUWeight < 0 || req.CPUWeight > MaxCPUWeight {
+		return nil, fmt.Errorf("wake %s: invalid cpu_weight %d (ADR-20261109172421)", req.Instance, req.CPUWeight)
+	}
 	ctx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
 	if err != nil {
 		return nil, err
@@ -4840,6 +4872,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.MemoryMaxMiB = wakeGuestMemoryMiB(req)
 	lease.CPUMillicores = req.CPUMillicores
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
+	lease.CPUWeight = req.CPUWeight
+	lease.CPUUncapped = req.CPUUncapped
 	lease.AppPort = req.Port
 	m.mu.Lock()
 	if m.waking == nil {
@@ -4944,6 +4978,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		err = fmt.Errorf("wake %s: prepare runtime env: %w", req.Instance, err)
 		return nil, err
 	}
+	resumeIdentity := resumeIdentityFromAPIEnv(req.preparedAPIEnvJSON)
+	ctx = withResumeIdentity(ctx, resumeIdentity)
 	if err = m.prepareSidecarEnvFiles(ctx, &req); err != nil {
 		err = fmt.Errorf("wake %s: prepare sidecar env: %w", req.Instance, err)
 		return nil, err
@@ -5142,6 +5178,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			// Circuit policy must be installed before the guest can boot.
 			return m.registerEgressCircuitNetwork(ctx, req.AppID, nc)
 		}, func() {
+			m.registerBootingEgressOwner(lease, nc, req, qualificationOnly)
 			if networkReady != nil {
 				networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, JailUID: lease.UID})
 			}
@@ -5205,6 +5242,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 				return nil, err
 			}
 		}
+		m.registerBootingEgressOwner(lease, nc, req, qualificationOnly)
 		if networkReady != nil && !req.ExecutionOnly {
 			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, PublicTarget: publicTarget, JailUID: lease.UID})
 		}
@@ -5445,7 +5483,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	inst := &Instance{
 		functionDestination: m.functionDestinationForWake(req),
 		publicForwardTarget: publicTarget,
-		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
+		Lease:               lease, Net: nc, Method: method, wakeID: wakeID, resumeIdentity: resumeIdentity,
 		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
 		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
@@ -5599,6 +5637,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			return nil, err
 		}
 		delete(m.waking, req.Instance)
+		m.adoptBootingEgressLocked(inst)
 		m.live[req.Instance] = inst
 		m.recordProvenWorkerLocked(inst)
 		if starting := m.functionStarting[req.Instance]; starting != nil && starting.Lease.processGeneration == inst.Lease.processGeneration {
@@ -6573,14 +6612,14 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 		if !ok {
 			return fmt.Errorf("%s %s: image healthcheck capability unavailable", op, instance)
 		}
-		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
+		if err := m.vmm.TriggerResumeHook(withResumeIdentity(ctx, inst.resumeIdentity), inst.Lease, time.Now().UnixNano()); err != nil {
 			return fmt.Errorf("%s %s: resume hook: %w", op, instance, err)
 		}
 		if err := checker.WaitImageHealthcheck(ctx, inst.Lease, inst.StartupDeadlineS); err != nil {
 			return err
 		}
 	} else if runResumeHook {
-		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
+		if err := m.vmm.TriggerResumeHook(withResumeIdentity(ctx, inst.resumeIdentity), inst.Lease, time.Now().UnixNano()); err != nil {
 			return fmt.Errorf("%s %s: resume hook: %w", op, instance, err)
 		}
 	}
@@ -6716,6 +6755,7 @@ func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instan
 	// A completed teardown retires the record; a failed one keeps this
 	// intent so a successor resumes it (adoption ADR §3).
 	m.beginAdoptionOp(instance, adoptionOpStop)
+	m.releaseConnectionsBeforeDestroy(ctx, inst, exportDir)
 	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
 	m.mu.Lock()
 	inst.awaitingExit = false // Teardown proper refuses grants from here.

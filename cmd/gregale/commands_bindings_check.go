@@ -28,10 +28,11 @@ func cmdBindingsCheck(args []string) int {
 	fs.Var(&storageRequirements, "object-storage-require", "require PREFIX=read|write|read_write evidence (repeatable; reads recorded evidence only)")
 	var queueRequirements queueRequirementsFlag
 	fs.Var(&queueRequirements, "queue-require", "require NAME=consumer_readiness for a push binding (repeatable; connectivity coverage remains partial)")
+	requireBindings := fs.Bool("require-bindings", false, "fail when no active binding is in scope (default: warn and pass)")
 	wait := fs.Bool("wait", false, "poll read-only inventory while probes, refreshes or application acknowledgements are pending")
 	timeout := fs.Duration("timeout", bindingProbeWaitTimeoutDefault, "maximum time for a waiting or policy-aware binding preflight")
 	pollInterval := fs.Duration("poll-interval", bindingCheckPollIntervalDefault, "inventory polling interval with --wait")
-	flags, positionals := splitArgsForFlags(args, "allow-unsupported", "require-application-ack", "release-policy", "wait", "interactive")
+	flags, positionals := splitArgsForFlags(args, "allow-unsupported", "require-application-ack", "require-bindings", "release-policy", "wait", "interactive")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -93,7 +94,7 @@ func cmdBindingsCheck(args []string) int {
 		}
 		return code
 	}
-	policy := bindingcheck.Policy{App: slug, Scope: *scope, DeploymentID: deploymentID, MaxVerificationAge: *maxAge, AllowUnsupported: *allowUnsupported, RequireApplicationAck: *requireAck, ObjectStorageRequirements: storageRequirements, QueueRequirements: queueRequirements}
+	policy := bindingcheck.Policy{App: slug, Scope: *scope, DeploymentID: deploymentID, MaxVerificationAge: *maxAge, AllowUnsupported: *allowUnsupported, RequireApplicationAck: *requireAck, ObjectStorageRequirements: storageRequirements, QueueRequirements: queueRequirements, RequireBindings: *requireBindings}
 	var report bindingcheck.Report
 	var releaseReport bindingReleasePolicyCheckReport
 	if *releasePolicy {

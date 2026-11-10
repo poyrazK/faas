@@ -2287,6 +2287,10 @@ type ScalingTarget struct {
 	// Name is the custom metric this target watches (ADR-202). Set only
 	// when Metric == "custom".
 	Name string
+	// Labels selects one labelled series of Name (ADR-20261108160000 slice
+	// C2); empty reads the metric's aggregate. Stored in the policy jsonb;
+	// omitted when empty so existing policies serialise unchanged.
+	Labels map[string]string `json:",omitempty"`
 }
 
 // CustomMetric is one customer-pushed gauge (ADR-202).
@@ -2303,6 +2307,10 @@ type CustomMetric struct {
 	// Kind is CustomMetricKindGauge (ADR-202 pushes) or
 	// CustomMetricKindCounter (ADR-745 OTLP cumulative sums).
 	Kind string
+	// Labelled is true when the metric has labelled series
+	// (ADR-20261108160000 slice C): Value is then their aggregate, the sum
+	// for counters and the maximum of fresh series for gauges.
+	Labelled bool
 }
 
 // MCPTaskHandlerCompatibility is a bounded, payload-free queue summary for a
@@ -3983,19 +3991,22 @@ type AlertRule struct {
 	// CreatedByAccountID is the member who created the rule
 	// (ADR-20261026151103); empty for a rule older than the column, which
 	// only the app's creator could create.
-	CreatedByAccountID  string
-	Name                string
-	Enabled             bool
-	Metric              AlertMetric
-	Comparison          AlertComparison
-	Threshold           float64
-	WindowSpec          AlertWindowSpec
-	FailureSource       AlertFailureSource // empty unless Metric == failed_invocations
-	CustomMetricName    string             // empty unless Metric == custom_metric (ADR-745)
-	LogQuery            string             // canonical log search filters; set only for log_search_matches
-	SLOID               string             // set only for the ADR-747 SLO metrics
-	SyntheticCheckID    string             // set only for the ADR-748 synthetic check metrics
-	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
+	CreatedByAccountID string
+	Name               string
+	Enabled            bool
+	Metric             AlertMetric
+	Comparison         AlertComparison
+	Threshold          float64
+	WindowSpec         AlertWindowSpec
+	FailureSource      AlertFailureSource // empty unless Metric == failed_invocations
+	CustomMetricName   string             // empty unless Metric == custom_metric (ADR-745)
+	// CustomMetricLabels selects one labelled series of the custom metric
+	// instead of its aggregate (ADR-20261108160000 slice C2); nil for none.
+	CustomMetricLabels  map[string]string
+	LogQuery            string      // canonical log search filters; set only for log_search_matches
+	SLOID               string      // set only for the ADR-747 SLO metrics
+	SyntheticCheckID    string      // set only for the ADR-748 synthetic check metrics
+	Action              AlertAction // issue #976 / ADR-122 / SAFE-RELEASES-B
 	WebhookURL          string
 	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
 	// NotifyResolved also sends the webhook a signed resolve event when the
@@ -4105,7 +4116,7 @@ const (
 	AppWebhookEventConsumerSignedUp                        AppWebhookEvent = "consumer.signed_up"
 	AppWebhookEventConsumerPlanChanged                     AppWebhookEvent = "consumer.plan_changed"
 	AppWebhookEventConsumerClosed                          AppWebhookEvent = "consumer.closed"
-	AppWebhookEventAutomationPaused                        AppWebhookEvent = "automation.paused"
+	AppWebhookEventStoredWorkflowPaused                    AppWebhookEvent = "stored_workflow.paused"
 	AppWebhookEventRealtimeConsumerGroupLagExceeded        AppWebhookEvent = "realtime.consumer_group.lag_exceeded"
 	AppWebhookEventRealtimeConsumerGroupLagRecovered       AppWebhookEvent = "realtime.consumer_group.lag_recovered"
 	AppWebhookEventRealtimeConsumerGroupDeadLetterExpiring AppWebhookEvent = "realtime.consumer_group.dead_letter_expiring"
@@ -4186,14 +4197,14 @@ const (
 	AppWebhookEventWorkflowFinished                        AppWebhookEvent = "workflow.finished"
 	AppWebhookEventOutboundAIBudgetThreshold               AppWebhookEvent = "outbound.ai_budget.threshold"
 	AppWebhookEventOutboundAIQualityDrift                  AppWebhookEvent = "outbound.ai_quality.drift"
-	AppWebhookEventRecoveryQueueBlocked                    AppWebhookEvent = "automation.recovery_queue_blocked"
-	AppWebhookEventRecoveryHealthAlert                     AppWebhookEvent = "automation.recovery_health_alert"
-	AppWebhookEventRecoveryHealthRecovered                 AppWebhookEvent = "automation.recovery_health_recovered"
-	AppWebhookEventRecoveryPolicyPaused                    AppWebhookEvent = "automation.recovery_policy_paused"
-	AppWebhookEventRecoveryReviewFinished                  AppWebhookEvent = "automation.recovery_review_finished"
-	AppWebhookEventRecoveryReviewReady                     AppWebhookEvent = "automation.recovery_review_ready"
+	AppWebhookEventRecoveryQueueBlocked                    AppWebhookEvent = "stored_workflow.recovery_queue_blocked"
+	AppWebhookEventRecoveryHealthAlert                     AppWebhookEvent = "stored_workflow.recovery_health_alert"
+	AppWebhookEventRecoveryHealthRecovered                 AppWebhookEvent = "stored_workflow.recovery_health_recovered"
+	AppWebhookEventRecoveryPolicyPaused                    AppWebhookEvent = "stored_workflow.recovery_policy_paused"
+	AppWebhookEventRecoveryReviewFinished                  AppWebhookEvent = "stored_workflow.recovery_review_finished"
+	AppWebhookEventRecoveryReviewReady                     AppWebhookEvent = "stored_workflow.recovery_review_ready"
 	AppWebhookEventRecoveryExecutionAttention              AppWebhookEvent = "event_recovery.execution_attention"
-	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "automation.recovery_polling_status"
+	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "stored_workflow.recovery_polling_status"
 	AppWebhookEventEnvironmentGitOpsChanged                AppWebhookEvent = "environment.gitops.changed"
 	AppWebhookEventIssueTrackerSyncAttention               AppWebhookEvent = "issue.tracker_sync.attention"
 	AppWebhookEventIssueTrackerSyncRecovered               AppWebhookEvent = "issue.tracker_sync.recovered"
@@ -4280,7 +4291,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventIssueFrequencyThresholdReached,
 	AppWebhookEventIssueCompoundThresholdReached,
-	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
+	AppWebhookEventWorkflowFinished, AppWebhookEventStoredWorkflowPaused,
 	AppWebhookEventEnvironmentGitOpsChanged,
 }
 
@@ -7829,6 +7840,9 @@ const (
 	ProjectScanSourceConvention ProjectScanSource = "convention"
 	ProjectScanSourceSingle     ProjectScanSource = "single"
 	ProjectScanSourceUnknown    ProjectScanSource = "unknown"
+	// ProjectScanSourceFunctions is a gregale.yaml functions project
+	// (ADR-20261108160000), a declared source like compose.
+	ProjectScanSourceFunctions ProjectScanSource = "functions"
 	// ProjectScanSourceWorkspaces is the plural form the
 	// reconcile.Service.DeriveScanSource helper returns for
 	// projects whose root tree enumerates a workspaces section
@@ -7874,6 +7888,7 @@ const (
 	scanSourceRankRender     scanSourceRank = 8
 	scanSourceRankK8s        scanSourceRank = 8
 	scanSourceRankCompose    scanSourceRank = 8
+	scanSourceRankFunctions  scanSourceRank = 8
 )
 
 func tierRank(s ProjectScanSource) scanSourceRank {
@@ -7888,6 +7903,8 @@ func tierRank(s ProjectScanSource) scanSourceRank {
 		return scanSourceRankFly
 	case ProjectScanSourceServerless:
 		return scanSourceRankServerless
+	case ProjectScanSourceFunctions:
+		return scanSourceRankFunctions
 	case ProjectScanSourceProcfile:
 		return scanSourceRankProcfile
 	case ProjectScanSourceWorkspace:
@@ -8264,6 +8281,9 @@ type CreateAccountWithPersonalOrgParams struct {
 	// commits it with the account, personal organization and owner membership.
 	// The credential is never included when creation parameters are serialized.
 	InitialPasswordHash string `json:"-"`
+	// TermsAcceptance, when set, records the Terms of Service version the
+	// account accepted at sign-up in the same transaction (legal_acceptances).
+	TermsAcceptance *TermsAcceptance
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted
@@ -8497,6 +8517,13 @@ type EdgeRuleHeaderOp struct {
 	Value    string `json:"value,omitempty"`
 	Action   string `json:"action"`
 	Template bool   `json:"template,omitempty"` // ADR-968
+	// Secret and SecretID (ADR-20261108110000): the value is sealed in
+	// edge_rule_header_secrets row SecretID and Value is empty.
+	Secret   bool   `json:"secret,omitempty"`
+	SecretID string `json:"secret_id,omitempty"`
+	// Redacted is set only on a response copy whose credential-named value
+	// was stored before sealing; it is never stored.
+	Redacted bool `json:"redacted,omitempty"`
 }
 
 // EdgeRuleHeadersAction mutates request headers BEFORE auth and

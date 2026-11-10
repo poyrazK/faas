@@ -8,7 +8,7 @@ App target: a command that takes `--app` and no other arguments also accepts the
 
 Earlier names: commands keep working under the names they had before the command tree (`gregale crons list` is `gregale cron list`); `gregale help --all --operator` lists them, and [The CLI command tree](cli-command-tree.md) maps each one.
 
-Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
+Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. With an agent key, put `--wait-for-approval` before the command to wait for a person to decide a request that needs approval, then retry it once. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
 
 | Command | What it does |
 |---|---|
@@ -860,7 +860,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
 | `--scale-to-zero` | suspend compute when idle |  |
 | `--environment-key <KEY>` | connection environment variable |  |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
 ### add ai
@@ -1950,6 +1950,20 @@ Only services the latest deploy changed roll back unless --all; services added s
 
 Stops at the first service that fails; run it again to finish.
 
+### project import
+
+Import .gregale/project.yaml into the root gregale.yaml project block
+
+`gregale project import [--dry-run] [<dir>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | print the new gregale.yaml without writing |  |
+
+Runs locally; nothing is uploaded.
+
+The existing gregale.yaml is kept as written; the block is appended and checked against the old file before anything changes.
+
 
 ## build
 
@@ -2206,7 +2220,7 @@ gregale app delete my-api --yes
 
 Delete an app; restore it within the deletion grace window
 
-`gregale app delete [--dry-run] [--yes] [--quiet] [-q] <slug>`
+`gregale app delete [--dry-run] [--yes] [--quiet] [-q] [--delete-bindings] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2214,6 +2228,7 @@ Delete an app; restore it within the deletion grace window
 | `--yes` | confirm deletion without prompting; required in non-interactive and JSON mode |  |
 | `--quiet` | confirm deletion without prompting (alias of --yes) |  |
 | `-q` | confirm deletion without prompting (alias of --yes) |  |
+| `--delete-bindings` | revoke the app&#39;s managed PostgreSQL bindings first (deleting the app otherwise refuses while any is live) |  |
 
 Also accepted as delete.
 
@@ -2521,7 +2536,7 @@ Apply a saved service binding plan if reviewed settings are unchanged
 
 Evaluate recorded binding evidence and runtime freshness for CI
 
-`gregale app binding check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--release <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--queue-require <NAME=consumer_readiness>] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+`gregale app binding check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--release <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--queue-require <NAME=consumer_readiness>] [--require-bindings] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2535,6 +2550,7 @@ Evaluate recorded binding evidence and runtime freshness for CI
 | `--release-policy` | apply stored scope requirements and confirm the policy after every inventory evaluation (read-only) |  |
 | `--object-storage-require <PREFIX=read|write|read_write>` | require recorded storage operation evidence (repeatable; no writes) |  |
 | `--queue-require <NAME=consumer_readiness>` | require recorded push queue readiness (repeatable; connectivity remains partial) |  |
+| `--require-bindings` | fail when no active binding is in scope (default: warn and pass) |  |
 | `--wait` | poll read-only inventory while probes, refreshes or application acknowledgements are pending |  |
 | `--timeout <DURATION>` | maximum waiting or policy-aware preflight time (default 5m) |  |
 | `--poll-interval <DURATION>` | inventory polling interval with --wait (default 1s) |  |
@@ -4538,7 +4554,7 @@ Bind a database to an app by app ID (attach takes slugs)
 | `--app <APP_ID>` | app ID | required |
 | `--env <SCOPE>` | environment scope (also --scope) | required |
 | `--environment-key <KEY>` | environment variable name | required |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
 
 #### postgres bindings get
 
@@ -4582,7 +4598,7 @@ Attach a database to an app
 |---|---|---|
 | `--scope <SCOPE>` | environment scope (defaults to linked project environment, otherwise default) |  |
 | `--env <KEY>` | connection environment variable |  |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
 
 Examples:
 
@@ -6368,6 +6384,18 @@ Add a channel; Slack URLs and PagerDuty keys are read from stdin
 | `--pagerduty-region <REGION>` | PagerDuty service region | one of `us` · `eu` |
 | `--email <EMAIL>` | your account email (kind email) |  |
 
+#### alert channel update
+
+Rename a channel or replace its destination; read from stdin
+
+`gregale alert channel update [--name <NAME>] [--secret-stdin] [--pagerduty-region <REGION>] <channel-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | new channel name, unique per account |  |
+| `--secret-stdin` | read the new Slack webhook URL or PagerDuty routing key from stdin |  |
+| `--pagerduty-region <REGION>` | PagerDuty service region of the new key | one of `us` · `eu` |
+
 #### alert channel test
 
 Send a marked test notification
@@ -6394,7 +6422,7 @@ List alert rules
 
 Add an alert rule
 
-`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
+`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--metric-label <KEY=VALUE>]... [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6410,6 +6438,7 @@ Add an alert rule
 | `--failure-source <SOURCE>` | any\|cron\|queue\|delayed_task\|async_invoke\|inbound_webhook |  |
 | `--channel <CHANNEL_ID>` | notification channel id (repeatable); with one, the webhook is optional |  |
 | `--custom-metric <NAME>` | Pushed custom metric to watch; required with --metric custom_metric |  |
+| `--metric-label <KEY=VALUE>` | with --custom-metric: watch the series with this label (repeatable) |  |
 | `--log-query <FILTERS>` | Log search filters to count, e.g. level=error&amp;q=timeout; with --metric log_search_matches |  |
 | `--saved-search <NAME>` | Copy a saved log search&#39;s filters; with --metric log_search_matches |  |
 | `--slo <SLO_ID>` | SLO id for slo_budget_burn or slo_budget_remaining_pct |  |
@@ -6675,7 +6704,7 @@ List signed-in browsers
 
 #### account sessions revoke
 
-Sign out one browser, or every browser with --all; API keys keep working
+Sign out one browser session, or all of them
 
 `gregale account sessions revoke [--all] [--yes] [SESSION_ID]`
 
@@ -6683,6 +6712,8 @@ Sign out one browser, or every browser with --all; API keys keep working
 |---|---|---|
 | `--all` | sign out every browser |  |
 | `--yes` | with --all, sign out without prompting |  |
+
+API keys keep working.
 
 ### account email
 
@@ -6721,6 +6752,18 @@ Show how you can sign in
 List your password, two-factor and linked Google/GitHub sign-ins
 
 `gregale account provider list`
+
+### account activity
+
+Show sign-ins and security changes
+
+#### account activity list
+
+List sign-ins, credential and security changes of the last 90 days
+
+`gregale account activity list`
+
+Shows the newest 100 events.
 
 
 ## org
@@ -7036,7 +7079,7 @@ Read or update the rotation grace window
 | Flag | Meaning | |
 |---|---|---|
 | `--reset` | clear the account override and use the plan default |  |
-| `--days <N>` | new grace window in days (0 or greater) |  |
+| `--days <N>` | new grace window in days (0 to 30) |  |
 
 #### key grace-window set
 
@@ -7047,7 +7090,7 @@ Read or update the rotation grace window
 | Flag | Meaning | |
 |---|---|---|
 | `--reset` | clear the account override and use the plan default |  |
-| `--days <N>` | new grace window in days (0 or greater) |  |
+| `--days <N>` | new grace window in days (0 to 30) |  |
 
 ### key list
 
@@ -7768,4 +7811,23 @@ Persist one non-secret setting
 ### config list
 
 Show all effective settings
+
+### config explain
+
+Show where a CLI target or project setting comes from
+
+`gregale config explain <key>`
+
+Examples:
+
+```sh
+gregale config explain app
+gregale config explain services.api.visibility
+```
+
+Keys: project, app, environment, service_policy, services.&lt;name&gt;.service_policy, services.&lt;name&gt;.visibility, services.&lt;name&gt;.depends_on, api-base, json.
+
+Lists every layer in precedence order (flag, .gregale/project.json, gregale.yaml `project:`, Compose x-gregale-*, .gregale/project.yaml) and marks the one that wins.
+
+Runs locally; nothing is uploaded.
 

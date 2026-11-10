@@ -205,7 +205,7 @@ func (g gateEvidence) ReleaseGateDeploymentSLI(context.Context, string, string, 
 func (g gateEvidence) ReleaseGateNewErrorGroups(_ context.Context, _, deploymentID string, _ int) ([]state.ReleaseGateErrorGroup, error) {
 	return g.groups[deploymentID], nil
 }
-func (g gateEvidence) ReleaseGateCustomMetricWindow(context.Context, string, string, time.Time, time.Time) (int64, float64, error) {
+func (g gateEvidence) ReleaseGateCustomMetricWindow(context.Context, string, string, string, time.Time, time.Time) (int64, float64, error) {
 	return 0, 0, nil
 }
 func (g gateEvidence) ReleaseGateDeploymentAI(_ context.Context, _, deploymentID string, _, _ time.Time) (state.ReleaseGateAIWindow, error) {

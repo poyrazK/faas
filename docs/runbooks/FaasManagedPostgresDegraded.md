@@ -152,6 +152,9 @@ To renew:
    `FAAS_MANAGED_POSTGRES_PRODUCTION_UNTIL` (at most 90 days later).
 4. Restart apid.
 
+`FaasManagedPostgresProductionApprovalImminent` pages when the approval ends
+within 48 hours. Renew as above now.
+
 `FaasManagedPostgresProductionApprovalExpired` pages because provisioning is
 already closed. Renew as above.
 

@@ -131,6 +131,69 @@ FROM billing_usage_deliveries
 WHERE provider = sqlc.arg(provider)::text AND account_id = sqlc.arg(account_id)::uuid
   AND window_start >= sqlc.arg(start_at)::timestamptz AND window_start < sqlc.arg(end_at)::timestamptz;
 
+-- ADR-20261019193600. Egress bytes the pusher settled for one provider and
+-- account in [start, end), shadow or live; the dual run compares them with
+-- the ledger's egress evidence.
+-- name: FinancialLedgerDeliveredEgressBytes :one
+SELECT coalesce(sum(quantity), 0)::bigint AS quantity
+FROM billing_meter_usage_deliveries
+WHERE provider = sqlc.arg(provider)::text AND account_id = sqlc.arg(account_id)::uuid AND meter = 'egress'
+  AND window_start >= sqlc.arg(start_at)::timestamptz AND window_start < sqlc.arg(end_at)::timestamptz;
+
+-- ADR-20261019193600. One meter's ledger evidence summed by the UTC hour its
+-- source started in, through one evidence head, so billing rules that run hour
+-- by hour can be applied to the ledger.
+-- name: FinancialUsageHourly :many
+SELECT date_trunc('hour', source_start, 'UTC')::timestamptz AS hour, sum(quantity)::bigint AS quantity
+FROM financial_usage_evidence
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND meter = sqlc.arg(meter)::text
+  AND source_start >= sqlc.arg(period_start)::timestamptz
+  AND source_end <= sqlc.arg(period_end)::timestamptz
+  AND id <= sqlc.arg(through_id)::bigint
+GROUP BY 1
+ORDER BY 1;
+
+-- ADR-20261107105126. A compute delivery receipt with the usage source that
+-- quantified its hour; the first receipt for an hour wins.
+-- name: BillingUsageDeliveryRecordFromSource :exec
+INSERT INTO billing_usage_deliveries (provider, account_id, window_start, mb_seconds, usage_source)
+VALUES (sqlc.arg(provider)::text, sqlc.arg(account_id)::uuid, sqlc.arg(window_start)::timestamptz,
+        sqlc.arg(mb_seconds)::bigint, sqlc.arg(usage_source)::text)
+ON CONFLICT (provider, account_id, window_start) DO NOTHING;
+
+-- ADR-20261107105126. A secondary-meter delivery receipt with its usage source.
+-- name: BillingMeterUsageDeliveryRecordFromSource :exec
+INSERT INTO billing_meter_usage_deliveries (provider, account_id, meter, window_start, quantity, usage_source)
+VALUES (sqlc.arg(provider)::text, sqlc.arg(account_id)::uuid, sqlc.arg(meter)::text,
+        sqlc.arg(window_start)::timestamptz, sqlc.arg(quantity)::bigint, sqlc.arg(usage_source)::text)
+ON CONFLICT (provider, account_id, meter, window_start) DO NOTHING;
+
+-- name: BillingUsageDeliverySource :one
+SELECT coalesce(usage_source, '')::text AS usage_source
+FROM billing_usage_deliveries
+WHERE provider = sqlc.arg(provider)::text AND account_id = sqlc.arg(account_id)::uuid
+  AND window_start = sqlc.arg(window_start)::timestamptz;
+
+-- name: BillingMeterUsageDeliverySource :one
+SELECT coalesce(usage_source, '')::text AS usage_source
+FROM billing_meter_usage_deliveries
+WHERE provider = sqlc.arg(provider)::text AND account_id = sqlc.arg(account_id)::uuid
+  AND meter = sqlc.arg(meter)::text AND window_start = sqlc.arg(window_start)::timestamptz;
+
+-- One account's usage_minutes summed by UTC hour: compute MB-seconds and
+-- interface egress bytes, so the pusher can apply its hour rules to a month.
+-- name: UsageMinutesHourly :many
+SELECT date_trunc('hour', minute, 'UTC')::timestamptz AS hour,
+       coalesce(sum(mb_seconds), 0)::bigint AS mb_seconds,
+       coalesce(sum(net_tx_bytes), 0)::bigint AS net_tx_bytes
+FROM usage_minutes
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND minute >= sqlc.arg(start_at)::timestamptz
+  AND minute < sqlc.arg(end_at)::timestamptz
+GROUP BY 1
+ORDER BY 1;
+
 -- name: FinancialObjectStorageEstimatePut :exec
 -- ADR-20261020160000: apid's newest live object-storage estimate replaces
 -- the month's row; an older observation never overwrites a newer one.

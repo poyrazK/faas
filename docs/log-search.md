@@ -39,7 +39,9 @@ Filters combine: every event shown matches all of them.
 
 Your app's output lines that are warnings or errors are indexed as `runtime`
 events, with the same level detection as `gregale logs --level`: a structured
-`"level"` field, or a marker such as `[error]` or `level=warn`. Info and
+`"level"` field, a marker such as `[error]` or `level=warn`, or the first
+line of an uncaught crash (`Traceback …`, `panic:`, `TypeError: …`, Python's
+and uvicorn's `ERROR:`; see [log alerts](alerts.md#log-alerts)). Info and
 unmarked lines are not indexed; `gregale logs` still shows them.
 
 ```sh
@@ -51,7 +53,9 @@ Indexing is bounded so a noisy app cannot flood its own search:
 - Each app indexes up to 120 warning and error lines per minute on each node
   that runs it. Past that, the minute gets one `system` line saying how many
   lines were not indexed.
-- Each account indexes up to 600 runtime lines per minute in total.
+- Each account indexes up to 600 runtime lines per minute in total. Past
+  that, each app whose lines were dropped gets one `system` line for the
+  minute saying so.
 - A line is indexed up to its first 4 KiB.
 - Email addresses, card numbers and credential headers (authorization,
   cookies, API keys) are redacted before a line is stored; the event's

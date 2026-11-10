@@ -96,7 +96,11 @@ is written to the audit log.
 - The CLI prints the review link from the problem, and waits and retries with
   `--wait-for-approval`.
 - The MCP bridge returns the review link to the agent as a tool error with an
-  instruction to retry the same call after approval.
+  instruction to retry the same call after approval. Amended 2026-11-09: the
+  error carries the request in `approval` with an `await_approval` recovery
+  naming `gregale_wait_for_approval`, which waits for the decision and answers
+  `retry_original` or `stop`; `gregale_agent_activity` lists the agent's own
+  write requests (ADR-20261107220000).
 - `gregale key create --approvals`, `gregale org agent policy set --approvals`
   and the agent connection list show and set the categories.
 

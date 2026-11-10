@@ -241,6 +241,13 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrCapacity("account lookup failed"))
 		return
 	}
+	// The approval page can be phished (device-code phishing), so the
+	// owner learns about every credential it hands out.
+	what := credentialCLISignIn
+	if isMCPAuthCode(req.Code) {
+		what = credentialAgentSignIn
+	}
+	h.srv.noticeCredentialCreated(r, acct, what, label)
 	writeJSON(w, http.StatusOK, api.CliAuthExchangeResponse{
 		Plaintext: plaintext,
 		KeyID:     k.ID,

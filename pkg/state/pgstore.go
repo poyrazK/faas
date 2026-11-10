@@ -326,6 +326,9 @@ func (s *PgStore) CreateAccount(ctx context.Context, email string, plan api.Plan
 // postSignup / OAuth ladders collapse to the idempotent-signin
 // path on a duplicate email.
 func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params CreateAccountWithPersonalOrgParams) (CreateAccountWithPersonalOrgResult, error) {
+	if err := params.TermsAcceptance.validate(); err != nil {
+		return CreateAccountWithPersonalOrgResult{}, err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: begin tx: %w", err)
@@ -381,6 +384,16 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 		}
 		if changed != 1 {
 			return CreateAccountWithPersonalOrgResult{}, ErrNotFound
+		}
+	}
+	// 4. Terms acceptance, in the same transaction: an account created
+	//    while the Terms are published always has its row.
+	if a := params.TermsAcceptance; a != nil {
+		if _, err := tx.Exec(ctx, `
+			insert into legal_acceptances (account_id, document, version, method)
+			values ($1, $2, $3, $4)
+		`, acct.ID, LegalDocumentTerms, a.Version, a.Method); err != nil {
+			return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: record terms acceptance: %w", mapErr(err))
 		}
 	}
 
@@ -5121,6 +5134,10 @@ func (s *PgStore) ListAppDeletionArtifacts(ctx context.Context, appID string) ([
 // covered by an ON DELETE CASCADE. It deliberately rechecks the deadline in
 // the final DELETE so a concurrent restore cannot be lost.
 func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
+	return retryTrafficAnalysisTimeout(ctx, func() error { return s.deleteAppPermanentlyOnce(ctx, id) })
+}
+
+func (s *PgStore) deleteAppPermanentlyOnce(ctx context.Context, id string) error {
 	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
 		return fmt.Errorf("state: begin app purge: %w", err)
@@ -5334,6 +5351,13 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 	}
 	if _, err := tx.Exec(ctx, `delete from crons where app_id = $1`, id); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app remove crons: %w", err)
+	}
+	// A deleted app consumes nothing: retire its queue bindings with the app,
+	// as crons go, instead of leaving them enabled until purge (production
+	// 2026-11-09 kept a deleted app's pull binding enabled).
+	if _, err := tx.Exec(ctx, `update queue_bindings set retired_at = $2, enabled = false, updated_at = $2
+		where app_id = $1 and retired_at is null`, id, now); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app retire queue bindings: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		update app_tasks
@@ -6299,6 +6323,10 @@ func (s *PgStore) applyProjectReconcileOnce(
 	}
 
 	creates, removes := 0, 0
+	// adopt maps a function workload to the same-account function app
+	// outside any project that already holds its slug: `gregale deploy`
+	// made it, and the repository takes it over (ADR-20261108160000 §1).
+	adopt := make(map[string]string)
 	removeIDs := make(map[string]bool)
 	for _, mutation := range mutations {
 		if mutation.Op == "remove" {
@@ -6311,15 +6339,19 @@ func (s *PgStore) applyProjectReconcileOnce(
 			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
 				return ProjectReconcileResult{}, ErrConflict
 			}
-			creates++
-			var collisionID string
-			if err := tx.QueryRow(ctx, `select id from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID); err == nil {
-				if !removeIDs[collisionID] {
+			var collisionID, collisionAccount, collisionProject, collisionType string
+			if err := tx.QueryRow(ctx, `select id::text, account_id::text, coalesce(project_id::text, ''), type from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID, &collisionAccount, &collisionProject, &collisionType); err == nil {
+				switch {
+				case mutation.App.Type == AppTypeFunction && collisionType == string(AppTypeFunction) && collisionAccount == storedProject.AccountID && collisionProject == "":
+					adopt[mutation.App.WorkloadName] = collisionID
+					continue
+				case !removeIDs[collisionID]:
 					return ProjectReconcileResult{}, ErrConflict
 				}
 			} else if !errors.Is(err, pgx.ErrNoRows) {
 				return ProjectReconcileResult{}, err
 			}
+			creates++
 		case "update", "remove":
 			if _, ok := byID[mutation.App.ID]; !ok {
 				return ProjectReconcileResult{}, ErrNotFound
@@ -6408,6 +6440,14 @@ func (s *PgStore) applyProjectReconcileOnce(
 		case "create":
 			app := mutation.App
 			app.AccountID, app.ProjectID, app.OrgID = storedProject.AccountID, storedProject.ID, storedProject.OrgID
+			if id := adopt[app.WorkloadName]; id != "" {
+				adopted, err := scanApp(tx.QueryRow(ctx, `update apps set project_id = $2, root_dir = $3, workload_name = $4, workload_class = $5 where id = $1 and account_id = $6 and project_id is null and type = 'function' and status <> 'deleted' returning `+appsSelectColumns, id, project.ID, app.RootDir, app.WorkloadName, string(app.WorkloadClass), storedProject.AccountID))
+				if err != nil {
+					return ProjectReconcileResult{}, mapErr(err)
+				}
+				out.Added = append(out.Added, adopted)
+				continue
+			}
 			tombstone, tombErr := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where account_id = $1 and project_id = $2 and workload_name = $3 and preview_of_slug is null and status = 'deleted' order by deleted_at desc nulls last limit 1 for update`, project.AccountID, project.ID, app.WorkloadName))
 			if tombErr == nil {
 				tombstone.RootDir = app.RootDir
@@ -7785,7 +7825,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	if err := sqlc.New().GuardWorkflowAdmissionSnapshot(ctx, tx, d.AppID); err != nil {
 		return Deployment{}, 0, err
 	}
-	if err := s.checkDeploymentAutomations(ctx, tx, d); err != nil {
+	if err := s.checkDeploymentStoredWorkflows(ctx, tx, d); err != nil {
 		return Deployment{}, 0, err
 	}
 	// 1. Lock the parent apps row. SELECT 1 + FOR UPDATE keeps lock
@@ -8363,6 +8403,11 @@ func readLiveDeployments(ctx context.Context, db sqlc.DBTX, appID string) ([]Dep
 // to deployments_live_traffic_idx for the status='live' slice. No
 // new index needed for this PR; the column defaults + status
 // index from migration 00162 are sufficient.
+//
+// A deleted app's canary is left out: there is nothing to progress, every
+// gate read for it is not found, and the safe-deploy orchestrator closes its
+// rollout from its own list (closeDeletedAppRollout). Listing it made meterd
+// warn every tick until then.
 func (s *PgStore) ListCanaryInFlight(ctx context.Context) ([]Deployment, error) {
 	rows, err := s.pool.Query(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
@@ -8371,6 +8416,10 @@ func (s *PgStore) ListCanaryInFlight(ctx context.Context) ([]Deployment, error) 
 		   and canary_total_steps > 0
 		   and canary_step < canary_total_steps
 		   and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')
+		   and not exists (
+		     select 1 from apps a
+		      where a.id = deployments.app_id
+		        and (a.status = 'deleted' or a.deleted_at is not null))
 		 order by created_at asc`)
 	if err != nil {
 		return nil, fmt.Errorf("state: list canary in-flight: %w", err)
@@ -9010,6 +9059,14 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 				expectedServingID[0], servingID, ErrTrafficServingChanged)
 		}
 	}
+	current := make(map[string]int, len(siblings)+1)
+	current[id] = currentTrafficPercent
+	for _, sibling := range siblings {
+		current[sibling.ID] = sibling.Prior
+	}
+	if err := checkExpectedTrafficWeights(ctx, current); err != nil {
+		return Deployment{}, err
+	}
 	if newPercent == 100 && currentTrafficPercent != 100 && len(siblings) > 0 {
 		if err := checkMCPTaskCompatibilityReportTx(ctx, tx, appID, id); err != nil {
 			return Deployment{}, err
@@ -9370,6 +9427,11 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		 values ($1::uuid, $2, $3, $4, $5, $6::jsonb)
 		 returning id`, dep.ID, params.Audit.AccountID, string(auditKind), params.Audit.Actor, auditAt, []byte(params.Audit.Data)).Scan(&auditID); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary audit: %w", err)
+	}
+	if dep.CanaryTotalSteps > 0 && persistedStep >= dep.CanaryTotalSteps && dep.RolloutState != "complete" {
+		if err := insertRolloutLifecycleAuditTx(ctx, tx, dep, DeployRolloutCompleted, now); err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	updated, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
@@ -10849,7 +10911,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	if dep.EnvironmentWorkloadManaged() || managed {
 		return ErrConflict
 	}
-	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
+	if err := s.checkDeploymentStoredWorkflows(ctx, tx, dep); err != nil {
 		return err
 	}
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, dep.ID); err != nil {
@@ -11187,6 +11249,12 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 				canary_step_started_at = $2
 			 where id = $1`, id, now); err != nil {
 			return fmt.Errorf("state: mark canary live: %w", err)
+		}
+		// A recovery replay of an already started rollout records nothing new.
+		if dep.RolloutState != "rolling_out" {
+			if err := insertRolloutLifecycleAuditTx(ctx, tx, dep, DeployRolloutStarted, now); err != nil {
+				return err
+			}
 		}
 		newWeights := RedistributeTraffic(siblings, 100-dep.TrafficPercent)
 		for i, sibling := range siblings {
@@ -25550,7 +25618,8 @@ func (s *PgStore) ListAppSecretsForAccount(ctx context.Context, accountID string
 func (s *PgStore) CountAppSecrets(ctx context.Context, accountID, appID string) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx,
-		`select count(*) from app_secrets where account_id = $1 and app_id = $2`,
+		`select count(*) from app_secrets where account_id = $1 and app_id = $2
+		   and managed_postgres_binding_id is null and managed_object_storage_credential_id is null`,
 		accountID, appID).Scan(&n)
 	return n, err
 }
@@ -28650,7 +28719,7 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		// automation failure history names it as the actor. An override goes
 		// with its author; the history keeps the event without the person.
 		{"deployment_mcp_readiness_overrides", `delete from deployment_mcp_readiness_overrides where created_by = $1`},
-		{"workflow_automation_failure_history", `update workflow_automation_failure_history set actor_account_id = null where actor_account_id = $1`},
+		{"stored_workflow_failure_history", `update stored_workflow_failure_history set actor_account_id = null where actor_account_id = $1`},
 		// Release stages and additions of the account's projects reference
 		// the account, and stages the project, without a cascade.
 		{"project_release_additions", `delete from project_release_additions where account_id = $1`},
@@ -31558,6 +31627,12 @@ func (s *PgStore) RequestTelemetryByDeployment(ctx context.Context, arg sqlc.Req
 	return s.appErrorsQueries().RequestTelemetryByDeployment(ctx, s.pool, arg)
 }
 
+// RequestTelemetryLatencyWeightsByRoute backs the regression detector's
+// affected-request count over the whole window.
+func (s *PgStore) RequestTelemetryLatencyWeightsByRoute(ctx context.Context, arg sqlc.RequestTelemetryLatencyWeightsByRouteParams) ([]sqlc.RequestTelemetryLatencyWeightsByRouteRow, error) {
+	return s.appErrorsQueries().RequestTelemetryLatencyWeightsByRoute(ctx, s.pool, arg)
+}
+
 // RequestTelemetryCircuitBreakerSummary is the bounded per-deployment
 // aggregate used by meterd's canary circuit breaker. It computes weighted
 // request and 5xx totals plus a weighted p95 in Postgres, avoiding transfer of
@@ -31693,6 +31768,12 @@ func (s *PgStore) ApplyRegressionAction(ctx context.Context, arg sqlc.ApplyRegre
 // refreshed by the detector within the supplied interval.
 func (s *PgStore) ResolveStaleRegressionObservations(ctx context.Context, arg pgtype.Interval) ([]sqlc.DebugRegressionObservation, error) {
 	return s.appErrorsQueries().ResolveStaleRegressionObservations(ctx, s.pool, arg)
+}
+
+// ResolveRegressionObservationsNotSeenSince resolves what an app's complete
+// detector pass no longer sees.
+func (s *PgStore) ResolveRegressionObservationsNotSeenSince(ctx context.Context, arg sqlc.ResolveRegressionObservationsNotSeenSinceParams) ([]sqlc.DebugRegressionObservation, error) {
+	return s.appErrorsQueries().ResolveRegressionObservationsNotSeenSince(ctx, s.pool, arg)
 }
 
 // CheckDebugRegressionReadiness verifies the exact relation and parameterized

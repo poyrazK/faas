@@ -26,7 +26,11 @@ type fakeHost struct {
 	window  *[2]time.Time
 	// hidden names apps the caller may no longer read.
 	hidden map[string]bool
+	// team is what TeamApps answers: teammates' organization apps.
+	team []state.App
 }
+
+func (h fakeHost) TeamApps(context.Context, state.Account) []state.App { return h.team }
 
 func (h fakeHost) LoadApp(w http.ResponseWriter, _ *http.Request, acct state.Account, slug string) (state.App, bool) {
 	app, err := h.store.AppBySlug(context.Background(), slug)

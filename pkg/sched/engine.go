@@ -729,6 +729,9 @@ type Engine struct {
 	// apps whose guest vCPU count follows their CPU quota
 	// (ADR-20261101160231, ADR-20261101215228).
 	guestVCPUApps atomic.Pointer[guestVCPUAppSet]
+	// cpuSizeApps (runtime config `cpu_size_apps`) lists the apps whose CPU
+	// follows instance size instead of plan (ADR-20261109172421).
+	cpuSizeApps atomic.Pointer[guestVCPUAppSet]
 	// cpuShape holds the runtime-config values that shape a listed app's CPU
 	// (ADR-20261101215228); nil is the compiled shape.
 	cpuShape atomic.Pointer[api.CPUShape]
@@ -4077,6 +4080,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(e.appCPUMillicores(app, limits)),
+		CPUWeight: e.appCPUWeight(app), CPUUncapped: e.cpuBySize(app.ID),
 		EgressMbit: int32(limits.EgressMbit), RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
@@ -5285,9 +5289,39 @@ type placementSnapshot struct {
 	// preferred is nodes less those whose vmmd is restarting under a
 	// notice, when that leaves any (vmmd restart adoption ADR §3).
 	preferred []state.ComputeNode
+	// cpu is the ledger's cpu_admission (ADR-20261109172421).
+	cpu *cpuAdmission
 }
 
+// choose places r. Observing cpu_admission, a refusal for vCPU or CPU alone
+// is retried without those budgets, so a node with memory room is chosen and
+// the refusal is only counted (ADR-20261109172421). The first pass still
+// prefers a node within its CPU budgets.
 func (s placementSnapshot) choose(r Request) (Placement, error) {
+	p, err := s.chooseOnce(r)
+	if err == nil || !s.cpu.observing() || !refusedForCPU(err) {
+		return p, err
+	}
+	r.ignoreCPUBudgets = true
+	if p, err = s.chooseOnce(r); err != nil {
+		return p, err
+	}
+	s.cpu.refusedAt(CPUGatePlacement)
+	return p, nil
+}
+
+// refusedForCPU reports whether a placement refusal names the vCPU or CPU
+// budget.
+func refusedForCPU(err error) bool {
+	for _, b := range admissionBlockers(err) {
+		if b.Code == "node_vcpu" || b.Code == "node_cpu" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s placementSnapshot) chooseOnce(r Request) (Placement, error) {
 	if len(s.preferred) > 0 {
 		if p, err := choosePlacementWithCPU(s.preferred, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r); err == nil {
 			return p, nil
@@ -5395,7 +5429,7 @@ func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (pla
 	}
 	snapshot := placementSnapshot{
 		nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
-		usedCPUMillicores: usedCPUMillicores,
+		usedCPUMillicores: usedCPUMillicores, cpu: e.ledger.cpuAdmission,
 	}
 	if preferred, ok := preferUnnoticed(ctx, e.restartNotices, nodes); ok {
 		snapshot.preferred = preferred
@@ -6195,6 +6229,8 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		BaseKey:            pinnedBase,
 		LayerKey:           layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount:          int32(e.guestVCPUs(app, limits)),
+		CPUWeight:          e.appCPUWeight(app),
+		CPUUncapped:        e.cpuBySize(app.ID),
 		MemSizeMiB:         int32(app.RAMMB),
 		CPUMillicores:      int32(e.appCPUMillicores(app, limits)),
 		EgressMbit:         int32(limits.EgressMbit),
@@ -7838,6 +7874,11 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 		return 0, fmt.Errorf("sched: deleted-app reconcile: empty app id")
 	}
 	app, err := e.store.AppByID(ctx, appID)
+	if errors.Is(err, state.ErrNotFound) {
+		// The purge already removed the app and its instance rows, so there
+		// is nothing left to stop.
+		return 0, nil
+	}
 	if err != nil {
 		return 0, fmt.Errorf("sched: deleted-app reconcile: load app %s: %w", appID, err)
 	}

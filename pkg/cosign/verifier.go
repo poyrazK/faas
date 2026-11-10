@@ -86,15 +86,15 @@ func (v *LocalVerifier) CheckPresent(ctx context.Context, layerKey, sigKey strin
 	if err != nil {
 		return fmt.Errorf("cosign: read sig %q: %w", sigKey, err)
 	}
-	sig, err := io.ReadAll(io.LimitReader(sigRC, 65))
+	sig, err := io.ReadAll(io.LimitReader(sigRC, maxSignatureV2Bytes+1))
 	_ = sigRC.Close()
 	if err != nil {
 		return fmt.Errorf("cosign: read sig %q: %w", sigKey, err)
 	}
-	if len(sig) != 64 {
+	if checkSignatureShape(layerKey, sig) != nil {
 		return api.NewProblem(503, "sig_invalid",
 			"malformed signature for cold-boot layer",
-			fmt.Sprintf("signature for layer %q at %q is %d bytes, want 64", layerKey, sigKey, len(sig)))
+			fmt.Sprintf("signature for layer %q at %q is neither a v1 signature nor a v2 signature for this layer", layerKey, sigKey))
 	}
 	exists, supported, err := storage.Exists(ctx, v.stor, layerKey)
 	if err != nil {
@@ -178,7 +178,7 @@ func (v *LocalVerifier) verify(ctx context.Context, layerKey, sigKey, cacheKey s
 		}
 		return fmt.Errorf("cosign: read sig %q: %w", sigKey, err)
 	}
-	sig, err := io.ReadAll(sigRC)
+	sig, err := io.ReadAll(io.LimitReader(sigRC, maxSignatureV2Bytes+1))
 	if err != nil {
 		_ = sigRC.Close()
 		return fmt.Errorf("cosign: read sig %q: %w", sigKey, err)
@@ -187,7 +187,9 @@ func (v *LocalVerifier) verify(ctx context.Context, layerKey, sigKey, cacheKey s
 		return fmt.Errorf("cosign: close sig %q: %w", sigKey, err)
 	}
 
-	if !verifyDigest(v.pub, digest, sig) {
+	// A v2 signature (ADR-20261109170000) must also name this layer's key,
+	// so a signed layer copied over another key fails here.
+	if !verifySignature(v.pub, layerKey, digest, sig) {
 		// Title for human display; Detail is the load-bearing
 		// operator message (Problem.Error() returns code+detail,
 		// so log greps will find this string verbatim).

@@ -1142,6 +1142,9 @@ type Handler struct {
 	MirrorMaxConcurrentPerRule int64
 	// log may be nil (defaults to slog.Default()).
 	log *slog.Logger
+	// requestLogBudget bounds the Info-level gateway_request lines
+	// (api.GatewayRequestLogLinesPerSecond); nil writes every line.
+	requestLogBudget *requestLogBudget
 	// appsSuffix is the configured public suffix (e.g. ".gregale.dev").
 	// Non-empty enables a pre-Lookup host suffix check that 404s anything
 	// outside it (spec §4.1 noise filter). Custom domains (Pro+) bypass this
@@ -1583,6 +1586,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		headHeaders:        newEdgeHeadHeaderCache(),
 		appFreezes:         newAppFreezes(),
 		log:                log,
+		requestLogBudget:   newRequestLogBudget(),
 		wakePageCycles:     make(map[string]*wakePageCycle),
 		consumerKeyTouches: newConsumerKeyToucher(),
 		// mirrorSlots is sync.Map (zero value ready); the cap is
@@ -2333,7 +2337,7 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 	// The deployment verifier presents a short-lived, random challenge that is
 	// bound to this app and candidate deployment. It must reach the guest health
 	// endpoint even when the customer enables the ordinary API-key gate.
-	if h.authorizedDeploymentSmoke(r, app) {
+	if h.authorizedDeploymentSmoke(r, app) || routeProbePassesPlatformAuth(r) {
 		return true
 	}
 	if !app.RequireAuthn {
@@ -5286,8 +5290,10 @@ func (h *Handler) enforcePublicAuth(w http.ResponseWriter, r *http.Request, rec 
 	}
 	// Platform deployment smoke is independently authenticated by the cached,
 	// app-and-deployment-bound challenge. Requiring customer bearer/basic auth
-	// here would make every protected app impossible to deploy.
-	if h.authorizedDeploymentSmoke(r, app) {
+	// here would make every protected app impossible to deploy. A validated
+	// route probe passes for the same reason: the canary of a protected app
+	// would otherwise roll out without evidence (ADR-847 amendment 2).
+	if h.authorizedDeploymentSmoke(r, app) || routeProbePassesPlatformAuth(r) {
 		return true
 	}
 	// Open → pass-through. The mode validator above keeps this switch
@@ -6306,6 +6312,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The compute edge's request for the instance's node, likewise
 	// (ADR-20261031105055).
 	r = takeEdgePlacement(r)
+	// Edge rules, routing and the app all see one path: dot segments
+	// resolved and duplicate slashes collapsed (ADR-20261108100000).
+	normalizeRequestPath(r)
 	if h.devBridgeAuthorize != nil {
 		if problem := h.devBridgeAuthorize(r); problem != nil {
 			api.WriteProblem(w, problem)
@@ -6352,6 +6361,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			(code >= http.StatusOK && code < http.StatusBadRequest && isLongLivedForward(r))
 	}
 	defer rec.stopTrafficResponse()
+	r = r.WithContext(withResponseRecorder(r.Context(), rec))
 	w = rec
 	// ADR-1505: the commit is armed once a monetized request is about to be
 	// forwarded; at exit it completes or aborts the response.
@@ -6630,8 +6640,9 @@ haveApp:
 		return
 	}
 
-	// ADR-847: a route probe pins one live deployment and keeps every customer
-	// auth gate; it is never combined with the smoke bypass.
+	// ADR-847: a route probe pins one live deployment and passes only the
+	// platform's own auth gates (amendment 2); it is never combined with the
+	// smoke bypass.
 	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
 	if deploymentSmoke {
 		probeDeploymentID, probeToken, routeProbe = "", "", false
@@ -7586,6 +7597,9 @@ haveApp:
 	if !deploymentSmoke && !routeProbe && projectReleaseDeploymentID == "" &&
 		(clientRevisionID != "" || app.PinnedDeploymentID != "" && app.PublicEnvironmentID == "") {
 		recordTrafficDeploymentPinned(r.Context())
+	}
+	if !deploymentSmoke && !routeProbe {
+		recordTrafficSelectedDeployment(r.Context(), exactDeploymentID)
 	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
@@ -8662,7 +8676,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// ServeHTTP (issue #273 / ADR-042 fixed the WithStartTime dead-code
 	// bug so this is now request-received → handler-return, not
 	// "now() — now()").
-	elapsed := time.Since(startTime(r))
+	elapsed := observedLatency(r, status, time.Since(startTime(r)))
 	h.observeMCPRequest(r, status, appID, elapsed)
 	if h.metrics != nil {
 		// Use placeholder labels for the unknown-host path so 404s show up on
@@ -8731,8 +8745,14 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// but recomputes; `elapsed` was already measured above.
 	// A warm 2xx is logged at Debug, which production does not write: build
 	// the line's attributes only when the handler will take it.
+	// An Info line also spends the request-log budget: past it the line is
+	// not built (see requestLogBudget).
 	decision := trafficDecisionEvidence(r.Context(), status, false)
-	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), requestLogLevel(code, cold)) {
+	level := requestLogLevel(code, cold)
+	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), level) && h.requestLogBudget.admit(level, h.metrics) {
+		if suppressed := h.requestLogBudget.takeSuppressed(); suppressed > 0 {
+			requestLog = requestLog.With("suppressed_before", suppressed)
+		}
 		if decision.path != "" {
 			requestLog = requestLog.With(decision.logAttribute())
 		}
@@ -8778,8 +8798,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		appUUID := appIDFromContext(r.Context())
 		if acctUUID != uuid.Nil && appUUID != uuid.Nil {
 			var deploymentUUID uuid.UUID
-			if target.DeploymentID != "" {
-				deploymentUUID, _ = uuid.Parse(target.DeploymentID)
+			if deploymentID := decision.telemetryDeployment(target, status); deploymentID != "" {
+				deploymentUUID, _ = uuid.Parse(deploymentID)
 			}
 			telemetryRoute := requestTelemetryRouteFrom(r)
 			if telemetryRoute == "" {
@@ -8849,10 +8869,10 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
 				PlatformRefusal:                      decision.platformRefusal(status),
 				DeploymentPinned:                     decision.deploymentPinned,
-				LongLived:                            decision.streamDetached,
+				LongLived:                            decision.longLived(requestOutlivedBudget(r.Context())),
 				exactSample:                          status >= http.StatusInternalServerError || exactRequestTelemetryFrom(r.Context()),
 			}
-			platformFailure := platformFailureUnbillable(r, status)
+			unbillable := usageUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {
 				// ADR-1505: the response's completion already waited for (or
 				// is aborted by) this event; never append it twice.
@@ -8878,14 +8898,14 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 					h.metrics.IncUsageOutboxFailure()
 					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)
 					// The debugger fallback bills every row it writes, so a
-					// platform failure must not reach it.
-					row.UsageOutboxed = platformFailure
+					// response the guest never answered must not reach it.
+					row.UsageOutboxed = unbillable
 				} else {
 					row.UsageOutboxed = true
 				}
-			} else if platformFailure {
+			} else if unbillable {
 				// Without an outbox the debugger fallback is the only ledger
-				// writer and bills every row; keep platform failures out of it.
+				// writer and bills every row; keep unanswered responses out of it.
 				row.UsageOutboxed = true
 			}
 			if h.requestTelemetry != nil {
@@ -9325,8 +9345,11 @@ func (h *Handler) RoutesFor(appID string) (routes []string, overflowed bool) {
 // streaming path).
 type statusRecorder struct {
 	http.ResponseWriter
-	status                   int
-	wroteHeader              bool
+	status      int
+	wroteHeader bool
+	// headerAt is when the response headers were committed: a long-lived
+	// response's latency (ADR-20261109153000).
+	headerAt                 time.Time
 	request                  *http.Request
 	Bytes                    int64
 	ContentType              string
@@ -9439,6 +9462,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 	if !s.wroteHeader {
 		s.status = code
 		s.wroteHeader = true
+		s.headerAt = time.Now()
 		s.mirrorSourceCapture.writeHeader(code)
 		// Issue #471: capture the upstream Content-Type at header
 		// commit time so the post-proxy site can detect a buffered

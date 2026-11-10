@@ -80,3 +80,72 @@ UPDATE accounts SET display_name=sqlc.arg(display_name)::text WHERE id=sqlc.arg(
 SELECT coalesce(host(issued_ip),'')::text AS issued_ip, coalesce(issued_ua,'')::text AS issued_ua, issued_at
 FROM sessions WHERE account_id=$1 AND issued_at>=sqlc.arg(since)
 ORDER BY issued_at DESC LIMIT 200;
+
+-- Remembered browsers for two-factor authentication (ADR 20261108150000).
+-- name: InsertMFATrustedBrowser :execrows
+INSERT INTO mfa_trusted_browsers(token_hash, account_id, ua_family, created_ip, expires_at)
+SELECT sqlc.arg(token_hash), a.id, sqlc.arg(ua_family)::text, sqlc.arg(created_ip)::text, sqlc.arg(expires_at)
+FROM accounts a WHERE a.id=sqlc.arg(account_id) AND a.mfa_enrolled_at IS NOT NULL;
+
+-- Keep only the newest max_active remembered browsers per account.
+-- name: TrimMFATrustedBrowsers :execrows
+UPDATE mfa_trusted_browsers SET revoked_at=clock_timestamp()
+WHERE id IN (
+    SELECT t.id FROM mfa_trusted_browsers t
+    WHERE t.account_id=sqlc.arg(account_id) AND t.revoked_at IS NULL
+    ORDER BY t.created_at DESC OFFSET sqlc.arg(max_active)::int
+);
+
+-- A browser remembered before the current enrollment (MFA turned off and
+-- set up again) is not trusted.
+-- name: UseMFATrustedBrowser :execrows
+UPDATE mfa_trusted_browsers t SET last_used_at=clock_timestamp()
+FROM accounts a
+WHERE t.token_hash=sqlc.arg(token_hash) AND t.account_id=sqlc.arg(account_id)
+  AND t.ua_family=sqlc.arg(ua_family)::text AND t.revoked_at IS NULL AND t.expires_at>clock_timestamp()
+  AND a.id=t.account_id AND a.mfa_enrolled_at IS NOT NULL AND t.created_at>=a.mfa_enrolled_at;
+
+-- name: ListMFATrustedBrowsers :many
+SELECT id, ua_family, created_ip, created_at, expires_at, last_used_at
+FROM mfa_trusted_browsers
+WHERE account_id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
+ORDER BY created_at DESC;
+
+-- name: RevokeMFATrustedBrowser :execrows
+UPDATE mfa_trusted_browsers SET revoked_at=clock_timestamp()
+WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id) AND revoked_at IS NULL;
+
+-- name: RevokeAllMFATrustedBrowsers :execrows
+UPDATE mfa_trusted_browsers SET revoked_at=clock_timestamp()
+WHERE account_id=$1 AND revoked_at IS NULL;
+
+-- Count one mail of kind to the account when its fixed window still has
+-- room and the last send is at least min_interval old; no row means the
+-- send is throttled (ADR 20261108160000).
+-- name: TakeAccountMailSlot :one
+INSERT INTO account_mail_throttle AS t (account_id, kind, window_started_at, sent_in_window, last_sent_at)
+VALUES (sqlc.arg(account_id), sqlc.arg(kind)::text, clock_timestamp(), 1, clock_timestamp())
+ON CONFLICT (account_id, kind) DO UPDATE SET
+    window_started_at = CASE WHEN t.window_started_at <= clock_timestamp() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
+        THEN clock_timestamp() ELSE t.window_started_at END,
+    sent_in_window = CASE WHEN t.window_started_at <= clock_timestamp() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
+        THEN 1 ELSE t.sent_in_window + 1 END,
+    last_sent_at = clock_timestamp()
+WHERE t.last_sent_at <= clock_timestamp() - make_interval(secs => sqlc.arg(min_interval_seconds)::double precision)
+  AND (t.window_started_at <= clock_timestamp() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
+       OR t.sent_in_window < sqlc.arg(max_per_window)::int)
+RETURNING t.sent_in_window;
+
+-- Grants an account started that a recovery must end (ADR 20261109120000):
+-- pending email changes, org invitations it created, and CLI or agent
+-- sign-in codes approved but not yet exchanged for a key.
+-- name: EndAccountPendingEmailChanges :execrows
+DELETE FROM account_email_changes WHERE account_id=$1 AND consumed_at IS NULL;
+
+-- name: EndAccountPendingInvitations :execrows
+UPDATE org_invitations SET revoked_at=clock_timestamp()
+WHERE invited_by_account_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL;
+
+-- name: EndAccountApprovedCliCodes :execrows
+UPDATE cli_auth_codes SET status='expired'
+WHERE account_id=$1 AND status='consumed' AND consumed_at IS NULL;

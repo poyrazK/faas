@@ -70,28 +70,29 @@ func (e *Engine) readVCPUShapeHistory(ctx context.Context) (vcpuShapeHistory, bo
 		}
 		return h.changes[i].version < h.changes[j].version
 	})
-	apps, shape := h.at(time.Time{}, true)
-	return h, guestVCPUShapeKey(apps, shape) == e.guestVCPUShapeKey(), nil
+	return h, guestVCPUShapeKey(h.at(time.Time{}, true)) == e.guestVCPUShapeKey(), nil
 }
 
-// at is the list and shape in force at t, or after every change when latest.
-func (h vcpuShapeHistory) at(t time.Time, latest bool) (*guestVCPUAppSet, api.CPUShape) {
+// at is the lists and shape in force at t, or after every change when
+// latest.
+func (h vcpuShapeHistory) at(t time.Time, latest bool) cpuShapeState {
 	s := h.initial
 	s.Apps = append([]string(nil), s.Apps...)
+	s.SizeApps = append([]string(nil), s.SizeApps...)
 	for _, c := range h.changes {
 		if !latest && c.at.After(t) {
 			break
 		}
 		applyVCPUShapeValue(&s, c.key, c.value)
 	}
-	apps, _ := parseGuestVCPUApps(s.Apps)
-	return apps, s.Shape
+	vcpuApps, _ := parseGuestVCPUApps(s.Apps)
+	sizeApps, _ := parseAppList(runtimeconfig.KeyCPUSizeApps, s.SizeApps)
+	return cpuShapeState{vcpuApps: vcpuApps, sizeApps: sizeApps, shape: s.Shape}
 }
 
 // vcpusAt is the guest vCPU count app booted with at t.
 func (h vcpuShapeHistory) vcpusAt(t time.Time, app state.App, limits api.Limits) int {
-	apps, shape := h.at(t, false)
-	return guestVCPUsUnder(apps, shape, app, limits)
+	return guestVCPUsUnder(h.at(t, false), app, limits)
 }
 
 // applyVCPUShapeValue sets one key as schedd applied it: no value is the
@@ -105,8 +106,13 @@ func applyVCPUShapeValue(s *runtimeconfig.CPUShapeSettings, key string, value js
 	if _, err := next.Apply(key, value); err != nil {
 		return
 	}
-	if key == runtimeconfig.KeyGuestVCPUFromCPUApps {
+	switch key {
+	case runtimeconfig.KeyGuestVCPUFromCPUApps:
 		if _, err := parseGuestVCPUApps(next.Apps); err != nil {
+			return
+		}
+	case runtimeconfig.KeyCPUSizeApps:
+		if _, err := parseAppList(key, next.SizeApps); err != nil {
 			return
 		}
 	}

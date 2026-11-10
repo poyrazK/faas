@@ -202,7 +202,7 @@ RULES = [
     (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags", "Customer feature flags"),
     # --- developer tools
     (r"mcp-management|mcpmanagement|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
-    (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories", "Docs site and trust pages"),
+    (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories|^/(terms|privacy|acceptable-use)$|^legal$|legal[-_]pages|^legal-acceptances$", "Docs site and trust pages"),
     (r"openapi\.(json|yaml)|^/v1/openapi|capabilities|productcap|sdk-coverage|^meta$", "Public OpenAPI spec"),
     (r"^sdk|sdk$|webhook-receiver|idempotency|transport|^client|options$|dto$|codes$|errors$|scopes$|^doc$|streaming$|release-context|^context", "SDKs:"),
     (r"dashboard|templates?/|^index$|^app\.(css|js)|\.js$|^stateless$|email-verification-banner|email-verified|set-password|password-reset|^login$|^profile$", "Web dashboard"),
@@ -232,7 +232,7 @@ RULES = [
     (r"datadog", "Datadog integration"),
     (r"log-drain|drain-analytics|log-analytics", "Log drains"),
     (r"logs?$|^log-|log-archive|tail|logarchive|/logs", "Logs, tail"),
-    (r"metrics|analytics|request-telemetry|telemetry", "App, service and account metrics"),
+    (r"metrics|analytics|request-telemetry|telemetry|long-lived-latency", "App, service and account metrics"),
     # --- data
     (r"ai-gateway|ai-access|aigateway|^ai$|llm|moderation|prompt", "AI gateway"),
     (r"outbound|integration", "Outbound integrations"),
@@ -245,7 +245,7 @@ RULES = [
     # --- async
     (r"inbound-webhook", "Durable inbound webhooks"),
     (r"webhook|account-release-webhook|delivery-format", "Outbound webhooks"),
-    (r"automation", "Automations:"),
+    (r"stored-workflow|storedworkflow|stored_workflow|workflows/stored", "Stored workflows:"),
     (r"operation|business-(invariant|decision|effect|compensation)|customer-operation", "Operations:"),
     (r"inbox|outbox|messaging|application-message|send$|deliver$", "Application inbox and outbox"),
     (r"worker-pool|^workers$|worker-replica", "Worker pools"),
@@ -361,7 +361,7 @@ PRIORITY_RULES = [
     (r"^signed-urls$", "Object storage"),
     (r"^test$|^scenario-tests$|^scenario-(test|object|postgres)", "Scenario tests"),
     (r"^(project-)?environment-(workload-)?qualification|^project-environment-qualifications$", "Environments and Environment GitOps"),
-    (r"automation-test", "Automations:"),
+    (r"stored-workflow-test", "Stored workflows:"),
     (r"realtime-customer-examples", "Realtime channels"),
     (r"^durableentity$", "Durable entities"),
     (r"^appmetrics$", "App, service and account metrics"),
@@ -392,6 +392,9 @@ INFRA_RULES = [
     r"^edge-placement(-routing)?$",
     # ADR-20261102081618 §5: local first for an app on several nodes.
     r"^edge-local-first$",
+    # Manifest hot_path: the compute edge keeps connections to each node's
+    # gatewayd-internal alive.
+    r"^internal-keepalive-per-node$",
     # ADR-20261102081618: the records that send Cloudflare to the compute edges.
     r"^edgednsd?(-.*)?$",
     # ADR-20261103163954: what stands in front of a compute edge's TLS listener.

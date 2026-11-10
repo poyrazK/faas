@@ -123,14 +123,15 @@
       "name": "Capability acceptance: billing",
       "category": "resources",
       "description": "Each released billing capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["app-costs", "billing", "billing-focus-export", "billing-forecast", "budgets"],
+      "capabilities": ["app-costs", "billing", "billing-focus-export", "billing-forecast", "budgets", "strict-budgets"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_app_costs_test.go::TestAppCostsCLIUsesStableAppIdentityAndFiltersAccountReport"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_billing_invoice_details_test.go::TestFOCUSArtifactLimitProblem"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_change_plan_test.go::TestGetBillingPortal"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_financial_budgets_test.go::TestFinancialBudgetCRUD"},
-        {"kind": "test", "locator": "pkg/financial/forecast_test.go::TestForecastMeterUnavailable"}
+        {"kind": "test", "locator": "pkg/financial/forecast_test.go::TestForecastMeterUnavailable"},
+        {"kind": "test", "locator": "pkg/state/financialtest/financial_compute_account_test.go::TestFinancialComputeAccountReservations"}
       ]
     },
     {

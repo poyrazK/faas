@@ -291,6 +291,8 @@ func (s *server) revokeAllBrowserSessions(w http.ResponseWriter, r *http.Request
 			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
+	s.forgetTrustedBrowsers(r.Context(), acct.ID, "sign_out_everywhere")
+	s.endPendingGrants(r.Context(), acct.ID, "sign_out_everywhere")
 	s.audit.Emit(r.Context(), "auth.sessions.revoke_all", &acct.ID, map[string]any{"revoked_count": n, "via": "api_key"})
 	writeJSON(w, http.StatusOK, api.SessionsRevokeAllResponse{Revoked: n})
 }

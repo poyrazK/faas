@@ -200,6 +200,35 @@ func cmdAccountProvider(args []string) int {
 	return 0
 }
 
+func cmdAccountActivity(args []string) int {
+	if len(args) == 0 || args[0] != subList {
+		PrintUsage(os.Stderr, "usage: gregale account activity list", "account")
+		return 1
+	}
+	if noArgs("account activity list", args[1:]) != 0 {
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	out, err := client.SecurityActivity(context.Background())
+	if err != nil {
+		return printErr("Could not list security activity", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	if len(out.Events) == 0 {
+		PrintProgress(osStdout, "No sign-ins or security changes in the last 90 days.")
+		return 0
+	}
+	for _, e := range out.Events {
+		_, _ = fmt.Fprintf(osStdout, "%s  %-46s  %-15s  %s\n", e.At, e.Summary, e.IP, e.Detail)
+	}
+	return 0
+}
+
 // cmdAccountBrowserForm opens the account page for changes that need a
 // browser session's proof (current password or authenticator).
 func cmdAccountBrowserForm(command, what string, args []string) int {

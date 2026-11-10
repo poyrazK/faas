@@ -164,6 +164,47 @@ func (q *Queries) DeleteAccountOAuthLink(ctx context.Context, db DBTX, arg Delet
 	return removed, err
 }
 
+const endAccountApprovedCliCodes = `-- name: EndAccountApprovedCliCodes :execrows
+UPDATE cli_auth_codes SET status='expired'
+WHERE account_id=$1 AND status='consumed' AND consumed_at IS NULL
+`
+
+func (q *Queries) EndAccountApprovedCliCodes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, endAccountApprovedCliCodes, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const endAccountPendingEmailChanges = `-- name: EndAccountPendingEmailChanges :execrows
+DELETE FROM account_email_changes WHERE account_id=$1 AND consumed_at IS NULL
+`
+
+// Grants an account started that a recovery must end (ADR 20261109120000):
+// pending email changes, org invitations it created, and CLI or agent
+// sign-in codes approved but not yet exchanged for a key.
+func (q *Queries) EndAccountPendingEmailChanges(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, endAccountPendingEmailChanges, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const endAccountPendingInvitations = `-- name: EndAccountPendingInvitations :execrows
+UPDATE org_invitations SET revoked_at=clock_timestamp()
+WHERE invited_by_account_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL
+`
+
+func (q *Queries) EndAccountPendingInvitations(ctx context.Context, db DBTX, invitedByAccountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, endAccountPendingInvitations, invitedByAccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertAccountEmailChange = `-- name: InsertAccountEmailChange :execrows
 INSERT INTO account_email_changes(token_hash,account_id,old_email,new_email,expires_at)
 SELECT $1, a.id, lower(a.email::text), $2::text, $3
@@ -181,6 +222,35 @@ func (q *Queries) InsertAccountEmailChange(ctx context.Context, db DBTX, arg Ins
 	result, err := db.Exec(ctx, insertAccountEmailChange,
 		arg.TokenHash,
 		arg.NewEmail,
+		arg.ExpiresAt,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertMFATrustedBrowser = `-- name: InsertMFATrustedBrowser :execrows
+INSERT INTO mfa_trusted_browsers(token_hash, account_id, ua_family, created_ip, expires_at)
+SELECT $1, a.id, $2::text, $3::text, $4
+FROM accounts a WHERE a.id=$5 AND a.mfa_enrolled_at IS NOT NULL
+`
+
+type InsertMFATrustedBrowserParams struct {
+	TokenHash []byte
+	UaFamily  string
+	CreatedIp string
+	ExpiresAt pgtype.Timestamptz
+	AccountID pgtype.UUID
+}
+
+// Remembered browsers for two-factor authentication (ADR 20261108150000).
+func (q *Queries) InsertMFATrustedBrowser(ctx context.Context, db DBTX, arg InsertMFATrustedBrowserParams) (int64, error) {
+	result, err := db.Exec(ctx, insertMFATrustedBrowser,
+		arg.TokenHash,
+		arg.UaFamily,
+		arg.CreatedIp,
 		arg.ExpiresAt,
 		arg.AccountID,
 	)
@@ -218,6 +288,49 @@ func (q *Queries) ListAccountOAuthLinks(ctx context.Context, db DBTX, accountID 
 			&i.Email,
 			&i.EmailVerified,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMFATrustedBrowsers = `-- name: ListMFATrustedBrowsers :many
+SELECT id, ua_family, created_ip, created_at, expires_at, last_used_at
+FROM mfa_trusted_browsers
+WHERE account_id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
+ORDER BY created_at DESC
+`
+
+type ListMFATrustedBrowsersRow struct {
+	ID         pgtype.UUID
+	UaFamily   string
+	CreatedIp  string
+	CreatedAt  pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListMFATrustedBrowsers(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListMFATrustedBrowsersRow, error) {
+	rows, err := db.Query(ctx, listMFATrustedBrowsers, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMFATrustedBrowsersRow{}
+	for rows.Next() {
+		var i ListMFATrustedBrowsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UaFamily,
+			&i.CreatedIp,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.LastUsedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -284,6 +397,37 @@ func (q *Queries) ReplaceAccountRecoveryCodes(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const revokeAllMFATrustedBrowsers = `-- name: RevokeAllMFATrustedBrowsers :execrows
+UPDATE mfa_trusted_browsers SET revoked_at=clock_timestamp()
+WHERE account_id=$1 AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeAllMFATrustedBrowsers(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, revokeAllMFATrustedBrowsers, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeMFATrustedBrowser = `-- name: RevokeMFATrustedBrowser :execrows
+UPDATE mfa_trusted_browsers SET revoked_at=clock_timestamp()
+WHERE id=$1 AND account_id=$2 AND revoked_at IS NULL
+`
+
+type RevokeMFATrustedBrowserParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) RevokeMFATrustedBrowser(ctx context.Context, db DBTX, arg RevokeMFATrustedBrowserParams) (int64, error) {
+	result, err := db.Exec(ctx, revokeMFATrustedBrowser, arg.ID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setAccountDisplayName = `-- name: SetAccountDisplayName :execrows
 UPDATE accounts SET display_name=$1::text WHERE id=$2
 `
@@ -295,6 +439,92 @@ type SetAccountDisplayNameParams struct {
 
 func (q *Queries) SetAccountDisplayName(ctx context.Context, db DBTX, arg SetAccountDisplayNameParams) (int64, error) {
 	result, err := db.Exec(ctx, setAccountDisplayName, arg.DisplayName, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const takeAccountMailSlot = `-- name: TakeAccountMailSlot :one
+INSERT INTO account_mail_throttle AS t (account_id, kind, window_started_at, sent_in_window, last_sent_at)
+VALUES ($1, $2::text, clock_timestamp(), 1, clock_timestamp())
+ON CONFLICT (account_id, kind) DO UPDATE SET
+    window_started_at = CASE WHEN t.window_started_at <= clock_timestamp() - make_interval(secs => $3::double precision)
+        THEN clock_timestamp() ELSE t.window_started_at END,
+    sent_in_window = CASE WHEN t.window_started_at <= clock_timestamp() - make_interval(secs => $3::double precision)
+        THEN 1 ELSE t.sent_in_window + 1 END,
+    last_sent_at = clock_timestamp()
+WHERE t.last_sent_at <= clock_timestamp() - make_interval(secs => $4::double precision)
+  AND (t.window_started_at <= clock_timestamp() - make_interval(secs => $3::double precision)
+       OR t.sent_in_window < $5::int)
+RETURNING t.sent_in_window
+`
+
+type TakeAccountMailSlotParams struct {
+	AccountID          pgtype.UUID
+	Kind               string
+	WindowSeconds      float64
+	MinIntervalSeconds float64
+	MaxPerWindow       int32
+}
+
+// Count one mail of kind to the account when its fixed window still has
+// room and the last send is at least min_interval old; no row means the
+// send is throttled (ADR 20261108160000).
+func (q *Queries) TakeAccountMailSlot(ctx context.Context, db DBTX, arg TakeAccountMailSlotParams) (int32, error) {
+	row := db.QueryRow(ctx, takeAccountMailSlot,
+		arg.AccountID,
+		arg.Kind,
+		arg.WindowSeconds,
+		arg.MinIntervalSeconds,
+		arg.MaxPerWindow,
+	)
+	var sent_in_window int32
+	err := row.Scan(&sent_in_window)
+	return sent_in_window, err
+}
+
+const trimMFATrustedBrowsers = `-- name: TrimMFATrustedBrowsers :execrows
+UPDATE mfa_trusted_browsers SET revoked_at=clock_timestamp()
+WHERE id IN (
+    SELECT t.id FROM mfa_trusted_browsers t
+    WHERE t.account_id=$1 AND t.revoked_at IS NULL
+    ORDER BY t.created_at DESC OFFSET $2::int
+)
+`
+
+type TrimMFATrustedBrowsersParams struct {
+	AccountID pgtype.UUID
+	MaxActive int32
+}
+
+// Keep only the newest max_active remembered browsers per account.
+func (q *Queries) TrimMFATrustedBrowsers(ctx context.Context, db DBTX, arg TrimMFATrustedBrowsersParams) (int64, error) {
+	result, err := db.Exec(ctx, trimMFATrustedBrowsers, arg.AccountID, arg.MaxActive)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const useMFATrustedBrowser = `-- name: UseMFATrustedBrowser :execrows
+UPDATE mfa_trusted_browsers t SET last_used_at=clock_timestamp()
+FROM accounts a
+WHERE t.token_hash=$1 AND t.account_id=$2
+  AND t.ua_family=$3::text AND t.revoked_at IS NULL AND t.expires_at>clock_timestamp()
+  AND a.id=t.account_id AND a.mfa_enrolled_at IS NOT NULL AND t.created_at>=a.mfa_enrolled_at
+`
+
+type UseMFATrustedBrowserParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+	UaFamily  string
+}
+
+// A browser remembered before the current enrollment (MFA turned off and
+// set up again) is not trusted.
+func (q *Queries) UseMFATrustedBrowser(ctx context.Context, db DBTX, arg UseMFATrustedBrowserParams) (int64, error) {
+	result, err := db.Exec(ctx, useMFATrustedBrowser, arg.TokenHash, arg.AccountID, arg.UaFamily)
 	if err != nil {
 		return 0, err
 	}

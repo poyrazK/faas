@@ -75,8 +75,25 @@ A process's environment is fixed when it starts, so an instance woken from a
 snapshot keeps the values of the instance that booted the workload. The app,
 deployment, tenant, commit, tag, created-at and image values stay correct
 because a snapshot belongs to one deployment, but `FAAS_INSTANCE_ID` and
-`FAAS_NODE_ID` can name an earlier instance or another node. Read the serving
-instance and node from the per-request headers below instead.
+`FAAS_NODE_ID` can name an earlier instance or another node. `FAAS_REGION`
+can name another region for the same reason.
+
+To read the serving instance from anywhere in the process, including
+background work outside a request, read the JSON file named by
+`FAAS_INSTANCE_IDENTITY_FILE` (`/run/guest-init/identity.json`):
+
+```json
+{"instance_id":"…","node_id":"…","region":"…","source":"resume","updated_at":"2026-11-07T12:00:00Z"}
+```
+
+guest-init writes it at boot and replaces it atomically on every snapshot
+resume, before the userspace reseed and the app's `after_restore` callback
+run, so the first request after a restore already sees the new values.
+`source` is `boot` until a resume has replaced the boot values. Read the file
+when you need the value rather than caching it at startup; an `after_restore`
+handler is a good place to refresh a cached copy. Sidecars that run in their
+own root filesystem do not get the file. Inside a request, the per-request
+headers below carry the same values.
 
 The gateway also forwards the request-scoped `X-Faas-Request-Id`, app,
 deployment, tenant, instance, node, region, commit, deployment-tag,

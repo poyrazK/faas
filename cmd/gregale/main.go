@@ -60,6 +60,9 @@ func topLevelUsage(showAll, showOperator bool) string {
 	b.WriteString("                         Interactive-only commands retain human prompts.\n")
 	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
 	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
+	b.WriteString("  --wait-for-approval    When an agent key's request needs a person's approval,\n")
+	b.WriteString("                         wait for the decision and retry once (before the\n")
+	b.WriteString("                         command). Equivalent env: GREGALE_WAIT_FOR_APPROVAL=1.\n")
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
 }
@@ -112,9 +115,10 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
-	previousAutomation := nonInteractive
-	defer func() { nonInteractive = previousAutomation }()
+	previousAutomation, previousWait := nonInteractive, approvalWaitEnabled
+	defer func() { nonInteractive, approvalWaitEnabled = previousAutomation, previousWait }()
 	nonInteractive = false
+	approvalWaitEnabled = os.Getenv("GREGALE_WAIT_FOR_APPROVAL") == "1"
 	previousInsecureWarned := insecureAPIWarned
 	defer func() { insecureAPIWarned = previousInsecureWarned }()
 	insecureAPIWarned = false
@@ -715,9 +719,9 @@ func run(args []string) (status int) {
 	case "workflows":
 		// ADR-081: durable execution workflows (list|run|status|steps|resume|resumes|cancel|events).
 		return cmdWorkflows(args[1:])
-	case "automations":
-		// Manage declarative automation definitions: validate, save a draft, publish.
-		return cmdAutomations(args[1:])
+	case "stored-workflows":
+		// Manage stored workflow definitions: validate, save a draft, publish.
+		return cmdStoredWorkflows(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
 	case "data-repair":
@@ -1161,7 +1165,9 @@ func printLocalHelpFlag(w io.Writer, flag cliFlag) {
 	if flag.Req {
 		description += " (required)"
 	}
-	if flag.Repeatable {
+	// Many descriptions already end in "(repeatable)"; saying it twice read
+	// "OIDC audience (repeatable) (repeatable)".
+	if flag.Repeatable && !strings.Contains(description, "(repeatable") {
 		description += " (repeatable)"
 	}
 	label := mdFlagLabel(flag)

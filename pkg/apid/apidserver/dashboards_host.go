@@ -31,10 +31,23 @@ func (h dashboardsHost) AppForAccount(ctx context.Context, acct state.Account, s
 		return state.App{}, false
 	}
 	app, err := h.s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID || !accountViewAppVisible(ctx, h.s.store, h.s.log, acct, app) {
+	// accountViewAppVisible keeps another account's personal app out and
+	// lets an organization app through for a member who may read it, whoever
+	// created it (ADR-20261109153000).
+	if err != nil || !accountViewAppVisible(ctx, h.s.store, h.s.log, acct, app) {
 		return state.App{}, false
 	}
 	return app, true
+}
+
+// AppOwner resolves the app's resource owner, as the app's own routes do.
+func (h dashboardsHost) AppOwner(ctx context.Context, app state.App) (state.Account, bool) {
+	owner, err := state.AppResourceAccount(ctx, h.s.store, app)
+	if err != nil {
+		h.s.log.WarnContext(ctx, "dashboards: app owner", "app_id", app.ID, "err", err)
+		return state.Account{}, false
+	}
+	return owner, true
 }
 
 // ShowsDashboard hides a dashboard from a key bound to one app or company
@@ -83,6 +96,11 @@ func (h dashboardsHost) Sources() dashboards.Sources { return dashboardSources(h
 
 func (h dashboardsHost) Logger() *slog.Logger { return h.s.log }
 
+// Audit records a dashboard change (ADR-20261031144636).
+func (h dashboardsHost) Audit(ctx context.Context, kind string, accountID string, data map[string]any) {
+	h.s.audit.Emit(ctx, kind, &accountID, data)
+}
+
 // dashboardSources reads widget signals through the code behind the per-app
 // endpoints, with the same plan gates.
 type dashboardSources struct{ s *server }
@@ -127,7 +145,7 @@ func (d dashboardSources) Released(acct state.Account, app state.App, kind strin
 }
 
 func (d dashboardSources) CustomMetricSeries(ctx context.Context, app state.App, name, rng string) api.CustomMetricSeriesResponse {
-	return d.s.customMetricSeries(ctx, app.ID, name, d.s.customMetricKind(ctx, app.ID, name), rng, time.Now().UTC())
+	return d.s.customMetricSeries(ctx, app.ID, name, "", d.s.customMetricKind(ctx, app.ID, name), rng, time.Now().UTC())
 }
 
 func (d dashboardSources) SLOStatus(ctx context.Context, acct state.Account, app state.App, sloID string) (*api.SLOStatus, error) {

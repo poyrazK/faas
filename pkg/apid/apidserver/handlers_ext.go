@@ -1222,6 +1222,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.afterRestoreBudgetProblem(r.Context(), acct.ID, app.ID, req.AfterRestore); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.executionModeApprovalProblem(r.Context(), app, &req); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -2336,6 +2340,10 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	if err := req.ValidateExpectedTraffic(); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -2378,6 +2386,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
 		ctx = state.WithTrafficSplitReleaseLimit(ctx, releaseLimit)
+		ctx = state.WithExpectedTrafficWeights(ctx, req.ExpectedTraffic)
 		var writeErr error
 		if req.ExpectedReview != nil {
 			store, ok := s.store.(state.ReviewedTrafficStore)
@@ -2428,6 +2437,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, trafficguard.PromotionProblem(err))
 		case promotionAttemptProblem(err) != nil:
 			api.WriteProblem(w, promotionAttemptProblem(err))
+		case errors.Is(err, state.ErrTrafficServingChanged) && req.ExpectedTraffic != nil:
+			api.WriteProblem(w, api.ErrTrafficSplitChanged())
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
@@ -5169,6 +5180,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		s.audit.Emit(r.Context(), "api_key.created", &acct.ID, newPayload)
 	}
+	s.noticeCredentialCreated(r, acct, credentialAPIKey, k.Label)
 	resp := api.APIKeyResponse{
 		ID:        k.ID,
 		OrgID:     k.OrgID,
@@ -5421,6 +5433,7 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"created_ua":         bindUA,
 		"parent_key_id":      oldKey.ID,
 	})
+	s.noticeCredentialCreated(r, acct, credentialRotatedKey, newKey.Label)
 	s.log.Info("key rotated",
 		"old_key", oldKey.ID, "new_key", newKey.ID,
 		"account", acct.ID, "grace_window_days", graceWindowDays)
@@ -5450,10 +5463,19 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // handler is the only caller; nil-safe when the cache is nil
 // (legacy tests that pre-date the cache field).
 func (s *server) resolveGraceWindow(ctx context.Context, accountID string) (*int, error) {
+	var days *int
+	var err error
 	if s.graceWindowCache == nil {
-		return s.store.GetAccountKeyGraceWindow(ctx, accountID)
+		days, err = s.store.GetAccountKeyGraceWindow(ctx, accountID)
+	} else {
+		days, err = s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
 	}
-	return s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
+	// A value saved before the cap existed is held to it (ADR 20261109120000).
+	if err == nil && days != nil && *days > api.APIKeyGraceWindowMaxDays {
+		capped := api.APIKeyGraceWindowMaxDays
+		days = &capped
+	}
+	return days, err
 }
 
 // --- usage -----------------------------------------------------------------
@@ -8484,6 +8506,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 			Metric: sp.Target.Metric,
 			Value:  sp.Target.Value,
 			Name:   sp.Target.Name,
+			Labels: sp.Target.Labels,
 		}
 	}
 	// ADR-194 targets, ADR-195 schedules. These were absent here for the
@@ -8497,7 +8520,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 	// fails if a field is added to either type without being copied here.
 	for _, t := range sp.Targets {
 		out.Targets = append(out.Targets, state.ScalingTarget{
-			Metric: t.Metric, Value: t.Value, Name: t.Name,
+			Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels,
 		})
 	}
 	out.Timezone = sp.Timezone

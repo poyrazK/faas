@@ -1213,7 +1213,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go runAlertTestSends(ctx, evaluator, log)
 	startAgentApprovalNotifications(ctx, store, mailer, evaluator, ops.Registry(), log)
 	evaluator.SetRuleRelease(release.ForAccount)
+	evaluator.SetRuleLimits(release.RuleLimits)
 	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))
+	// ADR-20261109153000: the spend alert reads the billing page's figure.
+	evaluator.SetSpend(monthSpend(store, pusher))
 	// ADR-20261022172052: firing app alerts carry what the log ledger shows,
 	// for the accounts the log-search capability flag releases it to
 	// (ADR-20261024222102).
@@ -1329,7 +1332,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if billingMode.Enabled() {
 		ledgerProvider = provName // with billing off there are no receipts to compare
 	}
-	ledgerRec := meter.NewLedgerReconciler(meter.NewPusher(store, pusher, log, deps.now, ops), ledgerProvider, recRegistry)
+	// The dual run reads usage through the source the pusher bills from, so
+	// its cap floors match the pusher's clamps (ADR-20261107105126).
+	ledgerPusher := meter.NewPusher(store, pusher, log, deps.now, ops)
+	if source, err := meter.ParseUsageSource(mc.BillingUsageSource); err == nil {
+		ledgerPusher.WithUsageSource(source)
+	}
+	ledgerRec := meter.NewLedgerReconciler(ledgerPusher, ledgerProvider, recRegistry)
 	go ledgerRec.Loop(ctx, mc.ReconcileInterval)
 
 	// ADR-049 §B.3: snapshot/app-layer storage rollup. The store
@@ -1412,6 +1421,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	})
 	go AccountSpendAggregatorLoop(ctx, AccountSpendAggregatorParams{
 		Store:    store,
+		Provider: pusher,
 		Log:      log,
 		Ops:      ops,
 		Interval: mc.AccountSpendAggregatorInterval,

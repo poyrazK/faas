@@ -34,6 +34,9 @@ from .activity_actor_response_type import ActivityActorResponseType
 from .activity_resource_response import ActivityResourceResponse
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_activity_entry import AgentActivityEntry
+from .agent_activity_entry_method import AgentActivityEntryMethod
+from .agent_activity_response import AgentActivityResponse
 from .agent_approval_channels_request import AgentApprovalChannelsRequest
 from .agent_approval_channels_response import AgentApprovalChannelsResponse
 from .agent_approval_pending_info import AgentApprovalPendingInfo
@@ -64,6 +67,7 @@ from .alert_preset_response_window_spec import AlertPresetResponseWindowSpec
 from .alert_rule_response import AlertRuleResponse
 from .alert_rule_response_action import AlertRuleResponseAction
 from .alert_rule_response_comparison import AlertRuleResponseComparison
+from .alert_rule_response_custom_metric_labels import AlertRuleResponseCustomMetricLabels
 from .alert_rule_response_failure_source import AlertRuleResponseFailureSource
 from .alert_rule_response_metric import AlertRuleResponseMetric
 from .alert_rule_response_state import AlertRuleResponseState
@@ -397,6 +401,7 @@ from .create_account_release_webhook_request_retry_policy import CreateAccountRe
 from .create_alert_rule_request import CreateAlertRuleRequest
 from .create_alert_rule_request_action import CreateAlertRuleRequestAction
 from .create_alert_rule_request_comparison import CreateAlertRuleRequestComparison
+from .create_alert_rule_request_custom_metric_labels import CreateAlertRuleRequestCustomMetricLabels
 from .create_alert_rule_request_failure_source import CreateAlertRuleRequestFailureSource
 from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
@@ -490,6 +495,8 @@ from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
 from .custom_metric_response import CustomMetricResponse
 from .custom_metric_response_kind import CustomMetricResponseKind
+from .custom_metric_series_value import CustomMetricSeriesValue
+from .custom_metric_series_value_labels import CustomMetricSeriesValueLabels
 from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
@@ -2183,6 +2190,7 @@ from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_schedule import ScalingSchedule
 from .scaling_target import ScalingTarget
+from .scaling_target_labels import ScalingTargetLabels
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_project_project_add_services import ScanProjectProjectAddServices
 from .scan_project_project_progressive import ScanProjectProjectProgressive
@@ -2234,6 +2242,8 @@ from .secret_runtime_reload_observation_reload_support import SecretRuntimeReloa
 from .secret_runtime_reload_observation_runtime_state import SecretRuntimeReloadObservationRuntimeState
 from .secret_runtime_reload_observation_signal import SecretRuntimeReloadObservationSignal
 from .secret_scan_result import SecretScanResult
+from .security_activity_event import SecurityActivityEvent
+from .security_activity_response import SecurityActivityResponse
 from .service_abort_receipt import ServiceAbortReceipt
 from .service_authorization_check import ServiceAuthorizationCheck
 from .service_authorization_check_result import ServiceAuthorizationCheckResult
@@ -2327,6 +2337,7 @@ from .test_alert_preset_response import TestAlertPresetResponse
 from .test_alert_preset_response_status import TestAlertPresetResponseStatus
 from .test_notification_channel_response import TestNotificationChannelResponse
 from .tracing_config import TracingConfig
+from .tracing_forward import TracingForward
 from .traffic_runtime_feature_status import TrafficRuntimeFeatureStatus
 from .traffic_runtime_feature_status_mode import TrafficRuntimeFeatureStatusMode
 from .traffic_runtime_feature_status_state import TrafficRuntimeFeatureStatusState
@@ -2398,6 +2409,7 @@ from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
 from .update_deployment_traffic_request_expected_mcp_access_policy import (
     UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy,
 )
+from .update_deployment_traffic_request_expected_traffic import UpdateDeploymentTrafficRequestExpectedTraffic
 from .update_edge_rule_list_request import UpdateEdgeRuleListRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
@@ -2408,6 +2420,8 @@ from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpoin
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
+from .update_notification_channel_request import UpdateNotificationChannelRequest
+from .update_notification_channel_request_pagerduty_region import UpdateNotificationChannelRequestPagerdutyRegion
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
 from .update_project_request import UpdateProjectRequest
@@ -2433,10 +2447,10 @@ from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClas
 from .wake_timeline_page import WakeTimelinePage
 from .wake_timeline_page_mode import WakeTimelinePageMode
 from .wake_timeline_response import WakeTimelineResponse
-from .webhook_automation_receipt_response import WebhookAutomationReceiptResponse
-from .webhook_automation_receipt_response_ignored_reason import WebhookAutomationReceiptResponseIgnoredReason
-from .webhook_automation_receipt_response_routing_status import WebhookAutomationReceiptResponseRoutingStatus
-from .webhook_automation_receipt_response_status import WebhookAutomationReceiptResponseStatus
+from .webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
+from .webhook_workflow_receipt_response_ignored_reason import WebhookWorkflowReceiptResponseIgnoredReason
+from .webhook_workflow_receipt_response_routing_status import WebhookWorkflowReceiptResponseRoutingStatus
+from .webhook_workflow_receipt_response_status import WebhookWorkflowReceiptResponseStatus
 from .work_decision import WorkDecision
 from .work_decision_action import WorkDecisionAction
 from .worker_rollout_observation import WorkerRolloutObservation
@@ -2702,6 +2716,9 @@ __all__ = (
     "ActivityResourceResponse",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentActivityEntry",
+    "AgentActivityEntryMethod",
+    "AgentActivityResponse",
     "AgentApprovalChannelsRequest",
     "AgentApprovalChannelsResponse",
     "AgentApprovalPendingInfo",
@@ -2732,6 +2749,7 @@ __all__ = (
     "AlertRuleResponse",
     "AlertRuleResponseAction",
     "AlertRuleResponseComparison",
+    "AlertRuleResponseCustomMetricLabels",
     "AlertRuleResponseFailureSource",
     "AlertRuleResponseMetric",
     "AlertRuleResponseState",
@@ -3063,6 +3081,7 @@ __all__ = (
     "CreateAlertRuleRequest",
     "CreateAlertRuleRequestAction",
     "CreateAlertRuleRequestComparison",
+    "CreateAlertRuleRequestCustomMetricLabels",
     "CreateAlertRuleRequestFailureSource",
     "CreateAlertRuleRequestMetric",
     "CreateAlertRuleRequestWindowSpec",
@@ -3154,6 +3173,8 @@ __all__ = (
     "CustomMetricRequest",
     "CustomMetricResponse",
     "CustomMetricResponseKind",
+    "CustomMetricSeriesValue",
+    "CustomMetricSeriesValueLabels",
     "CustomStage",
     "DailyUsageListResponse",
     "DailyUsagePoint",
@@ -4701,6 +4722,7 @@ __all__ = (
     "ScalingPolicyConcurrencyOverflow",
     "ScalingSchedule",
     "ScalingTarget",
+    "ScalingTargetLabels",
     "ScalingTargetMetric",
     "ScanProjectProjectAddServices",
     "ScanProjectProjectProgressive",
@@ -4748,6 +4770,8 @@ __all__ = (
     "SecretRuntimeReloadObservationRuntimeState",
     "SecretRuntimeReloadObservationSignal",
     "SecretScanResult",
+    "SecurityActivityEvent",
+    "SecurityActivityResponse",
     "ServiceAbortReceipt",
     "ServiceAuthorizationCheck",
     "ServiceAuthorizationCheckResult",
@@ -4841,6 +4865,7 @@ __all__ = (
     "TestAlertPresetResponseStatus",
     "TestNotificationChannelResponse",
     "TracingConfig",
+    "TracingForward",
     "TrafficRuntimeFeatureStatus",
     "TrafficRuntimeFeatureStatusMode",
     "TrafficRuntimeFeatureStatusState",
@@ -4906,6 +4931,7 @@ __all__ = (
     "UpdateDeploymentRequest",
     "UpdateDeploymentTrafficRequest",
     "UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy",
+    "UpdateDeploymentTrafficRequestExpectedTraffic",
     "UpdateEdgeRuleListRequest",
     "UpdateEdgeRuleRequest",
     "UpdateEdgeRuleRequestMatchHeaders",
@@ -4916,6 +4942,8 @@ __all__ = (
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
+    "UpdateNotificationChannelRequest",
+    "UpdateNotificationChannelRequestPagerdutyRegion",
     "UpdateProjectEnvironmentConfigRequest",
     "UpdateProjectEnvironmentConfigRequestValues",
     "UpdateProjectRequest",
@@ -4941,10 +4969,10 @@ __all__ = (
     "WakeTimelinePage",
     "WakeTimelinePageMode",
     "WakeTimelineResponse",
-    "WebhookAutomationReceiptResponse",
-    "WebhookAutomationReceiptResponseIgnoredReason",
-    "WebhookAutomationReceiptResponseRoutingStatus",
-    "WebhookAutomationReceiptResponseStatus",
+    "WebhookWorkflowReceiptResponse",
+    "WebhookWorkflowReceiptResponseIgnoredReason",
+    "WebhookWorkflowReceiptResponseRoutingStatus",
+    "WebhookWorkflowReceiptResponseStatus",
     "WorkDecision",
     "WorkDecisionAction",
     "WorkerRolloutObservation",

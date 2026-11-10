@@ -52,7 +52,7 @@ func recoveryHistoryWindow(account, app string, o api.WorkflowRecoveryHistoryOpt
 	if !o.CreatedBefore.IsZero() {
 		c.End = o.CreatedBefore.UTC()
 	}
-	c.Start = c.End.Add(-api.WorkflowAutomationHealthDefaultRange)
+	c.Start = c.End.Add(-api.StoredWorkflowHealthDefaultRange)
 	if !o.CreatedAfter.IsZero() {
 		c.Start = o.CreatedAfter.UTC()
 	}
@@ -65,7 +65,7 @@ func recoveryHistoryWindow(account, app string, o api.WorkflowRecoveryHistoryOpt
 			return c, 0, ErrEventRecoveryQuery
 		}
 	}
-	if c.Start.After(c.End) || c.End.After(c.ObservedAt) || c.End.Sub(c.Start) > api.WorkflowAutomationHealthMaxRange {
+	if c.Start.After(c.End) || c.End.After(c.ObservedAt) || c.End.Sub(c.Start) > api.StoredWorkflowHealthMaxRange {
 		return c, 0, ErrEventRecoveryQuery
 	}
 	return c, limit, nil

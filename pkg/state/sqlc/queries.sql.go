@@ -1371,6 +1371,17 @@ func (q *Queries) AdvanceRuntimeUpgradeOperation(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const alertRuleEpisodeOpen = `-- name: AlertRuleEpisodeOpen :one
+SELECT EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $1::uuid AND e.resolved_at IS NULL)::boolean AS open
+`
+
+func (q *Queries) AlertRuleEpisodeOpen(ctx context.Context, db DBTX, ruleID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, alertRuleEpisodeOpen, ruleID)
+	var open bool
+	err := row.Scan(&open)
+	return open, err
+}
+
 const appBindingRefreshInventory = `-- name: AppBindingRefreshInventory :many
 SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
  (o.payload::jsonb->>'wake_id')::text AS wake_id,
@@ -2713,116 +2724,6 @@ func (q *Queries) AuthorizeWorkflowOutbound(ctx context.Context, db DBTX, arg Au
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
-}
-
-const automationFailurePaused = `-- name: AutomationFailurePaused :one
-SELECT EXISTS(SELECT 1 FROM workflow_automation_failure_guards WHERE app_id=$1 AND name=$2 AND paused_at IS NOT NULL)::boolean
-`
-
-type AutomationFailurePausedParams struct {
-	AppID pgtype.UUID
-	Name  string
-}
-
-func (q *Queries) AutomationFailurePaused(ctx context.Context, db DBTX, arg AutomationFailurePausedParams) (bool, error) {
-	row := db.QueryRow(ctx, automationFailurePaused, arg.AppID, arg.Name)
-	var column_1 bool
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const automationFailureRetainedEvents = `-- name: AutomationFailureRetainedEvents :one
-SELECT count(*)::bigint FROM event_fanout_outbox o CROSS JOIN LATERAL jsonb_array_elements(o.recipient_snapshot) r
-WHERE o.state IN ('pending','processing') AND r->>'app_id'=$1::text AND r->'workflow'->>'name'=$2::text
-AND NOT EXISTS(SELECT 1 FROM workflow_event_receipts x WHERE x.outbox_id=o.id AND x.recipient_id=(r->>'id')::uuid)
-`
-
-type AutomationFailureRetainedEventsParams struct {
-	AppID string
-	Name  string
-}
-
-func (q *Queries) AutomationFailureRetainedEvents(ctx context.Context, db DBTX, arg AutomationFailureRetainedEventsParams) (int64, error) {
-	row := db.QueryRow(ctx, automationFailureRetainedEvents, arg.AppID, arg.Name)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const automationFailureSignals = `-- name: AutomationFailureSignals :one
-SELECT count(*) FILTER(WHERE status IN ('failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=$1::timestamptz AND finished_at<=$2::timestamptz)::bigint AS failures,
- count(*) FILTER(WHERE status IN ('succeeded','failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=$1::timestamptz AND finished_at<=$2::timestamptz)::bigint AS completed_runs,
- count(*) FILTER(WHERE status='pending')::bigint AS pending_runs,
- count(*) FILTER(WHERE status='running')::bigint AS running_runs,
- count(*) FILTER(WHERE status='awaiting_event')::bigint AS waiting_runs
-FROM workflow_runs WHERE app_id=$3::uuid AND workflow_name=$4::text
-`
-
-type AutomationFailureSignalsParams struct {
-	SinceAt pgtype.Timestamptz
-	NowAt   pgtype.Timestamptz
-	AppID   pgtype.UUID
-	Name    string
-}
-
-type AutomationFailureSignalsRow struct {
-	Failures      int64
-	CompletedRuns int64
-	PendingRuns   int64
-	RunningRuns   int64
-	WaitingRuns   int64
-}
-
-func (q *Queries) AutomationFailureSignals(ctx context.Context, db DBTX, arg AutomationFailureSignalsParams) (AutomationFailureSignalsRow, error) {
-	row := db.QueryRow(ctx, automationFailureSignals,
-		arg.SinceAt,
-		arg.NowAt,
-		arg.AppID,
-		arg.Name,
-	)
-	var i AutomationFailureSignalsRow
-	err := row.Scan(
-		&i.Failures,
-		&i.CompletedRuns,
-		&i.PendingRuns,
-		&i.RunningRuns,
-		&i.WaitingRuns,
-	)
-	return i, err
-}
-
-const automationFailureTargetExists = `-- name: AutomationFailureTargetExists :one
-SELECT EXISTS(SELECT 1 FROM jsonb_array_elements(app_workflow_definitions($1::uuid,
- coalesce((SELECT workflows FROM deployments WHERE app_id=$1::uuid AND status='live' AND scope='default' ORDER BY (traffic_percent>0) DESC,created_at DESC,id DESC LIMIT 1),'[]'::jsonb))) d WHERE d->>'name'=$2::text)::boolean
-`
-
-type AutomationFailureTargetExistsParams struct {
-	AppID pgtype.UUID
-	Name  string
-}
-
-func (q *Queries) AutomationFailureTargetExists(ctx context.Context, db DBTX, arg AutomationFailureTargetExistsParams) (bool, error) {
-	row := db.QueryRow(ctx, automationFailureTargetExists, arg.AppID, arg.Name)
-	var column_1 bool
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const automationManifest = `-- name: AutomationManifest :one
-SELECT id,workflows FROM deployments WHERE app_id=$1 AND status='live' AND scope='default'
-ORDER BY (traffic_percent>0) DESC,created_at DESC,id DESC LIMIT 1
-`
-
-type AutomationManifestRow struct {
-	ID        pgtype.UUID
-	Workflows []byte
-}
-
-func (q *Queries) AutomationManifest(ctx context.Context, db DBTX, appID pgtype.UUID) (AutomationManifestRow, error) {
-	row := db.QueryRow(ctx, automationManifest, appID)
-	var i AutomationManifestRow
-	err := row.Scan(&i.ID, &i.Workflows)
-	return i, err
 }
 
 const beginClonePostgresWriteFenceAbandonment = `-- name: BeginClonePostgresWriteFenceAbandonment :one
@@ -4732,7 +4633,7 @@ WITH candidate AS (
  AND (h.next_check_at IS NULL OR h.next_check_at <= $1::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= $1::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
+ LIMIT 1 FOR NO KEY UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, $1::timestamptz, $2::text, $1::timestamptz, $3::timestamptz FROM candidate
@@ -4759,6 +4660,10 @@ type ClaimAppHealthRow struct {
 // The insert's account_id foreign key needs a key-share lock on the
 // namespace; taking it here with SKIP LOCKED skips an app whose namespace is
 // mid-apply instead of holding the app row while waiting for it (40P01).
+// The app row is taken FOR NO KEY UPDATE: it still excludes a delete, but not
+// the key-share lock FinishAppHealth's history insert takes through
+// app_health_history.app_id while it holds this app's collection row, which
+// the upsert below waits on when the previous lease has just expired.
 func (q *Queries) ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error) {
 	row := db.QueryRow(ctx, claimAppHealth, arg.CheckedNow, arg.Token, arg.ExpiresAt)
 	var i ClaimAppHealthRow
@@ -8370,6 +8275,26 @@ func (q *Queries) ClaimTriggerRecordsByItems(ctx context.Context, db DBTX, arg C
 	return items, nil
 }
 
+const clearAlertChannelResolveRetries = `-- name: ClearAlertChannelResolveRetries :exec
+DELETE FROM alert_channel_resolve_retries WHERE rule_id = $1::uuid
+`
+
+// A new fire of the rule supersedes the recovery it had not delivered.
+func (q *Queries) ClearAlertChannelResolveRetries(ctx context.Context, db DBTX, ruleID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearAlertChannelResolveRetries, ruleID)
+	return err
+}
+
+const clearAlertChannelStandDowns = `-- name: ClearAlertChannelStandDowns :exec
+DELETE FROM alert_channel_stand_downs WHERE rule_id = $1::uuid
+`
+
+// A new fire of the rule supersedes the recovery notices it still owed.
+func (q *Queries) ClearAlertChannelStandDowns(ctx context.Context, db DBTX, ruleID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearAlertChannelStandDowns, ruleID)
+	return err
+}
+
 const clearAppSecretRuntimeProcessAck = `-- name: ClearAppSecretRuntimeProcessAck :execrows
 UPDATE app_secret_runtime_reload_observations
 SET application_ack_version = NULL, application_ack_status = NULL,
@@ -11814,6 +11739,22 @@ func (q *Queries) CountReadinessSubscriptions(ctx context.Context, db DBTX, arg 
 	return count, err
 }
 
+const countStoredWorkflowRevisions = `-- name: CountStoredWorkflowRevisions :one
+SELECT count(*) FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2
+`
+
+type CountStoredWorkflowRevisionsParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) CountStoredWorkflowRevisions(ctx context.Context, db DBTX, arg CountStoredWorkflowRevisionsParams) (int64, error) {
+	row := db.QueryRow(ctx, countStoredWorkflowRevisions, arg.AppID, arg.Name)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countTriggersByAccount = `-- name: CountTriggersByAccount :one
 select count(*) from triggers t
 join apps a on a.id = t.app_id join orgs o on o.id=a.org_id
@@ -11875,22 +11816,6 @@ func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperationsForProject(ctx
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
-}
-
-const countWorkflowAutomationRevisions = `-- name: CountWorkflowAutomationRevisions :one
-SELECT count(*) FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2
-`
-
-type CountWorkflowAutomationRevisionsParams struct {
-	AppID pgtype.UUID
-	Name  string
-}
-
-func (q *Queries) CountWorkflowAutomationRevisions(ctx context.Context, db DBTX, arg CountWorkflowAutomationRevisionsParams) (int64, error) {
-	row := db.QueryRow(ctx, countWorkflowAutomationRevisions, arg.AppID, arg.Name)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
 }
 
 const countWorkflowRunningActionsForAdmission = `-- name: CountWorkflowRunningActionsForAdmission :one
@@ -12772,7 +12697,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 const createEnvironmentQualificationInstance = `-- name: CreateEnvironmentQualificationInstance :one
 INSERT INTO instances(id,app_id,deployment_id,state,ram_mb,node_id,wake_id,started_at,mode)
 VALUES($1::uuid,$2::uuid,$3::uuid,'cold_booting',$4::integer,
- $5::uuid,$6::uuid,clock_timestamp(),$7::text) RETURNING id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, booked_cpu_millicores
+ $5::uuid,$6::uuid,clock_timestamp(),$7::text) RETURNING id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, booked_cpu_millicores, booked_vcpu
 `
 
 type CreateEnvironmentQualificationInstanceParams struct {
@@ -12830,6 +12755,7 @@ func (q *Queries) CreateEnvironmentQualificationInstance(ctx context.Context, db
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
 		&i.BookedCpuMillicores,
+		&i.BookedVcpu,
 	)
 	return i, err
 }
@@ -14876,6 +14802,35 @@ func (q *Queries) DeleteAccountEnvironmentGitSources(ctx context.Context, db DBT
 	return err
 }
 
+const deleteAlertChannelResolveRetry = `-- name: DeleteAlertChannelResolveRetry :exec
+DELETE FROM alert_channel_resolve_retries
+ WHERE rule_id = $1::uuid AND channel_id = $2::uuid
+`
+
+type DeleteAlertChannelResolveRetryParams struct {
+	RuleID    pgtype.UUID
+	ChannelID pgtype.UUID
+}
+
+func (q *Queries) DeleteAlertChannelResolveRetry(ctx context.Context, db DBTX, arg DeleteAlertChannelResolveRetryParams) error {
+	_, err := db.Exec(ctx, deleteAlertChannelResolveRetry, arg.RuleID, arg.ChannelID)
+	return err
+}
+
+const deleteAlertChannelStandDown = `-- name: DeleteAlertChannelStandDown :exec
+DELETE FROM alert_channel_stand_downs WHERE rule_id = $1::uuid AND channel_id = $2::uuid
+`
+
+type DeleteAlertChannelStandDownParams struct {
+	RuleID    pgtype.UUID
+	ChannelID pgtype.UUID
+}
+
+func (q *Queries) DeleteAlertChannelStandDown(ctx context.Context, db DBTX, arg DeleteAlertChannelStandDownParams) error {
+	_, err := db.Exec(ctx, deleteAlertChannelStandDown, arg.RuleID, arg.ChannelID)
+	return err
+}
+
 const deleteAlertRuleChannels = `-- name: DeleteAlertRuleChannels :exec
 
 DELETE FROM alert_rule_channels WHERE rule_id = $1::uuid
@@ -14953,34 +14908,6 @@ func (q *Queries) DeleteAppSLO(ctx context.Context, db DBTX, arg DeleteAppSLOPar
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const deleteAutomation = `-- name: DeleteAutomation :exec
-DELETE FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2
-`
-
-type DeleteAutomationParams struct {
-	AppID pgtype.UUID
-	Name  string
-}
-
-func (q *Queries) DeleteAutomation(ctx context.Context, db DBTX, arg DeleteAutomationParams) error {
-	_, err := db.Exec(ctx, deleteAutomation, arg.AppID, arg.Name)
-	return err
-}
-
-const deleteAutomationScheduleCursor = `-- name: DeleteAutomationScheduleCursor :exec
-DELETE FROM workflow_schedule_cursors WHERE app_id=$1 AND workflow_name=$2
-`
-
-type DeleteAutomationScheduleCursorParams struct {
-	AppID        pgtype.UUID
-	WorkflowName string
-}
-
-func (q *Queries) DeleteAutomationScheduleCursor(ctx context.Context, db DBTX, arg DeleteAutomationScheduleCursorParams) error {
-	_, err := db.Exec(ctx, deleteAutomationScheduleCursor, arg.AppID, arg.WorkflowName)
-	return err
 }
 
 const deleteCloneCheckpointObjectPublicationGrant = `-- name: DeleteCloneCheckpointObjectPublicationGrant :execrows
@@ -15979,6 +15906,34 @@ func (q *Queries) DeleteStaticEgressProvisioningSource(ctx context.Context, db D
 	return err
 }
 
+const deleteStoredWorkflow = `-- name: DeleteStoredWorkflow :exec
+DELETE FROM stored_workflows WHERE app_id=$1 AND name=$2
+`
+
+type DeleteStoredWorkflowParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) DeleteStoredWorkflow(ctx context.Context, db DBTX, arg DeleteStoredWorkflowParams) error {
+	_, err := db.Exec(ctx, deleteStoredWorkflow, arg.AppID, arg.Name)
+	return err
+}
+
+const deleteStoredWorkflowScheduleCursor = `-- name: DeleteStoredWorkflowScheduleCursor :exec
+DELETE FROM workflow_schedule_cursors WHERE app_id=$1 AND workflow_name=$2
+`
+
+type DeleteStoredWorkflowScheduleCursorParams struct {
+	AppID        pgtype.UUID
+	WorkflowName string
+}
+
+func (q *Queries) DeleteStoredWorkflowScheduleCursor(ctx context.Context, db DBTX, arg DeleteStoredWorkflowScheduleCursorParams) error {
+	_, err := db.Exec(ctx, deleteStoredWorkflowScheduleCursor, arg.AppID, arg.WorkflowName)
+	return err
+}
+
 const deleteSyntheticCheck = `-- name: DeleteSyntheticCheck :execrows
 DELETE FROM synthetic_checks WHERE app_id = $1::uuid AND id = $2::uuid
 `
@@ -16132,17 +16087,17 @@ func (q *Queries) DeleteUDPListener(ctx context.Context, db DBTX, id string) (in
 	return result.RowsAffected(), nil
 }
 
-const deleteWebhookAutomationBinding = `-- name: DeleteWebhookAutomationBinding :execrows
+const deleteWebhookWorkflowBinding = `-- name: DeleteWebhookWorkflowBinding :execrows
 DELETE FROM workflow_webhook_bindings WHERE endpoint_id=$1 AND version=$2
 `
 
-type DeleteWebhookAutomationBindingParams struct {
+type DeleteWebhookWorkflowBindingParams struct {
 	EndpointID pgtype.UUID
 	Version    int64
 }
 
-func (q *Queries) DeleteWebhookAutomationBinding(ctx context.Context, db DBTX, arg DeleteWebhookAutomationBindingParams) (int64, error) {
-	result, err := db.Exec(ctx, deleteWebhookAutomationBinding, arg.EndpointID, arg.Version)
+func (q *Queries) DeleteWebhookWorkflowBinding(ctx context.Context, db DBTX, arg DeleteWebhookWorkflowBindingParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteWebhookWorkflowBinding, arg.EndpointID, arg.Version)
 	if err != nil {
 		return 0, err
 	}
@@ -16575,6 +16530,111 @@ func (q *Queries) DropTriggerRecordByOperator(ctx context.Context, db DBTX, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const dueAlertChannelResolveRetries = `-- name: DueAlertChannelResolveRetries :many
+SELECT x.rule_id::text AS rule_id, x.channel_id::text AS channel_id, x.observed, x.resolved_at, x.attempts
+  FROM alert_channel_resolve_retries x
+  JOIN alert_rules r ON r.id = x.rule_id
+ WHERE x.next_attempt_at <= $1::timestamptz AND r.enabled AND r.state = 'ok'
+ ORDER BY x.next_attempt_at, x.rule_id, x.channel_id
+ LIMIT $2::integer
+`
+
+type DueAlertChannelResolveRetriesParams struct {
+	Now     pgtype.Timestamptz
+	MaxRows int32
+}
+
+type DueAlertChannelResolveRetriesRow struct {
+	RuleID     string
+	ChannelID  string
+	Observed   float64
+	ResolvedAt pgtype.Timestamptz
+	Attempts   int32
+}
+
+// Retries due now whose rule is still enabled and recovered.
+func (q *Queries) DueAlertChannelResolveRetries(ctx context.Context, db DBTX, arg DueAlertChannelResolveRetriesParams) ([]DueAlertChannelResolveRetriesRow, error) {
+	rows, err := db.Query(ctx, dueAlertChannelResolveRetries, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueAlertChannelResolveRetriesRow{}
+	for rows.Next() {
+		var i DueAlertChannelResolveRetriesRow
+		if err := rows.Scan(
+			&i.RuleID,
+			&i.ChannelID,
+			&i.Observed,
+			&i.ResolvedAt,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dueAlertChannelStandDowns = `-- name: DueAlertChannelStandDowns :many
+SELECT s.rule_id::text AS rule_id, s.channel_id::text AS channel_id, s.account_id::text AS account_id,
+       coalesce(s.app_id::text, '')::text AS app_id, s.rule_name, s.rule_metric, s.reason, s.queued_at, s.attempts
+  FROM alert_channel_stand_downs s
+ WHERE s.next_attempt_at <= $1::timestamptz
+ ORDER BY s.next_attempt_at, s.rule_id, s.channel_id
+ LIMIT $2::integer
+`
+
+type DueAlertChannelStandDownsParams struct {
+	Now     pgtype.Timestamptz
+	MaxRows int32
+}
+
+type DueAlertChannelStandDownsRow struct {
+	RuleID     string
+	ChannelID  string
+	AccountID  string
+	AppID      string
+	RuleName   string
+	RuleMetric string
+	Reason     string
+	QueuedAt   pgtype.Timestamptz
+	Attempts   int32
+}
+
+func (q *Queries) DueAlertChannelStandDowns(ctx context.Context, db DBTX, arg DueAlertChannelStandDownsParams) ([]DueAlertChannelStandDownsRow, error) {
+	rows, err := db.Query(ctx, dueAlertChannelStandDowns, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueAlertChannelStandDownsRow{}
+	for rows.Next() {
+		var i DueAlertChannelStandDownsRow
+		if err := rows.Scan(
+			&i.RuleID,
+			&i.ChannelID,
+			&i.AccountID,
+			&i.AppID,
+			&i.RuleName,
+			&i.RuleMetric,
+			&i.Reason,
+			&i.QueuedAt,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const dueManagedPostgresLifecycleDatabases = `-- name: DueManagedPostgresLifecycleDatabases :many
@@ -17104,20 +17164,6 @@ func (q *Queries) EnsureAppSecretRuntimeProcess(ctx context.Context, db DBTX, ar
 	return result.RowsAffected(), nil
 }
 
-const ensureAutomationFailureGuard = `-- name: EnsureAutomationFailureGuard :exec
-INSERT INTO workflow_automation_failure_guards(app_id,name) VALUES($1,$2) ON CONFLICT(app_id,name) DO NOTHING
-`
-
-type EnsureAutomationFailureGuardParams struct {
-	AppID pgtype.UUID
-	Name  string
-}
-
-func (q *Queries) EnsureAutomationFailureGuard(ctx context.Context, db DBTX, arg EnsureAutomationFailureGuardParams) error {
-	_, err := db.Exec(ctx, ensureAutomationFailureGuard, arg.AppID, arg.Name)
-	return err
-}
-
 const ensureEnvironmentQueueDeliveryQuota = `-- name: EnsureEnvironmentQueueDeliveryQuota :exec
 INSERT INTO account_async_quota(account_id,max_inflight) VALUES($1,$2)
 ON CONFLICT(account_id) DO UPDATE SET updated_at=now()
@@ -17186,6 +17232,20 @@ type EnsureExclusiveWorkQuotaParams struct {
 
 func (q *Queries) EnsureExclusiveWorkQuota(ctx context.Context, db DBTX, arg EnsureExclusiveWorkQuotaParams) error {
 	_, err := db.Exec(ctx, ensureExclusiveWorkQuota, arg.AccountID, arg.MaxInflight)
+	return err
+}
+
+const ensureStoredWorkflowFailureGuard = `-- name: EnsureStoredWorkflowFailureGuard :exec
+INSERT INTO stored_workflow_failure_guards(app_id,name) VALUES($1,$2) ON CONFLICT(app_id,name) DO NOTHING
+`
+
+type EnsureStoredWorkflowFailureGuardParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) EnsureStoredWorkflowFailureGuard(ctx context.Context, db DBTX, arg EnsureStoredWorkflowFailureGuardParams) error {
+	_, err := db.Exec(ctx, ensureStoredWorkflowFailureGuard, arg.AppID, arg.Name)
 	return err
 }
 
@@ -17727,7 +17787,7 @@ func (q *Queries) EnvironmentQualificationFrameworkReadyReceipt(ctx context.Cont
 }
 
 const environmentQualificationInstance = `-- name: EnvironmentQualificationInstance :one
-SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, booked_cpu_millicores FROM instances WHERE id=$1::uuid
+SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, booked_cpu_millicores, booked_vcpu FROM instances WHERE id=$1::uuid
 `
 
 func (q *Queries) EnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error) {
@@ -17767,6 +17827,7 @@ func (q *Queries) EnvironmentQualificationInstance(ctx context.Context, db DBTX,
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
 		&i.BookedCpuMillicores,
+		&i.BookedVcpu,
 	)
 	return i, err
 }
@@ -25813,96 +25874,6 @@ func (q *Queries) GetArtifactRuntimeRelease(ctx context.Context, db DBTX, arg Ge
 	return i, err
 }
 
-const getAutomationFailurePolicy = `-- name: GetAutomationFailurePolicy :one
-SELECT jsonb_build_object('policy',jsonb_build_object('version',coalesce(p.version,0),'enabled',coalesce(p.enabled,false),
- 'failure_threshold',coalesce(p.failure_threshold,3),'min_completed_runs',coalesce(p.min_completed_runs,5),'window_seconds',coalesce(p.window_seconds,300)),
- 'paused',g.paused_at IS NOT NULL,'generation',coalesce(g.generation,0),'monitoring_since',g.monitoring_since,'paused_at',g.paused_at,
- 'history',coalesce((SELECT jsonb_agg(jsonb_build_object('generation',h.generation,'state',h.state,'reason',h.reason,'recorded_at',h.recorded_at,
- 'failures',h.failures,'completed_runs',h.completed_runs,'policy_version',h.policy_version,'actor_account_id',coalesce(h.actor_account_id::text,'')) ORDER BY h.generation DESC)
- FROM (SELECT id, app_id, name, generation, state, reason, recorded_at, failures, completed_runs, policy_version, actor_account_id FROM workflow_automation_failure_history WHERE app_id=a.id AND name=$1::text ORDER BY generation DESC LIMIT $2::int) h),'[]'::jsonb))::jsonb
-FROM apps a LEFT JOIN workflow_automation_failure_policies p ON p.app_id=a.id AND p.name=$1::text
-LEFT JOIN workflow_automation_failure_guards g ON g.app_id=a.id AND g.name=$1::text WHERE a.id=$3::uuid AND a.status<>'deleted'
-`
-
-type GetAutomationFailurePolicyParams struct {
-	Name         string
-	HistoryLimit int32
-	AppID        pgtype.UUID
-}
-
-func (q *Queries) GetAutomationFailurePolicy(ctx context.Context, db DBTX, arg GetAutomationFailurePolicyParams) ([]byte, error) {
-	row := db.QueryRow(ctx, getAutomationFailurePolicy, arg.Name, arg.HistoryLimit, arg.AppID)
-	var column_1 []byte
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const getAutomationPublishDraftVersion = `-- name: GetAutomationPublishDraftVersion :one
-SELECT version FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2
-`
-
-type GetAutomationPublishDraftVersionParams struct {
-	AppID pgtype.UUID
-	Name  string
-}
-
-func (q *Queries) GetAutomationPublishDraftVersion(ctx context.Context, db DBTX, arg GetAutomationPublishDraftVersionParams) (int64, error) {
-	row := db.QueryRow(ctx, getAutomationPublishDraftVersion, arg.AppID, arg.Name)
-	var version int64
-	err := row.Scan(&version)
-	return version, err
-}
-
-const getAutomationPublishPolicy = `-- name: GetAutomationPublishPolicy :one
-SELECT COALESCE(p.mode,'optional')::text AS mode, COALESCE(p.version,0)::bigint AS version
-FROM apps a LEFT JOIN workflow_automation_publish_policies p ON p.app_id=a.id
-WHERE a.id=$1 AND a.status <> 'deleted'
-`
-
-type GetAutomationPublishPolicyRow struct {
-	Mode    string
-	Version int64
-}
-
-func (q *Queries) GetAutomationPublishPolicy(ctx context.Context, db DBTX, id pgtype.UUID) (GetAutomationPublishPolicyRow, error) {
-	row := db.QueryRow(ctx, getAutomationPublishPolicy, id)
-	var i GetAutomationPublishPolicyRow
-	err := row.Scan(&i.Mode, &i.Version)
-	return i, err
-}
-
-const getAutomationPublishReceipt = `-- name: GetAutomationPublishReceipt :one
-SELECT app_id, name, account_id, api_key_id, token_hash, policy_version, expires_at, evidence FROM workflow_automation_publish_receipts WHERE app_id=$1 AND name=$2 AND account_id=$3 AND api_key_id=$4
-`
-
-type GetAutomationPublishReceiptParams struct {
-	AppID     pgtype.UUID
-	Name      string
-	AccountID pgtype.UUID
-	ApiKeyID  string
-}
-
-func (q *Queries) GetAutomationPublishReceipt(ctx context.Context, db DBTX, arg GetAutomationPublishReceiptParams) (WorkflowAutomationPublishReceipt, error) {
-	row := db.QueryRow(ctx, getAutomationPublishReceipt,
-		arg.AppID,
-		arg.Name,
-		arg.AccountID,
-		arg.ApiKeyID,
-	)
-	var i WorkflowAutomationPublishReceipt
-	err := row.Scan(
-		&i.AppID,
-		&i.Name,
-		&i.AccountID,
-		&i.ApiKeyID,
-		&i.TokenHash,
-		&i.PolicyVersion,
-		&i.ExpiresAt,
-		&i.Evidence,
-	)
-	return i, err
-}
-
 const getBaseImageProducerByID = `-- name: GetBaseImageProducerByID :one
 SELECT id, storage_key, parent_producer_id, input_snapshot, input_hash, published_at FROM base_image_producers WHERE id=$1
 `
@@ -29645,6 +29616,305 @@ func (q *Queries) GetSourceBuildRootfsPointer(ctx context.Context, db DBTX, depl
 	return artifact_id, err
 }
 
+const getStoredWorkflowFailurePolicy = `-- name: GetStoredWorkflowFailurePolicy :one
+SELECT jsonb_build_object('policy',jsonb_build_object('version',coalesce(p.version,0),'enabled',coalesce(p.enabled,false),
+ 'failure_threshold',coalesce(p.failure_threshold,3),'min_completed_runs',coalesce(p.min_completed_runs,5),'window_seconds',coalesce(p.window_seconds,300)),
+ 'paused',g.paused_at IS NOT NULL,'generation',coalesce(g.generation,0),'monitoring_since',g.monitoring_since,'paused_at',g.paused_at,
+ 'history',coalesce((SELECT jsonb_agg(jsonb_build_object('generation',h.generation,'state',h.state,'reason',h.reason,'recorded_at',h.recorded_at,
+ 'failures',h.failures,'completed_runs',h.completed_runs,'policy_version',h.policy_version,'actor_account_id',coalesce(h.actor_account_id::text,'')) ORDER BY h.generation DESC)
+ FROM (SELECT id, app_id, name, generation, state, reason, recorded_at, failures, completed_runs, policy_version, actor_account_id FROM stored_workflow_failure_history WHERE app_id=a.id AND name=$1::text ORDER BY generation DESC LIMIT $2::int) h),'[]'::jsonb))::jsonb
+FROM apps a LEFT JOIN stored_workflow_failure_policies p ON p.app_id=a.id AND p.name=$1::text
+LEFT JOIN stored_workflow_failure_guards g ON g.app_id=a.id AND g.name=$1::text WHERE a.id=$3::uuid AND a.status<>'deleted'
+`
+
+type GetStoredWorkflowFailurePolicyParams struct {
+	Name         string
+	HistoryLimit int32
+	AppID        pgtype.UUID
+}
+
+func (q *Queries) GetStoredWorkflowFailurePolicy(ctx context.Context, db DBTX, arg GetStoredWorkflowFailurePolicyParams) ([]byte, error) {
+	row := db.QueryRow(ctx, getStoredWorkflowFailurePolicy, arg.Name, arg.HistoryLimit, arg.AppID)
+	var column_1 []byte
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const getStoredWorkflowHealthSummary = `-- name: GetStoredWorkflowHealthSummary :one
+SELECT count(*)::bigint AS run_count,
+       count(*) FILTER (WHERE status='pending')::bigint AS pending_runs,
+       count(*) FILTER (WHERE status='running')::bigint AS running_runs,
+       count(*) FILTER (WHERE status='awaiting_event')::bigint AS awaiting_event_runs,
+       count(*) FILTER (WHERE status='succeeded')::bigint AS succeeded_runs,
+       count(*) FILTER (WHERE status='failed')::bigint AS failed_runs,
+       count(*) FILTER (WHERE status='dead')::bigint AS dead_runs,
+       count(*) FILTER (WHERE started_at IS NOT NULL AND finished_at >= started_at AND status IN ('succeeded','failed','dead'))::bigint AS duration_samples,
+       COALESCE(round((percentile_cont(0.50) WITHIN GROUP (
+           ORDER BY (EXTRACT(EPOCH FROM (finished_at-started_at))*1000)::double precision
+       ) FILTER (WHERE started_at IS NOT NULL AND finished_at >= started_at AND status IN ('succeeded','failed','dead')))::numeric)::bigint, 0)::bigint AS p50_duration_ms,
+       COALESCE(round((percentile_cont(0.95) WITHIN GROUP (
+           ORDER BY (EXTRACT(EPOCH FROM (finished_at-started_at))*1000)::double precision
+       ) FILTER (WHERE started_at IS NOT NULL AND finished_at >= started_at AND status IN ('succeeded','failed','dead')))::numeric)::bigint, 0)::bigint AS p95_duration_ms
+FROM workflow_runs
+WHERE app_id=$1::uuid AND workflow_name=$2::text
+  AND created_at >= $3::timestamptz
+  AND created_at <= $4::timestamptz
+`
+
+type GetStoredWorkflowHealthSummaryParams struct {
+	AppID         pgtype.UUID
+	WorkflowName  string
+	CreatedAfter  pgtype.Timestamptz
+	CreatedBefore pgtype.Timestamptz
+}
+
+type GetStoredWorkflowHealthSummaryRow struct {
+	RunCount          int64
+	PendingRuns       int64
+	RunningRuns       int64
+	AwaitingEventRuns int64
+	SucceededRuns     int64
+	FailedRuns        int64
+	DeadRuns          int64
+	DurationSamples   int64
+	P50DurationMs     int64
+	P95DurationMs     int64
+}
+
+func (q *Queries) GetStoredWorkflowHealthSummary(ctx context.Context, db DBTX, arg GetStoredWorkflowHealthSummaryParams) (GetStoredWorkflowHealthSummaryRow, error) {
+	row := db.QueryRow(ctx, getStoredWorkflowHealthSummary,
+		arg.AppID,
+		arg.WorkflowName,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+	)
+	var i GetStoredWorkflowHealthSummaryRow
+	err := row.Scan(
+		&i.RunCount,
+		&i.PendingRuns,
+		&i.RunningRuns,
+		&i.AwaitingEventRuns,
+		&i.SucceededRuns,
+		&i.FailedRuns,
+		&i.DeadRuns,
+		&i.DurationSamples,
+		&i.P50DurationMs,
+		&i.P95DurationMs,
+	)
+	return i, err
+}
+
+const getStoredWorkflowPublishDraftVersion = `-- name: GetStoredWorkflowPublishDraftVersion :one
+SELECT version FROM stored_workflows WHERE app_id=$1 AND name=$2
+`
+
+type GetStoredWorkflowPublishDraftVersionParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) GetStoredWorkflowPublishDraftVersion(ctx context.Context, db DBTX, arg GetStoredWorkflowPublishDraftVersionParams) (int64, error) {
+	row := db.QueryRow(ctx, getStoredWorkflowPublishDraftVersion, arg.AppID, arg.Name)
+	var version int64
+	err := row.Scan(&version)
+	return version, err
+}
+
+const getStoredWorkflowPublishPolicy = `-- name: GetStoredWorkflowPublishPolicy :one
+SELECT COALESCE(p.mode,'optional')::text AS mode, COALESCE(p.version,0)::bigint AS version
+FROM apps a LEFT JOIN stored_workflow_publish_policies p ON p.app_id=a.id
+WHERE a.id=$1 AND a.status <> 'deleted'
+`
+
+type GetStoredWorkflowPublishPolicyRow struct {
+	Mode    string
+	Version int64
+}
+
+func (q *Queries) GetStoredWorkflowPublishPolicy(ctx context.Context, db DBTX, id pgtype.UUID) (GetStoredWorkflowPublishPolicyRow, error) {
+	row := db.QueryRow(ctx, getStoredWorkflowPublishPolicy, id)
+	var i GetStoredWorkflowPublishPolicyRow
+	err := row.Scan(&i.Mode, &i.Version)
+	return i, err
+}
+
+const getStoredWorkflowPublishReceipt = `-- name: GetStoredWorkflowPublishReceipt :one
+SELECT app_id, name, account_id, api_key_id, token_hash, policy_version, expires_at, evidence FROM stored_workflow_publish_receipts WHERE app_id=$1 AND name=$2 AND account_id=$3 AND api_key_id=$4
+`
+
+type GetStoredWorkflowPublishReceiptParams struct {
+	AppID     pgtype.UUID
+	Name      string
+	AccountID pgtype.UUID
+	ApiKeyID  string
+}
+
+func (q *Queries) GetStoredWorkflowPublishReceipt(ctx context.Context, db DBTX, arg GetStoredWorkflowPublishReceiptParams) (StoredWorkflowPublishReceipt, error) {
+	row := db.QueryRow(ctx, getStoredWorkflowPublishReceipt,
+		arg.AppID,
+		arg.Name,
+		arg.AccountID,
+		arg.ApiKeyID,
+	)
+	var i StoredWorkflowPublishReceipt
+	err := row.Scan(
+		&i.AppID,
+		&i.Name,
+		&i.AccountID,
+		&i.ApiKeyID,
+		&i.TokenHash,
+		&i.PolicyVersion,
+		&i.ExpiresAt,
+		&i.Evidence,
+	)
+	return i, err
+}
+
+const getStoredWorkflowQueueHealth = `-- name: GetStoredWorkflowQueueHealth :one
+WITH clock AS MATERIALIZED (SELECT now() AS at),
+app_runs AS MATERIALIZED (
+ SELECT r.id,r.workflow_name,r.platform_tenant_id,r.operation_id,r.status,r.started_at,r.scheduled_for,r.created_at,
+ coalesce((r.definition_snapshot->>'max_concurrent_runs')::integer,0) AS run_limit,
+ (r.status='running' AND coalesce(r.lease_until,r.updated_at+($2::bigint*interval '1 millisecond'))>clock.at) AS live,
+ coalesce(r.lease_until,r.updated_at+($2::bigint*interval '1 millisecond')) AS recovery_at
+ FROM workflow_runs r CROSS JOIN clock
+ WHERE r.app_id=$3::uuid AND r.status IN ('pending','running','awaiting_event')
+),
+app_claims AS (
+ SELECT count(*)::bigint AS running FROM app_runs WHERE live AND operation_id IS NULL
+),
+tenant_claims AS (
+ SELECT platform_tenant_id,count(*)::bigint AS running FROM app_runs
+ WHERE live AND operation_id IS NULL GROUP BY platform_tenant_id
+),
+workflow_claims AS (
+ SELECT workflow_name,count(*)::bigint AS active FROM app_runs
+ WHERE live OR status='awaiting_event' OR (status='pending' AND started_at IS NOT NULL)
+ GROUP BY workflow_name
+),
+classified AS MATERIALIZED (
+ SELECT r.id,r.status,r.created_at,
+ CASE WHEN r.status='running' THEN r.recovery_at ELSE r.scheduled_for END AS due_at,
+ (r.status='running' OR r.scheduled_for<=clock.at) AS due,
+ CASE
+ WHEN r.status='awaiting_event' AND r.scheduled_for>clock.at THEN 'parked_wait'
+ WHEN r.status='pending' AND r.scheduled_for>clock.at THEN
+  CASE WHEN EXISTS(SELECT 1 FROM workflow_steps step WHERE step.run_id=r.id AND step.status='pending'
+   AND step.next_retry_at=r.scheduled_for) THEN 'retry_backoff' ELSE 'scheduled' END
+ WHEN app_claims.running>=$4::integer THEN 'app_capacity'
+ WHEN r.platform_tenant_id IS NOT NULL AND coalesce(tenant_claims.running,0)>=$5::integer THEN 'tenant_capacity'
+ WHEN r.run_limit>0 AND
+  coalesce(workflow_claims.active,0)-CASE WHEN r.status='awaiting_event' OR (r.status='pending' AND r.started_at IS NOT NULL) THEN 1 ELSE 0 END
+  >=r.run_limit THEN 'workflow_capacity'
+ ELSE 'ready' END::text AS reason
+ FROM app_runs r CROSS JOIN clock CROSS JOIN app_claims
+ LEFT JOIN tenant_claims ON tenant_claims.platform_tenant_id=r.platform_tenant_id
+ LEFT JOIN workflow_claims ON workflow_claims.workflow_name=r.workflow_name
+ WHERE r.workflow_name=$1::text AND r.operation_id IS NULL
+ AND (r.status IN ('pending','awaiting_event') OR (r.status='running' AND NOT r.live))
+)
+SELECT clock.at::timestamptz AS observed_at,app_claims.running AS app_running_count,
+ (SELECT count(*) FROM app_runs WHERE workflow_name=$1::text AND
+  (status IN ('running','awaiting_event') OR (status='pending' AND started_at IS NOT NULL)))::bigint AS active_run_count,
+ (SELECT count(*) FROM app_runs WHERE workflow_name=$1::text AND status='pending' AND started_at IS NULL)::bigint AS queued_run_count,
+ (SELECT count(*) FROM classified)::bigint AS waiting_run_count,
+ (SELECT count(*) FROM classified WHERE due)::bigint AS due_run_count,
+ (SELECT count(*) FROM classified WHERE status='running')::bigint AS stale_run_count,
+ greatest(0,coalesce((SELECT max(extract(epoch FROM(clock.at-greatest(created_at,due_at)))) FROM classified WHERE due),0))::float8 AS oldest_due_age_seconds,
+ (SELECT count(*) FROM classified WHERE reason='ready')::bigint AS ready,
+ (SELECT count(*) FROM classified WHERE reason='scheduled')::bigint AS scheduled,
+ (SELECT count(*) FROM classified WHERE reason='retry_backoff')::bigint AS retry_backoff,
+ (SELECT count(*) FROM classified WHERE reason='parked_wait')::bigint AS parked_wait,
+ (SELECT count(*) FROM classified WHERE reason='app_capacity')::bigint AS app_capacity,
+ (SELECT count(*) FROM classified WHERE reason='tenant_capacity')::bigint AS tenant_capacity,
+ (SELECT count(*) FROM classified WHERE reason='workflow_capacity')::bigint AS workflow_capacity
+FROM clock CROSS JOIN app_claims
+`
+
+type GetStoredWorkflowQueueHealthParams struct {
+	WorkflowName string
+	StaleMs      int64
+	AppID        pgtype.UUID
+	AppLimit     int32
+	TenantLimit  int32
+}
+
+type GetStoredWorkflowQueueHealthRow struct {
+	ObservedAt          pgtype.Timestamptz
+	AppRunningCount     int64
+	ActiveRunCount      int64
+	QueuedRunCount      int64
+	WaitingRunCount     int64
+	DueRunCount         int64
+	StaleRunCount       int64
+	OldestDueAgeSeconds float64
+	Ready               int64
+	Scheduled           int64
+	RetryBackoff        int64
+	ParkedWait          int64
+	AppCapacity         int64
+	TenantCapacity      int64
+	WorkflowCapacity    int64
+}
+
+// ADR-730: live diagnostics share the health transaction's observation time.
+// Candidate capacity matches NextFairDueWorkflowRun, excluding native custody.
+func (q *Queries) GetStoredWorkflowQueueHealth(ctx context.Context, db DBTX, arg GetStoredWorkflowQueueHealthParams) (GetStoredWorkflowQueueHealthRow, error) {
+	row := db.QueryRow(ctx, getStoredWorkflowQueueHealth,
+		arg.WorkflowName,
+		arg.StaleMs,
+		arg.AppID,
+		arg.AppLimit,
+		arg.TenantLimit,
+	)
+	var i GetStoredWorkflowQueueHealthRow
+	err := row.Scan(
+		&i.ObservedAt,
+		&i.AppRunningCount,
+		&i.ActiveRunCount,
+		&i.QueuedRunCount,
+		&i.WaitingRunCount,
+		&i.DueRunCount,
+		&i.StaleRunCount,
+		&i.OldestDueAgeSeconds,
+		&i.Ready,
+		&i.Scheduled,
+		&i.RetryBackoff,
+		&i.ParkedWait,
+		&i.AppCapacity,
+		&i.TenantCapacity,
+		&i.WorkflowCapacity,
+	)
+	return i, err
+}
+
+const getStoredWorkflowRevision = `-- name: GetStoredWorkflowRevision :one
+SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2 AND version=$3
+`
+
+type GetStoredWorkflowRevisionParams struct {
+	AppID   pgtype.UUID
+	Name    string
+	Version int64
+}
+
+func (q *Queries) GetStoredWorkflowRevision(ctx context.Context, db DBTX, arg GetStoredWorkflowRevisionParams) (StoredWorkflowRevision, error) {
+	row := db.QueryRow(ctx, getStoredWorkflowRevision, arg.AppID, arg.Name, arg.Version)
+	var i StoredWorkflowRevision
+	err := row.Scan(
+		&i.AppID,
+		&i.Name,
+		&i.Version,
+		&i.Definition,
+		&i.RecordedAt,
+		&i.LegacySnapshot,
+		&i.PublishedByAccountID,
+		&i.PublishedByApiKeyID,
+		&i.CheckEvidence,
+	)
+	return i, err
+}
+
 const getSyntheticCheck = `-- name: GetSyntheticCheck :one
 SELECT id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at FROM synthetic_checks WHERE app_id = $1::uuid AND id = $2::uuid
 `
@@ -29771,12 +30041,12 @@ func (q *Queries) GetUploadSession(ctx context.Context, db DBTX, id string) (Upl
 	return i, err
 }
 
-const getWebhookAutomationBinding = `-- name: GetWebhookAutomationBinding :one
+const getWebhookWorkflowBinding = `-- name: GetWebhookWorkflowBinding :one
 SELECT endpoint_id, workflow_name, event_type, filter, version, updated_at FROM workflow_webhook_bindings WHERE endpoint_id=$1
 `
 
-func (q *Queries) GetWebhookAutomationBinding(ctx context.Context, db DBTX, endpointID pgtype.UUID) (WorkflowWebhookBinding, error) {
-	row := db.QueryRow(ctx, getWebhookAutomationBinding, endpointID)
+func (q *Queries) GetWebhookWorkflowBinding(ctx context.Context, db DBTX, endpointID pgtype.UUID) (WorkflowWebhookBinding, error) {
+	row := db.QueryRow(ctx, getWebhookWorkflowBinding, endpointID)
 	var i WorkflowWebhookBinding
 	err := row.Scan(
 		&i.EndpointID,
@@ -29789,19 +30059,19 @@ func (q *Queries) GetWebhookAutomationBinding(ctx context.Context, db DBTX, endp
 	return i, err
 }
 
-const getWebhookAutomationReceipt = `-- name: GetWebhookAutomationReceipt :one
+const getWebhookWorkflowReceipt = `-- name: GetWebhookWorkflowReceipt :one
 SELECT r.endpoint_id, r.provider_event_id, r.receipt_id, r.body_hash, r.workflow_name, r.recipient_id, r.outbox_id, r.status, r.ignored_reason, r.accepted_at, er.run_id, o.recipient_progress
 FROM workflow_webhook_receipts r JOIN event_fanout_outbox o ON o.id=r.outbox_id
 LEFT JOIN workflow_event_receipts er ON er.outbox_id=r.outbox_id AND er.recipient_id=r.recipient_id
 WHERE r.endpoint_id=$1 AND r.provider_event_id=$2
 `
 
-type GetWebhookAutomationReceiptParams struct {
+type GetWebhookWorkflowReceiptParams struct {
 	EndpointID      pgtype.UUID
 	ProviderEventID string
 }
 
-type GetWebhookAutomationReceiptRow struct {
+type GetWebhookWorkflowReceiptRow struct {
 	EndpointID        pgtype.UUID
 	ProviderEventID   string
 	ReceiptID         pgtype.UUID
@@ -29816,9 +30086,9 @@ type GetWebhookAutomationReceiptRow struct {
 	RecipientProgress []byte
 }
 
-func (q *Queries) GetWebhookAutomationReceipt(ctx context.Context, db DBTX, arg GetWebhookAutomationReceiptParams) (GetWebhookAutomationReceiptRow, error) {
-	row := db.QueryRow(ctx, getWebhookAutomationReceipt, arg.EndpointID, arg.ProviderEventID)
-	var i GetWebhookAutomationReceiptRow
+func (q *Queries) GetWebhookWorkflowReceipt(ctx context.Context, db DBTX, arg GetWebhookWorkflowReceiptParams) (GetWebhookWorkflowReceiptRow, error) {
+	row := db.QueryRow(ctx, getWebhookWorkflowReceipt, arg.EndpointID, arg.ProviderEventID)
+	var i GetWebhookWorkflowReceiptRow
 	err := row.Scan(
 		&i.EndpointID,
 		&i.ProviderEventID,
@@ -29832,215 +30102,6 @@ func (q *Queries) GetWebhookAutomationReceipt(ctx context.Context, db DBTX, arg 
 		&i.AcceptedAt,
 		&i.RunID,
 		&i.RecipientProgress,
-	)
-	return i, err
-}
-
-const getWorkflowAutomationHealthSummary = `-- name: GetWorkflowAutomationHealthSummary :one
-SELECT count(*)::bigint AS run_count,
-       count(*) FILTER (WHERE status='pending')::bigint AS pending_runs,
-       count(*) FILTER (WHERE status='running')::bigint AS running_runs,
-       count(*) FILTER (WHERE status='awaiting_event')::bigint AS awaiting_event_runs,
-       count(*) FILTER (WHERE status='succeeded')::bigint AS succeeded_runs,
-       count(*) FILTER (WHERE status='failed')::bigint AS failed_runs,
-       count(*) FILTER (WHERE status='dead')::bigint AS dead_runs,
-       count(*) FILTER (WHERE started_at IS NOT NULL AND finished_at >= started_at AND status IN ('succeeded','failed','dead'))::bigint AS duration_samples,
-       COALESCE(round((percentile_cont(0.50) WITHIN GROUP (
-           ORDER BY (EXTRACT(EPOCH FROM (finished_at-started_at))*1000)::double precision
-       ) FILTER (WHERE started_at IS NOT NULL AND finished_at >= started_at AND status IN ('succeeded','failed','dead')))::numeric)::bigint, 0)::bigint AS p50_duration_ms,
-       COALESCE(round((percentile_cont(0.95) WITHIN GROUP (
-           ORDER BY (EXTRACT(EPOCH FROM (finished_at-started_at))*1000)::double precision
-       ) FILTER (WHERE started_at IS NOT NULL AND finished_at >= started_at AND status IN ('succeeded','failed','dead')))::numeric)::bigint, 0)::bigint AS p95_duration_ms
-FROM workflow_runs
-WHERE app_id=$1::uuid AND workflow_name=$2::text
-  AND created_at >= $3::timestamptz
-  AND created_at <= $4::timestamptz
-`
-
-type GetWorkflowAutomationHealthSummaryParams struct {
-	AppID         pgtype.UUID
-	WorkflowName  string
-	CreatedAfter  pgtype.Timestamptz
-	CreatedBefore pgtype.Timestamptz
-}
-
-type GetWorkflowAutomationHealthSummaryRow struct {
-	RunCount          int64
-	PendingRuns       int64
-	RunningRuns       int64
-	AwaitingEventRuns int64
-	SucceededRuns     int64
-	FailedRuns        int64
-	DeadRuns          int64
-	DurationSamples   int64
-	P50DurationMs     int64
-	P95DurationMs     int64
-}
-
-func (q *Queries) GetWorkflowAutomationHealthSummary(ctx context.Context, db DBTX, arg GetWorkflowAutomationHealthSummaryParams) (GetWorkflowAutomationHealthSummaryRow, error) {
-	row := db.QueryRow(ctx, getWorkflowAutomationHealthSummary,
-		arg.AppID,
-		arg.WorkflowName,
-		arg.CreatedAfter,
-		arg.CreatedBefore,
-	)
-	var i GetWorkflowAutomationHealthSummaryRow
-	err := row.Scan(
-		&i.RunCount,
-		&i.PendingRuns,
-		&i.RunningRuns,
-		&i.AwaitingEventRuns,
-		&i.SucceededRuns,
-		&i.FailedRuns,
-		&i.DeadRuns,
-		&i.DurationSamples,
-		&i.P50DurationMs,
-		&i.P95DurationMs,
-	)
-	return i, err
-}
-
-const getWorkflowAutomationQueueHealth = `-- name: GetWorkflowAutomationQueueHealth :one
-WITH clock AS MATERIALIZED (SELECT now() AS at),
-app_runs AS MATERIALIZED (
- SELECT r.id,r.workflow_name,r.platform_tenant_id,r.operation_id,r.status,r.started_at,r.scheduled_for,r.created_at,
- coalesce((r.definition_snapshot->>'max_concurrent_runs')::integer,0) AS run_limit,
- (r.status='running' AND coalesce(r.lease_until,r.updated_at+($2::bigint*interval '1 millisecond'))>clock.at) AS live,
- coalesce(r.lease_until,r.updated_at+($2::bigint*interval '1 millisecond')) AS recovery_at
- FROM workflow_runs r CROSS JOIN clock
- WHERE r.app_id=$3::uuid AND r.status IN ('pending','running','awaiting_event')
-),
-app_claims AS (
- SELECT count(*)::bigint AS running FROM app_runs WHERE live AND operation_id IS NULL
-),
-tenant_claims AS (
- SELECT platform_tenant_id,count(*)::bigint AS running FROM app_runs
- WHERE live AND operation_id IS NULL GROUP BY platform_tenant_id
-),
-workflow_claims AS (
- SELECT workflow_name,count(*)::bigint AS active FROM app_runs
- WHERE live OR status='awaiting_event' OR (status='pending' AND started_at IS NOT NULL)
- GROUP BY workflow_name
-),
-classified AS MATERIALIZED (
- SELECT r.id,r.status,r.created_at,
- CASE WHEN r.status='running' THEN r.recovery_at ELSE r.scheduled_for END AS due_at,
- (r.status='running' OR r.scheduled_for<=clock.at) AS due,
- CASE
- WHEN r.status='awaiting_event' AND r.scheduled_for>clock.at THEN 'parked_wait'
- WHEN r.status='pending' AND r.scheduled_for>clock.at THEN
-  CASE WHEN EXISTS(SELECT 1 FROM workflow_steps step WHERE step.run_id=r.id AND step.status='pending'
-   AND step.next_retry_at=r.scheduled_for) THEN 'retry_backoff' ELSE 'scheduled' END
- WHEN app_claims.running>=$4::integer THEN 'app_capacity'
- WHEN r.platform_tenant_id IS NOT NULL AND coalesce(tenant_claims.running,0)>=$5::integer THEN 'tenant_capacity'
- WHEN r.run_limit>0 AND
-  coalesce(workflow_claims.active,0)-CASE WHEN r.status='awaiting_event' OR (r.status='pending' AND r.started_at IS NOT NULL) THEN 1 ELSE 0 END
-  >=r.run_limit THEN 'workflow_capacity'
- ELSE 'ready' END::text AS reason
- FROM app_runs r CROSS JOIN clock CROSS JOIN app_claims
- LEFT JOIN tenant_claims ON tenant_claims.platform_tenant_id=r.platform_tenant_id
- LEFT JOIN workflow_claims ON workflow_claims.workflow_name=r.workflow_name
- WHERE r.workflow_name=$1::text AND r.operation_id IS NULL
- AND (r.status IN ('pending','awaiting_event') OR (r.status='running' AND NOT r.live))
-)
-SELECT clock.at::timestamptz AS observed_at,app_claims.running AS app_running_count,
- (SELECT count(*) FROM app_runs WHERE workflow_name=$1::text AND
-  (status IN ('running','awaiting_event') OR (status='pending' AND started_at IS NOT NULL)))::bigint AS active_run_count,
- (SELECT count(*) FROM app_runs WHERE workflow_name=$1::text AND status='pending' AND started_at IS NULL)::bigint AS queued_run_count,
- (SELECT count(*) FROM classified)::bigint AS waiting_run_count,
- (SELECT count(*) FROM classified WHERE due)::bigint AS due_run_count,
- (SELECT count(*) FROM classified WHERE status='running')::bigint AS stale_run_count,
- greatest(0,coalesce((SELECT max(extract(epoch FROM(clock.at-greatest(created_at,due_at)))) FROM classified WHERE due),0))::float8 AS oldest_due_age_seconds,
- (SELECT count(*) FROM classified WHERE reason='ready')::bigint AS ready,
- (SELECT count(*) FROM classified WHERE reason='scheduled')::bigint AS scheduled,
- (SELECT count(*) FROM classified WHERE reason='retry_backoff')::bigint AS retry_backoff,
- (SELECT count(*) FROM classified WHERE reason='parked_wait')::bigint AS parked_wait,
- (SELECT count(*) FROM classified WHERE reason='app_capacity')::bigint AS app_capacity,
- (SELECT count(*) FROM classified WHERE reason='tenant_capacity')::bigint AS tenant_capacity,
- (SELECT count(*) FROM classified WHERE reason='workflow_capacity')::bigint AS workflow_capacity
-FROM clock CROSS JOIN app_claims
-`
-
-type GetWorkflowAutomationQueueHealthParams struct {
-	WorkflowName string
-	StaleMs      int64
-	AppID        pgtype.UUID
-	AppLimit     int32
-	TenantLimit  int32
-}
-
-type GetWorkflowAutomationQueueHealthRow struct {
-	ObservedAt          pgtype.Timestamptz
-	AppRunningCount     int64
-	ActiveRunCount      int64
-	QueuedRunCount      int64
-	WaitingRunCount     int64
-	DueRunCount         int64
-	StaleRunCount       int64
-	OldestDueAgeSeconds float64
-	Ready               int64
-	Scheduled           int64
-	RetryBackoff        int64
-	ParkedWait          int64
-	AppCapacity         int64
-	TenantCapacity      int64
-	WorkflowCapacity    int64
-}
-
-// ADR-730: live diagnostics share the health transaction's observation time.
-// Candidate capacity matches NextFairDueWorkflowRun, excluding native custody.
-func (q *Queries) GetWorkflowAutomationQueueHealth(ctx context.Context, db DBTX, arg GetWorkflowAutomationQueueHealthParams) (GetWorkflowAutomationQueueHealthRow, error) {
-	row := db.QueryRow(ctx, getWorkflowAutomationQueueHealth,
-		arg.WorkflowName,
-		arg.StaleMs,
-		arg.AppID,
-		arg.AppLimit,
-		arg.TenantLimit,
-	)
-	var i GetWorkflowAutomationQueueHealthRow
-	err := row.Scan(
-		&i.ObservedAt,
-		&i.AppRunningCount,
-		&i.ActiveRunCount,
-		&i.QueuedRunCount,
-		&i.WaitingRunCount,
-		&i.DueRunCount,
-		&i.StaleRunCount,
-		&i.OldestDueAgeSeconds,
-		&i.Ready,
-		&i.Scheduled,
-		&i.RetryBackoff,
-		&i.ParkedWait,
-		&i.AppCapacity,
-		&i.TenantCapacity,
-		&i.WorkflowCapacity,
-	)
-	return i, err
-}
-
-const getWorkflowAutomationRevision = `-- name: GetWorkflowAutomationRevision :one
-SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2 AND version=$3
-`
-
-type GetWorkflowAutomationRevisionParams struct {
-	AppID   pgtype.UUID
-	Name    string
-	Version int64
-}
-
-func (q *Queries) GetWorkflowAutomationRevision(ctx context.Context, db DBTX, arg GetWorkflowAutomationRevisionParams) (WorkflowAutomationRevision, error) {
-	row := db.QueryRow(ctx, getWorkflowAutomationRevision, arg.AppID, arg.Name, arg.Version)
-	var i WorkflowAutomationRevision
-	err := row.Scan(
-		&i.AppID,
-		&i.Name,
-		&i.Version,
-		&i.Definition,
-		&i.RecordedAt,
-		&i.LegacySnapshot,
-		&i.PublishedByAccountID,
-		&i.PublishedByApiKeyID,
-		&i.CheckEvidence,
 	)
 	return i, err
 }
@@ -33054,11 +33115,11 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 
 const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels)
 VALUES($1,$2,$3,$4,$5,$6,
  $7,$8,$9,$10,$11,$12,$13,
- $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
-RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved
+ $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27::jsonb)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels
 `
 
 type InsertCustomerAlertRuleParams struct {
@@ -33088,6 +33149,7 @@ type InsertCustomerAlertRuleParams struct {
 	LogQuery                        pgtype.Text
 	CreatedByAccountID              pgtype.UUID
 	NotifyResolved                  bool
+	CustomMetricLabels              []byte
 }
 
 func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg InsertCustomerAlertRuleParams) (AlertRule, error) {
@@ -33118,6 +33180,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		arg.LogQuery,
 		arg.CreatedByAccountID,
 		arg.NotifyResolved,
+		arg.CustomMetricLabels,
 	)
 	var i AlertRule
 	err := row.Scan(
@@ -33153,6 +33216,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		&i.LogQuery,
 		&i.CreatedByAccountID,
 		&i.NotifyResolved,
+		&i.CustomMetricLabels,
 	)
 	return i, err
 }
@@ -38553,6 +38617,37 @@ func (q *Queries) InsertStaticEgressProvisioningGrant(ctx context.Context, db DB
 	return err
 }
 
+const insertStoredWorkflowRevision = `-- name: InsertStoredWorkflowRevision :exec
+INSERT INTO stored_workflow_revisions(
+ app_id,name,version,definition,recorded_at,legacy_snapshot,published_by_account_id,published_by_api_key_id,check_evidence
+) VALUES($1,$2,$3,$4,$5,false,$6,$7,$8)
+`
+
+type InsertStoredWorkflowRevisionParams struct {
+	AppID                pgtype.UUID
+	Name                 string
+	Version              int64
+	Definition           []byte
+	RecordedAt           pgtype.Timestamptz
+	PublishedByAccountID pgtype.UUID
+	PublishedByApiKeyID  pgtype.UUID
+	CheckEvidence        []byte
+}
+
+func (q *Queries) InsertStoredWorkflowRevision(ctx context.Context, db DBTX, arg InsertStoredWorkflowRevisionParams) error {
+	_, err := db.Exec(ctx, insertStoredWorkflowRevision,
+		arg.AppID,
+		arg.Name,
+		arg.Version,
+		arg.Definition,
+		arg.RecordedAt,
+		arg.PublishedByAccountID,
+		arg.PublishedByApiKeyID,
+		arg.CheckEvidence,
+	)
+	return err
+}
+
 const insertSyntheticCheck = `-- name: InsertSyntheticCheck :one
 
 INSERT INTO synthetic_checks (account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds)
@@ -38750,12 +38845,12 @@ func (q *Queries) InsertTriggerRecord(ctx context.Context, db DBTX, arg InsertTr
 	return id, err
 }
 
-const insertWebhookAutomationOutbox = `-- name: InsertWebhookAutomationOutbox :one
+const insertWebhookWorkflowOutbox = `-- name: InsertWebhookWorkflowOutbox :one
 INSERT INTO event_fanout_outbox(account_id,source,event_id,event_type,event_data,payload,recipient_snapshot)
 VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id
 `
 
-type InsertWebhookAutomationOutboxParams struct {
+type InsertWebhookWorkflowOutboxParams struct {
 	AccountID         pgtype.UUID
 	Source            string
 	EventID           string
@@ -38765,8 +38860,8 @@ type InsertWebhookAutomationOutboxParams struct {
 	RecipientSnapshot []byte
 }
 
-func (q *Queries) InsertWebhookAutomationOutbox(ctx context.Context, db DBTX, arg InsertWebhookAutomationOutboxParams) (int64, error) {
-	row := db.QueryRow(ctx, insertWebhookAutomationOutbox,
+func (q *Queries) InsertWebhookWorkflowOutbox(ctx context.Context, db DBTX, arg InsertWebhookWorkflowOutboxParams) (int64, error) {
+	row := db.QueryRow(ctx, insertWebhookWorkflowOutbox,
 		arg.AccountID,
 		arg.Source,
 		arg.EventID,
@@ -38780,12 +38875,12 @@ func (q *Queries) InsertWebhookAutomationOutbox(ctx context.Context, db DBTX, ar
 	return id, err
 }
 
-const insertWebhookAutomationReceipt = `-- name: InsertWebhookAutomationReceipt :exec
+const insertWebhookWorkflowReceipt = `-- name: InsertWebhookWorkflowReceipt :exec
 INSERT INTO workflow_webhook_receipts(endpoint_id,provider_event_id,receipt_id,body_hash,workflow_name,recipient_id,outbox_id,status,ignored_reason)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
 `
 
-type InsertWebhookAutomationReceiptParams struct {
+type InsertWebhookWorkflowReceiptParams struct {
 	EndpointID      pgtype.UUID
 	ProviderEventID string
 	ReceiptID       pgtype.UUID
@@ -38797,8 +38892,8 @@ type InsertWebhookAutomationReceiptParams struct {
 	IgnoredReason   pgtype.Text
 }
 
-func (q *Queries) InsertWebhookAutomationReceipt(ctx context.Context, db DBTX, arg InsertWebhookAutomationReceiptParams) error {
-	_, err := db.Exec(ctx, insertWebhookAutomationReceipt,
+func (q *Queries) InsertWebhookWorkflowReceipt(ctx context.Context, db DBTX, arg InsertWebhookWorkflowReceiptParams) error {
+	_, err := db.Exec(ctx, insertWebhookWorkflowReceipt,
 		arg.EndpointID,
 		arg.ProviderEventID,
 		arg.ReceiptID,
@@ -38808,37 +38903,6 @@ func (q *Queries) InsertWebhookAutomationReceipt(ctx context.Context, db DBTX, a
 		arg.OutboxID,
 		arg.Status,
 		arg.IgnoredReason,
-	)
-	return err
-}
-
-const insertWorkflowAutomationRevision = `-- name: InsertWorkflowAutomationRevision :exec
-INSERT INTO workflow_automation_revisions(
- app_id,name,version,definition,recorded_at,legacy_snapshot,published_by_account_id,published_by_api_key_id,check_evidence
-) VALUES($1,$2,$3,$4,$5,false,$6,$7,$8)
-`
-
-type InsertWorkflowAutomationRevisionParams struct {
-	AppID                pgtype.UUID
-	Name                 string
-	Version              int64
-	Definition           []byte
-	RecordedAt           pgtype.Timestamptz
-	PublishedByAccountID pgtype.UUID
-	PublishedByApiKeyID  pgtype.UUID
-	CheckEvidence        []byte
-}
-
-func (q *Queries) InsertWorkflowAutomationRevision(ctx context.Context, db DBTX, arg InsertWorkflowAutomationRevisionParams) error {
-	_, err := db.Exec(ctx, insertWorkflowAutomationRevision,
-		arg.AppID,
-		arg.Name,
-		arg.Version,
-		arg.Definition,
-		arg.RecordedAt,
-		arg.PublishedByAccountID,
-		arg.PublishedByApiKeyID,
-		arg.CheckEvidence,
 	)
 	return err
 }
@@ -42474,26 +42538,26 @@ func (q *Queries) LastGraphMemberServingEnd(ctx context.Context, db DBTX, arg La
 	return ended_at, err
 }
 
-const latchAutomationFailurePause = `-- name: LatchAutomationFailurePause :exec
+const latchStoredWorkflowFailurePause = `-- name: LatchStoredWorkflowFailurePause :exec
 WITH changed AS (
- UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=$1::timestamptz
+ UPDATE stored_workflow_failure_guards SET generation=generation+1,paused_at=$1::timestamptz
  WHERE app_id=$2::uuid AND name=$3::text AND paused_at IS NULL RETURNING app_id, name, generation, monitoring_since, paused_at
 ), history AS (
- INSERT INTO workflow_automation_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version)
+ INSERT INTO stored_workflow_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version)
  SELECT app_id,name,generation,'paused','failure_threshold',paused_at,$4::bigint,$5::bigint,$6::bigint FROM changed RETURNING id, app_id, name, generation, state, reason, recorded_at, failures, completed_runs, policy_version, actor_account_id
 ), recipients AS (
  SELECT h.id,h.app_id,a.account_id,h.name,h.generation,h.failures,h.completed_runs,h.policy_version,h.recorded_at,array_agg(w.id ORDER BY w.id) AS ids
  FROM history h JOIN apps a ON a.id=h.app_id JOIN app_webhooks w ON w.app_id=a.id AND w.account_id=a.account_id AND w.scope='app' AND w.enabled
- AND (cardinality(w.event_filter)=0 OR 'automation.paused'=ANY(w.event_filter))
+ AND (cardinality(w.event_filter)=0 OR 'stored_workflow.paused'=ANY(w.event_filter))
  GROUP BY h.id,h.app_id,a.account_id,h.name,h.generation,h.failures,h.completed_runs,h.policy_version,h.recorded_at
 )
 INSERT INTO app_webhook_event_outbox(account_id,app_id,event,source_id,payload,recipient_webhook_ids)
-SELECT account_id,app_id,'automation.paused',id,jsonb_build_object('app_id',app_id::text,'automation_name',name,'generation',generation,
+SELECT account_id,app_id,'stored_workflow.paused',id,jsonb_build_object('app_id',app_id::text,'stored_workflow_name',name,'generation',generation,
  'reason','failure_threshold','failures',failures,'completed_runs',completed_runs,'policy_version',policy_version,'paused_at',recorded_at),ids FROM recipients
 ON CONFLICT(event,source_id) DO NOTHING
 `
 
-type LatchAutomationFailurePauseParams struct {
+type LatchStoredWorkflowFailurePauseParams struct {
 	NowAt         pgtype.Timestamptz
 	AppID         pgtype.UUID
 	Name          string
@@ -42502,8 +42566,8 @@ type LatchAutomationFailurePauseParams struct {
 	PolicyVersion int64
 }
 
-func (q *Queries) LatchAutomationFailurePause(ctx context.Context, db DBTX, arg LatchAutomationFailurePauseParams) error {
-	_, err := db.Exec(ctx, latchAutomationFailurePause,
+func (q *Queries) LatchStoredWorkflowFailurePause(ctx context.Context, db DBTX, arg LatchStoredWorkflowFailurePauseParams) error {
+	_, err := db.Exec(ctx, latchStoredWorkflowFailurePause,
 		arg.NowAt,
 		arg.AppID,
 		arg.Name,
@@ -42738,6 +42802,7 @@ const latestRetainedRollbackDeployment = `-- name: LatestRetainedRollbackDeploym
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid
 AND d.deleted_at IS NULL
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
+AND d.last_auto_rollback_reason IS NULL
 AND ($2::text IS NULL OR d.scope=$2::text)
 AND ($3::uuid IS NULL OR d.id<>$3::uuid)
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
@@ -42760,6 +42825,8 @@ type LatestRetainedRollbackDeploymentParams struct {
 // (a dark deploy) needs a retention pin. A canary candidate aborted before it
 // ever completed served only its canary steps and failed them, so it is never
 // an implicit target (H5-62).
+// A release an automatic guard reverted (ADR-625, ADR-1445) is never an
+// implicit target either; `rollback --to` can still name it.
 func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LatestRetainedRollbackDeploymentParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, latestRetainedRollbackDeployment, arg.AppID, arg.Scope, arg.CurrentDeploymentID)
 	var id pgtype.UUID
@@ -44796,7 +44863,7 @@ SELECT wake_id,
   WHEN position('reason=telemetry_missing' in last_error)>0 THEN 'telemetry_missing'
   WHEN position('reason=requests_active' in last_error)>0 THEN 'requests_active'
   WHEN position('reason=quiet_period_not_elapsed' in last_error)>0 THEN 'quiet_period_not_elapsed'
-  WHEN position('app_startup_crash' in o.last_error) > 0 THEN 'app_startup_crash'
+  WHEN position('app_startup_crash' in last_error)>0 THEN 'app_startup_crash'
   ELSE 'restart_attempt_failed' END::text AS failure_reason,
  created_at AS requested_at,delivered_at AS completed_at
 FROM latest WHERE state<>'delivered' ORDER BY created_at DESC,id DESC LIMIT $1
@@ -46139,105 +46206,6 @@ func (q *Queries) ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, doll
 	return items, nil
 }
 
-const listAutomationFailurePauses = `-- name: ListAutomationFailurePauses :many
-SELECT name FROM workflow_automation_failure_guards WHERE app_id=$1 AND paused_at IS NOT NULL ORDER BY name
-`
-
-func (q *Queries) ListAutomationFailurePauses(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error) {
-	rows, err := db.Query(ctx, listAutomationFailurePauses, appID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		items = append(items, name)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listAutomationFailurePolicyCandidates = `-- name: ListAutomationFailurePolicyCandidates :many
-SELECT p.app_id::text AS app_id,p.name FROM workflow_automation_failure_policies p JOIN apps a ON a.id=p.app_id
-JOIN app_resource_accounts ac ON ac.app_id = a.id
-WHERE p.enabled AND a.status<>'deleted' AND ($1::uuid IS NULL OR a.node_id=$1::uuid)
-AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
-AND p.app_id::text||'/'||p.name>$2::text
-ORDER BY p.app_id::text,p.name LIMIT $3::int
-`
-
-type ListAutomationFailurePolicyCandidatesParams struct {
-	OwnerNodeID pgtype.UUID
-	AfterKey    string
-	BatchLimit  int32
-}
-
-type ListAutomationFailurePolicyCandidatesRow struct {
-	AppID string
-	Name  string
-}
-
-func (q *Queries) ListAutomationFailurePolicyCandidates(ctx context.Context, db DBTX, arg ListAutomationFailurePolicyCandidatesParams) ([]ListAutomationFailurePolicyCandidatesRow, error) {
-	rows, err := db.Query(ctx, listAutomationFailurePolicyCandidates, arg.OwnerNodeID, arg.AfterKey, arg.BatchLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListAutomationFailurePolicyCandidatesRow{}
-	for rows.Next() {
-		var i ListAutomationFailurePolicyCandidatesRow
-		if err := rows.Scan(&i.AppID, &i.Name); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listAutomations = `-- name: ListAutomations :many
-SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM workflow_automation_definitions WHERE app_id=$1 ORDER BY name
-`
-
-func (q *Queries) ListAutomations(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowAutomationDefinition, error) {
-	rows, err := db.Query(ctx, listAutomations, appID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []WorkflowAutomationDefinition{}
-	for rows.Next() {
-		var i WorkflowAutomationDefinition
-		if err := rows.Scan(
-			&i.AppID,
-			&i.Name,
-			&i.Version,
-			&i.Draft,
-			&i.Published,
-			&i.PublishedVersion,
-			&i.Enabled,
-			&i.UpdatedAt,
-			&i.TestSuite,
-			&i.TestReport,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listBindingVerificationTasks = `-- name: ListBindingVerificationTasks :many
 SELECT DISTINCT ON (binding_verification->>'type', binding_verification->>'binding', deployment_scope)
  id, binding_verification, deployment_id, deployment_scope, status,
@@ -47192,7 +47160,7 @@ func (q *Queries) ListCustomDomainsForActor(ctx context.Context, db DBTX, accoun
 }
 
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
-SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope, r.log_query, r.created_by_account_id, r.notify_resolved FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope, r.log_query, r.created_by_account_id, r.notify_resolved, r.custom_metric_labels FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
  ORDER BY r.created_at DESC LIMIT 2
 `
@@ -47245,6 +47213,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 			&i.LogQuery,
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
+			&i.CustomMetricLabels,
 		); err != nil {
 			return nil, err
 		}
@@ -47257,7 +47226,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 }
 
 const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
@@ -47302,6 +47271,7 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 			&i.LogQuery,
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
+			&i.CustomMetricLabels,
 		); err != nil {
 			return nil, err
 		}
@@ -49456,6 +49426,101 @@ func (q *Queries) ListDueRouteMonitors(ctx context.Context, db DBTX, batchLimit 
 	return items, nil
 }
 
+const listEdgeRuleSetVersionsWithRequestHeaderLiterals = `-- name: ListEdgeRuleSetVersionsWithRequestHeaderLiterals :many
+SELECT v.id, v.app_id, v.version, v.rules, v.rules_sha256 FROM edge_rule_set_versions v
+WHERE v.id > $1::bigint
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v.rules) rule,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(rule->'action'->'headers'->'request_headers') = 'array'
+        THEN rule->'action'->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE rule->>'kind' = 'headers' AND coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+ORDER BY v.id LIMIT $2::integer
+`
+
+type ListEdgeRuleSetVersionsWithRequestHeaderLiteralsParams struct {
+	AfterID  int64
+	RowLimit int32
+}
+
+type ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow struct {
+	ID          int64
+	AppID       pgtype.UUID
+	Version     int32
+	Rules       []byte
+	RulesSha256 string
+}
+
+func (q *Queries) ListEdgeRuleSetVersionsWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEdgeRuleSetVersionsWithRequestHeaderLiteralsParams) ([]ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow, error) {
+	rows, err := db.Query(ctx, listEdgeRuleSetVersionsWithRequestHeaderLiterals, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow{}
+	for rows.Next() {
+		var i ListEdgeRuleSetVersionsWithRequestHeaderLiteralsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Version,
+			&i.Rules,
+			&i.RulesSha256,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEdgeRulesWithRequestHeaderLiterals = `-- name: ListEdgeRulesWithRequestHeaderLiterals :many
+
+SELECT r.id, r.action FROM edge_rules r
+WHERE r.kind = 'headers' AND r.id > $1::uuid
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(r.action->'headers'->'request_headers') = 'array'
+        THEN r.action->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+ORDER BY r.id LIMIT $2::integer
+`
+
+type ListEdgeRulesWithRequestHeaderLiteralsParams struct {
+	AfterID  pgtype.UUID
+	RowLimit int32
+}
+
+type ListEdgeRulesWithRequestHeaderLiteralsRow struct {
+	ID     pgtype.UUID
+	Action []byte
+}
+
+// ADR-20261108110000 amendment 2026-11-09: the sealing backfill finds
+// headers rules and rule-set versions that still store a request header value
+// as written. The scan is broad (any literal value); apid applies the
+// credential-name test.
+func (q *Queries) ListEdgeRulesWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEdgeRulesWithRequestHeaderLiteralsParams) ([]ListEdgeRulesWithRequestHeaderLiteralsRow, error) {
+	rows, err := db.Query(ctx, listEdgeRulesWithRequestHeaderLiterals, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEdgeRulesWithRequestHeaderLiteralsRow{}
+	for rows.Next() {
+		var i ListEdgeRulesWithRequestHeaderLiteralsRow
+		if err := rows.Scan(&i.ID, &i.Action); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEgressCircuitCandidates = `-- name: ListEgressCircuitCandidates :many
 SELECT
     u.app_id,
@@ -49637,7 +49702,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 }
 
 const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved FROM alert_rules r WHERE r.enabled=true
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules r WHERE r.enabled=true
  AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.id=r.app_id AND a.status='deleted')
  ORDER BY r.account_id
 `
@@ -49686,6 +49751,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 			&i.LogQuery,
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
+			&i.CustomMetricLabels,
 		); err != nil {
 			return nil, err
 		}
@@ -49871,6 +49937,60 @@ func (q *Queries) ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUd
 			&i.PublicPort,
 			&i.Protocol,
 			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnvironmentEdgePoliciesWithRequestHeaderLiterals = `-- name: ListEnvironmentEdgePoliciesWithRequestHeaderLiterals :many
+SELECT p.account_id, p.project_id, p.app_id, p.environment_slug, p.rules, p.created_at, p.updated_at
+FROM project_environment_edge_policies p
+WHERE (p.app_id, p.environment_slug) > ($1::uuid, $2::text)
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p.rules) rule,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(rule->'action'->'headers'->'request_headers') = 'array'
+        THEN rule->'action'->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+    WHERE rule->>'kind' = 'headers' AND coalesce(op->>'value', '') <> '' AND coalesce(op->>'secret_id', '') = '')
+  AND NOT EXISTS (
+    SELECT 1 FROM active_environment_git_sources s
+    JOIN project_environments e ON e.id = s.environment_id
+    JOIN environment_gitops_resources r ON r.source_id = s.id
+    WHERE r.app_id = p.app_id AND e.slug = p.environment_slug)
+ORDER BY p.app_id, p.environment_slug LIMIT $3::integer
+`
+
+type ListEnvironmentEdgePoliciesWithRequestHeaderLiteralsParams struct {
+	AfterAppID       pgtype.UUID
+	AfterEnvironment string
+	RowLimit         int32
+}
+
+// Environment edge policies written through the API. An environment with
+// an active Git source for the app is left out: its values come from the
+// repository, and a sealed value would read as drift there.
+func (q *Queries) ListEnvironmentEdgePoliciesWithRequestHeaderLiterals(ctx context.Context, db DBTX, arg ListEnvironmentEdgePoliciesWithRequestHeaderLiteralsParams) ([]ProjectEnvironmentEdgePolicy, error) {
+	rows, err := db.Query(ctx, listEnvironmentEdgePoliciesWithRequestHeaderLiterals, arg.AfterAppID, arg.AfterEnvironment, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentEdgePolicy{}
+	for rows.Next() {
+		var i ProjectEnvironmentEdgePolicy
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.ProjectID,
+			&i.AppID,
+			&i.EnvironmentSlug,
+			&i.Rules,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -51600,7 +51720,7 @@ func (q *Queries) ListMCPDestinationEvents(ctx context.Context, db DBTX, arg Lis
 }
 
 const listMCPNotificationRules = `-- name: ListMCPNotificationRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved FROM alert_rules WHERE account_id=$1 AND app_id=$2
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules WHERE account_id=$1 AND app_id=$2
  AND metric='mcp_readiness_unhealthy' AND action='webhook'
  AND ($3::text='' OR mcp_readiness_scope='' OR mcp_readiness_scope=$3)
  AND ($4::uuid IS NULL OR id>$4)
@@ -51663,6 +51783,7 @@ func (q *Queries) ListMCPNotificationRules(ctx context.Context, db DBTX, arg Lis
 			&i.LogQuery,
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
+			&i.CustomMetricLabels,
 		); err != nil {
 			return nil, err
 		}
@@ -55467,7 +55588,7 @@ const listRunnableSyntheticChecks = `-- name: ListRunnableSyntheticChecks :many
 SELECT c.id, c.account_id, c.app_id, c.name, c.method, c.path, c.expected_status, c.timeout_ms, c.interval_seconds, c.enabled, c.created_at, c.updated_at, a.slug AS app_slug,
  (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
 FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
-WHERE c.enabled AND a.status <> 'deleted'
+WHERE c.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal'
 ORDER BY c.id
 `
 
@@ -55489,8 +55610,9 @@ type ListRunnableSyntheticChecksRow struct {
 }
 
 // ADR-748 slice 2: synthetic check runs (meterd is the only writer).
-// Every enabled check on a live app, with its app slug and last run time;
-// the runner decides which are due.
+// Every enabled check on a live public app, with its app slug and last run
+// time; the runner decides which are due. The public edge does not serve an
+// internal app, so its checks wait until it is public (ADR-20261031144636).
 func (q *Queries) ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error) {
 	rows, err := db.Query(ctx, listRunnableSyntheticChecks)
 	if err != nil {
@@ -55785,6 +55907,7 @@ SELECT n.name AS node_name, COALESCE(o.generation, 0)::bigint AS generation, o.r
        COALESCE(o.security_revocation, false)::boolean AS security_revocation,
        COALESCE(o.managed_http, false)::boolean AS managed_http,
        COALESCE(o.managed_circuit, false)::boolean AS managed_circuit,
+       COALESCE(o.edge_header_secrets_boot = o.boot_id, false)::boolean AS edge_header_secrets,
        clock_timestamp()::timestamptz AS database_now
 FROM compute_nodes n LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
 WHERE n.active AND n.role IN ('compute-only', 'compute-node')
@@ -55805,6 +55928,7 @@ type ListServingGatewayTrafficRuntimeRow struct {
 	SecurityRevocation bool
 	ManagedHttp        bool
 	ManagedCircuit     bool
+	EdgeHeaderSecrets  bool
 	DatabaseNow        pgtype.Timestamptz
 }
 
@@ -55830,6 +55954,7 @@ func (q *Queries) ListServingGatewayTrafficRuntime(ctx context.Context, db DBTX,
 			&i.SecurityRevocation,
 			&i.ManagedHttp,
 			&i.ManagedCircuit,
+			&i.EdgeHeaderSecrets,
 			&i.DatabaseNow,
 		); err != nil {
 			return nil, err
@@ -55975,6 +56100,345 @@ func (q *Queries) ListSoonestExpiringCustomDomainCerts(ctx context.Context, db D
 	for rows.Next() {
 		var i ListSoonestExpiringCustomDomainCertsRow
 		if err := rows.Scan(&i.Domain, &i.CertExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStoredWorkflowFailurePauses = `-- name: ListStoredWorkflowFailurePauses :many
+SELECT name FROM stored_workflow_failure_guards WHERE app_id=$1 AND paused_at IS NOT NULL ORDER BY name
+`
+
+func (q *Queries) ListStoredWorkflowFailurePauses(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error) {
+	rows, err := db.Query(ctx, listStoredWorkflowFailurePauses, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStoredWorkflowFailurePolicyCandidates = `-- name: ListStoredWorkflowFailurePolicyCandidates :many
+SELECT p.app_id::text AS app_id,p.name FROM stored_workflow_failure_policies p JOIN apps a ON a.id=p.app_id
+JOIN app_resource_accounts ac ON ac.app_id = a.id
+WHERE p.enabled AND a.status<>'deleted' AND ($1::uuid IS NULL OR a.node_id=$1::uuid)
+AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+AND p.app_id::text||'/'||p.name>$2::text
+ORDER BY p.app_id::text,p.name LIMIT $3::int
+`
+
+type ListStoredWorkflowFailurePolicyCandidatesParams struct {
+	OwnerNodeID pgtype.UUID
+	AfterKey    string
+	BatchLimit  int32
+}
+
+type ListStoredWorkflowFailurePolicyCandidatesRow struct {
+	AppID string
+	Name  string
+}
+
+func (q *Queries) ListStoredWorkflowFailurePolicyCandidates(ctx context.Context, db DBTX, arg ListStoredWorkflowFailurePolicyCandidatesParams) ([]ListStoredWorkflowFailurePolicyCandidatesRow, error) {
+	rows, err := db.Query(ctx, listStoredWorkflowFailurePolicyCandidates, arg.OwnerNodeID, arg.AfterKey, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStoredWorkflowFailurePolicyCandidatesRow{}
+	for rows.Next() {
+		var i ListStoredWorkflowFailurePolicyCandidatesRow
+		if err := rows.Scan(&i.AppID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStoredWorkflowHealthFailedSteps = `-- name: ListStoredWorkflowHealthFailedSteps :many
+SELECT COALESCE(s.foreach_parent, s.step_name) AS step_name,
+       count(DISTINCT r.id)::bigint AS failed_run_count,
+       max(COALESCE(r.finished_at, r.created_at))::timestamptz AS last_failed_at
+FROM workflow_runs r
+JOIN workflow_steps s ON s.run_id=r.id
+WHERE r.app_id=$1::uuid AND r.workflow_name=$2::text
+  AND r.created_at >= $3::timestamptz
+  AND r.created_at <= $4::timestamptz
+  AND r.status IN ('failed','dead') AND s.status IN ('failed','dead')
+GROUP BY COALESCE(s.foreach_parent, s.step_name)
+ORDER BY failed_run_count DESC, step_name
+LIMIT $5::int
+`
+
+type ListStoredWorkflowHealthFailedStepsParams struct {
+	AppID         pgtype.UUID
+	WorkflowName  string
+	CreatedAfter  pgtype.Timestamptz
+	CreatedBefore pgtype.Timestamptz
+	MaxSteps      int32
+}
+
+type ListStoredWorkflowHealthFailedStepsRow struct {
+	StepName       string
+	FailedRunCount int64
+	LastFailedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListStoredWorkflowHealthFailedSteps(ctx context.Context, db DBTX, arg ListStoredWorkflowHealthFailedStepsParams) ([]ListStoredWorkflowHealthFailedStepsRow, error) {
+	rows, err := db.Query(ctx, listStoredWorkflowHealthFailedSteps,
+		arg.AppID,
+		arg.WorkflowName,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+		arg.MaxSteps,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStoredWorkflowHealthFailedStepsRow{}
+	for rows.Next() {
+		var i ListStoredWorkflowHealthFailedStepsRow
+		if err := rows.Scan(&i.StepName, &i.FailedRunCount, &i.LastFailedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStoredWorkflowHealthRecentRuns = `-- name: ListStoredWorkflowHealthRecentRuns :many
+WITH recent AS (
+    (SELECT 'latest'::text AS kind, id, status, created_at, finished_at
+     FROM workflow_runs
+     WHERE app_id=$1::uuid AND workflow_name=$2::text
+       AND created_at >= $3::timestamptz
+       AND created_at <= $4::timestamptz
+     ORDER BY created_at DESC, id DESC LIMIT 1)
+    UNION ALL
+    (SELECT 'success'::text AS kind, id, status, created_at, finished_at
+     FROM workflow_runs
+     WHERE app_id=$1::uuid AND workflow_name=$2::text
+       AND created_at >= $3::timestamptz
+       AND created_at <= $4::timestamptz AND status='succeeded'
+     ORDER BY created_at DESC, id DESC LIMIT 1)
+    UNION ALL
+    (SELECT 'failure'::text AS kind, id, status, created_at, finished_at
+     FROM workflow_runs
+     WHERE app_id=$1::uuid AND workflow_name=$2::text
+       AND created_at >= $3::timestamptz
+       AND created_at <= $4::timestamptz AND status IN ('failed','dead')
+     ORDER BY created_at DESC, id DESC LIMIT 1)
+)
+SELECT kind, id, status, created_at, finished_at FROM recent
+`
+
+type ListStoredWorkflowHealthRecentRunsParams struct {
+	AppID         pgtype.UUID
+	WorkflowName  string
+	CreatedAfter  pgtype.Timestamptz
+	CreatedBefore pgtype.Timestamptz
+}
+
+type ListStoredWorkflowHealthRecentRunsRow struct {
+	Kind       string
+	ID         pgtype.UUID
+	Status     string
+	CreatedAt  pgtype.Timestamptz
+	FinishedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListStoredWorkflowHealthRecentRuns(ctx context.Context, db DBTX, arg ListStoredWorkflowHealthRecentRunsParams) ([]ListStoredWorkflowHealthRecentRunsRow, error) {
+	rows, err := db.Query(ctx, listStoredWorkflowHealthRecentRuns,
+		arg.AppID,
+		arg.WorkflowName,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStoredWorkflowHealthRecentRunsRow{}
+	for rows.Next() {
+		var i ListStoredWorkflowHealthRecentRunsRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.ID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStoredWorkflowRevisions = `-- name: ListStoredWorkflowRevisions :many
+SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM stored_workflow_revisions
+WHERE app_id=$1 AND name=$2
+ORDER BY version DESC
+LIMIT $3 OFFSET $4
+`
+
+type ListStoredWorkflowRevisionsParams struct {
+	AppID  pgtype.UUID
+	Name   string
+	Limit  int32
+	Offset int32
+}
+
+func (q *Queries) ListStoredWorkflowRevisions(ctx context.Context, db DBTX, arg ListStoredWorkflowRevisionsParams) ([]StoredWorkflowRevision, error) {
+	rows, err := db.Query(ctx, listStoredWorkflowRevisions,
+		arg.AppID,
+		arg.Name,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StoredWorkflowRevision{}
+	for rows.Next() {
+		var i StoredWorkflowRevision
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Name,
+			&i.Version,
+			&i.Definition,
+			&i.RecordedAt,
+			&i.LegacySnapshot,
+			&i.PublishedByAccountID,
+			&i.PublishedByApiKeyID,
+			&i.CheckEvidence,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStoredWorkflows = `-- name: ListStoredWorkflows :many
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM stored_workflows WHERE app_id=$1 ORDER BY name
+`
+
+func (q *Queries) ListStoredWorkflows(ctx context.Context, db DBTX, appID pgtype.UUID) ([]StoredWorkflow, error) {
+	rows, err := db.Query(ctx, listStoredWorkflows, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StoredWorkflow{}
+	for rows.Next() {
+		var i StoredWorkflow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Name,
+			&i.Version,
+			&i.Draft,
+			&i.Published,
+			&i.PublishedVersion,
+			&i.Enabled,
+			&i.UpdatedAt,
+			&i.TestSuite,
+			&i.TestReport,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStrandedAlertRules = `-- name: ListStrandedAlertRules :many
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules r
+ WHERE r.state <> 'ok'
+   AND (NOT r.enabled OR EXISTS (SELECT 1 FROM apps a WHERE a.id = r.app_id AND a.status = 'deleted'))
+ ORDER BY r.updated_at, r.id
+ LIMIT $1::integer
+`
+
+// Rules left out of evaluation (disabled, or their app deleted) while not
+// ok: their state and open episode would otherwise stay as they were.
+func (q *Queries) ListStrandedAlertRules(ctx context.Context, db DBTX, maxRows int32) ([]AlertRule, error) {
+	rows, err := db.Query(ctx, listStrandedAlertRules, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertRule{}
+	for rows.Next() {
+		var i AlertRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Enabled,
+			&i.Metric,
+			&i.Comparison,
+			&i.Threshold,
+			&i.WindowSpec,
+			&i.FailureSource,
+			&i.WebhookUrl,
+			&i.WebhookSecretSealed,
+			&i.CooldownMinutes,
+			&i.State,
+			&i.LastFiredAt,
+			&i.LastEvaluatedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrgID,
+			&i.Action,
+			&i.PostDeployRollbackWindowSeconds,
+			&i.EventSubscriptionID,
+			&i.EdgeRuleID,
+			&i.CustomMetricName,
+			&i.SloID,
+			&i.SyntheticCheckID,
+			&i.McpMinCalls,
+			&i.McpForMinutes,
+			&i.McpReadinessScope,
+			&i.LogQuery,
+			&i.CreatedByAccountID,
+			&i.NotifyResolved,
+			&i.CustomMetricLabels,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -56697,182 +57161,6 @@ func (q *Queries) ListWarmPoolReconciliationAppIDs(ctx context.Context, db DBTX,
 			return nil, err
 		}
 		items = append(items, app_id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listWorkflowAutomationHealthFailedSteps = `-- name: ListWorkflowAutomationHealthFailedSteps :many
-SELECT COALESCE(s.foreach_parent, s.step_name) AS step_name,
-       count(DISTINCT r.id)::bigint AS failed_run_count,
-       max(COALESCE(r.finished_at, r.created_at))::timestamptz AS last_failed_at
-FROM workflow_runs r
-JOIN workflow_steps s ON s.run_id=r.id
-WHERE r.app_id=$1::uuid AND r.workflow_name=$2::text
-  AND r.created_at >= $3::timestamptz
-  AND r.created_at <= $4::timestamptz
-  AND r.status IN ('failed','dead') AND s.status IN ('failed','dead')
-GROUP BY COALESCE(s.foreach_parent, s.step_name)
-ORDER BY failed_run_count DESC, step_name
-LIMIT $5::int
-`
-
-type ListWorkflowAutomationHealthFailedStepsParams struct {
-	AppID         pgtype.UUID
-	WorkflowName  string
-	CreatedAfter  pgtype.Timestamptz
-	CreatedBefore pgtype.Timestamptz
-	MaxSteps      int32
-}
-
-type ListWorkflowAutomationHealthFailedStepsRow struct {
-	StepName       string
-	FailedRunCount int64
-	LastFailedAt   pgtype.Timestamptz
-}
-
-func (q *Queries) ListWorkflowAutomationHealthFailedSteps(ctx context.Context, db DBTX, arg ListWorkflowAutomationHealthFailedStepsParams) ([]ListWorkflowAutomationHealthFailedStepsRow, error) {
-	rows, err := db.Query(ctx, listWorkflowAutomationHealthFailedSteps,
-		arg.AppID,
-		arg.WorkflowName,
-		arg.CreatedAfter,
-		arg.CreatedBefore,
-		arg.MaxSteps,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListWorkflowAutomationHealthFailedStepsRow{}
-	for rows.Next() {
-		var i ListWorkflowAutomationHealthFailedStepsRow
-		if err := rows.Scan(&i.StepName, &i.FailedRunCount, &i.LastFailedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listWorkflowAutomationHealthRecentRuns = `-- name: ListWorkflowAutomationHealthRecentRuns :many
-WITH recent AS (
-    (SELECT 'latest'::text AS kind, id, status, created_at, finished_at
-     FROM workflow_runs
-     WHERE app_id=$1::uuid AND workflow_name=$2::text
-       AND created_at >= $3::timestamptz
-       AND created_at <= $4::timestamptz
-     ORDER BY created_at DESC, id DESC LIMIT 1)
-    UNION ALL
-    (SELECT 'success'::text AS kind, id, status, created_at, finished_at
-     FROM workflow_runs
-     WHERE app_id=$1::uuid AND workflow_name=$2::text
-       AND created_at >= $3::timestamptz
-       AND created_at <= $4::timestamptz AND status='succeeded'
-     ORDER BY created_at DESC, id DESC LIMIT 1)
-    UNION ALL
-    (SELECT 'failure'::text AS kind, id, status, created_at, finished_at
-     FROM workflow_runs
-     WHERE app_id=$1::uuid AND workflow_name=$2::text
-       AND created_at >= $3::timestamptz
-       AND created_at <= $4::timestamptz AND status IN ('failed','dead')
-     ORDER BY created_at DESC, id DESC LIMIT 1)
-)
-SELECT kind, id, status, created_at, finished_at FROM recent
-`
-
-type ListWorkflowAutomationHealthRecentRunsParams struct {
-	AppID         pgtype.UUID
-	WorkflowName  string
-	CreatedAfter  pgtype.Timestamptz
-	CreatedBefore pgtype.Timestamptz
-}
-
-type ListWorkflowAutomationHealthRecentRunsRow struct {
-	Kind       string
-	ID         pgtype.UUID
-	Status     string
-	CreatedAt  pgtype.Timestamptz
-	FinishedAt pgtype.Timestamptz
-}
-
-func (q *Queries) ListWorkflowAutomationHealthRecentRuns(ctx context.Context, db DBTX, arg ListWorkflowAutomationHealthRecentRunsParams) ([]ListWorkflowAutomationHealthRecentRunsRow, error) {
-	rows, err := db.Query(ctx, listWorkflowAutomationHealthRecentRuns,
-		arg.AppID,
-		arg.WorkflowName,
-		arg.CreatedAfter,
-		arg.CreatedBefore,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListWorkflowAutomationHealthRecentRunsRow{}
-	for rows.Next() {
-		var i ListWorkflowAutomationHealthRecentRunsRow
-		if err := rows.Scan(
-			&i.Kind,
-			&i.ID,
-			&i.Status,
-			&i.CreatedAt,
-			&i.FinishedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listWorkflowAutomationRevisions = `-- name: ListWorkflowAutomationRevisions :many
-SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM workflow_automation_revisions
-WHERE app_id=$1 AND name=$2
-ORDER BY version DESC
-LIMIT $3 OFFSET $4
-`
-
-type ListWorkflowAutomationRevisionsParams struct {
-	AppID  pgtype.UUID
-	Name   string
-	Limit  int32
-	Offset int32
-}
-
-func (q *Queries) ListWorkflowAutomationRevisions(ctx context.Context, db DBTX, arg ListWorkflowAutomationRevisionsParams) ([]WorkflowAutomationRevision, error) {
-	rows, err := db.Query(ctx, listWorkflowAutomationRevisions,
-		arg.AppID,
-		arg.Name,
-		arg.Limit,
-		arg.Offset,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []WorkflowAutomationRevision{}
-	for rows.Next() {
-		var i WorkflowAutomationRevision
-		if err := rows.Scan(
-			&i.AppID,
-			&i.Name,
-			&i.Version,
-			&i.Definition,
-			&i.RecordedAt,
-			&i.LegacySnapshot,
-			&i.PublishedByAccountID,
-			&i.PublishedByApiKeyID,
-			&i.CheckEvidence,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -59801,7 +60089,7 @@ func (q *Queries) LockEnvironmentQualificationNode(ctx context.Context, db DBTX,
 }
 
 const lockEnvironmentQualificationRuntimeInstance = `-- name: LockEnvironmentQualificationRuntimeInstance :one
-SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, booked_cpu_millicores FROM instances WHERE id=$1::uuid FOR UPDATE
+SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, booked_cpu_millicores, booked_vcpu FROM instances WHERE id=$1::uuid FOR UPDATE
 `
 
 func (q *Queries) LockEnvironmentQualificationRuntimeInstance(ctx context.Context, db DBTX, id pgtype.UUID) (Instance, error) {
@@ -59841,6 +60129,7 @@ func (q *Queries) LockEnvironmentQualificationRuntimeInstance(ctx context.Contex
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
 		&i.BookedCpuMillicores,
+		&i.BookedVcpu,
 	)
 	return i, err
 }
@@ -62245,6 +62534,7 @@ const lockRetainedRollbackDeployment = `-- name: LockRetainedRollbackDeployment 
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND d.deleted_at IS NULL
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
+AND d.last_auto_rollback_reason IS NULL
 AND d.id<>$3::uuid
 AND NOT d.environment_workload_held
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
@@ -62260,6 +62550,8 @@ type LockRetainedRollbackDeploymentParams struct {
 	CurrentDeploymentID pgtype.UUID
 }
 
+// A release an automatic guard reverted (ADR-625, ADR-1445) is never an
+// implicit target either; `rollback --to` can still name it.
 func (q *Queries) LockRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LockRetainedRollbackDeploymentParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, lockRetainedRollbackDeployment, arg.AppID, arg.Scope, arg.CurrentDeploymentID)
 	var id pgtype.UUID
@@ -63688,19 +63980,19 @@ func (q *Queries) LockUDPListenerAppOwner(ctx context.Context, db DBTX, appID st
 	return account_id, err
 }
 
-const lockWebhookAutomationEndpoint = `-- name: LockWebhookAutomationEndpoint :one
+const lockWebhookWorkflowEndpoint = `-- name: LockWebhookWorkflowEndpoint :one
 SELECT id, app_id, account_id, name, provider, token_hash, signing_secret_sealed, delivery_path, enabled, created_at, updated_at, previous_signing_secret_sealed, previous_signing_secret_expires_at FROM inbound_webhook_endpoints
 WHERE id=$1 AND app_id=$2 AND account_id=$3 FOR UPDATE
 `
 
-type LockWebhookAutomationEndpointParams struct {
+type LockWebhookWorkflowEndpointParams struct {
 	ID        pgtype.UUID
 	AppID     pgtype.UUID
 	AccountID pgtype.UUID
 }
 
-func (q *Queries) LockWebhookAutomationEndpoint(ctx context.Context, db DBTX, arg LockWebhookAutomationEndpointParams) (InboundWebhookEndpoint, error) {
-	row := db.QueryRow(ctx, lockWebhookAutomationEndpoint, arg.ID, arg.AppID, arg.AccountID)
+func (q *Queries) LockWebhookWorkflowEndpoint(ctx context.Context, db DBTX, arg LockWebhookWorkflowEndpointParams) (InboundWebhookEndpoint, error) {
+	row := db.QueryRow(ctx, lockWebhookWorkflowEndpoint, arg.ID, arg.AppID, arg.AccountID)
 	var i InboundWebhookEndpoint
 	err := row.Scan(
 		&i.ID,
@@ -65172,7 +65464,7 @@ WHERE i.id = $7::uuid AND i.state = 'migrating'
     AND i.node_id = $2::uuid AND i.lease_token = $8::text
     AND (NOT $9::boolean OR i.wake_id IS NOT DISTINCT FROM $10::uuid)
     AND (NOT $11::boolean OR EXISTS (SELECT 1 FROM deployments d WHERE d.id = i.deployment_id AND d.scope = $12::text))
-RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.application_standard_boot_token, i.application_standard_promotion_token, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu, i.booked_cpu_millicores
+RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.application_standard_boot_token, i.application_standard_promotion_token, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu, i.booked_cpu_millicores, i.booked_vcpu
 `
 
 type MigrateInstanceRuntimeConfigParams struct {
@@ -65240,6 +65532,7 @@ func (q *Queries) MigrateInstanceRuntimeConfig(ctx context.Context, db DBTX, arg
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
 		&i.BookedCpuMillicores,
+		&i.BookedVcpu,
 	)
 	return i, err
 }
@@ -65446,17 +65739,6 @@ func (q *Queries) MigrationTaskIsContract(ctx context.Context, db DBTX, arg Migr
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
-}
-
-const nextAutomationVersion = `-- name: NextAutomationVersion :one
-SELECT nextval('automation_definition_versions')::bigint
-`
-
-func (q *Queries) NextAutomationVersion(ctx context.Context, db DBTX) (int64, error) {
-	row := db.QueryRow(ctx, nextAutomationVersion)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
 }
 
 const nextCustomerOperationWorkflowRun = `-- name: NextCustomerOperationWorkflowRun :one
@@ -65667,6 +65949,17 @@ func (q *Queries) NextFairDueWorkflowRun(ctx context.Context, db DBTX, arg NextF
 		&i.WorkflowName,
 	)
 	return i, err
+}
+
+const nextStoredWorkflowVersion = `-- name: NextStoredWorkflowVersion :one
+SELECT nextval('stored_workflow_versions')::bigint
+`
+
+func (q *Queries) NextStoredWorkflowVersion(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRow(ctx, nextStoredWorkflowVersion)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const nodeGet = `-- name: NodeGet :one
@@ -66678,6 +66971,71 @@ func (q *Queries) ObjectBucketAccessGrantUpsert(ctx context.Context, db DBTX, ar
 	return result.RowsAffected(), nil
 }
 
+const objectBucketAllVersionStartInventory = `-- name: ObjectBucketAllVersionStartInventory :exec
+INSERT INTO object_storage_capacity_reconciliations(id,bucket_id,state,deadline_at,finished_at,inventory_scope,inventory_verified)
+VALUES($1,$2,'completed',now(),now(),'all_versions',true)
+`
+
+type ObjectBucketAllVersionStartInventoryParams struct {
+	ID       pgtype.UUID
+	BucketID pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketAllVersionStartInventory(ctx context.Context, db DBTX, arg ObjectBucketAllVersionStartInventoryParams) error {
+	_, err := db.Exec(ctx, objectBucketAllVersionStartInventory, arg.ID, arg.BucketID)
+	return err
+}
+
+const objectBucketAllVersionStartUsage = `-- name: ObjectBucketAllVersionStartUsage :exec
+INSERT INTO object_storage_bucket_usage(bucket_id,observed_at,attempt_at,inventory_scope)
+VALUES($1,now(),now(),'all_versions')
+`
+
+func (q *Queries) ObjectBucketAllVersionStartUsage(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectBucketAllVersionStartUsage, bucketID)
+	return err
+}
+
+const objectBucketAllVersionStartVersioning = `-- name: ObjectBucketAllVersionStartVersioning :exec
+INSERT INTO object_bucket_versioning(bucket_id,desired_status,observed_status,state,revision,versions_required,propagation_until,capacity_job_id)
+VALUES($1,'Suspended','Suspended','ready',1,true,now(),$2)
+`
+
+type ObjectBucketAllVersionStartVersioningParams struct {
+	BucketID      pgtype.UUID
+	CapacityJobID pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketAllVersionStartVersioning(ctx context.Context, db DBTX, arg ObjectBucketAllVersionStartVersioningParams) error {
+	_, err := db.Exec(ctx, objectBucketAllVersionStartVersioning, arg.BucketID, arg.CapacityJobID)
+	return err
+}
+
+const objectBucketAllVersionStartable = `-- name: ObjectBucketAllVersionStartable :one
+SELECT (EXISTS(SELECT 1 FROM object_buckets b WHERE b.id=$1::uuid AND b.account_id=$2::uuid AND b.state='provisioning')
+ AND NOT EXISTS(SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=$1::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_storage_write_admissions WHERE bucket_id=$1::uuid))::boolean AS startable
+`
+
+type ObjectBucketAllVersionStartableParams struct {
+	BucketID  pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// ADR-20261107214517: a bucket whose provider reports never-versioned as
+// Suspended (GCS) starts in all-version accounting while it is still
+// provisioning and provably empty, so no customer request meets the
+// conversion fence. Startable only before any accounting row exists.
+func (q *Queries) ObjectBucketAllVersionStartable(ctx context.Context, db DBTX, arg ObjectBucketAllVersionStartableParams) (bool, error) {
+	row := db.QueryRow(ctx, objectBucketAllVersionStartable, arg.BucketID, arg.AccountID)
+	var startable bool
+	err := row.Scan(&startable)
+	return startable, err
+}
+
 const objectBucketByName = `-- name: ObjectBucketByName :one
 SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id, org_id FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
 `
@@ -67303,6 +67661,22 @@ type ObjectBucketLockAppParams struct {
 
 func (q *Queries) ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBucketLockAppParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, objectBucketLockApp, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectBucketLockProvisioning = `-- name: ObjectBucketLockProvisioning :one
+SELECT id FROM object_buckets WHERE id=$1 AND account_id=$2 AND state='provisioning' FOR UPDATE
+`
+
+type ObjectBucketLockProvisioningParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketLockProvisioning(ctx context.Context, db DBTX, arg ObjectBucketLockProvisioningParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectBucketLockProvisioning, arg.ID, arg.AccountID)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -71801,6 +72175,7 @@ func (q *Queries) ObjectS3BindingRevokeLock(ctx context.Context, db DBTX, arg Ob
 
 const objectS3BindingSecretCount = `-- name: ObjectS3BindingSecretCount :one
 SELECT count(*) FROM app_secrets WHERE account_id=$1 AND app_id=$2
+  AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL
 `
 
 type ObjectS3BindingSecretCountParams struct {
@@ -78027,7 +78402,7 @@ func (q *Queries) PublishDeploymentRegistrySidecarRootfs(ctx context.Context, db
 const publishEnvironmentQualificationRuntime = `-- name: PublishEnvironmentQualificationRuntime :one
 UPDATE instances SET state='running',started_at=clock_timestamp(),netns=$1::text,
  host_ip=$2::text::inet,guest_uid=$3::integer
-WHERE id=$4::uuid AND state='cold_booting' RETURNING id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, booked_cpu_millicores
+WHERE id=$4::uuid AND state='cold_booting' RETURNING id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, booked_cpu_millicores, booked_vcpu
 `
 
 type PublishEnvironmentQualificationRuntimeParams struct {
@@ -78079,6 +78454,7 @@ func (q *Queries) PublishEnvironmentQualificationRuntime(ctx context.Context, db
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
 		&i.BookedCpuMillicores,
+		&i.BookedVcpu,
 	)
 	return i, err
 }
@@ -78176,7 +78552,7 @@ UPDATE instances i SET netns = $1, host_ip = $2::text::inet,
     guest_uid = $3, started_at = clock_timestamp(), state = 'running'
 WHERE i.id = $4::uuid AND i.state = $5::text AND i.wake_id = $6::uuid
 AND EXISTS (SELECT 1 FROM deployments d WHERE d.id = i.deployment_id AND d.scope = $7::text)
-RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.application_standard_boot_token, i.application_standard_promotion_token, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu, i.booked_cpu_millicores
+RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.application_standard_boot_token, i.application_standard_promotion_token, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu, i.booked_cpu_millicores, i.booked_vcpu
 `
 
 type PublishInstanceRuntimeConfigParams struct {
@@ -78234,6 +78610,7 @@ func (q *Queries) PublishInstanceRuntimeConfig(ctx context.Context, db DBTX, arg
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
 		&i.BookedCpuMillicores,
+		&i.BookedVcpu,
 	)
 	return i, err
 }
@@ -78938,6 +79315,43 @@ func (q *Queries) PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg
 		arg.NotAfter,
 		arg.ListenerID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const queueAlertChannelStandDowns = `-- name: QueueAlertChannelStandDowns :execrows
+WITH rule AS (
+    SELECT r.id, r.account_id, r.app_id, r.name, r.metric FROM alert_rules r WHERE r.id = $3::uuid
+), owed AS (
+    SELECT b.channel_id FROM alert_rule_channels b
+     WHERE b.rule_id = $3::uuid
+       AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $3::uuid AND e.resolved_at IS NULL)
+    UNION
+    SELECT x.channel_id FROM alert_channel_resolve_retries x WHERE x.rule_id = $3::uuid
+), moved AS (
+    DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = $3::uuid
+)
+INSERT INTO alert_channel_stand_downs
+    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at)
+SELECT rule.id, owed.channel_id, rule.account_id, rule.app_id, rule.name, rule.metric,
+       $1::text, $2::timestamptz, $2::timestamptz
+  FROM rule CROSS JOIN owed
+ON CONFLICT (rule_id, channel_id) DO NOTHING
+`
+
+type QueueAlertChannelStandDownsParams struct {
+	Reason string
+	At     pgtype.Timestamptz
+	RuleID pgtype.UUID
+}
+
+// A rule whose episode ends without it recovering owes each bound channel a
+// recovery notice (ADR-20261104142830): the channels of its open episode,
+// and those whose recovery notice is still being retried, which move here.
+func (q *Queries) QueueAlertChannelStandDowns(ctx context.Context, db DBTX, arg QueueAlertChannelStandDownsParams) (int64, error) {
+	result, err := db.Exec(ctx, queueAlertChannelStandDowns, arg.Reason, arg.At, arg.RuleID)
 	if err != nil {
 		return 0, err
 	}
@@ -82374,8 +82788,8 @@ SELECT jsonb_build_object(
  'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=$1::uuid),
  'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=$1::uuid),
  'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=$1::uuid),
- 'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=$1::uuid),
- 'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=$1::uuid),
+ 'stored_workflow_live_suites.deployment_id', (SELECT count(*) FROM stored_workflow_live_suites WHERE deployment_id=$1::uuid),
+ 'stored_workflow_live_verifications.deployment_id', (SELECT count(*) FROM stored_workflow_live_verifications WHERE deployment_id=$1::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=$1::uuid::text),
  'release_freezes.source_deployment_id', (SELECT count(*) FROM release_freezes WHERE source_deployment_id=$1::uuid),
  'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=$1::uuid),
@@ -82397,6 +82811,7 @@ SELECT jsonb_build_object(
  'project_environment_promotion_workloads.restored_target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE restored_target_deployment_id=$1::uuid::text),
  'project_environment_promotion_workloads.source_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE source_deployment_id=$1::uuid::text),
  'project_environment_promotion_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE target_deployment_id=$1::uuid::text),
+ 'request_analytics_hours.deployment_id', (SELECT count(*) FROM request_analytics_hours WHERE deployment_id=$1::uuid),
  'request_analytics_minutes.deployment_id', (SELECT count(*) FROM request_analytics_minutes WHERE deployment_id=$1::uuid),
  'release_outcome_checks.deployment_id', (SELECT count(*) FROM release_outcome_checks WHERE deployment_id=$1::uuid),
  'request_audit_events.deployment_id', (SELECT count(*) FROM request_audit_events WHERE deployment_id=$1::uuid),
@@ -82946,7 +83361,7 @@ func (q *Queries) ReadCustomDomainProbeObservation(ctx context.Context, db DBTX,
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved FROM alert_rules WHERE id=$1
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules WHERE id=$1
 `
 
 func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
@@ -82985,6 +83400,7 @@ func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.
 		&i.LogQuery,
 		&i.CreatedByAccountID,
 		&i.NotifyResolved,
+		&i.CustomMetricLabels,
 	)
 	return i, err
 }
@@ -93218,21 +93634,21 @@ func (q *Queries) ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]Reap
 	return items, nil
 }
 
-const rearmTenantAutomationSchedules = `-- name: RearmTenantAutomationSchedules :exec
+const rearmTenantStoredWorkflowSchedules = `-- name: RearmTenantStoredWorkflowSchedules :exec
 UPDATE platform_tenant_workflow_schedule_cursors
 SET deployment_id=NULL,scheduled_for=NULL,status='armed',last_run_id=NULL
 WHERE app_id=$1::uuid AND workflow_name=$2::text
 `
 
-type RearmTenantAutomationSchedulesParams struct {
+type RearmTenantStoredWorkflowSchedulesParams struct {
 	AppID        pgtype.UUID
 	WorkflowName string
 }
 
 // Preserve tenant cadence, version and admission priority, but invalidate the
 // evaluated deployment so publish/pause/resume cannot replay the paused interval.
-func (q *Queries) RearmTenantAutomationSchedules(ctx context.Context, db DBTX, arg RearmTenantAutomationSchedulesParams) error {
-	_, err := db.Exec(ctx, rearmTenantAutomationSchedules, arg.AppID, arg.WorkflowName)
+func (q *Queries) RearmTenantStoredWorkflowSchedules(ctx context.Context, db DBTX, arg RearmTenantStoredWorkflowSchedulesParams) error {
+	_, err := db.Exec(ctx, rearmTenantStoredWorkflowSchedules, arg.AppID, arg.WorkflowName)
 	return err
 }
 
@@ -93315,6 +93731,63 @@ func (q *Queries) ReconcileManagedPostgresLegacyResource(ctx context.Context, db
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordAlertChannelResolveRetry = `-- name: RecordAlertChannelResolveRetry :exec
+INSERT INTO alert_channel_resolve_retries (rule_id, channel_id, observed, resolved_at, attempts, next_attempt_at, last_error)
+VALUES ($1::uuid, $2::uuid, $3::double precision,
+        $4::timestamptz, 1, $5::timestamptz, $6::text)
+ON CONFLICT (rule_id, channel_id) DO UPDATE
+   SET attempts = alert_channel_resolve_retries.attempts + 1,
+       next_attempt_at = EXCLUDED.next_attempt_at,
+       last_error = EXCLUDED.last_error
+`
+
+type RecordAlertChannelResolveRetryParams struct {
+	RuleID        pgtype.UUID
+	ChannelID     pgtype.UUID
+	Observed      float64
+	ResolvedAt    pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+}
+
+// A failed recovery notice for one channel (ADR-20261031144636). The first
+// failure keeps the observation and time it reports; each later one counts
+// an attempt and moves the next try.
+func (q *Queries) RecordAlertChannelResolveRetry(ctx context.Context, db DBTX, arg RecordAlertChannelResolveRetryParams) error {
+	_, err := db.Exec(ctx, recordAlertChannelResolveRetry,
+		arg.RuleID,
+		arg.ChannelID,
+		arg.Observed,
+		arg.ResolvedAt,
+		arg.NextAttemptAt,
+		arg.LastError,
+	)
+	return err
+}
+
+const recordAlertChannelStandDownAttempt = `-- name: RecordAlertChannelStandDownAttempt :exec
+UPDATE alert_channel_stand_downs
+   SET attempts = attempts + 1, next_attempt_at = $1::timestamptz, last_error = $2::text
+ WHERE rule_id = $3::uuid AND channel_id = $4::uuid
+`
+
+type RecordAlertChannelStandDownAttemptParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+	RuleID        pgtype.UUID
+	ChannelID     pgtype.UUID
+}
+
+func (q *Queries) RecordAlertChannelStandDownAttempt(ctx context.Context, db DBTX, arg RecordAlertChannelStandDownAttemptParams) error {
+	_, err := db.Exec(ctx, recordAlertChannelStandDownAttempt,
+		arg.NextAttemptAt,
+		arg.LastError,
+		arg.RuleID,
+		arg.ChannelID,
+	)
+	return err
 }
 
 const recordAppSecretDeliveryFailure = `-- name: RecordAppSecretDeliveryFailure :execrows
@@ -96598,7 +97071,8 @@ WHERE ($2::bigint = 0 OR EXISTS (
 ON CONFLICT (node_name) DO UPDATE SET
     generation = EXCLUDED.generation, boot_id = EXCLUDED.boot_id, reported_at = NULL,
     retry_enabled = false, rate_counter_mode = 'unwired', retry_counter_mode = 'unwired', retry_backend_id = '',
-    deadline_signing = false, policy_snapshot = false, security_revocation = false, managed_http = false, managed_circuit = false
+    deadline_signing = false, policy_snapshot = false, security_revocation = false, managed_http = false, managed_circuit = false,
+    edge_header_secrets_boot = NULL
 WHERE gateway_traffic_runtime_observations.generation = $2::bigint
   AND gateway_traffic_runtime_observations.boot_id <> EXCLUDED.boot_id
 RETURNING generation
@@ -97849,6 +98323,28 @@ func (q *Queries) ReplaceDatabaseStandby(ctx context.Context, db DBTX, arg Repla
 	return result.RowsAffected(), nil
 }
 
+const replaceEdgeRuleSetVersionRules = `-- name: ReplaceEdgeRuleSetVersionRules :execrows
+UPDATE edge_rule_set_versions SET rules = $1::jsonb,
+    rules_sha256 = encode(sha256(convert_to($1::jsonb::text, 'UTF8')), 'hex')
+WHERE id = $2::bigint AND rules_sha256 = $3::text
+`
+
+type ReplaceEdgeRuleSetVersionRulesParams struct {
+	Rules          []byte
+	ID             int64
+	PreviousSha256 string
+}
+
+// The digest is computed as edge_rules_record_set_version computes it, and
+// the row is replaced only if no one changed it since it was read.
+func (q *Queries) ReplaceEdgeRuleSetVersionRules(ctx context.Context, db DBTX, arg ReplaceEdgeRuleSetVersionRulesParams) (int64, error) {
+	result, err := db.Exec(ctx, replaceEdgeRuleSetVersionRules, arg.Rules, arg.ID, arg.PreviousSha256)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const replaceProductionAppWorkloadSettings = `-- name: ReplaceProductionAppWorkloadSettings :exec
 with config as (select (json_populate_record(null::apps, $2::json)).*)
 		update apps a set visibility = c.visibility, type = c.type, runtime = nullif(c.runtime, ''),
@@ -97988,8 +98484,9 @@ UPDATE gateway_traffic_runtime_observations SET reported_at = clock_timestamp(),
     policy_snapshot = $6::boolean,
     security_revocation = $7::boolean,
     managed_http = $8::boolean,
-    managed_circuit = $9::boolean
-WHERE node_name = $10::text AND generation = $11::bigint AND boot_id = $12::uuid
+    managed_circuit = $9::boolean,
+    edge_header_secrets_boot = CASE WHEN $10::boolean THEN boot_id END
+WHERE node_name = $11::text AND generation = $12::bigint AND boot_id = $13::uuid
 `
 
 type ReportGatewayTrafficRuntimeParams struct {
@@ -98002,6 +98499,7 @@ type ReportGatewayTrafficRuntimeParams struct {
 	SecurityRevocation bool
 	ManagedHttp        bool
 	ManagedCircuit     bool
+	EdgeHeaderSecrets  bool
 	NodeName           string
 	Generation         int64
 	BootID             pgtype.UUID
@@ -98018,6 +98516,7 @@ func (q *Queries) ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg 
 		arg.SecurityRevocation,
 		arg.ManagedHttp,
 		arg.ManagedCircuit,
+		arg.EdgeHeaderSecrets,
 		arg.NodeName,
 		arg.Generation,
 		arg.BootID,
@@ -99629,7 +100128,9 @@ WITH weighted AS (
     SELECT latency_ms,
            SUM(count::bigint) AS requests,
            SUM(count::bigint) FILTER (WHERE status >= 500 AND status < 600) AS server_errors,
-           SUM(count::bigint) FILTER (WHERE cold_boot) AS cold_boot_requests
+           SUM(count::bigint) FILTER (WHERE cold_boot) AS cold_boot_requests,
+           COALESCE(SUM(count::bigint) FILTER (WHERE NOT long_lived), 0) AS latency_requests,
+           COALESCE(SUM(count::bigint) FILTER (WHERE cold_boot AND NOT long_lived), 0) AS cold_boot_latency_requests
       FROM request_telemetry
      WHERE app_id = $1::uuid
        AND deployment_id = $2::uuid
@@ -99655,16 +100156,16 @@ WITH weighted AS (
              requests,
              server_errors,
              cold_boot_requests,
-             SUM(requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
-             SUM(requests) OVER () AS total,
-             SUM(cold_boot_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cold_boot_cumulative,
-             SUM(cold_boot_requests) OVER () AS cold_boot_total
+             SUM(latency_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+             SUM(latency_requests) OVER () AS total,
+             SUM(cold_boot_latency_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cold_boot_cumulative,
+             SUM(cold_boot_latency_requests) OVER () AS cold_boot_total
         FROM weighted
 ), summary AS (
     SELECT COALESCE(SUM(requests), 0)::bigint AS requests,
            COALESCE(SUM(server_errors), 0)::bigint AS server_errors,
            COALESCE(
-               MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint),
+               MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint AND total > 0),
                0
            )::double precision AS p95_latency_ms,
            COALESCE(SUM(cold_boot_requests), 0)::bigint AS cold_boot_requests,
@@ -99708,7 +100209,9 @@ type RequestTelemetryCircuitBreakerSummaryRow struct {
 // Bounded candidate/stable health summary for the deployment circuit breaker.
 // `count` weights collapsed telemetry rows; compute request and 5xx totals,
 // overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
-// only one row.
+// only one row. A long-lived session's duration (WebSocket, event or gRPC
+// stream) is not a request latency: it counts as a request and a 5xx but stays
+// out of both percentiles (ADR-20261028110044 amendment 7).
 func (q *Queries) RequestTelemetryCircuitBreakerSummary(ctx context.Context, db DBTX, arg RequestTelemetryCircuitBreakerSummaryParams) (RequestTelemetryCircuitBreakerSummaryRow, error) {
 	row := db.QueryRow(ctx, requestTelemetryCircuitBreakerSummary,
 		arg.AppID,
@@ -99869,6 +100372,62 @@ func (q *Queries) RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, ar
 	for rows.Next() {
 		var i RequestTelemetryErrorsByRouteRow
 		if err := rows.Scan(&i.Route, &i.Requests, &i.ErrorRequests); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requestTelemetryLatencyWeightsByRoute = `-- name: RequestTelemetryLatencyWeightsByRoute :many
+SELECT route,
+       latency_ms,
+       SUM(GREATEST(count, 1)::bigint)::bigint AS requests
+FROM request_telemetry
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+  AND NOT platform_refusal AND NOT deployment_pinned AND NOT long_lived AND NOT cold_boot
+GROUP BY route, latency_ms
+`
+
+type RequestTelemetryLatencyWeightsByRouteParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+}
+
+type RequestTelemetryLatencyWeightsByRouteRow struct {
+	Route     string
+	LatencyMs int32
+	Requests  int64
+}
+
+// The regression detector's affected-request count: the requests each
+// latency bucket represents, per route, over the whole window and in the
+// regression view. A newest-rows drilldown capped at 10k rows across every
+// route undercounted busy apps, so a real regression missed the 100-request
+// floor. latency_ms is a bounded bucket, so the result is small per route.
+func (q *Queries) RequestTelemetryLatencyWeightsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryLatencyWeightsByRouteParams) ([]RequestTelemetryLatencyWeightsByRouteRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryLatencyWeightsByRoute,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryLatencyWeightsByRouteRow{}
+	for rows.Next() {
+		var i RequestTelemetryLatencyWeightsByRouteRow
+		if err := rows.Scan(&i.Route, &i.LatencyMs, &i.Requests); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -100553,6 +101112,71 @@ func (q *Queries) ResolvePublicProjectRelease(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const resolveRegressionObservationsNotSeenSince = `-- name: ResolveRegressionObservationsNotSeenSince :many
+UPDATE debug_regression_observations
+SET state = 'resolved',
+    resolved_at = COALESCE(resolved_at, now())
+WHERE app_id = $1
+  AND last_detected_at < $2
+  AND state <> 'resolved'
+RETURNING app_id, deployment_id, route,
+          p95_ms, p95_base_ms, affected_count,
+          regression_factor, first_detected_at, last_detected_at,
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count, review_version
+`
+
+type ResolveRegressionObservationsNotSeenSinceParams struct {
+	AppID          pgtype.UUID
+	LastDetectedAt pgtype.Timestamptz
+}
+
+// An app's complete detector pass reconfirms every regression it still sees
+// (UpsertRegressionObservation stamps last_detected_at = now()); whatever of
+// that app it did not reconfirm is no longer regressed, after a fix or a
+// rollback included. Resolving here, rather than 24 hours later through
+// ResolveStaleRegressionObservations, keeps the banner, status and the
+// resolved webhook current. $2 is the pass start (with clock slack).
+func (q *Queries) ResolveRegressionObservationsNotSeenSince(ctx context.Context, db DBTX, arg ResolveRegressionObservationsNotSeenSinceParams) ([]DebugRegressionObservation, error) {
+	rows, err := db.Query(ctx, resolveRegressionObservationsNotSeenSince, arg.AppID, arg.LastDetectedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DebugRegressionObservation{}
+	for rows.Next() {
+		var i DebugRegressionObservation
+		if err := rows.Scan(
+			&i.AppID,
+			&i.DeploymentID,
+			&i.Route,
+			&i.P95Ms,
+			&i.P95BaseMs,
+			&i.AffectedCount,
+			&i.RegressionFactor,
+			&i.FirstDetectedAt,
+			&i.LastDetectedAt,
+			&i.State,
+			&i.AcknowledgedAt,
+			&i.DismissedUntil,
+			&i.ResolvedAt,
+			&i.SuspectedDependency,
+			&i.Kind,
+			&i.ErrorRatePct,
+			&i.ErrorRateBasePct,
+			&i.ErrorCount,
+			&i.ReviewVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const resolveRetainedProjectRelease = `-- name: ResolveRetainedProjectRelease :one
 SELECT rs.id::text AS release_id,coalesce(rm.deployment_id::text,'')::text AS deployment_id
 FROM apps a JOIN project_release_sets rs ON rs.project_id=a.project_id AND rs.account_id=a.account_id
@@ -100761,17 +101385,17 @@ func (q *Queries) RestrictApplicationStandardWorkerEvidence(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
-const resumeAutomationFailurePause = `-- name: ResumeAutomationFailurePause :exec
+const resumeStoredWorkflowFailurePause = `-- name: ResumeStoredWorkflowFailurePause :exec
 WITH changed AS (
- UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=NULL,monitoring_since=clock_timestamp()
+ UPDATE stored_workflow_failure_guards SET generation=generation+1,paused_at=NULL,monitoring_since=clock_timestamp()
  WHERE app_id=$5::uuid AND name=$6::text AND paused_at IS NOT NULL RETURNING app_id, name, generation, monitoring_since, paused_at
 )
-INSERT INTO workflow_automation_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version,actor_account_id)
+INSERT INTO stored_workflow_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version,actor_account_id)
 SELECT app_id,name,generation,'resumed','operator_resume',monitoring_since,$1::bigint,$2::bigint,
  $3::bigint,$4::uuid FROM changed
 `
 
-type ResumeAutomationFailurePauseParams struct {
+type ResumeStoredWorkflowFailurePauseParams struct {
 	Failures       int64
 	CompletedRuns  int64
 	PolicyVersion  int64
@@ -100780,8 +101404,8 @@ type ResumeAutomationFailurePauseParams struct {
 	Name           string
 }
 
-func (q *Queries) ResumeAutomationFailurePause(ctx context.Context, db DBTX, arg ResumeAutomationFailurePauseParams) error {
-	_, err := db.Exec(ctx, resumeAutomationFailurePause,
+func (q *Queries) ResumeStoredWorkflowFailurePause(ctx context.Context, db DBTX, arg ResumeStoredWorkflowFailurePauseParams) error {
+	_, err := db.Exec(ctx, resumeStoredWorkflowFailurePause,
 		arg.Failures,
 		arg.CompletedRuns,
 		arg.PolicyVersion,
@@ -103788,69 +104412,6 @@ func (q *Queries) SaveApplicationStandardLocalIntent(ctx context.Context, db DBT
 	return result.RowsAffected(), nil
 }
 
-const saveAutomation = `-- name: SaveAutomation :exec
-INSERT INTO workflow_automation_definitions(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
- published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at,
- test_suite=excluded.test_suite,test_report=excluded.test_report
-`
-
-type SaveAutomationParams struct {
-	AppID            pgtype.UUID
-	Name             string
-	Version          int64
-	Draft            []byte
-	Published        []byte
-	PublishedVersion int64
-	Enabled          bool
-	UpdatedAt        pgtype.Timestamptz
-	TestSuite        []byte
-	TestReport       []byte
-}
-
-func (q *Queries) SaveAutomation(ctx context.Context, db DBTX, arg SaveAutomationParams) error {
-	_, err := db.Exec(ctx, saveAutomation,
-		arg.AppID,
-		arg.Name,
-		arg.Version,
-		arg.Draft,
-		arg.Published,
-		arg.PublishedVersion,
-		arg.Enabled,
-		arg.UpdatedAt,
-		arg.TestSuite,
-		arg.TestReport,
-	)
-	return err
-}
-
-const saveAutomationTestReport = `-- name: SaveAutomationTestReport :execrows
-UPDATE workflow_automation_definitions SET test_report=$4
-WHERE app_id=$1 AND name=$2 AND version=$3
-`
-
-type SaveAutomationTestReportParams struct {
-	AppID      pgtype.UUID
-	Name       string
-	Version    int64
-	TestReport []byte
-}
-
-// Observation only: suite/definition changes advance version through SaveAutomation.
-func (q *Queries) SaveAutomationTestReport(ctx context.Context, db DBTX, arg SaveAutomationTestReportParams) (int64, error) {
-	result, err := db.Exec(ctx, saveAutomationTestReport,
-		arg.AppID,
-		arg.Name,
-		arg.Version,
-		arg.TestReport,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const saveCheckedRollback = `-- name: SaveCheckedRollback :exec
 UPDATE deployment_rollback_operations SET status=$1,receipt=$2::jsonb || jsonb_build_object('_release_review',receipt->'_release_review'),updated_at=clock_timestamp()
  WHERE id=$3
@@ -104419,7 +104980,70 @@ func (q *Queries) SaveSnapshotPrimeHandoff(ctx context.Context, db DBTX, arg Sav
 	return result.RowsAffected(), nil
 }
 
-const saveWebhookAutomationBinding = `-- name: SaveWebhookAutomationBinding :one
+const saveStoredWorkflow = `-- name: SaveStoredWorkflow :exec
+INSERT INTO stored_workflows(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
+ published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at,
+ test_suite=excluded.test_suite,test_report=excluded.test_report
+`
+
+type SaveStoredWorkflowParams struct {
+	AppID            pgtype.UUID
+	Name             string
+	Version          int64
+	Draft            []byte
+	Published        []byte
+	PublishedVersion int64
+	Enabled          bool
+	UpdatedAt        pgtype.Timestamptz
+	TestSuite        []byte
+	TestReport       []byte
+}
+
+func (q *Queries) SaveStoredWorkflow(ctx context.Context, db DBTX, arg SaveStoredWorkflowParams) error {
+	_, err := db.Exec(ctx, saveStoredWorkflow,
+		arg.AppID,
+		arg.Name,
+		arg.Version,
+		arg.Draft,
+		arg.Published,
+		arg.PublishedVersion,
+		arg.Enabled,
+		arg.UpdatedAt,
+		arg.TestSuite,
+		arg.TestReport,
+	)
+	return err
+}
+
+const saveStoredWorkflowTestReport = `-- name: SaveStoredWorkflowTestReport :execrows
+UPDATE stored_workflows SET test_report=$4
+WHERE app_id=$1 AND name=$2 AND version=$3
+`
+
+type SaveStoredWorkflowTestReportParams struct {
+	AppID      pgtype.UUID
+	Name       string
+	Version    int64
+	TestReport []byte
+}
+
+// Observation only: suite/definition changes advance version through SaveStoredWorkflow.
+func (q *Queries) SaveStoredWorkflowTestReport(ctx context.Context, db DBTX, arg SaveStoredWorkflowTestReportParams) (int64, error) {
+	result, err := db.Exec(ctx, saveStoredWorkflowTestReport,
+		arg.AppID,
+		arg.Name,
+		arg.Version,
+		arg.TestReport,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const saveWebhookWorkflowBinding = `-- name: SaveWebhookWorkflowBinding :one
 INSERT INTO workflow_webhook_bindings(endpoint_id,workflow_name,event_type,filter,version)
 VALUES($1,$2,$3,$4,nextval('workflow_webhook_binding_revision_seq'))
 ON CONFLICT(endpoint_id) DO UPDATE SET workflow_name=EXCLUDED.workflow_name,
@@ -104427,15 +105051,15 @@ event_type=EXCLUDED.event_type,filter=EXCLUDED.filter,version=EXCLUDED.version,u
 RETURNING endpoint_id, workflow_name, event_type, filter, version, updated_at
 `
 
-type SaveWebhookAutomationBindingParams struct {
+type SaveWebhookWorkflowBindingParams struct {
 	EndpointID   pgtype.UUID
 	WorkflowName string
 	EventType    string
 	Filter       []byte
 }
 
-func (q *Queries) SaveWebhookAutomationBinding(ctx context.Context, db DBTX, arg SaveWebhookAutomationBindingParams) (WorkflowWebhookBinding, error) {
-	row := db.QueryRow(ctx, saveWebhookAutomationBinding,
+func (q *Queries) SaveWebhookWorkflowBinding(ctx context.Context, db DBTX, arg SaveWebhookWorkflowBindingParams) (WorkflowWebhookBinding, error) {
+	row := db.QueryRow(ctx, saveWebhookWorkflowBinding,
 		arg.EndpointID,
 		arg.WorkflowName,
 		arg.EventType,
@@ -106508,7 +107132,7 @@ func (q *Queries) StartDatabaseRestoreDrill(ctx context.Context, db DBTX, arg St
 const stopEnvironmentQualificationInstance = `-- name: StopEnvironmentQualificationInstance :one
 UPDATE instances i SET state=CASE WHEN i.state IN ('parked','stopped','failed','evicting_account_deleting') THEN i.state ELSE 'stopped' END,
 terminal_at=e.retired_at FROM environment_qualification_executions e
-WHERE i.id=$1::uuid AND e.instance_id=i.id AND e.retired_at IS NOT NULL RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.application_standard_boot_token, i.application_standard_promotion_token, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu, i.booked_cpu_millicores
+WHERE i.id=$1::uuid AND e.instance_id=i.id AND e.retired_at IS NOT NULL RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.application_standard_boot_token, i.application_standard_promotion_token, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu, i.booked_cpu_millicores, i.booked_vcpu
 `
 
 func (q *Queries) StopEnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error) {
@@ -106548,6 +107172,7 @@ func (q *Queries) StopEnvironmentQualificationInstance(ctx context.Context, db D
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
 		&i.BookedCpuMillicores,
+		&i.BookedVcpu,
 	)
 	return i, err
 }
@@ -106560,6 +107185,116 @@ UPDATE workflow_runs SET status='failed',last_error='workflow coordinator lease 
 func (q *Queries) StopUncertainCustomerOperationWorkflow(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, stopUncertainCustomerOperationWorkflow, id)
 	return err
+}
+
+const storedWorkflowFailurePaused = `-- name: StoredWorkflowFailurePaused :one
+SELECT EXISTS(SELECT 1 FROM stored_workflow_failure_guards WHERE app_id=$1 AND name=$2 AND paused_at IS NOT NULL)::boolean
+`
+
+type StoredWorkflowFailurePausedParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) StoredWorkflowFailurePaused(ctx context.Context, db DBTX, arg StoredWorkflowFailurePausedParams) (bool, error) {
+	row := db.QueryRow(ctx, storedWorkflowFailurePaused, arg.AppID, arg.Name)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const storedWorkflowFailureRetainedEvents = `-- name: StoredWorkflowFailureRetainedEvents :one
+SELECT count(*)::bigint FROM event_fanout_outbox o CROSS JOIN LATERAL jsonb_array_elements(o.recipient_snapshot) r
+WHERE o.state IN ('pending','processing') AND r->>'app_id'=$1::text AND r->'workflow'->>'name'=$2::text
+AND NOT EXISTS(SELECT 1 FROM workflow_event_receipts x WHERE x.outbox_id=o.id AND x.recipient_id=(r->>'id')::uuid)
+`
+
+type StoredWorkflowFailureRetainedEventsParams struct {
+	AppID string
+	Name  string
+}
+
+func (q *Queries) StoredWorkflowFailureRetainedEvents(ctx context.Context, db DBTX, arg StoredWorkflowFailureRetainedEventsParams) (int64, error) {
+	row := db.QueryRow(ctx, storedWorkflowFailureRetainedEvents, arg.AppID, arg.Name)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const storedWorkflowFailureSignals = `-- name: StoredWorkflowFailureSignals :one
+SELECT count(*) FILTER(WHERE status IN ('failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=$1::timestamptz AND finished_at<=$2::timestamptz)::bigint AS failures,
+ count(*) FILTER(WHERE status IN ('succeeded','failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=$1::timestamptz AND finished_at<=$2::timestamptz)::bigint AS completed_runs,
+ count(*) FILTER(WHERE status='pending')::bigint AS pending_runs,
+ count(*) FILTER(WHERE status='running')::bigint AS running_runs,
+ count(*) FILTER(WHERE status='awaiting_event')::bigint AS waiting_runs
+FROM workflow_runs WHERE app_id=$3::uuid AND workflow_name=$4::text
+`
+
+type StoredWorkflowFailureSignalsParams struct {
+	SinceAt pgtype.Timestamptz
+	NowAt   pgtype.Timestamptz
+	AppID   pgtype.UUID
+	Name    string
+}
+
+type StoredWorkflowFailureSignalsRow struct {
+	Failures      int64
+	CompletedRuns int64
+	PendingRuns   int64
+	RunningRuns   int64
+	WaitingRuns   int64
+}
+
+func (q *Queries) StoredWorkflowFailureSignals(ctx context.Context, db DBTX, arg StoredWorkflowFailureSignalsParams) (StoredWorkflowFailureSignalsRow, error) {
+	row := db.QueryRow(ctx, storedWorkflowFailureSignals,
+		arg.SinceAt,
+		arg.NowAt,
+		arg.AppID,
+		arg.Name,
+	)
+	var i StoredWorkflowFailureSignalsRow
+	err := row.Scan(
+		&i.Failures,
+		&i.CompletedRuns,
+		&i.PendingRuns,
+		&i.RunningRuns,
+		&i.WaitingRuns,
+	)
+	return i, err
+}
+
+const storedWorkflowFailureTargetExists = `-- name: StoredWorkflowFailureTargetExists :one
+SELECT EXISTS(SELECT 1 FROM jsonb_array_elements(app_workflow_definitions($1::uuid,
+ coalesce((SELECT workflows FROM deployments WHERE app_id=$1::uuid AND status='live' AND scope='default' ORDER BY (traffic_percent>0) DESC,created_at DESC,id DESC LIMIT 1),'[]'::jsonb))) d WHERE d->>'name'=$2::text)::boolean
+`
+
+type StoredWorkflowFailureTargetExistsParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) StoredWorkflowFailureTargetExists(ctx context.Context, db DBTX, arg StoredWorkflowFailureTargetExistsParams) (bool, error) {
+	row := db.QueryRow(ctx, storedWorkflowFailureTargetExists, arg.AppID, arg.Name)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const storedWorkflowManifest = `-- name: StoredWorkflowManifest :one
+SELECT id,workflows FROM deployments WHERE app_id=$1 AND status='live' AND scope='default'
+ORDER BY (traffic_percent>0) DESC,created_at DESC,id DESC LIMIT 1
+`
+
+type StoredWorkflowManifestRow struct {
+	ID        pgtype.UUID
+	Workflows []byte
+}
+
+func (q *Queries) StoredWorkflowManifest(ctx context.Context, db DBTX, appID pgtype.UUID) (StoredWorkflowManifestRow, error) {
+	row := db.QueryRow(ctx, storedWorkflowManifest, appID)
+	var i StoredWorkflowManifestRow
+	err := row.Scan(&i.ID, &i.Workflows)
+	return i, err
 }
 
 const sumAccountCreditRefundReversal = `-- name: SumAccountCreditRefundReversal :one
@@ -109171,7 +109906,7 @@ UPDATE alert_rules SET mcp_min_calls=coalesce($1::integer,mcp_min_calls),
  cooldown_minutes=coalesce($12::integer,cooldown_minutes),
  post_deploy_rollback_window_seconds=coalesce($13::integer,post_deploy_rollback_window_seconds),
  notify_resolved=coalesce($14::boolean,notify_resolved),updated_at=now()
-WHERE id=$15 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved
+WHERE id=$15 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels
 `
 
 type UpdateCustomerAlertRuleParams struct {
@@ -109244,6 +109979,7 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		&i.LogQuery,
 		&i.CreatedByAccountID,
 		&i.NotifyResolved,
+		&i.CustomMetricLabels,
 	)
 	return i, err
 }
@@ -109458,6 +110194,58 @@ func (q *Queries) UpdateInstanceStateIf(ctx context.Context, db DBTX, arg Update
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateNotificationChannel = `-- name: UpdateNotificationChannel :one
+UPDATE notification_channels
+   SET name = coalesce($1::text, name),
+       target_sealed = coalesce($2::bytea, target_sealed),
+       target_hint = coalesce($3::text, target_hint),
+       pagerduty_region = coalesce($4::text, pagerduty_region),
+       last_error = CASE WHEN $2::bytea IS NULL THEN last_error END,
+       last_error_at = CASE WHEN $2::bytea IS NULL THEN last_error_at END,
+       updated_at = now()
+ WHERE account_id = $5::uuid AND id = $6::uuid
+RETURNING id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at
+`
+
+type UpdateNotificationChannelParams struct {
+	Name            pgtype.Text
+	TargetSealed    []byte
+	TargetHint      pgtype.Text
+	PagerdutyRegion pgtype.Text
+	AccountID       pgtype.UUID
+	ID              pgtype.UUID
+}
+
+// Renames a channel or replaces its sealed destination (ADR-20261104142830).
+// A new destination clears the last error, which was the old one's.
+func (q *Queries) UpdateNotificationChannel(ctx context.Context, db DBTX, arg UpdateNotificationChannelParams) (NotificationChannel, error) {
+	row := db.QueryRow(ctx, updateNotificationChannel,
+		arg.Name,
+		arg.TargetSealed,
+		arg.TargetHint,
+		arg.PagerdutyRegion,
+		arg.AccountID,
+		arg.ID,
+	)
+	var i NotificationChannel
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetSealed,
+		&i.TargetHint,
+		&i.PagerdutyRegion,
+		&i.Email,
+		&i.LastDeliveredAt,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateOrgPlan = `-- name: UpdateOrgPlan :exec
@@ -109942,82 +110730,6 @@ func (q *Queries) UpdateWorkflowScheduleLastAdmittedAt(ctx context.Context, db D
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const upsertAutomationFailurePolicy = `-- name: UpsertAutomationFailurePolicy :exec
-INSERT INTO workflow_automation_failure_policies(app_id,name,version,enabled,failure_threshold,min_completed_runs,window_seconds)
-VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,
- failure_threshold=excluded.failure_threshold,min_completed_runs=excluded.min_completed_runs,window_seconds=excluded.window_seconds
-`
-
-type UpsertAutomationFailurePolicyParams struct {
-	AppID            pgtype.UUID
-	Name             string
-	Version          int64
-	Enabled          bool
-	FailureThreshold int32
-	MinCompletedRuns int32
-	WindowSeconds    int32
-}
-
-func (q *Queries) UpsertAutomationFailurePolicy(ctx context.Context, db DBTX, arg UpsertAutomationFailurePolicyParams) error {
-	_, err := db.Exec(ctx, upsertAutomationFailurePolicy,
-		arg.AppID,
-		arg.Name,
-		arg.Version,
-		arg.Enabled,
-		arg.FailureThreshold,
-		arg.MinCompletedRuns,
-		arg.WindowSeconds,
-	)
-	return err
-}
-
-const upsertAutomationPublishPolicy = `-- name: UpsertAutomationPublishPolicy :exec
-INSERT INTO workflow_automation_publish_policies(app_id,mode,version) VALUES($1,$2,$3)
-ON CONFLICT(app_id) DO UPDATE SET mode=EXCLUDED.mode,version=EXCLUDED.version
-`
-
-type UpsertAutomationPublishPolicyParams struct {
-	AppID   pgtype.UUID
-	Mode    string
-	Version int64
-}
-
-func (q *Queries) UpsertAutomationPublishPolicy(ctx context.Context, db DBTX, arg UpsertAutomationPublishPolicyParams) error {
-	_, err := db.Exec(ctx, upsertAutomationPublishPolicy, arg.AppID, arg.Mode, arg.Version)
-	return err
-}
-
-const upsertAutomationPublishReceipt = `-- name: UpsertAutomationPublishReceipt :exec
-INSERT INTO workflow_automation_publish_receipts(app_id,name,account_id,api_key_id,token_hash,policy_version,expires_at,evidence)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-ON CONFLICT(app_id,name,account_id,api_key_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,policy_version=EXCLUDED.policy_version,expires_at=EXCLUDED.expires_at,evidence=EXCLUDED.evidence
-`
-
-type UpsertAutomationPublishReceiptParams struct {
-	AppID         pgtype.UUID
-	Name          string
-	AccountID     pgtype.UUID
-	ApiKeyID      string
-	TokenHash     string
-	PolicyVersion int64
-	ExpiresAt     pgtype.Timestamptz
-	Evidence      []byte
-}
-
-func (q *Queries) UpsertAutomationPublishReceipt(ctx context.Context, db DBTX, arg UpsertAutomationPublishReceiptParams) error {
-	_, err := db.Exec(ctx, upsertAutomationPublishReceipt,
-		arg.AppID,
-		arg.Name,
-		arg.AccountID,
-		arg.ApiKeyID,
-		arg.TokenHash,
-		arg.PolicyVersion,
-		arg.ExpiresAt,
-		arg.Evidence,
-	)
-	return err
 }
 
 const upsertCustomDomainProbeObservation = `-- name: UpsertCustomDomainProbeObservation :execrows
@@ -110794,6 +111506,82 @@ func (q *Queries) UpsertSLOHour(ctx context.Context, db DBTX, arg UpsertSLOHourP
 	return err
 }
 
+const upsertStoredWorkflowFailurePolicy = `-- name: UpsertStoredWorkflowFailurePolicy :exec
+INSERT INTO stored_workflow_failure_policies(app_id,name,version,enabled,failure_threshold,min_completed_runs,window_seconds)
+VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,
+ failure_threshold=excluded.failure_threshold,min_completed_runs=excluded.min_completed_runs,window_seconds=excluded.window_seconds
+`
+
+type UpsertStoredWorkflowFailurePolicyParams struct {
+	AppID            pgtype.UUID
+	Name             string
+	Version          int64
+	Enabled          bool
+	FailureThreshold int32
+	MinCompletedRuns int32
+	WindowSeconds    int32
+}
+
+func (q *Queries) UpsertStoredWorkflowFailurePolicy(ctx context.Context, db DBTX, arg UpsertStoredWorkflowFailurePolicyParams) error {
+	_, err := db.Exec(ctx, upsertStoredWorkflowFailurePolicy,
+		arg.AppID,
+		arg.Name,
+		arg.Version,
+		arg.Enabled,
+		arg.FailureThreshold,
+		arg.MinCompletedRuns,
+		arg.WindowSeconds,
+	)
+	return err
+}
+
+const upsertStoredWorkflowPublishPolicy = `-- name: UpsertStoredWorkflowPublishPolicy :exec
+INSERT INTO stored_workflow_publish_policies(app_id,mode,version) VALUES($1,$2,$3)
+ON CONFLICT(app_id) DO UPDATE SET mode=EXCLUDED.mode,version=EXCLUDED.version
+`
+
+type UpsertStoredWorkflowPublishPolicyParams struct {
+	AppID   pgtype.UUID
+	Mode    string
+	Version int64
+}
+
+func (q *Queries) UpsertStoredWorkflowPublishPolicy(ctx context.Context, db DBTX, arg UpsertStoredWorkflowPublishPolicyParams) error {
+	_, err := db.Exec(ctx, upsertStoredWorkflowPublishPolicy, arg.AppID, arg.Mode, arg.Version)
+	return err
+}
+
+const upsertStoredWorkflowPublishReceipt = `-- name: UpsertStoredWorkflowPublishReceipt :exec
+INSERT INTO stored_workflow_publish_receipts(app_id,name,account_id,api_key_id,token_hash,policy_version,expires_at,evidence)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT(app_id,name,account_id,api_key_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,policy_version=EXCLUDED.policy_version,expires_at=EXCLUDED.expires_at,evidence=EXCLUDED.evidence
+`
+
+type UpsertStoredWorkflowPublishReceiptParams struct {
+	AppID         pgtype.UUID
+	Name          string
+	AccountID     pgtype.UUID
+	ApiKeyID      string
+	TokenHash     string
+	PolicyVersion int64
+	ExpiresAt     pgtype.Timestamptz
+	Evidence      []byte
+}
+
+func (q *Queries) UpsertStoredWorkflowPublishReceipt(ctx context.Context, db DBTX, arg UpsertStoredWorkflowPublishReceiptParams) error {
+	_, err := db.Exec(ctx, upsertStoredWorkflowPublishReceipt,
+		arg.AppID,
+		arg.Name,
+		arg.AccountID,
+		arg.ApiKeyID,
+		arg.TokenHash,
+		arg.PolicyVersion,
+		arg.ExpiresAt,
+		arg.Evidence,
+	)
+	return err
+}
+
 const upsertTenantWorkflowScheduleCursor = `-- name: UpsertTenantWorkflowScheduleCursor :one
 INSERT INTO platform_tenant_workflow_schedule_cursors (app_id, platform_tenant_id, workflow_name,
     deployment_id, trigger_snapshot, last_evaluated_at, scheduled_for, status, last_run_id, last_admitted_at)
@@ -111241,12 +112029,12 @@ func (q *Queries) WakeNativeWorkflowForReceivedEvent(ctx context.Context, db DBT
 	return err
 }
 
-const webhookAutomationLegacyReceiptExists = `-- name: WebhookAutomationLegacyReceiptExists :one
+const webhookWorkflowLegacyReceiptExists = `-- name: WebhookWorkflowLegacyReceiptExists :one
 SELECT EXISTS(SELECT 1 FROM invocations WHERE id=$1)
 `
 
-func (q *Queries) WebhookAutomationLegacyReceiptExists(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
-	row := db.QueryRow(ctx, webhookAutomationLegacyReceiptExists, id)
+func (q *Queries) WebhookWorkflowLegacyReceiptExists(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, webhookWorkflowLegacyReceiptExists, id)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -111419,7 +112207,7 @@ WITH owned_apps AS (
  -- Account-wide rules skip rehearsal-enrolled apps (ADR-20261019180000).
  AND ($4::uuid IS NOT NULL OR NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id = apps.id))
 ), due_runs AS (
- -- Same wake/lease eligibility as automation queue health (ADR-730/643).
+ -- Same wake/lease eligibility as stored workflow queue health (ADR-730/643).
  SELECT r.created_at,CASE WHEN r.status='running'
   THEN coalesce(r.lease_until,r.updated_at+($5::bigint*interval '1 millisecond'))
   ELSE r.scheduled_for END AS due_at

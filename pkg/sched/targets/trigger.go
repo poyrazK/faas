@@ -183,6 +183,13 @@ type CustomMetricReader interface {
 	ListCustomMetrics(ctx context.Context, appID string) ([]state.CustomMetric, error)
 }
 
+// customMetricSeriesReader is the optional read a labelled custom target
+// needs (ADR-20261108160000 slice C2); both stores implement it. Without it a
+// labelled target reports no signal.
+type customMetricSeriesReader interface {
+	ListCustomMetricSeries(ctx context.Context, appID string) ([]state.CustomMetricSeries, error)
+}
+
 // queueDepthSignal keeps the aggregate queue projection used by the generic
 // scaler together with the binding-level samples needed to size a worker
 // fleet fairly. A single app-level depth is not enough when two bindings have
@@ -1070,9 +1077,13 @@ func (t *Trigger) Tick(ctx context.Context) error {
 					stored[row.Name] = row
 				}
 			}
+			series := t.labelledCustomSeries(ctx, app.ID, customTargets)
 			freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
 			for _, ct := range customTargets {
 				row, ok := stored[ct.Name]
+				if len(ct.Labels) > 0 {
+					row, ok = series[ct.Name+"\x00"+api.CustomMetricSeriesKey(ct.Labels)]
+				}
 				fresh := ok && now.Sub(row.ObservedAt) <= freshness
 				obs = append(obs, scalesignal.Observation{
 					Metric:   api.ScalingMetricCustom,
@@ -1253,6 +1264,33 @@ const oversubscribedLogInterval = time.Minute
 // customTargetsOf returns the app's ADR-202 targets. Separate from
 // ScalingPolicy.TargetFor because custom targets are keyed by name and an app
 // may declare more than one, which a metric-keyed lookup cannot express.
+// labelledCustomSeries reads an app's gauge series, keyed name+"\x00"+series
+// key, only when one of its custom targets selects labels; counters are left
+// out as for the aggregate (a growing total is not a backlog).
+func (t *Trigger) labelledCustomSeries(ctx context.Context, appID string, targets []state.ScalingTarget) map[string]state.CustomMetric {
+	labelled := false
+	for _, ct := range targets {
+		labelled = labelled || len(ct.Labels) > 0
+	}
+	reader, ok := t.customMetrics.(customMetricSeriesReader)
+	if !labelled || !ok {
+		return nil
+	}
+	rows, err := reader.ListCustomMetricSeries(ctx, appID)
+	if err != nil {
+		t.log.Warn("targets: custom metric series failed", "app_id", appID, "err", err)
+		return nil
+	}
+	out := make(map[string]state.CustomMetric, len(rows))
+	for _, row := range rows {
+		if row.Kind == state.CustomMetricKindCounter {
+			continue
+		}
+		out[row.Name+"\x00"+row.SeriesKey] = state.CustomMetric{Name: row.Name, Value: row.Value, ObservedAt: row.ObservedAt, Kind: row.Kind}
+	}
+	return out
+}
+
 func customTargetsOf(policy *state.ScalingPolicy) []state.ScalingTarget {
 	var out []state.ScalingTarget
 	for _, t := range policy.EffectiveTargets() {

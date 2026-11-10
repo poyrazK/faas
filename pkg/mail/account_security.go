@@ -104,6 +104,88 @@ the session under Account → Sessions and contact support@gregale.dev.
 	return subject, body
 }
 
+// KeysAfterResetBody lists the API keys a password reset left working: keys
+// the owner created by hand (CI, deploys) are not revoked by a reset, so a
+// key someone else created while they had access is the owner's to find.
+// keys are "label (created YYYY-MM-DD)" lines.
+func KeysAfterResetBody(email string, keys []string, accountURL string) (subject, body string) {
+	subject = "Review the API keys on your Gregale account"
+	var b strings.Builder
+	fmt.Fprintf(&b, "Hi,\n\nThe password of %s was reset and every browser was signed out. These API keys\nstill work, because a reset does not revoke keys you created for CI and deploys:\n\n", safeRecipient(email))
+	for _, k := range keys {
+		fmt.Fprintf(&b, "  - %s\n", oneLine(k))
+	}
+	fmt.Fprintf(&b, "\nIf you do not recognise one, revoke it now at %s (or run\n`gregale key` and `gregale key delete ID`).\n\n— Gregale\n", accountURL)
+	return subject, b.String()
+}
+
+// OperatorMFAResetBody tells the account that Gregale support turned off
+// its two-factor authentication after an identity check.
+func OperatorMFAResetBody(email string, at time.Time) (subject, body string) {
+	subject = "Gregale support turned off two-factor authentication on your account"
+	body = fmt.Sprintf(`Hi,
+
+At %s Gregale support turned off two-factor authentication for your
+Gregale account (%s), after checking your identity for an account recovery
+request. The authenticator and its recovery codes were removed, every
+browser was signed out and remembered browsers were forgotten. API keys
+keep working.
+
+If you asked for this, sign in and set up two-factor authentication again.
+
+If you did not, contact security@gregale.dev at once: someone may be
+trying to take over your account.
+
+— Gregale
+`, at.UTC().Format("2006-01-02 15:04 UTC"), email)
+	return subject, body
+}
+
+// BillingEmailSyncFailedBody tells the new sign-in address which billing
+// emails could not follow an email change. failed names each subject, such
+// as `organization "Acme" (acme)`.
+func BillingEmailSyncFailedBody(email string, failed []string, docsURL string) (subject, body string) {
+	subject = "Update your Gregale billing email"
+	var b strings.Builder
+	fmt.Fprintf(&b, "Your Gregale sign-in email changed to %s, but the billing email of\n", email)
+	for _, f := range failed {
+		fmt.Fprintf(&b, "  - %s\n", f)
+	}
+	b.WriteString("could not be moved with it, so receipts and payment notices still go to the previous address.\n\n")
+	fmt.Fprintf(&b, "An organization owner can set the billing email with PUT /v1/orgs/{slug}/billing/email (%s).\n", docsURL)
+	b.WriteString("For your personal account, contact support.\n")
+	return subject, b.String()
+}
+
+// CredentialCreatedBody notifies that a new API key or CLI/agent sign-in
+// credential was created on the account. what is a short human phrase such
+// as "An API key" or "A CLI sign-in".
+func CredentialCreatedBody(email, what, label, ip, userAgent string, at time.Time) (subject, body string) {
+	if len(userAgent) > 200 {
+		userAgent = userAgent[:200]
+	}
+	if label == "" {
+		label = "(no label)"
+	}
+	subject = "New API credential on your Gregale account"
+	body = fmt.Sprintf(`Hi,
+
+%s was created for %s.
+
+  Time:    %s
+  Label:   %s
+  Address: %s
+  Client:  %s
+
+If this was you, there is nothing to do. If not, revoke it under
+Account → API keys (or gregale key delete ID), change your password, and
+contact support@gregale.dev.
+
+— Gregale
+`, oneLine(what), safeRecipient(email), mailTime(at), oneLine(label), oneLine(ip), oneLine(userAgent))
+	return subject, body
+}
+
 func providerName(provider string) string {
 	switch provider {
 	case "google":

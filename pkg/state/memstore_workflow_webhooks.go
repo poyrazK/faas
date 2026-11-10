@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func (m *MemStore) webhookAutomationEndpointLocked(opts WebhookAutomationBindingOptions) (InboundWebhookEndpoint, error) {
+func (m *MemStore) webhookWorkflowEndpointLocked(opts WebhookWorkflowBindingOptions) (InboundWebhookEndpoint, error) {
 	endpoint, ok := m.inboundWebhookEndpoints[opts.EndpointID]
 	app := m.apps[opts.AppID]
 	if !ok || endpoint.AppID != opts.AppID || endpoint.AccountID != opts.AccountID || app.AccountID != opts.AccountID || app.Status == AppDeleted {
@@ -19,152 +19,152 @@ func (m *MemStore) webhookAutomationEndpointLocked(opts WebhookAutomationBinding
 	}
 	return endpoint, nil
 }
-func (m *MemStore) SaveWebhookAutomationBinding(_ context.Context, opts WebhookAutomationBindingOptions) (WebhookAutomationBinding, error) {
-	if err := validateWebhookAutomationBinding(opts); err != nil {
-		return WebhookAutomationBinding{}, err
+func (m *MemStore) SaveWebhookWorkflowBinding(_ context.Context, opts WebhookWorkflowBindingOptions) (WebhookWorkflowBinding, error) {
+	if err := validateWebhookWorkflowBinding(opts); err != nil {
+		return WebhookWorkflowBinding{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	endpoint, err := m.webhookAutomationEndpointLocked(opts)
+	endpoint, err := m.webhookWorkflowEndpointLocked(opts)
 	if err != nil {
-		return WebhookAutomationBinding{}, err
+		return WebhookWorkflowBinding{}, err
 	}
-	previous := m.webhookAutomationBindings[endpoint.ID]
+	previous := m.webhookWorkflowBindings[endpoint.ID]
 	if previous.Version != opts.ExpectedVersion {
-		return WebhookAutomationBinding{}, ErrWebhookAutomationConflict
+		return WebhookWorkflowBinding{}, ErrWebhookWorkflowConflict
 	}
 	if _, exists := m.exclusiveTriggerBindings["inbound_webhook\x00"+endpoint.ID]; exists || m.operationWebhookBoundLocked(endpoint.ID) {
-		return WebhookAutomationBinding{}, ErrWebhookAutomationConflict
+		return WebhookWorkflowBinding{}, ErrWebhookWorkflowConflict
 	}
 	for _, binding := range m.workflowCallbackWebhookBindings {
 		if binding.EndpointID == endpoint.ID {
-			return WebhookAutomationBinding{}, ErrWebhookAutomationConflict
+			return WebhookWorkflowBinding{}, ErrWebhookWorkflowConflict
 		}
 	}
 	dep, account, eligible := m.workflowScheduleTargetLocked(endpoint.AppID)
 	if !eligible || (endpoint.Provider != InboundWebhookProviderStripe && endpoint.Provider != InboundWebhookProviderGeneric) {
-		return WebhookAutomationBinding{}, ErrWebhookAutomationUnavailable
+		return WebhookWorkflowBinding{}, ErrWebhookWorkflowUnavailable
 	}
-	spec, _, err := webhookAutomationDefinition(dep.Workflows, m.automationRecordsLocked(endpoint.AppID), opts.WorkflowName, account.Plan)
+	spec, _, err := webhookWorkflowDefinition(dep.Workflows, m.storedWorkflowRecordsLocked(endpoint.AppID), opts.WorkflowName, account.Plan)
 	if err != nil {
-		return WebhookAutomationBinding{}, err
+		return WebhookWorkflowBinding{}, err
 	}
 	if spec == nil {
-		return WebhookAutomationBinding{}, ErrNotFound
+		return WebhookWorkflowBinding{}, ErrNotFound
 	}
 	if err := m.validateWorkflowOutboundLocked(endpoint.AppID, endpoint.AccountID, *spec); err != nil {
-		return WebhookAutomationBinding{}, err
+		return WebhookWorkflowBinding{}, err
 	}
-	m.webhookAutomationRevision++
-	binding := WebhookAutomationBinding{EndpointID: endpoint.ID, WorkflowName: opts.WorkflowName, EventType: opts.EventType, Filter: normalizedWebhookFilter(opts.Filter), Version: m.webhookAutomationRevision, UpdatedAt: time.Now().UTC()}
-	if m.webhookAutomationBindings == nil {
-		m.webhookAutomationBindings = map[string]WebhookAutomationBinding{}
+	m.webhookWorkflowRevision++
+	binding := WebhookWorkflowBinding{EndpointID: endpoint.ID, WorkflowName: opts.WorkflowName, EventType: opts.EventType, Filter: normalizedWebhookFilter(opts.Filter), Version: m.webhookWorkflowRevision, UpdatedAt: time.Now().UTC()}
+	if m.webhookWorkflowBindings == nil {
+		m.webhookWorkflowBindings = map[string]WebhookWorkflowBinding{}
 	}
-	m.webhookAutomationBindings[endpoint.ID] = binding
-	return copyWebhookAutomationBinding(binding), nil
+	m.webhookWorkflowBindings[endpoint.ID] = binding
+	return copyWebhookWorkflowBinding(binding), nil
 }
-func (m *MemStore) GetWebhookAutomationBinding(_ context.Context, id string) (WebhookAutomationBinding, error) {
+func (m *MemStore) GetWebhookWorkflowBinding(_ context.Context, id string) (WebhookWorkflowBinding, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	binding, ok := m.webhookAutomationBindings[id]
+	binding, ok := m.webhookWorkflowBindings[id]
 	if !ok {
 		return binding, ErrNotFound
 	}
-	return copyWebhookAutomationBinding(binding), nil
+	return copyWebhookWorkflowBinding(binding), nil
 }
-func (m *MemStore) DeleteWebhookAutomationBinding(_ context.Context, opts WebhookAutomationBindingOptions) error {
+func (m *MemStore) DeleteWebhookWorkflowBinding(_ context.Context, opts WebhookWorkflowBindingOptions) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, err := m.webhookAutomationEndpointLocked(opts); err != nil {
+	if _, err := m.webhookWorkflowEndpointLocked(opts); err != nil {
 		return err
 	}
-	binding, ok := m.webhookAutomationBindings[opts.EndpointID]
+	binding, ok := m.webhookWorkflowBindings[opts.EndpointID]
 	if !ok {
 		return ErrNotFound
 	}
 	if binding.Version != opts.ExpectedVersion {
-		return ErrWebhookAutomationConflict
+		return ErrWebhookWorkflowConflict
 	}
-	delete(m.webhookAutomationBindings, opts.EndpointID)
+	delete(m.webhookWorkflowBindings, opts.EndpointID)
 	return nil
 }
-func webhookAutomationReceiptKey(endpointID, eventID string) string {
+func webhookWorkflowReceiptKey(endpointID, eventID string) string {
 	return endpointID + "\x00" + eventID
 }
-func (m *MemStore) AcceptWebhookAutomation(ctx context.Context, verified InboundWebhookEndpoint, body json.RawMessage, runtimeEnabled bool) (WebhookAutomationReceipt, bool, error) {
+func (m *MemStore) AcceptWebhookWorkflow(ctx context.Context, verified InboundWebhookEndpoint, body json.RawMessage, runtimeEnabled bool) (WebhookWorkflowReceipt, bool, error) {
 	eventID, eventType, err := webhookEventFromStripeBody(body)
 	if err != nil {
-		return WebhookAutomationReceipt{}, true, err
+		return WebhookWorkflowReceipt{}, true, err
 	}
-	return m.AcceptVerifiedWebhookAutomation(ctx, verified, eventID, eventType, body, runtimeEnabled)
+	return m.AcceptVerifiedWebhookWorkflow(ctx, verified, eventID, eventType, body, runtimeEnabled)
 }
 
-func (m *MemStore) AcceptVerifiedWebhookAutomation(_ context.Context, verified InboundWebhookEndpoint, eventID, eventType string, body json.RawMessage, runtimeEnabled bool) (WebhookAutomationReceipt, bool, error) {
+func (m *MemStore) AcceptVerifiedWebhookWorkflow(_ context.Context, verified InboundWebhookEndpoint, eventID, eventType string, body json.RawMessage, runtimeEnabled bool) (WebhookWorkflowReceipt, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	endpoint, err := m.webhookAutomationEndpointLocked(WebhookAutomationBindingOptions{EndpointID: verified.ID, AppID: verified.AppID, AccountID: verified.AccountID})
+	endpoint, err := m.webhookWorkflowEndpointLocked(WebhookWorkflowBindingOptions{EndpointID: verified.ID, AppID: verified.AppID, AccountID: verified.AccountID})
 	if err != nil {
-		return WebhookAutomationReceipt{}, true, err
+		return WebhookWorkflowReceipt{}, true, err
 	}
 	if !endpoint.Enabled || !bytes.Equal(endpoint.SigningSecretSealed, verified.SigningSecretSealed) {
-		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
+		return WebhookWorkflowReceipt{}, true, ErrWebhookWorkflowUnavailable
 	}
 	if strings.TrimSpace(eventID) == "" || len(eventID) > api.WorkflowWebhookEventMaxBytes ||
 		(eventType != "" && !api.ValidInboundWebhookEventType(eventType)) ||
 		(endpoint.Provider == InboundWebhookProviderGeneric && (!api.ValidInboundWebhookEventType(eventType) || !api.ValidInboundWebhookEventID(eventID))) {
-		return WebhookAutomationReceipt{}, true, ErrAutomationInvalid
+		return WebhookWorkflowReceipt{}, true, ErrStoredWorkflowInvalid
 	}
-	key := webhookAutomationReceiptKey(endpoint.ID, eventID)
-	prior, exists := m.webhookAutomationReceipts[key]
-	binding, bound := m.webhookAutomationBindings[endpoint.ID]
+	key := webhookWorkflowReceiptKey(endpoint.ID, eventID)
+	prior, exists := m.webhookWorkflowReceipts[key]
+	binding, bound := m.webhookWorkflowBindings[endpoint.ID]
 	if !exists && !bound {
-		return WebhookAutomationReceipt{}, false, nil
+		return WebhookWorkflowReceipt{}, false, nil
 	}
 	account := m.accounts[endpoint.AccountID]
 	if !account.Active() || !account.Plan.WorkflowsAllowed() {
-		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
+		return WebhookWorkflowReceipt{}, true, ErrWebhookWorkflowUnavailable
 	}
 	if exists {
-		hash, err := webhookAutomationBodyHashForEvent(endpoint.Provider, eventType, body)
+		hash, err := webhookWorkflowBodyHashForEvent(endpoint.Provider, eventType, body)
 		if err != nil {
 			return prior, true, err
 		}
 		if !bytes.Equal(hash, prior.bodyHash) {
-			return prior, true, ErrWebhookAutomationConflict
+			return prior, true, ErrWebhookWorkflowConflict
 		}
-		prior = m.webhookAutomationReceiptProgressLocked(prior)
+		prior = m.webhookWorkflowReceiptProgressLocked(prior)
 		prior.Duplicate = true
 		return prior, true, nil
 	}
 	if !runtimeEnabled {
-		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
+		return WebhookWorkflowReceipt{}, true, ErrWebhookWorkflowUnavailable
 	}
 	dep, currentAccount, eligible := m.workflowScheduleTargetLocked(endpoint.AppID)
 	if !eligible {
-		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
+		return WebhookWorkflowReceipt{}, true, ErrWebhookWorkflowUnavailable
 	}
-	spec, reason, err := webhookAutomationDefinition(dep.Workflows, m.automationRecordsLocked(endpoint.AppID), binding.WorkflowName, currentAccount.Plan)
+	spec, reason, err := webhookWorkflowDefinition(dep.Workflows, m.storedWorkflowRecordsLocked(endpoint.AppID), binding.WorkflowName, currentAccount.Plan)
 	if err != nil {
-		if errors.Is(err, ErrAutomationInvalid) {
-			err = ErrWebhookAutomationUnavailable
+		if errors.Is(err, ErrStoredWorkflowInvalid) {
+			err = ErrWebhookWorkflowUnavailable
 		}
-		return WebhookAutomationReceipt{}, true, err
+		return WebhookWorkflowReceipt{}, true, err
 	}
-	if m.automationFailureBlocksAdmissionLocked(endpoint.AppID, binding.WorkflowName, time.Now().UTC()) {
-		reason = "automation_failure_paused"
+	if m.storedWorkflowFailureBlocksAdmissionLocked(endpoint.AppID, binding.WorkflowName, time.Now().UTC()) {
+		reason = "stored_workflow_failure_paused"
 	}
-	receipt, envelope, recipients, err := prepareWebhookAutomation(endpoint, binding, spec, reason, eventID, eventType, body, time.Now().UTC())
+	receipt, envelope, recipients, err := prepareWebhookWorkflow(endpoint, binding, spec, reason, eventID, eventType, body, time.Now().UTC())
 	if err != nil {
 		return receipt, true, err
 	}
 	// A delivery accepted before opting into automation mode keeps its original
 	// app-invocation receipt and cannot gain a second effect from provider retry.
 	if _, exists := m.invocations[receipt.ReceiptID]; exists {
-		return WebhookAutomationReceipt{}, false, nil
+		return WebhookWorkflowReceipt{}, false, nil
 	}
 	if spec != nil && reason == "" {
 		if err := m.validateWorkflowOutboundLocked(endpoint.AppID, endpoint.AccountID, *spec); err != nil {
-			return receipt, true, ErrWebhookAutomationUnavailable
+			return receipt, true, ErrWebhookWorkflowUnavailable
 		}
 	}
 	for i := range recipients {
@@ -183,13 +183,13 @@ func (m *MemStore) AcceptVerifiedWebhookAutomation(_ context.Context, verified I
 	work := m.eventFanout[canonicalMemUUID(endpoint.AccountID)+"\x00"+envelope.Source+"\x00"+envelope.ID]
 	work.RecipientSnapshot = recipients
 	receipt.outboxID = work.ID
-	if m.webhookAutomationReceipts == nil {
-		m.webhookAutomationReceipts = map[string]WebhookAutomationReceipt{}
+	if m.webhookWorkflowReceipts == nil {
+		m.webhookWorkflowReceipts = map[string]WebhookWorkflowReceipt{}
 	}
-	m.webhookAutomationReceipts[key] = receipt
+	m.webhookWorkflowReceipts[key] = receipt
 	return receipt, true, nil
 }
-func (m *MemStore) webhookAutomationReceiptProgressLocked(receipt WebhookAutomationReceipt) WebhookAutomationReceipt {
+func (m *MemStore) webhookWorkflowReceiptProgressLocked(receipt WebhookWorkflowReceipt) WebhookWorkflowReceipt {
 	for _, work := range m.eventFanout {
 		if work.ID == receipt.outboxID {
 			if p, exists := work.RecipientProgress[receipt.recipientID]; exists {
@@ -201,12 +201,12 @@ func (m *MemStore) webhookAutomationReceiptProgressLocked(receipt WebhookAutomat
 	}
 	return receipt
 }
-func (m *MemStore) GetWebhookAutomationReceipt(_ context.Context, endpointID, eventID string) (WebhookAutomationReceipt, error) {
+func (m *MemStore) GetWebhookWorkflowReceipt(_ context.Context, endpointID, eventID string) (WebhookWorkflowReceipt, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	receipt, ok := m.webhookAutomationReceipts[webhookAutomationReceiptKey(endpointID, eventID)]
+	receipt, ok := m.webhookWorkflowReceipts[webhookWorkflowReceiptKey(endpointID, eventID)]
 	if !ok {
 		return receipt, ErrNotFound
 	}
-	return m.webhookAutomationReceiptProgressLocked(receipt), nil
+	return m.webhookWorkflowReceiptProgressLocked(receipt), nil
 }

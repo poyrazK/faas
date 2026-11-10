@@ -82,15 +82,32 @@ policy or operator access requires a replacement.
 If your last recovery code remains, use it to reset the authenticator and set
 up a replacement. If neither the device nor codes are available, choose email
 recovery. Its link can be confirmed after the existing 24-hour waiting period.
+If you have lost the device, the codes and the mailbox, contact
+support@gregale.dev. Support checks two independent proofs of ownership (such
+as payment details and a sign-in with your password or linked provider), mails
+the account's address and any co-owners, and after 72 hours without objection
+turns two-factor authentication off; you then sign in, set it up again and,
+if needed, change your email. Support never changes the sign-in email for you.
 To replace your recovery codes while you still have your authenticator, run
 `gregale account mfa rotate` (or use **New recovery codes** on the
 two-factor page) after verifying the session; the previous codes stop working
 and you get an email.
 
+At the dashboard sign-in check you can tick **Remember this browser for 30
+days**: that browser then skips the code at sign-in (not for sensitive
+actions) until it expires or you forget it on the account page. Operator
+accounts are always asked. See [account](account.md#profile-sign-in-and-sessions).
+
 ## Email verification
 
-A password signup must verify its email address. Until it does, deploying and
-billing changes answer `email_verification_required`. Send a new 24-hour link
+A password signup must verify its email address. Until it does, deploying,
+billing changes, creating API keys and organizations, and inviting members
+answer `email_verification_required`. The verification link works only in a
+browser signed in to that account: opened anywhere else, it asks you to sign
+in first and then verifies. (Someone who signed up with your address cannot
+verify their account by getting you to click the link; if you did not create
+the account, use **Forgot password** or a sign-in link instead, which claims
+it.) Send a new 24-hour link
 with `gregale account email verify` or the account page's button. After 30
 days unverified the account keeps its data, but password sign-in and existing
 sessions and keys only reach the account page, logout, deletion, the resend and

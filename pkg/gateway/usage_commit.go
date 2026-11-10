@@ -75,7 +75,7 @@ func (h *Handler) usageEvent(r *http.Request, in usageEventInput) usageoutbox.Ev
 	if in.status >= 400 {
 		errorCount = 1
 	}
-	if platformFailureUnbillable(r, in.status) {
+	if usageUnbillable(r, in.status) {
 		billableUnits = 0
 	}
 	event := usageoutbox.Event{

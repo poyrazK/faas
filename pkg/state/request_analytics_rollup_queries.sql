@@ -215,3 +215,33 @@ SELECT dimension::text AS route,
        SUM(requests)::bigint AS requests
 FROM filtered
 GROUP BY dimension, method, deployment_id;
+
+-- name: RequestTelemetryExistsBetween :one
+-- Whether the app has raw telemetry received in [window_from, window_until).
+-- Analytics backdates a rollup tier's coverage over a span with none
+-- (ADR-20261103113952 amendment 4).
+SELECT EXISTS (
+    SELECT 1 FROM request_telemetry
+    WHERE app_id = sqlc.arg(app_id)
+      AND received_at >= sqlc.arg(window_from)::timestamptz
+      AND received_at <  sqlc.arg(window_until)::timestamptz
+)::bool AS has_rows;
+
+-- name: RecordRequestAnalyticsRollupGapsFromTelemetry :exec
+-- ADR-20261103113952 amendment 4: after apid stopped without writing its
+-- pending rollups, mark every app minute with raw telemetry in the span it
+-- may have held as lost.
+INSERT INTO request_analytics_rollup_gaps (app_id, bucket_start)
+SELECT DISTINCT rt.app_id, date_bin('1 minute', rt.received_at, 'epoch'::timestamptz)
+FROM request_telemetry rt
+JOIN apps a ON a.id = rt.app_id
+WHERE rt.received_at >= sqlc.arg(window_from)::timestamptz
+  AND rt.received_at <  sqlc.arg(window_until)::timestamptz
+ON CONFLICT (app_id, bucket_start) DO NOTHING;
+
+-- name: ClaimRequestAnalyticsRollupBatch :execrows
+-- ADR-20261103113952 amendment 5: record a gateway rollup batch in the
+-- transaction that applies it; 0 rows means the batch was applied before.
+INSERT INTO request_analytics_rollup_batches (batch_id, node_id)
+VALUES (sqlc.arg(batch_id), sqlc.arg(node_id))
+ON CONFLICT (batch_id) DO NOTHING;
