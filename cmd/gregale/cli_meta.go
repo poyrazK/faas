@@ -4023,7 +4023,7 @@ var cliCommands = []cliCommand{
 				{Name: "replace-file", Short: "replace every item from a file, or - for stdin", Value: "path|-"},
 				{Name: "description", Short: "new description", Value: "TEXT"},
 			}},
-			{Name: subRm, Short: "Delete a list no rule references", Positionals: []string{"<name>"}},
+			{Name: subRm, Short: "Delete a list no rule references", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "yes", Short: "accepted for consistency with edge rule delete; does not prompt", Bool: true}}},
 		},
 	},
 	{
