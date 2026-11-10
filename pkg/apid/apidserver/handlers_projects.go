@@ -223,6 +223,12 @@ func (s *server) deleteProject(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, problem)
 		return
 	}
+	if r.URL.Query().Get(projectDetachServicesParam) != "true" {
+		if problem := s.projectServiceCallsProblem(r, acct, project); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	checked, ok := s.store.(state.CheckedProjectDeleteStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("guarded project deletion is unavailable"))
