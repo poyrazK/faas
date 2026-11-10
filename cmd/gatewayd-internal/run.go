@@ -3487,13 +3487,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				appGaps := make([]*apidpb.TelemetryAppGap, 0, len(report.AppGaps))
 				for _, gap := range report.AppGaps {
-					appGaps = append(appGaps, &apidpb.TelemetryAppGap{AppId: gap.AppID.String(), DroppedCount: gap.DroppedCount, PendingCount: int32(gap.PendingCount)})
+					appGaps = append(appGaps, &apidpb.TelemetryAppGap{AppId: gap.AppID.String(), DroppedCount: gap.DroppedCount, PendingCount: int32(gap.PendingCount),
+						AnalyticsDroppedCount: gap.AnalyticsDroppedCount, AnalyticsPendingCount: int32(gap.AnalyticsPendingCount)})
+				}
+				var analytics *apidpb.AnalyticsCoverage
+				if report.Analytics != nil {
+					analytics = &apidpb.AnalyticsCoverage{Counting: report.Analytics.Counting, UnattributedDroppedTotal: report.Analytics.UnattributedDroppedTotal}
 				}
 				receipt, err := rtCli.RecordTelemetryCoverage(heartbeatCtx, &apidpb.TelemetryCoverage{
 					NodeName: coverageNode, BootId: coverageBootID, Sequence: coverageSequence, Enabled: report.Enabled,
 					SamplingBasisPoints: int32(report.SamplingBasisPoints), DroppedTotal: report.DroppedTotal,
 					PendingCount: int32(report.PendingCount), SourceAtUnixMs: report.SourceAt.UnixMilli(),
 					AppScoped: report.AppScoped, UnattributedDroppedTotal: report.UnattributedDroppedTotal, AppGaps: appGaps,
+					Analytics: analytics,
 				})
 				if err != nil {
 					return err
@@ -3567,6 +3573,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					DeploymentTag:                        row.DeploymentTag,
 					DeploymentCreatedAt:                  row.DeploymentCreatedAt,
 					ImageDigest:                          row.ImageDigest,
+					AnalyticsCounted:                     row.AnalyticsCounted,
 				}
 				if row.Count < 1 {
 					req.Count = 1
@@ -3619,6 +3626,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}
 		}()
+		if requestTelemetryEnabled && osGetenv("FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS") == "1" {
+			// The gateway counts requests into per-minute rollups itself
+			// (ADR-20261103113952 amendment 5). The publisher actor runs
+			// the shipping, so it shares rtCli with the other RPCs.
+			recorder.EnableAnalyticsRollups(gateway.RequestAnalyticsRollupsConfig{
+				Ship: func(ctx context.Context, batchID uuid.UUID, rows []state.RequestAnalyticsRollup) error {
+					if rtTLSErr != nil {
+						return rtTLSErr
+					}
+					ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+					defer cancel()
+					if rtCli == nil {
+						var err error
+						rtCli, err = apidgrpc.DialRequestTelemetry(ctx, apidRTTarget, rtTLS)
+						if err != nil {
+							return fmt.Errorf("open request_telemetry client: %w", err)
+						}
+					}
+					return shipAnalyticsRollups(ctx, rtCli, batchID, coverageNode, rows)
+				},
+				OnShipped: deps.metrics.AddRequestAnalyticsRollupShipped,
+				OnLost:    deps.metrics.AddRequestAnalyticsRollupLost,
+			}, log)
+		}
 		// Wake the publisher as the recorder approaches capacity so the
 		// normal five-second ticker is only the idle fallback.
 		recorder.SetWakeHook(publisher.Wake)

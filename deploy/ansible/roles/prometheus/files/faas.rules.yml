@@ -1578,6 +1578,31 @@ groups:
           description: "At least one PostgreSQL process was runnable but waiting for a CPU more than 50% of the time (cgroup cpu.pressure) for 15 minutes. Every control-plane daemon queues behind the database while this lasts. The Control plane resources dashboard shows which slice is taking the CPU; the GitHub runners and faas-obs.slice are the usual competitors."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCgroupResources.md"
 
+      # ADR-20261109172421 §6: CPU decides where an instance goes, never
+      # whether it runs, so a CPU-saturated node shows up as slower requests
+      # and this alert instead of capacity refusals. Tenants have used over
+      # 90% of the tenant slice's per-host CPUQuota (host threads less the
+      # platform reserve, node_join.yml) while tenant tasks waited for a CPU
+      # over 20% of the time: the node needs more capacity or fewer hot apps.
+      - alert: FaasNodeCPUSaturated
+        expr: |
+          (
+            rate(faas_cgroup_cpu_usage_seconds_total{cgroup="faas-tenant.slice"}[10m])
+              / faas_cgroup_cpu_quota_cores{cgroup="faas-tenant.slice"} > 0.9
+          )
+          and on(instance)
+          rate(faas_cgroup_pressure_stall_seconds_total{cgroup="faas-tenant.slice",resource="cpu",kind="some"}[10m]) > 0.2
+        for: 15m
+        labels:
+          severity: warn
+          component: node
+          family: cgroup_resources
+          public_status: internal
+        annotations:
+          summary: "Tenants on {{ $labels.instance }} have used over 90% of their CPU for 15m"
+          description: "faas-tenant.slice on {{ $labels.instance }} has run at over 90% of its CPUQuota for 15 minutes while tenant tasks waited for a CPU over 20% of the time. Wakes still land (memory is the only capacity limit, ADR-20261109172421), so requests there get slower instead. Add a node or move hot apps; do not lower the platform reserve to buy tenant CPU."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNodeCPUSaturated.md"
+
       - alert: FaasCgroupMetricsStale
         expr: time() - faas_cgroup_metrics_last_run_timestamp_seconds > 300
         for: 5m
@@ -4110,7 +4135,8 @@ groups:
       #
       # Response cascade (docs/ops/FaasCpuStarvation.md §Recover):
       # top-N panel → plan raise for the customer → consider
-      # faas-tenant slice CPUQuota bump (1600% = 16 cores). Memory
+      # faas-tenant slice CPUQuota bump (host threads − reserve,
+      # node_join.yml; ADR-20261109172421 §4). Memory
       # is NOT in scope — the per-VM memory.max is enforced by
       # vmmd via the jailer (spec §11/G6); a starved VM is a CPU
       # signal, not a RAM one.

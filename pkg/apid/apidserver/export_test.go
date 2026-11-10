@@ -2187,6 +2187,14 @@ func CapabilitiesWithReleasePhase(enabled bool) *httptest.ResponseRecorder {
 	return recorder
 }
 
+// CapabilitiesWithWorkloadVerifier answers GET /v1/capabilities for a Scale
+// account with the cluster workload-identity verifier set or nil.
+func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{workloadVerifier: verifier}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
+	return recorder
+}
+
 // ReleasePhaseEnabledFromEnv exposes how apid reads FAAS_RELEASE_PHASE_ENABLED.
 var ReleasePhaseEnabledFromEnv = releasePhaseEnabledFromEnv
 
@@ -2303,3 +2311,6 @@ func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.R
 
 // SourceLivenessOverrides is a multipart deploy's liveness_probe override.
 var SourceLivenessOverrides = sourceLivenessOverrides
+
+// ValidateCustomMetricAlertLabels exposes the custom_metric rule label check.
+var ValidateCustomMetricAlertLabels = validateCustomMetricAlertLabels

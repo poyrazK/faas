@@ -522,3 +522,38 @@ the wrong deployment.
 - Labels change shape for paths with typed identifiers, dates or ID-named
   files; route selectors written against the old raw labels need updating.
 
+
+## Amendment 8 (2026-11-10): undelivered telemetry and refusals during database stalls
+
+A second production review (2026-11-09) found evidence gaps during database
+stalls on the control plane.
+
+1. **An undelivered batch was one app's gap.** When a gateway exhausted its
+   delivery retries it journaled the dropped rows as per-app losses, which
+   route health and the production monitor ignore by design (amendment 2,
+   for rows a receiver rejects). The windows that lost the rows still read as
+   complete.
+2. **Admission refusals were unmeasured.** A route change clears the
+   gateway's workload admission cache; the next request reads storage and
+   fails closed when it cannot. Those 5-14 s refusals were logged as an
+   unmeasured `body_response`.
+3. **A deleted app's canary kept running.** meterd evaluated the canary of a
+   deleted app (profiling gate `state: not found` every 30 s) until the
+   stuck-rollout guard closed it 30 minutes later.
+4. **Overflow labels failed `routes health suggest`.** Route usage carries
+   `__route_other__` and unlabeled rows; the CLI rejected the whole report.
+
+**Decision.**
+
+- Rows a gateway could not deliver (receiver unreachable, retries exhausted,
+  backlog full) count as unattributed losses and end the node's healthy
+  coverage. Rows the receiver rejects, or that it refused while accepting the
+  rest of their batch, stay the app's loss.
+- The workload admission check is measured as policy time; its refusal is
+  `policy_unavailable` with stage `workload_admission_unavailable` (and
+  `Retry-After: 2`) or `workload_retired`. It still fails closed: serving a
+  stale decision during a storage outage could serve a retired workload, a
+  posture change this amendment does not make.
+- The safe-deploy orchestrator closes a deleted app's rollout on its next
+  tick, and meterd's canary progression skips it.
+- `routes health suggest` skips overflow and unlabeled rows.

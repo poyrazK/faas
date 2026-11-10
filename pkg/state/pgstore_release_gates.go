@@ -24,7 +24,7 @@ func releaseGateFromRow(r sqlc.AppReleaseGate) ReleaseGate {
 		MetricName: r.MetricName.String, Comparison: r.Comparison.String, Threshold: r.Threshold.Float64,
 		MinSamples: int(r.MinSamples), CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt.Time.UTC(),
 		SyntheticCheckID: pgUUIDStringNullable(r.SyntheticCheckID), MaxFailurePercent: int(r.MaxFailurePercent.Int32),
-		MaxChangePercent: int(r.MaxChangePercent.Int32),
+		MaxChangePercent: int(r.MaxChangePercent.Int32), MetricLabels: customMetricLabelsFromJSON(r.MetricLabels),
 	}
 }
 
@@ -55,6 +55,7 @@ func (s *PgStore) CreateReleaseGate(ctx context.Context, g ReleaseGate, maxGates
 		CreatedBy: g.CreatedBy, Now: pgTimestamptzUTC(now), MaxGates: int64(maxGates),
 		SyntheticCheckID: checkID, MaxFailurePercent: optionalPgInt4(g.MaxFailurePercent, synthetic),
 		MaxChangePercent: optionalPgInt4(g.MaxChangePercent, change),
+		MetricLabels:     customMetricLabelsJSON(g.MetricLabels),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReleaseGate{}, ErrReleaseGateLimit
@@ -143,7 +144,16 @@ func (s *PgStore) ReleaseGateDeploymentAI(ctx context.Context, appID, deployment
 		CostMillicents: row.CostMillicents, TTFBCalls: row.TtfbCalls, TTFBMSTotal: row.TtfbMsTotal}, nil
 }
 
-func (s *PgStore) ReleaseGateCustomMetricWindow(ctx context.Context, appID, name string, since, until time.Time) (int64, float64, error) {
+func (s *PgStore) ReleaseGateCustomMetricWindow(ctx context.Context, appID, name, seriesKey string, since, until time.Time) (int64, float64, error) {
+	if seriesKey != "" {
+		row, err := sqlc.New().ReleaseGateCustomMetricSeriesWindow(ctx, s.pool, sqlc.ReleaseGateCustomMetricSeriesWindowParams{
+			AppID: mustPgUUID(appID), Name: name, SeriesKey: seriesKey, Since: pgTimestamptzUTC(since), Until: pgTimestamptzUTC(until),
+		})
+		if err != nil {
+			return 0, 0, mapErr(err)
+		}
+		return row.Samples, row.Average, nil
+	}
 	row, err := sqlc.New().ReleaseGateCustomMetricWindow(ctx, s.pool, sqlc.ReleaseGateCustomMetricWindowParams{
 		AppID: mustPgUUID(appID), Name: name, Since: pgTimestamptzUTC(since), Until: pgTimestamptzUTC(until),
 	})

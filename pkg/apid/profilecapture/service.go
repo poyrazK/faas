@@ -14,8 +14,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/google/pprof/profile"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -49,6 +51,28 @@ type Service struct {
 	// Enabled mirrors FAAS_PROFILING_ON_DEMAND. When false every capture
 	// route answers 404 and the dashboard hides the capture panel.
 	Enabled bool
+
+	mergeOnce  sync.Once
+	mergeSlots chan struct{}
+}
+
+// errMergeBusy is a merge refused because every merge slot is taken.
+var errMergeBusy = api.ErrCapacity("profile capture views are busy; retry shortly")
+
+// MergeBlobs merges one kind of a capture's blobs. Capture data is
+// guest-supplied: parsing is bounded per blob, and the apid's merge slots
+// bound how many merges run at once. A busy apid refuses (busy) rather than
+// queues.
+func (s *Service) MergeBlobs(blobs []state.ProfileCaptureBlob, kind string) (merged *profile.Profile, busy bool, err error) {
+	s.mergeOnce.Do(func() { s.mergeSlots = make(chan struct{}, api.ProfileCaptureMaxConcurrentMerges) })
+	select {
+	case s.mergeSlots <- struct{}{}:
+		defer func() { <-s.mergeSlots }()
+	default:
+		return nil, true, nil
+	}
+	merged, _, err = profiling.MergeCapture(KindProfiles(blobs, kind), kind)
+	return merged, false, err
 }
 
 // CaptureStore returns the capture store when on-demand profiling is

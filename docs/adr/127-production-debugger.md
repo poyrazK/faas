@@ -513,3 +513,17 @@ lose them.
 - A group holds one ingest-gate slot for its whole write, as it uses one
   connection.
 - A client that waits for each outcome gets it about 2 ms later.
+
+## Amendment (2026-11-10): traced requests keep their rows
+
+Exact samples were capped at five a bucket-minute for server errors and
+traced requests alike (amendment 2026-10-31). Past five, a traced request
+folded into the bucket, its guest spans found no row, and the span writer
+dropped them after three tries: ~190 traces a day across two production
+nodes, every hour.
+
+**Decision.** Status is part of the bucket key, so the cap is chosen per
+bucket: a 5xx bucket keeps five exact rows, any other bucket keeps
+`api.GatewayRequestTelemetryTracedExactPerBucket` (30) traced requests a
+minute. Request counts are unchanged; a traced app writes up to 30 rows per
+bucket-minute instead of 5.

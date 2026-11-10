@@ -466,16 +466,37 @@ const (
 	// schemas (ADR-1190). GoTrue enables RLS on its tables, so its runtime
 	// must own them; no customer schema is reachable.
 	CredentialAuth CredentialAccess = "auth"
+	// Session logins have read_write privileges but always use the direct
+	// endpoint, for serving code that needs session features a transaction
+	// pooler cannot keep (LISTEN, advisory locks, prepared statements, SET)
+	// (ADR-20261109180000).
+	CredentialSession CredentialAccess = "session"
 )
 
 // Known reports whether access is a portable credential mode. Every
 // validation site uses it so a new mode cannot be missed by one of them.
 func (a CredentialAccess) Known() bool {
 	switch a {
-	case CredentialReadWrite, CredentialReadOnly, CredentialMigration, CredentialDataAPI, CredentialAuth:
+	case CredentialReadWrite, CredentialReadOnly, CredentialMigration, CredentialDataAPI, CredentialAuth, CredentialSession:
 		return true
 	}
 	return false
+}
+
+// Privileges is the SQL privilege class a login of this access mode receives.
+// Only the endpoint distinguishes session from read_write.
+func (a CredentialAccess) Privileges() CredentialAccess {
+	if a == CredentialSession {
+		return CredentialReadWrite
+	}
+	return a
+}
+
+// DirectOnly reports whether the login must bypass the transaction pooler.
+// Migration and auth logins run DDL and rely on role session defaults;
+// session logins are chosen for session features.
+func (a CredentialAccess) DirectOnly() bool {
+	return a == CredentialMigration || a == CredentialAuth || a == CredentialSession
 }
 
 type EndpointRole string

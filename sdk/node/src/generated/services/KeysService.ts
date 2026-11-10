@@ -915,7 +915,7 @@ export class KeysService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid body (e.g. negative days).`,
+        400: `Invalid body (negative days, or more than 30).`,
         401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

@@ -124,6 +124,18 @@
     group: root
     mode: "0644"
 
+# Manifest hot_path: these switches were first turned on by hand on
+# production (2026-11-06). 99-faas-role.conf now carries them, so the hand-made
+# drop-ins go; left behind they would keep a switch on after the manifest
+# turned it off.
+- name: compute_only_service — remove the hand-made hot-path drop-ins
+  notify: restart faas-schedd
+  ansible.builtin.file:
+    path: "/etc/systemd/system/faas-schedd.service.d/{{ item }}"
+    state: absent
+  loop:
+    - 60-faas-frozen-tier.conf
+
 - name: compute_only_service — install schedd node identity (M9)
   notify: restart faas-schedd
   ansible.builtin.template:

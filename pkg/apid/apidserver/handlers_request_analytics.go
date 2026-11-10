@@ -72,16 +72,44 @@ type requestAnalyticsCompletenessReader interface {
 	RequestTelemetryCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error)
 }
 
+type requestAnalyticsRollupCompletenessReader interface {
+	RequestAnalyticsCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error)
+}
+
+// rollupCompleteness reads the analytics completeness through the raw
+// reader's shape.
+type rollupCompleteness struct {
+	r requestAnalyticsRollupCompletenessReader
+}
+
+func (c rollupCompleteness) RequestTelemetryCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error) {
+	return c.r.RequestAnalyticsCompleteness(ctx, appID, from, until)
+}
+
 // requestAnalyticsCompleteness says whether every gateway delivered the
 // window's telemetry. Losses (a ring overwrite, an exhausted retry, an app
 // over its ingest cap) otherwise only lowered the totals without a trace.
 // The newest RequestAnalyticsSettleLag is still arriving and is not judged;
 // a window entirely inside it is reported as pending. A failed check leaves
 // the verdict unknown rather than failing the read.
+//
+// When the app's rollups answer the window, a gateway counting analytics
+// itself is judged by its analytics gaps, not raw delivery: a raw row it
+// counted and then lost leaves the rollups whole (ADR-20261103113952
+// amendment 6).
 func (s *server) requestAnalyticsCompleteness(ctx context.Context, appID string, window requestAnalyticsWindow) (*bool, []string) {
-	reader, ok := s.store.(requestAnalyticsCompletenessReader)
-	if !ok {
-		return nil, nil
+	var reader requestAnalyticsCompletenessReader
+	if analytics, ok := s.store.(requestAnalyticsRollupCompletenessReader); ok {
+		if _, covered := analyticsrollup.Covers(ctx, s.store, appID, window.From); covered {
+			reader = rollupCompleteness{analytics}
+		}
+	}
+	if reader == nil {
+		raw, ok := s.store.(requestAnalyticsCompletenessReader)
+		if !ok {
+			return nil, nil
+		}
+		reader = raw
 	}
 	complete, gaps := requestAnalyticsCompletenessFrom(ctx, reader, s.log, appID, window)
 	return analyticsrollup.WithRollupGaps(ctx, s.store, s.log, appID, window.From, window.Until, complete, gaps)

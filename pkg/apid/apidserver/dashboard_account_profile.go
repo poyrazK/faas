@@ -139,6 +139,8 @@ func accountFlowFlash(r *http.Request) string {
 		return "That browser was signed out."
 	case q.Get("provider") == "removed":
 		return "Sign-in method removed."
+	case q.Get("password_reset") == "keys":
+		return "Password changed and every browser signed out. API keys you created still work: review them below and delete any you do not recognise."
 	case q.Get("trusted_browser") == "forgotten":
 		return "Forgotten. That browser asks for a code at its next sign-in."
 	case q.Get("provider") == "linked":

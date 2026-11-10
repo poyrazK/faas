@@ -2635,6 +2635,7 @@ export class AppsService {
     slug,
     name,
     range = '24h',
+    labels,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -2648,6 +2649,10 @@ export class AppsService {
      * History window. Default 24h.
      */
     range?: '1h' | '6h' | '24h' | '7d' | '15d',
+    /**
+     * One labelled series, by the `key` the metric list returns for it (for example `queue=emails`). Omitted: the metric's aggregate.
+     */
+    labels?: string,
   }): CancelablePromise<CustomMetricSeriesResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -2658,6 +2663,7 @@ export class AppsService {
       },
       query: {
         'range': range,
+        'labels': labels,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

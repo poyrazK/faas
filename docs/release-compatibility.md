@@ -357,6 +357,15 @@ The linter rejects an `expand` migration that does any of these:
   does not create again;
 - drops a column default.
 
+A `RENAME` or `DROP` that a migration assembles at run time (`EXECUTE
+format(...)` or a concatenated string inside a function or `DO` block) is a
+`dynamic-ddl` finding whatever the class: the linter cannot check the previous
+release's references to objects it only knows at run time. Write those
+statements literally, or waive the finding with the reason the previous
+release does not read them. Migration `20261107145315064` renamed eleven
+tables that way; the previous release kept reading the old names until its
+daemons restarted, and deployments failed for five minutes.
+
 What no linter sees is the author's claim to make: a trigger function's
 `pg_notify` payload, whether the previous release's writes satisfy a new
 CHECK or foreign key, a backfill that changes a value's meaning, and DDL

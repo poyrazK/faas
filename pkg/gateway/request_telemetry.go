@@ -84,6 +84,10 @@ type RequestTelemetryRow struct {
 	TraceID      string // W3C trace-id hex (32 chars); "" when unset
 	ReceivedAt   time.Time
 	Count        int // PR-B: collapse aggregate; >= 1 (CHECK in 00428). Recorder sets to 1.
+	// AnalyticsCounted is set when the gateway counted the row into its own
+	// analytics rollups, so apid must not count it again
+	// (ADR-20261103113952 amendment 5).
+	AnalyticsCounted bool
 	// Causal identifiers retained for the debugger timeline. WakeID is set
 	// only when this request admitted a new wake; InstanceID identifies the
 	// selected VM when the request reached a target. They are opaque strings
@@ -194,6 +198,12 @@ type requestTelemetryRecorder struct {
 
 	appLosses          map[uuid.UUID]int64
 	unattributedLosses int64
+	// analyticsLosses and analyticsUnattributed journal the requests lost to
+	// analytics while the gateway counts its own (ADR-20261103113952
+	// amendment 6): rollup batches given up, and lost raw rows the gateway
+	// did not count. A lost raw row it counted is no analytics loss.
+	analyticsLosses       map[uuid.UUID]int64
+	analyticsUnattributed int64
 
 	// overwrittenTotal counts rows lost before the publisher can drain them.
 	overwrittenTotal atomic.Int64
@@ -204,6 +214,10 @@ type requestTelemetryRecorder struct {
 	wakeFn        func()
 	wakeThreshold int
 	wakeArmed     bool
+
+	// analytics counts rows into per-minute rollups before the ring; nil
+	// unless EnableAnalyticsRollups ran.
+	analytics *requestAnalyticsRollups
 }
 
 // NewRequestTelemetryRecorder wires the recorder. The publisher
@@ -216,12 +230,13 @@ func NewRequestTelemetryRecorder(cfg RequestTelemetryConfig, log *slog.Logger) *
 		threshold = 1
 	}
 	return &requestTelemetryRecorder{
-		cfg:           cfg,
-		log:           log,
-		ring:          make([]RequestTelemetryRow, cfg.RingSize),
-		appLosses:     make(map[uuid.UUID]int64),
-		wakeThreshold: threshold,
-		wakeArmed:     true,
+		cfg:             cfg,
+		log:             log,
+		ring:            make([]RequestTelemetryRow, cfg.RingSize),
+		appLosses:       make(map[uuid.UUID]int64),
+		analyticsLosses: make(map[uuid.UUID]int64),
+		wakeThreshold:   threshold,
+		wakeArmed:       true,
 	}
 }
 
@@ -249,7 +264,26 @@ func (r *requestTelemetryRecorder) RecordFromObserve(row RequestTelemetryRow) {
 	if row.EventID == uuid.Nil {
 		row.EventID = uuid.New()
 	}
+	row.AnalyticsCounted = r.analytics.count(row)
 	r.enqueue(row)
+}
+
+// EnableAnalyticsRollups makes the gateway count requests into per-minute
+// analytics rollups itself and ship them through cfg.Ship
+// (ADR-20261103113952 amendment 5;
+// FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS). Call it at boot, before request
+// traffic and before the publisher starts.
+func (r *requestTelemetryRecorder) EnableAnalyticsRollups(cfg RequestAnalyticsRollupsConfig, log *slog.Logger) {
+	g := newRequestAnalyticsRollups(cfg, log)
+	// A batch given up loses analytics only: its raw rows were shipped.
+	g.losses = func(byApp map[uuid.UUID]int64) {
+		r.ringMu.Lock()
+		defer r.ringMu.Unlock()
+		for app, n := range byApp {
+			r.recordAnalyticsLossLocked(app, n)
+		}
+	}
+	r.analytics = g
 }
 
 // enqueue is the single entry point for the ringbuffer append.
@@ -451,6 +485,9 @@ func telemetryTraceID(requestID string) string {
 // retain a global counter, preventing pressure from hiding missing evidence.
 func (r *requestTelemetryRecorder) recordAppLossLocked(row RequestTelemetryRow) {
 	n := int64(normalizedRequestTelemetryCount(row.Count))
+	if !row.AnalyticsCounted {
+		r.recordAnalyticsLossLocked(row.AppID, n)
+	}
 	if row.AppID == uuid.Nil {
 		r.unattributedLosses += n
 		return
@@ -460,4 +497,22 @@ func (r *requestTelemetryRecorder) recordAppLossLocked(row RequestTelemetryRow) 
 		return
 	}
 	r.appLosses[row.AppID] += n
+}
+
+// recordAnalyticsLossLocked journals n requests lost to analytics, bounded
+// like the raw journal. It journals nothing unless the gateway counts its own
+// analytics: otherwise apid's raw evidence is the analytics evidence.
+func (r *requestTelemetryRecorder) recordAnalyticsLossLocked(app uuid.UUID, n int64) {
+	if r.analytics == nil {
+		return
+	}
+	if app == uuid.Nil {
+		r.analyticsUnattributed += n
+		return
+	}
+	if _, ok := r.analyticsLosses[app]; !ok && len(r.analyticsLosses) >= len(r.ring) {
+		r.analyticsUnattributed += n
+		return
+	}
+	r.analyticsLosses[app] += n
 }

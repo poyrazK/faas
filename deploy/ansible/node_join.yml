@@ -909,6 +909,26 @@
                  - ((faas_node_sizing.host_cpus | int)
                     - (faas_node_sizing.tenant_cpus | default(faas_node_sizing.host_cpus) | int))] | max }}
 
+    # ADR-20261109172421 §4: the platform's CPU is protected at the tenant
+    # slice, not per instance. Tenants together may use every host thread
+    # except faas_tenant_cpu_reserve_threads (default 2), which keep
+    # gatewayd-public, gatewayd-internal, vmmd and schedd responsive while
+    # tenants saturate the host. A host var sets another reserve per host
+    # class. Tenants always keep at least one thread.
+    - name: Validate the tenant CPU reserve
+      ansible.builtin.assert:
+        that:
+          - faas_tenant_cpu_reserve_threads | default(2) | string is match('^[0-9]+$')
+        fail_msg: >-
+          faas_tenant_cpu_reserve_threads must be a whole number of host
+          threads (got {{ faas_tenant_cpu_reserve_threads | default(2) }}).
+
+    - name: Derive the tenant slice CPU quota
+      ansible.builtin.set_fact:
+        faas_join_tenant_cpu_quota_pct: >-
+          {{ ([1, (ansible_processor_vcpus | int)
+                  - (faas_tenant_cpu_reserve_threads | default(2) | int)] | max) * 100 }}
+
     - name: Ensure the tenant slice drop-in directory exists
       ansible.builtin.file:
         path: /etc/systemd/system/faas-tenant.slice.d
@@ -920,6 +940,8 @@
     - name: Fence the tenant slice at the derived tenant slice maximum
       # The kernel fence and the admission ceiling are two views of the same
       # calculation. This drop-in was previously hand-written and unmanaged.
+      # CPUQuota replaces the systemd_slices role's fixed 1600%, which is no
+      # limit on a host with fewer threads.
       ansible.builtin.copy:
         dest: /etc/systemd/system/faas-tenant.slice.d/90-host-capacity.conf
         owner: root
@@ -928,6 +950,7 @@
         content: |
           [Slice]
           MemoryMax={{ faas_node_sizing.tenant_slice_max_mb }}M
+          CPUQuota={{ faas_join_tenant_cpu_quota_pct }}%
 
     - name: Reload systemd so the re-fenced tenant slice takes effect
       # Unconditional rather than a handler: handlers flush at the end of
