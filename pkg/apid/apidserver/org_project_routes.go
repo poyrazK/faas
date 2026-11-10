@@ -9,6 +9,8 @@ import (
 // Organization paths disambiguate the same project slug in different companies.
 // The existing handlers retain their scope, verification and replay middleware.
 func (s *server) registerOrganizationProjectRoutes(mux *http.ServeMux) {
+	// The organization's own GitHub installations (ADR-20261110200000).
+	mux.HandleFunc("GET /v1/orgs/{organization}/github/installations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listOrgGitHubInstallations))))
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listOrgProjects))))
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProject))))
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectEnvironments))))

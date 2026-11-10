@@ -20107,6 +20107,26 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/orgs/{organization}/github/installations:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    get:
+      tags: [github]
+      operationId: listOrgGitHubInstallations
+      summary: "List the GitHub installations a company organization owns."
+      description: "Company projects link repositories only through these installations. An owner or admin connects one from Connect GitHub with the organization selected. Members' personal installations are not listed; tokens are never returned."
+      responses:
+        '200':
+          description: "The organization's installations; empty before one is connected or before billing adoption."
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/GitHubInstallationSummary'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/orgs/{organization}/projects:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -24996,6 +25016,7 @@ components:
         auth_consumers: {type: integer, format: int64, minimum: 0}
         migration_bindings: {type: integer, format: int64, minimum: 0}
         other_bindings: {type: integer, format: int64, minimum: 0}
+        session_bindings: {type: integer, format: int64, minimum: 0, description: Session bindings are modeled at their role connection limit and are not counted in other_bindings.}
         resident_instances: {type: integer, format: int64, minimum: 0}
         parked_instances: {type: integer, format: int64, minimum: 0}
         auxiliary_instances: {type: integer, format: int64, minimum: 0}
@@ -25011,6 +25032,7 @@ components:
         data_api_resident_estimate: {type: integer, format: int64, minimum: 0}
         data_api_wake_estimate: {type: integer, format: int64, minimum: 0}
         auth_wake_estimate: {type: integer, format: int64, minimum: 0}
+        session_connection_ceiling: {type: integer, format: int64, minimum: 0, description: The session role connection limit per session binding; two roles while a binding rotates.}
         control_headroom: {type: integer, format: int64, minimum: 0}
         migration_headroom: {type: integer, format: int64, minimum: 0}
         modeled_peak_connections: {type: integer, format: int64, minimum: 0}
