@@ -4,81 +4,47 @@ package sched_test
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
-	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// An app on cpu_size_apps gets its CPU from its instance size, whatever its
-// plan: one vCPU per GB, a weight of one per 16 MB, no quota at the default
-// ceiling, and a booking of its RAM's baseline. It takes precedence over
-// guest_vcpu_from_cpu_apps; every other app keeps its plan.
-func TestCPUSizeAppsFollowInstanceSize(t *testing.T) {
-	engine, err := sched.NewEngine(context.Background(), state.NewMemStore(), sched.NewNodeLedger(), nil, nil, "", nil)
-	if err != nil {
-		t.Fatalf("NewEngine: %v", err)
-	}
-	const id = "0b6f8c1e-2f6a-4c55-9d38-3c1f0c5e7a11"
-	other := state.App{ID: "7e0d4a52-91b3-4f7e-8a3c-5d2e9b1f6c44", RAMMB: 2048}
-	scale := api.MustLimitsFor(api.PlanScale)
-	if err := engine.SetGuestVCPUFromCPUApps([]string{"*"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := engine.SetCPUSizeApps([]string{" " + id + " ", ""}); err != nil {
-		t.Fatalf("SetCPUSizeApps: %v", err)
-	}
+// An app instance's CPU follows its size, never its plan: one vCPU per GB, a
+// weight of one per 16 MB, its own CPU value (vmmd runs the default without a
+// quota), and a booking of its RAM's baseline bounded by what it can use.
+func TestAppCPUFollowsInstanceSize(t *testing.T) {
 	for _, tc := range []struct {
-		plan                api.Plan
 		ramMB, chosen       int
 		vcpus, cpu, booking int
 		weight              int32
 	}{
-		{api.PlanFree, 128, 0, 1, 1000, 125, 8},
-		{api.PlanHobby, 512, 0, 1, 1000, 500, 32},
-		{api.PlanScale, 512, 0, 1, 1000, 500, 32}, // the same size gets the same CPU on every plan
-		{api.PlanPro, 1024, 0, 1, 1000, 1000, 64},
-		{api.PlanScale, 2048, 0, 2, 1000, 2000, 128},
-		{api.PlanScale, 2048, 250, 2, 250, 250, 128}, // a chosen cap stays and bounds the booking
+		{128, 0, 1, 1000, 125, 8},
+		{512, 0, 1, 1000, 500, 32},
+		{1024, 0, 1, 1000, 1000, 64},
+		{1536, 0, 2, 1000, 1500, 96},
+		{2048, 0, 2, 1000, 2000, 128},
+		{2048, 250, 2, 250, 250, 128}, // a chosen cap stays and bounds the booking
+		{4096, 0, 4, 1000, 2000, 256}, // the booking stops at AppCPUBookingMaxMillicores
 	} {
-		app := state.App{ID: id, RAMMB: tc.ramMB, CPUMillicores: tc.chosen}
-		limits := api.MustLimitsFor(tc.plan)
-		if got := engine.GuestVCPUs(app, limits); got != tc.vcpus {
-			t.Errorf("%s %d MB: vCPUs = %d, want %d", tc.plan, tc.ramMB, got, tc.vcpus)
+		app := state.App{ID: uuid.NewString(), RAMMB: tc.ramMB, CPUMillicores: tc.chosen}
+		if got := sched.AppVCPUs(app); got != tc.vcpus {
+			t.Errorf("%d MB: vCPUs = %d, want %d", tc.ramMB, got, tc.vcpus)
 		}
-		if got := engine.AppCPUMillicores(app, limits); got != tc.cpu {
-			t.Errorf("%s %d MB: CPU = %d, want %d", tc.plan, tc.ramMB, got, tc.cpu)
+		if got := sched.AppCPUMillicores(app); got != tc.cpu {
+			t.Errorf("%d MB, chosen %d: CPU = %d, want %d", tc.ramMB, tc.chosen, got, tc.cpu)
 		}
-		if got, stamp := engine.AppCPUBookingMillicores(app, limits), engine.AppCPUBookingStamp(app, limits); got != tc.booking || stamp != tc.booking {
-			t.Errorf("%s %d MB: books %d m, stamps %d; want %d", tc.plan, tc.ramMB, got, stamp, tc.booking)
+		if got := sched.AppCPUBookingMillicores(app); got != tc.booking {
+			t.Errorf("%d MB, chosen %d: books %d m, want %d", tc.ramMB, tc.chosen, got, tc.booking)
 		}
-		if got := engine.AppCPUWeight(app); got != tc.weight || !engine.CPUBySize(app.ID) {
-			t.Errorf("%s %d MB: weight = %d, by size %v; want %d and true", tc.plan, tc.ramMB, got, engine.CPUBySize(app.ID), tc.weight)
+		if got := sched.AppCPUWeight(app); got != tc.weight {
+			t.Errorf("%d MB: weight = %d, want %d", tc.ramMB, got, tc.weight)
 		}
-		if got, err := engine.PolicyAppCPUMillicores(context.Background(), app.ID, 500); err != nil || got != 500 {
-			t.Errorf("%s: a live policy of 500 m pushes %d (err %v), want it unchanged", tc.plan, got, err)
-		}
-	}
-	// Not listed: guest_vcpu_from_cpu_apps and the plan as before.
-	if got := engine.GuestVCPUs(other, scale); got != 2 {
-		t.Errorf("an app off cpu_size_apps boots %d vCPUs, want guest_vcpu_from_cpu_apps' 2", got)
-	}
-	if engine.AppCPUWeight(other) != 0 || engine.CPUBySize(other.ID) {
-		t.Error("an app off cpu_size_apps carries a size weight or no quota")
-	}
-	if err := engine.SetCPUSizeApps([]string{"not-an-app"}); err == nil {
-		t.Fatal("SetCPUSizeApps accepted an entry that is neither an app ID nor *")
-	}
-	if err := engine.SetCPUSizeApps([]string{"*"}); err != nil || !engine.CPUBySize(other.ID) {
-		t.Fatalf("* did not list every app (err %v)", err)
-	}
-	if err := engine.SetCPUSizeApps(nil); err != nil || engine.CPUBySize(other.ID) {
-		t.Fatalf("an empty list kept apps on size (err %v)", err)
 	}
 }
 
@@ -99,39 +65,43 @@ func TestCPUSizeFieldsReachVMMD(t *testing.T) {
 	}
 }
 
-// setSizeApps sets cpu_size_apps as schedd does: a revision, then the engine
-// applies it.
-func (f *refreshFixture) setSizeApps(t *testing.T, list string) {
-	t.Helper()
-	value, _ := json.Marshal(list)
-	if _, err := f.store.UpsertRuntimeConfig(f.ctx, state.RuntimeConfigUpdate{Key: runtimeconfig.KeyCPUSizeApps, DesiredValue: value}); err != nil {
-		t.Fatalf("UpsertRuntimeConfig: %v", err)
-	}
-	if err := f.engine.SetCPUSizeApps([]string{list}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// Listing apps on cpu_size_apps changes a Pro app's vCPUs from 2 to 1: a
-// snapshot from before the change is stale without asking vmmd, one from
-// after is asked about as usual.
-func TestSnapshotRefreshPassFindsSnapshotsBeforeCPUSize(t *testing.T) {
+// The fixture's apps are 256 MB: one vCPU. A snapshot whose last instance
+// booked another count (one booted on its plan, before CPU followed size) is
+// stale without asking vmmd; one whose instance booked one vCPU, or recorded
+// no count, is asked about as usual.
+func TestSnapshotRefreshPassFindsSnapshotsAtAnotherVCPUCount(t *testing.T) {
 	f := newRefreshFixture(t)
 	f.shadow(t)
-	_, before := f.app(t, f.nodeA.ID, time.Hour, state.Snapshot{CreatedAt: time.Now().UTC().Add(-2 * time.Hour)})
-	f.vmm.verdicts[before] = sched.SnapshotBackingCurrent
-	f.setSizeApps(t, "*")
-	_, after := f.app(t, f.nodeA.ID, 2*time.Hour, state.Snapshot{CreatedAt: time.Now().UTC()})
-	f.vmm.verdicts[after] = sched.SnapshotBackingCurrent
+	_, planShaped := f.appBooked(t, f.nodeA.ID, time.Hour, 2)
+	_, sizeShaped := f.appBooked(t, f.nodeA.ID, 2*time.Hour, 1)
+	_, unrecorded := f.appBooked(t, f.nodeA.ID, 3*time.Hour, 0)
+	for _, key := range []string{planShaped, sizeShaped, unrecorded} {
+		f.vmm.verdicts[key] = sched.SnapshotBackingCurrent
+	}
 
 	pass, err := f.refresher.Pass(f.ctx, f.nodeA.ID, "r1")
 	if err != nil {
 		t.Fatalf("Pass: %v", err)
 	}
-	if pass.Outcomes[sched.SnapshotRefreshWouldRefresh] != 1 || pass.Outcomes[sched.SnapshotRefreshCurrent] != 1 {
-		t.Fatalf("pass outcomes = %v, want one would_refresh and one current", pass.Outcomes)
+	if pass.Outcomes[sched.SnapshotRefreshWouldRefresh] != 1 || pass.Outcomes[sched.SnapshotRefreshCurrent] != 2 {
+		t.Fatalf("pass outcomes = %v, want one would_refresh and two current", pass.Outcomes)
 	}
-	if len(f.vmm.asked) != 1 || f.vmm.asked[0] != f.nodeA.ID+"|"+after {
-		t.Fatalf("vmmd asked %v, want only the snapshot captured after the change", f.vmm.asked)
+	for _, key := range f.vmm.asked {
+		if key == f.nodeA.ID+"|"+planShaped {
+			t.Fatalf("vmmd was asked about the snapshot at another vCPU count: %v", f.vmm.asked)
+		}
 	}
+	if len(f.vmm.asked) != 2 {
+		t.Fatalf("vmmd asked %v, want the two snapshots at the app's count or none recorded", f.vmm.asked)
+	}
+}
+
+// appBooked is app, with the parked instance having booked vcpus guest vCPUs
+// (zero records none).
+func (f *refreshFixture) appBooked(t *testing.T, node string, parkedAgo time.Duration, vcpus int) (state.App, string) {
+	t.Helper()
+	ctx := f.ctx
+	f.ctx = state.WithNodeAdmission(ctx, state.NodeAdmission{NodeID: node, BookedVCPU: vcpus})
+	defer func() { f.ctx = ctx }()
+	return f.app(t, node, parkedAgo, state.Snapshot{CreatedAt: time.Now().UTC().Add(-parkedAgo)})
 }

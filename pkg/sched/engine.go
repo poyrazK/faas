@@ -725,16 +725,6 @@ type Engine struct {
 	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
 	// from functions to request-mode apps.
 	frozenTierApps atomic.Bool
-	// guestVCPUApps (runtime config `guest_vcpu_from_cpu_apps`) lists the
-	// apps whose guest vCPU count follows their CPU quota
-	// (ADR-20261101160231, ADR-20261101215228).
-	guestVCPUApps atomic.Pointer[guestVCPUAppSet]
-	// cpuSizeApps (runtime config `cpu_size_apps`) lists the apps whose CPU
-	// follows instance size instead of plan (ADR-20261109172421).
-	cpuSizeApps atomic.Pointer[guestVCPUAppSet]
-	// cpuShape holds the runtime-config values that shape a listed app's CPU
-	// (ADR-20261101215228); nil is the compiled shape.
-	cpuShape atomic.Pointer[api.CPUShape]
 	// frozenTierWorkers (schedd `frozen_tier_workers`) lets a worker pool
 	// freeze its surplus workers and thaw them before booting new ones
 	// (ADR-20261019103000).
@@ -3702,7 +3692,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			e.log.Debug("upstream affinity refresh failed; using legacy chooser", "app", logsanitize.Field(appID), "err", rerr)
 		}
 	}
-	configuredCPU := e.appCPUBookingMillicores(app, limits)
+	configuredCPU := appCPUBookingMillicores(app)
 	startupCPU := configuredCPU
 	if !dep.DisableStartupCPUBoost {
 		startupCPU = startupCPUBoostQuota(acct.Plan, configuredCPU)
@@ -3711,9 +3701,9 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		AppID:                      appID,
 		Plan:                       acct.Plan,
 		RAMMB:                      app.RAMMB,
-		VCPU:                       e.guestVCPUs(app, limits),
+		VCPU:                       appVCPUs(app),
 		CPUMillicores:              startupCPU,
-		BookedCPUMillicores:        e.appCPUBookingStamp(app, limits),
+		BookedCPUMillicores:        appCPUBookingMillicores(app),
 		MaxConcurrency:             app.MaxConcurrency,
 		PreferredNodeID:            warmHint,
 		PreferredNodeIDs:           snapshotNodes,
@@ -3860,7 +3850,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		EnvironmentKey:        environmentKey,
 		ProductionEnvironment: productionEnvironment,
-		RAMMB:                 app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		RAMMB:                 app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
 		// revision alongside the one already serving needs the same
@@ -4079,8 +4069,8 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(e.appCPUMillicores(app, limits)),
-		CPUWeight: e.appCPUWeight(app), CPUUncapped: e.cpuBySize(app.ID),
+		VCPUCount: int32(appVCPUs(app)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(appCPUMillicores(app)),
+		CPUWeight: appCPUWeight(app), CPUUncapped: true,
 		EgressMbit: int32(limits.EgressMbit), RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
@@ -5641,18 +5631,16 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 			"app_id", appID, "ram_mb", app.RAMMB)
 		return nil
 	}
-	acct, err := state.AppResourceAccount(ctx, e.store, app)
-	if err != nil {
+	if _, err := state.AppResourceAccount(ctx, e.store, app); err != nil {
 		return fmt.Errorf("sched: claim unplaced: lookup account: %w", err)
 	}
 	placement, ok := e.chooseOwnerByLoad(ctx, app)
 	if !ok {
-		limits := api.MustLimitsFor(acct.Plan)
 		placement, err = e.choosePlacementLocked(ctx, Request{
 			AppID:          appID,
 			RAMMB:          app.RAMMB,
-			VCPU:           e.guestVCPUs(app, limits),
-			CPUMillicores:  e.appCPUBookingMillicores(app, limits),
+			VCPU:           appVCPUs(app),
+			CPUMillicores:  appCPUBookingMillicores(app),
 			MaxConcurrency: app.MaxConcurrency,
 		})
 		if err != nil {
@@ -6228,11 +6216,11 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		WakeID:             ins.WakeID,
 		BaseKey:            pinnedBase,
 		LayerKey:           layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount:          int32(e.guestVCPUs(app, limits)),
-		CPUWeight:          e.appCPUWeight(app),
-		CPUUncapped:        e.cpuBySize(app.ID),
+		VCPUCount:          int32(appVCPUs(app)),
+		CPUWeight:          appCPUWeight(app),
+		CPUUncapped:        true,
 		MemSizeMiB:         int32(app.RAMMB),
-		CPUMillicores:      int32(e.appCPUMillicores(app, limits)),
+		CPUMillicores:      int32(appCPUMillicores(app)),
 		EgressMbit:         int32(limits.EgressMbit),
 		RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: migration must preserve the same readiness budget as the
@@ -6986,15 +6974,15 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	// ceiling and there's no other active node.
 	// Keep the initial snapshot near the app's assigned node when it fits.
 	// The chooser still enforces liveness and CPU/RAM admission.
-	primeConfiguredCPU := e.appCPUBookingMillicores(app, limits)
+	primeConfiguredCPU := appCPUBookingMillicores(app)
 	primeStartupCPU := primeConfiguredCPU
 	if !dep.DisableStartupCPUBoost {
 		primeStartupCPU = startupCPUBoostQuota(acct.Plan, primeConfiguredCPU)
 	}
 	primePlacementRequest := Request{
 		AppID: appID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
-		BookedCPUMillicores: e.appCPUBookingStamp(app, limits),
+		RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
+		BookedCPUMillicores: appCPUBookingMillicores(app),
 		PreferredNodeID:     app.NodeID,
 	}
 	// Prime is a wake-shape event (gaps analysis 2026-07-23): the
@@ -7058,7 +7046,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		Kind:                KindSnapshotPrime,
 		NodeID:              placement.NodeID,
 		NodeCeilingMB:       placement.CeilingMB,
@@ -8416,8 +8404,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		limits, ok := api.LimitsFor(acct.Plan)
-		if !ok {
+		if _, ok := api.LimitsFor(acct.Plan); !ok {
 			continue
 		}
 		instances, err := e.liveInstancesForApp(ctx, app.ID)
@@ -8467,7 +8454,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
 				ProductionEnvironment: policy.production,
-				RAMMB:                 ins.RAMMB, VCPU: e.guestVCPUs(policy.app, limits), CPUMillicores: e.appCPUBookingMillicores(policy.app, limits), MaxConcurrency: policy.app.MaxConcurrency,
+				RAMMB:                 ins.RAMMB, VCPU: appVCPUs(policy.app), CPUMillicores: appCPUBookingMillicores(policy.app), MaxConcurrency: policy.app.MaxConcurrency,
 				// Recovery must account for all already-resident serving rows,
 				// including overlap and capacity above a subsequently lowered cap.
 				// This does not authorize new capacity: the rows are already
