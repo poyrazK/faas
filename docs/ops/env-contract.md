@@ -738,6 +738,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PREVIEW_JANITOR_INTERVAL_SECONDS` | apid | `default` |  |  | `` |  |
 | `FAAS_PREVIEW_JANITOR_STARTUP_DELAY_SECONDS` | apid | `default` |  |  | `` |  |
 | `FAAS_PREWARM_ENABLED` | schedd | `unit` |  |  | `` | the schedd unit enables the scheduled prewarm drain (ADR-160, ADR-1189); exact `1` enables it |
+| `FAAS_PRIVATE_CONTROL_INGRESS_CIDRS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; the control plane's exact addresses, replacing FAAS_PRIVATE_INGRESS_CIDRS (ADR-20261110120000) |
 | `FAAS_PRIVATE_INGRESS_CIDRS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; private control-plane source CIDRs from the generated host inventory |
 | `FAAS_PRIVATE_INGRESS_TCP_PORTS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; exact compute service ports reachable from the control plane |
 | `FAAS_PRIVATE_NETWORKS` | schedd | `default` |  |  | `` | JSON array of operator-managed private networks consumed by the provider-neutral reconciler |
@@ -747,6 +748,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE` | vmmd | `default` |  |  | `` | optional underlay interface for Gregale private-network VXLAN; falls back to FAAS_OVERLAY_INTERFACE |
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_MTU` | vmmd | `default` |  |  | `` | common regional private-fabric MTU; defaults to 1230 and must fit every node's encrypted underlay plus VXLAN overhead |
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_PEERS` | vmmd | `default` |  |  | `` | comma-separated IPv4 overlay addresses for the other compute nodes in this region |
+| `FAAS_PRIVATE_PEER_INGRESS_CIDRS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; the other compute nodes' exact addresses (ADR-20261110120000) |
+| `FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; compute ports peer compute nodes reach (vmmd, schedd) |
 | `FAAS_PRODUCT_CONTROL_EMAIL_MODE` | apid | `default` |  | disabled | `` | internal Product Control email transport: disabled, local, or resend; ignored while Product Control is disabled |
 | `FAAS_PRODUCT_CONTROL_EMAIL_SEND_ENABLED` | apid | `default` |  | 0 | `` | separate exact 1 opt-in for the Product Control resend transport; never enables Product Control itself |
 | `FAAS_PRODUCT_CONTROL_EMAIL_SINK_DIR` | apid | `default` |  |  | `` | absolute private 0700 directory required only for the opt-in local Product Control email transport |

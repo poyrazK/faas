@@ -6,11 +6,11 @@
 
 flush ruleset
 {% set faas_priv = ('iifname "' ~ faas_private_iface ~ '" ') if (faas_private_iface | default('')) else '' %}
-{#- ADR-20261110120000: admit each fleet peer by its own address. exact is
-    {cidrs, hosts} from the manifest renderer; each host resolves to the private
-    address /etc/hosts maps the fleet's names to. Without exact, or when any
-    host does not resolve, the list is fallback (the *_allowed_cidrs list,
-    the overlay subnet for hostname fleets), as before. -#}
+{# ADR-20261110120000: admit each fleet peer by its own address. exact is
+   {cidrs, hosts} from the manifest renderer; each host resolves to the
+   private address /etc/hosts maps the fleet's names to. Without exact, or
+   when any host does not resolve, the list is fallback (the *_allowed_cidrs
+   list, the overlay subnet for hostname fleets), as before. #}
 {% macro faas_exact_cidrs(exact, fallback) -%}
 {%- set ns = namespace(out=[], ok=(exact is mapping)) -%}
 {%- if ns.ok -%}

@@ -16,9 +16,9 @@ Environment="FAAS_HOST_BRIDGE_CIDR={{ masquerade_cidr | default('10.100.0.0/16',
 {% endif %}
 Environment="FAAS_PRIVATE_INGRESS_CIDRS={{ faas_control_plane_allowed_cidrs | default([]) | join(',') }}"
 Environment="FAAS_PRIVATE_INGRESS_TCP_PORTS={{ faas_private_ingress_ports | join(',') }}"
-{#- ADR-20261110120000: the same exact sources as the boot policy. A vmmd
-    that predates these variables keeps FAAS_PRIVATE_INGRESS_CIDRS above.
-    Keep faas_exact_cidrs identical to the nftables role's copy. -#}
+{# ADR-20261110120000: the same exact sources as the boot policy. A vmmd
+   that predates these variables keeps FAAS_PRIVATE_INGRESS_CIDRS above.
+   Keep faas_exact_cidrs identical to the nftables role's copy. #}
 {% macro faas_exact_cidrs(exact, fallback) -%}
 {%- set ns = namespace(out=[], ok=(exact is mapping)) -%}
 {%- if ns.ok -%}
