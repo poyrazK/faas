@@ -618,36 +618,53 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}
-	// No point_in_time restores from the latest point (ADR-20261106103654).
-	restore := managedpostgres.RestoreDatabaseRequest{AccountID: acct.ID, SourceDatabaseID: source.ID, Name: req.Name}
-	if raw := strings.TrimSpace(req.PointInTime); raw == "" {
-		restore.Latest = true
-	} else if restore.PointInTime, err = time.Parse(time.RFC3339Nano, raw); err != nil {
-		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+	restore, err := managedPostgresRestoreRequest(acct.ID, source.ID, req)
+	if err != nil {
+		managedPostgresProblem(w, err)
 		return
-	}
-	if req.TTLSeconds != 0 {
-		if req.TTLSeconds < api.ManagedPostgresBranchTTLMinSeconds || req.TTLSeconds > api.ManagedPostgresBranchTTLMaxSeconds {
-			managedPostgresProblem(w, fmt.Errorf("%w: ttl_seconds must be from %d to %d", managedpostgres.ErrInvalid,
-				api.ManagedPostgresBranchTTLMinSeconds, api.ManagedPostgresBranchTTLMaxSeconds))
-			return
-		}
-		restore.TTL = time.Duration(req.TTLSeconds) * time.Second
 	}
 	database, err := s.managedPostgres.Restore(r.Context(), restore)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
 	}
+	s.audit.Emit(r.Context(), "managed_postgres.database.restored", &acct.ID, managedPostgresRestoredEvent(database, restore.Latest))
+	writeJSON(w, http.StatusCreated, managedPostgresView(database))
+}
+
+// managedPostgresRestoreRequest turns a restore body into a service request.
+// No point_in_time restores from the latest point; ttl_seconds makes the copy
+// a branch (ADR-20261106103654).
+func managedPostgresRestoreRequest(accountID, sourceID string, req api.RestoreManagedPostgresDatabaseRequest) (managedpostgres.RestoreDatabaseRequest, error) {
+	restore := managedpostgres.RestoreDatabaseRequest{AccountID: accountID, SourceDatabaseID: sourceID, Name: req.Name}
+	if raw := strings.TrimSpace(req.PointInTime); raw == "" {
+		restore.Latest = true
+	} else {
+		pit, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return restore, managedpostgres.ErrInvalid
+		}
+		restore.PointInTime = pit
+	}
+	if req.TTLSeconds != 0 {
+		if req.TTLSeconds < api.ManagedPostgresBranchTTLMinSeconds || req.TTLSeconds > api.ManagedPostgresBranchTTLMaxSeconds {
+			return restore, fmt.Errorf("%w: ttl_seconds must be from %d to %d (got %d)", managedpostgres.ErrInvalid,
+				api.ManagedPostgresBranchTTLMinSeconds, api.ManagedPostgresBranchTTLMaxSeconds, req.TTLSeconds)
+		}
+		restore.TTL = time.Duration(req.TTLSeconds) * time.Second
+	}
+	return restore, nil
+}
+
+func managedPostgresRestoredEvent(database managedpostgres.Database, latest bool) map[string]any {
 	event := map[string]any{
-		"database_id": database.ID, "source_database_id": source.ID,
-		"point_in_time": database.RestorePointInTime.UTC().Format(time.RFC3339Nano), "latest": restore.Latest,
+		"database_id": database.ID, "source_database_id": database.RestoreSourceDatabaseID,
+		"point_in_time": database.RestorePointInTime.UTC().Format(time.RFC3339Nano), "latest": latest,
 	}
 	if !database.ExpiresAt.IsZero() {
 		event["expires_at"] = database.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	s.audit.Emit(r.Context(), "managed_postgres.database.restored", &acct.ID, event)
-	writeJSON(w, http.StatusCreated, managedPostgresView(database))
+	return event
 }
 
 func (s *server) listManagedPostgresBindings(w http.ResponseWriter, r *http.Request, acct state.Account) {
