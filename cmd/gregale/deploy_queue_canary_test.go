@@ -143,6 +143,10 @@ func TestQueueCanaryCLIRedeployment(t *testing.T) {
 		switch {
 		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
 			main.WriteJSONTest(w, api.AppResponse{ID: "a1", Slug: "demo"})
+		case r.URL.Path == "/v1/apps/demo" && r.Method == http.MethodGet:
+			// The function deploy reads the app to sync its snapshot hooks
+			// (ADR-20261110190000).
+			main.WriteJSONTest(w, api.AppResponse{ID: "a1", Slug: "demo"})
 		case r.URL.Path == "/v1/apps/demo/queue-bindings" && r.Method == http.MethodGet:
 			main.WriteJSONTest(w, []api.QueueBindingResponse{})
 		case r.URL.Path == "/v1/apps/demo/queue-bindings" && r.Method == http.MethodPost:
