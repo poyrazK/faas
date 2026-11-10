@@ -108,8 +108,9 @@ type githubdBridge struct {
 	previewDatabases func(context.Context, state.Account, api.Plan, state.App) error
 }
 
-// bridgeSettingsApplier is server.applyBridgeSourceSettings.
-type bridgeSettingsApplier func(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (state.App, func(context.Context), *api.Problem)
+// bridgeSettingsApplier is server.applyBridgeSourceSettings. scope is the
+// environment the push deploys ("" is production).
+type bridgeSettingsApplier func(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, scope string) (state.App, func(context.Context), *api.Problem)
 
 // checkSourcePlanLimit refuses a GitHub build whose source is above the
 // account's plan limit. githubd fetches every push with Scale's limits, so
@@ -579,7 +580,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	params.SourcePath = spooled
 	undoSettings := func(context.Context) {}
 	if g.applySettings != nil && manifest != nil {
-		updated, undo, problem := g.applySettings(ctx, resource, app, manifest)
+		updated, undo, problem := g.applySettings(ctx, resource, app, manifest, req.DeploymentScope)
 		if problem != nil {
 			if spooled != req.SourcePath {
 				_ = os.Remove(spooled)

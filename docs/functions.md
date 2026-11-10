@@ -337,7 +337,9 @@ The project's production branch is `main` unless you pass
 commit, shows the plan, and creates one function app per function with the
 same `<project>-<name>` slugs `gregale deploy` uses. Function apps a checkout
 deploy already created are adopted, not duplicated, and an adopted app does
-not count against your app limit a second time.
+not count against your app limit a second time. Only an app with the
+project's owner is adopted: a company project never takes over a personal
+app, or the other way round, and the deploy stops with a conflict on that slug.
 
 After that, every push to the production branch:
 
@@ -350,6 +352,11 @@ After that, every push to the production branch:
   routes, including config in code;
 - keeps the app of a function the repository no longer declares. Its GitHub
   check says it was kept and names `gregale app delete <slug> --yes`.
+
+A push to a branch mapped to another environment (staging, for example) sets
+each function's `env` in that environment only, and `prune_env` removes only
+that environment's variables. RAM, timeouts and concurrency belong to the
+function in every environment, so only a production push changes them.
 
 A push runs unattended, so it leaves three steps for a person: creating an
 inbound webhook endpoint (its URL is shown once), changing bucket

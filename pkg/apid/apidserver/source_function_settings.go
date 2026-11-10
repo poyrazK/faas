@@ -18,13 +18,21 @@ import (
 // non-secret env, before the deployment row exists. An omitted key leaves the
 // app's setting alone, as `gregale deploy` does. Like the push's sibling
 // addresses, these are not undone when the enqueue fails afterwards.
-func (s *server) applySourceFunctionSettings(ctx context.Context, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec) (state.App, *api.Problem) {
+//
+// scope is the environment the push deploys ("" is production). The env is
+// written in that scope only. RAM, idle timeout and concurrency belong to the
+// app in every environment, so only a production push changes them: a push to
+// a branch mapped to staging must not change what production runs with.
+func (s *server) applySourceFunctionSettings(ctx context.Context, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec, scope string) (state.App, *api.Problem) {
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {
 		return app, api.ErrCapacity("could not resolve account plan limits")
 	}
+	if scope == "" {
+		scope = state.DefaultEnvScope
+	}
 	req, changed := functionSettingsRequest(spec, app)
-	if changed {
+	if changed && scope == state.DefaultEnvScope {
 		if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
 			return app, prob
 		}
@@ -45,7 +53,7 @@ func (s *server) applySourceFunctionSettings(ctx context.Context, acct state.Acc
 		}
 		app = updated
 	}
-	if prob := s.applySourceFunctionEnv(ctx, app, spec, limits); prob != nil {
+	if prob := s.applySourceFunctionEnv(ctx, app, spec, limits, scope); prob != nil {
 		return app, prob
 	}
 	return app, nil
@@ -71,14 +79,14 @@ func functionSettingsRequest(spec gregalemanifest.FunctionSpec, app state.App) (
 	return req, changed
 }
 
-// applySourceFunctionEnv writes the function's env in the default scope and,
-// with prune_env, removes default-scope keys it does not declare. Secrets are
-// separate and never touched.
-func (s *server) applySourceFunctionEnv(ctx context.Context, app state.App, spec gregalemanifest.FunctionSpec, limits api.Limits) *api.Problem {
+// applySourceFunctionEnv writes the function's env in scope and, with
+// prune_env, removes keys in that scope it does not declare. Other scopes and
+// secrets are never touched.
+func (s *server) applySourceFunctionEnv(ctx context.Context, app state.App, spec gregalemanifest.FunctionSpec, limits api.Limits, scope string) *api.Problem {
 	if len(spec.Env) == 0 && !spec.PruneEnv {
 		return nil
 	}
-	current, err := s.store.ListAppEnv(ctx, app.AccountID, app.ID)
+	current, err := s.store.ListAppEnvInScope(ctx, app.AccountID, app.ID, scope)
 	if err != nil {
 		return api.ErrCapacity("could not read the function's env")
 	}
@@ -114,7 +122,7 @@ func (s *server) applySourceFunctionEnv(ctx context.Context, app state.App, spec
 		if value, ok := existing[key]; ok && value == spec.Env[key] {
 			continue
 		}
-		if err := s.store.UpsertAppEnvInScope(ctx, app.AccountID, app.ID, state.DefaultEnvScope, key, spec.Env[key]); err != nil {
+		if err := s.store.UpsertAppEnvInScope(ctx, app.AccountID, app.ID, scope, key, spec.Env[key]); err != nil {
 			return api.ErrCapacity("could not set the function's env")
 		}
 	}
@@ -123,7 +131,7 @@ func (s *server) applySourceFunctionEnv(ctx context.Context, app state.App, spec
 			if _, declared := spec.Env[key]; declared {
 				continue
 			}
-			if err := s.store.DeleteAppEnvInScope(ctx, app.AccountID, app.ID, state.DefaultEnvScope, key); err != nil {
+			if err := s.store.DeleteAppEnvInScope(ctx, app.AccountID, app.ID, scope, key); err != nil {
 				return api.ErrCapacity("could not remove the function's env")
 			}
 		}

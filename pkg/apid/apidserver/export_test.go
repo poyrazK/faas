@@ -2327,8 +2327,8 @@ func AppEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 
 // ApplySourceFunctionSettingsForTest runs applySourceFunctionSettings on a
 // server holding only store.
-func ApplySourceFunctionSettingsForTest(ctx context.Context, store state.Store, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec) (state.App, *api.Problem) {
-	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec)
+func ApplySourceFunctionSettingsForTest(ctx context.Context, store state.Store, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec, scope string) (state.App, *api.Problem) {
+	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec, scope)
 }
 
 // WithPendingFunctionSteps exposes withPendingFunctionSteps.
