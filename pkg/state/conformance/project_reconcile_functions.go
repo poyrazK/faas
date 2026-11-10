@@ -57,4 +57,36 @@ func testProjectReconcileAdoptsFunctionApp(t *testing.T, fx *Fixture) {
 	if _, err := reconciler.ApplyProjectReconcile(fx.Ctx, project, []state.ProjectReconcileMutation{conflict}, nil, state.ProjectScanSourceFunctions, limits); err == nil {
 		t.Fatal("a plain app holding the slug must conflict")
 	}
+
+	// A legacy company project keeps its creator's account_id; it must not
+	// adopt the creator's personal function app (apps/projects review
+	// 2026-11-10, P9).
+	org, err := fx.Store.CreateOrg(fx.Ctx, state.Org{Slug: "fnorg-" + suffix, Name: "Fn Company", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Store.AddOrgMember(fx.Ctx, org.ID, fx.Account.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	company, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, OrgID: org.ID, Slug: "fncompany-" + suffix, ScanSource: state.ProjectScanSourceCompose,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	personal, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: "fn-personal-" + suffix, Type: state.AppTypeFunction, Runtime: "python312",
+		Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1, WorkloadClass: state.WorkloadClassHTTP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cross := create
+	cross.App.Slug, cross.App.WorkloadName = personal.Slug, "personal"
+	if _, err := reconciler.ApplyProjectReconcile(fx.Ctx, company, []state.ProjectReconcileMutation{cross}, nil, state.ProjectScanSourceFunctions, limits); err == nil {
+		t.Fatal("a company project must not adopt its creator's personal function app")
+	}
+	if after, err := fx.Store.AppByID(fx.Ctx, personal.ID); err != nil || after.ProjectID != "" || after.OrgID != "" {
+		t.Fatalf("personal function app after refused adoption = %+v, %v", after, err)
+	}
 }

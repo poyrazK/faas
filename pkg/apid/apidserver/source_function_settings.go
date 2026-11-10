@@ -2,10 +2,12 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
@@ -43,9 +45,15 @@ func (s *server) applySourceFunctionSettings(ctx context.Context, acct state.Acc
 		if err != nil {
 			return app, api.ErrCapacity("could not apply the function's settings")
 		}
+		// A PATCH records app.updated; the push changed the same settings
+		// (apps/projects review 2026-11-10, P12).
+		s.audit.Emit(ctx, "app.updated", &acct.ID, map[string]any{
+			"app_id": app.ID, "slug": app.Slug, "source": "repository_push",
+			"ram_mb": updated.RAMMB, "idle_timeout_s": updated.IdleTimeoutS, "function_concurrency": updated.Manifest.FunctionConcurrency,
+		})
 		app = updated
 	}
-	if prob := s.applySourceFunctionEnv(ctx, app, spec, limits); prob != nil {
+	if prob := s.applySourceFunctionEnv(ctx, acct, app, spec, limits); prob != nil {
 		return app, prob
 	}
 	return app, nil
@@ -72,61 +80,83 @@ func functionSettingsRequest(spec gregalemanifest.FunctionSpec, app state.App) (
 }
 
 // applySourceFunctionEnv writes the function's env in the default scope and,
-// with prune_env, removes default-scope keys it does not declare. Secrets are
-// separate and never touched.
-func (s *server) applySourceFunctionEnv(ctx context.Context, app state.App, spec gregalemanifest.FunctionSpec, limits api.Limits) *api.Problem {
+// with prune_env, removes default-scope keys it does not declare, as one
+// configuration batch: the change gets a config revision (env history and
+// rollback see it), the config guard watches it like any other write, and the
+// count limit is enforced atomically (ADR-1451; apps/projects review
+// 2026-11-10, P12). Secrets are separate and never touched.
+func (s *server) applySourceFunctionEnv(ctx context.Context, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec, limits api.Limits) *api.Problem {
 	if len(spec.Env) == 0 && !spec.PruneEnv {
 		return nil
 	}
-	current, err := s.store.ListAppEnv(ctx, app.AccountID, app.ID)
+	for _, key := range slices.Sorted(maps.Keys(spec.Env)) {
+		if projectsetup.PlatformProvidedEnvKey(key) {
+			return api.ErrValidation(fmt.Sprintf("env %s is set by the platform; remove it from gregale.yaml", key))
+		}
+	}
+	current, err := s.store.ListAppEnvInScope(ctx, app.AccountID, app.ID, state.DefaultEnvScope)
 	if err != nil {
 		return api.ErrCapacity("could not read the function's env")
 	}
+	request, changed := functionEnvBatch(spec, current)
+	if !changed {
+		return nil
+	}
+	batches, ok := s.store.(state.EnvBatchStore)
+	revisions, revisionsOK := s.store.(state.ConfigRevisionStore)
+	if !ok || !revisionsOK {
+		return api.ErrCapacity("atomic configuration is unavailable")
+	}
+	latest, err := revisions.ListConfigRevisions(ctx, app.ID, state.DefaultEnvScope, 1)
+	if err != nil {
+		return api.ErrCapacity("could not read the function's configuration revision")
+	}
+	revision := int64(0)
+	if len(latest) == 1 {
+		revision = latest[0].Revision
+	}
+	request.RequestID, request.ExpectedRevision = uuid.NewString(), &revision
+	if problem := request.Validate(limits); problem != nil {
+		return problem
+	}
+	_, err = batches.ApplyEnvBatch(ctx, state.EnvBatchChange{AccountID: app.AccountID, AppID: app.ID, Scope: state.DefaultEnvScope,
+		Actor: "repository_push:" + acct.ID, Guard: s.configGuardHasTraffic(ctx, app.ID, state.DefaultEnvScope), Limits: limits, Request: request})
+	var quota *state.EnvBatchQuotaError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &quota):
+		return api.ErrValidation(fmt.Sprintf("the function's env would put %s over the plan's %d variables", app.Slug, limits.EnvVarsMax))
+	case errors.Is(err, state.ErrEnvBatchRevisionConflict):
+		return api.ErrCapacity("the function's env changed during the push; retry the delivery")
+	default:
+		return api.ErrCapacity("could not set the function's env")
+	}
+}
+
+// functionEnvBatch is the batch that brings the default-scope env to the
+// function's declared env: changed or new keys set and, with prune_env, the
+// undeclared keys deleted. It reports false when nothing changes.
+func functionEnvBatch(spec gregalemanifest.FunctionSpec, current []state.AppEnv) (api.EnvBatchRequest, bool) {
 	existing := make(map[string]string, len(current))
 	for _, row := range current {
 		existing[row.Key] = row.Value
 	}
-	added := 0
-	for _, key := range slices.Sorted(maps.Keys(spec.Env)) {
-		if prob := api.ValidateEnvKey(key); prob != nil {
-			return prob
-		}
-		if projectsetup.PlatformProvidedEnvKey(key) {
-			return api.ErrValidation(fmt.Sprintf("env %s is set by the platform; remove it from gregale.yaml", key))
-		}
-		if int64(len(spec.Env[key])) > int64(limits.EnvValueMaxBytes) {
-			return api.ErrValidation(fmt.Sprintf("env %s is longer than the plan's %d bytes", key, limits.EnvValueMaxBytes))
-		}
-		if _, ok := existing[key]; !ok {
-			added++
-		}
-	}
-	if added > 0 {
-		count, err := s.store.CountAppEnv(ctx, app.AccountID, app.ID)
-		if err != nil {
-			return api.ErrCapacity("could not count the function's env")
-		}
-		if count+added > limits.EnvVarsMax {
-			return api.ErrValidation(fmt.Sprintf("the function's env would put %s over the plan's %d variables", app.Slug, limits.EnvVarsMax))
-		}
-	}
-	for _, key := range slices.Sorted(maps.Keys(spec.Env)) {
-		if value, ok := existing[key]; ok && value == spec.Env[key] {
-			continue
-		}
-		if err := s.store.UpsertAppEnvInScope(ctx, app.AccountID, app.ID, state.DefaultEnvScope, key, spec.Env[key]); err != nil {
-			return api.ErrCapacity("could not set the function's env")
+	request := api.EnvBatchRequest{Values: map[string]string{}}
+	for key, value := range spec.Env {
+		if old, ok := existing[key]; !ok || old != value {
+			request.Values[key] = value
 		}
 	}
 	if spec.PruneEnv {
 		for _, key := range slices.Sorted(maps.Keys(existing)) {
-			if _, declared := spec.Env[key]; declared {
-				continue
-			}
-			if err := s.store.DeleteAppEnvInScope(ctx, app.AccountID, app.ID, state.DefaultEnvScope, key); err != nil {
-				return api.ErrCapacity("could not remove the function's env")
+			if _, declared := spec.Env[key]; !declared {
+				request.Delete = append(request.Delete, key)
 			}
 		}
 	}
-	return nil
+	if len(request.Values) == 0 {
+		request.Values = nil
+	}
+	return request, len(request.Values)+len(request.Delete) > 0
 }

@@ -579,7 +579,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	params.SourcePath = spooled
 	undoSettings := func(context.Context) {}
 	if g.applySettings != nil && manifest != nil {
-		updated, undo, problem := g.applySettings(ctx, resource, app, manifest)
+		updated, undo, problem := g.applySettings(ctx, resource, app, pushSettingsManifest(manifest, req, kind, params))
 		if problem != nil {
 			if spooled != req.SourcePath {
 				_ = os.Remove(spooled)
@@ -951,6 +951,26 @@ func previewDatabasesStatus(err error) error {
 // created is left in place: it activates nothing, the app's next push
 // supersedes it, and githubd retrying the delivery prepares it again (a
 // cancelled intent would refuse that retry).
+// pushSettingsManifest drops a function's app settings (RAM, idle timeout,
+// concurrency and default-scope env) from a push that does not release to
+// production traffic. Those settings are app-wide and the env lands in the
+// production scope, so a stage-branch push or a release staged without
+// traffic rewrote production at its next wake, before (or without) any
+// production release (apps/projects review 2026-11-10, P11). A PR preview
+// builds its own preview app and keeps them.
+func pushSettingsManifest(manifest *gregalemanifest.Manifest, req *githubdpb.EnqueueBuildRequest, kind state.DeploymentKind, params apidsource.EnqueueParams) *gregalemanifest.Manifest {
+	if manifest == nil || manifest.FunctionSettings == nil || kind == state.DeploymentKindPreview {
+		return manifest
+	}
+	staged := params.TrafficPercentExplicit && params.TrafficPercent == 0 && params.CanaryTotalSteps == 0
+	if !staged && state.IsProductionScope(req.DeploymentScope) {
+		return manifest
+	}
+	withoutFunction := *manifest
+	withoutFunction.FunctionSettings = nil
+	return &withoutFunction
+}
+
 func (g *githubdBridge) prepareDeliveryCrons(ctx context.Context, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, manifest *gregalemanifest.Manifest, kind state.DeploymentKind, params apidsource.EnqueueParams) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {
 	staged := params.TrafficPercentExplicit && params.TrafficPercent == 0 && params.CanaryTotalSteps == 0
 	production := req.DeploymentScope == "" || req.DeploymentScope == state.DefaultEnvScope

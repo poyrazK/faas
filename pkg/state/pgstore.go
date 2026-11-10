@@ -6339,10 +6339,15 @@ func (s *PgStore) applyProjectReconcileOnce(
 			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
 				return ProjectReconcileResult{}, ErrConflict
 			}
-			var collisionID, collisionAccount, collisionProject, collisionType string
-			if err := tx.QueryRow(ctx, `select id::text, account_id::text, coalesce(project_id::text, ''), type from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID, &collisionAccount, &collisionProject, &collisionType); err == nil {
+			var collisionID, collisionAccount, collisionOrg, collisionProject, collisionType string
+			if err := tx.QueryRow(ctx, `select id::text, account_id::text, coalesce(org_id::text, ''), coalesce(project_id::text, ''), type from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID, &collisionAccount, &collisionOrg, &collisionProject, &collisionType); err == nil {
+				// Adoption must not cross the personal/company boundary: a
+				// legacy company project keeps its creator's account_id, so
+				// the account alone matched the creator's personal function
+				// app (apps/projects review 2026-11-10, P9).
+				sameOwner := SameAppResourceOwner(App{AccountID: collisionAccount, OrgID: collisionOrg}, App{AccountID: storedProject.AccountID, OrgID: storedProject.OrgID})
 				switch {
-				case mutation.App.Type == AppTypeFunction && collisionType == string(AppTypeFunction) && collisionAccount == storedProject.AccountID && collisionProject == "":
+				case mutation.App.Type == AppTypeFunction && collisionType == string(AppTypeFunction) && collisionAccount == storedProject.AccountID && sameOwner && collisionProject == "":
 					adopt[mutation.App.WorkloadName] = collisionID
 					continue
 				case !removeIDs[collisionID]:
@@ -6441,7 +6446,7 @@ func (s *PgStore) applyProjectReconcileOnce(
 			app := mutation.App
 			app.AccountID, app.ProjectID, app.OrgID = storedProject.AccountID, storedProject.ID, storedProject.OrgID
 			if id := adopt[app.WorkloadName]; id != "" {
-				adopted, err := scanApp(tx.QueryRow(ctx, `update apps set project_id = $2, root_dir = $3, workload_name = $4, workload_class = $5 where id = $1 and account_id = $6 and project_id is null and type = 'function' and status <> 'deleted' returning `+appsSelectColumns, id, project.ID, app.RootDir, app.WorkloadName, string(app.WorkloadClass), storedProject.AccountID))
+				adopted, err := scanApp(tx.QueryRow(ctx, `update apps set project_id = $2, root_dir = $3, workload_name = $4, workload_class = $5 where id = $1 and account_id = $6 and coalesce(org_id::text, '') = $7 and project_id is null and type = 'function' and status <> 'deleted' returning `+appsSelectColumns, id, project.ID, app.RootDir, app.WorkloadName, string(app.WorkloadClass), storedProject.AccountID, storedProject.OrgID))
 				if err != nil {
 					return ProjectReconcileResult{}, mapErr(err)
 				}
