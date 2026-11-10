@@ -104,3 +104,31 @@ func TestUncappedLeaseKeepsAnAppsOwnCPUCap(t *testing.T) {
 	}
 	assertFence(t, scope, memoryMaxValue(api.BillableRAMMB(512)), "32", half)
 }
+
+// An app instance's CPU follows its size whatever schedd sent (step 6.3):
+// the weight it sent, else its memory's, and no quota. Builders and
+// execution guests keep what they were sent.
+func TestWakeLeaseCPUFollowsAppSize(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		req          WakeRequest
+		builder      bool
+		wantWeight   int
+		wantUncapped bool
+	}{
+		{"schedd's size fields", WakeRequest{MemSizeMiB: 512, CPUWeight: 32, CPUUncapped: true}, false, 32, true},
+		{"an N-1 schedd's plan request", WakeRequest{MemSizeMiB: 512}, false, 32, true},
+		{"a 2 GB instance", WakeRequest{MemSizeMiB: 2048}, false, 128, true},
+		{"a 128 MB instance", WakeRequest{MemSizeMiB: 128}, false, 8, true},
+		{"a builder", WakeRequest{MemSizeMiB: 2048}, true, 0, false},
+		{"an execution guest", WakeRequest{MemSizeMiB: 512, ExecutionOnly: true}, false, 0, false},
+		{"no memory size", WakeRequest{}, false, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			weight, uncapped := wakeLeaseCPU(tc.req, tc.builder)
+			if weight != tc.wantWeight || uncapped != tc.wantUncapped {
+				t.Fatalf("wakeLeaseCPU = %d, %v; want %d, %v", weight, uncapped, tc.wantWeight, tc.wantUncapped)
+			}
+		})
+	}
+}

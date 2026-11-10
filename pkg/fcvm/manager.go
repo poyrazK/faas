@@ -3909,13 +3909,16 @@ type WakeRequest struct {
 	// DisableStartupCPUBoost opts out of the bounded startup CPU allowance.
 	DisableStartupCPUBoost bool
 	// CPUWeight is the instance's cgroup cpu.weight (ADR-20261109172421);
-	// 0 keeps the plan's weight. The json tag keeps the checkpoint wake
-	// commitment of a request without it unchanged.
+	// 0 gives an app instance its memory's weight (wakeLeaseCPU). The json
+	// tag keeps the checkpoint wake commitment of a request without it
+	// unchanged.
 	CPUWeight int `json:",omitempty"`
 	// CPUUncapped runs the instance with cpu.max = max and no startup boost
 	// while CPUMillicores is the app default; an app's 250 or 500 millicore
 	// choice stays a cap, also after a live CPU policy update
-	// (ADR-20261109172421). False keeps the CPUMillicores quota.
+	// (ADR-20261109172421). vmmd runs every app instance this way whatever
+	// the field says (wakeLeaseCPU, step 6.3); it stays on the wire for
+	// schedd N-1.
 	CPUUncapped bool `json:",omitempty"`
 	// ExecutionMode is the declared lifecycle mode used to constrain the
 	// cold-boot characterization result. Empty preserves legacy inference.
@@ -4872,8 +4875,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.MemoryMaxMiB = wakeGuestMemoryMiB(req)
 	lease.CPUMillicores = req.CPUMillicores
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
-	lease.CPUWeight = req.CPUWeight
-	lease.CPUUncapped = req.CPUUncapped
+	lease.CPUWeight, lease.CPUUncapped = wakeLeaseCPU(req, lease.IsBuilder)
 	lease.AppPort = req.Port
 	m.mu.Lock()
 	if m.waking == nil {

@@ -38,6 +38,22 @@ func leaseUncappedAt(l Lease, cpuMillicores int) bool {
 		(cpuMillicores <= 0 || cpuMillicores >= api.DefaultAppCPUMillicores)
 }
 
+// wakeLeaseCPU is the cpu.weight and quota rule of a woken VM. An app
+// instance's CPU follows its size whatever its scheduler sent
+// (ADR-20261109172421 step 6.3): the weight schedd sent, else its memory's,
+// and no quota at the app default ceiling. Builders and execution guests
+// (agent runs, data repair, function executions) keep their own rules, as
+// does a request without a memory size, which cannot boot.
+func wakeLeaseCPU(req WakeRequest, builder bool) (weight int, uncapped bool) {
+	if builder || req.ExecutionOnly || req.MemSizeMiB <= 0 {
+		return req.CPUWeight, req.CPUUncapped
+	}
+	if req.CPUWeight > 0 {
+		return req.CPUWeight, true
+	}
+	return api.SizeCPUWeight(req.MemSizeMiB), true
+}
+
 // liveAppCPUMax is the cpu.max an app lease runs with at a ceiling pushed by
 // a live CPU policy update.
 func liveAppCPUMax(l Lease, cpuMillicores int) (string, error) {
