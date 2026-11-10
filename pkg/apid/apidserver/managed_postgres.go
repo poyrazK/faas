@@ -295,6 +295,22 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
 		ProvisioningEnabled: operationsGate,
 		ProvisioningAllowed: provisioningAllowed,
+		// ADR-20261110120000: each binding issues a provider role, so the
+		// plan bounds live bindings per app (PostgresBindingsPerAppMax).
+		MaxBindingsPerApp: func(ctx context.Context, accountID string) (int, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
+			if err != nil {
+				return 0, err
+			}
+			limits, ok := api.LimitsFor(api.Plan(account.Plan))
+			if !ok || limits.PostgresBindingsPerAppMax <= 0 {
+				return 0, managedpostgres.ErrNotInPlan
+			}
+			return limits.PostgresBindingsPerAppMax, nil
+		},
+		// ADR-20261110120000: a binding's app secret would be refused by the
+		// release-secret trigger, leaving the binding retrying hourly.
+		ReleaseSecretsPinned: accountStore.ReleaseSecretsPinned,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err

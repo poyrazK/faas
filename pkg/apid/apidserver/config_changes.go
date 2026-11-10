@@ -66,14 +66,20 @@ func (s *server) beginConfigChange(r *http.Request, acct state.Account, app stat
 	if guard {
 		guard = s.configGuardHasTraffic(r.Context(), app.ID, scope)
 	}
-	c := &configChange{store: store, acct: acct, app: app, scope: scope, actor: configActor(r, acct)}
-	start := state.ConfigChangeStart{AccountID: acct.ID, AppID: app.ID, Scope: scope, Actor: c.actor, Guard: guard, Now: time.Now().UTC()}
+	return s.beginConfigChangeAs(r.Context(), store, acct, app, scope, configActor(r, acct), guard, secretKey)
+}
+
+// beginConfigChangeAs records the baseline for a config write made outside an
+// HTTP request, such as a repository push, attributed to actor.
+func (s *server) beginConfigChangeAs(ctx context.Context, store state.ConfigRevisionStore, acct state.Account, app state.App, scope, actor string, guard bool, secretKey string) *configChange {
+	c := &configChange{store: store, acct: acct, app: app, scope: scope, actor: actor}
+	start := state.ConfigChangeStart{AccountID: acct.ID, AppID: app.ID, Scope: scope, Actor: actor, Guard: guard, Now: time.Now().UTC()}
 	if guard {
 		start.SecretKey = secretKey
 	}
-	ticket, err := store.BeginConfigChange(r.Context(), start)
+	ticket, err := store.BeginConfigChange(ctx, start)
 	if err != nil {
-		s.configRevisionFailed(r.Context(), acct, app, scope, "begin", err)
+		s.configRevisionFailed(ctx, acct, app, scope, "begin", err)
 		return nil
 	}
 	c.ticket = ticket

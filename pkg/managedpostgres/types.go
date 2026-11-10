@@ -14,6 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
@@ -32,6 +33,25 @@ var (
 	// for a count problem it did not have (ChronoLake finding 18).
 	ErrUsageLimitReached = fmt.Errorf("%w: monthly usage ceiling reached", pgerrors.ErrQuotaExceeded)
 )
+
+// ErrReleaseSecretsPinned refuses a binding for an app whose project
+// environment pins its secrets to an active release: release capture refuses
+// managed credentials, and app-secret writes in that scope belong to an
+// atomic project release (ADR-20261110120000).
+var ErrReleaseSecretsPinned = fmt.Errorf("%w: the app's secrets in this environment are pinned to a project release", pgerrors.ErrConflict)
+
+// BindingLimitError is a new binding refused because its app already holds
+// the plan's PostgresBindingsPerAppMax live bindings (ADR-20261110120000).
+type BindingLimitError struct {
+	Limit    int
+	Observed int
+}
+
+func (e *BindingLimitError) Error() string {
+	return fmt.Sprintf("the app holds %d managed PostgreSQL bindings; the plan allows %d per app", e.Observed, e.Limit)
+}
+
+func (e *BindingLimitError) Is(target error) bool { return target == ErrQuotaExceeded }
 
 // UsageLimitHint is the remediation for ErrUsageLimitReached.
 const UsageLimitHint = "This month's managed PostgreSQL usage reached its ceiling (see compute_ceiling and guardrail_state in gregale postgres usage). Existing databases keep running; new databases and restores resume next month or when the ceiling is raised. Contact support if the ceiling is below your plan's allowance."
@@ -473,12 +493,16 @@ const (
 	CredentialSession CredentialAccess = "session"
 )
 
+// knownCredentialAccess lists every portable credential mode.
+var knownCredentialAccess = [...]CredentialAccess{CredentialReadWrite, CredentialReadOnly, CredentialMigration, CredentialDataAPI, CredentialAuth, CredentialSession}
+
 // Known reports whether access is a portable credential mode. Every
 // validation site uses it so a new mode cannot be missed by one of them.
 func (a CredentialAccess) Known() bool {
-	switch a {
-	case CredentialReadWrite, CredentialReadOnly, CredentialMigration, CredentialDataAPI, CredentialAuth, CredentialSession:
-		return true
+	for _, known := range knownCredentialAccess {
+		if a == known {
+			return true
+		}
 	}
 	return false
 }
@@ -1200,6 +1224,9 @@ type Binding struct {
 	CreatedAt                  time.Time
 	UpdatedAt                  time.Time
 	DeletedAt                  *time.Time
+	// appBindingLimit is the reservation's per-app ceiling, read by
+	// ReserveBinding and never stored; zero leaves the count unbounded.
+	appBindingLimit int
 }
 
 // CredentialSink is implemented by the app-secret subsystem. Put must seal
@@ -1303,6 +1330,20 @@ func validBindingScope(scope string) bool {
 	}
 	validScope := regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 	return validScope.MatchString(scope)
+}
+
+// customerBindingEnvironmentKeyError refuses keys a workload would never see
+// or that would shadow a platform setting (ADR-20261110120000): guest-init
+// accepts only keys that start with a letter and drops platform identity
+// keys, and PORT, GREGALE_* and FAAS_* belong to the platform.
+func customerBindingEnvironmentKeyError(key string) error {
+	if api.ValidateEnvKey(key) != nil {
+		return fmt.Errorf("%w: environment key %q must start with a letter and contain only A-Z, 0-9 and underscore", ErrInvalid, key)
+	}
+	if api.PlatformProvidedEnvKey(key) {
+		return fmt.Errorf("%w: environment key %q is set by the platform (PORT, GREGALE_*, FAAS_* and identity keys are reserved)", ErrInvalid, key)
+	}
+	return nil
 }
 
 func validEnvironmentKey(key string) bool {

@@ -1,7 +1,8 @@
 package apidserver_test
 
 // adr: 20261104145353 — once the platform created api.SignupAccountsPerDay
-// accounts in 24 hours, a sign-up from a fresh address is refused with 429.
+// verified accounts in 24 hours, a sign-up from a fresh address is refused
+// with 429. Amendment 1: unverified accounts do not count.
 
 import (
 	"bytes"
@@ -19,10 +20,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestSignupFleetCapRefusesPastTheDailyShare(t *testing.T) {
+func signupFleetCapFixture(t *testing.T) (*state.MemStore, func(email, addr string) int) {
+	t.Helper()
 	store := state.NewMemStore()
 	h := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).Handler()
-	signup := func(email, addr string) int {
+	return store, func(email, addr string) int {
 		body, _ := json.Marshal(api.PasswordLoginRequest{Email: email, Password: "farm-horse-battery-staple"})
 		req := httptest.NewRequest(http.MethodPost, "/v1/auth/signup", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -31,15 +33,35 @@ func TestSignupFleetCapRefusesPastTheDailyShare(t *testing.T) {
 		h.ServeHTTP(rec, req)
 		return rec.Code
 	}
-	for i := range api.SignupAccountsPerDay - 1 {
-		if _, err := store.CreateAccount(context.Background(), fmt.Sprintf("earlier-%d@example.com", i), api.PlanFree); err != nil {
+}
+
+func seedSignupAccounts(t *testing.T, store *state.MemStore, n int, verified bool) {
+	t.Helper()
+	for i := range n {
+		if _, err := store.CreateAccountWithPersonalOrg(context.Background(), state.CreateAccountWithPersonalOrgParams{
+			Email:                    fmt.Sprintf("earlier-%d@example.com", i),
+			Plan:                     api.PlanFree,
+			RequireEmailVerification: !verified,
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if code := signup("last@example.com", "203.0.113.50:4000"); code != http.StatusOK {
-		t.Fatalf("sign-up within the daily share: %d, want 200", code)
-	}
+}
+
+func TestSignupFleetCapRefusesPastTheDailyShare(t *testing.T) {
+	store, signup := signupFleetCapFixture(t)
+	seedSignupAccounts(t, store, api.SignupAccountsPerDay, true)
 	if code := signup("over@example.com", "198.51.100.60:4000"); code != http.StatusTooManyRequests {
-		t.Fatalf("sign-up past the platform's daily share from a fresh address: %d, want 429", code)
+		t.Fatalf("sign-up past the platform's daily share of verified accounts from a fresh address: %d, want 429", code)
+	}
+}
+
+// A signup farm that never verifies claims no Free allowance, so it must not
+// close sign-up for everyone else.
+func TestSignupFleetCapIgnoresUnverifiedAccounts(t *testing.T) {
+	store, signup := signupFleetCapFixture(t)
+	seedSignupAccounts(t, store, api.SignupAccountsPerDay, false)
+	if code := signup("real@example.com", "203.0.113.50:4000"); code != http.StatusOK {
+		t.Fatalf("sign-up after %d unverified accounts: %d, want 200", api.SignupAccountsPerDay, code)
 	}
 }

@@ -12,10 +12,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// A wake of an app whose guest vCPU count schedd shapes books that count in
-// the node's durable vCPU sum, not its plan's; any other app keeps the plan's
-// (ADR-20261109172421 step 5).
-func TestShapedAppBooksItsBootedVCPUs(t *testing.T) {
+// A wake books the guest vCPU count the instance boots with in the node's
+// durable vCPU sum: its size's, not its plan's (ADR-20261109172421).
+func TestAppInstanceBooksItsBootedVCPUs(t *testing.T) {
 	ctx := context.Background()
 	mem := state.NewMemStore()
 	existing, err := mem.ListComputeNodes(ctx, true)
@@ -47,28 +46,15 @@ func TestShapedAppBooksItsBootedVCPUs(t *testing.T) {
 		return got[node.ID]
 	}
 
-	shaped := f.app(t, api.PlanPro, 256, 1)
-	// MemStore app IDs are not dashed UUIDs, so list every app.
-	if err := f.e.SetGuestVCPUFromCPUApps([]string{"*"}); err != nil {
-		t.Fatal(err)
+	app := f.app(t, api.PlanPro, 256, 1)
+	want := sched.AppVCPUs(app)
+	if want != 1 || want >= api.MustLimitsFor(api.PlanPro).VCPU {
+		t.Fatalf("a 256 MB app boots %d vCPUs, want 1, fewer than the plan's for this test", want)
 	}
-	want := f.e.GuestVCPUs(shaped, api.MustLimitsFor(api.PlanPro))
-	if want >= api.MustLimitsFor(api.PlanPro).VCPU {
-		t.Fatalf("the shaped app boots %d vCPUs, want fewer than the plan's for this test", want)
-	}
-	if _, err := f.e.Wake(ctx, shaped.ID, "", "", sched.TriggerCronSched); err != nil {
-		t.Fatalf("wake shaped: %v", err)
+	if _, err := f.e.Wake(ctx, app.ID, "", "", sched.TriggerCronSched); err != nil {
+		t.Fatalf("wake: %v", err)
 	}
 	if got := used(); got != int64(want) {
-		t.Fatalf("a shaped app's instance books %d vCPU, want the %d it boots with", got, want)
-	}
-	if err := f.e.SetGuestVCPUFromCPUApps(nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.e.Wake(ctx, f.app(t, api.PlanPro, 256, 1).ID, "", "", sched.TriggerCronSched); err != nil {
-		t.Fatalf("wake plan app: %v", err)
-	}
-	if got, pro := used()-int64(want), api.MustLimitsFor(api.PlanPro).VCPU; got != int64(pro) {
-		t.Fatalf("a plan app's instance books %d vCPU, want its plan's %d", got, pro)
+		t.Fatalf("the instance books %d vCPU, want the %d it boots with", got, want)
 	}
 }

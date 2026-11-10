@@ -63,7 +63,7 @@ func render() string {
 		}
 	}
 	b.WriteString(strings.Join(caps, ", "))
-	b.WriteString("); `gregale billing spend-cap` raises or clears it.\n")
+	b.WriteString("); `gregale billing spend-cap` changes it, up to Hobby $75, Pro $200 or Scale $1,000.\n")
 	b.WriteString("- **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md).")
 	fmt.Fprintf(&b, " Functions default to %s on every plan; any app or function can set its own value from %s up to twice the plan default.\n",
 		formatDuration(api.FunctionIdleTimeoutDefaultSeconds), formatDuration(api.IdleTimeoutFloorSeconds))

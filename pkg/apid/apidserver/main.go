@@ -1892,6 +1892,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if err := object.ValidateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
 			return err
 		}
+		production := strings.EqualFold(strings.TrimSpace(deps.getenv("FAAS_ENVIRONMENT")), "production")
+		if err := object.RequireBilledObjectStorage(billingProv, objectRegistry, production); err != nil {
+			return err
+		}
 		if billingProv != nil {
 			srv.WithBillingProvider(billingProv)
 		} else if loadedName == "stripe" {

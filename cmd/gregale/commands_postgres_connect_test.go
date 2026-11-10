@@ -23,6 +23,7 @@ func TestChoosePostgresConnectBinding(t *testing.T) {
 		{ID: "mig", AppID: "a1", EnvironmentKey: "MIGRATION_DATABASE_URL", Access: "migration", State: "ready"},
 		{ID: "dead", AppID: "a1", EnvironmentKey: "OLD_URL", Access: "read_write", State: "failed"},
 		{ID: "api", AppID: "a1", EnvironmentKey: "DATA_API", Access: "data_api", State: "ready"},
+		{ID: "session", AppID: "a1", EnvironmentKey: "SESSION_DATABASE_URL", Access: "session", State: "ready"},
 		{ID: "hidden", AppID: "other-account", EnvironmentKey: "DATABASE_URL", Access: "read_write", State: "ready"},
 	}
 	for _, tc := range []struct {
@@ -32,6 +33,7 @@ func TestChoosePostgresConnectBinding(t *testing.T) {
 		{name: "prefers read_write", wantID: "rw", wantSlug: "store"},
 		{name: "app filter", app: "gateway", wantID: "mig", wantSlug: "gateway"},
 		{name: "access filter", access: "read_only", wantID: "ro", wantSlug: "gateway"},
+		{name: "session access filter", access: "session", wantID: "session", wantSlug: "gateway"},
 		{name: "env filter", env: "MIGRATION_DATABASE_URL", wantID: "mig", wantSlug: "gateway"},
 		{name: "failed binding is skipped", env: "OLD_URL", wantErr: true},
 		{name: "data_api is not a psql binding", env: "DATA_API", wantErr: true},
