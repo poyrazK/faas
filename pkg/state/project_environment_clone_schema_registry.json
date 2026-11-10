@@ -710,6 +710,7 @@
       "cooldown_minutes",
       "created_at",
       "created_by_account_id",
+      "custom_metric_labels",
       "custom_metric_name",
       "edge_rule_id",
       "enabled",
@@ -1278,6 +1279,19 @@
       "last_error",
       "node_id",
       "observed_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_custom_metric_series",
+    "columns": [
+      "app_id",
+      "kind",
+      "labels",
+      "name",
+      "observed_at",
+      "series_key",
+      "value"
     ],
     "kind": "operational"
   },
@@ -1939,6 +1953,7 @@
       "max_change_percent",
       "max_failure_percent",
       "max_new_groups",
+      "metric_labels",
       "metric_name",
       "min_events",
       "min_samples",
@@ -8394,6 +8409,7 @@
       "application_standard_boot_token",
       "application_standard_promotion_token",
       "booked_cpu_millicores",
+      "booked_vcpu",
       "capacity_cpu_millicores",
       "capacity_ram_mb",
       "capacity_vcpu",
@@ -17509,6 +17525,15 @@
     "kind": "operational"
   },
   {
+    "table": "realtime_node_endpoint_connections",
+    "columns": [
+      "connections",
+      "endpoint_id",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "realtime_usage_hours",
     "columns": [
       "account_id",
@@ -17625,6 +17650,17 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_app_gaps",
+    "columns": [
+      "app_id",
+      "last_gap_at",
+      "node_name",
+      "pending_count",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_hours",
     "columns": [
       "account_id",
@@ -17667,10 +17703,30 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_node_coverage",
+    "columns": [
+      "boot_id",
+      "counting_since",
+      "heartbeat_at",
+      "node_name",
+      "unattributed_dropped_total"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_rollup_gaps",
     "columns": [
       "app_id",
       "bucket_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_rollup_batches",
+    "columns": [
+      "applied_at",
+      "batch_id",
+      "node_id"
     ],
     "kind": "operational"
   },

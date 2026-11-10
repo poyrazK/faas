@@ -21,6 +21,9 @@ func TestTracingConfigValidate(t *testing.T) {
 		{name: "negative ratio", cfg: &TracingConfig{Enabled: true, SampleRatio: -0.1}, plan: PlanPro, wantErr: true},
 		{name: "ratio above one", cfg: &TracingConfig{Enabled: true, SampleRatio: 1.5}, plan: PlanPro, wantErr: true},
 		{name: "nan ratio", cfg: &TracingConfig{Enabled: true, SampleRatio: math.NaN()}, plan: PlanPro, wantErr: true},
+		{name: "metrics on pro", cfg: &TracingConfig{Enabled: true, Metrics: true}, plan: PlanPro},
+		{name: "metrics without tracing", cfg: &TracingConfig{Metrics: true}, plan: PlanPro, wantErr: true},
+		{name: "metrics on free", cfg: &TracingConfig{Metrics: true}, plan: PlanFree, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.cfg.Validate(tc.plan)
@@ -54,5 +57,29 @@ func TestTraceCodecMediaType(t *testing.T) {
 	}
 	if _, _, ok := TraceCodecMediaType(0x7f); ok {
 		t.Fatal("unknown codec accepted")
+	}
+}
+
+// adr: 20261108160000 — the metrics bit is its own signal; both bits at once
+// is malformed, and SplitTraceCodec leaves the metrics bit in base so an
+// older reader rejects it as an unknown codec.
+func TestTraceFrameSignal(t *testing.T) {
+	for _, tc := range []struct {
+		codec, base, signal byte
+		ok                  bool
+	}{
+		{TraceCodecGzipProtobuf, TraceCodecGzipProtobuf, 0, true},
+		{TraceCodecProtobuf | TraceCodecLogsSignal, TraceCodecProtobuf, TraceCodecLogsSignal, true},
+		{TraceCodecJSON | TraceCodecMetricsSignal, TraceCodecJSON, TraceCodecMetricsSignal, true},
+		{TraceCodecProtobuf | TraceCodecLogsSignal | TraceCodecMetricsSignal, TraceCodecProtobuf, 0, false},
+	} {
+		base, signal, ok := TraceFrameSignal(tc.codec)
+		if base != tc.base || signal != tc.signal || ok != tc.ok {
+			t.Errorf("TraceFrameSignal(%#x) = %#x %#x %v", tc.codec, base, signal, ok)
+		}
+	}
+	base, _ := SplitTraceCodec(TraceCodecProtobuf | TraceCodecMetricsSignal)
+	if _, _, ok := TraceCodecMediaType(base); ok {
+		t.Fatal("a metrics frame must look like an unknown codec to a traces/logs-only reader")
 	}
 }

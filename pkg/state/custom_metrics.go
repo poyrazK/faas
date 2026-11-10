@@ -86,14 +86,50 @@ func (s *PgStore) PutCustomMetricOfKind(ctx context.Context, appID, name, kind s
 }
 
 // AddCustomMetricCounter adds delta to the counter's total under the same
-// cap as PutCustomMetricOfKind.
+// cap as PutCustomMetricOfKind (AddCustomMetricOfKind for a counter).
 func (s *PgStore) AddCustomMetricCounter(ctx context.Context, appID, name string, delta float64, observedAt time.Time, distinctLimit int) error {
+	return s.AddCustomMetricOfKind(ctx, appID, name, CustomMetricKindCounter, delta, observedAt, distinctLimit)
+}
+
+// CustomMetricDeltaStore adds an OTLP delta to a stored metric
+// (ADR-20261108160000): delta counters and histogram totals accumulate into
+// a running total, and delta up-down counters move a gauge.
+type CustomMetricDeltaStore interface {
+	AddCustomMetricOfKind(ctx context.Context, appID, name, kind string, delta float64, observedAt time.Time, distinctLimit int) error
+}
+
+var (
+	_ CustomMetricDeltaStore = (*PgStore)(nil)
+	_ CustomMetricDeltaStore = (*MemStore)(nil)
+)
+
+// customMetricMaxTotal bounds an accumulated total below the column's
+// finite CHECK; a total that large is a broken producer, not a count.
+const customMetricMaxTotal = 1e15
+
+// clampCustomMetricTotal keeps an accumulated value inside the stored
+// range: never negative (app_custom_metrics_value_finite) and finite.
+func clampCustomMetricTotal(v float64) float64 {
+	switch {
+	case v < 0 || v != v:
+		return 0
+	case v > customMetricMaxTotal:
+		return customMetricMaxTotal
+	}
+	return v
+}
+
+// AddCustomMetricOfKind adds delta to the stored value of name, inserting it
+// as delta when the name is new or was stored with another kind (a kind
+// change restarts the total). The result is clamped to [0, 1e15]. The
+// distinct-name cap is enforced in the statement as in PutCustomMetricOfKind.
+func (s *PgStore) AddCustomMetricOfKind(ctx context.Context, appID, name, kind string, delta float64, observedAt time.Time, distinctLimit int) error {
 	if distinctLimit <= 0 {
 		return fmt.Errorf("state: add custom metric %q: distinct limit must be > 0", name)
 	}
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO app_custom_metrics (app_id, name, value, observed_at, kind)
-		SELECT $1::uuid, $2::text, $3::double precision, $4::timestamptz, $6::text
+		SELECT $1::uuid, $2::text, LEAST(GREATEST($3::double precision, 0), $7::double precision), $4::timestamptz, $6::text
 		WHERE EXISTS (
 			SELECT 1 FROM app_custom_metrics
 			 WHERE app_id = $1::uuid AND name = $2::text
@@ -101,11 +137,13 @@ func (s *PgStore) AddCustomMetricCounter(ctx context.Context, appID, name string
 			SELECT count(*) FROM app_custom_metrics WHERE app_id = $1::uuid
 		) < $5::int
 		ON CONFLICT (app_id, name) DO UPDATE
-		   SET value = CASE WHEN app_custom_metrics.kind = EXCLUDED.kind
-		                    THEN app_custom_metrics.value + EXCLUDED.value ELSE EXCLUDED.value END,
-		       observed_at = greatest(app_custom_metrics.observed_at, EXCLUDED.observed_at),
+		   SET value = LEAST(GREATEST(
+		           CASE WHEN app_custom_metrics.kind = EXCLUDED.kind
+		                THEN app_custom_metrics.value + $3::double precision
+		                ELSE $3::double precision END, 0), $7::double precision),
+		       observed_at = GREATEST(app_custom_metrics.observed_at, EXCLUDED.observed_at),
 		       kind = EXCLUDED.kind
-	`, appID, name, delta, observedAt, distinctLimit, CustomMetricKindCounter)
+	`, appID, name, delta, observedAt, distinctLimit, kind, customMetricMaxTotal)
 	if err != nil {
 		return fmt.Errorf("state: add custom metric %q for app %s: %w", name, appID, err)
 	}
@@ -124,10 +162,12 @@ func (s *PgStore) AddCustomMetricCounter(ctx context.Context, appID, name string
 // evaluation silently wrong.
 func (s *PgStore) ListCustomMetrics(ctx context.Context, appID string) ([]CustomMetric, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT name, value, observed_at, kind
-		  FROM app_custom_metrics
-		 WHERE app_id = $1::uuid
-		 ORDER BY name
+		SELECT m.name, m.value, m.observed_at, m.kind,
+		       EXISTS (SELECT 1 FROM app_custom_metric_series s
+		                WHERE s.app_id = m.app_id AND s.name = m.name)
+		  FROM app_custom_metrics m
+		 WHERE m.app_id = $1::uuid
+		 ORDER BY m.name
 	`, appID)
 	if err != nil {
 		return nil, fmt.Errorf("state: list custom metrics for app %s: %w", appID, err)
@@ -136,7 +176,7 @@ func (s *PgStore) ListCustomMetrics(ctx context.Context, appID string) ([]Custom
 	out := make([]CustomMetric, 0, 4)
 	for rows.Next() {
 		var m CustomMetric
-		if err := rows.Scan(&m.Name, &m.Value, &m.ObservedAt, &m.Kind); err != nil {
+		if err := rows.Scan(&m.Name, &m.Value, &m.ObservedAt, &m.Kind, &m.Labelled); err != nil {
 			return nil, fmt.Errorf("state: scan custom metric for app %s: %w", appID, err)
 		}
 		out = append(out, m)
@@ -271,7 +311,12 @@ func (m *MemStore) PutCustomMetricOfKind(_ context.Context, appID, name, kind st
 }
 
 // AddCustomMetricCounter mirrors PgStore.
-func (m *MemStore) AddCustomMetricCounter(_ context.Context, appID, name string, delta float64, observedAt time.Time, distinctLimit int) error {
+func (m *MemStore) AddCustomMetricCounter(ctx context.Context, appID, name string, delta float64, observedAt time.Time, distinctLimit int) error {
+	return m.AddCustomMetricOfKind(ctx, appID, name, CustomMetricKindCounter, delta, observedAt, distinctLimit)
+}
+
+// AddCustomMetricOfKind mirrors the PgStore delta upsert.
+func (m *MemStore) AddCustomMetricOfKind(_ context.Context, appID, name, kind string, delta float64, observedAt time.Time, distinctLimit int) error {
 	if distinctLimit <= 0 {
 		return fmt.Errorf("state: add custom metric %q: distinct limit must be > 0", name)
 	}
@@ -289,14 +334,14 @@ func (m *MemStore) AddCustomMetricCounter(_ context.Context, appID, name string,
 	if !exists && len(byName) >= distinctLimit {
 		return ErrCustomMetricLimit
 	}
-	next := CustomMetric{Name: name, Value: delta, ObservedAt: observedAt, Kind: CustomMetricKindCounter}
-	if exists && prev.Kind == CustomMetricKindCounter {
-		next.Value += prev.Value
+	value := delta
+	if exists && prev.Kind == kind {
+		value = prev.Value + delta
 	}
 	if exists && prev.ObservedAt.After(observedAt) {
-		next.ObservedAt = prev.ObservedAt
+		observedAt = prev.ObservedAt
 	}
-	byName[name] = next
+	byName[name] = CustomMetric{Name: name, Value: clampCustomMetricTotal(value), ObservedAt: observedAt, Kind: kind}
 	return nil
 }
 
@@ -309,18 +354,23 @@ func (m *MemStore) ListCustomMetrics(_ context.Context, appID string) ([]CustomM
 	byName := m.customMetrics[appID]
 	out := make([]CustomMetric, 0, len(byName))
 	for _, v := range byName {
+		v.Labelled = len(m.customMetricSeries[appID][v.Name]) > 0
 		out = append(out, v)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
-// DeleteCustomMetric removes one gauge; a missing name is not an error.
+// DeleteCustomMetric removes one gauge and, as the PgStore foreign key
+// cascades, its series; a missing name is not an error.
 func (m *MemStore) DeleteCustomMetric(_ context.Context, appID, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if byName := m.customMetrics[appID]; byName != nil {
 		delete(byName, name)
+	}
+	if bySeries := m.customMetricSeries[appID]; bySeries != nil {
+		delete(bySeries, name)
 	}
 	return nil
 }

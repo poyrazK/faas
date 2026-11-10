@@ -264,11 +264,18 @@ func (s *DataAPISetup) Deploy(ctx context.Context, job datapipeline.Setup) (stri
 	}
 	settings, _ := json.Marshal(map[string]string{"DATA_API_SCHEMAS": "public", "DATA_API_ISSUER": job.DataAPIPlan.Issuer, "DATA_API_JWKS_URL": job.DataAPIPlan.JWKSURL, "DATA_API_AUDIENCE": job.DataAPIPlan.Audience, "DATA_API_READ_ONLY": "true"})
 	health, _ := json.Marshal(api.DeploymentHealthcheck{Path: "/healthz"})
+	// Liveness checks the process only, where the plan has liveness probes:
+	// /healthz reports SQL readiness, which a busy pool or a database blip
+	// fails without the runtime being wedged.
+	var liveness json.RawMessage
+	if api.MustLimitsFor(a.Plan).LivenessPeriodSeconds > 0 {
+		liveness, _ = json.Marshal(api.DeploymentLivenessProbe{Path: api.DataAPILivenessPath})
+	}
 	reason := "Saved pipeline setup " + job.ID
 	if job.DataAPIPlan.PreviousDeploymentID != "" {
 		reason += "; retry of " + job.DataAPIPlan.PreviousDeploymentID
 	}
-	result, err := apidsource.Enqueue(ctx, s.Store, s.Notifier, apidsource.EnqueueParams{IntentID: job.DataAPIPlan.IntentID, AppID: app.ID, Kind: state.DeploymentKindDockerfile, SourcePath: source, SourceBytes: size, Scope: api.DefaultEnvScope, LogSpool: s.Spool, Log: s.Log, OverrideEnv: settings, OverrideHealthcheck: health, Reason: reason, ActorUserID: a.ID, ActorVia: "dashboard"})
+	result, err := apidsource.Enqueue(ctx, s.Store, s.Notifier, apidsource.EnqueueParams{IntentID: job.DataAPIPlan.IntentID, AppID: app.ID, Kind: state.DeploymentKindDockerfile, SourcePath: source, SourceBytes: size, Scope: api.DefaultEnvScope, LogSpool: s.Spool, Log: s.Log, OverrideEnv: settings, OverrideHealthcheck: health, OverrideLivenessProbe: liveness, Reason: reason, ActorUserID: a.ID, ActorVia: "dashboard"})
 	if err != nil {
 		return "", "", dataAPIError(err)
 	}

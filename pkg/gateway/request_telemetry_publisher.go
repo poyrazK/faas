@@ -242,6 +242,7 @@ func (p *requestTelemetryPublisher) tick(ctx context.Context) {
 		return
 	}
 	defer p.reportCoverage(ctx)
+	p.recorder.analytics.tick(ctx, false)
 	if p.minutes != nil {
 		p.tickMinutes(ctx, false)
 		return
@@ -608,6 +609,7 @@ func requestTelemetryBucketed(row RequestTelemetryRow) (RequestTelemetryRow, str
 		ColdBoot:                             row.ColdBoot,
 		LatencyBucket:                        row.LatencyMS,
 		ContentOutcome:                       row.ContentOutcome,
+		AnalyticsCounted:                     row.AnalyticsCounted,
 		bucket:                               bucket,
 	}.String()
 	row.ReceivedAt = bucket
@@ -669,6 +671,7 @@ type bucketKey struct {
 	ColdBoot                             bool
 	LatencyBucket                        int
 	ContentOutcome                       string
+	AnalyticsCounted                     bool
 	bucket                               time.Time
 }
 
@@ -758,6 +761,20 @@ type RequestTelemetryAppGap struct {
 	AppID        uuid.UUID
 	DroppedCount int64
 	PendingCount int
+	// AnalyticsDroppedCount and AnalyticsPendingCount are the analytics
+	// part (ADR-20261103113952 amendment 6): requests lost to analytics
+	// since the last acknowledged heartbeat, and requests whose analytics
+	// are late: rollups past their send time and raw rows the gateway did
+	// not count still waiting to ship.
+	AnalyticsDroppedCount int64
+	AnalyticsPendingCount int
+}
+
+// RequestTelemetryAnalyticsCoverage is a heartbeat's analytics part, set
+// only by a gateway that counts its own analytics.
+type RequestTelemetryAnalyticsCoverage struct {
+	Counting                 bool
+	UnattributedDroppedTotal int64
 }
 
 // RequestTelemetryCoverage describes completed-request delivery, not client migration.
@@ -770,6 +787,7 @@ type RequestTelemetryCoverage struct {
 	AppScoped                bool
 	UnattributedDroppedTotal int64
 	AppGaps                  []RequestTelemetryAppGap
+	Analytics                *RequestTelemetryAnalyticsCoverage
 }
 
 func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
@@ -784,6 +802,7 @@ func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
 	for app, n := range p.recorder.appLosses {
 		gaps[app] = RequestTelemetryAppGap{AppID: app, DroppedCount: n}
 	}
+	analytics := p.recorder.analytics
 	for i := 0; i < p.recorder.len; i++ {
 		row := p.recorder.ring[(p.recorder.head+i)%len(p.recorder.ring)]
 		if row.AppID == uuid.Nil {
@@ -792,6 +811,9 @@ func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
 		gap := gaps[row.AppID]
 		gap.AppID = row.AppID
 		gap.PendingCount++
+		if analytics != nil && !row.AnalyticsCounted {
+			gap.AnalyticsPendingCount += normalizedRequestTelemetryCount(row.Count)
+		}
 		gaps[row.AppID] = gap
 	}
 	if p.minutes != nil {
@@ -806,6 +828,34 @@ func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
 			gap := gaps[app]
 			gap.AppID = app
 			gap.PendingCount += n
+			gaps[app] = gap
+		}
+	}
+	if analytics != nil {
+		// The analytics part (ADR-20261103113952 amendment 6). Rollups
+		// late past their send time, and raw rows the gateway did not
+		// count, are pending for analytics; raw delivery does not wait on
+		// rollups.
+		coverage.Analytics = &RequestTelemetryAnalyticsCoverage{Counting: analytics.active.Load(), UnattributedDroppedTotal: p.recorder.analyticsUnattributed}
+		late := analytics.undelivered()
+		if p.minutes != nil {
+			for app, n := range p.minutes.undeliveredWhere(func(row RequestTelemetryRow) bool { return !row.AnalyticsCounted }) {
+				late[app] += int64(n)
+			}
+		}
+		for app, n := range late {
+			if app == uuid.Nil || n == 0 {
+				continue
+			}
+			gap := gaps[app]
+			gap.AppID = app
+			gap.AnalyticsPendingCount += int(n)
+			gaps[app] = gap
+		}
+		for app, n := range p.recorder.analyticsLosses {
+			gap := gaps[app]
+			gap.AppID = app
+			gap.AnalyticsDroppedCount = n
 			gaps[app] = gap
 		}
 	}
@@ -825,6 +875,11 @@ func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
 			p.recorder.appLosses[gap.AppID] = n
 		} else {
 			delete(p.recorder.appLosses, gap.AppID)
+		}
+		if n := p.recorder.analyticsLosses[gap.AppID] - gap.AnalyticsDroppedCount; n > 0 {
+			p.recorder.analyticsLosses[gap.AppID] = n
+		} else {
+			delete(p.recorder.analyticsLosses, gap.AppID)
 		}
 	}
 	p.recorder.ringMu.Unlock()

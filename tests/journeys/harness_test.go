@@ -1167,7 +1167,36 @@ func (tg *target) sweep(hours string) error {
 		}
 		fmt.Fprintf(os.Stderr, "journeys: swept stale app %s\n", slug)
 	}
+	tg.sweepDatabases(cutoff)
 	return nil
+}
+
+// sweepDatabases purges managed databases journeys created in earlier runs,
+// after the apps that held their bindings are gone. A database a crashed or
+// refused cleanup left behind otherwise holds one of the account's database
+// slots forever. Failures are logged; the next run retries.
+func (tg *target) sweepDatabases(cutoff time.Time) {
+	docs, err := tg.cliJSON("postgres", "list")
+	if err != nil || len(docs) == 0 {
+		return
+	}
+	items, _ := docs[0]["items"].([]any)
+	var dbs []map[string]any
+	for _, item := range items {
+		if db, ok := item.(map[string]any); ok && str(db, "state") != "deleted" {
+			dbs = append(dbs, map[string]any{"slug": str(db, "name")})
+		}
+	}
+	for _, name := range staleSlugs(dbs, cutoff, tg.runID) {
+		rm := exec.Command(tg.cli, "--non-interactive", "postgres", "delete", name, "--purge", "--yes")
+		rm.Env = tg.cliEnv(tg.token)
+		rm.Dir = tg.home
+		if out, err := rm.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "journeys: sweep database %s: %v: %s\n", name, err, tail(string(out), 300))
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "journeys: swept stale database %s\n", name)
+	}
 }
 
 // previewSlugRe matches pull-request previews of journey apps:

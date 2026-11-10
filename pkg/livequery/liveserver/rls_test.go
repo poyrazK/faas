@@ -38,7 +38,7 @@ func TestLiveReadsApplyTheDataAPIRowSecurityGate(t *testing.T) {
 
 func TestRLSClaimsMatchTheDataAPIGateway(t *testing.T) {
 	canonical, ok := rlsClaims(json.RawMessage(`{"sub":"alice","exp":1,"iat":2,"nbf":3,"jti":"j","tenant":"t1",
-		"gregale_access":"server","gregale_server_key":"a","gregale_sql_deadline":{"version":1},"gregale_refresh_hash":"h","gregale_serving_fingerprint":"f"}`))
+		"gregale_access":"server","gregale_server_key":"a","gregale_storage":"write","gregale_sql_deadline":{"version":1},"gregale_refresh_hash":"h","gregale_serving_fingerprint":"f"}`))
 	if !ok {
 		t.Fatal("valid claims refused")
 	}

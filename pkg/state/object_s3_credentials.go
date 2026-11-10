@@ -74,7 +74,7 @@ type ObjectS3ComputeBindingCreateRequest struct {
 
 func validObjectS3ComputeBindingCreateRequest(req ObjectS3ComputeBindingCreateRequest) bool {
 	c := req.Credential
-	if !validObjectS3Credential(c) || c.ManagedAppID == "" || c.IssuerAccountID != "" || c.IssuerAccessRevision != 0 || req.MaxCredentialsPerBucket < 1 || req.MaxSecretsPerApp < 6 || len(req.Secrets) != 6 {
+	if !validObjectS3Credential(c) || c.ManagedAppID == "" || c.IssuerAccountID != "" || c.IssuerAccessRevision != 0 || req.MaxCredentialsPerBucket < 1 || req.MaxSecretsPerApp < 1 || len(req.Secrets) != 6 {
 		return false
 	}
 	for _, id := range []string{c.ID, c.AccountID, c.BucketID, c.ManagedAppID} {

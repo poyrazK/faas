@@ -170,6 +170,10 @@ func TestPasswordResetRevokesSignInKeys(t *testing.T) {
 	if reset.Code != http.StatusFound {
 		t.Fatalf("reset: %d %s", reset.Code, reset.Body)
 	}
+	// The kept CI key is shown to the owner (ADR 20261109120000).
+	if loc := reset.Header().Get("Location"); loc != "/dashboard/account?password_reset=keys" {
+		t.Errorf("reset redirect = %q, want the account page's key review", loc)
+	}
 
 	if rec := e.bearer(t, http.MethodGet, "/v1/account", signedIn.APIKey.Plaintext); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("sign-in key after reset: %d, want 401", rec.Code)

@@ -55,8 +55,14 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 		t.Fatalf("opening the link verified the account (err=%v)", err)
 	}
 
+	// The post verifies only from a browser signed in to the account.
+	tok, err := apidserver.MintDashboardSession(t.Context(), store, *srv.Sessions(), acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := &http.Cookie{Name: apidserver.SessionCookie, Value: tok}
 	verifyRec := httptest.NewRecorder()
-	h.ServeHTTP(verifyRec, verifyEmailPost(apidserver.EmailVerificationPath, token))
+	h.ServeHTTP(verifyRec, verifyEmailPost(apidserver.EmailVerificationPath, token, cookie))
 	if verifyRec.Code != http.StatusOK {
 		t.Fatalf("verify status = %d: %s", verifyRec.Code, verifyRec.Body.String())
 	}
@@ -69,7 +75,7 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 	}
 
 	replayRec := httptest.NewRecorder()
-	h.ServeHTTP(replayRec, verifyEmailPost(apidserver.EmailVerificationPath, token))
+	h.ServeHTTP(replayRec, verifyEmailPost(apidserver.EmailVerificationPath, token, cookie))
 	if replayRec.Code != http.StatusGone {
 		t.Fatalf("replay status = %d, want 410", replayRec.Code)
 	}
@@ -77,9 +83,12 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 
 // verifyEmailPost is the confirmation page's form post of a verification
 // token.
-func verifyEmailPost(target, token string) *http.Request {
+func verifyEmailPost(target, token string, cookies ...*http.Cookie) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, target, strings.NewReader("token="+token))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		r.AddCookie(c)
+	}
 	return r
 }
 

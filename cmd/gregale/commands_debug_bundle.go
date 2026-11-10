@@ -84,7 +84,7 @@ func cmdDebugBundle(args []string) int {
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339Nano),
 		AppSlug:       slug,
 		Request:       evidence.Request,
-		Evidence:      evidence,
+		Evidence:      debugBundleEvidence(evidence),
 		Coverage:      coverage,
 		Regressions:   regressions.Regressions,
 		Sources:       []string{"request_telemetry", "wake_timeline", "guest_execution", "otel_spans", "regression_observations", "signal_coverage"},
@@ -127,6 +127,27 @@ func writeDebugIncidentBundle(output string, bundle debugIncidentBundle) error {
 	}
 	PrintOK(osStdout, "Wrote redacted debugger bundle for request %s to %s.", bundle.Request.ID, output)
 	return nil
+}
+
+// debugBundleEvidence drops what the bundle's redaction profile excludes but
+// request evidence carries for the app's owner: log message text (redacted
+// only by pattern, so names and free text remain) and each span's database
+// statement. Log timing and levels, normalized query patterns and dependency
+// timings stay, as in the MCP incident bundle.
+func debugBundleEvidence(evidence api.DebugRequestEvidenceResponse) api.DebugRequestEvidenceResponse {
+	logs := make([]api.DebugEvidenceLogLine, len(evidence.Logs))
+	for i, line := range evidence.Logs {
+		line.Message = ""
+		logs[i] = line
+	}
+	evidence.Logs = logs
+	spans := make([]api.DebugTelemetrySpan, len(evidence.Spans))
+	for i, span := range evidence.Spans {
+		span.DBStatement = ""
+		spans[i] = span
+	}
+	evidence.Spans = spans
+	return evidence
 }
 
 // writeDebugIncidentBundleFile keeps the bundle owner-readable even when a

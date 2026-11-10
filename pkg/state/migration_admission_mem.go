@@ -129,14 +129,9 @@ func (m *MemStore) nodeMigrationCapacityPendingLocked(node string) bool {
 func (m *MemStore) migrationInstanceCostLocked(i Instance) capacityResources {
 	a, d := m.apps[i.AppID], m.deployments[i.DeploymentID]
 	ram, cpu := capacitySidecarResources(d.Sidecars)
-	limits, _ := api.LimitsFor(m.accounts[a.AccountID].Plan)
-	vcpus := int64(limits.VCPU)
-	if vcpus <= 0 {
-		vcpus = 4
-	}
-	if i.AppID == "" {
-		vcpus = 1
-	}
+	// migration_admission_node_usage: the stored guest vCPU count, else the
+	// plan's (ADR-20261109172421).
+	vcpus := m.instanceCapacityVCPULocked(i, a)
 	captured := m.capacityInstanceResources[i.ID]
 	cost := capacityResources{RAM: max(captured.RAM, int64(i.RAMMB+api.PerVMOverheadMB)+ram), CPU: max(captured.CPU, int64(m.instanceCapacityCPULocked(i, a))+cpu), VCPU: max(captured.VCPU, vcpus)}
 	return m.migrationResourceFloorLocked(i, cost)

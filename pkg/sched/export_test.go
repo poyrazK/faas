@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 
@@ -1131,6 +1132,14 @@ func (e *Engine) AppCPUMillicores(app state.App, limits api.Limits) int {
 	return e.appCPUMillicores(app, limits)
 }
 
+// AppCPUWeight, CPUBySize and PolicyAppCPUMillicores expose CPU that follows
+// instance size (ADR-20261109172421).
+func (e *Engine) AppCPUWeight(app state.App) int32 { return e.appCPUWeight(app) }
+func (e *Engine) CPUBySize(appID string) bool      { return e.cpuBySize(appID) }
+func (e *Engine) PolicyAppCPUMillicores(ctx context.Context, appID string, configured int) (int, error) {
+	return e.policyAppCPUMillicores(ctx, appID, configured)
+}
+
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
 func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {
@@ -1369,4 +1378,40 @@ func (r *SnapshotRefresher) XSetNow(now func() time.Time) { r.now = now }
 // XResidentRAMForNode is the refresher engine's ledger residency on nodeID.
 func (r *SnapshotRefresher) XResidentRAMForNode(nodeID string) int {
 	return r.e.ledger.ResidentRAMForNode(nodeID)
+}
+
+// XSetCPUAdmissionObserve makes l admit on memory alone (ADR-20261109172421).
+func (l *NodeLedger) XSetCPUAdmissionObserve(observe bool) { l.cpuAdmission.observe.Store(observe) }
+
+// XCPUAdmissionWouldRefuse is what gate would have refused while observing.
+func (l *NodeLedger) XCPUAdmissionWouldRefuse(gate string) float64 {
+	return promtestutil.ToFloat64(l.cpuAdmission.wouldRefuse.WithLabelValues(gate))
+}
+
+// XAdmissionCompute is what an instance books at the durable node
+// reservation's vCPU and CPU budgets (ADR-20261109172421).
+func (e *Engine) XAdmissionCompute(nodeID string, vcpu, cpuMillicores int) state.NodeCompute {
+	return e.admissionCompute(nodeID, vcpu, cpuMillicores)
+}
+
+// XChooseWithCPUAdmission places r over nodes as the engine's placement
+// snapshot does, enforcing or observing cpu_admission, and returns how many
+// refusals the placement gate counted.
+func XChooseWithCPUAdmission(nodes []state.ComputeNode, usedMB, usedVCPU, usedCPU map[string]int64, r Request, observe bool) (Placement, float64, error) {
+	c := newCPUAdmission()
+	c.observe.Store(observe)
+	p, err := placementSnapshot{nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU, usedCPUMillicores: usedCPU, cpu: c}.choose(r)
+	return p, promtestutil.ToFloat64(c.wouldRefuse.WithLabelValues(CPUGatePlacement)), err
+}
+
+// NodeBudgetRefusal builds the scheduler's node-budget refusal carrying the
+// given blockers, as placement returns it.
+func NodeBudgetRefusal(detail string, blockers ...api.WorkerAdmissionBlocker) error {
+	return explainAdmission(api.ErrCapacity(detail), blockers...)
+}
+
+// FinishFailedPrime reaches the decision dispatchPrime makes after a prime
+// failed its retries.
+func (r *Loop) FinishFailedPrime(ctx context.Context, appID, deploymentID string, err error) {
+	r.finishFailedPrime(ctx, appID, deploymentID, 1, err)
 }

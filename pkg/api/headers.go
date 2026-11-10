@@ -338,6 +338,11 @@ const (
 	PlatformDeploymentTagEnv     = "FAAS_DEPLOYMENT_TAG"
 	PlatformDeploymentCreatedEnv = "FAAS_DEPLOYMENT_CREATED_AT"
 	PlatformImageDigestEnv       = "FAAS_IMAGE_DIGEST"
+	// PlatformDeveloperEnvironmentEnv is "1" in a `gregale dev` environment
+	// and empty everywhere else. guest-init starts the developer debugger
+	// (DevDebugEnv, ADR-741) only under it, so the switch set on a
+	// production app through env, secrets or the manifest is inert.
+	PlatformDeveloperEnvironmentEnv = "FAAS_DEVELOPER_ENVIRONMENT"
 )
 
 // PublicAPIURLEnv names the installation's public API URL in a workload's
@@ -353,7 +358,8 @@ func IsPlatformIdentityEnvKey(key string) bool {
 	case PlatformAppIDEnv, PlatformDeploymentIDEnv, PlatformTenantIDEnv,
 		PlatformInstanceIDEnv, PlatformNodeIDEnv, PlatformRegionEnv,
 		PlatformCommitSHAEnv, PlatformDeploymentTagEnv,
-		PlatformDeploymentCreatedEnv, PlatformImageDigestEnv:
+		PlatformDeploymentCreatedEnv, PlatformImageDigestEnv,
+		PlatformDeveloperEnvironmentEnv:
 		return true
 	default:
 		return false

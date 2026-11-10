@@ -145,9 +145,16 @@ func (m *requestTelemetryMinutes) takeAll() []RequestTelemetryRow {
 // counting them kept every app with traffic permanently "pending", which
 // blocked route removal for good (ADR-20261028110044 amendment 4).
 func (m *requestTelemetryMinutes) undeliveredByApp() map[uuid.UUID]int {
+	return m.undeliveredWhere(func(RequestTelemetryRow) bool { return true })
+}
+
+// undeliveredWhere is undeliveredByApp over the rows keep accepts.
+func (m *requestTelemetryMinutes) undeliveredWhere(keep func(RequestTelemetryRow) bool) map[uuid.UUID]int {
 	counts := make(map[uuid.UUID]int)
 	for _, row := range m.ready {
-		counts[row.AppID] += normalizedRequestTelemetryCount(row.Count)
+		if keep(row) {
+			counts[row.AppID] += normalizedRequestTelemetryCount(row.Count)
+		}
 	}
 	return counts
 }

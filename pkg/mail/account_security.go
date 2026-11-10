@@ -104,6 +104,21 @@ the session under Account → Sessions and contact support@gregale.dev.
 	return subject, body
 }
 
+// KeysAfterResetBody lists the API keys a password reset left working: keys
+// the owner created by hand (CI, deploys) are not revoked by a reset, so a
+// key someone else created while they had access is the owner's to find.
+// keys are "label (created YYYY-MM-DD)" lines.
+func KeysAfterResetBody(email string, keys []string, accountURL string) (subject, body string) {
+	subject = "Review the API keys on your Gregale account"
+	var b strings.Builder
+	fmt.Fprintf(&b, "Hi,\n\nThe password of %s was reset and every browser was signed out. These API keys\nstill work, because a reset does not revoke keys you created for CI and deploys:\n\n", safeRecipient(email))
+	for _, k := range keys {
+		fmt.Fprintf(&b, "  - %s\n", oneLine(k))
+	}
+	fmt.Fprintf(&b, "\nIf you do not recognise one, revoke it now at %s (or run\n`gregale key` and `gregale key delete ID`).\n\n— Gregale\n", accountURL)
+	return subject, b.String()
+}
+
 // OperatorMFAResetBody tells the account that Gregale support turned off
 // its two-factor authentication after an identity check.
 func OperatorMFAResetBody(email string, at time.Time) (subject, body string) {
