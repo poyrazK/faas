@@ -49,6 +49,9 @@ type managedPostgresHooks struct {
 	// NotifyPlanExcess queues the email for a database suspended past its
 	// plan (ADR-20261102125208).
 	NotifyPlanExcess func(context.Context, managedpostgres.PlanExcessNotice) error
+	// Egress reads a subject's plan egress allowance and its apps' egress
+	// this month, shared with its databases (ADR-20261110160000).
+	Egress managedpostgres.EgressAllowanceFunc
 }
 
 func (h *managedPostgresHooks) charges() billing.ManagedPostgresChargeSink {
@@ -98,6 +101,13 @@ func (h *managedPostgresHooks) notifyCap() func(context.Context, managedpostgres
 		return nil
 	}
 	return h.NotifyCap
+}
+
+func (h *managedPostgresHooks) egress() managedpostgres.EgressAllowanceFunc {
+	if h == nil {
+		return nil
+	}
+	return h.Egress
 }
 
 func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
@@ -392,6 +402,7 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		Notify:           hooks.notifyCap(),
 		NotifyPlanExcess: hooks.notifyPlanExcess(),
 		Ceiling:          managedPostgresCapLimits(store, accountStore, hooks.overage()),
+		Egress:           hooks.egress(),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
 		if err := managedPostgresCapNoticeReady(getenv); err != nil {

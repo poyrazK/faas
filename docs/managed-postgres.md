@@ -44,6 +44,12 @@ overage on ([Compute overage](#compute-overage)):
 - the pool doubles, and storage past the plan's pool, averaged over the
   month, costs $0.50 per GiB-month.
 
+Data your databases send counts toward your plan's monthly egress allowance
+together with your apps' egress (Free 10 GiB, Hobby 100 GiB, Pro 500 GiB,
+Scale 2,000 GiB; see [plans](plans.md)). Once the two together reach it, your
+databases stop and refuse connections until the month ends or the plan grows.
+Egress overage does not extend this for databases yet.
+
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
 scale-to-zero are rejected until a separately priced entitlement exists.

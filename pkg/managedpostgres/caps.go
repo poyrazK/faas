@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -316,6 +317,60 @@ type CapEnforcerOptions struct {
 	// until it links an email to the notice or the notice is a day old, so
 	// it must mail a notice at most once. Nil sends no email.
 	NotifyPlanExcess func(ctx context.Context, notice PlanExcessNotice) error
+	// Egress returns a subject's plan egress allowance and what its apps
+	// already sent this UTC month (ADR-20261110160000). Database egress
+	// counts toward the same allowance: once the two reach it, the sweep
+	// holds every database of the subject until the month ends, the plan
+	// grows or egress overage lifts the ceiling. Nil leaves egress unchecked.
+	Egress EgressAllowanceFunc
+}
+
+// EgressAllowance is a subject's monthly egress allowance shared by its apps
+// and databases (ADR-20261110160000). CeilingBytes zero means no ceiling: the
+// subject is gone or its plan has no egress allowance.
+type EgressAllowance struct {
+	CeilingBytes   int64
+	AppEgressBytes int64
+}
+
+// EgressAllowanceFunc reads a subject's EgressAllowance at now.
+type EgressAllowanceFunc func(ctx context.Context, subjectID string, now time.Time) (EgressAllowance, error)
+
+// uncappedHold is the hold reason for a subject without a compute ceiling:
+// egress, once its databases and apps spent the egress allowance, else none.
+func (e *CapEnforcer) uncappedHold(ctx context.Context, subjectID string) (string, error) {
+	if e.egress == nil {
+		return capHoldNone, nil
+	}
+	now := e.now().UTC()
+	snapshot, err := e.store.UsageSnapshot(ctx, subjectID, now)
+	if err != nil {
+		return capHoldNone, err
+	}
+	spent, err := e.egressSpent(ctx, subjectID, snapshot, now)
+	if err != nil || !spent {
+		return capHoldNone, err
+	}
+	return capHoldEgress, nil
+}
+
+// egressSpent reports whether the subject's databases and apps together sent
+// its whole egress allowance this month. A read failure is the subject's
+// failure for this sweep; the previous hold stays as it is.
+func (e *CapEnforcer) egressSpent(ctx context.Context, subjectID string, snapshot UsageSnapshot, now time.Time) (bool, error) {
+	if e.egress == nil {
+		return false, nil
+	}
+	allowance, err := e.egress(ctx, subjectID, now)
+	if err != nil || allowance.CeilingBytes <= 0 {
+		return false, err
+	}
+	databaseEgress := max(snapshot.EgressBytes, 0)
+	appEgress := max(allowance.AppEgressBytes, 0)
+	if databaseEgress > math.MaxInt64-appEgress {
+		return true, nil
+	}
+	return databaseEgress+appEgress >= allowance.CeilingBytes, nil
 }
 
 // CapSweepSummary counts one enforcement sweep. Scopes are provider quota
@@ -380,6 +435,7 @@ type CapEnforcer struct {
 	batchSize   int
 	planExcess  CapEnforcementMode
 	planNotify  func(context.Context, PlanExcessNotice) error
+	egress      EgressAllowanceFunc
 }
 
 func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOptions) (*CapEnforcer, error) {
@@ -439,6 +495,7 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 		registry: registry, store: store, mode: options.Mode, storageMode: options.StorageMode, ceiling: options.Ceiling,
 		now: options.Now, logger: options.Logger, observe: options.Observe, notify: options.Notify,
 		batchSize: options.BatchSize, planExcess: options.PlanExcessMode, planNotify: options.NotifyPlanExcess,
+		egress: options.Egress,
 	}, nil
 }
 
@@ -592,9 +649,14 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		ceiling = 1
 	case ceiling <= 0:
 		summary.Uncapped++
-		// An uncapped subject has nothing to stop: a hold left from
-		// before is released.
-		return e.holdDatabases(ctx, accountID, databases, capHoldNone, nil, summary)
+		// An uncapped subject has no compute to stop, but its egress
+		// allowance still binds; otherwise a hold left from before is
+		// released.
+		reason, err := e.uncappedHold(ctx, accountID)
+		if err != nil {
+			return err
+		}
+		return e.holdDatabases(ctx, accountID, databases, reason, nil, summary)
 	}
 	if policy := e.registry.UsagePolicy(); policy.Enabled && policy.MaxMonthlyComputeUnitSeconds > 0 {
 		ceiling = min(ceiling, policy.MaxMonthlyComputeUnitSeconds)
@@ -649,11 +711,17 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	// The hold is what stops a database; the quota is a backstop, so a
 	// failed quota write does not skip it.
 	all := capHoldNone
+	egressSpent, egressErr := e.egressSpent(ctx, accountID, snapshot, now)
+	if egressErr != nil {
+		return errors.Join(append(failures, egressErr)...)
+	}
 	switch {
 	case limits.Inactive:
 		all = capHoldInactive
 	case plan.suspended():
 		all = capHoldCeiling
+	case egressSpent:
+		all = capHoldEgress
 	}
 	if err := e.holdDatabases(ctx, accountID, databases, all, capHeldDatabases(databases, plan, suspended), summary); err != nil {
 		failures = append(failures, err)
