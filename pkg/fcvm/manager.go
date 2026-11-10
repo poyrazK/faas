@@ -425,6 +425,9 @@ func (w *wakePhases) attrs() []any {
 
 type Instance struct {
 	resolvedEgressGeneration string // immutable once captured, guarded by Manager.mu
+	// booting marks a network owner registered before publication
+	// (booting_egress.go); it is never in live.
+	booting bool
 	// awaitingExit: teardown has recorded its cleanup intent but is waiting
 	// for the guest to exit by itself (a builder finishing its build), so
 	// its DNS answers are still granted. Guarded by Manager.mu.
@@ -999,6 +1002,10 @@ type Manager struct {
 	// request's runtime identity so a booting guest can register its
 	// secret execution before exec (ADR-508), ahead of publication.
 	waking map[string]wakingInstance
+	// bootingEgress is the network owner of each booting guest whose
+	// namespace exists, until publication or teardown (booting_egress.go).
+	// Guarded by mu.
+	bootingEgress map[string]*Instance
 	// provenWorkers holds the deployments whose declared worker passed the
 	// full characterization window on this node; their later cold boots
 	// use the short window (ADR-20261018101500). Guarded by mu. Losing it on restart
@@ -5171,6 +5178,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			// Circuit policy must be installed before the guest can boot.
 			return m.registerEgressCircuitNetwork(ctx, req.AppID, nc)
 		}, func() {
+			m.registerBootingEgressOwner(lease, nc, req, qualificationOnly)
 			if networkReady != nil {
 				networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, JailUID: lease.UID})
 			}
@@ -5234,6 +5242,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 				return nil, err
 			}
 		}
+		m.registerBootingEgressOwner(lease, nc, req, qualificationOnly)
 		if networkReady != nil && !req.ExecutionOnly {
 			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, PublicTarget: publicTarget, JailUID: lease.UID})
 		}
@@ -5265,6 +5274,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	phases.mark("bring_up")
 	if err != nil {
 		return nil, err
+	}
+	if method == WakeRestore && !req.KeepPaused {
+		m.releaseInheritedConnections(ctx, lease, req.ExportDir != "" || lease.IsBuilder || req.ExecutionOnly || req.AppTaskOnly || qualificationOnly)
 	}
 
 	// Test VMMs retain the legacy observable staging hooks. Production
@@ -5628,6 +5640,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			return nil, err
 		}
 		delete(m.waking, req.Instance)
+		m.adoptBootingEgressLocked(inst)
 		m.live[req.Instance] = inst
 		m.recordProvenWorkerLocked(inst)
 		if starting := m.functionStarting[req.Instance]; starting != nil && starting.Lease.processGeneration == inst.Lease.processGeneration {
@@ -6269,6 +6282,10 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
+	// ADR-20261110160000: the capturing guest is torn down right after the
+	// snapshot. Reset its off-guest connections first so its peers free the
+	// sessions now and every restore wakes with failed sockets, not live ones.
+	m.releaseConnectionsBeforeCapture(operationCtx, inst)
 	spec.nativeRuntime = m.nativeRuntimeCapture(operationCtx, inst, spec)
 	info, snapshotErr := m.vmm.Snapshot(operationCtx, inst.Lease, spec)
 	info, snapshotErr = checkedNativeSnapshotResult(operationCtx, spec, info, snapshotErr)
@@ -6592,9 +6609,11 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 		return fmt.Errorf("%s %s: %w", op, instance, err)
 	}
 	m.mu.Lock()
+	wasSpare := inst.warmSpare
 	inst.migrationPaused, inst.warmSpare = false, false
 	m.mu.Unlock()
 	m.clearFrozen(inst) // Rewrites the adoption block, clearing all three.
+
 	if inst.ImageHealthcheckRequired {
 		checker, ok := m.vmm.(interface {
 			WaitImageHealthcheck(context.Context, Lease, int) error
@@ -6615,6 +6634,11 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("%s %s: %w", op, instance, err)
+	}
+	if wasSpare {
+		// A warm-pool spare was restored from a snapshot and kept paused; it
+		// holds the capture's sockets (ADR-20261110160000).
+		m.releaseInheritedConnections(ctx, inst.Lease, false)
 	}
 	m.reopenHTTPForwards(inst)
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)

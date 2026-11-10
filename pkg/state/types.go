@@ -2287,6 +2287,10 @@ type ScalingTarget struct {
 	// Name is the custom metric this target watches (ADR-202). Set only
 	// when Metric == "custom".
 	Name string
+	// Labels selects one labelled series of Name (ADR-20261108160000 slice
+	// C2); empty reads the metric's aggregate. Stored in the policy jsonb;
+	// omitted when empty so existing policies serialise unchanged.
+	Labels map[string]string `json:",omitempty"`
 }
 
 // CustomMetric is one customer-pushed gauge (ADR-202).
@@ -2874,6 +2878,13 @@ type Deployment struct {
 	// legacy deployment whose support has not been recorded yet.
 	SecretReloadSignal      string `json:"-"`
 	SecretReloadSignalKnown bool   `json:"-"`
+	// BeforeCheckpointHook records whether imaged stamped a before_checkpoint
+	// hook into this deployment's guest manifest. The guest only knows the
+	// hook its own layer was built with, so parks of this deployment must
+	// follow this value, not the app's current manifest (H32-49). Known is
+	// false for deployments built before the column existed.
+	BeforeCheckpointHook      bool `json:"-"`
+	BeforeCheckpointHookKnown bool `json:"-"`
 	// RuntimeBase is the shared runner base a source-built container app's
 	// layer was built for ("" for the app's own base). imaged stamps it with
 	// the deployment's source rootfs; schedd boots that base
@@ -3987,19 +3998,22 @@ type AlertRule struct {
 	// CreatedByAccountID is the member who created the rule
 	// (ADR-20261026151103); empty for a rule older than the column, which
 	// only the app's creator could create.
-	CreatedByAccountID  string
-	Name                string
-	Enabled             bool
-	Metric              AlertMetric
-	Comparison          AlertComparison
-	Threshold           float64
-	WindowSpec          AlertWindowSpec
-	FailureSource       AlertFailureSource // empty unless Metric == failed_invocations
-	CustomMetricName    string             // empty unless Metric == custom_metric (ADR-745)
-	LogQuery            string             // canonical log search filters; set only for log_search_matches
-	SLOID               string             // set only for the ADR-747 SLO metrics
-	SyntheticCheckID    string             // set only for the ADR-748 synthetic check metrics
-	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
+	CreatedByAccountID string
+	Name               string
+	Enabled            bool
+	Metric             AlertMetric
+	Comparison         AlertComparison
+	Threshold          float64
+	WindowSpec         AlertWindowSpec
+	FailureSource      AlertFailureSource // empty unless Metric == failed_invocations
+	CustomMetricName   string             // empty unless Metric == custom_metric (ADR-745)
+	// CustomMetricLabels selects one labelled series of the custom metric
+	// instead of its aggregate (ADR-20261108160000 slice C2); nil for none.
+	CustomMetricLabels  map[string]string
+	LogQuery            string      // canonical log search filters; set only for log_search_matches
+	SLOID               string      // set only for the ADR-747 SLO metrics
+	SyntheticCheckID    string      // set only for the ADR-748 synthetic check metrics
+	Action              AlertAction // issue #976 / ADR-122 / SAFE-RELEASES-B
 	WebhookURL          string
 	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
 	// NotifyResolved also sends the webhook a signed resolve event when the
@@ -7833,6 +7847,9 @@ const (
 	ProjectScanSourceConvention ProjectScanSource = "convention"
 	ProjectScanSourceSingle     ProjectScanSource = "single"
 	ProjectScanSourceUnknown    ProjectScanSource = "unknown"
+	// ProjectScanSourceFunctions is a gregale.yaml functions project
+	// (ADR-20261108160000), a declared source like compose.
+	ProjectScanSourceFunctions ProjectScanSource = "functions"
 	// ProjectScanSourceWorkspaces is the plural form the
 	// reconcile.Service.DeriveScanSource helper returns for
 	// projects whose root tree enumerates a workspaces section
@@ -7878,6 +7895,7 @@ const (
 	scanSourceRankRender     scanSourceRank = 8
 	scanSourceRankK8s        scanSourceRank = 8
 	scanSourceRankCompose    scanSourceRank = 8
+	scanSourceRankFunctions  scanSourceRank = 8
 )
 
 func tierRank(s ProjectScanSource) scanSourceRank {
@@ -7892,6 +7910,8 @@ func tierRank(s ProjectScanSource) scanSourceRank {
 		return scanSourceRankFly
 	case ProjectScanSourceServerless:
 		return scanSourceRankServerless
+	case ProjectScanSourceFunctions:
+		return scanSourceRankFunctions
 	case ProjectScanSourceProcfile:
 		return scanSourceRankProcfile
 	case ProjectScanSourceWorkspace:

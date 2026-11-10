@@ -211,6 +211,28 @@ func TestPGPasswordResetOutboxStableRetryPurposeAndAtomicRedemption(t *testing.T
 	}
 }
 
+// A customer in dunning can still reset: the inline path allowed past_due and
+// the durable one must too (ADR 20261109120000).
+func TestPGPasswordResetOutboxServesPastDueAccounts(t *testing.T) {
+	f := resetFixture(t)
+	accountID := resetAccount(t, f)
+	r := queueReset(t, f, accountID)
+	raw := resetRaw(t, f, r)
+	defer clear(raw)
+	if _, err := f.pool.Exec(t.Context(), "UPDATE accounts SET status='past_due' WHERE id=$1", accountID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if after := row(t, f, uuidString(r.ID.Bytes)); after.State == "cancelled" || len(f.sender.calls) != 1 {
+		t.Fatalf("past_due reset was not delivered: state=%s sends=%d", after.State, len(f.sender.calls))
+	}
+	if _, err := NewResetCredentials(f.pool).Redeem(t.Context(), api.HashToken(raw), "past-due-phc"); err != nil {
+		t.Fatalf("past_due reset refused: %v", err)
+	}
+}
+
 func TestPGPasswordResetOutboxStopsStaleOrSuppressedCredentials(t *testing.T) {
 	for _, scenario := range []string{"password_changed", "password_deleted_and_restored", "address_changed", "unverified", "inactive", "used", "expired", "suppressed", "corrupt"} {
 		t.Run(scenario, func(t *testing.T) {

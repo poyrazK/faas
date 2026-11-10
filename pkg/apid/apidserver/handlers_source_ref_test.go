@@ -68,6 +68,8 @@ type sourceRefFake struct {
 	streamRepo     string
 	streamRef      string
 	streamMaxBytes int64
+	// streamDeadline is the deadline the fetch ran under (zero: none).
+	streamDeadline time.Time
 	branchRepo     string
 	branchName     string
 	branchCalls    int
@@ -103,10 +105,11 @@ func (f *sourceRefFake) MintInstallationToken(_ context.Context, acctID string, 
 	return f.mintToken, f.mintExpiresAt, nil
 }
 
-func (f *sourceRefFake) StreamSourceRef(_ context.Context, acctID string, instID int64, repo, ref string, maxBytes int64) (*StreamSourceRefResult, error) {
+func (f *sourceRefFake) StreamSourceRef(ctx context.Context, acctID string, instID int64, repo, ref string, maxBytes int64) (*StreamSourceRefResult, error) {
 	f.mux.Lock()
 	defer f.mux.Unlock()
 	f.streamCalls++
+	f.streamDeadline, _ = ctx.Deadline()
 	f.streamAcctID = acctID
 	f.streamInstID = instID
 	f.streamRepo = repo
@@ -588,6 +591,12 @@ func TestSourceRef_HappyPath(t *testing.T) {
 	}
 	if got, want := e.gh.streamMaxBytes, int64(250)*1024*1024; got != want {
 		t.Errorf("max_bytes = %d, want %d (Pro source cap)", got, want)
+	}
+	// Deploy review 2026-11-10 (E1): the download, scans and publish run
+	// under the upload commit's size-scaled bound, not the 30 s
+	// deploy-submission budget.
+	if e.gh.streamDeadline.IsZero() || time.Until(e.gh.streamDeadline) <= api.RequestBudgetMax {
+		t.Errorf("source fetch deadline in %v, want more than RequestBudgetMax (%v)", time.Until(e.gh.streamDeadline), api.RequestBudgetMax)
 	}
 
 	// Confirm the deployment row carries Kind=github + CommitSHA +

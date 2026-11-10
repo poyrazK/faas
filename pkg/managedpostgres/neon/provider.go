@@ -164,6 +164,9 @@ type createdProjectResponse struct {
 
 func (p *Provider) Capabilities() managedpostgres.Capabilities {
 	access := []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration}
+	if p.sessionEnabled {
+		access = append(access, managedpostgres.CredentialSession)
+	}
 	if p.dataAPIEnabled {
 		access = append(access, managedpostgres.CredentialDataAPI)
 	}

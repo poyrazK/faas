@@ -1315,6 +1315,7 @@ var EndpointRecoveryReport = endpointRecoveryReport
 var EndpointRecoverySpec = endpointRecoverySpec
 var EnsurePostgresEgress = ensurePostgresEgress
 var EnsureSourceRefApp = ensureSourceRefApp
+var DeployPreviewSource = deployPreviewSource
 var ErrAuth = errAuth
 var EnvCreate = envCreate
 var EnvPull = envPull
@@ -2762,6 +2763,14 @@ func ResolveSourceUploadCapForTest(ctx context.Context, c *Client) (mb int, veri
 // ForwardAppTaskSession is the shared port-forward / postgres connect relay.
 var ForwardAppTaskSession = forwardAppTaskSession
 
+// AddBucketBindingUnavailable is add bucket's compute-binding precheck.
+var AddBucketBindingUnavailable = addBucketBindingUnavailable
+
+// AddPostgresUnsupported and PrintAddPostgresMigrationHint are add postgres's
+// region capability check and its migration-binding hint.
+var AddPostgresUnsupported = addPostgresUnsupported
+var PrintAddPostgresMigrationHint = printAddPostgresMigrationHint
+
 var DebugWatchNextWait = debugWatchNextWait
 
 // ADR-20261107180000 `gregale config explain`.
@@ -2778,8 +2787,14 @@ var (
 	MCPConnectHome        = &mcpConnectHome
 	MCPEndpointCheck      = &mcpEndpointCheck
 	MCPHeadlessToolCount  = &mcpHeadlessToolCount
+	MCPConnectRunStdin    = &mcpConnectRunStdin
 	UpsertCodexServer     = upsertCodexServer
 )
 
 // MCPConnectOptions builds the options a test passes to MCPHeadlessToolCount.
 type MCPConnectOptions = mcpConnectOptions
+
+var RefuseDevFunctionSet = refuseDevFunctionSet
+
+// MetricLabelFlags exposes the --metric-label parser.
+var MetricLabelFlags = metricLabelFlags

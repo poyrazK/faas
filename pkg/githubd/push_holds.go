@@ -41,6 +41,16 @@ func (s *Service) pushKeptServices(ctx context.Context, project state.Project, s
 	return kept, nil
 }
 
+// pushKeptMessage is the GitHub check text for an app a push keeps. A
+// function app is never removed by any deploy, so its text names the delete
+// command instead of a reviewed deploy (ADR-20261108160000 §2).
+func pushKeptMessage(app state.App) string {
+	if app.Type == state.AppTypeFunction {
+		return fmt.Sprintf("Kept: function %s is not in gregale.yaml at this commit, and deploys never delete a function's app. It keeps serving its last release. Delete it with `gregale app delete %s --yes`.", app.WorkloadName, app.Slug)
+	}
+	return fmt.Sprintf("Kept: %s is not in the Compose file at this commit, and a GitHub push does not remove services. It keeps serving its last release. Deploy with `gregale deploy` or from the dashboard to review and remove it.", app.WorkloadName)
+}
+
 // pushServicesWaitingForDatabase lists the project's apps that expect a
 // Compose datastore's address (DATABASE_URL: postgres://…@db/…,
 // REDIS_URL: redis://cache:6379, or depends_on: [db]) and have no value for

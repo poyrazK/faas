@@ -1032,11 +1032,12 @@ func cmdAppsRm(args []string) int {
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
 	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
 	fs.BoolVar(quiet, "quiet", false, "suppress confirmation prompt")
+	deleteBindings := fs.Bool("delete-bindings", false, "revoke the app's managed PostgreSQL bindings first (deleting the app otherwise refuses while any is live)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale app delete <slug> [--dry-run|-q|--quiet|--yes]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app delete <slug> [--dry-run|-q|--quiet|--yes] [--delete-bindings]", "apps")
 		return 1
 	}
 	if code := requireAutomationConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
@@ -1066,15 +1067,42 @@ func cmdAppsRm(args []string) int {
 			return 130
 		}
 	}
+	var revoked []string
+	if *deleteBindings {
+		ctx := context.Background()
+		app, err := client.GetApp(ctx, slug)
+		if err != nil {
+			return printErr("Could not read the app", err)
+		}
+		bindings, err := appPostgresBindings(ctx, client, slug, app.ID)
+		if err != nil {
+			return printErr("Could not list the app's database bindings", err)
+		}
+		revoked, _, err = revokeDataAPIBindings(ctx, client, bindings)
+		if err != nil {
+			return printErr("Could not revoke a database binding", err)
+		}
+	}
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
+		if !*deleteBindings && strings.Contains(err.Error(), "app_has_postgres_bindings") {
+			err = fmt.Errorf("%w; rerun with --delete-bindings to revoke them first", err)
+		}
 		return printErr("Could not delete app", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(map[string]any{
+		out := map[string]any{
 			"slug":    slug,
 			"status":  "deleted",
 			"deleted": true,
-		}))
+		}
+		if *deleteBindings {
+			out["revoked_bindings"] = revoked
+		}
+		return jsonOut(writeJSON(out))
+	}
+	if len(revoked) > 0 {
+		PrintOK(osStdout, "Revoked %d database binding(s) and deleted %s", len(revoked), slug)
+		return 0
 	}
 	PrintOK(osStdout, "Deleted %s", slug)
 	return 0
@@ -2058,7 +2086,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "named app resource size: micro|small|medium|large|xlarge")
-	vcpu := fs.Int("vcpu", 0, "assert the plan guest vCPU shape (omit to use the plan default)")
+	vcpu := fs.Int("vcpu", 0, "assert the guest vCPU count, one per GB of RAM (omit to use the size's)")
 	executionMode := fs.String("execution-mode", "", "app lifecycle mode: request|service|worker|job")
 	restartPolicy := fs.String("restart-policy", "", "restart policy: no|on-failure|always|unless-stopped")
 	startupDeadlineS := fs.Int("startup-deadline-s", 0, "maximum startup deadline in seconds (0 = plan default)")
@@ -6117,7 +6145,7 @@ func cmdKeysRotate(args []string) int {
 func cmdKeysGraceWindow(args []string) int {
 	fs := newFlagSet("keys grace-window", flag.ContinueOnError)
 	reset := fs.Bool("reset", false, "clear the per-account override (fall back to plan default)")
-	days := fs.Int("days", -1, "new grace window in days (>=0)")
+	days := fs.Int("days", -1, "new grace window in days (0 to 30)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

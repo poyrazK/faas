@@ -1,0 +1,31 @@
+---
+# tetragon — eBPF runtime detection on compute nodes (ADR-20261110183000).
+# Observe only: the policies in files/policies report, they never block or
+# kill. Alloy ships the events to Loki and counts the high-signal ones as
+# faas_security_events_total{event}. Off until an environment turns it on.
+faas_tetragon_enabled: false
+
+# Pinned release; the checksum is the cilium/tetragon release's .sha256sum
+# for tetragon-v<version>-amd64.tar.gz (equal to GitHub's asset digest).
+tetragon_version: "1.7.1"
+tetragon_release_sha256: "2f36a7bbb2b3d77a011383a01c8f804fe7761d934a76ff2fdf99ebad6f3e89ae"
+
+# Each release unpacks into its own directory; the unit names it, so an
+# upgrade is a new directory plus a restart.
+tetragon_install_root: /opt/tetragon
+tetragon_policy_dir: /etc/tetragon/tetragon.tp.d
+tetragon_config_dir: /etc/tetragon/tetragon.conf.d
+
+# Alloy reads the export as a member of adm: the directory is setgid adm and
+# the file 0640, so rotated files keep the group too.
+tetragon_export_dir: /var/log/tetragon
+tetragon_export_file: /var/log/tetragon/tetragon.log
+tetragon_export_max_size_mb: 50
+tetragon_export_max_backups: 3
+# Events per minute; above it Tetragon drops and counts, so a noisy policy or
+# a flood cannot fill the disk.
+tetragon_export_rate_limit: 600
+
+# Tetragon yields CPU to tenants and stays inside a bounded memory budget.
+tetragon_cpu_weight: 20
+tetragon_memory_max: 768M

@@ -131,7 +131,7 @@ func TestMarkdownReferenceEscapesPlaceholdersAndFlagValues(t *testing.T) {
 func TestMarkdownReferenceListsAppsRmConfirmation(t *testing.T) {
 	var buf bytes.Buffer
 	main.RenderMarkdownReference(&buf, main.CliTreeManifest(main.VisibleCliCommands()))
-	if !strings.Contains(buf.String(), "`gregale app delete [--dry-run] [--yes] [--quiet] [-q] <slug>`") {
+	if !strings.Contains(buf.String(), "`gregale app delete [--dry-run] [--yes] [--quiet] [-q] [--delete-bindings] <slug>`") {
 		t.Error("app delete reference omits its confirmation flags")
 	}
 }

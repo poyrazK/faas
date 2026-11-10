@@ -269,6 +269,9 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	default:
 		printDeployColdWakeSentence()
 	}
+	if appOK && !darkDeploy {
+		printFunctionLimits(osStdout, app)
+	}
 	if appOK && !noHTTP {
 		renderDeploymentAccess(osStdout, app, appSlug)
 	}

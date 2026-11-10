@@ -65,10 +65,7 @@ type Sample struct {
 	// the second line of the same cpu.stat file as CPUUsageUsec.
 	// The poller computes the per-tick delta against the previous
 	// sample and the wire side converts to seconds for
-	// vmmd_cpu_throttle_seconds_total. The throttle ratio gauge
-	// (vmmd_cpu_throttle_ratio{slice}) is derived from the same
-	// delta divided by (throttle_delta + usage_delta) over the 5s
-	// sampler window — that's the FaasCpuStarvation alert source.
+	// vmmd_cpu_throttle_seconds_total.
 	ThrottledUsec uint64
 
 	// RSSBytes is the current cgroup memory charge in bytes, read
@@ -275,9 +272,8 @@ type InstanceInfo struct {
 //
 // Throttled_usec may be missing on kernels older than 5.14
 // (cpu.stat throttling accounting landed in 5.14). When absent
-// the parser returns 0 + ok=true; the FaasCpuStarvation alert
-// treats a zero throttle ratio as healthy so a missing
-// throttled_usec reads as "no throttling" rather than alerting.
+// the parser returns 0 + ok=true, so a missing throttled_usec
+// reads as "no throttling".
 //
 // Path is vetted by the caller: it lives under
 // /sys/fs/cgroup/<slice>/<instance>/, where <instance> is the

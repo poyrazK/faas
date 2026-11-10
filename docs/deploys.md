@@ -327,8 +327,13 @@ repository.
 
 ### Deploy tokens
 
-Other CI systems deploy with a deploy token: a credential that can only deploy
-one app. Browser sessions with MFA enabled need verification from the last
+Other CI systems deploy with a deploy token: a credential bound to one app.
+It deploys that app and applies the configuration a deploy carries (app
+settings, crons, queue bindings, routes, edge rules, inbound webhooks). It
+cannot delete or rename the app, add log drains, mirrors or outbound webhooks,
+mint consumer keys, AI access tokens or issue ingest tokens, or read the app's
+debug requests, crash snapshots or forks; those answer `403` and need an API
+key. The OIDC bearer the deploy Action uses has the same limits. Browser sessions with MFA enabled need verification from the last
 five minutes when minting or rotating one. CLI requests use their scoped
 bearer credential. The token is shown once;
 store it as `FAAS_TOKEN` in the CI secret store.
@@ -414,6 +419,12 @@ release it replaces keeps serving while the command runs and through the
 rollout, so the old code always runs against the new schema for a while.
 Write migrations that the previous release can live with: add columns and
 tables first, and remove what the old code uses only in a later release.
+
+If the command exits non-zero or times out, the deployment fails with
+`release_command_failed`. If Gregale could not run the command or read its
+result (the task's environment could not be prepared, or its result channel
+broke), it fails with `release_infrastructure_failed`; deploy again. In both
+cases the previous release keeps serving.
 
 Release commands of one app run one at a time per environment, oldest first.
 If you deploy again while a release's command is still waiting to start, the
@@ -608,6 +619,10 @@ How each gate judges:
   at least `min_samples` values (default 20) in the window, or the gate is not
   judged. Custom metrics are reported per app, not per revision, so these
   gates are most useful after the release takes all the traffic.
+- Both metric gate kinds read the metric's aggregate. Add
+  `--metric-label key=value` (repeatable; `labels` in the API) to judge the one
+  labelled series with exactly those labels, for example
+  `--metric orders_per_minute --metric-label region=eu --below 5`.
 - **`metric_change` gates** (`--max-rise` or `--max-drop`) compare the
   metric's average, read from its history the same way, with its average over
   the same length of time before the rollout started. Use them when a fixed

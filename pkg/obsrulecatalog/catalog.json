@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "b1cdfac64082dec7c6828bd9e3616daf129d6027d5266a2adeb471d92e521c84",
+      "revision": "274ac2aedea350df615ba92ffe5cc80453f4d7e67ee51372845fa4b8d49fbdeb",
       "files": [
         "faas.rules.yml"
       ],
@@ -4417,6 +4417,19 @@
           }
         },
         {
+          "id": "9e64ebb08624e7c94ae8b8dce72e554f0b1e3f2e776e3f39a486c7955061450f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleHeaderBackfillStalled",
+          "definition": {
+            "expression_hash": "687627fb90c0d318ffb91ba128f919e224639f5a4aa9524256b78fe6c6f3a2d6",
+            "labels_hash": "23fb7b45542e50c066943bb85c4da42622a4fdda95144dd5aad7ee04a07c3ca7",
+            "for_seconds": 21600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8a18e34969e6c7a12b4b1efaa09bb49d4b35fd581e85919d5d5c0f32a5ec3844"
+          }
+        },
+        {
           "id": "9e66490b352e5a3c67a0fc859ae8fa3e204c02c9e7db8814ab5f56d8781b270b",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -4505,6 +4518,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "60977bba17c77f77d93970f0509f9e4bcfa2a162e46c7b537933acedfc2717bd"
+          }
+        },
+        {
+          "id": "a2ec818f0932ef2559cf027fabfa8e5b0345fb43bea0da879d6be52d1adaa091",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_cgroup_resources",
+          "rule_name": "FaasNodeCPUSaturated",
+          "definition": {
+            "expression_hash": "9247c13f29dc57e6a57a94f041e81eca0a74faf8f1e7c25b6f162ffd0e30e7fe",
+            "labels_hash": "3a5794b022b9a8740eabbf14821cd46cfccaf6112ec1d8bba3a6dfb96e2d8c21",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "af7ce3386756268fa31eb8a94f8617f486c12dd865b1b716cb93431ca8192822"
           }
         },
         {
@@ -6718,19 +6744,6 @@
           }
         },
         {
-          "id": "f8e24bcfbb2ebeac1c19136c8a92627bcbd070f5eadf2886c9abe9444c4959e3",
-          "file_name": "faas.rules.yml",
-          "group_name": "faas_slo",
-          "rule_name": "FaasCpuStarvation",
-          "definition": {
-            "expression_hash": "a33998a9928d667f79b6615b78e2feca0150050b23440d044f7019ac9ae6192b",
-            "labels_hash": "d28e488cea6bdcfd4266cab488efc1b9c625ae5335ae6a96880e3c90423e0159",
-            "for_seconds": 300,
-            "keep_firing_for_seconds": 0,
-            "fingerprint": "2e920d1aaeb39e21ecc990d96f5e72412a7d4fffc62c75f55176ed332b0a250c"
-          }
-        },
-        {
           "id": "f9a7dbd2b87c87bb28bb3d381e35f10764abe72908b856bfa5a31a732030dded",
           "file_name": "faas.rules.yml",
           "group_name": "faas_customer_log_drains",
@@ -6955,7 +6968,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "a2b1ac96635df8a8feb7cb8d43905bdf0328ef35da6d8593b13ebbe557e48fc5",
+      "revision": "1cf439e5d4147d378674cee32b11c3bb164e134a0460d765063d643a1243a893",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -11580,6 +11593,19 @@
           }
         },
         {
+          "id": "9e64ebb08624e7c94ae8b8dce72e554f0b1e3f2e776e3f39a486c7955061450f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleHeaderBackfillStalled",
+          "definition": {
+            "expression_hash": "687627fb90c0d318ffb91ba128f919e224639f5a4aa9524256b78fe6c6f3a2d6",
+            "labels_hash": "23fb7b45542e50c066943bb85c4da42622a4fdda95144dd5aad7ee04a07c3ca7",
+            "for_seconds": 21600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8a18e34969e6c7a12b4b1efaa09bb49d4b35fd581e85919d5d5c0f32a5ec3844"
+          }
+        },
+        {
           "id": "9e66490b352e5a3c67a0fc859ae8fa3e204c02c9e7db8814ab5f56d8781b270b",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -11668,6 +11694,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "60977bba17c77f77d93970f0509f9e4bcfa2a162e46c7b537933acedfc2717bd"
+          }
+        },
+        {
+          "id": "a2ec818f0932ef2559cf027fabfa8e5b0345fb43bea0da879d6be52d1adaa091",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_cgroup_resources",
+          "rule_name": "FaasNodeCPUSaturated",
+          "definition": {
+            "expression_hash": "9247c13f29dc57e6a57a94f041e81eca0a74faf8f1e7c25b6f162ffd0e30e7fe",
+            "labels_hash": "3a5794b022b9a8740eabbf14821cd46cfccaf6112ec1d8bba3a6dfb96e2d8c21",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "af7ce3386756268fa31eb8a94f8617f486c12dd865b1b716cb93431ca8192822"
           }
         },
         {
@@ -13982,19 +14021,6 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2d20726ebc9ae71d1b4be91c52718cbf6fdc828e8e58487a623257caa18b9ca2"
-          }
-        },
-        {
-          "id": "f8e24bcfbb2ebeac1c19136c8a92627bcbd070f5eadf2886c9abe9444c4959e3",
-          "file_name": "faas.rules.yml",
-          "group_name": "faas_slo",
-          "rule_name": "FaasCpuStarvation",
-          "definition": {
-            "expression_hash": "a33998a9928d667f79b6615b78e2feca0150050b23440d044f7019ac9ae6192b",
-            "labels_hash": "d28e488cea6bdcfd4266cab488efc1b9c625ae5335ae6a96880e3c90423e0159",
-            "for_seconds": 300,
-            "keep_firing_for_seconds": 0,
-            "fingerprint": "2e920d1aaeb39e21ecc990d96f5e72412a7d4fffc62c75f55176ed332b0a250c"
           }
         },
         {

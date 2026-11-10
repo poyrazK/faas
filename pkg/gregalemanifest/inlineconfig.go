@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -68,13 +68,19 @@ type InlineConfigSource struct {
 // ReadInlineConfig reads the config declared in one handler file. found is
 // false when the file declares none or is not a Node or Python file.
 func ReadInlineConfig(projectDir, rel string) (InlineConfig, bool, error) {
+	return ReadInlineConfigFS(os.DirFS(projectDir), rel)
+}
+
+// ReadInlineConfigFS is ReadInlineConfig over a source tree; rel is
+// slash-separated and relative to its root.
+func ReadInlineConfigFS(fsys fs.FS, rel string) (InlineConfig, bool, error) {
 	lang, ok := inlineLang(rel)
 	if !ok {
 		return InlineConfig{}, false, nil
 	}
-	abs := filepath.Join(projectDir, filepath.FromSlash(rel))
-	info, err := os.Stat(abs)
-	if errors.Is(err, os.ErrNotExist) {
+	name := path.Clean(rel)
+	info, err := fs.Stat(fsys, name)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return InlineConfig{}, false, nil
 	}
 	if err != nil {
@@ -86,7 +92,7 @@ func ReadInlineConfig(projectDir, rel string) (InlineConfig, bool, error) {
 	if info.Size() > InlineConfigMaxFileBytes {
 		return InlineConfig{}, false, nil
 	}
-	src, err := os.ReadFile(abs)
+	src, err := fs.ReadFile(fsys, name)
 	if err != nil {
 		return InlineConfig{}, false, fmt.Errorf("%s: %w", rel, err)
 	}
@@ -382,14 +388,20 @@ func snakeKey(k string) string {
 // handler declares a config. m may be nil (no gregale.yaml); the returned
 // manifest is nil when there is nothing to deploy as a function set.
 func ApplyInlineConfig(m *Manifest, projectDir string) (*Manifest, []InlineConfigSource, error) {
+	return ApplyInlineConfigFS(m, os.DirFS(projectDir))
+}
+
+// ApplyInlineConfigFS is ApplyInlineConfig over a source tree whose root is
+// the project directory.
+func ApplyInlineConfigFS(m *Manifest, fsys fs.FS) (*Manifest, []InlineConfigSource, error) {
 	if m != nil && len(m.Functions) > 0 {
-		sources, err := m.mergeListedInlineConfig(projectDir)
+		sources, err := m.mergeListedInlineConfig(fsys)
 		return m, sources, err
 	}
 	if !AllowsFunctionDiscovery(m) {
 		return m, nil, nil
 	}
-	discovered, sources, err := discoverInlineFunctions(projectDir)
+	discovered, sources, err := discoverInlineFunctions(fsys)
 	if err != nil || len(discovered) == 0 {
 		return m, nil, err
 	}
@@ -411,15 +423,15 @@ func AllowsFunctionDiscovery(m *Manifest) bool {
 	return m == nil || (m.Functions == nil && m.rejectSectionsBesideFunctions() == nil)
 }
 
-func (m *Manifest) mergeListedInlineConfig(projectDir string) ([]InlineConfigSource, error) {
+func (m *Manifest) mergeListedInlineConfig(fsys fs.FS) ([]InlineConfigSource, error) {
 	var sources []InlineConfigSource
 	for i := range m.Functions {
 		fn := &m.Functions[i]
-		rel := listedHandlerFile(projectDir, *fn)
+		rel := listedHandlerFile(fsys, *fn)
 		if rel == "" {
 			continue
 		}
-		cfg, found, err := ReadInlineConfig(projectDir, rel)
+		cfg, found, err := ReadInlineConfigFS(fsys, rel)
 		if err != nil {
 			return nil, fmt.Errorf("function %q: %w", fn.Name, err)
 		}
@@ -441,14 +453,14 @@ func (m *Manifest) mergeListedInlineConfig(projectDir string) ([]InlineConfigSou
 
 // listedHandlerFile is the project-relative handler file of a listed
 // function: its handler: file, else the root's conventional handler.
-func listedHandlerFile(projectDir string, fn FunctionSpec) string {
+func listedHandlerFile(fsys fs.FS, fn FunctionSpec) string {
 	root := fn.FunctionRoot()
 	if fn.Handler != "" {
 		return path.Join(root, fn.Handler)
 	}
 	for _, name := range conventionNames {
 		rel := path.Join(root, name)
-		if info, err := os.Stat(filepath.Join(projectDir, filepath.FromSlash(rel))); err == nil && !info.IsDir() {
+		if info, err := fs.Stat(fsys, rel); err == nil && !info.IsDir() {
 			return rel
 		}
 	}
@@ -492,9 +504,9 @@ func fillUnset(dst *FunctionSpec, src FunctionSpec) []string {
 
 // discoverInlineFunctions finds functions/<name>/ directories whose
 // conventional handler declares a config, in name order.
-func discoverInlineFunctions(projectDir string) ([]InlineConfig, []InlineConfigSource, error) {
-	entries, err := os.ReadDir(filepath.Join(projectDir, FunctionsDiscoveryDir))
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+func discoverInlineFunctions(fsys fs.FS) ([]InlineConfig, []InlineConfigSource, error) {
+	entries, err := fs.ReadDir(fsys, FunctionsDiscoveryDir)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return nil, nil, nil
 	}
 	if err != nil {
@@ -510,7 +522,7 @@ func discoverInlineFunctions(projectDir string) ([]InlineConfig, []InlineConfigS
 		var cfg InlineConfig
 		found := false
 		for _, name := range conventionNames {
-			c, ok, err := ReadInlineConfig(projectDir, path.Join(root, name))
+			c, ok, err := ReadInlineConfigFS(fsys, path.Join(root, name))
 			if err != nil {
 				return nil, nil, err
 			}

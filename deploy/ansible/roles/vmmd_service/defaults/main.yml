@@ -102,3 +102,5 @@ faas_workload_identity_issuer: ""
 faas_credential_attach_keys_src: ""
 faas_credential_attach_writes: plain
 faas_credential_attach_plain_lookup: true
+# The manifest's hot_path.local_vmmd_data_socket sets it on compute nodes.
+faas_vmmd_local_data_socket: false
