@@ -2812,3 +2812,5 @@ var InvalidAlertMetricError = invalidAlertMetricError
 var RealtimeClientURL = realtimeClientURL
 var CmdEdgeRuleListsRm = cmdEdgeRuleListsRm
 var CmdAppScaling = cmdAppScaling
+var CmdEventsSchemaRollout = cmdEventsSchemaRollout
+var CmdOrgsSeatUsage = cmdOrgsSeatUsage

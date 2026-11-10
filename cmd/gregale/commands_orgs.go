@@ -638,9 +638,9 @@ func cmdOrgsSeatUsage(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	fmt.Printf("plan:  %s\n", resp.Plan)
-	fmt.Printf("used:  %d\n", resp.Used)
-	fmt.Printf("limit: %d\n", resp.Limit)
+	// "used: 1 limit: 200" named no unit (Hunt 32 H32-54): these are seats.
+	_, _ = fmt.Fprintf(osStdout, "plan:  %s\n", resp.Plan)
+	_, _ = fmt.Fprintf(osStdout, "seats: %d used of %d\n", resp.Used, resp.Limit)
 	return 0
 }
 
