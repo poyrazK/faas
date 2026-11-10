@@ -266,10 +266,13 @@ every plan:
   happen together, so a worker restart cannot lose the notice.
 - A second restore past the limit while a copy holds the slot returns
   `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
-- A copy can replace its source on a one-database plan: detach the source's
-  apps and purge it. The source no longer counts, so the copy becomes an
-  ordinary database. The source is kept, with its name and storage, until the
-  copy is deleted.
+- A copy can replace its source on a one-database plan: point your app at
+  the copy, then delete the source. A normal delete is enough; you do not
+  have to purge. Once the source's delete is scheduled, the copy becomes an
+  ordinary database and keeps its bindings past `restore_slot_until`. The
+  source keeps its 7-day undo, but recovering it then needs room under your
+  plan's limit (delete or purge the copy, or upgrade). A purged source is
+  kept, with its name and storage, until the copy is deleted.
 - A [rollback that restores the database](deploys.md#rollbacks-that-restore-the-database)
   never uses the slot: its copy becomes the app's database, so the account
   needs room for it inside the limit.

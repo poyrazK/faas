@@ -171,9 +171,13 @@ customers out until the owner has tested production
 3. Turn on enforcement after each shadow readout (until both caps are `on`,
    step 6's default releases nobody):
    `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on`,
-   `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
+   `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, the cap emails
    (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
-   maild). Create the [SQL probe](#sql-availability-probe) canary databases.
+   maild), and the restore slot emails
+   (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_RESTORE_SLOT_OUTBOX_ENABLED=1` on apid
+   and maild). Without the latter, a one-database plan's restored copy loses
+   its bindings and has its delete scheduled at `restore_slot_until` with no
+   warning. Create the [SQL probe](#sql-availability-probe) canary databases.
    Set `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT=on` once the release
    shows [databases past a lowered plan](#databases-past-a-lowered-plan) to
    the customer.

@@ -175,7 +175,11 @@ func (w *RestoreSlotSweeper) visit(ctx context.Context, store RestoreSlotStore, 
 			return restoreSlotHeld, err
 		}
 	}
-	room, err := w.service.restoreSlotRoom(ctx, store, holder.SubjectID)
+	replaced, err := w.service.restoreSlotSourceReplaced(ctx, database)
+	if err != nil {
+		return restoreSlotHeld, err
+	}
+	room, err := w.service.restoreSlotRoomExcluding(ctx, store, holder.SubjectID, replaced)
 	if err != nil {
 		return restoreSlotHeld, err
 	}
@@ -291,6 +295,12 @@ func (w *RestoreSlotSweeper) revokeBindings(ctx context.Context, database Databa
 // restoreSlotRoom reports whether a slot holder fits inside its subject's
 // database limit: the subject's other databases leave room for it.
 func (s *Service) restoreSlotRoom(ctx context.Context, store RestoreSlotStore, subjectID string) (bool, error) {
+	return s.restoreSlotRoomExcluding(ctx, store, subjectID, false)
+}
+
+// restoreSlotRoomExcluding is restoreSlotRoom with the copy's own source left
+// out of the count when replaced is set (restoreSlotSourceReplaced).
+func (s *Service) restoreSlotRoomExcluding(ctx context.Context, store RestoreSlotStore, subjectID string, replaced bool) (bool, error) {
 	limit, err := s.maxDatabasesPerAccount(ctx, subjectID)
 	if errors.Is(err, ErrQuotaExceeded) {
 		// A plan without managed PostgreSQL has no room.
@@ -303,7 +313,34 @@ func (s *Service) restoreSlotRoom(ctx context.Context, store RestoreSlotStore, s
 	if err != nil {
 		return false, err
 	}
+	if replaced {
+		count--
+	}
 	return count <= int64(limit), nil
+}
+
+// restoreSlotSourceReplaced reports whether a slot holder's own source has its
+// delete scheduled (ADR-20261031123259 amendment 2026-11-10). Restoring,
+// pointing the app at the copy and deleting the original is how a one-database
+// plan recovers from a bad migration; the original's 7-day undo must not cost
+// the copy its slot. The copy then takes the source's place under the limit,
+// and the source can come back only once there is room for it again
+// (undeleteNeedsRoom).
+func (s *Service) restoreSlotSourceReplaced(ctx context.Context, copy Database) (bool, error) {
+	if copy.RestoreSourceDatabaseID == "" || copy.State == StateDeleting {
+		return false, nil
+	}
+	source, err := s.DatabaseOwnership(ctx, copy.RestoreSourceDatabaseID)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	// A copy is restored inside its source's owner; anything else is not the
+	// database it replaces under this owner's limit.
+	return source.State == StateDeleting && !source.PurgeAfter.IsZero() && source.CountsTowardLimit() &&
+		source.AccountID == copy.AccountID && source.OrgID == copy.OrgID, nil
 }
 
 // A database switch's copy becomes the app's database, so it must fit inside
@@ -354,6 +391,19 @@ func (s *Service) undeleteNeedsRoom(ctx context.Context, accountID, databaseID s
 	database, err := s.Get(ctx, accountID, databaseID)
 	if err != nil {
 		return err
+	}
+	if database.RestoreSlotUntil.IsZero() && database.State == StateDeleting {
+		// A database recovered from its undo window must fit under the
+		// limit: a restore copy that replaced it (restoreSlotSourceReplaced)
+		// may already hold its place. Its own count includes it.
+		room, err := s.restoreSlotRoom(ctx, store, PolicySubject(ctx, accountID))
+		if err != nil {
+			return err
+		}
+		if !room {
+			return ErrQuotaExceeded
+		}
+		return nil
 	}
 	if database.RestoreSlotUntil.IsZero() || now.Before(database.RestoreSlotUntil) {
 		return nil
