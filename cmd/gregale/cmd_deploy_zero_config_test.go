@@ -558,6 +558,7 @@ func TestDeployZeroConfig_GitHeadGoFunctionStaysFunction(t *testing.T) {
 		sourceBody []byte
 		runtime    string
 		handler    string
+		created    bool
 	)
 	stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *zeroConfigStubServer) {
 		switch {
@@ -565,6 +566,11 @@ func TestDeployZeroConfig_GitHeadGoFunctionStaysFunction(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&createReq); err != nil {
 				t.Errorf("decode create app: %v", err)
 			}
+			created = true
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "go-function"})
+		case r.URL.Path == "/v1/apps/go-function" && r.Method == http.MethodGet && created:
+			// Once created, the function deploy reads the app to sync its
+			// snapshot hooks (ADR-20261110190000).
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "go-function"})
 		case r.URL.Path == "/v1/apps/go-function" && r.Method == http.MethodGet && createReq.Slug != "":
 			// After the create, the snapshot-hook step reads the app's
