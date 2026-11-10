@@ -776,6 +776,10 @@ const (
 	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
 	CodeConflict                        = "conflict"
+	// CodeProjectServicesCallEachOther (409, ADR-20261104221217): deleting the
+	// project would detach services that still call each other by service
+	// name. Pass detach_services=true once they no longer do.
+	CodeProjectServicesCallEachOther = "project_services_call_each_other"
 	// CodeIdempotencyKeyReused (422, ADR-20261022204036): the request's
 	// Idempotency-Key was used within its 24 h replay window for a different
 	// request. Nothing ran, and the first request's result is kept.

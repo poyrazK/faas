@@ -2497,6 +2497,14 @@ func (c *Client) DeleteProject(ctx context.Context, slug string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug), nil, nil)
 }
 
+// DeleteProjectDetachingServices deletes a project whose services may still
+// call each other by service name: the caller confirms they no longer do, so
+// the API's 409 project_services_call_each_other refusal is waived
+// (ADR-20261104221217).
+func (c *Client) DeleteProjectDetachingServices(ctx context.Context, slug string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug)+"?detach_services=true", nil, nil)
+}
+
 func writeProjectTenantPolicy(w *multipart.Writer, policy []*bool) error {
 	if len(policy) == 0 || policy[0] == nil {
 		return nil
