@@ -39,7 +39,7 @@ func (c *Client) projectRoute(path string) (string, error) {
 	if personalOnlyProjectRoutes[bare] {
 		p := NewProblem(http.StatusBadRequest, CodeValidation, "Not available for organization projects",
 			"this project operation has no organization form; run it without --org, or use the organization's scan and deploy").
-			WithDocs(docsBase + "/organization-app-access#organization-projects-and-environments")
+			WithDocs(docsBase + "/orgs")
 		return "", &APIError{Problem: *p}
 	}
 	return "/v1/orgs/" + url.PathEscape(c.projectOrg) + strings.TrimPrefix(path, "/v1"), nil

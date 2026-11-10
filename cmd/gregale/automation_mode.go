@@ -29,11 +29,12 @@ func extractAutomationFlag(args []string) ([]string, error) {
 		if arg == "--org" || strings.HasPrefix(arg, "--org=") {
 			value := strings.TrimPrefix(arg, "--org=")
 			if arg == "--org" {
-				if i+1 == len(args) {
+				rest := args[i+1:]
+				if len(rest) == 0 {
 					return args, errors.New("--org requires an organization slug")
 				}
+				value = rest[0]
 				i++
-				value = args[i]
 			}
 			if strings.TrimSpace(value) == "" || strings.HasPrefix(value, "-") {
 				return args, errors.New("--org requires an organization slug")
