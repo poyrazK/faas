@@ -49,6 +49,13 @@ An `http` event's status is what Gregale recorded for the request:
 - A route the app has never answered on this node is grouped as `other`, so
   arbitrary paths cannot create unlimited routes.
 
+Two error counts exist, and the CLI labels which one it shows.
+`gregale metric requests` (request analytics) counts every status `>= 400`
+as an error and prints `Errors (4xx+5xx)`. Alerts, SLOs and app health count
+only `5xx` as failures, out of `2xx` plus `5xx`. An app that answers many
+`404`s therefore shows errors in request analytics without breaching an
+error-rate alert.
+
 ## Runtime lines
 
 Your app's output lines that are warnings or errors are indexed as `runtime`
