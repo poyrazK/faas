@@ -2803,3 +2803,6 @@ var ValidateSubscriptionCapacityCommandBudget = validateSubscriptionCapacityComm
 
 // ActivityDisplayTime exposes the org activity / keys list time formatter.
 var ActivityDisplayTime = activityDisplayTime
+
+// RenderHTTPLogQueryEvent exposes the `logs --source http` row renderer.
+var RenderHTTPLogQueryEvent = renderHTTPLogQueryEvent
