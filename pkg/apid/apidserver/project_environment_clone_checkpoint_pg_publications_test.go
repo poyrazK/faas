@@ -179,7 +179,9 @@ func TestPGCloneCheckpointPgPublicationRollsBackCompleteSet(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				max := api.MustLimitsFor(account.Plan).SecretCountMax
+				// Managed values do not count; only an app already over its
+				// customer-secret cap is refused (ADR-20261110120000).
+				max := api.MustLimitsFor(account.Plan).SecretCountMax + 1
 				if _, err = f.pool.Exec(t.Context(), "insert into app_secrets(account_id,app_id,scope,key,ciphertext) select $1,$2,'default','QUOTA_'||i,decode('01','hex') from generate_series(1,$3::int) i", secrets[1].AccountID, secrets[1].AppID, max); err != nil {
 					t.Fatal(err)
 				}
