@@ -62,7 +62,7 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 	}
 	return credentialRole{name: prefix + hex.EncodeToString(identity[:20]), schemaOwner: "gregale_schema_" + hex.EncodeToString(owner[:16]),
 		connectionLimit: connectionLimit, session: request.Access == managedpostgres.CredentialSession,
-		authOwner:       "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
+		authOwner: "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
 		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
 		database: p.databaseName, access: request.Access.Privileges(), legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID}
 }
