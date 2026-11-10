@@ -527,11 +527,12 @@ func appLogDrainHealthResponse(health state.AppLogDrainHealth) api.AppLogDrainHe
 // again, so the app never idles. Hunt 32 H32-52 saw 3,578 deliveries and an
 // instance that never parked until the drain was deleted.
 func (s *server) appLogDrainSelfTargetProblem(ctx context.Context, app state.App, targetURL string) *api.Problem {
-	parsed, err := url.Parse(targetURL)
-	if err != nil {
-		return nil
+	// An unparsable URL is refused by the target validation; it has no
+	// host to compare here.
+	host := ""
+	if parsed, err := url.Parse(targetURL); err == nil {
+		host = strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
 	}
-	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
 	if host == "" {
 		return nil
 	}
