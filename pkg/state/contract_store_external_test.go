@@ -23,8 +23,14 @@ type contractTestStore interface {
 	state.AgentClientStore
 	state.OrgAgentStore
 	state.KeyProjectLimitStore
+	state.AgentApprovalStore
+	state.AgentApprovalNotificationStore
+	state.AgentApprovalChannelStore
+	state.AgentActivityStore
+	state.NotificationChannelStore
 	state.AppWorkPolicyStore
 	state.ObjectStorageCeilingGrantStore
+	state.CreditDiscountStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
 	state.ComputeNodeReadinessStore

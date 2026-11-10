@@ -866,28 +866,7 @@ type deploymentCompanionRoute struct {
 }
 
 func readinessSourcesForDeployment(deployment state.Deployment) ([]string, error) {
-	sources := make([]string, 0, 2)
-	if len(deployment.OverrideReadinessProbe) > 0 {
-		var probe api.DeploymentReadinessProbe
-		if err := json.Unmarshal(deployment.OverrideReadinessProbe, &probe); err != nil {
-			return nil, fmt.Errorf("decode primary app readiness probe: %w", err)
-		}
-		if probe.Path != "" || probe.GRPC != nil {
-			sources = append(sources, "primary_app")
-		}
-	}
-	var companions []deploymentCompanionRoute
-	if len(deployment.Sidecars) > 0 && string(deployment.Sidecars) != "[]" {
-		if err := json.Unmarshal(deployment.Sidecars, &companions); err != nil {
-			return nil, fmt.Errorf("decode deployment companions: %w", err)
-		}
-	}
-	for _, companion := range companions {
-		if companion.Type == api.SidecarTypeSidecar && companion.PrimaryIngress && companion.ReadinessProbe != nil && companion.Name != "" {
-			sources = append(sources, "sidecar:"+companion.Name)
-		}
-	}
-	return sources, nil
+	return state.DeploymentReadinessSources(deployment)
 }
 
 // gatewayCompanionRoutes projects deployment-local companion specs into a
@@ -1426,7 +1405,11 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			if refresher, ok := inv.(interface {
 				RefreshLiveTargets(context.Context, string) error
 			}); ok {
-				if err := refresher.RefreshLiveTargets(ctx, p.AppID); err != nil {
+				if err := refresher.RefreshLiveTargets(ctx, p.AppID); errors.Is(err, gateway.ErrTargetPlacementChanged) {
+					// A newer placement reached the picker during the read;
+					// the 1 s placement repair converges it (~100/day/node).
+					log.Debug("gatewayd: refresh running instance raced a newer placement", "app_id", p.AppID, "instance_id", p.InstanceID)
+				} else if err != nil {
 					log.Warn("gatewayd: refresh running instance", "app_id", p.AppID, "instance_id", p.InstanceID, "err", err)
 				}
 			} else if reconciler, ok := inv.(interface {

@@ -82,7 +82,14 @@ func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("next"); raw != "" {
 		next = dashboardMFANext(raw)
 	}
-	a.renderLogin(w, r, http.StatusOK, "", false, next)
+	flash := ""
+	if r.URL.Query().Get("verify") == "1" {
+		flash = verifySignInFlash
+	}
+	if r.URL.Query().Get("reauth") == "1" {
+		flash = recentSignInFlash
+	}
+	a.renderLogin(w, r, http.StatusOK, flash, false, next)
 }
 
 // renderLogin renders the sign-in form. next is carried through the POST so a
@@ -98,8 +105,9 @@ func (a *authHandlers) renderLogin(w http.ResponseWriter, r *http.Request, statu
 		// SignInConfig is read here — not at request time — so
 		// there is no per-request os.Getenv cost.
 		Auth: &dashboard.AuthCapabilitiesView{
-			GoogleEnabled: a.srv.oauthConfig.Google.Enabled(),
-			GitHubEnabled: a.srv.oauthConfig.GitHub.Enabled(),
+			GoogleEnabled:  a.srv.oauthConfig.Google.Enabled(),
+			GitHubEnabled:  a.srv.oauthConfig.GitHub.Enabled(),
+			TermsPublished: termsPublished(),
 		},
 		Data: map[string]any{
 			"Error":     isError,
@@ -334,7 +342,7 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		// ignored the flag, so MFA protected only /v1: the password or
 		// inbox alone opened every page. Until the TOTP challenge is
 		// passed, only the challenge itself is reachable.
-		mfaPending := session.IsMFAPending(env)
+		mfaPending := session.IsMFAPending(env) && s.sessionMFAPending(acct)
 		if mfaPending && !dashboardMFARoute(r.Method, r.URL.Path) {
 			target := dashboardMFAPath
 			if r.Method == http.MethodGet {
@@ -347,6 +355,12 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, dashboardRecoveryPage(acct), http.StatusFound)
 			return
 		}
+		// Past the verification grace only the account page (with its
+		// resend button) and the resend form remain.
+		if s.verificationOverdueNow(acct) && !dashboardMFARoute(r.Method, r.URL.Path) && !dashboardOverdueRoute(r.Method, r.URL.Path) {
+			http.Redirect(w, r, "/dashboard/account", http.StatusFound)
+			return
+		}
 		// The session and pending flag feed cookie re-issue on
 		// /dashboard/mfa, the same context shape RequireSession builds.
 		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
@@ -355,6 +369,9 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		r = r.WithContext(authmw.WithMFAPending(r.Context(), mfaPending))
 		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
 		r = r.WithContext(WithAccount(r.Context(), acct))
+		// Dashboard verification uses the same live account policy as /v1.
+		//nolint:contextcheck // WithPrincipal derives from r.Context(), preserving the session and MFA stamps above.
+		r = r.WithContext(authmw.WithPrincipal(r.Context(), acct, nil, nil))
 		// IAM-hardening-mega-PR (logical change 6, ADR-077 /
 		// review finding #3): stamp env.StepUpAt onto
 		// r.Context() so requireStepUpHandler can read it. The
@@ -578,7 +595,7 @@ func dashboardMFANext(raw string) string {
 	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil {
 		return fallback
 	}
-	if u.Path != cliAuthPath && u.Path != "/dashboard" && !strings.HasPrefix(u.Path, "/dashboard/") {
+	if u.Path != cliAuthPath && u.Path != emailVerificationPath && u.Path != "/dashboard" && !strings.HasPrefix(u.Path, "/dashboard/") {
 		return fallback
 	}
 	if u.Path == dashboardMFAPath {
@@ -593,3 +610,7 @@ func dashboardMFARoute(method, path string) bool {
 	return path == dashboardMFAPath && (method == http.MethodGet || method == http.MethodPost) ||
 		path == "/dashboard/account/mfa" && method == http.MethodGet
 }
+
+// verifySignInFlash is the sign-in banner for a verification link opened in
+// a browser that is not signed in to its account (ADR 20261109120000).
+const verifySignInFlash = "Sign in to finish verifying your email. If you did not create this account or do not know its password, use \"Email me a sign-in link\" instead: it verifies the address and removes the password and keys someone else set."

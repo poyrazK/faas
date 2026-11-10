@@ -782,7 +782,7 @@ func (m *MemStore) ClaimNextAppTaskForNode(_ context.Context, owner, nodeID stri
 			m.syncAppTaskOccurrenceLocked(candidate, claimedAt)
 			continue
 		}
-		if !m.migrationTaskAllowedLocked(candidate) {
+		if !m.migrationTaskAllowedLocked(candidate) || !m.releaseTaskTurnLocked(candidate) {
 			continue
 		}
 		priority := candidate.CreatedAt

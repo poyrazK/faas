@@ -87,7 +87,6 @@ When you receive a page:
 | `tls_cert_expiry` | warn | [`FaasTLSCertExpiryWarn.md`](FaasTLSCertExpiryWarn.md) | Legacy certificate refresher queue lag (transient); current production TLS is upstream. |
 | `tls_cert_expiry` | page | [`FaasTLSCertExpiryPage.md`](FaasTLSCertExpiryPage.md) | None — certs expiring within 24h are always actionable. |
 | `tls_on_demand_denied` | warn | [`FaasTLSOnDemandDeniedHigh.md`](FaasTLSOnDemandDeniedHigh.md) | Bot/fuzzer probe traffic; check `gateway_request_origin_asn`. |
-| `cpu_starvation` | warn | [`FaasCpuStarvation.md`](FaasCpuStarvation.md) | Tenant burst coinciding with a builder build; check `vmmd_cpu_throttle_ratio{slice}`. |
 | `cve_check` | warn | [`FaasNewCve.md`](FaasNewCve.md) | None — every new medium+ CVE is actionable. |
 | `failed_login` | warn | [`FaasFailedLoginSpike.md`](FaasFailedLoginSpike.md) | Single bot probing; check `apig_failed_login{ip}` to see if one IP is driving. |
 | `restart_loop` | warn | [`FaasRestartLoop.md`](FaasRestartLoop.md) | (See `daemon_restart_loop` above.) |

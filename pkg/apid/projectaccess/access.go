@@ -41,7 +41,7 @@ func From(ctx context.Context) (Grant, bool) {
 func Wrap(store Store, audit authz.AuditEmitter, next authmw.AccountHandler) authmw.AccountHandler {
 	return func(w http.ResponseWriter, r *http.Request, actor state.Account) {
 		projectRequest := strings.HasPrefix(r.URL.Path, "/v1/projects") || strings.HasPrefix(r.URL.Path, "/dashboard/projects/") ||
-			r.PathValue("organization") != "" && strings.Contains(r.URL.Path, "/projects")
+			authmw.OrganizationSlug(r) != "" && strings.Contains(r.URL.Path, "/projects")
 		if !projectRequest {
 			next(w, r, actor)
 			return
@@ -115,7 +115,7 @@ func personalCollection(r *http.Request, store Store, actor state.Account) *api.
 }
 
 func resource(r *http.Request, store Store, actor state.Account) (state.Project, state.Org, bool, error) {
-	if organization := r.PathValue("organization"); organization != "" {
+	if organization := authmw.OrganizationSlug(r); organization != "" {
 		org, err := store.OrgBySlug(r.Context(), organization)
 		if err != nil {
 			return state.Project{}, org, true, err

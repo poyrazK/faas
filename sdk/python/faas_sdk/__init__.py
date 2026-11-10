@@ -30,6 +30,8 @@ Public surface:
   and return the stable delivery ID for receiver-side deduplication.
 * `pre_auth_target_digest` - opaque login-target signal for selected failed
   responses on opt-in pre-auth routes.
+* `function` - decorator declaring a function's deploy settings next to
+  its handler (cron, queue, RAM, ...); `gregale deploy` reads it statically.
 """
 
 from ._rfc7807 import (
@@ -49,6 +51,7 @@ from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
+from .functions import FunctionHookContext, function
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
@@ -117,6 +120,8 @@ def __dir__() -> list[str]:
 
 
 __all__ = (
+    "function",
+    "FunctionHookContext",
     "FaaSClient",
     "FaaSClientOptions",
     "Client",

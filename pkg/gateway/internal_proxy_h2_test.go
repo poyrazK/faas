@@ -338,3 +338,41 @@ func TestInternalProxy_StreamingStaysHTTP11(t *testing.T) {
 		t.Errorf("elapsed = %v, want < 4s (no premature cut)", elapsed)
 	}
 }
+
+// BenchmarkSmallResponseOverHTTP2 serves a 512-byte body through
+// copyResponseBodyWithActivity over HTTP/2 with TLS, the edge's public
+// shape. With a declared length the final chunk is not flushed on its own,
+// so the body and the end of the stream leave in one write.
+func BenchmarkSmallResponseOverHTTP2(b *testing.B) {
+	body := strings.Repeat("x", 512)
+	for _, bc := range []struct {
+		name   string
+		length int64
+	}{
+		{"declared_length", int64(len(body))},
+		{"unknown_length", -1},
+	} {
+		b.Run(bc.name, func(b *testing.B) {
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = copyResponseBodyWithActivity(r.Context(), w, io.NopCloser(strings.NewReader(body)), bc.length, nil)
+			}))
+			srv.EnableHTTP2 = true
+			srv.StartTLS()
+			defer srv.Close()
+			client := srv.Client()
+			b.ReportAllocs()
+			for b.Loop() {
+				resp, err := client.Get(srv.URL)
+				if err != nil {
+					b.Fatal(err)
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				if resp.ProtoMajor != 2 {
+					b.Fatalf("proto %s, want HTTP/2", resp.Proto)
+				}
+			}
+		})
+	}
+}

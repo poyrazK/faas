@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -95,8 +96,10 @@ func TestRouteAdviceSuggestsCacheAndThrottle(t *testing.T) {
 		store.stats.RouteLimit != api.RouteAdviceMaxRoutes || store.stats.CacheMaxAgeSeconds != 60 {
 		t.Fatalf("stats scope = %+v", store.stats)
 	}
-	if got := store.stats.UntilAt.Time.Sub(store.stats.SinceAt.Time); got != api.RouteAdviceDefaultSince {
-		t.Fatalf("default window = %s, want %s", got, api.RouteAdviceDefaultSince)
+	// The window's start aligns to a whole UTC hour inside the plan's
+	// retention (analyticsrollup.AlignWindow), so it may be up to an hour short.
+	if got := store.stats.UntilAt.Time.Sub(store.stats.SinceAt.Time); got > api.RouteAdviceDefaultSince || got <= api.RouteAdviceDefaultSince-time.Hour {
+		t.Fatalf("default window = %s, want within the hour below %s", got, api.RouteAdviceDefaultSince)
 	}
 	if len(store.excess) != 1 || store.excess[0].Route != "GET /search" || store.excess[0].AllowancePerMinute != 140 {
 		t.Fatalf("excess queries = %+v", store.excess)

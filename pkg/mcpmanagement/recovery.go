@@ -187,6 +187,10 @@ func (m *management) operationFailure(p *releasePlan, err error, priorAttempt bo
 func (m *management) toolErrorForCall(name string, args any, err error) *mcp.CallToolResult {
 	result := m.toolError(err)
 	p := result.StructuredContent.(ToolError)
+	if p.Approval != nil {
+		// A person decides; the plan and its retry advice wait for them.
+		return result
+	}
 	var lookup planLookupArgs
 	raw, _ := json.Marshal(args)
 	_ = json.Unmarshal(raw, &lookup)

@@ -91,6 +91,8 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/release-approvals":          authz.OrgActionReadApp,
 	"GET /v1/deployments/{id}/approvals":             authz.OrgActionReadApp,
 	"POST /v1/deployments/{id}/approvals":            authz.OrgActionApproveAppRelease,
+	// A check after a release command with an unknown outcome (ADR-1448 amendment 1).
+	"POST /v1/deployments/{id}/release-outcome": authz.OrgActionDeployApp,
 	// Release diff (ADR-20261021101117).
 	"GET /v1/deployments/{id}/diff": authz.OrgActionReadApp,
 	// Release timeline (ADR-20261022120744).
@@ -264,6 +266,8 @@ var routeActions = map[string]authz.OrgAction{
 	// environment. Legacy /v1/triggers stay personal-only (QueuePattern;
 	// docs/organization-queues.md).
 	"POST /v1/domains":                         authz.OrgActionConfigureApp,
+	"POST /v1/domains/plan":                    authz.OrgActionConfigureApp,
+	"POST /v1/domains/apply":                   authz.OrgActionConfigureApp,
 	"GET /v1/domains/{domain}":                 authz.OrgActionReadApp,
 	"GET /v1/domains/{domain}/doctor":          authz.OrgActionReadApp,
 	"DELETE /v1/domains/{domain}":              authz.OrgActionConfigureApp,

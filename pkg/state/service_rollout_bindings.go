@@ -31,7 +31,7 @@ func serviceBindingRequestMatches(ctx context.Context, d Deployment, action, rec
 	}
 	requestID, _ := ctx.Value(serviceBindingRequestKey{}).(string)
 	gate := d.ServiceRolloutHandoff.BindingsCheck
-	if requestID != "" && (gate == nil || gate.RequestID != requestID || gate.Action != action || gate.DeploymentID != recipientID || d.ServiceRolloutHandoff.PredecessorDeploymentID != predecessorID || gate.Status == "passed") {
+	if requestID != "" && (gate == nil || gate.RequestID != requestID || gate.Action != action || gate.DeploymentID != recipientID || d.ServiceRolloutHandoff.PredecessorDeploymentID != predecessorID || gate.Status == "passed" || serviceBindingTraffic(gate) != serviceRolloutTraffic(ctx)) {
 		return ErrServiceRolloutInvalid
 	}
 	if gate != nil && gate.Status != "passed" && gate.Action == action && d.ServiceRolloutHandoff.PredecessorDeploymentID != predecessorID {
@@ -40,15 +40,15 @@ func serviceBindingRequestMatches(ctx context.Context, d Deployment, action, rec
 	return nil
 }
 
-func queueServiceBindingCheck(d Deployment, action, recipientID, predecessorID, reason string) Deployment {
+func queueServiceBindingCheck(ctx context.Context, d Deployment, action, recipientID, predecessorID, reason string) Deployment {
 	h := d.ServiceRolloutHandoff
 	if h.Action != action {
 		h.Generation, h.AcknowledgedAt, h.CompletedAt = 0, nil, nil
 		h.ExpectedGateways, h.AcknowledgedGateways, h.MissingGateways = nil, nil, nil
 	}
 	gate := h.BindingsCheck
-	if gate == nil || gate.Action != action || gate.DeploymentID != recipientID || h.PredecessorDeploymentID != predecessorID || gate.Status == "passed" {
-		gate = &api.ServiceRolloutBindingGate{RequestID: uuid.NewString(), Action: action, DeploymentID: recipientID, Status: "pending"}
+	if gate == nil || gate.Action != action || gate.DeploymentID != recipientID || h.PredecessorDeploymentID != predecessorID || gate.Status == "passed" || serviceBindingTraffic(gate) != serviceRolloutTraffic(ctx) {
+		gate = &api.ServiceRolloutBindingGate{RequestID: uuid.NewString(), Action: action, DeploymentID: recipientID, Status: "pending", TrafficPercent: serviceRolloutTraffic(ctx)}
 	}
 	now := time.Now().UTC()
 	h.Action, h.Phase, h.PredecessorDeploymentID = action, ServiceRolloutPhasePending, predecessorID
@@ -69,6 +69,7 @@ func serviceBindingAudit(ctx context.Context, d Deployment) []byte {
 		"request_id":                d.ServiceRolloutHandoff.BindingsCheck.RequestID,
 		"deployment_id":             d.ServiceRolloutHandoff.BindingsCheck.DeploymentID,
 		"predecessor_deployment_id": d.ServiceRolloutHandoff.PredecessorDeploymentID,
+		"traffic_percent":           serviceRolloutTraffic(ctx),
 		"binding_fences":            bindingReleaseFences(ctx),
 		"crossed_releases":          checkedRollbackCrossedReleaseIDs(ctx),
 	})

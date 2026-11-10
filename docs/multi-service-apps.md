@@ -25,6 +25,13 @@ prompt:
 gregale deploy --yes
 ```
 
+Every service the deploy builds or redeploys counts once against your
+account's hourly deploy limit (`GET /v1/account/rate-limits` shows what is
+left). When the deploy needs more than remain, none of its services deploy,
+so the project never ends up half on the new release; the plan warns first.
+Deploy again after the reset, or deploy fewer services with `--only`. A
+GitHub push that does not fit fails every service's check the same way.
+
 `gregale deploy --project` asks for a project deploy explicitly, for example
 when the root is also an app. `gregale start` offers **All of them, as one
 project** when it finds two or more services. A repository connected to GitHub
@@ -172,7 +179,9 @@ the next push deploys them
 ([ADR-20261102192943](adr/20261102192943-compose-files-deploy-as-written.md)):
 
 - `condition: service_healthy` on another service holds this service's new
-  release until that service's deployment is live.
+  release until that service's deployment is live: the one being deployed
+  with it, or the one already serving. A failed or rolled-back release of the
+  dependency does not block it.
 - `condition: service_healthy` on a datastore (`db: postgres:16`) is accepted as
   a plain dependency, because Gregale does not run the datastore as a service.
   The plan says so; have the service retry its connection until the database
@@ -236,10 +245,16 @@ A Compose service that publishes `ports:` gets a public URL. One without
 no public URL. So is one whose ports are all bound to a loopback address, such
 as `127.0.0.1:8081:8080`, which Docker publishes only on your own machine; the
 plan warns, and removing the address publishes it. Other services are public unless
-[`.gregale/project.yaml`](#without-a-compose-file) says `visibility: internal`.
+the root [`gregale.yaml` `project:` block](#without-a-compose-file) says `visibility: internal`.
 The plan lists every public service under **Public on the internet** and marks
-the rest `visibility=internal`. Visibility is set when the app is created; see
-[networking](networking.md) for changing it later.
+the rest `visibility=internal`. A production deploy also makes an existing
+service internal once Compose stops publishing its ports, and the plan says
+so: removing `ports:` takes a service off the internet. The reverse is never
+automatic: a service that starts publishing ports stays internal, and the plan
+says how to publish it (`gregale app <slug> --visibility public`). A deploy to a
+named environment changes no visibility, which is app-wide. See
+[networking](networking.md) for changing it by hand
+([ADR-20261107090000](adr/20261107090000-preview-markers-reach-services-and-compose-visibility.md)).
 
 A service listens on the container side of its first `ports:` mapping: with
 `ports: ["8080:3000"]`, Gregale sends requests to port 3000 and, unless you set
@@ -283,7 +298,8 @@ A call stays in its caller's environment: production reaches the production
 deployment of `billing`, and a `staging` workload reaches the `staging`
 deployment. When `billing` has no deployment in that environment, the call is
 refused with 403 rather than sent to production; deploy `billing` to the
-environment first. During
+environment first. A deploy to the environment that leaves out a dependency it
+does not have there says so in its plan. During
 development, `gregale dev --all` runs every service in its own developer
 environment, and the same names reach those environments instead of
 production ([gregale dev](gregale-dev.md#call-the-other-apps)).
@@ -313,28 +329,66 @@ services a workload declares in `depends_on`, set
 whole file at the top level. [Networking](networking.md) covers caller
 allowlists, per-route scopes, HTTPS between services and timeouts.
 
-## Without a Compose file
+### gRPC services
 
-A repository without Compose declares the same things in
-`.gregale/project.yaml` at its root
-([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)):
+A service that serves gRPC declares it in Compose, so the platform reaches it
+over HTTP/2 from the internet and from its siblings:
 
 ```yaml
-service_policy: project        # project, declared or account, for every service
 services:
-  billing:
-    visibility: internal       # no public URL; set when the app is created
-    depends_on: [ledger]       # billing gets GREGALE_SERVICE_LEDGER_URL
-  admin:
-    service_policy: declared   # admin may call only what it declares
+  orders:
+    build: ./orders
+    x-gregale-app-protocol: grpc   # http1 (default), http2 or grpc
 ```
 
-Service names are the ones the plan shows. The file also applies to Compose
+Each production deploy sets the app's protocol to the declared value, and a
+deploy to a named environment sets it on the services it creates; the protocol
+is app-wide, so a stage deploy leaves an existing app's alone. A service that
+declares none keeps the protocol set with
+`gregale app update <app> --app-protocol`. gRPC needs the Hobby plan or
+above, and the plan refuses it on Free. A streaming RPC between services, like
+any streamed response, ends after about 15 minutes; clients reconnect and
+resume ([long-lived streams](networking.md#long-lived-streams)).
+
+Plain TCP between services (Redis, PostgreSQL and other non-HTTP protocols)
+is off unless your operator has enabled it; see
+[private TCP](networking.md#private-tcp-between-services).
+
+## Without a Compose file
+
+A repository without Compose declares the same things in the `project:` block
+of the `gregale.yaml` at its root
+([ADR-20261107180000](adr/20261107180000-one-config-file.md)):
+
+```yaml
+project:
+  service_policy: project        # project, declared or account, for every service
+  services:
+    billing:
+      visibility: internal       # no public URL; set when the app is created
+      depends_on: [ledger]       # billing gets GREGALE_SERVICE_LEDGER_URL
+    admin:
+      service_policy: declared   # admin may call only what it declares
+```
+
+Service names are the ones the plan shows. The block also applies to Compose
 services, but Compose stays the more specific source: a Compose
 `x-gregale-service-policy` wins, and `depends_on` lists from both are merged.
 A project created before the `project` policy became the default switches by
 setting `service_policy: project` here. An unknown name, key or value fails
-the plan and names the file.
+the plan and names the file. A root `gregale.yaml` that holds only the
+`project:` block is not deployed as a service.
+
+To see which file sets a value, run `gregale config explain` with the key,
+for example `gregale config explain services.billing.visibility`. It prints
+the effective value and every layer that can set it, and marks the one that
+wins.
+
+The same settings used to live in `.gregale/project.yaml`. That file still
+works but is deprecated: deploys warn about it, and declaring settings in
+both places fails the plan. Move it with `gregale project import`, which
+appends the block to your `gregale.yaml` without changing the rest of the
+file and deletes the old one (`--dry-run` prints the result first).
 
 ## Configuration
 
@@ -347,8 +401,12 @@ gregale env set --app shop-api LOG_LEVEL=info
 gregale env set --app shop-api STRIPE_KEY=sk_live_…
 ```
 
-or pass a `--secrets-file` to `gregale deploy`, which supplies its keys to every
-selected service.
+or pass a `--secrets-file` to `gregale deploy`. Each key goes only to the
+selected services whose Compose `environment:` names it, so one service's
+credentials do not reach the others. A key no service names goes to every
+selected service that has no value for it yet. A value that has not changed is
+not rewritten, and every service's secret limit is checked before the first
+write ([ADR-20261108090000](adr/20261108090000-project-deploy-config-correctness.md)).
 
 A value every service needs, such as a shared API key or log level, can be set
 once for the project instead of once per service. Every service of the
@@ -399,7 +457,9 @@ never overwrites a value already set on the app, never imports secret-looking
 values, other Docker addresses, `${…}` interpolation or `env_file` values, and
 never shows values in the plan.
 Imports happen on reviewed deploys (`gregale deploy`, the dashboard,
-`--repo … --project`); a GitHub push deploy imports nothing. Values in
+`--repo … --project`). A GitHub push imports only the sibling service
+addresses, which a service added by the push needs to call its siblings, and
+leaves every other value to a reviewed deploy. Values in
 `compose.override.yaml` are imported too, so keep local-only settings out of an
 opted-in project.
 See [ADR-20261023085230](adr/20261023085230-compose-env-import.md).
@@ -454,20 +514,30 @@ Each service rolls back on its own, to its previous live deployment:
 gregale rollback shop-api
 ```
 
-To roll the whole project back, preview the order and then run it:
+To roll the project's latest deploy back, preview the plan and then run it:
 
 ```sh
 gregale project rollback shop --dry-run
 gregale project rollback shop --yes
 ```
 
-Every service rolls back to its previous live deployment, one at a time, after
-the services it depends on, as a deploy brings them up. Each step waits until
-the service serves its previous release. The command stops at the first
-service that fails, and names the services already rolled back and those still
-on their current release; roll those back with `gregale rollback <slug>`. A
-rollback across a release command (a migration) needs
-`--acknowledge-releases`, as for one app.
+The services that deploy changed roll back to the release each served before
+it, one at a time, callers first: a service rolls back before the services it
+depends on, the reverse of a deploy, so a caller is never left calling an API
+that has already gone back. Each step waits until the service serves its
+previous release. The plan shows each service's revisions (`v4 -> v3`) and
+which services it leaves as they are:
+
+- a service the latest deploy did not change (it serves another commit, or a
+  release more than 15 minutes older); `--all` rolls those back too;
+- a service added by the latest deploy, which has no earlier release;
+- a service already rolled back.
+
+The command stops at the first service that fails and names the services
+already rolled back and those still on their current release. Fix the cause
+and run it again: the services already rolled back are skipped, so a rerun
+finishes the rollback instead of undoing it. A rollback across a release
+command (a migration) needs `--acknowledge-releases`, as for one app.
 
 A project rollback is a sequence of per-service rollbacks, not one atomic
 switch: for a moment, a rolled-back service can receive calls from a service
@@ -536,6 +606,53 @@ See [cold wake](cold-wake.md#refresh-application-state-after-restore).
 Before [ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md) project deploys and GitHub pushes ignored
 these settings.
 
+## Databases and buckets in gregale.yaml
+
+A Compose `postgres` service already becomes a managed database. To declare
+resources by name instead, list them in the `gregale.yaml` at the repository
+root, give each entry the service it binds to, and add `create` for any that
+do not exist yet:
+
+```yaml
+databases:
+  - database: chronolake-db
+    app: gateway
+    create:
+      postgres_major: 17
+buckets:
+  - bucket: segments
+    app: store
+    create: true
+```
+
+The plan lists them before you apply: databases under **Managed PostgreSQL
+(provided by this deploy)**, buckets under **Object storage (from
+gregale.yaml)**. Apply creates whatever is missing and binds it to its service
+after the services exist and before they build, so the first deployment
+starts with its keys. An entry without `create` binds an existing resource, and
+a missing one stops the plan before anything changes
+([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)).
+Deploys never delete a database or bucket. See
+[managed PostgreSQL](postgres.md#connect-an-app) for the database fields;
+object-storage bindings inject the bucket's S3 settings under
+`GREGALE_S3_<BUCKET>_*` unless the entry sets `prefix`. Binding a bucket
+needs a credential with `storage:manage`, and creating a database needs
+`postgres:manage`. Organization projects attach buckets with
+`gregale add bucket` for now; a project deploy refuses `buckets:` there.
+
+## Debugging a project
+
+- `gregale logs --project shop --follow` streams every service's logs, each
+  line prefixed with its service.
+- `gregale debug trace <trace-id>` joins one request's hops across services,
+  with how each was woken. See [tracing](tracing.md).
+- `gregale postgres connect <database>` opens `psql` on your machine through
+  a bound service. See [managed PostgreSQL](postgres.md#connect-from-your-laptop).
+- `gregale app port-forward <service> 5433:<host>:<port>` reaches anything else
+  on a service's network.
+- `gregale dev bridge` runs one service on your machine against the rest of
+  the project in a remote development environment.
+
 ## Cold starts and tracing
 
 Parked services wake on their first request, so a chain of cold services wakes
@@ -545,4 +662,6 @@ under the `project` policy: the first wake restores the services an app lists in
 `depends_on`, and the gateways then learn which siblings it calls after waking.
 `gregale app wake-ahead <app> off` turns it off. See
 [wake-ahead](service-wake-ahead.md). Traces follow a request across services;
-see [tracing](tracing.md) and the [service map](service-map.md).
+see [tracing](tracing.md), a preview on Hobby and above, and the
+[service map](service-map.md), an internal preview available only where your
+operator has enabled it.

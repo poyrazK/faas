@@ -218,8 +218,8 @@ func TestTenantWorkflowCatchUpPreservesCadenceAndRearmsOnPublication(t *testing.
 		if err != nil || !changed || cursor.Status != state.WorkflowScheduleStarted || cursor.ScheduledFor == nil || !cursor.ScheduledFor.Equal(now.Add(-7*time.Minute)) {
 			t.Fatalf("customized recovery=%+v changed=%t err=%v", cursor, changed, err)
 		}
-		author := store.(state.AutomationStore)
-		draft := state.MutateForTest(t, author, app.ID, "report", "save", 0, state.AutomationDraft("report", "/report", `{"type":"schedule","schedule":"*/5 * * * *","tenant_configurable":true,"catch_up":"latest","catch_up_window":"1h"}`), false)
+		author := store.(state.StoredWorkflowStore)
+		draft := state.MutateForTest(t, author, app.ID, "report", "save", 0, state.StoredWorkflowDraft("report", "/report", `{"type":"schedule","schedule":"*/5 * * * *","tenant_configurable":true,"catch_up":"latest","catch_up_window":"1h"}`), false)
 		published := state.MutateForTest(t, author, app.ID, "report", "publish", draft.Version, nil, true)
 		if cursor, changed, err := admit(now.Add(time.Hour)); err != nil || !changed || cursor.Status != state.WorkflowScheduleArmed || cursor.ScheduledFor != nil || cursor.LastAdmittedAt == nil || !cursor.LastAdmittedAt.Equal(now) {
 			t.Fatalf("publication rearm=%+v changed=%t err=%v", cursor, changed, err)
@@ -228,11 +228,11 @@ func TestTenantWorkflowCatchUpPreservesCadenceAndRearmsOnPublication(t *testing.
 		if err != nil || len(configs) != 1 || configs[0].Schedule != "*/10 * * * *" || configs[0].Version != 1 || configs[0].CatchUpWindow != "1h0m0s" {
 			t.Fatalf("preserved config=%+v err=%v", configs, err)
 		}
-		paused, err := author.MutateAutomation(context.Background(), app.ID, "report", state.AutomationMutation{Action: "enable", ExpectedVersion: published.Version, Enabled: false})
+		paused, err := author.MutateStoredWorkflow(context.Background(), app.ID, "report", state.StoredWorkflowMutation{Action: "enable", ExpectedVersion: published.Version, Enabled: false})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := author.MutateAutomation(context.Background(), app.ID, "report", state.AutomationMutation{Action: "enable", ExpectedVersion: paused.Version, Enabled: true}); err != nil {
+		if _, err := author.MutateStoredWorkflow(context.Background(), app.ID, "report", state.StoredWorkflowMutation{Action: "enable", ExpectedVersion: paused.Version, Enabled: true}); err != nil {
 			t.Fatal(err)
 		}
 		if cursor, changed, err := admit(now.Add(2 * time.Hour)); err != nil || !changed || cursor.Status != state.WorkflowScheduleArmed {

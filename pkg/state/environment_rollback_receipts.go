@@ -3,11 +3,11 @@ package state
 import (
 	"context"
 	"errors"
-	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -17,7 +17,7 @@ type EnvironmentRollbackReceiptStore interface {
 
 var ErrEnvironmentRollbackAttemptAccepted = errors.New("original environment rollback already accepted; inspect its receipt")
 var ErrEnvironmentRollbackAttemptConflict = errors.New("environment rollback attempt conflicts with its original request")
-var environmentRollbackHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var environmentRollbackHash = lazyregexp.New(`^[0-9a-f]{64}$`)
 
 type environmentRollbackAttempt struct{ id, hash string }
 type environmentRollbackAttemptKey struct{}

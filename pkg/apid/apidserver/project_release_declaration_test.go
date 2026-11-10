@@ -75,3 +75,15 @@ func TestProjectWorkloadReleaseCommandLeavesRootProcfileToReposcan(t *testing.T)
 		t.Fatalf("release = %v, %v; want none (reposcan owns the root Procfile)", command, problem)
 	}
 }
+
+// A service in its own directory reads its own Procfile even when its app
+// row has no RootDir; the root Procfile is still reposcan's (nightly 11-07).
+func TestProjectWorkloadReleaseCommandReadsServiceDirNotAppRoot(t *testing.T) {
+	web := reposcan.Workload{Name: "web"}
+	worker := reposcan.Workload{Name: "worker", RootDir: "worker"}
+	archive := sourceArchive(t, map[string]string{"Procfile": "release: node migrate.js\n"})
+	command, _, problem := apidserver.ProjectWorkloadReleaseCommand(archive, []reposcan.Workload{web, worker}, worker, state.App{}, nil)
+	if problem != nil || command != nil {
+		t.Fatalf("release = %v, %v; want none (the worker declares nothing in worker/)", command, problem)
+	}
+}

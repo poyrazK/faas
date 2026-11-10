@@ -1,11 +1,14 @@
 from typing import Literal
 
-PlanDetectionWarningDetector = Literal["app_yaml", "compose", "fly", "k8s", "other", "procfile", "render", "serverless"]
+PlanDetectionWarningDetector = Literal[
+    "app_yaml", "compose", "fly", "functions", "k8s", "other", "procfile", "render", "serverless"
+]
 
 PLAN_DETECTION_WARNING_DETECTOR_VALUES: set[PlanDetectionWarningDetector] = {
     "app_yaml",
     "compose",
     "fly",
+    "functions",
     "k8s",
     "other",
     "procfile",

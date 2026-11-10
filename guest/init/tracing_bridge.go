@@ -24,6 +24,40 @@ type traceBridge struct {
 	// observe, when set, receives each forwarded export's outcome so the
 	// platform side can log delivery problems (diagnostics only).
 	observe func(outcome string, err error)
+	// forward, when set, gets a copy of every export for the customer's own
+	// OTLP endpoint (ADR-20261108100000).
+	forward *traceForwarder
+}
+
+// tryAcquire takes an upload slot, shared by the OTLP/HTTP and OTLP/gRPC
+// receivers; false means the bridge is busy.
+func (b *traceBridge) tryAcquire() bool {
+	select {
+	case b.slots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (b *traceBridge) release() { <-b.slots }
+
+// export hands one non-empty export to the forwarder (if any) and to the
+// host, returning the host's ack. signal is 0 for traces,
+// api.TraceCodecLogsSignal for logs or api.TraceCodecMetricsSignal for
+// metrics; codec carries no signal bit.
+func (b *traceBridge) export(ctx context.Context, codec, signal byte, contentType, contentEncoding string, body []byte) (byte, error) {
+	signalPath := api.TraceLocalTracesPath
+	switch signal {
+	case api.TraceCodecLogsSignal:
+		signalPath = api.TraceLocalLogsPath
+	case api.TraceCodecMetricsSignal:
+		signalPath = api.TraceLocalMetricsPath
+	}
+	b.forward.enqueue(signalPath, contentType, contentEncoding, body)
+	ack, err := b.send(ctx, encodeTraceFrame(codec|signal, body))
+	b.report(ack, err)
+	return ack, err
 }
 
 func newTraceBridge(send func(context.Context, []byte) (byte, error)) *traceBridge {
@@ -35,6 +69,9 @@ func (b *traceBridge) handler() http.Handler {
 	mux.HandleFunc("POST "+api.TraceLocalTracesPath, func(w http.ResponseWriter, r *http.Request) { b.exportHandler(w, r, 0) })
 	mux.HandleFunc("POST "+api.TraceLocalLogsPath, func(w http.ResponseWriter, r *http.Request) {
 		b.exportHandler(w, r, api.TraceCodecLogsSignal)
+	})
+	mux.HandleFunc("POST "+api.TraceLocalMetricsPath, func(w http.ResponseWriter, r *http.Request) {
+		b.exportHandler(w, r, api.TraceCodecMetricsSignal)
 	})
 	return mux
 }
@@ -48,15 +85,12 @@ func (b *traceBridge) exportHandler(w http.ResponseWriter, r *http.Request, sign
 		http.Error(w, "expected application/x-protobuf or application/json", http.StatusUnsupportedMediaType)
 		return
 	}
-	codec |= signal
-	select {
-	case b.slots <- struct{}{}:
-		defer func() { <-b.slots }()
-	default:
+	if !b.tryAcquire() {
 		w.Header().Set("Retry-After", "1")
 		http.Error(w, "trace bridge busy", http.StatusTooManyRequests)
 		return
 	}
+	defer b.release()
 	r.Body = http.MaxBytesReader(w, r.Body, api.TraceMaxFrameBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -72,8 +106,7 @@ func (b *traceBridge) exportHandler(w http.ResponseWriter, r *http.Request, sign
 		writeTraceExportResponse(w, mediaType)
 		return
 	}
-	ack, err := b.send(r.Context(), encodeTraceFrame(codec, body))
-	b.report(ack, err)
+	ack, err := b.export(r.Context(), codec, signal, mediaType, traceCodecContentEncoding(codec), body)
 	if err != nil {
 		w.Header().Set("Retry-After", "1")
 		http.Error(w, "trace host unavailable", http.StatusServiceUnavailable)
@@ -141,6 +174,15 @@ func traceFrameCodec(contentType, contentEncoding string) (byte, string, bool) {
 	return 0, "", false
 }
 
+// traceCodecContentEncoding is the normalized Content-Encoding of a frame
+// codec: "gzip" for the gzip codecs, "" otherwise.
+func traceCodecContentEncoding(codec byte) string {
+	if codec == api.TraceCodecGzipProtobuf || codec == api.TraceCodecGzipJSON {
+		return "gzip"
+	}
+	return ""
+}
+
 // encodeTraceFrame builds [4B BE length][1B codec][body], where length
 // counts the codec byte and body.
 func encodeTraceFrame(codec byte, body []byte) []byte {
@@ -187,7 +229,19 @@ func tracingEnvAtPaths(env []string, cfg *api.TracingConfig, nodePath, pythonPat
 	env = setEnvValue(env, "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "http/protobuf")
 	// The bootstraps start an SDK only when this is set.
 	env = setEnvValue(env, "FAAS_TRACING_ENABLED", "1")
-	if !hasEnvKey(env, "OTEL_METRICS_EXPORTER") {
+	switch {
+	case cfg.Metrics && !hasEnvKey(env, "OTEL_METRICS_EXPORTER") && !hasEnvKey(env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"):
+		// tracing.metrics (ADR-20261108160000 slice B): metric exports go to
+		// the bridge and become the app's custom metrics. Delta temporality
+		// so several instances' counters add up instead of replacing each
+		// other, unless the app chose one.
+		env = setEnvValue(env, "OTEL_METRICS_EXPORTER", "otlp")
+		env = setEnvValue(env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", api.TraceLocalEndpoint+api.TraceLocalMetricsPath)
+		env = setEnvValue(env, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
+		if !hasEnvKey(env, "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE") {
+			env = setEnvValue(env, "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE", "delta")
+		}
+	case !hasEnvKey(env, "OTEL_METRICS_EXPORTER"):
 		env = setEnvValue(env, "OTEL_METRICS_EXPORTER", "none")
 	}
 	if !hasEnvKey(env, "OTEL_LOGS_EXPORTER") && !hasEnvKey(env, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") {

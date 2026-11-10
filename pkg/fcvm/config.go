@@ -705,6 +705,9 @@ type JailerSpec struct {
 	// IsBuilder routes the jailer to faas-cp-build.slice and uses a neutral
 	// cgroup weight instead of a tenant plan weight.
 	IsBuilder bool
+	// CPUWeight, when positive, replaces the plan's cpu.weight for an app VM
+	// (ADR-20261109172421).
+	CPUWeight int
 	// MemoryMaxBytes is passed as a cgroup creation parameter. Zero preserves
 	// the legacy/test command shape; production Manager.Wake supplies the
 	// billable VM ceiling before jailer drops privileges.
@@ -736,18 +739,32 @@ type JailerSpec struct {
 // reach it without dragging the rest of JailerSpec into scope.
 func PerInstanceScope(instance string) string { return instance }
 
-// vmCPUWeight is the per-VM cpu.weight jailer sets when it creates the scope.
-// Builders and an empty plan use the legacy neutral 256 (the kernel accepts
-// [1, 10000]).
-func vmCPUWeight(plan api.Plan, isBuilder bool) int {
+// MaxCPUWeight is the largest cgroup v2 cpu.weight.
+const MaxCPUWeight = 10000
+
+// vmCPUWeight is the cpu.weight jailer sets for a VM without its own weight:
+// a builder's neutral 256 in its own slice, else the cgroup v2 default 100
+// (a database VM; the kernel accepts [1, 10000]). No weight depends on the
+// plan (ADR-20261109172421).
+func vmCPUWeight(isBuilder bool) int {
 	if isBuilder {
 		return 256
 	}
-	if w := plan.CPUWeight(); w > 0 {
-		return w
-	}
-	return 256
+	return 100
 }
+
+// jailerCPUWeight is the cpu.weight a VM scope gets: its own weight (its
+// memory's, ADR-20261109172421), else vmCPUWeight.
+func jailerCPUWeight(isBuilder bool, weight int) int {
+	if weight > 0 && !isBuilder {
+		return min(weight, MaxCPUWeight)
+	}
+	return vmCPUWeight(isBuilder)
+}
+
+// leaseCPUWeight is jailerCPUWeight for a lease; the cgroup fence repairs
+// to it.
+func leaseCPUWeight(l Lease) int { return jailerCPUWeight(l.IsBuilder, l.CPUWeight) }
 
 // JailerCommand builds the jailer argv (Appendix B). vmmd execs this as root; the
 // jailer drops privileges to UID/GID, chroots, applies seccomp, and joins the
@@ -795,7 +812,7 @@ func JailerCommand(s JailerSpec) []string {
 	if s.ChrootBase != "" {
 		chrootBase = s.ChrootBase
 	}
-	cpuWeight := vmCPUWeight(s.Plan, s.IsBuilder)
+	cpuWeight := jailerCPUWeight(s.IsBuilder, s.CPUWeight)
 	args := []string{
 		"jailer",
 		"--id", PerInstanceScope(s.Instance),

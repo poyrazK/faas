@@ -104,7 +104,7 @@ func TestPrintResidentCostEcho_Pro(t *testing.T) {
 		"1 instance of 512 MB kept warm",
 		"~365.6 GB-h/mo",
 		"billed against your included quota",
-		"1000 millicent/GB-h overage",
+		"5000 millicent/GB-h overage",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q\nfull: %s", want, out)

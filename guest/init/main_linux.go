@@ -439,6 +439,11 @@ func boot() error {
 	if apiErr != nil {
 		slog.Default().Warn("env.json could not be loaded; proceeding without api env", "err_kind", errorKind(apiErr))
 	}
+	// ADR-20261107160000: the identity file outlives the environment's
+	// FAAS_INSTANCE_ID, which a snapshot restore cannot change.
+	if err := publishBootInstanceIdentity(apiEnv, time.Now()); err != nil {
+		slog.Default().Warn("instance identity file unavailable", "err", err)
+	}
 	qualificationReceiptToken, qualificationReceiptMACKey, qualificationReceiptErr := takeQualificationConfigReceiptControl(apiEnv)
 	if qualificationReceiptErr != nil {
 		slog.Default().Warn("qualification configuration receipt control is invalid")
@@ -635,6 +640,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
+	env = StampInstanceIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", "/")
 	if trustErr != nil {
@@ -649,16 +655,23 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// boundary. Empty = no OTel configured, the env is unchanged.
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
 	// ADR-741: `gregale dev --debug` starts the Node inspector for the main
-	// workload only.
+	// workload only, and only in a developer environment: schedd owns the
+	// marker, so the switch set on any other app is ignored.
+	developer := apiEnv[api.PlatformDeveloperEnvironmentEnv] == "1"
 	preload := ""
 	if devDebugEnvValue(env, api.DevDebugEnv) == api.DevDebugRuntimeNode {
-		if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
-			slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
-		} else {
-			preload = devDebugPreloadPath
+		switch {
+		case !developer:
+			slog.Warn("dev debug ignored: not a developer environment", "key", api.DevDebugEnv)
+		default:
+			if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
+				slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
+			} else {
+				preload = devDebugPreloadPath
+			}
 		}
 	}
-	env = StampDevDebugEnv(env, preload)
+	env = StampDevDebugEnv(env, preload, developer)
 	// ADR-1170: a watch-mode developer image runs a development server that
 	// reloads patched files itself.
 	devWatchActive.Store(devDebugEnvValue(env, api.DevWatchEnv) == "1")
@@ -687,7 +700,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	if sup != nil {
 		output = io.MultiWriter(os.Stdout, sup.LogBuffer())
 	}
-	outputPipe, err := newWorkloadOutputPipe(output, int(credential.Uid), int(credential.Gid))
+	// Spec §17 G2: sealed values never reach the logs in cleartext. A
+	// reloadable app shares one redactor across restarts so reloaded values
+	// are masked too (ADR-20261110090000).
+	redactor := processSecrets.logRedactor()
+	redactor.update(secrets)
+	outputPipe, err := newWorkloadOutputPipe(redactor.writer(output), int(credential.Uid), int(credential.Gid))
 	if err != nil {
 		return fmt.Errorf("run app: workload output pipe: %w", err)
 	}

@@ -210,7 +210,7 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 		if existing.Restorable(s.now()) {
 			return Database{}, fmt.Errorf("%w: the name %q belongs to a database scheduled for deletion; undelete it, or delete it with purge=true to reuse the name now", ErrConflict, request.Name)
 		}
-		if reservedID != "" && existing.ID != reservedID {
+		if reservedID != "" && existing.ID != reservedID || !existing.Preview.IsZero() {
 			return Database{}, ErrConflict
 		}
 		if _, err := s.Get(ctx, existing.AccountID, existing.ID); err != nil {
@@ -311,6 +311,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	source, err := s.Get(ctx, request.AccountID, request.SourceDatabaseID)
 	if err != nil {
 		return Database{}, false, err
+	}
+	if !source.Preview.IsZero() {
+		return Database{}, false, ErrPreviewDatabase
 	}
 	now := s.now()
 	currentRestoreWindow := source.Spec.RestoreWindowSeconds

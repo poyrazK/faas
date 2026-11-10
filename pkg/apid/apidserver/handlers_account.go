@@ -1082,6 +1082,12 @@ func (s *server) setGraceWindow(w http.ResponseWriter, r *http.Request, acct sta
 			"days must be >= 0 (0 = atomic rotation, null = use plan default)"))
 		return
 	}
+	if req.Days != nil && *req.Days > api.APIKeyGraceWindowMaxDays {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid grace window",
+			fmt.Sprintf("days must be at most %d (got %d); see %s", api.APIKeyGraceWindowMaxDays, *req.Days, wire.DocsBaseURL+"/api-keys")))
+		return
+	}
 
 	// Read the prior value for the audit row. The cache may
 	// short-circuit this — invalidated-or-stale cache is fine.

@@ -58,7 +58,7 @@ func observeRecoveryExecutionHealth(ctx context.Context, q *sqlc.Queries, db sql
 		}
 		var observations map[int64]api.EventRecoveryExecution
 		if selection.Mode == "workflow" {
-			observations, err = observeWorkflowRecoveryExecutions(ctx, q, db, account, uuidString(row.ID), 0, api.AutomationRecoveryBatchMaxRuns, now)
+			observations, err = observeWorkflowRecoveryExecutions(ctx, q, db, account, uuidString(row.ID), 0, api.StoredWorkflowRecoveryBatchMaxRuns, now)
 		} else {
 			observations, err = observeRecoveryExecutions(ctx, q, db, account, uuidString(row.ID), 0, api.EventRecoveryRecipientsMax, now)
 		}

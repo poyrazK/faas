@@ -61,7 +61,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
-	"github.com/onebox-faas/faas/pkg/apid/release"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -619,6 +619,12 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			fmt.Sprintf("Session received %d of %d bytes; PATCH the remaining bytes before committing.", row.ReceivedBytes, row.TotalSize)))
 		return
 	}
+	// ADR-20261104140058: an agent deploying a production app needs a
+	// person's approval; the commit names its app only in the session, so
+	// the gate runs here rather than in the authentication middleware.
+	if actor, key, _, ok := authmw.PrincipalFrom(r); ok && s.authMw.RequireAgentApprovalForApp(w, r, actor, key, app) {
+		return
+	}
 	if prob := s.enforceSecurityPostureGate(r.Context(), app); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -643,9 +649,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		}
 	}(r.Context())
 	limits := api.MustLimitsFor(acct.Plan)
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars, OverrideFreeze: opts.OverrideFreeze, ReleaseAt: opts.ReleaseAt, ReleaseNotify: opts.ReleaseNotify}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars, OverrideFreeze: opts.OverrideFreeze, ReleaseAt: opts.ReleaseAt, ReleaseNotify: opts.ReleaseNotify, Workflows: opts.Workflows}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(opts.Healthcheck)
-	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	_, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
 		api.WriteProblem(w, healthProblem)
 		return
@@ -669,42 +675,15 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	if opts.SourceRoot != "" {
-		root, rootErr := sourcecontext.StorageRoot(opts.SourceRoot)
-		if rootErr != nil {
-			api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+rootErr.Error()))
-			return
-		}
-		opts.SourceRoot = root
-	}
-	sched, prob := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
-	if prob != nil {
-		api.WriteProblem(w, prob)
+	root, rootErr := sourcecontext.DeploymentRoot(opts.SourceRoot, app.RootDir)
+	if rootErr != nil {
+		api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+rootErr.Error()))
 		return
 	}
-	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
-	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
-		api.WriteProblem(w, ap)
-		return
-	}
-	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	if prob := s.validateAndPlanSidecars(rolloutReq, acct, limits); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	sched.park(rolloutReq)
-	rollout, prob := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
-	if prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
+	opts.SourceRoot = root
 	if app.Type == state.AppTypeFunction {
-		if opts.Dockerfile {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-				"Dockerfile functions unsupported", "function deploys use the platform runtime scaffold; remove dockerfile=true"))
+		if opts.Dockerfile && !api.FunctionRuntimeBuildsFromDockerfile(app.Runtime) {
+			api.WriteProblem(w, api.FunctionDockerfileProblem(app.Runtime, true))
 			return
 		}
 		if opts.Runtime != "" && opts.Runtime != app.Runtime {
@@ -712,8 +691,8 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 				"Runtime mismatch", "function deploys must match the app's runtime"))
 			return
 		}
-		if opts.Handler == "" {
-			api.WriteProblem(w, api.ErrHandlerMissing())
+		if problem := api.FunctionHandlerProblem(app.Runtime, opts.Handler); problem != nil {
+			api.WriteProblem(w, problem)
 			return
 		}
 	}
@@ -755,10 +734,19 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	manifestApp := app
-	if opts.SourceRoot != "" {
-		manifestApp.RootDir = opts.SourceRoot
+	if app.Type == state.AppTypeFunction {
+		hasDockerfile, err := archiveHasRootDockerfileAtRoot(row.PartPath, opts.SourceRoot)
+		if err != nil {
+			api.WriteProblem(w, api.ErrSourceInvalid(err.Error()))
+			return
+		}
+		if problem := api.FunctionDockerfileProblem(app.Runtime, opts.Dockerfile || hasDockerfile); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
+	manifestApp := app
+	manifestApp.RootDir = opts.SourceRoot
 	manifest, manifestProblem := loadSourceRefManifest(row.PartPath, manifestApp, acct.Plan, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -769,17 +757,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, buildProblem)
 		return
 	}
-	manifestOverrides, workloadsApplied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
-	if workloadProblem != nil {
-		api.WriteProblem(w, workloadProblem)
+	rollout, sched, prob := s.prepareSourceDeploymentRollout(r, acct, app, manifest, rolloutReq)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
-	}
-	if workloadsApplied {
-		rollout, prob = buildDeploymentForInsert(app, rolloutReq, manifestOverrides, limits, acct.Plan)
-		if prob != nil {
-			api.WriteProblem(w, prob)
-			return
-		}
 	}
 	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest, s.releasePhaseOff)
 	if releaseProblem != nil {
@@ -856,7 +837,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
 		CanaryStages:           rollout.CanaryStages,
 		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
-		Workflows:              marshalWorkflowDefinitions(opts.Workflows),
+		Workflows:              append(json.RawMessage(nil), rollout.Workflows...),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
 		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
 		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
@@ -865,7 +846,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		Scope:                  rolloutReq.Scope,
 		HostingObserver:        s.ops,
 		HostingFlow:            "first_deploy",
-		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService,
+		ServiceRollout:         state.IsServiceRollout(rollout),
 	})
 	if err != nil {
 		s.writeDeploymentCreateError(w, err)

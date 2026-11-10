@@ -16,8 +16,13 @@ gregale --non-interactive --json whoami
 Results are JSON on stdout. Errors are one JSON object on stderr with a
 stable `code`, a `hint` and an `exit_code`:
 
+- `1`: invalid request. Fix the arguments or the project; don't retry
+  unchanged.
 - `2`: the credential is missing or invalid. Stop and ask the user.
-- `3`: temporary failure. Check the current state, then retry.
+- `3`: temporary failure, or a wait that timed out. If the output has a
+  `resume_command`, run it; otherwise check the current state, then retry.
+  Never deploy again just because a deploy exited `3`.
+- `4`: not found. Check the app or deployment name.
 - `5`: conflict. Read the current state before retrying.
 - `6`: the key or the plan doesn't allow this. Ask the user.
 
@@ -52,7 +57,7 @@ app, so it does not show your code ran.
 ## Check and debug
 
 ```sh
-gregale --non-interactive --json deploys status <deployment-id> --app <app>
+gregale --non-interactive --json release get <deployment-id> --app <app>
 gregale --non-interactive --json logs <app> --since 15m --level error
 ```
 

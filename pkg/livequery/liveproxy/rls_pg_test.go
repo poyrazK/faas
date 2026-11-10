@@ -215,6 +215,14 @@ func TestRealtimeCarriesRLSQueries(t *testing.T) {
 		t.Fatalf("bob sees %s", got)
 	}
 
+	// A relation without row-level security is refused, as REST answers
+	// rls_required: every signed-in user would read all of it.
+	c.send(liveproto.ClientFrame{Type: liveproto.TypeSubscribe, Subscription: "unprotected", Database: "db_1", Rest: `members?select=user_id&order=user_id`, Token: "user:alice"})
+	c.until("the row-security refusal", func() bool { return c.last("unprotected") != nil })
+	if f := c.last("unprotected"); f["code"] != liveproto.CodeForbidden || !strings.Contains(fmt.Sprint(f["message"]), "rls_required") {
+		t.Fatalf("unprotected relation: %v", f)
+	}
+
 	// A refreshed token keeps the subscription; another user's does not.
 	c.send(liveproto.ClientFrame{Type: liveproto.TypeRenew, Subscription: "alice", Token: "user:alice"})
 	c.until("the renewal", func() bool { f := c.last("alice"); return f != nil && f["type"] == liveproto.TypeRenewed })

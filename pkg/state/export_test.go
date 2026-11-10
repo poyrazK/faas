@@ -31,7 +31,7 @@ import (
 type AlertRollbackDeployment = alertRollbackDeployment
 type AlertRollbackFacts = alertRollbackFacts
 type ApplicationStandardAssignmentRecord = applicationStandardAssignmentRecord
-type AutomationPublishReceipt = automationPublishReceipt
+type StoredWorkflowPublishReceipt = storedWorkflowPublishReceipt
 type ContractTestStore = contractTestStore
 type DeploymentRuntimeArtifactIdentity = deploymentRuntimeArtifactIdentity
 type EffectFixture = effectFixture
@@ -160,8 +160,8 @@ var AutomaticObservationNewRevision = automaticObservationNewRevision
 var AutomaticObservationReviewPrecedence = automaticObservationReviewPrecedence
 var AutomaticPollingFailureCode = automaticPollingFailureCode
 var AutomaticRepair = automaticRepair
-var AutomationDraft = automationDraft
-var AutomationReceiptHash = automationReceiptHash
+var StoredWorkflowDraft = storedWorkflowDraft
+var StoredWorkflowReceiptHash = storedWorkflowReceiptHash
 var BaseProducerFixture = baseProducerFixture
 var BaseProducerLifecycle = baseProducerLifecycle
 var BaseProducerRefusals = baseProducerRefusals
@@ -257,7 +257,7 @@ var EnvironmentGraphSupportsProductionServing = environmentGraphSupportsProducti
 var EnvironmentWorkloadHeldFlag = environmentWorkloadHeldFlag
 var EnvironmentWorkloadServingReceiptAcknowledged = environmentWorkloadServingReceiptAcknowledged
 var EqualWorkflowJSON = equalWorkflowJSON
-var EvaluateAutomationTestCase = evaluateAutomationTestCase
+var EvaluateStoredWorkflowTestCase = evaluateStoredWorkflowTestCase
 var EvaluateRuntimeUpgradeGatewayMembership = evaluateRuntimeUpgradeGatewayMembership
 var EvaluateRuntimeUpgradeVerification = evaluateRuntimeUpgradeVerification
 var EvaluateWorkflowSchedule = evaluateWorkflowSchedule
@@ -537,7 +537,7 @@ var SeedResumeRun = seedResumeRun
 var SeedWorkflowSchedule = seedWorkflowSchedule
 var SettleProductOperationTx = settleProductOperationTx
 var SimpleResumeSpec = simpleResumeSpec
-var SimulateAutomationTestSuite = simulateAutomationTestSuite
+var SimulateStoredWorkflowTestSuite = simulateStoredWorkflowTestSuite
 var SimulateTest = simulateTest
 var SimulationLoopSpec = simulationLoopSpec
 var SimulationStep = simulationStep
@@ -669,7 +669,7 @@ var ValidStandardRuntimeRefresh = validStandardRuntimeRefresh
 var ValidStoredFinancialPrice = validStoredFinancialPrice
 var ValidateAPIConsumerPlanAlerts = validateAPIConsumerPlanAlerts
 var ValidateAPIConsumerUsageStatementHandoffInput = validateAPIConsumerUsageStatementHandoffInput
-var ValidateAutomationTestSuite = validateAutomationTestSuite
+var ValidateStoredWorkflowTestSuite = validateStoredWorkflowTestSuite
 var ValidateCheckpointCaptureRetirementObservation = validateCheckpointCaptureRetirementObservation
 var ValidateCheckpointCaptureRetirementPlan = validateCheckpointCaptureRetirementPlan
 var ValidateCheckpointObjectCopyObservation = validateCheckpointObjectCopyObservation
@@ -1183,4 +1183,17 @@ func (m *MemStore) SeedLegacyWorkflowEvent(event WorkflowEvent) {
 	defer m.mu.Unlock()
 	m.workflowEvents[event.RunID] = append(m.workflowEvents[event.RunID], event)
 	m.workflowEventApps[event.RunID] = m.workflowRuns[event.RunID].AppID
+}
+
+// CandidatePostgresDeadlineForAccess runs candidatePostgresEvidenceDeadline
+// for one settled binding of the access mode whose receipt was recorded at
+// recorded and whose delivery the candidate was captured and restored with
+// (ADR-20261110120000).
+func CandidatePostgresDeadlineForAccess(access string, recorded time.Time, age time.Duration) (time.Time, error) {
+	request := EnvironmentWorkloadQualificationRequest{ID: "request", Attempt: 1}
+	request.FrozenInputs.Scope = "production"
+	delivery := candidatePostgresDelivery{BindingID: "binding", EnvironmentKey: "DATABASE_URL", Access: access, CredentialGeneration: 1, DeliveryVersion: 3, Settled: true}
+	receipts := map[string]time.Time{qualificationPostgresReceiptKey(request.ID, request.Attempt, delivery.BindingID, 1, 3): recorded}
+	inputs := RuntimeConfigInputs{SecretVersions: map[string]int64{"production/DATABASE_URL": 3}}
+	return candidatePostgresEvidenceDeadline(request, []candidatePostgresDelivery{delivery}, receipts, inputs, inputs, age, recorded.Add(time.Second))
 }

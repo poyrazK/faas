@@ -15,19 +15,29 @@ Operators running Gregale themselves should read the
 
 ## Plans and pricing
 
-Object storage is available on the Hobby, Pro and Scale plans. Each plan
-includes an amount of storage, measured as the average bytes you keep over the
-billing month:
+Object storage is available on every plan. Each plan includes an amount of
+storage, measured as the average bytes you keep over the billing month, and
+has a ceiling on what you can store
+([ADR-20261101214152](adr/20261101214152-object-storage-ceiling-follows-spend-cap.md)):
 
-| Plan | Included storage |
-|---|---|
-| Hobby | 10 GiB |
-| Pro | 50 GiB |
-| Scale | 200 GiB |
+| Plan | Included storage | Storage ceiling |
+|---|---|---|
+| Free | 1 GiB | 1 GiB |
+| Hobby | 10 GiB | 20 GiB |
+| Pro | 50 GiB | 250 GiB |
+| Scale | 200 GiB | 1,000 GiB |
 
-Storage beyond the included amount costs $0.03 per GiB-month. Downloads
-(egress) and requests are not billed. Because storage is averaged, 20 GiB held
-for half a month uses 10 GiB of the allowance. See [plans](plans.md).
+On a paid plan, storage beyond the included amount costs $0.03 per GiB-month,
+up to the ceiling. Free storage is never billed: writes stop at 1 GiB.
+Downloads (egress) and requests are not billed. Because storage is averaged,
+20 GiB held for half a month uses 10 GiB of the allowance. A spend cap lowers
+the ceiling to what it pays for, and support can raise a paid account's
+ceiling. See [plans](plans.md).
+
+A write past the ceiling is refused with `account_bytes`. While an account
+stores more than its ceiling (for example after a downgrade to Free or a lower
+spend cap), downloads are refused with `402 account_bytes`; listing, `HEAD` and
+`DELETE` keep working so you can delete objects to get back under it.
 
 When your account reaches its spend cap, existing buckets keep working within
 your plan's limits. Retained object versions count toward stored bytes until
@@ -99,6 +109,13 @@ date permits a partial response; a stale validator returns the full current
 object. If the provider ignores the condition, the full-read fallback counts as
 another request and must fit the remaining read and egress allowances.
 
+Reads of a mount are served before your app's edge rules and access control:
+`ip`, `jwt`, `geo`, `limit` and other rules, and the app's public auth mode
+(Basic, bearer, IP allowlist), do not apply to them. Put anything that needs
+those behind your app instead. SVG and XML objects are served with
+`Content-Security-Policy: sandbox`, so opening one directly cannot run script
+on your app's hostname.
+
 ## Upload and download files
 
 From the CLI:
@@ -124,6 +141,16 @@ POST /v1/apps/{app}/buckets/{bucket-id}/signed-url
 
 {"method": "PUT", "key": "avatars/42.png", "size_bytes": 18231, "content_type": "image/png", "expires_in": 300}
 ```
+
+From the CLI:
+
+```sh
+gregale bucket sign my-api BUCKET_ID v1/stream/segment.gz --expires 15m
+gregale bucket sign my-api BUCKET_ID avatars/42.png --method PUT --size-bytes 18231 --content-type image/png
+```
+
+It prints the URL, its headers and a `curl` command to send it with; `--json`
+prints the API response.
 
 The response holds a `url`, a `method` and `headers`. Send the request with
 exactly those headers and a body of exactly `size_bytes`. Use a plain HTTP
@@ -162,6 +189,12 @@ Organization-bound keys must match the app's organization, and project-limited
 keys can upload and read receipts only for apps in their allowed projects.
 Each request is one PUT and must fit the configured single-upload limit,
 including when the route's stored byte policy is larger.
+
+Active content (HTML, SVG, XML, XSL and JavaScript types) is accepted only when
+the route lists the exact type: an empty list or a wildcard such as `image/*`
+never admits it, so `image/*` does not admit `image/svg+xml`. A route on a
+public bucket mount cannot list an active type at all, and such uploads are
+refused with `415`, because the file would be served on your app's hostname.
 
 ## Use an S3 SDK
 
@@ -246,7 +279,8 @@ environment secrets: `<PREFIX>_ENDPOINT`, `_REGION`, `_BUCKET`,
 defaults to `GREGALE_S3_` and the bucket name in capitals, such as
 `GREGALE_S3_ASSETS`; set another with `--prefix`. Pass them to your
 S3 SDK. The credentials are sealed: they are never printed or returned by the
-API.
+API. These six values, like a managed PostgreSQL `DATABASE_URL`, do not count
+toward your plan's per-app secret limit, which covers only the secrets you set.
 
 To keep the binding next to your code, declare it in `gregale.yaml`:
 
@@ -271,6 +305,43 @@ Rotation keeps the secret names; running instances move to the new key before
 the old one is retired. Your app must be allowed to reach `s3.gregale.dev` under
 its egress rules. See [object storage from compute workloads](object-storage-compute.md)
 for SDK helpers.
+
+### Limit a binding to part of a bucket (preview)
+
+A binding can be limited to object keys under one prefix. Give each service
+only the keys it needs, with its own secret-name prefix:
+
+```yaml
+buckets:
+  - bucket: segments
+    app: store
+    permission: write
+    key_prefix: v1/L0/
+    prefix: GREGALE_S3_L0
+  - bucket: segments
+    app: query
+    permission: read
+    key_prefix: v1/
+  - bucket: segments
+    app: compactor
+    permission: read_write
+    key_prefix: v1/
+```
+
+Or `gregale add bucket segments --app store --permission write --key-prefix v1/L0/ --prefix GREGALE_S3_L0`.
+
+- The prefix is literal and ends with `/`: `v1/L0/` matches `v1/L0/a.gz` but
+  not `v1/L0x/a.gz`, and `tenant1` is refused so it cannot reach `tenant10/`.
+  Patterns such as `v1/*/L0/` are refused.
+- Object reads, writes, deletes and multipart uploads work only on keys under
+  it. A copy's source must be in the same bucket and under it too.
+- Listings must pass a `prefix` under it. `DeleteObjects` fails with 403 if any
+  key is outside it, and then deletes nothing.
+- Bucket-wide requests (versioning, lifecycle, notifications, encryption,
+  Object Lock, listing every bucket) are refused.
+- The key keeps its prefix through rotation and environment clones.
+- Until key-scoped bindings are released to your account, a binding with
+  `key_prefix` is refused with `403 object_storage_key_scopes_unavailable`.
 
 ## API keys and bucket grants
 
@@ -450,6 +521,7 @@ what you used.
 | CORS rules per bucket | 100 |
 | Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket |
 | Requests through `s3.gregale.dev` | 100 per second per account, bursts of 200; more answer `503 SlowDown`, which S3 SDKs retry with backoff |
+| Requests each month | Free 50,000, Hobby 500,000, Pro 2,500,000, Scale 10,000,000 ([plans](plans.md#object-storage)). At the limit, every request is refused until the month ends |
 | Uploads and upload parts in progress through `s3.gregale.dev` | A few per account; more wait up to 15 seconds for a turn, then answer `503 SlowDown` |
 | Stored data | Free stops at 1 GiB, Hobby at 20 GiB, Pro at 250 GiB and Scale at 1,000 GiB. A lower spend cap lowers it to the included storage plus what the cap buys at $0.03 per GiB-month; a $0 cap stops at the included storage. Need more? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused; while you store more than it, downloads answer `402` until you delete objects. Listing, `HEAD` and deletes keep working, and nothing is deleted for you. A downgrade is refused while your data does not fit the new plan |
 | Objects per account, counting retained versions | 1,000,000 on every plan |

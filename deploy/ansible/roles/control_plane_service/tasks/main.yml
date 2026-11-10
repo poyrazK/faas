@@ -448,6 +448,13 @@
     state: absent
   when: faas_environment | length == 0
 
+# Public-beta billing activation switch. The release unit defaults to live;
+# this role overrides it until the launch-date transition. This drop-in and
+# zz-faas-public-status.conf must render byte-for-byte what the signed
+# control-plane bundle installs (cd-controlplane.yml): deployctl hands apid
+# off only while no unit input changed since it started, so two different
+# renders of one file restart apid on every release and fail the API gate.
+# pkg/daemonunitspec TestAnsibleAndBundleRenderTheSameControlPlaneDropIns.
 - name: control_plane_service — set public-beta billing mode
   notify:
     - restart faas-apid
@@ -468,6 +475,7 @@
 - name: control_plane_service — converge the app outbound relay (ADR-989)
   ansible.builtin.include_tasks: outbound_relay.yml
 
+# Managed here and in the signed bundle; keep both renders identical (above).
 - name: control_plane_service — set public status launch boundary
   notify: restart faas-apid
   ansible.builtin.template:
@@ -774,6 +782,17 @@
 # absent (operator-provisioned via `gregalectl secrets init`).
 - name: control_plane_service — sealed.env split perm-asserts (issue # 585 / ADR-127)
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml
+
+# ADR-20261107180000: apid refuses the labels of edgednsd's managed host
+# names as new apps' names.
+- name: control_plane_service — install apid reserved app names drop-in (ADR-20261107180000)
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: 99-faas-reserved-app-slugs.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/99-faas-reserved-app-slugs.conf
+    owner: root
+    group: root
+    mode: "0644"
 
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
 # through to the four control-plane daemons (apid, schedd,

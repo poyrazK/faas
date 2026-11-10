@@ -205,10 +205,10 @@ func (d *Decoder) run() {
 	defer close(d.err)
 
 	scanner := bufio.NewScanner(d.r)
-	// Allow long lines (max SSE field size in spec is unbounded;
-	// practical cap is 64 KB which fits apid's largest frame
-	// (deployment_log line is the worst case at 1 KB)).
-	scanner.Buffer(make([]byte, 0, 4096), 64*1024)
+	// Allow long lines: the spec leaves a field unbounded and a runtime
+	// log frame can carry a 1 MiB line, JSON-escaped (SSEMaxLineBytes).
+	// The buffer grows only as far as the longest line seen.
+	scanner.Buffer(make([]byte, 0, 4096), SSEMaxLineBytes)
 
 	var (
 		event string

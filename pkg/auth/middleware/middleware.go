@@ -125,6 +125,13 @@ type DeploymentAppResolver interface {
 	DeploymentAppID(ctx context.Context, deploymentID string) (string, error)
 }
 
+// EdgeRuleAppResolver is the optional store seam that loads the edge rule an
+// agent approval addresses by id, to tell a production app's rule from a
+// preview's (ADR-091 amendment 2026-11-07).
+type EdgeRuleAppResolver interface {
+	GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error)
+}
+
 // deployTokenDeploymentReads are the routes outside /v1/apps/{slug} a deploy
 // token may read, for a deployment of its own app: the ones
 // api.ScopesDeploymentReadSurface admits for deploy:write, which every CLI
@@ -224,12 +231,18 @@ type AccountHandler func(w http.ResponseWriter, r *http.Request, acct state.Acco
 type Middleware struct {
 	HostingAutomationEnabled func() bool
 	HostingOIDCEnabled       func() bool
-	Authn                    Authenticator
-	Sessions                 Sessions
-	Lookups                  SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
-	Audit                    Auditor             // nil-safe; nil disables audit emit
-	Log                      *slog.Logger        // nil-safe; nil disables the Warn path
-	Limiter                  *middleware.Limiter // shared per-IP bucket for RequireLimited
+	// MandatoryMFA adds deployment policy such as the operator allowlist.
+	// When configured, a factor reset can also clear a stale pending cookie.
+	MandatoryMFA func(state.Account) bool
+	Authn        Authenticator
+	Sessions     Sessions
+	Lookups      SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
+	Audit        Auditor             // nil-safe; nil disables audit emit
+	Log          *slog.Logger        // nil-safe; nil disables the Warn path
+	Limiter      *middleware.Limiter // shared per-IP bucket for RequireLimited
+	// ApprovalReviewURL is the page where a person decides an agent's
+	// approval request (ADR-20261104140058).
+	ApprovalReviewURL func(id string) string
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -606,6 +619,18 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				if m.limitKeyToProjects(w, r, acct, &key) {
 					return
 				}
+				// ADR-20261107220000: an agent's write requests are
+				// recorded once the handler answers; the approval gate
+				// notes the approval a request went through on.
+				var activity *agentActivityNote
+				if ProjectLimitable(key) && agentWrite(r.Method) {
+					*r = *r.WithContext(withAgentActivityNote(r.Context(), &activity))
+				}
+				// ADR-20261104140058: an agent's risky request waits for a
+				// person's approval.
+				if m.requireAgentApproval(w, r, acct, key) {
+					return
+				}
 				*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
 				// TouchKeyLastUsed is observability, not auth —
 				// detached context + bounded timeout so a slow PG
@@ -622,6 +647,12 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 							m.Log.Warn("api_key last_used_at touch failed", "key_id", id, "error", err.Error())
 						}
 					}(r.Context(), key.ID, t)
+				}
+				if activity != nil {
+					aw := &activityWriter{ResponseWriter: w}
+					next(aw, r, acct)
+					m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
+					return
 				}
 				next(w, r, acct)
 				return
@@ -831,7 +862,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						//nolint:contextcheck // same pointer-mutation contract: withPrincipal derives from r.Context() so the principal stamps into the OUTER r, not a captured local ctx.
 						*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: nil, Membership: nil}))
 						//nolint:contextcheck // same pointer-mutation contract: withMFAPending derives from r.Context() so the flag stamps into the OUTER r.
-						*r = *r.WithContext(withMFAPending(r.Context(), session.IsMFAPending(env)))
+						pending := session.IsMFAPending(env)
+						if m.MandatoryMFA != nil && !m.accountRequiresMFA(acct) {
+							pending = false
+						}
+						*r = *r.WithContext(withMFAPending(r.Context(), pending))
 						// IAM-hardening-mega-PR (logical change 6,
 						// ADR-077): stamp the step-up timestamp the
 						// /v1/account/mfa/verify handler last sealed
@@ -1129,6 +1164,24 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		}
 		return state.Session{}, true, nil
 	}
+	// (4.5) idle timeout (ADR 20261110120000): a session unused for
+	// api.DashboardSessionIdleTimeout ends, however long its cookie has
+	// left. The row is revoked so the cookie cannot come back to life.
+	if sessionIdle(sess, time.Now()) {
+		if _, revokeErr := m.Lookups.RevokeSession(ctx, env.Sid, env.AccountID); revokeErr != nil && m.Log != nil {
+			m.Log.Warn("idle session revoke failed", "sid", logsanitize.Field(env.Sid), "error", revokeErr.Error())
+		}
+		if m.Audit != nil {
+			m.Audit.Emit(ctx, "auth.session.idle_expired", &env.AccountID, map[string]any{
+				"sid":      env.Sid,
+				"idle_sec": int(api.DashboardSessionIdleTimeout.Seconds()),
+			})
+		}
+		m.clearSessionCookie(w)
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeSessionExpired,
+			"Session expired", "signed out after 48 hours without activity; sign in again"))
+		return state.Session{}, true, nil
+	}
 	// (5) stamp + async touch. Detached; bounded.
 	if t, fire := m.sessionDebounce.shouldTouch(env.Sid, time.Now(), m.sessionTouchWindow()); fire {
 		go func(parentCtx context.Context, sid string, ticket *TouchTicket) {
@@ -1144,6 +1197,17 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 }
 
 const sessionTouchWindow = 5 * time.Minute
+
+// sessionIdle reports whether sess saw no request for
+// api.DashboardSessionIdleTimeout. A row never touched counts from its
+// sign-in.
+func sessionIdle(sess state.Session, now time.Time) bool {
+	last := sess.IssuedAt
+	if sess.LastSeenAt != nil && sess.LastSeenAt.After(last) {
+		last = *sess.LastSeenAt
+	}
+	return !last.IsZero() && now.Sub(last) > api.DashboardSessionIdleTimeout
+}
 
 // sessionTouchDebounce mirrors keyTouchDebounce but keyed on the
 // session id (sid) rather than the API key id. Same pointer-version
@@ -1276,7 +1340,11 @@ func isBillingRecoveryRoute(method, path string) bool {
 		"PATCH /v1/account/plan",
 		// Completing MFA is what clears an mfa_pending session and
 		// stamps the step-up that retry and plan change require.
-		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover", "GET /v1/auth/csrf":
+		"POST /v1/account/mfa/enroll", "POST /v1/account/mfa/confirm",
+		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover",
+		"POST /v1/account/mfa/disable", "POST /v1/account/mfa/disable-email",
+		"POST /v1/account/mfa/disable-email/confirm", "GET /auth/reset/mfa",
+		"HEAD /auth/reset/mfa", "GET /v1/auth/csrf":
 		return true
 	}
 	return false
@@ -1471,8 +1539,8 @@ const (
 //
 //	requireMFA → requireScope(admin) → requireStepUp(5m) → handler
 //
-// The new stamp is written by /v1/account/mfa/verify on every
-// success — see cmd/apid/handlers_mfa.go reissueSessionCookie.
+// Confirmation, authenticator verification and recovery all refresh the
+// stamp. Customer sessions without enabled or required MFA bypass this gate.
 //
 // RequireStepUpStrict is the opt-in for operations where a bearer must
 // never be enough proof. Invitation acceptance and provider-admin
@@ -1494,10 +1562,8 @@ func (m *Middleware) RequireStepUp(ttl time.Duration) func(AccountHandler) Accou
 // mutations use the same strict gate so bearer/API-key principals are
 // rejected consistently across the control plane.
 //
-// The cookie path is unchanged — the absence of a step-up stamp
-// on a session-cookie principal still fails-fast (the v1 cookie
-// branch already did, and the Envelope.StepUpAt omission is the
-// same condition).
+// Strict cookie sessions require a recent stamp even if the account has
+// not enrolled yet. This preserves mandatory operator verification.
 func (m *Middleware) RequireStepUpStrict(ttl time.Duration) func(AccountHandler) AccountHandler {
 	return m.requireStepUp(ttl, true)
 }
@@ -1512,6 +1578,15 @@ func (m *Middleware) requireStepUp(ttl time.Duration, strict bool) func(AccountH
 	}
 	return func(next AccountHandler) AccountHandler {
 		return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+			// Customer MFA is opt-in; strict provider operations keep their gate.
+			actor := acct
+			if principal, _, ok := AccountFromContext(r); ok {
+				actor = principal
+			}
+			if !strict && !m.accountRequiresMFA(actor) {
+				next(w, r, acct)
+				return
+			}
 			ts, has := StepUpFrom(r)
 			// Lax mode: bearer-key principal (no step-up stamp) bypasses.
 			// Pre-PR-077 cookie without step_up_at is also bypass-
@@ -1562,11 +1637,21 @@ func (m *Middleware) requireStepUp(ttl time.Duration, strict bool) func(AccountH
 // same bypass rules. The stamp is read off r.Context() the same
 // way RequireStepUp reads it via StepUpFrom.
 func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) http.Handler {
+	return m.RequireStepUpHandlerWithRedirect(ttl, nil)
+}
+
+// RequireStepUpHandlerWithRedirect lets browser forms visit a challenge.
+// An empty destination retains the structured API refusal.
+func (m *Middleware) RequireStepUpHandlerWithRedirect(ttl time.Duration, redirect func(*http.Request) string) func(http.Handler) http.Handler {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if acct, _, ok := AccountFromContext(r); ok && !m.accountRequiresMFA(acct) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			ts, has := StepUpFrom(r)
 			if !has {
 				next.ServeHTTP(w, r)
@@ -1580,7 +1665,6 @@ func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) 
 			if !ts.IsZero() {
 				reason = stepUpReasonExpired
 			}
-			api.WriteProblem(w, api.ErrStepUpRequired())
 			if m.Audit != nil {
 				// Dashboard routes don't carry a state.Account on
 				// the request context the way RequireSession's
@@ -1598,6 +1682,13 @@ func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) 
 					"ttl_sec": int(ttl.Seconds()),
 				})
 			}
+			if redirect != nil {
+				if target := redirect(r); target != "" {
+					http.Redirect(w, r, target, http.StatusSeeOther)
+					return
+				}
+			}
+			api.WriteProblem(w, api.ErrStepUpRequired())
 		})
 	}
 }
@@ -1754,7 +1845,51 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 			"Not found", detail))
 		return true
 	}
+	if appBoundCredentialDeniedRoute(r.Pattern) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, title,
+			"this token deploys its app; it cannot delete or rename the app, send its data elsewhere, mint credentials, or read its debug and crash data. Use an API key for that").
+			WithHint("Create an API key with `gregale key create` for app administration."))
+		return true
+	}
 	return false
+}
+
+// appBoundCredentialDeniedExact and appBoundCredentialDeniedAreas are the
+// /v1/apps/{slug} routes an app-bound credential (a deploy token, or an OIDC
+// bearer exchanged for one app) may not use although deploy:write opens them
+// to API keys: deleting or renaming the app, sending its data elsewhere (log
+// drains, mirrors, outbound webhooks), minting credentials (consumer keys, AI
+// access tokens, issue ingest tokens) and reading or forking its memory
+// (debug requests, crash snapshots, forks). A CI deploy, including a
+// gregale.yaml reconciliation, uses none of them; inbound webhooks are
+// separate routes and stay open.
+var appBoundCredentialDeniedExact = map[string]bool{
+	"DELETE /v1/apps/{slug}":      true,
+	"POST /v1/apps/{slug}/rename": true,
+}
+
+var appBoundCredentialDeniedAreas = map[string]bool{
+	"log-drains": true, "mirrors": true, "webhooks": true,
+	"consumers": true, "ai-access-tokens": true, "issue-ingest-tokens": true,
+	"debug": true, "crash-snapshots": true, "forks": true,
+}
+
+// appBoundCredentialDeniedRoute reports whether the matched route pattern is
+// outside what an app-bound credential may do.
+func appBoundCredentialDeniedRoute(pattern string) bool {
+	if appBoundCredentialDeniedExact[pattern] {
+		return true
+	}
+	_, path, ok := strings.Cut(pattern, " ")
+	if !ok {
+		return false
+	}
+	rest, ok := strings.CutPrefix(path, "/v1/apps/{slug}/")
+	if !ok {
+		return false
+	}
+	area, _, _ := strings.Cut(rest, "/")
+	return appBoundCredentialDeniedAreas[area]
 }
 
 // appBoundPreviewStatusReads are the PR preview status reads an app-bound

@@ -1045,9 +1045,17 @@ gregale data-api configure notes-data --no-allow-without-rls   # remove all exem
 Exemptions use the `--public-read` format (at most 64 `schema.relation`
 names). In local development, list them as `"allow_without_rls": [...]` in
 `data-api.dev.json`. The API reads its relations at startup: a table created
-later answers `404 not_found` until `gregale data-api refresh`. Server keys are
-trusted backends and are not checked; anonymous requests follow the
-[public read](#public-reads) rules.
+later answers `404 not_found` until `gregale data-api refresh`. It rechecks
+their row-level security at most once a minute while it serves and after
+every wake, so a migration that disables RLS on a served table, or recreates
+it without RLS, closes it (`403 rls_required`) within a minute, without a
+refresh. A public relation or public function that stops passing the public
+checks answers anonymous callers `503 data_api_public_read_unsafe` or
+`data_api_public_rpc_unsafe` until you fix it. Server keys are trusted
+backends and are not checked; anonymous requests follow the
+[public read](#public-reads) rules. [Live reads](#live-reads) apply the same
+rule, with the same exemptions; a live read of an unprotected relation is
+refused with a `forbidden` error naming `rls_required`.
 
 ## Generate types and use the client
 
@@ -1389,7 +1397,9 @@ gregale data-api configure shop-data --monthly-caps off
 ```
 
 `requests` counts every admitted request this UTC month; `anonymous` counts
-only requests without a token. Once a cap is reached, the API answers
+only requests without a token. A request is admitted once its credential, rate
+budget, row security and concurrency checks pass: an invalid token, or a
+visitor over their rate limit, counts as rejected and never toward a cap. Once a cap is reached, the API answers
 `429 data_api_monthly_cap_reached` with the cap, its limit and the observed
 count, and `Retry-After` set to the start of the next UTC month. A reached
 anonymous cap refuses only anonymous requests, so signed-in users and server
@@ -1397,7 +1407,10 @@ keys keep working. Caps turn usage reporting on.
 
 Caps are enforced from totals the runtime learns every 15 seconds while it
 serves traffic, so several instances can each go slightly past a cap before
-they hear about it. Those totals come from usage reports, so on a Gregale
+they hear about it. A cap reached before the API parked stays reached when it
+wakes. Only the production deployment reports and counts: stages and preview
+environments of the app neither report usage nor learn production's totals.
+Those totals come from usage reports, so on a Gregale
 installation that does not accept runtime reports yet `--monthly-caps` is
 refused: a cap there could never be reached. `data-api diagnostics` counts
 requests refused by caps.
@@ -1515,14 +1528,21 @@ Each route asks PostgreSQL first, as the caller:
   policies still decide which files. Visitors cannot upload or remove files.
 - **Sizes.** Uploads need `Content-Length` and are at most 25 MiB by default
   (`--max-object-bytes`, up to 100 MiB). Files stream through the Data API,
-  four transfers at a time per instance, each within two minutes.
+  four transfers at a time per instance, each within two minutes. One
+  signed-in user or visitor holds at most two of them; another transfer
+  answers `429 storage_client_busy` with `Retry-After`, and a busy instance
+  `503 storage_busy`. Server keys share the instance's four.
+- **Removals.** A removal deletes the row first, then the file's bytes, so a
+  removal that fails leaves the file whole.
 - **Safe serving.** Downloads are served with `Content-Security-Policy:
   sandbox` and `nosniff`, so an uploaded page cannot run as your API's
   origin.
 - **Versions.** Each upload stores its bytes under a new `object_key` and
   replaces the previous version only once its row commits, so two uploads
   racing for one name never mix their bytes; a refused upload leaves the
-  existing file untouched. A row you insert yourself without `object_key`
+  existing file untouched. The replaced version's bytes are deleted after the
+  commit, including a version another upload committed while this one
+  streamed. A row you insert yourself without `object_key`
   names its bytes by `name`.
 - **Before the migration.** Until `storage_objects` exists with RLS, its
   guard trigger and `object_key`, storage routes answer
@@ -1607,15 +1627,31 @@ An event's `data` holds the change:
 
   Intervals are minutes that divide an hour, hours that divide a day, or
   `24h`. The cron counts against your plan's cron limits (the Free plan has
-  none) and each run is app time. `--drain-every off` removes it.
+  none) and each run is app time. `--drain-every off` removes it. The
+  schedule is stored before hooks turn on, so a plan that refuses it leaves
+  hooks as they were.
 - **Status.** `gregale data-api hooks status shop-data` shows the drain
   schedule and the delivery the Data API last reported, without waking it:
   waiting changes and when the oldest was recorded, rejected changes and the
   latest code, whether publications keep failing, and when changes last
   published. The API reports while it is awake, at most once a minute.
+- **Production only.** Only the app's production deployment publishes.
+  Stages and preview environments copy the table and its triggers but never
+  publish: their API stops relaying, and `hooks enable --scope` refuses any
+  scope but production.
 - **Platform requirement.** Publishing uses the Data API's workload identity.
   On a Gregale installation that does not accept runtime reports yet,
-  `hooks enable` warns and changes wait in the table until it does.
+  `hooks enable` refuses and changes nothing.
+- **Backlog bound.** While 100,000 changes wait to publish, because nothing
+  publishes them (a stage, an installation without runtime reports) or
+  publishing keeps failing, new changes are not recorded, so the table cannot
+  fill your database. Changes past the bound are lost; `hooks status` warns
+  from 90,000 waiting, and reports when changes were last left out. To drop
+  what waits, run `SELECT gregale_hooks.discard_waiting();` with the migration
+  binding. Rejected changes do not count. Installations made by an earlier CLI
+  get the bound, the left-out note and `discard_waiting()` when you apply
+  `gregale data-api hooks export --upgrade` in a migration; it can be applied
+  more than once.
 - **Backfills.** `SET LOCAL gregale_hooks.skip = 'on';` in a migration's
   transaction records nothing for it.
 - **Failures.** An event the platform refuses, such as one that does not match
@@ -1623,7 +1659,8 @@ An event's `data` holds the change:
   `failed_at` and `failure_code` and does not hold back later events. Fix the
   cause, then run `SELECT gregale_hooks.retry_failed();` or
   `SELECT gregale_hooks.discard_failed();` with the migration binding.
-  Retried events publish after newer changes of the same rows.
+  Retried events take new identifiers (`data.sequence`) and publish after
+  newer changes of the same rows; each keeps its event `id` and time.
 - **Isolation.** The change event table is the Data API's: the REST API
   answers 404 for it, generated types leave it out, and its row-level security
   admits only the Data API's own relay.
@@ -1633,7 +1670,9 @@ An event's `data` holds the change:
   environment that copied the setting publishes nothing.
 - **Turning it off.** `gregale_hooks.disable('api.orders')` stops recording a
   table. `gregale data-api hooks disable shop-data` stops publishing and
-  removes the drain schedule; recorded changes wait in the table.
+  removes the drain schedule; recorded changes wait in the table, and hooked
+  tables keep recording until the backlog bound. Unhook the tables too to stop
+  recording.
 - **Cost.** Each hooked write adds one row insert in its transaction. Events
   count toward your account's event limits like any publication. See
   [ADR 20261022121642](adr/20261022121642-data-api-change-hooks.md).
@@ -3807,6 +3846,19 @@ safe `checks` and an `admission` snapshot. Both bypass request admission and use
 `Cache-Control: no-store`. Liveness does not prove startup completion or database
 availability; startup failures and engine exit still stop the production runtime.
 Keep deployment health checks on `/healthz`.
+
+A ready `/healthz` answer is reused for up to 5 seconds, so polling a healthy API
+reaches the database at most once per interval; concurrent checks share one run.
+An unready answer is never reused, and an engine restart, schema reload, snapshot
+or restore forgets the cached answer, so readiness never describes an engine that
+is gone. `gregale data-api serve` checks every time.
+
+`data-api deploy` and dashboard setup use `/healthz` for startup readiness and
+`/livez` as the platform's liveness probe (Hobby and above): `/healthz` reports
+SQL readiness, which a saturated pool or a short database outage fails while the
+runtime is healthy, and three failed liveness probes restart the instance. Existing
+deployments switch on their next deploy. See
+[ADR 20261109160000](adr/20261109160000-data-api-health-cache-and-liveness.md).
 
 The observations have deliberately separate meanings:
 

@@ -18,13 +18,14 @@ func TestObjectStoragePlanLimitsZeroChangesNothing(t *testing.T) {
 // Free also stops at its allowance. ADR-20261031122757 caps each plan's
 // monthly egress at ten times its included storage. ADR-20261101214152 stops
 // Hobby at twice its included storage, Pro and Scale at five times.
+// ADR-20261104145353 caps each plan's monthly requests.
 func TestObjectStoragePlanLimitsFollowCOGSReport(t *testing.T) {
 	const gib = int64(1 << 30)
 	want := map[Plan]ObjectStoragePlanLimits{
-		PlanFree:  {MaxAccountBytes: gib, MaxMonthlyEgressBytes: 10 * gib, IncludedBytes: gib},
-		PlanHobby: {MaxAccountBytes: 20 * gib, MaxMonthlyEgressBytes: 100 * gib, IncludedBytes: 10 * gib},
-		PlanPro:   {MaxAccountBytes: 250 * gib, MaxMonthlyEgressBytes: 500 * gib, IncludedBytes: 50 * gib},
-		PlanScale: {MaxAccountBytes: 1_000 * gib, MaxMonthlyEgressBytes: 2_000 * gib, IncludedBytes: 200 * gib},
+		PlanFree:  {MaxAccountBytes: gib, MaxMonthlyRequests: 50_000, MaxMonthlyEgressBytes: 10 * gib, IncludedBytes: gib},
+		PlanHobby: {MaxAccountBytes: 20 * gib, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 * gib, IncludedBytes: 10 * gib},
+		PlanPro:   {MaxAccountBytes: 250 * gib, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 * gib, IncludedBytes: 50 * gib},
+		PlanScale: {MaxAccountBytes: 1_000 * gib, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 * gib, IncludedBytes: 200 * gib},
 	}
 	for plan, limits := range want {
 		if got := MustLimitsFor(plan).ObjectStorage; got != limits {
@@ -118,7 +119,7 @@ func TestObjectStorageCeilingFollowsThePlanGrantAndSpendCap(t *testing.T) {
 		{"a zero cap stops at the included storage", PlanPro, nil, bytesOf(0), 50 * gib},
 		{"a low cap binds below the plan's ceiling", PlanHobby, nil, bytesOf(15), 15 * gib},
 		{"a support grant replaces the plan's ceiling", PlanPro, bytesOf(2_000 * gib), nil, 2_000 * gib},
-		{"the cap still tightens a grant", PlanPro, bytesOf(2_000 * gib), defaultCap(PlanPro), 383 * gib},
+		{"the cap still tightens a grant", PlanPro, bytesOf(2_000 * gib), defaultCap(PlanPro), 1_716 * gib},
 		{"free keeps its own ceiling", PlanFree, nil, nil, gib},
 		{"free ignores a grant", PlanFree, bytesOf(100 * gib), nil, gib},
 		{"free's ceiling is tighter than any cap", PlanFree, nil, bytesOf(1_000_000), gib},
@@ -139,5 +140,22 @@ func TestObjectStorageCeilingFollowsThePlanGrantAndSpendCap(t *testing.T) {
 	operator := ObjectStoragePolicy{MaxAccountBytes: 100 * gib, MaxBucketBytes: 100 * gib}
 	if got := ObjectStorageLimitsFor(PlanPro, nil, defaultCap(PlanPro)).Policy(operator); got.MaxAccountBytes != 100*gib {
 		t.Fatalf("a lower operator ceiling must still win: %+v", got)
+	}
+}
+
+// adr: 20261104145353 — a plan's request ceiling binds even when the
+// operator policy is looser, and the tighter operator value still wins.
+func TestObjectStoragePlanRequestCeilingTightensOperatorPolicy(t *testing.T) {
+	free := MustLimitsFor(PlanFree).ObjectStorage
+	if got := free.Policy(ObjectStoragePolicy{MaxMonthlyRequests: 1 << 40}).MaxMonthlyRequests; got != free.MaxMonthlyRequests {
+		t.Fatalf("free requests under a loose operator policy = %d, want %d", got, free.MaxMonthlyRequests)
+	}
+	if got := free.Policy(ObjectStoragePolicy{MaxMonthlyRequests: 10}).MaxMonthlyRequests; got != 10 {
+		t.Fatalf("free requests under a tighter operator policy = %d, want 10", got)
+	}
+	for i, plan := range Plans[1:] {
+		if MustLimitsFor(plan).ObjectStorage.MaxMonthlyRequests <= MustLimitsFor(Plans[i]).ObjectStorage.MaxMonthlyRequests {
+			t.Fatalf("%s request ceiling does not grow over %s", plan, Plans[i])
+		}
 	}
 }

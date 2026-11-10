@@ -77,6 +77,10 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 // A retry's new revision URL is a new binding (ADR-570); a refusal is the
 // customer's policy problem, not an internal error.
 func retryTrafficProblem(err error) error {
+	if errors.Is(err, state.ErrRetryIntentUnavailable) {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Retry settings unavailable",
+			"This older failed deployment no longer retains its requested traffic settings. Submit a fresh deployment with the intended traffic percentage or --no-traffic.")
+	}
 	if problem := trafficproblem.Policy(err, nil); problem != nil {
 		return problem
 	}

@@ -600,7 +600,7 @@ func (p PoolNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wak
 //	                         "at":rfc3339nano}
 //	                         meterd → dashboard: paid-tier overage crossed
 //	                         100 %; apps keep running, overage accrues at
-//	                         $0.01/GB-h (spec §1, §10).
+//	                         $0.05/GB-h (spec §1, §10; ADR-20261107192333).
 //	NotifyMigrationsApplied {"version_id":int64}
 //	                         the leader's goose-up landed an applied migration
 //	                         ledger row (migration 20260904000000001 trigger).
@@ -723,7 +723,8 @@ const (
 	NotifyDeploymentSmokeChallenge = "deployment_smoke_challenge"
 	// NotifyRouteProbeChallenge carries an ADR-847 route probe token from apid
 	// to every gateway. It is a separate kind from the smoke challenge: it
-	// pins one live deployment but never bypasses customer auth gates.
+	// pins one live deployment; it passes the platform auth gates but never an
+	// auth check the app runs itself (ADR-847 amendment 2).
 	// Payload: {"app_id":uuid,"deployment_id":uuid,"token":string,
 	//           "expires_at":RFC3339}
 	NotifyRouteProbeChallenge = "route_probe_challenge"

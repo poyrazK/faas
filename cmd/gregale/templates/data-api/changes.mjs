@@ -2,7 +2,7 @@ import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { SignJWT } from 'jose'
-import { limits, UnsafeConfiguration } from './config.mjs'
+import { limits, sqlDeadlineExpiry, UnsafeConfiguration } from './config.mjs'
 import { runtimeFailure } from './logging.mjs'
 
 // Change hooks (ADR-20261022121642). Owner triggers record each change of a
@@ -16,8 +16,16 @@ import { runtimeFailure } from './logging.mjs'
 // oldest waiting change, whether publications keep failing) to the platform,
 // so owners see it without waking the API, and a platform cron may wake a
 // parked API to drain changes other writers recorded meanwhile.
+//
+// Amendment 2: only production publishes. The platform refuses a stage,
+// preview or cloned environment for good (403); its relay returns the claim
+// and stops, and capture's backlog bound keeps that database's table finite.
 
 export const changeEventsTable = 'gregale_change_events'
+// The relay's drop note (amendment 3): when capture last left a change out.
+export const changeDropsTable = 'gregale_change_drops'
+// The relay's tables, never part of the API.
+export const relayTables = Object.freeze([changeEventsTable, changeDropsTable])
 // The drain route a drain schedule's cron calls (api.DataAPIChangeHooksDrainPath).
 export const changeHooksDrainPath = '/__gregale/hooks/drain'
 
@@ -28,7 +36,9 @@ const failureCode = /^[a-z0-9_]{1,64}$/
 const changeEventsQuery = `SELECT c.relkind AS kind, c.relrowsecurity AS rls,
  has_table_privilege(current_user, c.oid, 'SELECT') AND has_table_privilege(current_user, c.oid, 'UPDATE') AND has_table_privilege(current_user, c.oid, 'DELETE') AS settles,
  (SELECT count(*) FROM pg_proc p WHERE p.pronamespace = c.relnamespace AND p.proname IN ('gregale_change_claim', 'gregale_change_settle')
-   AND NOT p.prosecdef AND has_function_privilege(current_user, p.oid, 'EXECUTE'))::int AS functions
+   AND NOT p.prosecdef AND has_function_privilege(current_user, p.oid, 'EXECUTE'))::int AS functions,
+ EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace pn ON pn.oid = p.pronamespace
+   WHERE pn.nspname = 'gregale_hooks' AND p.proname = 'capture' AND p.prosrc LIKE '%gregale:backlog-bound%') AS bounded
  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2`
 
 // unsafeChangeEvents explains why the catalog cannot serve the relay.
@@ -41,6 +51,9 @@ export function unsafeChangeEvents(row) {
   return null
 }
 
+// checkChangeEvents refuses an unsafe installation and reports whether its
+// capture has the backlog bound (amendment 2); one installed before it still
+// works, and `gregale data-api hooks export --upgrade` adds the bound.
 export async function checkChangeEvents(connection, schema) {
   const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.queryMs })
   await client.connect()
@@ -48,6 +61,7 @@ export async function checkChangeEvents(connection, schema) {
     const { rows } = await client.query(changeEventsQuery, [schema, changeEventsTable])
     const unsafe = unsafeChangeEvents(rows[0])
     if (unsafe) throw new UnsafeConfiguration(`Change hooks are not installed: ${unsafe}`)
+    return { bounded: rows[0].bounded === true }
   } finally { await client.end() }
 }
 
@@ -111,6 +125,8 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
   // Delivery reports: the last one sent, whether the platform takes them, and
   // when this relay last published.
   let reportedAt = -Infinity, reported = null, reportsRefused = false, publishedAt = null, forceReport = true, retrying = false
+  // The platform refused this runtime for good: not a production deployment.
+  let refused = false
   const drains = new Set()
 
   // Snapshot restores copy this process; each copy takes a new identity so
@@ -136,7 +152,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
   // The relay's internal token: only the gateway grants the hooks access kind.
   const token = () => {
     const claims = { role: config.role, exp: Math.ceil(now() / 1000) + Math.ceil(limits.queryMs / 1000) + 5, gregale_access: 'hooks' }
-    if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: now() + limits.queryMs, coordinated_refresh: config.coordinatedRefresh === true }
+    if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: sqlDeadlineExpiry(now() + limits.queryMs), coordinated_refresh: config.coordinatedRefresh === true }
     if (config.coordinatedRefresh) claims.gregale_serving_fingerprint = config.fingerprint
     return new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(key)
   }
@@ -202,7 +218,18 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
       oldestPendingAt: waiting.total && typeof head?.captured_at === 'string' ? new Date(head.captured_at).toISOString() : null,
       publishing: Date.parse(head?.available_at) > now() ? 'retrying' : 'ok',
       lastFailureCode: failed.total && failureCode.test(code ?? '') ? code : null,
+      lastDroppedAt: await lastDropped(),
     }
+  }
+
+  // lastDropped reads when capture last left a change out at the backlog
+  // bound (amendment 3); null when it never did, or the installation
+  // predates the note (hooks export --upgrade adds it).
+  async function lastDropped() {
+    const answer = await loopback('GET', `/${changeDropsTable}?select=last_dropped_at`)
+    const value = (answer.status === 200 || answer.status === 206) && Array.isArray(answer.json) ? answer.json[0]?.last_dropped_at : null
+    const at = typeof value === 'string' ? Date.parse(value) : NaN
+    return Number.isNaN(at) ? null : new Date(at).toISOString()
   }
 
   // workloadToken returns the runtime's platform token, or null.
@@ -224,7 +251,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
     if (!state || reportsRefused) return state
     const body = { version: 1, pending: state.pending, failed: state.failed, publishing: state.publishing,
       ...(state.oldestPendingAt ? { oldest_pending_at: state.oldestPendingAt } : {}), ...(publishedAt ? { last_published_at: publishedAt } : {}),
-      ...(state.lastFailureCode ? { last_failure_code: state.lastFailureCode } : {}) }
+      ...(state.lastFailureCode ? { last_failure_code: state.lastFailureCode } : {}), ...(state.lastDroppedAt ? { last_dropped_at: state.lastDroppedAt } : {}) }
     const signature = JSON.stringify(body)
     if (Buffer.byteLength(signature) > limits.changeHookReportBytes) return state
     if (!force && signature === reported && at - reportedAt < limits.changeHookReportHeartbeatMs) return state
@@ -236,7 +263,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
       const response = await fetchImpl(settings.status, { method: 'POST', redirect: 'error', signal,
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: signature })
       await response.body?.cancel()
-      if (response.status === 404) reportsRefused = true
+      if (response.status === 404 || response.status === 403) reportsRefused = true
       else if (response.ok) reported = signature
     } catch { /* Never log tokens or platform errors; the next interval retries. */ }
     return state
@@ -263,6 +290,8 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
         return Array.isArray(answer?.results) ? { results: answer.results } : null
       }
       await response.body?.cancel()
+      // A runtime the platform refuses (403) never publishes; its changes stay.
+      if (response.status === 403) return { refused: true }
       // A refused publication cannot succeed on retry; the owner can retry it.
       return [400, 413, 422].includes(response.status) ? { rejected: `publication_rejected_${response.status}` } : null
     } catch { return null /* Never log tokens or platform errors. */ }
@@ -293,6 +322,14 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
       const events = pack(batch.map(changeEvent))
       const sent = batch.slice(0, events.length)
       const answer = events.length ? await publish(events) : { results: [] }
+      if (answer?.refused) {
+        // Return the claim untouched and stop: nothing here will publish.
+        await rpc('gregale_change_settle', { relay, published: [], failed: [], retry_after_ms: 0 }, limits.changeEventsPublishMs)
+        refused = true
+        runtimeFailure('data_api_change_hooks_not_production')
+        settleDrains()
+        return
+      }
       const outcome = answer?.rejected ? { published: [], failed: sent.map(row => ({ id: row.id, code: answer.rejected })), retry: false } : settlement(sent, answer?.results ?? null)
       outcome.failed.push(...invalid.filter(row => Number.isSafeInteger(row?.id)).map(row => ({ id: row.id, code: 'invalid_change_event' })))
       const settled = await rpc('gregale_change_settle', { relay, published: outcome.published, failed: outcome.failed, retry_after_ms: outcome.retry ? retry : 0 }, limits.changeEventsPublishMs)
@@ -310,7 +347,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
     } catch { next = retry } finally {
       busy = false
       if (again) { again = false; next = 0 }
-      schedule(next)
+      if (!refused) schedule(next)
     }
   }
 
@@ -319,6 +356,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
   // waitMs, then reports delivery and answers it.
   async function drain(waitMs) {
     if (stopped) return null
+    if (refused) return { refused: true }
     await new Promise(resolve => {
       const deadline = setTimeout(() => { drains.delete(done); resolve() }, waitMs)
       deadline.unref?.()
@@ -333,7 +371,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
 
   schedule(0)
   return Object.freeze({
-    kick: () => { idle = limits.changeEventsIdleMinMs; schedule(0) },
+    kick: () => { if (refused) return; idle = limits.changeEventsIdleMinMs; schedule(0) },
     stop: () => { stopped = true; clearTimer(timer); settleDrains() },
     drain,
     // Tests drive cycles directly.

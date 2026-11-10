@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/dataapiworkload"
 	usage "github.com/onebox-faas/faas/pkg/state/dataapiusage"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -32,20 +33,24 @@ type Reader interface {
 var reportID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 // ReportHandler accepts runtime usage deltas. Only a gregale:data-api:usage
-// workload token is accepted, never an owner key or application JWT; the
-// token names the account, app and instance.
+// workload token from a live production instance of an active app is
+// accepted, never an owner key or application JWT. A stage shares the
+// production app's id: its usage would count against production's monthly
+// caps, and its access settings would govern production's live reads
+// (ADR-20261019102108 amendment 2026-11-05).
 type ReportHandler struct {
-	Store    Recorder
-	Verifier *workloadidentity.Verifier
-	Now      func() time.Time
+	Store     Recorder
+	Verifier  *workloadidentity.Verifier
+	Workloads dataapiworkload.Store
+	Now       func() time.Time
 }
 
 func (h ReportHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	now := h.now()
-	claims, err := h.Verifier.Verify(bearer(r), workloadidentity.DataAPIUsageAudience, now)
+	_, app, err := dataapiworkload.Live(r, h.Verifier, workloadidentity.DataAPIUsageAudience, h.Workloads, now)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required", "a Data API usage-report workload token is required"))
+		dataapiworkload.Refuse(w, err, "a Data API usage-report workload token from a live instance of an active app is required")
 		return
 	}
 	if h.Store == nil {
@@ -64,7 +69,7 @@ func (h ReportHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	mtd, err := h.Store.Record(r.Context(), claims.AccountID, claims.AppID, report.ReportID, hours, access, now)
+	mtd, err := h.Store.Record(r.Context(), app.AccountID, app.ID, report.ReportID, hours, access, now)
 	switch {
 	case errors.Is(err, usage.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "App not found", "the workload's app no longer exists"))
@@ -267,11 +272,4 @@ func unavailable(w http.ResponseWriter) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
-}
-
-func bearer(r *http.Request) string {
-	if len(r.Header.Values("Authorization")) != 1 || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
-		return ""
-	}
-	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 }

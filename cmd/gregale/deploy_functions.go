@@ -21,7 +21,6 @@ import (
 	"maps"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -65,9 +64,12 @@ type functionSetDeploy struct {
 	projectDir  string
 	projectSlug string
 	manifest    *gregalemanifest.Manifest
-	planOnly    bool // --dry-run, --diff, --server-diff or --create-only
-	noTriggers  bool
-	out         io.Writer
+	// fromCode records settings read from handler files
+	// (ADR-20261107193000), for the plan and deploy output.
+	fromCode   []gregalemanifest.InlineConfigSource
+	planOnly   bool // --dry-run, --diff, --server-diff or --create-only
+	noTriggers bool
+	out        io.Writer
 	// deployOne runs the single-function deploy; tests replace it.
 	deployOne func(args []string) int
 	getenv    func(string) string
@@ -84,78 +86,57 @@ type plannedFunction struct {
 // functionSetManifest returns the manifest's functions when this deploy is a
 // plain local-source deploy of a functions manifest.
 func functionSetManifest(sourceDir string) (*gregalemanifest.Manifest, bool, error) {
+	m, _, ok, err := functionSetManifestFromCode(sourceDir)
+	return m, ok, err
+}
+
+// functionSetManifestFromCode also applies config declared in handler files
+// and discovers functions/<name>/ directories that declare one
+// (ADR-20261107193000); gregale.yaml wins over code.
+func functionSetManifestFromCode(sourceDir string) (*gregalemanifest.Manifest, []gregalemanifest.InlineConfigSource, bool, error) {
 	if sourceDir == "" {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	m, found, err := gregalemanifest.Load(sourceDir)
-	if err != nil || !found || len(m.Functions) == 0 {
-		return nil, false, err
+	if err != nil {
+		return nil, nil, false, err
 	}
-	return m, true, nil
+	if !found {
+		m = nil
+	}
+	m, sources, err := gregalemanifest.ApplyInlineConfig(m, sourceDir)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if m == nil || len(m.Functions) == 0 {
+		return nil, nil, false, nil
+	}
+	return m, sources, true, nil
 }
 
-// functionSlug is the app slug of one function in a project.
-func functionSlug(projectSlug, name string) string {
-	return projectSlug + "-" + name
-}
-
-// plan validates every function before anything is deployed.
+// plan validates every function before anything is deployed. The shared
+// plan (ADR-20261108160000) resolves each function; root is then made
+// relative to the working directory, as --path takes it.
 func (d functionSetDeploy) plan() ([]plannedFunction, error) {
-	if err := d.manifest.Validate(); err != nil {
+	resolved, err := d.manifest.PlanFunctions(d.projectDir, d.projectSlug)
+	if err != nil {
 		return nil, err
 	}
-	planned := make([]plannedFunction, 0, len(d.manifest.Functions))
-	for _, fn := range d.manifest.Functions {
-		slug := functionSlug(d.projectSlug, fn.Name)
-		if !api.ValidAppSlug(slug) {
-			return nil, fmt.Errorf("function %q: app slug %q must be 3-40 lowercase letters, digits and hyphens; shorten the function name or pass a shorter --name", fn.Name, slug)
-		}
-		absRoot := filepath.Join(d.projectDir, filepath.FromSlash(fn.FunctionRoot()))
-		info, err := os.Stat(absRoot)
-		if err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("function %q: root %q is not a directory", fn.Name, fn.Root)
-		}
-		runtime, handler, err := functionRuntimeAndHandler(fn, absRoot)
-		if err != nil {
-			return nil, fmt.Errorf("function %q: %w", fn.Name, err)
-		}
+	planned := make([]plannedFunction, 0, len(resolved))
+	for _, p := range resolved {
+		absRoot := filepath.Join(d.projectDir, filepath.FromSlash(p.Root))
 		root, err := filepath.Rel(d.cwd, absRoot)
 		if err != nil {
 			root = absRoot
 		}
-		planned = append(planned, plannedFunction{spec: fn, slug: slug, root: root, runtime: runtime, handler: handler})
+		planned = append(planned, plannedFunction{spec: p.Spec, slug: p.Slug, root: root, runtime: p.Runtime, handler: p.Handler})
 	}
 	return planned, nil
 }
 
-// functionRuntimeAndHandler resolves the runtime and wire handler for one
-// function. A handler file in a shared tree must exist; without one, the
-// root's conventional handler.* file decides the runtime.
-func functionRuntimeAndHandler(fn gregalemanifest.FunctionSpec, absRoot string) (string, string, error) {
-	if fn.Handler != "" {
-		info, err := os.Stat(filepath.Join(absRoot, filepath.FromSlash(fn.Handler)))
-		if err != nil || info.IsDir() {
-			return "", "", fmt.Errorf("handler %q is not a file in %s", fn.Handler, fn.FunctionRoot())
-		}
-		runtime := fn.Runtime
-		if runtime == "" {
-			switch gregalemanifest.HandlerRuntimeFamily(fn.Handler) {
-			case "node":
-				runtime = runtimeNode22
-			case "python":
-				runtime = runtimePython312
-			}
-		}
-		return runtime, path.Clean(fn.Handler), nil
-	}
-	if fn.Runtime != "" {
-		return fn.Runtime, defaultTemplateHandler, nil
-	}
-	runtime, handler, ok := inferFunctionRuntime(absRoot)
-	if !ok {
-		return "", "", fmt.Errorf("could not infer a runtime from %s; set runtime: in gregale.yaml", fn.FunctionRoot())
-	}
-	return runtime, handler, nil
+// shared is the function as the shared plan describes it.
+func (fn plannedFunction) shared() gregalemanifest.FunctionPlan {
+	return gregalemanifest.FunctionPlan{Spec: fn.spec, Slug: fn.slug, Runtime: fn.runtime, Handler: fn.handler}
 }
 
 // functionDeployArgs rewrites the parent deploy arguments for one function:
@@ -208,6 +189,7 @@ func (d functionSetDeploy) run(ctx context.Context, client functionSetClient) in
 		}
 	}
 	_, _ = fmt.Fprintf(d.out, "Deploying %d functions from %s\n", len(planned), displayPath(d.cwd, d.projectDir))
+	d.printConfigFromCode()
 	done := make([]string, 0, len(planned))
 	for i, fn := range planned {
 		_, _ = fmt.Fprintf(d.out, "\n[%d/%d] %s → %s (%s, %s)\n", i+1, len(planned), fn.spec.Name, fn.slug, fn.runtime, fn.root)
@@ -251,6 +233,15 @@ type functionSetPlan struct {
 	Inference     string                `json:"inference"`
 	Functions     []functionSetPlanItem `json:"functions"`
 	DeployCommand string                `json:"deploy_command"`
+	// ConfigFromCode lists settings read from handler files.
+	ConfigFromCode []functionConfigFromCode `json:"config_from_code,omitempty"`
+}
+
+type functionConfigFromCode struct {
+	Function   string   `json:"function"`
+	File       string   `json:"file"`
+	Keys       []string `json:"keys"`
+	Discovered bool     `json:"discovered"`
 }
 
 type functionSetPlanItem struct {
@@ -259,6 +250,8 @@ type functionSetPlanItem struct {
 	Runtime string `json:"runtime"`
 	Handler string `json:"handler"`
 	Root    string `json:"root"`
+	// Hooks are the snapshot hooks the handler declares (ADR-20261110190000).
+	Hooks []string `json:"hooks,omitempty"`
 }
 
 // printPlan shows the function set without login, upload or remote state.
@@ -269,7 +262,10 @@ func (d functionSetDeploy) printPlan() int {
 	}
 	plan := functionSetPlan{Inference: "local", DeployCommand: "gregale deploy", Functions: make([]functionSetPlanItem, 0, len(planned))}
 	for _, fn := range planned {
-		plan.Functions = append(plan.Functions, functionSetPlanItem{Name: fn.spec.Name, App: fn.slug, Runtime: fn.runtime, Handler: fn.handler, Root: fn.root})
+		plan.Functions = append(plan.Functions, functionSetPlanItem{Name: fn.spec.Name, App: fn.slug, Runtime: fn.runtime, Handler: fn.handler, Root: fn.root, Hooks: fn.spec.Hooks})
+	}
+	for _, src := range d.fromCode {
+		plan.ConfigFromCode = append(plan.ConfigFromCode, functionConfigFromCode{Function: src.Function, File: src.File, Keys: src.Keys, Discovered: src.Discovered})
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(plan))
@@ -278,8 +274,47 @@ func (d functionSetDeploy) printPlan() int {
 	for _, fn := range plan.Functions {
 		_, _ = fmt.Fprintf(d.out, "  %-20s %-28s %-10s %s\n", fn.Name, fn.App, fn.Runtime, fn.Root)
 	}
+	d.printConfigFromCode()
+	printSnapshotHooks(d.out, planned)
 	_, _ = fmt.Fprintf(d.out, "\nDeploy them: %s\nCompare with remote state: gregale deploy --dry-run\n", plan.DeployCommand)
 	return 0
+}
+
+// printSnapshotHooks lists the snapshot hooks each function declares in code
+// (ADR-20261110190000): the deploy wires beforeSnapshot and afterRestore to
+// the runner, and init runs before each worker is ready.
+func printSnapshotHooks(out io.Writer, planned []plannedFunction) {
+	header := false
+	for _, fn := range planned {
+		if len(fn.spec.Hooks) == 0 {
+			continue
+		}
+		if !header {
+			_, _ = fmt.Fprintln(out, "\nSnapshot hooks in code:")
+			header = true
+		}
+		_, _ = fmt.Fprintf(out, "  %-20s %s\n", fn.spec.Name, strings.Join(fn.spec.Hooks, ", "))
+	}
+}
+
+// printConfigFromCode names each setting read from a handler file, so a
+// value that differs from gregale.yaml is never a mystery.
+func (d functionSetDeploy) printConfigFromCode() {
+	if len(d.fromCode) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(d.out, "\nConfig from code (gregale.yaml wins where both set a value):")
+	for _, src := range d.fromCode {
+		note := ""
+		if src.Discovered {
+			note = " (discovered; not in gregale.yaml)"
+		}
+		keys := strings.Join(src.Keys, ", ")
+		if keys == "" {
+			keys = "no settings"
+		}
+		_, _ = fmt.Fprintf(d.out, "  %-20s %s: %s%s\n", src.Function, src.File, keys, note)
+	}
 }
 
 func (d functionSetDeploy) summarize(done []string, failed plannedFunction, skipped []plannedFunction) {
@@ -321,7 +356,7 @@ func (d functionSetDeploy) reportUnlisted(ctx context.Context, client functionSe
 		return
 	}
 	sort.Strings(unlisted)
-	_, _ = fmt.Fprintf(d.out, "Not in gregale.yaml (kept): %s — delete with `gregale app list --yes <slug>`\n", strings.Join(unlisted, ", "))
+	_, _ = fmt.Fprintf(d.out, "Not in gregale.yaml (kept): %s — delete with `gregale app delete <slug> --yes`\n", strings.Join(unlisted, ", "))
 }
 
 // reconcile applies one deployed function's manifest configuration.
@@ -348,18 +383,12 @@ func (d functionSetDeploy) reconcile(ctx context.Context, client functionSetClie
 	if d.noTriggers {
 		return nil
 	}
-	crons := &gregalemanifest.Manifest{Triggers: []gregalemanifest.Trigger{}}
-	for _, trigger := range d.manifest.Triggers {
-		if trigger.App == fn.spec.Name {
-			trigger.App = fn.slug
-			crons.Triggers = append(crons.Triggers, trigger)
-		}
-	}
+	crons := d.manifest.FunctionCronTriggers(fn.shared())
 	txn, err := reconcileManifestCronsWithRollback(ctx, client, fn.slug, crons)
 	if err != nil {
 		return fmt.Errorf("cron triggers: %w", err)
 	}
-	if err := reconcileManifestRealtime(ctx, client, fn.slug, functionRealtimeTriggers(d.manifest, fn), txn); err != nil {
+	if err := reconcileManifestRealtime(ctx, client, fn.slug, d.manifest.FunctionRealtimeTriggers(fn.shared()), txn); err != nil {
 		if rollbackErr := txn.rollback(ctx); rollbackErr != nil {
 			err = errors.Join(err, rollbackErr)
 		}
@@ -447,7 +476,17 @@ func (d functionSetDeploy) applySettings(ctx context.Context, client functionSet
 	if err != nil {
 		return fmt.Errorf("read app %s: %w", fn.slug, err)
 	}
-	if update, changed := functionSettingsUpdate(fn.spec, app); changed {
+	update, changed := fn.spec.AppSettingsUpdate(app)
+	// Snapshot hooks declared in code point the app's lifecycle at the
+	// runner (ADR-20261110190000 §5); the deployment is built with them.
+	after, before, hooksChanged, err := fn.spec.HookLifecycleUpdate(app.Manifest.AfterRestore, app.Manifest.BeforeCheckpoint)
+	if err != nil {
+		return err
+	}
+	if hooksChanged {
+		update.AfterRestore, update.BeforeCheckpoint, changed = after, before, true
+	}
+	if changed {
 		if _, err := client.UpdateApp(ctx, fn.slug, update); err != nil {
 			return fmt.Errorf("update app settings: %w", err)
 		}
@@ -482,26 +521,6 @@ func pruneFunctionEnv(ctx context.Context, client functionSetClient, out io.Writ
 		_, _ = fmt.Fprintf(out, "removed env %s from %s (prune_env)\n", row.Key, slug)
 	}
 	return nil
-}
-
-// functionSettingsUpdate is the app PATCH that brings an app to a function's
-// declared RAM, request timeout and concurrency.
-func functionSettingsUpdate(spec gregalemanifest.FunctionSpec, app api.AppResponse) (api.UpdateAppRequest, bool) {
-	var update api.UpdateAppRequest
-	changed := false
-	if spec.RAMMB != 0 && app.RAMMB != spec.RAMMB {
-		ram := spec.RAMMB
-		update.RAMMB, changed = &ram, true
-	}
-	if spec.RequestTimeoutS != 0 && app.RequestTimeoutS != spec.RequestTimeoutS {
-		timeout := spec.RequestTimeoutS
-		update.RequestTimeoutS, changed = &timeout, true
-	}
-	if spec.Concurrency != 0 && max(app.FunctionConcurrency, 1) != spec.Concurrency {
-		concurrency := spec.Concurrency
-		update.FunctionConcurrency, changed = &concurrency, true
-	}
-	return update, changed
 }
 
 // sealFunctionSecrets seals each named secret from the deployer's
@@ -683,32 +702,6 @@ func reconcileRouteRules(ctx context.Context, client functionSetClient, slug str
 		}
 	}
 	return nil
-}
-
-// functionRealtimeTriggers selects one function's realtime triggers with the
-// function name rewritten to its app slug. A function that declares none is
-// left alone unless the manifest explicitly clears every trigger.
-func functionRealtimeTriggers(m *gregalemanifest.Manifest, fn plannedFunction) *gregalemanifest.Manifest {
-	out := &gregalemanifest.Manifest{}
-	if m.Triggers != nil && len(m.Triggers) == 0 {
-		out.Triggers = []gregalemanifest.Trigger{}
-	}
-	for _, trigger := range m.Triggers {
-		if trigger.Kind == gregalemanifest.TriggerKindRealtime && trigger.App == fn.spec.Name {
-			trigger.App = fn.slug
-			out.Triggers = append(out.Triggers, trigger)
-		}
-	}
-	if m.Realtime != nil {
-		out.Realtime = &gregalemanifest.RealtimeConfig{Endpoints: []gregalemanifest.RealtimeEndpoint{}}
-		for _, endpoint := range m.Realtime.Endpoints {
-			if endpoint.App == fn.spec.Name {
-				endpoint.App = fn.slug
-				out.Realtime.Endpoints = append(out.Realtime.Endpoints, endpoint)
-			}
-		}
-	}
-	return out
 }
 
 // functionARN is the object-notification destination for a function app.

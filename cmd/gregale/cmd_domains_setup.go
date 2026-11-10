@@ -206,19 +206,7 @@ func domainSetupRetryable(err error) bool {
 }
 
 func domainSetupReady(d api.CustomDomainResponse) bool {
-	if !d.Verified {
-		return false
-	}
-	if d.CertStatus != "" && d.CertStatus != "issued" && d.CertStatus != "renewing" {
-		return false
-	}
-	// Verification of ownership alone does not establish HTTPS readiness.
-	expires := d.CertNotAfter
-	if expires == "" {
-		expires = d.CertExpiresAt
-	}
-	end, err := time.Parse(time.RFC3339, expires)
-	return err == nil && end.After(time.Now())
+	return d.HTTPSReadyAt(time.Now())
 }
 
 func validSetupDomain(domain string) bool {

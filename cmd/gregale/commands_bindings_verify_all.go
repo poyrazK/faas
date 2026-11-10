@@ -205,6 +205,12 @@ func bindingProbeOmission(item api.AppBindingInventoryItem, scope string) (strin
 }
 
 func allBindingQueueOmission(item api.AppBindingInventoryItem, inventory api.AppBindingInventory, options allBindingProbeOptions) (string, string) {
+	if item.Access == "pull" {
+		// A pull consumer leases messages itself; no platform delivery path
+		// exists to probe. Exclude it explicitly, like release-only
+		// credentials, so --require-complete can pass for apps that use one.
+		return "skipped", "pull_consumer_external"
+	}
 	if item.Access != "push" {
 		return "unsupported", "queue_delivery_unsupported"
 	}

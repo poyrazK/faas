@@ -29,7 +29,7 @@ def test_initial_attention_and_history_round_trip():
         "repairable": True,
         "diagnosis_reason": "terminal_outcome_not_saved",
         "evidence_url": "/initial-recovery-reviews/review/evidence",
-        "cli_command": "gregale automations failure-recovery-evidence --app orders --review review",
+        "cli_command": "gregale workflow stored failure-recovery-evidence --app orders --review review",
     }
     assert WorkflowRecoveryQueueBlockedWebhookPayload.from_dict(event).to_dict() == event
     receipt = {

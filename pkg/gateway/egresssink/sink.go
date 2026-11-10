@@ -55,6 +55,8 @@ package egresssink
 import (
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // BucketsToKeep is the number of past minute-buckets the sink
@@ -91,6 +93,9 @@ type EgressSink struct {
 // the hot path. mu covers ONLY the (map + lastTouch) pair — never
 // held across I/O. Always taken after s.mu, never before.
 type instanceBuckets struct {
+	// appID is set for an app's edge counter (RecordEdgeBytes): bytes served
+	// without an instance, keyed by api.EdgeUsageInstanceID(appID).
+	appID     string
 	mu        sync.Mutex
 	usage     map[int64]usageBucket
 	lastTouch time.Time
@@ -165,6 +170,32 @@ func (s *EgressSink) RecordResponseBytes(instanceID string, n int64) {
 // RecordRequest records one request that reached a selected instance. A cold
 // boot is counted only when that request's authoritative wake outcome was a
 // cold boot; restores and already-running requests leave coldBoots unchanged.
+// RecordEdgeBytes adds n bytes the gateway served for appID without an
+// instance: a response-cache hit, a stale serve, a fixed edge response or a
+// log drain delivery (ADR-20261104132753). They drain as records carrying
+// AppID under the app's edge usage ID, so meterd counts them as the app's
+// egress.
+func (s *EgressSink) RecordEdgeBytes(appID string, n int64) {
+	if appID == "" || n <= 0 {
+		return
+	}
+	id := api.EdgeUsageInstanceID(appID)
+	minute := s.now().UTC().Truncate(time.Minute).Unix()
+	s.mu.Lock()
+	inst, ok := s.instances[id]
+	if !ok {
+		inst = &instanceBuckets{appID: appID, usage: make(map[int64]usageBucket, BucketsToKeep)}
+		s.instances[id] = inst
+	}
+	inst.mu.Lock()
+	s.mu.Unlock()
+	bucket := inst.usage[minute]
+	bucket.bytes += uint64(n)
+	inst.usage[minute] = bucket
+	inst.lastTouch = s.now()
+	inst.mu.Unlock()
+}
+
 func (s *EgressSink) RecordRequest(instanceID string, coldBoot bool) {
 	if instanceID == "" {
 		return
@@ -234,6 +265,7 @@ func (s *EgressSink) DrainRecords() []Record {
 			}
 			out = append(out, Record{
 				InstanceID: id,
+				AppID:      inst.appID,
 				Minute:     time.Unix(minute, 0).UTC(),
 				Bytes:      bucket.bytes,
 				Requests:   bucket.requests,
@@ -280,7 +312,7 @@ func (s *EgressSink) RestoreRecords(records []Record) {
 		}
 		inst, ok := s.instances[record.InstanceID]
 		if !ok {
-			inst = &instanceBuckets{usage: make(map[int64]usageBucket, BucketsToKeep)}
+			inst = &instanceBuckets{appID: record.AppID, usage: make(map[int64]usageBucket, BucketsToKeep)}
 			s.instances[record.InstanceID] = inst
 		}
 		inst.mu.Lock()
@@ -309,6 +341,7 @@ func (s *EgressSink) Snapshot() []Record {
 			}
 			out = append(out, Record{
 				InstanceID: id,
+				AppID:      inst.appID,
 				Minute:     time.Unix(minute, 0).UTC(),
 				Bytes:      bucket.bytes,
 				Requests:   bucket.requests,
@@ -333,9 +366,12 @@ func (s *EgressSink) Tracked() int {
 // record per (instanceID, minute) bucket — the per-instance grouping
 // the consumer (meterd) needs to populate usage_minutes.tx_bytes.
 type Record struct {
-	InstanceID string    `json:"instance_id"`
-	Minute     time.Time `json:"minute"` // truncated to the minute
-	Bytes      uint64    `json:"bytes"`  // cumulative within the bucket
-	Requests   uint64    `json:"requests"`
-	ColdBoots  uint64    `json:"cold_boots"`
+	InstanceID string `json:"instance_id"`
+	// AppID marks an edge record (RecordEdgeBytes); InstanceID is then the
+	// app's edge usage ID. Older gateways ignore it on a replay ledger.
+	AppID     string    `json:"app_id,omitempty"`
+	Minute    time.Time `json:"minute"` // truncated to the minute
+	Bytes     uint64    `json:"bytes"`  // cumulative within the bucket
+	Requests  uint64    `json:"requests"`
+	ColdBoots uint64    `json:"cold_boots"`
 }

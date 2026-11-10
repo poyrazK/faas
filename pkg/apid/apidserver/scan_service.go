@@ -925,8 +925,16 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	}
 	out := make([]appliedBuild, 0, len(touched))
 	selected, accepted := reconcile.ProjectDeploymentSelection(touched), make(map[string]bool, len(touched))
+	// The whole selection deploys or none of it: a budget that runs out
+	// part-way left the project on mixed releases.
+	rateShortfall := s.projectDeployRateShortfall(ctx, acct, len(touched), timeNow().UTC())
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
+		if rateShortfall != "" {
+			res.Error = rateShortfall
+			out = append(out, res)
+			continue
+		}
 		if blocker := reconcile.ProjectDependencyAdmissionBlocker(app, selected, accepted); blocker != "" {
 			res.Error = blocker
 			out = append(out, res)
@@ -1088,6 +1096,18 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// deployment row exists, so imaged bakes the hooks into it.
 		settings := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 		if manifest != nil {
+			// The settings writes are guarded by the deployment they were
+			// read against, as on the single-app and GitHub paths; without
+			// the baseline every guarded write of an app that had deployed
+			// conflicted, and the service's settings were rejected.
+			baseline, baselineErr := s.store.LatestDeployment(ctx, app.ID)
+			if baselineErr != nil && !errors.Is(baselineErr, state.ErrNotFound) {
+				_ = os.Remove(staged)
+				res.Error = "gregale.yaml settings rejected: could not read deployment before manifest settings"
+				out = append(out, res)
+				continue
+			}
+			settings.baselineDeploymentID = baseline.ID
 			if problem := s.applySourceManifestSettings(ctx, acct, app, manifest, &settings); problem != nil {
 				_ = os.Remove(staged)
 				if rbErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), settings); rbErr != nil {
@@ -1668,10 +1688,11 @@ func (s *server) scanService(
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 			"project_selection_empty", "No workloads selected", "all requested workloads are excluded; review the persisted exclusions before deploying")
 	}
-	var dependencyReferences []reposcan.Workload
-	if req.Migration {
-		dependencyReferences = projectsetup.DependencyReferences(result.Workloads, filteredW)
-	}
+	// Services left out by --only or --exclude stay valid dependency targets:
+	// a partial rollout of compactor,query must not report their store
+	// dependency as unknown (ChronoLake finding 10). They are references only,
+	// never reconciled, built or counted against quotas.
+	dependencyReferences := projectsetup.DependencyReferences(result.Workloads, filteredW)
 	// Post-scan exclude-validity check: every entry in req.Exclude
 	// must correspond to a real scan workload OR an existing app in
 	// the account. A typo would otherwise silently survive and
@@ -1718,6 +1739,12 @@ func (s *server) scanService(
 		r.Context(), acct, req.ScanDir, selectedDatabaseWorkloads, req.Environment)
 	if manifestProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
+	}
+	// gregale.yaml buckets, resolved before mutation like databases
+	// (ADR-20261106105015 §1).
+	manifestBuckets, bucketProblem := s.resolveProjectManifestBuckets(r, acct, req.ScanDir, filteredW, req.Environment)
+	if bucketProblem != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, bucketProblem
 	}
 	var stalePersistedSlugs []string
 	if len(req.Exclude) > 0 {
@@ -2078,10 +2105,16 @@ func (s *server) scanService(
 			}
 		}
 		if existing != nil {
-			// Visibility is create-only; the plan shows what the app has.
+			// The plan shows what the app will have: a production deploy makes
+			// internal a service Compose no longer publishes; anything else
+			// keeps the app's visibility (ADR-20261107090000).
 			pw.Visibility = ""
-			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal {
+			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal ||
+				(req.Environment == "" && reposcan.NewWorkloadVisibility(w) == api.AppVisibilityInternal) {
 				pw.Visibility = api.AppVisibilityInternal
+			}
+			if note := projectVisibilityNote(w, *existing, req.Environment == ""); note != "" {
+				warnings = append(warnings, note)
 			}
 		}
 		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
@@ -2114,6 +2147,11 @@ func (s *server) scanService(
 		}
 		respWorkloads[i] = pw
 	}
+	if shortfall := s.projectDeployRateShortfall(r.Context(), acct, len(filteredW), timeNow().UTC()); shortfall != "" {
+		warnings = append(warnings, "deploy rate: "+strings.TrimPrefix(shortfall, "not deployed: "))
+	}
+	warnings = append(warnings, s.environmentDependencyNotes(r.Context(), req.Environment, filteredW, projectApps)...)
+	warnings = append(warnings, allowCallersNotes(filteredW, result.Workloads, projectApps, acctApps)...)
 	respManaged := make([]api.PlanManaged, len(filteredMc))
 	for i, m := range filteredMc {
 		respManaged[i] = toPlanManaged(m)
@@ -2129,6 +2167,10 @@ func (s *server) scanService(
 				m.Name, m.Kind, strings.Join(respManaged[i].Unbound, ", "), m.Kind))
 		}
 	}
+	// Databases gregale.yaml creates are reviewed with the Compose ones
+	// (ADR-20261106105015 §1).
+	respManaged = append(respManaged, manifestDatabasePlan(resolvedManifest.PostgresBindings)...)
+	respManaged = append(respManaged, manifestBucketPlan(manifestBuckets)...)
 	resp := &scanPlanResponse{
 		SafeRelease:           req.SafeRelease,
 		ProjectSlug:           req.ProjectSlug,
@@ -2667,7 +2709,7 @@ func (s *server) scanService(
 	}
 	if len(req.Secrets) > 0 {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
-		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, req.Environment, req.Secrets); prob != nil {
+		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, filteredW, req.Environment, req.Secrets); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 		// Secret-only redeploys also need a build, even if source reconciliation
@@ -2712,12 +2754,26 @@ func (s *server) scanService(
 	if problem := s.importComposeEnv(r, acct, project.ID, importScope, composeEnv, filteredW, limits); problem != nil {
 		return resp, state.Project{}, nil, nil, nil, nil, problem
 	}
+	if req.Environment == "" {
+		if problem := s.applyComposeInternalVisibility(r, acct, project.ID, filteredW); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
 	if len(composePostgres) > 0 {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if err != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project database targets")
 		}
 		if problem := s.applyComposePostgres(r.Context(), acct, importScope, composePostgres, apps); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	if len(manifestBuckets) > 0 {
+		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if err != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project bucket targets")
+		}
+		if problem := s.applyProjectManifestBuckets(r.Context(), acct, manifestBuckets, apps); problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}
@@ -3177,6 +3233,7 @@ func (s *server) projectScanOptions(acct state.Account) reposcan.ScanOptions {
 		KubernetesManifests:       s.capGate == nil || s.capGate.Enabled(reposcan.KubernetesManifestsCapability, subject),
 		HTTPSTransportUnavailable: !s.privateServiceHTTPS(acct),
 		ResourceLabels:            s.capGate == nil || s.capGate.Enabled(resourcelabels.Capability, subject),
+		Functions:                 s.capGate == nil || s.capGate.Enabled(reposcan.RepositoryFunctionsCapability, subject),
 	}
 }
 

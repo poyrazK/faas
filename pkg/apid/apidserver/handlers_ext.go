@@ -197,6 +197,35 @@ func validateIdleTimeout(v int, limits api.Limits) *api.Problem {
 	return nil
 }
 
+// validateWorkerPlan refuses a worker the plan cannot run
+// (ADR-20261018101500 amendment 2026-10-31): a request that makes the app a
+// worker on a plan without workers, or whose worker bounds pass the plan's
+// running-worker cap. The pool would otherwise cap it silently, or on Free
+// never start it.
+func validateWorkerPlan(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
+	mode := app.Manifest.ExecutionMode
+	if req.ExecutionMode != nil {
+		mode = *req.ExecutionMode
+	}
+	if mode != api.ExecutionModeWorker || (req.ExecutionMode == nil && req.WorkerReplicas == nil) {
+		return nil
+	}
+	want := 1
+	if req.WorkerReplicas != nil {
+		// The package declares a float64 max (handlers_dashboard.go), so the
+		// builtin is not reachable here.
+		for _, n := range []int{req.WorkerReplicas.Min, req.WorkerReplicas.Max} {
+			if n > want {
+				want = n
+			}
+		}
+	}
+	if want > limits.WorkerReplicasMax {
+		return api.ErrPlanWorkerReplicas(acct.Plan, limits.WorkerReplicasMax, want)
+	}
+	return nil
+}
+
 // validatePerInstanceConcurrency gates and bounds
 // scaling_policy.per_instance_concurrency (ADR-20261022203523). Until the
 // account is listed in FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS the field is
@@ -241,6 +270,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if prob := validateIdleTimeout(*req.IdleTimeoutS, limits); prob != nil {
 			return prob
 		}
+	}
+	if prob := validateWorkerPlan(req, acct, limits, app); prob != nil {
+		return prob
 	}
 	// The app-wide edge bucket is a tightening-only runtime policy. Zero
 	// restores the plan default; a positive override cannot exceed the plan
@@ -1187,6 +1219,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.afterRestoreBudgetProblem(r.Context(), acct.ID, app.ID, req.AfterRestore); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -2304,6 +2340,10 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	if err := req.ValidateExpectedTraffic(); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -2346,6 +2386,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
 		ctx = state.WithTrafficSplitReleaseLimit(ctx, releaseLimit)
+		ctx = state.WithExpectedTrafficWeights(ctx, req.ExpectedTraffic)
 		var writeErr error
 		if req.ExpectedReview != nil {
 			store, ok := s.store.(state.ReviewedTrafficStore)
@@ -2396,6 +2437,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, trafficguard.PromotionProblem(err))
 		case promotionAttemptProblem(err) != nil:
 			api.WriteProblem(w, promotionAttemptProblem(err))
+		case errors.Is(err, state.ErrTrafficServingChanged) && req.ExpectedTraffic != nil:
+			api.WriteProblem(w, api.ErrTrafficSplitChanged())
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
@@ -3699,14 +3742,29 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		"domain":      d.Domain,
 		"environment": req.Environment,
 	})
+	s.domainChecks.Wake()
 	writeJSON(w, http.StatusAccepted, s.domainResponseWithDefault(r.Context(), d))
 }
 
 func (s *server) retryDomainVerification(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	domain := strings.ToLower(strings.TrimSpace(r.PathValue("domain")))
-	_, ok := s.loadDomain(w, r, acct, domain)
+	d, ok := s.loadDomain(w, r, acct, domain)
 	if !ok {
 		return
+	}
+	if !d.Verified() && d.ClaimLive(time.Now()) {
+		if checks, available := s.store.(state.CustomDomainManualCheckStore); available {
+			allowed, err := checks.BeginCustomDomainManualCheck(r.Context(), d, time.Now(), api.DomainVerificationManualCooldown)
+			if err != nil {
+				s.manualDomainCheckProblem(w, err)
+				return
+			}
+			if !allowed {
+				w.Header().Set("Retry-After", strconv.Itoa(int(api.DomainVerificationManualCooldown/time.Second)))
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+		}
 	}
 	type retrier interface {
 		RetryCustomDomainVerification(context.Context, string) error
@@ -3718,6 +3776,7 @@ func (s *server) retryDomainVerification(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain cannot be retried", err.Error()))
 		return
 	}
+	s.domainChecks.Wake()
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -3877,50 +3936,31 @@ func (s *server) setDefaultDomain(w http.ResponseWriter, r *http.Request, acct s
 		"app_id": d.AppID,
 		"domain": d.Domain,
 	})
-	resp := domainResponse(d)
+	resp := s.domainResponseWithDefault(r.Context(), d)
 	resp.Default = true
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// verifyDomain (issue #961 / Mega-A PR-3) is the
-// POST /v1/domains/{domain}/verify handler. Re-runs the DNS + cert
-// walk and returns the canonical CustomDomainResponse (with
-// CertNotAfter / CertSANs populated when the cert dial succeeds).
-//
-// The handler is idempotent — POSTing twice does not change the
-// domain's verification state; it just re-reads the wire. The
-// `verifying` state machine is owned by the DNSVerifier goroutine
-// (cmd/apid/dns_poller.go); this handler is the read sibling.
-//
-// CRIT-1 + MED-4 fix: dialCert failures are surfaced rather than
-// silently returned as 200-with-empty-fields. The CDN mismatch maps
-// to 422 CodeDomainCertNotIssued (existing); any other dial failure
-// maps to 422 CodeDomainVerificationFailed with reason
-// "dial_failed:<subreason>" so the customer can distinguish "DNS not
-// propagated" from "cert not yet issued" from "TLS handshake
-// refused". The show endpoint (getDomain) intentionally keeps the
-// soft-fail behaviour — it is a read; the customer re-polls.
+// verifyDomain runs a bounded, coalesced ownership and routing/TLS check.
+// Readiness failures are reported as structured conditions, while unavailable
+// probes and changed bindings return an HTTP problem.
 func (s *server) verifyDomain(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	domain := strings.ToLower(r.PathValue("domain"))
+	domain := strings.ToLower(strings.TrimSpace(r.PathValue("domain")))
 	d, ok := s.loadDomain(w, r, acct, domain)
 	if !ok {
 		return
 	}
-	resp, certErr := s.domainResponseWithCert(r.Context(), d)
-	if certErr != nil {
-		if errors.Is(certErr, errCDNCert) {
-			api.WriteProblem(w, api.ErrDomainCertNotIssued(d.Domain, certErr.Error()))
-			return
-		}
-		if errors.Is(certErr, errCertFailure) {
-			api.WriteProblem(w, api.ErrDomainVerificationFailed(d.Domain, "cert dial failed: "+certErr.Error()))
-			return
-		}
-		// Unwrap transport-level errors (net.OpError, context errors).
-		api.WriteProblem(w, api.ErrDomainVerificationFailed(d.Domain, "transport: "+certErr.Error()))
+	if err := s.checkDomainNow(r.Context(), d); err != nil {
+		s.manualDomainCheckProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	current, ok := s.loadDomain(w, r, acct, domain)
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Retry-After", strconv.Itoa(int(api.DomainVerificationManualCooldown/time.Second)))
+	writeJSON(w, http.StatusOK, s.domainResponseWithDefault(r.Context(), current))
 }
 
 // getDomain (issue #961 / Mega-A PR-3) is the GET /v1/domains/{domain}
@@ -3964,19 +4004,19 @@ func (s *server) loadDomain(w http.ResponseWriter, r *http.Request, acct state.A
 	return d, true
 }
 
-// domainResponseWithCert is the building block for verify + show.
+// domainResponseWithCert serves the live certificate details used by show.
 // It mirrors the existing domainResponse (line ~3309) but extends
 // the wire with the live cert details. d is the loaded domain row
 // (already ownership-checked).
 //
 // MED-4 fix: the cert dial error is returned alongside the response.
 // On success the caller can write a 200 with CertStatus="issued".
-// On failure the caller decides whether to surface the error (verify
-// → 422) or to keep the soft-fail shape (show → 200 with
-// CertStatus="dial_failed:<reason>").
-func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomain) (api.CustomDomainResponse, error) {
+// Show keeps a soft-fail response with CertStatus="dial_failed:<reason>".
+// Manual verification uses the doctor and returns structured readiness.
+func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomain) (resp api.CustomDomainResponse, certErr error) {
 	ctx = state.WithCustomDomainProbe(ctx, d)
-	resp := s.domainResponseWithDefault(ctx, d)
+	resp = s.domainResponseWithDefault(ctx, d)
+	defer func() { s.decorateDomainResponse(ctx, d, &resp) }()
 	if !d.Verified() {
 		if d.CertStatus != state.CustomDomainCertDNSDrifted {
 			resp.CertStatus = certStatusPending
@@ -3985,6 +4025,17 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 	}
 	dialDomain, _ := state.WildcardProbeHost(d.Domain)
 	points, routingProbe := checkDomainRouting(ctx, d.Domain)
+	routingCheck := api.DomainDoctorCheck{Name: "points_to_gregale", Status: string(points.Status), Detail: points.Detail, Observed: points.Observed, Remediation: points.Remediation, CheckedAt: points.ObservedAt.UTC().Format(time.RFC3339Nano)}
+	found := false
+	for i := range resp.Checks {
+		if resp.Checks[i].Name == routingCheck.Name {
+			resp.Checks[i] = routingCheck
+			found = true
+		}
+	}
+	if !found {
+		resp.Checks = append(resp.Checks, routingCheck)
+	}
 	if points.Status == probeFail {
 		err := fmt.Errorf("%w: %w", errCertFailure, errCertRoutingMismatch)
 		resp.CertStatus = classifyCertError(err)
@@ -4040,6 +4091,7 @@ func (s *server) domainResponseWithDefault(ctx context.Context, d state.CustomDo
 			resp.Default = isDefault
 		}
 	}
+	s.decorateDomainResponse(ctx, d, &resp)
 	return resp
 }
 
@@ -4987,6 +5039,10 @@ func cronRunFromInvocation(inv state.Invocation) api.CronRun {
 func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateKeyRequest
 	_ = decodeJSON(r, &req)
+	if problem := reservedKeyLabelProblem(req.Label); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	scopes, err := api.NormalizeCreateKeyScopes(req.Scopes)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -5051,6 +5107,11 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	approvals, approvalsSet, prob := keyApprovalCategories(scopes, req.ApprovalCategories)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	var k state.APIKey
 	switch {
 	case perr == nil:
@@ -5077,6 +5138,10 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	if prob := s.limitKeyToProjects(r.Context(), acct, k, projects); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.setKeyApprovalCategories(r.Context(), acct, k, approvals, approvalsSet); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -5115,6 +5180,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		s.audit.Emit(r.Context(), "api_key.created", &acct.ID, newPayload)
 	}
+	s.noticeCredentialCreated(r, acct, credentialAPIKey, k.Label)
 	resp := api.APIKeyResponse{
 		ID:        k.ID,
 		OrgID:     k.OrgID,
@@ -5130,6 +5196,9 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	resp.Plaintext = plaintext
 	if len(projects) > 0 {
 		resp.Projects = projectSlugs(projects)
+	}
+	if approvalsSet {
+		resp.ApprovalCategories = &approvals
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -5331,6 +5400,10 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 			s.notFound(w, "key already revoked")
 			return
 		}
+		if errors.Is(err, state.ErrAPIKeyExpired) {
+			api.WriteProblem(w, api.ErrAPIKeyExpired())
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("could not rotate key"))
 		return
 	}
@@ -5360,6 +5433,7 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"created_ua":         bindUA,
 		"parent_key_id":      oldKey.ID,
 	})
+	s.noticeCredentialCreated(r, acct, credentialRotatedKey, newKey.Label)
 	s.log.Info("key rotated",
 		"old_key", oldKey.ID, "new_key", newKey.ID,
 		"account", acct.ID, "grace_window_days", graceWindowDays)
@@ -5389,10 +5463,19 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // handler is the only caller; nil-safe when the cache is nil
 // (legacy tests that pre-date the cache field).
 func (s *server) resolveGraceWindow(ctx context.Context, accountID string) (*int, error) {
+	var days *int
+	var err error
 	if s.graceWindowCache == nil {
-		return s.store.GetAccountKeyGraceWindow(ctx, accountID)
+		days, err = s.store.GetAccountKeyGraceWindow(ctx, accountID)
+	} else {
+		days, err = s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
 	}
-	return s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
+	// A value saved before the cap existed is held to it (ADR 20261109120000).
+	if err == nil && days != nil && *days > api.APIKeyGraceWindowMaxDays {
+		capped := api.APIKeyGraceWindowMaxDays
+		days = &capped
+	}
+	return days, err
 }
 
 // --- usage -----------------------------------------------------------------
@@ -5642,9 +5725,10 @@ func (s *server) raiseOverageCap(w http.ResponseWriter, r *http.Request, acct st
 			"Bad request", err.Error()))
 		return
 	}
-	if req.OverageCapCents != nil && *req.OverageCapCents < 0 {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"overage_cap_cents must be >= 0 or null", "negative values are rejected"))
+	// ADR-20261105120000: a paid subject keeps a cap, at most its plan's
+	// self-service ceiling.
+	if problem := api.OverageCapProblem(acct.Plan, req.OverageCapCents); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	updated, err := s.raiseOverageCapSvc(r.Context(), acct, req.OverageCapCents)
@@ -6952,6 +7036,10 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 	if !d.VerificationExpiresAt.IsZero() {
 		r.VerificationExpiresAt = d.VerificationExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
+	if !d.Verified() && !d.VerificationNextCheckAt.IsZero() {
+		r.VerificationNextCheckAt = d.VerificationNextCheckAt.UTC().Format(time.RFC3339Nano)
+	}
+	r.VerificationAttempts = d.VerificationAttempts
 	r.VerificationExpired = r.VerificationExpiredAt(time.Now())
 	if r.VerificationExpired {
 		r.ChallengeToken = ""
@@ -8418,6 +8506,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 			Metric: sp.Target.Metric,
 			Value:  sp.Target.Value,
 			Name:   sp.Target.Name,
+			Labels: sp.Target.Labels,
 		}
 	}
 	// ADR-194 targets, ADR-195 schedules. These were absent here for the
@@ -8431,7 +8520,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 	// fails if a field is added to either type without being copied here.
 	for _, t := range sp.Targets {
 		out.Targets = append(out.Targets, state.ScalingTarget{
-			Metric: t.Metric, Value: t.Value, Name: t.Name,
+			Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels,
 		})
 	}
 	out.Timezone = sp.Timezone

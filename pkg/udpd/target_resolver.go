@@ -57,7 +57,7 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	}
 	running := make([]state.Instance, 0, len(instances))
 	for _, instance := range instances {
-		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && !state.IsFork(instance.Mode) && instance.ID != "" && instance.NodeID != "" {
+		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && !state.NeverServes(instance.Mode) && instance.ID != "" && instance.NodeID != "" {
 			running = append(running, instance)
 		}
 	}
@@ -124,6 +124,11 @@ func (r *StoreTargetResolver) validateIntent(ctx context.Context, route Route) e
 	}
 	if app.Visibility == api.AppVisibilityInternal {
 		return errors.New("UDP app is internal")
+	}
+	// The public access gates an HTTP request meets
+	// (ADR-20261104221012).
+	if err := ingressroute.CheckApp(ctx, app); err != nil {
+		return err
 	}
 	intent, err := r.Store.UDPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
 	if err != nil {

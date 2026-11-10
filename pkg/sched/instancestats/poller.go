@@ -628,6 +628,7 @@ func (p *Poller) decodeTelemetrySnapshot(
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
 			QuietPaused:      in.QuietPaused,
+			IdleLadderLevel:  in.IdleLadderLevel,
 			Frozen:           in.Frozen,
 			QuietPause:       in.QuietPause,
 			CPU:              Unknown,
@@ -725,7 +726,7 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 		snap, err = p.Router.Stats(callCtx, node.ID)
 	} else {
 		var vmm sched.VMM
-		vmm, err = p.Dialer.Dial(callCtx, node.TargetURL, p.TLS)
+		vmm, err = p.Dialer.Dial(callCtx, node.TargetURL, wire.ExpectPeerCN(p.TLS, node.Name))
 		if err != nil {
 			p.Log.Warn("instance stats dial failed", "node_id", node.ID, "err", err)
 			if p.Metrics != nil {
@@ -917,6 +918,7 @@ func (p *Poller) decodeStatsSnapshot(
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
 			QuietPaused:      in.QuietPaused,
+			IdleLadderLevel:  in.IdleLadderLevel,
 			Frozen:           in.Frozen,
 			QuietPause:       in.QuietPause,
 			CPU:              Unknown,

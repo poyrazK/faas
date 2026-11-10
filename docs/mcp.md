@@ -227,9 +227,59 @@ them later, and the projects themselves. Every other app and project answers
 as if it did not exist, account-wide routes answer 403, and the app and
 project lists show only what the limit allows. Databases belong to the
 account or organization rather than a project, so a limited agent cannot
-manage them. The limit is fixed when the agent connects; to change it,
+manage them. Its edge rules stay on its own apps too: they may match only
+`@app`, the app's own host or its custom domains, route only to apps of its
+projects, and it cannot change or roll back a rule another credential wrote
+for wider hosts. The limit is fixed when the agent connects; to change it,
 connect again. `gregale mcp connection list` and `GET /v1/account`
 (`key_projects`) name a connection's projects.
+
+### Approve an agent's risky actions
+
+An agent connection asks a person before it does something hard to undo
+or that reaches production traffic. Gregale checks this for every client
+of the agent's key: the hosted MCP server, the CLI and direct API calls.
+
+| Kind | What needs approval |
+|---|---|
+| `delete` | Deleting anything: apps, databases, buckets, domains, secrets, keys |
+| `production` | Deploying, rolling back, restarting or moving traffic of a production app (previews and `gregale dev` environments are free) |
+| `credentials` | Minting or rotating API keys, deploy tokens, secrets and signing secrets |
+| `billing` | Plan, subscription, payment and budget changes |
+
+By default an agent needs approval for all four. When it asks, Gregale
+answers `428 approval_required` with a review link. Open the link while
+signed in. Approve or deny the request there; then the agent repeats the
+same request, and the approval lets it through once. A request expires
+after 30 minutes. The member who connected the agent can decide, and so can
+the organization's owners and admins. No API key can approve a request.
+
+Choose the kinds when you create an agent key, or `none` to let it act
+alone:
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write --approvals delete,billing
+gregale key create sandbox-agent --scopes agent,deploy:write --approvals none
+```
+
+An organization can require approvals for every agent acting in it,
+whatever each connection chose:
+
+```sh
+gregale org agent policy set --org acme --agents allow --approvals delete,production
+```
+
+`gregale mcp connection list` shows each connection's approvals, and
+`GET /v1/agent-approvals` lists the requests waiting for you.
+
+Over MCP, the tool error carries the request in `approval` (its id, review
+link, category and expiry) and a recovery of `await_approval` naming
+`gregale_wait_for_approval`. The agent shows you the link, then calls that
+tool, which waits up to 50 seconds per call. When you approve, the tool
+answers `retry_original` and the agent repeats its call once with the same
+inputs. When you deny it or it expires, the agent gets `stop`, with your
+reason, and stops. `gregale_agent_activity` lists the agent's own write
+requests of the last 7 days (`operate` toolset).
 
 ## Connect a local agent to Gregale
 
@@ -347,6 +397,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_get_health` | Current health, readiness checks, freshness, and serving releases. |
 | `gregale_get_routes` | Observed routes and telemetry coverage, including unavailable sources. |
 | `gregale_get_action_outcome` | Read supported native receipts for a retained action attempt, including after plan expiry; missing evidence stays unresolved. |
+| `gregale_wait_for_approval` | Wait up to 50 seconds for a person to decide an agent approval request; answers `retry_original`, `await_approval` or `stop`. |
+| `gregale_agent_activity` | The calling agent key's write requests of the last 7 days, with status and the approval each used. |
 | `gregale_get_route_budgets` | Effective advisory budgets, inheritance source and policy revisions for the selected environment. |
 | `gregale_plan_route_budgets` | Review an environment override or return to app-budget inheritance without saving intent. |
 | `gregale_apply_route_budgets` | Opt-in write: apply the reviewed budget plan with native revision guards and durable replay. |
@@ -2683,6 +2735,9 @@ allowing additive native evidence. Errors and plan/status receipts include
 | `retry_same_plan` | Apply the original `plan_id`; do not create a replacement plan. |
 | `replan` | Obtain a new review with the indicated planning tool. |
 | `request_access` | Restore current authorization or the required capability before continuing. |
+| `await_approval` | Show the user `approval.review_url`, then call `gregale_wait_for_approval` with the given `approval_id`. |
+| `retry_original` | A person approved: repeat the original call once with exactly the same inputs. |
+| `stop` | A person denied the request, or it expired: do not retry; tell the user, with `approval.note` if present. |
 
 When supplied, `tool` and `arguments` identify a listed tool and value-free
 selectors such as `plan_id`. `reuse_original_inputs` tells the agent to reuse

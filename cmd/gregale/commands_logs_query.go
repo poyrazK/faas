@@ -313,6 +313,7 @@ func httpLogQueryEvent(row api.DebugTelemetryRequestItem) api.LogQueryEvent {
 	if row.TraceID != nil {
 		traceID = *row.TraceID
 	}
+	latencyMS := row.LatencyMS
 	return api.LogQueryEvent{
 		ID:           row.ID,
 		Timestamp:    row.ReceivedAt,
@@ -325,7 +326,7 @@ func httpLogQueryEvent(row api.DebugTelemetryRequestItem) api.LogQueryEvent {
 		Method:       row.Method,
 		Status:       row.Status,
 		Message:      fmt.Sprintf("%s returned %d in %dms", requestLine(row.Method, row.Route), row.Status, row.LatencyMS),
-		LatencyMS:    row.LatencyMS,
+		LatencyMS:    &latencyMS,
 		Count:        row.Count,
 		ColdBoot:     row.ColdBoot,
 	}

@@ -103,6 +103,25 @@ type ManagedPostgresDatabase struct {
 	// list and read while the resource-labels capability is on for the
 	// caller. Labels are not secret.
 	Labels map[string]string `json:"labels,omitempty"`
+	// Previews is what this database gives PR preview environments
+	// (ADR-20261102123523): "empty" or "copy"; omitted when off.
+	Previews string `json:"previews,omitempty"`
+	// Preview is set on a database a PR preview environment owns: it is
+	// purged with the environment.
+	Preview *ManagedPostgresPreviewOwner `json:"preview,omitempty"`
+}
+
+// ManagedPostgresPreviewOwner names the PR preview environment that owns a
+// database: the production database it stands in for and the pull request.
+type ManagedPostgresPreviewOwner struct {
+	SourceDatabaseID string `json:"source_database_id"`
+	PRNumber         int    `json:"pr_number"`
+}
+
+// SetManagedPostgresPreviewsRequest sets what a database gives PR preview
+// environments: "off", "empty" or "copy" (ADR-20261102123523).
+type SetManagedPostgresPreviewsRequest struct {
+	Previews string `json:"previews"`
 }
 
 // ManagedPostgresRestoreRange bounds a restore's point_in_time: from

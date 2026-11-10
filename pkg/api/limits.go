@@ -17,9 +17,17 @@ import (
 	"os/exec"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// SSEMaxLineBytes bounds one line of a server-sent event stream read by the
+// CLI and SDK. A runtime log line may be up to 1 MiB (logbuf
+// MaxPartialLineBytes) and JSON escaping can grow it up to six times, so 8 MiB
+// carries the largest log frame apid sends. The old 64 KiB cap ended a whole
+// `gregale logs` stream at the first long line (ADR-20261110090000).
+const SSEMaxLineBytes = 8 << 20
 
 // Shared traffic counters bound each admission round trip and aggregate replay.
 const (
@@ -42,8 +50,12 @@ const (
 	TrafficStaleTargetQuarantine = 30 * time.Second
 	// Reusable bridges acknowledge exchange cleanup before node capacity is
 	// released. Failure fences and reaps the bridge process instead.
-	TrafficBridgeCompletionTimeout    = 5 * time.Second
-	TrafficBridgeCompletionMaxEntries = 128
+	TrafficBridgeCompletionTimeout = 5 * time.Second
+	// TrafficBridgeCompletionMaxEntries bounds a bridge's open exchanges. It
+	// is the largest per-instance request limit runtime config may set
+	// (AppRequestConcurrencyBound, ADR-20261101215228): an open entry is a
+	// map entry and a channel, about 200 bytes.
+	TrafficBridgeCompletionMaxEntries = AppRequestConcurrencyBound
 	// A bridge keeps this many recent completions, so vmmd's fallback wait
 	// after a canceled exchange still finds one that just finished.
 	TrafficBridgeCompletionRetained = 1024
@@ -84,10 +96,74 @@ const (
 // one account may receive: one per SecurityMailPerAccountInterval and
 // SecurityMailPerAccountPerHour an hour. One apid tracks at most
 // SecurityMailTrackedAccountsMax accounts at a time.
+// RecentSignInWindow is how long after signing in a browser session alone
+// may set a first password, change the sign-in email, remove a sign-in
+// method or start two-factor setup on an account with neither a password
+// nor an authenticator to confirm with (ADR 20261110100000). Older
+// sessions sign in again first.
+const RecentSignInWindow = 15 * time.Minute
+
+// DashboardSessionIdleTimeout ends a dashboard session after this long
+// without a request, within its 7-day maximum lifetime (ADR 20261110120000).
+// Activity is sessions.last_seen_at, touched at most every 5 minutes.
+const DashboardSessionIdleTimeout = 48 * time.Hour
+
+// UnverifiedAccountDeleteAfter schedules deletion of an account nobody
+// verified this long after signup (or after EmailVerificationEnforcedFrom,
+// when later), if it never created an app and has no billing customer. The
+// normal 30-day restore window still applies (ADR 20261110120000).
+// UnverifiedAccountExpiryBatch caps one hourly sweep.
+const (
+	UnverifiedAccountDeleteAfter = 60 * 24 * time.Hour
+	UnverifiedAccountExpiryBatch = 100
+)
+
+// EmailChangeRevertWindow is how long after a confirmed sign-in email
+// change an operator can move the account back to the previous address
+// (`gregalectl accounts revert-email`, ADR 20261110100000).
+const EmailChangeRevertWindow = 30 * 24 * time.Hour
+
 const (
 	SecurityMailPerAccountInterval = time.Minute
 	SecurityMailPerAccountPerHour  = 5
 	SecurityMailTrackedAccountsMax = 100_000
+)
+
+// EmailVerificationEnforcedFrom is when the 30-day verification grace
+// started to restrict accounts (ADR 20261107103000). An account created
+// before it gets its 30 days from this date, so accounts that were
+// unverified when enforcement shipped are not cut off the day it deploys.
+var EmailVerificationEnforcedFrom = time.Date(2026, time.November, 16, 0, 0, 0, 0, time.UTC)
+
+// An unverified account active in the last EmailVerificationReminderWindow
+// before its deadline is mailed a fresh verification link, at most once per
+// EmailVerificationReminderInterval per apid.
+const (
+	EmailVerificationReminderWindow   = 7 * 24 * time.Hour
+	EmailVerificationReminderInterval = 24 * time.Hour
+)
+
+// Account profile and security notices (ADR 20261107103000). A display name
+// is at most DisplayNameMaxChars characters. A browser sign-in whose device
+// and network match no session of the last NewSignInLookback mails a notice.
+const (
+	DisplayNameMaxChars = 80
+	NewSignInLookback   = 90 * 24 * time.Hour
+)
+
+// The security activity view (ADR 20261108150000) shows at most
+// SecurityActivityMaxEvents events from the last SecurityActivityLookback.
+const (
+	SecurityActivityLookback  = 90 * 24 * time.Hour
+	SecurityActivityMaxEvents = 100
+)
+
+// A browser remembered at the authenticator check (ADR 20261108150000)
+// skips the code at sign-in for MFATrustedBrowserTTL; an account keeps at
+// most MFATrustedBrowsersMax, the oldest forgotten first.
+const (
+	MFATrustedBrowserTTL  = 30 * 24 * time.Hour
+	MFATrustedBrowsersMax = 10
 )
 
 // Queue receive long-polls one account, and one apid in all, may hold at a
@@ -160,9 +236,18 @@ const (
 
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one
 // client address, and one network (IPv4 /24, IPv6 /48), may create per day.
+//
+// SignupAccountsPerDay caps the verified self-service accounts the whole
+// platform creates in any 24 hours (ADR-20261104145353 amendment 1). Each
+// verified account carries a full Free allowance, and the per-address and
+// per-network caps reset with every new address, so this bounds the Free
+// compute, egress and storage a signup farm can claim in a day. Unverified
+// accounts cannot deploy and do not count. An operator- or support-created
+// verified account uses the same budget.
 const (
 	SignupAccountsPerAddressPerDay = 10
 	SignupAccountsPerNetworkPerDay = 50
+	SignupAccountsPerDay           = 2_000
 )
 
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
@@ -178,6 +263,43 @@ const (
 // AgentKeyLifetime is an agent key's default expiry (ADR-20261029085359):
 // shorter than other non-admin keys' because agents run unattended.
 const AgentKeyLifetime = 90 * 24 * time.Hour
+
+// Agent approvals (ADR-20261104140058): a request waits this long for a
+// person and its approval stays usable until then; one key holds at most
+// MaxPendingAgentApprovals undecided requests; a body up to
+// AgentApprovalBodyBindBytes is bound by its hash, a larger one is not.
+const (
+	AgentApprovalTTL           = 30 * time.Minute
+	MaxPendingAgentApprovals   = 20
+	AgentApprovalBodyBindBytes = 1 << 20
+)
+
+// Agent activity (ADR-20261107220000): an agent key's write requests are
+// kept AgentActivityRetention; a page holds DefaultAgentActivityPage rows
+// unless ?limit asks for up to MaxAgentActivityPage.
+const (
+	AgentActivityRetention   = 7 * 24 * time.Hour
+	DefaultAgentActivityPage = 50
+	MaxAgentActivityPage     = 200
+)
+
+// Agent approval outcomes (ADR-20261107140000 §6): an agent repeating a
+// request denied, or expired, within AgentApprovalOutcomeWindow is told so
+// instead of asking again; a denial note holds at most
+// MaxAgentApprovalNoteChars characters.
+const (
+	AgentApprovalOutcomeWindow = 30 * time.Minute
+	MaxAgentApprovalNoteChars  = 280
+)
+
+// AgentApprovalEmailInterval is the least time between two emails to one
+// person about one agent key's approval requests (ADR-20261107140000 §2).
+const AgentApprovalEmailInterval = 10 * time.Minute
+
+// MaxAgentApprovalChannels is how many notification channels one scope (an
+// account's agents, or an organization's for one admin) may route agent
+// approval requests to (ADR-20261107140000 §3).
+const MaxAgentApprovalChannels = 5
 
 // InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
 // failed-signature deliveries one client IP may send to /v1/hooks a minute
@@ -249,7 +371,15 @@ const (
 	RequestBodySpoolOwnerShareDivisor       = 4
 	RequestBodySpoolClientIPv6Prefix        = 56
 	RequestBodyMemoryNodeBytes        int64 = 96 << 20
-	RequestBodyBudgetRetryAfter             = 5 * time.Second
+	// One app owner holds at most a third of RequestBodyMemoryNodeBytes
+	// (32 MiB, above the 25 MiB validate cap), one client IP (an IPv6 /56)
+	// at most RequestBodyMemoryPerClient bodies, and a body of unknown
+	// length reserves RequestBodyMemoryReserveStep at a time as it is read
+	// (ADR-091 amendment 2026-11-04, round 12).
+	RequestBodyMemoryOwnerShareDivisor       = 3
+	RequestBodyMemoryPerClient               = 4
+	RequestBodyMemoryReserveStep       int64 = 64 << 10
+	RequestBodyBudgetRetryAfter              = 5 * time.Second
 )
 
 // The project scan reads Kubernetes manifests under k8s/, kubernetes/,
@@ -575,6 +705,10 @@ const (
 	PrimeRuntimePublicationBusyAttempts   = 5
 	PrimeRuntimePublicationBusyBackoff    = 500 * time.Millisecond
 	PrimeRuntimePublicationBusyMaxBackoff = 4 * time.Second
+	// Scheduler workers and direct session-pool capacity share this budget.
+	// Prime can also run once inline when all off-loop slots are occupied.
+	SnapshotPrimeConcurrentSlots = 4
+	SnapshotPrimeInlineSlots     = 1
 	// Bounded full streams for measured native snapshot lineage. This is a
 	// safety ceiling, not a tenant memory or disk entitlement.
 	ApplicationStandardSnapshotMaxArtifactBytes  int64 = 16 << 30
@@ -770,6 +904,24 @@ const ManagedPostgresUsageWaiverPeriod = 30 * 24 * time.Hour
 const ManagedPostgresRestoreSlots = 1
 const ManagedPostgresRestoreSlotWindow = 7 * 24 * time.Hour
 
+// ManagedPostgresPreviewStorageLimitBytes is a PR preview environment's empty
+// database's storage limit, lowered to the plan's pool where that is smaller
+// (ADR-20261102123523): a developer session's database gets the same.
+const ManagedPostgresPreviewStorageLimitBytes int64 = 1 << 30
+
+// ManagedPostgresPreviewDatabasesMax is how many PR preview databases an
+// account may hold (ADR-20261102123523): one per open preview environment and
+// source database. They are outside DatabasesMax, so no plan number changes.
+// Unknown plans fail closed.
+func ManagedPostgresPreviewDatabasesMax(p Plan) int {
+	limits, ok := LimitsFor(p)
+	databases, managed := ManagedPostgresLimitsFor(p)
+	if !ok || !managed || !databases.DevelopmentAllowed {
+		return 0
+	}
+	return limits.PreviewApps * databases.DatabasesMax
+}
+
 // ManagedPostgresRestoreSlotNoticeLead is how long before a restore slot ends
 // without room the restoring account is emailed (ADR-20261031123259).
 const ManagedPostgresRestoreSlotNoticeLead = 48 * time.Hour
@@ -909,21 +1061,31 @@ const (
 	ProfileMaxSymbolBytes           = 4096
 	ProfileMaxTotalFrames           = 200000
 	ProfileMaxNodes                 = 20000
-	ProfileMaxViewNodes             = 5000
-	ProfileMaxViewSymbolBytes       = 256 << 10
-	ProfileMaxCoverageEntries       = 5000
-	ProfileFailureRecordInterval    = time.Minute
-	ProfileMaxChartPoints           = 120
-	ProfileChartMinStep             = time.Minute
-	ProfileMaxConcurrentUploads     = 4
-	ProfileMaxConcurrentQueries     = 4
-	ProfileMaxTrackedAccounts       = 10000
-	ProfileTransportTimeout         = 2 * time.Second
-	ProfileQueryTimeout             = 15 * time.Second
-	ProfileVsockPort                = 1040
-	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
-	ProfileHealthListen             = "127.0.0.1:9160"
-	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+	// The pprof precheck also bounds each sample (ADR-1155 round 4
+	// follow-up): one sample's packed location ids or labels are objects the
+	// parser builds before its own depth check runs.
+	ProfileMaxSampleTypes        = 16
+	ProfileMaxSampleLabels       = 64
+	ProfileMaxTotalLabels        = ProfileMaxNodes
+	ProfileMaxViewNodes          = 5000
+	ProfileMaxViewSymbolBytes    = 256 << 10
+	ProfileMaxCoverageEntries    = 5000
+	ProfileFailureRecordInterval = time.Minute
+	ProfileMaxChartPoints        = 120
+	ProfileChartMinStep          = time.Minute
+	ProfileMaxConcurrentUploads  = 4
+	// ProfileCollectorLabelSlots bounds the Pyroscope collector_id label to a
+	// fixed set per deployment; one value per VM lifetime made a new series on
+	// every wake (profiling review round 4, R4-5).
+	ProfileCollectorLabelSlots  = 32
+	ProfileMaxConcurrentQueries = 4
+	ProfileMaxTrackedAccounts   = 10000
+	ProfileTransportTimeout     = 2 * time.Second
+	ProfileQueryTimeout         = 15 * time.Second
+	ProfileVsockPort            = 1040
+	ProfileLocalEndpoint        = "http://127.0.0.1:9191"
+	ProfileHealthListen         = "127.0.0.1:9160"
+	ProfileDefaultSocket        = "/run/faas/profiled.sock"
 	// ProfileRetryCacheMaxEntries bounds profiled's upload replay cache on a
 	// node. At the bound the oldest entries are evicted: the cache is
 	// best-effort replay protection, so it never refuses an upload.
@@ -1045,6 +1207,10 @@ const (
 	ProfileMutexFraction  = 10
 	// ProfileCaptureDiffMaxNodes bounds a differential flamegraph.
 	ProfileCaptureDiffMaxNodes = 2 * ProfileMaxViewNodes
+	// ProfileCaptureMaxConcurrentMerges bounds how many capture merges (view,
+	// diff, download, dashboard page) one apid parses at once; merges beyond
+	// it are refused as busy rather than queued (ADR-1155 round 4 follow-up).
+	ProfileCaptureMaxConcurrentMerges = 2
 	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
 	ProfileCaptureMaxConcurrentPerScheduler = 4
 	// ProfileCaptureMaxRunningPerPool bounds the captures of one pool (an
@@ -1241,15 +1407,15 @@ type ProfilingLimits struct {
 }
 
 const (
-	AutomationEventRecoveryReceiptMaxPages = 25
-	AutomationRecoveryPlanMaxBytes         = 64 << 10
-	AutomationRecoveryBatchMaxRuns         = 25
-	AutomationRecoveryPreviewDefaultLimit  = 10
-	AutomationRecoveryPreviewMaxLimit      = 25
-	EventReplayPreviewPageDefault          = 50
-	EventReplayPreviewPageMax              = 100
-	EventReplayPreviewCursorMaxBytes       = 4096
-	EventReplayPreviewReadTimeout          = 5 * time.Second
+	StoredWorkflowEventRecoveryReceiptMaxPages = 25
+	StoredWorkflowRecoveryPlanMaxBytes         = 64 << 10
+	StoredWorkflowRecoveryBatchMaxRuns         = 25
+	StoredWorkflowRecoveryPreviewDefaultLimit  = 10
+	StoredWorkflowRecoveryPreviewMaxLimit      = 25
+	EventReplayPreviewPageDefault              = 50
+	EventReplayPreviewPageMax                  = 100
+	EventReplayPreviewCursorMaxBytes           = 4096
+	EventReplayPreviewReadTimeout              = 5 * time.Second
 )
 
 // Historical backfills pin only the bounded settled-receipt retention window;
@@ -1275,6 +1441,12 @@ const (
 	InvocationRetentionBatch          = 500
 	InvocationRetentionBatchesPerPass = 20
 )
+
+// QueueCompletedPayloadRetention is how long a completed queue message keeps
+// its payload after its ack. Its history row stays for the plan's result
+// retention; failures and dead letters keep their payloads for replay
+// (ADR-20261018101500 amendment 2026-10-31).
+const QueueCompletedPayloadRetention = 24 * time.Hour
 
 // Event job lifecycle (ADR-20261028095548). A running backfill that makes no
 // progress for EventReplayBackfillIdleExpiry ends as expired. A recovery or
@@ -1732,6 +1904,20 @@ const (
 	RealtimeUsageQueryMaxHours     = 744
 )
 
+// QueueStatusCountLimit bounds every count a queue status read or gauge
+// makes: queue state, binding status, the dashboard and schedd's queue
+// gauges. A larger backlog reads as this many (ADR-20261018101500 amendments
+// 2026-10-27 and 2026-10-31).
+const QueueStatusCountLimit = 100_000
+
+// A batch send carries at most QueueSendBatchMaxMessages messages in at most
+// QueueSendBatchMaxBytes of request body; each message still meets its plan's
+// message size (ADR-20261018101500 amendment 2026-10-31).
+const (
+	QueueSendBatchMaxMessages = 100
+	QueueSendBatchMaxBytes    = 8 << 20
+)
+
 // Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
 // takes at most QueueLeaseMaxReceipts receipts. A lease without an explicit
 // timeout hides its message for QueueLeaseDefaultVisibilitySeconds; the
@@ -2120,6 +2306,12 @@ const OperationScheduleOnceHorizon = 366 * 24 * time.Hour
 const (
 	AfterRestoreHookDefaultTimeoutMS = 500
 	AfterRestoreHookMaxTimeoutMS     = 2000
+	// AfterRestoreHookBoundMaxTimeoutMS is the after_restore cap for an app
+	// with a managed PostgreSQL or object-storage binding (ADR-20261109180000):
+	// reconnecting to a scale-to-zero database across clouds missed 2 s in
+	// production and fell back to a cold boot. It stays inside the host's
+	// five-second resume deadline. apid refuses it for apps without a binding.
+	AfterRestoreHookBoundMaxTimeoutMS = 4000
 )
 
 const (
@@ -3280,29 +3472,9 @@ func CustomDomainLimitsFor(p Plan) (perApp, perAccount int, ok bool) {
 	}
 }
 
-// PlanResourceShape is the canonical RAM/vCPU pair advertised for a plan.
-// Guest vCPU topology is plan-derived in v1 (ADR-014 and ADR-152); it is not
-// a persisted per-app override. RAM can still be selected below the plan cap
-// through the existing resource-profile contract. The shape is therefore the
-// pair used when a caller explicitly supplies both values, while omitted vCPU
-// continues to preserve the legacy plan default.
-type PlanResourceShape struct {
-	Plan  Plan
-	RAMMB int
-	VCPU  int
-}
-
-// PlanResourceShapes is the single joint RAM/vCPU table used by API
-// validation and documentation. Keep this ordered with Plans.
-var PlanResourceShapes = []PlanResourceShape{
-	{Plan: PlanFree, RAMMB: 256, VCPU: 2},
-	{Plan: PlanHobby, RAMMB: 512, VCPU: 2},
-	{Plan: PlanPro, RAMMB: 1024, VCPU: 2},
-	{Plan: PlanScale, RAMMB: 2048, VCPU: 4},
-}
-
-// VCPUPerPlan exposes the plan-derived guest topology to SDK and CLI callers.
-// Keep it in lock-step with PlanResourceShapes and the Limits table below.
+// VCPUPerPlan is the guest vCPU count a function execution boots with. App
+// instances follow their size instead (ADR-20261109172421); this goes with
+// the Limits table's VCPU once executions do too. Keep the two in lock-step.
 var VCPUPerPlan = map[Plan]int{
 	PlanFree:  2,
 	PlanHobby: 2,
@@ -3329,6 +3501,10 @@ const AppCPUBaselineMillicoresPerGB = 1000
 // AppCPUBookingMaxMillicores bounds an instance's stored CPU booking
 // (instances.booked_cpu_millicores): the largest plan baseline.
 const AppCPUBookingMaxMillicores = 2000
+
+// GuestVCPUBookingMax bounds an instance's stored guest vCPU count
+// (instances.booked_vcpu, ADR-20261109172421): Firecracker's vCPU limit.
+const GuestVCPUBookingMax = 32
 
 // AppCPUCeilingFloorMillicores is the lowest burst ceiling (cpu.max) a plan
 // gets, so no plan bursts below today's one core (ADR-20261101160231).
@@ -3426,6 +3602,83 @@ func ValidGuestVCPUMillicores(v int) bool {
 	return v >= GuestVCPUMillicoresMin && v <= GuestVCPUMillicoresMax
 }
 
+// CPU admission (ADR-20261109172421), schedd's `cpu_admission`. enforce
+// refuses work for the per-node vCPU and physical CPU budgets; observe admits
+// on memory alone and counts what those gates would have refused, so CPU
+// decides where an instance goes, never whether it runs.
+const (
+	CPUAdmissionEnforce = "enforce"
+	CPUAdmissionObserve = "observe"
+	DefaultCPUAdmission = CPUAdmissionEnforce
+)
+
+// ValidCPUAdmission reports whether v is a `cpu_admission` value.
+func ValidCPUAdmission(v string) bool {
+	return v == CPUAdmissionEnforce || v == CPUAdmissionObserve
+}
+
+// SizeCPUWeightMax is the largest cgroup v2 cpu.weight.
+const SizeCPUWeightMax = 10_000
+
+// SizeVCPUs is the guest vCPU count of an instance whose CPU follows its size
+// (ADR-20261109172421): one per GB of instance RAM, at least one. It does not
+// depend on the plan.
+func SizeVCPUs(ramMB int) int {
+	return max(1, (ramMB+1023)/1024)
+}
+
+// SizeCPUWeight is the cpu.weight of such an instance: one per 16 MB of
+// instance RAM (8 at 128 MB, 128 at 2 GB), so a busy host shares CPU by
+// memory.
+func SizeCPUWeight(ramMB int) int {
+	return min(SizeCPUWeightMax, max(1, ramMB/16))
+}
+
+// Snapshot refresh after a release (ADR-20261106214916). schedd's
+// `snapshot_refresh` runtime config is off, shadow (find and count the
+// snapshots a release made stale, boot nothing) or on.
+const (
+	SnapshotRefreshOff    = "off"
+	SnapshotRefreshShadow = "shadow"
+	SnapshotRefreshOn     = "on"
+	// DefaultSnapshotRefresh is the compiled `snapshot_refresh`.
+	DefaultSnapshotRefresh = SnapshotRefreshOff
+
+	// DefaultSnapshotRefreshWindowHours is the compiled
+	// `snapshot_refresh_window_hours`: an app parked on a node within this
+	// many hours is a candidate on that node.
+	DefaultSnapshotRefreshWindowHours = 168
+	SnapshotRefreshWindowHoursMin     = 1
+	// SnapshotRefreshWindowHoursMax stays inside the 30-day retention of the
+	// parked instance rows the window is read from (DefaultInstanceRetention).
+	SnapshotRefreshWindowHoursMax = 720
+
+	// SnapshotRefreshPassMaxApps bounds one node's pass, most recently parked
+	// first.
+	SnapshotRefreshPassMaxApps = 1000
+
+	// SnapshotRefreshMaxResidencyPercent: a refresh boots only while the
+	// node's admitted tenant RAM is below this share of its ceiling, the
+	// headroom the builder's opportunistic slot requires. A refresh never
+	// waits for room; the next pass tries again.
+	SnapshotRefreshMaxResidencyPercent = 60
+	// SnapshotRefreshMaxRuntime is how long a refresh VM may live. A refresh
+	// parks within a cold boot and a capture; one older than this was left
+	// by a scheduler that stopped mid-refresh and is retired.
+	SnapshotRefreshMaxRuntime = 10 * time.Minute
+)
+
+// ValidSnapshotRefresh reports whether v is a valid `snapshot_refresh`.
+func ValidSnapshotRefresh(v string) bool {
+	return v == SnapshotRefreshOff || v == SnapshotRefreshShadow || v == SnapshotRefreshOn
+}
+
+// ValidSnapshotRefreshWindowHours reports whether v is a valid
+// `snapshot_refresh_window_hours`.
+func ValidSnapshotRefreshWindowHours(v int) bool {
+	return v >= SnapshotRefreshWindowHoursMin && v <= SnapshotRefreshWindowHoursMax
+}
+
 // CPUShape holds the runtime-config values that shape the CPU of an app on
 // schedd's `guest_vcpu_from_cpu_apps` list (ADR-20261101215228). A zero field
 // takes the compiled value, so the zero CPUShape is ADR-20261101160231 as
@@ -3519,18 +3772,6 @@ const (
 	BlockRateLimitBurstMB  = 256
 	BlockRateLimitBurstOps = 20000
 )
-
-// PlanResourceShapeFor returns the canonical joint shape for p. The bool is
-// false for an unknown plan so callers fail closed instead of inheriting a
-// higher-tier topology.
-func PlanResourceShapeFor(p Plan) (PlanResourceShape, bool) {
-	for _, shape := range PlanResourceShapes {
-		if shape.Plan == p {
-			return shape, true
-		}
-	}
-	return PlanResourceShape{}, false
-}
 
 // planRank maps a Plan to its rank (Free=0 … Scale=3). The lookup
 // returns -1 for any unknown plan so a closed-set drift surfaces
@@ -3738,7 +3979,10 @@ func RealtimeResumeSubscriptionsPerNodeFor(accountMaxConnections int) int {
 // Each realtimed process reports its per-account connection counts to apid
 // every RealtimeConnectionSyncInterval and learns the other nodes' counts in
 // return. Counts older than RealtimeConnectionSyncStaleAfter are ignored, and a
-// node whose own sync is that stale enforces its local count only.
+// node whose own sync is that stale enforces its local count only. The same
+// sync carries the open connections of each endpoint with its own
+// max_connections (at most RealtimeConnectionSyncMaxEndpoints), so that cap
+// holds across the fleet rather than once per node.
 //
 // RealtimeNodeOutboundBytesDefault bounds the payload bytes queued for clients
 // across a whole node. Each connection may queue up to 4 MiB, so without it
@@ -3756,6 +4000,7 @@ const (
 	RealtimeConnectionSyncInterval        = 5 * time.Second
 	RealtimeConnectionSyncStaleAfter      = 30 * time.Second
 	RealtimeConnectionSyncMaxAccounts     = 10_000
+	RealtimeConnectionSyncMaxEndpoints    = 10_000
 )
 
 // Channel rules (ADR-20261019102657): realtimed authorizes channels from a
@@ -3892,7 +4137,12 @@ type ObjectStoragePlanLimits struct {
 	// Free 1 GiB, Hobby 2× its included storage, Pro and Scale 5×. Support can
 	// grant a paid account another (ObjectStorageLimitsFor), and the account's
 	// spend cap tightens it (WithSpendCap).
-	MaxAccountBytes       int64
+	MaxAccountBytes int64
+	// MaxMonthlyRequests is the requests the account may make each month
+	// (ADR-20261104145353): Free 50,000, Hobby 500,000, Pro 2,500,000, Scale
+	// 10,000,000. Requests are not billed, so this bounds the provider's
+	// per-request charge: even all writes stay below the plan's price. The
+	// operator policy still applies when it is tighter.
 	MaxMonthlyRequests    int64
 	MaxMonthlyEgressBytes int64
 	// IncludedBytes is average stored bytes over a billing month of
@@ -3940,6 +4190,13 @@ const (
 	// leaves at its own deadline. It covers dialing a fresh control-plane
 	// connection from a compute edge.
 	PublicReadHostLookupTimeout = 2 * time.Second
+	// PublicReadForwardStaleMax is how long a compute edge's forwarder keeps
+	// routing a host by its last mount answer while the refresh runs in the
+	// background or fails (a control-plane database stall). The forwarder
+	// only routes: the control plane checks the bucket again before serving,
+	// so a stale answer delays a newly public mount but never serves a
+	// private one. Past it, a request waits for the lookup again.
+	PublicReadForwardStaleMax = 10 * time.Minute
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
@@ -4147,6 +4404,15 @@ type Limits struct {
 	// hourly count is below it, so production deploys always keep
 	// DeploysPerHour - PreviewDeploysPerHour (ADR-20261028100000).
 	PreviewDeploysPerHour int
+	// BuildMinutesPerMonth is the builder time the account that pays for an
+	// app may use per UTC month across all its apps (ADR-20261104132753).
+	// Builds are free; this bounds how much of the shared builder slots one
+	// account can hold. A build that starts past it is refused with
+	// plan_limit_build_minutes; image deploys build nothing and are not
+	// counted. A running build counts up to now, and no build counts past
+	// BuildTimeoutSeconds (amendment 1). Free 200, Hobby 1,000, Pro 3,000,
+	// Scale 6,000 (owner, 2026-11-07).
+	BuildMinutesPerMonth int
 	// DeveloperApps is the separate cap for expiring `gregale dev`
 	// environments. These sessions do not consume DeployedApps slots.
 	DeveloperApps      int
@@ -4309,12 +4575,18 @@ type Limits struct {
 	EgressMbit int // per-instance egress bandwidth cap via tc
 	// MonthlyEgressGiB is the application egress a month includes: the
 	// host-interface bytes the subject's instances send (state.Usage
-	// NetTxBytes, the egress meter's source). While egress is not billed for
-	// the plan, meterd stops the subject's apps at it until the month ends or
-	// the plan grows; once the egress meter bills live it is the included
-	// allowance and usage above it is overage under the spend cap
-	// (ADR-20261103131742). It matches the plan's object storage egress.
+	// NetTxBytes, the egress meter's source). meterd stops the subject's apps
+	// at it until the month ends or the plan grows, on every plan and even
+	// once the egress meter bills live: usage above it is overage only for a
+	// subject that opted into egress overage, which none can yet
+	// (ADR-20261103131742, ADR-20261104090000). It matches the plan's object
+	// storage egress.
 	MonthlyEgressGiB int64
+	// EgressOverageElectable is whether the plan's billing subject may elect
+	// to pay for egress above MonthlyEgressGiB instead of stopping at it
+	// (PUT /v1/account/egress-overage, ADR-20261104204500). The election takes
+	// effect only while the egress meter bills live; Free never can.
+	EgressOverageElectable bool
 	// EgressNewConnPerSecond / EgressNewConnBurst cap the rate at which a
 	// guest may open new outbound flows (ADR-361). Excess new flows are
 	// dropped in the per-instance forward chain and counted in
@@ -4359,11 +4631,17 @@ type Limits struct {
 	// CodePlanLimitSecrets on the next PUT. SecretValueMaxBytes bounds the
 	// plaintext value the customer may PUT — apid rejects larger values
 	// with 413 CodeSecretValueTooLarge before sealing.
-	SecretCountMax      int // max secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100)
+	SecretCountMax      int // max customer-authored secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100); managed binding values do not count (ADR-20261109180000)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
 	// ProjectSecretCountMax bounds the secrets one project environment shares
 	// with its services (ADR-1139); each value uses SecretValueMaxBytes.
 	ProjectSecretCountMax int // (Free 8, Hobby 25, Pro 50, Scale 100)
+	// PostgresBindingsPerAppMax bounds the live managed PostgreSQL bindings
+	// one app holds across every scope. Each binding issues its own provider
+	// role, so the count is capped on its own now that managed values left
+	// SecretCountMax (ADR-20261110120000); the values equal the bound
+	// SecretCountMax used to impose.
+	PostgresBindingsPerAppMax int // (Free 8, Hobby 25, Pro 50, Scale 100)
 
 	// Customer env vars (issue #395 / ADR-045). Plaintext per-app store
 	// for non-sensitive runtime config (LOG_LEVEL, FEATURE_X, etc.). The
@@ -4388,6 +4666,14 @@ type Limits struct {
 	// Spec §11: signature enforcement is a regulated-workload feature;
 	// Free tier keeps its "ship any image" path.
 	TrustedSignerCountMax int // Free 0, Hobby 4, Pro 8, Scale 16
+
+	// DeploymentAliasesMax bounds an app's named deployment aliases. Each
+	// alias keeps its deployment's layers out of retention
+	// (LayerArtifactHasReferences) for as long as it exists, and layer
+	// storage is not billed, so an uncapped count let one app pin any number
+	// of app layers (deploy review 2026-11-10, F1). Re-pointing an existing
+	// alias does not count.
+	DeploymentAliasesMax int // Free 5, Hobby 10, Pro 25, Scale 50
 
 	// RegistryCredentialMax (issue #461 / ADR-062) bounds the per-app
 	// count of sealed Basic Auth credentials, one row per (app, host).
@@ -4418,6 +4704,16 @@ type Limits struct {
 	// min_instances does, and an unbounded free-tier write endpoint is an
 	// abuse surface.
 	CustomMetricsAllowed bool
+	// CustomMetricsPerApp caps distinct custom metric names per app
+	// (ADR-20261108160000; was a flat MaxCustomMetricsPerApp = 5). A
+	// histogram uses five names (_count, _sum, _p50, _p95, _p99). Bounded
+	// because schedd reads an app's metrics every tick and apid exports
+	// every fresh one to the platform Prometheus.
+	CustomMetricsPerApp int
+	// CustomMetricSeriesPerApp caps labelled series (one per distinct label
+	// set of a metric name) per app, ADR-20261108160000 slice C. Each is a
+	// stored row and an exported Prometheus series.
+	CustomMetricSeriesPerApp int
 
 	// MaxInstancesAllowed (issue #462 / ADR-058) toggles the per-app
 	// ceiling on live instances. Mirrors MinInstancesAllowed: Hobby+
@@ -5239,17 +5535,21 @@ type Limits struct {
 	// body has more entries.
 	PublicAuthIPAllowlistMaxEntries int
 
-	// WarmSnapshotEnabled (issue #470 / ADR-055) is the plan-gated
-	// default for the per-app two-tier snapshot flag. Free/Hobby =
-	// false (warm-tier apps keep both warm.snap + init.snap, which
-	// is +130 MB per app on the parked disk budget — Hobby's pricing
-	// tier is too cheap for that). Pro/Scale = true (the doubled
-	// parked footprint is inside the 452 GB budget). Apid's
-	// updateApp handler rejects Free/Hobby PATCH-true with
-	// 403 plan_warm_snapshot_not_allowed; the default is applied
-	// at CreateApp time so a Pro customer's brand-new app gets a
-	// warm.snap without an extra PATCH.
+	// WarmSnapshotEnabled (issue #470 / ADR-055) is the plan gate for
+	// the per-app two-tier snapshot flag (Plan.WarmSnapshotAllowed).
+	// Free/Hobby = false (warm-tier apps keep both warm.snap +
+	// init.snap, which is +130 MB per app on the parked disk budget —
+	// Hobby's pricing tier is too cheap for that). Pro/Scale = true
+	// (the doubled parked footprint is inside the 452 GB budget).
+	// Apid's updateApp handler rejects Free/Hobby PATCH-true with
+	// 403 plan_warm_snapshot_not_allowed.
 	WarmSnapshotEnabled bool
+	// WarmSnapshotNewAppDefault is the warm_snapshot_enabled value a
+	// new app gets when the create request does not set one. False on
+	// every plan (ADR-20261110180000): a warm snapshot keeps the memory
+	// and /tmp an instance built while serving its first requests and
+	// restores it in every later wake and instance, so an app opts in.
+	WarmSnapshotNewAppDefault bool
 	// WarmPoolAllowed (issue #1056 / ADR-074) permits a customer to
 	// retain paused warm-pool VMs. Free is disabled; Hobby and above
 	// may opt in with an app-level warm_pool_size setting.
@@ -5786,6 +6086,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        10,
 		PreviewDeploysPerHour: 5,
+		BuildMinutesPerMonth:  200,
 		DeveloperApps:         1,
 		MaxConcurrency:        1,
 		RAMMB:                 256,
@@ -5807,10 +6108,10 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       20,
 		// ADR-1430: 1 GiB included and Free's hard stop; egress capped at
 		// ten times that (ADR-20261031122757).
-		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
+		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyRequests: 50_000, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
-		RateLimitRPS:                   5,
-		RateLimitBurst:                 20,
+		RateLimitRPS:                   50,
+		RateLimitBurst:                 200,
 		EgressMbit:                     10,
 		MonthlyEgressGiB:               10,
 		EgressNewConnPerSecond:         10,
@@ -5823,6 +6124,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   16,
 		SecretCountMax:                 8,
 		ProjectSecretCountMax:          8,
+		PostgresBindingsPerAppMax:      8,
 		SecretValueMaxBytes:            4 * 1024,
 		EnvVarsMax:                     16,
 		EnvValueMaxBytes:               4 * 1024,
@@ -5830,6 +6132,7 @@ var planLimits = map[Plan]Limits{
 		// signature enforcement is a regulated-workload feature that
 		// Free never needs (issue #472 / ADR-054).
 		TrustedSignerCountMax: 0,
+		DeploymentAliasesMax:  5,
 		// Issue #461: Free has no private-registry credential surface.
 		// Handler returns 403 plan_registry_credentials_not_allowed.
 		RegistryCredentialMax: 0,
@@ -6045,8 +6348,8 @@ var planLimits = map[Plan]Limits{
 		BrokerEgressMbit:       0,
 		TLSSkipVerifyAllowed:   false,
 		// Per-account rate limit (ADR-040, amended by issue #1680): the
-		// account can sustain one Free app at its advertised 5 rps.
-		RateLimitPerAccountRPM: 300,
+		// account can sustain one Free app at its advertised 50 rps.
+		RateLimitPerAccountRPM: 3000,
 		// Wake-side admission throttle (ADR-099 PR-0). Free caps
 		// wake admissions at 1/min per app + 1/min per account — the
 		// abuse-floor tier should never burst-wake. The apid-side
@@ -6212,6 +6515,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        50,
 		PreviewDeploysPerHour: 25,
+		BuildMinutesPerMonth:  1_000,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
 		RAMMB:                 512,
@@ -6224,15 +6528,16 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
 		ConcurrencyPerVMBound:          5,
-		RateLimitRPS:                   20,
-		RateLimitBurst:                 100,
+		RateLimitRPS:                   200,
+		RateLimitBurst:                 1000,
 		EgressMbit:                     25,
 		MonthlyEgressGiB:               100,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         20,
 		EgressNewConnBurst:             80,
 		EgressNewDestinationsPerMinute: 240,
@@ -6243,6 +6548,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   64,
 		SecretCountMax:                 25,
 		ProjectSecretCountMax:          25,
+		PostgresBindingsPerAppMax:      25,
 		SecretValueMaxBytes:            8 * 1024,
 		EnvVarsMax:                     32,
 		EnvValueMaxBytes:               8 * 1024,
@@ -6252,6 +6558,7 @@ var planLimits = map[Plan]Limits{
 		// signing key + an emergency break-glass. Anything beyond
 		// that is "you're a Pro" territory.
 		TrustedSignerCountMax: 4,
+		DeploymentAliasesMax:  10,
 		// Issue #461: Hobby = 2 — staging + production.
 		RegistryCredentialMax: 2,
 		// 64 KB envelope = 0.25 % of Hobby's 25 MB tarball budget — small
@@ -6303,7 +6610,10 @@ var planLimits = map[Plan]Limits{
 		// they're paying for.
 		MinInstancesAllowed:  true,
 		CustomMetricsAllowed: true,
-		MaxInstancesAllowed:  true,
+		CustomMetricsPerApp:  20,
+		// ADR-20261108160000 slice C.
+		CustomMetricSeriesPerApp: 100,
+		MaxInstancesAllowed:      true,
 		// MaxMinInstances (ADR-071): Hobby gets 1 — one warm
 		// instance is the minimum the floor feature exists to
 		// deliver (the customer's "first request never pays the
@@ -6489,8 +6799,8 @@ var planLimits = map[Plan]Limits{
 		// headroom for Pro+ below the hard limit.
 		TriggerPayloadMaxBytes: 1048576,
 		// Per-account rate limit (ADR-040, amended by issue #1680): the
-		// account can sustain one Hobby app at its advertised 20 rps.
-		RateLimitPerAccountRPM: 1200,
+		// account can sustain one Hobby app at its advertised 200 rps.
+		RateLimitPerAccountRPM: 12000,
 		// Wake-side admission throttle (ADR-099 PR-0). Hobby
 		// permits a small wake burst — a cron tick on a Hobby
 		// customer's job can legitimately want 5 wakes/min across
@@ -6507,7 +6817,7 @@ var planLimits = map[Plan]Limits{
 		LogStreamsMax:          5,
 		// CPU fairness (issue #301): Hobby weight=4, quota 200ms/200ms.
 		// Doubles Free's quota — tracks the per-app concurrency bump
-		// (1 → 2) and the per-app rps (5 → 20).
+		// (1 → 2) and the per-app rps (50 → 200).
 		CPUWeight:   4,
 		CPUQuotaUS:  200_000,
 		CPUPeriodUS: 200_000,
@@ -6659,6 +6969,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        250,
 		PreviewDeploysPerHour: 125,
+		BuildMinutesPerMonth:  3_000,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
 		RAMMB:                 1024,
@@ -6671,17 +6982,18 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
 		// typical SaaS-tier workload envelope (one Node/Python
 		// service handling fan-out from a single client request).
 		ConcurrencyPerVMBound:          25,
-		RateLimitRPS:                   100,
-		RateLimitBurst:                 500,
+		RateLimitRPS:                   1000,
+		RateLimitBurst:                 5000,
 		EgressMbit:                     100,
 		MonthlyEgressGiB:               500,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         50,
 		EgressNewConnBurst:             200,
 		EgressNewDestinationsPerMinute: 1200,
@@ -6692,6 +7004,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   256,
 		SecretCountMax:                 50,
 		ProjectSecretCountMax:          50,
+		PostgresBindingsPerAppMax:      50,
 		SecretValueMaxBytes:            16 * 1024,
 		EnvVarsMax:                     64,
 		EnvValueMaxBytes:               16 * 1024,
@@ -6699,7 +7012,10 @@ var planLimits = map[Plan]Limits{
 		RegistryCredentialMax: 5,
 		MinInstancesAllowed:   true,
 		CustomMetricsAllowed:  true,
-		MaxInstancesAllowed:   true,
+		CustomMetricsPerApp:   50,
+		// ADR-20261108160000 slice C.
+		CustomMetricSeriesPerApp: 500,
+		MaxInstancesAllowed:      true,
 		// MaxMinInstances (ADR-071): Pro = 3 — covers a small
 		// "always-warm fan-out for a customer-facing API" pattern
 		// without letting one Pro app reserve a quarter of the
@@ -6709,6 +7025,7 @@ var planLimits = map[Plan]Limits{
 		// matrix (5-8 publishers). Enough for "every dev has their own
 		// key" workflows without letting the table grow unbounded.
 		TrustedSignerCountMax: 8,
+		DeploymentAliasesMax:  25,
 		// 256 KB = 0.1 % of Pro's 250 MB tarball. ADR-20261022105723:
 		// 100,000 pending messages per app, 1 GiB of them per account,
 		// kept 4 days.
@@ -6919,8 +7236,8 @@ var planLimits = map[Plan]Limits{
 		// identically pre/post migration 00274.
 		TriggerPayloadMaxBytes: 6291456,
 		// Per-account rate limit (ADR-040, amended by issue #1680): the
-		// account can sustain one Pro app at its advertised 100 rps.
-		RateLimitPerAccountRPM: 6000,
+		// account can sustain one Pro app at its advertised 1000 rps.
+		RateLimitPerAccountRPM: 60000,
 		// Wake-side admission throttle (ADR-099 PR-0). Pro is the
 		// production tier — the per-app burst ceiling of 20/min is
 		// calibrated against a customer running a cron fleet
@@ -6962,7 +7279,7 @@ var planLimits = map[Plan]Limits{
 		// breakdown by default).
 		RouteMetricsEnabled: true,
 		// Warm-snapshot (issue #470 / ADR-055): Pro is the first
-		// tier where warm-snapshot is on by default. Per the issue
+		// tier that may opt in (off by default, ADR-20261110180000). Per the issue
 		// body's acceptance: "for a Pro+ app that has served ≥5
 		// successful requests ≥2 s after first-ready, restore
 		// from warm.snap should be ≤50 % of init.snap p50".
@@ -7071,6 +7388,7 @@ var planLimits = map[Plan]Limits{
 
 		DeploysPerHour:        1000,
 		PreviewDeploysPerHour: 500,
+		BuildMinutesPerMonth:  6_000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
 		RAMMB:                 2048,
@@ -7083,7 +7401,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -7092,10 +7410,11 @@ var planLimits = map[Plan]Limits{
 		// for a typical Node.js / Go service; a sync-subprocess
 		// Python customer would saturate before hitting this cap.
 		ConcurrencyPerVMBound:          80,
-		RateLimitRPS:                   500,
-		RateLimitBurst:                 2000,
+		RateLimitRPS:                   5000,
+		RateLimitBurst:                 20000,
 		EgressMbit:                     250,
 		MonthlyEgressGiB:               2000,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         100,
 		EgressNewConnBurst:             400,
 		EgressNewDestinationsPerMinute: 3000,
@@ -7106,6 +7425,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   1024,
 		SecretCountMax:                 100,
 		ProjectSecretCountMax:          100,
+		PostgresBindingsPerAppMax:      100,
 		SecretValueMaxBytes:            32 * 1024,
 		EnvVarsMax:                     256,
 		EnvValueMaxBytes:               32 * 1024,
@@ -7113,7 +7433,10 @@ var planLimits = map[Plan]Limits{
 		RegistryCredentialMax: 20,
 		MinInstancesAllowed:   true,
 		CustomMetricsAllowed:  true,
-		MaxInstancesAllowed:   true,
+		CustomMetricsPerApp:   200,
+		// ADR-20261108160000 slice C.
+		CustomMetricSeriesPerApp: 2000,
+		MaxInstancesAllowed:      true,
 		// MaxMinInstances (ADR-071): Scale = 10 — half of
 		// MaxConcurrency (20). At Scale's 1024 MB instance RAM
 		// and 8 MB overhead, 10 instances resident = 10,320 MB
@@ -7129,6 +7452,7 @@ var planLimits = map[Plan]Limits{
 		// key (1024 bytes per migration 00083 CHECK) keeps the
 		// table on-disk under ~16 KiB regardless.
 		TrustedSignerCountMax: 16,
+		DeploymentAliasesMax:  50,
 		// ADR-20261022105723: 1,000,000 pending messages per app, 10 GiB
 		// of them per account, kept 14 days.
 		MaxQueueDepth:                  1_000_000,
@@ -7355,8 +7679,8 @@ var planLimits = map[Plan]Limits{
 		// constraint.
 		TriggerPayloadMaxBytes: 16777216,
 		// Per-account rate limit (ADR-040, amended by issue #1680): the
-		// account can sustain one Scale app at its advertised 500 rps.
-		RateLimitPerAccountRPM: 30000,
+		// account can sustain one Scale app at its advertised 5000 rps.
+		RateLimitPerAccountRPM: 300000,
 		// Wake-side admission throttle (ADR-099 PR-0). Scale is
 		// the upper tier — 100 wakes/min per app is enough to drain
 		// a 1000-task parallel job run in 10 min wall-clock, which
@@ -7547,6 +7871,56 @@ const (
 	// request (ADR-1151). The instance stays RUNNING and billed. In the
 	// ADR's simulation 2 s fit 2.5x the function apps per node.
 	QuietPauseAfterMillis = 2000
+	// The idle ladder (ADR-20261107122928, proposed): how long a
+	// request-serving instance has had nothing in flight when it reaches
+	// each level. L1 quiet pause, L2 a vmmd-local freeze, L3 and L4 compress
+	// the pages left untouched for that long, and L5 snapshots (parks) the
+	// instance. vmmd's idle_ladder observe mode measures the levels instances
+	// would reach; nothing acts on them yet.
+	IdleLadderQuietPauseAfterMillis = 1000
+	IdleLadderFreezeAfterSeconds    = 10
+	IdleLadderColdAge1Seconds       = 60
+	IdleLadderColdAge2Seconds       = 180
+	IdleLadderSnapshotAfterSeconds  = 600
+	// The idle ladder's activity guard (ADR-20261107122928 §6): an app quiet
+	// pause does not pause counts as idle only when, over the last
+	// IdleLadderQuietPauseAfterMillis, nothing was in flight, its VM cgroup
+	// used at most IdleLadderGuardCPUMaxMillis of CPU and its veth moved at
+	// most IdleLadderGuardNetMaxBytes in each direction.
+	IdleLadderGuardCPUMaxMillis = 10
+	IdleLadderGuardNetMaxBytes  = 512
+	// IdleLadderReservationDiscountMaxPercent bounds the RAM measured
+	// admission leaves out of a node's reservation cap for instances vmmd
+	// holds at the idle ladder's freeze level (ADR-20261107122928): at most
+	// this percent of the node's admission ceiling. With the ADR-909 cap of
+	// MeasuredAdmissionMaxOvercommitPercent, reservations including those
+	// instances reach at most 400% of the ceiling; the measured figure still
+	// bounds what the node holds.
+	IdleLadderReservationDiscountMaxPercent = 200
+	// IdleLadderFreezeLevel is the idle_ladder_level vmmd reports for L2: a
+	// quiet-paused instance quiet for IdleLadderFreezeAfterSeconds, which
+	// measured admission books like a frozen instance.
+	IdleLadderFreezeLevel = 2
+	// Cold-page compression (ADR-20261107122928 §1, §2). vmmd ages a quiet
+	// VM's memory at most once per IdleLadderColdAge1Seconds of wall time,
+	// after the guest ran, so each multi-gen LRU generation spans at least
+	// that long. L3 compresses every generation but the youngest
+	// IdleLadderCold1KeepGenerations, L4 every one but the youngest
+	// IdleLadderCold2KeepGenerations (2 is the fewest the kernel keeps). A
+	// wake from L3/L4 may add at most IdleLadderWakeBudgetMillis, or the
+	// instance's own snapshot restore time if that is shorter; vmmd counts
+	// IdleLadderFaultMicrosPerPage for each page the guest brings back
+	// (measured on nested production-us; re-measure on bare metal, Rollout
+	// step 1). An app whose wake exceeds the budget keeps one more
+	// generation at each level, up to IdleLadderMaxExtraKeepGenerations;
+	// IdleLadderCeilingRelaxWakes wakes in a row under half the budget give
+	// one back.
+	IdleLadderCold1KeepGenerations    = 3
+	IdleLadderCold2KeepGenerations    = 2
+	IdleLadderWakeBudgetMillis        = 100
+	IdleLadderFaultMicrosPerPage      = 21
+	IdleLadderMaxExtraKeepGenerations = 2
+	IdleLadderCeilingRelaxWakes       = 5
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
@@ -7723,12 +8097,18 @@ const (
 	VCPUSlots     = 160
 
 	// Metering (spec §1, §10).
-	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1430)
+	OverageMillicentsPerGBHour = 5_000 // $0.05 per GB-RAM-hour (ADR-20261107192333, amends ADR-1430)
 	// ObjectStorageMillicentsPerGiBMonth is the published rate for average
 	// stored bytes beyond a plan's ObjectStorage.IncludedBytes: $0.03 per
 	// GiB-month (ADR-1430). Requests and egress are free. The operator's
 	// object-storage rate card applies it.
 	ObjectStorageMillicentsPerGiBMonth int64 = 3_000
+	// EgressOverageMillicentsPerGiB is the published rate for application
+	// egress beyond a paid plan's MonthlyEgressGiB: $0.03 per GiB. Only a
+	// subject whose egress overage election covers the hour is billed it,
+	// under its spend cap (ADR-20261104204500); every other subject's apps
+	// stop at the allowance (ADR-20261103131742 amendment 2).
+	EgressOverageMillicentsPerGiB int64 = 3_000
 	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
 	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
 	FinancialEgressMinimumCreditBytes = int64(4096)
@@ -7858,6 +8238,15 @@ const (
 	// keep waiting for build disk before it fails with the disk-full error
 	// instead of being requeued (H83).
 	BuildDiskCapacityMaxWait = 15 * time.Minute
+	// SnapshotPrimeCapacityMaxWait is how long after its snapshot_prepare
+	// stage started a built deployment keeps waiting for a compute node with
+	// room for its first boot. Inside the window a node-budget refusal
+	// (memory, guest vCPUs, CPU) leaves the deployment snapshotting and the
+	// scheduler's prime recovery retries it each minute; after it the
+	// deployment fails with capacity_unavailable as before. Without the wait
+	// a momentarily full fleet failed a finished build, and the customer had
+	// to rebuild to retry.
+	SnapshotPrimeCapacityMaxWait = 5 * time.Minute
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment
@@ -8299,6 +8688,12 @@ const (
 	// not the cap).
 	MaxEdgeRuleMaintenanceRetryAfterSeconds = 24 * 60 * 60 // 86400 (24h)
 
+	// MaxEdgeJWTIdentityBytes bounds the issuer and subject a kind=jwt rule
+	// hands the app (X-Faas-Edge-Jwt-*) and an async route stores on its
+	// invocation; a longer value is not forwarded (ADR-091 amendment
+	// 2026-11-04, round 11). A global bound, not a plan quota.
+	MaxEdgeJWTIdentityBytes = 1024
+
 	// --- ADR-201 §1: kind=retry bounds -------------------------------
 	// These are global bounds, not plan quotas. The per-plan rule count
 	// is EdgeRulesRetryPerApp above.
@@ -8584,6 +8979,12 @@ const (
 	// takes precedence; 0 in the per-account column means
 	// "atomic revocation" (no grace).
 	DefaultAPIKeyGraceWindowDays = 7
+
+	// APIKeyGraceWindowMaxDays caps the per-account rotation grace window
+	// (ADR 20261109120000). Unbounded, a leaked admin key could set years
+	// of grace, so the owner's rotation of that key left it working; a
+	// value past ~106,751 days also overflowed time.Duration.
+	APIKeyGraceWindowMaxDays = 30
 
 	// SidecarCapMax bounds all helper workloads in one deployment, including
 	// the optional one-shot init helper. The global cap keeps roster, mount,
@@ -9014,7 +9415,9 @@ const (
 	// latency bound rather than a product limit. Twelve covers a distinct
 	// window per month, which is well past any real weekly shape.
 	MaxScalingSchedules = 12
-	// MaxCustomMetricsPerApp caps distinct ADR-202 metric names per app.
+	// MaxCustomMetricsPerApp is the largest per-plan cap on distinct ADR-202
+	// metric names per app (Limits.CustomMetricsPerApp, ADR-20261108160000);
+	// enforcement reads the plan's own cap.
 	//
 	// The bound is a LATENCY property before it is a storage one: the
 	// targets trigger reads an app's custom metrics on every tick for
@@ -9022,7 +9425,7 @@ const (
 	// per-tick read. The (app_id, name) primary key means a push to an
 	// existing name is an upsert and cannot grow the count — only a new
 	// name can, which is where apid enforces this.
-	MaxCustomMetricsPerApp = 5
+	MaxCustomMetricsPerApp = 200
 	// CustomMetricNameMaxBytes bounds a metric name. Matches the
 	// app_custom_metrics_name_shape CHECK in the migration; the Go gate
 	// exists so the customer gets a 422 with a useful message instead of
@@ -9033,6 +9436,13 @@ const (
 	// ceiling one bad push would demand the plan cap's worth of instances
 	// on the very next tick.
 	CustomMetricMaxValue = 1e12
+	// Labelled series bounds (ADR-20261108160000 slice C): label keys per data
+	// point, the longest label value kept, and series per metric name. Each
+	// series is a stored row and an exported Prometheus series, so a metric
+	// labelled by an unbounded attribute (a user id) stops at the cap.
+	CustomMetricMaxLabels          = 3
+	CustomMetricLabelValueMaxBytes = 128
+	CustomMetricMaxSeriesPerMetric = 50
 	// MinScalingScheduleDurationS / MaxScalingScheduleDurationS bound a
 	// window. The floor is 60 s because the scheduler's own sweep is
 	// coarser than that, so a shorter window could close before any tick
@@ -9055,6 +9465,10 @@ const (
 	// than its last value, so an app whose pusher died scales down on its
 	// other signals instead of holding the fleet at a frozen backlog.
 	CustomMetricFreshnessSeconds = 300
+	// CustomMetricMaxFutureSkewSeconds bounds how far ahead of apid's clock
+	// an OTLP data point may be stamped. A later stamp would keep the value
+	// fresh after its pusher stopped (ADR-20261031144636).
+	CustomMetricMaxFutureSkewSeconds = 300
 
 	// CustomMetricExportMaxSeries caps one ADR-745 exporter scrape. The
 	// per-app name cap already bounds the table; this bounds a scrape even
@@ -9451,6 +9865,14 @@ const (
 	// GatewayRequestTelemetryMinuteGraceSeconds keeps a minute's buckets open
 	// this long after the minute ends, for requests that finish just after it.
 	GatewayRequestTelemetryMinuteGraceSeconds = 5
+	// GatewayRequestTelemetryTracedExactPerBucket is how many traced
+	// non-5xx requests in one collapse bucket-minute keep their own row, so
+	// their guest spans have a row to merge into (ADR-127 amendment
+	// 2026-11-10). Past it a traced request folds into the bucket and its
+	// spans are dropped after the span writer's retries. At the 5-row cap that
+	// server errors keep, a busy traced app lost spans all day (prod
+	// 2026-11-09: ~190 traces/day across two nodes).
+	GatewayRequestTelemetryTracedExactPerBucket = 30
 	// GatewayRequestJournalSegmentMinutes is the received-time span of one
 	// node-local request-ID journal segment (ADR-20261101085552). A segment's
 	// index is sorted in memory when it closes, so the span bounds that work:
@@ -9789,8 +10211,14 @@ const (
 	// unbounded body exhausted schedd's memory (bug hunt 2026-10-28 H56).
 	TriggerBrokerStatsMaxBytes int64 = 4 << 10
 
-	// Free-tier disk reaper (spec §4.3): zero requests this long => EVICTED_COLD.
+	// Free-tier disk reaper (spec §4.3, ADR-20261105120000): a Free app with
+	// no request, start, park or deployment this long loses its snapshots;
+	// its live app layer stays and the next request cold-boots.
 	FreeTierColdEvictDays = 14
+	// FreeTierColdEvictAppsPerTick bounds the apps one imaged GC tick evicts
+	// (ADR-20261105120000), so a first sweep over a large backlog is spread
+	// over several ticks.
+	FreeTierColdEvictAppsPerTick = 50
 
 	// Instance retention (spec §17 follow-up, PR #74; issue #2415):
 	// STOPPED/FAILED rows are deleted from their terminal_at anchor and
@@ -10232,99 +10660,99 @@ const (
 )
 
 const (
-	AutomationPublishCheckMaxBytes        int64 = 8 * AutomationSimulationRequestMaxBytes
-	AutomationPublishCheckMaxScenarios          = 32
-	AutomationPublishCheckMaxExpectations       = 4096
-	AutomationPublishCheckMaxExclusions         = 256
-	AutomationPublishCheckReceiptTTL            = 30 * time.Minute
+	StoredWorkflowPublishCheckMaxBytes        int64 = 8 * StoredWorkflowSimulationRequestMaxBytes
+	StoredWorkflowPublishCheckMaxScenarios          = 32
+	StoredWorkflowPublishCheckMaxExpectations       = 4096
+	StoredWorkflowPublishCheckMaxExclusions         = 256
+	StoredWorkflowPublishCheckReceiptTTL            = 30 * time.Minute
 
-	AutomationSimulationRequestMaxBytes      int64 = 3 << 20
-	AutomationSimulationResponseMaxBytes     int64 = 4 << 20
-	AutomationSimulationMaxSteps                   = 128
-	AutomationSimulationMaxTraceEntries            = 1024
-	AutomationDefinitionMaxBytes             int64 = 1 << 20
-	AutomationTestSuiteMaxBytes              int64 = AutomationSimulationRequestMaxBytes + AutomationPublishCheckMaxBytes
-	AutomationTestSuiteRequestMaxBytes       int64 = AutomationTestSuiteMaxBytes + 4096
-	AutomationTestReportMaxBytes             int64 = AutomationPublishCheckMaxBytes
-	AutomationLiveMaxExpectations                  = AutomationSimulationMaxSteps
-	AutomationLiveSpecMaxBytes               int64 = AutomationSimulationRequestMaxBytes
-	AutomationLiveStartMaxBytes              int64 = 4096
-	AutomationLiveHistoryLimit                     = 20
-	AutomationLiveReportMaxBytes             int64 = 128 << 10
-	AutomationLiveMaxAttempts                      = WorkflowRetryMaxAttempts * (WorkflowRunMaxResumes + 1)
-	AutomationLiveProgressPollInterval             = 3 * time.Second
-	AutomationLiveProgressRequestTimeout           = 10 * time.Second
-	AutomationLiveProgressMaxRequests              = 100
-	AutomationLiveProgressFormMaxBytes       int64 = 4096
-	AutomationLiveCLIWaitDefault                   = 5 * time.Minute
-	AutomationLiveCLIWaitMax                       = time.Hour
-	AutomationLiveCLIPollMin                       = time.Second
-	AutomationLiveCLIPollMax                       = time.Minute
-	AutomationLiveSuiteMaxCases                    = AutomationPublishCheckMaxScenarios
-	AutomationLiveBaselineNameMaxBytes             = 63
-	AutomationLiveBaselineLimit                    = 20
-	AutomationLiveBaselineLifetimeNameLimit        = 100
-	AutomationLiveBaselineHistoryLimit             = 100
-	AutomationLiveBaselineRequestMaxBytes    int64 = 20 << 10
-	AutomationLiveBaselineReceiptMaxBytes    int64 = 32 << 10
-	AutomationLiveGatePolicyMaxBytes         int64 = 16 << 10
-	AutomationLiveSuiteComparisonMaxCases          = 2 * AutomationLiveSuiteMaxCases
-	AutomationLiveSuiteJournalMaxBytes       int64 = (AutomationLiveReportMaxBytes+AutomationLiveStartMaxBytes)*AutomationLiveSuiteMaxCases + (64 << 10)
-	AutomationLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
-	AutomationLiveSuiteRequestMaxBytes       int64 = 16 << 10
-	AutomationLiveSuiteStartWindow                 = 10 * time.Minute
-	AutomationLiveSuiteFutureClockSkew             = 30 * time.Second
-	AutomationLiveSuiteProtectedWindow             = AutomationLiveSuiteStartWindow + AutomationLiveSuiteFutureClockSkew
-	AutomationLiveSuiteHistoryLimit                = AutomationLiveHistoryLimit
-	AutomationLiveSuiteRetainedLimit               = 100
-	AutomationTestCaseNameMaxBytes                 = 128
-	AutomationTestStepResultsMax                   = AutomationSimulationMaxTraceEntries
+	StoredWorkflowSimulationRequestMaxBytes      int64 = 3 << 20
+	StoredWorkflowSimulationResponseMaxBytes     int64 = 4 << 20
+	StoredWorkflowSimulationMaxSteps                   = 128
+	StoredWorkflowSimulationMaxTraceEntries            = 1024
+	StoredWorkflowDefinitionMaxBytes             int64 = 1 << 20
+	StoredWorkflowTestSuiteMaxBytes              int64 = StoredWorkflowSimulationRequestMaxBytes + StoredWorkflowPublishCheckMaxBytes
+	StoredWorkflowTestSuiteRequestMaxBytes       int64 = StoredWorkflowTestSuiteMaxBytes + 4096
+	StoredWorkflowTestReportMaxBytes             int64 = StoredWorkflowPublishCheckMaxBytes
+	StoredWorkflowLiveMaxExpectations                  = StoredWorkflowSimulationMaxSteps
+	StoredWorkflowLiveSpecMaxBytes               int64 = StoredWorkflowSimulationRequestMaxBytes
+	StoredWorkflowLiveStartMaxBytes              int64 = 4096
+	StoredWorkflowLiveHistoryLimit                     = 20
+	StoredWorkflowLiveReportMaxBytes             int64 = 128 << 10
+	StoredWorkflowLiveMaxAttempts                      = WorkflowRetryMaxAttempts * (WorkflowRunMaxResumes + 1)
+	StoredWorkflowLiveProgressPollInterval             = 3 * time.Second
+	StoredWorkflowLiveProgressRequestTimeout           = 10 * time.Second
+	StoredWorkflowLiveProgressMaxRequests              = 100
+	StoredWorkflowLiveProgressFormMaxBytes       int64 = 4096
+	StoredWorkflowLiveCLIWaitDefault                   = 5 * time.Minute
+	StoredWorkflowLiveCLIWaitMax                       = time.Hour
+	StoredWorkflowLiveCLIPollMin                       = time.Second
+	StoredWorkflowLiveCLIPollMax                       = time.Minute
+	StoredWorkflowLiveSuiteMaxCases                    = StoredWorkflowPublishCheckMaxScenarios
+	StoredWorkflowLiveBaselineNameMaxBytes             = 63
+	StoredWorkflowLiveBaselineLimit                    = 20
+	StoredWorkflowLiveBaselineLifetimeNameLimit        = 100
+	StoredWorkflowLiveBaselineHistoryLimit             = 100
+	StoredWorkflowLiveBaselineRequestMaxBytes    int64 = 20 << 10
+	StoredWorkflowLiveBaselineReceiptMaxBytes    int64 = 32 << 10
+	StoredWorkflowLiveGatePolicyMaxBytes         int64 = 16 << 10
+	StoredWorkflowLiveSuiteComparisonMaxCases          = 2 * StoredWorkflowLiveSuiteMaxCases
+	StoredWorkflowLiveSuiteJournalMaxBytes       int64 = (StoredWorkflowLiveReportMaxBytes+StoredWorkflowLiveStartMaxBytes)*StoredWorkflowLiveSuiteMaxCases + (64 << 10)
+	StoredWorkflowLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
+	StoredWorkflowLiveSuiteRequestMaxBytes       int64 = 16 << 10
+	StoredWorkflowLiveSuiteStartWindow                 = 10 * time.Minute
+	StoredWorkflowLiveSuiteFutureClockSkew             = 30 * time.Second
+	StoredWorkflowLiveSuiteProtectedWindow             = StoredWorkflowLiveSuiteStartWindow + StoredWorkflowLiveSuiteFutureClockSkew
+	StoredWorkflowLiveSuiteHistoryLimit                = StoredWorkflowLiveHistoryLimit
+	StoredWorkflowLiveSuiteRetainedLimit               = 100
+	StoredWorkflowTestCaseNameMaxBytes                 = 128
+	StoredWorkflowTestStepResultsMax                   = StoredWorkflowSimulationMaxTraceEntries
 	// Browser forms percent-encode the definition, sample, cases, and selected
 	// case simulation/output controls.
-	AutomationConsoleFormMaxBytes               int64 = 3*(AutomationDefinitionMaxBytes+2*AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes+WorkflowRunInputMaxBytes+AutomationLiveSpecMaxBytes) + 4096
-	AutomationNameMaxBytes                            = 128
-	WorkflowRunInputMaxBytes                    int64 = 1 << 20
-	WorkflowWebhookBindingMaxBytes              int64 = 64 << 10
-	WorkflowWebhookFilterMaxBytes                     = 32 << 10
-	WorkflowWebhookNameMaxBytes                       = 128
-	WorkflowWebhookEventMaxBytes                      = 256
-	WorkflowAutomationHealthDefaultRange              = 7 * 24 * time.Hour
-	WorkflowAutomationHealthMaxRange                  = 30 * 24 * time.Hour
-	WorkflowAutomationHealthMaxFailureSteps           = 10
-	WorkflowAutomationHealthReadTimeout               = 5 * time.Second
-	WorkflowRunDiagnosticsReadTimeout                 = 5 * time.Second
-	WorkflowSchedulePreviewDefaultCount               = 5
-	WorkflowSchedulePreviewMaxCount                   = 20
-	WorkflowSchedulePreviewReadTimeout                = 5 * time.Second
-	WorkflowBacklogAlertThresholdSeconds              = 300
-	WorkflowBacklogAlertCooldownMinutes               = 30
-	AutomationFailurePolicyMaxCount                   = 10000
-	AutomationFailurePolicyMinWindowSeconds           = 60
-	AutomationFailurePolicyMaxWindowSeconds           = 86400
-	AutomationFailurePolicyDefaultWindowSeconds       = 300
-	AutomationFailurePolicyDefaultThreshold           = 3
-	AutomationFailurePolicyDefaultMinRuns             = 5
-	AutomationFailurePolicyHistoryLimit               = 100
-	AutomationFailurePolicyBatch                      = 100
-	AutomationFailurePolicyRequestMaxBytes      int64 = 4096
-	WorkflowFailureAlertThreshold                     = 1
-	WorkflowFailureAlertCooldownMinutes               = 30
-	WorkflowAlertSnapshotReadTimeout                  = 5 * time.Second
-	WorkflowOutboundBodyMaxBytes                int64 = 1 << 20
-	WorkflowOutboundStepNameMaxBytes                  = 128
-	WorkflowResumeRequestMaxBytes               int64 = 4096
-	WorkflowRunMaxResumes                             = 16
-	WorkflowForEachMaxItems                           = 128
-	WorkflowForEachMaxParallelLimit                   = 16
-	WorkflowForEachNameMaxBytes                       = 64
-	WorkflowForEachMaxInputBytes                int64 = 1 << 20
-	WorkflowForEachMaxOutputBytes               int64 = 1 << 20
-	WorkflowJoinMaxDependencies                       = 128
-	WorkflowGuardMaxBytes                             = 16 << 10
-	WorkflowGuardMaxDepth                             = 8
-	WorkflowGuardMaxNodes                             = 32
-	WorkflowGuardNumberMaxBytes                       = 4096
-	WorkflowGuardNumberMaxExponent                    = 4096
+	StoredWorkflowConsoleFormMaxBytes               int64 = 3*(StoredWorkflowDefinitionMaxBytes+2*StoredWorkflowSimulationRequestMaxBytes+StoredWorkflowPublishCheckMaxBytes+WorkflowRunInputMaxBytes+StoredWorkflowLiveSpecMaxBytes) + 4096
+	StoredWorkflowNameMaxBytes                            = 128
+	WorkflowRunInputMaxBytes                        int64 = 1 << 20
+	WorkflowWebhookBindingMaxBytes                  int64 = 64 << 10
+	WorkflowWebhookFilterMaxBytes                         = 32 << 10
+	WorkflowWebhookNameMaxBytes                           = 128
+	WorkflowWebhookEventMaxBytes                          = 256
+	StoredWorkflowHealthDefaultRange                      = 7 * 24 * time.Hour
+	StoredWorkflowHealthMaxRange                          = 30 * 24 * time.Hour
+	StoredWorkflowHealthMaxFailureSteps                   = 10
+	StoredWorkflowHealthReadTimeout                       = 5 * time.Second
+	WorkflowRunDiagnosticsReadTimeout                     = 5 * time.Second
+	WorkflowSchedulePreviewDefaultCount                   = 5
+	WorkflowSchedulePreviewMaxCount                       = 20
+	WorkflowSchedulePreviewReadTimeout                    = 5 * time.Second
+	WorkflowBacklogAlertThresholdSeconds                  = 300
+	WorkflowBacklogAlertCooldownMinutes                   = 30
+	StoredWorkflowFailurePolicyMaxCount                   = 10000
+	StoredWorkflowFailurePolicyMinWindowSeconds           = 60
+	StoredWorkflowFailurePolicyMaxWindowSeconds           = 86400
+	StoredWorkflowFailurePolicyDefaultWindowSeconds       = 300
+	StoredWorkflowFailurePolicyDefaultThreshold           = 3
+	StoredWorkflowFailurePolicyDefaultMinRuns             = 5
+	StoredWorkflowFailurePolicyHistoryLimit               = 100
+	StoredWorkflowFailurePolicyBatch                      = 100
+	StoredWorkflowFailurePolicyRequestMaxBytes      int64 = 4096
+	WorkflowFailureAlertThreshold                         = 1
+	WorkflowFailureAlertCooldownMinutes                   = 30
+	WorkflowAlertSnapshotReadTimeout                      = 5 * time.Second
+	WorkflowOutboundBodyMaxBytes                    int64 = 1 << 20
+	WorkflowOutboundStepNameMaxBytes                      = 128
+	WorkflowResumeRequestMaxBytes                   int64 = 4096
+	WorkflowRunMaxResumes                                 = 16
+	WorkflowForEachMaxItems                               = 128
+	WorkflowForEachMaxParallelLimit                       = 16
+	WorkflowForEachNameMaxBytes                           = 64
+	WorkflowForEachMaxInputBytes                    int64 = 1 << 20
+	WorkflowForEachMaxOutputBytes                   int64 = 1 << 20
+	WorkflowJoinMaxDependencies                           = 128
+	WorkflowGuardMaxBytes                                 = 16 << 10
+	WorkflowGuardMaxDepth                                 = 8
+	WorkflowGuardMaxNodes                                 = 32
+	WorkflowGuardNumberMaxBytes                           = 4096
+	WorkflowGuardNumberMaxExponent                        = 4096
 
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
@@ -10659,12 +11087,37 @@ func (p Plan) PlanIncludedGBHours() int {
 const DefaultOverageCapAllowances = ManagedPostgresOverageCeilingMultiplier - 1
 
 // DefaultOverageCapCents returns the spend cap a paid plan starts with:
-// Hobby $2, Pro $10, Scale $30. Free stops at its allowance and has none.
+// Hobby $10, Pro $50, Scale $150. Free stops at its allowance and has none.
 func (p Plan) DefaultOverageCapCents() (int64, bool) {
 	if !p.IsPaid() {
 		return 0, false
 	}
 	return int64(p.PlanIncludedGBHours()) * DefaultOverageCapAllowances * OverageMillicentsPerGBHour / MillicentsPerCent, true
+}
+
+// Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
+// owner's numbers 2026-11-07): Hobby $75, Pro $200, Scale $1,000. A larger
+// cap is an operator change.
+const (
+	HobbyMaxSelfServiceOverageCapCents int64 = 7_500
+	ProMaxSelfServiceOverageCapCents   int64 = 20_000
+	ScaleMaxSelfServiceOverageCapCents int64 = 100_000
+)
+
+// MaxSelfServiceOverageCapCents is the largest spend cap a paid subject may
+// set through the API or dashboard, and the cap a paid subject without one
+// (NULL, saved before ADR-20261105120000) is held to. Free has none: Free
+// stops at its allowance whatever its cap.
+func (p Plan) MaxSelfServiceOverageCapCents() (int64, bool) {
+	switch p {
+	case PlanHobby:
+		return HobbyMaxSelfServiceOverageCapCents, true
+	case PlanPro:
+		return ProMaxSelfServiceOverageCapCents, true
+	case PlanScale:
+		return ScaleMaxSelfServiceOverageCapCents, true
+	}
+	return 0, false
 }
 
 // Valid reports whether p is a known plan.
@@ -10738,6 +11191,26 @@ func (p Plan) CustomMetricsAllowed() bool {
 		return false
 	}
 	return l.CustomMetricsAllowed
+}
+
+// CustomMetricsPerApp (ADR-20261108160000) returns the plan's cap on distinct
+// custom metric names per app; 0 when the plan has no custom metrics.
+func (p Plan) CustomMetricsPerApp() int {
+	l, ok := LimitsFor(p)
+	if !ok || !l.CustomMetricsAllowed {
+		return 0
+	}
+	return l.CustomMetricsPerApp
+}
+
+// CustomMetricSeriesPerApp (ADR-20261108160000 slice C) returns the plan's
+// cap on labelled custom metric series per app; 0 without custom metrics.
+func (p Plan) CustomMetricSeriesPerApp() int {
+	l, ok := LimitsFor(p)
+	if !ok || !l.CustomMetricsAllowed {
+		return 0
+	}
+	return l.CustomMetricSeriesPerApp
 }
 
 // QueueControlsAllowed (ADR-124) reports whether the plan may
@@ -11567,22 +12040,14 @@ const (
 	RoutePlanPriorityMax = 10000
 )
 
-// WarmSnapshotEnabled reports whether the plan's default for the
-// per-app two-tier snapshot flag is on. Pro/Scale return true; Free /
-// Hobby return false. The accessor is fail-closed — an unknown plan
-// reads as false, matching the Free default. Used by buildApp in
-// cmd/apid/handlers.go to populate a brand-new app's flag.
-//
-// Issue #470 / ADR-055: the equivalent gate ("can the customer opt in
-// to warm-snapshot?") lives on WarmSnapshotAllowed (separate method
-// below) so Free + Hobby PATCH-true can be rejected cleanly without
-// conflating the default and the gate.
-func (p Plan) WarmSnapshotEnabled() bool {
+// WarmSnapshotNewAppDefault is the warm-snapshot flag a new app gets when
+// its create request does not set one (ADR-20261110180000: opt-in).
+func (p Plan) WarmSnapshotNewAppDefault() bool {
 	l, ok := LimitsFor(p)
 	if !ok {
 		return false
 	}
-	return l.WarmSnapshotEnabled
+	return l.WarmSnapshotNewAppDefault
 }
 
 // WarmSnapshotAllowed reports whether the plan permits a customer to
@@ -12498,6 +12963,86 @@ func (p Plan) ConcurrencyPerVMBound() int {
 	return l.ConcurrencyPerVMBound
 }
 
+// RequestConcurrencyBound is the largest per_instance_concurrency an app on p
+// may declare in this process: app_request_concurrency_max once runtime
+// config sets it, else ConcurrencyPerVMBound (ADR-20261101215228). Unknown
+// plans fail closed (return 0).
+func (p Plan) RequestConcurrencyBound() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.RequestConcurrencyBound()
+}
+
+// AppRequestConcurrencyBound is the largest value runtime config may set for
+// app_request_concurrency_default or app_request_concurrency_max, and the
+// largest per-instance limit vmmd accepts from a wake (ADR-20261101215228).
+const AppRequestConcurrencyBound = 10000
+
+// RequestConcurrency holds the runtime-config request limits per instance
+// (ADR-20261101215228): `app_request_concurrency_default`, for an app that
+// declares no per_instance_concurrency, and `app_request_concurrency_max`, the
+// largest declaration. A zero field is unset. With both unset every plan keeps
+// its concurrency_per_vm bound, as before.
+type RequestConcurrency struct {
+	Default int
+	Max     int
+}
+
+// requestConcurrency is the process's applied RequestConcurrency. Only a
+// daemon's runtime-config watcher sets it (SetRequestConcurrency); vmmd never
+// does and takes each instance's limit from its wake instead.
+var requestConcurrency atomic.Pointer[RequestConcurrency]
+
+// SetRequestConcurrency applies the runtime-config request limits to this
+// process. Values outside [0, AppRequestConcurrencyBound] are clamped.
+func SetRequestConcurrency(rc RequestConcurrency) {
+	rc.Default = min(max(rc.Default, 0), AppRequestConcurrencyBound)
+	rc.Max = min(max(rc.Max, 0), AppRequestConcurrencyBound)
+	requestConcurrency.Store(&rc)
+}
+
+// CurrentRequestConcurrency is the process's applied RequestConcurrency.
+func CurrentRequestConcurrency() RequestConcurrency {
+	if rc := requestConcurrency.Load(); rc != nil {
+		return *rc
+	}
+	return RequestConcurrency{}
+}
+
+// Set reports whether either limit is set.
+func (rc RequestConcurrency) Set() bool { return rc.Default > 0 || rc.Max > 0 }
+
+// Bound is the largest per-instance limit an app on l may declare: the
+// configured maximum, or the plan's concurrency_per_vm while it is unset.
+func (rc RequestConcurrency) Bound(l Limits) int {
+	if rc.Max > 0 {
+		return rc.Max
+	}
+	return l.ConcurrencyPerVMBound
+}
+
+// PerInstance resolves an app's declared per_instance_concurrency on l: the
+// declaration up to Bound, or for none the configured default (at most the
+// bound). With nothing set it is l's plan resolution.
+func (rc RequestConcurrency) PerInstance(l Limits, requested int) int {
+	bound := rc.Bound(l)
+	if requested > 0 {
+		return min(requested, bound)
+	}
+	if rc.Default > 0 {
+		return min(rc.Default, bound)
+	}
+	return bound
+}
+
+// RequestConcurrencyBound is the largest per_instance_concurrency an app on
+// l may declare in this process (CurrentRequestConcurrency).
+func (l Limits) RequestConcurrencyBound() int {
+	return CurrentRequestConcurrency().Bound(l)
+}
+
 // PerInstanceConcurrency resolves an app's declared
 // scaling_policy.per_instance_concurrency against the plan's
 // ConcurrencyPerVMBound (ADR-20261022203523). It is the one resolver the
@@ -12505,11 +13050,12 @@ func (p Plan) ConcurrencyPerVMBound() int {
 // in-flight scale-in floor, and apid's effective limits all use. Zero (the
 // default) and any value above the bound, which a plan downgrade can leave
 // behind, resolve to the bound: exactly the pre-ADR behaviour.
+//
+// Runtime config (ADR-20261101215228) replaces the bound with
+// app_request_concurrency_max and the zero case with
+// app_request_concurrency_default once they are set in this process.
 func (l Limits) PerInstanceConcurrency(requested int) int {
-	if requested <= 0 || requested > l.ConcurrencyPerVMBound {
-		return l.ConcurrencyPerVMBound
-	}
-	return requested
+	return CurrentRequestConcurrency().PerInstance(l, requested)
 }
 
 // LogDeploymentFilterMax returns the per-plan cap on the
@@ -12608,6 +13154,16 @@ func (p Plan) DeveloperLeaseMax() time.Duration {
 
 // DeploysPerHour returns the account-wide deploy admission budget for the
 // plan. Unknown plans fail closed.
+// BuildMinutesPerMonth returns the plan's monthly builder-time quota; zero
+// for an unknown plan.
+func (p Plan) BuildMinutesPerMonth() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.BuildMinutesPerMonth
+}
+
 func (p Plan) DeploysPerHour() int {
 	l, ok := LimitsFor(p)
 	if !ok {
@@ -13132,6 +13688,11 @@ const (
 	TrafficServicePolicyReadTimeout = 250 * time.Millisecond
 	TrafficPublicRoutingReadTimeout = 250 * time.Millisecond
 	TrafficPublicHostReadTimeout    = 250 * time.Millisecond
+	// TrafficPolicySnapshotCancelGrace is how long a policy snapshot whose
+	// caller gave up waits for PostgreSQL to answer the cancel request it
+	// sent. An answered cancel keeps the connection; past the grace pgx
+	// closes it, as it did at the caller's deadline before.
+	TrafficPolicySnapshotCancelGrace = 200 * time.Millisecond
 	// TrafficPublicRoutingColdReadTimeout bounds the routing read of an app
 	// the gateway holds no admissible view for, usually an idle app's first
 	// request. Its first attempt keeps TrafficPublicRoutingReadTimeout; a
@@ -13172,6 +13733,20 @@ const (
 	GatewayWildcardRecoveryPerSecond = 5
 	GatewayWildcardRecoveryBurst     = 50
 	GatewayNewHostLookupMaxWait      = 100 * time.Millisecond
+	// GatewayRequestLogLinesPerSecond and GatewayRequestLogBurst bound the
+	// gateway_request lines one gatewayd-internal writes at Info: a cold
+	// request or any answer but a 2xx (a warm 2xx is a Debug line). A flood
+	// of 404s for names that route nowhere, or an app answering errors at
+	// volume, would otherwise write one line per request. Building them took
+	// about 12% of gatewayd-internal's CPU under a 404 flood on 2026-11-09,
+	// and past journald's per-unit rate limit (10,000 lines per 30 s by
+	// default) journald dropped every line the daemon wrote, warnings
+	// included. A line past the budget is not built;
+	// gateway_request_log_suppressed_total counts it and the next written
+	// line carries suppressed_before. gateway_requests_total still counts
+	// every request.
+	GatewayRequestLogLinesPerSecond = 100
+	GatewayRequestLogBurst          = 1000
 	// The gateway and the edge preload every app slug and verified custom
 	// domain or admitted concrete wildcard host (at most KnownRouteHostsMax
 	// of each), refreshed every KnownRouteHostsRefreshInterval. Concrete names
@@ -13306,10 +13881,12 @@ const (
 
 	// RequestBudgetDefault is the per-request wall-clock budget the
 	// gateway uses for Functions when no edge-rule kind=budget matches.
-	// A misconfigured deployment that wants a tighter or looser default
-	// can override per-route via kind=budget, or per-plan via the
-	// Limits.RequestBudgetMs accessor.
-	RequestBudgetDefault = 3 * time.Second
+	// It was 3 s (ADR-093) until ADR-20261107190000 raised it to 30 s, the
+	// Free plan's ceiling, because the short default failed ordinary
+	// handlers (a cold database connection, a model call) before their
+	// authors knew a limit existed. Override per-route via kind=budget,
+	// per-app via request_timeout_s, or per-plan via Limits.RequestBudgetMs.
+	RequestBudgetDefault = 30 * time.Second
 	// RequestBudgetAppDefault is the request-mode App wall-clock budget
 	// when no edge-rule kind=budget matches and the plan has no explicit
 	// RequestBudgetMs override. Apps are ordinary HTTP services and need
@@ -13377,6 +13954,12 @@ const (
 	TrafficRuntimeObservationTimeout   = 250 * time.Millisecond
 	TrafficRuntimeObservationFreshness = 10 * time.Second
 	TrafficRuntimeObservationMaxNodes  = 4096
+	// EdgeRuleHeaderSecretBackfillInterval is how often apid seals the
+	// credential header values edge rules and their versions still store as
+	// written (ADR-20261108110000, amendment 2026-11-09); the first pass waits
+	// EdgeRuleHeaderSecretBackfillStartDelay so gateways can report first.
+	EdgeRuleHeaderSecretBackfillInterval   = 15 * time.Minute
+	EdgeRuleHeaderSecretBackfillStartDelay = 2 * time.Minute
 	// RequestBudgetPlanMax is the largest request budget any plan may allow
 	// (Scale's 15 minutes, ADR-1150). Every per-plan ceiling is clamped to
 	// it, edge-rule and route-requirement budgets are validated against it,
@@ -13469,10 +14052,10 @@ func (l Limits) RequestBudget() time.Duration {
 
 // RequestBudgetForType returns the effective baseline for an app type.
 //
-// The existing RequestBudget accessor intentionally remains the Function /
-// legacy baseline so control-plane callers and older clients keep their
-// established 3-second contract. Request-mode Apps use the longer default
-// unless the plan carries an explicit RequestBudgetMs override. The returned
+// The existing RequestBudget accessor remains the Function / legacy
+// baseline. Since ADR-20261107190000 Functions and request-mode Apps both
+// default to 30 s; the two constants stay separate so either can move
+// without the other. The returned
 // value is bounded by the plan's effective ceiling, preserving the existing
 // RequestBudgetMaxDuration invariant that an invalid ceiling cannot undercut
 // an explicit plan default.
@@ -13652,6 +14235,13 @@ func (l Limits) PostgresPoolMax(requestedPerInstanceConcurrency int) int {
 // PostgresPoolMaxAccepted is the largest GREGALE_POSTGRES_POOL_MAX the SDKs
 // and the binding check accept; a larger value is ignored as unset.
 const PostgresPoolMaxAccepted = 1000
+
+// SessionBindingConnectionLimit is the role CONNECTION LIMIT of a `session`
+// login (ADR-20261110120000): 2 direct connections × (Scale concurrency 20 +
+// rollout 1). Session bindings are for session features (LISTEN/NOTIFY,
+// session advisory locks), not bulk query traffic, which belongs on a pooled
+// read_write binding; without a limit one binding could exhaust the compute.
+const SessionBindingConnectionLimit = 42
 
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a
@@ -13946,6 +14536,25 @@ const (
 	VmmdLogRingBudgetBytes int64 = 512 << 20
 	VmmdLogRingFloorBytes  int64 = 256 << 10
 )
+
+// A release that OOMs on every request looped forever: each kill re-staled
+// its snapshots and the next wake cold-booted into the same OOM (bug hunt
+// H34). Only the first kill in WorkloadOOMBackoffWindow re-stales them, and
+// WorkloadOOMBackoffKills kills in the window back off the deployment's
+// wakes with a 503, starting at WorkloadOOMBackoffInitial and doubling up
+// to WorkloadOOMBackoffMax while the kills continue.
+const (
+	WorkloadOOMBackoffWindow  = 5 * time.Minute
+	WorkloadOOMBackoffKills   = 5
+	WorkloadOOMBackoffInitial = 30 * time.Second
+	WorkloadOOMBackoffMax     = 5 * time.Minute
+)
+
+// VmmdScanRefusalRefreshTTL is how long one canonical re-read of a refused
+// base's scan sidecar answers the boots that follow it. Concurrent refusals
+// share the re-read, so a cold burst against a fail-closed sidecar costs one
+// object-store read per interval instead of one per wake (bug hunt O36).
+const VmmdScanRefusalRefreshTTL = 5 * time.Second
 
 // UDPDatagramMaxBytes is the largest UDP payload on the IPv4 guest network:
 // a 65535-byte IP packet minus the minimum 20-byte IP and 8-byte UDP headers.
@@ -14716,6 +15325,17 @@ const RouteAnalyticsQueryTimeout = 10 * time.Second
 // render; past it the panel is left out and the page renders without it.
 const DashboardRequestAnalyticsTimeout = 5 * time.Second
 
+// apid handles the request telemetry records that arrive together on one
+// stream as a group whose rows commit in one transaction (ADR-127
+// amendment, group commit). A group ends when the gateway half-closes its
+// batch, at RequestTelemetryReceiveGroupMax records (the gateway's batch
+// size), or when no record arrives for RequestTelemetryReceiveGroupWait, so
+// a client that waits for each outcome is still answered.
+const (
+	RequestTelemetryReceiveGroupMax  = 256
+	RequestTelemetryReceiveGroupWait = 2 * time.Millisecond
+)
+
 // RequestAnalyticsSettleLag is how far before now request analytics stops
 // judging telemetry completeness: gateways hold a minute's rows until it
 // closes and flush every few seconds, so the newest minutes are always still
@@ -14724,26 +15344,60 @@ const RequestAnalyticsSettleLag = 2 * time.Minute
 
 // Request analytics rollups (ADR-20261103113952). apid adds every telemetry
 // row a plan keeps, before the debugger ingest cap, to per-minute rollups
-// and writes them every RequestAnalyticsRollupFlushInterval in statements of
-// at most RequestAnalyticsRollupFlushRowsMax rows. For each app, minute and
-// non-route dimension a flush keeps RequestAnalyticsRollupDimensionsMax
-// distinct values and folds the rest into "__other__". The aggregator counts
+// and, every RequestAnalyticsRollupFlushInterval, writes the minutes that
+// closed at least RequestAnalyticsRollupMinuteGrace ago (amendment 3), in
+// statements of at most RequestAnalyticsRollupFlushRowsMax rows. The grace
+// covers the gateways holding a minute until it closes and flushing every
+// few seconds, and stays inside RequestAnalyticsSettleLag. For each app,
+// minute and non-route dimension the write keeps
+// RequestAnalyticsRollupDimensionsMax distinct values and folds the rest
+// into "__other__". The aggregator counts
 // a replayed event ID once among the last RequestAnalyticsRollupSeenEventsMax
 // rows; a gateway replays a batch within seconds of the original. Past
 // RequestAnalyticsRollupPendingRowsMax buffered rollup rows, because
 // Postgres is failing, new rows are dropped and counted.
 const (
 	RequestAnalyticsRollupFlushInterval = 10 * time.Second
+	RequestAnalyticsRollupMinuteGrace   = 30 * time.Second
 	RequestAnalyticsRollupFlushRowsMax  = 1000
 	RequestAnalyticsRollupDimensionsMax = 50
 	// The buffer holds up to this many values of a kind per app minute
-	// before folding new ones into __other__; the flush keeps the
-	// RequestAnalyticsRollupDimensionsMax busiest of them.
-	RequestAnalyticsRollupDimensionsBufferMax = 4 * RequestAnalyticsRollupDimensionsMax
+	// before folding new ones into __other__; the minute's write keeps the
+	// RequestAnalyticsRollupDimensionsMax busiest of them. Non-route rows
+	// are keyed by value alone, so a value costs one buffered row.
+	RequestAnalyticsRollupDimensionsBufferMax = 10 * RequestAnalyticsRollupDimensionsMax
 	// App minutes whose lost rollups wait to be recorded as gaps.
 	RequestAnalyticsRollupPendingGapsMax = 100_000
 	RequestAnalyticsRollupSeenEventsMax  = 200_000
 	RequestAnalyticsRollupPendingRowsMax = 200_000
+)
+
+// A gateway counts its requests into per-minute rollups itself when
+// FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS is on (ADR-20261103113952
+// amendment 5). It buffers at most RequestAnalyticsGatewayRollupRowsMax
+// rollup rows, ships the minutes that closed RequestAnalyticsRollupMinuteGrace
+// ago in batches of at most RequestAnalyticsRollupBatchRowsMax rows (apid
+// refuses a larger one), and keeps RequestAnalyticsGatewayRollupBatchesMax
+// unacknowledged batches to resend before the oldest is lost. While apid
+// answers that it takes no batches, the gateway asks again every
+// RequestAnalyticsGatewayRollupProbeInterval and leaves the counting to apid.
+const (
+	RequestAnalyticsRollupBatchRowsMax         = 1000
+	RequestAnalyticsGatewayRollupRowsMax       = 100_000
+	RequestAnalyticsGatewayRollupBatchesMax    = 32
+	RequestAnalyticsGatewayRollupProbeInterval = 5 * time.Minute
+)
+
+// The minute tier is kept RequestAnalyticsMinuteRetention, whatever the plan
+// (ADR-20261103113952 amendment 3); the hourly tier keeps the plan's
+// telemetry retention. An analytics window reaching further back than
+// RequestAnalyticsMinuteReadHorizon starts and ends on whole UTC hours, so
+// that part is read from the hourly tier alone. The hour between the two
+// keeps the minutes a window inside the horizon reads from a sweep that runs
+// once an hour.
+const (
+	RequestAnalyticsMinuteRetention   = 48 * time.Hour
+	RequestAnalyticsMinuteReadHorizon = RequestAnalyticsMinuteRetention - time.Hour
 )
 
 // RequestAnalyticsSampledMeasuresTimeout bounds the raw telemetry read that
@@ -15126,6 +15780,9 @@ const (
 	AppHealthCollectorIdleInterval  = time.Second
 	AppHealthCollectorLease         = 30 * time.Second
 	AppHealthCollectorBatch         = 20
+	// AppHealthCollectorWorkers collect due apps concurrently in each sweep
+	// (bug hunt O35); each claims up to AppHealthCollectorBatch apps.
+	AppHealthCollectorWorkers       = 4
 	AppHealthHistoryPageSize        = 20
 	AppHealthHistoryMaxPage         = 100
 	AppHealthHistoryMaxEntries      = 100
@@ -15333,6 +15990,20 @@ const (
 	DataAPIStorageTransfers          = 4
 	DataAPIStorageTransferTimeout    = 120 * time.Second
 	DataAPIStorageSignedURLTTL       = 60 * time.Second
+	// One signed-in user or anonymous visitor holds at most this many of an
+	// instance's transfers, so one slow client cannot keep storage busy for
+	// everyone. Server keys (trusted backends) are bounded only by the total.
+	DataAPIStorageTransfersPerClient = 2
+	// /healthz is public and its readiness checks reach the database: a
+	// completed ready result answers further checks for this long, so polling
+	// a healthy API asks the database at most once per interval per instance.
+	// Unready results are never reused, and engine restarts, schema reloads,
+	// checkpoints and restores forget the cached one (ADR-20261109160000).
+	DataAPIHealthCache = 5 * time.Second
+	// The gateway sends the SQL deadline this much early, so a VM clock that
+	// runs ahead of the database's by up to it still passes the engine's
+	// future-horizon check (ADR-1734 amendment 1).
+	DataAPISQLDeadlineClockSkew = 2 * time.Second
 	// Change hooks (ADR-20261022121642), mirrored in the runtime's limits:
 	// events and body bytes per runtime publication, the largest event data
 	// before its rows are dropped, the relay's claim lease, how long one
@@ -15361,6 +16032,20 @@ const (
 	DataAPIChangeHooksDrainWait        = 45 * time.Second
 	DataAPIChangeHooksDrainCronTimeout = 60 * time.Second
 	DataAPIChangeHooksDrainPath        = "/__gregale/hooks/drain"
+	// The change event table stops recording while this many changes wait to
+	// publish (ADR-20261022121642 amendment 2): a stage or an installation
+	// without workload identity never publishes, and the trigger would
+	// otherwise grow the table until it fills the customer's database. The
+	// CLI renders it into `data-api hooks export`; status warns from
+	// DataAPIChangeHooksBacklogWarnPercent of it.
+	DataAPIChangeHooksBacklogMax         = 100_000
+	DataAPIChangeHooksBacklogWarnPercent = 90
+	// The runtime rereads its access gate (which relations are row-secured,
+	// whether public reads and RPCs are still safe) at most this often while
+	// it serves, and after every snapshot restore (ADR 20261026140223
+	// amendment 1): a migration that disables RLS reaches the gate within it,
+	// not at the next refresh. Each reread is one short catalog connection.
+	DataAPIAccessRecheckInterval = time.Minute
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour
@@ -16462,12 +17147,17 @@ const (
 //   - AlertWebhookBudget bounds one webhook delivery, retries included
 //     (pkg/webhookout's own policy allows minutes);
 //   - AlertAccountTickBudget is an account's share of one tick: once spent,
-//     its remaining rules wait for the next tick, which starts with them.
+//     its remaining rules wait for the next tick, which starts with them;
+//   - AlertAccountWebhookConcurrency webhook deliveries of one account run
+//     at once, off the evaluation path, so a receiver that fails or never
+//     answers no longer holds the account's next rules for its whole
+//     AlertWebhookBudget (ADR-20261110090000).
 const (
-	AlertEvaluationWorkers = 8
-	AlertObserveBudget     = 15 * time.Second
-	AlertWebhookBudget     = 30 * time.Second
-	AlertAccountTickBudget = 45 * time.Second
+	AlertEvaluationWorkers         = 8
+	AlertObserveBudget             = 15 * time.Second
+	AlertWebhookBudget             = 30 * time.Second
+	AlertAccountTickBudget         = 45 * time.Second
+	AlertAccountWebhookConcurrency = 4
 )
 
 // Alert delivery retention (ADR-20261029203000): meterd deletes settled
@@ -16480,6 +17170,17 @@ const (
 	AlertDeliveryPurgeBatch    = 1000
 	AlertDeliveryPurgeBatches  = 20
 	AlertDeliveryPurgeInterval = time.Hour
+)
+
+// Channel recovery notices (ADR-20261031144636): a resolve a notification
+// channel did not take is retried, the wait doubling from a minute up to
+// AlertChannelResolveRetryBackoffMax, for AlertChannelResolveRetryWindow
+// after the rule recovered; each tick retries at most
+// AlertChannelResolveRetryBatch of them.
+const (
+	AlertChannelResolveRetryWindow     = 24 * time.Hour
+	AlertChannelResolveRetryBackoffMax = time.Hour
+	AlertChannelResolveRetryBatch      = 100
 )
 
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
@@ -16497,6 +17198,10 @@ const (
 	DashboardsPerAccount   = 20
 	DashboardWidgetsMax    = 24
 	DashboardDefaultWindow = "1h"
+	// DashboardDataReadsPerAccount bounds one account's dashboard data
+	// reads in flight on an apid: each fans out to every widget's
+	// Prometheus queries (ADR-20261104142830).
+	DashboardDataReadsPerAccount = 2
 )
 
 // DashboardWindows are the windows a dashboard widget may read.
@@ -16548,6 +17253,14 @@ const (
 	LogProjectionTickRowsMax     = 2000
 	LogProjectionBuildErrorBytes = 1024
 )
+
+// AlertRatioMinRequests is the fewest requests a window must hold before a
+// threshold rule on a share or percentile of them (error_rate_pct,
+// cold_start_pct, latency_p50/p95/p99_ms) fires (ADR-20261109153000). On a
+// scale-to-zero app a window often holds a handful of requests, and one
+// failed wake out of three read as a 33% error rate and paged. Below it the
+// rule reads unknown: too few requests to tell.
+const AlertRatioMinRequests = 10
 
 // Anomaly alert bounds (ADR-744). A baseline rule compares a request metric
 // with the median of its value at the same time of day over the previous
@@ -16610,6 +17323,16 @@ const (
 	SyntheticCheckPathMaxBytes     = 512
 	SyntheticCheckRunRetentionDays = 7
 	SyntheticCheckRecentRuns       = 20
+	// SyntheticCheckStaleIntervals: once a check's newest run is older than
+	// this many intervals (paused, its app made internal, or the runner
+	// stopped), its consecutive-failures alert has no current value and goes
+	// unknown instead of re-paging on old failures (ADR-20261031144636).
+	SyntheticCheckStaleIntervals = 2
+	// SyntheticCheckProbesPerAccount bounds one account's probes in flight
+	// from meterd, so one account's slow or hanging app holds at most this
+	// many of the runner's slots and never delays other accounts' checks
+	// (ADR-20261104142830).
+	SyntheticCheckProbesPerAccount = 2
 )
 
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
@@ -17727,8 +18450,8 @@ const (
 	EdgeClientOpenConnsPerAddrMax      = 512
 	EdgeClientNewConnsPerSecondPerAddr = 100
 	EdgeClientNewConnsBurstPerAddr     = 400
-	EdgeClientRequestsPerSecondPerAddr = 500
-	EdgeClientRequestsBurstPerAddr     = 1000
+	EdgeClientRequestsPerSecondPerAddr = 2500
+	EdgeClientRequestsBurstPerAddr     = 5000
 	EdgeClientTrackedAddrsMax          = 200_000
 	// EdgeHostRequestsPerSecond and EdgeHostRequestsBurst are a node's
 	// ceiling for one hostname, checked at the edge before the request is
@@ -17742,11 +18465,23 @@ const (
 	// client's to choose, so a hostname the full table cannot track passes
 	// instead of sharing one bucket that a flood of random names would drain
 	// for every tenant (hunt 38); the per-address limit still bounds it.
-	EdgeHostRequestsPerSecond       = 1000
-	EdgeHostRequestsBurst           = 4000
+	EdgeHostRequestsPerSecond       = 10_000
+	EdgeHostRequestsBurst           = 40_000
 	EdgeHostTrackedMax              = 100_000
 	EdgeTLSHandshakesInFlightPerCPU = 128
 	EdgeTLSHandshakeTimeout         = 10 * time.Second
+	// ADR-20261107180000: one client address (an IPv4 address or an IPv6
+	// /64) holds at most EdgeTLSHandshakesInFlightPerAddrMax of those
+	// handshakes at once, an address in Cloudflare's ranges
+	// EdgeTLSHandshakesInFlightPerProxyAddrMax (it carries many clients when
+	// a host is back behind Cloudflare, and the listener does not count it
+	// until its handshake settles), so one address cannot hold every slot
+	// with connections that never finish. A connection must send its
+	// ClientHello within EdgeTLSClientHelloTimeout; the rest of the
+	// handshake keeps EdgeTLSHandshakeTimeout.
+	EdgeTLSHandshakesInFlightPerAddrMax      = 32
+	EdgeTLSHandshakesInFlightPerProxyAddrMax = 64
+	EdgeTLSClientHelloTimeout                = 3 * time.Second
 	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
 	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
 	// the public server's read timeout is the whole request envelope.
@@ -17758,6 +18493,53 @@ const (
 	// (uploads, public reads, OTLP), so direct clients cannot push more at
 	// the control plane than Cloudflare let through.
 	EdgeControlPlaneForwardsInFlightMax = 256
+	// One client address holds at most
+	// EdgeControlPlaneForwardsInFlightPerAddrMax of them, so slow uploads
+	// from one client cannot hold every slot (ADR-20261107180000).
+	EdgeControlPlaneForwardsInFlightPerAddrMax = 16
+)
+
+// A compute edge's overload level (ADR-20261110123517) follows three signals,
+// sampled every EdgeOverloadTick and each measured over the last
+// EdgeOverloadWindow: the edge's goroutine scheduling delay (99th
+// percentile), the node's CPU pressure (the share of time any task waited for
+// a CPU) and the gateway daemons' share of the node's CPUs. The edge is
+// overloaded when its scheduling delay passes EdgeOverloadSchedDelayP99, or
+// when node CPU pressure passes EdgeOverloadNodeCPUPressure while the
+// gateways use more than EdgeOverloadGatewayCPUShare. The level, from 0 to 1,
+// rises by EdgeOverloadLevelStep on each overloaded tick and falls by
+// EdgeOverloadLevelRecoveryStep on each tick where every signal is below
+// EdgeOverloadCalmFraction of its threshold. These are starting values for
+// observe mode to tune.
+const (
+	EdgeOverloadTick              = 100 * time.Millisecond
+	EdgeOverloadWindow            = time.Second
+	EdgeOverloadSchedDelayP99     = 10 * time.Millisecond
+	EdgeOverloadNodeCPUPressure   = 0.5
+	EdgeOverloadGatewayCPUShare   = 0.5
+	EdgeOverloadLevelStep         = 0.1
+	EdgeOverloadLevelRecoveryStep = 0.02
+	EdgeOverloadCalmFraction      = 0.7
+	// While the level is above 0, a new connection is reset before TLS with
+	// the level's probability, but EdgeOverloadHandshakesFloorPerCPU
+	// handshakes a second per CPU are always admitted, so new users can still
+	// connect at the deepest level.
+	EdgeOverloadHandshakesFloorPerCPU = 25
+	// Each client address's request limit scales down from
+	// EdgeClientRequestsPerSecondPerAddr toward
+	// EdgeOverloadRequestsPerSecondPerAddrFloor as the level rises.
+	EdgeOverloadRequestsPerSecondPerAddrFloor = 50
+	// An address refused more than EdgeOverloadRefusalsPerAddrMax times in
+	// one second while the level is above 0 is cut off for
+	// EdgeOverloadCooloff: its connections are closed and its new ones are
+	// reset before TLS.
+	EdgeOverloadRefusalsPerAddrMax = 200
+	EdgeOverloadCooloff            = 10 * time.Second
+	// A refusal's Retry-After is drawn from EdgeOverloadRetryAfterMin to
+	// EdgeOverloadRetryAfterMax seconds, so refused clients don't return
+	// together.
+	EdgeOverloadRetryAfterMin = 1
+	EdgeOverloadRetryAfterMax = 3
 )
 
 // The host firewall's backstop for a compute edge's public entry address
@@ -17775,6 +18557,14 @@ const (
 	PublicEntryNewConnsPerSecondPerSource = 2 * EdgeClientNewConnsPerSecondPerAddr
 	PublicEntryNewConnsBurstPerSource     = 2 * EdgeClientNewConnsBurstPerAddr
 	PublicEntryTrackedSourcesMax          = 65536
+	// One address in Cloudflare's ranges carries many clients, but those
+	// ranges also carry every other Cloudflare customer's traffic, so they
+	// get a backstop PublicEntryProxyFactor times the per-source one rather
+	// than none (ADR-20261104221012).
+	PublicEntryProxyFactor                     = 16
+	PublicEntryProxyConnsPerSourceMax          = PublicEntryProxyFactor * PublicEntryConnsPerSourceMax
+	PublicEntryProxyNewConnsPerSecondPerSource = PublicEntryProxyFactor * PublicEntryNewConnsPerSecondPerSource
+	PublicEntryProxyNewConnsBurstPerSource     = PublicEntryProxyFactor * PublicEntryNewConnsBurstPerSource
 	// PublicBlockListRefreshInterval is how often vmmd re-reads the
 	// operator's block list (/etc/faas/public-block-list) and adds its
 	// entries to the firewall's block sets: an edit takes effect within
@@ -17782,9 +18572,16 @@ const (
 	PublicBlockListRefreshInterval = 30 * time.Second
 )
 
-// Edge certificates (ADR-20261103163954 §3). edgednsd obtains the apps
-// domains' certificate from Let's Encrypt with DNS-01 and renews it
-// EdgeCertificateRenewBefore its expiry, checking every
+// Edge certificates (ADR-20261103163954 §3, ADR-20261108100000). edgednsd
+// obtains the apps domains' certificate from Let's Encrypt with DNS-01 under
+// the EdgeCertificateProfile ACME profile, whose certificates live about 160
+// hours, and renews it EdgeCertificateRenewBefore its expiry: a new one about
+// every 64 hours, about 2.6 of the 5 Let's Encrypt allows for the same names
+// in 7 days, which leaves two for rotating the key after a compromise. A key
+// a compromised compute node copied is good only until its certificate
+// expires. A stored certificate that lives longer than
+// EdgeCertificateLifetimeMax is replaced at once, and an order that returns
+// one is refused. edgednsd checks every
 // EdgeCertificateCheckInterval. A failed order is retried after
 // EdgeCertificateRetryMin, doubling to EdgeCertificateRetryMax: Let's
 // Encrypt allows 5 failed validations per account, hostname and hour, and 5
@@ -17794,8 +18591,10 @@ const (
 // certificate's row is kept EdgeCertificateKeepAfterExpiry past its expiry,
 // so the Certificate Transparency watch can tell ours from anyone else's.
 const (
-	EdgeCertificateRenewBefore     = 30 * 24 * time.Hour
+	EdgeCertificateRenewBefore     = 4 * 24 * time.Hour
 	EdgeCertificateCheckInterval   = time.Hour
+	EdgeCertificateProfile         = "shortlived"
+	EdgeCertificateLifetimeMax     = 7 * 24 * time.Hour
 	EdgeCertificateRetryMin        = time.Hour
 	EdgeCertificateRetryMax        = 12 * time.Hour
 	EdgeCertificateOrderTimeout    = 10 * time.Minute
@@ -17807,6 +18606,11 @@ const (
 	// EdgeCertificateListenRetry.
 	EdgeCertificateReloadInterval = 10 * time.Minute
 	EdgeCertificateListenRetry    = 5 * time.Second
+	// A reload reads at most EdgeCertificateLiveMax live certificates,
+	// newest first: every one is opened, so an unopenable newest row never
+	// hides an older good one (ADR-20261107180000). A cell holds one or two
+	// live certificates per set of names.
+	EdgeCertificateLiveMax = 32
 	// edgednsd's Certificate Transparency watch reads the apps domain's
 	// unexpired issuances from Cert Spotter every
 	// EdgeCertificateTransparencyInterval: without an API key Cert Spotter
@@ -17852,6 +18656,15 @@ const (
 	// One verification pass shares workers between custom domains and tenant
 	// hostnames, leaving time for the doctor on the same 30-second ticker.
 	DomainVerificationWorkers        = 16
+	DomainVerificationManualWorkers  = 8
+	DomainPlanMaxBindings            = 20
+	DomainPlanMaxBytes               = 128 << 10
+	DomainVerificationManualTimeout  = 12 * time.Second
+	DomainVerificationManualCooldown = 15 * time.Second
 	DomainVerificationPassTimeout    = 25 * time.Second
 	DomainVerificationCleanupTimeout = 3 * time.Second
 )
+
+// MaxObjectKeyScopeBytes bounds a bucket binding's key_prefix
+// (ADR-20261106114500); the catalog CHECK enforces the same bound.
+const MaxObjectKeyScopeBytes = 512

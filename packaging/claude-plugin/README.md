@@ -33,8 +33,10 @@ claude --plugin-dir packaging/claude-plugin
 ```
 
 `cmd/gregale/claude_plugin_test.go` keeps the plugin in step with the CLI: the
-MCP server must be the hosted endpoint, and every `gregale` command and
-`gregale_*` tool the skills name must exist. Bump `version` in
-`.claude-plugin/plugin.json` when the skills or the server change.
+MCP server must be the hosted endpoint, every `gregale` command and
+`gregale_*` tool the skills name must exist, and a tool outside the default
+`core` toolset needs its `gregale` CLI fallback in the same list item. Bump
+`version` in `.claude-plugin/plugin.json` when the skills or the server
+change.
 
 See https://gregale.dev/docs/agents for the full agent guide.

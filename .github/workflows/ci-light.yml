@@ -267,7 +267,10 @@ jobs:
   checks:
     name: "light: codegen, policy, migrations"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Cold generation builds plus the complete migration history and ledger
+    # recovery/replay checks can exceed 15 minutes. Keep every gate and the
+    # individual test deadlines; give the job enough time to finish them.
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -351,6 +354,7 @@ jobs:
           python3 scripts/ci/check_daemon_deps_test.py
           python3 scripts/ci/blast_radius_test.py
           python3 scripts/ci/binary_code_test.py
+          python3 scripts/ci/compute_db_roles_test.py
           python3 scripts/ci/guest_init_reuse_test.py
           python3 scripts/ci/guest_init_stability_test.py
           python3 scripts/ci/warm_unit_build_cache_test.py
@@ -366,7 +370,9 @@ jobs:
           bash scripts/ci/edgednsd_vars_test.sh
           bash scripts/ci/postgres_runtime_roles_vars_test.sh
           bash scripts/ci/faas_environment_vars_test.sh
+          bash scripts/ci/faas_billing_mode_test.sh
           bash scripts/ci/verify_unit_release_test.sh
+          bash scripts/ci/fetch_release_asset_test.sh
       - name: release binaries link no forbidden package
         run: make daemon-deps-check
       - name: MemStore stub guard
@@ -752,9 +758,11 @@ jobs:
             # deadline on a light runner. Give its full race suite 24m while
             # retaining a 50m job limit and running every test.
             # mcpmanagement's full protocol suite also exceeds 10m under
-            # this shard's 2 GiB / GOGC=10 race-test bounds.
+            # this shard's 2 GiB / GOGC=10 race-test bounds. financialfixture
+            # builds a non-race meterd inside the test; the race-only cache
+            # makes that a cold build of ~8m before its scenarios start.
             package_timeout=10m
-            if [[ " $PKGS " == *" ./pkg/mcpmanagement "* ]]; then package_timeout=18m; fi
+            if [[ " $PKGS " == *" ./pkg/mcpmanagement "* || " $PKGS " == *" ./pkg/e2etest/financialfixture "* ]]; then package_timeout=18m; fi
             if [[ " $PKGS " == *" ./cmd/gatewayd-internal "* ]]; then package_timeout=24m; fi
             if (( ${#race_pkgs[@]} )); then
               GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" "${race_pkgs[@]}" || status=1
@@ -855,13 +863,18 @@ jobs:
         # dropping back to the runner uid for the test process.
         run: |
           BOOT_CONTRACT_PATH="$PATH"
-          sudo -E setpriv \
+          # The runner's sudo (sudo-rs) ignores -E, so name the environment
+          # the test needs: HOME and the Go paths keep the build cache under
+          # the runner user instead of /root.
+          sudo setpriv \
             --bounding-set=-sys_admin \
             --reuid "$(id -u)" \
             --regid "$(id -g)" \
             --init-groups \
             --no-new-privs \
-            -- env "PATH=$BOOT_CONTRACT_PATH" \
+            -- env "PATH=$BOOT_CONTRACT_PATH" "HOME=$HOME" \
+              "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" "GOPATH=$(go env GOPATH)" \
+              "GOTOOLCHAIN=${GOTOOLCHAIN:-local}" "DATABASE_URL=${DATABASE_URL:-}" "FAAS_SKIP_PG_TESTS=${FAAS_SKIP_PG_TESTS:-}" \
             go test -race -count=1 -timeout=12m -run '^TestBootContract_' ./cmd/e2e/...
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'

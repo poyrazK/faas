@@ -77,6 +77,11 @@ func (r *StoreTargetResolver) validateIntent(ctx context.Context, route Route) e
 	if app.Visibility == api.AppVisibilityInternal || !api.DeclaresPublicWorkloadPort(app.Manifest.Ports, route.ListenerName, api.WorkloadPortTCP, route.GuestPort) {
 		return errors.New("TCP listener has no matching public declaration")
 	}
+	// The public access gates an HTTP request meets
+	// (ADR-20261104221012).
+	if err := ingressroute.CheckApp(ctx, app); err != nil {
+		return err
+	}
 	intent, err := r.Instances.TCPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
 	if err != nil {
 		return fmt.Errorf("read TCP listener intent: %w", err)
@@ -112,7 +117,7 @@ func (r *StoreTargetResolver) resolveInstance(ctx context.Context, route Route) 
 	}
 	var running []state.Instance
 	for _, instance := range instances {
-		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && !state.IsFork(instance.Mode) && instance.ID != "" && instance.NodeID != "" {
+		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && !state.NeverServes(instance.Mode) && instance.ID != "" && instance.NodeID != "" {
 			running = append(running, instance)
 		}
 	}

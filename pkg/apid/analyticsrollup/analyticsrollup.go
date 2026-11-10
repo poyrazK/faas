@@ -27,8 +27,29 @@ type Reader = state.RequestAnalyticsRollupReader
 // Covers reports whether the app's rollups hold every minute from from on:
 // rollups started at least RequestAnalyticsSettleLag before from, so the
 // first, partial minute and an upgrade's stragglers are outside the window.
-// Any error, or a store without rollups, means no.
+// Minutes are kept only RequestAnalyticsMinuteRetention (amendment 3), so a
+// window starting past RequestAnalyticsMinuteReadHorizon is covered only
+// when it starts on a whole hour the hourly tier holds; the apid window
+// parser aligns such windows, ends included. A tier's coverage is backdated
+// over a span with no raw telemetry (effectiveSince). Any error, or a store
+// without rollups, means no.
 func Covers(ctx context.Context, store any, appID string, from time.Time) (Reader, bool) {
+	reader, ok := coversMinutes(ctx, store, appID, from)
+	if !ok || !from.Before(time.Now().Add(-api.RequestAnalyticsMinuteReadHorizon)) {
+		return reader, ok
+	}
+	id, _ := uuid.Parse(appID)
+	hoursSince, has, err := reader.RequestAnalyticsRollupHoursCoverage(ctx, id)
+	if err != nil || !has || !from.Equal(from.UTC().Truncate(time.Hour)) {
+		return reader, false
+	}
+	if hoursSince, err = effectiveSince(ctx, reader, id, from, hoursSince); err != nil {
+		return reader, false
+	}
+	return reader, !from.Before(ceilHour(hoursSince.Add(api.RequestAnalyticsSettleLag)))
+}
+
+func coversMinutes(ctx context.Context, store any, appID string, from time.Time) (Reader, bool) {
 	reader, ok := store.(Reader)
 	if !ok {
 		return nil, false
@@ -41,7 +62,26 @@ func Covers(ctx context.Context, store any, appID string, from time.Time) (Reade
 	if err != nil || !ok {
 		return nil, false
 	}
+	if since, err = effectiveSince(ctx, reader, id, from, since); err != nil {
+		return nil, false
+	}
 	return reader, !from.Before(since.Add(api.RequestAnalyticsSettleLag))
+}
+
+// effectiveSince backdates a tier's coverage to before from when the app
+// has no raw telemetry received in [from, since): it had no traffic there
+// that the tier misses, so the tier answers that span too (amendment 4).
+// Without it a new app, or one idle when rollups started, read slow and
+// ingest-capped raw rows for every window longer than its rollups' age.
+func effectiveSince(ctx context.Context, reader Reader, id uuid.UUID, from, since time.Time) (time.Time, error) {
+	if !from.Before(since) {
+		return since, nil
+	}
+	has, err := reader.RequestTelemetryExistsBetween(ctx, id, from, since)
+	if err != nil || has {
+		return since, err
+	}
+	return from.Add(-api.RequestAnalyticsSettleLag), nil
 }
 
 // WindowIncompleteGap is the analytics telemetry gap reason for requests
@@ -77,13 +117,91 @@ func WithRollupGaps(ctx context.Context, store any, log *slog.Logger, appID stri
 	return &incomplete, gaps
 }
 
+// HourRange is the part of [from, until) read from the hourly tier: the
+// whole UTC hours inside the window that start at or after the hourly
+// tier's coverage plus RequestAnalyticsSettleLag (amendment 2). The minute
+// tier answers the rest. An empty range is returned as [until, until).
+func HourRange(from, until, hoursSince time.Time, hasHours bool) (time.Time, time.Time) {
+	if !hasHours {
+		return until, until
+	}
+	start := from
+	if settled := hoursSince.Add(api.RequestAnalyticsSettleLag); settled.After(start) {
+		start = settled
+	}
+	hoursFrom := ceilHour(start)
+	hoursUntil := until.UTC().Truncate(time.Hour)
+	if !hoursFrom.Before(hoursUntil) {
+		return until, until
+	}
+	return hoursFrom, hoursUntil
+}
+
+// AlignWindow widens the ends of an analytics window that lie past
+// RequestAnalyticsMinuteReadHorizon to whole UTC hours: minute rollups are
+// kept only RequestAnalyticsMinuteRetention, so the hourly tier answers that
+// part (amendment 3). from moves back to its hour, or forward when that hour
+// starts before the plan's retention, whose hour rows are swept; until moves
+// forward to its next hour. Ends inside the horizon are kept, so a recent
+// window still ends at now. A zero retention means unlimited.
+func AlignWindow(from, until, now time.Time, retention time.Duration) (time.Time, time.Time) {
+	from, until, now = from.UTC(), until.UTC(), now.UTC()
+	horizon := now.Add(-api.RequestAnalyticsMinuteReadHorizon)
+	if from.Before(horizon) {
+		floor := from.Truncate(time.Hour)
+		if retention > 0 && floor.Before(now.Add(-retention)) {
+			floor = ceilHour(from)
+		}
+		from = floor
+	}
+	if until.Before(horizon) {
+		until = ceilHour(until)
+	}
+	if !from.Before(until) {
+		// A window inside one hour at the retention edge keeps that hour.
+		until = from.Add(time.Hour)
+	}
+	return from, until
+}
+
+func ceilHour(t time.Time) time.Time {
+	floor := t.UTC().Truncate(time.Hour)
+	if floor.Equal(t) {
+		return floor
+	}
+	return floor.Add(time.Hour)
+}
+
+// hourRange looks up the app's hourly coverage and returns its HourRange.
+func hourRange(ctx context.Context, reader Reader, appID string, from, until time.Time) (pgtype.Timestamptz, pgtype.Timestamptz, error) {
+	since, ok := time.Time{}, false
+	if id, err := uuid.Parse(appID); err == nil {
+		if since, ok, err = reader.RequestAnalyticsRollupHoursCoverage(ctx, id); err != nil {
+			return pgtype.Timestamptz{}, pgtype.Timestamptz{}, err
+		}
+		if ok {
+			if since, err = effectiveSince(ctx, reader, id, from, since); err != nil {
+				return pgtype.Timestamptz{}, pgtype.Timestamptz{}, err
+			}
+		}
+	}
+	hf, hu := HourRange(from, until, since, ok)
+	return pgtype.Timestamptz{Time: hf, Valid: true}, pgtype.Timestamptz{Time: hu, Valid: true}, nil
+}
+
 // RouteDeployments returns requests per route, method and deployment from
 // the rollups.
 func RouteDeployments(ctx context.Context, reader Reader, appID, accountID string, from, until time.Time) (map[RouteDeploymentKey]int64, error) {
+	hoursFrom, hoursUntil, err := hourRange(ctx, reader, appID, from, until)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := reader.RequestAnalyticsRollupRouteDeployments(ctx, sqlc.RequestAnalyticsRollupRouteDeploymentsParams{
 		AppID: pgUUID(appID), AccountID: pgUUID(accountID),
 		WindowFrom:  pgtype.Timestamptz{Time: from, Valid: true},
 		WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
+		HoursFrom:   hoursFrom,
+		HoursUntil:  hoursUntil,
 	})
 	if err != nil {
 		return nil, err
@@ -146,6 +264,10 @@ func Read(ctx context.Context, reader Reader, q Query) ([]Group, error) {
 	if groupBy == "" {
 		groupBy = "route"
 	}
+	hoursFrom, hoursUntil, err := hourRange(ctx, reader, q.AppID, q.From, q.Until)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := reader.RequestAnalyticsRollupGroups(ctx, sqlc.RequestAnalyticsRollupGroupsParams{
 		Hourly:      q.Hourly,
 		GroupBy:     groupBy,
@@ -153,6 +275,8 @@ func Read(ctx context.Context, reader Reader, q Query) ([]Group, error) {
 		AccountID:   pgUUID(q.AccountID),
 		WindowFrom:  pgtype.Timestamptz{Time: q.From, Valid: true},
 		WindowUntil: pgtype.Timestamptz{Time: q.Until, Valid: true},
+		HoursFrom:   hoursFrom,
+		HoursUntil:  hoursUntil,
 		Route:       q.Route,
 		Method:      q.Method,
 		GroupLimit:  int32(q.Limit),
