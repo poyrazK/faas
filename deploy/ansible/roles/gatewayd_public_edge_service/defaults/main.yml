@@ -80,3 +80,6 @@ faas_cloudflared_grace_period: 30s
 faas_cloudflared_stop_timeout: 45s
 # The manifest's hot_path.edge_keepalive_per_node sets it.
 faas_internal_keepalive_per_node: false
+# ADR-20261110081523: send this node's requests to its gatewayd-internal in
+# binary HTTP. The manifest's hot_path.edge_binary_hop sets it.
+faas_edge_internal_hop_binary: false

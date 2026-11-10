@@ -89,6 +89,12 @@ print(env.from_string(pathlib.Path(sys.argv[1]).read_text()).render(**json.loads
 			base:     map[string]any{"faas_edge_control_plane_target": "http://10.42.0.1:8090"},
 		},
 		{
+			template: filepath.Join(roles, "gatewayd_public_edge_service", "templates", "99-faas-edge.conf.j2"),
+			variable: "faas_edge_internal_hop_binary",
+			line:     "Environment=FAAS_EDGE_INTERNAL_HOP=binary\n",
+			base:     map[string]any{"faas_edge_control_plane_target": "http://10.42.0.1:8090"},
+		},
+		{
 			template: filepath.Join(roles, "gatewayd_internal_service", "templates", "99-faas-role.conf.j2"),
 			variable: "faas_gateway_edge_local_first",
 			line:     "Environment=FAAS_GATEWAY_EDGE_LOCAL_FIRST=1\n",

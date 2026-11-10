@@ -425,6 +425,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// ADR-20261031105055: a compute edge may route each host to the node
 	// that last served it. Off by default for a measured rollout.
 	var placement *edgePlacement
+	var lfd *localFirstDialer
 	if edgeMode == edgeModeCompute {
 		// ADR-1343 §2: this node's gatewayd-internal first, the compute pool
 		// only while it is unhealthy.
@@ -437,7 +438,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ADR-1343 §6: FAAS_NODE_NAME is the name vmmd registers this node
 		// under (the shared node-name drop-in), so a drain in the registry
 		// withdraws this edge's local path.
-		lfd := newLocalFirstDialer(localDialer, cgp, internalURL, edgeMetricsSet, log).
+		lfd = newLocalFirstDialer(localDialer, cgp, internalURL, edgeMetricsSet, log).
 			withDrainWatch(strings.TrimSpace(os.Getenv("FAAS_NODE_NAME")), cgp)
 		if envBoolOr(edgePlacementRoutingEnv, false) {
 			placement = newEdgePlacement()
@@ -512,6 +513,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// itself, so it keeps one connection per request.
 	if dynamicUpstream && envBoolOr(internalKeepAlivePerNodeEnv, false) && !proxy.WithUpstreamKeepAlive() {
 		log.Warn("gatewayd-public: " + internalKeepAlivePerNodeEnv + " ignored: this upstream cannot keep connections per node")
+	}
+	// ADR-20261110081523: requests to this node's gatewayd-internal in
+	// binary HTTP, on per-node keep-alive's transport.
+	if err := configureBinaryHop(proxy, lfd, edgeMetricsSet, os.Getenv, log); err != nil {
+		return err
 	}
 	// Issue #587 / PR-A: per-request drain tracker shared between
 	// the InternalReverseProxy and the control mux so every
