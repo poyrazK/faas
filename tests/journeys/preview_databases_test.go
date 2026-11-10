@@ -135,10 +135,10 @@ func (j *previewDatabaseJourney) openPullRequest(t *testing.T) {
 }
 
 // previewDatabaseReady creates the preview environment, which sets up its
-// database, and waits until the database and the preview's copies of
-// production's two bindings are ready. Waiting here keeps the release
-// command from running before its MIGRATION_DATABASE_URL exists: the API
-// create path does not wait for a provisioning database.
+// database, and checks that the database and the preview's copies of
+// production's two bindings become ready. The preview's deployment would
+// wait for them too (503 preview_database_provisioning); checking first
+// keeps a failure here pointing at the setup rather than the build.
 func (j *previewDatabaseJourney) previewDatabaseReady(t *testing.T) {
 	key := j.tg.scopedKey(t, "pgpr-preview")
 	r := j.tg.apiCall(http.MethodPost, "/v1/apps/"+j.app+"/previews", map[string]int{"pr_number": j.number}, key)

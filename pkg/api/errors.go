@@ -550,6 +550,11 @@ const (
 	// mirrors CodeCapacity / CodeBuildXXX — the failure is transient
 	// and the customer's CLI/CI will retry on the backoff.
 	CodeSourceRefUnavailable = "source_ref_unavailable"
+	// CodePreviewDatabaseProvisioning is the 503 a deployment into a PR
+	// preview answers while the preview's managed PostgreSQL databases are
+	// still provisioning (ADR-20261102123523): its release command needs
+	// their URLs. Retry-After says when to send it again; the CLI waits.
+	CodePreviewDatabaseProvisioning = "preview_database_provisioning"
 	// ADR-570: connection-circuit enforcement availability and revision errors.
 	CodeEgressCircuitUnavailable = "egress_circuit_unavailable"
 	CodeEgressCircuitDisabled    = "egress_circuit_disabled"
@@ -7096,6 +7101,20 @@ func ErrSourceRefUnavailable(reason string) *Problem {
 		"Source-ref fetch unavailable",
 		reason).
 		WithDocs(docsBase + "/build/source-ref#errors")
+}
+
+// PreviewDatabaseRetryAfter is the Retry-After of
+// ErrPreviewDatabaseProvisioning.
+const PreviewDatabaseRetryAfter = 10 * time.Second
+
+// ErrPreviewDatabaseProvisioning holds a deployment into a PR preview until
+// the preview's managed PostgreSQL databases are ready (ADR-20261102123523).
+func ErrPreviewDatabaseProvisioning() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodePreviewDatabaseProvisioning,
+		"Preview database provisioning",
+		"The preview's managed PostgreSQL database is still provisioning; retry after the indicated delay.").
+		WithDocs(docsBase+"/preview-databases").
+		WithHeader("Retry-After", strconv.Itoa(int(PreviewDatabaseRetryAfter.Seconds())))
 }
 
 // ErrSourceRefStale is returned when a caller binds an immutable source SHA

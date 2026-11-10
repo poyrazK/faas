@@ -80,6 +80,28 @@ func (s *server) prepareBuildPreviewDatabases(ctx context.Context, acct state.Ac
 	return s.preparePreviewDatabases(ctx, acct, plan, parent, preview)
 }
 
+// previewDeployProblem holds a source deployment into a PR preview until the
+// preview's databases are ready, as the bridge holds a push's build: the
+// release command needs their URLs. Setup runs here too, so a preview whose
+// databases were never set up gets them. One still provisioning answers 503
+// with Retry-After, which the CLI waits on; a refusal answers 4xx.
+func (s *server) previewDeployProblem(ctx context.Context, acct state.Account, app state.App) *api.Problem {
+	err := s.prepareBuildPreviewDatabases(ctx, acct, acct.Plan, app)
+	if err != nil && !errors.Is(err, previewdb.ErrPending) {
+		s.log.Warn("source deploy: preview databases", "app_id", app.ID, "err", err)
+	}
+	return previewDeployDatabasesProblem(err)
+}
+
+// previewDeployDatabasesProblem is a preview deployment's answer to a
+// preview database setup error.
+func previewDeployDatabasesProblem(err error) *api.Problem {
+	if errors.Is(err, previewdb.ErrPending) {
+		return api.ErrPreviewDatabaseProvisioning()
+	}
+	return previewDatabasesProblem(err)
+}
+
 // releasePreviewDatabases removes a torn-down PR preview's bindings and
 // purges the environment's databases no other preview binds. It runs with or
 // without the capability, so a database set up before it closed is removed.

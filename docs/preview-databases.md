@@ -39,13 +39,13 @@ preview, so the release command migrates the preview's database through
 `MIGRATION_DATABASE_URL` while the app serves through `DATABASE_URL`. See
 [managed PostgreSQL](postgres.md) for release commands and binding access.
 
-On a push to a pull request, the preview's build waits while its database is
-provisioned, so the release command finds its URL. If the database cannot be
-set up, the pull request shows why. `gregale preview create` does not wait:
-the preview's bindings deliver their URLs once the database is ready, so a
-release command in its first deployment can run before they do. If it fails,
-run `gregale preview create` again once `gregale postgres list` shows the
-preview's database `ready`.
+A deployment into a preview waits while its database is provisioned, so the
+release command finds its URL. On a push to a pull request the build waits,
+and if the database cannot be set up, the pull request shows why.
+`gregale preview create` waits too, up to its `--timeout`. Over the API, a
+source deployment into the preview answers `503 preview_database_provisioning`
+with `Retry-After` until the database is ready; send it again after that
+delay.
 
 ## Lifecycle
 

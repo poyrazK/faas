@@ -190,6 +190,37 @@ func TestPreviewDatabasesBuildStatus(t *testing.T) {
 	}
 }
 
+// A source deployment into a preview waits for its databases, as a push's
+// build does: one still provisioning answers 503 with Retry-After, which the
+// CLI waits on, so the release command never runs without its URL.
+func TestPreviewDeployWaitsForItsDatabases(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{nil, 0, ""},
+		{previewdb.ErrPending, http.StatusServiceUnavailable, api.CodePreviewDatabaseProvisioning},
+		{&previewdb.RefusedError{Reason: "the plan's PR preview databases are all in use", Err: managedpostgres.ErrPreviewDatabaseLimit}, http.StatusForbidden, "managed_postgres_preview_database_limit"},
+		{&previewdb.RefusedError{Reason: "the backend refused", Err: errors.New("refused")}, http.StatusConflict, "managed_postgres_conflict"},
+		{errors.New("provider timeout"), http.StatusServiceUnavailable, api.CodeCapacity},
+	} {
+		got := apidserver.PreviewDeployDatabasesProblem(tc.err)
+		if tc.status == 0 {
+			if got != nil {
+				t.Fatalf("%v → %+v, want none", tc.err, got)
+			}
+			continue
+		}
+		if got == nil || got.Status != tc.status || got.Code != tc.code {
+			t.Fatalf("%v → %+v, want %d %s", tc.err, got, tc.status, tc.code)
+		}
+	}
+	if retry := apidserver.PreviewDeployDatabasesProblem(previewdb.ErrPending).HasHeader("Retry-After"); len(retry) != 1 || retry[0] != "10" {
+		t.Fatalf("Retry-After = %v", retry)
+	}
+}
+
 // A teardown that stopped before it released its database leaves the
 // database to the sweep, which keeps the open PR's.
 func TestPreviewDatabaseSweepFinishesAStoppedTeardown(t *testing.T) {
