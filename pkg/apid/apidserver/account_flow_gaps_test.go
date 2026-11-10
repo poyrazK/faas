@@ -179,7 +179,7 @@ func TestUnverifiedAccountRestrictedAfterGrace(t *testing.T) {
 	}
 
 	token := flowLastToken(t, mailer, regexp.MustCompile(`/v1/auth/verify-email\?token=([A-Za-z0-9_-]+)`))
-	if rec := flowForm(h, "/v1/auth/verify-email", url.Values{"token": {token}}); rec.Code >= 400 {
+	if rec := flowForm(h, "/v1/auth/verify-email", url.Values{"token": {token}}, flowSession(t, store, mgr, late.ID)); rec.Code >= 400 {
 		t.Fatalf("verify = %d %s", rec.Code, rec.Body.String())
 	}
 	if acct, err := store.AccountByEmail(t.Context(), "late@example.com"); err != nil || !acct.EmailVerified() {

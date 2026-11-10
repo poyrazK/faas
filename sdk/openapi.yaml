@@ -16055,7 +16055,7 @@ paths:
                 $ref: '#/components/schemas/GraceWindowResponse'
               example: {days: 14, plan_default: 7}
         '400':
-          description: "Invalid body (e.g. negative days)."
+          description: "Invalid body (negative days, or more than 30)."
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -38496,7 +38496,7 @@ components:
       description: "Body of PATCH /v1/account/keys/grace_window_days. `days` is the per-account override for the rotation grace window. `days=0` is atomic rotation; `days=null` (or omitted) clears the override and falls back to the plan default (api.DefaultAPIKeyGraceWindowDays = 7)."
       type: object
       properties:
-        days: {type: [integer, "null"], minimum: 0, description: "Per-account override in days. 0 = atomic, null = use plan default."}
+        days: {type: [integer, "null"], minimum: 0, maximum: 30, description: "Per-account override in days, at most 30 (`api.APIKeyGraceWindowMaxDays`). 0 = atomic, null = use plan default. Changing it needs a recent step-up when the account uses two-factor authentication."}
     GraceWindowResponse:
       description: "Body of GET /v1/account/keys/grace_window_days. `days` is the customer's override (null = no override); `plan_default` is the platform default the rotation handler uses when the row is null."
       type: object

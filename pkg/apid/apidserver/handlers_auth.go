@@ -82,7 +82,11 @@ func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("next"); raw != "" {
 		next = dashboardMFANext(raw)
 	}
-	a.renderLogin(w, r, http.StatusOK, "", false, next)
+	flash := ""
+	if r.URL.Query().Get("verify") == "1" {
+		flash = verifySignInFlash
+	}
+	a.renderLogin(w, r, http.StatusOK, flash, false, next)
 }
 
 // renderLogin renders the sign-in form. next is carried through the POST so a
@@ -588,7 +592,7 @@ func dashboardMFANext(raw string) string {
 	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil {
 		return fallback
 	}
-	if u.Path != cliAuthPath && u.Path != "/dashboard" && !strings.HasPrefix(u.Path, "/dashboard/") {
+	if u.Path != cliAuthPath && u.Path != emailVerificationPath && u.Path != "/dashboard" && !strings.HasPrefix(u.Path, "/dashboard/") {
 		return fallback
 	}
 	if u.Path == dashboardMFAPath {
@@ -603,3 +607,7 @@ func dashboardMFARoute(method, path string) bool {
 	return path == dashboardMFAPath && (method == http.MethodGet || method == http.MethodPost) ||
 		path == "/dashboard/account/mfa" && method == http.MethodGet
 }
+
+// verifySignInFlash is the sign-in banner for a verification link opened in
+// a browser that is not signed in to its account (ADR 20261109120000).
+const verifySignInFlash = "Sign in to finish verifying your email. If you did not create this account or do not know its password, use \"Email me a sign-in link\" instead: it verifies the address and removes the password and keys someone else set."

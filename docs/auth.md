@@ -100,8 +100,14 @@ accounts are always asked. See [account](account.md#profile-sign-in-and-sessions
 
 ## Email verification
 
-A password signup must verify its email address. Until it does, deploying and
-billing changes answer `email_verification_required`. Send a new 24-hour link
+A password signup must verify its email address. Until it does, deploying,
+billing changes, creating API keys and organizations, and inviting members
+answer `email_verification_required`. The verification link works only in a
+browser signed in to that account: opened anywhere else, it asks you to sign
+in first and then verifies. (Someone who signed up with your address cannot
+verify their account by getting you to click the link; if you did not create
+the account, use **Forgot password** or a sign-in link instead, which claims
+it.) Send a new 24-hour link
 with `gregale account email verify` or the account page's button. After 30
 days unverified the account keeps its data, but password sign-in and existing
 sessions and keys only reach the account page, logout, deletion, the resend and

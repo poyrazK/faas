@@ -1242,7 +1242,17 @@ type Querier interface {
 	// The customer's override wins over the default.
 	EffectiveOperationConcurrencyLimit(ctx context.Context, db DBTX, arg EffectiveOperationConcurrencyLimitParams) (int32, error)
 	EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg EffectiveWorkflowDefinitionsParams) ([]byte, error)
+	// The account a usable verification link belongs to, without consuming it:
+	// the link verifies only from a browser signed in to that account
+	// (ADR 20261109120000).
+	EmailVerificationTokenAccount(ctx context.Context, db DBTX, tokenHash []byte) (pgtype.UUID, error)
 	EnableReleaseSecretRekey(ctx context.Context, db DBTX) error
+	EndAccountApprovedCliCodes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	// Grants an account started that a recovery must end (ADR 20261109120000):
+	// pending email changes, org invitations it created, and CLI or agent
+	// sign-in codes approved but not yet exchanged for a key.
+	EndAccountPendingEmailChanges(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	EndAccountPendingInvitations(ctx context.Context, db DBTX, invitedByAccountID pgtype.UUID) (int64, error)
 	EnqueueAppHealthNotification(ctx context.Context, db DBTX, arg EnqueueAppHealthNotificationParams) error
 	// A company project keeps its creator's account; the account's webhooks get
 	// its notifications only while the account may still see the project's
