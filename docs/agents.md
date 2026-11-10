@@ -12,7 +12,8 @@ directly.
 Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
 
-With the Gregale CLI installed, one command sets up Claude Code and Codex:
+With the Gregale CLI installed, one command sets up Claude Code, Codex,
+Cursor, VS Code and Windsurf, and prints the steps for Claude Desktop:
 
 ```sh
 gregale mcp connect

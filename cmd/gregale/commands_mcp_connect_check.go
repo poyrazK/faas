@@ -104,6 +104,13 @@ func mcpDoctorClient(client, url string) (mcpDoctorCheck, bool) {
 		c.Status, c.Detail = "skip", mcpClientName(client)+" is not installed"
 		return c, false
 	}
+	switch client {
+	case mcpConnectClaudeDesktop:
+		c.Status, c.Detail = "skip", "Claude Desktop adds Gregale under Settings → Connectors; check it there"
+		return c, false
+	case mcpConnectCursor, mcpConnectVSCode, mcpConnectWindsurf:
+		return mcpDoctorJSONClient(client, url)
+	}
 	connect := "gregale mcp connect --client " + client
 	var entry string
 	if client == mcpConnectClaude {

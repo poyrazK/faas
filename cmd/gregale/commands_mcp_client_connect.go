@@ -31,7 +31,7 @@ const (
 	agentKeyEnv = "GREGALE_AGENT_KEY"
 )
 
-var mcpConnectClients = []string{mcpConnectClaude, mcpConnectCodex}
+var mcpConnectClients = []string{mcpConnectClaude, mcpConnectCodex, mcpConnectCursor, mcpConnectVSCode, mcpConnectWindsurf, mcpConnectClaudeDesktop}
 
 // Seams for tests: external commands, PATH lookup and the home directory.
 var (
@@ -76,12 +76,12 @@ type mcpConnectSummary struct {
 	Clients  []mcpConnectResult `json:"clients"`
 }
 
-const mcpConnectUsage = "usage: gregale mcp connect [--client claude-code|codex]... [--project] [--toolsets LIST] [--headless] [--force] [--dry-run] [--yes] | --check"
+const mcpConnectUsage = "usage: gregale mcp connect [--client claude-code|codex|cursor|vscode|windsurf|claude-desktop]... [--project] [--toolsets LIST] [--headless] [--force] [--dry-run] [--yes] | --check"
 
 func cmdMCPConnect(args []string) int {
 	fs := newFlagSet("mcp connect", flag.ContinueOnError)
 	var clients stringListFlag
-	fs.Var(&clients, "client", "agent client to connect: claude-code or codex (repeatable; default: every detected one)")
+	fs.Var(&clients, "client", "agent client to connect: "+strings.Join(mcpConnectClients, ", ")+" (repeatable; default: every detected one)")
 	project := fs.Bool("project", false, "write this project's config (.mcp.json) instead of the user-wide one")
 	toolsets := fs.String("toolsets", "", "MCP toolsets to list, comma-separated (default core)")
 	headless := fs.Bool("headless", false, "mint an agent key for an agent with no person at a browser; the config reads it from $"+agentKeyEnv)
@@ -147,7 +147,7 @@ func mcpConnectSelect(named []string, auto bool) ([]string, int) {
 		}
 	}
 	if len(detected) == 0 {
-		return nil, printErr("No agent client found", fmt.Errorf("neither Claude Code (claude) nor Codex (codex) is installed; install one, or see https://gregale.dev/docs/agents for other clients"))
+		return nil, printErr("No agent client found", fmt.Errorf("found none of Claude Code, Codex, Cursor, VS Code, Windsurf or Claude Desktop; install one, or see https://gregale.dev/docs/agents for other clients"))
 	}
 	if auto {
 		return detected, 0
@@ -182,23 +182,44 @@ func mcpClientDetected(client string) bool {
 		}
 		_, err = os.Stat(filepath.Join(home, ".codex"))
 		return err == nil
+	case mcpConnectClaudeDesktop:
+		return mcpDirExists(claudeDesktopDir)
+	}
+	if c, ok := mcpJSONClients[client]; ok {
+		if _, err := mcpConnectLookPath(c.binary); err == nil {
+			return true
+		}
+		return mcpDirExists(c.userDir)
 	}
 	return false
 }
 
 func mcpClientName(client string) string {
-	if client == mcpConnectClaude {
+	switch client {
+	case mcpConnectClaude:
 		return "Claude Code"
+	case mcpConnectCodex:
+		return "Codex"
+	case mcpConnectClaudeDesktop:
+		return "Claude Desktop"
 	}
-	return "Codex"
+	if c, ok := mcpJSONClients[client]; ok {
+		return c.name
+	}
+	return client
 }
 
 func mcpConnectClient(client string, opts mcpConnectOptions) mcpConnectResult {
 	var r mcpConnectResult
-	if client == mcpConnectClaude {
+	switch client {
+	case mcpConnectClaude:
 		r = connectClaudeCode(opts)
-	} else {
+	case mcpConnectCodex:
 		r = connectCodex(opts)
+	case mcpConnectClaudeDesktop:
+		r = connectClaudeDesktop(opts)
+	default:
+		r = connectJSONClient(client, opts)
 	}
 	r.Client = client
 	return r

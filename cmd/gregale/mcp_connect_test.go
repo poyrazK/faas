@@ -65,6 +65,9 @@ func newMCPConnectFixture(t *testing.T, binaries ...string) *mcpConnectFixture {
 	t.Cleanup(f.api.Close)
 	t.Setenv("FAAS_API", f.api.URL)
 	t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
+	// VS Code's Linux config follows XDG_CONFIG_HOME; keep it in the fake home.
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(f.home, ".config"))
+	t.Setenv("APPDATA", filepath.Join(f.home, "AppData"))
 	oldLook, oldRun, oldInter, oldHome := *main.MCPConnectLookPath, *main.MCPConnectRun, *main.MCPConnectInteractive, *main.MCPConnectHome
 	oldCheck, oldCount := *main.MCPEndpointCheck, *main.MCPHeadlessToolCount
 	t.Cleanup(func() {
@@ -234,7 +237,7 @@ func TestMCPConnectRefusals(t *testing.T) {
 	if code, _, errOut := f.run(t, "--yes"); code != 1 || !strings.Contains(errOut, "Claude Code") {
 		t.Fatalf("no client found = %d\n%s", code, errOut)
 	}
-	if code, _, errOut := f.run(t, "--client", "cursor"); code != 1 || !strings.Contains(errOut, "claude-code") {
+	if code, _, errOut := f.run(t, "--client", "atom"); code != 1 || !strings.Contains(errOut, "claude-code") {
 		t.Fatalf("unknown client = %d\n%s", code, errOut)
 	}
 	if code, out, _ := f.run(t, "--client", "codex", "--project"); code != 0 || !strings.Contains(out, "skipped") {
@@ -396,5 +399,125 @@ func TestInitWritesProjectMCPConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(other, ".mcp.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("--no-mcp wrote .mcp.json (%v)", err)
+	}
+}
+
+// Cursor, VS Code and Windsurf get a gregale entry in their JSON config,
+// keeping every other key and its order (ADR-20261109121411 §7).
+func TestMCPConnectCursorKeepsTheRestOfTheConfig(t *testing.T) {
+	f := newMCPConnectFixture(t, "cursor")
+	path := filepath.Join(f.home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const before = `{"zeta": 1, "mcpServers": {"other": {"command": "other"}}, "alpha": [1, 2]}`
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := f.run(t, "--client", "cursor")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+	got, _ := os.ReadFile(path)
+	want := "{\n  \"zeta\": 1,\n  \"mcpServers\": {\n    \"other\": {\n      \"command\": \"other\"\n    },\n    \"gregale\": {\n      \"url\": \"" + f.api.URL + "/mcp\"\n    }\n  },\n  \"alpha\": [\n    1,\n    2\n  ]\n}\n"
+	if string(got) != want {
+		t.Fatalf("mcp.json =\n%s\nwant\n%s", got, want)
+	}
+	if code, out, _ := f.run(t, "--client", "cursor"); code != 0 || !strings.Contains(out, "already connected") {
+		t.Fatalf("second run = %d\n%s", code, out)
+	}
+	if code, out, _ := f.run(t, "--client", "cursor", "--toolsets", "core,operate"); code != 1 || !strings.Contains(out, "--force") {
+		t.Fatalf("a different entry = %d\n%s; want a conflict", code, out)
+	}
+	if code, _, _ := f.run(t, "--client", "cursor", "--toolsets", "core,operate", "--force"); code != 0 {
+		t.Fatal("--force failed")
+	}
+	got, _ = os.ReadFile(path)
+	if !strings.Contains(string(got), `"Gregale-MCP-Toolsets": "core,operate"`) || strings.Count(string(got), `"gregale"`) != 1 || !strings.HasPrefix(string(got), "{\n  \"zeta\": 1,") {
+		t.Fatalf("after --force:\n%s", got)
+	}
+}
+
+func TestMCPConnectVSCodeProjectAndWindsurfHeadless(t *testing.T) {
+	f := newMCPConnectFixture(t, "code", "windsurf")
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if code, out, errOut := f.run(t, "--client", "vscode", "--project"); code != 0 {
+		t.Fatalf("vscode --project exit %d\n%s\n%s", code, out, errOut)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".vscode", "mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vscode struct {
+		Servers map[string]map[string]any `json:"servers"`
+	}
+	if err := json.Unmarshal(data, &vscode); err != nil || vscode.Servers["gregale"]["type"] != "http" || vscode.Servers["gregale"]["url"] != f.api.URL+"/mcp" {
+		t.Fatalf(".vscode/mcp.json = %s (%v)", data, err)
+	}
+	if code, out, _ := f.run(t, "--client", "windsurf", "--project"); code != 0 || !strings.Contains(out, "skipped") {
+		t.Fatalf("windsurf --project = %d\n%s", code, out)
+	}
+
+	code, out, errOut := f.run(t, "--client", "windsurf", "--headless")
+	if code != 0 {
+		t.Fatalf("windsurf --headless exit %d\n%s\n%s", code, out, errOut)
+	}
+	data, err = os.ReadFile(filepath.Join(f.home, ".codeium", "windsurf", "mcp_config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var windsurf struct {
+		MCPServers map[string]struct {
+			ServerURL string            `json:"serverUrl"`
+			Headers   map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &windsurf); err != nil {
+		t.Fatal(err)
+	}
+	g := windsurf.MCPServers["gregale"]
+	if g.ServerURL != f.api.URL+"/mcp" || g.Headers["Authorization"] != "Bearer ${env:GREGALE_AGENT_KEY}" || strings.Contains(string(data), "fp_live_agentsecret") {
+		t.Fatalf("mcp_config.json = %s", data)
+	}
+}
+
+func TestMCPConnectRefusesJSONWithComments(t *testing.T) {
+	f := newMCPConnectFixture(t, "cursor")
+	path := filepath.Join(f.home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const before = "{\n  // my servers\n  \"mcpServers\": {}\n}\n"
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := f.run(t, "--client", "cursor")
+	if code != 1 || !strings.Contains(out, "not plain JSON") || !strings.Contains(out, `"gregale"`) {
+		t.Fatalf("exit %d\n%s; want a refusal with the entry to add", code, out)
+	}
+	if got, _ := os.ReadFile(path); string(got) != before {
+		t.Fatalf("a commented config was rewritten:\n%s", got)
+	}
+}
+
+func TestMCPConnectClaudeDesktopPrintsSteps(t *testing.T) {
+	f := newMCPConnectFixture(t)
+	code, out, _ := f.run(t, "--client", "claude-desktop")
+	if code != 0 || !strings.Contains(out, "Claude Desktop: manual") || !strings.Contains(out, "Settings → Connectors") || !strings.Contains(out, f.api.URL+"/mcp") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+}
+
+func TestMCPConnectCheckJSONClients(t *testing.T) {
+	f := newMCPConnectFixture(t, "cursor", "windsurf")
+	t.Chdir(t.TempDir())
+	t.Setenv("GREGALE_AGENT_KEY", "")
+	if code, _, errOut := f.run(t, "--client", "cursor"); code != 0 {
+		t.Fatalf("connect cursor: %s", errOut)
+	}
+	code, checks := f.check(t)
+	if code != 0 || checks["cursor"]["status"] != "ok" || checks["windsurf"]["status"] != "warn" || checks["vscode"]["status"] != "skip" || checks["claude-desktop"]["status"] != "skip" {
+		t.Fatalf("exit %d checks %v", code, checks)
 	}
 }
