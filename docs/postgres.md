@@ -195,7 +195,15 @@ gregale postgres attach orders my-api --access session --env SESSION_DATABASE_UR
 ```
 
 Each serving instance then holds its own server connections, so keep its pool
-small (a few connections per instance).
+small: a `session` login allows at most 42 connections across every instance
+of the app (2 per instance at Scale concurrency), and further connections are
+refused with "too many connections for role". Keep ordinary query traffic on a
+pooled `read_write` binding. `session` is offered only where the database
+backend has qualified it (`gregale postgres capabilities` lists it).
+
+An app holds at most 8 managed PostgreSQL bindings on Free, 25 on Hobby, 50 on
+Pro and 100 on Scale. A binding's environment key must start with a letter and
+may not be `PORT` or start with `GREGALE_` or `FAAS_`, which the platform sets.
 
 Run migrations as a release task, with a Procfile `release: npm run migrate` or
 `release.command` in `gregale.yaml`, and point the migration tool at a

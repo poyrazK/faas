@@ -204,6 +204,21 @@ func (s *Service) newObjectStorageComputeBinding(ctx context.Context, acct state
 				WithHint("Choose another prefix (gregale add bucket --prefix NAME, or prefix in the request), or remove the existing variable."), nil
 		}
 	}
+	// Release capture refuses managed credentials and the release-secret
+	// trigger refuses their rows, so say so before minting a key
+	// (ADR-20261110120000).
+	if pinned, ok := s.Host.Store().(state.ProjectReleaseSecretsStore); ok {
+		yes, err := pinned.ReleaseSecretsPinned(ctx, app.AccountID, app.ID, bucket.Scope)
+		if err != nil {
+			return state.ObjectS3Credential{}, nil, err
+		}
+		if yes {
+			return state.ObjectS3Credential{}, api.NewProblem(http.StatusConflict, "project_release_secrets_pinned", "Secret versions are release-bound",
+				"This app's secrets in the environment are pinned to an active project release, and release secrets cannot carry managed credentials.").
+				WithHint("Bind the bucket in an environment whose release does not pin secrets, or release without pinned secrets first.").
+				WithDocs("https://gregale.dev/docs/secrets"), nil
+		}
+	}
 	// The binding's six managed values (four of them not secret) do not consume
 	// SecretCountMax; per-bucket credential limits bound them (ADR-20261109180000).
 	limits := api.MustLimitsFor(acct.Plan)

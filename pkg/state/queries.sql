@@ -7647,6 +7647,11 @@ SELECT pg_advisory_xact_lock(managed_secret_target_lock_key(sqlc.arg(app_id)::uu
 -- name: ProjectEnvironmentCloneSecretTargetExists :one
 SELECT EXISTS(SELECT 1 FROM app_secrets WHERE app_id=$1 AND scope=$2 AND key=$3)::boolean;
 
+-- name: CountLiveManagedPostgresBindingsForApp :one
+-- ADR-20261110120000: the plan's PostgresBindingsPerAppMax counts every
+-- binding of the app that is not deleted.
+SELECT count(*) FROM managed_postgres_bindings WHERE app_id=$1 AND state<>'deleted';
+
 -- name: ManagedPostgresBindingDatabaseID :one
 SELECT database_id,database_account_id FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2;
 
@@ -28110,7 +28115,7 @@ FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id
 JOIN project_environments e ON e.id=g.environment_id
 JOIN managed_postgres_bindings b ON b.app_id=q.app_id AND b.scope=e.slug AND b.state='ready'
- AND b.access IN ('read_write','read_only','migration') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
+ AND b.access IN ('read_write','read_only','migration','session') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
 JOIN app_secrets s ON s.app_id=q.app_id AND s.scope=e.slug AND s.key=b.environment_key
  AND s.managed_postgres_binding_id=b.id AND s.managed_credential_generation=b.credential_generation AND s.delivery_version IS NOT NULL
 JOIN managed_postgres_databases d ON d.id=b.database_id AND d.deleted_at IS NULL

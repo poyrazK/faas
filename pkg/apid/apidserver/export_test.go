@@ -86,6 +86,10 @@ var SealNotificationChannel = sealChannel
 var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
 var DashboardDebugStatusView = dashboardDebugStatusView
 
+// ManifestDeclaresManagedBinding is the deploy-time bound-app check
+// (ADR-20261110120000).
+var ManifestDeclaresManagedBinding = manifestDeclaresManagedBinding
+
 // Package-level types
 type AffectedPartition = affectedPartition
 type AnnotationForm = annotationForm

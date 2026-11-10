@@ -96,5 +96,6 @@ func (s *appSecretCredentialSink) VerifyCredential(ctx context.Context, binding 
 	if err != nil || subtle.ConstantTimeCompare([]byte(fingerprint), []byte(sealed.ValueHash)) != 1 {
 		return managedpostgres.ErrUnavailable
 	}
-	return s.probe(ctx, value, binding.Access, target.Spec.PostgresMajor)
+	// A session login has read_write privileges; only its endpoint differs.
+	return s.probe(ctx, value, binding.Access.Privileges(), target.Spec.PostgresMajor)
 }

@@ -774,6 +774,9 @@ type Querier interface {
 	CountEnabledEventSubscriptionsForQuota(ctx context.Context, db DBTX, appID pgtype.UUID) (CountEnabledEventSubscriptionsForQuotaRow, error)
 	CountEnvironmentQueueProducerDepth(ctx context.Context, db DBTX, arg CountEnvironmentQueueProducerDepthParams) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
+	// ADR-20261110120000: the plan's PostgresBindingsPerAppMax counts every
+	// binding of the app that is not deleted.
+	CountLiveManagedPostgresBindingsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountLiveOperationSchedules(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountMCPOAuthRetirements(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountMCPPagerDutyAcknowledgementEvents(ctx context.Context, db DBTX, incidentID pgtype.UUID) (int64, error)
