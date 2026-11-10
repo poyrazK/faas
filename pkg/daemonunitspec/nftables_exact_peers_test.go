@@ -80,6 +80,9 @@ func TestVmmdDropInCarriesExactPeers(t *testing.T) {
 		"c2": map[string]any{"faas_private_dns_address": "10.20.0.3"},
 	})
 	vars["faas_control_plane_allowed_ports"] = []int{50051, 9091}
+	vars["public_iface"] = "eno1"
+	vars["masquerade_cidr"] = "10.100.0.0/16"
+	vars["ansible_default_ipv4"] = map[string]string{"interface": "eno1"}
 	encoded, err := json.Marshal(vars)
 	if err != nil {
 		t.Fatal(err)
