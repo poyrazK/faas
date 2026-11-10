@@ -2204,10 +2204,12 @@ select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at
 from instances where app_id = $1 order by started_at desc;
 
--- name: CountAccountsCreatedSince :one
--- Accounts created at or after since (ADR-20261104145353: the platform-wide
--- daily sign-up cap). Read only on a sign-up attempt.
-select count(*)::bigint from accounts where created_at >= sqlc.arg(since)::timestamptz;
+-- name: CountVerifiedAccountsCreatedSince :one
+-- Accounts created at or after since that have verified their email
+-- (ADR-20261104145353 amendment 1: the platform-wide daily sign-up cap counts
+-- the accounts that can use a Free allowance). Read only on a sign-up attempt.
+select count(*)::bigint from accounts
+ where created_at >= sqlc.arg(since)::timestamptz and email_verified_at is not null;
 
 -- name: ListFirstSuccessfulRequestsForAccountsCreatedSince :many
 -- Operator beta funnel: one bounded aggregate read replaces an N+1
