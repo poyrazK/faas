@@ -1,9 +1,9 @@
 # ADR-20261110170000: Object storage held above its ceiling is deleted after notice
 
-- **Status:** proposed (owner, 2026-11-10: "Notify, then delete", on the billing launch review; the details below await review before any code deletes customer data)
+- **Status:** proposed (owner, 2026-11-10: "Notify, then delete", on the billing launch review; amended the same day for Object Lock, decision 8, owner choice "30-day delete + lock cap"; the details below await review before any code deletes customer data)
 - **Date:** 2026-11-10
 - **Owner:** apid and object storage maintainers
-- **Amends:** [ADR-20261101214152](20261101214152-object-storage-ceiling-follows-spend-cap.md): data above the ceiling is no longer kept indefinitely.
+- **Amends:** [ADR-20261101214152](20261101214152-object-storage-ceiling-follows-spend-cap.md): data above the ceiling is no longer kept indefinitely. Also bounds Object Lock retention per plan.
 
 This record has a date-and-time identifier because numbered ADRs collide
 when parallel changes pick the next number.
@@ -48,16 +48,46 @@ when parallel changes pick the next number.
    3. current objects, newest first, so data stored before the account went
       over is kept longest.
 
-   Versions under Object Lock retention or a legal hold are never deleted. A
-   subject that stays over only because of protected versions stays read
-   blocked, as today.
+   Protected versions follow decision 8: the platform releases legal holds
+   and bypasses GOVERNANCE retention once the grace has passed. Only
+   COMPLIANCE retention, which nobody can shorten, is left until it lapses.
 5. **Record.**
    - Every deletion pass writes an audit row with counts and bytes.
    - A final email lists what was deleted.
    - Deleted objects are not recoverable.
 6. **Organizations** that own their resources follow the same rules as
    accounts.
-7. **Rollout.**
+8. **Object Lock is bounded by plan, and the platform can remove it**
+   (owner, 2026-11-10, object storage audit OS-6).
+   - Today any plan, Free included, may set GOVERNANCE or COMPLIANCE retention
+     up to 100 years (`api.MaxObjectLockRetentionYears`), on objects or as a
+     bucket default. Account erasure (`objectstorage.CleanupOwnedBucketObjects`)
+     stops at the first protected version it meets and retries hourly forever,
+     so it never completes. The protected data stays stored, unbilled, after
+     the account is gone.
+   - COMPLIANCE mode becomes paid-only. Retention is capped per plan:
+     Free GOVERNANCE 30 days with no COMPLIANCE; Hobby 1 year; Pro 7 years;
+     Scale 10 years. The caps go in `pkg/api/limits.go` as
+     `ObjectStoragePlanLimits.MaxLockRetentionDays`. A retention date,
+     default retention or bucket lock configuration beyond the plan's cap is
+     refused at write with the limit and the observed value. Existing longer
+     retention is reported, not shortened.
+   - When deletion is due (this ADR) or account erasure runs (staged
+     deletion's grace expiry, [ADR-021](021-account-export-and-staged-deletion.md)), the platform releases legal holds and deletes GOVERNANCE
+     versions with `x-amz-bypass-governance-retention` (GCS: release
+     temporary/event holds). A protected version no longer stops the pass:
+     cleanup deletes everything it may, records the COMPLIANCE versions it must
+     keep, and schedules the next attempt at their earliest retain-until
+     instead of hourly.
+   - Residual: COMPLIANCE versions written within a plan's cap outlive a lapse
+     by at most that cap (Scale: 10 years). They stay read-blocked and are
+     listed in the final email and the audit row. Accepted, because COMPLIANCE
+     exists precisely so that no one, Gregale included, can delete early.
+   - A downgrade (customer-initiated) is refused while COMPLIANCE retention in
+     the account runs past the target plan's cap, like the storage ceiling
+     check (`PlanChangeStorage`); a lapse cannot be refused and falls under
+     the residual.
+9. **Rollout.**
    - `object_storage_over_ceiling_deletion` starts in `shadow`: it records
      clocks, sends no email and logs what it would delete.
    - Next, `notify` sends the emails without deleting.
@@ -65,6 +95,9 @@ when parallel changes pick the next number.
      so no subject is deleted without having had the full notice.
 
 ## Open questions for the owner
+
+- **Lock caps.** Free GOVERNANCE 30 days / Hobby 1 y / Pro 7 y / Scale 10 y
+  are proposed values; the owner chose capping, not these numbers.
 
 - **Grace length.** 30 days, or shorter for Free (for example, 14)?
 - **Deletion order.** Is newest-first right for current objects, or should
