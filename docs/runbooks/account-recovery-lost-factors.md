@@ -28,9 +28,11 @@ support: they sign in with the authenticator and change the email.
 - **Requests under time pressure**, threats, or a story that changes between
   messages. Pressure is the attacker's main tool; the waiting period below is
   not negotiable.
-- **Requests that ask to change the sign-in email.** Support never changes
-  the email. After the reset the owner signs in and changes it themselves; the
-  confirmation link goes to the new address and the old one gets a notice.
+- **Requests that ask to change the sign-in email to a new address.**
+  Support never does that. After the reset the owner signs in and changes it
+  themselves; the confirmation link goes to the new address and the old one
+  gets a notice. The one exception is moving an account *back* after someone
+  else changed it: [account-recovery-email-changed.md](account-recovery-email-changed.md).
 - **Accounts whose orgs hold other people's data** (any org with more than one
   member) without the second check in section 3.
 

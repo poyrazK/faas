@@ -7215,6 +7215,13 @@ type Querier interface {
 	RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, arg RetryQueueDeadLetterInvocationParams) (Invocation, error)
 	RetryQueueLeaseInvocation(ctx context.Context, db DBTX, arg RetryQueueLeaseInvocationParams) (int64, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)
+	// Operator revert of the last confirmed email change (ADR 20261110100000).
+	// Applies only while the account still has the address that change moved it
+	// to, so it cannot run twice or undo a later change. Like the change itself,
+	// it spends account-bound links mailed while the account had that address.
+	// A unique violation (the old address now belongs to another account) rolls
+	// the statement back.
+	RevertLastAccountEmailChange(ctx context.Context, db DBTX, arg RevertLastAccountEmailChangeParams) (RevertLastAccountEmailChangeRow, error)
 	RevokeAllMFATrustedBrowsers(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.
