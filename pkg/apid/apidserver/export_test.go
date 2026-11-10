@@ -2075,6 +2075,19 @@ func AgeSignInsForTest(t testing.TB, d time.Duration) {
 	t.Cleanup(func() { recentSignInNow = prev })
 }
 
+// ReserveTOTPAttempt counts one TOTP attempt; zero means allowed.
+func (r *server) ReserveTOTPAttempt(ctx context.Context, accountID string) time.Duration {
+	return r.reserveTOTPAttempt(ctx, accountID)
+}
+
+// ResetTOTPAttempts clears the counted TOTP attempts.
+func (r *server) ResetTOTPAttempts(ctx context.Context, accountID string) {
+	r.resetTOTPAttempts(ctx, accountID)
+}
+
+// TOTPMaxFailures is the per-account TOTP attempt limit.
+const TOTPMaxFailures = totpMaxFailures
+
 // ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
 func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
 	return r.expireUnverifiedAccounts(ctx)

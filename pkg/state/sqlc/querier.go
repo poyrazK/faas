@@ -534,6 +534,9 @@ type Querier interface {
 	// Claims always allow an event to inspect demand and drain surplus workers.
 	// The returned failure deadline gates new admission inside the reconciler.
 	ClaimWorkerRecovery(ctx context.Context, db DBTX, arg ClaimWorkerRecoveryParams) (WorkerRecovery, error)
+	// A correct authenticator code clears the account's counted attempts
+	// (ADR 20261110120000).
+	ClearAccountMailSlot(ctx context.Context, db DBTX, arg ClearAccountMailSlotParams) error
 	ClearAccountOAuthUnlink(ctx context.Context, db DBTX, arg ClearAccountOAuthUnlinkParams) error
 	// A new fire of the rule supersedes the recovery it had not delivered.
 	ClearAlertChannelResolveRetries(ctx context.Context, db DBTX, ruleID pgtype.UUID) error

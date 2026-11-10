@@ -190,3 +190,8 @@ WHERE a.status='active' AND a.email_verified_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM apps p WHERE p.account_id=a.id)
 ORDER BY a.created_at
 LIMIT sqlc.arg(max_rows);
+
+-- A correct authenticator code clears the account's counted attempts
+-- (ADR 20261110120000).
+-- name: ClearAccountMailSlot :exec
+DELETE FROM account_mail_throttle WHERE account_id=$1 AND kind=$2;
