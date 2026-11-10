@@ -5,12 +5,6 @@
 # node_exporter textfile collector and logs each failure to the journal under
 # faas-release-integrity, which Alloy ships off the host.
 
-- name: release_integrity — ensure the textfile collector directory exists
-  ansible.builtin.file:
-    path: /var/lib/node_exporter/textfile_collector
-    state: directory
-    mode: "0755"
-
 - name: release_integrity — install the service and timer
   ansible.builtin.copy:
     src: "{{ item }}"
