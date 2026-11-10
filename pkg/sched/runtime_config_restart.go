@@ -8,7 +8,17 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+)
+
+var (
+	// errRuntimeRefreshIdle reports an app with no live deployment and no
+	// resident instance: nothing runs the previous configuration.
+	errRuntimeRefreshIdle = errors.New("sched: runtime config restart: no live deployment and no resident instance")
+	// errRuntimeRefreshAwaitingLive reports resident instances of a
+	// deployment that is not live yet.
+	errRuntimeRefreshAwaitingLive = errors.New("sched: runtime config restart: resident instances await a live deployment")
 )
 
 // refreshRuntimeConfigRolling is the durable apply-now path for env and secret
@@ -79,7 +89,17 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		}
 	}
 	if len(live) == 0 {
-		return CoordOutcome{}, errors.New("sched: runtime config restart: no resident live deployment in selected environment")
+		// No live deployment (ADR-20261110120000). With nothing resident, no
+		// runtime holds a previous credential and the refresh is complete.
+		// Instances of a deployment that is not live yet (a first deploy
+		// still snapshotting) keep the old value until it goes live, so the
+		// refresh waits for it instead of failing on every delivery.
+		for _, instance := range instances {
+			if runtimeConfigResident(instance) {
+				return CoordOutcome{}, errors.Join(db.ErrNotificationDeferred, errRuntimeRefreshAwaitingLive)
+			}
+		}
+		return CoordOutcome{}, errRuntimeRefreshIdle
 	}
 	// A live deployment staged at 0% traffic (deploy --no-traffic) serves no
 	// production requests. Replacing it boots a VM nothing routes to and, under

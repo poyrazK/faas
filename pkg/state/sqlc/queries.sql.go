@@ -11383,6 +11383,19 @@ func (q *Queries) CountExclusiveWorkPending(ctx context.Context, db DBTX, accoun
 	return count, err
 }
 
+const countLiveManagedPostgresBindingsForApp = `-- name: CountLiveManagedPostgresBindingsForApp :one
+SELECT count(*) FROM managed_postgres_bindings WHERE app_id=$1 AND state<>'deleted'
+`
+
+// ADR-20261110120000: the plan's PostgresBindingsPerAppMax counts every
+// binding of the app that is not deleted.
+func (q *Queries) CountLiveManagedPostgresBindingsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countLiveManagedPostgresBindingsForApp, appID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countMCPPagerDutyAcknowledgementEvents = `-- name: CountMCPPagerDutyAcknowledgementEvents :one
 SELECT count(*) FROM mcp_readiness_pagerduty_ack_events WHERE incident_id=$1
 `
@@ -76488,7 +76501,7 @@ FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id
 JOIN project_environments e ON e.id=g.environment_id
 JOIN managed_postgres_bindings b ON b.app_id=q.app_id AND b.scope=e.slug AND b.state='ready'
- AND b.access IN ('read_write','read_only','migration') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
+ AND b.access IN ('read_write','read_only','migration','session') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
 JOIN app_secrets s ON s.app_id=q.app_id AND s.scope=e.slug AND s.key=b.environment_key
  AND s.managed_postgres_binding_id=b.id AND s.managed_credential_generation=b.credential_generation AND s.delivery_version IS NOT NULL
 JOIN managed_postgres_databases d ON d.id=b.database_id AND d.deleted_at IS NULL

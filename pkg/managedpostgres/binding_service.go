@@ -24,9 +24,16 @@ type BindingServiceOptions struct {
 	// accounts. It is intended for staging canaries; deletion remains
 	// available regardless of this gate.
 	ProvisioningAllowed func(context.Context, string) bool
-	Now                 func() time.Time
-	NewID               func() string
-	NewLeaseToken       func() string
+	// MaxBindingsPerApp returns the live bindings one app of the account may
+	// hold (ADR-20261110120000). Nil, or zero, leaves the count unbounded.
+	MaxBindingsPerApp func(context.Context, string) (int, error)
+	// ReleaseSecretsPinned reports whether the app's secrets in the scope are
+	// pinned to an active project release (accountID, appID, scope). Nil
+	// treats every app as unpinned.
+	ReleaseSecretsPinned func(context.Context, string, string, string) (bool, error)
+	Now                  func() time.Time
+	NewID                func() string
+	NewLeaseToken        func() string
 }
 
 // BindingService owns the recoverable saga between a provider credential and
@@ -35,18 +42,20 @@ type BindingServiceOptions struct {
 // idempotent sink references, and the persisted lease make every boundary safe
 // to retry after a process crash.
 type BindingService struct {
-	registry            *Registry
-	databases           Store
-	bindings            BindingStore
-	sink                CredentialSink
-	leaseDuration       time.Duration
-	providerTimeout     time.Duration
-	retryInterval       time.Duration
-	provisioningEnabled func() bool
-	provisioningAllowed func(context.Context, string) bool
-	now                 func() time.Time
-	newID               func() string
-	newLeaseToken       func() string
+	registry             *Registry
+	databases            Store
+	bindings             BindingStore
+	sink                 CredentialSink
+	leaseDuration        time.Duration
+	providerTimeout      time.Duration
+	retryInterval        time.Duration
+	provisioningEnabled  func() bool
+	provisioningAllowed  func(context.Context, string) bool
+	maxBindingsPerApp    func(context.Context, string) (int, error)
+	releaseSecretsPinned func(context.Context, string, string, string) (bool, error)
+	now                  func() time.Time
+	newID                func() string
+	newLeaseToken        func() string
 }
 
 type CreateBindingRequest struct {
@@ -91,18 +100,20 @@ func NewBindingService(registry *Registry, databases Store, bindings BindingStor
 		options.NewLeaseToken = uuid.NewString
 	}
 	return &BindingService{
-		registry:            registry,
-		databases:           databases,
-		bindings:            bindings,
-		sink:                sink,
-		leaseDuration:       options.LeaseDuration,
-		providerTimeout:     options.ProviderTimeout,
-		retryInterval:       options.RetryInterval,
-		provisioningEnabled: options.ProvisioningEnabled,
-		provisioningAllowed: options.ProvisioningAllowed,
-		now:                 options.Now,
-		newID:               options.NewID,
-		newLeaseToken:       options.NewLeaseToken,
+		registry:             registry,
+		databases:            databases,
+		bindings:             bindings,
+		sink:                 sink,
+		leaseDuration:        options.LeaseDuration,
+		providerTimeout:      options.ProviderTimeout,
+		retryInterval:        options.RetryInterval,
+		provisioningEnabled:  options.ProvisioningEnabled,
+		provisioningAllowed:  options.ProvisioningAllowed,
+		maxBindingsPerApp:    options.MaxBindingsPerApp,
+		releaseSecretsPinned: options.ReleaseSecretsPinned,
+		now:                  options.Now,
+		newID:                options.NewID,
+		newLeaseToken:        options.NewLeaseToken,
 	}, nil
 }
 
@@ -125,6 +136,9 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 		!request.Access.Known() {
 		return Binding{}, false, ErrInvalid
 	}
+	if err := customerBindingEnvironmentKeyError(request.EnvironmentKey); err != nil {
+		return Binding{}, false, err
+	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
 		return Binding{}, false, ErrProvisioningClosed
 	}
@@ -139,8 +153,24 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	if err := backend.Capabilities.SupportsCredentialAccess(request.Access); err != nil {
 		return Binding{}, false, err
 	}
+	if s.releaseSecretsPinned != nil {
+		pinned, err := s.releaseSecretsPinned(ctx, request.AccountID, request.AppID, request.Scope)
+		if err != nil {
+			return Binding{}, false, err
+		}
+		if pinned {
+			return Binding{}, false, ErrReleaseSecretsPinned
+		}
+	}
+	appBindingLimit := 0
+	if s.maxBindingsPerApp != nil {
+		if appBindingLimit, err = s.maxBindingsPerApp(ctx, request.AccountID); err != nil {
+			return Binding{}, false, err
+		}
+	}
 	now := s.now()
 	binding, created, err := s.bindings.ReserveBinding(ctx, Binding{
+		appBindingLimit:      appBindingLimit,
 		ID:                   s.newID(),
 		AccountID:            request.AccountID,
 		DatabaseAccountID:    database.AccountID,
