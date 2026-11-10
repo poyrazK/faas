@@ -302,12 +302,10 @@ func (m *MemStore) functionDestinationCapacityLocked(nodeID, excludeID string, e
 	if !ok || !node.Active || node.Lifecycle != "active" || node.AdmissionCeilingMB <= 0 || node.VPCPUs <= 0 {
 		return ErrNodeCapacity
 	}
+	// Memory is the only capacity limit (ADR-20261109172421); CPU and vCPUs
+	// are measured, never refused.
 	used := m.migrationNodeUsedLocked(nodeID, excludeID)
-	budget := node.VCPUBudget
-	if budget <= 0 {
-		budget = api.VCPUSlots
-	}
-	if used.RAM+extra.RAM > int64(node.AdmissionCeilingMB) || used.CPU+extra.CPU > int64(node.VPCPUs)*1000*api.CPUOvercommit || used.VCPU+extra.VCPU > int64(budget) {
+	if used.RAM+extra.RAM > int64(node.AdmissionCeilingMB) {
 		return ErrNodeCapacity
 	}
 	return nil

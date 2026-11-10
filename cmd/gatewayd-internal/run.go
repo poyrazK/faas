@@ -115,6 +115,24 @@ var scheddSocket = envOrGateway("FAAS_SCHEDD_SOCKET", "/run/faas/schedd.sock")
 // per-test path without needing /run/faas on the host (PR #203).
 var gatewaydInternalSocket = envOrGateway("FAAS_GATEWAY_SYNTH_SOCKET", "/run/faas/gatewayd-internal.sock")
 
+// gatewaydInternalHopSocket serves the same handler in binary HTTP to this
+// node's compute edge (ADR-20261110081523); "off" serves none. It listens
+// whether or not the edge uses it, so an edge may switch to it in any
+// release order. Unset, it sits beside the HTTP/1.1 socket:
+// /run/faas/gatewayd-internal-hop.sock in production.
+var gatewaydInternalHopSocket = os.Getenv("FAAS_INTERNAL_HOP_SOCKET")
+
+// binaryHopSocket is the hop's socket path, or "" for none.
+func binaryHopSocket() string {
+	switch gatewaydInternalHopSocket {
+	case "off":
+		return ""
+	case "":
+		return strings.TrimSuffix(gatewaydInternalSocket, ".sock") + "-hop.sock"
+	}
+	return gatewaydInternalHopSocket
+}
+
 const internalGatewayHealthHost = "gatewayd-internal.faas"
 
 // internalHealthRoute reserves the synthetic health response only for direct
@@ -2097,6 +2115,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// of the synthAdapter struct literal, which broke the compile.
 	// Restoring the off-the-brace call keeps both sides readable.
 	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, synth, log)
+	if hop := binaryHopSocket(); hop != "" {
+		deps.synth.WithBinaryHop(hop)
+	}
 	deps.syntheticDispatcher = synth
 	deps.synth.WithWorkerJobEvidence(pgStore.FinishProjectWorkerJobEvidence)
 	// ADR-119 — wire synth-side metrics and audit. The verifier is loaded

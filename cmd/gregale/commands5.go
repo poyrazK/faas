@@ -1634,6 +1634,11 @@ func queueWorkFromFlags(policy, key, fairnessKey string) (*api.InvokeWork, error
 // the SDK-side timeout; a 204 No Content (empty queue) returns
 // `empty`. Mirrors the existing cmdQueueTail long-poll framing —
 // same signal.NotifyContext wiring.
+// queueReceiveEmpty explains an empty receive: it returns processed
+// messages' results, and pending messages are delivered to the app, so a
+// queue with depth > 0 can still receive nothing (Hunt 32 H32-44).
+const queueReceiveEmpty = "(empty: no message finished processing in the wait window; pending messages are delivered to the app, not to receive)"
+
 func cmdQueueReceive(args []string) int {
 	fs := newFlagSet("queue receive", flag.ContinueOnError)
 	appFlag := fs.String("app", "", appSlugFlagUsage)
@@ -1669,7 +1674,7 @@ func cmdQueueReceive(args []string) int {
 			if jsonOutput {
 				return jsonOut(writeJSON(api.QueueReceiveResponse{}))
 			}
-			_, _ = fmt.Fprintln(osStdout, "(empty)")
+			_, _ = fmt.Fprintln(osStdout, queueReceiveEmpty)
 			return 0
 		}
 		return printErr("Queue receive failed", err)
@@ -1682,7 +1687,7 @@ func cmdQueueReceive(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(resp))
 		}
-		_, _ = fmt.Fprintln(osStdout, "(empty)")
+		_, _ = fmt.Fprintln(osStdout, queueReceiveEmpty)
 		return 0
 	}
 	if jsonOutput {
