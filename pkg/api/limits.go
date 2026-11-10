@@ -4692,6 +4692,14 @@ type Limits struct {
 	// Free tier keeps its "ship any image" path.
 	TrustedSignerCountMax int // Free 0, Hobby 4, Pro 8, Scale 16
 
+	// DeploymentAliasesMax bounds an app's named deployment aliases. Each
+	// alias keeps its deployment's layers out of retention
+	// (LayerArtifactHasReferences) for as long as it exists, and layer
+	// storage is not billed, so an uncapped count let one app pin any number
+	// of app layers (deploy review 2026-11-10, F1). Re-pointing an existing
+	// alias does not count.
+	DeploymentAliasesMax int // Free 5, Hobby 10, Pro 25, Scale 50
+
 	// RegistryCredentialMax (issue #461 / ADR-062) bounds the per-app
 	// count of sealed Basic Auth credentials, one row per (app, host).
 	// Free = 0 — Free cannot pull from private registries (the abuse
@@ -6145,6 +6153,7 @@ var planLimits = map[Plan]Limits{
 		// signature enforcement is a regulated-workload feature that
 		// Free never needs (issue #472 / ADR-054).
 		TrustedSignerCountMax: 0,
+		DeploymentAliasesMax:  5,
 		// Issue #461: Free has no private-registry credential surface.
 		// Handler returns 403 plan_registry_credentials_not_allowed.
 		RegistryCredentialMax: 0,
@@ -6570,6 +6579,7 @@ var planLimits = map[Plan]Limits{
 		// signing key + an emergency break-glass. Anything beyond
 		// that is "you're a Pro" territory.
 		TrustedSignerCountMax: 4,
+		DeploymentAliasesMax:  10,
 		// Issue #461: Hobby = 2 — staging + production.
 		RegistryCredentialMax: 2,
 		// 64 KB envelope = 0.25 % of Hobby's 25 MB tarball budget — small
@@ -7036,6 +7046,7 @@ var planLimits = map[Plan]Limits{
 		// matrix (5-8 publishers). Enough for "every dev has their own
 		// key" workflows without letting the table grow unbounded.
 		TrustedSignerCountMax: 8,
+		DeploymentAliasesMax:  25,
 		// 256 KB = 0.1 % of Pro's 250 MB tarball. ADR-20261022105723:
 		// 100,000 pending messages per app, 1 GiB of them per account,
 		// kept 4 days.
@@ -7462,6 +7473,7 @@ var planLimits = map[Plan]Limits{
 		// key (1024 bytes per migration 00083 CHECK) keeps the
 		// table on-disk under ~16 KiB regardless.
 		TrustedSignerCountMax: 16,
+		DeploymentAliasesMax:  50,
 		// ADR-20261022105723: 1,000,000 pending messages per app, 10 GiB
 		// of them per account, kept 14 days.
 		MaxQueueDepth:                  1_000_000,
