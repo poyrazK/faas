@@ -6372,6 +6372,10 @@ FOR UPDATE;
 SELECT rotation_wake_id::text FROM object_storage_s3_credentials
 WHERE account_id=$1 AND bucket_id=$2 AND rotation_parent_id=$3 AND status='active';
 
+-- name: ObjectS3CredentialRotationsPendingForBucket :many
+SELECT rotation_parent_id::text AS binding_id, rotation_wake_id::text AS wake_id FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND rotation_parent_id IS NOT NULL AND status='active';
+
 -- name: ObjectS3CredentialRotationStage :one
 INSERT INTO object_storage_s3_credentials
 (id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,rotation_parent_id,rotation_wake_id,key_prefix)

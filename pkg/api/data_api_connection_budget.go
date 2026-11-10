@@ -34,11 +34,14 @@ type ManagedPostgresConnectionBudget struct {
 }
 
 type ConnectionBudgetInventory struct {
-	Bindings           int64 `json:"bindings"`
-	DataAPIConsumers   int64 `json:"data_api_consumers"`
-	AuthConsumers      int64 `json:"auth_consumers"`
-	MigrationBindings  int64 `json:"migration_bindings"`
-	OtherBindings      int64 `json:"other_bindings"`
+	Bindings          int64 `json:"bindings"`
+	DataAPIConsumers  int64 `json:"data_api_consumers"`
+	AuthConsumers     int64 `json:"auth_consumers"`
+	MigrationBindings int64 `json:"migration_bindings"`
+	OtherBindings     int64 `json:"other_bindings"`
+	// SessionBindings are modeled at their role connection limit; they are
+	// not counted in OtherBindings.
+	SessionBindings    int64 `json:"session_bindings,omitempty"`
 	ResidentInstances  int64 `json:"resident_instances"`
 	ParkedInstances    int64 `json:"parked_instances"`
 	AuxiliaryInstances int64 `json:"auxiliary_instances"`
@@ -49,13 +52,16 @@ type ConnectionBudgetInventory struct {
 }
 
 type ConnectionBudgetDemand struct {
-	DataAPIResidentEstimate int64                                `json:"data_api_resident_estimate"`
-	DataAPIWakeEstimate     int64                                `json:"data_api_wake_estimate"`
-	AuthWakeEstimate        int64                                `json:"auth_wake_estimate"`
-	ControlHeadroom         int64                                `json:"control_headroom"`
-	MigrationHeadroom       int64                                `json:"migration_headroom"`
-	ModeledPeakConnections  int64                                `json:"modeled_peak_connections"`
-	RuntimeObservations     *ConnectionBudgetRuntimeObservations `json:"runtime_observations,omitempty"`
+	DataAPIResidentEstimate int64 `json:"data_api_resident_estimate"`
+	DataAPIWakeEstimate     int64 `json:"data_api_wake_estimate"`
+	AuthWakeEstimate        int64 `json:"auth_wake_estimate"`
+	// SessionConnectionCeiling is api.SessionBindingConnectionLimit per
+	// session role, two while a binding rotates.
+	SessionConnectionCeiling int64                                `json:"session_connection_ceiling,omitempty"`
+	ControlHeadroom          int64                                `json:"control_headroom"`
+	MigrationHeadroom        int64                                `json:"migration_headroom"`
+	ModeledPeakConnections   int64                                `json:"modeled_peak_connections"`
+	RuntimeObservations      *ConnectionBudgetRuntimeObservations `json:"runtime_observations,omitempty"`
 }
 
 // ConnectionBudgetRuntimeObservations covers configured resident Data API
