@@ -4311,7 +4311,11 @@ Edit a list; referencing rules pick up the change within seconds
 
 Delete a list no rule references
 
-`gregale edge rule-list delete <name>`
+`gregale edge rule-list delete [--yes] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | accepted for consistency with edge rule delete; does not prompt |  |
 
 ### edge cache
 
@@ -6044,7 +6048,11 @@ Update a receiver
 
 Delete a receiver
 
-`gregale webhook account delete <id>`
+`gregale webhook account delete [--yes] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 #### webhook account deliveries
 
