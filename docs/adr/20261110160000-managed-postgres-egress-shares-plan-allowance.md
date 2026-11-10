@@ -50,6 +50,24 @@ when parallel changes pick the next number.
    paying for its apps' egress past the allowance, but its databases stop at
    the allowance.
 
+## Amendment 2026-11-10: holds are visible
+
+A held database still reported `ready`, so a customer saw connections fail
+with no reason; no email names the egress hold yet.
+
+- `GET /v1/postgres/databases/{id}` and the list report `hold`:
+  `compute_ceiling`, `egress`, `inactive`, `plan_excess` or `preview`.
+- `GET /v1/postgres/usage` adds `egress_allowance_bytes`, `app_egress_bytes`,
+  `egress_state` (healthy, warning at 80%, held) and the account-wide `hold`.
+- The read uses the sweep's own rules (`managedpostgres.SubjectHold`,
+  `DatabaseHold`, `EgressState`) and the sweep's egress check shares the same
+  helper. It runs only while cap enforcement is `on`, so shadow mode reports
+  nothing and reads nothing extra. A view can lead or trail the provider by
+  one sweep interval.
+- The order of the slices below changes: slice 3 (billing database egress)
+  lifts the hold only while that charge is live, because the managed
+  PostgreSQL overage path is still `internal`.
+
 ## Later slices
 
 - **Slice 2:** meterd's app egress stop counts the databases' egress too, so
