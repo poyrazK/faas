@@ -3926,6 +3926,15 @@ const CodePlanCronQuota = "plan_cron_quota"
 // per-app or per-account cap (ADR-20261031130000).
 const CodePlanEventSubscriptionQuota = "plan_event_subscription_quota"
 
+// CodeEventSubscriptionFilterTooLarge and CodeEventSubscriptionFilterTooDeep
+// are the 422s for an event_triggers filter over
+// EventSubscriptionFilterMaxBytes or EventSubscriptionFilterMaxDepth
+// (events hunt #9).
+const (
+	CodeEventSubscriptionFilterTooLarge = "event_subscription_filter_too_large"
+	CodeEventSubscriptionFilterTooDeep  = "event_subscription_filter_too_deep"
+)
+
 // CodeCronFireNowBusy is the 429 a manual cron run gets while the cron
 // already has CronFireNowActivePerCron runs waiting or running
 // (ADR-20261026201726).
@@ -4736,6 +4745,28 @@ func ErrPlanEventSubscriptionQuota(plan Plan, scope string, limit, observed int)
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/events#subscription-limits")
+}
+
+// ErrEventSubscriptionFilterTooLarge is the 422 for an event_triggers filter
+// whose compact JSON exceeds EventSubscriptionFilterMaxBytes.
+func ErrEventSubscriptionFilterTooLarge(field string, limit, observed int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeEventSubscriptionFilterTooLarge,
+		"Event filter too large",
+		fmt.Sprintf("%s is %d bytes as compact JSON; event filters are capped at %d bytes. Filter on fewer fields, or route by source and type instead.",
+			field, observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/events#filter-limits")
+}
+
+// ErrEventSubscriptionFilterTooDeep is the 422 for an event_triggers filter
+// nested deeper than EventSubscriptionFilterMaxDepth.
+func ErrEventSubscriptionFilterTooDeep(field string, limit, observed int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeEventSubscriptionFilterTooDeep,
+		"Event filter nested too deeply",
+		fmt.Sprintf("%s nests %d levels deep; event filters are capped at %d levels.",
+			field, observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/events#filter-limits")
 }
 
 // ErrCronConflict is the 409 for a cron another cron of the same app already

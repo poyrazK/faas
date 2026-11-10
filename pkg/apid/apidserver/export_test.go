@@ -798,6 +798,7 @@ var SetupWithScopes = setupWithScopes
 var SourceDeltaLimits = sourceDeltaLimits
 var SourceRefAsyncRouteTestFixture = sourceRefAsyncRouteTestFixture
 var SourceRefManifestNeedsRollback = sourceRefManifestNeedsRollback
+var SourceRefEventSubscriptionProblem = sourceRefEventSubscriptionProblem
 var SpoolRoot = spoolRoot
 var SseFanIn = sseFanIn
 var StartSSEStream = startSSEStream
@@ -2375,3 +2376,6 @@ var SourceLivenessOverrides = sourceLivenessOverrides
 
 // ValidateCustomMetricAlertLabels exposes the custom_metric rule label check.
 var ValidateCustomMetricAlertLabels = validateCustomMetricAlertLabels
+
+// PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
+var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode

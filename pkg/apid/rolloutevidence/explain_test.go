@@ -262,6 +262,22 @@ func TestExplainSelection(t *testing.T) {
 	}
 }
 
+// TestExplainSkipsCancelledBuilds pins Hunt 32 H32-43: a build cancelled
+// before it served was explained as "Rolled back" against a stable release.
+func TestExplainSkipsCancelledBuilds(t *testing.T) {
+	cancelled := state.Deployment{ID: testCandidate, AppID: testApp, Status: state.DeployCancelled,
+		RolloutState: api.DebugRolloutAborted, RolloutAbortedReason: "deployment cancelled: user", CanaryTotalSteps: 3}
+	store := &fakeStore{deployments: []state.Deployment{cancelled}}
+	out, err := reader(store, nil, nil).Explain(context.Background(), state.App{ID: testApp}, "", time.Hour)
+	if err != nil || out.State != api.DebugRolloutNone || out.DeploymentID != "" {
+		t.Fatalf("default explain picked the cancelled build: %+v err=%v", out, err)
+	}
+	out, err = reader(store, nil, nil).Explain(context.Background(), state.App{ID: testApp}, testCandidate, time.Hour)
+	if err != nil || out.State != api.DebugRolloutNone || strings.Contains(out.Headline, "Rolled back") || out.StableDeploymentID != "" {
+		t.Fatalf("explicit explain of a cancelled build: %+v err=%v", out, err)
+	}
+}
+
 // The evidence window never reaches before the plan's debugger retention.
 func TestExplainClampsToRetention(t *testing.T) {
 	dep := state.Deployment{ID: testCandidate, AppID: testApp, CanaryTotalSteps: 4, RolloutState: "rolling_out", CanaryStepStartedAt: at(-48 * time.Hour)}

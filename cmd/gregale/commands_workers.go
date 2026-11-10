@@ -457,7 +457,7 @@ func cmdWorkersStatus(args []string) int {
 	}
 
 	if len(status.Instances) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "Active Instances: 0 (worker pool is scaled to zero / parked)")
+		_, _ = fmt.Fprintln(osStdout, workerNoInstancesLine(status.Slug, status.Status, status.QueueLag))
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "Active Instances (%d):\n", len(status.Instances))
 		_, _ = fmt.Fprintf(osStdout, "  %-36s %-12s %-8s %-20s %s\n", "INSTANCE ID", "STATE", "RAM_MB", "STARTED", "UPTIME")
@@ -746,4 +746,18 @@ func workerMetricLabel(metrics string) string {
 		return "none (holds the minimum replicas)"
 	}
 	return metrics
+}
+
+// workerNoInstancesLine explains an empty worker pool. A parked pool stays
+// parked whatever its backlog until `gregale app wake` (H8-23); the status
+// said "scaled to zero / parked" either way, so a parked pool with queued
+// messages read like an autoscaler that had stopped (Hunt 32 H32-32).
+func workerNoInstancesLine(slug, appStatus string, backlog int64) string {
+	if appStatus == "evicted_cold" {
+		if backlog > 0 {
+			return fmt.Sprintf("Active Instances: 0 (parked; %d queued messages wait until `gregale app wake %s`)", backlog, slug)
+		}
+		return fmt.Sprintf("Active Instances: 0 (parked; autoscaling resumes after `gregale app wake %s`)", slug)
+	}
+	return "Active Instances: 0 (scaled to zero; it starts replicas when the backlog reaches its target)"
 }
