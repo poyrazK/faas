@@ -27,7 +27,7 @@ func (m *Manager) registerBootingEgressOwner(lease Lease, nc netns.Config, req W
 	owner := &Instance{
 		Lease: lease, Net: nc,
 		AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
-		Paused: req.KeepPaused,
+		Paused:  req.KeepPaused,
 		booting: true,
 	}
 	m.mu.Lock()
