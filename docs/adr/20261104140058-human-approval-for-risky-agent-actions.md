@@ -125,3 +125,25 @@ is written to the audit log.
   the repeated request needs no client change.
 - **Approval by API key.** Any key an agent can read could approve its own
   request.
+
+## Amendment (2026-11-10): project routes are production writes
+
+The production list named only app routes, so an agent key with
+`deploy:write` could deploy a whole project, promote an environment,
+activate, deactivate or roll back a release set, or create, change, rebind
+or adopt an environment's GitOps source without a person (deploy review
+2026-11-10, D3). These routes, including their `/v1/orgs/{organization}`
+forms, are now production writes in `pkg/agentapproval`: `projects/apply-plan`,
+`projects/safe-deploy`, the organization project deploy, `environments/{}/promote`,
+promotion actions (abort, recover), promotion rollback and migration
+recovery, `release-sets` (publish, activate, deactivate, rollback) and
+`gitops/source`, `source/rebind`, `adopt`, `overrides` and
+`revisions/approve`. Plans, previews and verification runs stay ungated.
+
+A project environment records no production flag, so these ask on every
+environment (`TargetNone`), staging included; a protected environment keeps
+its own approval token on top. The promotion action route is registered as
+`promotions/{promotion}/{action}` while the spec lists `/abort` and
+`/recover`, so it sits in a separate route-only table that the spec coverage
+test checks does not overlap the spec. Validation: `TestClassify`,
+`TestClassificationCoversTheSpec`, `TestHandlers_AgentProjectWritesNeedApproval`.

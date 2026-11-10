@@ -127,7 +127,9 @@ the exact request are checked again when the change runs.
 An agent key, and an agent you connect to the hosted MCP server, must ask a
 person before it deletes something, deploys or rolls back a production app,
 creates or rotates credentials, or changes billing. Previews are not
-gated. Choose the categories when you create the key:
+gated. Project deploys, environment promotions, release-set changes and GitOps
+source changes count as production on every environment, because an
+environment does not say whether it serves production. Choose the categories when you create the key:
 
 ```sh
 gregale key create ci-agent --scopes agent,deploy:write --approvals delete,billing
