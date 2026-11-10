@@ -1606,6 +1606,11 @@ type Manifest struct {
 	// gregale.yaml, where the scanner applies it; it replaces the
 	// deprecated .gregale/project.yaml. Not part of any app's deployment.
 	Project *projectconfig.Config `yaml:"project,omitempty" json:"-"`
+
+	// FunctionSettings is set on a FunctionAppManifest view: the function's
+	// app settings (RAM, idle timeout, concurrency, env) that a repository
+	// push applies to its function app (ADR-20261108160000 §4). Never parsed.
+	FunctionSettings *FunctionSpec `yaml:"-"`
 }
 
 // ReleaseConfig declares a command that must succeed for the candidate

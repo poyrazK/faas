@@ -32,6 +32,7 @@ func (s *Service) scanOptions(accountID string) reposcan.ScanOptions {
 		KubernetesManifests:       s.capabilityAllowed(reposcan.KubernetesManifestsCapability, accountID),
 		HTTPSTransportUnavailable: !s.capabilityAllowed(api.PrivateServiceHTTPSCapability, accountID),
 		ResourceLabels:            s.capabilityAllowed(labels.Capability, accountID),
+		Functions:                 s.capabilityAllowed(reposcan.RepositoryFunctionsCapability, accountID),
 	}
 }
 
