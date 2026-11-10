@@ -351,17 +351,9 @@ func TestFinancialSystemProviderContractGuard(t *testing.T) {
 			t.Fatal("incompatible rate acknowledged locally")
 		}
 	}
+	// A funded period's egress price cannot be raised (constraint
+	// financial_egress_price_ceiling) and meterd accepts only the published
+	// rate, so no replacement provider becomes compatible within this period;
+	// the reconciliation scenarios cover delivering held egress.
 	m.Stop()
-	// Funding the period at the published rate makes the same provider compatible.
-	month := financial.ComputeMonth(f.start)
-	if _, err := f.store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: f.account.Plan, DeliveryMode: "live",
-		Price: financial.Price{Version: "acceptance-egress-published", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: 1 << 30, MillicentsPerUnit: replayEgressRate, IncludedQuantity: 1 << 30}}); err != nil {
-		t.Fatal(err)
-	}
-	p2 := financialfixture.NewProvider(t, replayEgressRate)
-	m2 := financialfixture.StartMeterd(t, binary, f.pool, p2.Env(financial.ComputeMonth(f.start)))
-	financialfixture.Wait(t, m2, "compatible replacement delivers held egress", func() bool { return reflect.DeepEqual(receipts(t, f), f.want) })
-	if len(p2.Snapshot().Events) != 3 {
-		t.Fatalf("replacement accepted %d events; want three held egress windows", len(p2.Snapshot().Events))
-	}
 }
