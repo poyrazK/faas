@@ -5279,17 +5279,18 @@ type placementSnapshot struct {
 	// preferred is nodes less those whose vmmd is restarting under a
 	// notice, when that leaves any (vmmd restart adoption ADR §3).
 	preferred []state.ComputeNode
-	// cpu is the ledger's cpu_admission (ADR-20261109172421).
+	// cpu counts what the CPU budgets would have refused
+	// (ADR-20261109172421).
 	cpu *cpuAdmission
 }
 
-// choose places r. Observing cpu_admission, a refusal for vCPU or CPU alone
-// is retried without those budgets, so a node with memory room is chosen and
-// the refusal is only counted (ADR-20261109172421). The first pass still
-// prefers a node within its CPU budgets.
+// choose places r. CPU decides where, never whether (ADR-20261109172421):
+// the first pass prefers a node within its vCPU and CPU budgets, and a
+// refusal for those alone is retried without them, so a node with memory
+// room is chosen and the refusal is only counted.
 func (s placementSnapshot) choose(r Request) (Placement, error) {
 	p, err := s.chooseOnce(r)
-	if err == nil || !s.cpu.observing() || !refusedForCPU(err) {
+	if err == nil || !refusedForCPU(err) {
 		return p, err
 	}
 	r.ignoreCPUBudgets = true
