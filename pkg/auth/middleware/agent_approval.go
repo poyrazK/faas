@@ -204,6 +204,18 @@ func (m *Middleware) writeApprovalOutcome(w http.ResponseWriter, acct state.Acco
 	api.WriteProblem(w, problem)
 }
 
+// productionConfigScope reports whether a config write targets the app's
+// production scope: env and secret routes name it in ?scope=, secret
+// references in ?environment=; both default to production.
+func productionConfigScope(r *http.Request) bool {
+	query := r.URL.Query()
+	scope := query.Get("scope")
+	if scope == "" {
+		scope = query.Get("environment")
+	}
+	return state.IsProductionScope(scope)
+}
+
 // productionTarget reports whether the request's app is a production app. It
 // reports answered when it has written an error.
 func (m *Middleware) productionTarget(w http.ResponseWriter, r *http.Request, target agentapproval.Target) (production, answered bool) {
@@ -212,6 +224,12 @@ func (m *Middleware) productionTarget(w http.ResponseWriter, r *http.Request, ta
 	var err error
 	switch target {
 	case agentapproval.TargetApp:
+		app, err = m.Authn.AppBySlug(ctx, r.PathValue(firstWildcard(r.Pattern)))
+	case agentapproval.TargetAppConfig:
+		// A stage-scope write never reaches production traffic.
+		if !productionConfigScope(r) {
+			return false, false
+		}
 		app, err = m.Authn.AppBySlug(ctx, r.PathValue(firstWildcard(r.Pattern)))
 	case agentapproval.TargetDeployment:
 		deployments, okDeployments := m.Authn.(DeploymentAppResolver)
