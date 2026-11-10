@@ -3,6 +3,7 @@ package gregalemanifest
 import (
 	"fmt"
 	"io/fs"
+	"os"
 	"path"
 	"slices"
 
@@ -69,4 +70,15 @@ func (fn FunctionSpec) HookLifecycleUpdate(currentAfter *api.AfterRestoreHook, c
 		before, changed = &api.BeforeCheckpointHook{}, true
 	}
 	return after, before, changed, nil
+}
+
+// FunctionHooksInDir returns the snapshot hooks a single function's handler
+// declares, read from dir the way a functions project reads each entry
+// (ADR-20261110190000 §5). handler is relative to dir; empty uses the
+// conventional handler file.
+func FunctionHooksInDir(dir, handler string) []string {
+	if dir == "" {
+		return nil
+	}
+	return readFunctionHooks(os.DirFS(dir), ".", handler)
 }
