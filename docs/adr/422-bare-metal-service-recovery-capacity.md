@@ -159,3 +159,16 @@ function. Any later `CREATE OR REPLACE` of the function must restate it; a
 migration test fails if the complete migration set leaves JIT enabled. The
 admission-throughput measurement required above must run against a JIT-enabled
 server, because that is the PostgreSQL default.
+
+## Amendment (2026-11-10): memory is the only slot bound
+
+ADR-20261109172421 makes memory the only capacity limit: CPU decides where an
+instance goes, never whether. Migration `20261110155502778` sizes a host's
+slots as `(admission ceiling − other RAM) / replica RAM` and its ordinary fit
+by RAM alone, and only memory growth (demand, resident, other usage or the
+replica shape) needs a protected fleet. CPU and vCPUs stay in the snapshot
+(`demands`, `other`, `resident`, `replica_cpu_millicores`, `replica_vcpu`) as
+telemetry. The "separately for RAM, peak startup CPU and guest vCPU" slot
+sizing above, the CPU and vCPU budgets in the slot count, and the retained
+guest vCPU in the warm-promotion tests are superseded; retained guest RAM is
+still a protected slot change.
