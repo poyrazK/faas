@@ -8617,8 +8617,12 @@ SELECT
      WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='dispatching'
        AND w.lease_expires_at IS NOT NULL AND w.lease_expires_at>now()
      LIMIT sqlc.arg(row_limit)::integer) leased)::bigint AS in_flight,
+  -- Open dead letters only; purge and replay leave the row dead_letter
+  -- (Hunt 32 H32-45).
   (SELECT count(*) FROM (SELECT 1 FROM production_invocation_work w
      WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='dead_letter'
+       AND EXISTS (SELECT 1 FROM dead_letter_events e
+                   WHERE e.source='invocation' AND e.source_id=w.id AND e.replayed_at IS NULL)
      LIMIT sqlc.arg(row_limit)::integer) dead)::bigint AS dead_letter,
   (SELECT min(first.created_at) FROM names n CROSS JOIN LATERAL (
      SELECT w.created_at FROM production_invocation_work w
@@ -13952,7 +13956,7 @@ with b as (
   select id, account_id, queue_name, deployment_scope from queue_bindings
   where id=sqlc.arg(binding_id)::uuid and app_id=sqlc.arg(app_id)::uuid
 ), owned as (
-  select i.state, i.lease_expires_at from invocations i, b
+  select i.id, i.state, i.lease_expires_at from invocations i, b
   where i.app_id=sqlc.arg(app_id)::uuid and i.account_id=b.account_id and i.source='queue'
     and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
     and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
@@ -13973,8 +13977,13 @@ select
   (select count(*) from (
      select 1 from owned where state='dispatching' and lease_expires_at > now()
      limit sqlc.arg(row_limit)::integer) leased)::bigint as in_flight,
+  -- A dead-lettered message counts while its dead letter is open: `dlq
+  -- purge` deletes the event and replay marks it, but both leave the
+  -- invocation in dead_letter (Hunt 32 H32-45: dead_letter=2 after purge).
   (select count(*) from (
-     select 1 from owned where state='dead_letter'
+     select 1 from owned o where o.state='dead_letter'
+       and exists (select 1 from dead_letter_events e
+                   where e.source='invocation' and e.source_id=o.id and e.replayed_at is null)
      limit sqlc.arg(row_limit)::integer) dead)::bigint as dead_letter,
   (select min(first.created_at) from (
      (select i.created_at from invocations i, b

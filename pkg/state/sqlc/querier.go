@@ -101,6 +101,13 @@ type Querier interface {
 	AdvanceCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg AdvanceCustomerOperationWorkflowStepParams) (int64, error)
 	AdvanceEnvironmentGitOpsRuntimeBoundary(ctx context.Context, db DBTX, arg AdvanceEnvironmentGitOpsRuntimeBoundaryParams) (EnvironmentGitopsRuntimeEffect, error)
 	AdvanceEnvironmentWorkloadGraphPreparation(ctx context.Context, db DBTX, arg AdvanceEnvironmentWorkloadGraphPreparationParams) (EnvironmentWorkloadGraph, error)
+	// pending already proved each locked row has no unattributed execution, and
+	// every part of one statement reads the same snapshot, so a second check
+	// could only agree. It used to be a separate CTE, which the planner ran as an
+	// anti-join of every coverage row against all invocations before joining it
+	// to pending: about 0.5 s per call on production with nothing pending
+	// (2026-11-10). Updating from pending reads invocations only for rows it
+	// locked.
 	AdvanceEventExecutionReconciliations(ctx context.Context, db DBTX, batchLimit int32) (int64, error)
 	AdvanceImagePreparation(ctx context.Context, db DBTX, arg AdvanceImagePreparationParams) (int64, error)
 	AdvanceProjectEnvironmentCloneCheckpointIntent(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneCheckpointIntentParams) (int64, error)

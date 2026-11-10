@@ -440,13 +440,14 @@ type AppSpec struct {
 	// keeps what it declared. False (an older schedd) never pauses it.
 	IdleLadderGuardedPause bool `protobuf:"varint,39,opt,name=idle_ladder_guarded_pause,json=idleLadderGuardedPause,proto3" json:"idle_ladder_guarded_pause,omitempty"`
 	// ADR-20261109172421: the instance's cgroup cpu.weight, its share of a busy
-	// host (schedd sends max(1, ram_mb / 16)). 0 (an older schedd) keeps the
-	// plan's weight. vmmd refuses a value above 10000.
+	// host (schedd sends max(1, ram_mb / 16)). 0 (an older schedd) gets that
+	// weight from mem_size_mib. vmmd refuses a value above 10000.
 	CpuWeight int32 `protobuf:"varint,41,opt,name=cpu_weight,json=cpuWeight,proto3" json:"cpu_weight,omitempty"`
 	// ADR-20261109172421: the instance runs with host cpu.max = max and no
 	// startup boost, so it may use any idle host CPU up to its vCPUs.
-	// cpu_millicores still sizes guest workload partitions. False (an older
-	// schedd) keeps the cpu_millicores quota.
+	// cpu_millicores still sizes guest workload partitions. vmmd runs every
+	// app instance this way whatever the field says (ADR-20261109172421 step
+	// 6.3); it stays for an older schedd.
 	CpuUncapped   bool `protobuf:"varint,42,opt,name=cpu_uncapped,json=cpuUncapped,proto3" json:"cpu_uncapped,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

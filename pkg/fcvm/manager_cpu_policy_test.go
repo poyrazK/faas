@@ -124,7 +124,7 @@ func TestManagerWakeAppliesLatestAppCPULimitBeforePublication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read live cpu.max: %v", err)
 	}
-	if got, want := string(body), fmt.Sprintf("%d %d\n", 125000, api.PlanPro.CPUPeriodUS()); got != want {
+	if got, want := string(body), fmt.Sprintf("%d %d\n", 250*cpuMaxPeriodUS/1000, cpuMaxPeriodUS); got != want {
 		t.Fatalf("cpu.max = %q, want %q", got, want)
 	}
 }

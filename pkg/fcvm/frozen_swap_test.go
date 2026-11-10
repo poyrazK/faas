@@ -48,7 +48,7 @@ func swapFencedVM(t *testing.T, l Lease) (*JailerVMM, string) {
 	if err := os.MkdirAll(scope, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeCgroupFile(t, scope, "cpu.weight", itoa(vmCPUWeight(l.Plan, l.IsBuilder)))
+	writeCgroupFile(t, scope, "cpu.weight", itoa(vmCPUWeight(l.IsBuilder)))
 	writeCgroupFile(t, scope, "memory.swap.max", "max")
 	v := &JailerVMM{}
 	if err := v.applyPreBootCgroupFence(l, nil); err != nil {
