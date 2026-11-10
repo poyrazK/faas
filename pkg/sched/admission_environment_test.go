@@ -82,7 +82,10 @@ func TestPropertyEnvironmentLedgerCountsMatchConcurrentAdmissions(t *testing.T) 
 		go func(i int) {
 			id := fmt.Sprintf("instance-%d", i)
 			environment := fmt.Sprintf("environment:%d", i%3)
-			err := ledger.Admit(sched.Request{Instance: id, AppID: "app", EnvironmentKey: environment, Plan: api.PlanScale, RAMMB: 128})
+			// environment:0 is production: stages alone stop one short of
+			// the plan cap (ADR-590 amendment 2026-11-10), production
+			// takes the reserved slot.
+			err := ledger.Admit(sched.Request{Instance: id, AppID: "app", EnvironmentKey: environment, ProductionEnvironment: i%3 == 0, Plan: api.PlanScale, RAMMB: 128})
 			results <- admitted{id, environment, err}
 		}(i)
 	}

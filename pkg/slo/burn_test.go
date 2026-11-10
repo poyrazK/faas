@@ -27,7 +27,7 @@ func TestMultiWindowBurn(t *testing.T) {
 				if strings.Contains(q, "[6h]") {
 					bad = tt.badPct6h
 				}
-				if strings.Contains(q, "5..") {
+				if strings.Contains(q, "5xx") {
 					return 100000, nil
 				}
 				return 100000 * (1 - bad/100), nil

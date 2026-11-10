@@ -64,6 +64,7 @@ promtail_journal_units:
   - faas-cgroup-metrics.service
   - faas-kernel-lockdown.service
   - faas-canary-artifact-sweep.service
+  - faas-release-integrity.service
   - faas-cp-state-backup.service
   - faas-audit-anchor.service
   - faas-audit-verify.service

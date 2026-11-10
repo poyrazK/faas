@@ -147,3 +147,18 @@ its own approval token on top. The promotion action route is registered as
 `/recover`, so it sits in a separate route-only table that the spec coverage
 test checks does not overlap the spec. Validation: `TestClassify`,
 `TestClassificationCoversTheSpec`, `TestHandlers_AgentProjectWritesNeedApproval`.
+
+## Amendment (2026-11-10): production configuration is a production write
+
+An agent could change a production app's variables, secrets, secret
+references and app settings without approval, though they reach traffic at
+the next wake like a release, while a restart and a config rollback already
+asked (apps/projects review 2026-11-10, P10). These writes now ask in the
+`production` category: `PUT /env/{key}`, `POST /env/batch`,
+`PUT /secrets/{key}` and `PUT /secret-references/{key}` when they target the
+production scope (`?scope=`/`?environment=` empty, `default` or `production`;
+target `TargetAppConfig`), `PATCH /v1/apps/{slug}` on a production app, and
+project environment configuration, shared secrets and workload policies on
+every environment (`TargetNone`, as for the project routes above). Deletes
+keep asking as `delete`; rotating a secret keeps asking as `credentials`.
+Validation: `TestClassify`, `TestProductionConfigScope`.

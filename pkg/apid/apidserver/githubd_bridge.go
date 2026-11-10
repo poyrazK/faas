@@ -580,7 +580,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	params.SourcePath = spooled
 	undoSettings := func(context.Context) {}
 	if g.applySettings != nil && manifest != nil {
-		updated, undo, problem := g.applySettings(ctx, resource, app, manifest, sourcePush{Scope: req.DeploymentScope, Pusher: req.Pusher})
+		updated, undo, problem := g.applySettings(ctx, resource, app, pushSettingsManifest(manifest, params), sourcePush{Scope: req.DeploymentScope, Pusher: req.Pusher})
 		if problem != nil {
 			if spooled != req.SourcePath {
 				_ = os.Remove(spooled)
@@ -942,6 +942,21 @@ func previewDatabasesStatus(err error) error {
 	default:
 		return status.Error(codes.Unavailable, "EnqueueBuild: the preview's managed PostgreSQL database could not be set up yet")
 	}
+}
+
+// pushSettingsManifest drops a function's settings from a release staged
+// without traffic: its RAM, idle timeout, concurrency and env take effect at
+// the environment's next wake, so a staged release would change what the live
+// one runs with before it is promoted (apps/projects review 2026-11-10, P11).
+// Crons follow the same rule (prepareDeliveryCrons).
+func pushSettingsManifest(manifest *gregalemanifest.Manifest, params apidsource.EnqueueParams) *gregalemanifest.Manifest {
+	staged := params.TrafficPercentExplicit && params.TrafficPercent == 0 && params.CanaryTotalSteps == 0
+	if manifest == nil || manifest.FunctionSettings == nil || !staged {
+		return manifest
+	}
+	withoutFunction := *manifest
+	withoutFunction.FunctionSettings = nil
+	return &withoutFunction
 }
 
 // prepareDeliveryCrons stages the crons a push's gregale.yaml declares for the

@@ -34,6 +34,16 @@ func TestClassify(t *testing.T) {
 		{"DELETE /v1/edge-rules/{id}", api.AgentApprovalDelete, TargetNone},
 		// Deploy review 2026-11-10 (D3): project deploys, promotions,
 		// release sets and GitOps sources, in their ServeMux spelling.
+		// Apps/projects review 2026-11-10 (P10): production configuration
+		// reaches traffic at the next wake, like a restart.
+		{"PUT /v1/apps/{slug}/env/{key}", api.AgentApprovalProduction, TargetAppConfig},
+		{"POST /v1/apps/{slug}/env/batch", api.AgentApprovalProduction, TargetAppConfig},
+		{"PUT /v1/apps/{slug}/secrets/{key}", api.AgentApprovalProduction, TargetAppConfig},
+		{"PUT /v1/apps/{slug}/secret-references/{key}", api.AgentApprovalProduction, TargetAppConfig},
+		{"PATCH /v1/apps/{slug}", api.AgentApprovalProduction, TargetApp},
+		{"PUT /v1/projects/{slug}/environments/{environment}/config", api.AgentApprovalProduction, TargetNone},
+		{"PUT /v1/projects/{slug}/environments/{environment}/secrets/{key}", api.AgentApprovalProduction, TargetNone},
+		{"DELETE /v1/apps/{slug}/env/{key}", api.AgentApprovalDelete, TargetNone},
 		{"POST /v1/projects/apply-plan", api.AgentApprovalProduction, TargetNone},
 		{"POST /v1/projects/safe-deploy", api.AgentApprovalProduction, TargetNone},
 		{"POST /v1/orgs/{organization}/projects/{slug}/deploy", api.AgentApprovalProduction, TargetNone},
@@ -66,8 +76,6 @@ func TestClassify(t *testing.T) {
 	for _, pattern := range []string{
 		"GET /v1/apps/{slug}",
 		"POST /v1/apps",
-		"PATCH /v1/apps/{slug}",
-		"PUT /v1/apps/{slug}/env/{key}",
 		"DELETE /v1/agent-connections/self",
 		"DELETE /v1/uploads/{id}",
 		"DELETE /v1/dev/sessions/{project}",

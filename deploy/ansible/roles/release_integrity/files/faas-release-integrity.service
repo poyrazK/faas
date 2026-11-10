@@ -1,0 +1,25 @@
+# Managed by the release_integrity role (ADR-20261110183000): proves the
+# platform binaries on this host are the signed release's. Its metrics and
+# journal lines leave the host.
+[Unit]
+Description=Gregale release integrity check
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0022
+SyslogIdentifier=faas-release-integrity
+# Reads every process's /proc/<pid>/exe and the release tree; writes only its
+# textfile.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+ExecStart=/usr/local/bin/gregalectl release verify --metrics-file /var/lib/node_exporter/textfile_collector/faas_release_integrity.prom
+Nice=10
+IOSchedulingClass=idle
