@@ -2243,6 +2243,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261105115100: Gate public raw ingress on production readiness and teardown](20261105115100-public-raw-ingress-production-readiness-and-teardown.md)
 - [ADR-20261105120000: Enforce network quarantine, timed grants and release ports](20261105120000-network-quarantine-renewal-and-release-ports.md) — bounds per-instance, per-family DNS/database grants at the existing kernel set capacities
 - [ADR-20261105153007: Exact environment promotion acceptance recovery](20261105153007-management-mcp-environment-promotion-outcomes.md)
+- [ADR-20261106103654: Managed PostgreSQL branches: restore from latest, with an expiry](20261106103654-managed-postgres-branches.md)
 - [ADR-20261106114500: Key-scoped bucket bindings and `gregale bucket sign`](20261106114500-key-scoped-bucket-bindings.md)
 - [ADR-20261106200000: Immediate domain verification and readiness](20261106200000-domain-verification-readiness.md) — bounded manual checks, durable cooldowns and independent ownership, routing and TLS readiness
 - [ADR-20261107010000: Declarative domain bindings and guarded moves](20261107010000-declarative-domain-bindings.md) — reviewed atomic apply, binding version fences, preserved verification/TLS state and explicit rollback manifests
