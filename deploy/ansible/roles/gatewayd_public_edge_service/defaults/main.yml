@@ -20,6 +20,10 @@ faas_edge_placement_node_set: false
 # faas_edge_public_front none, on connections and TLS handshakes. The values
 # are in pkg/api/limits.go.
 faas_edge_client_limits: false
+# ADR-20261110123517: the node-wide overload level on top of the client
+# limits: off, observe (measure and export, refuse nothing) or on. The
+# manifest's public_edge.overload sets it.
+faas_edge_overload: "off"
 # ADR-20261102081618: how Cloudflare reaches this edge. "tunnel", the default,
 # is the connector only; "both" also opens the edge's TLS listener on
 # faas_edge_public_tls_port for proxied address records. The manifest's

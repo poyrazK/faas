@@ -885,6 +885,10 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, control
 			fmt.Fprintf(&b, "faas_edge_public_front: %q\n", edge.Front)
 			b.WriteString("faas_edge_client_limits: true\n")
 			fmt.Fprintf(&b, "faas_public_entry_addrs: [%s]\n", quotedYAMLList([]string{host.EntryAddress()}))
+			// ADR-20261110123517: the node-wide overload level.
+			if edge.Overload != "" && edge.Overload != manifest.PublicEdgeOverloadOff {
+				fmt.Fprintf(&b, "faas_edge_overload: %q\n", edge.Overload)
+			}
 		}
 		// ADR-20261103163954 §3: the edge serves the certificate edgednsd
 		// stored from the serve CA, its key opened with the edge-tls

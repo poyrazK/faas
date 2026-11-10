@@ -113,10 +113,21 @@ type edgeMetrics struct {
 	// refused counts connections and requests the per-client-address
 	// limits turned away, by reason (ADR-20261103163954 §4).
 	refused *prometheus.CounterVec
+	// overloadLevel and overloadSignal export the overload level and the
+	// signals it follows (ADR-20261110123517 §8).
+	overloadLevel  prometheus.Gauge
+	overloadSignal *prometheus.GaugeVec
 	// hopFallbacks counts requests for the binary hop that went over
 	// HTTP/1.1 instead, by reason (ADR-20261110081523).
 	hopFallbacks *prometheus.CounterVec
 }
+
+// Label values of gatewayd_public_overload_signal.
+const (
+	overloadSignalSchedDelay   = "sched_delay_p99_seconds"
+	overloadSignalNodePressure = "node_cpu_pressure"
+	overloadSignalGatewayShare = "gateway_cpu_share"
+)
 
 func newEdgeMetrics() *edgeMetrics {
 	m := &edgeMetrics{
@@ -151,8 +162,16 @@ func newEdgeMetrics() *edgeMetrics {
 		}),
 		refused: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gatewayd_public_edge_refused_total",
-			Help: "Connections and requests a compute edge's client limits turned away, by reason: open_connections, connection_rate and handshakes (reset before TLS), request_rate and host_request_rate (answered 429), body_rate (a body slower than the minimum rate, its read failed) and forward_in_flight (answered 503 at the cap on requests forwarded to the control plane) (ADR-20261103163954 §4).",
+			Help: "Connections and requests a compute edge's client limits turned away, by reason: open_connections, connection_rate and handshakes (reset before TLS), request_rate and host_request_rate (answered 429), body_rate (a body slower than the minimum rate, its read failed) and forward_in_flight (answered 503 at the cap on requests forwarded to the control plane) (ADR-20261103163954 §4); handshakes_per_address and forward_in_flight_per_address (one address's share, ADR-20261107180000); and, while the edge sheds load, overload_connection and overload_cooloff (reset before TLS, or a cut-off address's request) and overload_unknown_host, overload_address and overload_request (answered 503 edge_overloaded) (ADR-20261110123517).",
 		}, []string{"reason"}),
+		overloadLevel: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gatewayd_public_overload_level",
+			Help: "A compute edge's overload level, from 0 to 1, in observe and on modes; the edge sheds by it only when FAAS_EDGE_OVERLOAD=on (ADR-20261110123517).",
+		}),
+		overloadSignal: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gatewayd_public_overload_signal",
+			Help: "The signals a compute edge's overload level follows, each over the last second: sched_delay_p99_seconds (the edge's goroutine scheduling delay), node_cpu_pressure (share of time any task waited for a CPU) and gateway_cpu_share (the gateway daemons' share of the node's CPUs) (ADR-20261110123517).",
+		}, []string{"signal"}),
 		hopFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gatewayd_public_internal_hop_fallback_total",
 			Help: "Requests a compute edge meant for its own node's gatewayd-internal in binary HTTP that went over HTTP/1.1 instead, by reason: no_socket (the hop socket is missing or nothing listens on it, as beside a gatewayd-internal from before the hop or while it restarts) and dial_error (ADR-20261110081523).",
@@ -160,6 +179,12 @@ func newEdgeMetrics() *edgeMetrics {
 	}
 	for _, reason := range clientlimit.Reasons {
 		m.refused.WithLabelValues(reason)
+	}
+	for _, reason := range clientlimit.OverloadReasons {
+		m.refused.WithLabelValues(reason)
+	}
+	for _, signal := range []string{overloadSignalSchedDelay, overloadSignalNodePressure, overloadSignalGatewayShare} {
+		m.overloadSignal.WithLabelValues(signal)
 	}
 	for _, reason := range gateway.HopFallbackReasons {
 		m.hopFallbacks.WithLabelValues(reason)
@@ -172,8 +197,16 @@ func newEdgeMetrics() *edgeMetrics {
 			m.wakeFailover.WithLabelValues(reason, outcome)
 		}
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures, m.refused, m.hopFallbacks)
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures, m.refused, m.overloadLevel, m.overloadSignal, m.hopFallbacks)
 	return m
+}
+
+// observeOverload exports one tick of the overload controller.
+func (m *edgeMetrics) observeOverload(s clientlimit.OverloadSignals, level float64) {
+	m.overloadLevel.Set(level)
+	m.overloadSignal.WithLabelValues(overloadSignalSchedDelay).Set(s.SchedDelayP99.Seconds())
+	m.overloadSignal.WithLabelValues(overloadSignalNodePressure).Set(s.NodeCPUPressure)
+	m.overloadSignal.WithLabelValues(overloadSignalGatewayShare).Set(s.GatewayCPUShare)
 }
 
 // observeHopFallback counts one binary hop request sent over HTTP/1.1.
