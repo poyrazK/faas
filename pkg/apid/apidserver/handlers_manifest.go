@@ -60,8 +60,7 @@ func validateManifest(dir string, acctPlan api.Plan, agentSteps bool) (*gregalem
 		return nil, prob
 	}
 	if err := m.ValidateForPlan(acctPlan); err != nil {
-		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
-			"Invalid manifest", err.Error())
+		return nil, manifestValidationProblem(err)
 	}
 	return m, nil
 }
@@ -94,8 +93,7 @@ func validateManifestBytes(b []byte, acctPlan api.Plan, agentSteps bool) (*grega
 		return nil, prob
 	}
 	if err := m.ValidateForPlan(acctPlan); err != nil {
-		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
-			"Invalid manifest", err.Error())
+		return nil, manifestValidationProblem(err)
 	}
 	return m, nil
 }
