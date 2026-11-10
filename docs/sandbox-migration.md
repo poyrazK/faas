@@ -14,7 +14,7 @@ Gregale sandbox sessions are Firecracker microVMs with a `/workspace`, root insi
 | OS package installs at run time (`apk`, `apt`, `sudo`) | Root inside the guest, in `registries` network mode | Available at launch |
 | Dev servers and previews | Exposed ports with preview URLs, private behind a token by default | Available at launch |
 | Short untrusted code (playgrounds, judges, user scripts) | Sandbox sessions, or functions and image runs | Available at launch |
-| Custom templates (`e2b.Dockerfile`) | Start a session from your own OCI image (`image` on create); `gregale sandbox template build` to follow | Images at launch; template import not yet |
+| Custom templates (`e2b.Dockerfile`, `e2b.toml`) | `gregale sandbox template publish` builds the template; sessions start from it by name, or from your own OCI image (`image` on create) | Available at launch |
 | Open internet egress | The `web` network mode | Not yet: `none` and `registries` (package registries and GitHub over 443) only |
 | Headless browser agents | A browser preset, Pro and up | After the agent egress gateway |
 | Code interpreter: stateful Python cells and charts | A stateful kernel preset | Follow-up; until then, run Python with `commands.run` and files |
@@ -39,7 +39,7 @@ Gregale sandbox sessions are Firecracker microVMs with a `/workspace`, root insi
 
 | E2B call | On Gregale |
 |---|---|
-| `Sandbox.create({ template, timeoutMs, envs, metadata })` | `template` is a preset (`base` means the default preset); `timeoutMs` is the idle time before the session freezes; `envs` go with every command; `metadata` become labels |
+| `Sandbox.create({ template, timeoutMs, envs, metadata })` | `template` is a preset (`base` means the default preset) or the name of a template you built with `gregale sandbox template publish`; `timeoutMs` is the idle time before the session freezes; `envs` go with every command; `metadata` become labels |
 | `Sandbox.connect(id)`, `Sandbox.list()`, `Sandbox.kill(id)` | The same. `connect` mints a fresh session token with your API key |
 | `sandbox.setTimeout(ms)`, `sandbox.kill()`, `sandbox.isRunning()`, `sandbox.getInfo()` | The same |
 | `commands.run(cmd, { background, cwd, envs, user, timeoutMs, onStdout, onStderr })` | The same. `user: 'root'` runs as root; with callbacks the output streams; a non-zero exit throws `CommandExitError` |
@@ -83,6 +83,22 @@ POST /v1/sandboxes
 - The session answers `queued` until the image is pulled and cached, then starts. If the pull fails, the session ends with outcome `image_unavailable` and the registry's error.
 - Images share the image-run cache and its plan limit. A cached image a live session uses is never evicted; when every cached image is in use, create answers `image_run_cache_full`.
 - Commands run as `app` (uid 1000) in `/workspace`, or as root with `user: 'root'`. The image needs a shell (`/bin/sh`) for commands.
+
+## Build a template
+
+Run `gregale sandbox template publish` in a directory with an `e2b.Dockerfile` (or a `Dockerfile`) and, optionally, an `e2b.toml`:
+
+```bash
+gregale sandbox template publish ./my-template
+```
+
+- The build runs in a builder microVM, like an app build. The command waits for it and prints the template's name; `gregale sandbox template list`, `get <name>` and `rm <name>` manage templates.
+- From `e2b.toml` Gregale reads `template_name`, `dockerfile`, `start_cmd` and `ready_cmd`; flags of the same names override them. `cpu_count` and `memory_mb` are ignored: pick memory per session with `ram_mb`.
+- `start_cmd` runs in the background, as `app`, each time a session boots; its output goes to `/tmp/gregale-start.log`. The session is ready once `ready_cmd` exits 0, polled each second for up to `--ready-timeout` seconds (60 by default, at most 600). If it never passes, the session fails.
+- E2B snapshots a running start command into the template. Gregale runs it at every boot, so a session starts as fast as your start command gets ready.
+- Start a session with `{ "template": "my-template" }`, or `Sandbox.create('my-template')`. Sessions boot the newest finished build; a rebuild leaves running sessions alone.
+- The image needs a shell (`/bin/sh`) for commands and for `start_cmd` and `ready_cmd`.
+- Each plan has a template limit (`SandboxTemplatesMax`): Free 0, Hobby 3, Pro 20, Scale 100. Template builds do not count as apps.
 
 ## Choose a network mode
 

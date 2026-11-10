@@ -167,7 +167,9 @@ test('Sandbox.create maps E2B options and waits for the VM', async () => {
   assert.throws(() => sbx.getHost(5173), (err) => err instanceof UnsupportedError && /exposePort\(5173\)/.test(err.message));
   await sbx.commands.run('env');
   assert.deepEqual(fake.execs.at(-1)?.env, { CI: '1' });
-  await assert.rejects(Sandbox.create('my-template', opts), (err) => err instanceof UnsupportedError && /my-template/.test(err.message));
+  const custom = await Sandbox.create('my-template', opts);
+  assert.equal(custom.sandboxId, ID);
+  assert.deepEqual(fake.created, { template: 'my-template' });
 });
 
 test('foreground commands answer results, stream to callbacks and throw on failure', async () => {

@@ -9,6 +9,8 @@ export type SandboxView = {
   id: string;
   state: 'queued' | 'starting' | 'ready' | 'frozen' | 'closed' | 'expired' | 'failed';
   preset: string;
+  /** The sandbox template the session boots, if any. */
+  template?: string;
   ram_mb: number;
   network: { mode: string };
   idle_timeout_s: number;

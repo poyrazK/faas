@@ -16,7 +16,10 @@ const DEFAULT_TEMPLATES = new Set(['base', 'default']);
 export type ConnectionOpts = ApiOptions & { requestTimeoutMs?: number; signal?: AbortSignal };
 
 export type SandboxOpts = ConnectionOpts & {
-  /** A preset (codex, opencode, claude-code); "base" is the default preset. */
+  /**
+   * A preset (codex, opencode, claude-code), "base" for the default preset,
+   * or the name of a template built with `gregale sandbox template publish`.
+   */
   template?: string;
   /** Labels on the session. */
   metadata?: Record<string, string>;
@@ -65,7 +68,7 @@ type PortView = { port: number; url: string; preview_token?: string };
 function info(view: SandboxView): SandboxInfo {
   return {
     sandboxId: view.id,
-    templateId: view.preset,
+    templateId: view.template ?? view.preset,
     metadata: view.labels ?? {},
     startedAt: new Date(view.created_at),
     endAt: new Date(view.expires_at),
@@ -149,16 +152,15 @@ export class Sandbox {
   static async create<S extends typeof Sandbox>(this: S, a?: string | SandboxOpts, b?: SandboxOpts): Promise<InstanceType<S>> {
     const opts: SandboxOpts = typeof a === 'string' ? { ...b, template: a } : (a ?? {});
     const template = opts.template ?? 'base';
-    if (!PRESETS.has(template) && !DEFAULT_TEMPLATES.has(template)) {
-      throw new UnsupportedError(`template "${template}"`, 'custom templates are not available yet; use codex, opencode or claude-code');
-    }
+    // A name that is not a preset is one of the account's templates.
+    const source = PRESETS.has(template) ? { preset: template } : DEFAULT_TEMPLATES.has(template) ? { preset: 'codex' } : { template };
     const network = opts.network ?? (opts.allowInternetAccess === true ? 'web' : opts.allowInternetAccess === false ? 'none' : undefined);
     const api = new Api(opts);
     let view: SandboxView;
     try {
       view = await api.control<SandboxView>('POST', '/v1/sandboxes', {
         json: {
-          preset: PRESETS.has(template) ? template : 'codex',
+          ...source,
           ram_mb: opts.ramMb,
           network: network ? { mode: network } : undefined,
           idle_timeout_s: opts.timeoutMs ? Math.ceil(opts.timeoutMs / 1000) : undefined,

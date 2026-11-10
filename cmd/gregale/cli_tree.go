@@ -153,6 +153,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app deploy-token", "deploy-tokens"},
 	{"app streaming-cap", "apps streaming-cap"},
 	{"sandbox run", "run"},
+	{"sandbox template publish", "sandbox-templates build"},
+	{"sandbox template", "sandbox-templates"},
 	{"sandbox", "runs"},
 	{"invocation watch", "tail"},
 	{"invocation", "invocations"},

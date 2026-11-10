@@ -83,6 +83,9 @@
         "/v1/sandbox-templates",
         "/v1/sandboxes"
       ],
+      "cli": [
+        "sandbox-templates"
+      ],
       "consumers": [
         "schedd"
       ]

@@ -128,6 +128,7 @@ touch them. The tables below map each earlier name.
 | `gregale release-gates` | `gregale release gate` |
 | `gregale routes` | `gregale api route` |
 | `gregale runs` | `gregale sandbox` |
+| `gregale sandbox-templates` | `gregale sandbox template` |
 | `gregale scan` | `gregale deploy --plan` |
 | `gregale scheduled-releases` | `gregale release schedule` |
 | `gregale secrets` | `gregale env` |
@@ -546,6 +547,7 @@ touch them. The tables below map each earlier name.
 | `gregale routes migration gate` | `gregale api route migration check` |
 | `gregale routes migration server-check` | `gregale api route migration verify` |
 | `gregale routes monitor preview` | `gregale api route monitor set --dry-run` |
+| `gregale sandbox-templates build` | `gregale sandbox template publish` |
 | `gregale secrets audit` | `gregale env audit` |
 | `gregale secrets check` | `gregale env check` |
 | `gregale secrets list` | `gregale env list` |

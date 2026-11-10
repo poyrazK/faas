@@ -292,10 +292,10 @@ RAM per session follows `AgentRunRAMMBMax`.
 | `betaPause`, `resume` | Not needed for idle time, which ephemeral sessions pause on their own (§5). Explicit long pauses need `persistent` sessions (ADR-20261027090014 §5) and fail with a clear error |
 | `files.watchDir`, Code Interpreter `runCode`, the Desktop SDK | Unsupported in this release. Each fails with an error naming the call and the Gregale alternative |
 
-- **Templates.** `gregale sandbox template build` accepts an `e2b.Dockerfile`, and reads the start and ready commands from `e2b.toml`.
+- **Templates.** `gregale sandbox template publish` accepts an `e2b.Dockerfile`, and reads the start and ready commands from `e2b.toml`.
   - It builds in a builder microVM (ADR-003).
-  - It runs the start command before the warm snapshot (ADR-20261027090015 §1), so sessions start ready.
-  - The result is a per-account seller image (ADR-20261027090010).
+  - It runs the start command before the warm snapshot (ADR-20261027090015 §1), so sessions start ready. *Amended in step 10 part three: the start command runs at each session boot, and the session is ready once the ready command passes.*
+  - The result is a per-account seller image (ADR-20261027090010). *As built, the image is the newest finished build of the template's build app.*
 - **Documented differences:**
   - default egress is `registries`, not open internet;
   - mail ports are always blocked;
@@ -328,7 +328,7 @@ What sandbox users run today, and where it lands on Gregale.
 **Migration path:**
 
 - **Swap the client.** Use `GregaleSandboxClient` (OpenAI Agents SDK) or the E2B shim.
-- **Rebuild the templates** with `gregale sandbox template build`.
+- **Rebuild the templates** with `gregale sandbox template publish`.
 - **Choose a network mode per workload.** Most need `registries` or `web`.
 - **Move persisted workspaces** with `workspace:hydrate`.
 - **Compare before switching.** A pricing calculator reads a provider's usage export (sandbox-hours, vCPU, GB) and shows the Gregale bill, where waiting time is free. A shadow mode runs the same tasks on both providers and compares latency and cost.
@@ -540,7 +540,7 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
    - **Migration guide:** `docs/sandbox-migration.md`, holding the coverage table, the E2B call mapping, the Agents SDK move, workspaces and network modes. It is not in `customer-pages.json` until launch.
    - **Not built yet:**
      - The Python shim `gregale-sandbox-e2b`.
-     - Template import (`gregale sandbox template build` from `e2b.Dockerfile` and `e2b.toml`): the build command in a builder VM, with the start command run before the warm snapshot. It builds on seller-image sessions (part two).
+     - ~~Template import~~: built in part three.
    - **As built, part two: seller-image sessions (local branch, no PR yet).** `POST /v1/sandboxes {"image": "<ref>"}` boots a customer OCI image in place of a preset.
      - **Amends §2:** the image is cached in ADR-1161's image-run cache, not a separate per-account seller-image store. apid gets or creates the image's runner job (`imagerun.Handler.EnsureSessionImage`), so sessions and image runs share one cache, one `ImageRunCachedImages` limit and one pull. Image sessions need image runs switched on; otherwise `image` is `sandbox_unsupported`.
      - **Any OCI image** boots as a full rootfs (imaged's job materialization) with guest-init's sandbox server as PID1, like a job image. The session records preset `image` and defaults to `SandboxImageDefaultRAMMB` (1024 MB). `preset` and `image` together are a validation error.
@@ -551,6 +551,15 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - **Metal test:** `TestMetalSandboxFromASellerImage` (pkg/fcvm, run by `scripts/experiments/agent-runs/metal/run_sandbox_root_metal.sh`) boots a Debian image packed as imaged publishes a job image over the Alpine agent base, and checks the image's root, the staged marker, uid 1000, a writable `/workspace`, root, and that the cached image is unchanged afterwards. It passed on internal-test-1 on 2026-11-09 with leakcheck clean.
      - **Not built:** registry credentials for private images on create (image runs take `registry_auth`; sessions use the runner job's stored credential, if any), and `pull: always`.
      - The pricing calculator and shadow mode from §13.
+   - **As built, part three: templates (local branch, no PR yet; slices A–E).** `gregale sandbox template publish [dir]` builds a template from `e2b.Dockerfile` and `e2b.toml`; sessions start from it with `{"template": "<name>"}`.
+     - **A hidden build app per template.** `PUT /v1/sandbox-templates/{name}` (`start_cmd`, `ready_cmd`, `ready_timeout_s`: default 60, at most `SandboxTemplateReadyTimeoutSecMax` 600) creates the template and its app: internal, execution mode `job`, slug `sbt-` plus 12 hex (reserved, `api.IsSandboxTemplateAppSlug`), marked `apps.sandbox_template`. The app counts in `SandboxTemplatesMax` (Free 0, Hobby 3, Pro 20, Scale 100) instead of `DeployedApps` and is left out of app listings. `GET` lists or reads templates with their newest build; `DELETE` deletes the app first, so a failure leaves the template whole. Migrations `20261109202124000_sandbox_templates` and `20261109211935000_sandbox_session_templates` (expand).
+     - **Builds are deployments of that app** through the normal deploy path, in a builder microVM (ADR-003). A job-mode app skips the snapshot-prime boot. imaged publishes a template's build as a full rootfs (`publishSandboxTemplateRootfs`); an image with no command gets `/bin/sh`.
+     - **Sessions** boot the newest `live` build's rootfs (`apps/sbt-…/<uuid>.ext4`, `storagekey.IsSandboxTemplateLayer`, which vmmd accepts beside job layers) like a seller image, recording preset `template`, `image_ref` `template:<name>` and `template_id`. Create answers `sandbox_template_not_found` (404) or `sandbox_template_not_ready` (409); a template deleted before the session starts fails it as `image_unavailable`.
+     - **Amends §12: the start command runs at boot, not before a warm snapshot.** agentd passes `start_cmd`, `ready_cmd` and `ready_timeout_ms` (schedd `SandboxRunStart` 10–12, vmmd `RunSandboxStart` 14–16). fcvm stages `sandbox.json` version 2 with them; guest-init runs the start command in the background as uid 1000 (output in `/tmp/gregale-start.log`), polls the ready command each second (10 s per attempt), and listens only once it passes. A ready command that never passes powers the VM off, so the wake fails. Template warm snapshots can follow with ADR-20261027090015.
+     - **CLI:** `gregale sandbox template publish|list|get|rm` (`sandbox-templates`; `build` also works). `publish` reads `template_name`, `dockerfile`, `start_cmd` and `ready_cmd` from `e2b.toml` (flags override; `cpu_count` and `memory_mb` are ignored), saves the template, packs the directory with the chosen Dockerfile at the archive root as `Dockerfile`, deploys it to the template's app, and waits for the build.
+     - **Shim:** `Sandbox.create('<name>')` with a name that is not a preset or `base` creates the session from that template; `getInfo().templateId` is the template's name.
+     - **Tested:** store, apid handler, imaged, agentd, vmmdgrpc, fcvm and CLI unit tests; guest-init tests and the metal tests `TestMetalSandboxFromASellerImage` and `TestMetalSandboxTemplateCommands` passed on internal-test-1 on 2026-11-10 with leakcheck clean. **Not tested** end to end against a deployed Gregale (build to session); that needs sandbox sessions switched on in a test environment.
+     - **Not built:** the Python shim, and template warm snapshots.
 11. Billing, with ADR-20261027090011.
 
 Long-lived paused sessions (E2B-style memory pause) need their own ADR.

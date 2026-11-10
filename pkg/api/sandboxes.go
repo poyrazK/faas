@@ -158,7 +158,7 @@ func ErrSandboxTemplateNotFound(name string) *Problem {
 // build.
 func ErrSandboxTemplateNotReady(name string) *Problem {
 	return NewProblem(http.StatusConflict, CodeSandboxTemplateNotReady, "Sandbox template not built",
-		fmt.Sprintf("sandbox template %q has no finished build; build it with gregale sandbox template build", name))
+		fmt.Sprintf("sandbox template %q has no finished build; build it with gregale sandbox template publish", name))
 }
 
 // ValidSandboxTemplateName reports a template name: 1-63 lowercase letters,
