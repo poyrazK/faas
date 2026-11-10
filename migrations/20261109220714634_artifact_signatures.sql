@@ -9,7 +9,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE artifact_signatures (
+CREATE TABLE IF NOT EXISTS artifact_signatures (
     storage_key      text        PRIMARY KEY CHECK (storage_key ~ '^apps/[^/]+/[^/]+\.ext4$' AND octet_length(storage_key) <= 512),
     digest           text        NOT NULL CHECK (digest ~ '^[0-9a-f]{64}$'),
     bytes            bigint      NOT NULL CHECK (bytes >= 0),
@@ -18,7 +18,7 @@ CREATE TABLE artifact_signatures (
     signature_format text        NOT NULL CHECK (signature_format IN ('v2')),
     signed_at        timestamptz NOT NULL DEFAULT now() CHECK (isfinite(signed_at))
 );
-CREATE INDEX artifact_signatures_deployment ON artifact_signatures (deployment_id);
+CREATE INDEX IF NOT EXISTS artifact_signatures_deployment ON artifact_signatures (deployment_id);
 
 DO $$
 BEGIN
@@ -34,5 +34,5 @@ $$;
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE artifact_signatures;
+DROP TABLE IF EXISTS artifact_signatures;
 -- +goose StatementEnd
