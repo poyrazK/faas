@@ -33,7 +33,7 @@ export default {
   async beforeSnapshot(ctx) {},
   async fetch(request) { return new Response('ok'); },
 };`, []string{"before_snapshot"}},
-		{"no hooks", "handler.js",`export default { async fetch() { return new Response("ok"); } };`, nil},
+		{"no hooks", "handler.js", `export default { async fetch() { return new Response("ok"); } };`, nil},
 		{"python module functions", "handler.py", `import asyncio
 
 async def init():
