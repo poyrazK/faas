@@ -196,7 +196,7 @@ budget refusal under the operation outcome `capacity`, not `error`, so a full
 fleet does not fire `FaasAppTaskOperationsFailing`; its log class is
 `capacity` too.
 
-The column is expand-only (`migrations/20261110093132000_app_task_capacity_wait.sql`).
+The column is expand-only (`migrations/20261110113931741_app_task_capacity_wait.sql`).
 An older schedd ignores it and fails a refused task at once, as before; a
 newer schedd beside an older one sees no wait recorded and starts one.
 Validation: `TestDeferAppTaskForCapacityContract` (memory and PostgreSQL),
