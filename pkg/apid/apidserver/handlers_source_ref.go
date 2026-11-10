@@ -135,6 +135,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
+	if problem := s.previewDeployProblem(r.Context(), acct, app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	installID, p := s.resolveInstallToken(r.Context(), acct, app, req.Repo)
 	if p != nil {
 		api.WriteProblem(w, p)
