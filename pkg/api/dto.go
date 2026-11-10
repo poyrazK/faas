@@ -6079,9 +6079,12 @@ type LogQueryEvent struct {
 	Level        string    `json:"level,omitempty"`
 	Stream       string    `json:"stream,omitempty"`
 	Message      string    `json:"message"`
-	LatencyMS    int       `json:"latency_ms,omitempty"`
-	Count        int       `json:"count,omitempty"`
-	ColdBoot     bool      `json:"cold_boot,omitempty"`
+	// LatencyMS is set on every HTTP row, 0 ms included, and absent on rows
+	// with no latency (runtime and build lines). A plain omitempty int dropped
+	// the field from 0 ms requests (ADR-20261110090000).
+	LatencyMS *int `json:"latency_ms,omitempty"`
+	Count     int  `json:"count,omitempty"`
+	ColdBoot  bool `json:"cold_boot,omitempty"`
 }
 
 // AccountTraceLookupResponse is the tenant-scoped correlation envelope used

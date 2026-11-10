@@ -351,7 +351,7 @@ func (r *Report) checkUnsupported(item api.AppBindingInventoryItem, policy Polic
 }
 
 // checkDeclaredBindings blocks on every binding the manifest declares for the
-// checked scope that the inventory does not list (ADR-20261110180000).
+// checked scope that the inventory does not list (ADR-20261110213000).
 func (r *Report) checkDeclaredBindings(inventory api.AppBindingInventory, policy Policy) {
 	for _, declared := range policy.DeclaredBindings {
 		if declared.Scope != "" && declared.Scope != r.Scope {

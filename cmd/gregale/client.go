@@ -46,7 +46,7 @@ type Client = api.Client
 // A client for a plain-HTTP base on another host refuses every request
 // (guardAPIClient) unless the user opted in.
 func NewClient(baseURL, token string) *Client {
-	return guardAPIClient(bindProfileCompletionCache(withApprovalWait(api.NewClient(baseURL, token).WrapTransport(wrapCLITransport))))
+	return guardAPIClient(bindProfileCompletionCache(withApprovalWait(api.NewClient(baseURL, token).WrapTransport(wrapCLITransport).WithProjectOrganization(projectOrganization))))
 }
 
 // NewClientWithDeployTimeout wraps api.NewClientWithDeployTimeout like
@@ -56,7 +56,7 @@ func NewClientWithDeployTimeout(baseURL, token string, d time.Duration) *Client 
 	if apiClientRefused(baseURL) {
 		d = 0
 	}
-	return guardAPIClient(bindProfileCompletionCache(withApprovalWait(api.NewClientWithDeployTimeout(baseURL, token, d).WrapTransport(wrapCLITransport))))
+	return guardAPIClient(bindProfileCompletionCache(withApprovalWait(api.NewClientWithDeployTimeout(baseURL, token, d).WrapTransport(wrapCLITransport).WithProjectOrganization(projectOrganization))))
 }
 
 // withApprovalWait applies --wait-for-approval: the client prints the review

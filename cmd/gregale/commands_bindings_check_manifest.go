@@ -12,7 +12,7 @@ import (
 )
 
 // manifestDeclaredBindings returns the PostgreSQL bindings the gregale.yaml in
-// dir declares for slug (ADR-20261110180000). An entry naming the app always
+// dir declares for slug (ADR-20261110213000). An entry naming the app always
 // counts; an entry without `app` counts only when dir is linked to slug, so a
 // check run from another project's directory never borrows its manifest. A
 // directory without a manifest declares nothing.

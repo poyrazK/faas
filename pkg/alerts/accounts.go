@@ -156,11 +156,15 @@ feed:
 
 // evalAccount evaluates one account's rules in order within its tick budget.
 // A rule already started always finishes; the budget is checked between rules.
-func (e *Evaluator) evalAccount(ctx context.Context, rules []state.AlertRule, now time.Time) Stats {
-	var stats Stats
+func (e *Evaluator) evalAccount(ctx context.Context, rules []state.AlertRule, now time.Time) (stats Stats) {
 	if len(rules) == 0 {
 		return stats
 	}
+	// Webhook deliveries leave the evaluation path; the account's counters
+	// include them once they are recorded (ADR-20261110090000).
+	pool := newWebhookPool()
+	ctx = withWebhookPool(ctx, pool)
+	defer func() { stats.add(pool.wait()) }()
 	accountID := rules[0].AccountID
 	var over map[string]bool
 	if e.ruleLimits != nil {

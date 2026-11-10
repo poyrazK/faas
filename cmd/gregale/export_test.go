@@ -1534,6 +1534,7 @@ func NormalizeGitArchive(repoRoot, prefix, archivePath string) ([]string, error)
 var ParkedArchivePendingNote = parkedArchivePendingNote
 var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
+var RetainedLineLevelMatches = retainedLineLevelMatches
 var ParseAIPriceSpec = parseAIPriceSpec
 var ParseAIRouteTargets = parseAIRouteTargets
 var ParseStoredWorkflowLiveBaseline = parseStoredWorkflowLiveBaseline
@@ -2798,5 +2799,13 @@ var RefuseDevFunctionSet = refuseDevFunctionSet
 // MetricLabelFlags exposes the --metric-label parser.
 var MetricLabelFlags = metricLabelFlags
 
-// ManifestDeclaredBindings exposes the bindings check manifest reader (ADR-20261110180000).
+// ManifestDeclaredBindings exposes the bindings check manifest reader (ADR-20261110213000).
 var ManifestDeclaredBindings = manifestDeclaredBindings
+
+// ApplyFunctionHookLifecycleForTest exposes applyFunctionHookLifecycle.
+func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
+	GetApp(ctx context.Context, slug string) (api.AppResponse, error)
+	UpdateApp(ctx context.Context, slug string, req api.UpdateAppRequest) (api.AppResponse, error)
+}, slug, sourceDir, handler string) error {
+	return applyFunctionHookLifecycle(ctx, client, slug, sourceDir, handler)
+}

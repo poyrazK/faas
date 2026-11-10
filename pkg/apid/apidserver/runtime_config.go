@@ -146,6 +146,9 @@ type runtimeConfigManager struct {
 	// flags is the compiled platform-flag view (ADR-1700). applyVersion
 	// updates it under mu so flag decisions follow version order.
 	flags *platformflags.Set
+	// repairFingerprint is the global rows' fingerprint as of the last
+	// periodic repair that reconciled cleanly; "" until one has.
+	repairFingerprint string
 	// receiptDaemon, when set, makes this manager record apply receipts
 	// (ADR-1700) as that daemon on receiptInstance. failedReceipts holds
 	// the last version whose failure was recorded.
@@ -459,6 +462,34 @@ func (m *runtimeConfigManager) applyVersion(key string, value json.RawMessage, v
 	return true, nil
 }
 
+// repair is the periodic reconcile. When the store fingerprints its rows it
+// skips the full read while nothing changed since a clean reconcile; the
+// fingerprint is taken before the rows are read, so a write between the two
+// only costs one more read (pkg/runtimeconfig Watcher.Repair).
+func (m *runtimeConfigManager) repair(ctx context.Context, store state.Store) error {
+	fingerprinter, ok := store.(state.RuntimeConfigFingerprinter)
+	if !ok {
+		return m.reconcile(ctx, store)
+	}
+	fingerprint, err := fingerprinter.RuntimeConfigFingerprint(ctx, state.RuntimeConfigScopeGlobal)
+	if err != nil {
+		return m.reconcile(ctx, store)
+	}
+	m.mu.RLock()
+	unchanged := fingerprint == m.repairFingerprint
+	m.mu.RUnlock()
+	if unchanged {
+		return nil
+	}
+	if err := m.reconcile(ctx, store); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.repairFingerprint = fingerprint
+	m.mu.Unlock()
+	return nil
+}
+
 func (m *runtimeConfigManager) reconcile(ctx context.Context, store state.Store) error {
 	rows, err := store.ListRuntimeConfigs(ctx, state.RuntimeConfigScopeGlobal, "")
 	if err != nil {
@@ -683,7 +714,7 @@ func runRuntimeConfigSubscriber(ctx context.Context, pool *pgxpool.Pool, srv *se
 			// Notifications reduce propagation latency; this periodic repair
 			// guarantees eventual convergence across LISTEN reconnects and
 			// transient delivery gaps.
-			if err := srv.runtimeConfig.reconcile(ctx, srv.store); err != nil && log != nil {
+			if err := srv.runtimeConfig.repair(ctx, srv.store); err != nil && log != nil {
 				log.Error("runtime_config.reconcile_failed", "err", err)
 			}
 		case _, ok := <-ch:

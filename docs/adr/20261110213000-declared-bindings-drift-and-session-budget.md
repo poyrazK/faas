@@ -1,4 +1,4 @@
-# ADR-20261110180000: Declared bindings gate checks, manifest drift warnings and session connection budgets
+# ADR-20261110213000: Declared bindings gate checks, manifest drift warnings and session connection budgets
 
 - **Status:** accepted
 - **Date:** 2026-11-10
