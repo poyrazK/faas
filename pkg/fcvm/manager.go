@@ -4445,6 +4445,11 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// fence and can OOM-kill the box. CR-2 / code-review #2.
 	// Mirrors manager.go:2581 in the Wake path.
 	lease.MemoryMaxMiB = req.MemSizeMiB
+	// A job's share of a busy host follows its memory, as an app
+	// instance's does; its cpu.max stays one core (ADR-20261109172421).
+	if req.MemSizeMiB > 0 {
+		lease.CPUWeight = api.SizeCPUWeight(req.MemSizeMiB)
+	}
 
 	// Match the wake path's defer-and-unwind pattern: any error
 	// after Acquire must release the slot AND tear down the netns.
