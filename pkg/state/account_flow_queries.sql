@@ -135,3 +135,17 @@ WHERE t.last_sent_at <= clock_timestamp() - make_interval(secs => sqlc.arg(min_i
   AND (t.window_started_at <= clock_timestamp() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
        OR t.sent_in_window < sqlc.arg(max_per_window)::int)
 RETURNING t.sent_in_window;
+
+-- Grants an account started that a recovery must end (ADR 20261109120000):
+-- pending email changes, org invitations it created, and CLI or agent
+-- sign-in codes approved but not yet exchanged for a key.
+-- name: EndAccountPendingEmailChanges :execrows
+DELETE FROM account_email_changes WHERE account_id=$1 AND consumed_at IS NULL;
+
+-- name: EndAccountPendingInvitations :execrows
+UPDATE org_invitations SET revoked_at=clock_timestamp()
+WHERE invited_by_account_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL;
+
+-- name: EndAccountApprovedCliCodes :execrows
+UPDATE cli_auth_codes SET status='expired'
+WHERE account_id=$1 AND status='consumed' AND consumed_at IS NULL;

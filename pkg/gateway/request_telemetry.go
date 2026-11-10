@@ -198,6 +198,12 @@ type requestTelemetryRecorder struct {
 
 	appLosses          map[uuid.UUID]int64
 	unattributedLosses int64
+	// analyticsLosses and analyticsUnattributed journal the requests lost to
+	// analytics while the gateway counts its own (ADR-20261103113952
+	// amendment 6): rollup batches given up, and lost raw rows the gateway
+	// did not count. A lost raw row it counted is no analytics loss.
+	analyticsLosses       map[uuid.UUID]int64
+	analyticsUnattributed int64
 
 	// overwrittenTotal counts rows lost before the publisher can drain them.
 	overwrittenTotal atomic.Int64
@@ -224,12 +230,13 @@ func NewRequestTelemetryRecorder(cfg RequestTelemetryConfig, log *slog.Logger) *
 		threshold = 1
 	}
 	return &requestTelemetryRecorder{
-		cfg:           cfg,
-		log:           log,
-		ring:          make([]RequestTelemetryRow, cfg.RingSize),
-		appLosses:     make(map[uuid.UUID]int64),
-		wakeThreshold: threshold,
-		wakeArmed:     true,
+		cfg:             cfg,
+		log:             log,
+		ring:            make([]RequestTelemetryRow, cfg.RingSize),
+		appLosses:       make(map[uuid.UUID]int64),
+		analyticsLosses: make(map[uuid.UUID]int64),
+		wakeThreshold:   threshold,
+		wakeArmed:       true,
 	}
 }
 
@@ -268,15 +275,12 @@ func (r *requestTelemetryRecorder) RecordFromObserve(row RequestTelemetryRow) {
 // traffic and before the publisher starts.
 func (r *requestTelemetryRecorder) EnableAnalyticsRollups(cfg RequestAnalyticsRollupsConfig, log *slog.Logger) {
 	g := newRequestAnalyticsRollups(cfg, log)
+	// A batch given up loses analytics only: its raw rows were shipped.
 	g.losses = func(byApp map[uuid.UUID]int64) {
 		r.ringMu.Lock()
 		defer r.ringMu.Unlock()
 		for app, n := range byApp {
-			if _, ok := r.appLosses[app]; !ok && len(r.appLosses) >= len(r.ring) {
-				r.unattributedLosses += n
-				continue
-			}
-			r.appLosses[app] += n
+			r.recordAnalyticsLossLocked(app, n)
 		}
 	}
 	r.analytics = g
@@ -481,6 +485,9 @@ func telemetryTraceID(requestID string) string {
 // retain a global counter, preventing pressure from hiding missing evidence.
 func (r *requestTelemetryRecorder) recordAppLossLocked(row RequestTelemetryRow) {
 	n := int64(normalizedRequestTelemetryCount(row.Count))
+	if !row.AnalyticsCounted {
+		r.recordAnalyticsLossLocked(row.AppID, n)
+	}
 	if row.AppID == uuid.Nil {
 		r.unattributedLosses += n
 		return
@@ -490,4 +497,22 @@ func (r *requestTelemetryRecorder) recordAppLossLocked(row RequestTelemetryRow) 
 		return
 	}
 	r.appLosses[row.AppID] += n
+}
+
+// recordAnalyticsLossLocked journals n requests lost to analytics, bounded
+// like the raw journal. It journals nothing unless the gateway counts its own
+// analytics: otherwise apid's raw evidence is the analytics evidence.
+func (r *requestTelemetryRecorder) recordAnalyticsLossLocked(app uuid.UUID, n int64) {
+	if r.analytics == nil {
+		return
+	}
+	if app == uuid.Nil {
+		r.analyticsUnattributed += n
+		return
+	}
+	if _, ok := r.analyticsLosses[app]; !ok && len(r.analyticsLosses) >= len(r.ring) {
+		r.analyticsUnattributed += n
+		return
+	}
+	r.analyticsLosses[app] += n
 }

@@ -41,6 +41,7 @@ var securityActivityKinds = map[string]string{
 	"auth.mfa_trusted_browser_used":            "Signed in from a remembered browser",
 	"account.mfa_browser_forgotten":            "A remembered browser was forgotten",
 	"account.mfa_browsers_forgotten":           "Remembered browsers were forgotten",
+	"account.pending_grants_ended":             "Pending email change, invitations or CLI approvals cancelled",
 	"account.sign_in_method_linked":            "Sign-in method linked",
 	"account.sign_in_method_unlinked":          "Sign-in method removed",
 	"account.sign_in_method_link_refused":      "Linking a sign-in method was refused",

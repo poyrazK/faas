@@ -23,6 +23,7 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
            AND COALESCE(NULLIF(p.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
            AND p.status = 'superseded' AND p.created_at < d.created_at
            AND NOT (p.canary_total_steps > 0 AND p.rollout_state = 'aborted' AND p.rollout_completed_at IS NULL)
+           AND p.last_auto_rollback_reason IS NULL
          ORDER BY COALESCE(p.serving_ended_at, p.created_at) DESC, p.created_at DESC, p.id DESC LIMIT 1) AS pred ON true
  WHERE d.status = 'live'
    AND d.rollback_on_5xx

@@ -65,6 +65,7 @@ func Run(t *testing.T, open Open) {
 		{"non_uuid_invocation_identity_is_unowned", testNonUUIDInvocationIdentityIsUnowned},
 		{"deployment_secret_reload_signal_survives_read", testDeploymentSecretReloadSignalSurvivesRead},
 		{"rollback_on_5xx_candidates_track_the_opt_in", testRollbackOn5xxCandidates},
+		{"reverted_release_is_not_a_rollback_target", testRevertedReleaseIsNotARollbackTarget},
 		{"config_revisions_and_guards_track_each_write", testConfigRevisionsAndGuards},
 		{"config_restore_is_atomic_and_compares_observed_state", testAtomicConfigRestore},
 		{"config_restore_guard_commits_secrets_and_outcome", testAtomicGuardRestore},

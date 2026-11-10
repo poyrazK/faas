@@ -608,6 +608,10 @@ How each gate judges:
   at least `min_samples` values (default 20) in the window, or the gate is not
   judged. Custom metrics are reported per app, not per revision, so these
   gates are most useful after the release takes all the traffic.
+- Both metric gate kinds read the metric's aggregate. Add
+  `--metric-label key=value` (repeatable; `labels` in the API) to judge the one
+  labelled series with exactly those labels, for example
+  `--metric orders_per_minute --metric-label region=eu --below 5`.
 - **`metric_change` gates** (`--max-rise` or `--max-drop`) compare the
   metric's average, read from its history the same way, with its average over
   the same length of time before the rollout started. Use them when a fixed

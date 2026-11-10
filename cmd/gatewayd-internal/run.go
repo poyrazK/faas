@@ -3487,13 +3487,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				appGaps := make([]*apidpb.TelemetryAppGap, 0, len(report.AppGaps))
 				for _, gap := range report.AppGaps {
-					appGaps = append(appGaps, &apidpb.TelemetryAppGap{AppId: gap.AppID.String(), DroppedCount: gap.DroppedCount, PendingCount: int32(gap.PendingCount)})
+					appGaps = append(appGaps, &apidpb.TelemetryAppGap{AppId: gap.AppID.String(), DroppedCount: gap.DroppedCount, PendingCount: int32(gap.PendingCount),
+						AnalyticsDroppedCount: gap.AnalyticsDroppedCount, AnalyticsPendingCount: int32(gap.AnalyticsPendingCount)})
+				}
+				var analytics *apidpb.AnalyticsCoverage
+				if report.Analytics != nil {
+					analytics = &apidpb.AnalyticsCoverage{Counting: report.Analytics.Counting, UnattributedDroppedTotal: report.Analytics.UnattributedDroppedTotal}
 				}
 				receipt, err := rtCli.RecordTelemetryCoverage(heartbeatCtx, &apidpb.TelemetryCoverage{
 					NodeName: coverageNode, BootId: coverageBootID, Sequence: coverageSequence, Enabled: report.Enabled,
 					SamplingBasisPoints: int32(report.SamplingBasisPoints), DroppedTotal: report.DroppedTotal,
 					PendingCount: int32(report.PendingCount), SourceAtUnixMs: report.SourceAt.UnixMilli(),
 					AppScoped: report.AppScoped, UnattributedDroppedTotal: report.UnattributedDroppedTotal, AppGaps: appGaps,
+					Analytics: analytics,
 				})
 				if err != nil {
 					return err

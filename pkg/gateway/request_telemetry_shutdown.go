@@ -99,6 +99,13 @@ func (p *requestTelemetryPublisher) dropPending(message string) {
 	}
 	count := requestTelemetryCount(p.pending)
 	p.log.Warn(message, slog.Int("batch_size", len(p.pending)), slog.Int64("request_count", count))
-	p.recordDroppedRows(p.pending)
+	if p.receiverAnswered {
+		// The receiver took other rows of this batch and kept refusing these:
+		// the loss belongs to their apps (for example an ingest cap).
+		p.recordDroppedRows(p.pending)
+	} else {
+		p.recordPlatformDroppedRows(p.pending)
+	}
 	p.pending = nil
+	p.receiverAnswered = false
 }

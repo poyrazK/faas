@@ -457,10 +457,24 @@ message TelemetryCoverage {
   int64 unattributed_dropped_total = 10;
   // Complete pending snapshot and unacknowledged loss deltas. Commit is atomic.
   repeated TelemetryAppGap app_gaps = 11;
+  // A gateway that counts its own requests into analytics rollups reports
+  // its analytics part apart from raw delivery (ADR-20261103113952
+  // amendment 6); an older gateway leaves it unset.
+  AnalyticsCoverage analytics = 12;
+}
+message AnalyticsCoverage {
+  // Whether the gateway counts every request it records.
+  bool counting = 1;
+  // Cumulative analytics losses the gateway could not attribute to an app.
+  int64 unattributed_dropped_total = 2;
 }
 message TelemetryAppGap {
   string app_id = 1;
   int64 dropped_count = 2;
   int32 pending_count = 3;
+  // Requests lost to analytics since the last acknowledged heartbeat, and
+  // requests in rollups past their send time not yet acknowledged.
+  int64 analytics_dropped_count = 4;
+  int32 analytics_pending_count = 5;
 }
 message TelemetryCoverageReceipt { bool recorded = 1; }

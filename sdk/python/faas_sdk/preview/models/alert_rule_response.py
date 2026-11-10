@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -18,6 +18,10 @@ from ..models.alert_rule_response_metric import AlertRuleResponseMetric, check_a
 from ..models.alert_rule_response_state import AlertRuleResponseState, check_alert_rule_response_state
 from ..models.alert_rule_response_window_spec import AlertRuleResponseWindowSpec, check_alert_rule_response_window_spec
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.alert_rule_response_custom_metric_labels import AlertRuleResponseCustomMetricLabels
+
 
 T = TypeVar("T", bound="AlertRuleResponse")
 
@@ -82,6 +86,9 @@ class AlertRuleResponse:
     """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
     custom_metric_name: str | Unset = UNSET
     """The pushed custom metric a custom_metric rule watches. Present only when metric is custom_metric."""
+    custom_metric_labels: AlertRuleResponseCustomMetricLabels | Unset = UNSET
+    """The labelled series a custom_metric rule watches: the series with exactly these labels. Absent when the rule
+    watches the aggregate."""
     log_query: str | Unset = UNSET
     """The canonical log search filters a log_search_matches rule counts. Present only when metric is
     log_search_matches."""
@@ -150,6 +157,10 @@ class AlertRuleResponse:
 
         custom_metric_name = self.custom_metric_name
 
+        custom_metric_labels: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.custom_metric_labels, Unset):
+            custom_metric_labels = self.custom_metric_labels.to_dict()
+
         log_query = self.log_query
 
         slo_id: str | Unset = UNSET
@@ -214,6 +225,8 @@ class AlertRuleResponse:
             field_dict["failure_source"] = failure_source
         if custom_metric_name is not UNSET:
             field_dict["custom_metric_name"] = custom_metric_name
+        if custom_metric_labels is not UNSET:
+            field_dict["custom_metric_labels"] = custom_metric_labels
         if log_query is not UNSET:
             field_dict["log_query"] = log_query
         if slo_id is not UNSET:
@@ -231,6 +244,8 @@ class AlertRuleResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.alert_rule_response_custom_metric_labels import AlertRuleResponseCustomMetricLabels
+
         d = dict(src_dict)
         id = d.pop("id")
 
@@ -294,6 +309,13 @@ class AlertRuleResponse:
             failure_source = check_alert_rule_response_failure_source(_failure_source)
 
         custom_metric_name = d.pop("custom_metric_name", UNSET)
+
+        _custom_metric_labels = d.pop("custom_metric_labels", UNSET)
+        custom_metric_labels: AlertRuleResponseCustomMetricLabels | Unset
+        if isinstance(_custom_metric_labels, Unset):
+            custom_metric_labels = UNSET
+        else:
+            custom_metric_labels = AlertRuleResponseCustomMetricLabels.from_dict(_custom_metric_labels)
 
         log_query = d.pop("log_query", UNSET)
 
@@ -359,6 +381,7 @@ class AlertRuleResponse:
             notify_resolved=notify_resolved,
             failure_source=failure_source,
             custom_metric_name=custom_metric_name,
+            custom_metric_labels=custom_metric_labels,
             log_query=log_query,
             slo_id=slo_id,
             synthetic_check_id=synthetic_check_id,

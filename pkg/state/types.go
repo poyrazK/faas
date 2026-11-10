@@ -2287,6 +2287,10 @@ type ScalingTarget struct {
 	// Name is the custom metric this target watches (ADR-202). Set only
 	// when Metric == "custom".
 	Name string
+	// Labels selects one labelled series of Name (ADR-20261108160000 slice
+	// C2); empty reads the metric's aggregate. Stored in the policy jsonb;
+	// omitted when empty so existing policies serialise unchanged.
+	Labels map[string]string `json:",omitempty"`
 }
 
 // CustomMetric is one customer-pushed gauge (ADR-202).
@@ -3987,19 +3991,22 @@ type AlertRule struct {
 	// CreatedByAccountID is the member who created the rule
 	// (ADR-20261026151103); empty for a rule older than the column, which
 	// only the app's creator could create.
-	CreatedByAccountID  string
-	Name                string
-	Enabled             bool
-	Metric              AlertMetric
-	Comparison          AlertComparison
-	Threshold           float64
-	WindowSpec          AlertWindowSpec
-	FailureSource       AlertFailureSource // empty unless Metric == failed_invocations
-	CustomMetricName    string             // empty unless Metric == custom_metric (ADR-745)
-	LogQuery            string             // canonical log search filters; set only for log_search_matches
-	SLOID               string             // set only for the ADR-747 SLO metrics
-	SyntheticCheckID    string             // set only for the ADR-748 synthetic check metrics
-	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
+	CreatedByAccountID string
+	Name               string
+	Enabled            bool
+	Metric             AlertMetric
+	Comparison         AlertComparison
+	Threshold          float64
+	WindowSpec         AlertWindowSpec
+	FailureSource      AlertFailureSource // empty unless Metric == failed_invocations
+	CustomMetricName   string             // empty unless Metric == custom_metric (ADR-745)
+	// CustomMetricLabels selects one labelled series of the custom metric
+	// instead of its aggregate (ADR-20261108160000 slice C2); nil for none.
+	CustomMetricLabels  map[string]string
+	LogQuery            string      // canonical log search filters; set only for log_search_matches
+	SLOID               string      // set only for the ADR-747 SLO metrics
+	SyntheticCheckID    string      // set only for the ADR-748 synthetic check metrics
+	Action              AlertAction // issue #976 / ADR-122 / SAFE-RELEASES-B
 	WebhookURL          string
 	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
 	// NotifyResolved also sends the webhook a signed resolve event when the

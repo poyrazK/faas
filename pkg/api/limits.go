@@ -2243,6 +2243,12 @@ const OperationScheduleOnceHorizon = 366 * 24 * time.Hour
 const (
 	AfterRestoreHookDefaultTimeoutMS = 500
 	AfterRestoreHookMaxTimeoutMS     = 2000
+	// AfterRestoreHookBoundMaxTimeoutMS is the after_restore cap for an app
+	// with a managed PostgreSQL or object-storage binding (ADR-20261109180000):
+	// reconnecting to a scale-to-zero database across clouds missed 2 s in
+	// production and fell back to a cold boot. It stays inside the host's
+	// five-second resume deadline. apid refuses it for apps without a binding.
+	AfterRestoreHookBoundMaxTimeoutMS = 4000
 )
 
 const (
@@ -4153,6 +4159,13 @@ const (
 	// leaves at its own deadline. It covers dialing a fresh control-plane
 	// connection from a compute edge.
 	PublicReadHostLookupTimeout = 2 * time.Second
+	// PublicReadForwardStaleMax is how long a compute edge's forwarder keeps
+	// routing a host by its last mount answer while the refresh runs in the
+	// background or fails (a control-plane database stall). The forwarder
+	// only routes: the control plane checks the bucket again before serving,
+	// so a stale answer delays a newly public mount but never serves a
+	// private one. Past it, a request waits for the lookup again.
+	PublicReadForwardStaleMax = 10 * time.Minute
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
@@ -4587,7 +4600,7 @@ type Limits struct {
 	// CodePlanLimitSecrets on the next PUT. SecretValueMaxBytes bounds the
 	// plaintext value the customer may PUT — apid rejects larger values
 	// with 413 CodeSecretValueTooLarge before sealing.
-	SecretCountMax      int // max secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100)
+	SecretCountMax      int // max customer-authored secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100); managed binding values do not count (ADR-20261109180000)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
 	// ProjectSecretCountMax bounds the secrets one project environment shares
 	// with its services (ADR-1139); each value uses SecretValueMaxBytes.
@@ -8910,6 +8923,12 @@ const (
 	// "atomic revocation" (no grace).
 	DefaultAPIKeyGraceWindowDays = 7
 
+	// APIKeyGraceWindowMaxDays caps the per-account rotation grace window
+	// (ADR 20261109120000). Unbounded, a leaked admin key could set years
+	// of grace, so the owner's rotation of that key left it working; a
+	// value past ~106,751 days also overflowed time.Duration.
+	APIKeyGraceWindowMaxDays = 30
+
 	// SidecarCapMax bounds all helper workloads in one deployment, including
 	// the optional one-shot init helper. The global cap keeps roster, mount,
 	// and admission work bounded across every plan.
@@ -9789,6 +9808,14 @@ const (
 	// GatewayRequestTelemetryMinuteGraceSeconds keeps a minute's buckets open
 	// this long after the minute ends, for requests that finish just after it.
 	GatewayRequestTelemetryMinuteGraceSeconds = 5
+	// GatewayRequestTelemetryTracedExactPerBucket is how many traced
+	// non-5xx requests in one collapse bucket-minute keep their own row, so
+	// their guest spans have a row to merge into (ADR-127 amendment
+	// 2026-11-10). Past it a traced request folds into the bucket and its
+	// spans are dropped after the span writer's retries. At the 5-row cap that
+	// server errors keep, a busy traced app lost spans all day (prod
+	// 2026-11-09: ~190 traces/day across two nodes).
+	GatewayRequestTelemetryTracedExactPerBucket = 30
 	// GatewayRequestJournalSegmentMinutes is the received-time span of one
 	// node-local request-ID journal segment (ADR-20261101085552). A segment's
 	// index is sorted in memory when it closes, so the span bounds that work:

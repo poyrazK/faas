@@ -7874,6 +7874,11 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 		return 0, fmt.Errorf("sched: deleted-app reconcile: empty app id")
 	}
 	app, err := e.store.AppByID(ctx, appID)
+	if errors.Is(err, state.ErrNotFound) {
+		// The purge already removed the app and its instance rows, so there
+		// is nothing left to stop.
+		return 0, nil
+	}
 	if err != nil {
 		return 0, fmt.Errorf("sched: deleted-app reconcile: load app %s: %w", appID, err)
 	}

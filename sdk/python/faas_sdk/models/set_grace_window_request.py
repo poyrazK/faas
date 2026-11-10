@@ -20,7 +20,8 @@ class SetGraceWindowRequest:
     """
 
     days: int | None | Unset = UNSET
-    """Per-account override in days. 0 = atomic, null = use plan default."""
+    """Per-account override in days, at most 30 (`api.APIKeyGraceWindowMaxDays`). 0 = atomic, null = use plan
+    default. Changing it needs a recent step-up when the account uses two-factor authentication."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

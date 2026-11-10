@@ -129,6 +129,8 @@ func cmdAlertAdd(args []string) int {
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
 	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke|inbound_webhook) — required iff --metric=failed_invocations")
 	customMetric := fs.String("custom-metric", "", "pushed custom metric name — required iff --metric=custom_metric")
+	var metricLabels multiFlag
+	fs.Var(&metricLabels, "metric-label", "with --custom-metric: watch the series with this label, key=value (repeatable)")
 	sloID := fs.String("slo", "", "SLO id — required iff --metric is slo_budget_burn or slo_budget_remaining_pct")
 	syntheticCheck := fs.String("synthetic-check", "", "synthetic check id — required iff --metric is synthetic_check_*")
 	logQuery := fs.String("log-query", "", "log search filters, e.g. 'level=error&q=timeout' — with --metric log_search_matches")
@@ -160,6 +162,13 @@ func cmdAlertAdd(args []string) int {
 	}
 	if (*metric == api.AlertRuleMetricCustomMetric) != (*customMetric != "") {
 		return printErr("Invalid custom-metric", fmt.Errorf("--custom-metric is required with --metric=custom_metric and not allowed otherwise"))
+	}
+	labels, err := metricLabelFlags(metricLabels)
+	if err != nil {
+		return printErr("Invalid metric label", err)
+	}
+	if len(labels) > 0 && *customMetric == "" {
+		return printErr("Invalid metric label", fmt.Errorf("--metric-label applies to --custom-metric"))
 	}
 	if api.IsSLOAlertMetric(*metric) != (*sloID != "") {
 		return printErr("Invalid slo", fmt.Errorf("--slo is required with --metric slo_budget_burn or slo_budget_remaining_pct and not allowed otherwise"))
@@ -200,6 +209,7 @@ func cmdAlertAdd(args []string) int {
 		FailureSource:                   *failureSource,
 		ChannelIDs:                      channels,
 		CustomMetricName:                *customMetric,
+		CustomMetricLabels:              labels,
 		LogQuery:                        query,
 		SLOID:                           *sloID,
 		SyntheticCheckID:                *syntheticCheck,
@@ -347,7 +357,7 @@ func cmdAlertInfo(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "channels:     %s\n", strings.Join(resp.ChannelIDs, ", "))
 	}
 	if resp.CustomMetricName != "" {
-		_, _ = fmt.Fprintf(osStdout, "custom_metric: %s\n", resp.CustomMetricName)
+		_, _ = fmt.Fprintf(osStdout, "custom_metric: %s%s\n", resp.CustomMetricName, metricLabelSuffix(resp.CustomMetricLabels))
 	}
 	if resp.LogQuery != "" {
 		_, _ = fmt.Fprintf(osStdout, "log_query:    %s\n", resp.LogQuery)

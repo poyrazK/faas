@@ -198,6 +198,7 @@ func (s *server) revokeAllSessions(w http.ResponseWriter, r *http.Request, acct 
 	// is the caller's credential.
 	s.revokeInteractiveSignInKeys(r, acct, "sessions_revoke_all")
 	s.forgetTrustedBrowsers(r.Context(), acct.ID, "sign_out_everywhere")
+	s.endPendingGrants(r.Context(), acct.ID, "sign_out_everywhere")
 	if s.audit != nil {
 		s.audit.Emit(r.Context(), "auth.sessions.revoke_all", &acct.ID, map[string]any{
 			"revoked_count": n,

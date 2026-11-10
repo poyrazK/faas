@@ -105,8 +105,10 @@ func testPostReleaseWatchCandidates(t *testing.T, fx *Fixture) {
 		t.Fatal(err)
 	}
 	complete(next.ID, time.Minute)
-	if c, ok := watched()[next.ID]; !ok || c.PredecessorID != release.ID {
-		t.Fatalf("watched = %+v, want %s against %s", watched(), next.ID, release.ID)
+	// The rolled-back release is never a rollback target (ADR-625 amendment
+	// 2026-11-10), so the watch compares against the last good release.
+	if c, ok := watched()[next.ID]; !ok || c.PredecessorID != previous.ID {
+		t.Fatalf("watched = %+v, want %s against %s", watched(), next.ID, previous.ID)
 	}
 	time.Sleep(10 * time.Millisecond)
 	// ADR-1445 amendment 5: a newer release that has not served (still

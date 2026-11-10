@@ -8037,6 +8037,13 @@ func (m *MemStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, er
 			delete(m.crons, cronID)
 		}
 	}
+	for bindingID, binding := range m.queueBindings {
+		if binding.AppID == id && binding.RetiredAt == nil {
+			retired := now
+			binding.RetiredAt, binding.Enabled, binding.UpdatedAt = &retired, false, now
+			m.queueBindings[bindingID] = binding
+		}
+	}
 	m.cancelDeletedAppPipelineLocked(id, now)
 	// App deletion retires snapshot replicas immediately, but keeps the
 	// snapshot rows available to GC. The PostgreSQL lifecycle trigger uses
@@ -9152,6 +9159,9 @@ func (m *MemStore) ListCanaryInFlight(_ context.Context) ([]Deployment, error) {
 		if rolloutState != "pending" && rolloutState != "rolling_out" {
 			continue
 		}
+		if app, ok := m.apps[d.AppID]; ok && (app.Status == AppDeleted || app.DeletedAt != nil) {
+			continue
+		}
 		d.RolloutState = rolloutState
 		out = append(out, d)
 	}
@@ -9771,7 +9781,7 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID, scope st
 	var latest Deployment
 	found := false
 	for _, d := range m.deployments {
-		rollbackEligible := !abortedCanaryCandidate(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
+		rollbackEligible := !implicitRollbackExcluded(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
 		if d.DeletedAt == nil && d.AppID == appID && normalizedDeploymentScope(d.Scope) == scope && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
 			latest, found = d, true
 		}
@@ -11280,7 +11290,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, current
 		if id == currentDeploymentID {
 			continue
 		}
-		rollbackEligible := !abortedCanaryCandidate(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
+		rollbackEligible := !implicitRollbackExcluded(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
 		if !m.runtimeUpgradeTrafficAllowedLocked(d) || d.EnvironmentWorkloadHeld() || d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
 			continue
 		}
@@ -23494,7 +23504,8 @@ func (m *MemStore) CountAppSecrets(_ context.Context, accountID, appID string) (
 	defer m.mu.Unlock()
 	n := 0
 	for _, s := range m.secrets {
-		if s.AppID == appID && s.AccountID == accountID {
+		// Managed binding values do not consume SecretCountMax (ADR-20261109180000).
+		if s.AppID == appID && s.AccountID == accountID && s.ManagedPostgresBindingID == "" && s.ManagedObjectStorageCredentialID == "" {
 			n++
 		}
 	}
@@ -25114,9 +25125,10 @@ func (m *MemStore) ListCronsForAccount(_ context.Context, accountID string) ([]C
 // default now() are faked by MemStore with newID/time.Now).
 func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, error) {
 	in = defaultMCPProtocolAlert(in)
-	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) {
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
 		return AlertRule{}, ErrInvalidArgument
 	}
+	in.CustomMetricLabels = cloneCustomMetricLabels(in.CustomMetricLabels)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.alertRules {
@@ -25150,9 +25162,10 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 // the per-app branch but still hit the per-account branch.
 func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, limits api.Limits) (AlertRule, error) {
 	in = defaultMCPProtocolAlert(in)
-	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) {
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
 		return AlertRule{}, ErrInvalidArgument
 	}
+	in.CustomMetricLabels = cloneCustomMetricLabels(in.CustomMetricLabels)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.alertRules {

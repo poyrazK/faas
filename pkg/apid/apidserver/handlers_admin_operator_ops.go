@@ -148,6 +148,7 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 		}
 		if err == nil {
 			s.forgetTrustedBrowsers(r.Context(), targetID, "operator_suspend")
+			s.endPendingGrants(r.Context(), targetID, "operator_suspend")
 		}
 	case "restore":
 		err = s.store.UpdateAccountStatus(r.Context(), targetID, state.AccountActive)
@@ -158,6 +159,7 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 		revokedSessions, err = s.store.RevokeAllSessions(r.Context(), targetID, uuid.Nil.String())
 		if err == nil {
 			s.forgetTrustedBrowsers(r.Context(), targetID, "operator_revoke")
+			s.endPendingGrants(r.Context(), targetID, "operator_revoke")
 		}
 	case "reset-mfa":
 		if problem := s.operatorMFAResetRefusal(r.Context(), targetID); problem != nil {

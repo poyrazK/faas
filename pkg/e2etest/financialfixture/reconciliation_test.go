@@ -37,18 +37,26 @@ type replayFixture struct {
 
 // This fixture restores historical usage and settled funding, without running
 // guests or claiming native enforcement. The native lane supplies that evidence.
-// Money in the replay. Compute is billed at the published rate; egress at
-// 2,000 mC per GiB above 1 GiB included. The first invoice is 4 paid GB-h and
+// Money in the replay. Compute and egress are billed at the published rates
+// (meterd refuses any other egress rate, ADR-20261103131742 amendment 2);
+// egress above 1 GiB included. The first invoice is 4 paid GB-h and
 // 3 paid GiB; the late window adds 1 of each. Retained funding settles 5 GB-h
 // and 4 paid GiB, and the shared paid ceiling leaves 7,000 mC above it.
 const (
-	replayInitialInvoiceMillicents = 4*api.OverageMillicentsPerGBHour + 3*2000
-	replayFinalInvoiceMillicents   = 5*api.OverageMillicentsPerGBHour + 4*2000
+	replayEgressRate               = api.EgressOverageMillicentsPerGiB
+	replayInitialInvoiceMillicents = 4*api.OverageMillicentsPerGBHour + 3*replayEgressRate
+	replayFinalInvoiceMillicents   = 5*api.OverageMillicentsPerGBHour + 4*replayEgressRate
 	replayCommittedMillicents      = replayFinalInvoiceMillicents
 	replayLimitMillicents          = replayCommittedMillicents + 7000
 )
 
 func seedReplay(t *testing.T) replayFixture {
+	t.Helper()
+	return seedReplayAt(t, replayEgressRate)
+}
+
+// seedReplayAt funds the period's egress at fundedEgressRate millicents per GiB.
+func seedReplayAt(t *testing.T, fundedEgressRate int64) replayFixture {
 	t.Helper()
 	ctx := t.Context()
 	pool := pgtest.OpenMigrated(t)
@@ -83,7 +91,7 @@ func seedReplay(t *testing.T) replayFixture {
 	computeAllowance := int64(a.Plan.PlanIncludedGBHours()) * api.SecondsPerGBHour
 	for _, price := range []financial.Price{
 		{Version: "acceptance-compute", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: computeAllowance},
-		{Version: "acceptance-egress", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: gib, MillicentsPerUnit: 2000, IncludedQuantity: gib},
+		{Version: "acceptance-egress", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: gib, MillicentsPerUnit: fundedEgressRate, IncludedQuantity: gib},
 	} {
 		if _, err := s.PutFinancialPriceSnapshot(ctx, state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: a.Plan, DeliveryMode: "live", Price: price}); err != nil {
 			t.Fatal(err)
@@ -138,7 +146,7 @@ func seedReplay(t *testing.T) replayFixture {
 
 	// A retained settlement can be more conservative than measured usage:
 	// 5 GiB issued, 4 GiB measured, 1 GiB included, 3 GiB actually billed.
-	book := financial.ComputeBook{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Committed: 5 * api.OverageMillicentsPerGBHour, QuantityCommitted: computeAllowance + 5*api.SecondsPerGBHour, AllowanceGranted: computeAllowance, Egress: financial.EgressBook{Initialized: true, QuantityCommitted: 5 * gib, AllowanceGranted: gib, Committed: 8000, RateMillicents: 2000, RateQuantity: gib}}
+	book := financial.ComputeBook{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Committed: 5 * api.OverageMillicentsPerGBHour, QuantityCommitted: computeAllowance + 5*api.SecondsPerGBHour, AllowanceGranted: computeAllowance, Egress: financial.EgressBook{Initialized: true, QuantityCommitted: 5 * gib, AllowanceGranted: gib, Committed: 4 * fundedEgressRate, RateMillicents: fundedEgressRate, RateQuantity: gib}}
 	payload, err := json.Marshal(book)
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +219,7 @@ func TestFinancialSystemBillingReconciliation(t *testing.T) {
 	for _, scenario := range []string{"provider_unavailable", "accepted_reply_lost", "local_receipt_lost", "restart_after_delivery"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := seedReplay(t)
-			p := financialfixture.NewProvider(t, 2000)
+			p := financialfixture.NewProvider(t, replayEgressRate)
 			if scenario == "provider_unavailable" {
 				p.FailBeforeAccept()
 			}
@@ -327,8 +335,10 @@ func TestFinancialSystemBillingReconciliation(t *testing.T) {
 func TestFinancialSystemProviderContractGuard(t *testing.T) {
 	pgtest.Open(t)
 	binary := financialfixture.BuildMeterd(t)
-	f := seedReplay(t)
-	p := financialfixture.NewProvider(t, 4000) // catalog agrees, retained funding does not
+	// The period was funded under a cheaper egress rate than the published
+	// one the provider now charges: the catalog agrees, retained funding does not.
+	f := seedReplayAt(t, replayEgressRate-1000)
+	p := financialfixture.NewProvider(t, replayEgressRate)
 	m := financialfixture.StartMeterd(t, binary, f.pool, p.Env(financial.ComputeMonth(f.start)))
 	financialfixture.Wait(t, m, "funded provider rate refusal", func() bool { return strings.Contains(m.Logs(), "provider egress rate exceeds funded period ceiling") })
 	for _, e := range p.Snapshot().Events {
@@ -341,11 +351,9 @@ func TestFinancialSystemProviderContractGuard(t *testing.T) {
 			t.Fatal("incompatible rate acknowledged locally")
 		}
 	}
+	// A funded period's egress price cannot be raised (constraint
+	// financial_egress_price_ceiling) and meterd accepts only the published
+	// rate, so no replacement provider becomes compatible within this period;
+	// the reconciliation scenarios cover delivering held egress.
 	m.Stop()
-	p2 := financialfixture.NewProvider(t, 2000)
-	m2 := financialfixture.StartMeterd(t, binary, f.pool, p2.Env(financial.ComputeMonth(f.start)))
-	financialfixture.Wait(t, m2, "compatible replacement delivers held egress", func() bool { return reflect.DeepEqual(receipts(t, f), f.want) })
-	if len(p2.Snapshot().Events) != 3 {
-		t.Fatalf("replacement accepted %d events; want three held egress windows", len(p2.Snapshot().Events))
-	}
 }
