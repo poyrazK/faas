@@ -85,3 +85,22 @@ func TestCmdRealtimeUpdateAcceptsEnabledFlag(t *testing.T) {
 		t.Fatal("--enabled=false with --enable succeeded")
 	}
 }
+
+// Hunt 32 H32-71: get/create never printed the URL clients connect to.
+func TestRealtimeClientURLUsesTheCanonicalHost(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		app  api.AppResponse
+		want string
+	}{
+		{"platform host", api.AppResponse{URL: "https://demo.gregale.dev"}, "wss://demo.gregale.dev/__gregale/realtime/ep-1"},
+		{"custom domain", api.AppResponse{URL: "https://demo.gregale.dev", CanonicalURL: "https://app.example.com"}, "wss://app.example.com/__gregale/realtime/ep-1"},
+		{"no host", api.AppResponse{}, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := main.RealtimeClientURL(tt.app, "ep-1"); got != tt.want {
+				t.Fatalf("url = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

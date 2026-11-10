@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -136,11 +137,12 @@ func cmdRealtimeCreate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	app := realtimeEndpointApp(client, positional[0])
 	endpoint, err := client.CreateManagedRealtimeEndpoint(context.Background(), positional[0], request)
 	if err != nil {
 		return printErr("Could not create realtime endpoint", err)
 	}
-	return renderRealtimeLifecycleEndpoint(endpoint)
+	return renderRealtimeLifecycleEndpoint(app, endpoint)
 }
 
 func cmdRealtimeUpdate(args []string) int {
@@ -283,11 +285,12 @@ func cmdRealtimeUpdate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	app := realtimeEndpointApp(client, positional[0])
 	endpoint, err := client.UpdateManagedRealtimeEndpoint(context.Background(), positional[0], positional[1], request)
 	if err != nil {
 		return printErr("Could not update realtime endpoint", err)
 	}
-	return renderRealtimeLifecycleEndpoint(endpoint)
+	return renderRealtimeLifecycleEndpoint(app, endpoint)
 }
 
 func cmdRealtimeDelete(args []string) int {
@@ -390,12 +393,46 @@ func requestHasNoRealtimeChanges(request api.UpdateManagedRealtimeEndpointReques
 	return request.CallbackURL == nil && request.ConnectPath == nil && request.MessagePath == nil && request.DisconnectPath == nil && request.CallbackAuthToken == nil && request.AuthToken == nil && request.AuthMode == nil && request.AuthIssuer == nil && request.AuthJWKSURL == nil && request.AuthAudience == nil && request.AuthAlgorithms == nil && request.AuthRequiredClaims == nil && request.AllowedOrigins == nil && request.MaxConnections == nil && request.MaxMessageBytes == nil && request.MaxConnectionAgeSeconds == nil && request.Enabled == nil
 }
 
-func renderRealtimeLifecycleEndpoint(endpoint api.ManagedRealtimeEndpointResponse) int {
+func renderRealtimeLifecycleEndpoint(app api.AppResponse, endpoint api.ManagedRealtimeEndpointResponse) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(endpoint))
 	}
 	renderRealtimeEndpoint(osStdout, endpoint)
+	printRealtimeClientURL(osStdout, app, endpoint.ID)
 	return 0
+}
+
+// realtimeEndpointApp reads the app whose host clients connect to; get and
+// create never showed that URL (Hunt 32 H32-71). It is best effort: without
+// the app the URL line is left out. It runs before the endpoint call so a
+// failure here never hides that call's own result.
+func realtimeEndpointApp(client *api.Client, slug string) api.AppResponse {
+	if jsonOutput {
+		return api.AppResponse{}
+	}
+	app, err := client.GetApp(context.Background(), slug)
+	if err != nil {
+		return api.AppResponse{}
+	}
+	return app
+}
+
+func printRealtimeClientURL(w io.Writer, app api.AppResponse, endpointID string) {
+	if u := realtimeClientURL(app, endpointID); u != "" {
+		_, _ = fmt.Fprintf(w, "  client_url:                   %s\n", u)
+	}
+}
+
+func realtimeClientURL(app api.AppResponse, endpointID string) string {
+	base := app.CanonicalURL
+	if base == "" {
+		base = app.URL
+	}
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Host == "" || endpointID == "" {
+		return ""
+	}
+	return "wss://" + parsed.Host + "/__gregale/realtime/" + url.PathEscape(endpointID)
 }
 
 // cmdRealtimeCreateWithAuth wires an endpoint to an application Auth app:
@@ -463,6 +500,7 @@ func cmdRealtimeCreateWithAuth(app, authApp string, fs *flag.FlagSet, origins re
 	if maxConnectionAge >= 0 {
 		request.MaxConnectionAgeSeconds = maxConnectionAge
 	}
+	appInfo := realtimeEndpointApp(client, app)
 	endpoint, err := client.CreateManagedRealtimeEndpoint(ctx, app, request)
 	if err != nil {
 		_ = client.UnsetSecretWithScope(ctx, authApp, secretName, api.DefaultEnvScope)
@@ -472,5 +510,5 @@ func cmdRealtimeCreateWithAuth(app, authApp string, fs *flag.FlagSet, origins re
 	if _, err := client.RestartAppFresh(ctx, authApp); err != nil {
 		PrintWarn(osStderr, "the endpoint exists, but restarting %s failed (%v); run `gregale app restart %s --fresh` before clients subscribe", authApp, err, authApp)
 	}
-	return renderRealtimeLifecycleEndpoint(endpoint)
+	return renderRealtimeLifecycleEndpoint(appInfo, endpoint)
 }

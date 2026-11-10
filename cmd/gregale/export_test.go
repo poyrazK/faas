@@ -2809,3 +2809,4 @@ func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
 
 // InvalidAlertMetricError exposes the unknown --metric error (H32-18).
 var InvalidAlertMetricError = invalidAlertMetricError
+var RealtimeClientURL = realtimeClientURL
