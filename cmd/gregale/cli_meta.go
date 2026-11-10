@@ -7002,6 +7002,7 @@ var cliCommands = []cliCommand{
 			{Name: "rm", Short: "Delete a log drain", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "SLUG"},
 				{Name: "id", Short: "log drain id", Value: "ID", Req: true},
+				{Name: "yes", Bool: true, Short: "confirm deletion without prompting"},
 			}},
 		},
 	},
