@@ -152,7 +152,6 @@
       "deploy/ansible/node_join_contract_probe.yml"
     ],
     "blocking": [
-      "deploy/ansible/.cache/",
       "deploy/ansible/control_plane_converge.yml",
       "deploy/ansible/cp_state_restore.yml",
       "deploy/ansible/database_node.yml",
