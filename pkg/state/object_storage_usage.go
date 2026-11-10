@@ -101,6 +101,26 @@ type ObjectStorageAccountingStore interface {
 	FinishObjectInventory(context.Context, string, string, int64, int64) error
 }
 
+// ObjectInventoryDue is one due bucket in the inventory sweep's queue. Long
+// marks a listing that holds a worker for long: one that continues an
+// unfinished listing, or a bucket whose last inventory counted more than
+// api.ObjectStorageInventoryLongListingKeys keys (ADR-20261110151628 §1).
+type ObjectInventoryDue struct {
+	Bucket ObjectBucket
+	Long   bool
+}
+
+// ObjectInventoryQueueStore lists due inventories in DueObjectInventories'
+// order, leaving out skip, the buckets the sweep already took.
+type ObjectInventoryQueueStore interface {
+	DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string) ([]ObjectInventoryDue, error)
+}
+
+var (
+	_ ObjectInventoryQueueStore = (*PgStore)(nil)
+	_ ObjectInventoryQueueStore = (*MemStore)(nil)
+)
+
 // ObjectInventoryReleaser gives up an inventory claim without publishing it,
 // so deletions waiting for the claim continue at once (ADR-20261025115958).
 // The claim's attempt time stays, which keeps the retry cadence.

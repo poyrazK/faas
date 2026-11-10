@@ -87,6 +87,9 @@ type ManagedPostgresDatabase struct {
 	// database once the account has room; otherwise its delete is scheduled
 	// at this time.
 	RestoreSlotUntil string `json:"restore_slot_until,omitempty"`
+	// ExpiresAt is set on a restore made with ttl_seconds (a branch;
+	// ADR-20261106103654): its bindings are revoked and it is purged then.
+	ExpiresAt string `json:"expires_at,omitempty"`
 	// PlanExcess is set while the plan no longer includes the database and
 	// it is suspended (ADR-20261102125208): database_limit when it ranks
 	// past the plan's database limit, oldest first, or service_class when
@@ -257,9 +260,22 @@ type CreateManagedPostgresDatabaseRequest struct {
 }
 
 type RestoreManagedPostgresDatabaseRequest struct {
-	Name        string `json:"name"`
-	PointInTime string `json:"point_in_time"`
+	Name string `json:"name"`
+	// PointInTime is an RFC3339 time inside the source's restore range.
+	// Empty restores from the latest point (ADR-20261106103654): apid's
+	// clock minus a couple of seconds.
+	PointInTime string `json:"point_in_time,omitempty"`
+	// TTLSeconds, when set, purges the copy that long after it is created
+	// (a branch; ADR-20261106103654). From ManagedPostgresBranchTTLMinSeconds
+	// to ManagedPostgresBranchTTLMaxSeconds.
+	TTLSeconds int64 `json:"ttl_seconds,omitempty"`
 }
+
+// The bounds of a restore's ttl_seconds (ADR-20261106103654).
+const (
+	ManagedPostgresBranchTTLMinSeconds = 300
+	ManagedPostgresBranchTTLMaxSeconds = 30 * 24 * 3600
+)
 
 type ManagedPostgresBinding struct {
 	ID                   string `json:"id"`
