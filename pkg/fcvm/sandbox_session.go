@@ -96,6 +96,13 @@ type SandboxWakeRequest struct {
 	StartCmd     string
 	ReadyCmd     string
 	ReadyTimeout time.Duration
+	// Snapshot restores the session from a warm snapshot CaptureSandboxSnapshot
+	// took of the same drives and machine (ADR-20261027090013 §12), and
+	// falls back to a cold boot (ADR-005). It was captured before the
+	// template's commands, so a restored session gets them by
+	// template_start. A registries session restores only a networked
+	// snapshot, a none session only a networkless one.
+	Snapshot *Snapshot
 }
 
 // WakeSandbox cold-boots one sandbox session VM on the execution-only path
@@ -114,6 +121,9 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 	registries := req.Network == api.SandboxNetworkRegistries
 	if !registries && req.Network != api.SandboxNetworkNone {
 		return nil, fmt.Errorf("fcvm: sandbox network mode %q is not supported", req.Network)
+	}
+	if req.Snapshot != nil && req.Snapshot.Networkless == registries {
+		return nil, fmt.Errorf("fcvm: a %s sandbox cannot restore this snapshot's network", req.Network)
 	}
 	dialer, ok := m.vmm.(SandboxDialer)
 	if !ok {
@@ -135,7 +145,7 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		Instance: req.Instance, ExecutionOnly: true, sandboxID: req.SandboxID, sandboxRegistries: registries,
 		sandboxManifest: manifest, AccountID: req.AccountID, Plan: req.Plan,
 		BaseKey: req.BaseKey, LayerKey: layer, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
-		CPUMillicores: req.CPUMillicores, QuietPauseAfter: req.QuietPauseAfter,
+		CPUMillicores: req.CPUMillicores, QuietPauseAfter: req.QuietPauseAfter, Snapshot: req.Snapshot,
 	})
 	if err != nil {
 		return nil, err
@@ -152,7 +162,36 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 	if err := awaitSandboxListener(ctx, dialer, req.Instance, agentRunDialWindow+req.ReadyTimeout); err != nil {
 		return destroy(err)
 	}
+	// A cold boot ran the commands from its manifest; a restore's snapshot
+	// was captured before them.
+	if inst.Method == WakeRestore && (req.StartCmd != "" || req.ReadyCmd != "") {
+		if err := startSandboxTemplate(ctx, dialer, req); err != nil {
+			return destroy(err)
+		}
+	}
 	return inst, nil
+}
+
+// sandboxTemplateStartSlack is the time template_start may take beyond the
+// ready timeout: the start command's launch and the answer.
+const sandboxTemplateStartSlack = 10 * time.Second
+
+// startSandboxTemplate runs a restored session's template commands and
+// returns once the ready command passed.
+func startSandboxTemplate(ctx context.Context, dialer SandboxDialer, req SandboxWakeRequest) error {
+	startCtx, cancel := context.WithTimeout(ctx, req.ReadyTimeout+sandboxTemplateStartSlack)
+	defer cancel()
+	conn, err := dialer.DialSandbox(startCtx, req.Instance)
+	if err != nil {
+		return fmt.Errorf("fcvm: sandbox %s template start: %w", req.Instance, err)
+	}
+	defer func() { _ = conn.Close() }()
+	op := sandboxproto.Request{Op: sandboxproto.OpTemplateStart, StartCmd: req.StartCmd, ReadyCmd: req.ReadyCmd,
+		TimeoutMillis: req.ReadyTimeout.Milliseconds()}
+	if err := sandboxproto.Do(startCtx, conn, op, func(uint32, []byte) error { return nil }, nil); err != nil {
+		return fmt.Errorf("fcvm: sandbox %s template start: %w", req.Instance, err)
+	}
+	return nil
 }
 
 // awaitSandboxListener dials the guest's sandbox port until it answers. Wake

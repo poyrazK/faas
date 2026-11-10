@@ -83,7 +83,16 @@ const (
 	// it, and what the port sends comes back as data frames. The result
 	// follows once both directions are done.
 	OpPortConnect = "port_connect"
+	// OpTemplateStart runs a template's start and ready commands in a
+	// session restored from its warm snapshot (ADR-20261027090013 §12),
+	// which was captured before them; it answers once the ready command
+	// passes. Only vmmd sends it, once, right after the restore: callers'
+	// requests that name it are refused (IsHostOnly).
+	OpTemplateStart = "template_start"
 )
+
+// IsHostOnly reports whether only vmmd may send op, never a caller.
+func IsHostOnly(op string) bool { return op == OpTemplateStart }
 
 // Command users (ADR-20261027090013 §10).
 const (
@@ -174,6 +183,10 @@ type Request struct {
 
 	// port_connect
 	Port int `json:"port,omitempty"`
+
+	// template_start; the ready timeout is TimeoutMillis.
+	StartCmd string `json:"start_cmd,omitempty"`
+	ReadyCmd string `json:"ready_cmd,omitempty"`
 }
 
 // handleRE is a background command's handle.
@@ -213,6 +226,8 @@ func (r Request) Validate() error {
 			positiveInt("max_entries", r.MaxEntries, MaxArchiveEntries))
 	case OpPortConnect:
 		err = ValidPreviewPort(r.Port)
+	case OpTemplateStart:
+		err = r.validateTemplateStart()
 	default:
 		err = fmt.Errorf("unknown op %q", r.Op)
 	}
@@ -220,6 +235,21 @@ func (r Request) Validate() error {
 		return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 	return nil
+}
+
+func (r Request) validateTemplateStart() error {
+	if r.StartCmd == "" && r.ReadyCmd == "" {
+		return errors.New("template_start needs a start or a ready command")
+	}
+	for _, cmd := range []string{r.StartCmd, r.ReadyCmd} {
+		if len(cmd) > MaxCommandBytes || strings.IndexByte(cmd, 0) >= 0 || !utf8.ValidString(cmd) {
+			return fmt.Errorf("a template command must be at most %d bytes of UTF-8 without NUL", MaxCommandBytes)
+		}
+	}
+	if r.ReadyCmd != "" && r.TimeoutMillis <= 0 {
+		return errors.New("a ready command needs a positive timeout_ms")
+	}
+	return bounded("timeout_ms", r.TimeoutMillis, MaxTimeoutMillis)
 }
 
 func (r Request) validateExec() error {

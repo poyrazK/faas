@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/sandboxproto"
 )
 
 // adr: 20261027090013 step 10 — version 2 manifests carry a template's
@@ -62,5 +64,51 @@ func TestRunSandboxStartup(t *testing.T) {
 	}
 	if err := runSandboxStartup(context.Background(), runner, sandboxManifest{}, dir, dir, io.Discard, log); err != nil {
 		t.Fatalf("no commands = %v", err)
+	}
+}
+
+// adr: 20261027090013 §12 — a session restored from a template's warm
+// snapshot gets its commands by template_start: they run once, the answer
+// comes when the ready command passes, and a second start is refused.
+func TestSandboxTemplateStart(t *testing.T) {
+	f := newSandboxFixture(t)
+	f.srv.startLog = filepath.Join(t.TempDir(), "start.log")
+	marker := filepath.Join(f.workspace, "up")
+	req := sandboxproto.Request{Op: sandboxproto.OpTemplateStart, StartCmd: "echo starting; sleep 1; touch " + marker + "; sleep 30",
+		ReadyCmd: "test -e " + marker, TimeoutMillis: 15_000}
+	if err := req.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if res := f.call(t, req, nil, nil); res.err != nil {
+		t.Fatalf("template_start: %v", res.err)
+	}
+	if took := time.Since(start); took < time.Second {
+		t.Fatalf("answered after %v, before the ready command could pass", took)
+	}
+	if res := f.call(t, req, nil, nil); res.code() != sandboxproto.CodeExists {
+		t.Fatalf("second start = %v, want %s", res.err, sandboxproto.CodeExists)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if out, err := os.ReadFile(f.srv.startLog); err != nil || !strings.Contains(string(out), "starting") {
+		t.Fatalf("start log %q, %v", out, err)
+	}
+
+	never := newSandboxFixture(t)
+	never.srv.startLog = filepath.Join(t.TempDir(), "start.log")
+	if res := never.call(t, sandboxproto.Request{Op: sandboxproto.OpTemplateStart, ReadyCmd: "exit 1", TimeoutMillis: 1_500}, nil, nil); res.code() != sandboxproto.CodeStartFailed {
+		t.Fatalf("never ready = %v, want %s", res.err, sandboxproto.CodeStartFailed)
+	}
+	for _, bad := range []sandboxproto.Request{
+		{Op: sandboxproto.OpTemplateStart},
+		{Op: sandboxproto.OpTemplateStart, ReadyCmd: "probe"},
+		{Op: sandboxproto.OpTemplateStart, StartCmd: "serve\x00"},
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("%+v was accepted", bad)
+		}
+	}
+	if !sandboxproto.IsHostOnly(sandboxproto.OpTemplateStart) || sandboxproto.IsHostOnly(sandboxproto.OpExec) {
+		t.Fatal("template_start must be vmmd's own and exec a caller's")
 	}
 }

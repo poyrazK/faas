@@ -50,6 +50,9 @@ func (s *Server) SandboxCall(stream vmmdpb.Vmmd_SandboxCallServer) error {
 	if err := req.Validate(); err != nil {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
+	if sandboxproto.IsHostOnly(req.Op) {
+		return status.Error(codes.PermissionDenied, "this sandbox operation is vmmd's own")
+	}
 	sessions, ok := s.vmm.(sandboxSessions)
 	if !ok {
 		return status.Error(codes.Unimplemented, "this vmmd serves no sandbox sessions")

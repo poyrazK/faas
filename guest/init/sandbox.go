@@ -22,7 +22,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"net"
+	"os"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -101,6 +103,11 @@ type sandboxServer struct {
 	ops      chan struct{}
 	now      func() time.Time
 	log      *slog.Logger
+	// templateStarted is set once a template's commands ran, at boot or by
+	// template_start, so they never run twice.
+	templateStarted atomic.Bool
+	// startLog is where the start command's output goes.
+	startLog string
 }
 
 func newSandboxServer(workspace, home string, owner int, runner sandboxRunner, log *slog.Logger) *sandboxServer {
@@ -108,7 +115,7 @@ func newSandboxServer(workspace, home string, owner int, runner sandboxRunner, l
 		log = slog.Default()
 	}
 	s := &sandboxServer{workspace: workspace, home: home, owner: owner, runner: runner, ops: make(chan struct{}, sandboxMaxOperations),
-		now: time.Now, log: log}
+		now: time.Now, log: log, startLog: sandboxStartLog}
 	s.commands = newSandboxCommands(runner, sandboxproto.MaxBackgroundCommands, s.now)
 	return s
 }
@@ -146,8 +153,30 @@ func (s *sandboxServer) handle(ctx context.Context, req sandboxproto.Request, ca
 		return s.archiveExtract(req, call)
 	case sandboxproto.OpPortConnect:
 		return portConnect(ctx, req, call)
+	case sandboxproto.OpTemplateStart:
+		return s.templateStart(ctx, req)
 	}
 	return s.fileOp(req, call)
+}
+
+// templateStart runs a restored template session's start and ready
+// commands (ADR-20261027090013 §12): its warm snapshot was captured before
+// them, so they run once, after the restore's reseed, as at a cold boot.
+func (s *sandboxServer) templateStart(ctx context.Context, req sandboxproto.Request) (any, error) {
+	if !s.templateStarted.CompareAndSwap(false, true) {
+		return nil, sandboxError(sandboxproto.CodeExists, "the template's commands already ran")
+	}
+	//nolint:forbidigo // a fixed guest log path guest-init owns
+	out, err := os.OpenFile(s.startLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, sandboxError(sandboxproto.CodeInternal, "open the start log: %v", err)
+	}
+	m := sandboxManifest{Kind: sandboxManifestKind, Version: sandboxManifestVersionCommands, StartCmd: req.StartCmd,
+		ReadyCmd: req.ReadyCmd, ReadyTimeoutMs: req.TimeoutMillis}
+	if err := runSandboxStartup(ctx, s.runner, m, s.workspace, s.home, out, s.log); err != nil {
+		return nil, sandboxError(sandboxproto.CodeStartFailed, "%v", err)
+	}
+	return struct{}{}, nil
 }
 
 // sandboxError is a refusal the host shows the caller.

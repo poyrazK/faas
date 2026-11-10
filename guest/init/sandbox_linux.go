@@ -43,7 +43,8 @@ func runSandboxGuest(log *slog.Logger) error {
 	}
 	// A template's ready command gates the listener, so vmmd's wait for the
 	// sandbox port is the wait for the template (ADR-20261027090013).
-	if err := startSandboxTemplate(runner, log); err != nil {
+	started, err := startSandboxTemplate(runner, log)
+	if err != nil {
 		log.Error("sandbox: template startup", "err", err)
 		return err
 	}
@@ -58,6 +59,7 @@ func runSandboxGuest(log *slog.Logger) error {
 		log.Warn("sandbox: resume listener unavailable", "err", err)
 	}
 	srv := newSandboxServer(sandboxWorkspace, sandboxHome, sandboxUID, runner, log)
+	srv.templateStarted.Store(started)
 	guestStage(sandboxReadyStage)
 	ctx := context.Background()
 	for {
@@ -73,23 +75,25 @@ func runSandboxGuest(log *slog.Logger) error {
 	}
 }
 
-// startSandboxTemplate runs the manifest's start and ready commands, if any.
-func startSandboxTemplate(runner sandboxRunner, log *slog.Logger) error {
+// startSandboxTemplate runs the manifest's start and ready commands, if any,
+// and reports whether it ran them. A warm-snapshot capture boots without
+// them; the restored session gets them by template_start.
+func startSandboxTemplate(runner sandboxRunner, log *slog.Logger) (bool, error) {
 	//nolint:forbidigo // the platform-staged manifest decideMode already validated
 	data, err := os.ReadFile("/" + sandboxManifestRelativePath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	m, err := parseSandboxManifest(data)
 	if err != nil || m.StartCmd == "" && m.ReadyCmd == "" {
-		return err
+		return false, err
 	}
 	//nolint:forbidigo // a fixed guest log path guest-init owns
 	out, err := os.OpenFile(sandboxStartLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return runSandboxStartup(context.Background(), runner, m, sandboxWorkspace, sandboxHome, out, log)
+	return true, runSandboxStartup(context.Background(), runner, m, sandboxWorkspace, sandboxHome, out, log)
 }
 
 // prepareSandboxDirs makes the workspace and the user's home, both owned by
