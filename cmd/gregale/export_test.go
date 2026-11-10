@@ -2808,6 +2808,9 @@ var ActivityDisplayTime = activityDisplayTime
 // RenderHTTPLogQueryEvent exposes the `logs --source http` row renderer.
 var RenderHTTPLogQueryEvent = renderHTTPLogQueryEvent
 
+// ManifestDeclaredBindings exposes the bindings check manifest reader (ADR-20261110213000).
+var ManifestDeclaredBindings = manifestDeclaredBindings
+
 // ApplyFunctionHookLifecycleForTest exposes applyFunctionHookLifecycle.
 func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
 	GetApp(ctx context.Context, slug string) (api.AppResponse, error)

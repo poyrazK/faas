@@ -32,6 +32,19 @@ type Policy struct {
 	// gate run against the wrong app or scope fails instead of passing on
 	// nothing.
 	RequireBindings bool
+	// DeclaredBindings are the bindings the app's gregale.yaml declares. Each
+	// one must be in the inventory, and declaring any implies RequireBindings:
+	// an app that needs a database must not pass on zero bindings.
+	DeclaredBindings []DeclaredBinding
+}
+
+// DeclaredBinding is one manifest-declared binding. An empty Scope follows
+// the deployment's environment, as it does on deploy.
+type DeclaredBinding struct {
+	Type    string
+	Name    string
+	Binding string
+	Scope   string
 }
 
 type Finding = api.BindingCheckFinding
@@ -79,6 +92,7 @@ func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (
 	if !dataAPIRuntimeOnly(inventory, policy) {
 		report.checkRuntime(inventory.RuntimeFreshness, policy.AllowPreparedRollback)
 	}
+	report.checkDeclaredBindings(inventory, policy)
 	active := 0
 	for _, item := range report.Bindings {
 		if item.Status != "skipped" {
@@ -88,7 +102,7 @@ func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (
 	if active == 0 {
 		report.Coverage = "none"
 		finding := Finding{Code: "no_bindings", Message: "No active bindings were returned in the selected scope; there is no binding connectivity evidence to check."}
-		if policy.RequireBindings {
+		if policy.RequireBindings || len(policy.DeclaredBindings) > 0 {
 			report.Blockers = append(report.Blockers, finding)
 		} else {
 			report.Warnings = append(report.Warnings, finding)
@@ -333,5 +347,26 @@ func (r *Report) checkUnsupported(item api.AppBindingInventoryItem, policy Polic
 	}
 	if item.State != "enabled" {
 		r.bindingBlock(item, "binding_not_ready", "The binding's configuration state is unknown.")
+	}
+}
+
+// checkDeclaredBindings blocks on every binding the manifest declares for the
+// checked scope that the inventory does not list (ADR-20261110213000).
+func (r *Report) checkDeclaredBindings(inventory api.AppBindingInventory, policy Policy) {
+	for _, declared := range policy.DeclaredBindings {
+		if declared.Scope != "" && declared.Scope != r.Scope {
+			continue
+		}
+		found := false
+		for _, item := range inventory.Bindings {
+			if item.Type == declared.Type && item.Binding == declared.Binding && item.Scope == r.Scope && item.State != "disabled" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.Blockers = append(r.Blockers, Finding{Code: "declared_binding_missing", Type: declared.Type, Name: declared.Name, Binding: declared.Binding, Scope: r.Scope,
+				Message: "gregale.yaml declares this binding, but the app has no such binding in this scope; deploy again to create it."})
+		}
 	}
 }

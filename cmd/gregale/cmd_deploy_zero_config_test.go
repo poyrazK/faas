@@ -572,6 +572,10 @@ func TestDeployZeroConfig_GitHeadGoFunctionStaysFunction(t *testing.T) {
 			// Once created, the function deploy reads the app to sync its
 			// snapshot hooks (ADR-20261110190000).
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "go-function"})
+		case r.URL.Path == "/v1/apps/go-function" && r.Method == http.MethodGet && createReq.Slug != "":
+			// After the create, the snapshot-hook step reads the app's
+			// lifecycle (ADR-20261110190000).
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "go-function"})
 		case r.URL.Path == "/v1/apps/go-function/deployments" && r.Method == http.MethodPost:
 			mr, err := r.MultipartReader()
 			if err != nil {
