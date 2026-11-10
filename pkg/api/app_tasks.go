@@ -47,6 +47,9 @@ func (s AppTaskStatus) Terminal() bool {
 const (
 	AppTaskDefaultTimeoutSeconds = 600
 	AppTaskDefaultMaxOutputBytes = 1024 * 1024
+	// AppTaskMaxOutputBytes is the largest combined stdout/stderr tail one
+	// app task may retain (max_output_bytes).
+	AppTaskMaxOutputBytes = 16 * 1024 * 1024
 	// AppTaskServiceBindingProbeCommand is a reserved argv[0] handled directly
 	// by guest-init. It runs a bounded HTTPS canary without requiring utilities
 	// or a language runtime in the customer image.
@@ -208,8 +211,8 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 	if maxOutputBytes == 0 {
 		maxOutputBytes = AppTaskDefaultMaxOutputBytes
 	}
-	if maxOutputBytes < 1024 || maxOutputBytes > 16*1024*1024 {
-		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("max_output_bytes must be between 1024 and 16777216")
+	if maxOutputBytes < 1024 || maxOutputBytes > AppTaskMaxOutputBytes {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid(fmt.Sprintf("max_output_bytes must be between 1024 and %d", AppTaskMaxOutputBytes))
 	}
 
 	return ResolvedCreateAppTaskRequest{
