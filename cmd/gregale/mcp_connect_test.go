@@ -667,3 +667,28 @@ func fileExistsT(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+
+// Cursor's agent expands ${NAME} and sends ${env:NAME} literally, so a
+// headless Cursor config reads the key as ${GREGALE_AGENT_KEY}
+// (ADR-20261109121411 §7).
+func TestMCPConnectCursorHeadlessKeyRef(t *testing.T) {
+	f := newMCPConnectFixture(t, "cursor")
+	if code, out, errOut := f.run(t, "--client", "cursor", "--headless"); code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+	data, err := os.ReadFile(filepath.Join(f.home, ".cursor", "mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		MCPServers map[string]struct {
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := config.MCPServers["gregale"].Headers["Authorization"]; got != "Bearer ${GREGALE_AGENT_KEY}" {
+		t.Fatalf("Cursor Authorization header = %q, want Bearer ${GREGALE_AGENT_KEY}", got)
+	}
+}
