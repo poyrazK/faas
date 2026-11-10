@@ -38,14 +38,12 @@ func signupFleetCapFixture(t *testing.T) (*state.MemStore, func(email, addr stri
 func seedSignupAccounts(t *testing.T, store *state.MemStore, n int, verified bool) {
 	t.Helper()
 	for i := range n {
-		acct, err := store.CreateAccount(context.Background(), fmt.Sprintf("earlier-%d@example.com", i), api.PlanFree)
-		if err != nil {
+		if _, err := store.CreateAccountWithPersonalOrg(context.Background(), state.CreateAccountWithPersonalOrgParams{
+			Email:                    fmt.Sprintf("earlier-%d@example.com", i),
+			Plan:                     api.PlanFree,
+			RequireEmailVerification: !verified,
+		}); err != nil {
 			t.Fatal(err)
-		}
-		if verified {
-			if err := store.MarkAccountEmailVerified(context.Background(), acct.ID); err != nil {
-				t.Fatal(err)
-			}
 		}
 	}
 }
