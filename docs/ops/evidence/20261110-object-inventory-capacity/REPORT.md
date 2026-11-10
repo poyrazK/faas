@@ -88,6 +88,39 @@ anything changed. That is 100–300 listing requests per bucket per day even
 for a bucket nobody touches. At 10,000 buckets that is 1–3M listing requests
 a day, all of them platform maintenance.
 
+## After step 1 (2026-11-10)
+
+Step 1 of ADR-20261110151628 replaced the batches with one queue (each
+worker takes the next due bucket as soon as it finishes), capped long
+listings at 4 workers, filled the time after the budget with short buckets
+while earlier attempts finish, and dropped the minute's wait while work is
+due. Same harness, plus a steady-state scenario: 2,000 small and 16 large
+buckets, all listed 10 minutes before with their key counts, as production
+buckets are.
+
+| Scenario (200 ms per page) | Main | Step 1 |
+|---|---|---|
+| 3,000 small, one sweep | 1,350 buckets, 84% busy | 1,421–1,536 buckets, 88–96% busy |
+| Steady state, sweep 1 | 99 small + 1 large, 17% busy | 1,205 small + 4 large, 96% busy |
+| Steady state, sweep 2 | 49 small + 1 large, 15% busy | 795 small + 4 large, 94% busy |
+| Wait after a sweep with work due | 60 s | none |
+
+- **Small buckets inside 900 s.** A sweep takes about 40 s and the next one
+  starts at once, so about 22 sweeps fit in the window. That is about 32,000
+  one-page buckets at 200 ms, up from 10,800. Runs at 100 ms and 300 ms gave
+  2,645–2,933 and 1,016–1,033 buckets per sweep, about 57,000–63,000 and
+  22,000.
+- **Large buckets no longer starve small ones.** In steady state the sweep
+  refreshes 12–16× more small buckets per sweep while four large listings
+  advance beside them.
+- **The first listing of a full, never-listed bucket** still takes a short
+  worker for 45 s, because its size is unknown. That is the original "mixed"
+  scenario, which stayed at 68–82% busy and 523–1,477 small buckets per
+  sweep. In production only a bucket that is new (and empty) or restored full
+  has no inventory.
+- **Noise.** Other sessions were rebuilding the shared Go cache during these
+  runs. Identical small-only runs varied between 82% and 96% busy.
+
 ## Limits of this measurement
 
 - The provider latency is injected, not measured against OVH. The ranking of
