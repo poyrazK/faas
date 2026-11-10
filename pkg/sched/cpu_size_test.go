@@ -101,7 +101,11 @@ func TestSnapshotRefreshPassFindsSnapshotsAtAnotherVCPUCount(t *testing.T) {
 func (f *refreshFixture) appBooked(t *testing.T, node string, parkedAgo time.Duration, vcpus int) (state.App, string) {
 	t.Helper()
 	ctx := f.ctx
-	f.ctx = state.WithNodeAdmission(ctx, state.NodeAdmission{NodeID: node, BookedVCPU: vcpus})
+	generation := f.nodeA.LifecycleGeneration
+	if node == f.nodeB.ID {
+		generation = f.nodeB.LifecycleGeneration
+	}
+	f.ctx = state.WithNodeAdmission(ctx, state.NodeAdmission{NodeID: node, Generation: generation, BookedVCPU: vcpus})
 	defer func() { f.ctx = ctx }()
 	return f.app(t, node, parkedAgo, state.Snapshot{CreatedAt: time.Now().UTC().Add(-parkedAgo)})
 }
