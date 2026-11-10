@@ -683,12 +683,12 @@ func TestPgStoreCurrentMonthOverageCents_NonUTC(t *testing.T) {
 	}
 
 	// Both in-month rows must be summed, the previous-month row excluded,
-	// and the Hobby GB-hour allowance applied once. The result is 2 cents.
+	// and the Hobby GB-hour allowance applied once: 2 GB-h of overage.
 	got, err := store.CurrentMonthOverageCents(ctx, acct.ID)
 	if err != nil {
 		t.Fatalf("CurrentMonthOverageCents: %v", err)
 	}
-	const wantCents = int64(2)
+	wantCents := 2 * api.OverageMillicentsPerGBHour / api.MillicentsPerCent
 	if got != wantCents {
 		t.Fatalf("got %d cents, want %d (boundary + previous-month exclusion under Istanbul TZ)", got, wantCents)
 	}
