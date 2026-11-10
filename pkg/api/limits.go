@@ -4257,15 +4257,18 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
 
-// ObjectStoragePlanLimitsMax is the largest storage ceiling and monthly egress
-// any plan sells. An installation's safety policy (ObjectStoragePolicy) must
-// allow at least these, because apid enforces the tighter of the two and a
-// smaller policy value silently sells every plan less.
+// ObjectStoragePlanLimitsMax is the largest storage ceiling, monthly requests
+// and monthly egress any plan sells. An installation's safety policy
+// (ObjectStoragePolicy) must allow at least these, because apid enforces the
+// tighter of the two and a smaller policy value silently sells every plan less.
+// Monthly authorizations follow requests, so they must allow the most
+// requests too.
 func ObjectStoragePlanLimitsMax() ObjectStoragePlanLimits {
 	var most ObjectStoragePlanLimits
 	for _, p := range Plans {
 		l := MustLimitsFor(p).ObjectStorage
 		most.MaxAccountBytes = max(most.MaxAccountBytes, l.MaxAccountBytes)
+		most.MaxMonthlyRequests = max(most.MaxMonthlyRequests, l.MaxMonthlyRequests)
 		most.MaxMonthlyEgressBytes = max(most.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
 	}
 	return most
@@ -4312,6 +4315,10 @@ func (l ObjectStoragePlanLimits) Policy(p ObjectStoragePolicy) ObjectStoragePoli
 	p.MaxAccountBytes = tighterObjectStorageLimit(p.MaxAccountBytes, l.MaxAccountBytes)
 	p.MaxBucketBytes = tighterObjectStorageLimit(p.MaxBucketBytes, p.MaxAccountBytes)
 	p.MaxMonthlyRequests = tighterObjectStorageLimit(p.MaxMonthlyRequests, l.MaxMonthlyRequests)
+	// Every admitted read and write spends one authorization, so a plan's
+	// authorizations follow its requests; the operator value is only an
+	// upper safety bound (object storage audit OS-1, 2026-11-10).
+	p.MaxMonthlyAuthorizations = tighterObjectStorageLimit(p.MaxMonthlyAuthorizations, l.MaxMonthlyRequests)
 	p.MaxMonthlyEgressBytes = tighterObjectStorageLimit(p.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
 	if p.AnonymousReads {
 		p.MaxMonthlyRequests = publicObjectReadShare(p.MaxMonthlyRequests)
