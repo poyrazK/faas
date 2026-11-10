@@ -169,14 +169,20 @@ func seedDeploymentWithPlan(t *testing.T, store *state.MemStore, source, plan st
 	return build.ID, dep.ID, app.ID
 }
 
-// TestStore_ClearDeployment_Pending_Happy and Live_Refuses pin the
+// TestStore_ClearDeployment_Pending_RefusedUntilCancelled and Live_Refuses pin the
 // memstore ClearDeployment happy + IDOR paths so pkg/state coverage
 // stays above the 70% floor. ADR-124: soft-delete stamps deleted_at +
 // deleted_by_principal; status is intentionally untouched.
-func TestStore_ClearDeployment_Pending_Happy(t *testing.T) {
+func TestStore_ClearDeployment_Pending_RefusedUntilCancelled(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
 	_, depID, _ := seedDeploymentWithPlan(t, store, "/tmp/src.tar.gz", string(api.PlanPro))
+	if err := store.ClearDeployment(ctx, depID, "operator:test"); !errors.Is(err, state.ErrClearInFlightForbidden) {
+		t.Fatalf("ClearDeployment(in flight) = %v, want ErrClearInFlightForbidden", err)
+	}
+	if _, _, err := store.CancelDeploymentTx(ctx, depID, "operator:test", state.CancelReasonUser); err != nil {
+		t.Fatalf("CancelDeploymentTx: %v", err)
+	}
 	if err := store.ClearDeployment(ctx, depID, "operator:test"); err != nil {
 		t.Fatalf("ClearDeployment happy: %v", err)
 	}

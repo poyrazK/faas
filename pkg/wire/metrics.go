@@ -8667,6 +8667,7 @@ func (m *OpsMetrics) ObserveDeploymentReorder(outcome string) {
 // outcome is the closed label set:
 //   - "ok" — single deployment soft-deleted (status untouched)
 //   - "live_forbidden" — attempt to clear a DeployLive row (409)
+//   - "in_flight" — attempt to clear a row still in the pipeline (409)
 //   - "error" — internal failure (logged at the call site)
 //
 // Mirrors ObserveDeploymentCancelled's label set for §12 dashboard
