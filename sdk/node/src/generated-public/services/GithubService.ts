@@ -8,6 +8,7 @@ import type { GitHubConnectionManageRequest } from '../models/GitHubConnectionMa
 import type { GitHubConnectionVerification } from '../models/GitHubConnectionVerification.js';
 import type { GitHubDeploymentPolicy } from '../models/GitHubDeploymentPolicy.js';
 import type { GitHubDeploymentPolicyPatch } from '../models/GitHubDeploymentPolicyPatch.js';
+import type { GitHubInstallationSummary } from '../models/GitHubInstallationSummary.js';
 import type { GitHubInstallMutationRequest } from '../models/GitHubInstallMutationRequest.js';
 import type { GitHubInstallStatus } from '../models/GitHubInstallStatus.js';
 import type { InstallBindRequest } from '../models/InstallBindRequest.js';
@@ -677,6 +678,38 @@ export class GithubService {
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List the GitHub installations a company organization owns.
+   * Company projects link repositories only through these installations (ADR-20261110200000). An owner or admin connects one from Connect GitHub with the organization selected. Members' personal installations are not listed; tokens are never returned.
+   * @returns GitHubInstallationSummary The organization's installations; empty before one is connected or before billing adoption.
+   * @throws ApiError
+   */
+  public static listOrgGitHubInstallations({
+    organization,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+  }): CancelablePromise<Array<GitHubInstallationSummary>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/github/installations',
+      path: {
+        'organization': organization,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
