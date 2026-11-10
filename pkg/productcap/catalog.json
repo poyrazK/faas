@@ -29,6 +29,7 @@
         "/v1/account/email",
         "/v1/account/mfa",
         "/v1/account/rate-limits",
+        "/v1/account/security-activity",
         "/v1/account/sign-in-methods",
         "/v1/auth/capabilities",
         "/v1/auth/csrf",
