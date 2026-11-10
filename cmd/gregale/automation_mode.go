@@ -17,10 +17,30 @@ var nonInteractive bool
 // --wait-for-approval prefix or GREGALE_WAIT_FOR_APPROVAL=1.
 var approvalWaitEnabled bool
 
+// projectOrganization sends project commands to a company's projects. Set by
+// the --org prefix (`gregale --org acme deploy --project`); a command's own
+// --org option keeps its meaning (apps/projects review 2026-11-10, P3).
+var projectOrganization string
+
 func extractAutomationFlag(args []string) ([]string, error) {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if arg == "--org" || strings.HasPrefix(arg, "--org=") {
+			value := strings.TrimPrefix(arg, "--org=")
+			if arg == "--org" {
+				if i+1 == len(args) {
+					return args, errors.New("--org requires an organization slug")
+				}
+				i++
+				value = args[i]
+			}
+			if strings.TrimSpace(value) == "" || strings.HasPrefix(value, "-") {
+				return args, errors.New("--org requires an organization slug")
+			}
+			projectOrganization = value
+			continue
+		}
 		handled, err := extractBoolPrefixFlag(arg, "non-interactive", &nonInteractive)
 		if !handled && err == nil {
 			handled, err = extractBoolPrefixFlag(arg, "wait-for-approval", &approvalWaitEnabled)

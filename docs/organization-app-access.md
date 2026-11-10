@@ -188,6 +188,11 @@ Go clients provide organization project methods such as `GetOrgProject`,
 `CreateOrgProjectEnvironment`, `DeployOrgProject`, `PromoteOrgProjectEnvironment`
 and `RollbackOrgProjectEnvironmentPromotion`. Generated Node/Python project
 clients include the organization routes. Personal clients retain their URLs.
+`Client.WithProjectOrganization("acme")` sends every project call of an existing
+client to the company's routes. In the CLI, put `--org` before the command:
+`gregale --org acme deploy --project`, `gregale --org acme projects list`. The
+reviewed-plan (`apply-plan`), safe-release and source-ref scan entry points have
+no company form; with `--org` the CLI refuses them before sending a request.
 See [ADR-202610171905](adr/202610171905-organization-project-ownership.md) for migration and
 acceptance requirements.
 
