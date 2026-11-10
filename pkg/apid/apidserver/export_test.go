@@ -582,6 +582,7 @@ var ManagedPostgresSpecFromRequest = managedPostgresSpecFromRequest
 var ManagedPostgresUsageCeilings = managedPostgresUsageCeilings
 var ManagedPostgresUsageOperatorView = managedPostgresUsageOperatorView
 var ManagedPostgresUsageView = managedPostgresUsageView
+var ManagedPostgresUsageHoldView = managedPostgresUsageHoldView
 var ManagedPostgresView = managedPostgresView
 var ManagedWorkflowCanConsumeFailedDependencies = managedWorkflowCanConsumeFailedDependencies
 var MapReconcileError = mapReconcileError

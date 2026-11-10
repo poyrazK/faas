@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -365,12 +364,7 @@ func (e *CapEnforcer) egressSpent(ctx context.Context, subjectID string, snapsho
 	if err != nil || allowance.CeilingBytes <= 0 {
 		return false, err
 	}
-	databaseEgress := max(snapshot.EgressBytes, 0)
-	appEgress := max(allowance.AppEgressBytes, 0)
-	if databaseEgress > math.MaxInt64-appEgress {
-		return true, nil
-	}
-	return databaseEgress+appEgress >= allowance.CeilingBytes, nil
+	return egressAllowanceReached(snapshot.EgressBytes, allowance.AppEgressBytes, allowance.CeilingBytes), nil
 }
 
 // CapSweepSummary counts one enforcement sweep. Scopes are provider quota

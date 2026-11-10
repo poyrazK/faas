@@ -24819,6 +24819,10 @@ components:
           type: string
           enum: [database_limit, service_class]
           description: "Set while the plan no longer includes this database, for example after a subscription ended, and it is suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept), service_class when the plan does not include its class. Its data is kept. Upgrading, deleting a database or resizing to an included class resumes it."
+        hold:
+          type: string
+          enum: [compute_ceiling, egress, inactive, plan_excess, preview]
+          description: "Set while the platform stops this database's compute and refuses its connections although its state is ready: compute_ceiling once the account used its monthly compute ceiling; egress once its apps and databases sent the plan's monthly egress allowance; inactive while the account is suspended; plan_excess (see plan_excess); preview for a PR preview database once the account used 80% of its compute. Its data is kept. Omitted while nothing holds it; the platform applies a change within a few minutes."
         restore_range:
           $ref: '#/components/schemas/ManagedPostgresRestoreRange'
     ManagedPostgresRestoreRange:
@@ -24894,6 +24898,24 @@ components:
           description: When the compute cap suspended the account's databases this month; present while compute_cap_state is suspended.
           type: string
           format: date-time
+        egress_allowance_bytes:
+          description: The plan's monthly egress allowance, shared by the account's apps and databases. Absent on a plan without one.
+          type: integer
+          format: int64
+          minimum: 0
+        app_egress_bytes:
+          description: What the account's apps sent this month toward the shared egress allowance; egress_bytes is the databases' part.
+          type: integer
+          format: int64
+          minimum: 0
+        egress_state:
+          description: "healthy; warning at 80% of the shared egress allowance; held once apps and databases together sent it and the platform enforces caps, until the month ends or the plan grows."
+          type: string
+          enum: [healthy, warning, held]
+        hold:
+          description: Set while every database of the account is held, with the same reason each database reports.
+          type: string
+          enum: [compute_ceiling, egress, inactive]
     CreateManagedPostgresDatabaseRequest:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object

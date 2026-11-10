@@ -11,9 +11,17 @@ from ..models.managed_postgres_usage_response_compute_cap_state import (
     ManagedPostgresUsageResponseComputeCapState,
     check_managed_postgres_usage_response_compute_cap_state,
 )
+from ..models.managed_postgres_usage_response_egress_state import (
+    ManagedPostgresUsageResponseEgressState,
+    check_managed_postgres_usage_response_egress_state,
+)
 from ..models.managed_postgres_usage_response_guardrail_state import (
     ManagedPostgresUsageResponseGuardrailState,
     check_managed_postgres_usage_response_guardrail_state,
+)
+from ..models.managed_postgres_usage_response_hold import (
+    ManagedPostgresUsageResponseHold,
+    check_managed_postgres_usage_response_hold,
 )
 from ..types import UNSET, Unset
 
@@ -52,6 +60,17 @@ class ManagedPostgresUsageResponse:
     compute_suspended_at: datetime.datetime | Unset = UNSET
     """When the compute cap suspended the account's databases this month; present while compute_cap_state is
     suspended."""
+    egress_allowance_bytes: int | Unset = UNSET
+    """The plan's monthly egress allowance, shared by the account's apps and databases. Absent on a plan without
+    one."""
+    app_egress_bytes: int | Unset = UNSET
+    """What the account's apps sent this month toward the shared egress allowance; egress_bytes is the databases'
+    part."""
+    egress_state: ManagedPostgresUsageResponseEgressState | Unset = UNSET
+    """healthy; warning at 80% of the shared egress allowance; held once apps and databases together sent it and
+    the platform enforces caps, until the month ends or the plan grows."""
+    hold: ManagedPostgresUsageResponseHold | Unset = UNSET
+    """Set while every database of the account is held, with the same reason each database reports."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -103,6 +122,18 @@ class ManagedPostgresUsageResponse:
         if not isinstance(self.compute_suspended_at, Unset):
             compute_suspended_at = self.compute_suspended_at.isoformat()
 
+        egress_allowance_bytes = self.egress_allowance_bytes
+
+        app_egress_bytes = self.app_egress_bytes
+
+        egress_state: str | Unset = UNSET
+        if not isinstance(self.egress_state, Unset):
+            egress_state = self.egress_state
+
+        hold: str | Unset = UNSET
+        if not isinstance(self.hold, Unset):
+            hold = self.hold
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -134,6 +165,14 @@ class ManagedPostgresUsageResponse:
             field_dict["overage_enabled"] = overage_enabled
         if compute_suspended_at is not UNSET:
             field_dict["compute_suspended_at"] = compute_suspended_at
+        if egress_allowance_bytes is not UNSET:
+            field_dict["egress_allowance_bytes"] = egress_allowance_bytes
+        if app_egress_bytes is not UNSET:
+            field_dict["app_egress_bytes"] = app_egress_bytes
+        if egress_state is not UNSET:
+            field_dict["egress_state"] = egress_state
+        if hold is not UNSET:
+            field_dict["hold"] = hold
 
         return field_dict
 
@@ -203,6 +242,24 @@ class ManagedPostgresUsageResponse:
         else:
             compute_suspended_at = datetime.datetime.fromisoformat(_compute_suspended_at)
 
+        egress_allowance_bytes = d.pop("egress_allowance_bytes", UNSET)
+
+        app_egress_bytes = d.pop("app_egress_bytes", UNSET)
+
+        _egress_state = d.pop("egress_state", UNSET)
+        egress_state: ManagedPostgresUsageResponseEgressState | Unset
+        if isinstance(_egress_state, Unset):
+            egress_state = UNSET
+        else:
+            egress_state = check_managed_postgres_usage_response_egress_state(_egress_state)
+
+        _hold = d.pop("hold", UNSET)
+        hold: ManagedPostgresUsageResponseHold | Unset
+        if isinstance(_hold, Unset):
+            hold = UNSET
+        else:
+            hold = check_managed_postgres_usage_response_hold(_hold)
+
         managed_postgres_usage_response = cls(
             period_start=period_start,
             policy_enabled=policy_enabled,
@@ -223,6 +280,10 @@ class ManagedPostgresUsageResponse:
             compute_cap_state=compute_cap_state,
             overage_enabled=overage_enabled,
             compute_suspended_at=compute_suspended_at,
+            egress_allowance_bytes=egress_allowance_bytes,
+            app_egress_bytes=app_egress_bytes,
+            egress_state=egress_state,
+            hold=hold,
         )
 
         managed_postgres_usage_response.additional_properties = d

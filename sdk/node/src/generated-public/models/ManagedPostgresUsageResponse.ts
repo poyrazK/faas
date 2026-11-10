@@ -40,5 +40,21 @@ export type ManagedPostgresUsageResponse = {
    * When the compute cap suspended the account's databases this month; present while compute_cap_state is suspended.
    */
   compute_suspended_at?: string;
+  /**
+   * The plan's monthly egress allowance, shared by the account's apps and databases. Absent on a plan without one.
+   */
+  egress_allowance_bytes?: number;
+  /**
+   * What the account's apps sent this month toward the shared egress allowance; egress_bytes is the databases' part.
+   */
+  app_egress_bytes?: number;
+  /**
+   * healthy; warning at 80% of the shared egress allowance; held once apps and databases together sent it and the platform enforces caps, until the month ends or the plan grows.
+   */
+  egress_state?: 'healthy' | 'warning' | 'held';
+  /**
+   * Set while every database of the account is held, with the same reason each database reports.
+   */
+  hold?: 'compute_ceiling' | 'egress' | 'inactive';
 };
 

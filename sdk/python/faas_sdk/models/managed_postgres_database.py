@@ -11,6 +11,7 @@ from ..models.managed_postgres_database_availability import (
     ManagedPostgresDatabaseAvailability,
     check_managed_postgres_database_availability,
 )
+from ..models.managed_postgres_database_hold import ManagedPostgresDatabaseHold, check_managed_postgres_database_hold
 from ..models.managed_postgres_database_plan_excess import (
     ManagedPostgresDatabasePlanExcess,
     check_managed_postgres_database_plan_excess,
@@ -64,6 +65,12 @@ class ManagedPostgresDatabase:
     suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept),
     service_class when the plan does not include its class. Its data is kept. Upgrading, deleting a database or
     resizing to an included class resumes it."""
+    hold: ManagedPostgresDatabaseHold | Unset = UNSET
+    """Set while the platform stops this database's compute and refuses its connections although its state is
+    ready: compute_ceiling once the account used its monthly compute ceiling; egress once its apps and databases
+    sent the plan's monthly egress allowance; inactive while the account is suspended; plan_excess (see
+    plan_excess); preview for a PR preview database once the account used 80% of its compute. Its data is kept.
+    Omitted while nothing holds it; the platform applies a change within a few minutes."""
     restore_range: ManagedPostgresRestoreRange | Unset = UNSET
     """The span a point-in-time restore from this database can target now. Absent while the database cannot be
     restored from."""
@@ -138,6 +145,10 @@ class ManagedPostgresDatabase:
         if not isinstance(self.plan_excess, Unset):
             plan_excess = self.plan_excess
 
+        hold: str | Unset = UNSET
+        if not isinstance(self.hold, Unset):
+            hold = self.hold
+
         restore_range: dict[str, Any] | Unset = UNSET
         if not isinstance(self.restore_range, Unset):
             restore_range = self.restore_range.to_dict()
@@ -176,6 +187,8 @@ class ManagedPostgresDatabase:
             field_dict["restore_slot_until"] = restore_slot_until
         if plan_excess is not UNSET:
             field_dict["plan_excess"] = plan_excess
+        if hold is not UNSET:
+            field_dict["hold"] = hold
         if restore_range is not UNSET:
             field_dict["restore_range"] = restore_range
 
@@ -291,6 +304,13 @@ class ManagedPostgresDatabase:
         else:
             plan_excess = check_managed_postgres_database_plan_excess(_plan_excess)
 
+        _hold = d.pop("hold", UNSET)
+        hold: ManagedPostgresDatabaseHold | Unset
+        if isinstance(_hold, Unset):
+            hold = UNSET
+        else:
+            hold = check_managed_postgres_database_hold(_hold)
+
         _restore_range = d.pop("restore_range", UNSET)
         restore_range: ManagedPostgresRestoreRange | Unset
         if isinstance(_restore_range, Unset):
@@ -319,6 +339,7 @@ class ManagedPostgresDatabase:
             restorable_until=restorable_until,
             restore_slot_until=restore_slot_until,
             plan_excess=plan_excess,
+            hold=hold,
             restore_range=restore_range,
         )
 
