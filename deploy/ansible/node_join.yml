@@ -474,6 +474,21 @@
         - (faas_join_expected_cert_fingerprint | default('') | trim) != ''
       changed_when: true
 
+    # ADR-20261109170000: once signd on the control plane signs this node's
+    # app layers and the stored layers are re-signed
+    # (docs/runbooks/artifact-signer-rollout.md), the node holds no signing
+    # key at all.
+    - name: Require signd before retiring the image-signing key
+      ansible.builtin.assert:
+        that:
+          - faas_imaged_signd_target | default('') is match('^tcp://')
+        fail_msg: >-
+          faas_compute_sign_key_retired removes sign.key from this node, but
+          imaged only runs without it when signd signs its app layers: set
+          faas_imaged_signd_target first (runbook artifact-signer-rollout.md
+          step 2).
+      when: faas_compute_sign_key_retired | default(false) | bool
+
     - name: Stage the image-signing private key
       ansible.builtin.copy:
         src: "{{ faas_join_sign_key_source }}"
@@ -482,6 +497,13 @@
         group: faas
         mode: "0440"
       no_log: true
+      when: not (faas_compute_sign_key_retired | default(false) | bool)
+
+    - name: Remove the retired image-signing private key
+      ansible.builtin.file:
+        path: /etc/faas/secrets/sign.key
+        state: absent
+      when: faas_compute_sign_key_retired | default(false) | bool
 
     - name: Stage the image-signing public key
       ansible.builtin.copy:

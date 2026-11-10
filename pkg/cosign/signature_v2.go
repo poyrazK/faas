@@ -63,6 +63,23 @@ func SignV2(priv *ecdsa.PrivateKey, key, digestHex string) ([]byte, error) {
 	return encodeSignatureV2(priv, key, digest)
 }
 
+// VerifyArtifactSignature checks blob, a stored signature, against key and
+// digestHex, the artifact's lowercase hex SHA-256. It returns the blob's
+// format, "v1" (raw, bound to the bytes only) or "v2" (bound to key and
+// digest), and whether it verifies under pub. The re-sign pass uses it
+// (ADR-20261109170000 §5 step 3).
+func VerifyArtifactSignature(pub *ecdsa.PublicKey, key, digestHex string, blob []byte) (string, bool) {
+	format := "v2"
+	if len(blob) == 64 {
+		format = "v1"
+	}
+	if !ValidDigestHex(digestHex) || pub == nil {
+		return format, false
+	}
+	digest, _ := hex.DecodeString(digestHex)
+	return format, verifySignature(pub, key, digest, blob)
+}
+
 // ValidDigestHex reports whether s is a lowercase hex SHA-256.
 func ValidDigestHex(s string) bool {
 	if len(s) != 2*sha256.Size {

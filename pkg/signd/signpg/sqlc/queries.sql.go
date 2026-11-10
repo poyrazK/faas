@@ -104,3 +104,45 @@ func (q *Queries) InsertArtifactSignature(ctx context.Context, db DBTX, arg Inse
 	}
 	return result.RowsAffected(), nil
 }
+
+const storedLayers = `-- name: StoredLayers :many
+SELECT d.id::text AS deployment_id,
+       (CASE WHEN d.rootfs_key <> '' THEN d.rootfs_key
+             ELSE 'layers/' || d.id::text || '.ext4' END)::text AS storage_key
+FROM deployments d
+WHERE d.deleted_at IS NULL AND (d.rootfs_key <> '' OR COALESCE(d.rootfs_path, '') <> '')
+UNION ALL
+SELECT l.deployment_id::text AS deployment_id, l.storage_key
+FROM deployment_sidecar_layers l
+JOIN deployments d ON d.id = l.deployment_id
+WHERE d.deleted_at IS NULL
+ORDER BY 1, 2
+`
+
+type StoredLayersRow struct {
+	DeploymentID string
+	StorageKey   string
+}
+
+// Every signed layer a deployment that still exists can boot: its main layer
+// (legacy rows without rootfs_key keep layers/<id>.ext4) and its sidecars'.
+// The re-sign pass walks them (ADR-20261109170000 §5 step 3).
+func (q *Queries) StoredLayers(ctx context.Context, db DBTX) ([]StoredLayersRow, error) {
+	rows, err := db.Query(ctx, storedLayers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StoredLayersRow{}
+	for rows.Next() {
+		var i StoredLayersRow
+		if err := rows.Scan(&i.DeploymentID, &i.StorageKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
