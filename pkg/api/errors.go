@@ -858,6 +858,10 @@ const (
 	// (with reason: "missing"|"expired", ttl_sec) is the load-
 	// bearing security signal; the wire code is the UX affordance.
 	CodeStepUpRequired = "step_up_required"
+	// CodeRecentSignInRequired is returned when an account change whose
+	// only proof is the browser session comes from a session older than
+	// RecentSignInWindow (ADR 20261110100000): sign in again, then retry.
+	CodeRecentSignInRequired = "recent_sign_in_required"
 	// CodeMFAInvalidCode is returned when /confirm, /verify, or
 	// /recover validate a presented TOTP code / recovery code and
 	// the comparison fails. The audit Emit fires regardless.
@@ -3384,6 +3388,15 @@ func ErrStepUpRequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeStepUpRequired,
 		"Step-up required",
 		"step-up MFA required for this action: complete /v1/account/mfa/verify to refresh")
+}
+
+// ErrRecentSignInRequired asks a browser to sign in again before an account
+// change it can prove with nothing but its session.
+func ErrRecentSignInRequired() *Problem {
+	return NewProblem(http.StatusForbidden, CodeRecentSignInRequired,
+		"Sign in again",
+		fmt.Sprintf("this change needs a sign-in from the last %d minutes; sign in again, then retry", int(RecentSignInWindow.Minutes()))).
+		WithDocs(docsBase + "/auth")
 }
 
 // ErrBillingNotImplemented is returned by an apid handler when the selected

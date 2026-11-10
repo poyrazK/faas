@@ -4673,6 +4673,8 @@ func (s *server) handler() http.Handler {
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions))))
 	mux.Handle("POST /v1/admin/ops/accounts/{id}/reset-mfa",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountResetMFA))))
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/revert-email",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRevertEmail))))
 	// ADR-20261101214152: support raises (or returns to the plan's) a paid
 	// billing subject's object-storage ceiling.
 	mux.Handle("POST /v1/admin/ops/accounts/{id}/object-storage-ceiling",

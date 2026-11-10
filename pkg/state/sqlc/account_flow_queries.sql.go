@@ -397,6 +397,54 @@ func (q *Queries) ReplaceAccountRecoveryCodes(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const revertLastAccountEmailChange = `-- name: RevertLastAccountEmailChange :one
+WITH last_change AS MATERIALIZED (
+    SELECT c.account_id, c.old_email, c.new_email FROM account_email_changes c
+    WHERE c.account_id=$1 AND c.consumed_at IS NOT NULL
+      AND c.consumed_at > clock_timestamp() - make_interval(secs => $2::float8)
+    ORDER BY c.consumed_at DESC LIMIT 1
+), target AS MATERIALIZED (
+    SELECT a.id, l.old_email, l.new_email FROM accounts a JOIN last_change l ON l.account_id=a.id
+    WHERE lower(a.email::text)=l.new_email
+    FOR UPDATE OF a
+), spent_logins AS (
+    UPDATE login_tokens t SET consumed_at=clock_timestamp()
+    FROM target x WHERE t.account_id=x.id AND t.consumed_at IS NULL
+    RETURNING t.account_id
+), spent_mfa_disables AS (
+    UPDATE mfa_disable_requests m SET consumed_at=clock_timestamp()
+    FROM target x WHERE m.account_id=x.id AND m.consumed_at IS NULL
+    RETURNING m.account_id
+)
+UPDATE accounts a SET email=x.old_email, email_verified_at=clock_timestamp()
+FROM target x WHERE a.id=x.id
+RETURNING a.id, x.old_email, x.new_email
+`
+
+type RevertLastAccountEmailChangeParams struct {
+	AccountID  pgtype.UUID
+	WithinSecs float64
+}
+
+type RevertLastAccountEmailChangeRow struct {
+	ID       pgtype.UUID
+	OldEmail string
+	NewEmail string
+}
+
+// Operator revert of the last confirmed email change (ADR 20261110100000).
+// Applies only while the account still has the address that change moved it
+// to, so it cannot run twice or undo a later change. Like the change itself,
+// it spends account-bound links mailed while the account had that address.
+// A unique violation (the old address now belongs to another account) rolls
+// the statement back.
+func (q *Queries) RevertLastAccountEmailChange(ctx context.Context, db DBTX, arg RevertLastAccountEmailChangeParams) (RevertLastAccountEmailChangeRow, error) {
+	row := db.QueryRow(ctx, revertLastAccountEmailChange, arg.AccountID, arg.WithinSecs)
+	var i RevertLastAccountEmailChangeRow
+	err := row.Scan(&i.ID, &i.OldEmail, &i.NewEmail)
+	return i, err
+}
+
 const revokeAllMFATrustedBrowsers = `-- name: RevokeAllMFATrustedBrowsers :execrows
 UPDATE mfa_trusted_browsers SET revoked_at=clock_timestamp()
 WHERE account_id=$1 AND revoked_at IS NULL

@@ -37,6 +37,7 @@ export class MfaService {
       url: '/v1/account/mfa/enroll',
       errors: {
         401: `code: unauthorized`,
+        403: `An API key was used, or the account has no password and the browser session signed in more than 15 minutes ago (\`recent_sign_in_required\`): sign in again.`,
         409: `Already enrolled. Call /v1/account/mfa/disable first.`,
         503: `MFA unavailable — host age key not loaded.`,
       },

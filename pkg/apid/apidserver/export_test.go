@@ -2067,6 +2067,17 @@ func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
 	return l.allow
 }
 
+// AgeSignInsForTest makes every browser session look signed in d earlier to
+// the recent-sign-in check (ADR 20261110100000). Not for parallel tests.
+func AgeSignInsForTest(t testing.TB, d time.Duration) {
+	prev := recentSignInNow
+	recentSignInNow = func() time.Time { return time.Now().Add(d) }
+	t.Cleanup(func() { recentSignInNow = prev })
+}
+
+// OperatorRevertEmail exposes the operator email revert.
+var OperatorRevertEmail = (*server).operatorRevertEmail
+
 // AdvanceSecurityMailClockForTest moves the per-account sign-in mail
 // limiter's clock d ahead, as if the next request came that much later.
 func (r *server) AdvanceSecurityMailClockForTest(d time.Duration) {
