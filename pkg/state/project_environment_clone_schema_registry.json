@@ -20213,6 +20213,8 @@
       "override_freeze_ids",
       "release_at",
       "scheduled_by",
+      "scheduled_by_account_id",
+      "scheduled_by_key_id",
       "started_at",
       "state",
       "updated_at"

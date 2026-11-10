@@ -1,4 +1,4 @@
--- filename: 20261110183000000_scheduled_release_scheduler.sql
+-- filename: 20261110183012417_scheduled_release_scheduler.sql
 -- ADR-20261021152201 amendment (2026-11-10): a scheduled release starts only
 -- while whoever scheduled it may still deploy the app. scheduled_by is a
 -- display label (an email or api_key:<id>); these columns name the account
