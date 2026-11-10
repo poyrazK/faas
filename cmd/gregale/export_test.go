@@ -2806,3 +2806,6 @@ func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
 }, slug, sourceDir, handler string) error {
 	return applyFunctionHookLifecycle(ctx, client, slug, sourceDir, handler)
 }
+
+// InvalidAlertMetricError exposes the unknown --metric error (H32-18).
+var InvalidAlertMetricError = invalidAlertMetricError
