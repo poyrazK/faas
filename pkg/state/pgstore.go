@@ -31664,6 +31664,42 @@ func (s *PgStore) RequestTelemetryCircuitBreakerSummary(ctx context.Context, app
 	return row.Requests, row.ServerErrors, row.P95LatencyMs, row.ColdBootRequests, row.ColdBootP95LatencyMs, row.CpuUsec, row.CpuRequests, nil
 }
 
+// SharedRouteLatency is the post-release watch's latency sample restricted to
+// the method+route pairs both a release and its predecessor served.
+type SharedRouteLatency struct {
+	ReleaseRequests      int64
+	ReleaseP95LatencyMS  float64
+	BaselineRequests     int64
+	BaselineP95LatencyMS float64
+}
+
+// RequestTelemetrySharedRouteLatency backs the post-release watch's
+// shared-route latency check (ADR-1445 amendment 2026-11-10). Like the
+// circuit-breaker summary it stays outside state.Store; apid discovers it as
+// an optional reader.
+func (s *PgStore) RequestTelemetrySharedRouteLatency(ctx context.Context, appID, releaseID string, releaseSince, releaseUntil time.Time, baselineID string, baselineSince, baselineUntil time.Time) (SharedRouteLatency, error) {
+	ids := make([]pgtype.UUID, 0, 3)
+	for _, id := range []string{appID, releaseID, baselineID} {
+		parsed, err := uuid.Parse(id)
+		if err != nil {
+			return SharedRouteLatency{}, fmt.Errorf("state: shared-route latency parse id %q: %w", id, err)
+		}
+		ids = append(ids, pgtype.UUID{Bytes: parsed, Valid: true})
+	}
+	row, err := s.appErrorsQueries().RequestTelemetrySharedRouteLatency(ctx, s.pool, sqlc.RequestTelemetrySharedRouteLatencyParams{
+		AppID: ids[0], ReleaseID: ids[1], BaselineID: ids[2],
+		ReleaseSince:  pgtype.Timestamptz{Time: releaseSince, Valid: true},
+		ReleaseUntil:  pgtype.Timestamptz{Time: releaseUntil, Valid: true},
+		BaselineSince: pgtype.Timestamptz{Time: baselineSince, Valid: true},
+		BaselineUntil: pgtype.Timestamptz{Time: baselineUntil, Valid: true},
+	})
+	if err != nil {
+		return SharedRouteLatency{}, fmt.Errorf("state: shared-route latency app=%s release=%s baseline=%s: %w", appID, releaseID, baselineID, err)
+	}
+	return SharedRouteLatency{ReleaseRequests: row.ReleaseRequests, ReleaseP95LatencyMS: row.ReleaseP95LatencyMs,
+		BaselineRequests: row.BaselineRequests, BaselineP95LatencyMS: row.BaselineP95LatencyMs}, nil
+}
+
 // RequestTelemetryBaselineP95ByRoute backs the regression detector's
 // per-route p95 baseline lookup.
 func (s *PgStore) RequestTelemetryBaselineP95ByRoute(ctx context.Context, arg sqlc.RequestTelemetryBaselineP95ByRouteParams) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, error) {

@@ -100995,6 +100995,101 @@ func (q *Queries) RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, a
 	return items, nil
 }
 
+const requestTelemetrySharedRouteLatency = `-- name: RequestTelemetrySharedRouteLatency :one
+WITH release_rows AS (
+    SELECT method, route, latency_ms, SUM(count::bigint) AS requests
+      FROM request_telemetry
+     WHERE app_id = $1::uuid
+       AND deployment_id = $2::uuid
+       AND received_at >= $3::timestamptz
+       AND received_at < $4::timestamptz
+       AND NOT long_lived
+     GROUP BY method, route, latency_ms
+), baseline_rows AS (
+    SELECT method, route, latency_ms, SUM(count::bigint) AS requests
+      FROM request_telemetry
+     WHERE app_id = $1::uuid
+       AND deployment_id = $5::uuid
+       AND received_at >= $6::timestamptz
+       AND received_at < $7::timestamptz
+       AND NOT long_lived
+     GROUP BY method, route, latency_ms
+), shared AS (
+    SELECT method, route FROM release_rows
+    INTERSECT
+    SELECT method, route FROM baseline_rows
+), weighted AS (
+    SELECT 'release'::text AS side, r.latency_ms, SUM(r.requests) AS requests
+      FROM release_rows AS r
+      JOIN shared USING (method, route)
+     GROUP BY r.latency_ms
+    UNION ALL
+    SELECT 'baseline'::text AS side, b.latency_ms, SUM(b.requests) AS requests
+      FROM baseline_rows AS b
+      JOIN shared USING (method, route)
+     GROUP BY b.latency_ms
+), ranked AS (
+    SELECT side,
+           latency_ms,
+           SUM(requests) OVER (PARTITION BY side ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(requests) OVER (PARTITION BY side) AS total
+      FROM weighted
+)
+SELECT COALESCE(MAX(total) FILTER (WHERE side = 'release'), 0)::bigint AS release_requests,
+       COALESCE(MIN(latency_ms) FILTER (
+           WHERE side = 'release' AND cumulative >= CEIL(total * 0.95)
+       ), 0)::double precision AS release_p95_latency_ms,
+       COALESCE(MAX(total) FILTER (WHERE side = 'baseline'), 0)::bigint AS baseline_requests,
+       COALESCE(MIN(latency_ms) FILTER (
+           WHERE side = 'baseline' AND cumulative >= CEIL(total * 0.95)
+       ), 0)::double precision AS baseline_p95_latency_ms
+  FROM ranked
+`
+
+type RequestTelemetrySharedRouteLatencyParams struct {
+	AppID         pgtype.UUID
+	ReleaseID     pgtype.UUID
+	ReleaseSince  pgtype.Timestamptz
+	ReleaseUntil  pgtype.Timestamptz
+	BaselineID    pgtype.UUID
+	BaselineSince pgtype.Timestamptz
+	BaselineUntil pgtype.Timestamptz
+}
+
+type RequestTelemetrySharedRouteLatencyRow struct {
+	ReleaseRequests      int64
+	ReleaseP95LatencyMs  float64
+	BaselineRequests     int64
+	BaselineP95LatencyMs float64
+}
+
+// Release and predecessor p95 over only the method+route pairs both served in
+// their windows (ADR-1445 amendment 2026-11-10, Hunt 32 H32-33). The
+// post-release watch reads it only after the whole-app p95 regressed, so a
+// route the predecessor never served in its baseline cannot roll a release
+// back on its own. Weighted by `count`; long-lived sessions stay out of the
+// percentiles as in RequestTelemetryCircuitBreakerSummary. Both windows use
+// request_telemetry_app_dep_received_idx.
+func (q *Queries) RequestTelemetrySharedRouteLatency(ctx context.Context, db DBTX, arg RequestTelemetrySharedRouteLatencyParams) (RequestTelemetrySharedRouteLatencyRow, error) {
+	row := db.QueryRow(ctx, requestTelemetrySharedRouteLatency,
+		arg.AppID,
+		arg.ReleaseID,
+		arg.ReleaseSince,
+		arg.ReleaseUntil,
+		arg.BaselineID,
+		arg.BaselineSince,
+		arg.BaselineUntil,
+	)
+	var i RequestTelemetrySharedRouteLatencyRow
+	err := row.Scan(
+		&i.ReleaseRequests,
+		&i.ReleaseP95LatencyMs,
+		&i.BaselineRequests,
+		&i.BaselineP95LatencyMs,
+	)
+	return i, err
+}
+
 const requeueFailedWorkflowStepForRetry = `-- name: RequeueFailedWorkflowStepForRetry :execrows
 UPDATE workflow_steps
 SET status='pending',output=NULL,next_check_at=NULL,next_retry_at=NULL,

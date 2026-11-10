@@ -7110,6 +7110,14 @@ type Querier interface {
 	// One immutable deployment only. Identity joins validate ownership, never
 	// infer a tenant from today's consumer link. Counts precede all output caps.
 	RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, arg RequestTelemetryRouteCustomersParams) ([]RequestTelemetryRouteCustomersRow, error)
+	// Release and predecessor p95 over only the method+route pairs both served in
+	// their windows (ADR-1445 amendment 2026-11-10, Hunt 32 H32-33). The
+	// post-release watch reads it only after the whole-app p95 regressed, so a
+	// route the predecessor never served in its baseline cannot roll a release
+	// back on its own. Weighted by `count`; long-lived sessions stay out of the
+	// percentiles as in RequestTelemetryCircuitBreakerSummary. Both windows use
+	// request_telemetry_app_dep_received_idx.
+	RequestTelemetrySharedRouteLatency(ctx context.Context, db DBTX, arg RequestTelemetrySharedRouteLatencyParams) (RequestTelemetrySharedRouteLatencyRow, error)
 	RequeueFailedWorkflowStepForRetry(ctx context.Context, db DBTX, arg RequeueFailedWorkflowStepForRetryParams) (int64, error)
 	RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg RequeueWorkflowRunForRetryParams) (WorkflowRun, error)
