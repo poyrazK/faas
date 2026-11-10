@@ -45,16 +45,14 @@ const (
 	// their first reconcile; turn it on fleet-wide before admitting clones.
 	KeyFullEnvironmentClones = "full_environment_clones_enabled"
 
-	// The values that shape the CPU of an app on the
-	// KeyGuestVCPUFromCPUApps list (ADR-20261101215228), read by schedd.
-	// Each default is the compiled value; bounds are in pkg/api/limits.go.
+	// Retired CPU shape keys (ADR-20261109172421): every app's CPU follows
+	// its instance size, so no daemon reads them. apid keeps them as
+	// read-only catalog entries for the rows already stored.
 	KeyAppCPUBaselineMillicoresPerGB = "app_cpu_baseline_millicores_per_gb"
 	KeyAppCPUCeilingFloorMillicores  = "app_cpu_ceiling_floor_millicores"
 	KeyGuestVCPUMillicores           = "guest_vcpu_millicores"
-	// KeyGuestVCPUFromCPUApps lists the apps, comma-separated IDs or "*",
-	// whose vCPUs follow their CPU ceiling and that book their plan's
-	// baseline (ADR-20261101160231). Empty keeps every app on its plan.
-	KeyGuestVCPUFromCPUApps = "guest_vcpu_from_cpu_apps"
+	KeyGuestVCPUFromCPUApps          = "guest_vcpu_from_cpu_apps"
+	KeyCPUSizeApps                   = "cpu_size_apps"
 
 	// KeySnapshotRefresh is schedd's snapshot refresh after a release:
 	// off, shadow or on (ADR-20261106214916). KeySnapshotRefreshWindowHours
@@ -67,12 +65,6 @@ const (
 	// the vCPU and CPU budgets, observe admits on memory alone and counts
 	// what those gates would have refused (ADR-20261109172421).
 	KeyCPUAdmission = "cpu_admission"
-	// KeyCPUSizeApps lists the apps, comma-separated IDs or "*", whose CPU
-	// follows instance size instead of plan: one guest vCPU per GB, a
-	// cpu.weight by RAM and no quota but their own (ADR-20261109172421).
-	// Empty keeps every app on its plan. It takes precedence over
-	// KeyGuestVCPUFromCPUApps.
-	KeyCPUSizeApps = "cpu_size_apps"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.

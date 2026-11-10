@@ -812,9 +812,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-1155: on-demand profile capture outcomes, queue waits and the
 	// automatic captures schedd skips, for the capture alerts.
 	engine.WithProfileCaptureMetrics(wire.NewProfileCaptureMetrics(ops.Registry()))
-	// ADR-20261101215228: the values that shape a listed app's CPU, and the
-	// list itself, are runtime config.
-	cpuShape := &cpuShapeConfig{engine: engine}
 	requestConcurrency := &runtimeconfig.RequestConcurrency{}
 	// ADR-20261106214916: after a node takes a release, find the recently
 	// active apps whose snapshots there the release made stale.
@@ -822,17 +819,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261109172421: cpu_admission observe admits on memory alone and
 	// counts what the vCPU and CPU budgets would have refused.
 	engine.WithCPUAdmissionMetrics(ops.Registry())
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.CPUShapeKeys...), runtimeconfig.RequestConcurrencyKeys...), append(snapshotRefreshKeys, runtimeconfig.KeyCPUAdmission)...),
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.RequestConcurrencyKeys...), append(snapshotRefreshKeys, runtimeconfig.KeyCPUAdmission)...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			if handled, err := requestConcurrency.Apply(key, value); handled {
 				if err == nil {
 					log.Info("schedd: applied request limit setting (ADR-20261101215228)", "key", key, "value", string(value))
-				}
-				return err
-			}
-			if handled, err := cpuShape.apply(key, value); handled {
-				if err == nil {
-					log.Info("schedd: applied CPU shape setting (ADR-20261101215228)", "key", key, "value", string(value))
 				}
 				return err
 			}

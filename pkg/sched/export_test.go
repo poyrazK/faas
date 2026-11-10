@@ -1115,30 +1115,12 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
 
-// GuestVCPUs exposes guestVCPUs (ADR-20261101160231).
-func (e *Engine) GuestVCPUs(app state.App, limits api.Limits) int { return e.guestVCPUs(app, limits) }
-
-// AppCPUBookingMillicores and AppCPUBookingStamp expose the step 5b
-// bookings (ADR-20261101160231).
-func (e *Engine) AppCPUBookingMillicores(app state.App, limits api.Limits) int {
-	return e.appCPUBookingMillicores(app, limits)
-}
-func (e *Engine) AppCPUBookingStamp(app state.App, limits api.Limits) int {
-	return e.appCPUBookingStamp(app, limits)
-}
-
-// AppCPUMillicores exposes appCPUMillicores (ADR-20261101160231).
-func (e *Engine) AppCPUMillicores(app state.App, limits api.Limits) int {
-	return e.appCPUMillicores(app, limits)
-}
-
-// AppCPUWeight, CPUBySize and PolicyAppCPUMillicores expose CPU that follows
-// instance size (ADR-20261109172421).
-func (e *Engine) AppCPUWeight(app state.App) int32 { return e.appCPUWeight(app) }
-func (e *Engine) CPUBySize(appID string) bool      { return e.cpuBySize(appID) }
-func (e *Engine) PolicyAppCPUMillicores(ctx context.Context, appID string, configured int) (int, error) {
-	return e.policyAppCPUMillicores(ctx, appID, configured)
-}
+// AppVCPUs, AppCPUMillicores, AppCPUBookingMillicores and AppCPUWeight
+// expose an app instance's CPU, which follows its size (ADR-20261109172421).
+func AppVCPUs(app state.App) int                { return appVCPUs(app) }
+func AppCPUMillicores(app state.App) int        { return appCPUMillicores(app) }
+func AppCPUBookingMillicores(app state.App) int { return appCPUBookingMillicores(app) }
+func AppCPUWeight(app state.App) int32          { return appCPUWeight(app) }
 
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
