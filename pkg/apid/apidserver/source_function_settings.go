@@ -20,13 +20,21 @@ import (
 // non-secret env, before the deployment row exists. An omitted key leaves the
 // app's setting alone, as `gregale deploy` does. Like the push's sibling
 // addresses, these are not undone when the enqueue fails afterwards.
-func (s *server) applySourceFunctionSettings(ctx context.Context, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec) (state.App, *api.Problem) {
+//
+// scope is the environment the push deploys ("" is production). The env is
+// written in that scope only. RAM, idle timeout and concurrency belong to the
+// app in every environment, so only a production push changes them: a push to
+// a branch mapped to staging must not change what production runs with.
+func (s *server) applySourceFunctionSettings(ctx context.Context, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec, scope string) (state.App, *api.Problem) {
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {
 		return app, api.ErrCapacity("could not resolve account plan limits")
 	}
+	if scope == "" {
+		scope = state.DefaultEnvScope
+	}
 	req, changed := functionSettingsRequest(spec, app)
-	if changed {
+	if changed && scope == state.DefaultEnvScope {
 		if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
 			return app, prob
 		}
@@ -47,13 +55,15 @@ func (s *server) applySourceFunctionSettings(ctx context.Context, acct state.Acc
 		}
 		// A PATCH records app.updated; the push changed the same settings
 		// (apps/projects review 2026-11-10, P12).
-		s.audit.Emit(ctx, "app.updated", &acct.ID, map[string]any{
-			"app_id": app.ID, "slug": app.Slug, "source": "repository_push",
-			"ram_mb": updated.RAMMB, "idle_timeout_s": updated.IdleTimeoutS, "function_concurrency": updated.Manifest.FunctionConcurrency,
-		})
+		if s.audit != nil {
+			s.audit.Emit(ctx, "app.updated", &acct.ID, map[string]any{
+				"app_id": app.ID, "slug": app.Slug, "source": "repository_push",
+				"ram_mb": updated.RAMMB, "idle_timeout_s": updated.IdleTimeoutS, "function_concurrency": updated.Manifest.FunctionConcurrency,
+			})
+		}
 		app = updated
 	}
-	if prob := s.applySourceFunctionEnv(ctx, acct, app, spec, limits); prob != nil {
+	if prob := s.applySourceFunctionEnv(ctx, acct, app, spec, limits, scope); prob != nil {
 		return app, prob
 	}
 	return app, nil
@@ -79,13 +89,13 @@ func functionSettingsRequest(spec gregalemanifest.FunctionSpec, app state.App) (
 	return req, changed
 }
 
-// applySourceFunctionEnv writes the function's env in the default scope and,
-// with prune_env, removes default-scope keys it does not declare, as one
+// applySourceFunctionEnv writes the function's env in scope and, with
+// prune_env, removes keys in that scope it does not declare, as one
 // configuration batch: the change gets a config revision (env history and
 // rollback see it), the config guard watches it like any other write, and the
 // count limit is enforced atomically (ADR-1451; apps/projects review
-// 2026-11-10, P12). Secrets are separate and never touched.
-func (s *server) applySourceFunctionEnv(ctx context.Context, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec, limits api.Limits) *api.Problem {
+// 2026-11-10, P12). Other scopes and secrets are never touched.
+func (s *server) applySourceFunctionEnv(ctx context.Context, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec, limits api.Limits, scope string) *api.Problem {
 	if len(spec.Env) == 0 && !spec.PruneEnv {
 		return nil
 	}
@@ -94,7 +104,7 @@ func (s *server) applySourceFunctionEnv(ctx context.Context, acct state.Account,
 			return api.ErrValidation(fmt.Sprintf("env %s is set by the platform; remove it from gregale.yaml", key))
 		}
 	}
-	current, err := s.store.ListAppEnvInScope(ctx, app.AccountID, app.ID, state.DefaultEnvScope)
+	current, err := s.store.ListAppEnvInScope(ctx, app.AccountID, app.ID, scope)
 	if err != nil {
 		return api.ErrCapacity("could not read the function's env")
 	}
@@ -107,20 +117,32 @@ func (s *server) applySourceFunctionEnv(ctx context.Context, acct state.Account,
 	if !ok || !revisionsOK {
 		return api.ErrCapacity("atomic configuration is unavailable")
 	}
-	latest, err := revisions.ListConfigRevisions(ctx, app.ID, state.DefaultEnvScope, 1)
-	if err != nil {
-		return api.ErrCapacity("could not read the function's configuration revision")
+	// A scope written before config history existed first records a
+	// baseline revision and refuses the batch; the push has reviewed nothing
+	// else, so it retries once against that baseline.
+	for attempt := 0; ; attempt++ {
+		latest, err := revisions.ListConfigRevisions(ctx, app.ID, scope, 1)
+		if err != nil {
+			return api.ErrCapacity("could not read the function's configuration revision")
+		}
+		revision := int64(0)
+		if len(latest) == 1 {
+			revision = latest[0].Revision
+		}
+		request.RequestID, request.ExpectedRevision = uuid.NewString(), &revision
+		if problem := request.Validate(limits); problem != nil {
+			return problem
+		}
+		_, err = batches.ApplyEnvBatch(ctx, state.EnvBatchChange{AccountID: app.AccountID, AppID: app.ID, Scope: scope,
+			Actor: "repository_push:" + acct.ID, Guard: s.configGuardHasTraffic(ctx, app.ID, scope), Limits: limits, Request: request})
+		if attempt == 0 && len(latest) == 0 && errors.Is(err, state.ErrEnvBatchRevisionConflict) {
+			continue
+		}
+		return functionEnvBatchProblem(err, app, limits)
 	}
-	revision := int64(0)
-	if len(latest) == 1 {
-		revision = latest[0].Revision
-	}
-	request.RequestID, request.ExpectedRevision = uuid.NewString(), &revision
-	if problem := request.Validate(limits); problem != nil {
-		return problem
-	}
-	_, err = batches.ApplyEnvBatch(ctx, state.EnvBatchChange{AccountID: app.AccountID, AppID: app.ID, Scope: state.DefaultEnvScope,
-		Actor: "repository_push:" + acct.ID, Guard: s.configGuardHasTraffic(ctx, app.ID, state.DefaultEnvScope), Limits: limits, Request: request})
+}
+
+func functionEnvBatchProblem(err error, app state.App, limits api.Limits) *api.Problem {
 	var quota *state.EnvBatchQuotaError
 	switch {
 	case err == nil:
@@ -134,9 +156,9 @@ func (s *server) applySourceFunctionEnv(ctx context.Context, acct state.Account,
 	}
 }
 
-// functionEnvBatch is the batch that brings the default-scope env to the
-// function's declared env: changed or new keys set and, with prune_env, the
-// undeclared keys deleted. It reports false when nothing changes.
+// functionEnvBatch is the batch that brings a scope's env to the function's
+// declared env: changed or new keys set and, with prune_env, undeclared keys
+// deleted. It reports false when nothing changes.
 func functionEnvBatch(spec gregalemanifest.FunctionSpec, current []state.AppEnv) (api.EnvBatchRequest, bool) {
 	existing := make(map[string]string, len(current))
 	for _, row := range current {

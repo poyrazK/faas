@@ -108,8 +108,9 @@ type githubdBridge struct {
 	previewDatabases func(context.Context, state.Account, api.Plan, state.App) error
 }
 
-// bridgeSettingsApplier is server.applyBridgeSourceSettings.
-type bridgeSettingsApplier func(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (state.App, func(context.Context), *api.Problem)
+// bridgeSettingsApplier is server.applyBridgeSourceSettings. scope is the
+// environment the push deploys ("" is production).
+type bridgeSettingsApplier func(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, scope string) (state.App, func(context.Context), *api.Problem)
 
 // checkSourcePlanLimit refuses a GitHub build whose source is above the
 // account's plan limit. githubd fetches every push with Scale's limits, so
@@ -579,7 +580,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	params.SourcePath = spooled
 	undoSettings := func(context.Context) {}
 	if g.applySettings != nil && manifest != nil {
-		updated, undo, problem := g.applySettings(ctx, resource, app, pushSettingsManifest(manifest, req, kind, params))
+		updated, undo, problem := g.applySettings(ctx, resource, app, pushSettingsManifest(manifest, params), req.DeploymentScope)
 		if problem != nil {
 			if spooled != req.SourcePath {
 				_ = os.Remove(spooled)
@@ -951,19 +952,14 @@ func previewDatabasesStatus(err error) error {
 // created is left in place: it activates nothing, the app's next push
 // supersedes it, and githubd retrying the delivery prepares it again (a
 // cancelled intent would refuse that retry).
-// pushSettingsManifest drops a function's app settings (RAM, idle timeout,
-// concurrency and default-scope env) from a push that does not release to
-// production traffic. Those settings are app-wide and the env lands in the
-// production scope, so a stage-branch push or a release staged without
-// traffic rewrote production at its next wake, before (or without) any
-// production release (apps/projects review 2026-11-10, P11). A PR preview
-// builds its own preview app and keeps them.
-func pushSettingsManifest(manifest *gregalemanifest.Manifest, req *githubdpb.EnqueueBuildRequest, kind state.DeploymentKind, params apidsource.EnqueueParams) *gregalemanifest.Manifest {
-	if manifest == nil || manifest.FunctionSettings == nil || kind == state.DeploymentKindPreview {
-		return manifest
-	}
+// pushSettingsManifest drops a function's settings from a release staged
+// without traffic: its RAM, idle timeout, concurrency and env take effect at
+// the environment's next wake, so a staged release would change what the live
+// one runs with before it is promoted (apps/projects review 2026-11-10, P11).
+// Crons follow the same rule (prepareDeliveryCrons).
+func pushSettingsManifest(manifest *gregalemanifest.Manifest, params apidsource.EnqueueParams) *gregalemanifest.Manifest {
 	staged := params.TrafficPercentExplicit && params.TrafficPercent == 0 && params.CanaryTotalSteps == 0
-	if !staged && state.IsProductionScope(req.DeploymentScope) {
+	if manifest == nil || manifest.FunctionSettings == nil || !staged {
 		return manifest
 	}
 	withoutFunction := *manifest

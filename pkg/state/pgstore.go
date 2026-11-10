@@ -6326,6 +6326,9 @@ func (s *PgStore) applyProjectReconcileOnce(
 	// adopt maps a function workload to the same-account function app
 	// outside any project that already holds its slug: `gregale deploy`
 	// made it, and the repository takes it over (ADR-20261108160000 §1).
+	// The app must also have the project's owner (the same org, or both
+	// personal): project apps share the project's org_id, and adoption never
+	// moves an app between a personal and a company owner.
 	adopt := make(map[string]string)
 	removeIDs := make(map[string]bool)
 	for _, mutation := range mutations {
@@ -6341,13 +6344,8 @@ func (s *PgStore) applyProjectReconcileOnce(
 			}
 			var collisionID, collisionAccount, collisionOrg, collisionProject, collisionType string
 			if err := tx.QueryRow(ctx, `select id::text, account_id::text, coalesce(org_id::text, ''), coalesce(project_id::text, ''), type from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID, &collisionAccount, &collisionOrg, &collisionProject, &collisionType); err == nil {
-				// Adoption must not cross the personal/company boundary: a
-				// legacy company project keeps its creator's account_id, so
-				// the account alone matched the creator's personal function
-				// app (apps/projects review 2026-11-10, P9).
-				sameOwner := SameAppResourceOwner(App{AccountID: collisionAccount, OrgID: collisionOrg}, App{AccountID: storedProject.AccountID, OrgID: storedProject.OrgID})
 				switch {
-				case mutation.App.Type == AppTypeFunction && collisionType == string(AppTypeFunction) && collisionAccount == storedProject.AccountID && sameOwner && collisionProject == "":
+				case mutation.App.Type == AppTypeFunction && collisionType == string(AppTypeFunction) && collisionAccount == storedProject.AccountID && collisionOrg == storedProject.OrgID && collisionProject == "":
 					adopt[mutation.App.WorkloadName] = collisionID
 					continue
 				case !removeIDs[collisionID]:
@@ -11714,7 +11712,7 @@ func (s *PgStore) ClearObsoleteDeployments(ctx context.Context, appID string, ol
 	// column — `deployments` carries `created_at` as its FIFO
 	// tiebreaker. (Surfaced in CI round-5 dispatch 32671691532
 	// pg-shard-2 — SQLSTATE 42703 column does not exist.)
-	countRows, err := sqlc.New().ClearObsoleteDeploymentsRetainingRecovery(ctx, tx, sqlc.ClearObsoleteDeploymentsRetainingRecoveryParams{AppID: mustPgUUID(appID), OlderThan: gitOpsTime(olderThan), DeletedAt: gitOpsTime(now)})
+	countRows, err := sqlc.New().ClearObsoleteDeploymentsRetainingRecovery(ctx, tx, sqlc.ClearObsoleteDeploymentsRetainingRecoveryParams{AppID: mustPgUUID(appID), OlderThan: gitOpsTime(olderThan), DeletedAt: gitOpsTime(now), RollbackGenerations: int32(api.SnapshotRollbackRetentionDeployments)})
 
 	if err != nil {
 		return 0, fmt.Errorf("ClearObsoleteDeployments: bulk update: %w", err)

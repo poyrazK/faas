@@ -1,41 +1,28 @@
-// A functions-project push applies its function's app-wide settings and
-// default-scope env. A push that does not release to production traffic (a
-// stage branch, or a release staged without traffic) rewrote production with
-// them; the env bypassed config history (apps/projects review 2026-11-10,
-// P11 and P12).
+// A functions-project push applies its function's settings and env. A
+// release staged without traffic changed what the live release runs with,
+// and the env bypassed config history (apps/projects review 2026-11-10, P11
+// and P12).
 package apidserver_test
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
-	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestPushSettingsManifestKeepsFunctionSettingsOnlyForProductionReleases(t *testing.T) {
-	spec := &gregalemanifest.FunctionSpec{RAMMB: 512, Env: map[string]string{"MODE": "x"}}
-	manifest := &gregalemanifest.Manifest{FunctionSettings: spec}
-	for _, tc := range []struct {
-		name   string
-		scope  string
-		kind   state.DeploymentKind
-		params apidsource.EnqueueParams
-		keep   bool
-	}{
-		{"production push", "", state.DeploymentKindGitHub, apidsource.EnqueueParams{}, true},
-		{"named production push", "production", state.DeploymentKindGitHub, apidsource.EnqueueParams{}, true},
-		{"stage branch push", "staging", state.DeploymentKindGitHub, apidsource.EnqueueParams{}, false},
-		{"staged without traffic", "", state.DeploymentKindGitHub, apidsource.EnqueueParams{TrafficPercentExplicit: true}, false},
-		{"pull request preview", "", state.DeploymentKindPreview, apidsource.EnqueueParams{}, true},
-	} {
-		got := apidserver.PushSettingsManifest(manifest, &githubdpb.EnqueueBuildRequest{DeploymentScope: tc.scope}, tc.kind, tc.params)
-		if kept := got.FunctionSettings != nil; kept != tc.keep {
-			t.Errorf("%s: function settings kept = %v, want %v", tc.name, kept, tc.keep)
-		}
+func TestPushSettingsManifestDropsFunctionSettingsFromStagedReleases(t *testing.T) {
+	manifest := &gregalemanifest.Manifest{FunctionSettings: &gregalemanifest.FunctionSpec{RAMMB: 512}}
+	if got := apidserver.PushSettingsManifest(manifest, apidsource.EnqueueParams{}); got.FunctionSettings == nil {
+		t.Fatal("a release taking traffic keeps the function's settings")
+	}
+	if got := apidserver.PushSettingsManifest(manifest, apidsource.EnqueueParams{TrafficPercentExplicit: true}); got.FunctionSettings != nil {
+		t.Fatal("a release staged without traffic must not apply the function's settings")
 	}
 	if manifest.FunctionSettings == nil {
 		t.Fatal("the caller's manifest must not be modified")
@@ -56,5 +43,37 @@ func TestFunctionEnvBatchSetsChangesAndPrunesUndeclared(t *testing.T) {
 	}
 	if _, changed := apidserver.FunctionEnvBatch(gregalemanifest.FunctionSpec{Env: map[string]string{"KEEP": "same"}}, current); changed {
 		t.Fatal("an unchanged env must not write a revision")
+	}
+}
+
+// The push's env lands as a config revision that env history and rollback see.
+func TestPushedFunctionEnvRecordsAConfigRevision(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "fn-history@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "hist-api", Type: state.AppTypeFunction, Runtime: "node22",
+		RAMMB: 256, MaxConcurrency: 1, Status: state.AppActive, WorkloadClass: state.WorkloadClassHTTP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := gregalemanifest.FunctionSpec{Name: "api", Env: map[string]string{"MODE": "prod"}}
+	if _, prob := apidserver.ApplySourceFunctionSettingsForTest(ctx, store, acct, app, spec, ""); prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	revisions, err := store.ListConfigRevisions(ctx, app.ID, state.DefaultEnvScope, 5)
+	if err != nil || len(revisions) == 0 || revisions[0].Variables["MODE"] != "prod" || revisions[0].Source != state.ConfigSourceEnvBatch {
+		t.Fatalf("revisions = %+v, %v; want the newest an env batch with MODE=prod", revisions, err)
+	}
+	// An unchanged env writes no further revision.
+	if _, prob := apidserver.ApplySourceFunctionSettingsForTest(ctx, store, acct, app, spec, ""); prob != nil {
+		t.Fatalf("re-apply: %+v", prob)
+	}
+	if again, _ := store.ListConfigRevisions(ctx, app.ID, state.DefaultEnvScope, 5); len(again) != len(revisions) {
+		t.Fatalf("revisions after an unchanged push = %d, want %d", len(again), len(revisions))
 	}
 }

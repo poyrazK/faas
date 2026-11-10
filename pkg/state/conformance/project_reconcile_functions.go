@@ -58,35 +58,44 @@ func testProjectReconcileAdoptsFunctionApp(t *testing.T, fx *Fixture) {
 		t.Fatal("a plain app holding the slug must conflict")
 	}
 
-	// A legacy company project keeps its creator's account_id; it must not
-	// adopt the creator's personal function app (apps/projects review
-	// 2026-11-10, P9).
-	org, err := fx.Store.CreateOrg(fx.Ctx, state.Org{Slug: "fnorg-" + suffix, Name: "Fn Company", Plan: api.PlanPro})
+	// Adoption never crosses the personal/company boundary: project apps share
+	// the project's org_id.
+	org, err := fx.Store.CreateOrg(fx.Ctx, state.Org{Slug: "fnorg-" + suffix, Name: "Functions org", Plan: api.PlanScale, Status: state.OrgStatusActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fx.Store.AddOrgMember(fx.Ctx, org.ID, fx.Account.ID, state.OrgRoleOwner, nil); err != nil {
-		t.Fatal(err)
-	}
 	company, err := fx.Store.CreateProject(fx.Ctx, state.Project{
-		AccountID: fx.Account.ID, OrgID: org.ID, Slug: "fncompany-" + suffix, ScanSource: state.ProjectScanSourceCompose,
+		AccountID: fx.Account.ID, OrgID: org.ID, Slug: "fnco-" + suffix, ScanSource: state.ProjectScanSourceCompose,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	personal, err := fx.Store.CreateApp(fx.Ctx, state.App{
-		AccountID: fx.Account.ID, Slug: "fn-personal-" + suffix, Type: state.AppTypeFunction, Runtime: "python312",
+		AccountID: fx.Account.ID, Slug: "fn-mine-" + suffix, Type: state.AppTypeFunction, Runtime: "python312",
 		Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1, WorkloadClass: state.WorkloadClassHTTP,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cross := create
-	cross.App.Slug, cross.App.WorkloadName = personal.Slug, "personal"
+	cross.App.Slug, cross.App.WorkloadName = personal.Slug, "mine"
 	if _, err := reconciler.ApplyProjectReconcile(fx.Ctx, company, []state.ProjectReconcileMutation{cross}, nil, state.ProjectScanSourceFunctions, limits); err == nil {
-		t.Fatal("a company project must not adopt its creator's personal function app")
+		t.Fatal("a company project must not adopt the creator's personal function app")
 	}
-	if after, err := fx.Store.AppByID(fx.Ctx, personal.ID); err != nil || after.ProjectID != "" || after.OrgID != "" {
-		t.Fatalf("personal function app after refused adoption = %+v, %v", after, err)
+	owned, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, OrgID: org.ID, Slug: "fn-ours-" + suffix, Type: state.AppTypeFunction, Runtime: "python312",
+		Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1, WorkloadClass: state.WorkloadClassHTTP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := create
+	same.App.Slug, same.App.WorkloadName = owned.Slug, "ours"
+	res, err = reconciler.ApplyProjectReconcile(fx.Ctx, company, []state.ProjectReconcileMutation{same}, nil, state.ProjectScanSourceFunctions, limits)
+	if err != nil {
+		t.Fatalf("adopt company function app: %v", err)
+	}
+	if len(res.Added) != 1 || res.Added[0].ID != owned.ID || res.Added[0].ProjectID != company.ID {
+		t.Fatalf("added = %+v, want the company app %s adopted", res.Added, owned.ID)
 	}
 }
