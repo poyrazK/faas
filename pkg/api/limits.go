@@ -9952,6 +9952,10 @@ const (
 	// VM's cumulative usage (ADR-20261027090013 step 11). A report lost
 	// with vmmd costs at most this much measurement.
 	SandboxUsageReportSec = 60
+	// SandboxWarmSnapshotsMax bounds the warm session snapshot slots one
+	// schedd keeps across nodes (ADR-20261027090013 §12); a shape past it
+	// cold-boots every session.
+	SandboxWarmSnapshotsMax = 512
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2

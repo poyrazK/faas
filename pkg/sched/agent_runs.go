@@ -54,6 +54,11 @@ type AgentRunConfig struct {
 	// SandboxLayerKey is the platform sandbox layer (drive1) sandbox
 	// sessions boot with (ADR-20261027090013 §2); empty: no sessions.
 	SandboxLayerKey string
+	// SandboxSnapshots restores sessions from a warm snapshot of their node,
+	// drives, machine shape and network mode, captured after that shape's
+	// first cold-booted session there ends (ADR-20261027090013 §12). Off:
+	// every session cold-boots.
+	SandboxSnapshots bool
 }
 
 // AgentRunAdmission is one run's machine (ADR-20261027090010 §5), already checked
@@ -140,6 +145,10 @@ type AgentRunner struct {
 	snapMu    sync.Mutex
 	snapshots map[agentSnapshotShape]*AgentRunSnapshot
 	capturing map[agentSnapshotShape]bool
+	// sandboxSnaps and sandboxCapturing are sessions' warm snapshots, under
+	// snapMu, per schedd process like the preset snapshots.
+	sandboxSnaps     map[sandboxSnapshotShape]sandboxSnapshot
+	sandboxCapturing map[sandboxSnapshotShape]bool
 }
 
 // NewAgentRunner returns a runner, or ErrAgentRunsDisabled when the config
@@ -155,7 +164,8 @@ func NewAgentRunner(engine *Engine, router agentRunRouter, cfg AgentRunConfig) (
 		return nil, ErrAgentRunsDisabled
 	}
 	return &AgentRunner{engine: engine, router: router, cfg: cfg, pool: pool,
-		snapshots: map[agentSnapshotShape]*AgentRunSnapshot{}, capturing: map[agentSnapshotShape]bool{}}, nil
+		snapshots: map[agentSnapshotShape]*AgentRunSnapshot{}, capturing: map[agentSnapshotShape]bool{},
+		sandboxSnaps: map[sandboxSnapshotShape]sandboxSnapshot{}, sandboxCapturing: map[sandboxSnapshotShape]bool{}}, nil
 }
 
 // Run admits one agent run, streams it on the chosen node's vmmd, and

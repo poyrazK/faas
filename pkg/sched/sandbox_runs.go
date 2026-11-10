@@ -75,6 +75,9 @@ type SandboxSpec struct {
 	StartCmd        string
 	ReadyCmd        string
 	ReadyTimeout    time.Duration
+	// Snapshot restores the session from a warm snapshot of the same drives,
+	// machine and network mode (ADR-20261027090013 §12).
+	Snapshot *AgentRunSnapshot
 }
 
 // SandboxControl is a request agentd sends a live session's VM: a freeze,
@@ -180,7 +183,12 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	if err != nil {
 		return err
 	}
-	defer release()
+	capturing := false
+	defer func() {
+		if !capturing {
+			release()
+		}
+	}()
 	if placed != nil {
 		if err := placed(placement); err != nil {
 			return err
@@ -194,8 +202,29 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 		BaseKey: r.cfg.BaseKey, LayerKey: r.cfg.SandboxLayerKey, VCPU: a.VCPU, MemSizeMiB: a.RAMMB,
 		CPUMillicores: a.CPUMillicores, QuietPauseAfter: api.QuietPauseAfterMillis * time.Millisecond, Network: a.network(),
 		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey, StartCmd: a.StartCmd, ReadyCmd: a.ReadyCmd, ReadyTimeout: a.ReadyTimeout}
-	if err := router.RunSandbox(ctx, placement.NodeID, spec, hooks, control); err != nil {
+	shape := r.sandboxShape(placement.NodeID, spec)
+	spec.Snapshot = r.sandboxSnapshotFor(shape, spec)
+	var method string
+	booted := hooks.Booted
+	hooks.Booted = func(ctx context.Context, m string, bootMs int64) error {
+		method = m
+		if booted != nil {
+			return booted(ctx, m, bootMs)
+		}
+		return nil
+	}
+	err = router.RunSandbox(ctx, placement.NodeID, spec, hooks, control)
+	if spec.Snapshot != nil && method != "" && method != vmmdpb.WakeMethod_WAKE_RESTORE.String() {
+		r.dropSandboxSnapshot(shape, spec.Snapshot)
+	}
+	if err != nil {
 		return fmt.Errorf("sched: sandbox %s on node %s: %w", a.SandboxID, placement.NodeID, err)
+	}
+	// A session that cold-booted and ended cleanly proves the shape boots;
+	// its capture runs under the session's reservation, which it releases.
+	if method == vmmdpb.WakeMethod_WAKE_COLD_BOOT.String() && r.claimSandboxCapture(shape) {
+		capturing = true
+		go r.captureSandbox(context.WithoutCancel(ctx), placement, spec, shape, release)
 	}
 	return nil
 }
@@ -246,7 +275,7 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 		BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB),
 		CpuMillicores: int32(spec.CPUMillicores), QuietPauseAfterMs: spec.QuietPauseAfter.Milliseconds(), NetworkMode: spec.Network,
 		WorkspaceKey: spec.WorkspaceKey, ImageKey: spec.ImageKey, StartCmd: spec.StartCmd, ReadyCmd: spec.ReadyCmd,
-		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(),
+		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(), Snapshot: snapshotToProto(spec.Snapshot),
 	}}}); err != nil {
 		return liftErr(err)
 	}

@@ -252,3 +252,38 @@ func ParentBaseAliases() []string {
 	}
 	return out
 }
+
+// Warm sandbox session snapshots (ADR-20261027090013 §12). A preset's
+// snapshot holds only platform drives, so every account's sessions share
+// it; a template's holds the account's own image, so its namespace names
+// the account and no other account's session restores it.
+const sandboxPresetSnapshotNamespace = "sandbox-preset"
+
+// SandboxSnapshotNamespace is the capture namespace of a session's warm
+// snapshot: accountID's own for an image session, the shared preset one
+// otherwise.
+func SandboxSnapshotNamespace(accountID string, image bool) string {
+	if image {
+		return "sandbox-template-" + accountID
+	}
+	return sandboxPresetSnapshotNamespace
+}
+
+// IsSandboxSnapshotKey reports whether key is a capture memory key a session
+// of accountID may restore (snap/<namespace>/captures/<id>/v2/mem).
+func IsSandboxSnapshotKey(key, accountID string, image bool) bool {
+	rest, ok := strings.CutPrefix(key, "snap/"+SandboxSnapshotNamespace(accountID, image)+"/captures/")
+	id, ok2 := strings.CutSuffix(rest, "/v2/mem")
+	return ok && ok2 && id != "" && !strings.ContainsAny(id, "/.")
+}
+
+// SandboxImageIdentity is what a session image's warm snapshot is kept
+// under: a template's build app (every build of one template shares its
+// snapshot slot, so a rebuild replaces it), or the image key itself.
+func SandboxImageIdentity(imageKey string) string {
+	if IsSandboxTemplateLayer(imageKey) {
+		dir, _, _ := strings.Cut(strings.TrimPrefix(imageKey, "apps/"), "/")
+		return "apps/" + dir
+	}
+	return imageKey
+}

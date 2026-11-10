@@ -49,6 +49,7 @@ const (
 	Vmmd_RestoreExecution_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
 	Vmmd_RunAgent_FullMethodName                                = "/onebox.faas.vmmd.v1.Vmmd/RunAgent"
 	Vmmd_CaptureAgentSnapshot_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/CaptureAgentSnapshot"
+	Vmmd_CaptureSandboxSnapshot_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/CaptureSandboxSnapshot"
 	Vmmd_RestoreAppTask_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/RestoreAppTask"
 	Vmmd_RestoreRehearsalAppTask_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/RestoreRehearsalAppTask"
 	Vmmd_ExecuteAppTask_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
@@ -213,6 +214,11 @@ type VmmdClient interface {
 	// waits for guest-init, and captures a preset snapshot for its machine
 	// shape (ADR-20261027090010 §2, rollout step 9). The VM is destroyed afterwards.
 	CaptureAgentSnapshot(ctx context.Context, in *CaptureAgentSnapshotRequest, opts ...grpc.CallOption) (*CaptureAgentSnapshotResponse, error)
+	// CaptureSandboxSnapshot captures a sandbox session VM's warm snapshot
+	// (ADR-20261027090013 §12): booted with no session data and no template
+	// command, snapshotted once guest-init is ready, then destroyed. schedd's
+	// certificate only.
+	CaptureSandboxSnapshot(ctx context.Context, in *CaptureSandboxSnapshotRequest, opts ...grpc.CallOption) (*CaptureAgentSnapshotResponse, error)
 	// RestoreAppTask creates a fresh deployment-attached VM without carrying
 	// command data. The command crosses the trust boundary only after schedd
 	// has committed the durable running fence.
@@ -1051,6 +1057,16 @@ func (c *vmmdClient) CaptureAgentSnapshot(ctx context.Context, in *CaptureAgentS
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CaptureAgentSnapshotResponse)
 	err := c.cc.Invoke(ctx, Vmmd_CaptureAgentSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) CaptureSandboxSnapshot(ctx context.Context, in *CaptureSandboxSnapshotRequest, opts ...grpc.CallOption) (*CaptureAgentSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CaptureAgentSnapshotResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CaptureSandboxSnapshot_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1987,6 +2003,11 @@ type VmmdServer interface {
 	// waits for guest-init, and captures a preset snapshot for its machine
 	// shape (ADR-20261027090010 §2, rollout step 9). The VM is destroyed afterwards.
 	CaptureAgentSnapshot(context.Context, *CaptureAgentSnapshotRequest) (*CaptureAgentSnapshotResponse, error)
+	// CaptureSandboxSnapshot captures a sandbox session VM's warm snapshot
+	// (ADR-20261027090013 §12): booted with no session data and no template
+	// command, snapshotted once guest-init is ready, then destroyed. schedd's
+	// certificate only.
+	CaptureSandboxSnapshot(context.Context, *CaptureSandboxSnapshotRequest) (*CaptureAgentSnapshotResponse, error)
 	// RestoreAppTask creates a fresh deployment-attached VM without carrying
 	// command data. The command crosses the trust boundary only after schedd
 	// has committed the durable running fence.
@@ -2637,6 +2658,9 @@ func (UnimplementedVmmdServer) RunAgent(grpc.BidiStreamingServer[RunAgentRequest
 }
 func (UnimplementedVmmdServer) CaptureAgentSnapshot(context.Context, *CaptureAgentSnapshotRequest) (*CaptureAgentSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CaptureAgentSnapshot not implemented")
+}
+func (UnimplementedVmmdServer) CaptureSandboxSnapshot(context.Context, *CaptureSandboxSnapshotRequest) (*CaptureAgentSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CaptureSandboxSnapshot not implemented")
 }
 func (UnimplementedVmmdServer) RestoreAppTask(context.Context, *RestoreAppTaskRequest) (*RestoreAppTaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestoreAppTask not implemented")
@@ -3302,6 +3326,24 @@ func _Vmmd_CaptureAgentSnapshot_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).CaptureAgentSnapshot(ctx, req.(*CaptureAgentSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_CaptureSandboxSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CaptureSandboxSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CaptureSandboxSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CaptureSandboxSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CaptureSandboxSnapshot(ctx, req.(*CaptureSandboxSnapshotRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -4687,6 +4729,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CaptureAgentSnapshot",
 			Handler:    _Vmmd_CaptureAgentSnapshot_Handler,
+		},
+		{
+			MethodName: "CaptureSandboxSnapshot",
+			Handler:    _Vmmd_CaptureSandboxSnapshot_Handler,
 		},
 		{
 			MethodName: "RestoreAppTask",

@@ -23,11 +23,12 @@ import (
 // until daemons get distinct uids. builderd keeps Destroy for its own builder
 // VMs; see builderMayCall.
 var schedulerOnlyMethods = map[string]string{
-	vmmdpb.Vmmd_ExecuteAppTask_FullMethodName:   "app task execution",
-	vmmdpb.Vmmd_ExecForkCommand_FullMethodName:  "fork command execution",
-	vmmdpb.Vmmd_ExecuteExecution_FullMethodName: "execution",
-	vmmdpb.Vmmd_Destroy_FullMethodName:          "instance destruction",
-	vmmdpb.Vmmd_RunSandbox_FullMethodName:       "sandbox session boot",
+	vmmdpb.Vmmd_ExecuteAppTask_FullMethodName:         "app task execution",
+	vmmdpb.Vmmd_ExecForkCommand_FullMethodName:        "fork command execution",
+	vmmdpb.Vmmd_ExecuteExecution_FullMethodName:       "execution",
+	vmmdpb.Vmmd_Destroy_FullMethodName:                "instance destruction",
+	vmmdpb.Vmmd_RunSandbox_FullMethodName:             "sandbox session boot",
+	vmmdpb.Vmmd_CaptureSandboxSnapshot_FullMethodName: "sandbox snapshot capture",
 }
 
 // gatewayOnlyMethods run sandbox session operations, which the session token

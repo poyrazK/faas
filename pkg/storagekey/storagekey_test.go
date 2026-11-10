@@ -105,3 +105,33 @@ func TestIsJobLayer(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261027090013 §12 — a preset's warm snapshot is shared, a
+// template's is its account's own, and a template's builds share one slot.
+func TestSandboxSnapshotKeys(t *testing.T) {
+	preset := "snap/sandbox-preset/captures/abc/v2/mem"
+	tpl := "snap/sandbox-template-acct/captures/abc/v2/mem"
+	for _, tc := range []struct {
+		key, account string
+		image, ok    bool
+	}{
+		{preset, "acct", false, true},
+		{preset, "acct", true, false},
+		{tpl, "acct", true, true},
+		{tpl, "other", true, false},
+		{tpl, "acct", false, false},
+		{"snap/sandbox-preset/captures/../v2/mem", "acct", false, false},
+		{"snap/app-1/captures/abc/v2/mem", "acct", false, false},
+		{"snap/sandbox-preset/captures/abc/v1/mem", "acct", false, false},
+	} {
+		if got := storagekey.IsSandboxSnapshotKey(tc.key, tc.account, tc.image); got != tc.ok {
+			t.Errorf("storagekey.IsSandboxSnapshotKey(%q, %q, %v) = %v", tc.key, tc.account, tc.image, got)
+		}
+	}
+	a := "apps/sbt-0123456789ab/11111111-1111-4111-8111-111111111111.ext4"
+	b := "apps/sbt-0123456789ab/22222222-2222-4222-8222-222222222222.ext4"
+	if storagekey.SandboxImageIdentity(a) != "apps/sbt-0123456789ab" || storagekey.SandboxImageIdentity(a) != storagekey.SandboxImageIdentity(b) ||
+		storagekey.SandboxImageIdentity("jobs/j.ext4") != "jobs/j.ext4" {
+		t.Fatal("a template's builds must share one identity, and other images keep their key")
+	}
+}

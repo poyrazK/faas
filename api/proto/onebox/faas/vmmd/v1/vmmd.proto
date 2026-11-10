@@ -102,6 +102,11 @@ service Vmmd {
   // waits for guest-init, and captures a preset snapshot for its machine
   // shape (ADR-20261027090010 §2, rollout step 9). The VM is destroyed afterwards.
   rpc CaptureAgentSnapshot(CaptureAgentSnapshotRequest) returns (CaptureAgentSnapshotResponse);
+  // CaptureSandboxSnapshot captures a sandbox session VM's warm snapshot
+  // (ADR-20261027090013 §12): booted with no session data and no template
+  // command, snapshotted once guest-init is ready, then destroyed. schedd's
+  // certificate only.
+  rpc CaptureSandboxSnapshot(CaptureSandboxSnapshotRequest) returns (CaptureAgentSnapshotResponse);
 
   // RestoreAppTask creates a fresh deployment-attached VM without carrying
   // command data. The command crosses the trust boundary only after schedd
@@ -3335,6 +3340,29 @@ message RunSandboxStart {
   string start_cmd = 14;
   string ready_cmd = 15;
   int64 ready_timeout_ms = 16;
+  // snapshot restores the session from a warm snapshot
+  // CaptureSandboxSnapshot made of the same drives, machine and network
+  // mode; a failed restore cold-boots (ADR-005), and booted reports which.
+  // An older vmmd ignores it and cold-boots.
+  AgentRunSnapshot snapshot = 17;
+}
+
+// CaptureSandboxSnapshotRequest is the session machine to capture, without
+// its session or template commands; namespace and capture_id name its
+// storage keys.
+message CaptureSandboxSnapshotRequest {
+  string instance = 1;
+  string account_id = 2;
+  string plan = 3;
+  string base_key = 4;
+  string layer_key = 5;
+  string image_key = 6;
+  int32 vcpu_count = 7;
+  int32 mem_size_mib = 8;
+  int32 cpu_millicores = 9;
+  string network_mode = 10;
+  string namespace = 11;
+  string capture_id = 12;
 }
 
 // RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),

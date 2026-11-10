@@ -108,7 +108,7 @@ gregale sandbox template publish ./my-template
 - The build runs in a builder microVM, like an app build. The command waits for it and prints the template's name; `gregale sandbox template list`, `get <name>` and `rm <name>` manage templates.
 - From `e2b.toml` Gregale reads `template_name`, `dockerfile`, `start_cmd` and `ready_cmd`; flags of the same names override them. `cpu_count` and `memory_mb` are ignored: pick memory per session with `ram_mb`.
 - `start_cmd` runs in the background, as `app`, each time a session boots; its output goes to `/tmp/gregale-start.log`. The session is ready once `ready_cmd` exits 0, polled each second for up to `--ready-timeout` seconds (60 by default, at most 600). If it never passes, the session fails.
-- E2B snapshots a running start command into the template. Gregale runs it at every boot, so a session starts as fast as your start command gets ready.
+- E2B snapshots a running start command into the template. Gregale restores the booted template from a warm snapshot and then runs the start command in each session, so no two sessions share a process's memory or random state. A session starts as fast as your start command gets ready.
 - Start a session with `{ "template": "my-template" }`, or `Sandbox.create('my-template')`. Sessions boot the newest finished build; a rebuild leaves running sessions alone.
 - The image needs a shell (`/bin/sh`) for commands and for `start_cmd` and `ready_cmd`.
 - Each plan has a template limit (`SandboxTemplatesMax`): Free 0, Hobby 3, Pro 20, Scale 100. Template builds do not count as apps.

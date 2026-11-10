@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"google.golang.org/grpc/codes"
 )
@@ -346,5 +347,53 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		return fcvm.SandboxWakeRequest{}, invalid("quiet_pause_after_ms is out of range")
 	}
 	wake.QuietPauseAfter = time.Duration(ms) * time.Millisecond
+	if snap := start.GetSnapshot(); snap != nil {
+		if !storagekey.IsSandboxSnapshotKey(snap.GetStorageKey(), wake.AccountID, wake.ImageKey != "") ||
+			snap.GetVmstateStorageKey() != state.SnapshotVMStateKey(state.Snapshot{StorageKey: snap.GetStorageKey()}) ||
+			snap.GetFcVersion() == "" || snap.GetMemBytes() < 1 {
+			return fcvm.SandboxWakeRequest{}, invalid("snapshot must be a sandbox capture of this session's kind, with its keys, version and size")
+		}
+		wake.Snapshot = &fcvm.Snapshot{StorageKey: snap.GetStorageKey(), VMStateStorageKey: snap.GetVmstateStorageKey(),
+			FCVersion: snap.GetFcVersion(), MemBytes: snap.GetMemBytes(), Networkless: wake.Network != api.SandboxNetworkRegistries}
+	}
 	return wake, nil
+}
+
+// CaptureSandboxSnapshot captures a session VM's warm snapshot (ADR-20261027090013
+// §12). Like RunSandbox it is refused unless agent runs are on.
+func (s *Server) CaptureSandboxSnapshot(ctx context.Context, req *vmmdpb.CaptureSandboxSnapshotRequest) (*vmmdpb.CaptureAgentSnapshotResponse, error) {
+	const op = "CaptureSandboxSnapshot"
+	started := time.Now()
+	var opErr error
+	defer func() { s.ops.Observe(op, time.Since(started), opErr) }()
+	capturer, ok := s.vmm.(interface {
+		CaptureSandboxSnapshot(context.Context, fcvm.SandboxCapture) (*fcvm.Snapshot, fcvm.SnapshotInfo, error)
+	})
+	if !s.agentRunsEnabled || !ok {
+		problem := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented, "Sandbox sessions unavailable", "vmmd agent runs are not enabled")
+		opErr = problem
+		return nil, grpcerr.ToStatus(problem)
+	}
+	wake, problem := sandboxStartFromProto(&vmmdpb.RunSandboxStart{Instance: req.GetInstance(), SandboxId: req.GetCaptureId(),
+		AccountId: req.GetAccountId(), Plan: req.GetPlan(), BaseKey: req.GetBaseKey(), LayerKey: req.GetLayerKey(),
+		ImageKey: req.GetImageKey(), VcpuCount: req.GetVcpuCount(), MemSizeMib: req.GetMemSizeMib(),
+		CpuMillicores: req.GetCpuMillicores(), NetworkMode: req.GetNetworkMode()})
+	if problem == nil {
+		if req.GetNamespace() != storagekey.SandboxSnapshotNamespace(wake.AccountID, wake.ImageKey != "") {
+			problem = api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid sandbox capture",
+				"the namespace must be the session kind's own")
+		}
+	}
+	if problem != nil {
+		opErr = problem
+		return nil, grpcerr.ToStatus(problem)
+	}
+	snap, info, err := capturer.CaptureSandboxSnapshot(ctx, fcvm.SandboxCapture{Wake: wake, Namespace: req.GetNamespace(), CaptureID: req.GetCaptureId()})
+	if err != nil {
+		opErr = err
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.CaptureAgentSnapshotResponse{VmstateBytes: info.VMStateBytes, Snapshot: &vmmdpb.AgentRunSnapshot{
+		StorageKey: snap.StorageKey, VmstateStorageKey: snap.VMStateStorageKey, FcVersion: snap.FCVersion, MemBytes: snap.MemBytes,
+	}}, nil
 }

@@ -399,3 +399,86 @@ func TestRunSandboxReportsUsage(t *testing.T) {
 		t.Fatalf("destroyed %v", destroyed)
 	}
 }
+
+func (v *sandboxRunVMM) CaptureSandboxSnapshot(_ context.Context, c fcvm.SandboxCapture) (*fcvm.Snapshot, fcvm.SnapshotInfo, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.woken = append(v.woken, c.Wake)
+	key := "snap/" + c.Namespace + "/captures/" + c.CaptureID + "/v2/mem"
+	return &fcvm.Snapshot{StorageKey: key, VMStateStorageKey: "snap/" + c.Namespace + "/captures/" + c.CaptureID + "/v2/vmstate",
+		FCVersion: "1.7.0", MemBytes: 1 << 30}, fcvm.SnapshotInfo{VMStateBytes: 7}, nil
+}
+
+func (v *sandboxRunVMM) lastWake() fcvm.SandboxWakeRequest {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.woken[len(v.woken)-1]
+}
+
+// adr: 20261027090013 §12 — a session restores only a sandbox capture of
+// its own kind (a template's only for its account), with the network the
+// snapshot was taken with; a capture names its kind's namespace.
+func TestRunSandboxWarmSnapshots(t *testing.T) {
+	snap := func(namespace string) *vmmdpb.AgentRunSnapshot {
+		return &vmmdpb.AgentRunSnapshot{StorageKey: "snap/" + namespace + "/captures/abc/v2/mem",
+			VmstateStorageKey: "snap/" + namespace + "/captures/abc/v2/vmstate", FcVersion: "1.7.0", MemBytes: 1 << 30}
+	}
+	const image = "apps/sbt-0123456789ab/11111111-1111-4111-8111-111111111111.ext4"
+	for _, tc := range []struct {
+		name  string
+		image string
+		snap  *vmmdpb.AgentRunSnapshot
+		ok    bool
+	}{
+		{"a preset session restores the preset snapshot", "", snap("sandbox-preset"), true},
+		{"a template session restores its account's", image, snap("sandbox-template-acct-1"), true},
+		{"not another account's", image, snap("sandbox-template-acct-2"), false},
+		{"not a preset snapshot for a template", image, snap("sandbox-preset"), false},
+		{"not an app's snapshot", "", snap("app-1"), false},
+		{"not with a mismatched state key", "", &vmmdpb.AgentRunSnapshot{StorageKey: "snap/sandbox-preset/captures/abc/v2/mem",
+			VmstateStorageKey: "snap/other/vmstate", FcVersion: "1.7.0", MemBytes: 1}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vmm := newSandboxRunVMM()
+			stream, err := newSandboxRunClient(t, vmm, true).RunSandbox(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			start := sandboxRunStart()
+			start.GetStart().ImageKey, start.GetStart().Snapshot, start.GetStart().NetworkMode = tc.image, tc.snap, "registries"
+			if err := stream.Send(start); err != nil {
+				t.Fatal(err)
+			}
+			ev, err := stream.Recv()
+			if !tc.ok {
+				if status.Code(err) != codes.InvalidArgument {
+					t.Fatalf("err = %v, want InvalidArgument", err)
+				}
+				return
+			}
+			if err != nil || ev.GetBooted() == nil {
+				t.Fatalf("first event %v, %v", ev, err)
+			}
+			if w := vmm.lastWake(); w.Snapshot == nil || w.Snapshot.StorageKey != tc.snap.GetStorageKey() || w.Snapshot.Networkless {
+				t.Fatalf("wake snapshot %+v", w.Snapshot)
+			}
+		})
+	}
+
+	vmm := newSandboxRunVMM()
+	cli := newSandboxRunClient(t, vmm, true)
+	req := &vmmdpb.CaptureSandboxSnapshotRequest{Instance: "sbx-capture", AccountId: "acct-1", Plan: "pro", BaseKey: "base/runner-agent-amd64.ext4",
+		LayerKey: "base/sandbox-layer-v1-amd64.ext4", ImageKey: image, VcpuCount: 1, MemSizeMib: 1024, CpuMillicores: 1000,
+		NetworkMode: "none", Namespace: "sandbox-template-acct-1", CaptureId: "abc"}
+	resp, err := cli.CaptureSandboxSnapshot(context.Background(), req)
+	if err != nil || resp.GetSnapshot().GetStorageKey() != "snap/sandbox-template-acct-1/captures/abc/v2/mem" || resp.GetVmstateBytes() != 7 {
+		t.Fatalf("capture = %v, %v", resp, err)
+	}
+	if w := vmm.lastWake(); w.ImageKey != image || w.StartCmd != "" || w.Snapshot != nil || w.QuietPauseAfter != 0 {
+		t.Fatalf("capture wake %+v", w)
+	}
+	req.Namespace = "sandbox-preset"
+	if _, err := cli.CaptureSandboxSnapshot(context.Background(), req); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a template capture into the preset namespace: %v", err)
+	}
+}

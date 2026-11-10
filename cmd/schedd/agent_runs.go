@@ -51,6 +51,9 @@ func agentRunConfigFromEnv(getenv func(string) string) sched.AgentRunConfig {
 		if cfg.SandboxLayerKey == "" {
 			cfg.SandboxLayerKey = sched.SandboxLayerKeyForArch(agentRunArch)
 		}
+		// ADR-20261027090013 §12: warm session snapshots, off unless asked.
+		cfg.SandboxSnapshots = strings.TrimSpace(getenv("FAAS_SCHEDD_SANDBOX_SNAPSHOTS")) == "1"
+
 	}
 	return cfg
 }
