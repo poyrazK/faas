@@ -177,11 +177,10 @@ func TestMeasuredCPUAdmissionReachesTheDurableGuard(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	vcpus := api.MustLimitsFor(api.PlanPro).VCPU
 	f := &failoverFleet{store: mem, ctx: ctx, vmm: newRefusingVMM(nil), ops: wire.NewOpsMetrics("schedd")}
 	node, err := mem.CreateComputeNode(ctx, state.ComputeNode{
 		Name: "measured-cpu", TargetURL: "tcp://10.0.5.2:7000",
-		VPCPUs: 80, MemMB: 16384, MaxConcurrency: 50, AdmissionCeilingMB: 8192, VCPUBudget: 2 * vcpus, Active: true,
+		VPCPUs: 80, MemMB: 16384, MaxConcurrency: 50, AdmissionCeilingMB: 8192, VCPUBudget: 2, Active: true, // two 256 MB instances fill it
 	})
 	if err != nil {
 		t.Fatal(err)
