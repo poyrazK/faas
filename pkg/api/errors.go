@@ -2901,18 +2901,14 @@ func ErrInvalidAppRAM(requestedMB int) *Problem {
 		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB))
 }
 
-// ErrInvalidCPURAMPair rejects an explicit guest topology that does not match
-// the plan's canonical RAM/vCPU shape. Guest vCPU is plan-derived in v1, so
-// the pair is validated without introducing a per-app database column.
+// ErrInvalidCPURAMPair rejects an explicit guest vCPU count that is not its
+// size's: one vCPU per GB of ram_mb, at least one (ADR-20261109172421). Guest
+// vCPU is derived, so the pair is validated without a per-app column.
 func ErrInvalidCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
-	shape, ok := PlanResourceShapeFor(l.Plan)
-	if !ok {
-		shape = PlanResourceShape{Plan: l.Plan, RAMMB: l.RAMMB, VCPU: l.VCPU}
-	}
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidCPURAMPair,
 		"Invalid CPU/RAM pair",
-		fmt.Sprintf("invalid (ram_mb, vcpu) pair for plan %s: expected (%d, %d), received (%d, %d). Omit vcpu to use the plan default.",
-			l.Plan, shape.RAMMB, shape.VCPU, ramMB, guestVCPU)).
+		fmt.Sprintf("invalid (ram_mb, vcpu) pair on plan %s: an instance of %d MB has %d vCPU (one per GB), received %d. Omit vcpu to use the size's.",
+			l.Plan, ramMB, SizeVCPUs(ramMB), guestVCPU)).
 		WithDocs(docsBase + "/plans#resources")
 }
 

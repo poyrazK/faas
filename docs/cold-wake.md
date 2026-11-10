@@ -93,7 +93,11 @@ loopback `POST`s with the marker header, run your callbacks in order within
 Each has a helper that closes a pool's idle connections on both hooks. Those
 sockets point at connections the database closed while the instance was
 parked or frozen; closing them is local and fast, and the pool opens fresh
-ones on demand. A full reconnect inside `after_restore` can take longer than
+ones on demand. Gregale itself resets an app's outbound connections before it
+takes a snapshot and again on a restore, so a restored instance's inherited
+sockets fail at once instead of hanging, and the database frees the
+snapshot's sessions immediately
+([ADR-20261110160000](adr/20261110160000-reset-connections-around-captures-and-restores.md)). A full reconnect inside `after_restore` can take longer than
 the limit.
 
 ```go

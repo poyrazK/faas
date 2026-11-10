@@ -2086,7 +2086,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "named app resource size: micro|small|medium|large|xlarge")
-	vcpu := fs.Int("vcpu", 0, "assert the plan guest vCPU shape (omit to use the plan default)")
+	vcpu := fs.Int("vcpu", 0, "assert the guest vCPU count, one per GB of RAM (omit to use the size's)")
 	executionMode := fs.String("execution-mode", "", "app lifecycle mode: request|service|worker|job")
 	restartPolicy := fs.String("restart-policy", "", "restart policy: no|on-failure|always|unless-stopped")
 	startupDeadlineS := fs.Int("startup-deadline-s", 0, "maximum startup deadline in seconds (0 = plan default)")

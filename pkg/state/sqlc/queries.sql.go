@@ -74961,7 +74961,8 @@ FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = $1
 LEFT JOIN object_storage_gateway_storage s ON s.bucket_id = b.id AND s.period_start = $1
-WHERE object_storage_usage_subject(b.org_id,b.account_id,$1) = $2
+WHERE (b.account_id = $2 OR b.org_id = $2)
+AND object_storage_usage_subject(b.org_id,b.account_id,$1) = $2
 `
 
 type ObjectUsageBucketsParams struct {
@@ -75017,6 +75018,11 @@ type ObjectUsageBucketsRow struct {
 	InventoryHeld                  bool
 }
 
+// Every bucket billed to one usage subject, with its usage. A subject is
+// always a bucket's org or its account, so the account_id/org_id prefilter
+// narrows by their indexes without changing the result. The subject function
+// alone cannot use an index (its EXISTS keeps it from inlining): it scanned
+// every bucket on the platform, under the account lock of every object write.
 func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error) {
 	rows, err := db.Query(ctx, objectUsageBuckets, arg.PeriodStart, arg.AccountID)
 	if err != nil {
