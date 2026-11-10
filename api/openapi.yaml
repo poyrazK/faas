@@ -90068,6 +90068,8 @@ components:
         request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
         response_write_timeout_s: { type: integer, format: int64, description: "Maximum response write window for the plan, in seconds." }
         request_body_max_bytes: { type: integer, format: int64, description: "Maximum inbound request body accepted for this app's plan, in bytes." }
+        idle_timeout_s: { type: integer, description: "Idle timeout the platform applies: the app's own setting or its type's default, within the plan bounds (seconds)." }
+        pause: { type: string, enum: [between_requests, when_idle, never], description: "When the platform may pause the VM: the declared value or the default for the app's type. Apps on a private network are never paused." }
 
     AppConfiguredResources:
       description: "The memory and sustained CPU shape selected for each instance of this app."
