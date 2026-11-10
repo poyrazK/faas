@@ -781,6 +781,10 @@ const (
 	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
 	CodeConflict                        = "conflict"
+	// CodeProjectServicesCallEachOther (409, ADR-20261104221217): deleting the
+	// project would detach services that still call each other by service
+	// name. Pass detach_services=true once they no longer do.
+	CodeProjectServicesCallEachOther = "project_services_call_each_other"
 	// CodeIdempotencyKeyReused (422, ADR-20261022204036): the request's
 	// Idempotency-Key was used within its 24 h replay window for a different
 	// request. Nothing ran, and the first request's result is kept.
@@ -1267,6 +1271,9 @@ const (
 	// as its own row and so SDK callers don't accidentally decode a
 	// trusted-signer quota error as an env-var quota error.
 	CodePlanLimitTrustedSigners = "plan_limit_trusted_signers"
+	// CodePlanLimitDeploymentAliases: a new deployment alias would exceed the
+	// plan's DeploymentAliasesMax for the app.
+	CodePlanLimitDeploymentAliases = "plan_limit_deployment_aliases"
 
 	// IAM-5 API-key lifecycle (issue #189). Distinct from the
 	// secret/env surface because the lifecycle diverges: secrets
@@ -2532,7 +2539,7 @@ func StatusForCode(code string) int {
 	// 404 (the URL resource IS the signer name; we deliberately
 	// diverge from the secret/env 400 to make the resource model
 	// explicit on the new surface).
-	case CodePlanLimitTrustedSigners:
+	case CodePlanLimitTrustedSigners, CodePlanLimitDeploymentAliases:
 		return http.StatusForbidden
 	case CodeTrustedSignerInvalid:
 		return http.StatusBadRequest
@@ -5830,6 +5837,16 @@ func ErrAPIKeyLimitExceeded(l Limits, observed int) *Problem {
 // so the SDK's quota-reached branch decodes this code without
 // hand-rolling a new switch arm. Distinct `code` keeps the dashboard
 // row count for "trusted publishers" separate from "env vars".
+// ErrPlanLimitDeploymentAliases refuses a new deployment alias above the
+// plan's per-app cap.
+func ErrPlanLimitDeploymentAliases(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitDeploymentAliases,
+		"Deployment alias limit reached",
+		fmt.Sprintf("%s plan allows %d deployment aliases per app; this app has %d. Delete an alias or re-point an existing one.", l.Plan, l.DeploymentAliasesMax, observed)).
+		WithLimit(int64(l.DeploymentAliasesMax), int64(observed)).
+		WithDocs(docsBase + "/deploys#deployment-aliases")
+}
+
 func ErrPlanLimitTrustedSigners(l Limits, observed int) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanLimitTrustedSigners,
 		"Trusted signer count limit reached",

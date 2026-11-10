@@ -21,6 +21,7 @@ fleets without the edge.
 | `FaasComputeEdgeConnectorDisconnected` | warn | One node's connector is down or holds no tunnel connection. |
 | `FaasComputeEdgeLocalFallback` | warn | One node's edge keeps routing to the compute pool because its own gatewayd-internal is unhealthy. |
 | `FaasComputeEdgeMisdirected` | warn | One node's edge keeps answering 421 for hosts outside the apps domain. |
+| `FaasComputeEdgeShedding` | warn | One node's edge has held an overload level above 0 for 2 minutes (ADR-20261110123517): its CPU is full of edge traffic, and with `public_edge.overload: on` it is refusing work. |
 
 Cloudflare spreads tunnel traffic across the connected connectors, so one
 node down costs capacity, not availability. While a node's edge is down but
@@ -73,3 +74,19 @@ curl -fsS http://127.0.0.1:9109/metrics | grep gatewayd_public_edge_
 - **Misdirected.** The tunnel's ingress rules send hosts other than
   `*.<apps domain>` to the edge. The platform hosts and customer domains
   belong on the control-plane edge, so fix the ingress rule in Cloudflare.
+- **Shedding.** The node's CPU is full of edge traffic
+  (ADR-20261110123517).
+  - Read `gatewayd_public_overload_signal` to see which signal is high, and
+    `gatewayd_public_edge_refused_total{reason=~"overload_.*"}` to see what
+    the edge refuses. In observe mode nothing is refused; the level shows
+    what would be.
+  - Find the load: the edge's `gatewayd_public_edge_refused_total` reasons
+    `overload_address` and `overload_cooloff` point at heavy client
+    addresses, `overload_unknown_host` at names with no app.
+  - A flood on one host: move that host back behind Cloudflare, the flood
+    fallback (`public_edge.dns.proxied`, ADR-20261103163954 §4).
+  - Real traffic past the node's ceiling: add a compute node.
+  - The level returns to 0 on its own within seconds of the load easing.
+    Don't restart the edge to clear it: a restart drops every client
+    connection, and their reconnects cost more than the requests did.
+

@@ -707,7 +707,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	if sup != nil {
 		output = io.MultiWriter(os.Stdout, sup.LogBuffer())
 	}
-	outputPipe, err := newWorkloadOutputPipe(output, int(credential.Uid), int(credential.Gid))
+	// Spec §17 G2: sealed values never reach the logs in cleartext. A
+	// reloadable app shares one redactor across restarts so reloaded values
+	// are masked too (ADR-20261110090000).
+	redactor := processSecrets.logRedactor()
+	redactor.update(secrets)
+	outputPipe, err := newWorkloadOutputPipe(redactor.writer(output), int(credential.Uid), int(credential.Gid))
 	if err != nil {
 		return fmt.Errorf("run app: workload output pipe: %w", err)
 	}

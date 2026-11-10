@@ -264,9 +264,13 @@ func DecodeCursor(raw string) (time.Time, string, error) {
 
 // QueryEvent is the customer shape of one ledger row.
 func QueryEvent(app string, event state.LogEvent) api.LogQueryEvent {
-	latencyMS := 0
+	var latencyMS *int
 	if event.LatencyMS != nil {
-		latencyMS = *event.LatencyMS
+		v := *event.LatencyMS
+		latencyMS = &v
+	} else if event.Source == state.LogEventSourceHTTP {
+		zero := 0
+		latencyMS = &zero
 	}
 	return api.LogQueryEvent{
 		ID: event.ID, App: app, Timestamp: event.OccurredAt.UTC().Format(time.RFC3339Nano),

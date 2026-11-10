@@ -1,0 +1,11 @@
+# Managed by the release_integrity role (ADR-20261110183000).
+[Unit]
+Description=Hourly Gregale release integrity check
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

@@ -1171,7 +1171,11 @@ func cmdProjectsRemove(args []string) int {
 			"deleting %s detaches its services, and these calls stop working: %s. Delete the services instead (gregale app delete), or add --detach-services if they no longer call each other by name",
 			positional[0], strings.Join(calls, ", ")))
 	}
-	if err := client.DeleteProject(context.Background(), positional[0]); err != nil {
+	deleteProject := client.DeleteProject
+	if *detach {
+		deleteProject = client.DeleteProjectDetachingServices
+	}
+	if err := deleteProject(context.Background(), positional[0]); err != nil {
 		return printErr("Could not delete project", err)
 	}
 	if jsonOutput {

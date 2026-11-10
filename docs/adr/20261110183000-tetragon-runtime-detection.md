@@ -55,5 +55,27 @@ root, open the node's keys, load a module or attach to another process.
 - Tetragon itself runs as root with BPF; it is another root daemon to keep
   patched. Kernel lockdown (integrity) still allows it.
 - The control plane does not run it yet.
-- Binary integrity (does each node run the signed release's binaries) is the
-  next slice of this ADR.
+
+## Amendment (2026-11-10): release integrity
+
+Every control-plane and compute host runs `gregalectl release verify` from an
+hourly timer (`release_integrity` role). It verifies the current release
+against `release-manifest.json`, the manifest embedded in and signed with the
+release tarball (`releaseinstall.Verify`), and checks every process whose
+executable is under `/opt/faas`: it must run from an installed release that
+verifies, from a file not replaced since it started. The node join pre-stage,
+the compute edge's pinned cloudflared and CI canaries are skipped; an audit
+hotfix is reported.
+
+It writes `faas_release_integrity_ok`, a check timestamp and
+`faas_release_manifest_info{release,digest}`, the sha256 of the signed
+manifest bytes, and logs failures as `faas-release-integrity`, which Alloy
+ships off the host. Alerts: `FaasReleaseIntegrityFailed` (page),
+`FaasReleaseIntegrityStale` (warn, no check for 3 hours) and
+`FaasReleaseManifestDiverged` (page, hosts on one release report different
+digests: a manifest edited to cover a swapped binary).
+
+The check runs on the host it checks, so root there can stop or fake it. The
+evidence it leaves off the host (stale alert, Loki lines, the other hosts'
+digests) is what it adds; remote attestation (TPM, IMA) is not covered.
+Runbook: [FaasReleaseIntegrity](../runbooks/FaasReleaseIntegrity.md).

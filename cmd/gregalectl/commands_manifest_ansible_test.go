@@ -1177,3 +1177,45 @@ func TestRenderManifestAnsibleFiles_ComputeObjectGateway(t *testing.T) {
 		}
 	}
 }
+
+// ADR-20261110123517: public_edge.overload reaches the compute hosts only, and
+// only when it is not off.
+func TestRenderManifestAnsibleFiles_EdgeOverload(t *testing.T) {
+	for _, tc := range []struct {
+		overload, want string
+	}{
+		{overload: "", want: ""},
+		{overload: "  overload: off\n", want: ""},
+		{overload: "  overload: observe\n", want: "faas_edge_overload: \"observe\"\n"},
+		{overload: "  overload: on\n", want: "faas_edge_overload: \"on\"\n"},
+	} {
+		yaml := strings.Replace(validManifestYAML,
+			"    - name: fsn-1\n      role: control-plane\n",
+			"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n      public_ipv4: 203.0.113.2\n      entry_ipv4: 198.51.100.2\n", 1) +
+			"public_edge:\n  compute_nodes: true\n  entry: both\n  front: none\n" + tc.overload
+		m, err := manifest.Parse([]byte(yaml))
+		if err != nil {
+			t.Fatalf("manifest.Parse: %v", err)
+		}
+		if errs := m.Validate(); errs != nil {
+			t.Fatalf("manifest.Validate: %v", errs)
+		}
+		files, err := renderManifestAnsibleFiles(m, t.TempDir())
+		if err != nil {
+			t.Fatalf("renderManifestAnsibleFiles: %v", err)
+		}
+		for _, file := range files {
+			body := string(file.Body)
+			compute := strings.HasSuffix(file.Path, "fsn-2.yml")
+			has := strings.Contains(body, "faas_edge_overload")
+			switch {
+			case compute && tc.want != "" && !strings.Contains(body, tc.want):
+				t.Errorf("%q: compute host vars missing %q:\n%s", tc.overload, tc.want, body)
+			case compute && tc.want == "" && has:
+				t.Errorf("%q: compute host vars set the overload level:\n%s", tc.overload, body)
+			case !compute && has:
+				t.Errorf("%q: %s sets the overload level:\n%s", tc.overload, file.Path, body)
+			}
+		}
+	}
+}

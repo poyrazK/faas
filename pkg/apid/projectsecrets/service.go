@@ -32,6 +32,12 @@ type Host interface {
 	Seal(accountID, key, value string, maxBytes int) (Sealed, *api.Problem)
 }
 
+// ProtectedConfigGuard is the optional Host seam that refuses a value write
+// into a protected project environment (ADR-20261019071733 amendment 11).
+type ProtectedConfigGuard interface {
+	ProtectedConfigProblem(ctx context.Context, accountID, projectID, environment string) *api.Problem
+}
+
 // Service is the project secrets surface.
 type Service struct{ Host Host }
 
@@ -88,6 +94,15 @@ func (s Service) write(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	}
 	if rotate && !s.exists(w, r, secrets, acct, project, environment, key) {
 		return
+	}
+	// Setting a value in a protected environment other than production goes
+	// through an approved plan or promotion; rotating stays open for incident
+	// response (ADR-20261019071733 amendment 11).
+	if guard, ok := s.Host.(ProtectedConfigGuard); ok && !rotate {
+		if problem := guard.ProtectedConfigProblem(r.Context(), project.AccountID, project.ID, environment.Slug); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	sealed, problem := s.Host.Seal(acct.ID, key, req.Value, limits.SecretValueMaxBytes)

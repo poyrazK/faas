@@ -407,6 +407,8 @@ INFRA_RULES = [
     r"^edge-public-front$",
     # ADR-20261103163954 §4: the compute edge's per-client-address limits.
     r"^edge-client-limits$",
+    # ADR-20261110123517: the compute edge sheds load when its node is overloaded.
+    r"^edge-overload$",
     # ADR-20261103163954 §4: Cloudflare's ranges skip those connection limits.
     r"^edge-proxy-cidrs$",
 ]
