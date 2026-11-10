@@ -136,12 +136,17 @@ func TestQueueCanaryCLIRedeployment(t *testing.T) {
 	archive := queueCanaryArchive(t, "wrapper/", queueCanaryManifest)
 	var uploaded []map[string]string
 	mutations := 0
+	created := false
 	stub := main.NewZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *main.ZeroConfigStubServer) {
 		if r.Method != http.MethodGet {
 			mutations++
 		}
 		switch {
 		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			created = true
+			main.WriteJSONTest(w, api.AppResponse{ID: "a1", Slug: "demo"})
+		case r.URL.Path == "/v1/apps/demo" && r.Method == http.MethodGet && created:
+			// The snapshot-hook step reads the app's lifecycle (ADR-20261110190000).
 			main.WriteJSONTest(w, api.AppResponse{ID: "a1", Slug: "demo"})
 		case r.URL.Path == "/v1/apps/demo/queue-bindings" && r.Method == http.MethodGet:
 			main.WriteJSONTest(w, []api.QueueBindingResponse{})
