@@ -327,8 +327,13 @@ repository.
 
 ### Deploy tokens
 
-Other CI systems deploy with a deploy token: a credential that can only deploy
-one app. Browser sessions with MFA enabled need verification from the last
+Other CI systems deploy with a deploy token: a credential bound to one app.
+It deploys that app and applies the configuration a deploy carries (app
+settings, crons, queue bindings, routes, edge rules, inbound webhooks). It
+cannot delete or rename the app, add log drains, mirrors or outbound webhooks,
+mint consumer keys, AI access tokens or issue ingest tokens, or read the app's
+debug requests, crash snapshots or forks; those answer `403` and need an API
+key. The OIDC bearer the deploy Action uses has the same limits. Browser sessions with MFA enabled need verification from the last
 five minutes when minting or rotating one. CLI requests use their scoped
 bearer credential. The token is shown once;
 store it as `FAAS_TOKEN` in the CI secret store.
