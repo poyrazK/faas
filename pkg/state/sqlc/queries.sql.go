@@ -69712,52 +69712,71 @@ func (q *Queries) ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg Ob
 }
 
 const objectInventoriesDue = `-- name: ObjectInventoriesDue :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id, b.org_id FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id, b.org_id, (l.listing OR COALESCE(u.observed_keys, 0) > $1::bigint)::boolean AS long_listing
+FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM object_storage_inventory_scans s WHERE s.bucket_id=b.id AND s.pages > 0 AND NOT s.complete
+  AND s.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND s.started_at > now() - $2::bigint * interval '1 second') AS listing) l
 WHERE b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning'))
-AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes' OR EXISTS (SELECT 1 FROM object_storage_inventory_scans s WHERE s.bucket_id=b.id AND s.pages > 0 AND NOT s.complete
-  AND s.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND s.started_at > now() - $1::bigint * interval '1 second'))
+AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes' OR l.listing)
 AND (u.lease_until IS NULL OR u.lease_until < now())
-ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $2
+AND NOT (b.id = ANY(COALESCE($3::uuid[], '{}')))
+ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $4
 `
 
 type ObjectInventoriesDueParams struct {
+	LongKeys          int64
 	ScanMaxAgeSeconds int64
+	Skip              []pgtype.UUID
 	RowLimit          int32
 }
 
+type ObjectInventoriesDueRow struct {
+	ObjectBucket ObjectBucket
+	LongListing  bool
+}
+
 // A bucket whose listing is unfinished is due at once (ADR-20261030100835).
-func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectInventoriesDueParams) ([]ObjectBucket, error) {
-	rows, err := db.Query(ctx, objectInventoriesDue, arg.ScanMaxAgeSeconds, arg.RowLimit)
+// The sweep's queue leaves out the buckets it already took (skip) and marks a
+// long listing: one that continues, or a bucket whose last inventory counted
+// more than long_keys keys (ADR-20261110151628 §1).
+func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectInventoriesDueParams) ([]ObjectInventoriesDueRow, error) {
+	rows, err := db.Query(ctx, objectInventoriesDue,
+		arg.LongKeys,
+		arg.ScanMaxAgeSeconds,
+		arg.Skip,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ObjectBucket{}
+	items := []ObjectInventoriesDueRow{}
 	for rows.Next() {
-		var i ObjectBucket
+		var i ObjectInventoriesDueRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.AccountID,
-			&i.AppID,
-			&i.Name,
-			&i.Scope,
-			&i.Region,
-			&i.BackendID,
-			&i.BackendFingerprint,
-			&i.PhysicalName,
-			&i.State,
-			&i.LeaseToken,
-			&i.LeaseUntil,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.AttemptCount,
-			&i.RetryAt,
-			&i.LastErrorCode,
-			&i.PublicRead,
-			&i.ServeAt,
-			&i.EnvironmentCloneSourceBucketID,
-			&i.EnvironmentCloneOperationID,
-			&i.OrgID,
+			&i.ObjectBucket.ID,
+			&i.ObjectBucket.AccountID,
+			&i.ObjectBucket.AppID,
+			&i.ObjectBucket.Name,
+			&i.ObjectBucket.Scope,
+			&i.ObjectBucket.Region,
+			&i.ObjectBucket.BackendID,
+			&i.ObjectBucket.BackendFingerprint,
+			&i.ObjectBucket.PhysicalName,
+			&i.ObjectBucket.State,
+			&i.ObjectBucket.LeaseToken,
+			&i.ObjectBucket.LeaseUntil,
+			&i.ObjectBucket.CreatedAt,
+			&i.ObjectBucket.UpdatedAt,
+			&i.ObjectBucket.AttemptCount,
+			&i.ObjectBucket.RetryAt,
+			&i.ObjectBucket.LastErrorCode,
+			&i.ObjectBucket.PublicRead,
+			&i.ObjectBucket.ServeAt,
+			&i.ObjectBucket.EnvironmentCloneSourceBucketID,
+			&i.ObjectBucket.EnvironmentCloneOperationID,
+			&i.ObjectBucket.OrgID,
+			&i.LongListing,
 		); err != nil {
 			return nil, err
 		}

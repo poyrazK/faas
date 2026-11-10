@@ -5117,7 +5117,10 @@ type Querier interface {
 	ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDeletionSaveParams) error
 	ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg ObjectGatewayUploadInsertParams) (ObjectUploadCompletion, error)
 	// A bucket whose listing is unfinished is due at once (ADR-20261030100835).
-	ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectInventoriesDueParams) ([]ObjectBucket, error)
+	// The sweep's queue leaves out the buckets it already took (skip) and marks a
+	// long listing: one that continues, or a bucket whose last inventory counted
+	// more than long_keys keys (ADR-20261110151628 §1).
+	ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectInventoriesDueParams) ([]ObjectInventoriesDueRow, error)
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)
 	ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error)
 	// Give up a claim without publishing; attempt_at keeps the retry cadence.

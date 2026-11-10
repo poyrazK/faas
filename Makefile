@@ -1115,6 +1115,10 @@ systemd-hardening-check: ## Static release gate for production systemd isolation
 canary-artifact-retention-test: ## Test bounded validation-artifact inventory, safety proofs, and cleanup
 	python3 scripts/ops/faas_canary_artifacts_test.py
 
+.PHONY: go-cache-retention-test
+go-cache-retention-test: ## Test the acceptance-host Go build cache trim (disk high/low water, lock, entry guards)
+	python3 scripts/ops/faas_go_cache_trim_test.py
+
 .PHONY: serving-probe-test
 serving-probe-test: ## Test the compute-node serving probe (ADR-20261023124955 §5)
 	python3 scripts/ops/faas_serving_probe_test.py
