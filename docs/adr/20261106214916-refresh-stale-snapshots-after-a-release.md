@@ -47,9 +47,12 @@ The customer is not billed for this work.
    schedd restarts during a release. schedd runs one refresh pass for that
    node. Every node is also passed again when the CPU shape settings change
    the guest vCPU count apps boot with (`guest_vcpu_from_cpu_apps` and the
-   three shape keys, ADR-20261101160231; added 2026-11-08). A pass for a
-   base, kernel or Firecracker change made outside a release, started by an
-   operator, is a later addition.
+   three shape keys, ADR-20261101160231; added 2026-11-08; `cpu_size_apps`,
+   ADR-20261109172421), and when `snapshot_refresh` changes mode, so turning
+   `shadow` into `on` refreshes what the shadow pass found without waiting
+   for the next release (added 2026-11-10). A pass for a base, kernel or
+   Firecracker change made outside a release, started by an operator, is a
+   later addition.
 2. **Which snapshots.** For each app with a gateway wake in the last
    `snapshot_refresh_window_hours` (default 168), schedd asks the node's vmmd
    whether the app's live snapshot would restore there. A new

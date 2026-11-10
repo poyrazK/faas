@@ -157,16 +157,19 @@ func (r *SnapshotRefresher) Tick(ctx context.Context) {
 	wg.Wait()
 }
 
-// tickNode runs nodeID's pass when its release, or the CPU shape apps boot
-// with, has not been passed yet. A pass that deferred a refresh, or whose
-// vmmd did not answer, runs again on the next tick.
+// tickNode runs nodeID's pass when its release, the CPU shape apps boot
+// with, or the mode has not been passed yet: turning shadow into on refreshes
+// what the shadow pass found without waiting for the next release. A pass
+// that deferred a refresh, or whose vmmd did not answer, runs again on the
+// next tick.
 func (r *SnapshotRefresher) tickNode(ctx context.Context, node state.ComputeNode) {
 	r.reapOrphanedRefreshes(ctx, node.ID)
 	release := ""
 	if node.ReleaseID != nil {
 		release = *node.ReleaseID
 	}
-	key := release + "\x00" + r.e.guestVCPUShapeKey()
+	mode, _ := r.settings()
+	key := release + "\x00" + r.e.guestVCPUShapeKey() + "\x00" + mode
 	r.mu.Lock()
 	done, seen := r.passed[node.ID]
 	r.mu.Unlock()
