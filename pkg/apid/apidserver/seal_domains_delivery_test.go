@@ -159,10 +159,10 @@ func withDeliveryRecipients(t *testing.T, fleet *age.X25519Recipient, staged boo
 
 // TestTriggerConfigs_FollowTheDeliveryDomain pins who opens a trigger
 // config's credentials apid seals at each step of the delivery rollout (ADR
-// 20261022111812): the domain once staged, and the fleet key at every step,
-// domain-only included, since a schedd of the previous release opens trigger
-// configs with the fleet key alone. apid holds no identity, and an update
-// that omits the password keeps it.
+// 20261022111812): the domain once staged, and the fleet key until the
+// domain-only step, since every schedd now opens trigger configs with the
+// delivery identity. apid holds no identity, and an update that omits the
+// password keeps it.
 func TestTriggerConfigs_FollowTheDeliveryDomain(t *testing.T) {
 	fleet, domain := mustSealIdentity(t), mustSealIdentity(t)
 	for _, tc := range edgeDomainSteps {
@@ -206,7 +206,7 @@ func TestTriggerConfigs_FollowTheDeliveryDomain(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for id, want := range map[*age.X25519Identity]bool{fleet: true, domain: tc.domainOpens} {
+			for id, want := range map[*age.X25519Identity]bool{fleet: tc.fleetOpens, domain: tc.domainOpens} {
 				opened, err := triggerconfig.Open(api.TriggerKindKafka, stored.Config, []*age.X25519Identity{id})
 				if got := err == nil && bytes.Contains(opened, []byte("trigger-secret")); got != want {
 					t.Fatalf("%s opens the kept password = %v, want %v (%v)", map[bool]string{true: "fleet", false: "domain"}[id == fleet], got, want, err)

@@ -3,3 +3,14 @@
 # so a stale single-box default cannot make a node-local schedd claim the
 # wrong topology.
 Environment=FAAS_SCHEDD_ROLE={{ faas_box_role }}
+{% if (faas_schedd_frozen_tier | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+
+# Wake-path switches (manifest hot_path).
+Environment=FAAS_FROZEN_TIER=true
+{% endif %}
+{% if (faas_schedd_frozen_fast_path | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+Environment=FAAS_FROZEN_FAST_PATH=true
+{% endif %}
+{% if (faas_schedd_owner_cache | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+Environment=FAAS_OWNER_CACHE=true
+{% endif %}

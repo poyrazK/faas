@@ -70,9 +70,14 @@ type publicReadHandler struct {
 	now                   func() time.Time
 	log                   *slog.Logger
 	mounts                *publicMountCache
-	lookups               singleflight.Group
-	hostLookups           *HostLookupBudget
-	limiters              *publicReadLimiters
+	// staleFor, when set, lets a request use a host's expired answer up to
+	// this age and refresh it in the background instead of waiting for the
+	// control plane. Only the forwarder sets it (api.PublicReadForwardStaleMax):
+	// it routes, and the control plane checks the bucket again before serving.
+	staleFor    time.Duration
+	lookups     singleflight.Group
+	hostLookups *HostLookupBudget
+	limiters    *publicReadLimiters
 }
 
 // NewPublicReadHandler mounts ready public buckets on app hostnames. A route
@@ -363,18 +368,29 @@ func (h *publicReadHandler) lookup(r *http.Request) (state.ObjectBucket, string,
 // deadline.
 func (h *publicReadHandler) hostMounts(ctx context.Context, host string) ([]state.ObjectBucket, error) {
 	checkTenant := !strings.HasSuffix(host, "."+h.appsDomain) && h.tenantSurfacesOn()
-	if buckets, ok := h.mounts.get(host, time.Now()); ok && (!checkTenant || len(buckets) == 0) {
+	cacheUsable := func(buckets []state.ObjectBucket) bool { return !checkTenant || len(buckets) == 0 }
+	if buckets, ok := h.mounts.get(host, time.Now()); ok && cacheUsable(buckets) {
 		return buckets, nil
 	}
 	key := host
 	if checkTenant {
 		key = "tenant\x00" + host
 	}
-	shared := h.lookups.DoChan(key, func() (any, error) {
+	lookup := func() (any, error) {
 		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.PublicReadHostLookupTimeout)
 		defer cancel()
 		return h.resolveHostMounts(lookupCtx, host, checkTenant)
-	})
+	}
+	// A forwarder routes by an expired answer and refreshes it in the
+	// background, so neither an expiry nor a control-plane stall holds the
+	// request. A failed refresh leaves the answer in place until staleFor.
+	if h.staleFor > 0 {
+		if buckets, _, ok := h.mounts.getStale(host, time.Now(), h.staleFor); ok && cacheUsable(buckets) {
+			h.lookups.DoChan(key, lookup)
+			return buckets, nil
+		}
+	}
+	shared := h.lookups.DoChan(key, lookup)
 	select {
 	case result := <-shared:
 		if result.Err != nil {

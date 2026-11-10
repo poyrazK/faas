@@ -6840,6 +6840,8 @@ type Querier interface {
 	ReleaseEnvironmentGitSourceOverrides(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseEnvironmentGitSourceOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	// ADR-20261108160000 slice C2: the latest value of one labelled series.
+	ReleaseGateCustomMetricSeriesWindow(ctx context.Context, db DBTX, arg ReleaseGateCustomMetricSeriesWindowParams) (ReleaseGateCustomMetricSeriesWindowRow, error)
 	ReleaseGateCustomMetricWindow(ctx context.Context, db DBTX, arg ReleaseGateCustomMetricWindowParams) (ReleaseGateCustomMetricWindowRow, error)
 	// ADR 20261022153155: a deployment's AI calls in the UTC minutes of
 	// [since, until).

@@ -2761,6 +2761,14 @@ func ResolveSourceUploadCapForTest(ctx context.Context, c *Client) (mb int, veri
 // ForwardAppTaskSession is the shared port-forward / postgres connect relay.
 var ForwardAppTaskSession = forwardAppTaskSession
 
+// AddBucketBindingUnavailable is add bucket's compute-binding precheck.
+var AddBucketBindingUnavailable = addBucketBindingUnavailable
+
+// AddPostgresUnsupported and PrintAddPostgresMigrationHint are add postgres's
+// region capability check and its migration-binding hint.
+var AddPostgresUnsupported = addPostgresUnsupported
+var PrintAddPostgresMigrationHint = printAddPostgresMigrationHint
+
 var DebugWatchNextWait = debugWatchNextWait
 
 // ADR-20261107180000 `gregale config explain`.
@@ -2782,3 +2790,6 @@ var (
 
 // MCPConnectOptions builds the options a test passes to MCPHeadlessToolCount.
 type MCPConnectOptions = mcpConnectOptions
+
+// MetricLabelFlags exposes the --metric-label parser.
+var MetricLabelFlags = metricLabelFlags

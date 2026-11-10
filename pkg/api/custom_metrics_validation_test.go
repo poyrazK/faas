@@ -91,6 +91,36 @@ func TestScalingTargetName_RequiredForCustomOnly(t *testing.T) {
 	}
 }
 
+// adr: 20261108160000 — slice C2: a custom target may select one labelled
+// series; labels elsewhere, or malformed, are rejected, and one name may be
+// targeted once per label set.
+func TestScalingTargetLabels(t *testing.T) {
+	ok := []ScalingTarget{
+		{Metric: ScalingMetricCustom, Name: "depth", Value: 10, Labels: map[string]string{"queue": "emails"}},
+		{Metric: ScalingMetricCustom, Name: "depth", Value: 10, Labels: map[string]string{"queue": "billing"}},
+		{Metric: ScalingMetricCustom, Name: "depth", Value: 10},
+	}
+	if p := ValidateScalingTargets("targets", ok); p != nil {
+		t.Fatalf("rejected per-series targets: %s", p.Detail)
+	}
+	for name, targets := range map[string][]ScalingTarget{
+		"labels on cpu": {{Metric: ScalingMetricCPU, Value: 70, Labels: map[string]string{"a": "b"}}},
+		"bad key":       {{Metric: ScalingMetricCustom, Name: "depth", Value: 1, Labels: map[string]string{"9x": "b"}}},
+		"four labels":   {{Metric: ScalingMetricCustom, Name: "depth", Value: 1, Labels: map[string]string{"a": "1", "b": "2", "c": "3", "d": "4"}}},
+		"same series twice": {
+			{Metric: ScalingMetricCustom, Name: "depth", Value: 1, Labels: map[string]string{"queue": "a"}},
+			{Metric: ScalingMetricCustom, Name: "depth", Value: 2, Labels: map[string]string{"queue": "a"}},
+		},
+	} {
+		if p := ValidateScalingTargets("targets", targets); p == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if got := CustomMetricSeriesKey(map[string]string{"b": "2", "a": "x=y,%"}); got != "a=x%3Dy%2C%25,b=2" {
+		t.Errorf("series key = %q", got)
+	}
+}
+
 // TestScalingTargets_CustomUniquenessIsPerName pins that the duplicate check
 // keys on metric+name. Two custom targets on DIFFERENT names are legitimate
 // and common; two on the SAME name are the dead-config case the check exists
