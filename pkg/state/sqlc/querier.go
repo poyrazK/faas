@@ -534,6 +534,9 @@ type Querier interface {
 	// Claims always allow an event to inspect demand and drain surplus workers.
 	// The returned failure deadline gates new admission inside the reconciler.
 	ClaimWorkerRecovery(ctx context.Context, db DBTX, arg ClaimWorkerRecoveryParams) (WorkerRecovery, error)
+	// A correct authenticator code clears the account's counted attempts
+	// (ADR 20261110120000).
+	ClearAccountMailSlot(ctx context.Context, db DBTX, arg ClearAccountMailSlotParams) error
 	ClearAccountOAuthUnlink(ctx context.Context, db DBTX, arg ClearAccountOAuthUnlinkParams) error
 	// A new fire of the rule supersedes the recovery it had not delivered.
 	ClearAlertChannelResolveRetries(ctx context.Context, db DBTX, ruleID pgtype.UUID) error
@@ -3914,6 +3917,10 @@ type Querier interface {
 	ListExpiredCrashCaptures(ctx context.Context, db DBTX, arg ListExpiredCrashCapturesParams) ([]CrashCapture, error)
 	ListExpiredCustomerOperationExecutions(ctx context.Context, db DBTX, arg ListExpiredCustomerOperationExecutionsParams) ([]string, error)
 	ListExpiredFunctionMigrationSources(ctx context.Context, db DBTX, arg ListExpiredFunctionMigrationSourcesParams) ([]FunctionMigrationSource, error)
+	// Accounts never verified long after signup (ADR 20261110120000): still
+	// active, no app ever created and no billing customer. The grace clock
+	// starts at signup or at enforced_from, whichever is later.
+	ListExpiredUnverifiedAccounts(ctx context.Context, db DBTX, arg ListExpiredUnverifiedAccountsParams) ([]pgtype.UUID, error)
 	ListFairTenantWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListFairTenantWorkflowScheduleCandidatesParams) ([]ListFairTenantWorkflowScheduleCandidatesRow, error)
 	ListFeatureFlagAutoRolloutCandidates(ctx context.Context, db DBTX, arg ListFeatureFlagAutoRolloutCandidatesParams) ([]ListFeatureFlagAutoRolloutCandidatesRow, error)
 	ListFeatureFlagRequestEvidence(ctx context.Context, db DBTX, arg ListFeatureFlagRequestEvidenceParams) ([]ListFeatureFlagRequestEvidenceRow, error)
