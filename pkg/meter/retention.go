@@ -422,6 +422,9 @@ DECLARE
     partsuffix text;
     partstart date;
 BEGIN
+    -- DROP takes ACCESS EXCLUSIVE on request_telemetry; queued behind a
+    -- long reader it would block every later one. Retry on the next tick.
+    PERFORM set_config('lock_timeout', '2s', true);
     FOR partname IN
         SELECT c.relname
         FROM pg_inherits i
