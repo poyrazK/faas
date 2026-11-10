@@ -5315,6 +5315,11 @@ type Querier interface {
 	ObjectUsageAuthorize(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeParams) error
 	ObjectUsageAuthorizeBy(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeByParams) error
 	ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
+	// Every bucket billed to one usage subject, with its usage. A subject is
+	// always a bucket's org or its account, so the account_id/org_id prefilter
+	// narrows by their indexes without changing the result. The subject function
+	// alone cannot use an index (its EXISTS keeps it from inlining): it scanned
+	// every bucket on the platform, under the account lock of every object write.
 	ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error)
 	ObjectUsageGrant(ctx context.Context, db DBTX, arg ObjectUsageGrantParams) (int64, error)
 	ObjectUsageGrantIncrement(ctx context.Context, db DBTX, arg ObjectUsageGrantIncrementParams) error
