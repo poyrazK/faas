@@ -3555,6 +3555,17 @@ func ErrUploadSessionOffsetConflict(uploadID string, expected, current int64) *P
 		WithDocs(docsBase + "/deploy-from-source#uploads")
 }
 
+// ErrUploadChecksumMismatch is returned by commit when the received bytes do
+// not hash to the declared sha256_hex. 410 like an expired session: this
+// session is gone and a fresh upload is the fix.
+func ErrUploadChecksumMismatch(uploadID, declared, got string) *Problem {
+	return NewProblem(http.StatusGone, CodeUploadChecksumMismatch,
+		"Uploaded archive does not match its checksum",
+		fmt.Sprintf("Upload session %q declared sha256 %s but the received bytes hash to %s; the session was cancelled.", uploadID, declared, got)).
+		WithHint("Start the upload again; gregale deploy does this automatically.").
+		WithDocs(docsBase + "/deploy-from-source#uploads")
+}
+
 // ErrUploadSessionExpired is returned when the reaper has marked the
 // row expired (or the request arrives after its TTL before the next
 // sweep). The CLI auto-rolls to a fresh POST /v1/uploads on receipt of
@@ -4659,6 +4670,11 @@ const (
 	// already gone; the operator's fix is to start a fresh
 	// upload session.
 	CodeUploadSessionAlreadyCancelled = "upload_session_already_cancelled"
+	// CodeUploadChecksumMismatch is the 410 emitted by
+	// POST /v1/uploads/{id}/commit when the received archive's SHA-256
+	// differs from the sha256_hex declared at start. The session is
+	// cancelled, so the CLI restarts with a fresh upload.
+	CodeUploadChecksumMismatch = "upload_checksum_mismatch"
 )
 
 // ErrPlanCronsNotAllowed is returned by apid's createCron handler
