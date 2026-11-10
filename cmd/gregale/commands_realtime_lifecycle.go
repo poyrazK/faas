@@ -144,7 +144,7 @@ func cmdRealtimeCreate(args []string) int {
 }
 
 func cmdRealtimeUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "callback-auth-token-stdin", "auth-token-stdin", "enable", "disable", "clear-allowed-origins", "clear-auth-claims")
+	flags, positional := splitArgsForFlags(args, "callback-auth-token-stdin", "auth-token-stdin", "enable", "disable", "enabled", "clear-allowed-origins", "clear-auth-claims")
 	fs := newFlagSet("realtime update", flag.ContinueOnError)
 	callbackURL := fs.String("callback-url", "", "new application callback URL")
 	callbackToken := fs.String("callback-auth-token", "", "new callback bearer token (prefer --callback-auth-token-stdin)")
@@ -170,16 +170,29 @@ func cmdRealtimeUpdate(args []string) int {
 	maxConnectionAge := fs.Int64("max-connection-age-seconds", -1, "new per-endpoint connection age cap")
 	enable := fs.Bool("enable", false, "enable the endpoint")
 	disable := fs.Bool("disable", false, "disable the endpoint")
+	// create spells it --enabled[=bool]; update accepts the same form
+	// (Hunt 32 H32-71) beside --enable/--disable.
+	enabled := fs.Bool("enabled", false, "--enabled or --enabled=false, as on create")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 {
 		PrintUsage(osStderr, "usage: gregale realtime update APP_SLUG ENDPOINT_ID [configuration flags]", "realtime")
 		return 1
 	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name != "enabled" {
+			return
+		}
+		if *enabled {
+			*enable = true
+		} else {
+			*disable = true
+		}
+	})
 	if strings.TrimSpace(positional[0]) == "" || strings.TrimSpace(positional[1]) == "" {
 		PrintUsage(osStderr, "usage: gregale realtime update APP_SLUG ENDPOINT_ID [configuration flags]", "realtime")
 		return 1
 	}
 	if *enable && *disable {
-		return printErr("Invalid flags", fmt.Errorf("--enable and --disable are mutually exclusive"))
+		return printErr("Invalid flags", fmt.Errorf("--enable and --disable (or --enabled=true and --enabled=false) are mutually exclusive"))
 	}
 	if *callbackTokenStdin && *authTokenStdin {
 		return printErr("Invalid secret input", fmt.Errorf("--callback-auth-token-stdin and --auth-token-stdin cannot be used together; stdin carries one secret per command"))
