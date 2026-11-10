@@ -138,6 +138,8 @@ RULES = [
     # Keyed credential hashes (ADR 20261029202403): storage plumbing under
     # every credential, no capability of its own.
     (r"^credhash$", "INFRA"),
+    # ADR-20261109170000: signd's record of the layers it signed.
+    (r"^artifact-signatures$", "INFRA"),
     # Compile-on-first-use regexps for package-level patterns
     # (ADR-20261101215228 measurement); no capability of its own.
     (r"^lazyregexp$", "INFRA"),
@@ -397,6 +399,8 @@ INFRA_RULES = [
     r"^internal-keepalive-per-node$",
     # ADR-20261102081618: the records that send Cloudflare to the compute edges.
     r"^edgednsd?(-.*)?$",
+    # ADR-20261109170000: the control plane's artifact signer.
+    r"^signd$",
     # ADR-20261103163954: what stands in front of a compute edge's TLS listener.
     r"^edge-public-front$",
     # ADR-20261103163954 §4: the compute edge's per-client-address limits.

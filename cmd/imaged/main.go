@@ -378,7 +378,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("imaged: FAAS_ARTIFACT_SIGNATURE_FORMAT=%q: want v1 or v2", format)
 	}
 	log.Info("imaged: artifact signature format", "v2", os.Getenv("FAAS_ARTIFACT_SIGNATURE_FORMAT") == "v2")
-	builder.WithSigner(signer)
+	layerSigner, closeSigner, err := artifactSignerFromEnv(ctx, os.Getenv, signer, storageBackend, log)
+	if err != nil {
+		return err
+	}
+	defer closeSigner()
+	builder.WithSigner(layerSigner)
 	// One per-daemon Prometheus registry, shared by the handler
 	// (OCI-pull observations inside aboveBaseLayers + buildImageLayer)
 	// and the /metrics listener below. PR #132 constructed two
