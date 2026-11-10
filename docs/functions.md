@@ -425,9 +425,9 @@ In Node, hooks are methods on the default export or named exports beside
 is cancelled. In Python
 they are module functions, sync or async, with an optional `ctx` argument.
 
-`gregale deploy` finds the hooks in the handler file without running it, lists
-them under "Snapshot hooks in code:" in `gregale deploy --plan`, and points
-the app's `before_checkpoint` and `after_restore` lifecycle at the function
+`gregale deploy` finds the hooks in the handler file without running it (for a
+[functions project](#several-functions-in-one-project), `gregale deploy --plan`
+lists them under "Snapshot hooks in code:") and points the app's `before_checkpoint` and `after_restore` lifecycle at the function
 runner, which calls the hook in every worker. A push to a [GitHub-connected
 functions project](#deploy-a-functions-project-from-github) does the same. A
 hook removed from the code is removed from the app on the next deploy. An
