@@ -131,7 +131,10 @@ benchmark. h2c costs half again as much as HTTP/1.1.
    - A failure after the request was written is handled as today's transport
      errors are.
 7. **Switch.** `FAAS_EDGE_INTERNAL_HOP=http1|binary`, `http1` by default,
-   like other data-path changes.
+   like other data-path changes. The manifest's `hot_path.edge_binary_hop`
+   sets it. It needs `hot_path.edge_keepalive_per_node`: that transport
+   names the node before it picks a connection, so the edge knows a request
+   is for its own node before choosing the hop.
 8. **Metric.** `gatewayd_public_internal_hop_fallback_total{reason}` counts
    requests that fell back to HTTP/1.1. The reasons are `no_socket` and
    `dial_error`. It gets a spec §12 row.
@@ -148,9 +151,24 @@ benchmark. h2c costs half again as much as HTTP/1.1.
 
 ## Consequences
 
-- **Expected saving.** About 120 µs per request: 14% of the two daemons'
-  CPU on a 404 and about 5% on an app request. That is the benchmark's ratio
-  applied to the profile's 160 µs. Step 9 measures the real number.
+- **Expected saving.** Measured on the implementation, the saving is about
+  half the hop, not the prototype's three quarters. The implementation adds
+  what the prototype left out: streamed bodies, trailers, 1xx responses,
+  cancellation and net/http's response defaults.
+
+  `BenchmarkInternalHop`, internal-test-1, `-cpu 1`, five runs in one sitting
+  on a loaded host:
+
+  | Hop | ns/op | B/op | allocs/op |
+  |---|---|---|---|
+  | HTTP/1.1 | 52,046–55,547 | 6,593 | 77 |
+  | Binary HTTP | 26,509–30,714 | 4,299 | 42 |
+
+  The host ran everything about 1.8 times slower than in the morning's
+  table, so read the ratio, not the absolute numbers. Half of the profile's
+  160 µs is about 80 µs per 404: about 10% of the two daemons' CPU, and
+  about 3% on an app request. That is at step 9's threshold, so the
+  one-node measurement decides whether the hop stays.
 - **What stays the same:**
   - two processes, as ADR-070 and ADR-1343 set out;
   - their separate systemd hardening, so the edge keeps its stricter
@@ -218,3 +236,36 @@ benchmark. h2c costs half again as much as HTTP/1.1.
   over a unix socket write, at much greater complexity.
 - **Doing nothing and adding nodes.** Cost scales with nodes, and the
   per-node ceiling of a flood or a misconfigured client stays where it is.
+
+## Implementation notes
+
+- **Package layout:**
+  - `pkg/binhttp` is the RFC 9292 codec;
+  - `pkg/gateway/binary_hop_server.go` is gatewayd-internal's side, served
+    beside the HTTP/1.1 socket by `SynthServer.WithBinaryHop`;
+  - `pkg/gateway/binary_hop_transport.go` is the edge's side, chosen per
+    attempt in `upstreamTransport` when the picked upstream offers a hop.
+- **Framing:** a request with no content uses the known-length form, so
+  gatewayd-internal knows at once that no body follows, as net/http does
+  with `http.NoBody`. Everything else uses the indeterminate-length form.
+  Messages on one connection carry no padding: a known-length request's
+  framing indicator is itself a zero byte.
+- **What gatewayd-internal sees is net/http's:**
+  - the same headers, `RemoteAddr`, `ContentLength` and trailers;
+  - a context cancelled when the edge closes the connection;
+  - the first 2 KB buffered, so a small response gets a sniffed
+    `Content-Type` and a `Content-Length`.
+
+  `TestBinaryHopMatchesHTTP1` sends each case both ways and compares.
+- **One difference:** the HTTP/1.1 transport adds `Accept-Encoding: gzip` to
+  a request that has none, and then unzips the response itself. The binary
+  hop does neither, so a client that asked for no compression gets the same
+  bytes without the round trip through gzip.
+- **No systemd socket unit holds the hop socket.** While gatewayd-internal
+  restarts, the edge's dials fail and it uses the HTTP/1.1 socket, which
+  `faas-gatewayd-internal.socket` keeps open. The fallback metric counts
+  those requests.
+- **The socket's path** is `FAAS_INTERNAL_HOP_SOCKET`, by default
+  `/run/faas/gatewayd-internal-hop.sock`, beside the HTTP/1.1 socket.
+  `off` serves none.
+

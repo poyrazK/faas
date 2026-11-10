@@ -113,6 +113,9 @@ type edgeMetrics struct {
 	// refused counts connections and requests the per-client-address
 	// limits turned away, by reason (ADR-20261103163954 §4).
 	refused *prometheus.CounterVec
+	// hopFallbacks counts requests for the binary hop that went over
+	// HTTP/1.1 instead, by reason (ADR-20261110081523).
+	hopFallbacks *prometheus.CounterVec
 }
 
 func newEdgeMetrics() *edgeMetrics {
@@ -150,9 +153,16 @@ func newEdgeMetrics() *edgeMetrics {
 			Name: "gatewayd_public_edge_refused_total",
 			Help: "Connections and requests a compute edge's client limits turned away, by reason: open_connections, connection_rate and handshakes (reset before TLS), request_rate and host_request_rate (answered 429), body_rate (a body slower than the minimum rate, its read failed) and forward_in_flight (answered 503 at the cap on requests forwarded to the control plane) (ADR-20261103163954 §4).",
 		}, []string{"reason"}),
+		hopFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gatewayd_public_internal_hop_fallback_total",
+			Help: "Requests a compute edge meant for its own node's gatewayd-internal in binary HTTP that went over HTTP/1.1 instead, by reason: no_socket (the hop socket is missing or nothing listens on it, as beside a gatewayd-internal from before the hop or while it restarts) and dial_error (ADR-20261110081523).",
+		}, []string{"reason"}),
 	}
 	for _, reason := range clientlimit.Reasons {
 		m.refused.WithLabelValues(reason)
+	}
+	for _, reason := range gateway.HopFallbackReasons {
+		m.hopFallbacks.WithLabelValues(reason)
 	}
 	for _, result := range placementResults {
 		m.placement.WithLabelValues(result)
@@ -162,8 +172,13 @@ func newEdgeMetrics() *edgeMetrics {
 			m.wakeFailover.WithLabelValues(reason, outcome)
 		}
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures, m.refused)
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures, m.refused, m.hopFallbacks)
 	return m
+}
+
+// observeHopFallback counts one binary hop request sent over HTTP/1.1.
+func (m *edgeMetrics) observeHopFallback(reason string) {
+	m.hopFallbacks.WithLabelValues(reason).Inc()
 }
 
 // observeWakeFailover is the gateway.WakeFailover observer.
@@ -198,6 +213,9 @@ type localFirstDialer struct {
 	// it (ADR-20261031105055); nil keeps every request local first.
 	placement     *edgePlacement
 	placementPool *computeGatewayPool
+	// hop, when set, dials this node's gatewayd-internal's binary HTTP
+	// socket, offered with the local upstream (ADR-20261110081523).
+	hop gateway.InternalDialer
 }
 
 // nodeInventory reports a compute node's registry state: whether it is
@@ -224,6 +242,18 @@ func (d *localFirstDialer) withPlacement(placement *edgePlacement, pool *compute
 	d.placement = placement
 	d.placementPool = pool
 	return d
+}
+
+// withBinaryHop offers the local upstream's binary HTTP socket, dialled
+// with hop (ADR-20261110081523).
+func (d *localFirstDialer) withBinaryHop(hop gateway.InternalDialer) *localFirstDialer {
+	d.hop = hop
+	return d
+}
+
+// dialHop opens a connection to this node's binary HTTP socket.
+func (d *localFirstDialer) dialHop(ctx context.Context) (net.Conn, error) {
+	return d.hop.DialContext(ctx, "")
 }
 
 // placementRoute returns the ready node a request's host was last served
@@ -328,7 +358,11 @@ func (d *localFirstDialer) PickUpstream(ctx context.Context, rec *gateway.DialRe
 	localExcluded := d.nodeName != "" && rec.Excluded(d.nodeName)
 	viaLocal := d.healthy.Load() && !localExcluded
 	if viaLocal && !slices.Contains(failed, localUpstreamKey) {
-		return gateway.Upstream{Key: localUpstreamKey, Node: d.nodeName, Dial: d.dialLocal}, nil
+		local := gateway.Upstream{Key: localUpstreamKey, Node: d.nodeName, Dial: d.dialLocal}
+		if d.hop != nil {
+			local.Hop = d.dialHop
+		}
+		return local, nil
 	}
 	pool, ok := d.fallback.(gateway.UpstreamPicker)
 	if !ok {
