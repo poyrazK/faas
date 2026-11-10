@@ -1380,6 +1380,8 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
 		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
 		RequestBodyMaxBytes:   plan.MaxRequestBodyBytes(),
+		IdleTimeoutS:          limits.EffectiveIdleTimeoutS(string(a.Type), a.IdleTimeoutS),
+		Pause:                 api.EffectivePause(a.Manifest.Pause, a.Type == state.AppTypeFunction),
 	}
 }
 

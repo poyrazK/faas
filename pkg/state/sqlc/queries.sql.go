@@ -42815,6 +42815,7 @@ const latestRetainedRollbackDeployment = `-- name: LatestRetainedRollbackDeploym
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid
 AND d.deleted_at IS NULL
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
+AND d.last_auto_rollback_reason IS NULL
 AND ($2::text IS NULL OR d.scope=$2::text)
 AND ($3::uuid IS NULL OR d.id<>$3::uuid)
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
@@ -42837,6 +42838,8 @@ type LatestRetainedRollbackDeploymentParams struct {
 // (a dark deploy) needs a retention pin. A canary candidate aborted before it
 // ever completed served only its canary steps and failed them, so it is never
 // an implicit target (H5-62).
+// A release an automatic guard reverted (ADR-625, ADR-1445) is never an
+// implicit target either; `rollback --to` can still name it.
 func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LatestRetainedRollbackDeploymentParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, latestRetainedRollbackDeployment, arg.AppID, arg.Scope, arg.CurrentDeploymentID)
 	var id pgtype.UUID
@@ -62544,6 +62547,7 @@ const lockRetainedRollbackDeployment = `-- name: LockRetainedRollbackDeployment 
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND d.deleted_at IS NULL
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
+AND d.last_auto_rollback_reason IS NULL
 AND d.id<>$3::uuid
 AND NOT d.environment_workload_held
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
@@ -62559,6 +62563,8 @@ type LockRetainedRollbackDeploymentParams struct {
 	CurrentDeploymentID pgtype.UUID
 }
 
+// A release an automatic guard reverted (ADR-625, ADR-1445) is never an
+// implicit target either; `rollback --to` can still name it.
 func (q *Queries) LockRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LockRetainedRollbackDeploymentParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, lockRetainedRollbackDeployment, arg.AppID, arg.Scope, arg.CurrentDeploymentID)
 	var id pgtype.UUID

@@ -33413,6 +33413,27 @@ CREATE TABLE public.application_standards (
 
 
 --
+-- Name: artifact_signatures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.artifact_signatures (
+    storage_key text NOT NULL,
+    digest text NOT NULL,
+    bytes bigint NOT NULL,
+    deployment_id uuid NOT NULL,
+    node_name text NOT NULL,
+    signature_format text NOT NULL,
+    signed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT artifact_signatures_bytes_check CHECK ((bytes >= 0)),
+    CONSTRAINT artifact_signatures_digest_check CHECK ((digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT artifact_signatures_node_name_check CHECK (((node_name <> ''::text) AND (octet_length(node_name) <= 253))),
+    CONSTRAINT artifact_signatures_signature_format_check CHECK ((signature_format = 'v2'::text)),
+    CONSTRAINT artifact_signatures_signed_at_check CHECK (isfinite(signed_at)),
+    CONSTRAINT artifact_signatures_storage_key_check CHECK (((storage_key ~ '^apps/[^/]+/[^/]+\.ext4$'::text) AND (octet_length(storage_key) <= 512)))
+);
+
+
+--
 -- Name: audit_event_outbox; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -54899,7 +54920,7 @@ CREATE TABLE public.projects (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid NOT NULL,
-    CONSTRAINT projects_scan_source_chk CHECK ((scan_source = ANY (ARRAY['compose'::text, 'procfile'::text, 'k8s'::text, 'render'::text, 'fly'::text, 'serverless'::text, 'workspace'::text, 'convention'::text, 'single'::text, 'unknown'::text]))),
+    CONSTRAINT projects_scan_source_functions_chk CHECK ((scan_source = ANY (ARRAY['compose'::text, 'procfile'::text, 'k8s'::text, 'render'::text, 'fly'::text, 'serverless'::text, 'workspace'::text, 'convention'::text, 'single'::text, 'unknown'::text, 'functions'::text]))),
     CONSTRAINT projects_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
 );
 
@@ -60959,6 +60980,14 @@ ALTER TABLE ONLY public.apps
 
 ALTER TABLE ONLY public.apps
     ADD CONSTRAINT apps_slug_key UNIQUE (slug);
+
+
+--
+-- Name: artifact_signatures artifact_signatures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.artifact_signatures
+    ADD CONSTRAINT artifact_signatures_pkey PRIMARY KEY (storage_key);
 
 
 --
@@ -73938,6 +73967,13 @@ CREATE INDEX apps_streaming_enabled_idx ON public.apps USING btree (streaming_en
 --
 
 CREATE INDEX apps_websocket_enabled_idx ON public.apps USING btree (websocket_enabled) WHERE (websocket_enabled = true);
+
+
+--
+-- Name: artifact_signatures_deployment; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX artifact_signatures_deployment ON public.artifact_signatures USING btree (deployment_id);
 
 
 --

@@ -52,6 +52,47 @@ func encodeSignatureV2(priv *ecdsa.PrivateKey, key string, digest []byte) ([]byt
 	return json.Marshal(SignatureV2{Format: SignatureFormatV2, Key: key, Digest: digestHex, Signature: sig})
 }
 
+// SignV2 signs key and digestHex, the artifact's lowercase hex SHA-256, and
+// returns the v2 document to store. signd signs with it
+// (ADR-20261109170000 §3).
+func SignV2(priv *ecdsa.PrivateKey, key, digestHex string) ([]byte, error) {
+	if !ValidDigestHex(digestHex) {
+		return nil, errors.New("cosign: v2 signature needs a lowercase hex SHA-256 digest")
+	}
+	digest, _ := hex.DecodeString(digestHex)
+	return encodeSignatureV2(priv, key, digest)
+}
+
+// VerifyArtifactSignature checks blob, a stored signature, against key and
+// digestHex, the artifact's lowercase hex SHA-256. It returns the blob's
+// format, "v1" (raw, bound to the bytes only) or "v2" (bound to key and
+// digest), and whether it verifies under pub. The re-sign pass uses it
+// (ADR-20261109170000 §5 step 3).
+func VerifyArtifactSignature(pub *ecdsa.PublicKey, key, digestHex string, blob []byte) (string, bool) {
+	format := "v2"
+	if len(blob) == 64 {
+		format = "v1"
+	}
+	if !ValidDigestHex(digestHex) || pub == nil {
+		return format, false
+	}
+	digest, _ := hex.DecodeString(digestHex)
+	return format, verifySignature(pub, key, digest, blob)
+}
+
+// ValidDigestHex reports whether s is a lowercase hex SHA-256.
+func ValidDigestHex(s string) bool {
+	if len(s) != 2*sha256.Size {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // parseSignatureV2 decodes a v2 document. It reports ok false for anything
 // that is not one, a v1 raw signature included.
 func parseSignatureV2(blob []byte) (SignatureV2, bool) {

@@ -228,6 +228,18 @@ var cliCommands = []cliCommand{
 					{Name: "refresh", Short: "fetch from shared storage and replace the local cache"},
 				},
 			},
+			{
+				Name:  "resign",
+				Short: "Convert stored layers' v1 signatures to key-bound v2 ones (ADR-20261109170000)",
+				Flags: []cliFlag{
+					{Name: "env-file", Short: "storage.env path (required)"},
+					{Name: "pg-dsn", Short: "PostgreSQL DSN"},
+					{Name: "db-env", Short: "database environment file"},
+					{Name: "sign-key", Short: "the fleet signing key signd holds"},
+					{Name: "dry-run", Short: "verify and count, write nothing"},
+					{Name: "json", Short: "emit a machine-readable report"},
+				},
+			},
 		},
 	},
 	{

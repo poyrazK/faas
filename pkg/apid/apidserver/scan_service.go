@@ -3233,6 +3233,7 @@ func (s *server) projectScanOptions(acct state.Account) reposcan.ScanOptions {
 		KubernetesManifests:       s.capGate == nil || s.capGate.Enabled(reposcan.KubernetesManifestsCapability, subject),
 		HTTPSTransportUnavailable: !s.privateServiceHTTPS(acct),
 		ResourceLabels:            s.capGate == nil || s.capGate.Enabled(resourcelabels.Capability, subject),
+		Functions:                 s.capGate == nil || s.capGate.Enabled(reposcan.RepositoryFunctionsCapability, subject),
 	}
 }
 

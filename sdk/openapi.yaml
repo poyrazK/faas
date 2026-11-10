@@ -26070,6 +26070,8 @@ components:
         request_budget_max_ms: {type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds."}
         response_write_timeout_s: {type: integer, format: int64, description: "Maximum response write window for the plan, in seconds."}
         request_body_max_bytes: {type: integer, format: int64, description: "Maximum inbound request body accepted for this app's plan, in bytes."}
+        idle_timeout_s: {type: integer, description: "Idle timeout the platform applies: the app's own setting or its type's default, within the plan bounds (seconds)."}
+        pause: {type: string, enum: [between_requests, when_idle, never], description: "When the platform may pause the VM: the declared value or the default for the app's type. Apps on a private network are never paused."}
     AppConfiguredResources:
       description: "The memory and sustained CPU shape selected for each instance of this app."
       type: object
@@ -35257,7 +35259,7 @@ components:
         detector:
           type: string
           description: "closed vocabulary — the detector that won identity for this workload"
-          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
           example: compose
         marker:
           type: string
@@ -35280,7 +35282,7 @@ components:
             get its own workload?" — it merged into the compose `web`.
           items:
             type: string
-            enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+            enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
           example: [procfile]
     PlanDetectionWarning:
       description: |
@@ -35295,7 +35297,7 @@ components:
           description: "Workload affected by the decision; omitted for source-wide warnings."
         detector:
           type: string
-          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
         marker:
           type: string
           description: "Concrete source marker associated with the detector decision."
@@ -35449,7 +35451,7 @@ components:
         environment_config_hash: {type: string, pattern: '^[a-f0-9]{64}$', description: "Hash of the non-secret environment configuration bound into this plan"}
         scan_source:
           type: string
-          enum: [compose, procfile, k8s, render, fly, serverless, workspace, convention, single, unknown]
+          enum: [compose, procfile, k8s, render, fly, serverless, workspace, convention, single, unknown, functions]
         tier: {type: string}
         workloads:
           type: array

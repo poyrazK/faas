@@ -425,6 +425,9 @@ func (w *wakePhases) attrs() []any {
 
 type Instance struct {
 	resolvedEgressGeneration string // immutable once captured, guarded by Manager.mu
+	// booting marks a network owner registered before publication
+	// (booting_egress.go); it is never in live.
+	booting bool
 	// awaitingExit: teardown has recorded its cleanup intent but is waiting
 	// for the guest to exit by itself (a builder finishing its build), so
 	// its DNS answers are still granted. Guarded by Manager.mu.
@@ -999,6 +1002,10 @@ type Manager struct {
 	// request's runtime identity so a booting guest can register its
 	// secret execution before exec (ADR-508), ahead of publication.
 	waking map[string]wakingInstance
+	// bootingEgress is the network owner of each booting guest whose
+	// namespace exists, until publication or teardown (booting_egress.go).
+	// Guarded by mu.
+	bootingEgress map[string]*Instance
 	// provenWorkers holds the deployments whose declared worker passed the
 	// full characterization window on this node; their later cold boots
 	// use the short window (ADR-20261018101500). Guarded by mu. Losing it on restart
@@ -5171,6 +5178,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			// Circuit policy must be installed before the guest can boot.
 			return m.registerEgressCircuitNetwork(ctx, req.AppID, nc)
 		}, func() {
+			m.registerBootingEgressOwner(lease, nc, req, qualificationOnly)
 			if networkReady != nil {
 				networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, JailUID: lease.UID})
 			}
@@ -5234,6 +5242,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 				return nil, err
 			}
 		}
+		m.registerBootingEgressOwner(lease, nc, req, qualificationOnly)
 		if networkReady != nil && !req.ExecutionOnly {
 			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, PublicTarget: publicTarget, JailUID: lease.UID})
 		}
@@ -5628,6 +5637,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			return nil, err
 		}
 		delete(m.waking, req.Instance)
+		m.adoptBootingEgressLocked(inst)
 		m.live[req.Instance] = inst
 		m.recordProvenWorkerLocked(inst)
 		if starting := m.functionStarting[req.Instance]; starting != nil && starting.Lease.processGeneration == inst.Lease.processGeneration {

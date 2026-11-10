@@ -31,7 +31,7 @@ const (
 	agentKeyEnv = "GREGALE_AGENT_KEY"
 )
 
-var mcpConnectClients = []string{mcpConnectClaude, mcpConnectCodex}
+var mcpConnectClients = []string{mcpConnectClaude, mcpConnectCodex, mcpConnectCursor, mcpConnectVSCode, mcpConnectWindsurf, mcpConnectClaudeDesktop}
 
 // Seams for tests: external commands, PATH lookup and the home directory.
 var (
@@ -76,22 +76,26 @@ type mcpConnectSummary struct {
 	Clients  []mcpConnectResult `json:"clients"`
 }
 
-const mcpConnectUsage = "usage: gregale mcp connect [--client claude-code|codex]... [--project] [--toolsets LIST] [--headless] [--force] [--dry-run] [--yes]"
+const mcpConnectUsage = "usage: gregale mcp connect [--client claude-code|codex|cursor|vscode|windsurf|claude-desktop]... [--project] [--toolsets LIST] [--headless] [--force] [--dry-run] [--yes] | --check"
 
 func cmdMCPConnect(args []string) int {
 	fs := newFlagSet("mcp connect", flag.ContinueOnError)
 	var clients stringListFlag
-	fs.Var(&clients, "client", "agent client to connect: claude-code or codex (repeatable; default: every detected one)")
+	fs.Var(&clients, "client", "agent client to connect: "+strings.Join(mcpConnectClients, ", ")+" (repeatable; default: every detected one)")
 	project := fs.Bool("project", false, "write this project's config (.mcp.json) instead of the user-wide one")
 	toolsets := fs.String("toolsets", "", "MCP toolsets to list, comma-separated (default core)")
 	headless := fs.Bool("headless", false, "mint an agent key for an agent with no person at a browser; the config reads it from $"+agentKeyEnv)
 	force := fs.Bool("force", false, "replace an existing gregale entry that differs")
 	dryRun := fs.Bool("dry-run", false, "print what would be written without changing anything")
 	yes := fs.Bool("yes", false, "connect every detected client without asking")
-	flags, positional := splitArgsForFlags(args, "project", "headless", "force", "dry-run", "yes")
+	check := fs.Bool("check", false, "only check why an agent does not see Gregale; changes nothing")
+	flags, positional := splitArgsForFlags(args, "project", "headless", "force", "dry-run", "yes", "check")
 	if err := fs.Parse(flags); err != nil || len(positional) != 0 {
 		PrintUsage(os.Stderr, mcpConnectUsage, "mcp")
 		return 1
+	}
+	if *check {
+		return runMCPConnectCheck()
 	}
 	opts := mcpConnectOptions{URL: strings.TrimRight(apiBase(), "/") + "/mcp", Toolsets: strings.TrimSpace(*toolsets),
 		Project: *project, Headless: *headless, Force: *force, DryRun: *dryRun}
@@ -143,7 +147,7 @@ func mcpConnectSelect(named []string, auto bool) ([]string, int) {
 		}
 	}
 	if len(detected) == 0 {
-		return nil, printErr("No agent client found", fmt.Errorf("neither Claude Code (claude) nor Codex (codex) is installed; install one, or see https://gregale.dev/docs/agents for other clients"))
+		return nil, printErr("No agent client found", fmt.Errorf("found none of Claude Code, Codex, Cursor, VS Code, Windsurf or Claude Desktop; install one, or see https://gregale.dev/docs/agents for other clients"))
 	}
 	if auto {
 		return detected, 0
@@ -178,23 +182,44 @@ func mcpClientDetected(client string) bool {
 		}
 		_, err = os.Stat(filepath.Join(home, ".codex"))
 		return err == nil
+	case mcpConnectClaudeDesktop:
+		return mcpDirExists(claudeDesktopDir)
+	}
+	if c, ok := mcpJSONClients[client]; ok {
+		if _, err := mcpConnectLookPath(c.binary); err == nil {
+			return true
+		}
+		return mcpDirExists(c.userDir)
 	}
 	return false
 }
 
 func mcpClientName(client string) string {
-	if client == mcpConnectClaude {
+	switch client {
+	case mcpConnectClaude:
 		return "Claude Code"
+	case mcpConnectCodex:
+		return "Codex"
+	case mcpConnectClaudeDesktop:
+		return "Claude Desktop"
 	}
-	return "Codex"
+	if c, ok := mcpJSONClients[client]; ok {
+		return c.name
+	}
+	return client
 }
 
 func mcpConnectClient(client string, opts mcpConnectOptions) mcpConnectResult {
 	var r mcpConnectResult
-	if client == mcpConnectClaude {
+	switch client {
+	case mcpConnectClaude:
 		r = connectClaudeCode(opts)
-	} else {
+	case mcpConnectCodex:
 		r = connectCodex(opts)
+	case mcpConnectClaudeDesktop:
+		r = connectClaudeDesktop(opts)
+	default:
+		r = connectJSONClient(client, opts)
 	}
 	r.Client = client
 	return r
@@ -325,22 +350,7 @@ const (
 // other line, comment and table stays byte for byte.
 func upsertCodexServer(content, block string, force bool) (string, string) {
 	lines := strings.SplitAfter(content, "\n")
-	start, end := -1, len(lines)
-	for i, line := range lines {
-		header := codexTableHeader(line)
-		if header == "" {
-			continue
-		}
-		owned := header == "mcp_servers."+mcpServerName || strings.HasPrefix(header, "mcp_servers."+mcpServerName+".")
-		if start < 0 && owned {
-			start = i
-			continue
-		}
-		if start >= 0 && !owned {
-			end = i
-			break
-		}
-	}
+	start, end := codexServerSpan(lines)
 	if start < 0 {
 		sep := ""
 		if content != "" {
@@ -363,6 +373,37 @@ func upsertCodexServer(content, block string, force bool) (string, string) {
 		block += "\n"
 	}
 	return strings.Join(lines[:start], "") + block + tail, codexReplaced
+}
+
+// codexServerSpan finds the lines of the gregale server table and its
+// subtables: [start, end), or start -1 when there is none.
+func codexServerSpan(lines []string) (start, end int) {
+	start, end = -1, len(lines)
+	for i, line := range lines {
+		header := codexTableHeader(line)
+		if header == "" {
+			continue
+		}
+		owned := header == "mcp_servers."+mcpServerName || strings.HasPrefix(header, "mcp_servers."+mcpServerName+".")
+		if start < 0 && owned {
+			start = i
+			continue
+		}
+		if start >= 0 && !owned {
+			return start, i
+		}
+	}
+	return start, end
+}
+
+// codexServerTable returns the gregale server table of a Codex config, or "".
+func codexServerTable(content string) string {
+	lines := strings.SplitAfter(content, "\n")
+	start, end := codexServerSpan(lines)
+	if start < 0 {
+		return ""
+	}
+	return strings.Join(lines[start:end], "")
 }
 
 // codexTableHeader returns the dotted name of a TOML table header line, or

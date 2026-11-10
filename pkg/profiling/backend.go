@@ -143,13 +143,21 @@ func (b *Pyroscope) QueryHeap(ctx context.Context, tenant, appID, scope string, 
 }
 
 func encodeSeries(principal Principal, identity sampleIdentity, name string, p *profile.Profile) ([]byte, error) {
+	// Pyroscope query deduplication uses series identity and capture time.
+	// Lifetimes share collector_id slots, so two lifetimes in one slot with
+	// identical samples and capture times (heap snapshots are stamped in whole
+	// seconds) would still collapse into one. Each lifetime shifts its capture
+	// times by its own offset below a millisecond (ADR-1155 round 4
+	// follow-up). The caller's profile is restored after encoding.
+	offset := collectorTimeOffset(identity.Collector)
+	p.TimeNanos += offset
 	var encoded bytes.Buffer
-	if err := p.WriteUncompressed(&encoded); err != nil {
+	err := p.WriteUncompressed(&encoded)
+	p.TimeNanos -= offset
+	if err != nil {
 		return nil, fmt.Errorf("encode profile: %w", err)
 	}
-	// Pyroscope query deduplication uses series identity and capture time.
-	// Separate VM/process lifetimes need distinct series even when their
-	// CPU samples and timestamps coincide. No guest label is forwarded.
+	// No guest label is forwarded.
 	labels := [][2]string{{"__name__", name}, {"service_name", "gregale"}, {"app_id", principal.AppID}, {"deployment_id", principal.DeploymentID}, {"scope", principal.Scope}, {"runtime", principal.Runtime}, {"collector_id", collectorLabel(identity.Collector)}}
 	var series []byte
 	for _, label := range labels {
@@ -170,6 +178,13 @@ func encodeSeries(principal Principal, identity sampleIdentity, name string, p *
 // and a slot does that as well as a unique value; a unique value per wake grew
 // the series count without bound. Coverage still counts lifetimes from the
 // sample names, which keep the full identity.
+// collectorTimeOffset is a lifetime's capture-time offset, below a
+// millisecond, from bits of its identity the slot does not use.
+func collectorTimeOffset(collector string) int64 {
+	sum := sha256.Sum256([]byte(collector))
+	return int64(binary.BigEndian.Uint32(sum[4:8]) % uint32(time.Millisecond))
+}
+
 func collectorLabel(collector string) string {
 	sum := sha256.Sum256([]byte(collector))
 	return "c" + strconv.Itoa(int(binary.BigEndian.Uint32(sum[:4])%api.ProfileCollectorLabelSlots))

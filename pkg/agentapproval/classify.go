@@ -96,6 +96,41 @@ var production = map[string]Target{
 	"POST /v1/deployments/{}/canary/advance":               TargetDeployment,
 	"POST /v1/deployments/{}/retry":                        TargetDeployment,
 	"POST /v1/deployments/{}/approvals":                    TargetDeployment,
+
+	// Project deploys, environment promotions, release sets and GitOps
+	// sources deploy or move traffic for every app of an environment
+	// (deploy review 2026-11-10, D3). An environment records no production
+	// flag, so these ask on every environment (TargetNone); protected
+	// environments keep their own approval token on top.
+	"POST /v1/projects/apply-plan":                                                 TargetNone,
+	"POST /v1/projects/safe-deploy":                                                TargetNone,
+	"POST /v1/projects/{}/environments/{}/promote":                                 TargetNone,
+	"POST /v1/projects/{}/environments/{}/promotions/{}/rollback":                  TargetNone,
+	"POST /v1/projects/{}/environments/{}/promotions/{}/recover-migration":         TargetNone,
+	"POST /v1/projects/{}/environments/{}/release-sets":                            TargetNone,
+	"POST /v1/projects/{}/environments/{}/release-sets/activate":                   TargetNone,
+	"POST /v1/projects/{}/environments/{}/release-sets/deactivate":                 TargetNone,
+	"POST /v1/projects/{}/environments/{}/release-sets/rollback":                   TargetNone,
+	"POST /v1/projects/{}/environments/{}/gitops/source":                           TargetNone,
+	"PATCH /v1/projects/{}/environments/{}/gitops/source":                          TargetNone,
+	"POST /v1/projects/{}/environments/{}/gitops/source/rebind":                    TargetNone,
+	"POST /v1/projects/{}/environments/{}/gitops/adopt":                            TargetNone,
+	"POST /v1/projects/{}/environments/{}/gitops/overrides":                        TargetNone,
+	"POST /v1/projects/{}/environments/{}/gitops/revisions/approve":                TargetNone,
+	"POST /v1/orgs/{}/projects/{}/deploy":                                          TargetNone,
+	"POST /v1/orgs/{}/projects/{}/environments/{}/promote":                         TargetNone,
+	"POST /v1/orgs/{}/projects/{}/environments/{}/promotions/{}/rollback":          TargetNone,
+	"POST /v1/orgs/{}/projects/{}/environments/{}/promotions/{}/recover-migration": TargetNone,
+	"POST /v1/orgs/{}/projects/{}/environments/{}/release-sets":                    TargetNone,
+}
+
+// productionRouteOnly are production routes whose ServeMux pattern differs
+// from api/openapi.yaml: the promotion action route the spec writes as /abort
+// and /recover. The gate classifies the ServeMux pattern, so these are listed
+// as registered.
+var productionRouteOnly = map[string]Target{
+	"POST /v1/orgs/{}/projects/{}/environments/{}/promotions/{}/{}": TargetNone,
+	"POST /v1/projects/{}/environments/{}/promotions/{}/{}":         TargetNone,
 }
 
 // credentials mint keys and tokens; every POST ending in /rotate or
@@ -146,6 +181,9 @@ func Classify(pattern string) (Rule, bool) {
 		return Rule{Category: api.AgentApprovalCredentials}, true
 	}
 	if target, ok := production[key]; ok {
+		return Rule{Category: api.AgentApprovalProduction, Target: target}, true
+	}
+	if target, ok := productionRouteOnly[key]; ok {
 		return Rule{Category: api.AgentApprovalProduction, Target: target}, true
 	}
 	return Rule{}, false

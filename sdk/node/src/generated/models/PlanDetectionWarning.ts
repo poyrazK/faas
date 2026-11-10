@@ -13,7 +13,7 @@ export type PlanDetectionWarning = {
    * Workload affected by the decision; omitted for source-wide warnings.
    */
   workload?: string;
-  detector: 'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'app_yaml' | 'other';
+  detector: 'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'app_yaml' | 'functions' | 'other';
   /**
    * Concrete source marker associated with the detector decision.
    */

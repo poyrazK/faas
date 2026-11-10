@@ -5134,6 +5134,10 @@ func (s *PgStore) ListAppDeletionArtifacts(ctx context.Context, appID string) ([
 // covered by an ON DELETE CASCADE. It deliberately rechecks the deadline in
 // the final DELETE so a concurrent restore cannot be lost.
 func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
+	return retryTrafficAnalysisTimeout(ctx, func() error { return s.deleteAppPermanentlyOnce(ctx, id) })
+}
+
+func (s *PgStore) deleteAppPermanentlyOnce(ctx context.Context, id string) error {
 	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
 		return fmt.Errorf("state: begin app purge: %w", err)
@@ -6319,6 +6323,10 @@ func (s *PgStore) applyProjectReconcileOnce(
 	}
 
 	creates, removes := 0, 0
+	// adopt maps a function workload to the same-account function app
+	// outside any project that already holds its slug: `gregale deploy`
+	// made it, and the repository takes it over (ADR-20261108160000 §1).
+	adopt := make(map[string]string)
 	removeIDs := make(map[string]bool)
 	for _, mutation := range mutations {
 		if mutation.Op == "remove" {
@@ -6331,15 +6339,19 @@ func (s *PgStore) applyProjectReconcileOnce(
 			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
 				return ProjectReconcileResult{}, ErrConflict
 			}
-			creates++
-			var collisionID string
-			if err := tx.QueryRow(ctx, `select id from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID); err == nil {
-				if !removeIDs[collisionID] {
+			var collisionID, collisionAccount, collisionProject, collisionType string
+			if err := tx.QueryRow(ctx, `select id::text, account_id::text, coalesce(project_id::text, ''), type from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID, &collisionAccount, &collisionProject, &collisionType); err == nil {
+				switch {
+				case mutation.App.Type == AppTypeFunction && collisionType == string(AppTypeFunction) && collisionAccount == storedProject.AccountID && collisionProject == "":
+					adopt[mutation.App.WorkloadName] = collisionID
+					continue
+				case !removeIDs[collisionID]:
 					return ProjectReconcileResult{}, ErrConflict
 				}
 			} else if !errors.Is(err, pgx.ErrNoRows) {
 				return ProjectReconcileResult{}, err
 			}
+			creates++
 		case "update", "remove":
 			if _, ok := byID[mutation.App.ID]; !ok {
 				return ProjectReconcileResult{}, ErrNotFound
@@ -6428,6 +6440,14 @@ func (s *PgStore) applyProjectReconcileOnce(
 		case "create":
 			app := mutation.App
 			app.AccountID, app.ProjectID, app.OrgID = storedProject.AccountID, storedProject.ID, storedProject.OrgID
+			if id := adopt[app.WorkloadName]; id != "" {
+				adopted, err := scanApp(tx.QueryRow(ctx, `update apps set project_id = $2, root_dir = $3, workload_name = $4, workload_class = $5 where id = $1 and account_id = $6 and project_id is null and type = 'function' and status <> 'deleted' returning `+appsSelectColumns, id, project.ID, app.RootDir, app.WorkloadName, string(app.WorkloadClass), storedProject.AccountID))
+				if err != nil {
+					return ProjectReconcileResult{}, mapErr(err)
+				}
+				out.Added = append(out.Added, adopted)
+				continue
+			}
 			tombstone, tombErr := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where account_id = $1 and project_id = $2 and workload_name = $3 and preview_of_slug is null and status = 'deleted' order by deleted_at desc nulls last limit 1 for update`, project.AccountID, project.ID, app.WorkloadName))
 			if tombErr == nil {
 				tombstone.RootDir = app.RootDir
