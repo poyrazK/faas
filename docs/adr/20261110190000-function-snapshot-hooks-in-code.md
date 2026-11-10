@@ -39,8 +39,11 @@ function cannot do well today is react to the snapshot itself:
    - `init` runs in each worker after the module loads and before the worker
      reports ready, on cold boot and before the init snapshot. Readiness, and
      so the snapshot, waits for it. It is bounded by the function's startup
-     deadline; a failure or timeout fails the deployment with a new code,
-     `function_init_failed`, carrying the error.
+     deadline; a failure fails the deployment with a new code,
+     `function_init_failed`, carrying the error (vmmd reads the adapter's
+     `gregale: function init failed:` line in the startup output). An `init`
+     that never finishes fails as `app_startup_timeout`, like any workload
+     that never becomes ready.
    - `beforeSnapshot` runs before a new terminal init snapshot is captured.
      It has the `before_checkpoint` contract: 500 ms by default, at most
      2 s; a failure on the first capture fails the deployment with

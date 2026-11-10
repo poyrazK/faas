@@ -10184,7 +10184,7 @@ func writeWakeError(w http.ResponseWriter, err error) {
 // 502: Cloudflare replaces 502 bodies.
 func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
 	switch p.Code {
-	case api.CodeAppStartupCrash, api.CodeAppNotListening, api.CodeAppStartupTimeout,
+	case api.CodeAppStartupCrash, api.CodeFunctionInitFailed, api.CodeAppNotListening, api.CodeAppStartupTimeout,
 		api.CodeAppLoopbackBound, api.CodeAppRuntimeOOM, api.CodeAppArchMismatch, api.CodeDeployFailed:
 		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App failed to start",
 			"the app's process did not become ready; its owner can find the cause in the app's logs and deployment status"), true

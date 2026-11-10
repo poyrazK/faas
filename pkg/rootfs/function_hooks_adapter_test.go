@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // hookWorker drives one generated adapter over the persistent protocol.
@@ -225,5 +227,46 @@ def handler(event, ctx):
 	failing := startHookWorker(t, python, []string{adapter}, dir)
 	if s := failing.hook("after_restore"); s != 500 {
 		t.Fatalf("raising after_restore status = %d, want 500", s)
+	}
+}
+
+// A throwing init exits the worker before its ready line with the marker
+// vmmd reads to report function_init_failed (ADR-20261110190000).
+func TestFunctionAdaptersReportInitFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name, bin, adapter, adapterFile, file, src string
+	}{
+		{"node", "node", nodeFunctionAdapter, "adapter.mjs", "handler.js", "export function init() { throw new Error(\"no DATABASE_URL\"); }\nexport async function handler() { return {body: \"ok\"}; }\n"},
+		{"python", "python3", pythonFunctionAdapter, "adapter.py", ".faas-handler.py", "def init(ctx):\n    raise RuntimeError(\"no DATABASE_URL\")\n\ndef handler(event, ctx):\n    return {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin, err := exec.LookPath(tc.bin)
+			if err != nil {
+				t.Skipf("%s is not installed", tc.bin)
+			}
+			dir := t.TempDir()
+			_ = os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"type":"module"}`), 0o644)
+			if err := os.WriteFile(filepath.Join(dir, tc.file), []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			adapter := filepath.Join(dir, tc.adapterFile)
+			if err := os.WriteFile(adapter, []byte(tc.adapter), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, bin, adapter)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "FAAS_PERSISTENT_WORKER=1")
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			err = cmd.Run()
+			if err == nil || strings.Contains(stdout.String(), "__faas_ready") {
+				t.Fatalf("worker exited %v with stdout %q, want a failure before ready", err, stdout.String())
+			}
+			if !strings.Contains(stderr.String(), api.FunctionInitFailedMarker) || !strings.Contains(stderr.String(), "no DATABASE_URL") {
+				t.Fatalf("stderr = %q, want %q and the error", stderr.String(), api.FunctionInitFailedMarker)
+			}
+		})
 	}
 }
