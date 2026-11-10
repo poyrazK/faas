@@ -455,7 +455,9 @@ jobs:
     name: Publish the npm channel
     needs: [build]
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    # Two public-availability waits of up to 20 minutes each
+    # (scripts/publish-npm-packages.mjs) plus staging and uploads.
+    timeout-minutes: 55
     concurrency:
       group: gregale-npm-publish
       cancel-in-progress: false
@@ -602,31 +604,26 @@ jobs:
           COSIGN_SHA256: "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
           SYFT_VERSION: "1.49.0"
           SYFT_SHA256: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
-          CRANE_VERSION: "0.21.1"
+          # fetch-release-asset.sh falls back to the GitHub API with this
+          # token when github.com's release download fails (rc.329: 504s for
+          # over an hour). Every asset is checked against its pin either way.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release-tools"
-          curl --fail --silent --show-error --location \
-            --proto '=https' --tlsv1.2 \
-            -o "$RUNNER_TEMP/release-tools/cosign" \
-            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
-          echo "${COSIGN_SHA256}  $RUNNER_TEMP/release-tools/cosign" | sha256sum -c -
+          bash scripts/ci/fetch-release-asset.sh sigstore/cosign "v${COSIGN_VERSION}" \
+            cosign-linux-amd64 "$COSIGN_SHA256" "$RUNNER_TEMP/release-tools/cosign"
           chmod 0755 "$RUNNER_TEMP/release-tools/cosign"
           # Use Syft's checksum-pinned release binary to avoid compiling its
           # dependency tree in every release job.
-          curl -fsSL -o "$RUNNER_TEMP/release-tools/syft.tar.gz" \
-            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
-          echo "${SYFT_SHA256}  $RUNNER_TEMP/release-tools/syft.tar.gz" | sha256sum -c -
+          bash scripts/ci/fetch-release-asset.sh anchore/syft "v${SYFT_VERSION}" \
+            "syft_${SYFT_VERSION}_linux_amd64.tar.gz" "$SYFT_SHA256" \
+            "$RUNNER_TEMP/release-tools/syft.tar.gz"
           tar -xzf "$RUNNER_TEMP/release-tools/syft.tar.gz" \
             -C "$RUNNER_TEMP/release-tools" syft
           chmod 0755 "$RUNNER_TEMP/release-tools/syft"
           rm -f "$RUNNER_TEMP/release-tools/syft.tar.gz"
-          curl -fsSL -o "$RUNNER_TEMP/release-tools/crane.tar.gz" \
-            "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
-          tar -xzf "$RUNNER_TEMP/release-tools/crane.tar.gz" \
-            -C "$RUNNER_TEMP/release-tools" crane
-          chmod 0755 "$RUNNER_TEMP/release-tools/crane"
-          rm -f "$RUNNER_TEMP/release-tools/crane.tar.gz"
+          bash scripts/ci/install-crane.sh "$RUNNER_TEMP/release-tools"
           echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
 
       - name: Resolve the immutable builder-base child digest
@@ -951,9 +948,30 @@ jobs:
           echo "KERNEL_DIGEST=$KERNEL_DIGEST" >> "$GITHUB_ENV"
           echo "release kernel digest=$KERNEL_DIGEST"
 
+      # ADR-20261108170000: compute nodes run a Firecracker built here from the
+      # pinned upstream commit plus deploy/firecracker/patches (host-owned
+      # virtio-net header), never upstream's release binary. The manifest's
+      # release.firecracker_digest anchors these exact bytes.
+      - name: Build release-pinned patched Firecracker
+        env:
+          FIRECRACKER_FILE: ${{ runner.temp }}/gregale-release/firecracker-vmm
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y musl-tools linux-libc-dev libseccomp-dev
+          scripts/build-firecracker.sh --run-unit-tests --output "$FIRECRACKER_FILE"
+          FIRECRACKER_DIGEST="$(sha256sum "$FIRECRACKER_FILE" | awk '{print $1}')"
+          echo "FIRECRACKER_DIGEST=$FIRECRACKER_DIGEST" >> "$GITHUB_ENV"
+          echo "release firecracker digest=$FIRECRACKER_DIGEST"
+
       - name: Build canonical daemon tarball and SPDX SBOM
         env:
+          GH_TOKEN: ${{ github.token }}
           GIT_SHA: ${{ github.sha }}
+          # ADR-20261105150000: ship the previous signed release's guest-init
+          # while the one just built runs the same code, so the runtime bases
+          # keep their bytes and ADR-510 keeps restoring snapshots.
+          REUSE_GUEST_INIT: "true"
           # The production manifest is not a repository variable or the
           # illustrative manifest
           # in deploy/manifest/examples. The production manifest is
@@ -962,6 +980,7 @@ jobs:
           OUT_DIR: ${{ runner.temp }}/gregale-release
           SYFT_BIN: syft
           KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
+          FIRECRACKER_FILE: ${{ runner.temp }}/gregale-release/firecracker-vmm
           SIGSTORE_TRUSTED_ROOT_FILE: ${{ runner.temp }}/sigstore/trusted-root.json
         run: |
           set -euo pipefail
@@ -971,12 +990,14 @@ jobs:
             --git-sha "$GIT_SHA" \
             --builder-base-digest "$BUILDER_BASE_DIGEST" \
             --kernel-digest "$KERNEL_DIGEST" \
+            --firecracker-digest "$FIRECRACKER_DIGEST" \
             --runtime-bases-env "$OUT_DIR/runtime-bases.env" \
             --output "$MANIFEST_FILE"
           MANIFEST_FILE="$MANIFEST_FILE" \
             GIT_SHA="$GIT_SHA" \
             OUT_DIR="$OUT_DIR" \
             KERNEL_FILE="$KERNEL_FILE" \
+            FIRECRACKER_FILE="$FIRECRACKER_FILE" \
             SYFT_BIN="$SYFT_BIN" \
             scripts/build-canonical-tarball.sh
 

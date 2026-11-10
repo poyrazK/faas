@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"io"
 	"log/slog"
@@ -67,9 +68,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/realtime"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 	"net/url"
@@ -77,8 +80,15 @@ import (
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
+// SealNotificationChannel validates a channel create request (ADR-749).
+var SealNotificationChannel = sealChannel
+
 var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
 var DashboardDebugStatusView = dashboardDebugStatusView
+
+// ManifestDeclaresManagedBinding is the deploy-time bound-app check
+// (ADR-20261110120000).
+var ManifestDeclaresManagedBinding = manifestDeclaresManagedBinding
 
 // Package-level types
 type AffectedPartition = affectedPartition
@@ -284,6 +294,7 @@ var ChannelTestRelayWait = &channelTestRelayWait
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
+var ErrCDNCert = &errCDNCert
 var ErrCertFailure = &errCertFailure
 var ErrClassifierHostHashFailed = &errClassifierHostHashFailed
 var ErrClassifierInsert = &errClassifierInsert
@@ -433,6 +444,9 @@ var ConfigureSourceRefManagedPostgres = configureSourceRefManagedPostgres
 var Contains = contains
 var CookieDo = cookieDo
 var CountAffectedRequests = countAffectedRequests
+var RegressionBaselineRoutes = regressionBaselineRoutes
+
+var DebugCursorWindow = debugCursorWindow
 var CreateApp = createApp
 
 // CustomHistoryEnv is setup with custom metric history (and so OTLP ingest) on.
@@ -474,6 +488,8 @@ var DebugRegressionObservationToItem = debugRegressionObservationToItem
 var DebugRegressionParams = debugRegressionParams
 var DebugRequestIDCandidates = debugRequestIDCandidates
 var DebugReplayRequestPath = debugReplayRequestPath
+var DebugRouteMatches = debugRouteMatches
+var RegressionAppsAfter = regressionAppsAfter
 var DebugTelemetryCursorParams = debugTelemetryCursorParams
 var DebugTelemetryExportFilename = debugTelemetryExportFilename
 var DecodeBindingInventory = decodeBindingInventory
@@ -665,6 +681,14 @@ func RequestAnalyticsCompleteness(ctx context.Context, reader interface {
 }, appID string, from, until, asOf time.Time) (*bool, []string) {
 	return requestAnalyticsCompletenessFrom(ctx, reader, nil, appID, requestAnalyticsWindow{From: from, Until: until, AsOf: asOf})
 }
+
+// RequestAnalyticsSampledRead runs read as the analytics handler runs a
+// sampled-detail read; bounded is whether the rollups answer the window.
+func RequestAnalyticsSampledRead(ctx context.Context, bounded bool, read func(context.Context) (int, error)) (int, bool, error) {
+	return requestAnalyticsSampledRead(ctx, &server{}, bounded, "test", read)
+}
+
+var RequestAnalyticsSampledMeasuresState = requestAnalyticsSampledMeasuresState
 
 var ParseScanMultipart = parseScanMultipart
 var ParseSuspectedDependency = parseSuspectedDependency
@@ -1134,8 +1158,8 @@ func (r *server) ApplySourceRefManifest(p0 context.Context, p1 state.Account, p2
 func (r *server) AssessProfileDeploymentCheck(p0 context.Context, p1 state.ProfileDeploymentCheckWork) (api.ProfileRegressionAssessment, bool) {
 	return r.assessProfileDeploymentCheck(p0, p1)
 }
-func (r *server) AuditAutomationMutation(p0 *http.Request, p1 state.Account, p2 string, p3 string, p4 state.AutomationMutation, p5 state.Automation) {
-	r.auditAutomationMutation(p0, p1, p2, p3, p4, p5)
+func (r *server) AuditStoredWorkflowMutation(p0 *http.Request, p1 state.Account, p2 string, p3 string, p4 state.StoredWorkflowMutation, p5 state.StoredWorkflow) {
+	r.auditStoredWorkflowMutation(p0, p1, p2, p3, p4, p5)
 }
 func (r *server) AutoAdvanceFeatureFlagRollout(p0 context.Context, p1 state.FeatureFlagAutoRolloutCandidate, p2 time.Time) error {
 	return r.autoAdvanceFeatureFlagRollout(p0, p1, p2)
@@ -1674,6 +1698,18 @@ func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) 
 	return r.cleanupDevSessionResources(ctx, app)
 }
 
+// Preview databases (ADR-20261102123523).
+var PreviewDatabasesStatus = previewDatabasesStatus
+var PreviewDeployDatabasesProblem = previewDeployDatabasesProblem
+
+func (r *server) SweepPreviewDatabases(ctx context.Context, setupBefore time.Time) (int, error) {
+	return r.previewDatabaseManager().SweepAll(ctx, r.store, setupBefore)
+}
+
+func (r *server) PrepareBuildPreviewDatabases(ctx context.Context, acct state.Account, plan api.Plan, preview state.App) error {
+	return r.prepareBuildPreviewDatabases(ctx, acct, plan, preview)
+}
+
 func IssueNativeSetClients(e pgHandlerEnv, gh GithubdClient, provider issuetracker.StatusProvider) {
 	e.s.githubd = gh
 	e.s.nativeTrackerProvider = provider
@@ -2035,12 +2071,49 @@ func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
 	return l.allow
 }
 
+// AgeSignInsForTest makes every browser session look signed in d earlier to
+// the recent-sign-in check (ADR 20261110100000). Not for parallel tests.
+func AgeSignInsForTest(t testing.TB, d time.Duration) {
+	prev := recentSignInNow
+	recentSignInNow = func() time.Time { return time.Now().Add(d) }
+	t.Cleanup(func() { recentSignInNow = prev })
+}
+
+// ReserveTOTPAttempt counts one TOTP attempt; zero means allowed.
+func (r *server) ReserveTOTPAttempt(ctx context.Context, accountID string) time.Duration {
+	return r.reserveTOTPAttempt(ctx, accountID)
+}
+
+// ResetTOTPAttempts clears the counted TOTP attempts.
+func (r *server) ResetTOTPAttempts(ctx context.Context, accountID string) {
+	r.resetTOTPAttempts(ctx, accountID)
+}
+
+// TOTPMaxFailures is the per-account TOTP attempt limit.
+const TOTPMaxFailures = totpMaxFailures
+
+// ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
+func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
+	return r.expireUnverifiedAccounts(ctx)
+}
+
+// OperatorRevertEmail exposes the operator email revert.
+var OperatorRevertEmail = (*server).operatorRevertEmail
+
 // AdvanceSecurityMailClockForTest moves the per-account sign-in mail
 // limiter's clock d ahead, as if the next request came that much later.
 func (r *server) AdvanceSecurityMailClockForTest(d time.Duration) {
 	r.securityMail.mu.Lock()
 	defer r.securityMail.mu.Unlock()
 	r.securityMail.now = func() time.Time { return time.Now().Add(d) }
+	r.ageSharedMailSlots(d)
+}
+
+// ageSharedMailSlots ages the database mail counters of an in-memory store.
+func (r *server) ageSharedMailSlots(d time.Duration) {
+	if m, ok := r.store.(interface{ AgeAccountMailSlotsForTest(time.Duration) }); ok {
+		m.AgeAccountMailSlotsForTest(d)
+	}
 }
 
 // SealOAuthCodeState mints a Connect GitHub state for accountID (H64).
@@ -2121,9 +2194,42 @@ func (r *server) AlertMFADisabledInline(ctx context.Context, acct state.Account,
 // ResolveSourceReleaseCommand exposes the release command precedence of a
 // source deployment (ADR-20261102192943).
 func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
-	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest)
+	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest, false)
 	return resolved.command, resolved.shell, problem
 }
+
+// ProjectWorkloadReleaseCommand exposes a project workload's release command
+// resolution (ADR-20261019120007 amendment 1).
+func ProjectWorkloadReleaseCommand(sourcePath string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
+	resolved, problem := projectWorkloadReleaseCommand(sourcePath, workloads, workload, app, manifest)
+	return resolved.command, resolved.shell, problem
+}
+
+// ResolveSourceReleaseCommandWithPhase resolves a source deployment's release
+// command with the release phase on or off (FAAS_RELEASE_PHASE_ENABLED).
+func ResolveSourceReleaseCommandWithPhase(sourcePath string, app state.App, manifest *gregalemanifest.Manifest, enabled bool) ([]string, *api.Problem) {
+	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest, !enabled)
+	return resolved.command, problem
+}
+
+// CapabilitiesWithReleasePhase answers GET /v1/capabilities for a Pro
+// account with the release phase on or off.
+func CapabilitiesWithReleasePhase(enabled bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithReleasePhaseEnabled(enabled).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+	return recorder
+}
+
+// CapabilitiesWithWorkloadVerifier answers GET /v1/capabilities for a Scale
+// account with the cluster workload-identity verifier set or nil.
+func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{workloadVerifier: verifier}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
+	return recorder
+}
+
+// ReleasePhaseEnabledFromEnv exposes how apid reads FAAS_RELEASE_PHASE_ENABLED.
+var ReleasePhaseEnabledFromEnv = releasePhaseEnabledFromEnv
 
 var MintMCPAuthCodeForTest = mintMCPAuthCode
 var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
@@ -2143,6 +2249,58 @@ func (s *server) RunDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 // request path (H86).
 func (r *server) WaitPasswordResetMail() { r.resetMail.wait() }
 
+// SignInIsNew exposes the new-device check behind the sign-in notice.
+func (r *server) SignInIsNew(ctx context.Context, accountID, ip, ua string) bool {
+	return r.signInIsNew(ctx, accountID, ip, ua)
+}
+
+// ResetSecurityMailLimiter forgets every throttled security-mail send.
+func (r *server) ResetSecurityMailLimiter() {
+	r.securityMail = newSecurityMailLimiter()
+	r.ageSharedMailSlots(-1)
+}
+
+// SetVerificationClock moves the clock the email-verification grace reads.
+func (r *server) SetVerificationClock(now func() time.Time) { r.verificationClock = now }
+
+// VerificationDeadline is when an unverified account becomes restricted.
+func VerificationDeadline(acct state.Account) time.Time { return verificationDeadline(acct) }
+
+// FinishOAuthLink runs the callback's account-page link step; handled is
+// false when the request carries no link intent.
+func (r *server) FinishOAuthLink(w http.ResponseWriter, req *http.Request, provider, sub, email string) (handled bool) {
+	return r.finishOAuthLink(w, req, provider, sub, email, true)
+}
+
+// OAuthLinkCookie is the link-intent cookie name on a plain-HTTP request.
+const OAuthLinkCookie = oauthLinkCookie
+
+// IssueDashboardSession runs the sign-in session issue step and returns the
+// sealed cookie value.
+func (r *server) IssueDashboardSession(req *http.Request, accountID string, mfaPending bool) (string, error) {
+	cookie, _, err := r.issueDashboardSession(req.Context(), req, accountID, mfaPending, "password")
+	return cookie, err
+}
+
+// MoveBillingEmails runs the billing email move of a confirmed email change
+// and returns the subjects it could not move.
+func (r *server) MoveBillingEmails(ctx context.Context, change state.EmailChange) []string {
+	return r.moveBillingEmails(ctx, change)
+}
+
+// MFATrustCookie is the remembered-browser cookie name on a plain-HTTP request.
+const MFATrustCookie = mfaTrustCookie
+
+// LinkOAuthByEmail runs the OAuth email-match link step; the bool reports
+// a refusal because the owner removed the provider.
+func (r *server) LinkOAuthByEmail(req *http.Request, acct state.Account, provider, sub string) (refused bool, err error) {
+	err = r.linkOAuthByEmail(req, acct, provider, sub, acct.Email, true)
+	if errors.Is(err, errOAuthProviderUnlinked) {
+		return true, nil
+	}
+	return false, err
+}
+
 // Login failure limiter internals (bug hunt round 8: eviction when full).
 func NewLoginFailureLimiterForTest() *loginFailureLimiter { return newLoginFailureLimiter() }
 func (l *loginFailureLimiter) Record(key string) bool     { return l.record(key) }
@@ -2152,3 +2310,54 @@ func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
+
+// RegressionComparison exposes chooseRegressionComparison's choice.
+type RegressionComparison struct {
+	Cur, Prev          string
+	CurStart, CurEnd   time.Time
+	PrevStart, PrevEnd time.Time
+}
+
+func ChooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now time.Time) (RegressionComparison, bool) {
+	c, ok := chooseRegressionComparison(deps, now)
+	return RegressionComparison{
+		Cur: c.cur.DeploymentID.String(), Prev: c.prev.DeploymentID.String(),
+		CurStart: c.curStart, CurEnd: c.curEnd, PrevStart: c.prevStart, PrevEnd: c.prevEnd,
+	}, ok
+}
+
+var DebugEvidenceLogWindow = debugEvidenceLogWindow
+
+var CSVSafeCell = csvSafeCell
+
+// ManagedPostgresCapNoticeReady exposes the H88 startup gate on compute cap
+// enforcement.
+var ManagedPostgresCapNoticeReady = managedPostgresCapNoticeReady
+
+func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.getEnvironmentRollbackReceipt(w, r, acct)
+}
+
+func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.getEnvironmentPromotionReceipt(w, r, acct)
+}
+
+// AppEffectiveLimits exposes appEffectiveLimits.
+func AppEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
+	return appEffectiveLimits(a, plan)
+}
+
+// ApplySourceFunctionSettingsForTest runs applySourceFunctionSettings on a
+// server holding only store.
+func ApplySourceFunctionSettingsForTest(ctx context.Context, store state.Store, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec, scope string) (state.App, *api.Problem) {
+	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec, sourcePush{Scope: scope, Pusher: "octocat"})
+}
+
+// WithPendingFunctionSteps exposes withPendingFunctionSteps.
+var WithPendingFunctionSteps = withPendingFunctionSteps
+
+// SourceLivenessOverrides is a multipart deploy's liveness_probe override.
+var SourceLivenessOverrides = sourceLivenessOverrides
+
+// ValidateCustomMetricAlertLabels exposes the custom_metric rule label check.
+var ValidateCustomMetricAlertLabels = validateCustomMetricAlertLabels

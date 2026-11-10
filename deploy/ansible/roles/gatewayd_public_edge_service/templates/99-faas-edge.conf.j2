@@ -21,13 +21,21 @@ Environment=FAAS_EDGE_CLIENT_LIMITS=1
 # ADR-20261102081618: Cloudflare also connects to this edge directly. The edge
 # binds the TLS port itself and reads its TLS material as credentials.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-LoadCredential=edge_tls_cert:{{ faas_edge_public_tls_cert }}
-LoadCredential=edge_tls_key:{{ faas_edge_public_tls_key }}
 LoadCredential=edge_tls_client_ca:{{ faas_edge_public_tls_client_ca }}
 Environment=FAAS_EDGE_PUBLIC_TLS_ADDR=:{{ faas_edge_public_tls_port | default(443) }}
+Environment=FAAS_EDGE_PUBLIC_TLS_CLIENT_CA_FILE=%d/edge_tls_client_ca
+{% if (faas_edge_public_tls_cert_source | default('file')) == 'database' %}
+# ADR-20261103163954 §3: the apps domains' certificate edgednsd stores. The
+# edge opens its key with the edge-tls identity, which the seal_domains role
+# hands it, and keeps it in memory only.
+Environment=FAAS_EDGE_PUBLIC_TLS_CERT_SOURCE=database
+Environment=FAAS_EDGE_PUBLIC_TLS_CERT_CA={{ faas_edge_public_tls_cert_ca | default('letsencrypt') }}
+{% else %}
+LoadCredential=edge_tls_cert:{{ faas_edge_public_tls_cert }}
+LoadCredential=edge_tls_key:{{ faas_edge_public_tls_key }}
 Environment=FAAS_EDGE_PUBLIC_TLS_CERT_FILE=%d/edge_tls_cert
 Environment=FAAS_EDGE_PUBLIC_TLS_KEY_FILE=%d/edge_tls_key
-Environment=FAAS_EDGE_PUBLIC_TLS_CLIENT_CA_FILE=%d/edge_tls_client_ca
+{% endif %}
 {% if faas_edge_no_front %}
 # ADR-20261103163954: no proxy in front. Clients connect directly; the zone's
 # client certificate is verified only when given, so a proxied record still
@@ -40,4 +48,8 @@ Environment=FAAS_EDGE_PUBLIC_FRONT=none
 Environment=FAAS_EDGE_PROXY_CIDRS={{ (faas_edge_cloudflare_ipv4_cidrs + faas_edge_cloudflare_ipv6_cidrs) | join(',') }}
 {% endif %}
 {% endif %}
+{% endif %}
+{% if (faas_internal_keepalive_per_node | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+# Keep connections to each node's gatewayd-internal alive (manifest hot_path).
+Environment=FAAS_INTERNAL_KEEPALIVE_PER_NODE=1
 {% endif %}

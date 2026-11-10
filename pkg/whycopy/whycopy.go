@@ -248,8 +248,14 @@ var catalog = map[string]Render{
 	api.CodeBuildInfrastructure: {
 		Title: "Build could not run",
 		Hint:  "a platform problem stopped the build; your code did not cause it",
-		Why:   "the build failed in Gregale's build infrastructure (builder VM, build disk, or control plane) before your build steps could finish",
+		Why:   "the build failed in Gregale's build infrastructure (builder VM, build disk, or control plane), or a toolchain or package registry download the build tooling needs failed upstream, before your build steps could finish",
 		Fix:   "• deploy again; the build is retried from the start\n• if it keeps failing, contact support with the deployment id",
+	},
+	api.CodeReleaseInfrastructure: {
+		Title: "Release command could not run",
+		Hint:  "a platform problem stopped the release task; your release command did not cause it",
+		Why:   "Gregale could not prepare the release task's environment in time, lost the task's result channel, or got an invalid answer from the task VM, so the release command did not run to a result; the previous deployment is still live",
+		Fix:   "• deploy again; the release task runs from the start\n• if the release command changes data, read `gregale release summary <deployment-id>` first: when the result channel broke, the command may have run\n• if it keeps failing, contact support with the deployment id",
 	},
 	api.CodeAppLayerTooBig: {
 		Title: "App too large",

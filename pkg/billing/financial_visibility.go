@@ -85,7 +85,9 @@ func ReadFinancialCosts(ctx context.Context, store state.Store, account string, 
 // above the allowance in force for it (state.MonthBilledComputeMBSeconds,
 // ADR-20261031100000), so after a plan change in the month the grant is the
 // ledger's own live compute usage less what the pusher bills for it. A month
-// without a plan change keeps the time-weighted grant (ADR-20261030093512).
+// without a plan change keeps the time-weighted grant (ADR-20261030093512),
+// unless its plan is Free: the pusher never bills a Free hour
+// (ADR-20261101143527), so all of that usage is granted.
 func billedComputeGrant(ctx context.Context, fs state.FinancialStore, account string, start, asOf time.Time, head int64, snapshots []state.FinancialPriceSnapshot) (int64, error) {
 	var live []state.FinancialPriceSnapshot
 	versions := map[string]bool{}
@@ -96,7 +98,7 @@ func billedComputeGrant(ctx context.Context, fs state.FinancialStore, account st
 		live = append(live, p)
 		versions[p.Price.Version] = true
 	}
-	if len(grantBoundaries(live, start, asOf)) == 0 {
+	if len(grantBoundaries(live, start, asOf)) == 0 && state.MonthPlanAt("", live, asOf) != api.PlanFree {
 		return state.MonthComputeIncludedMBSeconds("", live, asOf), nil
 	}
 	// The ledger's own evidence, not usage_minutes, so the dual run still

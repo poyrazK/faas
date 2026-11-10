@@ -111,6 +111,62 @@ databases:
 - In a project with several apps, give each entry an `app`.
 - All of one deployment's database entries use the same scope.
 
+Add `create` to have the deploy create the database when none with that name
+exists, so a new project needs no `gregale postgres create` first
+([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)):
+
+```yaml
+databases:
+  - database: chronolake-db
+    app: gateway
+    create:                # or `create: true` for the defaults
+      postgres_major: 17
+      class: development   # development (default), burstable or production
+      scale_to_zero: true  # default
+      region: us-east-1    # defaults to your default region
+  - database: chronolake-db
+    app: gateway
+    env: MIGRATION_DATABASE_URL
+    access: migration
+```
+
+- `create` applies only when the database is missing: an existing database
+  keeps its settings, and the deploy never changes or deletes one.
+- Declare `create` once per database; other entries for the same name bind it.
+- A project deploy lists the database under **Managed PostgreSQL (provided by
+  this deploy)** before you apply. The database counts against your plan's
+  limit, and the plan stops before creating anything when it would not fit.
+- `gregale deploy` of a single app waits up to three minutes for the new
+  database. A project deploy reserves the bindings right away and delivers each
+  key once the database is ready, usually before the first build ends.
+- Creating a database needs a credential with `postgres:manage`. Deploy
+  tokens and `deploy:write` keys can bind existing databases but not create
+  them.
+
+## Connect from your laptop
+
+`gregale postgres connect` opens `psql` on your machine against a managed
+database, through an app that is bound to it:
+
+```sh
+gregale postgres connect orders
+gregale postgres connect orders --access read_only -- -c 'select count(*) from segments'
+gregale postgres connect orders --proxy --port 5433   # for a GUI client
+```
+
+It starts a task VM of a bound app to read that binding and relays a local
+port to the database through
+[`gregale app port-forward`](apps.md). TLS still verifies the database's own
+host name, and the password reaches `psql` in its environment, so it is never
+printed or put on the command line. With `--proxy` the tunnel stays open for
+another client; take the password from the app's binding.
+
+- It picks a `ready` binding, preferring `read_write`, then `migration`, then
+  `read_only`. Choose one with `--app`, `--env` or `--access`.
+- It needs [app tasks](apps.md) on your plan and `psql` on your machine (or
+  `--proxy`). The app's image needs `printenv`, which Debian, Ubuntu and
+  Alpine images include.
+
 Choose the credential with `--access`:
 
 | Access | Use it for |
@@ -119,6 +175,7 @@ Choose the credential with `--access`:
 | `read_only` | Read-only queries, for example `--env READ_DATABASE_URL`. |
 | `migration` | Schema changes. Only the release task receives it, never the serving instances. |
 | `data_api` | The [Data API](data-api.md). |
+| `session` | The same privileges as `read_write` over a direct connection, for serving code that needs session state. |
 
 `read_write` and `data_api` URLs, and `read_only` ones unless they reach a
 replica, go through a connection pooler in transaction mode. Session state does not carry from one transaction to the
@@ -129,7 +186,24 @@ next, so these don't work through it:
 - SQL-level `PREPARE` (driver prepared statements work);
 - temporary tables kept across transactions.
 
-A `migration` binding connects directly and supports all of them.
+A `migration` binding connects directly and supports all of them, but only the
+release task receives it. When the serving app itself needs one of them, bind
+a `session` credential instead:
+
+```sh
+gregale postgres attach orders my-api --access session --env SESSION_DATABASE_URL
+```
+
+Each serving instance then holds its own server connections, so keep its pool
+small: a `session` login allows at most 42 connections across every instance
+of the app (2 per instance at Scale concurrency), and further connections are
+refused with "too many connections for role". Keep ordinary query traffic on a
+pooled `read_write` binding. `session` is offered only where the database
+backend has qualified it (`gregale postgres capabilities` lists it).
+
+An app holds at most 8 managed PostgreSQL bindings on Free, 25 on Hobby, 50 on
+Pro and 100 on Scale. A binding's environment key must start with a letter and
+may not be `PORT` or start with `GREGALE_` or `FAAS_`, which the platform sets.
 
 Run migrations as a release task, with a Procfile `release: npm run migrate` or
 `release.command` in `gregale.yaml`, and point the migration tool at a
@@ -147,6 +221,10 @@ To rotate a credential, run `gregale postgres bindings list orders`, then
 `gregale postgres bindings rotate BINDING_ID --wait`. Rotation returns once
 the new credential is active. `--wait` polls until `rotation_pending` clears,
 for up to five minutes (`--wait-timeout`).
+
+Rotation recovery queues the runtime refresh even if the original request
+fails or the worker restarts. The previous serving credential stays valid
+until that refresh is confirmed; retrying rotation reuses its generation.
 
 The `rest-api-postgres` and `rest-api-postgres-python` starters
 (`gregale init --template rest-api-postgres`) already use this layout. They
@@ -184,7 +262,8 @@ every plan:
   7-day undo. Its bindings are removed first. The source is never touched.
 - The account that ran the restore gets an email 48 hours before
   `restore_slot_until` while there is still no room, and another when the
-  delete is scheduled.
+  delete is scheduled. Recording the expiry email and scheduling deletion
+  happen together, so a worker restart cannot lose the notice.
 - A second restore past the limit while a copy holds the slot returns
   `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
 - A copy can replace its source on a one-database plan: detach the source's
@@ -207,6 +286,9 @@ gregale postgres resize status orders "$REQUEST_ID"
 
 - Keep the request ID, a lowercase UUID: repeating it returns the same
   resize's progress.
+- A confirmed rejection reports `failed` and `last_error_code`, keeps the
+  original configuration and permits deletion or a corrected request with a
+  new ID. An uncertain outcome stays `pending` until it can be confirmed.
 - Clients may be disconnected during the change. They reconnect with the same
   credentials.
 - Region, version, storage and the restore window stay as they are.
@@ -243,6 +325,11 @@ gregale postgres delete orders --purge
   returns it to `ready` with its data and restore history.
 - After that, it is deleted for good.
 - A database that never became ready is deleted at once.
+
+If a delete request fails while the provider is confirming that compute has
+stopped, check the database with `gregale postgres get`. Its delete may already
+be scheduled. Retrying delete finishes that step without extending the 7 days;
+`recover` can still undo it.
 
 `--purge` (API: `DELETE /v1/postgres/databases/{id}?purge=true`) deletes the
 database and its restore history at once, even during the 7 days. It cannot be

@@ -81,8 +81,9 @@ func TestRuntimeRolesCoverEveryMappedDaemonUser(t *testing.T) {
 			t.Errorf("runtime-roles.sql creates %s but faas_map maps no daemon user to it", role)
 		}
 	}
-	if !strings.Contains(runtimeRolesSQL(t), "GRANT faas_runtime TO faas_compute") {
-		t.Error("runtime-roles.sql does not add faas_compute to faas_runtime")
+	compute := regexp.MustCompile(`(?s)FOREACH r IN ARRAY ARRAY\[('faas_compute'.*?)\] LOOP(.*?)END LOOP`).FindStringSubmatch(runtimeRolesSQL(t))
+	if compute == nil || !strings.Contains(compute[2], "GRANT faas_runtime TO %I") {
+		t.Error("runtime-roles.sql does not add faas_compute (and the per-daemon compute roles) to faas_runtime")
 	}
 }
 
@@ -214,8 +215,16 @@ func TestOwnerContractLeavesOnlyRoot(t *testing.T) {
 		if contracted && strings.Join(users, ",") != "root" {
 			t.Errorf("contracted faas_map maps %v to the owner, want only root", users)
 		}
-		if !contracted && len(users) != len(runtime)+1 {
-			t.Errorf("faas_map maps %v to the owner before the contract, want root and the %d daemon users", users, len(runtime))
+		// Daemons born after the owner contract began never logged in as the
+		// owner, so they never map to it (ADR-20261109170000: signd).
+		ownerless := map[string]bool{"faas-signd": true}
+		for _, u := range users {
+			if ownerless[u] {
+				t.Errorf("contracted=%t: faas_map maps %s to the owner; it never needed it", contracted, u)
+			}
+		}
+		if !contracted && len(users) != len(runtime)+1-len(ownerless) {
+			t.Errorf("faas_map maps %v to the owner before the contract, want root and the %d daemon users that predate the contract", users, len(runtime)-len(ownerless))
 		}
 		for user, role := range runtime {
 			if !regexp.MustCompile(`(?m)^faas_map\s+` + regexp.QuoteMeta(user) + `\s+` + role + `\s*$`).MatchString(rendered) {
@@ -242,6 +251,12 @@ func TestOwnerContractLeavesOnlyRoot(t *testing.T) {
 		if position[refuse] >= position[later] {
 			t.Errorf("%q runs before the contract's live check", later)
 		}
+	}
+	stray := byName["postgres — remove owner mappings outside the managed block when contracted — ADR-20261023104734"]
+	strayArgs, _ := stray.body["ansible.builtin.lineinfile"].(map[string]any)
+	if strayArgs["state"] != "absent" || !strings.Contains(fmt.Sprint(strayArgs["regexp"]), "(?!root\\s)") ||
+		!strings.Contains(whenClauses(stray), "faas_postgres_owner_contracted") {
+		t.Errorf("the contract no longer removes owner mappings written outside the managed block (keeping root's): %v", stray.body)
 	}
 	probe, _ := byName["postgres — read the logins that still use the owner — ADR-20261023104734"].body["ansible.builtin.command"].(map[string]any)
 	if !strings.Contains(fmt.Sprint(probe["argv"]), "usename = 'faas'") {

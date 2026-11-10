@@ -406,7 +406,7 @@ func (s *PgStore) FinancialComputePolicies(ctx context.Context, account, app str
 		}
 		all = append(all, p)
 	}
-	return computeWorkloadPoliciesIn(reader, app, all, computeScopes{Project: rows[0].ProjectID})
+	return computeWorkloadPoliciesIn(reader, app, all, computeScopes{Project: rows[0].ProjectID, OrgPaid: rows[0].OrgPaid})
 }
 func (s *PgStore) FinancialComputeBillingSeconds(ctx context.Context, account, app, instance string, start time.Time, seconds int64) (int64, error) {
 	a, _ := parsePgUUID(account)
@@ -439,6 +439,11 @@ func (s *PgStore) FinancialComputeBillingSeconds(ctx context.Context, account, a
 func (s *PgStore) FinancialComputeFloorCovered(ctx context.Context, account, app string, at time.Time) (bool, error) {
 	a, _ := parsePgUUID(account)
 	reader := &pgFinancialComputeTxn{ctx: ctx, db: s.pool, q: sqlc.New(), account: a}
+	scopes, scopeErr := reader.workloadScopes(app, "", "")
+	if scopeErr == nil && scopes.OrgPaid {
+		// The organization pays for this floor; no creator's cap waives it.
+		return false, nil
+	}
 	_, err := reader.book("", financial.ComputeMonth(at))
 	if errors.Is(err, ErrNotFound) {
 		var b financial.ComputeBook
@@ -446,7 +451,6 @@ func (s *PgStore) FinancialComputeFloorCovered(ctx context.Context, account, app
 			err = ErrNotFound
 		}
 	}
-	scopes, scopeErr := reader.workloadScopes(app, "", "")
 	if errors.Is(err, ErrNotFound) && scopeErr == nil && scopes.Project != "" {
 		_, err = reader.book(financial.ComputeProjectKey(scopes.Project), financial.ComputeMonth(at))
 	}

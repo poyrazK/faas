@@ -232,3 +232,21 @@
 # sources and publish rate. (ADR-20261026090000's collision was removed by
 # renumbering #5516's builder private base images to ADR-20261026091500.)
 20261026140000
+
+# Independently duplicated in merged main e9442a524 (2026-11-05):
+# managed PostgreSQL/network controls and account/raw-ingress recovery.
+20261104143000
+20261104170000
+
+# Independently duplicated in merged main 95ff12d007 (2026-11-10, nightly run
+# 42736795787): ADRs merged 11-05..11-09 that picked the same rounded
+# timestamp. Renaming would break their citations, so freeze them here.
+20261105120000
+20261107160000
+20261107180000
+20261107190000
+20261107220000
+20261108100000
+20261108150000
+20261108160000
+20261109120000

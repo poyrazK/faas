@@ -7,6 +7,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 var ErrPolicyMismatch = errors.New("durable quota policy differs from node configuration")
@@ -124,6 +125,9 @@ func (q *Quotas) ApplyPolicy(ctx context.Context, id durableentity.ID, p QuotaPo
 		return nil, durableentity.ErrInvalid
 	}
 	for attempt := 0; attempt < 8; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return nil, err
+		}
 		r, version, err := q.read(ctx, scopeKey(scope))
 		if err != nil {
 			return nil, err

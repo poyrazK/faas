@@ -89,7 +89,10 @@ Free organizations own resources immediately, so each has its own Free app and
 allowance. An account may own one organization on the Free plan
 (`api.FreeOrganizationsOwnedMax`); creating another answers `403
 org_free_limit_exceeded` until one is upgraded or deleted
-(ADR-20261031090658). Existing paid organizations adopt
+(ADR-20261031090658). Ownership transfers also check the new owner's Free
+capacity atomically with creation and other transfers. A refused transfer keeps
+both roles unchanged; making room permits a retry. Paid organizations consume
+no Free ownership slot. Existing paid organizations adopt
 ownership when their own provider-qualified subscription is confirmed; a customer
 ID or cached subscription handle alone does not activate it. Until then, existing
 billing remains in place and creator erasure returns 409. Personal provider IDs
@@ -111,6 +114,7 @@ Organization financial APIs are scoped by URL:
 - `GET /v1/orgs/{slug}/billing/status` and `GET /v1/orgs/{slug}/usage` require organization view permission.
 - `GET /v1/orgs/{slug}/invoices` requires billing permission.
 - `GET /v1/orgs/{slug}/billing/portal` and `PATCH /v1/orgs/{slug}/plan` require the owner, admin credential scope and the existing verification/step-up posture.
+- `PUT /v1/orgs/{slug}/billing/email` uses the same owner permissions and moves the provider customer before saving the email. Overlapping changes keep the provider and saved email in the same order; a provider refusal preserves the saved email.
 - `GET /v1/orgs/{slug}/overage-cap` requires organization view permission; `POST /v1/orgs/{slug}/overage-cap` sets or clears the organization's monthly spend cap and requires the owner like a plan change. The organization's apps stop at its cap, not at a member's (ADR-20261030093512).
 
 The Go client exposes `GetOrgBillingStatus`, `GetOrgUsage`, `ListOrgInvoices`,

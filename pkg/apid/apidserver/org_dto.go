@@ -63,6 +63,29 @@ func (s *server) memberToRow(ctx context.Context, mem state.OrgMembership) api.O
 	}
 }
 
+// memberRowWithName is memberToRow plus the member's display name, for
+// the routes that answer with one member.
+func (s *server) memberRowWithName(ctx context.Context, mem state.OrgMembership) api.OrgMemberRow {
+	row := s.memberToRow(ctx, mem)
+	row.DisplayName = s.displayNames(ctx, []string{mem.AccountID})[mem.AccountID]
+	return row
+}
+
+// displayNames reads the display names of accountIDs in one query. Names
+// are decoration: a failed read logs and returns none.
+func (s *server) displayNames(ctx context.Context, accountIDs []string) map[string]string {
+	flow, ok := s.store.(state.AccountFlowStore)
+	if !ok || len(accountIDs) == 0 {
+		return nil
+	}
+	names, err := flow.AccountDisplayNames(ctx, accountIDs)
+	if err != nil {
+		s.log.Warn("org_members.display_names", "err", err)
+		return nil
+	}
+	return names
+}
+
 // invitationToRow maps a state.OrgInvitation + the joined org row
 // to an api.OrgInvitationRow. orgSlug is the join; now is the
 // clock for deriving the runtime status (the store doesn't store

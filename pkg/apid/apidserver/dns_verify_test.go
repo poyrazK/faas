@@ -87,6 +87,8 @@ func TestSanContains(t *testing.T) {
 			query: "a.example.com",
 			want:  true,
 		},
+		{name: "case_insensitive_exact", sans: []string{"API.EXAMPLE.COM"}, query: "api.example.com", want: true},
+		{name: "case_insensitive_wildcard", sans: []string{"*.EXAMPLE.COM"}, query: "api.example.com", want: true},
 		{
 			name:  "missing_exact",
 			sans:  []string{"a.example.com", "b.example.com"},
@@ -223,6 +225,23 @@ func TestDialCert_CDNCert(t *testing.T) {
 	// surfaces the test is comparing against.
 	if !strings.Contains(err.Error(), "SANs") {
 		t.Errorf("expected error to mention SANs; got %v", err)
+	}
+}
+
+func TestDialCertClassifiesCertificateHostnameMismatch(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	previousLookup, previousDial := *apidserver.CertLookupIPFunc, *apidserver.CertDialContextFunc
+	t.Cleanup(func() { *apidserver.CertLookupIPFunc, *apidserver.CertDialContextFunc = previousLookup, previousDial })
+	*apidserver.CertLookupIPFunc = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
+	}
+	*apidserver.CertDialContextFunc = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", server.Listener.Addr().String())
+	}
+	_, err := apidserver.DialCert(t.Context(), "wrong.example")
+	if !errors.Is(err, *apidserver.ErrCDNCert) {
+		t.Fatalf("wrong hostname error = %v; want CDN certificate classification", err)
 	}
 }
 

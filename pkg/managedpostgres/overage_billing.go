@@ -97,6 +97,9 @@ type OverageSubject struct {
 // one transaction. A step that was sent but not recorded is therefore sent
 // again unchanged, and the provider deduplicates it on its target.
 type OverageBillingStore interface {
+	// PendingOverage pages reservations independently of the window for new
+	// charges. through is the latest UTC month that may be recovered.
+	PendingOverage(context.Context, string, OveragePendingRef, time.Time, int) ([]OveragePendingRef, error)
 	OverageSubjects(ctx context.Context, periodStart time.Time) ([]OverageSubject, error)
 	OverageDelivered(ctx context.Context, provider, subjectID string, periodStart time.Time) (OverageDelivery, error)
 	// RecordOverageDelivery advances the month's delivery from previous, the
@@ -107,6 +110,12 @@ type OverageBillingStore interface {
 	OveragePending(ctx context.Context, provider, subjectID string, periodStart time.Time) (OveragePendingStep, bool, error)
 	ReserveOverage(ctx context.Context, pending OveragePendingStep) (bool, error)
 	CompleteOverage(ctx context.Context, pending OveragePendingStep) (bool, error)
+}
+
+// OveragePendingRef is both a reservation key and its stable recovery cursor.
+type OveragePendingRef struct {
+	SubjectID   string
+	PeriodStart time.Time
 }
 
 // OveragePendingStep is a step reserved for one provider before it is sent.
@@ -146,15 +155,23 @@ type OverageChargeStep struct {
 	BilledStorageByteSeconds int64
 }
 
+// OverageAllowance resolves billing allowances for a UTC month. Closed
+// months must use their recorded terms, rather than today's plan.
+type OverageAllowance func(ctx context.Context, subjectID string, month time.Time) (CapLimits, error)
+
 // OverageBillerOptions configures delivery. Publish is nil in shadow mode:
 // steps are recorded but never sent.
 type OverageBillerOptions struct {
 	Provider      string
 	EffectiveFrom time.Time
 	Publish       func(context.Context, OverageChargeStep) error
-	Allowance     func(ctx context.Context, subjectID string) (CapLimits, error)
-	Now           func() time.Time
-	Logger        *slog.Logger
+	Allowance     OverageAllowance
+	// PlanSpans, when set, splits month through at at the subject's plan
+	// changes, oldest first, each with its plan's allowance; each span's usage
+	// is billed against its own allowance (ADR-20261103131742 amendment 2).
+	PlanSpans func(ctx context.Context, subjectID string, month, at time.Time) ([]AllowanceSpan, error)
+	Now       func() time.Time
+	Logger    *slog.Logger
 }
 
 // OverageBiller delivers managed PostgreSQL overage charges.
@@ -191,8 +208,8 @@ func NewOverageBiller(usage UsageStore, options OverageBillerOptions) (*OverageB
 	return &OverageBiller{usage: usage, billing: billing, options: options}, nil
 }
 
-// Deliver brings every subject's charge for the current month, and for the
-// previous one inside the close window, up to its usage.
+// Deliver recovers reserved steps from every elapsed billing month, then
+// brings current-month and still-open previous-month charges up to their usage.
 func (b *OverageBiller) Deliver(ctx context.Context) (OverageBillingSummary, error) {
 	now := b.options.Now().UTC()
 	current := monthStart(now)
@@ -201,20 +218,27 @@ func (b *OverageBiller) Deliver(ctx context.Context) (OverageBillingSummary, err
 		months = []time.Time{previous, current}
 	}
 	var summary OverageBillingSummary
+	handled, recoveryErr := b.recoverPending(ctx, current, &summary)
 	var failures []error
+	if recoveryErr != nil {
+		failures = append(failures, recoveryErr)
+	}
 	for _, month := range months {
 		if month.Before(b.options.EffectiveFrom) {
 			continue
 		}
 		subjects, err := b.billing.OverageSubjects(ctx, month)
 		if err != nil {
-			return summary, err
+			return summary, errors.Join(append(failures, err)...)
 		}
 		at := now
 		if month.Before(current) {
 			at = current.Add(-time.Nanosecond)
 		}
 		for _, subject := range subjects {
+			if handled[OveragePendingRef{SubjectID: subject.SubjectID, PeriodStart: month}] {
+				continue
+			}
 			if err := ctx.Err(); err != nil {
 				return summary, err
 			}
@@ -229,13 +253,10 @@ func (b *OverageBiller) Deliver(ctx context.Context) (OverageBillingSummary, err
 }
 
 func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, month, at, now time.Time, summary *OverageBillingSummary) error {
-	limits, err := b.options.Allowance(ctx, subject.SubjectID)
-	if errors.Is(err, ErrNotFound) {
+	limits, allowanceErr := b.options.Allowance(ctx, subject.SubjectID, month)
+	if errors.Is(allowanceErr, ErrNotFound) {
 		// A deleted subject has no billing customer left to charge.
 		return nil
-	}
-	if err != nil {
-		return err
 	}
 	// A step reserved by an earlier pass is finished before a new one is
 	// computed: it may have reached the provider (ADR-20261101143527).
@@ -271,16 +292,22 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	if err != nil {
 		return err
 	}
-	billed, target := OverageCharge(snapshot.ComputeUnitSeconds, max(limits.Allowance, subject.Allowance))
+	if snapshot.ComputeUnitSeconds == 0 && snapshot.StorageByteSeconds == 0 {
+		// An account first enabling overage this month is also listed for
+		// last month. No usage needs no historical terms or charge.
+		return nil
+	}
+	if allowanceErr != nil {
+		return allowanceErr
+	}
 	// Storage past the pool is charged while overage is on, and for the rest
 	// of a month that already charged it, so turning overage off never
 	// lowers the month's cumulative charge.
-	var storageBilled int64
-	if limits.Overage || delivered.BilledStorageByteSeconds > 0 {
-		var storage int64
-		storageBilled, storage = StorageOverageCharge(snapshot.StorageByteSeconds, limits.StorageAllowance, month)
-		target += storage
+	charge, err := b.charge(ctx, subject, limits, month, at, snapshot, limits.Overage || delivered.BilledStorageByteSeconds > 0)
+	if err != nil {
+		return err
 	}
+	billed, target, storageBilled := charge.billedUnitSeconds, charge.millicents, charge.billedStorageByteSeconds
 	if target <= baseline {
 		return nil
 	}
@@ -291,15 +318,39 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	// identical step rather than computing a new one.
 	pending = OveragePendingStep{Provider: b.options.Provider, Live: live, Previous: delivered, Step: OverageChargeStep{
 		SubjectID: subject.SubjectID, PeriodStart: month, At: now,
-		UsedUnitSeconds: snapshot.ComputeUnitSeconds, AllowanceSeconds: max(limits.Allowance, subject.Allowance),
+		UsedUnitSeconds: snapshot.ComputeUnitSeconds, AllowanceSeconds: charge.allowance,
 		BilledUnitSeconds: billed, DeliveredMillicents: baseline, TargetMillicents: target,
-		UsedStorageByteSeconds: snapshot.StorageByteSeconds, StoragePoolBytes: limits.StorageAllowance, BilledStorageByteSeconds: storageBilled}}
+		UsedStorageByteSeconds: snapshot.StorageByteSeconds, StoragePoolBytes: charge.storageAllowance, BilledStorageByteSeconds: storageBilled}}
 	reserved, err := b.billing.ReserveOverage(ctx, pending)
 	if err != nil || !reserved {
 		// Another replica holds this month's step; it sends it.
 		return err
 	}
 	return b.send(ctx, pending, summary)
+}
+
+// charge is the month's charge through at. With the subject's plan spans it
+// bills each span's usage against that span's allowance (ADR-20261103131742
+// amendment 2); without them, the month's usage against the allowance now,
+// or the one recorded when the subject reached it, whichever is larger.
+func (b *OverageBiller) charge(ctx context.Context, subject OverageSubject, limits CapLimits, month, at time.Time, snapshot UsageSnapshot, storage bool) (spanCharge, error) {
+	if reader, ok := b.usage.(UsageBeforeReader); ok && b.options.PlanSpans != nil {
+		spans, err := b.options.PlanSpans(ctx, subject.SubjectID, month, at)
+		if err != nil {
+			return spanCharge{}, err
+		}
+		if len(spans) > 0 {
+			return chargeBySpan(ctx, reader, subject.SubjectID, month, spans, snapshot, storage)
+		}
+	}
+	out := spanCharge{allowance: max(limits.Allowance, subject.Allowance), storageAllowance: limits.StorageAllowance}
+	out.billedUnitSeconds, out.millicents = OverageCharge(snapshot.ComputeUnitSeconds, out.allowance)
+	if storage {
+		var storageMillicents int64
+		out.billedStorageByteSeconds, storageMillicents = StorageOverageCharge(snapshot.StorageByteSeconds, limits.StorageAllowance, month)
+		out.millicents += storageMillicents
+	}
+	return out, nil
 }
 
 // send delivers a reserved step and records it. A failure leaves the step

@@ -169,9 +169,18 @@ type operationFixture struct {
 	batchBodies             []string
 	failBatchAfterCommit    bool
 	denyRestart             bool
+	scalingRevision         int64
+	scalingReceipts         map[string]api.AppScalingReceipt
+	failScalingAfterCommit  bool
+	failScalingBeforeCommit bool
+	denyScalingReads        bool
+	concurrentScalingRAM    *int
 }
 
 func (f *operationFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if f.serveScaling(w, r) {
+		return
+	}
 	switch {
 	case r.URL.Path == "/v1/apps/alpha/env/batch" && r.Method == http.MethodPost:
 		var req api.EnvBatchRequest
@@ -276,6 +285,9 @@ func TestAtomicVariableBatchRecoversLostResponseAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := plan.(releasePlan).ID
+	// Plans created by older bridges must retry their original request body;
+	// identity fields cannot be added after an attempted legacy write.
+	m.plans[id].Operation.EnvIdentityPinned = false
 	f.mu.Lock()
 	f.failBatchAfterCommit = true
 	f.mu.Unlock()
@@ -301,7 +313,7 @@ func TestAtomicVariableBatchRecoversLostResponseAfterRestart(t *testing.T) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.puts != 2 || len(f.batchBodies) != 2 || f.batchBodies[0] != f.batchBodies[1] {
+	if f.puts != 2 || len(f.batchBodies) != 2 || f.batchBodies[0] != f.batchBodies[1] || strings.Contains(f.batchBodies[0], "expected_app_id") || strings.Contains(f.batchBodies[0], "expected_environment_id") || strings.Contains(f.batchBodies[0], "receipt_proof") {
 		t.Fatalf("retry repeated writes or changed its request: puts=%d bodies=%v", f.puts, f.batchBodies)
 	}
 }

@@ -28,6 +28,10 @@ type Policy struct {
 	RequireApplicationAck     bool
 	ObjectStorageRequirements map[string]string
 	QueueRequirements         map[string]string
+	// RequireBindings blocks when no active binding is in scope, so a CI
+	// gate run against the wrong app or scope fails instead of passing on
+	// nothing.
+	RequireBindings bool
 }
 
 type Finding = api.BindingCheckFinding
@@ -49,6 +53,7 @@ func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (
 	if policy.Scope != "" && api.ValidateScope(policy.Scope) != nil {
 		return Report{}, fmt.Errorf("invalid binding check scope %q", policy.Scope)
 	}
+	now = evaluationTime(inventory, now)
 	report := Report{App: policy.App, Scope: policy.Scope, DeploymentID: inventory.VerificationDeploymentID,
 		ExpectedDeploymentID: policy.DeploymentID,
 		CheckedAt:            now.UTC(), InventoryGeneratedAt: inventory.GeneratedAt, MaxVerificationAge: policy.MaxVerificationAge.String(),
@@ -71,7 +76,9 @@ func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (
 	for _, item := range bindings {
 		report.checkBinding(item, policy, probesUnavailable)
 	}
-	report.checkRuntime(inventory.RuntimeFreshness, policy.AllowPreparedRollback)
+	if !dataAPIRuntimeOnly(inventory, policy) {
+		report.checkRuntime(inventory.RuntimeFreshness, policy.AllowPreparedRollback)
+	}
 	active := 0
 	for _, item := range report.Bindings {
 		if item.Status != "skipped" {
@@ -80,7 +87,12 @@ func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (
 	}
 	if active == 0 {
 		report.Coverage = "none"
-		report.Warnings = append(report.Warnings, Finding{Code: "no_bindings", Message: "No active bindings were returned in the selected scope; there is no binding connectivity evidence to check."})
+		finding := Finding{Code: "no_bindings", Message: "No active bindings were returned in the selected scope; there is no binding connectivity evidence to check."}
+		if policy.RequireBindings {
+			report.Blockers = append(report.Blockers, finding)
+		} else {
+			report.Warnings = append(report.Warnings, finding)
+		}
 	}
 	for _, findings := range [][]Finding{report.Blockers, report.Warnings} {
 		sort.Slice(findings, func(i, j int) bool {
@@ -90,6 +102,19 @@ func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (
 	}
 	report.Passed = len(report.Blockers) == 0
 	return report, nil
+}
+
+// evaluationTime is the reference clock for every freshness comparison. The
+// server stamps runtime, consumer and acknowledgement observations no later
+// than the inventory's GeneratedAt, so a caller whose clock runs behind the
+// server's would otherwise read them as future timestamps and block a healthy
+// app (runtime_unknown). Evidence is never judged older than the caller's own
+// clock says, so a caller clock that runs ahead still ages evidence.
+func evaluationTime(inventory api.AppBindingInventory, now time.Time) time.Time {
+	if inventory.GeneratedAt.After(now) {
+		return inventory.GeneratedAt
+	}
+	return now
 }
 
 func (r *Report) checkInventory(inventory api.AppBindingInventory, policy Policy) {
@@ -110,12 +135,33 @@ func (r *Report) checkInventory(inventory api.AppBindingInventory, policy Policy
 	if !inventory.Complete || len(inventory.Issues) > 0 {
 		r.block("inventory_incomplete", "Binding metadata or observations are incomplete; resolve the inventory issues and check again.")
 	}
+	if dataAPIRuntimeOnly(inventory, policy) {
+		// A Data API runtime has no customer deployment to run probes in; its
+		// bindings are excluded below and checked by `gregale data-api health`.
+		return
+	}
 	if inventory.VerificationDeploymentID == "" {
 		r.block("deployment_missing", "No live deployment was selected for verification.")
 	}
 	if r.Scope == "" || inventory.VerificationScope != r.Scope {
 		r.block("deployment_scope_mismatch", "The requested scope does not match the deployment selected for manual-task verification.")
 	}
+}
+
+// dataAPIRuntimeOnly reports an app whose every binding is a managed Data API
+// credential and which has no deployment of its own (production 2026-11-09:
+// chronolake-data-api could never pass). An explicit --deployment keeps the
+// ordinary deployment checks.
+func dataAPIRuntimeOnly(inventory api.AppBindingInventory, policy Policy) bool {
+	if policy.DeploymentID != "" || inventory.VerificationDeploymentID != "" || len(inventory.Bindings) == 0 {
+		return false
+	}
+	for _, item := range inventory.Bindings {
+		if item.Type != api.BindingTypePostgres || item.Access != "data_api" {
+			return false
+		}
+	}
+	return true
 }
 
 func sameSelectedDeployment(a, b string) bool {
@@ -167,6 +213,11 @@ func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy, p
 		}
 		r.checkProbeEvidence(item, policy, probesUnavailable, &result)
 	case api.BindingTypePostgres, api.BindingTypeObjectStorage:
+		if item.Type == api.BindingTypePostgres && item.Access == "data_api" {
+			result.Status, result.Reason = "skipped", "data_api_runtime"
+			r.Warnings = append(r.Warnings, bindingFinding(item, "binding_data_api_runtime", "Data API credentials are used by the managed Data API runtime, not app code; check it with `gregale data-api health`."))
+			break
+		}
 		if item.Scope != r.Scope {
 			result.Status, result.Reason = "skipped", "outside_scope"
 			break
@@ -212,6 +263,14 @@ func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy, p
 		result.RequiredQueueEvidence = policy.QueueRequirements[item.Binding]
 		if item.State == "disabled" && result.RequiredQueueEvidence == "" {
 			result.Status, result.Reason = "skipped", "disabled"
+			break
+		}
+		if item.Access == "pull" && result.RequiredQueueEvidence == "" {
+			// Pull consumers lease messages themselves; there is no platform
+			// delivery path to probe. An explicit exclusion, like release-only
+			// credentials, rather than an unsupported coverage gap.
+			result.Status, result.Reason = "skipped", "pull_consumer_external"
+			r.Warnings = append(r.Warnings, bindingFinding(item, "queue_pull_consumer_unverified", "Pull consumers lease messages from your own worker code; preflight does not verify them."))
 			break
 		}
 		switch result.RequiredQueueEvidence {

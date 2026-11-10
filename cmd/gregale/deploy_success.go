@@ -180,7 +180,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		appURL = canonicalAppURL(app)
 	}
 	noHTTP := appOK && servesNoHTTP(app.Manifest.ExecutionMode)
-	if final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
+	if final.RolloutState == rolloutStateAborted {
 		reason := final.RolloutAbortedReason
 		if reason == "" {
 			reason = "the rollout was aborted"
@@ -211,6 +211,10 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		if appOK && app.ReleasePolicy != api.ReleasePolicyImmediate && final.CanaryPreset == api.ReleasePolicyCanaryPreset(app.ReleasePolicy) {
 			PrintProgress(osStdout, "A health-gated rollout is this app's default: skip it once with --rollout immediate, or always with gregale app %s --release-policy immediate", appSlug)
 		}
+	} else if final.RolloutState == "rolling_out" {
+		PrintOK(osStdout, "Candidate %s ready. %s", deploymentCommandRef(final), appURL)
+		PrintProgress(osStdout, "Service rollout: %d%% traffic · cutover in progress", final.TrafficPercent)
+		PrintProgress(osStdout, "follow: gregale release wait %s --rollout", final.ID)
 	} else if darkDeploy {
 		if final.TrafficPercent != 0 {
 			// A scheduled release whose time passed during its build starts
@@ -265,6 +269,9 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	default:
 		printDeployColdWakeSentence()
 	}
+	if appOK && !darkDeploy {
+		printFunctionLimits(osStdout, app)
+	}
 	if appOK && !noHTTP {
 		renderDeploymentAccess(osStdout, app, appSlug)
 	}
@@ -280,25 +287,24 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	return 0
 }
 
-// deploymentRolloutComplete is deliberately separate from readiness
-// completion. A canary deployment can be live and routable while it is still
-// below 100% traffic; safe deploys must wait for the rollout state machine to
-// finish before reporting success.
+// Readiness can finish before a canary's traffic progression or a service's
+// acknowledged routing and drain handoff. Both must close before a rollout
+// wait reports success; plain releases without a rollout remain complete.
 func deploymentRolloutComplete(dep api.DeploymentResponse) bool {
 	if dep.Status != statusLive {
 		return false
 	}
-	if dep.CanaryTotalSteps <= 0 {
+	if dep.RolloutState == rolloutStateComplete {
 		return true
 	}
-	return dep.RolloutState == rolloutStateComplete
+	return dep.CanaryTotalSteps <= 0 && dep.RolloutState != "rolling_out" && dep.RolloutState != rolloutStateAborted
 }
 
 func deploymentRolloutTerminal(dep api.DeploymentResponse) bool {
 	if dep.Status != statusLive {
 		return isTerminalDeploymentStatus(dep.Status)
 	}
-	return dep.CanaryTotalSteps <= 0 || dep.RolloutState == rolloutStateComplete || dep.RolloutState == rolloutStateAborted
+	return deploymentRolloutComplete(dep) || dep.RolloutState == rolloutStateAborted
 }
 
 // waitForDeploymentRollout polls the durable deployment row after readiness
@@ -519,7 +525,7 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 	if configurationErr != nil {
 		return sessionFromContext(ctx).failure("Saved deploy settings remain pending", "configuration", configurationErr)
 	}
-	if waitForRollout && final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
+	if waitForRollout && final.RolloutState == rolloutStateAborted {
 		return 1
 	}
 	if final.Status != statusLive {

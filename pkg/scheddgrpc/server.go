@@ -1509,6 +1509,7 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 			EgressNewDestinationsLimitPerMin: row.GetEgressNewDestinationsLimitPerMin(),
 			EgressFloodDropsLimitPerMin:      row.GetEgressFloodDropsLimitPerMin(),
 			QuietPaused:                      row.GetQuietPaused(),
+			IdleLadderLevel:                  row.GetIdleLadderLevel(),
 			Frozen:                           row.GetFrozen(),
 		}
 		if value := row.GetEgressNewDestinationsPerMin(); value != nil {
@@ -1652,7 +1653,9 @@ func (s *Server) ListInstanceStats(ctx context.Context, _ *scheddpb.ListInstance
 				}
 				r.CPU = instancestats.Unknown
 				r.DiskValid = false
-				rows = append(rows, instanceStatsRowProto(r))
+				row := instanceStatsRowProto(r)
+				row.Departed = true
+				rows = append(rows, row)
 			}
 		}
 		if h := s.ops.CPUStatsCollectDuration(); h != nil {

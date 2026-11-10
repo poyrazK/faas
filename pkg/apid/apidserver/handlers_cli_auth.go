@@ -211,7 +211,7 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 	}
 	label, scopes, ttl := browserAuthCredential(req.Code)
 	expiresAt := time.Now().UTC().Add(ttl)
-	k, scopes, p := h.createBrowserAuthKey(r, req, accountID, keyHash, label, scopes, expiresAt)
+	k, scopes, p := h.mintBrowserAuthKey(r, req, accountID, keyHash, label, scopes, expiresAt)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -241,6 +241,13 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrCapacity("account lookup failed"))
 		return
 	}
+	// The approval page can be phished (device-code phishing), so the
+	// owner learns about every credential it hands out.
+	what := credentialCLISignIn
+	if isMCPAuthCode(req.Code) {
+		what = credentialAgentSignIn
+	}
+	h.srv.noticeCredentialCreated(r, acct, what, label)
 	writeJSON(w, http.StatusOK, api.CliAuthExchangeResponse{
 		Plaintext: plaintext,
 		KeyID:     k.ID,
@@ -321,6 +328,10 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		h.renderPromotionApprovalPage(w, r)
 		return
 	}
+	if r.URL.Query().Has("agent_approval") {
+		h.renderAgentApprovalPage(w, r)
+		return
+	}
 	if r.URL.Query().Has("secret") {
 		h.renderSecretEntryPage(w, r)
 		return
@@ -372,6 +383,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		title = "Authorize MCP connection"
 		shownCode = raw
 	}
+	orgs := h.mcpOrgChoices(r, acct.ID, raw)
 	page := dashboard.Page{
 		Title:   title,
 		Body:    "cli_auth",
@@ -382,7 +394,8 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 			"AccountEmail":    acct.Email,
 			"MCP":             isMCPAuthCode(raw),
 			"MCPCapabilities": mcpCapabilities(raw),
-			"MCPOrgs":         h.mcpOrgChoices(r, acct.ID, raw),
+			"MCPOrgs":         orgs,
+			"MCPProjects":     h.mcpProjectChoices(r, acct.ID, raw, orgs),
 			// The hosted bridge asks to have the browser back (ADR-20261028205920).
 			"ReturnMCP": isMCPAuthCode(raw) && r.URL.Query().Get("return") == "mcp" && h.srv.hostedMCPContinueURL() != "",
 		},
@@ -419,6 +432,10 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 		h.postPromotionApprovalPage(w, r)
 		return
 	}
+	if r.PostForm.Has("agent_approval") {
+		h.postAgentApprovalPage(w, r)
+		return
+	}
 	if r.PostForm.Has("secret") {
 		h.postSecretEntryPage(w, r)
 		return
@@ -443,7 +460,7 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !h.bindMCPOrg(w, r, acct.ID, rawCode, hash) {
+	if !h.bindMCPOrg(w, r, acct.ID, rawCode, hash) || !h.bindMCPProjects(w, r, acct.ID, rawCode, hash) {
 		return
 	}
 	// Atomically claim the code for this account. ClaimCliAuthCode

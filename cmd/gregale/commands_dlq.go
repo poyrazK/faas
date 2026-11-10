@@ -61,14 +61,15 @@ var dlqSources = map[string]string{
 // narrow it to invocations, trigger records, webhook deliveries or one
 // trigger.
 func cmdDLQList(args []string) int {
-	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale dlq list <app> [--source invocation|trigger|webhook] [--trigger ID] [--limit N] [--before ID]"
+	flags, pos := splitArgsForFlags(args, "unreplayed")
+	usage := "usage: gregale dlq list <app> [--source invocation|trigger|webhook] [--trigger ID] [--unreplayed] [--limit N] [--before ID]"
 	fs := dlqFlagSet("dlq list", usage)
 	limit := fs.Int("limit", 50, "max events (1..200)")
 	before := fs.String("before", "", "pagination cursor (next_before from a prior page)")
 	app := fs.String("app", "", appSlugFlagUsage)
 	sourceFlag := fs.String("source", "", "only this source: invocation, trigger or webhook")
 	trigger := fs.String("trigger", "", "only dead letters from this trigger ID")
+	unreplayed := fs.Bool("unreplayed", false, "hide events already replayed")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -97,11 +98,11 @@ func cmdDLQList(args []string) int {
 	if err != nil {
 		return printErr("Could not list dead-letter events", err)
 	}
-	filtered := source != "" || *trigger != ""
+	filtered := source != "" || *trigger != "" || *unreplayed
 	if filtered {
 		kept := resp.Events[:0]
 		for _, event := range resp.Events {
-			if (source == "" || event.Source == source) && (*trigger == "" || event.TriggerID == *trigger) {
+			if (source == "" || event.Source == source) && (*trigger == "" || event.TriggerID == *trigger) && (!*unreplayed || event.ReplayedAt == nil) {
 				kept = append(kept, event)
 			}
 		}

@@ -50,3 +50,34 @@ Managed PostgreSQL restores any point inside its restore window into a new datab
 Ship the guard, the problem fields, the CLI prompt and the `release` field together. apidserver tests cover the crossing rule (the release that replaced the target is not crossed, an older target is, and the refusal leaves the target untouched), acknowledgement and its audit row, the checked path, and the `release` field. The store tests cover the crossing query on MemStore and Postgres (a failed release counts; another scope, the target's own release and releases before it do not; the cut-off moves to `serving_ended_at` once the target served) and the migratable-database query on Postgres. The CLI tests cover the explanation, `--acknowledge-releases`, and a script getting the refusal back.
 
 Verified on the n2 node on 2026-10-15: the apidserver rollback tests (new and existing, including the checked, dashboard, alert-historical and 5xx paths), the state, CLI, unit and spec tests pass. The full safe-release drill passed with leakcheck clean; its manual rollback goes through the guard and recovered in 10.4 s.
+
+## Amendment 1 (2026-11-05): release commands run one at a time, and not after a lost one
+
+Release review round 16 found two gaps in how release commands run.
+
+**Overlapping migrations.** A deployment had at most one release task, but nothing ordered the release tasks of different deployments. While v2's migration ran (a backfill, say), v3 could finish building and schedd could claim v3's migration alongside it, or, when v2's task returned to the queue, after it. Two migrations against one database, or an older one after a newer one, can leave a schema neither release expects. The outpaced-release check (ADR-20261020085706 amendment 13) only looked at releases whose command had not been admitted.
+
+- The claim (`ClaimNextUnfencedAppTask`, and the MemStore mirror) takes a release task only when no other release task of the same app and scope is restoring or running, and no older one is queued. Scopes are independent; manual tasks are unchanged.
+- `SupersedeOutpacedRelease` now also retires a release whose command is still queued: the task is cancelled (status guard `queued`, so a claim that already took it wins) and the release superseded in one transaction. imaged calls it for the older releases of the scope (the newest 50 deployments) each time it admits a release command, so a queued older migration never runs before a newer one. A command already claimed keeps its outcome; the go-live fence supersedes its release as before.
+
+**A lost migration.** A release command whose worker lease expired after dispatch is failed and never replayed (ADR-230), and so is one that timed out or was cancelled while running. It may have committed part of its changes. The next release ran its own migration on top without anyone looking. Project promotions already block new migrations while an outcome is uncertain; single apps now do too.
+
+- A release command is *uncertain* when it started (`started_at` set), ended `failed`, `timed_out` or `cancelled` without an exit code, nobody checked it, and no later release command of the scope succeeded.
+- imaged fails a release before admitting its command when its scope has an uncertain one: `release_outcome_uncertain`, naming the lost release and the command to record a check. The claim refuses such a command too, which covers one admitted before the earlier outcome became uncertain; it waits until the check, or until the stale sweeps close its release.
+- `POST /v1/deployments/{id}/release-outcome` (`deploy:write`, MFA, org action `org.deploy_app`) records the check in `release_outcome_checks` with the caller and a required note; `gregale release resolve <id|vN> --note TEXT` calls it. It answers `409` when the release's command never ran, ended with an exit code, or was checked already. The check is audited as `app.release_outcome_checked`.
+- A release command that failed with an exit code is not uncertain: its output says what happened. The rollback guard above already counts it as crossed.
+
+Tests: conformance cases `release_commands_run_one_at_a_time_per_scope` and `outpaced_queued_release_command_is_cancelled` (MemStore and Postgres); imaged tests for the retirement and the uncertain refusal; apidserver and CLI tests for the check.
+
+## Amendment (2026-11-10): platform failures of the release task are not the command's
+
+A release task that schedd could not run or observe (`restore_failed`,
+`restore_timeout`, `execution_transport_failed`, `guest_protocol_error`,
+`attach_unroutable`) failed its deployment as `release_command_failed`, telling
+the customer their command failed; production recorded two on 2026-11-05
+("app task environment could not be prepared"). imaged now fails such a
+deployment with `release_infrastructure_failed` and whycopy guidance to deploy
+again. A non-zero exit, a command timeout, a cancellation and refusals tied to
+the account or a database cutover keep `release_command_failed`. The previous
+release keeps serving in every case. Validation:
+`TestReleaseTaskFailureNamesWhoFailed`.

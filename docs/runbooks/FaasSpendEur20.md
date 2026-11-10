@@ -41,7 +41,7 @@ Common causes:
 
 1. **Plan tier crossed** — Free (1/1/128/5) → Hobby (5/2/256/50)
    crossover. Customer likely exceeded their plan limit and
-   incurred overage at $0.01/GB-h.
+   incurred overage at $0.05/GB-h (ADR-20261107192333).
 2. **Runaway invocations** — a cron misfire, an external client
    hammering the customer's app, or an infinite-loop bug. Check
    `meterd_invocations_billed_total` rate — if it's >> the typical

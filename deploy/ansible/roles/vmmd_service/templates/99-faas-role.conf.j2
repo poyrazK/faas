@@ -12,3 +12,9 @@
 # the env var. Idempotent — `ansible.builtin.template` is no-op
 # when the rendered file is byte-identical.
 Environment=FAAS_VMMD_ROLE={{ faas_box_role }}
+{% if (faas_vmmd_local_data_socket | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+
+# Serve this node's gatewayd-internal on the local data socket (manifest
+# hot_path; the gateway's half renders with it).
+Environment=FAAS_VMMD_LOCAL_DATA_SOCKET=1
+{% endif %}

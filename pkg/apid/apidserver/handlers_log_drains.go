@@ -14,6 +14,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
+	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -460,6 +462,31 @@ func sealAppLogDrainAuthHeader(plaintext string) ([]byte, error) {
 		return nil, fmt.Errorf("seal log drain credential: %w", err)
 	}
 	return secretbox.SealBytesTo(recipients, appLogDrainSecretSealLabel, []byte(plaintext), api.AppLogDrainAuthHeaderMaxBytes)
+}
+
+// environmentPolicyHost is the stable environment URL whose rules policy
+// changes (the host updateProjectEnvironmentPolicies fences).
+func (s *server) environmentPolicyHost(ctx context.Context, policy state.ProjectEnvironmentEdgePolicy) (string, error) {
+	environment, err := s.store.ProjectEnvironmentBySlug(ctx, policy.AccountID, policy.ProjectID, policy.EnvironmentSlug)
+	if err != nil {
+		return "", err
+	}
+	host := gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), environment.ID, policy.AppID)
+	if host == "" {
+		return "", errors.New("environment URL is unavailable")
+	}
+	return host, nil
+}
+
+// sealEdgeRuleHeaderValue seals a secret edge-rule request header value to
+// the edge domain, like a log drain header; gatewayd-internal opens it when
+// it compiles the rule (ADR-20261108110000).
+func sealEdgeRuleHeaderValue(plaintext string) ([]byte, error) {
+	recipients, err := edgeCredentialRecipients()
+	if err != nil {
+		return nil, fmt.Errorf("seal edge rule header value: %w", err)
+	}
+	return secretbox.SealBytesTo(recipients, api.EdgeRuleHeaderSecretSealNamespace, []byte(plaintext), api.EdgeRuleHeaderSecretMaxBytes)
 }
 
 func appLogDrainHealthResponse(health state.AppLogDrainHealth) api.AppLogDrainHealthResponse {

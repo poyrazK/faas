@@ -79,6 +79,8 @@ func OrgList(d OrgDeps) httpkit.AccountHandler {
 		for _, k := range keys {
 			item := response(k, clients[k.ID], prefixes[k.ID])
 			item.Member = members[k.AccountID]
+			item.Projects = d.projects(r.Context(), k.ID)
+			item.Approvals = d.approvals(r.Context(), k)
 			out.Items = append(out.Items, item)
 		}
 		httpkit.WriteJSON(w, http.StatusOK, out)
@@ -167,7 +169,7 @@ func (d OrgDeps) revokeWhere(r *http.Request, acct state.Account, orgID, reason 
 
 // GetPolicy handles GET /v1/orgs/{slug}/agent-policy.
 func GetPolicy(d OrgDeps) httpkit.AccountHandler {
-	return func(w http.ResponseWriter, r *http.Request, _ state.Account) {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		orgID, ok := d.activeOrg(w, r, authz.OrgActionView)
 		if !ok {
 			return
@@ -182,7 +184,12 @@ func GetPolicy(d OrgDeps) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrCapacity("could not read the agent policy"))
 			return
 		}
-		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, 0))
+		channels, err := boundChannelNames(r.Context(), d.Store, acct.ID, orgID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read the approval channels"))
+			return
+		}
+		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, 0, channels))
 	}
 }
 
@@ -204,7 +211,16 @@ func PutPolicy(d OrgDeps) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrCapacity("agent policies unavailable"))
 			return
 		}
-		policy, err := store.SetOrgAgentPolicy(r.Context(), state.OrgAgentPolicy{OrgID: orgID, AgentsAllowed: *req.AgentsAllowed, AllowedScopes: *req.AllowedScopes, UpdatedBy: acct.ID})
+		approvals, prob := d.policyApprovals(r.Context(), store, orgID, req.ApprovalCategories)
+		if prob == nil && req.ApprovalChannels != nil {
+			// The caller's own channels get the organization's requests (ADR-20261107140000 §3).
+			prob = setApprovalChannels(r.Context(), d.Store, acct.ID, orgID, *req.ApprovalChannels)
+		}
+		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		policy, err := store.SetOrgAgentPolicy(r.Context(), state.OrgAgentPolicy{OrgID: orgID, AgentsAllowed: *req.AgentsAllowed, AllowedScopes: *req.AllowedScopes, ApprovalCategories: approvals, UpdatedBy: acct.ID})
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not save the agent policy"))
 			return
@@ -215,15 +231,18 @@ func PutPolicy(d OrgDeps) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrCapacity("the policy is saved, but some agent connections it no longer allows could not be revoked; retry"))
 			return
 		}
-		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, revoked))
+		channels, _ := boundChannelNames(r.Context(), d.Store, acct.ID, orgID)
+		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, revoked, channels))
 	}
 }
 
-func policyResponse(policy state.OrgAgentPolicy, revoked int) api.OrgAgentPolicyResponse {
+func policyResponse(policy state.OrgAgentPolicy, revoked int, channels []string) api.OrgAgentPolicyResponse {
 	out := api.OrgAgentPolicyResponse{AgentsAllowed: policy.AgentsAllowed, AllowedScopes: slices.Clone(policy.AllowedScopes), Revoked: revoked}
+	out.ApprovalChannels = append([]string{}, channels...)
 	if out.AllowedScopes == nil {
 		out.AllowedScopes = []string{}
 	}
+	out.ApprovalCategories = append([]string{}, policy.ApprovalCategories...)
 	if !policy.UpdatedAt.IsZero() {
 		out.UpdatedAt = policy.UpdatedAt.UTC().Format(time.RFC3339)
 	}
@@ -239,4 +258,22 @@ func joinScopes() string {
 		out += scope
 	}
 	return out
+}
+
+// policyApprovals is the floor a policy change sets: the requested
+// categories, or the current ones when the request names none
+// (ADR-20261104140058).
+func (d OrgDeps) policyApprovals(ctx context.Context, store state.OrgAgentStore, orgID string, requested *[]string) ([]string, *api.Problem) {
+	if requested == nil {
+		current, err := store.OrgAgentPolicy(ctx, orgID)
+		if err != nil {
+			return nil, api.ErrCapacity("could not load the agent policy")
+		}
+		return current.ApprovalCategories, nil
+	}
+	categories, err := api.NormalizeAgentApprovalCategories(*requested)
+	if err != nil {
+		return nil, api.ErrValidation(err.Error())
+	}
+	return categories, nil
 }

@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -34,18 +35,20 @@ const (
 // ServiceDiscoveryDNSHandler answers private service names on a compute
 // node's tenant bridge and forwards ordinary/unbound DNS queries upstream.
 type ServiceDiscoveryDNSHandler struct {
-	bridgeIP      netip.Addr
-	upstream      []string
-	log           *slog.Logger
-	resolveCaller ServiceProxyCallerResolver
-	allowAlias    ServiceAliasAllowed
-	blocklist     *DNSBlocklist
-	onBlocked     func(category string)
-	onResolved    ResolvedEgressHook
-	serviceAddr   ServiceAddressLookup
-	scenarioChaos *serviceDiscoveryDNSChaos
-	database      databaseRoute
-	privateOnly   bool
+	bridgeIP        netip.Addr
+	upstream        []string
+	log             *slog.Logger
+	resolveCaller   ServiceProxyCallerResolver
+	allowAlias      ServiceAliasAllowed
+	blocklist       *DNSBlocklist
+	onBlocked       func(category string)
+	onResolved      ResolvedEgressHook
+	prepareResolved ResolvedEgressPreparation
+	egressWarns     guestDNSWarnLimiter
+	serviceAddr     ServiceAddressLookup
+	scenarioChaos   *serviceDiscoveryDNSChaos
+	database        databaseRoute
+	privateOnly     bool
 	// allowedHost, when set, is the only names the resolver answers: it
 	// forwards one question for an allowed name and refuses everything else,
 	// private service names included.
@@ -146,21 +149,43 @@ func (h *ServiceDiscoveryDNSHandler) refuseBlocked(w dns.ResponseWriter, req *dn
 		if !blocked {
 			continue
 		}
-		caller, remote := "", ""
-		if addr := w.RemoteAddr(); addr != nil {
-			remote = addr.String()
-		}
-		if h.resolveCaller != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), serviceDiscoveryTimeout)
-			caller, _ = h.resolveCaller(ctx, remote)
-			cancel()
-		}
-		h.log.Warn("guest DNS lookup blocked", "name", question.Name, "category", category, "app", caller, "remote", remote)
-		if h.onBlocked != nil {
-			h.onBlocked(category)
-		}
-		h.writeRcode(w, req, dns.RcodeNameError)
+		ctx, cancel := context.WithTimeout(context.Background(), serviceDiscoveryTimeout)
+		h.writeBlockedDNS(ctx, w, req, question.Name, category)
+		cancel()
 		return true
+	}
+	return false
+}
+
+func (h *ServiceDiscoveryDNSHandler) writeBlockedDNS(ctx context.Context, w dns.ResponseWriter, req *dns.Msg, name, category string) {
+	caller, remote := "", remoteAddress(w)
+	if h.resolveCaller != nil {
+		caller, _ = h.resolveCaller(ctx, remote)
+	}
+	h.log.Warn("guest DNS lookup blocked", "name", name, "category", category, "app", caller, "remote", remote)
+	if h.onBlocked != nil {
+		h.onBlocked(category)
+	}
+	h.writeRcode(w, req, dns.RcodeNameError)
+}
+
+// Check the complete upstream answer before returning any records or granting
+// their addresses. An unblocked question must not hide a blocked alias target.
+func (h *ServiceDiscoveryDNSHandler) refuseBlockedAnswer(ctx context.Context, w dns.ResponseWriter, req, resp *dns.Msg) bool {
+	for _, rr := range resp.Answer {
+		names := []string{rr.Header().Name}
+		switch alias := rr.(type) {
+		case *dns.CNAME:
+			names = append(names, alias.Target)
+		case *dns.DNAME:
+			names = append(names, alias.Target)
+		}
+		for _, name := range names {
+			if category, blocked := h.blocklist.Match(name); blocked {
+				h.writeBlockedDNS(ctx, w, req, name, category)
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -171,6 +196,15 @@ func (h *ServiceDiscoveryDNSHandler) refuseBlocked(w dns.ResponseWriter, req *dn
 // (ADR 20261026150000 matches it to bound databases); ttl is the answer's
 // smallest record TTL.
 type ResolvedEgressHook func(ctx context.Context, remoteAddr, name string, addrs []netip.Addr, ttl time.Duration) error
+
+// ResolvedEgressPreparation captures the query's runtime network owner before
+// an upstream exchange can outlive that owner. The returned hook is query-local.
+type ResolvedEgressPreparation func(ctx context.Context, remoteAddr, name string) (ResolvedEgressHook, error)
+
+func (h *ServiceDiscoveryDNSHandler) WithResolvedEgressPreparation(prepare ResolvedEgressPreparation) *ServiceDiscoveryDNSHandler {
+	h.prepareResolved = prepare
+	return h
+}
 
 // WithResolvedEgressHook installs the ADR-373 hook. A hook error is logged
 // and the answer is still returned; the guest's connection then fails
@@ -384,30 +418,35 @@ func (h *ServiceDiscoveryDNSHandler) writeRcodeWithAuthority(w dns.ResponseWrite
 func (h *ServiceDiscoveryDNSHandler) forward(w dns.ResponseWriter, req *dns.Msg) {
 	ctx, cancel := context.WithTimeout(context.Background(), serviceDiscoveryTimeout)
 	defer cancel()
-	client := &dns.Client{Timeout: serviceDiscoveryTimeout}
-	for _, upstream := range h.upstream {
-		resp, _, err := client.ExchangeContext(ctx, req, upstream)
+	remote := remoteAddress(w)
+	name := strings.TrimSuffix(strings.ToLower(req.Question[0].Name), ".")
+	hook := h.onResolved
+	if h.prepareResolved != nil {
+		var err error
+		hook, err = h.prepareResolved(ctx, remote, name)
 		if err != nil {
+			hook = nil
+			if h.egressWarns.admit("capture", remote, time.Now()) {
+				h.log.Warn("guest DNS owner capture failed", "remote", remote, "err", err)
+			}
+		}
+	}
+	for _, upstream := range h.upstream {
+		resp, err := exchangeServiceDNS(ctx, req, upstream)
+		if err != nil || resp == nil || resp.Truncated || resp.Rcode == dns.RcodeServerFailure {
 			continue
 		}
-		if h.onResolved != nil {
+		if h.refuseBlockedAnswer(ctx, w, req, resp) {
+			return
+		}
+		if resp.Rcode == dns.RcodeSuccess && hook != nil {
 			if addrs, ttl := answerAddresses(resp); len(addrs) > 0 {
-				remote := ""
-				if addr := w.RemoteAddr(); addr != nil {
-					remote = addr.String()
-				}
-				name := ""
-				if len(req.Question) > 0 {
-					name = strings.TrimSuffix(strings.ToLower(req.Question[0].Name), ".")
-				}
-				if hookErr := h.onResolved(ctx, remote, name, addrs, ttl); hookErr != nil {
-					h.log.Warn("guest DNS answer not registered for egress", "remote", remote, "addresses", len(addrs), "err", hookErr)
+				if hookErr := hook(ctx, remote, name, addrs, ttl); hookErr != nil && h.egressWarns.admit("grant", remote, time.Now()) {
+					h.log.Warn("guest DNS answer not registered for egress", "remote", remote, "name", name, "addresses", len(addrs), "err", hookErr)
 				}
 			}
 		}
-		if err := w.WriteMsg(resp); err != nil {
-			h.log.Debug("forwarded DNS response failed", "upstream", upstream, "err", err)
-		}
+		h.writeForwardedDNS(w, req, resp, upstream)
 		return
 	}
 	msg := new(dns.Msg)
@@ -434,4 +473,46 @@ func privateServiceName(name, domain string) string {
 		return ""
 	}
 	return service
+}
+
+// guestDNSWarnInterval is how often one guest's DNS egress warnings are
+// logged: a guest retries a lookup whose answer it cannot reach many times.
+const guestDNSWarnInterval = time.Minute
+
+// guestDNSWarnSources bounds the guests guestDNSWarnLimiter remembers.
+const guestDNSWarnSources = 4096
+
+// guestDNSWarnLimiter admits one warning per kind and guest address per
+// guestDNSWarnInterval. The zero value is ready to use.
+type guestDNSWarnLimiter struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func (l *guestDNSWarnLimiter) admit(kind, remote string, now time.Time) bool {
+	host := remote
+	if h, _, err := net.SplitHostPort(remote); err == nil {
+		host = h
+	}
+	key := kind + " " + host
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if last, ok := l.last[key]; ok && now.Sub(last) < guestDNSWarnInterval {
+		return false
+	}
+	if len(l.last) >= guestDNSWarnSources {
+		for k, last := range l.last {
+			if now.Sub(last) >= guestDNSWarnInterval {
+				delete(l.last, k)
+			}
+		}
+		if len(l.last) >= guestDNSWarnSources {
+			clear(l.last)
+		}
+	}
+	if l.last == nil {
+		l.last = make(map[string]time.Time)
+	}
+	l.last[key] = now
+	return true
 }

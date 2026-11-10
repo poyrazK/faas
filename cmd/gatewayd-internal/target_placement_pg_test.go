@@ -112,8 +112,9 @@ func TestTargetPlacementPostgresRepairWithoutNotifications(t *testing.T) {
 			t.Fatalf("managed/public fan-out: %+v %v", endpoints, err)
 		}
 	}
-	// Lock only the private fixture database. Actual SQLC timeout withdraws
-	// routing on both independently cached gateways, then repairs after release.
+	// Lock only the private fixture database. An actual SQLC timeout is a failed
+	// read: both independently cached gateways report it and keep routing the
+	// leased targets (ADR-570 amendment 2026-11-03), then repair after release.
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -128,8 +129,8 @@ func TestTargetPlacementPostgresRepairWithoutNotifications(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, b := range backends {
-		if err := b.ReconcileTargetPlacements(ctx); err == nil || b.Pick(app.ID).OK || b.CapacityCount(app.ID) != 2 {
-			t.Fatalf("store outage: %v", err)
+		if err := b.ReconcileTargetPlacements(ctx); err == nil || !b.Pick(app.ID).OK || b.CapacityCount(app.ID) != 2 {
+			t.Fatalf("store outage dropped leased targets or hid the failed read: %v", err)
 		}
 	}
 	if err := tx.Rollback(ctx); err != nil {

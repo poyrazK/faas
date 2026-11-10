@@ -69,6 +69,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 	"github.com/onebox-faas/faas/pkg/oauthmetadata"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
@@ -331,13 +332,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(hstsEnabledFromEnv))
 	s3Flag := runtimeconfig.NewBoolFlag(false)
+	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	// gatewayd-public owns the outer response headers, so it must consume the
 	// same durable HSTS flag as apid and gatewayd-internal. This keeps a hot
 	// operator change from producing different security headers at the edge.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
-	watcher := runtimeconfig.New(pgStore, pool, []string{runtimeconfig.KeyHSTS, runtimeconfig.KeyS3},
+	watcher := runtimeconfig.New(pgStore, pool, []string{runtimeconfig.KeyHSTS, runtimeconfig.KeyS3, runtimeconfig.KeyTenantSurfaces},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
@@ -349,6 +351,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			if key == runtimeconfig.KeyS3 {
 				s3Flag.Store(enabled)
+			}
+			if key == runtimeconfig.KeyTenantSurfaces {
+				tenantSurfacesFlag.Store(enabled)
 			}
 			return nil
 		}, log)
@@ -546,15 +551,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// ADR-190 follow-up: export this pool's live statistics so the
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(opsMetrics, pool)
+	edgeCerts, err := startEdgeCertificates(ctx, edgeTLS, pool, probe, edgeMetricsSet.registry, log)
+	if err != nil {
+		return err
+	}
 	probe.SetReadyObserver(func(ready bool, reason string) {
 		opsMetrics.MarkReady("gatewayd-public", ready, reason)
 	})
-	// Issue #555 PR-3: mount otelhttp.NewTransport so the outbound
-	// request to gatewayd-internal carries the same trace context
-	// (gateway.route span). The wrapper sits UNDER the proxy's
-	// RoundTripper so the inbound span context is propagated on the
-	// outbound hop.
-	proxy.Transport = otelhttp.NewTransport(proxy.Transport)
+	// The hop to gatewayd-internal carries no otelhttp.Transport. The proxy
+	// injects the edge's span context itself (InternalReverseProxy), so
+	// gateway.request stays on the edge's trace. The wrapper only added a
+	// client span and, in otelhttp v0.72, built metric attribute sets on
+	// every request even though no meter provider is installed: 47 µs of
+	// the edge's 550 µs per 404 on gregale-compute-1 (2026-11-10).
 
 	// ADR-093 / PR-B: end-to-end request budgets. The BudgetMiddleware
 	// stamps a per-request deadline onto r.Context() before the proxy
@@ -630,7 +639,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("gatewayd-public: %w", err)
 		}
 		// ADR-20261103163954 §4: bounded however many clients send them.
-		edgeForward = edgeLimits.forwards(edgeForward)
+		edgeForward = edgeLimits.forwards(edgeForward, trustedIngressCIDRs)
 	}
 	traceMux := http.NewServeMux()
 	var tenantRoot http.Handler
@@ -714,6 +723,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// edge never saw name an app spend a budget (ADR-20261103163954 §4).
 	hostLookups := objectstorage.NewHostLookupBudget("gatewayd_public_object")
 	opsMetrics.Registry().MustRegister(hostLookups.Collectors()...)
+	// Every app slug and verified custom domain skips that budget, so after
+	// a restart random names cannot starve real apps this edge has not yet
+	// served.
+	knownHosts := knownhosts.New(domains.Apps)
+	hostLookups.Preload(knownHosts)
+	go knownhosts.Run(runtimeCtx, knownHosts, pgStore, log)
 	if edgeMode == edgeModeCompute {
 		// Upload routes go to the control plane's edge: only apid resolves
 		// their keys. Public bucket reads are served here once the node holds
@@ -731,13 +746,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 			defer stopReads()
 			localReads, err = publicObjectReads(pgStore, publicStorageRegistry, reads, transfers, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
-				domains, controlPlaneHandler, log)
+				tenantSurfacesFlag.Load, domains, controlPlaneHandler, log)
 			if err != nil {
 				return err
 			}
 			log.Info("gatewayd-public: public object reads served on this node", "max_bytes_per_second", budget)
 		}
-		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, localReads, pgStore, hostLookups, domains, log)
+		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, localReads, pgStore, hostLookups, tenantSurfacesFlag.Load, domains, log)
 		if err != nil {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
@@ -758,7 +773,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 		defer stopReads()
 		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
-			domains, controlPlaneHandler, log)
+			tenantSurfacesFlag.Load, domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
 		}
@@ -890,7 +905,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	if edgeTLS.enabled() {
 		appHost := func(name string) bool { return isAppHost(name, domains) }
-		if listeners.tls, err = openEdgeTLSListener(ctx, edgeTLS, appHost, edgeLimits, edgeTLSErrors.handshakeFailed); err != nil {
+		if listeners.tls, err = openEdgeTLSListener(ctx, edgeTLS, appHost, edgeCerts, edgeLimits, edgeTLSErrors.handshakeFailed); err != nil {
 			listeners.close()
 			return err
 		}

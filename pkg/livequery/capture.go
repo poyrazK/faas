@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgproto3"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 // MarkerPrefix names the non-transactional logical messages that close a
@@ -84,6 +85,10 @@ func OpenSlot(ctx context.Context, dsn, slot, publication string) (*Capture, err
 }
 
 func openCapture(ctx context.Context, dsn, slot, publication string, persistent bool) (*Capture, error) {
+	// Only setup is finite; the returned Capture owns the replication stream's
+	// lifetime. A stuck slot owner must not block supervision indefinitely.
+	ctx, cancelSetup := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelSetup()
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("livequery: parse capture dsn: %w", err)
@@ -91,6 +96,9 @@ func openCapture(ctx context.Context, dsn, slot, publication string, persistent 
 	cfg.RuntimeParams["replication"] = "database"
 	for k, v := range CaptureRuntimeParams {
 		cfg.RuntimeParams[k] = v
+	}
+	if cfg.ConnectTimeout <= 0 {
+		cfg.ConnectTimeout = 5 * time.Second
 	}
 	conn, err := pgconn.ConnectConfig(ctx, cfg)
 	if err != nil {
@@ -112,7 +120,7 @@ func openCapture(ctx context.Context, dsn, slot, publication string, persistent 
 		}
 	}
 	args := []string{"proto_version '1'", fmt.Sprintf("publication_names '%s'", publication), "messages 'true'"}
-	for {
+	for attempt := 0; ; attempt++ {
 		err := pglogrepl.StartReplication(ctx, conn, slot, 0, pglogrepl.StartReplicationOptions{PluginArgs: args})
 		if err == nil {
 			break
@@ -120,8 +128,11 @@ func openCapture(ctx context.Context, dsn, slot, publication string, persistent 
 		// A previous capture's walsender may still hold the slot for a
 		// moment after its connection closed.
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "55006" && ctx.Err() == nil {
-			time.Sleep(50 * time.Millisecond)
+		if errors.As(err, &pgErr) && pgErr.Code == "55006" && attempt < 8 && ctx.Err() == nil {
+			if waitErr := retry.Wait(ctx, 50*time.Millisecond, 2*time.Second, attempt+1); waitErr != nil {
+				_ = conn.Close(ctx)
+				return nil, fmt.Errorf("livequery: wait for replication slot %s: %w", slot, waitErr)
+			}
 			continue
 		}
 		_ = conn.Close(ctx)

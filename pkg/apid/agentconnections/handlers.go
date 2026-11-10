@@ -32,6 +32,9 @@ type Deps struct {
 	Revoke func(r *http.Request, acct state.Account, keyID string) error
 	// Audit records an audit event for the account.
 	Audit func(ctx context.Context, kind string, accountID string, data map[string]any)
+	// ReviewURL is the page where a person decides an agent's approval
+	// request (ADR-20261104140058).
+	ReviewURL func(id string) string
 }
 
 // Kind reports how a key connects an agent, or "" for any other key. An
@@ -93,10 +96,33 @@ func List(d Deps) httpkit.AccountHandler {
 		prefixes := d.Prefixes(r.Context(), keys)
 		out := api.AgentConnectionsResponse{Items: make([]api.AgentConnectionResponse, 0, len(keys))}
 		for _, k := range keys {
-			out.Items = append(out.Items, response(k, clients[k.ID], prefixes[k.ID]))
+			item := response(k, clients[k.ID], prefixes[k.ID])
+			item.Projects = d.projects(r.Context(), k.ID)
+			item.Approvals = d.approvals(r.Context(), k)
+			out.Items = append(out.Items, item)
 		}
 		httpkit.WriteJSON(w, http.StatusOK, out)
 	}
+}
+
+// projects names the projects a connection's key is limited to, or nil when
+// it reaches every project (ADR-20261104085712).
+func (d Deps) projects(ctx context.Context, keyID string) []string {
+	limits, ok := d.Store.(state.KeyProjectLimitStore)
+	if !ok {
+		return nil
+	}
+	ids, limited, err := limits.APIKeyProjectLimit(ctx, keyID)
+	if err != nil || !limited {
+		return nil
+	}
+	out := []string{}
+	for _, id := range ids {
+		if project, err := d.Store.ProjectByID(ctx, id); err == nil {
+			out = append(out, project.Slug)
+		}
+	}
+	return out
 }
 
 func response(k state.APIKey, client state.AgentClient, prefix string) api.AgentConnectionResponse {

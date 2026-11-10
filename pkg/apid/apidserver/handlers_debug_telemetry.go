@@ -106,9 +106,13 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 	windowStart := now.Add(-sinceDur)
 	windowEnd := now
 	if decodedCursor.Version != 0 {
-		// A cursor pins both bounds. Reject an old cursor after the plan's
-		// retention horizon rather than allowing it to read aged-out rows.
-		if decodedCursor.WindowEnd.After(now.Add(time.Minute)) || decodedCursor.WindowStart.Before(now.Add(-cap)) {
+		// A cursor pins both bounds. A window wholly past the plan's
+		// retention horizon has expired; one that reaches past it (a
+		// --since equal to the retention, a moment later) is clamped to the
+		// horizon, so page 2 of a full-retention list still works without
+		// reading aged-out rows.
+		start, end, clamped, ok := debugCursorWindow(decodedCursor.WindowStart, decodedCursor.WindowEnd, now, cap)
+		if !ok {
 			api.WriteProblem(w, api.ErrValidation("cursor has expired; restart the request list"))
 			return
 		}
@@ -116,10 +120,9 @@ func (s *server) debugTelemetryListHandler(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, api.ErrValidation("cursor does not match since; restart the request list"))
 			return
 		}
-		windowStart = decodedCursor.WindowStart.UTC()
-		windowEnd = decodedCursor.WindowEnd.UTC()
-		sinceDur = windowEnd.Sub(windowStart)
-		retentionClamped = decodedCursor.RetentionClamped || retentionClamped
+		sinceDur = decodedCursor.WindowEnd.Sub(decodedCursor.WindowStart)
+		windowStart, windowEnd = start, end
+		retentionClamped = decodedCursor.RetentionClamped || retentionClamped || clamped
 	}
 	cursorReceivedAt, cursorID := debugTelemetryCursorParams(decodedCursor)
 	rows, err := s.store.ListRequestTelemetryByApp(r.Context(), sqlc.ListRequestTelemetryByAppParams{
@@ -224,6 +227,7 @@ func (s *server) debugTelemetryCoverageHandler(w http.ResponseWriter, r *http.Re
 		GuestEvidence:       debugCoverageSignal(row.GuestEvidenceRows, row.GuestEvidenceRequests, row.RepresentedRequests),
 		OldestTelemetryAt:   debugCoverageTimestamp(row.OldestTelemetryAt),
 		LatestTelemetryAt:   debugCoverageTimestamp(row.LatestTelemetryAt),
+		RequestsNotRetained: s.debugRequestsNotRetained(r.Context(), app.ID, from, now),
 	})
 }
 
@@ -285,6 +289,8 @@ func (s *server) debugDependencyLatencyHandler(w http.ResponseWriter, r *http.Re
 		ReceivedAt:   pgtype.Timestamptz{Time: windowStart, Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
 		Limit:        debugDependencyHistoryMaxRows + 1,
+		// Both halves of the window keep a share of the bounded read.
+		Column6: pgtype.Timestamptz{Time: windowStart.Add(now.Sub(windowStart) / 2), Valid: true},
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("get debug dependency latency"))
@@ -349,6 +355,8 @@ func (s *server) debugCriticalPathHistoryHandler(w http.ResponseWriter, r *http.
 		ReceivedAt:   pgtype.Timestamptz{Time: windowStart, Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
 		Limit:        debugDependencyHistoryMaxRows + 1,
+		// Both halves of the window keep a share of the bounded read.
+		Column6: pgtype.Timestamptz{Time: windowStart.Add(now.Sub(windowStart) / 2), Valid: true},
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("get debug critical path history"))
@@ -1404,62 +1412,33 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	receivedFrom := now.Add(-retention)
-	// The gateway/apid hosts can differ by a small NTP skew; the journal RPC
-	// accepts up to one minute of future skew, so its matching window must too.
-	receivedUntil := now.Add(time.Minute)
-	journal, found, journalErr := s.findDebugRequestJournal(r.Context(), acct.ID, app.ID, identifier, receivedFrom, now)
-	if journalErr != nil {
-		api.WriteProblem(w, api.ErrCapacity("get request ID journal"))
-		return
-	}
-	if found {
-		if journal.TraceID != "" {
-			row, telemetryErr := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-				AppID:         stringToPgUUID(app.ID),
-				Identifier:    journal.TraceID,
-				ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
-				ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
-			})
-			if telemetryErr == nil {
-				item := debugTelemetryGetRowToItem(row)
-				item.RequestID = identifier
-				s.linkRequestProfileCapture(r.Context(), acct, app, &item)
-				writeJSON(w, http.StatusOK, item)
-				return
-			}
-			if !errors.Is(telemetryErr, pgx.ErrNoRows) {
-				api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
-				return
-			}
-		}
-		item := api.DebugTelemetryRequestItem{
-			RequestID: identifier, EvidenceStatus: "request_id_only",
-			ReceivedAt: journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
-		}
-		if journal.TraceID != "" {
-			traceID := journal.TraceID
-			item.TraceID = &traceID
-		}
-		s.linkRequestProfileCapture(r.Context(), acct, app, &item)
-		writeJSON(w, http.StatusOK, item)
-		return
-	}
-	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-		AppID:         stringToPgUUID(app.ID),
-		Identifier:    identifier,
-		ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
-		ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
-		return
-	}
+	res, err := s.resolveDebugRequest(r.Context(), acct.ID, app.ID, identifier, now.Add(-retention), now.Add(debugRequestJournalSkew), now)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
 		return
 	}
-	item := debugTelemetryGetRowToItem(row)
+	var item api.DebugTelemetryRequestItem
+	switch {
+	case res.found:
+		item = debugTelemetryGetRowToItem(res.row)
+		if res.journaled {
+			item.RequestID = identifier
+		}
+	case res.journaled:
+		// The request was served but its telemetry row was not kept (it was
+		// folded into a bucket, sampled out or rate limited).
+		item = api.DebugTelemetryRequestItem{
+			RequestID: identifier, EvidenceStatus: "request_id_only",
+			ReceivedAt: res.journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
+		}
+		if res.journal.TraceID != "" {
+			traceID := res.journal.TraceID
+			item.TraceID = &traceID
+		}
+	default:
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
+		return
+	}
 	s.linkRequestProfileCapture(r.Context(), acct, app, &item)
 	writeJSON(w, http.StatusOK, item)
 }
@@ -1497,7 +1476,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	row, err := s.getDebugRequestTelemetry(r.Context(), acct.ID, app.ID, identifier, now.Add(-retention), now, now)
+	row, err := s.getDebugRequestTelemetry(r.Context(), acct.ID, app.ID, identifier, now.Add(-retention), now.Add(debugRequestJournalSkew), now)
 	if errors.Is(err, pgx.ErrNoRows) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
 		return
@@ -2478,7 +2457,7 @@ func (s *server) fetchRouteStats(ctx context.Context, appID string, deploymentID
 	}
 	out := make(map[string]routeStats, len(rows))
 	for _, row := range rows {
-		if route != "" && row.Route != route {
+		if !debugRouteMatches(route, row.Route) {
 			continue
 		}
 		out[row.Route] = routeStats{
@@ -2589,12 +2568,8 @@ func (s *server) enqueueDebugReplayForDeployment(ctx context.Context, app state.
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(api.MustLimitsFor(acct.Plan).DebugTelemetryRetentionDays) * 24 * time.Hour
-	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(ctx, sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-		AppID:         stringToPgUUID(app.ID),
-		Identifier:    identifier,
-		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
-		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
-	})
+	// Replay accepts the public request ID get and evidence accept.
+	row, err := s.getDebugRequestTelemetry(ctx, acct.ID, app.ID, identifier, now.Add(-retention), now.Add(debugRequestJournalSkew), now)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return debugReplayEnqueueResult{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found")
 	}
@@ -2632,6 +2607,16 @@ func (s *server) enqueueDebugReplayForDeployment(ctx context.Context, app state.
 			api.CodeDebugReplayUnsupported,
 			"Debug replay is unavailable",
 			message)
+	}
+	// Telemetry keeps no request body, so a replay of POST/PUT/PATCH/DELETE
+	// would re-run the side effect with an empty body against a deployment
+	// that usually shares production's data. Like live mirroring, only a rule
+	// that opted into unsafe methods may carry one.
+	if method := strings.ToUpper(strings.TrimSpace(row.Method)); !api.MirrorSafeMethod(method) && !rule.AllowUnsafeMethods {
+		return debugReplayEnqueueResult{}, api.NewProblem(http.StatusConflict,
+			api.CodeDebugReplayUnsupported,
+			"Debug replay is unavailable",
+			fmt.Sprintf("%s requests replay only through a mirror rule with allow_unsafe_methods enabled; the replay has no request body and may repeat a side effect", method))
 	}
 	sourceRequestID := uuidFromPg(row.ID)
 	if row.TraceID.Valid && strings.TrimSpace(row.TraceID.String) != "" {
@@ -2692,6 +2677,12 @@ func debugReplayRequestPath(method, route string) (string, bool) {
 	if !strings.HasPrefix(route, "/") || strings.HasPrefix(route, "//") || strings.ContainsAny(route, "?#") {
 		return "", false
 	}
+	// A declared route's label is its template ("/users/{id}"); the request's
+	// own path is not retained, so replaying the template would request a
+	// path the original never had.
+	if routeLabelIsTemplate(route) {
+		return "", false
+	}
 	parsed, err := url.ParseRequestURI(route)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Opaque != "" ||
 		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.Path == "" ||
@@ -2699,6 +2690,32 @@ func debugReplayRequestPath(method, route string) (string, bool) {
 		return "", false
 	}
 	return route, true
+}
+
+// debugRouteMatches applies a debugger route filter to a route label. Labels
+// carry their method ("GET /checkout"); a filter that is a bare path
+// ("/checkout") matches it under every method, as ListRequestTelemetryByApp
+// does. An empty filter matches everything.
+func debugRouteMatches(filter, label string) bool {
+	if filter == "" || filter == label {
+		return true
+	}
+	_, path, ok := strings.Cut(label, " ")
+	return ok && strings.HasPrefix(filter, "/") && path == filter
+}
+
+// routeLabelIsTemplate reports whether a route label names a pattern rather
+// than a path: a {param} segment, a :param segment or a * wildcard segment.
+func routeLabelIsTemplate(route string) bool {
+	if strings.ContainsAny(route, "{}") {
+		return true
+	}
+	for _, segment := range strings.Split(route, "/") {
+		if segment == "*" || strings.HasPrefix(segment, ":") {
+			return true
+		}
+	}
+	return false
 }
 
 // selectDebugReplayMirrorRule keeps replay target selection constrained to an
@@ -2712,4 +2729,21 @@ func selectDebugReplayMirrorRule(rules []state.MirrorRule, sourceDeploymentID, r
 		}
 	}
 	return state.MirrorRule{}, false
+}
+
+// debugCursorWindow is the window a request-list cursor reads now. A cursor
+// pins both bounds; a window wholly past the retention horizon (or ending in
+// the future) has expired, and one that reaches past the horizon is clamped
+// to it. A list taken with --since equal to the retention otherwise expired
+// on its very next page, a moment later.
+func debugCursorWindow(start, end, now time.Time, retention time.Duration) (time.Time, time.Time, bool, bool) {
+	horizon := now.Add(-retention)
+	if end.After(now.Add(time.Minute)) || !end.After(horizon) {
+		return time.Time{}, time.Time{}, false, false
+	}
+	start, end = start.UTC(), end.UTC()
+	if start.Before(horizon) {
+		return horizon.UTC(), end, true, true
+	}
+	return start, end, false, true
 }

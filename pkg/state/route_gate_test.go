@@ -129,6 +129,7 @@ func TestCanaryRouteGateEvidenceAndRecovery(t *testing.T) {
 						t.Fatalf("allowed: %+v %+v %v", updated, decision, err)
 					}
 					audits, err := store.ListDeploymentAudit(t.Context(), candidate.ID, 10)
+					audits = advanceAudits(audits)
 					if err != nil || len(audits) != 1 || !strings.Contains(string(audits[0].Data), `"route_gate"`) || strings.Contains(string(audits[0].Data), "private rationale") {
 						t.Fatal("gate audit missing or private context leaked")
 					}
@@ -144,7 +145,7 @@ func TestCanaryRouteGateEvidenceAndRecovery(t *testing.T) {
 					t.Fatal("blocked advance changed traffic")
 				}
 				audits, err := store.ListDeploymentAudit(t.Context(), candidate.ID, 10)
-				if err != nil || len(audits) != 0 {
+				if err != nil || len(advanceAudits(audits)) != 0 {
 					t.Fatal("blocked advance wrote a traffic audit")
 				}
 				if scenario == "missing" || scenario == "policy_changed" {

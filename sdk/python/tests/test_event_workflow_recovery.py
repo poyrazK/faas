@@ -129,7 +129,7 @@ def test_recovery_review_completion_snapshot_roundtrip():
         "result": result,
         "review_url": "/review",
         "status_url": "/review/status",
-        "status_command": "gregale automations recovery-policy-reviews --status",
+        "status_command": "gregale workflow stored recovery-policy-reviews --status",
     }
     assert WorkflowRecoveryReviewFinishedWebhookPayload.from_dict(payload).to_dict() == payload
 

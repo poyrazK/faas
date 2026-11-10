@@ -14,6 +14,10 @@ export type AccountResponse = {
   email: string;
   email_verified: boolean;
   /**
+   * Optional display name; absent when unset.
+   */
+  display_name?: string;
+  /**
    * 30-day verification deadline; present only while email_verified is false.
    */
   email_verification_grace_ends_at?: string;
@@ -48,6 +52,10 @@ export type AccountResponse = {
   key_scopes?: Array<string>;
   key_app?: AppAgentBinding;
   key_org?: KeyOrg;
+  /**
+   * Slugs of the projects the authenticating key is limited to; absent when the key reaches every project.
+   */
+  key_projects?: Array<string>;
   abuse_hold?: AccountAbuseHold;
 };
 

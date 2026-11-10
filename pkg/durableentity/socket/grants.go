@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/api"
 	"net/url"
 	"strings"
 	"time"
@@ -18,7 +17,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 const BrowserProtocol = "gregale.entity.v1"
@@ -155,6 +157,9 @@ func (g *Grants) Revoke(ctx context.Context, id, account, app string) error {
 		return g.Quotas.revoke(ctx, id, account, app)
 	}
 	for attempt := 0; attempt < 3; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return err
+		}
 		grant, version, err := g.Read(ctx, id)
 		if err != nil {
 			return err

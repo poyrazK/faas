@@ -56,8 +56,8 @@ func TestPlatformTenantSelfWorkflowScheduleOverrides(t *testing.T) {
 		}
 		return response.Token
 	}
-	manageToken := issueToken("schedule manager", api.ScopePlatformTenantAutomationsManage, api.ScopePlatformTenantAutomationsRead)
-	readToken := issueToken("schedule reader", api.ScopePlatformTenantAutomationsRead)
+	manageToken := issueToken("schedule manager", api.ScopePlatformTenantStoredWorkflowsManage, api.ScopePlatformTenantStoredWorkflowsRead)
+	readToken := issueToken("schedule reader", api.ScopePlatformTenantStoredWorkflowsRead)
 	manageHeaders := map[string]string{"Authorization": "Bearer " + manageToken}
 	readHeaders := map[string]string{"Authorization": "Bearer " + readToken}
 	listPath := "/v1/platform-tenant-self/apps/" + app.Slug + "/workflows/schedules"
@@ -96,7 +96,7 @@ func TestPlatformTenantSelfWorkflowScheduleOverrides(t *testing.T) {
 	if denied := e.Do(t, http.MethodPut, namePath, update, readHeaders); denied.Code != http.StatusForbidden {
 		t.Fatalf("read-only tenant changed schedule: %d %s", denied.Code, denied.Body)
 	}
-	if denied := e.Do(t, http.MethodGet, listPath, nil, map[string]string{"Authorization": "Bearer " + issueToken("manage only", api.ScopePlatformTenantAutomationsManage)}); denied.Code != http.StatusForbidden {
+	if denied := e.Do(t, http.MethodGet, listPath, nil, map[string]string{"Authorization": "Bearer " + issueToken("manage only", api.ScopePlatformTenantStoredWorkflowsManage)}); denied.Code != http.StatusForbidden {
 		t.Fatalf("manage-only token listed schedules: %d %s", denied.Code, denied.Body)
 	}
 	listed = e.Do(t, http.MethodGet, listPath, nil, readHeaders)

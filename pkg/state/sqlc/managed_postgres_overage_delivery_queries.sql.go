@@ -34,6 +34,55 @@ func (q *Queries) ClearManagedPostgresOveragePending(ctx context.Context, db DBT
 	return err
 }
 
+const listManagedPostgresOveragePending = `-- name: ListManagedPostgresOveragePending :many
+SELECT subject_id,period_start FROM managed_postgres_overage_pending
+WHERE provider=$1::text AND period_start<=$2::timestamptz
+ AND ($3::timestamptz IS NULL
+  OR (period_start,subject_id)>($3::timestamptz,$4::uuid))
+ORDER BY period_start,subject_id LIMIT $5::int
+`
+
+type ListManagedPostgresOveragePendingParams struct {
+	Provider     string
+	Through      pgtype.Timestamptz
+	AfterPeriod  pgtype.Timestamptz
+	AfterSubject pgtype.UUID
+	PageLimit    int32
+}
+
+type ListManagedPostgresOveragePendingRow struct {
+	SubjectID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+// Reservations survive month close and are paged without starving later keys
+// when an older provider delivery keeps failing.
+func (q *Queries) ListManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ListManagedPostgresOveragePendingParams) ([]ListManagedPostgresOveragePendingRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresOveragePending,
+		arg.Provider,
+		arg.Through,
+		arg.AfterPeriod,
+		arg.AfterSubject,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListManagedPostgresOveragePendingRow{}
+	for rows.Next() {
+		var i ListManagedPostgresOveragePendingRow
+		if err := rows.Scan(&i.SubjectID, &i.PeriodStart); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const managedPostgresOverageDelivered = `-- name: ManagedPostgresOverageDelivered :one
 SELECT d.live, d.billed_unit_seconds, d.delivered_millicents, d.updated_at, d.billed_storage_byte_seconds
 FROM managed_postgres_overage_deliveries d
@@ -138,6 +187,10 @@ FROM (
     SELECT d.subject_id, 0::bigint, false
     FROM managed_postgres_overage_deliveries d
     WHERE d.period_start = $1::timestamptz
+    UNION ALL
+    SELECT p.subject_id, 0::bigint, false
+    FROM managed_postgres_overage_pending p
+    WHERE p.period_start = $1::timestamptz
 ) s
 GROUP BY s.subject_id
 ORDER BY s.subject_id
@@ -154,7 +207,7 @@ type ManagedPostgresOverageSubjectsRow struct {
 // Subjects that may owe overage for the month: those that reached the
 // compute allowance (as the cap sweep recorded it), those with overage on,
 // whose storage past the pool is billed (ADR-20261031110037 amendment 2), and
-// those already charged.
+// those already charged or with a reserved step awaiting reconciliation.
 func (q *Queries) ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, periodStart pgtype.Timestamptz) ([]ManagedPostgresOverageSubjectsRow, error) {
 	rows, err := db.Query(ctx, managedPostgresOverageSubjects, periodStart)
 	if err != nil {

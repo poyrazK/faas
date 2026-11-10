@@ -13,7 +13,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
-    body: PostAccountSessionsRevokeAllBody,
+    body: PostAccountSessionsRevokeAllBody | Unset = UNSET,
     faas_sid: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -28,7 +28,8 @@ def _get_kwargs(
         "cookies": cookies,
     }
 
-    _kwargs["json"] = body.to_dict()
+    if not isinstance(body, Unset):
+        _kwargs["json"] = body.to_dict()
 
     headers["Content-Type"] = "application/json"
 
@@ -79,25 +80,23 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: PostAccountSessionsRevokeAllBody,
+    body: PostAccountSessionsRevokeAllBody | Unset = UNSET,
     faas_sid: str | Unset = UNSET,
 ) -> Response[Problem | SessionsRevokeAllResponse]:
-    r"""Revoke every session except the calling one.
+    """Revoke every session except the calling one.
 
-     Revokes all `sessions` rows for the calling account
-    whose `id` is NOT the calling cookie's `sid`. The
-    caller's session stays active. Returns the count of
-    rows revoked so the dashboard can render \"Signed out
-    N other devices\".
+     From a browser session: revokes every other browser session of the
+    calling account and keeps the caller's. CSRF: action
+    `sessions_revoke_all`.
 
-    CSRF: action `sessions_revoke_all`.
+    With an API key: revokes every browser session. API keys keep
+    working, and no CSRF token is needed.
 
-    Emits `auth.sessions.revoke_all` with
-    `{revoked_count, retained_sid}`.
+    Returns the count of sessions revoked.
 
     Args:
         faas_sid (str | Unset):
-        body (PostAccountSessionsRevokeAllBody):
+        body (PostAccountSessionsRevokeAllBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -122,25 +121,23 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    body: PostAccountSessionsRevokeAllBody,
+    body: PostAccountSessionsRevokeAllBody | Unset = UNSET,
     faas_sid: str | Unset = UNSET,
 ) -> Problem | SessionsRevokeAllResponse | None:
-    r"""Revoke every session except the calling one.
+    """Revoke every session except the calling one.
 
-     Revokes all `sessions` rows for the calling account
-    whose `id` is NOT the calling cookie's `sid`. The
-    caller's session stays active. Returns the count of
-    rows revoked so the dashboard can render \"Signed out
-    N other devices\".
+     From a browser session: revokes every other browser session of the
+    calling account and keeps the caller's. CSRF: action
+    `sessions_revoke_all`.
 
-    CSRF: action `sessions_revoke_all`.
+    With an API key: revokes every browser session. API keys keep
+    working, and no CSRF token is needed.
 
-    Emits `auth.sessions.revoke_all` with
-    `{revoked_count, retained_sid}`.
+    Returns the count of sessions revoked.
 
     Args:
         faas_sid (str | Unset):
-        body (PostAccountSessionsRevokeAllBody):
+        body (PostAccountSessionsRevokeAllBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -160,25 +157,23 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: PostAccountSessionsRevokeAllBody,
+    body: PostAccountSessionsRevokeAllBody | Unset = UNSET,
     faas_sid: str | Unset = UNSET,
 ) -> Response[Problem | SessionsRevokeAllResponse]:
-    r"""Revoke every session except the calling one.
+    """Revoke every session except the calling one.
 
-     Revokes all `sessions` rows for the calling account
-    whose `id` is NOT the calling cookie's `sid`. The
-    caller's session stays active. Returns the count of
-    rows revoked so the dashboard can render \"Signed out
-    N other devices\".
+     From a browser session: revokes every other browser session of the
+    calling account and keeps the caller's. CSRF: action
+    `sessions_revoke_all`.
 
-    CSRF: action `sessions_revoke_all`.
+    With an API key: revokes every browser session. API keys keep
+    working, and no CSRF token is needed.
 
-    Emits `auth.sessions.revoke_all` with
-    `{revoked_count, retained_sid}`.
+    Returns the count of sessions revoked.
 
     Args:
         faas_sid (str | Unset):
-        body (PostAccountSessionsRevokeAllBody):
+        body (PostAccountSessionsRevokeAllBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -201,25 +196,23 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    body: PostAccountSessionsRevokeAllBody,
+    body: PostAccountSessionsRevokeAllBody | Unset = UNSET,
     faas_sid: str | Unset = UNSET,
 ) -> Problem | SessionsRevokeAllResponse | None:
-    r"""Revoke every session except the calling one.
+    """Revoke every session except the calling one.
 
-     Revokes all `sessions` rows for the calling account
-    whose `id` is NOT the calling cookie's `sid`. The
-    caller's session stays active. Returns the count of
-    rows revoked so the dashboard can render \"Signed out
-    N other devices\".
+     From a browser session: revokes every other browser session of the
+    calling account and keeps the caller's. CSRF: action
+    `sessions_revoke_all`.
 
-    CSRF: action `sessions_revoke_all`.
+    With an API key: revokes every browser session. API keys keep
+    working, and no CSRF token is needed.
 
-    Emits `auth.sessions.revoke_all` with
-    `{revoked_count, retained_sid}`.
+    Returns the count of sessions revoked.
 
     Args:
         faas_sid (str | Unset):
-        body (PostAccountSessionsRevokeAllBody):
+        body (PostAccountSessionsRevokeAllBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

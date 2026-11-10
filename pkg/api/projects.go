@@ -260,16 +260,17 @@ type ProjectEnvironmentSharedResourceResponse struct {
 // ProjectEnvironmentStateResponse is the canonical read model used by future
 // clone operations and by the unified environment diff.
 type ProjectEnvironmentStateResponse struct {
-	FeatureFlagsHash string                                     `json:"feature_flags_hash,omitempty"`
-	ActiveReleaseSet *ProjectReleaseSetResponse                 `json:"active_release_set"`
-	ReleaseSetStatus string                                     `json:"release_set_status"`
-	ProjectSlug      string                                     `json:"project_slug"`
-	Environment      string                                     `json:"environment"`
-	Protected        bool                                       `json:"protected"`
-	Configuration    ProjectEnvironmentConfigResponse           `json:"configuration"`
-	Workloads        []ProjectEnvironmentStateWorkloadResponse  `json:"workloads"`
-	SharedResources  []ProjectEnvironmentSharedResourceResponse `json:"shared_resources"`
-	GeneratedAt      string                                     `json:"generated_at"`
+	ProjectSecretsRevisionHash string                                     `json:"project_secrets_revision_hash,omitempty"`
+	FeatureFlagsHash           string                                     `json:"feature_flags_hash,omitempty"`
+	ActiveReleaseSet           *ProjectReleaseSetResponse                 `json:"active_release_set"`
+	ReleaseSetStatus           string                                     `json:"release_set_status"`
+	ProjectSlug                string                                     `json:"project_slug"`
+	Environment                string                                     `json:"environment"`
+	Protected                  bool                                       `json:"protected"`
+	Configuration              ProjectEnvironmentConfigResponse           `json:"configuration"`
+	Workloads                  []ProjectEnvironmentStateWorkloadResponse  `json:"workloads"`
+	SharedResources            []ProjectEnvironmentSharedResourceResponse `json:"shared_resources"`
+	GeneratedAt                string                                     `json:"generated_at"`
 }
 
 // ProjectEnvironmentReleaseDiffResponse compares the live artifact selected

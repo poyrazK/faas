@@ -202,7 +202,7 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 		if existing.Restorable(s.now()) {
 			return Database{}, fmt.Errorf("%w: the name %q belongs to a database scheduled for deletion; undelete it, or delete it with purge=true to reuse the name now", ErrConflict, request.Name)
 		}
-		if reservedID != "" && existing.ID != reservedID {
+		if reservedID != "" && existing.ID != reservedID || !existing.Preview.IsZero() {
 			return Database{}, ErrConflict
 		}
 		if _, err := s.Get(ctx, existing.AccountID, existing.ID); err != nil {
@@ -298,8 +298,8 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if err != nil {
 		return Database{}, false, err
 	}
-	if source.State != StateReady || source.ProviderResourceID == "" {
-		return Database{}, false, ErrConflict
+	if !source.Preview.IsZero() {
+		return Database{}, false, ErrPreviewDatabase
 	}
 	now := s.now()
 	currentRestoreWindow := source.Spec.RestoreWindowSeconds
@@ -326,6 +326,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(existing, source) {
 			return Database{}, false, ErrConflict
 		}
+		if request.WithinLimit && !existing.RestoreSlotUntil.IsZero() {
+			return Database{}, false, ErrQuotaExceeded
+		}
 		if existing.State == StateReady {
 			return existing, false, nil
 		}
@@ -334,6 +337,11 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, false, err
+	}
+	// Readiness admits a new restore. An already reserved target owns its
+	// recovery intent even if the source is now updating or being deleted.
+	if source.State != StateReady || source.ProviderResourceID == "" {
+		return Database{}, false, ErrConflict
 	}
 	if !request.PointInTime.Before(now) || currentRestoreWindow <= 0 || source.Spec.RestoreWindowSeconds <= 0 ||
 		now.Sub(request.PointInTime) > time.Duration(currentRestoreWindow)*time.Second ||
@@ -345,6 +353,11 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	// on the account's database quota (production-us hunt #9).
 	if request.PointInTime.Before(source.CreatedAt) {
 		return Database{}, false, fmt.Errorf("%w: point in time is before the source database was created (%s)", ErrInvalid, source.CreatedAt.UTC().Format(time.RFC3339))
+	}
+	// A major upgrade preserves the older major's recovery archive. Persist
+	// that historical major before any target or quota slot is reserved.
+	if source.Spec, err = s.resolveRestoreSpec(ctx, source, request.PointInTime, request.SourceDefinition != nil); err != nil {
+		return Database{}, false, err
 	}
 	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
 		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID})
@@ -378,6 +391,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	}
 	if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(database, source) {
 		return Database{}, false, ErrConflict
+	}
+	if request.WithinLimit && !database.RestoreSlotUntil.IsZero() {
+		return Database{}, false, ErrQuotaExceeded
 	}
 	if database.State == StateReady {
 		return database, created, nil

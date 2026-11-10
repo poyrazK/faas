@@ -1822,6 +1822,10 @@ type ScalingTarget struct {
 	// kind of accepted-but-inert field this codebase keeps having to
 	// remove.
 	Name string `json:"name,omitempty"`
+	// Labels selects one labelled series of the custom metric
+	// (ADR-20261108160000 slice C2). Empty: the metric's aggregate (the
+	// maximum of its fresh series). Only valid with Metric "custom".
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ScalingSchedule is one recurring window that raises the warm floor
@@ -1959,6 +1963,13 @@ type AppEffectiveLimits struct {
 	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
 	RequestBodyMaxBytes    int64 `json:"request_body_max_bytes"`
+	// IdleTimeoutS is the idle timeout the reaper applies: the app's own
+	// setting, or its type's default, clamped to the plan bounds (spec §4.3).
+	IdleTimeoutS int `json:"idle_timeout_s,omitempty"`
+	// Pause is when the platform may pause the VM (ADR-1151): the declared
+	// value, or the default for the app's type. Apps attached to a private
+	// network are never paused whatever they declare.
+	Pause string `json:"pause,omitempty"`
 }
 
 // AppConfiguredResources is the resource shape selected for an app. It is
@@ -3882,6 +3893,42 @@ type UpdateDeploymentTrafficRequest struct {
 	// An explicit empty id requires no live sibling with positive traffic.
 	ExpectedServingDeploymentID *string                     `json:"expected_serving_deployment_id,omitempty"`
 	ExpectedMCPAccessPolicy     *MCPAccessPolicyExpectation `json:"expected_mcp_access_policy,omitempty"`
+	// ExpectedTraffic makes the change conditional on the split it was planned
+	// from: every live release in the deployment's environment with positive
+	// traffic, mapped to its percent. Any difference at write time is a 409
+	// traffic_serving_changed.
+	ExpectedTraffic map[string]int `json:"expected_traffic,omitempty"`
+}
+
+// MaxExpectedTrafficReleases bounds expected_traffic; no split serves more
+// releases than an app's largest concurrency.
+const MaxExpectedTrafficReleases = 100
+
+// ValidateExpectedTraffic checks the bounds of an expected_traffic map.
+func (r UpdateDeploymentTrafficRequest) ValidateExpectedTraffic() error {
+	if r.ExpectedTraffic == nil {
+		return nil
+	}
+	if len(r.ExpectedTraffic) == 0 || len(r.ExpectedTraffic) > MaxExpectedTrafficReleases {
+		return fmt.Errorf("expected_traffic must name between 1 and %d releases", MaxExpectedTrafficReleases)
+	}
+	if r.ExpectedServingDeploymentID != nil || r.ExpectedReview != nil {
+		return fmt.Errorf("expected_traffic cannot be combined with expected_serving_deployment_id or expected_review")
+	}
+	sum := 0
+	for id, percent := range r.ExpectedTraffic {
+		if _, err := uuid.Parse(id); err != nil {
+			return fmt.Errorf("expected_traffic key %q is not a deployment id", id)
+		}
+		if percent < 1 || percent > 100 {
+			return fmt.Errorf("expected_traffic percent for %s must be between 1 and 100", id)
+		}
+		sum += percent
+	}
+	if sum != 100 {
+		return fmt.Errorf("expected_traffic percents must sum to 100, got %d", sum)
+	}
+	return nil
 }
 
 // AdvanceCanaryRequest is the compare-and-swap body for
@@ -4100,6 +4147,19 @@ func ParseMirrorWindow(s string) (MirrorWindowDuration, error) {
 	return 0, errInvalidMirrorWindow
 }
 
+// MirrorSafeMethod reports whether a method is mirrored and replayed without
+// the mirror rule's allow_unsafe_methods opt-in: GET, HEAD and OPTIONS. Live
+// mirroring, debugger replay and the replay dispatcher share it, so a rule
+// that opted out of side effects is never replayed with one.
+func MirrorSafeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
+}
+
 // MirrorAlwaysStrippedHeaders is the set of headers the gateway
 // strips from every mirror invocation regardless of the
 // customer-supplied RedactHeaders list (issue #72 / ADR-125
@@ -4234,6 +4294,8 @@ type AccountResponse struct {
 	ID            string            `json:"id"`
 	Email         string            `json:"email"`
 	EmailVerified bool              `json:"email_verified"`
+	// DisplayName is the account's optional human name; omitted when unset.
+	DisplayName string `json:"display_name,omitempty"`
 	// EmailVerificationGraceEndsAt is present only for unverified password
 	// accounts so API and dashboard clients can render the 30-day deadline.
 	EmailVerificationGraceEndsAt *time.Time    `json:"email_verification_grace_ends_at,omitempty"`
@@ -4263,6 +4325,9 @@ type AccountResponse struct {
 	// KeyOrg is the shared organization that key acts in; absent for a
 	// personal key or a session (ADR-20261101225122).
 	KeyOrg *KeyOrg `json:"key_org,omitempty"`
+	// KeyProjects are the slugs of the projects that key is limited to;
+	// absent for an unlimited key or a session (ADR-20261104085712).
+	KeyProjects []string `json:"key_projects,omitempty"`
 }
 
 // KeyOrg names the shared organization an API key acts in.
@@ -4302,6 +4367,35 @@ type AccountLimits struct {
 // Nil means no ceiling; zero means no overage is allowed.
 type AccountOverageCapResponse struct {
 	OverageCapCents *int64 `json:"overage_cap_cents"`
+}
+
+// EgressOverageRequest is PUT /v1/account/egress-overage and
+// PUT /v1/orgs/{slug}/egress-overage.
+type EgressOverageRequest struct {
+	// Enabled turns the election on or off. Required.
+	Enabled *bool `json:"enabled"`
+}
+
+// EgressOverageResponse is the billing subject's egress overage election.
+type EgressOverageResponse struct {
+	// Enabled is whether the election is on.
+	Enabled bool `json:"enabled"`
+	// Electable is whether the plan allows the election.
+	Electable bool `json:"electable"`
+	// EnabledAt is when the election started; it is kept when the election
+	// is turned off and on again.
+	EnabledAt *time.Time `json:"enabled_at,omitempty"`
+	// DisabledAt is when the election was last turned off.
+	DisabledAt *time.Time `json:"disabled_at,omitempty"`
+	// IncludedGiB is the plan's monthly egress allowance.
+	IncludedGiB int64 `json:"included_gib"`
+	// Billing is EgressOverageBillingLive or EgressOverageBillingOff.
+	Billing string `json:"billing"`
+	// PriceMillicentsPerGiB prices egress above the allowance while billing
+	// is live.
+	PriceMillicentsPerGiB int64 `json:"price_millicents_per_gib,omitempty"`
+	// Currency is the price's currency.
+	Currency string `json:"currency,omitempty"`
 }
 
 // OrgBillingEmailRequest sets the email an organization bills to. The billing
@@ -4365,6 +4459,12 @@ type APIKeyResponse struct {
 	RotatedFromID string   `json:"rotated_from_id,omitempty"` // predecessor key id
 	// Plaintext appears ONLY on the create + rotate responses, never persisted.
 	Plaintext string `json:"plaintext,omitempty"`
+	// Projects are the slugs of the projects an agent key is limited to;
+	// absent for an unlimited key (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories are the kinds of action a person must approve for
+	// an agent key, when it chose them (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // DeployTokenResponse is the redacted representation of a per-app CI
@@ -4469,6 +4569,13 @@ type GraceWindowResponse struct {
 type CreateKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
+	// Projects limits an agent key to these projects' apps, by slug
+	// (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories are the kinds of action an agent key must have a
+	// person approve; absent for every kind, empty for none
+	// (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // CreateOrgAPIKeyRequest is the body of POST /v1/orgs/{slug}/keys
@@ -4483,6 +4590,12 @@ type CreateKeyRequest struct {
 type CreateOrgAPIKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
+	// Projects limits an agent key to these projects' apps, by slug
+	// (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories: as CreateKeyRequest's; the organization's floor
+	// applies on top (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // ListOrgAPIKeysResponse is the body of GET /v1/orgs/{slug}/keys
@@ -4528,6 +4641,12 @@ type RotateOrgAPIKeyResponse struct {
 // alt names, useful for the `gregale domains show` listing). All three
 // fields are omitempty so pre-PR-3 clients see bit-identical payloads.
 type CustomDomainResponse struct {
+	// Readiness keeps DNS ownership, routing, and HTTPS readiness independent.
+	Readiness               *DomainReadiness    `json:"readiness,omitempty"`
+	VerificationNextCheckAt string              `json:"verification_next_check_at,omitempty"`
+	VerificationAttempts    int                 `json:"verification_attempts,omitempty"`
+	CertRetryAt             string              `json:"cert_retry_at,omitempty"`
+	Checks                  []DomainDoctorCheck `json:"checks,omitempty"`
 	// VerificationExpiresAt is the hard deadline for an unverified claim.
 	// Expired claims require a fresh create request and a new TXT proof.
 	VerificationExpiresAt string   `json:"verification_expires_at,omitempty"`
@@ -5275,7 +5394,7 @@ type ExecutionUsageSummaryResponse struct {
 // without having to sum rows.
 //
 // Overage math: anything above IncludedGBHours is billable at the
-// overage rate in the financial model ($0.01/GB-h). Cents are integer.
+// overage rate in the financial model (OverageMillicentsPerGBHour, $0.05/GB-h). Cents are integer.
 //
 // Issue #279 / PR-B: UsedCPUHours is informational and NOT billed.
 // The billing math is on UsedGBHours (plan RAM + 8 MB per running
@@ -5384,8 +5503,7 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int, guestVCPU ...int) *P
 // ValidateAppConfig keeps existing callers source-compatible while allowing
 // create-time callers to opt into the joint contract.
 func ValidateAppCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
-	shape, ok := PlanResourceShapeFor(l.Plan)
-	if !ok || guestVCPU != shape.VCPU || ramMB != shape.RAMMB {
+	if guestVCPU != SizeVCPUs(ramMB) {
 		return ErrInvalidCPURAMPair(l, ramMB, guestVCPU)
 	}
 	return nil
@@ -5897,6 +6015,37 @@ type QueueSendResponse struct {
 	QueueBindingID string `json:"queue_binding_id,omitempty"`
 	ID             string `json:"id"`
 	TraceID        string `json:"trace_id,omitempty"`
+}
+
+// QueueSendBatchRequest is POST /v1/apps/{slug}/queues/send-batch: up to
+// QueueSendBatchMaxMessages messages for one queue, sent in order as one API
+// request (ADR-20261018101500 amendment 2026-10-31).
+type QueueSendBatchRequest struct {
+	Environment string                  `json:"environment,omitempty"`
+	QueueName   string                  `json:"queue_name,omitempty"`
+	RetryPolicy *RetryPolicyDTO         `json:"retry_policy,omitempty"`
+	Messages    []QueueSendBatchMessage `json:"messages"`
+}
+
+// QueueSendBatchMessage is one message of a batch send.
+type QueueSendBatchMessage struct {
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+
+// QueueSendBatchResult reports one message by its zero-based input index:
+// "accepted" with the message, "rejected" with the problem, or
+// "not_attempted" after an earlier message was rejected. Resend from the
+// first message that was not accepted.
+type QueueSendBatchResult struct {
+	Index   int                `json:"index"`
+	Status  string             `json:"status"`
+	Message *QueueSendResponse `json:"message,omitempty"`
+	Problem *Problem           `json:"problem,omitempty"`
+}
+
+// QueueSendBatchResponse lists every message of the batch in input order.
+type QueueSendBatchResponse struct {
+	Results []QueueSendBatchResult `json:"results"`
 }
 
 // QueueReceiveResponse is returned on POST /v1/apps/{slug}/queues/invocations:receive.
@@ -7661,8 +7810,13 @@ type PlanManaged struct {
 	Provision *PlanManagedProvision `json:"provision,omitempty"`
 	// NotProvisionedReason says why a Compose postgres service is not
 	// provided: unavailable, plan, quota, unsupported, configured,
-	// not_referenced or permission. Empty for other datastores.
+	// not_referenced or permission. Empty for other datastores, which have
+	// no managed equivalent.
 	NotProvisionedReason string `json:"not_provisioned_reason,omitempty"`
+	// Unbound names the selected services' keys that point at a datastore
+	// apply does not provide and will have no value ("api.REDIS_URL"), so a
+	// reviewer sees which services start without it (ADR-20261104221217).
+	Unbound []string `json:"unbound,omitempty"`
 }
 
 // PlanManagedProvision is a managed database a project apply provides.
@@ -9018,6 +9172,16 @@ type EdgeRuleHeaderOp struct {
 	Action string `json:"action"`
 	// Template (ADR-968) expands ${name} request values in Value.
 	Template bool `json:"template,omitempty"`
+	// Secret seals Value (ADR-20261108110000): apid stores it encrypted to
+	// the edge seal domain and never returns it. Credential-named request
+	// headers (EdgeRuleHeaderNameIsCredential) are sealed without it.
+	Secret bool `json:"secret,omitempty"`
+	// SecretID names the sealed value of a secret op. Responses carry it;
+	// sending it back with no Value keeps that value.
+	SecretID string `json:"secret_id,omitempty"`
+	// Redacted marks a credential-named value stored before sealing, which
+	// responses leave out. Sending the op back with no Value seals it.
+	Redacted bool `json:"redacted,omitempty"`
 }
 
 // edgeRuleHeaderForbidden is the hard-coded blacklist of header
@@ -9117,9 +9281,18 @@ func (a *EdgeRuleHeadersAction) Validate() *Problem {
 		if p := a.RequestHeaders[i].Validate(); p != nil {
 			return p
 		}
+		if p := a.RequestHeaders[i].validateSecretFields(true); p != nil {
+			return p
+		}
+		if EdgeRuleHeaderOpSealed(a.RequestHeaders[i]) && len(a.RequestHeaders[i].Value) > EdgeRuleHeaderSecretMaxBytes {
+			return ErrValidation(fmt.Sprintf("header %q is sealed and its value must be at most %d bytes", a.RequestHeaders[i].Name, EdgeRuleHeaderSecretMaxBytes))
+		}
 	}
 	for i := range a.ResponseHeaders {
 		if p := a.ResponseHeaders[i].Validate(); p != nil {
+			return p
+		}
+		if p := a.ResponseHeaders[i].validateSecretFields(false); p != nil {
 			return p
 		}
 	}
@@ -11703,6 +11876,12 @@ type DebugTelemetryExportOptions struct {
 	Route  string
 	Format string
 	Limit  int
+	// The request list's filters, with the same meaning.
+	DeploymentID string
+	Status       int
+	ColdBoot     *bool
+	ConsumerID   string
+	MinLatencyMS int
 }
 
 // DebugTelemetryListResponse is the wire envelope for the debug
@@ -11755,6 +11934,11 @@ type DebugCoverageResponse struct {
 	GuestEvidence       DebugCoverageSignal `json:"guest_evidence"`
 	OldestTelemetryAt   string              `json:"oldest_telemetry_at,omitempty"`
 	LatestTelemetryAt   string              `json:"latest_telemetry_at,omitempty"`
+	// RequestsNotRetained is how many requests the app's request analytics
+	// counted in the window's whole minutes but the debugger did not keep,
+	// because the plan's per-minute debugger row limit turned them away. It
+	// is a lower bound, and absent when analytics do not cover the window.
+	RequestsNotRetained *int64 `json:"requests_not_retained,omitempty"`
 }
 
 // DebugRunningRequestAttribution links request activity to the nearest
@@ -12482,7 +12666,20 @@ type RequestAnalyticsResponse struct {
 	// TelemetryGaps names each reason requests may be missing.
 	TelemetryComplete *bool    `json:"telemetry_complete,omitempty"`
 	TelemetryGaps     []string `json:"telemetry_gaps,omitempty"`
+	// SampledMeasures says whether the detail only raw sampled rows carry
+	// (group CPU and latency of sampled rows, per-deployment costs and
+	// per-route deployment splits) is in this response: "included", or
+	// "omitted" when reading it failed or ran past its time budget. Counts
+	// and percentiles never depend on it.
+	SampledMeasures string `json:"sampled_measures,omitempty"`
 }
+
+// RequestAnalyticsSampledMeasures* are the RequestAnalyticsResponse
+// sampled_measures values.
+const (
+	RequestAnalyticsSampledMeasuresIncluded = "included"
+	RequestAnalyticsSampledMeasuresOmitted  = "omitted"
+)
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
 // by GET /v1/apps/{slug}/analytics/timeseries. Counts include collapsed
@@ -13380,6 +13577,20 @@ type CustomMetricResponse struct {
 	// Kind is "gauge" (pushed, a scaling signal) or "counter" (an ADR-745
 	// OTLP cumulative sum, charted as a rate and never a scaling signal).
 	Kind string `json:"kind,omitempty"`
+	// Series lists a labelled metric's series (ADR-20261108160000 slice C);
+	// Value is then their aggregate: the sum for counters, the maximum of
+	// fresh series for gauges. Empty for an unlabelled metric.
+	Series []CustomMetricSeriesValue `json:"series,omitempty"`
+}
+
+// CustomMetricSeriesValue is one labelled series' latest value. Key is the
+// canonical "k=v,..." form accepted by the history endpoint's labels query.
+type CustomMetricSeriesValue struct {
+	Key        string            `json:"key"`
+	Labels     map[string]string `json:"labels"`
+	Value      float64           `json:"value"`
+	ObservedAt time.Time         `json:"observed_at"`
+	Stale      bool              `json:"stale"`
 }
 
 // CustomMetricListResponse carries the rows plus the two limits an operator
@@ -13389,6 +13600,8 @@ type CustomMetricListResponse struct {
 	Metrics    []CustomMetricResponse `json:"metrics"`
 	FreshnessS int                    `json:"freshness_seconds"`
 	MaxMetrics int                    `json:"max_metrics"`
+	// MaxSeries is the app's cap on labelled series (slice C).
+	MaxSeries int `json:"max_series,omitempty"`
 }
 
 // EgressFlowLogEntry is one ADR-371 egress flow log row: a destination

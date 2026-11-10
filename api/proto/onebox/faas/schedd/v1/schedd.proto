@@ -846,6 +846,14 @@ message InstanceStatsRow {
   // absent-versus-zero semantics for older nodes and first samples.
   google.protobuf.Int64Value disk_used_bytes = 11;
   google.protobuf.Int64Value disk_capacity_bytes = 12;
+  // departed marks the last row of an instance that has left this schedd's
+  // stats snapshot (it parked or moved to another node), served for
+  // api.MeterFinalNetworkReadingRetention so meterd can checkpoint its final
+  // network counters (ADR-20261103121407). Only its network counters are
+  // meaningful. A live row for the same instance from any node wins over it:
+  // a live-migrated instance keeps its ID and restarts its counters on the new
+  // node (ADR-20261104090000). Older schedds never set it.
+  bool departed = 13;
 }
 
 message ListInstanceStatsRequest {
@@ -1155,6 +1163,11 @@ message InstanceTelemetry {
   google.protobuf.Timestamp quiet_last_pause_started_at = 22;
   google.protobuf.Timestamp quiet_last_pause_ended_at = 23;
   google.protobuf.Int64Value quiet_paused_ns_total = 24;
+  // ADR-20261107122928: vmmd's InstanceStats.idle_ladder_level, the idle
+  // ladder level vmmd holds the instance at (1 quiet-paused, 2 quiet-paused
+  // and quiet for the ladder's freeze delay). 0 when off, running or not on
+  // the ladder.
+  int32 idle_ladder_level = 25;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"
@@ -1575,6 +1588,16 @@ message DatabaseRuntime {
   // The database's current or last in-place major upgrade; absent if it
   // never had one.
   DatabaseUpgrade upgrade = 21;
+  // Complete persisted major history, including an explicitly empty history.
+  // Older schedulers omit the completeness marker; an upgraded source then
+  // cannot safely resolve historical restore specifications through them.
+  repeated DatabaseMajorSpan major_history = 22;
+  bool major_history_complete = 23;
+}
+
+message DatabaseMajorSpan {
+  int32 postgres_major = 1;
+  google.protobuf.Timestamp until = 2;
 }
 
 message UpgradeDatabaseRequest {

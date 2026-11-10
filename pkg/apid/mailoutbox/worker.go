@@ -248,7 +248,7 @@ func (s *Service) dispatch(ctx context.Context, claimed q.PlatformMailProducerOu
 		state, code = "cancelled", "account_changed"
 	case r.Template == VerificationTemplate && (account.Status != "active" || account.EmailVerifiedAt.Valid):
 		state, code = "cancelled", "token_unavailable"
-	case r.Template == PasswordResetTemplate && (account.Status != "active" || !account.EmailVerifiedAt.Valid):
+	case r.Template == PasswordResetTemplate && ((account.Status != "active" && account.Status != "past_due") || !account.EmailVerifiedAt.Valid):
 		state, code = "cancelled", "token_unavailable"
 	case r.Template == MagicLinkTemplate && !magicLinkAccountAvailable(account.Status, account.AbuseHoldAt):
 		state, code = "cancelled", "token_unavailable"

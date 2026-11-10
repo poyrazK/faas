@@ -43,6 +43,10 @@ type NodeLedger struct {
 	perAppEnvironment map[string]int              // app_id|"\x00"|original environment -> serving concurrency (ADR-590)
 	perAppProduction  map[string]int              // valid production ownership, including unpinned compatibility rows
 	entries           map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
+	// byNode indexes entries by node and boosted holds the entries with a
+	// CPU startup boost to expire (admission_index.go).
+	byNode  map[string]map[string]*reservation
+	boosted map[*reservation]struct{}
 	// measured, when set, admits by measured memory (ADR-909): it returns a
 	// node's measured charge and when it was taken. nil keeps invariant 2's
 	// reservation check.
@@ -50,6 +54,10 @@ type NodeLedger struct {
 	// quietPaused, when set, lets the vCPU and CPU gates count only active
 	// instances (ADR-1151, admission_cpu_discount.go).
 	quietPaused QuietPaused
+	// idleLadderFrozen, when set, leaves instances vmmd holds at the idle
+	// ladder's freeze level out of measured admission's cap on reservations
+	// (ADR-20261107122928, admission_idle_ladder.go).
+	idleLadderFrozen IdleLadderFrozen
 	// measuredCPU, when set, charges measured instances their measured CPU
 	// at the vCPU and CPU gates (ADR 20261029151111, admission_cpu_discount.go).
 	measuredCPU MeasuredCPU
@@ -57,6 +65,9 @@ type NodeLedger struct {
 	// pressure (ADR 20261030100950): the gates then count its bookings in
 	// full. The engine sets it from its node registry.
 	cpuPressured func(nodeID string, now time.Time) bool
+	// cpuAdmission counts what the vCPU and CPU gates would have refused
+	// (ADR-20261109172421).
+	cpuAdmission *cpuAdmission
 	now          func() time.Time // nil means time.Now; tests set it
 }
 
@@ -143,6 +154,7 @@ func NewNodeLedger() *NodeLedger {
 		perAppEnvironment: map[string]int{},
 		perAppProduction:  map[string]int{},
 		entries:           map[string]*reservation{},
+		cpuAdmission:      newCPUAdmission(),
 	}
 }
 
@@ -230,8 +242,12 @@ func kindCountsConcurrency(kind Kind) bool {
 
 // Request is an admission request for one instance (a wake or a build).
 type Request struct {
-	Instance string
-	AppID    string
+	// ignoreCPUBudgets makes placement skip the vCPU and CPU budget gates:
+	// observing cpu_admission, its retry after a refusal for CPU alone
+	// (ADR-20261109172421).
+	ignoreCPUBudgets bool
+	Instance         string
+	AppID            string
 	// DeploymentID is the target deployment for the wake (ADR-072 /
 	// issue #557 closure). The Engine resolves it from the wake
 	// target before calling Admit — the gateway passes the latest
@@ -274,7 +290,12 @@ type Request struct {
 	// the reservation and is durable so SeedLedger can reconstruct it.
 	CPUStartupBoostMillicores int
 	CPUStartupBoostUntil      time.Time
-	MaxConcurrency            int // the selected environment's deployed max (validated ≤ plan cap)
+	// BookedCPUMillicores, when positive, is stamped on the admitted
+	// instance's row as what it books once its startup boost ends, in place
+	// of its app's configured CPU (ADR-20261101160231 step 5b). Only apps on
+	// the guest_vcpu_from_cpu_apps list set it.
+	BookedCPUMillicores int
+	MaxConcurrency      int // the selected environment's deployed max (validated ≤ plan cap)
 	// AllowConcurrencyOverlap permits exactly one counted serving instance
 	// above the environment and shared plan ceilings. A candidate must overlap
 	// a serving revision of that same environment; node RAM/vCPU limits and
@@ -511,60 +532,19 @@ func (l *NodeLedger) Admit(r Request) error {
 		}
 	}
 
-	// Per-node vCPU headroom (Tier A2, migration 00123). Replaces
-	// the legacy box-wide api.VCPUSlots gate. The Engine reads the
-	// row budget from compute_nodes.vcpu_budget and threads it
-	// into the Request; r.VCPUBudget > 0 means a real row budget;
-	// ≤ 0 falls back to api.VCPUSlots (the legacy single-box
-	// posture, and the safe default for un-registered nodes).
-	// This check sits alongside the RAM check so a node's RAM
-	// and vCPU ceilings are enforced together — a heterogeneous
-	// fleet with one RAM-rich + vCPU-poor box and one vCPU-rich
-	// + RAM-poor box now routes traffic correctly.
-	vcpuCeiling := r.VCPUBudget
-	if vcpuCeiling <= 0 {
-		vcpuCeiling = api.VCPUSlots
+	// Per-node vCPU and CPU budgets (Tier A2, migration 00123): CPU
+	// decides where, never whether (ADR-20261109172421). Placement prefers
+	// a node within them; here an admission past them is counted in
+	// schedd_cpu_admission_would_refuse_total, not refused.
+	if !r.AllowResidentRecovery {
+		for _, over := range l.cpuOverBudget_locked(r, node) {
+			l.cpuAdmission.refusedAt(over.gate)
+		}
 	}
-	if r.Kind == KindJob && r.Flexible {
-		vcpuCeiling -= flexibleAppReserveVCPU
-	}
-	discountVCPU, discountCPU := l.cpuDiscount_locked(r.NodeID)
-	overcommitCap := l.overcommitCap_locked()
-	pressure := ""
-	if l.nodeCPUPressured_locked(r.NodeID) {
-		pressure = " (node under CPU pressure: every booking counts)"
-	}
-	vcpuUsed := quietEffective(node.usedVCPU, discountVCPU, vcpuCeiling, overcommitCap)
-	if vcpuUsed+r.VCPU > vcpuCeiling && !r.AllowResidentRecovery {
-		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
-			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget%s",
-			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling, pressure)), resourceBlocker("node_vcpu", "vcpu", int64(r.VCPU)))
-	}
-
-	// Host CPU admission is distinct from guest-visible vCPU topology.
-	// Firecracker can expose four guest vCPUs while the parent cgroup's
-	// cpu.max is 1000 millicores; using VCPU alone therefore allowed eight
-	// such VMs onto a four-vCPU host. Enforce the sustained cgroup quota
-	// against physical host capacity. Startup recovery may record an
-	// already-overcommitted node, but can never use that exception for a
-	// newly-created reservation.
-	reservedCPU := r.CPUMillicores
 	boostCPU := max(0, r.CPUStartupBoostMillicores-r.CPUMillicores)
-	reservedCPU += boostCPU
-	cpuCeiling := r.CPUBudgetMillicores
-	if r.Kind == KindJob && r.Flexible && cpuCeiling > 0 {
-		cpuCeiling -= flexibleAppReserveCPUMillicores
-	}
-	cpuUsed := quietEffective(node.usedCPUMillicores, discountCPU, cpuCeiling, overcommitCap)
-	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
-		cpuUsed+reservedCPU > cpuCeiling &&
-		!r.AllowResidentRecovery {
-		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
-			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget%s",
-			r.NodeID, cpuUsed, reservedCPU, cpuCeiling, pressure)), resourceBlocker("node_cpu", "cpu_millicores", int64(reservedCPU)))
-	}
+	reservedCPU := r.CPUMillicores + boostCPU
 
-	l.entries[r.Instance] = &reservation{
+	l.putEntry_locked(r.Instance, &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, environmentKey: r.EnvironmentKey, nodeID: r.NodeID,
 		production:  r.ProductionEnvironment || r.EnvironmentKey == "",
 		admissionMB: r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
@@ -573,7 +553,7 @@ func (l *NodeLedger) Admit(r Request) error {
 		countsConc: kindCountsConcurrency(r.Kind),
 		admittedAt: l.clock(),
 		agentRun:   r.Kind == KindAgentRun,
-	}
+	})
 	node.residentRAM += r.admissionMB()
 	node.usedVCPU += r.VCPU
 	node.usedCPUMillicores += reservedCPU
@@ -607,7 +587,7 @@ func (l *NodeLedger) SetCPUStartupBoostUntil(instance string, until time.Time) b
 }
 
 func (l *NodeLedger) expireCPUBoosts_locked(now time.Time) {
-	for _, r := range l.entries {
+	for r := range l.boosted {
 		if r.cpuBoostMillicores > 0 && !r.cpuBoostUntil.IsZero() && !now.Before(r.cpuBoostUntil) {
 			l.releaseCPUBoost_locked(r)
 		}
@@ -626,6 +606,7 @@ func (l *NodeLedger) releaseCPUBoost_locked(r *reservation) {
 	}
 	r.cpuBoostMillicores = 0
 	r.cpuBoostUntil = time.Time{}
+	delete(l.boosted, r)
 }
 
 // ceilingForNode_locked resolves the per-node admission ceiling.
@@ -748,7 +729,7 @@ func (l *NodeLedger) Release(instance string) {
 	if e == nil {
 		return
 	}
-	delete(l.entries, instance)
+	l.dropEntry_locked(instance)
 	if node, ok := l.resident[e.nodeID]; ok {
 		node.residentRAM -= e.admissionMB
 		if node.residentRAM < 0 {
@@ -1009,8 +990,8 @@ func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceili
 	}
 	// The measurement cannot include instances admitted after it, nor agent
 	// run VMs at all: it sums instances rows, and agent runs have none.
-	for _, e := range l.entries {
-		if e.nodeID == nodeID && (e.agentRun || e.admittedAt.After(asOf)) {
+	for _, e := range l.entriesOnNode_locked(nodeID) {
+		if e.agentRun || e.admittedAt.After(asOf) {
 			used += e.admissionMB
 		}
 	}
@@ -1018,7 +999,7 @@ func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceili
 	// Frozen reservations already book measured memory, so the cap on
 	// reservations leaves them out (ADR-1151).
 	overcommit := ceiling * (api.MeasuredAdmissionMaxOvercommitPercent - 100) / 100
-	if capped := reserved - frozen - overcommit; capped > used {
+	if capped := reserved - frozen - l.idleLadderDiscountMB_locked(nodeID, ceiling) - overcommit; capped > used {
 		return capped, "reservations beyond the overcommit allowance"
 	}
 	return used, "measured"
@@ -1089,4 +1070,51 @@ func (l *NodeLedger) CeilingForNode(nodeID string) int {
 		return node.ceilingMB
 	}
 	return l.ceilingForNode_locked(nodeID, api.Limits{})
+}
+
+// cpuOverBudget is a per-node budget an admission would pass: its
+// schedd_cpu_admission_would_refuse_total gate, and the refusal it made
+// before memory became the only capacity limit (ADR-20261109172421).
+type cpuOverBudget struct {
+	gate string
+	err  error
+}
+
+// cpuOverBudget_locked lists the per-node vCPU and CPU budgets r would pass
+// on node, with the discounts placement applies. r.VCPUBudget > 0 is the
+// row's compute_nodes.vcpu_budget; ≤ 0 falls back to api.VCPUSlots. Host
+// CPU is measured apart from guest-visible vCPU topology: the CPU booking,
+// with any temporary startup boost, against the node's physical CPU.
+func (l *NodeLedger) cpuOverBudget_locked(r Request, node *nodeReservation) []cpuOverBudget {
+	vcpuCeiling := r.VCPUBudget
+	if vcpuCeiling <= 0 {
+		vcpuCeiling = api.VCPUSlots
+	}
+	if r.Kind == KindJob && r.Flexible {
+		vcpuCeiling -= flexibleAppReserveVCPU
+	}
+	discountVCPU, discountCPU := l.cpuDiscount_locked(r.NodeID)
+	overcommitCap := l.overcommitCap_locked()
+	pressure := ""
+	if l.nodeCPUPressured_locked(r.NodeID) {
+		pressure = " (node under CPU pressure: every booking counts)"
+	}
+	var over []cpuOverBudget
+	if vcpuUsed := quietEffective(node.usedVCPU, discountVCPU, vcpuCeiling, overcommitCap); vcpuUsed+r.VCPU > vcpuCeiling {
+		over = append(over, cpuOverBudget{gate: CPUGateLedgerVCPU, err: explainAdmission(api.ErrCapacity(fmt.Sprintf(
+			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget%s",
+			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling, pressure)), resourceBlocker("node_vcpu", "vcpu", int64(r.VCPU)))})
+	}
+	reservedCPU := r.CPUMillicores + max(0, r.CPUStartupBoostMillicores-r.CPUMillicores)
+	cpuCeiling := r.CPUBudgetMillicores
+	if r.Kind == KindJob && r.Flexible && cpuCeiling > 0 {
+		cpuCeiling -= flexibleAppReserveCPUMillicores
+	}
+	cpuUsed := quietEffective(node.usedCPUMillicores, discountCPU, cpuCeiling, overcommitCap)
+	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 && cpuUsed+reservedCPU > cpuCeiling {
+		over = append(over, cpuOverBudget{gate: CPUGateLedgerCPU, err: explainAdmission(api.ErrCapacity(fmt.Sprintf(
+			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget%s",
+			r.NodeID, cpuUsed, reservedCPU, cpuCeiling, pressure)), resourceBlocker("node_cpu", "cpu_millicores", int64(reservedCPU)))})
+	}
+	return over
 }

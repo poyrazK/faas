@@ -80,14 +80,18 @@ func TestWorkerAdmissionLedgerExplainsConcurrencyAndStartupCPU(t *testing.T) {
 	if len(b) != 1 || b[0].Code != "concurrency_limit" || b[0].Used == nil || *b[0].Used != 1 || b[0].Limit == nil || *b[0].Limit != 1 {
 		t.Fatalf("wrong concurrency explanation: %+v", b)
 	}
+	// Past the CPU budget an admission is counted, not refused
+	// (ADR-20261109172421); the would-be refusal still names the boost.
 	r.MaxConcurrency, r.CPUMillicores, r.CPUStartupBoostMillicores = 5, 500, 1500
-	err = ledger.Admit(r)
-	b = admissionBlockers(err)
+	b = admissionBlockers(ledger.XCPUOverBudget(r))
 	if len(b) != 1 || b[0].Code != "node_cpu" || b[0].Requested == nil || *b[0].Requested != 1500 {
 		t.Fatalf("startup CPU boost omitted: %+v", b)
 	}
 	if ledger.Concurrency("app") != 1 {
 		t.Fatal("refused reservations changed concurrency")
+	}
+	if err := ledger.Admit(r); err != nil {
+		t.Fatalf("past the CPU budget: %v, want admitted on memory", err)
 	}
 }
 

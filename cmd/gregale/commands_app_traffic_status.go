@@ -43,14 +43,15 @@ func renderAppTrafficStatus(w io.Writer, status api.RuntimePolicyStatusResponse)
 	}
 	_, _ = fmt.Fprintf(w, "Traffic status\n  Policy convergence: %s (revision %d)\n  Compute gateway wiring: %s; fresh %d/%d, missing %d, stale %d\n",
 		status.State, status.DesiredRevision, runtime.State, runtime.FreshGateways, runtime.ServingGateways, runtime.MissingGateways, runtime.StaleGateways)
-	for _, feature := range []struct {
-		name   string
-		status api.TrafficRuntimeFeatureStatus
-	}{
+	features := []trafficFeatureRow{
 		{"Public edge retry", runtime.PublicRetry}, {"Rate counter", runtime.RateCounter}, {"Retry counter", runtime.RetryCounter},
 		{"Deadline signing", runtime.DeadlineSigning}, {"Public policy snapshot", runtime.PolicySnapshot}, {"Security revocation", runtime.SecurityRevocation},
 		{"Managed HTTP listener", runtime.ManagedHTTP}, {"Managed HTTP adaptive circuit", runtime.ManagedCircuit},
-	} {
+	}
+	if runtime.EdgeHeaderSecrets != nil { // older apid releases leave it out
+		features = append(features, trafficFeatureRow{"Sealed edge-rule header values", *runtime.EdgeHeaderSecrets})
+	}
+	for _, feature := range features {
 		value := feature.status.Mode
 		if feature.status.State == "" || feature.status.State == "unverified" {
 			value = "unverified"
@@ -59,4 +60,10 @@ func renderAppTrafficStatus(w io.Writer, status api.RuntimePolicyStatusResponse)
 	}
 	_, _ = fmt.Fprintln(w, "  Request enforcement: unverified\n  Wiring observations do not attest the public hop, backend health, VM admission, or outbound firewall enforcement.")
 	return 0
+}
+
+// trafficFeatureRow is one wiring feature line of the traffic status.
+type trafficFeatureRow struct {
+	name   string
+	status api.TrafficRuntimeFeatureStatus
 }

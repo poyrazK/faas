@@ -74,7 +74,6 @@ touch them. The tables below map each earlier name.
 | `gregale approvals` | `gregale release approval` |
 | `gregale apps` | `gregale app list` |
 | `gregale audit-events` | `gregale audit` |
-| `gregale automations` | `gregale automation` |
 | `gregale bindings` | `gregale app binding` |
 | `gregale cache` | `gregale edge cache` |
 | `gregale canary` | `gregale release canary` |
@@ -135,6 +134,7 @@ touch them. The tables below map each earlier name.
 | `gregale send` | `gregale event send` |
 | `gregale slo` | `gregale alert slo list --window` |
 | `gregale slos` | `gregale alert slo` |
+| `gregale stored-workflows` | `gregale workflow stored` |
 | `gregale synthetics` | `gregale alert check` |
 | `gregale tail` | `gregale invocation watch` |
 | `gregale throttle-suggestions` | `gregale edge rule suggest --rate-limits` |
@@ -177,37 +177,9 @@ touch them. The tables below map each earlier name.
 | `gregale apps restore` | `gregale app restore` |
 | `gregale apps rm` | `gregale app delete` |
 | `gregale apps streaming-cap` | `gregale app streaming-cap` |
-| `gregale automations event-recover` | `gregale automation event recover` |
-| `gregale automations event-recovery-plan` | `gregale automation event-recovery start --dry-run` |
-| `gregale automations event-recovery-start` | `gregale automation event-recovery start` |
-| `gregale automations failure-policy` | `gregale automation failure policy` |
-| `gregale automations failure-recovery-evidence` | `gregale automation failure-recovery evidence` |
-| `gregale automations failure-recovery-plan` | `gregale automation failure resume --dry-run` |
-| `gregale automations failure-recovery-review` | `gregale automation failure-recovery review` |
-| `gregale automations failure-recovery-reviews` | `gregale automation failure-recovery list` |
-| `gregale automations failure-resume` | `gregale automation failure resume` |
-| `gregale automations failures` | `gregale automation failure list` |
-| `gregale automations live gate` | `gregale automation live check` |
-| `gregale automations live suite` | `gregale automation live run` |
-| `gregale automations publish-policy` | `gregale automation policy publish` |
-| `gregale automations recovery-cancel-preview` | `gregale automation recovery cancel --dry-run` |
-| `gregale automations recovery-cancel` | `gregale automation recovery cancel` |
-| `gregale automations recovery-health` | `gregale automation recovery health` |
-| `gregale automations recovery-plan` | `gregale automation recovery run` |
-| `gregale automations recovery-policy-evaluate` | `gregale automation recovery-policy evaluate` |
-| `gregale automations recovery-policy-reviews` | `gregale automation recovery-policy history` |
-| `gregale automations recovery-policy` | `gregale automation recovery-policy get` |
-| `gregale automations recovery-policy` | `gregale automation recovery-policy set` |
-| `gregale automations recovery-preview` | `gregale automation recovery create --dry-run` |
-| `gregale automations recovery-response-apply` | `gregale automation recovery-response apply` |
-| `gregale automations recovery-response-plan` | `gregale automation recovery-response apply --dry-run` |
-| `gregale automations recovery-response-preview` | `gregale automation recovery-response check` |
-| `gregale automations recovery-response-status` | `gregale automation recovery-response status` |
-| `gregale automations recovery-retry-evidence` | `gregale automation recovery evidence` |
-| `gregale automations recovery-retry-plan` | `gregale automation recovery create --job <JOB> --dry-run` |
-| `gregale automations recovery-start` | `gregale automation recovery create` |
-| `gregale automations recovery-suppress` | `gregale automation recovery suppress` |
 | `gregale billing budget-preview` | `gregale billing budgets create --dry-run` |
+| `gregale billing egress-overage` | `gregale billing egress-overage get` |
+| `gregale billing egress-overage` | `gregale billing egress-overage set` |
 | `gregale billing payment-method` | `gregale billing payment-method get` |
 | `gregale billing portal` | `gregale billing portal open` |
 | `gregale bindings probe-policy` | `gregale app binding probe-policy set` |
@@ -301,6 +273,7 @@ touch them. The tables below map each earlier name.
 | `gregale deploy retry` | `gregale release attempt retry` |
 | `gregale deploy status` | `gregale release attempt get` |
 | `gregale deployment diff` | `gregale release diff` |
+| `gregale deployment resolve` | `gregale release resolve` |
 | `gregale deployment runtime` | `gregale release runtime` |
 | `gregale deployment status` | `gregale release status` |
 | `gregale deployment summary` | `gregale release summary` |
@@ -439,6 +412,9 @@ touch them. The tables below map each earlier name.
 | `gregale jobs next` | `gregale job get --next` |
 | `gregale jobs replay-failed` | `gregale job replay` |
 | `gregale keys grace-window` | `gregale key grace-window set` |
+| `gregale mcp approval-channels` | `gregale mcp server approval channels` |
+| `gregale mcp approval-channels` | `gregale mcp server approvals get` |
+| `gregale mcp approval-channels` | `gregale mcp server approvals set` |
 | `gregale mcp call` | `gregale mcp client call` |
 | `gregale mcp complete` | `gregale mcp client complete` |
 | `gregale mcp config` | `gregale mcp server export` |
@@ -514,6 +490,7 @@ touch them. The tables below map each earlier name.
 | `gregale postgres compute-policy` | `gregale postgres compute-policy set` |
 | `gregale postgres overage` | `gregale postgres overage get` |
 | `gregale postgres overage` | `gregale postgres overage set` |
+| `gregale postgres previews` | `gregale postgres previews set` |
 | `gregale postgres resize-status` | `gregale postgres resize status` |
 | `gregale previews join` | `gregale feature join` |
 | `gregale previews leave` | `gregale feature leave` |
@@ -534,6 +511,7 @@ touch them. The tables below map each earlier name.
 | `gregale projects environments release-sets stage` | `gregale environment release-sets stage create` |
 | `gregale projects environments release-sets verification-runs` | `gregale environment release-sets verification` |
 | `gregale projects environments` | `gregale environment` |
+| `gregale projects preview-secrets` | `gregale project preview secret` |
 | `gregale queue dead-letter` | `gregale queue dlq list` |
 | `gregale queue tail` | `gregale queue watch` |
 | `gregale realtime drain-status` | `gregale realtime drain status` |
@@ -556,6 +534,37 @@ touch them. The tables below map each earlier name.
 | `gregale secrets rotate` | `gregale env rotate` |
 | `gregale secrets set` | `gregale env set` |
 | `gregale secrets unset` | `gregale env unset` |
+| `gregale stored-workflows event-recover` | `gregale workflow stored event recover` |
+| `gregale stored-workflows event-recovery-plan` | `gregale workflow stored event-recovery start --dry-run` |
+| `gregale stored-workflows event-recovery-start` | `gregale workflow stored event-recovery start` |
+| `gregale stored-workflows failure-policy` | `gregale workflow stored failure policy` |
+| `gregale stored-workflows failure-recovery-evidence` | `gregale workflow stored failure-recovery evidence` |
+| `gregale stored-workflows failure-recovery-plan` | `gregale workflow stored failure resume --dry-run` |
+| `gregale stored-workflows failure-recovery-review` | `gregale workflow stored failure-recovery review` |
+| `gregale stored-workflows failure-recovery-reviews` | `gregale workflow stored failure-recovery list` |
+| `gregale stored-workflows failure-resume` | `gregale workflow stored failure resume` |
+| `gregale stored-workflows failures` | `gregale workflow stored failure list` |
+| `gregale stored-workflows live baseline` | `gregale workflow stored baseline` |
+| `gregale stored-workflows live gate` | `gregale workflow stored live check` |
+| `gregale stored-workflows live suite` | `gregale workflow stored live run` |
+| `gregale stored-workflows publish-policy` | `gregale workflow stored policy publish` |
+| `gregale stored-workflows recovery-cancel-preview` | `gregale workflow stored recovery cancel --dry-run` |
+| `gregale stored-workflows recovery-cancel` | `gregale workflow stored recovery cancel` |
+| `gregale stored-workflows recovery-health` | `gregale workflow stored recovery health` |
+| `gregale stored-workflows recovery-plan` | `gregale workflow stored recovery run` |
+| `gregale stored-workflows recovery-policy-evaluate` | `gregale workflow stored recovery-policy evaluate` |
+| `gregale stored-workflows recovery-policy-reviews` | `gregale workflow stored recovery-policy history` |
+| `gregale stored-workflows recovery-policy` | `gregale workflow stored recovery-policy get` |
+| `gregale stored-workflows recovery-policy` | `gregale workflow stored recovery-policy set` |
+| `gregale stored-workflows recovery-preview` | `gregale workflow stored recovery create --dry-run` |
+| `gregale stored-workflows recovery-response-apply` | `gregale workflow stored recovery-response apply` |
+| `gregale stored-workflows recovery-response-plan` | `gregale workflow stored recovery-response apply --dry-run` |
+| `gregale stored-workflows recovery-response-preview` | `gregale workflow stored recovery-response check` |
+| `gregale stored-workflows recovery-response-status` | `gregale workflow stored recovery-response status` |
+| `gregale stored-workflows recovery-retry-evidence` | `gregale workflow stored recovery evidence` |
+| `gregale stored-workflows recovery-retry-plan` | `gregale workflow stored recovery create --job <JOB> --dry-run` |
+| `gregale stored-workflows recovery-start` | `gregale workflow stored recovery create` |
+| `gregale stored-workflows recovery-suppress` | `gregale workflow stored recovery suppress` |
 | `gregale test coverage-trend` | `gregale test coverage report` |
 | `gregale test recovery-trend` | `gregale test recovery report` |
 | `gregale triggers dlq` | `gregale trigger dlq list` |

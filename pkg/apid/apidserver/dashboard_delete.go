@@ -181,7 +181,7 @@ func acctViewFrom(acct state.Account) *dashboard.AccountView {
 		Email:                      acct.Email,
 		Plan:                       string(acct.Plan),
 		EmailVerified:              acct.EmailVerified(),
-		EmailVerificationGraceEnds: acct.CreatedAt.Add(emailVerificationGrace).UTC().Format("2006-01-02"),
+		EmailVerificationGraceEnds: verificationDeadline(acct).UTC().Format("2006-01-02"),
 	}
 }
 
@@ -235,6 +235,11 @@ func (s *server) dashboardRaiseOverageCap(w http.ResponseWriter, r *http.Request
 			return
 		}
 		capCents = &n
+	}
+	// ADR-20261105120000: the same paid-plan bounds as the API.
+	if api.OverageCapProblem(acct.Plan, capCents) != nil {
+		http.Redirect(w, r, "/dashboard/billing?cap=invalid", http.StatusSeeOther)
+		return
 	}
 	if _, err := s.raiseOverageCapSvc(r.Context(), acct, capCents); err != nil {
 		http.Redirect(w, r, "/dashboard/billing?cap=error", http.StatusSeeOther)

@@ -68,6 +68,7 @@ const (
 	Vmmd_ThawInstance_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/ThawInstance"
 	Vmmd_WaitBuilderReady_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
 	Vmmd_DeleteWarmSnapshot_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
+	Vmmd_SnapshotBackingCurrent_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/SnapshotBackingCurrent"
 	Vmmd_RetireNativeRuntimeSnapshotObject_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/RetireNativeRuntimeSnapshotObject"
 	Vmmd_FrameworkReady_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
 	Vmmd_Destroy_FullMethodName                                 = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
@@ -92,6 +93,7 @@ const (
 	Vmmd_UpdatePrivateNetwork_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
 	Vmmd_ReconcilePrivateNetworkFabric_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkFabric"
 	Vmmd_ReconcilePrivateNetworkPeerings_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkPeerings"
+	Vmmd_RestrictPrivateNetworkPeerings_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/RestrictPrivateNetworkPeerings"
 	Vmmd_RemovePrivateNetworkFabric_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RemovePrivateNetworkFabric"
 	Vmmd_SeccompStatus_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
 	Vmmd_Logs_FullMethodName                                    = "/onebox.faas.vmmd.v1.Vmmd/Logs"
@@ -336,6 +338,12 @@ type VmmdClient interface {
 	// DeleteWarmSnapshot removes the two storage objects created by a builder
 	// warm capture. Missing objects are treated as an idempotent success.
 	DeleteWarmSnapshot(ctx context.Context, in *DeleteWarmSnapshotRequest, opts ...grpc.CallOption) (*DeleteWarmSnapshotResponse, error)
+	// SnapshotBackingCurrent answers, without starting a VM, whether a parked
+	// capture would restore on this node: the Firecracker version pin and the
+	// ADR-510 backing check a wake runs before it loads a snapshot. schedd asks
+	// after a release to find captures the release made stale and refresh them
+	// before a customer request wakes the app (ADR-20261106214916).
+	SnapshotBackingCurrent(ctx context.Context, in *SnapshotBackingCurrentRequest, opts ...grpc.CallOption) (*SnapshotBackingCurrentResponse, error)
 	// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
 	// capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
 	// imaged decides what to collect; vmmd accepts only a v2 capture object key
@@ -516,6 +524,7 @@ type VmmdClient interface {
 	// Atomically replaces the complete account/region L3 peering policy.
 	// Callers must prepare every listed fabric before publishing app routes.
 	ReconcilePrivateNetworkPeerings(ctx context.Context, in *ReconcilePrivateNetworkPeeringsRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkPeeringsAck, error)
+	RestrictPrivateNetworkPeerings(ctx context.Context, in *ReconcilePrivateNetworkPeeringsRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkPeeringsAck, error)
 	// RemovePrivateNetworkFabric tears down the node-local bridge and optional
 	// regional VXLAN link for a deleted Gregale-owned network. The operation is
 	// idempotent so durable delete notifications may be replayed safely.
@@ -1271,6 +1280,16 @@ func (c *vmmdClient) DeleteWarmSnapshot(ctx context.Context, in *DeleteWarmSnaps
 	return out, nil
 }
 
+func (c *vmmdClient) SnapshotBackingCurrent(ctx context.Context, in *SnapshotBackingCurrentRequest, opts ...grpc.CallOption) (*SnapshotBackingCurrentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SnapshotBackingCurrentResponse)
+	err := c.cc.Invoke(ctx, Vmmd_SnapshotBackingCurrent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) RetireNativeRuntimeSnapshotObject(ctx context.Context, in *RetireNativeRuntimeSnapshotObjectRequest, opts ...grpc.CallOption) (*RetireNativeRuntimeSnapshotObjectResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RetireNativeRuntimeSnapshotObjectResponse)
@@ -1505,6 +1524,16 @@ func (c *vmmdClient) ReconcilePrivateNetworkPeerings(ctx context.Context, in *Re
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReconcilePrivateNetworkPeeringsAck)
 	err := c.cc.Invoke(ctx, Vmmd_ReconcilePrivateNetworkPeerings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) RestrictPrivateNetworkPeerings(ctx context.Context, in *ReconcilePrivateNetworkPeeringsRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkPeeringsAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReconcilePrivateNetworkPeeringsAck)
+	err := c.cc.Invoke(ctx, Vmmd_RestrictPrivateNetworkPeerings_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2125,6 +2154,12 @@ type VmmdServer interface {
 	// DeleteWarmSnapshot removes the two storage objects created by a builder
 	// warm capture. Missing objects are treated as an idempotent success.
 	DeleteWarmSnapshot(context.Context, *DeleteWarmSnapshotRequest) (*DeleteWarmSnapshotResponse, error)
+	// SnapshotBackingCurrent answers, without starting a VM, whether a parked
+	// capture would restore on this node: the Firecracker version pin and the
+	// ADR-510 backing check a wake runs before it loads a snapshot. schedd asks
+	// after a release to find captures the release made stale and refresh them
+	// before a customer request wakes the app (ADR-20261106214916).
+	SnapshotBackingCurrent(context.Context, *SnapshotBackingCurrentRequest) (*SnapshotBackingCurrentResponse, error)
 	// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
 	// capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
 	// imaged decides what to collect; vmmd accepts only a v2 capture object key
@@ -2305,6 +2340,7 @@ type VmmdServer interface {
 	// Atomically replaces the complete account/region L3 peering policy.
 	// Callers must prepare every listed fabric before publishing app routes.
 	ReconcilePrivateNetworkPeerings(context.Context, *ReconcilePrivateNetworkPeeringsRequest) (*ReconcilePrivateNetworkPeeringsAck, error)
+	RestrictPrivateNetworkPeerings(context.Context, *ReconcilePrivateNetworkPeeringsRequest) (*ReconcilePrivateNetworkPeeringsAck, error)
 	// RemovePrivateNetworkFabric tears down the node-local bridge and optional
 	// regional VXLAN link for a deleted Gregale-owned network. The operation is
 	// idempotent so durable delete notifications may be replayed safely.
@@ -2716,6 +2752,9 @@ func (UnimplementedVmmdServer) WaitBuilderReady(context.Context, *WaitBuilderRea
 func (UnimplementedVmmdServer) DeleteWarmSnapshot(context.Context, *DeleteWarmSnapshotRequest) (*DeleteWarmSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteWarmSnapshot not implemented")
 }
+func (UnimplementedVmmdServer) SnapshotBackingCurrent(context.Context, *SnapshotBackingCurrentRequest) (*SnapshotBackingCurrentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SnapshotBackingCurrent not implemented")
+}
 func (UnimplementedVmmdServer) RetireNativeRuntimeSnapshotObject(context.Context, *RetireNativeRuntimeSnapshotObjectRequest) (*RetireNativeRuntimeSnapshotObjectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetireNativeRuntimeSnapshotObject not implemented")
 }
@@ -2787,6 +2826,9 @@ func (UnimplementedVmmdServer) ReconcilePrivateNetworkFabric(context.Context, *R
 }
 func (UnimplementedVmmdServer) ReconcilePrivateNetworkPeerings(context.Context, *ReconcilePrivateNetworkPeeringsRequest) (*ReconcilePrivateNetworkPeeringsAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReconcilePrivateNetworkPeerings not implemented")
+}
+func (UnimplementedVmmdServer) RestrictPrivateNetworkPeerings(context.Context, *ReconcilePrivateNetworkPeeringsRequest) (*ReconcilePrivateNetworkPeeringsAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestrictPrivateNetworkPeerings not implemented")
 }
 func (UnimplementedVmmdServer) RemovePrivateNetworkFabric(context.Context, *RemovePrivateNetworkFabricRequest) (*RemovePrivateNetworkFabricAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemovePrivateNetworkFabric not implemented")
@@ -3632,6 +3674,24 @@ func _Vmmd_DeleteWarmSnapshot_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_SnapshotBackingCurrent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SnapshotBackingCurrentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).SnapshotBackingCurrent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_SnapshotBackingCurrent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).SnapshotBackingCurrent(ctx, req.(*SnapshotBackingCurrentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_RetireNativeRuntimeSnapshotObject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RetireNativeRuntimeSnapshotObjectRequest)
 	if err := dec(in); err != nil {
@@ -4060,6 +4120,24 @@ func _Vmmd_ReconcilePrivateNetworkPeerings_Handler(srv interface{}, ctx context.
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).ReconcilePrivateNetworkPeerings(ctx, req.(*ReconcilePrivateNetworkPeeringsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_RestrictPrivateNetworkPeerings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReconcilePrivateNetworkPeeringsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RestrictPrivateNetworkPeerings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RestrictPrivateNetworkPeerings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RestrictPrivateNetworkPeerings(ctx, req.(*ReconcilePrivateNetworkPeeringsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -4791,6 +4869,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_DeleteWarmSnapshot_Handler,
 		},
 		{
+			MethodName: "SnapshotBackingCurrent",
+			Handler:    _Vmmd_SnapshotBackingCurrent_Handler,
+		},
+		{
 			MethodName: "RetireNativeRuntimeSnapshotObject",
 			Handler:    _Vmmd_RetireNativeRuntimeSnapshotObject_Handler,
 		},
@@ -4885,6 +4967,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReconcilePrivateNetworkPeerings",
 			Handler:    _Vmmd_ReconcilePrivateNetworkPeerings_Handler,
+		},
+		{
+			MethodName: "RestrictPrivateNetworkPeerings",
+			Handler:    _Vmmd_RestrictPrivateNetworkPeerings_Handler,
 		},
 		{
 			MethodName: "RemovePrivateNetworkFabric",

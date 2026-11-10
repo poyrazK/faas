@@ -23,6 +23,7 @@ type MemoryStore struct {
 	databases                 map[string]Database
 	names                     map[string]string
 	bindings                  map[string]Binding
+	rotationRefreshes         map[string]BindingRotationRefresh
 	targets                   map[string]string
 	usage                     map[usageKey]UsageRecord
 	restoreProofs             map[string]RestoreProof
@@ -53,6 +54,7 @@ func NewMemoryStore() *MemoryStore {
 		billingSubjects:           map[string]string{},
 		names:                     map[string]string{},
 		bindings:                  map[string]Binding{},
+		rotationRefreshes:         map[string]BindingRotationRefresh{},
 		targets:                   map[string]string{},
 		usage:                     map[usageKey]UsageRecord{},
 		restoreProofs:             map[string]RestoreProof{},
@@ -84,13 +86,16 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 	if limit < 1 || limit > 100 {
 		return Database{}, false, ErrInvalid
 	}
-	if database.EnvironmentCloneOperationID != "" || database.DataResourceID != "" {
+	if database.EnvironmentCloneOperationID != "" || database.DataResourceID != "" || !database.Preview.IsZero() {
 		return Database{}, false, ErrInvalid
 	}
 	key := databaseNameKey(database)
 	if id, ok := s.names[key]; ok {
-		if s.databases[id].EnvironmentCloneOperationID != "" {
+		if s.databases[id].EnvironmentCloneOperationID != "" || !s.databases[id].Preview.IsZero() {
 			return Database{}, false, ErrConflict
+		}
+		if !restoreSlotAllowed(ctx) && !s.databases[id].RestoreSlotUntil.IsZero() {
+			return Database{}, false, ErrQuotaExceeded
 		}
 		return cloneDatabase(s.databases[id]), false, nil
 	}
@@ -115,7 +120,9 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 	}
 	active := 0
 	for _, existing := range s.databases {
-		if s.sameQuotaOwner(ctx, existing, database) && existing.CountsTowardLimit() {
+		// A PR preview environment's database is outside the plan's limit
+		// (ADR-20261102123523).
+		if s.sameQuotaOwner(ctx, existing, database) && existing.CountsTowardLimit() && existing.Preview.IsZero() {
 			active++
 		}
 	}
@@ -203,16 +210,25 @@ func (s *MemoryStore) Due(_ context.Context, includeProvisioning bool, limit int
 		if database.State != StateDeleting && database.State != StateUpdating && (!includeProvisioning || !provisioning) {
 			continue
 		}
-		if database.RetryAt.After(now) || database.LeaseUntil.After(now) {
+		pendingHold := database.Restorable(now) && database.LastErrorCode == deletionHoldPendingCode &&
+			!database.UpdatedAt.After(now.Add(-defaultPollInterval))
+		if (database.RetryAt.After(now) && !pendingHold) || database.LeaseUntil.After(now) {
 			continue
 		}
 		items = append(items, cloneDatabase(database))
 	}
+	dueAt := func(database Database) time.Time {
+		if database.Restorable(now) && database.LastErrorCode == deletionHoldPendingCode {
+			return database.UpdatedAt
+		}
+		return database.RetryAt
+	}
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].RetryAt.Equal(items[j].RetryAt) {
+		a, b := dueAt(items[i]), dueAt(items[j])
+		if a.Equal(b) {
 			return items[i].ID < items[j].ID
 		}
-		return items[i].RetryAt.Before(items[j].RetryAt)
+		return a.Before(b)
 	})
 	if len(items) > limit {
 		items = items[:limit]

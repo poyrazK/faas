@@ -402,6 +402,9 @@ type VMInstanceStat struct {
 	InflightRequests int64
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
+	// IdleLadderLevel (ADR-20261107122928): the idle ladder level vmmd holds
+	// a quiet-paused instance at (1 quiet pause, 2 freeze); 0 otherwise.
+	IdleLadderLevel int32
 	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
 	Frozen bool
 	// QuietPause is the quiet pause record for the pause ledger
@@ -457,6 +460,15 @@ type AppSpec struct {
 	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
 	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
 	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	// CPUWeight and CPUUncapped carry CPU that follows instance size
+	// (ADR-20261109172421, Engine.appCPUWeight): the instance's cpu.weight,
+	// and no quota while CPUMillicores is the app default. Zero and false
+	// keep the plan's weight and quota.
+	CPUWeight   int32
+	CPUUncapped bool
+	// RequestConcurrency is vmmd's HTTP admission limit for the instance
+	// (ADR-20261101215228, vmmRequestConcurrency); 0 keeps the plan bound.
+	RequestConcurrency int32
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
@@ -487,6 +499,10 @@ type AppSpec struct {
 	APIEnv          []fcvm.APIEnvEntry // issue #395 / ADR-045: plaintext per-app env
 	EgressAllowlist []string           // ADR-031 + ADR-032; v4 or v6 CIDRs; empty = no allowlist rule. The renderer partitions by family.
 	EgressPorts     []int              // ADR-361; the app's declared extra TCP egress ports on top of 80/443.
+	// EgressRevision is apps.egress_allowlist_revision for EgressAllowlist and
+	// EgressPorts (read in the same row). vmmd prefers this request's policy
+	// over its cached app policy when the revision is newer; 0 = unknown.
+	EgressRevision int64
 	// Quarantine (ADR-732) asks vmmd for a production-fork network: no
 	// guest-originated flow, inbound only from the platform veth. Only
 	// the fork coordinator sets it.
@@ -542,6 +558,14 @@ type AppSpec struct {
 	// QuietPauseAfterMS asks vmmd to pause the instance's vCPUs between
 	// requests (ADR-1151); 0 keeps it running. See quietPauseAfterMS.
 	QuietPauseAfterMS int64
+	// IdleLadderEligible marks a request-serving workload the pause tiers
+	// may pause, whatever its declared pause (pauseTierWorkload). vmmd's
+	// idle_ladder observe mode measures it (ADR-20261107122928).
+	IdleLadderEligible bool
+	// IdleLadderGuardedPause lets vmmd quiet-pause a request-serving app that
+	// declared no pause behind the idle ladder's activity guard
+	// (idleLadderGuardedPause, ADR-20261107122928 §6).
+	IdleLadderGuardedPause bool
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
 	// the live Instance so the framework_ready DGRAM receipt
@@ -1818,6 +1842,7 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		HostIP:           in.GetHostIp(),
 		InflightRequests: in.GetInflightRequests(),
 		QuietPaused:      in.GetQuietPaused(),
+		IdleLadderLevel:  in.GetIdleLadderLevel(),
 		Frozen:           in.GetFrozen(),
 		QuietPause: QuietPauseRecordFromProto(in.GetQuietPausedSince(),
 			in.GetQuietLastPauseStartedAt(), in.GetQuietLastPauseEndedAt(), in.GetQuietPausedNsTotal()),
@@ -1962,22 +1987,26 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		})
 	}
 	out := &vmmdpb.AppSpec{
-		RehearsalRunId:  a.RehearsalRunID,
-		BaseKey:         a.BaseKey,
-		LayerKey:        a.LayerKey,
-		VcpuCount:       a.VCPUCount,
-		MemSizeMib:      a.MemSizeMiB,
-		CpuMillicores:   a.CPUMillicores,
-		EgressMbit:      a.EgressMbit,
-		AppId:           a.AppID,
-		SealedEnv:       sealed,
-		ApiEnv:          apiEnv,
-		Sidecars:        sidecars,
-		MainDependsOn:   mainDependsOn,
-		EgressAllowlist: a.EgressAllowlist,
-		EgressPorts:     egressPortsToWire(a.EgressPorts),
-		Quarantine:      a.Quarantine,
-		Port:            uint32(a.Port),
+		RehearsalRunId:     a.RehearsalRunID,
+		BaseKey:            a.BaseKey,
+		LayerKey:           a.LayerKey,
+		VcpuCount:          a.VCPUCount,
+		MemSizeMib:         a.MemSizeMiB,
+		CpuMillicores:      a.CPUMillicores,
+		CpuWeight:          a.CPUWeight,
+		CpuUncapped:        a.CPUUncapped,
+		RequestConcurrency: a.RequestConcurrency,
+		EgressMbit:         a.EgressMbit,
+		AppId:              a.AppID,
+		SealedEnv:          sealed,
+		ApiEnv:             apiEnv,
+		Sidecars:           sidecars,
+		MainDependsOn:      mainDependsOn,
+		EgressAllowlist:    a.EgressAllowlist,
+		EgressPorts:        egressPortsToWire(a.EgressPorts),
+		EgressRevision:     a.EgressRevision,
+		Quarantine:         a.Quarantine,
+		Port:               uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC
 		// mode/service fields above.
 		HealthcheckPath:          a.HealthcheckPath,
@@ -1987,6 +2016,8 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		ReadinessProbeJson:       a.ReadinessProbeJSON,
 		LivenessProbeJson:        a.LivenessProbeJSON,
 		QuietPauseAfterMs:        a.QuietPauseAfterMS,
+		IdleLadderEligible:       a.IdleLadderEligible,
+		IdleLadderGuardedPause:   a.IdleLadderGuardedPause,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label

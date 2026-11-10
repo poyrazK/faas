@@ -44,6 +44,25 @@ const (
 	// coordinator. Daemons start with it on and apply the durable value at
 	// their first reconcile; turn it on fleet-wide before admitting clones.
 	KeyFullEnvironmentClones = "full_environment_clones_enabled"
+
+	// Retired CPU shape keys (ADR-20261109172421): every app's CPU follows
+	// its instance size, so no daemon reads them. apid keeps them as
+	// read-only catalog entries for the rows already stored.
+	KeyAppCPUBaselineMillicoresPerGB = "app_cpu_baseline_millicores_per_gb"
+	KeyAppCPUCeilingFloorMillicores  = "app_cpu_ceiling_floor_millicores"
+	KeyGuestVCPUMillicores           = "guest_vcpu_millicores"
+	KeyGuestVCPUFromCPUApps          = "guest_vcpu_from_cpu_apps"
+	KeyCPUSizeApps                   = "cpu_size_apps"
+	// KeyCPUAdmission (enforce or observe) is retired too: CPU never
+	// refuses work.
+	KeyCPUAdmission = "cpu_admission"
+
+	// KeySnapshotRefresh is schedd's snapshot refresh after a release:
+	// off, shadow or on (ADR-20261106214916). KeySnapshotRefreshWindowHours
+	// is how recently an app must have parked on a node to be refreshed
+	// there. Defaults and bounds are in pkg/api/limits.go.
+	KeySnapshotRefresh            = "snapshot_refresh"
+	KeySnapshotRefreshWindowHours = "snapshot_refresh_window_hours"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.
@@ -286,6 +305,24 @@ func Bool(value json.RawMessage) (bool, error) {
 		return false, err
 	}
 	return enabled, nil
+}
+
+// Int decodes the JSON integer shape of an integer setting.
+func Int(value json.RawMessage) (int, error) {
+	var v int
+	if err := json.Unmarshal(value, &v); err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
+// String decodes the JSON string shape of a string setting.
+func String(value json.RawMessage) (string, error) {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return "", err
+	}
+	return v, nil
 }
 
 // IsContextDone identifies normal shutdown so callers can avoid logging a

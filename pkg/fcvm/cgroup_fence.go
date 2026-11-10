@@ -70,7 +70,7 @@ func newCgroupFence(l Lease) (*cgroupFence, error) {
 		lease:     l,
 		parent:    parent,
 		scope:     filepath.Join(parent, PerInstanceScope(l.Instance)),
-		cpuWeight: strconv.Itoa(vmCPUWeight(l.Plan, l.IsBuilder)),
+		cpuWeight: strconv.Itoa(leaseCPUWeight(l)),
 	}
 	if l.IsBuilder {
 		f.memoryMax = fenceMemoryMaxFor(l)

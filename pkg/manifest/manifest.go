@@ -110,6 +110,16 @@ type Manifest struct {
 	// renderer uses the same endpoint port for per-daemon target_url entries.
 	Overlay Overlay `yaml:"overlay"`
 
+	// SSH limits who may reach sshd (ADR-20261109100000). Absent keeps the
+	// provider boundary in charge (GCP IAP); present, sshd answers only the
+	// private network (overlay.cidr, on overlay.interface when set) and
+	// AllowedCIDRs. Bare-metal fleets with a public address on every host set it.
+	SSH *SSH `yaml:"ssh,omitempty"`
+
+	// DiskEncryption encrypts each host's data volume at rest, unlocked by
+	// the other hosts' Tang servers (ADR-20261109120000). Absent: plain.
+	DiskEncryption *DiskEncryption `yaml:"disk_encryption,omitempty"`
+
 	// DNS is the public-facing hostname contract. apps_domain is the
 	// single source of truth — gatewayd-internal, apid, and the CLI
 	// PrintOK paths all read from it; a value of `gregale.dev` produces
@@ -129,9 +139,17 @@ type Manifest struct {
 	// platform zone. Today that is customer custom domains (ADR-520).
 	PublicEdge PublicEdge `yaml:"public_edge,omitempty"`
 
+	// HotPath turns on the compute nodes' request- and wake-path switches
+	// (hot_path.go).
+	HotPath HotPath `yaml:"hot_path,omitempty"`
+
 	// ManagedPostgres turns on native managed PostgreSQL (ADR-1027) on the
 	// fleet's database hosts (managed_postgres.go).
 	ManagedPostgres *ManagedPostgres `yaml:"managed_postgres,omitempty"`
+
+	// ServiceTCP stages private TCP service addressing (ADR-576) on the
+	// compute-only hosts (service_tcp.go).
+	ServiceTCP *ServiceTCP `yaml:"service_tcp,omitempty"`
 
 	// PostgreSQL is the database cluster configuration. The renderer
 	// needs the role names, the database name, and the migration
@@ -184,6 +202,10 @@ type Manifest struct {
 	// LogArchive is the bucket customer logs are archived to. Absent leaves
 	// each host's archive credential envelope untouched.
 	LogArchive LogArchive `yaml:"log_archive,omitempty"`
+
+	// ArtifactSigner turns on the control plane's artifact signer
+	// (ADR-20261109170000). Absent keeps sign.key on the compute nodes.
+	ArtifactSigner ArtifactSigner `yaml:"artifact_signer,omitempty"`
 
 	// WorkloadIdentity turns on workload-identity tokens (ADR-1141): the
 	// renderer hands its source directory to every control-plane and
@@ -742,6 +764,19 @@ type Overlay struct {
 	// CIDR is the overlay subnet (e.g. "10.42.0.0/24"). The renderer
 	// asserts each host's Address falls within CIDR.
 	CIDR string `yaml:"cidr"`
+	// Interface names the private network card for the "static" provider
+	// (ADR-20261109100000), e.g. an OVH vRack NIC. Empty keeps the
+	// default-route interface, which is right on a cloud VPC with one NIC and
+	// wrong on bare metal, where the default route is the public card. When
+	// set, the host firewall accepts private-service traffic only on it.
+	Interface string `yaml:"interface,omitempty"`
+}
+
+// SSH is the sshd source boundary (ADR-20261109100000).
+type SSH struct {
+	// AllowedCIDRs are the sources outside the private network that may reach
+	// sshd: an operator bastion or VPN. Empty means the private network only.
+	AllowedCIDRs []string `yaml:"allowed_cidrs,omitempty"`
 }
 
 // DNS is the public-facing hostname contract. apps_domain is the
@@ -833,6 +868,64 @@ type PublicEdgeDNS struct {
 	// (ADR-20261103163954 §4). A record for the exact name wins over the
 	// wildcard.
 	Proxied []string `yaml:"proxied,omitempty"`
+	// Certificate is the apps domains' publicly trusted certificate, which
+	// edgednsd orders with the DNS-01 challenge in ZoneID and the compute
+	// edges serve (ADR-20261103163954 §3).
+	Certificate *PublicEdgeCertificate `yaml:"certificate,omitempty"`
+}
+
+// PublicEdgeCertificate is the certificate edgednsd keeps for the apps
+// domains (ADR-20261103163954 §3). Each cell's edge-tls seal domain must be
+// staged first: edgednsd seals the key to its recipient, and the edges open
+// it with its identity.
+type PublicEdgeCertificate struct {
+	// Names are the certificate's names, e.g. "*.gregale.dev".
+	Names []string `yaml:"names"`
+	// CA is letsencrypt-staging, the default, until the path is proven,
+	// then letsencrypt.
+	CA string `yaml:"ca,omitempty"`
+	// Serve is the CA whose stored certificate the compute edges serve in
+	// place of their certificate files: empty (the default) serves none.
+	// It moves separately from CA, after edgednsd has stored a certificate
+	// from it: an edge without one is not ready, so switching both at once
+	// would take every edge out of DNS until the new order lands.
+	Serve string `yaml:"serve,omitempty"`
+	// Transparency turns on edgednsd's Certificate Transparency watch,
+	// which pages on publicly trusted certificates it did not issue.
+	Transparency *PublicEdgeTransparency `yaml:"transparency,omitempty"`
+}
+
+// PublicEdgeTransparency is edgednsd's Certificate Transparency watch
+// (ADR-20261103163954 §3).
+type PublicEdgeTransparency struct {
+	// Domain is the domain whose certificates, and those of every name
+	// under it, the watch reads, e.g. gregale.dev.
+	Domain string `yaml:"domain"`
+	// AllowNames are the names a certificate edgednsd did not issue may
+	// carry without a page: a certificate whose every name is listed is
+	// someone else's by design, such as the CDN's own certificate for the
+	// zone ("gregale.dev", "*.gregale.dev") or a hosted site's.
+	AllowNames []string `yaml:"allow_names,omitempty"`
+}
+
+// The CAs a public_edge.dns.certificate comes from.
+const (
+	EdgeCertificateCAStaging    = "letsencrypt-staging"
+	EdgeCertificateCAProduction = "letsencrypt"
+	// edgeTransparencyAllowNamesMax is
+	// api.EdgeCertificateTransparencyAllowNamesMax.
+	edgeTransparencyAllowNamesMax = 32
+	// edgeCertificateNamesMax is api.EdgeCertificateNamesMax, which the
+	// edgednsd unit refuses past.
+	edgeCertificateNamesMax = 10
+)
+
+// CAOrDefault is the certificate's CA, staging when unset.
+func (c PublicEdgeCertificate) CAOrDefault() string {
+	if c.CA == "" {
+		return EdgeCertificateCAStaging
+	}
+	return c.CA
 }
 
 // Public edge entries (ADR-20261102081618).
@@ -972,6 +1065,7 @@ func (e PublicEdge) validateDNS(hosts []Host) Errors {
 		}
 		seen[name] = true
 	}
+	errs = append(errs, e.DNS.Certificate.validate()...)
 	addressed := 0
 	for i, h := range hosts {
 		if h.PublicIPv4 == "" {
@@ -987,6 +1081,55 @@ func (e PublicEdge) validateDNS(hosts []Host) Errors {
 	// validateEntryAddrs requires instead.
 	if addressed == 0 && !e.NoFront() {
 		errs = append(errs, Error{"public_edge.dns", "needs a compute-only host with public_ipv4"})
+	}
+	return errs
+}
+
+// validate checks public_edge.dns.certificate; nil is valid.
+func (c *PublicEdgeCertificate) validate() Errors {
+	if c == nil {
+		return nil
+	}
+	var errs Errors
+	if len(c.Names) == 0 || len(c.Names) > edgeCertificateNamesMax {
+		errs = append(errs, Error{"public_edge.dns.certificate.names", fmt.Sprintf("needs 1 to %d names", edgeCertificateNamesMax)})
+	}
+	seen := map[string]bool{}
+	for i, name := range c.Names {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower == "" || seen[lower] || !strings.Contains(strings.TrimPrefix(lower, "*."), ".") || strings.Contains(strings.TrimPrefix(lower, "*."), "*") {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.certificate.names[%d]", i), fmt.Sprintf("%q is empty, listed twice, or not a host name or *. wildcard", name)})
+		}
+		seen[lower] = true
+	}
+	if !contains([]string{"", EdgeCertificateCAStaging, EdgeCertificateCAProduction}, c.CA) {
+		errs = append(errs, Error{"public_edge.dns.certificate.ca", fmt.Sprintf("unsupported %q (allowed: %s|%s)", c.CA, EdgeCertificateCAStaging, EdgeCertificateCAProduction)})
+	}
+	if !contains([]string{"", EdgeCertificateCAStaging, EdgeCertificateCAProduction}, c.Serve) {
+		errs = append(errs, Error{"public_edge.dns.certificate.serve", fmt.Sprintf("unsupported %q (allowed: empty, %s or %s)", c.Serve, EdgeCertificateCAStaging, EdgeCertificateCAProduction)})
+	}
+	return append(errs, c.Transparency.validate()...)
+}
+
+func (t *PublicEdgeTransparency) validate() Errors {
+	if t == nil {
+		return nil
+	}
+	var errs Errors
+	domain := strings.ToLower(strings.TrimSpace(t.Domain))
+	if domain == "" || strings.Contains(domain, "*") || !strings.Contains(domain, ".") {
+		errs = append(errs, Error{"public_edge.dns.certificate.transparency.domain", fmt.Sprintf("%q is not a domain name", t.Domain)})
+	}
+	if len(t.AllowNames) > edgeTransparencyAllowNamesMax {
+		errs = append(errs, Error{"public_edge.dns.certificate.transparency.allow_names", fmt.Sprintf("at most %d names, not %d", edgeTransparencyAllowNamesMax, len(t.AllowNames))})
+	}
+	seen := map[string]bool{}
+	for i, name := range t.AllowNames {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower == "" || seen[lower] || !strings.Contains(strings.TrimPrefix(lower, "*."), ".") || strings.Contains(strings.TrimPrefix(lower, "*."), "*") {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.certificate.transparency.allow_names[%d]", i), fmt.Sprintf("%q is empty, listed twice, or not a host name or *. wildcard", name)})
+		}
+		seen[lower] = true
 	}
 	return errs
 }
@@ -1378,10 +1521,13 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.validateFleetEndpoints()...)
 	errs = append(errs, m.Daemons.validate()...)
 	errs = append(errs, m.Overlay.validate()...)
+	errs = append(errs, m.SSH.validate()...)
+	errs = append(errs, m.validateDiskEncryption()...)
 	errs = append(errs, m.DNS.validate()...)
 	errs = append(errs, m.PrivateDNS.validate()...)
 	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
 	errs = append(errs, m.PublicEdge.validate(m.Fleet.Hosts)...)
+	errs = append(errs, m.HotPath.validate(m.PublicEdge)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
 	errs = append(errs, m.validatePostgresStandby()...)
@@ -1391,9 +1537,11 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
 	errs = append(errs, m.validateManagedPostgres()...)
+	errs = append(errs, m.validateServiceTCP()...)
 	errs = append(errs, m.ObjectStorage.validate()...)
 	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
 	errs = append(errs, m.LogArchive.validate()...)
+	errs = append(errs, m.ArtifactSigner.validate()...)
 	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
 		return errs
@@ -1817,11 +1965,41 @@ func (o *Overlay) validate() Errors {
 		errs = append(errs, Error{"overlay.provider",
 			fmt.Sprintf("unsupported %q (allowed: wireguard|tailscale|static)", o.Provider)})
 	}
+	if o.Interface != "" {
+		if !ifaceNameRe.MatchString(o.Interface) {
+			errs = append(errs, Error{"overlay.interface",
+				fmt.Sprintf("%q is not a network interface name (at most 15 of [A-Za-z0-9_.-])", o.Interface)})
+		} else if o.Provider != "static" {
+			errs = append(errs, Error{"overlay.interface",
+				fmt.Sprintf("applies to the static provider only; %s names its own interface", o.Provider)})
+		}
+	}
 	if o.CIDR == "" {
 		errs = append(errs, Error{"overlay.cidr", "is required"})
 	} else if !validCIDR(o.CIDR) {
 		errs = append(errs, Error{"overlay.cidr",
 			fmt.Sprintf("cidr %q must be a valid IPv4 CIDR (e.g. 10.42.0.0/24)", o.CIDR)})
+	}
+	return errs
+}
+
+var ifaceNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,15}$`)
+
+func (s *SSH) validate() Errors {
+	if s == nil {
+		return nil
+	}
+	var errs Errors
+	for i, cidr := range s.AllowedCIDRs {
+		path := fmt.Sprintf("ssh.allowed_cidrs[%d]", i)
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			errs = append(errs, Error{path, fmt.Sprintf("%q is not a CIDR", cidr)})
+			continue
+		}
+		if ones, _ := network.Mask.Size(); ones == 0 {
+			errs = append(errs, Error{path, fmt.Sprintf("%q admits every address; leave the ssh section out instead", cidr)})
+		}
 	}
 	return errs
 }

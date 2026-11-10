@@ -20,6 +20,19 @@ type RevisionPinStore interface {
 	ExpireRevisionPins(context.Context) (int64, error)
 }
 
+// Each new serving period gets a new cutover window. Preserve a longer
+// deadline already promised by a retained graph.
+func (m *MemStore) retainServingRevisionLocked(d Deployment, now time.Time) {
+	ttl := m.apps[d.AppID].Manifest.RevisionPinTTLSeconds
+	if d.Status != DeployLive || d.TrafficPercent <= 0 || ttl <= 0 || ttl > api.RevisionPinMaxTTLSeconds {
+		return
+	}
+	deadline := now.Add(time.Duration(ttl) * time.Second)
+	if deadline.After(m.revisionPins[d.ID]) {
+		m.revisionPins[d.ID] = deadline
+	}
+}
+
 func (s *PgStore) ResolveRevisionPin(ctx context.Context, appID, scope, deploymentID string) (Deployment, error) {
 	retired, fenceErr := s.ProjectMigrationDeploymentRetired(ctx, deploymentID)
 	if fenceErr != nil {

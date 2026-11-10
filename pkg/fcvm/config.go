@@ -353,6 +353,9 @@ type ColdBootSpec struct {
 	// StorageBackend key of the image it holds; empty: zeros.
 	AgentInput bool
 	InputKey   string
+	// Backing is the ADR-510 backing check that ran before this boot, when a
+	// restore was attempted first; it rides wake.cold_boot_breakdown.
+	Backing BackingCheckTimings
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the
@@ -707,6 +710,9 @@ type JailerSpec struct {
 	// IsBuilder routes the jailer to faas-cp-build.slice and uses a neutral
 	// cgroup weight instead of a tenant plan weight.
 	IsBuilder bool
+	// CPUWeight, when positive, replaces the plan's cpu.weight for an app VM
+	// (ADR-20261109172421).
+	CPUWeight int
 	// MemoryMaxBytes is passed as a cgroup creation parameter. Zero preserves
 	// the legacy/test command shape; production Manager.Wake supplies the
 	// billable VM ceiling before jailer drops privileges.
@@ -738,6 +744,9 @@ type JailerSpec struct {
 // reach it without dragging the rest of JailerSpec into scope.
 func PerInstanceScope(instance string) string { return instance }
 
+// MaxCPUWeight is the largest cgroup v2 cpu.weight.
+const MaxCPUWeight = 10000
+
 // vmCPUWeight is the per-VM cpu.weight jailer sets when it creates the scope.
 // Builders and an empty plan use the legacy neutral 256 (the kernel accepts
 // [1, 10000]).
@@ -750,6 +759,19 @@ func vmCPUWeight(plan api.Plan, isBuilder bool) int {
 	}
 	return 256
 }
+
+// jailerCPUWeight is the cpu.weight a VM scope gets: an app VM's own weight
+// when schedd sent one (ADR-20261109172421), else its plan's.
+func jailerCPUWeight(plan api.Plan, isBuilder bool, weight int) int {
+	if weight > 0 && !isBuilder {
+		return min(weight, MaxCPUWeight)
+	}
+	return vmCPUWeight(plan, isBuilder)
+}
+
+// leaseCPUWeight is jailerCPUWeight for a lease; the cgroup fence repairs
+// to it.
+func leaseCPUWeight(l Lease) int { return jailerCPUWeight(l.Plan, l.IsBuilder, l.CPUWeight) }
 
 // JailerCommand builds the jailer argv (Appendix B). vmmd execs this as root; the
 // jailer drops privileges to UID/GID, chroots, applies seccomp, and joins the
@@ -797,7 +819,7 @@ func JailerCommand(s JailerSpec) []string {
 	if s.ChrootBase != "" {
 		chrootBase = s.ChrootBase
 	}
-	cpuWeight := vmCPUWeight(s.Plan, s.IsBuilder)
+	cpuWeight := jailerCPUWeight(s.Plan, s.IsBuilder, s.CPUWeight)
 	args := []string{
 		"jailer",
 		"--id", PerInstanceScope(s.Instance),

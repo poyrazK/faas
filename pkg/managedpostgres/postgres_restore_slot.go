@@ -9,10 +9,20 @@ import (
 
 // RestoreSlots implements RestoreSlotStore (ADR-20261031123259).
 func (s *PostgresStore) RestoreSlots(ctx context.Context, limit int) ([]RestoreSlotHolder, error) {
-	if limit < 1 || limit > 500 {
+	return s.RestoreSlotsPage(ctx, RestoreSlotCursor{}, limit)
+}
+
+func (s *PostgresStore) RestoreSlotsPage(ctx context.Context, after RestoreSlotCursor, limit int) ([]RestoreSlotHolder, error) {
+	if limit < 1 || limit > 500 || after.Until.IsZero() != (after.ID == "") {
 		return nil, ErrInvalid
 	}
-	rows, err := new(sqlc.Queries).ListManagedPostgresRestoreSlots(ctx, s.catalog, int32(limit))
+	afterID := databaseNullableUUID(after.ID)
+	if after.ID != "" && !afterID.Valid {
+		return nil, ErrInvalid
+	}
+	rows, err := new(sqlc.Queries).ListManagedPostgresRestoreSlotPage(ctx, s.catalog, sqlc.ListManagedPostgresRestoreSlotPageParams{
+		AfterUntil: databaseNullableTime(after.Until), AfterID: afterID, BatchSize: int32(limit),
+	})
 	if err != nil {
 		return nil, mapPostgresError(err)
 	}
