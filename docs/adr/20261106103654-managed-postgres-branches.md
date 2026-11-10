@@ -36,4 +36,4 @@
   - One expand migration: nullable `expires_at timestamptz` on `managed_postgres_databases`, with a partial index for the sweep. An older apid ignores the column: it never expires a copy, and a newer apid expires it later.
   - Branches work only where the backend advertises point-in-time restore (Neon today). The native Firecracker backend (ADR-1027) gets them when it gains restore.
   - Open owner decision: whether short-lived branches should get an allowance outside the database limit (for example N concurrent branches with a TTL of at most 7 days). Until then a Pro account at 3 of 3 databases can hold one branch at a time.
-  - Follow-up: PR previews can branch a project's databases (whole-project previews, ADR-20261025093331, still skip managed datastores).
+  - PR preview databases (ADR-20261102123523) landed separately; they keep their own lifecycle and do not use `expires_at`.
