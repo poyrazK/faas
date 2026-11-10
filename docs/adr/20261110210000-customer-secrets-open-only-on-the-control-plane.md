@@ -215,8 +215,39 @@ plane": the control-plane schedd alone assigns owners (in a table
 only wake apps assigned to their node. A rooted node then receives only
 apps the control plane chose to give it: it cannot target a specific
 tenant, and per-node budgets bound how many it gets. This is the
-prerequisite the rest depends on, and its shape is an owner decision
-recorded before slice 1 starts.
+prerequisite the rest depends on (owner approved the shape, 2026-11-11).
+
+**Slice 1a (implemented): the owner is the control plane's, enforced by
+Postgres.**
+
+- Migration `20261110210850013_app_owner_authority` adds a trigger on
+  `apps` (`BEFORE INSERT OR UPDATE OF node_id`). It admits an owner change
+  only from a login that is a member of `faas_owner_authority`, a NOLOGIN
+  group that `runtime-roles.sql` grants to the control plane's peer-auth
+  `faas_schedd` and the owner `faas`, and never to a compute role.
+  `session_user` decides, so `SET ROLE` cannot borrow it. Clearing an owner
+  is always admitted. The mode lives in `app_owner_authority` (`any`, the
+  default, then `observe`, then `enforce`). In observe, every change is
+  recorded in the append-only `app_owner_writes`. In enforce, an
+  unauthorized change fails with SQLSTATE 42501. Compute logins cannot write
+  either table. The function is `SECURITY DEFINER` with
+  `search_path = pg_catalog, pg_temp` and schema-qualified tables, so a
+  temporary table cannot shadow the mode.
+- `FAAS_APP_OWNER_AUTHORITY=control-plane` (Ansible
+  `faas_app_owner_authority`) stops compute schedds from claiming unplaced
+  apps, pulling orphaned apps onto themselves and pressure-rebalancing. The
+  control plane's schedd claims new apps and runs
+  `RebalanceOrphanedAppsCentral`, which chooses each orphan's destination
+  with `ChooseOwnerNode` among the other admitting nodes with headroom.
+  Pressure rebalancing pauses in this mode until slice 1b.
+- `faas_app_owner_unauthorized_writes` and `FaasAppOwnerUnauthorizedWrite`
+  (runbook `docs/runbooks/FaasAppOwnerUnauthorizedWrite.md`, with the
+  rollout: observe, switch, watch, enforce).
+
+**Slice 1b (next):** pressure rebalancing as a node's *release request*
+(a node may give an app away; the control plane picks the destination),
+placement grants for instances that run on a non-owner node, and the
+`secret_grants` table secretd checks.
 
 What a rooted node still gets: the plaintext of workloads placed on it
 while it is compromised, which it could read from guest memory anyway.
@@ -291,7 +322,8 @@ Operations:
 | slice | content | depends on |
 |---|---|---|
 | 0 | GitHub environment policy + tag ruleset (done, §1); enable `faas_compute_fleet_key_retired` in prod; OIDC condition check | — |
-| 1 | Placement grants: `secret_grants`, `faas_grantor`, REVOKE for `faas_runtime`, control-plane admission point for every wake/build/edge placement | — |
+| 1a | Owner authority: apps trigger + `faas_owner_authority`, `FAAS_APP_OWNER_AUTHORITY=control-plane`, central ownership recovery, metric + alert (code in #7003) | — |
+| 1b | Pressure release requests, non-owner instance grants, `secret_grants` for secretd | 1a |
 | 2 | CI holds recipients only: key escrow on the control plane, `SEAL_DOMAIN_KEY_SOURCE=escrow`, escrow/rotate workflow, runbook (code in this PR); then the owner escrows, deletes the GitHub secrets and rotates | — |
 | 3 | `secretd` + `OpenWorkloadSecrets` + audit + alerts; move `runtime`, then `build`, `edge`, `delivery`; `control` behind signd; node join stops staging, verify refuses leftovers | 1 |
 | 4 | HSM hardware, ceremony runbook, Tier A wrapped identities for every control-plane reader, measurements | — |

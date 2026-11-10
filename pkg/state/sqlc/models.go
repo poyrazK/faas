@@ -1569,6 +1569,23 @@ type AppOpenapiDoc struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type AppOwnerAuthority struct {
+	Singleton bool
+	Mode      string
+	UpdatedAt pgtype.Timestamptz
+}
+
+type AppOwnerWrite struct {
+	ID         int64
+	AppID      pgtype.UUID
+	FromNodeID pgtype.UUID
+	ToNodeID   pgtype.UUID
+	LoginRole  string
+	Authorized bool
+	Mode       string
+	WrittenAt  pgtype.Timestamptz
+}
+
 type AppParkTransition struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID

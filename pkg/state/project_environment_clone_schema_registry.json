@@ -1874,6 +1874,29 @@
     }
   },
   {
+    "table": "app_owner_authority",
+    "columns": [
+      "mode",
+      "singleton",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_owner_writes",
+    "columns": [
+      "app_id",
+      "authorized",
+      "from_node_id",
+      "id",
+      "login_role",
+      "mode",
+      "to_node_id",
+      "written_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_park_transitions",
     "columns": [
       "app_id",

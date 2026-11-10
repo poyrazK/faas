@@ -860,6 +860,50 @@ $$;
 
 
 --
+-- Name: app_owner_authority_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_owner_authority_check() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    current_mode text;
+    login text := session_user;
+    is_authorized boolean;
+    previous uuid;
+BEGIN
+    IF NEW.node_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        previous := OLD.node_id;
+        IF NEW.node_id IS NOT DISTINCT FROM previous THEN
+            RETURN NEW;
+        END IF;
+    END IF;
+    EXECUTE format('SELECT mode FROM %I.app_owner_authority WHERE singleton', TG_TABLE_SCHEMA)
+        INTO current_mode;
+    IF current_mode IS NULL OR current_mode = 'any' THEN
+        RETURN NEW;
+    END IF;
+    is_authorized := to_regrole('faas_owner_authority') IS NOT NULL
+        AND pg_has_role(login, 'faas_owner_authority', 'MEMBER');
+    IF NOT is_authorized AND current_mode = 'enforce' THEN
+        RAISE LOG 'faas_app_owner_refused app=% from=% to=% login=%', NEW.id, previous, NEW.node_id, login;
+        RAISE EXCEPTION 'app owner changes are made by the control plane'
+            USING ERRCODE = '42501',
+                  DETAIL = format('app=%s to=%s login=%s', NEW.id, NEW.node_id, login);
+    END IF;
+    EXECUTE format('INSERT INTO %I.app_owner_writes (app_id, from_node_id, to_node_id, login_role, authorized, mode) '
+                   'VALUES ($1, $2, $3, $4, $5, $6)', TG_TABLE_SCHEMA)
+        USING NEW.id, previous, NEW.node_id, login, is_authorized, current_mode;
+    RETURN NEW;
+END;
+$_$;
+
+
+--
 -- Name: app_private_network_attachment_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -32289,6 +32333,49 @@ CREATE TABLE public.app_openapi_docs (
 
 
 --
+-- Name: app_owner_authority; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_owner_authority (
+    singleton boolean DEFAULT true NOT NULL,
+    mode text DEFAULT 'any'::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_owner_authority_mode_check CHECK ((mode = ANY (ARRAY['any'::text, 'observe'::text, 'enforce'::text]))),
+    CONSTRAINT app_owner_authority_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: app_owner_writes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_owner_writes (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    from_node_id uuid,
+    to_node_id uuid NOT NULL,
+    login_role text NOT NULL,
+    authorized boolean NOT NULL,
+    mode text NOT NULL,
+    written_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: app_owner_writes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.app_owner_writes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.app_owner_writes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: app_park_transitions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -60367,6 +60454,22 @@ ALTER TABLE ONLY public.app_openapi_docs
 
 
 --
+-- Name: app_owner_authority app_owner_authority_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_authority
+    ADD CONSTRAINT app_owner_authority_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: app_owner_writes app_owner_writes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_writes
+    ADD CONSTRAINT app_owner_writes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: app_park_transitions app_park_transitions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -73306,6 +73409,13 @@ CREATE INDEX app_openapi_docs_account_id_idx ON public.app_openapi_docs USING bt
 
 
 --
+-- Name: app_owner_writes_unauthorized_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_owner_writes_unauthorized_idx ON public.app_owner_writes USING btree (written_at) WHERE (NOT authorized);
+
+
+--
 -- Name: app_park_transitions_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -83734,6 +83844,13 @@ CREATE TRIGGER app_object_buckets_guard BEFORE UPDATE OF status ON public.apps F
 --
 
 CREATE TRIGGER app_openapi_docs_set_updated_at_trg BEFORE UPDATE ON public.app_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.app_openapi_docs_set_updated_at();
+
+
+--
+-- Name: apps app_owner_authority_check; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_owner_authority_check BEFORE INSERT OR UPDATE OF node_id ON public.apps FOR EACH ROW EXECUTE FUNCTION public.app_owner_authority_check();
 
 
 --

@@ -389,6 +389,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := role.Require("schedd", cfg.Role, role.RoleSingleBox, role.RoleControlPlane, role.RoleComputeOnly); err != nil {
 		return err
 	}
+	// ADR-20261110210000 §4: who assigns app owners.
+	owners, err := ownerAuthorityFromEnv()
+	if err != nil {
+		return err
+	}
+	if owners == ownerAuthorityControlPlane {
+		log.Info("schedd: app owners are assigned by the control plane", "role", cfg.Role,
+			"claims", owners.claimsOwners(cfg.Role), "central_recovery", owners.recoversCentrally(cfg.Role))
+	}
 	listenTarget := cfg.ResolveListenTarget()
 	vmmTarget := cfg.ResolveVMMTarget()
 	log.Info("config",
@@ -1501,7 +1510,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// filters to kind="updated"; both run side-by-side. nil seam
 	// = skip in tests that don't want a fake channel; the
 	// cold-start sweep below still runs.
-	if deps.subscribePlacementClaim != nil {
+	// ADR-20261110210000 §4: under control-plane owner authority a compute
+	// node's schedd never claims an app; the control plane's does.
+	if deps.subscribePlacementClaim != nil && owners.claimsOwners(cfg.Role) {
 		claimSub := sched.NewPlacementClaimSubscriber(engine, log)
 		go subscribeWithReconnect(ctx, "placement claim", log, deps.subscribePlacementClaim, pool, claimSub.Run)
 	}
@@ -1669,7 +1680,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	// ADR-421: periodic ownership recovery is authoritative. Notifications
 	// accelerate a batch, but recovery does not depend on their connection.
-	if ownerNodeID != "" {
+	// ADR-20261110210000 §4: under control-plane owner authority the control
+	// plane's schedd chooses each orphan's destination; no node pulls apps
+	// onto itself.
+	if owners.recoversCentrally(cfg.Role) {
+		reb := sched.NewRebalancer(engine.RebalanceOrphanedAppsCentral, log)
+		go func() {
+			if err := reb.RunSweep(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("schedd: central ownership recovery stopped", "err", err)
+			}
+		}()
+		if deps.subscribeRebalancer != nil {
+			go subscribeWithReconnect(ctx, "central rebalancer", log, deps.subscribeRebalancer, pool, reb.Run)
+		}
+	}
+	if cfg.Role == role.RoleControlPlane && store != nil {
+		go runOwnerAuthorityMetrics(ctx, ops.Registry(), store, time.Minute, log)
+	}
+	if ownerNodeID != "" && owners.recoversOntoOwnNode(cfg.Role) {
 		reb := sched.NewRebalancer(engine.RebalanceOrphanedApps, log)
 		go func() {
 			if err := reb.RunSweep(ctx); err != nil && ctx.Err() == nil {
@@ -1690,7 +1718,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reads the current sweep count when the handle is
 	// invoked. Spawned only when ownerNodeID is set — the
 	// legacy single-box posture has no peer to migrate to.
-	if ownerNodeID != "" {
+	// ADR-20261110210000 §4: paused under control-plane owner authority.
+	if ownerNodeID != "" && owners.recoversOntoOwnNode(cfg.Role) {
 		prReb := sched.NewPressureRebalancer(
 			pressureAgg,
 			pressureThreshold,
@@ -1728,6 +1757,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// path. Errors are logged and dropped; the next notify (or the
 	// next schedd restart) is the next opportunity.
 	go func() {
+		if !owners.claimsOwners(cfg.Role) {
+			return
+		}
 		apps, err := store.ListUnplacedApps(ctx)
 		if err != nil {
 			log.Warn("schedd: cold-start sweep: list unplaced apps", "err", err)

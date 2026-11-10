@@ -164,6 +164,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_APP_ERRORS_ENABLED", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_APP_FORKS", Owners: []string{"apid", "schedd"}, Source: EnvSourceDefault, Note: "exact opt-in for ADR-732 production forks; apid admits fork intent and schedd restores quarantined forks only when both are 1; default off until the quarantine metal test is qualified"},
 	{Name: "FAAS_APP_ID", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
+	{Name: "FAAS_APP_OWNER_AUTHORITY", Owners: []string{"schedd"}, Source: EnvSourceDropin, Note: "ADR-20261110210000 §4: any (default) lets every schedd assign app owners; control-plane leaves claims and ownership recovery to the control plane's schedd (faas_app_owner_authority in the compute and control-plane schedd drop-ins); pair with app_owner_authority.mode observe, then enforce"},
 	{Name: "FAAS_APP_TASK_API_ENABLED", Owners: []string{"apid"}, Source: EnvSourceUnit, Note: "explicit 0 until deployment-attached task admission and the ADR-230 metal isolation path are qualified together"},
 	{Name: "FAAS_APP_TASK_DISPATCH", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "exact opt-in for deployment-attached one-off command dispatch; default off provides a production-safe rollout gate"},
 	{Name: "FAAS_ARTIFACT_REPLICATOR", Owners: []string{"imaged"}, Source: EnvSourceEnvFile},

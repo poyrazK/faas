@@ -94,6 +94,44 @@ BEGIN
 		REVOKE INSERT, UPDATE, DELETE ON public.artifact_signatures FROM faas_runtime;
 		GRANT SELECT, INSERT ON public.artifact_signatures TO faas_signd;
 	END IF;
+	-- ADR-20261110210000 §4: the owner-authority mode and its record are the
+	-- owner's; a compute login could otherwise switch the check off or erase
+	-- what it did. The apps trigger writes the record as its definer.
+	IF to_regclass('public.app_owner_authority') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.app_owner_authority FROM faas_runtime;
+	END IF;
+	IF to_regclass('public.app_owner_writes') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.app_owner_writes FROM faas_runtime;
+	END IF;
+END
+$$;
+
+-- ADR-20261110210000 §4: faas_owner_authority (NOLOGIN) names the logins
+-- that may set an app's owner node once app_owner_authority.mode is enforce:
+-- the control plane's schedd (peer-authenticated, so it cannot log in from a
+-- compute node) and the schema owner. No compute role is ever a member.
+DO $$
+DECLARE
+	r text;
+BEGIN
+	IF to_regrole('faas_owner_authority') IS NULL THEN
+		CREATE ROLE faas_owner_authority NOLOGIN;
+	END IF;
+	ALTER ROLE faas_owner_authority NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+	FOREACH r IN ARRAY ARRAY['faas_schedd', 'faas'] LOOP
+		IF to_regrole(r) IS NOT NULL AND NOT pg_has_role(r, 'faas_owner_authority', 'MEMBER') THEN
+			EXECUTE format('GRANT faas_owner_authority TO %I', r);
+		END IF;
+	END LOOP;
+	-- A compute login that became a member by mistake is removed.
+	FOREACH r IN ARRAY ARRAY['faas_compute', 'faas_vmmd', 'faas_node_schedd', 'faas_imaged',
+		'faas_builderd', 'faas_gatewayd_internal', 'faas_gatewayd_edge', 'faas_runtime'] LOOP
+		IF to_regrole(r) IS NOT NULL AND EXISTS (
+			SELECT 1 FROM pg_catalog.pg_auth_members
+			 WHERE roleid = to_regrole('faas_owner_authority') AND member = to_regrole(r)) THEN
+			EXECUTE format('REVOKE faas_owner_authority FROM %I', r);
+		END IF;
+	END LOOP;
 END
 $$;
 -- Objects the next migrations create carry the same grants. Only objects the

@@ -951,6 +951,23 @@ groups:
           description: "tetragon.service is installed but not active on {{ $labels.instance }}, so guest-escape signals (setuid to root, secret opens, module loads, ptrace) are not reported. `journalctl -u tetragon -n 200` first; a crash loop stops restarting after 10 starts in 2 minutes (`systemctl reset-failed tetragon`)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
 
+  # ADR-20261110210000 §4: an app's owner node is the control plane's
+  # decision. In observe mode the apps trigger records every owner change a
+  # login outside faas_owner_authority made; the control plane's schedd
+  # publishes the last 15 minutes' count.
+  - name: app_owner_authority
+    interval: 1m
+    rules:
+      - alert: FaasAppOwnerUnauthorizedWrite
+        expr: max(faas_app_owner_unauthorized_writes) > 0
+        labels:
+          severity: page
+          family: app_owner_authority
+        annotations:
+          summary: "A login outside the control plane changed an app's owner node"
+          description: "{{ $value }} owner change(s) to apps.node_id in the last 15 minutes came from a database login that is not in faas_owner_authority. Before control-plane owner authority is on everywhere this lists the paths still to move; after it, a compute node choosing which apps it runs is a compromise signal. `select * from app_owner_writes where not authorized order by id desc limit 50` names the login and the nodes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppOwnerUnauthorizedWrite.md"
+
   # ADR-20261110183000: each host proves hourly that its platform binaries
   # and running daemons are the signed release's (gregalectl release verify).
   - name: release_integrity
