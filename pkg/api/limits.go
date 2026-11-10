@@ -11081,7 +11081,7 @@ func (p Plan) PlanIncludedGBHours() int {
 const DefaultOverageCapAllowances = ManagedPostgresOverageCeilingMultiplier - 1
 
 // DefaultOverageCapCents returns the spend cap a paid plan starts with:
-// Hobby $2, Pro $10, Scale $30. Free stops at its allowance and has none.
+// Hobby $10, Pro $50, Scale $150. Free stops at its allowance and has none.
 func (p Plan) DefaultOverageCapCents() (int64, bool) {
 	if !p.IsPaid() {
 		return 0, false

@@ -5444,8 +5444,9 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "overage-cap",
 		DocSlug:     "overage-cap",
-		Short:       "Set or clear a spending cap for usage beyond your plan",
-		Flags:       []cliFlag{{Name: "clear", Short: "remove the overage cap"}},
+		Short:       "Set the monthly spend cap for usage beyond your plan",
+		HelpNotes:   []string{"A paid plan always keeps a cap, at most Hobby $75, Pro $200 or Scale $1,000; ask support for a higher one."},
+		Flags:       []cliFlag{{Name: "clear", Short: "remove the cap (Free accounts only; a paid plan keeps one)"}},
 		Positionals: []string{"<cents>"},
 	},
 	{
