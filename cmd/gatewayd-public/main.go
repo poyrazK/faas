@@ -418,6 +418,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	var internalDialer gateway.InternalDialer
 	edgeMetricsSet := newEdgeMetrics()
 	edgeLimits.refused = edgeMetricsSet.refused
+	edgeLimits.runOverload(ctx, edgeMetricsSet, log)
 	// A dynamic dialer can pick a different upstream per request, so the
 	// transport must not pool connections under the one logical URL.
 	dynamicUpstream := upstreamMode == internalUpstreamDatabase
@@ -823,6 +824,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// Cloudflare the request rate counts against CF-Connecting-IP.
 		publicHandler = edgeLimits.body(publicHandler)
 		publicHandler = edgeLimits.hosts(publicHandler)
+		publicHandler = edgeLimits.shed(publicHandler, trustedIngressCIDRs)
 		publicHandler = edgeLimits.requests(publicHandler, trustedIngressCIDRs)
 		// Outermost, so every layer below sees the canonical client address.
 		publicHandler = cloudflareClientIP(publicHandler, trustedIngressCIDRs)

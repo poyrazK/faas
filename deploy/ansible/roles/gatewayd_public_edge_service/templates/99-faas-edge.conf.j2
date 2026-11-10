@@ -15,6 +15,10 @@ Environment=FAAS_EDGE_PLACEMENT_NODE_SET=1
 {% if (faas_edge_client_limits | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
 # ADR-20261103163954 §4: per-client-address limits.
 Environment=FAAS_EDGE_CLIENT_LIMITS=1
+{% if (faas_edge_overload | default('off') | string | lower) in ["observe", "on"] %}
+# ADR-20261110123517: the node-wide overload level (observe or on).
+Environment=FAAS_EDGE_OVERLOAD={{ faas_edge_overload | string | lower }}
+{% endif %}
 {% endif %}
 {% if (faas_edge_entry | default('tunnel') | string | lower) == 'both' %}
 {% set faas_edge_no_front = (faas_edge_public_front | default('cloudflare') | string | lower) == 'none' %}
