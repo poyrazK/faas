@@ -562,13 +562,6 @@ type Host struct {
 	// edge under direct entry (ADR-20261102081618): its own on bare metal,
 	// an inbound-only forwarding rule on GCP. Unused elsewhere.
 	PublicIPv4 string `yaml:"public_ipv4,omitempty"`
-	// PrivateIPv4 is the host's address on the private network
-	// (ADR-20261110120000). The host firewall admits exactly these
-	// addresses, one /32 per host, instead of the whole overlay subnet, and
-	// private listeners bind to it instead of every address. Required on
-	// every host when overlay.interface names a private card (bare metal);
-	// elsewhere Address's host serves when it is an IP literal.
-	PrivateIPv4 string `yaml:"private_ipv4,omitempty"`
 	// PublicIPv4Forwarded says public_ipv4 is an inbound-only forwarding
 	// rule to the host that carries TCP 443 alone
 	// (deploy/scripts/gcp-compute-edge-address.sh), not an address anyone
@@ -1548,7 +1541,6 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.ObjectStorage.validate()...)
 	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
 	errs = append(errs, m.LogArchive.validate()...)
-	errs = append(errs, validatePrivateAddresses(m.Overlay, m.Fleet.Hosts)...)
 	errs = append(errs, m.ArtifactSigner.validate()...)
 	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {

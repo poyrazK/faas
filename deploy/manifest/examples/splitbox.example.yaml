@@ -71,11 +71,6 @@ fleet:
       role: compute-only
       address: fsn-2.gregale.dev:50051
       tags: ["vpc-pub"]
-      # private_ipv4 (ADR-20261110120000): the host's address inside
-      # overlay.cidr. With hostnames as addresses, peers' firewalls admit
-      # the exact /32 instead of the whole overlay subnet. Required on every
-      # host once overlay.interface is set.
-      # private_ipv4: 10.42.0.2
 
 # Daemons — per-daemon configuration. The renderer (PR-2) writes
 # one TOML per host for the daemons that host runs. The `tls`
@@ -185,7 +180,6 @@ overlay:
   cidr: 10.42.0.0/24
   # Bare metal (ADR-20261109100000): with provider "static", name the private
   # card, e.g. an OVH vRack NIC; private services then accept only on it.
-  # Every host then needs fleet.hosts[].private_ipv4.
   # interface: eno2
 
 # Bare metal: limit sshd to the private network and these operator sources

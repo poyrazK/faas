@@ -6,6 +6,31 @@
 
 flush ruleset
 {% set faas_priv = ('iifname "' ~ faas_private_iface ~ '" ') if (faas_private_iface | default('')) else '' %}
+{#- ADR-20261110120000: admit each fleet peer by its own address. exact is
+    {cidrs, hosts} from the manifest renderer; each host resolves to the private
+    address /etc/hosts maps the fleet's names to. Without exact, or when any
+    host does not resolve, the list is fallback (the *_allowed_cidrs list,
+    the overlay subnet for hostname fleets), as before. -#}
+{% macro faas_exact_cidrs(exact, fallback) -%}
+{%- set ns = namespace(out=[], ok=(exact is mapping)) -%}
+{%- if ns.ok -%}
+{%- set ns.out = exact.cidrs | default([]) | list -%}
+{%- for h in exact.hosts | default([]) -%}
+{%- set hv = hostvars[h] if (hostvars is defined and h in hostvars) else {} -%}
+{%- set addr = (hv.faas_private_dns_address | default(hv.faas_private_address | default(((hv.ansible_facts | default({})).default_ipv4 | default({})).address | default(''), true), true)) | string -%}
+{%- if addr.split('.') | length == 4 and addr.replace('.', '').isdigit() -%}
+{%- set ns.out = ns.out + [addr ~ '/32'] -%}
+{%- else -%}
+{%- set ns.ok = false -%}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+{{- (ns.out | unique | join(',')) if ns.ok else (fallback | default([]) | join(',')) -}}
+{%- endmacro %}
+{% set faas_compute_peer_cidrs = (faas_exact_cidrs(faas_compute_peer_exact, faas_control_plane_allowed_cidrs | default([])) | trim).split(',') | reject('equalto', '') | list if faas_compute_peer_exact is defined else [] %}
+{% set faas_control_plane_allowed_cidrs = (faas_exact_cidrs(faas_control_plane_allowed_exact | default(none), faas_control_plane_allowed_cidrs | default([])) | trim).split(',') | reject('equalto', '') | list %}
+{% set faas_compute_allowed_cidrs = (faas_exact_cidrs(faas_compute_allowed_exact | default(none), faas_compute_allowed_cidrs | default([])) | trim).split(',') | reject('equalto', '') | list %}
+{% set faas_postgres_allowed_cidrs = (faas_exact_cidrs(faas_compute_allowed_exact | default(none), faas_postgres_allowed_cidrs | default([])) | trim).split(',') | reject('equalto', '') | list %}
 {% macro faas_sshd() %}
 {% if (faas_ssh_restricted | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
 {% for cidr in faas_ssh_private_cidrs | default([]) %}
@@ -128,6 +153,11 @@ table inet faas {
 {% if faas_control_plane_allowed_cidrs is defined and faas_control_plane_allowed_cidrs -%}
 {% for cidr in faas_control_plane_allowed_cidrs -%}
     {{ faas_priv }}ip saddr {{ cidr }} tcp dport { {{ faas_control_plane_allowed_ports | join(', ') }} } accept comment "faas compute services from control"
+{% endfor -%}
+{% endif -%}
+{% if faas_compute_peer_cidrs -%}
+{% for cidr in faas_compute_peer_cidrs -%}
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport { {{ faas_compute_peer_ports | default([50051, 9091]) | join(', ') }} } accept comment "faas vmmd and schedd from peer compute nodes (ADR-20261110120000)"
 {% endfor -%}
 {% endif -%}
 {% if (faas_obs_logs_enabled | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}

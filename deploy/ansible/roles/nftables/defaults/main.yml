@@ -82,6 +82,13 @@ faas_database_allowed_ports: [5432]
 # Control-plane ingress to compute services. The manifest generator sets
 # these only on compute-only hosts; an empty list keeps the one-box policy.
 faas_control_plane_allowed_cidrs: []
+# ADR-20261110120000: compute nodes reach each other only here. gatewayd-internal
+# forwards to the owning node's vmmd and wakes through that node's schedd.
+# The manifest renderer names the peers (faas_compute_peer_exact); the
+# vmmd_service drop-in uses the same default.
+faas_compute_peer_ports:
+  - 50051
+  - 9091
 # Compute-side TCP services reached by the control plane. The daemon metrics
 # listeners remain limited to the private control-plane CIDRs; they are not
 # opened by the public 22/80/443 rule.
