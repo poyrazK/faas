@@ -20,6 +20,15 @@ type HoldInputs struct {
 	// DatabaseEgress, AppEgress and EgressCeiling are the subject's egress
 	// this month and its plan's shared allowance (zero: none).
 	DatabaseEgress, AppEgress, EgressCeiling int64
+	// EgressOverageBilled is set while the subject's egress overage election
+	// lifts the allowance and database egress is billed live: the hold is
+	// then at twice the allowance (EgressHoldCeiling).
+	EgressOverageBilled bool
+}
+
+// egressHoldCeiling is the shared egress the subject's databases are held at.
+func (in HoldInputs) egressHoldCeiling() int64 {
+	return EgressHoldCeiling(in.EgressCeiling, in.EgressOverageBilled)
 }
 
 // SubjectHold is the reason every database of the subject is held, or "":
@@ -33,7 +42,7 @@ func SubjectHold(in HoldInputs) string {
 		return api.ManagedPostgresHoldInactive
 	case in.ComputeCeiling > 0 && in.ComputeUsed >= in.ComputeCeiling:
 		return api.ManagedPostgresHoldComputeCeiling
-	case egressAllowanceReached(in.DatabaseEgress, in.AppEgress, in.EgressCeiling):
+	case egressAllowanceReached(in.DatabaseEgress, in.AppEgress, in.egressHoldCeiling()):
 		return api.ManagedPostgresHoldEgress
 	default:
 		return ""
@@ -61,15 +70,19 @@ func DatabaseHold(database Database, planExcess bool, in HoldInputs) string {
 }
 
 // EgressState is the usage view's egress_state: held only while caps are
-// enforced, warning at 80% of the allowance, "" without an allowance.
+// enforced, overage past the allowance while database egress is billed,
+// warning at 80% of the hold, "" without an allowance.
 func EgressState(in HoldInputs) string {
 	if in.EgressCeiling <= 0 {
 		return ""
 	}
+	hold := in.egressHoldCeiling()
 	switch {
-	case in.Mode == CapEnforcementOn && egressAllowanceReached(in.DatabaseEgress, in.AppEgress, in.EgressCeiling):
+	case in.Mode == CapEnforcementOn && egressAllowanceReached(in.DatabaseEgress, in.AppEgress, hold):
 		return api.ManagedPostgresEgressHeld
-	case egressAllowanceReached(in.DatabaseEgress, in.AppEgress, in.EgressCeiling-in.EgressCeiling/5):
+	case in.EgressOverageBilled && egressAllowanceReached(in.DatabaseEgress, in.AppEgress, in.EgressCeiling):
+		return api.ManagedPostgresEgressOverage
+	case egressAllowanceReached(in.DatabaseEgress, in.AppEgress, hold-hold/5):
 		return api.ManagedPostgresEgressWarning
 	default:
 		return api.ManagedPostgresEgressHealthy

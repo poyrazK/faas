@@ -873,6 +873,18 @@ const ManagedPostgresOverageMillicentsPerComputeUnitHour = ManagedPostgresNeonSc
 // arrive (ADR-20261031110037).
 const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
 
+// ManagedPostgresNeonMillicentsPerEgressGB is what Neon charges Gregale per GB
+// (10^9 bytes, Neon's unit) of data transfer past its plan's organization
+// allowance ($0.10, neon.com/pricing on 2026-11-02, ADR-20261102072425).
+const ManagedPostgresNeonMillicentsPerEgressGB = 10_000
+
+// ManagedPostgresEgressOverageMillicentsPerGB prices database egress past the
+// plan's shared egress allowance for a subject that elected egress overage:
+// Neon's price plus the markup, $0.105 per GB (ADR-20261110160000 slice 3).
+// Apps use the allowance first; at most one more allowance is billed, as the
+// 2x ceiling allows.
+const ManagedPostgresEgressOverageMillicentsPerGB = ManagedPostgresNeonMillicentsPerEgressGB * (100 + ManagedPostgresOverageMarkupPercent) / 100
+
 // ManagedPostgresStorageOverageMillicentsPerGiBMonth prices storage a subject
 // with overage on holds past its plan's pool: $0.50 per GiB-month, averaged
 // over the UTC month (ADR-20261102072425; ADR-20261031110037 amendment 2).

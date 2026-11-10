@@ -43,6 +43,7 @@ func (s *server) managedPostgresHoldInputsFrom(ctx context.Context, acct state.A
 		return managedpostgres.HoldInputs{}, err
 	}
 	in.EgressCeiling, in.AppEgress = egress.CeilingBytes, egress.AppEgressBytes
+	in.EgressOverageBilled = egress.OverageLifted && managedPostgresChargesLive(s.managedPostgresChargeSink())
 	return in, nil
 }
 

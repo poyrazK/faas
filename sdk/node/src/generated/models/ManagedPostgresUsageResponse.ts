@@ -49,9 +49,9 @@ export type ManagedPostgresUsageResponse = {
    */
   app_egress_bytes?: number;
   /**
-   * healthy; warning at 80% of the shared egress allowance; held once apps and databases together sent it and the platform enforces caps, until the month ends or the plan grows.
+   * healthy; warning at 80% of the shared egress allowance; overage past it while the account's egress overage election bills database egress (at Neon's price plus 5%, up to twice the allowance); held once apps and databases together reach the allowance (twice it with overage billed) and the platform enforces caps, until the month ends or the plan grows.
    */
-  egress_state?: 'healthy' | 'warning' | 'held';
+  egress_state?: 'healthy' | 'warning' | 'overage' | 'held';
   /**
    * Set while every database of the account is held, with the same reason each database reports.
    */

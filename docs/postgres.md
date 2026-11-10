@@ -315,6 +315,10 @@ databases by up to two hours.
   together reach it: the databases then refuse connections until the 1st of
   next month or an upgrade. Data a database sends your app counts as
   database egress.
+- With egress overage on (`gregale billing egress-overage`), your apps use
+  the allowance first and database egress past it is billed at $0.105 per GB.
+  `egress_state` is then `overage`, and the databases are held only at twice
+  the allowance.
 
 When the platform stops a database that is still `ready`, `get`, `list` and
 the API say why in `hold`: `compute_ceiling`, `egress`, `inactive` (the

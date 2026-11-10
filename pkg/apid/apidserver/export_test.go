@@ -2376,3 +2376,13 @@ var SourceLivenessOverrides = sourceLivenessOverrides
 
 // ValidateCustomMetricAlertLabels exposes the custom_metric rule label check.
 var ValidateCustomMetricAlertLabels = validateCustomMetricAlertLabels
+
+func (r *server) ManagedPostgresEgressAllowance(ctx context.Context, subjectID string, now time.Time) (managedpostgres.EgressAllowance, error) {
+	return r.managedPostgresEgressAllowance(ctx, subjectID, now)
+}
+
+// NewUsageSummaryEgressProvider is a billing provider whose egress meter
+// policy is mode for every paid plan.
+func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provider {
+	return &usageSummaryEgressProvider{mode: mode}
+}

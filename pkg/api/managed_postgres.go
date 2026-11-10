@@ -193,9 +193,11 @@ type ManagedPostgresUsageResponse struct {
 	// The plan's monthly egress allowance, shared by the account's apps and
 	// databases (ADR-20261110160000): EgressBytes is what the databases sent,
 	// AppEgressBytes what the apps sent. EgressState is healthy, warning (at
-	// 80% of the allowance) or held (the databases are stopped until the
-	// month ends or the plan grows); held is reported only while caps are
-	// enforced. All three are omitted on a plan without an egress allowance.
+	// 80% of the allowance), overage (past it while the account's egress
+	// overage election bills database egress, up to twice the allowance) or
+	// held (the databases are stopped until the month ends or the plan
+	// grows); held is reported only while caps are enforced. All three are
+	// omitted on a plan without an egress allowance.
 	EgressAllowanceBytes int64  `json:"egress_allowance_bytes,omitempty"`
 	AppEgressBytes       int64  `json:"app_egress_bytes,omitempty"`
 	EgressState          string `json:"egress_state,omitempty"`
@@ -218,6 +220,10 @@ const (
 	ManagedPostgresEgressHealthy = "healthy"
 	ManagedPostgresEgressWarning = "warning"
 	ManagedPostgresEgressHeld    = "held"
+	// ManagedPostgresEgressOverage: past the allowance while the account's
+	// egress overage election bills database egress (ADR-20261110160000
+	// slice 3); held at twice the allowance.
+	ManagedPostgresEgressOverage = "overage"
 )
 
 // ManagedPostgresOverage is GET and PUT /v1/postgres/overage. With overage on,

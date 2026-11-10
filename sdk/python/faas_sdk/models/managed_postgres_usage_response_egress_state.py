@@ -1,10 +1,11 @@
 from typing import Literal
 
-ManagedPostgresUsageResponseEgressState = Literal["healthy", "held", "warning"]
+ManagedPostgresUsageResponseEgressState = Literal["healthy", "held", "overage", "warning"]
 
 MANAGED_POSTGRES_USAGE_RESPONSE_EGRESS_STATE_VALUES: set[ManagedPostgresUsageResponseEgressState] = {
     "healthy",
     "held",
+    "overage",
     "warning",
 }
 
