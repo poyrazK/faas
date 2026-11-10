@@ -13,6 +13,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+// signdServerName is pki.SigndServerName, the SAN on signd's server leaf.
+const signdServerName = "signd.faas"
+
 // artifactSignerFromEnv picks who signs the layers imaged publishes
 // (ADR-20261109170000 §5 step 2). FAAS_ARTIFACT_SIGNER unset or "local" keeps
 // the node's own key. "signd" sends app layers to the control plane's signd
@@ -43,6 +46,12 @@ func artifactSignerFromEnv(ctx context.Context, getenv func(string) string, loca
 	}
 	if tlsCfg == nil {
 		return nil, nil, errors.New("imaged: FAAS_ARTIFACT_SIGNER=signd needs FAAS_SIGND_TLS_{CERT,KEY,CA}_PATH")
+	}
+	// signd's leaf names only signd.faas (pkg/pki FeatureArtifactSigner): a
+	// leaf of another daemon from the same CA does not pass as signd, and
+	// dialing the control plane by address still verifies.
+	if tlsCfg.ServerName == "" {
+		tlsCfg.ServerName = signdServerName
 	}
 	conn, err := wire.DialContext(ctx, target, tlsCfg)
 	if err != nil {
