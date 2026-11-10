@@ -768,6 +768,11 @@ var cliCommands = []cliCommand{
 				Short: "Clear a customer's two-factor authentication after verified recovery",
 				Flags: accountMutationCLIFlags(),
 			},
+			{
+				Name:  "revert-email",
+				Short: "Move a customer back to the email address their last confirmed change replaced",
+				Flags: accountMutationCLIFlags(),
+			},
 		},
 	},
 	{

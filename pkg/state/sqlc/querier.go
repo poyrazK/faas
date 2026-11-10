@@ -774,6 +774,9 @@ type Querier interface {
 	CountEnabledEventSubscriptionsForQuota(ctx context.Context, db DBTX, appID pgtype.UUID) (CountEnabledEventSubscriptionsForQuotaRow, error)
 	CountEnvironmentQueueProducerDepth(ctx context.Context, db DBTX, arg CountEnvironmentQueueProducerDepthParams) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
+	// ADR-20261110120000: the plan's PostgresBindingsPerAppMax counts every
+	// binding of the app that is not deleted.
+	CountLiveManagedPostgresBindingsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountLiveOperationSchedules(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountMCPOAuthRetirements(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountMCPPagerDutyAcknowledgementEvents(ctx context.Context, db DBTX, incidentID pgtype.UUID) (int64, error)
@@ -782,9 +785,15 @@ type Querier interface {
 	CountManagedPostgresHealth(ctx context.Context, db DBTX, arg CountManagedPostgresHealthParams) (CountManagedPostgresHealthRow, error)
 	// A delete that can no longer be undone frees the database, including a source
 	// kept for its restore copies (ADR-20261103091657).
+	// A PR preview environment's database is outside the plan's database limit
+	// (ADR-20261102123523) and is counted by CountManagedPostgresPreviewDatabases.
 	CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Counts as CountManagedPostgresLifecycleDatabases does.
 	CountManagedPostgresOrgDatabases(ctx context.Context, db DBTX, orgID pgtype.UUID) (int64, error)
+	// The reservation owner's undeleted PR preview databases, read under its
+	// reservation lock. The owner is the organization for an organization
+	// owner, otherwise the account's usage subject, as in the reservation counts.
+	CountManagedPostgresPreviewDatabases(ctx context.Context, db DBTX, arg CountManagedPostgresPreviewDatabasesParams) (int64, error)
 	CountMigrationCutovers(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	// Per-(account_id, app_slug) open-session cap check at the top of
 	// POST /v1/uploads. Returns the current count; the handler
@@ -2060,6 +2069,8 @@ type Querier interface {
 	// Two matches mean an invoice ID collides with another invoice's charge ID.
 	FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error)
 	FindManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg FindManagedPostgresLifecycleDatabaseParams) (ManagedPostgresDatabase, error)
+	// The undeleted database one PR preview environment owns for one source.
+	FindManagedPostgresPreviewDatabase(ctx context.Context, db DBTX, arg FindManagedPostgresPreviewDatabaseParams) (ManagedPostgresDatabase, error)
 	// Inspect the rows actually copied in the clone transaction. Return only a
 	// scalar error verdict; oversized policy bodies never cross the store boundary.
 	FindOversizedClonedEnvironmentPolicy(ctx context.Context, db DBTX, arg FindOversizedClonedEnvironmentPolicyParams) (FindOversizedClonedEnvironmentPolicyRow, error)
@@ -3952,6 +3963,11 @@ type Querier interface {
 	// Reservations survive month close and are paged without starving later keys
 	// when an older provider delivery keeps failing.
 	ListManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ListManagedPostgresOveragePendingParams) ([]ListManagedPostgresOveragePendingRow, error)
+	// ADR-20261102123523: the preview-database sweep's page of undeleted preview
+	// databases across accounts, in ID order after after_id.
+	ListManagedPostgresPreviewDatabasePage(ctx context.Context, db DBTX, arg ListManagedPostgresPreviewDatabasePageParams) ([]ManagedPostgresDatabase, error)
+	// The undeleted databases one PR preview environment owns.
+	ListManagedPostgresPreviewDatabases(ctx context.Context, db DBTX, arg ListManagedPostgresPreviewDatabasesParams) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresReconciliationCoverage(ctx context.Context, db DBTX, databaseID pgtype.UUID) ([]ManagedPostgresUsageCoverage, error)
 	ListManagedPostgresRestoreSlotPage(ctx context.Context, db DBTX, arg ListManagedPostgresRestoreSlotPageParams) ([]ListManagedPostgresRestoreSlotPageRow, error)
 	// ADR-20261031123259: the databases holding a restore slot, soonest end
@@ -7219,6 +7235,13 @@ type Querier interface {
 	RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, arg RetryQueueDeadLetterInvocationParams) (Invocation, error)
 	RetryQueueLeaseInvocation(ctx context.Context, db DBTX, arg RetryQueueLeaseInvocationParams) (int64, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)
+	// Operator revert of the last confirmed email change (ADR 20261110100000).
+	// Applies only while the account still has the address that change moved it
+	// to, so it cannot run twice or undo a later change. Like the change itself,
+	// it spends account-bound links mailed while the account had that address.
+	// A unique violation (the old address now belongs to another account) rolls
+	// the statement back.
+	RevertLastAccountEmailChange(ctx context.Context, db DBTX, arg RevertLastAccountEmailChangeParams) (RevertLastAccountEmailChangeRow, error)
 	RevokeAllMFATrustedBrowsers(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.
@@ -7636,7 +7659,11 @@ type Querier interface {
 	// Durable links follow mfa_revision; the legacy inline requests carry no
 	// revision, so each statement consumes them too (bug hunt 2026-10-28 H98).
 	SetMFASecret(ctx context.Context, db DBTX, arg SetMFASecretParams) (int64, error)
+	// ADR-20261102123523: what a database gives PR preview environments. A
+	// preview database cannot have previews of its own.
+	SetManagedPostgresDatabasePreviews(ctx context.Context, db DBTX, arg SetManagedPostgresDatabasePreviewsParams) (ManagedPostgresDatabase, error)
 	SetManagedPostgresOverage(ctx context.Context, db DBTX, arg SetManagedPostgresOverageParams) error
+	SetManagedPostgresPreviewOwner(ctx context.Context, db DBTX, arg SetManagedPostgresPreviewOwnerParams) (ManagedPostgresDatabase, error)
 	SetMigrationAdmissionCleaned(ctx context.Context, db DBTX, arg SetMigrationAdmissionCleanedParams) (int64, error)
 	SetMigrationAdmissionCleaning(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	SetMigrationSourceRetiring(ctx context.Context, db DBTX, leaseToken string) (int64, error)

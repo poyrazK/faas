@@ -9608,7 +9608,9 @@ BEGIN
  SELECT runtime_inputs->'secret_versions' INTO restored FROM environment_qualification_restore_receipts
   WHERE request_id=q.id AND attempt=q.attempt AND instance_id=restored_instance;
  FOR b IN SELECT * FROM managed_postgres_bindings WHERE app_id=q.app_id AND scope=release_scope AND state<>'deleted' ORDER BY id LOOP
-  IF b.access NOT IN ('read_write','read_only','migration') OR b.state<>'ready' OR b.rotation_previous_generation IS NOT NULL OR b.cutover_id IS NOT NULL THEN RETURN NULL; END IF;
+  -- data_api and auth logins are qualified by their own evidence.
+  IF b.access IN ('data_api','auth') THEN CONTINUE; END IF;
+  IF b.access NOT IN ('read_write','read_only','migration','session') OR b.state<>'ready' OR b.rotation_previous_generation IS NOT NULL OR b.cutover_id IS NOT NULL THEN RETURN NULL; END IF;
   SELECT * INTO s FROM app_secrets WHERE app_id=q.app_id AND scope=release_scope AND key=b.environment_key;
   IF s.managed_postgres_binding_id IS DISTINCT FROM b.id OR s.managed_credential_generation IS DISTINCT FROM b.credential_generation OR s.delivery_version IS NULL THEN RETURN NULL; END IF;
   SELECT * INTO receipt FROM environment_qualification_postgres_receipts WHERE request_id=q.id AND attempt=q.attempt AND binding_id=b.id
@@ -38914,7 +38916,7 @@ CREATE TABLE public.environment_qualification_postgres_receipts (
     CONSTRAINT environment_qualification_postgres__credential_generation_check CHECK ((credential_generation >= 1)),
     CONSTRAINT environment_qualification_postgres_recei_delivery_version_check CHECK ((delivery_version >= 1)),
     CONSTRAINT environment_qualification_postgres_receip_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
-    CONSTRAINT environment_qualification_postgres_receipts_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text]))),
+    CONSTRAINT environment_qualification_postgres_receipts_access_v2_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'session'::text]))),
     CONSTRAINT environment_qualification_postgres_receipts_attempt_check CHECK ((attempt > 0))
 );
 
@@ -45425,6 +45427,10 @@ CREATE TABLE public.managed_postgres_databases (
     purge_after timestamp with time zone,
     restore_slot_until timestamp with time zone,
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    previews text DEFAULT 'off'::text NOT NULL,
+    preview_source_database_id uuid,
+    preview_environment_id text,
+    preview_pr_number integer,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -45443,11 +45449,13 @@ CREATE TABLE public.managed_postgres_databases (
     CONSTRAINT managed_postgres_databases_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
     CONSTRAINT managed_postgres_databases_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT managed_postgres_databases_postgres_major_check CHECK (((postgres_major >= 12) AND (postgres_major <= 99))),
+    CONSTRAINT managed_postgres_databases_previews_chk CHECK ((previews = ANY (ARRAY['off'::text, 'empty'::text, 'copy'::text]))),
     CONSTRAINT managed_postgres_databases_region_check CHECK ((region ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT managed_postgres_databases_restore_window_seconds_check CHECK ((restore_window_seconds >= 0)),
     CONSTRAINT managed_postgres_databases_service_class_check CHECK ((service_class = ANY (ARRAY['development'::text, 'burstable'::text, 'production'::text]))),
     CONSTRAINT managed_postgres_databases_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'ready'::text, 'updating'::text, 'deleting'::text, 'failed'::text, 'deleted'::text]))),
     CONSTRAINT managed_postgres_databases_storage_limit_bytes_check CHECK ((storage_limit_bytes >= 0)),
+    CONSTRAINT managed_postgres_preview_fields_chk CHECK ((((preview_source_database_id IS NULL) AND (preview_environment_id IS NULL) AND (preview_pr_number IS NULL)) OR ((preview_source_database_id IS NOT NULL) AND (preview_source_database_id <> id) AND (preview_environment_id ~ '^[A-Za-z0-9-]{1,64}$'::text) AND (preview_pr_number > 0) AND (previews = 'off'::text)))),
     CONSTRAINT managed_postgres_restore_fields_ck CHECK ((((restore_source_database_id IS NULL) AND (restore_source_resource_id IS NULL) AND (restore_point_in_time IS NULL)) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL))))
 );
 
@@ -78624,6 +78632,13 @@ CREATE INDEX managed_postgres_live_keys_database_idx ON public.managed_postgres_
 --
 
 CREATE INDEX managed_postgres_overage_pending_recovery_idx ON public.managed_postgres_overage_pending USING btree (provider, period_start, subject_id);
+
+
+--
+-- Name: managed_postgres_preview_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_preview_key ON public.managed_postgres_databases USING btree (preview_source_database_id, preview_environment_id, preview_pr_number) WHERE ((preview_source_database_id IS NOT NULL) AND (deleted_at IS NULL));
 
 
 --

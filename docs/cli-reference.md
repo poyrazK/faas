@@ -89,7 +89,7 @@ gregale menu
 
 Scaffold a project from a built-in template
 
-`gregale init --template <NAME> --path <DIR> [--deploy] [--name <SLUG>] [--secrets-file <PATH>] [--list]`
+`gregale init --template <NAME> --path <DIR> [--deploy] [--name <SLUG>] [--secrets-file <PATH>] [--list] [--no-mcp]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -99,6 +99,7 @@ Scaffold a project from a built-in template
 | `--name <SLUG>` | app slug used with --deploy |  |
 | `--secrets-file <PATH>` | seal KEY=VALUE pairs before the first deployment (requires --deploy) |  |
 | `--list` | list available templates |  |
+| `--no-mcp` | do not write .mcp.json, which offers Gregale&#39;s MCP server to agents opened in the project |  |
 
 Examples:
 

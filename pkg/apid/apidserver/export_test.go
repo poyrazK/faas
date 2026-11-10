@@ -86,6 +86,10 @@ var SealNotificationChannel = sealChannel
 var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
 var DashboardDebugStatusView = dashboardDebugStatusView
 
+// ManifestDeclaresManagedBinding is the deploy-time bound-app check
+// (ADR-20261110120000).
+var ManifestDeclaresManagedBinding = manifestDeclaresManagedBinding
+
 // Package-level types
 type AffectedPartition = affectedPartition
 type AnnotationForm = annotationForm
@@ -1694,6 +1698,18 @@ func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) 
 	return r.cleanupDevSessionResources(ctx, app)
 }
 
+// Preview databases (ADR-20261102123523).
+var PreviewDatabasesStatus = previewDatabasesStatus
+var PreviewDeployDatabasesProblem = previewDeployDatabasesProblem
+
+func (r *server) SweepPreviewDatabases(ctx context.Context, setupBefore time.Time) (int, error) {
+	return r.previewDatabaseManager().SweepAll(ctx, r.store, setupBefore)
+}
+
+func (r *server) PrepareBuildPreviewDatabases(ctx context.Context, acct state.Account, plan api.Plan, preview state.App) error {
+	return r.prepareBuildPreviewDatabases(ctx, acct, plan, preview)
+}
+
 func IssueNativeSetClients(e pgHandlerEnv, gh GithubdClient, provider issuetracker.StatusProvider) {
 	e.s.githubd = gh
 	e.s.nativeTrackerProvider = provider
@@ -2055,6 +2071,17 @@ func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
 	return l.allow
 }
 
+// AgeSignInsForTest makes every browser session look signed in d earlier to
+// the recent-sign-in check (ADR 20261110100000). Not for parallel tests.
+func AgeSignInsForTest(t testing.TB, d time.Duration) {
+	prev := recentSignInNow
+	recentSignInNow = func() time.Time { return time.Now().Add(d) }
+	t.Cleanup(func() { recentSignInNow = prev })
+}
+
+// OperatorRevertEmail exposes the operator email revert.
+var OperatorRevertEmail = (*server).operatorRevertEmail
+
 // AdvanceSecurityMailClockForTest moves the per-account sign-in mail
 // limiter's clock d ahead, as if the next request came that much later.
 func (r *server) AdvanceSecurityMailClockForTest(d time.Duration) {
@@ -2304,8 +2331,8 @@ func AppEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 
 // ApplySourceFunctionSettingsForTest runs applySourceFunctionSettings on a
 // server holding only store.
-func ApplySourceFunctionSettingsForTest(ctx context.Context, store state.Store, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec) (state.App, *api.Problem) {
-	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec)
+func ApplySourceFunctionSettingsForTest(ctx context.Context, store state.Store, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec, scope string) (state.App, *api.Problem) {
+	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec, scope)
 }
 
 // WithPendingFunctionSteps exposes withPendingFunctionSteps.

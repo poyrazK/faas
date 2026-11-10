@@ -7647,6 +7647,11 @@ SELECT pg_advisory_xact_lock(managed_secret_target_lock_key(sqlc.arg(app_id)::uu
 -- name: ProjectEnvironmentCloneSecretTargetExists :one
 SELECT EXISTS(SELECT 1 FROM app_secrets WHERE app_id=$1 AND scope=$2 AND key=$3)::boolean;
 
+-- name: CountLiveManagedPostgresBindingsForApp :one
+-- ADR-20261110120000: the plan's PostgresBindingsPerAppMax counts every
+-- binding of the app that is not deleted.
+SELECT count(*) FROM managed_postgres_bindings WHERE app_id=$1 AND state<>'deleted';
+
 -- name: ManagedPostgresBindingDatabaseID :one
 SELECT database_id,database_account_id FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2;
 
@@ -15696,8 +15701,11 @@ ORDER BY CASE WHEN state='deleting' AND purge_after>sqlc.arg(at)::timestamptz AN
 -- name: CountManagedPostgresLifecycleDatabases :one
 -- A delete that can no longer be undone frees the database, including a source
 -- kept for its restore copies (ADR-20261103091657).
+-- A PR preview environment's database is outside the plan's database limit
+-- (ADR-20261102123523) and is counted by CountManagedPostgresPreviewDatabases.
 SELECT ((SELECT count(*) FROM managed_postgres_databases d
- WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL))
+ WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL)
+ AND d.preview_source_database_id IS NULL)
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r
  JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=sqlc.arg(account_id)::uuid
@@ -15736,6 +15744,49 @@ ORDER BY d.restore_slot_until, d.id LIMIT sqlc.arg(batch_size);
 -- name: ClearManagedPostgresRestoreSlot :execrows
 UPDATE managed_postgres_databases SET restore_slot_until=NULL,updated_at=sqlc.arg(at)::timestamptz
 WHERE id=sqlc.arg(id)::uuid AND restore_slot_until IS NOT NULL;
+
+-- name: SetManagedPostgresDatabasePreviews :one
+-- ADR-20261102123523: what a database gives PR preview environments. A
+-- preview database cannot have previews of its own.
+UPDATE managed_postgres_databases SET previews=sqlc.arg(previews)::text,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND state NOT IN ('deleting','deleted')
+ AND preview_source_database_id IS NULL
+RETURNING *;
+
+-- name: FindManagedPostgresPreviewDatabase :one
+-- The undeleted database one PR preview environment owns for one source.
+SELECT * FROM managed_postgres_databases
+WHERE preview_source_database_id=sqlc.arg(source_database_id)::uuid AND preview_environment_id=sqlc.arg(environment_id)::text
+ AND preview_pr_number=sqlc.arg(pr_number)::integer AND deleted_at IS NULL;
+
+-- name: SetManagedPostgresPreviewOwner :one
+UPDATE managed_postgres_databases SET preview_source_database_id=sqlc.arg(source_database_id)::uuid,
+ preview_environment_id=sqlc.arg(environment_id)::text, preview_pr_number=sqlc.arg(pr_number)::integer
+WHERE id=sqlc.arg(id)::uuid RETURNING *;
+
+-- name: CountManagedPostgresPreviewDatabases :one
+-- The reservation owner's undeleted PR preview databases, read under its
+-- reservation lock. The owner is the organization for an organization
+-- owner, otherwise the account's usage subject, as in the reservation counts.
+SELECT count(*)::bigint AS count FROM managed_postgres_databases d
+WHERE d.preview_source_database_id IS NOT NULL AND d.state<>'deleted'
+ AND CASE WHEN sqlc.narg(org_id)::uuid IS NOT NULL THEN d.org_id=sqlc.narg(org_id)::uuid
+     ELSE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid END;
+
+-- name: ListManagedPostgresPreviewDatabases :many
+-- The undeleted databases one PR preview environment owns.
+SELECT * FROM managed_postgres_databases
+WHERE account_id=sqlc.arg(account_id)::uuid AND preview_environment_id=sqlc.arg(environment_id)::text
+ AND preview_pr_number=sqlc.arg(pr_number)::integer AND deleted_at IS NULL
+ORDER BY created_at,id;
+
+-- name: ListManagedPostgresPreviewDatabasePage :many
+-- ADR-20261102123523: the preview-database sweep's page of undeleted preview
+-- databases across accounts, in ID order after after_id.
+SELECT * FROM managed_postgres_databases
+WHERE preview_source_database_id IS NOT NULL AND deleted_at IS NULL AND id>sqlc.arg(after_id)::uuid
+ORDER BY id
+LIMIT sqlc.arg(page_size)::integer;
 
 -- name: RecordManagedPostgresRestoreSlotNotice :execrows
 -- ADR-20261031123259: one notice per copy and kind; the first sweep to reach
@@ -28064,7 +28115,7 @@ FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id
 JOIN project_environments e ON e.id=g.environment_id
 JOIN managed_postgres_bindings b ON b.app_id=q.app_id AND b.scope=e.slug AND b.state='ready'
- AND b.access IN ('read_write','read_only','migration') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
+ AND b.access IN ('read_write','read_only','migration','session') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
 JOIN app_secrets s ON s.app_id=q.app_id AND s.scope=e.slug AND s.key=b.environment_key
  AND s.managed_postgres_binding_id=b.id AND s.managed_credential_generation=b.credential_generation AND s.delivery_version IS NOT NULL
 JOIN managed_postgres_databases d ON d.id=b.database_id AND d.deleted_at IS NULL
@@ -28404,7 +28455,8 @@ SELECT * FROM managed_postgres_bindings WHERE id=$1;
 
 -- name: CountManagedPostgresOrgDatabases :one
 -- Counts as CountManagedPostgresLifecycleDatabases does.
-SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=sqlc.arg(org_id)::uuid AND state<>'deleted' AND NOT (state='deleting' AND purge_after IS NULL))
+SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=sqlc.arg(org_id)::uuid AND state<>'deleted' AND NOT (state='deleting' AND purge_after IS NULL)
+ AND d.preview_source_database_id IS NULL)
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE p.org_id=sqlc.arg(org_id)::uuid AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count;
 
@@ -28717,7 +28769,18 @@ UPDATE deployments SET deleted_at=sqlc.arg(deleted_at)::timestamptz,deleted_by_p
 WHERE app_id=sqlc.arg(app_id)::uuid AND status IN ('superseded','failed','cancelled')
  AND created_at<sqlc.arg(older_than)::timestamptz AND deleted_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=deployments.id)
- AND id NOT IN (SELECT id FROM (SELECT id,row_number() OVER(PARTITION BY app_id ORDER BY created_at DESC,id) rn FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid) recent WHERE rn<=2);
+ AND id NOT IN (SELECT id FROM (SELECT id,row_number() OVER(PARTITION BY app_id ORDER BY created_at DESC,id) rn FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid) recent WHERE rn<=2)
+ -- A superseded deployment in its scope's rollback window (the newest
+ -- rollback_generations live or superseded deployments, as
+ -- LayerArtifactHasReferences counts them) stays: failed attempts must not
+ -- push rollback targets out of the window.
+ AND NOT (status='superseded' AND (
+   SELECT count(*) FROM deployments n
+    WHERE n.app_id=deployments.app_id
+      AND COALESCE(NULLIF(n.scope,''),'default')=COALESCE(NULLIF(deployments.scope,''),'default')
+      AND n.deleted_at IS NULL AND n.status IN ('live','superseded')
+      AND (n.created_at>deployments.created_at OR (n.created_at=deployments.created_at AND n.id>deployments.id))
+ ) < sqlc.arg(rollback_generations)::int);
 
 -- name: ReadEnvironmentRecoveryServingHistory :one
 SELECT served_at FROM environment_recovery_serving_history WHERE graph_id=sqlc.arg(graph_id)::uuid;

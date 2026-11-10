@@ -42,10 +42,52 @@ func EmailChangedNoticeBody(oldEmail, newEmail string, at time.Time) (subject, b
 At %s the Gregale account that used %s changed its sign-in email to
 %s. Every signed-in session was signed out.
 
-If you did not make this change, contact support@gregale.dev right away.
+If you did not make this change, reply from this address to
+support@gregale.dev right away, keeping this email: within 30 days support
+can move the account back to this address after checking your identity.
 
 — Gregale
 `, mailTime(at), safeRecipient(oldEmail), maskEmail(newEmail))
+	return subject, body
+}
+
+// EmailChangeRequestedBody warns the current address that a change to
+// another address was asked for and has not happened yet, so the owner can
+// stop it before the new address confirms (ADR 20261110100000).
+func EmailChangeRequestedBody(email, newEmail string, at, expiresAt time.Time) (subject, body string) {
+	subject = "Someone asked to change your Gregale sign-in email"
+	body = fmt.Sprintf(`Hi,
+
+At %s someone signed in to the Gregale account %s asked to change its
+sign-in email to %s. Nothing has changed yet: the change happens only if the
+link sent to that address is opened before %s.
+
+If this was you, there is nothing to do.
+
+If it was not, stop it now: sign in and choose Account → Sessions → Sign out
+everywhere, or reset your password with "Forgot password". Either cancels the
+change and signs out whoever asked for it. Then contact support@gregale.dev.
+
+— Gregale
+`, mailTime(at), safeRecipient(email), maskEmail(newEmail), mailTime(expiresAt))
+	return subject, body
+}
+
+// SignInMethodRemovedBody notifies that a provider no longer signs in to the account.
+func SignInMethodRemovedBody(email, provider string, at time.Time) (subject, body string) {
+	name := providerName(provider)
+	subject = fmt.Sprintf("%s sign-in removed from your Gregale account", name)
+	body = fmt.Sprintf(`Hi,
+
+At %s "Continue with %s" was removed from the Gregale account %s. It can
+no longer be used to sign in.
+
+If you did not do this, reset your password with "Forgot password" (or use a
+sign-in link), link %s again from Account → Sign-in methods, and contact
+support@gregale.dev.
+
+— Gregale
+`, mailTime(at), name, safeRecipient(email), name)
 	return subject, body
 }
 
@@ -138,6 +180,27 @@ trying to take over your account.
 
 — Gregale
 `, at.UTC().Format("2006-01-02 15:04 UTC"), email)
+	return subject, body
+}
+
+// OperatorEmailRevertedBody tells the restored address that Gregale support
+// moved the account back to it after an identity check.
+func OperatorEmailRevertedBody(email, removedEmail string, at time.Time) (subject, body string) {
+	subject = "Gregale support restored your sign-in email"
+	body = fmt.Sprintf(`Hi,
+
+At %s Gregale support moved your Gregale account back to %s, after
+checking your identity for an account recovery request. It no longer signs in
+with %s. Every browser was signed out, remembered browsers were forgotten and
+sign-in links sent meanwhile stopped working.
+
+Next: use "Forgot password" to set a new password, review Account → Sign-in
+methods and Account → API keys, and remove anything you do not recognise.
+
+If you did not ask for this, contact security@gregale.dev at once.
+
+— Gregale
+`, mailTime(at), safeRecipient(email), maskEmail(removedEmail))
 	return subject, body
 }
 

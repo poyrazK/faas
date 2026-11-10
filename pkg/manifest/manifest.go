@@ -203,6 +203,10 @@ type Manifest struct {
 	// each host's archive credential envelope untouched.
 	LogArchive LogArchive `yaml:"log_archive,omitempty"`
 
+	// ArtifactSigner turns on the control plane's artifact signer
+	// (ADR-20261109170000). Absent keeps sign.key on the compute nodes.
+	ArtifactSigner ArtifactSigner `yaml:"artifact_signer,omitempty"`
+
 	// WorkloadIdentity turns on workload-identity tokens (ADR-1141): the
 	// renderer hands its source directory to every control-plane and
 	// compute host, so the roles install the JWKS and the signing key.
@@ -1537,6 +1541,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.ObjectStorage.validate()...)
 	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
 	errs = append(errs, m.LogArchive.validate()...)
+	errs = append(errs, m.ArtifactSigner.validate()...)
 	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
 		return errs

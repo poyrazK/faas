@@ -89,6 +89,18 @@ const (
 // one account may receive: one per SecurityMailPerAccountInterval and
 // SecurityMailPerAccountPerHour an hour. One apid tracks at most
 // SecurityMailTrackedAccountsMax accounts at a time.
+// RecentSignInWindow is how long after signing in a browser session alone
+// may set a first password, change the sign-in email, remove a sign-in
+// method or start two-factor setup on an account with neither a password
+// nor an authenticator to confirm with (ADR 20261110100000). Older
+// sessions sign in again first.
+const RecentSignInWindow = 15 * time.Minute
+
+// EmailChangeRevertWindow is how long after a confirmed sign-in email
+// change an operator can move the account back to the previous address
+// (`gregalectl accounts revert-email`, ADR 20261110100000).
+const EmailChangeRevertWindow = 30 * 24 * time.Hour
+
 const (
 	SecurityMailPerAccountInterval = time.Minute
 	SecurityMailPerAccountPerHour  = 5
@@ -868,6 +880,24 @@ const ManagedPostgresUsageWaiverPeriod = 30 * 24 * time.Hour
 // could not restore at all.
 const ManagedPostgresRestoreSlots = 1
 const ManagedPostgresRestoreSlotWindow = 7 * 24 * time.Hour
+
+// ManagedPostgresPreviewStorageLimitBytes is a PR preview environment's empty
+// database's storage limit, lowered to the plan's pool where that is smaller
+// (ADR-20261102123523): a developer session's database gets the same.
+const ManagedPostgresPreviewStorageLimitBytes int64 = 1 << 30
+
+// ManagedPostgresPreviewDatabasesMax is how many PR preview databases an
+// account may hold (ADR-20261102123523): one per open preview environment and
+// source database. They are outside DatabasesMax, so no plan number changes.
+// Unknown plans fail closed.
+func ManagedPostgresPreviewDatabasesMax(p Plan) int {
+	limits, ok := LimitsFor(p)
+	databases, managed := ManagedPostgresLimitsFor(p)
+	if !ok || !managed || !databases.DevelopmentAllowed {
+		return 0
+	}
+	return limits.PreviewApps * databases.DatabasesMax
+}
 
 // ManagedPostgresRestoreSlotNoticeLead is how long before a restore slot ends
 // without room the restoring account is emailed (ADR-20261031123259).
@@ -4615,6 +4645,12 @@ type Limits struct {
 	// ProjectSecretCountMax bounds the secrets one project environment shares
 	// with its services (ADR-1139); each value uses SecretValueMaxBytes.
 	ProjectSecretCountMax int // (Free 8, Hobby 25, Pro 50, Scale 100)
+	// PostgresBindingsPerAppMax bounds the live managed PostgreSQL bindings
+	// one app holds across every scope. Each binding issues its own provider
+	// role, so the count is capped on its own now that managed values left
+	// SecretCountMax (ADR-20261110120000); the values equal the bound
+	// SecretCountMax used to impose.
+	PostgresBindingsPerAppMax int // (Free 8, Hobby 25, Pro 50, Scale 100)
 
 	// Customer env vars (issue #395 / ADR-045). Plaintext per-app store
 	// for non-sensitive runtime config (LOG_LEVEL, FEATURE_X, etc.). The
@@ -6085,6 +6121,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   16,
 		SecretCountMax:                 8,
 		ProjectSecretCountMax:          8,
+		PostgresBindingsPerAppMax:      8,
 		SecretValueMaxBytes:            4 * 1024,
 		EnvVarsMax:                     16,
 		EnvValueMaxBytes:               4 * 1024,
@@ -6507,6 +6544,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   64,
 		SecretCountMax:                 25,
 		ProjectSecretCountMax:          25,
+		PostgresBindingsPerAppMax:      25,
 		SecretValueMaxBytes:            8 * 1024,
 		EnvVarsMax:                     32,
 		EnvValueMaxBytes:               8 * 1024,
@@ -6961,6 +6999,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   256,
 		SecretCountMax:                 50,
 		ProjectSecretCountMax:          50,
+		PostgresBindingsPerAppMax:      50,
 		SecretValueMaxBytes:            16 * 1024,
 		EnvVarsMax:                     64,
 		EnvValueMaxBytes:               16 * 1024,
@@ -7380,6 +7419,7 @@ var planLimits = map[Plan]Limits{
 		ServiceTCPSessionsPerAccount:   1024,
 		SecretCountMax:                 100,
 		ProjectSecretCountMax:          100,
+		PostgresBindingsPerAppMax:      100,
 		SecretValueMaxBytes:            32 * 1024,
 		EnvVarsMax:                     256,
 		EnvValueMaxBytes:               32 * 1024,
@@ -14191,6 +14231,13 @@ func (l Limits) PostgresPoolMax(requestedPerInstanceConcurrency int) int {
 // PostgresPoolMaxAccepted is the largest GREGALE_POSTGRES_POOL_MAX the SDKs
 // and the binding check accept; a larger value is ignored as unset.
 const PostgresPoolMaxAccepted = 1000
+
+// SessionBindingConnectionLimit is the role CONNECTION LIMIT of a `session`
+// login (ADR-20261110120000): 2 direct connections × (Scale concurrency 20 +
+// rollout 1). Session bindings are for session features (LISTEN/NOTIFY,
+// session advisory locks), not bulk query traffic, which belongs on a pooled
+// read_write binding; without a limit one binding could exhaust the compute.
+const SessionBindingConnectionLimit = 42
 
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a

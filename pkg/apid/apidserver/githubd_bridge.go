@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
+	"github.com/onebox-faas/faas/pkg/apid/previewdb"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
@@ -102,10 +103,14 @@ type githubdBridge struct {
 	// row exists, and returns their undo for a failed enqueue
 	// (ADR-20261104221217). Nil skips them.
 	applySettings bridgeSettingsApplier
+	// previewDatabases sets up a PR preview build's managed PostgreSQL
+	// databases (ADR-20261102123523); nil sets up none.
+	previewDatabases func(context.Context, state.Account, api.Plan, state.App) error
 }
 
-// bridgeSettingsApplier is server.applyBridgeSourceSettings.
-type bridgeSettingsApplier func(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (state.App, func(context.Context), *api.Problem)
+// bridgeSettingsApplier is server.applyBridgeSourceSettings. scope is the
+// environment the push deploys ("" is production).
+type bridgeSettingsApplier func(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, scope string) (state.App, func(context.Context), *api.Problem)
 
 // checkSourcePlanLimit refuses a GitHub build whose source is above the
 // account's plan limit. githubd fetches every push with Scale's limits, so
@@ -369,6 +374,13 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if releaseProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: release command: %s", releaseProblem.Detail)
 	}
+	// A preview build waits for its databases before it spends the deploy
+	// window, so the retries while one provisions cost no deploys.
+	if eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+		if err := g.preparePreviewDatabases(ctx, acct, resource.Plan, app); err != nil {
+			return nil, err
+		}
+	}
 	// PR preview builds stop at their share of the window, so a busy pull
 	// request cannot spend the deploys production needs (ADR-20261028100000).
 	// The window belongs to the app's resource owner, as on the API path.
@@ -568,7 +580,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	params.SourcePath = spooled
 	undoSettings := func(context.Context) {}
 	if g.applySettings != nil && manifest != nil {
-		updated, undo, problem := g.applySettings(ctx, resource, app, manifest)
+		updated, undo, problem := g.applySettings(ctx, resource, app, manifest, req.DeploymentScope)
 		if problem != nil {
 			if spooled != req.SourcePath {
 				_ = os.Remove(spooled)
@@ -883,7 +895,7 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
 		store:       store,
 		notif:       notif,
@@ -894,9 +906,42 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		spoolRoot:   spool,
 		agentSteps:  agentSteps,
 
-		releasePhaseOff: releasePhaseOff,
-		applySettings:   applySettings,
+		releasePhaseOff:  releasePhaseOff,
+		applySettings:    applySettings,
+		previewDatabases: previewDatabases,
 	})
+}
+
+// preparePreviewDatabases sets up a PR preview build's databases
+// (ADR-20261102123523). One still provisioning answers Unavailable, which
+// githubd retries; a refusal answers ResourceExhausted, which githubd
+// reports on the pull request as a setup failure.
+func (g *githubdBridge) preparePreviewDatabases(ctx context.Context, acct state.Account, plan api.Plan, preview state.App) error {
+	if g.previewDatabases == nil {
+		return nil
+	}
+	err := g.previewDatabases(ctx, acct, plan, preview)
+	if err != nil && !errors.Is(err, previewdb.ErrPending) {
+		g.log.Warn("githubd bridge: preview databases", "app_id", preview.ID, "err", err)
+	}
+	return previewDatabasesStatus(err)
+}
+
+// previewDatabasesStatus is the bridge's answer to a preview database setup
+// error: Unavailable for one githubd should retry, ResourceExhausted for a
+// refusal it reports on the pull request.
+func previewDatabasesStatus(err error) error {
+	var refused *previewdb.RefusedError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &refused):
+		return status.Errorf(codes.ResourceExhausted, "EnqueueBuild: %s", refused.Reason)
+	case errors.Is(err, previewdb.ErrPending):
+		return status.Error(codes.Unavailable, "EnqueueBuild: the preview's managed PostgreSQL database is still provisioning")
+	default:
+		return status.Error(codes.Unavailable, "EnqueueBuild: the preview's managed PostgreSQL database could not be set up yet")
+	}
 }
 
 // prepareDeliveryCrons stages the crons a push's gregale.yaml declares for the

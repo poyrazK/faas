@@ -951,11 +951,13 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SERVICE_MAP_ENABLED` | apid, shared | `default` |  | 0 | `` | ADR-1131 operator gate for GET /v1/service-map and /dashboard/service-map; explicit 1 enables the internal preview; boot fallback for the service_map platform flag (ADR-1700), ignored once an operator writes platform_flag.service_map |
 | `FAAS_SERVICE_TCP_ENABLED` | vmmd | `dropin` |  |  | `` | ADR-576 opt-in private TCP service addressing: new netns admit guest TCP to 198.19.0.0/16, the runtime host policy DNATs it onto the tenant-bridge service listeners, and the node records compute_nodes.service_address_ready_at. Set from the manifest's service_tcp.node with the nftables role's faas_service_tcp_enabled |
 | `FAAS_SESSION_KEY` | apid, shared | `unit` |  |  | `` | LoadCredential= path form in faas-apid.service; apid only: gateways ask apid to open session cookies (ADR-20261102191500) |
+| `FAAS_SIGND_LISTEN` | signd | `dropin` |  |  | `` | ADR-20261109170000: tcp://<control plane private address>:<port>; signd_service renders it from faas_signd_listen |
+| `FAAS_SIGND_ROLE` | signd | `dropin` |  |  | `` | ADR-20261109170000: the box role signd checks it runs on (control-plane or single-box) |
 | `FAAS_SIGND_TARGET` | imaged | `default` |  |  | `` | ADR-20261109170000: tcp:// or dns:// address of the control plane's signd; required when FAAS_ARTIFACT_SIGNER=signd |
-| `FAAS_SIGND_TLS_CA_PATH` | imaged | `default` |  |  | `` | ADR-20261109170000: CA that signs signd's server leaf; required when FAAS_ARTIFACT_SIGNER=signd |
-| `FAAS_SIGND_TLS_CERT_PATH` | imaged | `default` |  |  | `` | ADR-20261109170000: imaged's signd client leaf, whose CN is this node's compute_nodes.name; required when FAAS_ARTIFACT_SIGNER=signd |
-| `FAAS_SIGND_TLS_KEY_PATH` | imaged | `default` |  |  | `` | ADR-20261109170000: key of imaged's signd client leaf; required when FAAS_ARTIFACT_SIGNER=signd |
-| `FAAS_SIGN_KEY` | imaged | `default` |  |  | `` |  |
+| `FAAS_SIGND_TLS_CA_PATH` | imaged, signd | `default` |  |  | `` | ADR-20261109170000: CA that signs signd's server leaf; required when FAAS_ARTIFACT_SIGNER=signd |
+| `FAAS_SIGND_TLS_CERT_PATH` | imaged, signd | `default` |  |  | `` | ADR-20261109170000: imaged's signd client leaf, whose CN is this node's compute_nodes.name; required when FAAS_ARTIFACT_SIGNER=signd |
+| `FAAS_SIGND_TLS_KEY_PATH` | imaged, signd | `default` |  |  | `` | ADR-20261109170000: key of imaged's signd client leaf; required when FAAS_ARTIFACT_SIGNER=signd |
+| `FAAS_SIGN_KEY` | imaged, signd | `default` |  |  | `` | the fleet signing key; signd_service hands it to signd as a credential (ADR-20261109170000) |
 | `FAAS_SIGN_PUB` | apid, schedd | `unit` |  |  | `` |  |
 | `FAAS_SKIP_PG_TESTS` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SKIP_SOCKET_GROUP` | shared | `dev-only` |  |  | `` | must never be set on a production host |

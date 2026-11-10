@@ -550,6 +550,11 @@ const (
 	// mirrors CodeCapacity / CodeBuildXXX — the failure is transient
 	// and the customer's CLI/CI will retry on the backoff.
 	CodeSourceRefUnavailable = "source_ref_unavailable"
+	// CodePreviewDatabaseProvisioning is the 503 a deployment into a PR
+	// preview answers while the preview's managed PostgreSQL databases are
+	// still provisioning (ADR-20261102123523): its release command needs
+	// their URLs. Retry-After says when to send it again; the CLI waits.
+	CodePreviewDatabaseProvisioning = "preview_database_provisioning"
 	// ADR-570: connection-circuit enforcement availability and revision errors.
 	CodeEgressCircuitUnavailable = "egress_circuit_unavailable"
 	CodeEgressCircuitDisabled    = "egress_circuit_disabled"
@@ -853,6 +858,10 @@ const (
 	// (with reason: "missing"|"expired", ttl_sec) is the load-
 	// bearing security signal; the wire code is the UX affordance.
 	CodeStepUpRequired = "step_up_required"
+	// CodeRecentSignInRequired is returned when an account change whose
+	// only proof is the browser session comes from a session older than
+	// RecentSignInWindow (ADR 20261110100000): sign in again, then retry.
+	CodeRecentSignInRequired = "recent_sign_in_required"
 	// CodeMFAInvalidCode is returned when /confirm, /verify, or
 	// /recover validate a presented TOTP code / recovery code and
 	// the comparison fails. The audit Emit fires regardless.
@@ -3379,6 +3388,15 @@ func ErrStepUpRequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeStepUpRequired,
 		"Step-up required",
 		"step-up MFA required for this action: complete /v1/account/mfa/verify to refresh")
+}
+
+// ErrRecentSignInRequired asks a browser to sign in again before an account
+// change it can prove with nothing but its session.
+func ErrRecentSignInRequired() *Problem {
+	return NewProblem(http.StatusForbidden, CodeRecentSignInRequired,
+		"Sign in again",
+		fmt.Sprintf("this change needs a sign-in from the last %d minutes; sign in again, then retry", int(RecentSignInWindow.Minutes()))).
+		WithDocs(docsBase + "/auth")
 }
 
 // ErrBillingNotImplemented is returned by an apid handler when the selected
@@ -7102,6 +7120,20 @@ func ErrSourceRefUnavailable(reason string) *Problem {
 		"Source-ref fetch unavailable",
 		reason).
 		WithDocs(docsBase + "/build/source-ref#errors")
+}
+
+// PreviewDatabaseRetryAfter is the Retry-After of
+// ErrPreviewDatabaseProvisioning.
+const PreviewDatabaseRetryAfter = 10 * time.Second
+
+// ErrPreviewDatabaseProvisioning holds a deployment into a PR preview until
+// the preview's managed PostgreSQL databases are ready (ADR-20261102123523).
+func ErrPreviewDatabaseProvisioning() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodePreviewDatabaseProvisioning,
+		"Preview database provisioning",
+		"The preview's managed PostgreSQL database is still provisioning; retry after the indicated delay.").
+		WithDocs(docsBase+"/preview-databases").
+		WithHeader("Retry-After", strconv.Itoa(int(PreviewDatabaseRetryAfter.Seconds())))
 }
 
 // ErrSourceRefStale is returned when a caller binds an immutable source SHA

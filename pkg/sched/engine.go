@@ -2287,7 +2287,13 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 	}
 	if refreshRuntimeConfig {
 		out, err = e.refreshRuntimeConfigRolling(ctx, appID, wakeID)
-		if err == nil && out.Instance != nil && wakeID != "" {
+		idle := errors.Is(err, errRuntimeRefreshIdle)
+		if idle {
+			// Nothing runs the previous credentials, so a pending rotation
+			// is complete (ADR-20261110120000).
+			err = nil
+		}
+		if err == nil && (out.Instance != nil || idle) && wakeID != "" {
 			if rotations, ok := e.store.(state.ObjectS3CredentialRotationStore); ok {
 				if finishErr := rotations.FinalizeObjectS3CredentialRotationsForApp(ctx, appID, wakeID); finishErr != nil {
 					return out, fmt.Errorf("sched: retire previous object-storage credentials for app %s: %w", appID, finishErr)

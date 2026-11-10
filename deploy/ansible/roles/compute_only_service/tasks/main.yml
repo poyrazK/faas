@@ -621,6 +621,29 @@
     mode: "0644"
   when: (faas_box_role | default('single-box')) == 'compute-only'
 
+# ADR-20261109170000: sign app layers through the control plane's signd once
+# faas_imaged_signd_target is set; empty keeps the node's own signer.
+- name: compute_only_service — converge imaged's signd client leaf
+  ansible.builtin.include_tasks: signd_client.yml
+  when: faas_imaged_signd_target | default('') | length > 0
+
+- name: compute_only_service — install imaged's signd drop-in
+  notify: restart faas-imaged
+  ansible.builtin.template:
+    src: zz-faas-signd-client.conf.j2
+    dest: /etc/systemd/system/faas-imaged.service.d/zz-faas-signd-client.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_imaged_signd_target | default('') | length > 0
+
+- name: compute_only_service — remove imaged's signd drop-in while signd is off
+  notify: restart faas-imaged
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-imaged.service.d/zz-faas-signd-client.conf
+    state: absent
+  when: faas_imaged_signd_target | default('') | length == 0
+
 # Runtime bases embed guest/init as PID 1. Keep the source release-managed;
 # an old /usr/local/bin/faas-guest-init can otherwise survive a daemon rollout
 # and make every newly staged base boot with stale guest code.
