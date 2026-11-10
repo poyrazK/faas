@@ -22,7 +22,7 @@ covered. Update this table when a journey or a GA row changes.
 | 38 | Scale to zero | `TestScaleToZero`, `TestGuestGuarantees` (burst wake, wake latency) | — |
 | 39 | Browser wake page | `TestBrowserWakePage` (shown when a wake exceeds 1.5 s; never for fetch) | forcing a wake slower than 1.5 s |
 | 40 | Firecracker isolation | `TestGuestGuarantees` (egress denylist, RNG and clock after restore) | jailer/cgroup internals (metal tests) |
-| 41 | Function runtimes | `TestTemplateDeploys` (Node 22/24, Python 3.12/3.13, Go, Rust) | alpine Go variant |
+| 41 | Function runtimes | `TestTemplateDeploys` (Node 22/24, Python 3.12/3.13, Go, Rust); `TestFunctionSnapshotHooks` (Node `init`, `beforeSnapshot`, `afterRestore` in code, ADR-20261110190000: `init_before_serving`, `hooks_around_restore`) | alpine Go variant; Python snapshot hooks; a failing `init` (`function_init_failed`) |
 | 42 | Manual park / wake, prewarm | `TestScaleToZero` (park, wake --wait) | prewarm (no CLI command) |
 | 43 | Autoscaling and min instances | `TestScaleToZero/min_instances`, `TestResourcesAndAutoscaling` (target RPS/CPU, max instances), `TestRecoverableScaling` (guarded CLI writes, recovery after a later revision, stale refusal, public probe) | scheduled scaling; scale-out under load |
 | 44 | Service wake-ahead | `TestMultiServiceProject/wake_ahead_on_by_default` | that a caller's cold wake restores its dependencies (not observable from outside) |
