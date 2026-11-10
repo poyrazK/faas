@@ -4388,13 +4388,6 @@ Create, attach and restore managed PostgreSQL databases
 
 Durably switch between idle suspension and always-on compute
 
-`gregale postgres compute-policy [set|status] --scale-to-zero <BOOL> --request-id <UUID> <database>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scale-to-zero <BOOL>` | true for idle suspension, false for always-on | required; one of `true` · `false` |
-| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
-
 #### postgres compute-policy set
 
 Durably switch between idle suspension and always-on compute

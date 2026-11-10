@@ -152,18 +152,29 @@ func (d cliTreeDiscovery) runsToday(words []string) (string, bool) {
 }
 
 // groupListsRunner reports whether the tree group at path lists, among its
-// verbs, the tree path that runs today's command old: `event backfill` runs
-// `events backfill`, which the table names `event backfill create`.
+// verbs, the tree path that runs today's command old while another of its
+// verbs runs a different command: `event backfill` runs `events backfill`,
+// which the table names `event backfill create`, beside `get`
+// (`events backfill-status`). A group whose verbs all run old
+// (`edge rule attack-mode set|get`) shares old's flags, so it keeps them.
 func (d cliTreeDiscovery) groupListsRunner(path []string, old string, verbs []cliSub) bool {
 	if len(verbs) == 0 {
 		return false
 	}
 	prefix := strings.Join(path, " ") + " "
-	return slices.ContainsFunc(cliTreeAliases, func(alias cliTreeAlias) bool {
+	runsOld, runsOther := false, false
+	for _, alias := range cliTreeAliases {
 		verb, under := strings.CutPrefix(alias.New, prefix)
-		return under && alias.Old == old && !strings.Contains(verb, " ") &&
-			slices.ContainsFunc(verbs, func(sub cliSub) bool { return sub.Name == verb })
-	})
+		if !under || strings.Contains(verb, " ") || !slices.ContainsFunc(verbs, func(sub cliSub) bool { return sub.Name == verb }) {
+			continue
+		}
+		if alias.Old == old {
+			runsOld = true
+		} else {
+			runsOther = true
+		}
+	}
+	return runsOld && runsOther
 }
 
 // cliTreeRenamesPath reports a path of today's that the table gives a tree
