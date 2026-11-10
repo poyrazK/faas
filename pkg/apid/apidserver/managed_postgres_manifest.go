@@ -465,7 +465,8 @@ func (s *server) bindResolvedManagedPostgresBindings(
 func (s *server) manifestBindingChangedProblem(ctx context.Context, accountID, appID string, dependency resolvedManagedPostgresBinding, databaseName string) *api.Problem {
 	bindings, err := s.managedPostgresBindings.ListForApp(ctx, accountID, appID, dependency.scope)
 	if err != nil {
-		return nil
+		// The caller reports the original conflict instead.
+		return nil //nolint:nilerr // explanation is best-effort
 	}
 	for _, existing := range bindings {
 		if existing.EnvironmentKey != dependency.environmentKey || existing.Scope != dependency.scope ||
