@@ -2256,6 +2256,16 @@ type ApplicationStandardVersion struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type ArtifactSignature struct {
+	StorageKey      string
+	Digest          string
+	Bytes           int64
+	DeploymentID    pgtype.UUID
+	NodeName        string
+	SignatureFormat string
+	SignedAt        pgtype.Timestamptz
+}
+
 type AuditEventOutbox struct {
 	ID          int64
 	Actor       string
