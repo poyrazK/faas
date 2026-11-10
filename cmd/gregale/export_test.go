@@ -2798,6 +2798,15 @@ var RefuseDevFunctionSet = refuseDevFunctionSet
 // MetricLabelFlags exposes the --metric-label parser.
 var MetricLabelFlags = metricLabelFlags
 
+// ValidateSubscriptionCapacityCommandBudget exposes the receipt budget check.
+var ValidateSubscriptionCapacityCommandBudget = validateSubscriptionCapacityCommandBudget
+
+// ActivityDisplayTime exposes the org activity / keys list time formatter.
+var ActivityDisplayTime = activityDisplayTime
+
+// RenderHTTPLogQueryEvent exposes the `logs --source http` row renderer.
+var RenderHTTPLogQueryEvent = renderHTTPLogQueryEvent
+
 // ManifestDeclaredBindings exposes the bindings check manifest reader (ADR-20261110213000).
 var ManifestDeclaredBindings = manifestDeclaredBindings
 

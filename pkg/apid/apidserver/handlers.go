@@ -1327,6 +1327,11 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 		// writes and reads this column; omitting it here made a successful
 		// PATCH appear to remain false to API clients.
 		MaintenanceMode: a.MaintenanceMode,
+		// Issue #475: the DTO documents eviction_priority as the field
+		// customers read to verify their PATCH; it was never projected, so
+		// `app get` showed best_effort after a successful switch to reserved
+		// (Hunt 32 H32-55).
+		EvictionPriority: state.EvictionPriorityOrBestEffort(a.EvictionPriority),
 	}
 }
 

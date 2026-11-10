@@ -354,12 +354,15 @@ func validOrgActivityActor(actor string) bool {
 	}
 }
 
+// activityDisplayTime prints a server timestamp in UTC with its zone, like
+// `audit list` and `org get`. It used the Mac's local zone with no label
+// (Hunt 32 H32-5), so one activity row and its audit row disagreed.
 func activityDisplayTime(raw string) string {
 	at, err := time.Parse(time.RFC3339Nano, raw)
 	if err != nil {
 		return raw
 	}
-	return at.Local().Format("2006-01-02 15:04")
+	return at.UTC().Format("2006-01-02 15:04 UTC")
 }
 
 // cmdOrgsRm takes its flags before or after the slug: `org delete acme -q`
