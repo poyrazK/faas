@@ -96,15 +96,11 @@ func printParkedWindowLogs(ctx context.Context, client parkedWindowLogsClient, s
 				if e.Event == "end" {
 					return true, 0
 				}
-				if e.Data == "" || !retainedLineMatches(e.Data, filter.Grep) || !writtenAtOrAfter(e.Data, since) {
+				if e.Data == "" || !retainedLineMatches(e.Data, filter.Grep) || !retainedLineLevelMatches(e.Data, filter.Level) || !writtenAtOrAfter(e.Data, since) {
 					return false, 0
 				}
 				if !header {
-					note := ""
-					if filter.Level != "" {
-						note = " --level is not applied to retained logs."
-					}
-					_, _ = fmt.Fprintf(errOut, "Retained logs of parked instance %s (started %s).%s\n", ins.ID, ins.Start.UTC().Format(time.RFC3339), note)
+					_, _ = fmt.Fprintf(errOut, "Retained logs of parked instance %s (started %s).\n", ins.ID, ins.Start.UTC().Format(time.RFC3339))
 					header = true
 				}
 				_, _ = fmt.Fprintln(out, formatRuntimeLogLine(e.Data))

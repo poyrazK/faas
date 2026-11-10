@@ -221,7 +221,7 @@ export type AppResponse = {
    */
   require_signed?: boolean;
   /**
-   * Per-app two-tier snapshot flag. True on Pro/Scale by default; Free/Hobby always false.
+   * Per-app two-tier snapshot flag. False by default; Pro/Scale may opt in, Free/Hobby always false.
    */
   warm_snapshot_enabled?: boolean;
   /**

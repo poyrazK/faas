@@ -10862,6 +10862,9 @@ func (m *MemStore) ClearDeployment(_ context.Context, id, principal string) erro
 	if d.Status == DeployLive {
 		return ErrCancelLiveForbidden
 	}
+	if d.Status.IsCancelEligible() {
+		return ErrClearInFlightForbidden
+	}
 	now := time.Now().UTC()
 	d.DeletedAt = &now
 	d.DeletedByPrincipal = principal

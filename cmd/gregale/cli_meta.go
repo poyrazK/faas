@@ -1364,6 +1364,14 @@ var cliCommands = []cliCommand{
 			{Name: "update", Short: "Update one alert rule", Positionals: []string{"[<alert-id>]"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose a rule, edit current settings, and confirm changes", Bool: true},
 				{Name: "app", Short: "app slug (linked app or picker in interactive mode)", Value: "slug"},
+				{Name: "name", Short: "rule name (3..120 chars)", Value: "NAME"},
+				{Name: flagNameEnabled, Short: "turn the rule on or off (--enabled=false pauses it)", Bool: true},
+				{Name: "metric", Short: "metric", Value: "METRIC"},
+				{Name: "comparison", Short: "gt|gte|lt|lte|above_baseline|below_baseline", Value: "OP"},
+				{Name: "threshold", Short: "threshold value", Value: "N"},
+				{Name: "window-spec", Short: "5m|15m|1h|6h|24h|7d|15d", Value: "WINDOW"},
+				{Name: flagNameCooldownMinutes, Short: "minutes between repeat notifications of one breach", Value: "N"},
+				{Name: "webhook-url", Short: "http(s) webhook URL", Value: "URL"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the replacement webhook secret from stdin"},
@@ -6136,7 +6144,7 @@ var cliCommands = []cliCommand{
 				{Name: "work-key", Short: "JSON scalar identifying related work", Value: "JSON"},
 				{Name: "work-fairness-key", Short: "JSON scalar shared by related work keys", Value: "JSON"},
 			}},
-			{Name: "receive", Short: "Wait for the next queue row the platform delivers", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
+			{Name: "receive", Short: "Wait for the next processed message's result (pending messages go to the app, not here)", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
 			{Name: "state", Short: "Show queue state", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
 			{Name: statusLiteral, Short: "Show queue depth, scaling, bindings, and liveness", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
 			{Name: "peek", Short: "Peek at the next wake", Positionals: []string{"<slug>"}, Flags: []cliFlag{
@@ -6153,7 +6161,7 @@ var cliCommands = []cliCommand{
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 			}},
-			{Name: "ack", Short: "Ack a wake", Positionals: []string{"<slug>", "<row-id>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
+			{Name: "ack", Short: "Acknowledge a processed message's result (refused for a message still pending)", Positionals: []string{"<slug>", "<row-id>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
 			{Name: "setup", Short: "Configure a simple push workload with queue-depth scaling", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "queue-name", Short: "logical queue name", Value: "QUEUE"},
 				{Name: "target-depth", Short: "messages per worker before scaling out", Value: "N"},
@@ -6475,6 +6483,7 @@ var cliCommands = []cliCommand{
 			{Name: "environments", Aliases: []string{"envs"}, Short: "Manage project environments, releases and promotions", Notes: []string{"Qualify binds probes to release, config and secret revisions."}, Subcommands: []cliSub{
 				{Name: "list", Aliases: []string{"ls"}, Short: "List environments", Positionals: []string{"<project-slug>"}},
 				{Name: "create", Short: "Create or clone an environment"},
+				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Req: true, Short: "confirm environment deletion"}}},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
 				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},

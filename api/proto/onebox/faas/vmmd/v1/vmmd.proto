@@ -969,13 +969,14 @@ message AppSpec {
   // keeps what it declared. False (an older schedd) never pauses it.
   bool idle_ladder_guarded_pause = 39;
   // ADR-20261109172421: the instance's cgroup cpu.weight, its share of a busy
-  // host (schedd sends max(1, ram_mb / 16)). 0 (an older schedd) keeps the
-  // plan's weight. vmmd refuses a value above 10000.
+  // host (schedd sends max(1, ram_mb / 16)). 0 (an older schedd) gets that
+  // weight from mem_size_mib. vmmd refuses a value above 10000.
   int32 cpu_weight = 41;
   // ADR-20261109172421: the instance runs with host cpu.max = max and no
   // startup boost, so it may use any idle host CPU up to its vCPUs.
-  // cpu_millicores still sizes guest workload partitions. False (an older
-  // schedd) keeps the cpu_millicores quota.
+  // cpu_millicores still sizes guest workload partitions. vmmd runs every
+  // app instance this way whatever the field says (ADR-20261109172421 step
+  // 6.3); it stays for an older schedd.
   bool cpu_uncapped = 42;
 }
 

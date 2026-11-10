@@ -592,6 +592,17 @@ var MustCreateAlertRule = mustCreateAlertRule
 var MustSeedApp = mustSeedApp
 var MustSeedAppFor = mustSeedAppFor
 var MustSeedDeployment = mustSeedDeployment
+var LockUploadSession = lockUploadSession
+
+// UploadSessionLockTracked reports whether key still has an entry in the
+// upload-session lock map.
+func UploadSessionLockTracked(key string) bool {
+	uploadSessionLocksMu.Lock()
+	defer uploadSessionLocksMu.Unlock()
+	_, ok := uploadSessionLocks[key]
+	return ok
+}
+
 var MustSeedEdgeRuleApp = mustSeedEdgeRuleApp
 var NearestRunningTelemetryRow = nearestRunningTelemetryRow
 var NewAppSecretCredentialSink = newAppSecretCredentialSink
@@ -2016,6 +2027,9 @@ var WriteExclusiveError = writeExclusiveError
 // ResolveAndCheckEgress is the create-time egress check every outbound URL
 // (alert, log drain, webhook, channel) passes.
 var ResolveAndCheckEgress = resolveAndCheckEgress
+
+// LegacyNumericHost spots "2130706433"-style hosts before resolution.
+var LegacyNumericHost = legacyNumericHost
 
 // PlanDowngradeProblemForTest runs the pre-downgrade quota check (Hunt 17
 // H17-4) for a subject the HTTP route would resolve, such as an organization.

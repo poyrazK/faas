@@ -1534,6 +1534,7 @@ func NormalizeGitArchive(repoRoot, prefix, archivePath string) ([]string, error)
 var ParkedArchivePendingNote = parkedArchivePendingNote
 var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
+var RetainedLineLevelMatches = retainedLineLevelMatches
 var ParseAIPriceSpec = parseAIPriceSpec
 var ParseAIRouteTargets = parseAIRouteTargets
 var ParseStoredWorkflowLiveBaseline = parseStoredWorkflowLiveBaseline
@@ -2806,3 +2807,11 @@ var ActivityDisplayTime = activityDisplayTime
 
 // RenderHTTPLogQueryEvent exposes the `logs --source http` row renderer.
 var RenderHTTPLogQueryEvent = renderHTTPLogQueryEvent
+
+// ApplyFunctionHookLifecycleForTest exposes applyFunctionHookLifecycle.
+func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
+	GetApp(ctx context.Context, slug string) (api.AppResponse, error)
+	UpdateApp(ctx context.Context, slug string, req api.UpdateAppRequest) (api.AppResponse, error)
+}, slug, sourceDir, handler string) error {
+	return applyFunctionHookLifecycle(ctx, client, slug, sourceDir, handler)
+}

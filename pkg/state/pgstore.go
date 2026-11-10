@@ -11672,6 +11672,9 @@ func (s *PgStore) ClearDeployment(ctx context.Context, id, principal string) err
 	if status == DeployLive {
 		return ErrCancelLiveForbidden
 	}
+	if status.IsCancelEligible() {
+		return ErrClearInFlightForbidden
+	}
 	now := time.Now().UTC()
 	if _, err := tx.Exec(ctx, `
 		UPDATE deployments

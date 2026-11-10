@@ -150,7 +150,8 @@ type Lease struct {
 	// DisableStartupCPUBoost opts out of the bounded startup CPU allowance.
 	DisableStartupCPUBoost bool
 	// CPUWeight, when positive, is the per-VM cpu.weight instead of the
-	// plan's (ADR-20261109172421).
+	// plan's (ADR-20261109172421). Every app instance has one since step
+	// 6.3 (wakeLeaseCPU); jobs keep their plan's.
 	CPUWeight int
 	// CPUUncapped writes cpu.max = max and skips the startup boost while the
 	// ceiling is the app default; a 250 or 500 millicore ceiling stays a cap

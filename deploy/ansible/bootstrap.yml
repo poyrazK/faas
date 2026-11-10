@@ -259,6 +259,9 @@
     # legacy one-box services left on an existing control-plane host.
     - role: role_convergence
       when: faas_cp_converge_roles | default(none) is none or 'role_convergence' in faas_cp_converge_roles
+    # ADR-20261110183000: hourly check that this host runs the signed release.
+    - role: release_integrity
+      when: faas_cp_converge_roles | default(none) is none or 'release_integrity' in faas_cp_converge_roles
     # ADR-143: prove convergence. Lenient here (first bootstrap has no
     # enabled units yet); `make verify-fleet` runs the strict form.
     - role: fleet_verify
@@ -359,6 +362,8 @@
     - role: log_archive
     - role: optional_credentials
     - role: role_convergence
+    # ADR-20261110183000: hourly check that this host runs the signed release.
+    - role: release_integrity
     - role: fleet_verify
       # node_join imports this bootstrap before it installs the requested
       # release. Existing enabled daemons may still execute an older binary
