@@ -2159,6 +2159,21 @@ groups:
           description: "The compute edge on {{ $labels.node }} answered {{ $value | humanize }} requests/s with 421 for hosts outside the apps domain for 15 minutes. The tunnel's ingress rules likely send platform or custom-domain hosts to the compute edge."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
+      # ADR-20261110123517: the edge's overload level has stayed above 0, in
+      # observe mode (it would be shedding) or on (it is).
+      - alert: FaasComputeEdgeShedding
+        expr: gatewayd_public_overload_level > 0
+        for: 2m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The app edge on {{ $labels.node }} is overloaded"
+          description: "The compute edge on {{ $labels.node }} has held an overload level of {{ $value | humanize }} for 2 minutes: its node's CPU is full of edge traffic. With FAAS_EDGE_OVERLOAD=on it is resetting new connections and answering 503 edge_overloaded; in observe mode it would be. Find the hosts and addresses sending the load, then move a flooded host behind Cloudflare or add a node."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
       # ADR-20261103163954 §3: edgednsd renews the apps domains' certificate
       # 4 days before its roughly 6.7-day certificate expires
       # (ADR-20261108100000), so an edge serving one with 2 days left means
