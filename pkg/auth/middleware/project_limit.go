@@ -24,6 +24,14 @@ type ProjectResolver interface {
 	ProjectBySlug(ctx context.Context, accountID, slug string) (state.Project, error)
 }
 
+// OrgProjectResolver is the optional store seam that resolves an
+// organization project route's {organization} and {slug} for a
+// project-limited key: project slugs are unique only within an owner.
+type OrgProjectResolver interface {
+	OrgBySlug(ctx context.Context, slug string) (state.Org, error)
+	ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error)
+}
+
 // ProjectLimitable reports whether a key may carry a project limit: agent
 // keys and hosted MCP sign-ins' mcp-login keys.
 func ProjectLimitable(key state.APIKey) bool {
@@ -42,15 +50,16 @@ func AppOutsideKeyProjects(key *state.APIKey, app state.App) bool {
 // the body or a stored session, and the key's own identity. Every other route
 // is closed to it until someone adds it here deliberately.
 var projectLimitedOpenRoutes = map[string]bool{
-	"GET /v1/apps":                      true,
-	"GET /v1/orgs/{slug}/apps":          true,
-	"GET /v1/projects":                  true,
-	"POST /v1/domains":                  true,
-	"POST /v1/crons":                    true,
-	"GET /v1/account":                   true,
-	"GET /v1/capabilities":              true,
-	"PUT /v1/agent-connections/self":    true,
-	"DELETE /v1/agent-connections/self": true,
+	"GET /v1/apps":                         true,
+	"GET /v1/orgs/{slug}/apps":             true,
+	"GET /v1/projects":                     true,
+	"GET /v1/orgs/{organization}/projects": true,
+	"POST /v1/domains":                     true,
+	"POST /v1/crons":                       true,
+	"GET /v1/account":                      true,
+	"GET /v1/capabilities":                 true,
+	"PUT /v1/agent-connections/self":       true,
+	"DELETE /v1/agent-connections/self":    true,
 }
 
 // AppByIDResolver is the optional store seam that loads a deployment read's
@@ -80,10 +89,14 @@ func (m *Middleware) limitKeyToProjects(w http.ResponseWriter, r *http.Request, 
 		// The handler authorizes the app (appaccess refuses one outside
 		// the key's projects) or narrows the list.
 		return false
-	case appRoutePattern(r.Pattern):
+	case appRoutePattern(r.Pattern), orgAppRoutePattern(r.Pattern):
+		// App slugs are unique across accounts, so an organization's app
+		// route resolves the app the same way.
 		return m.refuseAppOutsideProjects(w, r, key)
 	case projectRoutePattern(r.Pattern):
 		return m.refuseProjectOutsideLimit(w, r, acct, key)
+	case orgProjectRoutePattern(r.Pattern):
+		return m.refuseOrgProjectOutsideLimit(w, r, key)
 	case strings.HasPrefix(r.Pattern, "GET /v1/deployments/{id}"):
 		return m.refuseDeploymentOutsideProjects(w, r, key)
 	}
@@ -102,6 +115,47 @@ func appRoutePattern(pattern string) bool {
 func projectRoutePattern(pattern string) bool {
 	_, path, _ := strings.Cut(pattern, " ")
 	return strings.HasPrefix(path, "/v1/projects/{slug}")
+}
+
+// orgAppRoutePattern reports an organization route addressed to one app.
+func orgAppRoutePattern(pattern string) bool {
+	_, path, _ := strings.Cut(pattern, " ")
+	return strings.HasPrefix(path, "/v1/orgs/{organization}/apps/{slug}")
+}
+
+// orgProjectRoutePattern reports an organization route addressed to one
+// project by its {slug}.
+func orgProjectRoutePattern(pattern string) bool {
+	_, path, _ := strings.Cut(pattern, " ")
+	return strings.HasPrefix(path, "/v1/orgs/{organization}/projects/{slug}")
+}
+
+// refuseOrgProjectOutsideLimit answers 404, as for another organization's
+// project, when the route's project is not one the key is limited to.
+func (m *Middleware) refuseOrgProjectOutsideLimit(w http.ResponseWriter, r *http.Request, key *state.APIKey) bool {
+	notFound := func() bool {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such project"))
+		return true
+	}
+	resolver, ok := m.Authn.(OrgProjectResolver)
+	if !ok {
+		return notFound()
+	}
+	org, err := resolver.OrgBySlug(r.Context(), r.PathValue("organization"))
+	if err == nil {
+		var project state.Project
+		if project, err = resolver.ProjectByOrgSlug(r.Context(), org.ID, r.PathValue("slug")); err == nil {
+			if !slices.Contains(key.ProjectIDs, project.ID) {
+				return notFound()
+			}
+			return false
+		}
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return notFound()
+	}
+	m.storeUnavailable(w, r, err, "could not load the project; retry shortly")
+	return true
 }
 
 // refuseAppOutsideProjects answers 404, as for another account's app, when
