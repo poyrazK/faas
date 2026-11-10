@@ -3,7 +3,6 @@ package middleware
 import (
 	"context"
 	"net/http"
-	"strings"
 )
 
 // orgProjectPathKey carries the organization slug of an
@@ -27,11 +26,4 @@ func OrganizationSlug(r *http.Request) string {
 	}
 	organization, _ := r.Context().Value(orgProjectPathKey{}).(string)
 	return organization
-}
-
-// orgPathPrefix reports whether path is under /v1/orgs/{organization}/ and
-// returns the rest after the organization segment.
-func orgPathRest(path string) (string, bool) {
-	rest, ok := strings.CutPrefix(path, "/v1/orgs/{organization}")
-	return rest, ok
 }
