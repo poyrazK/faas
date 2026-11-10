@@ -217,7 +217,13 @@ schema change ships before its first user.
       `admission_reserve_node`'s CPU resources); CPU stays telemetry.
    3. vmmd drops its plan CPU fallback (plan `cpu.max`, weight and startup
       boost for app instances). It ships a release after 1, once every
-      schedd sends `cpu_weight` and `cpu_uncapped`.
+      schedd sends `cpu_weight` and `cpu_uncapped`. No vmmd CPU value reads
+      the plan after it: jobs and execution guests (agent runs, data
+      repair, function executions) get the weight of their memory and keep
+      their quotas, one core unless they were given one; every `cpu.max`
+      uses a 100 ms period (the per-plan periods ran from 100 ms to 1 s, at
+      one core each); a VM without a weight of its own (a database VM) gets
+      the cgroup default 100, a builder 256.
    4. The per-plan fields in `pkg/api/limits.go`, the API and CLI fields
       that show them, and the SQL `plan_vcpus` fallbacks.
    5. The flat hierarchy: app instances directly under `faas-tenant.slice`,
