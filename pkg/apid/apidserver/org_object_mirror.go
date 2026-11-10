@@ -34,7 +34,7 @@ func orgObjectMirror(next func() http.Handler) http.Handler {
 		organization, slug := r.PathValue("organization"), r.PathValue("slug")
 		prefix := "/v1/orgs/" + organization + "/apps/" + slug
 		rest, ok := strings.CutPrefix(r.URL.Path, prefix)
-		if !ok || organization == "" || slug == "" || !(strings.HasPrefix(rest, "/buckets/") || rest == "/upload-routes" || strings.HasPrefix(rest, "/upload-routes/")) {
+		if !ok || organization == "" || slug == "" || !orgObjectMirrored(rest) {
 			http.NotFound(w, r)
 			return
 		}
@@ -44,4 +44,10 @@ func orgObjectMirror(next func() http.Handler) http.Handler {
 		dispatched.RequestURI = dispatched.URL.RequestURI()
 		next().ServeHTTP(w, dispatched)
 	})
+}
+
+// orgObjectMirrored reports whether rest, the path after
+// /v1/orgs/{organization}/apps/{slug}, is a storage path the mirror serves.
+func orgObjectMirrored(rest string) bool {
+	return strings.HasPrefix(rest, "/buckets/") || rest == "/upload-routes" || strings.HasPrefix(rest, "/upload-routes/")
 }
