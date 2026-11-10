@@ -138,14 +138,16 @@ func (s *Service) DescribeDevBuckets(r *http.Request, app state.App) ([]api.DevB
 		if err != nil {
 			return nil, err
 		}
+		var pending map[string]string
 		for _, credential := range credentials {
 			if credential.ManagedAppID == app.ID && credential.ManagedScope == bucket.Scope && credential.Label == "developer" && credential.ID == DevBucketBindingID(bucket, credential.ManagedPrefix) {
 				item := viewObjectStorageComputeBinding(credential)
-				wakeID, err := bindings.PendingObjectS3CredentialRotation(ctx, app.AccountID, bucket.ID, credential.ID)
-				if err != nil {
-					return nil, err
+				if pending == nil {
+					if pending, err = bindings.PendingObjectS3CredentialRotations(ctx, app.AccountID, bucket.ID); err != nil {
+						return nil, err
+					}
 				}
-				item.RotationPending = wakeID != ""
+				item.RotationPending = pending[credential.ID] != ""
 				out = append(out, api.DevBucketResponse{Bucket: viewBucket(bucket), Binding: item})
 			}
 		}

@@ -170,8 +170,10 @@ func (m *MemStore) migrationNodeUsedLocked(node, omit string) capacityResources 
 	return used
 }
 
+// migrationCapacityFits is memory alone: CPU and vCPUs are measured, never
+// refused (ADR-20261109172421).
 func migrationCapacityFits(n ComputeNode, used capacityResources) bool {
-	return (n.AdmissionCeilingMB <= 0 || used.RAM <= int64(n.AdmissionCeilingMB)) && (n.VPCPUs <= 0 || used.CPU <= int64(n.VPCPUs)*1000) && (n.VCPUBudget <= 0 || used.VCPU <= int64(n.VCPUBudget))
+	return n.AdmissionCeilingMB <= 0 || used.RAM <= int64(n.AdmissionCeilingMB)
 }
 
 func (m *MemStore) checkMigrationAdmissionCapacityLocked(i Instance) error {
