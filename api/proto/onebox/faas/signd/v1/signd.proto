@@ -1,0 +1,44 @@
+// signd — the control-plane artifact signer (ADR-20261109170000).
+//
+// signd is the only holder of the fleet signing key. imaged on a compute
+// node asks it to sign each app layer it publishes; signd signs only a
+// layer of a deployment that node is building right now, and only once per
+// storage key. It writes the signature object itself.
+//
+// Wire discipline mirrors the other daemons: checked-in *.pb.go generated
+// with paths=source_relative, errors enveloped through pkg/grpcerr. signd
+// listens on TCP with mutual TLS only; the client leaf's CN is the calling
+// compute node's name (pkg/pki node identity).
+
+syntax = "proto3";
+
+package onebox.faas.signd.v1;
+
+option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/signd/v1;signdpb";
+
+service Signd {
+  // SignArtifact signs one published app layer with a version-2 signature
+  // and writes it to sigs/<storage_key>.sig. Refused (PERMISSION_DENIED)
+  // when the caller is not the node building the deployment, the deployment
+  // is not mid-build, the key is not one its build produces, or the key
+  // already has a different signature. A retry of the same request after a
+  // lost reply signs again and succeeds.
+  rpc SignArtifact(SignArtifactRequest) returns (SignArtifactResponse);
+}
+
+message SignArtifactRequest {
+  // The deployment whose build published the layer.
+  string deployment_id = 1;
+  // The layer's storage key: apps/<slug>/<deployment id>.ext4, or a
+  // sidecar's apps/<slug>/<deployment id>-<name>.ext4.
+  string storage_key = 2;
+  // Lowercase hex SHA-256 of the layer's bytes.
+  string digest = 3;
+  // The layer's size in bytes.
+  int64 bytes = 4;
+}
+
+message SignArtifactResponse {
+  // Where signd wrote the signature: sigs/<storage_key>.sig.
+  string signature_key = 1;
+}

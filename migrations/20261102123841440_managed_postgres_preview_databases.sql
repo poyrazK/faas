@@ -11,10 +11,12 @@
 --
 -- The CHECKs are added NOT VALID and validated in their own statements, and
 -- the index is built concurrently, so databases keep being written. Every
--- step is re-runnable.
+-- step is re-runnable: a failed concurrent build leaves an invalid index,
+-- which the next run drops and builds again.
 -- +goose NO TRANSACTION
 
 -- +goose Up
+SET statement_timeout = 0;
 SET lock_timeout = '5s';
 
 ALTER TABLE managed_postgres_databases
@@ -44,13 +46,25 @@ $previews$;
 ALTER TABLE managed_postgres_databases VALIDATE CONSTRAINT managed_postgres_databases_previews_chk;
 ALTER TABLE managed_postgres_databases VALIDATE CONSTRAINT managed_postgres_preview_fields_chk;
 
+-- +goose StatementBegin
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+             WHERE c.relname = 'managed_postgres_preview_key' AND NOT i.indisvalid) THEN
+    EXECUTE 'DROP INDEX managed_postgres_preview_key';
+  END IF;
+END $$;
+-- +goose StatementEnd
+
 RESET lock_timeout;
 
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS managed_postgres_preview_key
   ON managed_postgres_databases (preview_source_database_id, preview_environment_id, preview_pr_number)
   WHERE preview_source_database_id IS NOT NULL AND deleted_at IS NULL;
 
+RESET statement_timeout;
+
 -- +goose Down
+SET statement_timeout = 0;
 SET lock_timeout = '5s';
 
 DROP INDEX CONCURRENTLY IF EXISTS managed_postgres_preview_key;
@@ -63,3 +77,4 @@ ALTER TABLE managed_postgres_databases
   DROP COLUMN IF EXISTS previews;
 
 RESET lock_timeout;
+RESET statement_timeout;
