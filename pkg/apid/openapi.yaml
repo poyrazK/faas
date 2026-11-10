@@ -90758,7 +90758,7 @@ components:
         # out-of-range threshold values are rejected with 422
         # invalid_warm_snapshot_min_*.
         warm_snapshot_enabled:
-          description: "Per-app two-tier snapshot flag. True on Pro/Scale by default; Free/Hobby always false."
+          description: "Per-app two-tier snapshot flag. False by default; Pro/Scale may opt in, Free/Hobby always false."
           type: boolean
           example: true
         warm_snapshot_min_requests:
