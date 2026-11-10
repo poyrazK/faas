@@ -1,0 +1,33 @@
+---
+# release_integrity — hourly check that the platform binaries on this host
+# are the signed release's (ADR-20261110183000). `gregalectl release verify`
+# writes faas_release_integrity_* and faas_release_manifest_info to the
+# node_exporter textfile collector and logs each failure to the journal under
+# faas-release-integrity, which Alloy ships off the host.
+
+- name: release_integrity — ensure the textfile collector directory exists
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    mode: "0755"
+
+- name: release_integrity — install the service and timer
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-release-integrity.service
+    - faas-release-integrity.timer
+  notify: reload systemd for release integrity
+
+- name: release_integrity — flush the systemd reload before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+- name: release_integrity — enable and start the timer
+  ansible.builtin.systemd_service:
+    name: faas-release-integrity.timer
+    enabled: true
+    state: started

@@ -106,6 +106,8 @@ alloy_security_identifiers:
   - chage
   - gpasswd
   - chsh
+  # ADR-20261110183000: release integrity failures (gregalectl release verify).
+  - faas-release-integrity
 # Kernel messages at notice (5) or more severe; lockdown refusals are
 # notices. Bridge and tap port changes are info and stay local.
 alloy_security_kernel_max_priority: 5
