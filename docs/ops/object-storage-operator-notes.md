@@ -1409,9 +1409,13 @@ bucket without versioning, and accounting reads any native version ID as
 retained versions. A GCS bucket's first tracked write therefore moves it to
 `all_versions` accounting, after which ADR-540 declines direct signed PUTs,
 untracked gateway writes and multipart completion with 409. S3 backends (OVH)
-return no version ID for an unversioned bucket and are unaffected. Object
-storage moves to OVH before customer launch, so this is not fixed on GCS
-(production journey 2026-11-03).
+return no version ID for an unversioned bucket and are unaffected. This is not
+fixed on GCS (production journey 2026-11-03): customer launch of object storage
+is gated on moving production to OVH. production-us still runs
+`gcs-us-east1-prod-v1`, and on 2026-11-10 all seven of its ready buckets were
+already in `all_versions` accounting, so multipart completion and direct signed
+PUTs answer 409 there today; single gateway PUTs up to `max_single_put_bytes`
+work.
 
 The route policy is provider-neutral. It uses the registry's optional streaming
 writer, so switching an immutable bucket placement between OVH, R2, AWS, GCS,
@@ -2278,6 +2282,19 @@ parts stream through upload slots and durable admission without whole-part
 staging. Admission returns `SlowDown`; HTTP/1 connections with unread uploads
 close after the error. Clients using `Expect: 100-continue` can avoid sending a
 rejected body.
+
+Size these for the whole installation: one control-plane gateway serves every
+customer, so `max_concurrent_uploads` is the platform's upload concurrency, and
+one account may hold half the slots (`api.ObjectUploadAccountSlotSharePercent`).
+With the default 4, two accounts uploading at once (`aws s3 cp` runs 10 parts in
+parallel) make every other account's PUTs and parts wait 15 s and then answer
+`SlowDown`. Raise it with `max_spool_bytes` (each single PUT reserves its whole
+size; 32 slots of 64 MiB is 2 GiB) and keep `min_spool_free_bytes` on the spool
+volume. On a control plane that also runs apid and PostgreSQL, set
+`max_bytes_per_second` below the NIC's speed so object transfers cannot starve
+them. production-us ran the defaults on a 2-vCPU host on 2026-11-10 (object
+storage audit OS-11); moving the gateway to its own hosts or the compute nodes
+(ADR-20261031122757) is the lasting fix.
 
 `max_bytes_per_second` is the gateway's share of its node's port
 (ADR-20261031122757 §3): 0 (the default) leaves transfers unpaced, otherwise

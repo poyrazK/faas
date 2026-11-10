@@ -2384,6 +2384,21 @@ groups:
           description: "Prometheus cannot scrape s3-gatewayd's control listener on {{ $labels.node }}. Its s3 tunnel connector leaves the tunnel once the gateway's unit stops; check faas-s3-gatewayd-compute on that node."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
 
+      # Object storage audit OS-10: the control-plane gateway behind
+      # s3.<domain> had no availability alert of its own.
+      - alert: FaasS3GatewayDown
+        expr: up{job="s3-gatewayd"} == 0
+        for: 2m
+        labels:
+          severity: page
+          component: s3-gatewayd
+          family: object_storage
+          public_status: internal
+        annotations:
+          summary: "The control-plane S3 gateway is not answering"
+          description: "Prometheus cannot scrape s3-gatewayd's control listener on the control plane. While it is down every request to s3.<domain> fails; check faas-s3-gatewayd there."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+
       - alert: FaasComputeObjectGatewayConnectorDisconnected
         expr: (up{job="cloudflared-s3"} == 0) or (cloudflared_tunnel_ha_connections{job="cloudflared-s3"} == 0)
         for: 2m

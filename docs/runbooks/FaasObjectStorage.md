@@ -6,8 +6,8 @@ Alerts: `FaasObjectStorageProviderRefusingCredentials`,
 `FaasObjectStorageUsageExportStale`, `FaasObjectStorageRegionNearlyFull`,
 `FaasObjectStorageRegionFull`, `FaasS3GatewayReadUsageFlushFailing`,
 `FaasPublicObjectReadUsageFlushFailing`, `FaasS3GatewayPortShareSaturated`,
-`FaasComputeObjectGatewayDown`, `FaasComputeObjectGatewayConnectorDisconnected`,
-`FaasComputeObjectGatewayUnavailable`.
+`FaasS3GatewayDown`, `FaasComputeObjectGatewayDown`,
+`FaasComputeObjectGatewayConnectorDisconnected`, `FaasComputeObjectGatewayUnavailable`.
 Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
 `s3-gatewayd` (`pkg/s3gateway`), apid's provider usage exporter
 (`pkg/apid/object/usage_export.go`), and public bucket reads in `gatewayd-public`
@@ -43,6 +43,12 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
 
 ## Symptom
 
+- **Control-plane gateway down.** `FaasS3GatewayDown`: Prometheus cannot
+  scrape `faas-s3-gatewayd` on the control plane (`127.0.0.1:9096`), and every
+  request to `s3.<domain>` fails. Check `systemctl status faas-s3-gatewayd`
+  and its journal, then restart it. Prometheus scrapes the gateway whenever
+  its unit exists, managed by the manifest or not; before 2026-11-10 only a
+  managed gateway was scraped, so production-us's gateway alerts never fired.
 - **Provider refusing credentials.** A provider answered 401/403 to a bucket
   operation. apid withdraws object storage for an hour: capabilities report
   it off, `gregale feature list` shows it disabled, and bucket creates answer
