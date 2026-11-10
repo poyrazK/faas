@@ -70,6 +70,10 @@ export interface FunctionConfig {
   webhooks?: FunctionWebhookConfig[];
   queueBindings?: FunctionQueueBindingConfig[];
   eventTriggers?: FunctionEventTriggerConfig[];
+  /** Milliseconds beforeSnapshot may take (default 500, at most 2000). */
+  beforeSnapshotTimeoutMs?: number;
+  /** Milliseconds afterRestore may take (default 500, at most 2000). */
+  afterRestoreTimeoutMs?: number;
 }
 
 /**

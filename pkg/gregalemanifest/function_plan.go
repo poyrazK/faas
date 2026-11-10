@@ -70,6 +70,9 @@ func (m *Manifest) PlanFunctionsFS(fsys fs.FS, projectSlug string) ([]FunctionPl
 			return nil, fmt.Errorf("function %q: %w", fn.Name, err)
 		}
 		fn.Hooks = readFunctionHooks(fsys, root, handler)
+		if err := fn.validateHookTimeouts(); err != nil {
+			return nil, err
+		}
 		planned = append(planned, FunctionPlan{Spec: fn, Slug: slug, Root: root, Runtime: runtime, Handler: handler})
 	}
 	return planned, nil

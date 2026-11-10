@@ -33,3 +33,17 @@ func applyFunctionHookLifecycle(ctx context.Context, client functionHookClient, 
 	}
 	return nil
 }
+
+// functionSetMemberKey marks the context of one function's deploy inside a
+// functions-project deploy, which has already applied that function's hook
+// lifecycle with its entry's timeouts before the build.
+type functionSetMemberKey struct{}
+
+func withFunctionSetMember(ctx context.Context) context.Context {
+	return context.WithValue(ctx, functionSetMemberKey{}, true)
+}
+
+func isFunctionSetMember(ctx context.Context) bool {
+	member, _ := ctx.Value(functionSetMemberKey{}).(bool)
+	return member
+}
