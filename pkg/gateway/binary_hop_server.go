@@ -231,7 +231,10 @@ func (c *hopServerConn) setReadDeadline(d time.Duration) {
 }
 
 // serveOne reads and serves one request and reports whether the connection
-// may carry another.
+// may carry another. Each request's context starts fresh, as net/http's
+// does; the client hanging up and Shutdown cancel it.
+//
+//nolint:contextcheck // a request's context is its own, not the caller of Serve's.
 func (c *hopServerConn) serveOne() bool {
 	start := time.Now()
 	headerTimeout := c.srv.ReadHeaderTimeout
@@ -299,7 +302,7 @@ func (c *hopServerConn) serveOne() bool {
 func (c *hopServerConn) runHandler(w *hopResponseWriter, req *http.Request) (ok bool) {
 	defer func() {
 		if v := recover(); v != nil {
-			if v != http.ErrAbortHandler {
+			if err, isErr := v.(error); !isErr || !errors.Is(err, http.ErrAbortHandler) {
 				c.srv.log().Error("gateway binary hop: handler panic", "err", v, "stack", string(debug.Stack()))
 			}
 			ok = false

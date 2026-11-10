@@ -267,7 +267,10 @@ func TestBinaryHopCancelReachesTheHandler(t *testing.T) {
 	req := newHopRequest(http.MethodGet, "/wait", nil).WithContext(ctx)
 	done := make(chan error, 1)
 	go func() {
-		_, err := p.binary.roundTrip(req, p.dialBinary)
+		resp, err := p.binary.roundTrip(req, p.dialBinary)
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
 		done <- err
 	}()
 	time.Sleep(50 * time.Millisecond)
@@ -332,10 +335,12 @@ func TestBinaryHopLimitsAndFailures(t *testing.T) {
 		}
 	})
 	t.Run("a panic ends the connection and the next request gets a new one", func(t *testing.T) {
-		if _, err := p.binary.roundTrip(newHopRequest(http.MethodGet, "/panic", nil), p.dialBinary); err == nil {
+		resp, err := p.binary.roundTrip(newHopRequest(http.MethodGet, "/panic", nil), p.dialBinary)
+		if err == nil {
+			_ = resp.Body.Close()
 			t.Fatal("a request whose handler panicked succeeded")
 		}
-		resp, err := p.binary.roundTrip(newHopRequest(http.MethodGet, "/", nil), p.dialBinary)
+		resp, err = p.binary.roundTrip(newHopRequest(http.MethodGet, "/", nil), p.dialBinary)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -360,7 +365,10 @@ func TestBinaryHopLimitsAndFailures(t *testing.T) {
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", p.binPath+".missing")
 		}
-		_, err := newBinaryHopTransport(time.Second).roundTrip(newHopRequest(http.MethodGet, "/", nil), missing)
+		resp, err := newBinaryHopTransport(time.Second).roundTrip(newHopRequest(http.MethodGet, "/", nil), missing)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
 		var dialErr *hopDialError
 		if !errors.As(err, &dialErr) || dialErr.reason() != HopFallbackNoSocket {
 			t.Fatalf("err %v, want a %s dial error", err, HopFallbackNoSocket)

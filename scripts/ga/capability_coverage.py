@@ -399,6 +399,9 @@ INFRA_RULES = [
     # Manifest hot_path: the compute edge keeps connections to each node's
     # gatewayd-internal alive.
     r"^internal-keepalive-per-node$",
+    # ADR-20261110081523: binary HTTP on that hop, its switch and its codec.
+    r"^edge-internal-hop$",
+    r"^binhttp$",
     # ADR-20261102081618: the records that send Cloudflare to the compute edges.
     r"^edgednsd?(-.*)?$",
     # ADR-20261109170000: the control plane's artifact signer.
