@@ -29,6 +29,10 @@ func reseedRuntimeForExe(exe string) string {
 		return "bun"
 	case base == "deno":
 		return "deno"
+	case base == "java":
+		// ADR-20261110150000: a JVM older than 16, or one started without
+		// the stamped JAVA_TOOL_OPTIONS, does not register.
+		return "java"
 	case pythonExe.MatchString(base):
 		return "python"
 	}
@@ -53,6 +57,9 @@ type reseedCandidate struct {
 	optedOut bool
 	// ownRoot is a process chrooted into its own root filesystem (a sidecar).
 	ownRoot bool
+	// runtime overrides the executable-name label: "go" for a workload
+	// executable carrying Go build info (ADR-20261110150000).
+	runtime string
 }
 
 // unregisteredRuntimes returns the sorted, de-duplicated runtime labels of
@@ -62,7 +69,10 @@ func unregisteredRuntimes(candidates []reseedCandidate, registered map[int]bool)
 	seen := map[string]bool{}
 	count := 0
 	for _, c := range candidates {
-		runtime := reseedRuntimeForExe(c.exe)
+		runtime := c.runtime
+		if runtime == "" {
+			runtime = reseedRuntimeForExe(c.exe)
+		}
 		if runtime == "" || registered[c.pid] || c.optedOut {
 			continue
 		}
