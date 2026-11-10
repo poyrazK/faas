@@ -654,7 +654,7 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 		exclude := make([]string, 0, len(kept))
 		for _, app := range kept {
 			exclude = append(exclude, app.WorkloadName)
-			held[app.ID] = fmt.Sprintf("Kept: %s is not in the Compose file at this commit, and a GitHub push does not remove services. It keeps serving its last release. Deploy with `gregale deploy` or from the dashboard to review and remove it.", app.WorkloadName)
+			held[app.ID] = pushKeptMessage(app)
 		}
 		result, err = s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, exclude)
 		if err != nil {
