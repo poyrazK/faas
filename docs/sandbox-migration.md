@@ -10,7 +10,7 @@ Gregale sandbox sessions are Firecracker microVMs with a `/workspace`, root insi
 |---|---|---|
 | Coding agents: clone, install, edit, test, open a PR | Agent runs, or sandbox sessions | Available at launch |
 | A tool sandbox for a harness running elsewhere (OpenAI Agents SDK) | Sandbox sessions and `@gregale/agents-sandbox` | Available at launch |
-| Code written against the E2B SDK | `@gregale/sandbox-e2b`, an E2B-compatible client | Available at launch; Python client to follow |
+| Code written against the E2B SDK | E2B-compatible clients: `@gregale/sandbox-e2b` (TypeScript) and `gregale-sandbox-e2b` (Python) | Available at launch |
 | OS package installs at run time (`apk`, `apt`, `sudo`) | Root inside the guest, in `registries` network mode | Available at launch |
 | Dev servers and previews | Exposed ports with preview URLs, private behind a token by default | Available at launch |
 | Short untrusted code (playgrounds, judges, user scripts) | Sandbox sessions, or functions and image runs | Available at launch |
@@ -34,8 +34,15 @@ Gregale sandbox sessions are Firecracker microVMs with a `/workspace`, root insi
    import { Sandbox } from '@gregale/sandbox-e2b';
    ```
 
-2. Set `GREGALE_API_KEY` (or pass `apiKey`) in place of the E2B key.
-3. Check the differences below against your code.
+   In Python, install `gregale-sandbox-e2b` and change the import the same way:
+
+   ```python
+   # from e2b import Sandbox
+   from gregale_sandbox_e2b import Sandbox
+   ```
+
+2. Set `GREGALE_API_KEY` (or pass `apiKey`, `api_key` in Python) in place of the E2B key.
+3. Check the differences below against your code. The Python client keeps the same calls under their Python names (`commands.run(cmd, background=True, on_stdout=...)`, `files.make_dir`, `get_host`, `expose_port`), with times in seconds; the differences are listed after the table.
 
 | E2B call | On Gregale |
 |---|---|
@@ -56,6 +63,12 @@ Gregale sandbox sessions are Firecracker microVMs with a `/workspace`, root insi
 - Mail ports (25, 465, 587) and private, link-local and metadata addresses are always blocked.
 - Plan limits apply: concurrent sessions, memory, lifetime, exposed ports and preview rate.
 - Commands take no stdin yet.
+
+**Python client differences:**
+
+- Synchronous only: use `Sandbox`; there is no `AsyncSandbox` yet.
+- A background command's `on_stdout` and `on_stderr` run while you `wait()` on the handle or iterate it (`for stdout, stderr, _ in handle`), not on a thread of their own.
+- Pass `api_base` instead of `domain`. Unsupported calls raise `UnsupportedException`; a non-zero exit raises `CommandExitException`.
 
 ## Move an OpenAI Agents SDK harness
 

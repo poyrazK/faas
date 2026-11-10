@@ -539,7 +539,7 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - **Refused with `UnsupportedError`,** naming the call and the alternative: `pause` and `betaPause`, `pty`, stdin, `watchDir`, MCP and custom templates. `envs` go with every command, because create takes no session env yet. `allowInternetAccess: true` asks for `web`, which apid still refuses.
    - **Migration guide:** `docs/sandbox-migration.md`, holding the coverage table, the E2B call mapping, the Agents SDK move, workspaces and network modes. It is not in `customer-pages.json` until launch.
    - **Not built yet:**
-     - The Python shim `gregale-sandbox-e2b`.
+     - ~~The Python shim `gregale-sandbox-e2b`~~: built in part four.
      - ~~Template import~~: built in part three.
    - **As built, part two: seller-image sessions (local branch, no PR yet).** `POST /v1/sandboxes {"image": "<ref>"}` boots a customer OCI image in place of a preset.
      - **Amends §2:** the image is cached in ADR-1161's image-run cache, not a separate per-account seller-image store. apid gets or creates the image's runner job (`imagerun.Handler.EnsureSessionImage`), so sessions and image runs share one cache, one `ImageRunCachedImages` limit and one pull. Image sessions need image runs switched on; otherwise `image` is `sandbox_unsupported`.
@@ -559,7 +559,11 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - **CLI:** `gregale sandbox template publish|list|get|rm` (`sandbox-templates`; `build` also works). `publish` reads `template_name`, `dockerfile`, `start_cmd` and `ready_cmd` from `e2b.toml` (flags override; `cpu_count` and `memory_mb` are ignored), saves the template, packs the directory with the chosen Dockerfile at the archive root as `Dockerfile`, deploys it to the template's app, and waits for the build.
      - **Shim:** `Sandbox.create('<name>')` with a name that is not a preset or `base` creates the session from that template; `getInfo().templateId` is the template's name.
      - **Tested:** store, apid handler, imaged, agentd, vmmdgrpc, fcvm and CLI unit tests; guest-init tests and the metal tests `TestMetalSandboxFromASellerImage` and `TestMetalSandboxTemplateCommands` passed on internal-test-1 on 2026-11-10 with leakcheck clean. **Not tested** end to end against a deployed Gregale (build to session); that needs sandbox sessions switched on in a test environment.
-     - **Not built:** the Python shim, and template warm snapshots.
+     - **Not built:** template warm snapshots.
+   - **As built, part four: the Python shim (local branch, no PR yet).** `gregale-sandbox-e2b` (import `gregale_sandbox_e2b`, private, Python 3.12+) lives in `sdk/sandbox-e2b-python` and uses only the standard library. Its tests run under `make test-sandbox-e2b-python`, which no CI job runs yet.
+     - It mirrors the TypeScript shim call for call, with the E2B Python SDK's names and arguments: `Sandbox(...)` and `Sandbox.create(...)`, `connect`, `list` (a paginator with `has_next` and `next_items()`), and `kill`, `get_info` and `set_timeout` on the class with an ID or on an instance. A `with` block closes the session. Times are in seconds, as in E2B's Python SDK. Exceptions keep E2B's Python names (`SandboxException`, `CommandExitException`, `NotFoundException`, `TimeoutException` and the rest), plus `UnsupportedException`.
+     - **Synchronous only:** there is no `AsyncSandbox`. A background command's `on_stdout`/`on_stderr` run while the caller waits on the handle or iterates it, because the client starts no threads.
+     - **Transport:** `urllib` with redirects refused, so the bearer never follows a redirect; tests inject a fake transport, and one test drives the real one against a local HTTP server.
 11. Billing, with ADR-20261027090011.
 
 Long-lived paused sessions (E2B-style memory pause) need their own ADR.
