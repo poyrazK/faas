@@ -57,3 +57,8 @@ Environment=FAAS_EDGE_PROXY_CIDRS={{ (faas_edge_cloudflare_ipv4_cidrs + faas_edg
 # Keep connections to each node's gatewayd-internal alive (manifest hot_path).
 Environment=FAAS_INTERNAL_KEEPALIVE_PER_NODE=1
 {% endif %}
+{% if (faas_edge_internal_hop_binary | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+# ADR-20261110081523: this node's gatewayd-internal in binary HTTP
+# (manifest hot_path).
+Environment=FAAS_EDGE_INTERNAL_HOP=binary
+{% endif %}

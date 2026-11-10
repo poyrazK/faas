@@ -1,7 +1,7 @@
 # ADR: Object inventory follows bucket activity, and the sweep keeps its workers busy
 
 Date: 2026-11-10
-Status: Proposed
+Status: Accepted (2026-11-10)
 Amends: [ADR 20261023223000](20261023223000-object-storage-bucket-scoped-availability.md) (the 900 s window and the batched sweep), [ADR-20261030100835](20261030100835-object-storage-resumable-inventory.md) (when an unfinished listing is due)
 Related: [ADR-627](627-prospective-gateway-storage-safety-accounting.md), [ADR-20261024132844](20261024132844-gateway-metered-object-storage-billing.md), [ADR-20261029174627](20261029174627-object-storage-backend-pools.md), [ADR-20261031122757](20261031122757-s3-gateway-on-compute-nodes.md)
 
@@ -53,17 +53,22 @@ in flight: "a held bucket cannot grow, so a past inventory holds"
 
 - **No batch barrier.** Workers draw due buckets from one queue. A worker that
   finishes claims the next due bucket at once instead of waiting for the rest
-  of its batch. The sweep stops claiming after
-  `ObjectStorageInventorySweepBudget` (40 s). Attempts in flight finish under
-  their own 45 s timeout.
+  of its batch. After `ObjectStorageInventorySweepBudget` (40 s) the sweep
+  starts no long listing. Short buckets fill the time the long listings in
+  flight still take (under their own 45 s timeout), so the sweep never
+  outlasts its longest listing and its workers do not idle meanwhile.
 - **No idle minute while work is due.** A sweep that stopped on its budget
   with buckets still due is followed by the next one immediately. The loop
   waits its minute, or for `InventoryWake`, only when nothing is due.
-- **Large listings take at most half the workers.** At most
-  `ObjectStorageInventoryContinuingWorkers` (4) attempts at a time continue an
-  unfinished listing, so one-page buckets keep their cadence beside them.
-  Continuing listings are still due on the next sweep, as ADR-20261030100835
-  decided.
+- **Long listings take at most half the workers.** At most
+  `ObjectStorageInventoryLongListingWorkers` (4) attempts at a time list a
+  long bucket, so one-page buckets keep their cadence beside them. A listing
+  is long when it continues an unfinished listing, or when the bucket's last
+  inventory counted more than `ObjectStorageInventoryLongListingKeys`
+  (100,000) keys. Without the second rule the first 45 s attempt of every
+  large bucket could still take all eight workers. Continuing listings are
+  still due on the next sweep, as ADR-20261030100835 decided, and a sweep
+  hands out each bucket at most once.
 
 ### 2. A quiet bucket's inventory stays fresh for a day
 
@@ -125,6 +130,25 @@ in flight: "a held bucket cannot grow, so a past inventory holds"
 4. Quiet freshness and verification cadence behind `object_inventory_quiet`.
    Run in `shadow` for a week, then `on` with the owner's go-ahead.
 5. Re-measure and record the result here.
+
+## Step 1 result (2026-11-10)
+
+`TestInventorySweepCapacity` on the new sweep, at 200 ms per page
+([evidence](../ops/evidence/20261110-object-inventory-capacity/REPORT.md#after-step-1-2026-11-10)):
+
+- **Small buckets:** 1,505 per 40 s sweep, listers 93% busy. The next sweep
+  starts at once, so about 32,000 one-page buckets stay inside 900 s, up from
+  about 10,800.
+- **Steady state with 16 large buckets** (listed before, 500,000 keys each):
+  795–1,205 small buckets per sweep with the listers 94–96% busy, and 4
+  large listings advancing each sweep. Main's sweep, measured the same way,
+  refreshed 49–99 at 15–17% busy and then waited a minute.
+- **Pass criteria.** Small-only cycle under 50 s: met (about 40 s). Listers at
+  least 75% busy with large listings: met in steady state (94–96%). The
+  original mixed scenario, whose 16 buckets were full but never listed,
+  stayed at 68–82%. A bucket with no inventory has unknown size, so its first
+  45 s listing takes a short worker. In production that happens only to a
+  bucket that is new (and empty) or restored full.
 
 ## Consequences
 

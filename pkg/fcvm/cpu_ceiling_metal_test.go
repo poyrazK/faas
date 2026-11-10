@@ -58,7 +58,7 @@ func TestMetalScaleTwoCoreCeiling(t *testing.T) {
 	const appID = "app-" + instance
 	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
 	scope := filepath.Join(cgroupRoot, ParentCgroupFor(api.PlanScale), PerInstanceScope(instance))
-	period := api.PlanScale.CPUPeriodUS()
+	period := cpuMaxPeriodUS
 	check := func(stage string, wantMillicores int) {
 		t.Helper()
 		raw, err := os.ReadFile(filepath.Join(scope, "cpu.max"))

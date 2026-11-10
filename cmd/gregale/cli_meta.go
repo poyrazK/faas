@@ -6144,7 +6144,7 @@ var cliCommands = []cliCommand{
 				{Name: "work-key", Short: "JSON scalar identifying related work", Value: "JSON"},
 				{Name: "work-fairness-key", Short: "JSON scalar shared by related work keys", Value: "JSON"},
 			}},
-			{Name: "receive", Short: "Wait for the next queue row the platform delivers", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
+			{Name: "receive", Short: "Wait for the next processed message's result (pending messages go to the app, not here)", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
 			{Name: "state", Short: "Show queue state", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
 			{Name: statusLiteral, Short: "Show queue depth, scaling, bindings, and liveness", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
 			{Name: "peek", Short: "Peek at the next wake", Positionals: []string{"<slug>"}, Flags: []cliFlag{
@@ -6161,7 +6161,7 @@ var cliCommands = []cliCommand{
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 			}},
-			{Name: "ack", Short: "Ack a wake", Positionals: []string{"<slug>", "<row-id>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
+			{Name: "ack", Short: "Acknowledge a processed message's result (refused for a message still pending)", Positionals: []string{"<slug>", "<row-id>"}, Flags: []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}}},
 			{Name: "setup", Short: "Configure a simple push workload with queue-depth scaling", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "queue-name", Short: "logical queue name", Value: "QUEUE"},
 				{Name: "target-depth", Short: "messages per worker before scaling out", Value: "N"},
@@ -6483,6 +6483,7 @@ var cliCommands = []cliCommand{
 			{Name: "environments", Aliases: []string{"envs"}, Short: "Manage project environments, releases and promotions", Notes: []string{"Qualify binds probes to release, config and secret revisions."}, Subcommands: []cliSub{
 				{Name: "list", Aliases: []string{"ls"}, Short: "List environments", Positionals: []string{"<project-slug>"}},
 				{Name: "create", Short: "Create or clone an environment"},
+				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Req: true, Short: "confirm environment deletion"}}},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
 				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},
