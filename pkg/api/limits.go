@@ -9808,6 +9808,14 @@ const (
 	// GatewayRequestTelemetryMinuteGraceSeconds keeps a minute's buckets open
 	// this long after the minute ends, for requests that finish just after it.
 	GatewayRequestTelemetryMinuteGraceSeconds = 5
+	// GatewayRequestTelemetryTracedExactPerBucket is how many traced
+	// non-5xx requests in one collapse bucket-minute keep their own row, so
+	// their guest spans have a row to merge into (ADR-127 amendment
+	// 2026-11-10). Past it a traced request folds into the bucket and its
+	// spans are dropped after the span writer's retries. At the 5-row cap that
+	// server errors keep, a busy traced app lost spans all day (prod
+	// 2026-11-09: ~190 traces/day across two nodes).
+	GatewayRequestTelemetryTracedExactPerBucket = 30
 	// GatewayRequestJournalSegmentMinutes is the received-time span of one
 	// node-local request-ID journal segment (ADR-20261101085552). A segment's
 	// index is sorted in memory when it closes, so the span bounds that work:

@@ -78,6 +78,9 @@ func (s *server) evaluatePostRelease(ctx context.Context, store state.PostReleas
 	if end := c.RolloutCompletedAt.Add(api.PostReleaseWatchWindow); end.Before(now) {
 		until = end.Truncate(time.Minute).Add(time.Minute)
 	}
+	// Only closed minutes: an open minute holds 5xx rows but not the folded
+	// 2xx yet (ADR-625 amendment 2026-11-10).
+	until = canary.ClosedTelemetryUntil(until, now)
 	current, err := postReleaseWindow(telemetry, ctx, c.AppID, c.DeploymentID, since, until)
 	if err != nil {
 		return fmt.Errorf("read release telemetry: %w", err)
@@ -109,6 +112,15 @@ func (s *server) evaluatePostRelease(ctx context.Context, store state.PostReleas
 			return nil
 		}
 		rule, reason = api.RolloutRuleAbortPostReleaseGate, "after the rollout completed: "+gates.Summary()
+	}
+	if regressed {
+		// Request telemetry a gateway dropped would compare partial counts;
+		// judge again once coverage holds (ADR-625 amendment 2026-11-10).
+		for _, window := range [][2]time.Time{{since, until}, {baselineEnd.Add(-api.PostReleaseWatchBaseline), baselineEnd}} {
+			if lost, err := s.releaseTelemetryLost(ctx, telemetry, window[0], window[1]); err != nil || lost {
+				return err
+			}
+		}
 	}
 	decision := release.PostReleaseDecision(rule, reason, c.PredecessorID, current, previous, since, until, now)
 	decision.Gates = gates.Results

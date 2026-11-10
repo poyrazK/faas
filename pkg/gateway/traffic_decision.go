@@ -269,7 +269,8 @@ func recordTrafficRefusal(ctx context.Context, reason string) {
 func recordTrafficPolicyStage(ctx context.Context, stage string) {
 	switch stage {
 	case "routing_read_timeout", "routing_owner_unverified", "routing_read_error", "routing_snapshot_invalid",
-		"routing_encode", "routing_host_pin_denied", "routing_empty_roster", "routing_no_selection":
+		"routing_encode", "routing_host_pin_denied", "routing_empty_roster", "routing_no_selection",
+		"workload_admission_unavailable", "workload_retired":
 	default:
 		stage = "other"
 	}
