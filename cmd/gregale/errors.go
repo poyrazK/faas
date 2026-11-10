@@ -76,6 +76,7 @@ var errorDocsURL = map[string]string{
 	api.CodeDepInstallFailed:            cliDocsURL,
 	api.CodeAppStartupTimeout:           cliDocsURL,
 	api.CodeAppStartupCrash:             cliDocsURL,
+	api.CodeFunctionInitFailed:          cliDocsURL,
 	api.CodeExecutionModeConflict:       cliDocsURL,
 }
 

@@ -970,6 +970,10 @@ const (
 	// the row is already terminal and the cancel is meaningless.
 	// ADR-124; mirrors the state.CancelReason invalid path.
 	CodeDeploymentCancelNotCancellable = "deployment_cancel_not_cancellable"
+	// CodeDeploymentHideInFlight is returned by DELETE /v1/deployments/{id}
+	// when the row is still pending, building, imaging or snapshotting:
+	// hiding does not stop it, so it must be cancelled first.
+	CodeDeploymentHideInFlight = "deployment_hide_in_flight"
 	// CodeDeploymentReorderNotPending is returned by reorder
 	// when the row's status is not 'pending'. ADR-124.
 	CodeDeploymentReorderNotPending = "deployment_reorder_not_pending"
@@ -1891,6 +1895,15 @@ const (
 	// Distinct from app_startup_timeout (still running, never ready) and
 	// app_not_listening (running, nothing bound).
 	CodeAppStartupCrash = "app_startup_crash"
+	// CodeFunctionInitFailed means a function's init hook threw
+	// before its worker became ready (ADR-20261110190000); an init that never
+	// finishes is an app_startup_timeout. The adapter's
+	// FunctionInitFailedMarker line in the workload output names it; it is
+	// otherwise an app_startup_crash, and customer-caused like one.
+	CodeFunctionInitFailed = "function_init_failed"
+	// FunctionInitFailedMarker begins the line the Node and Python function
+	// adapters print to stderr when init fails (pkg/fnadapter).
+	FunctionInitFailedMarker = "gregale: function init failed:"
 	// CodeExecutionModeConflict means the workload's startup behavior
 	// contradicts its declared execution mode: a worker that bound a port or
 	// exited, or a job that served. Customer-caused, like app_startup_crash.
@@ -2332,7 +2345,7 @@ func StatusForCode(code string) int {
 		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeWorkflowStepRetryNotAllowed,
-		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
+		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable, CodeDeploymentHideInFlight,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
@@ -2427,6 +2440,7 @@ func StatusForCode(code string) int {
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
 		CodeAppStartupCrash,
+		CodeFunctionInitFailed,
 		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
@@ -6025,6 +6039,18 @@ func ErrDeploymentCancelLiveForbidden(id string) *Problem {
 		WithHint("Use 'gregale deploys rollback <id>' to swap to a previous deployment.").
 		WithFix("Run: gregale deploys rollback --app <slug> --to <previous-deployment-id>").
 		WithWhy("Cancelling a live deployment has no well-defined semantics: it would either scale the app to zero (kills §6.2 INV 4) or park the app (kills INV 3). The deploys-rollback path is the user-correct escape.").
+		WithDocs(docsBase + "/deploys#cancel")
+}
+
+// ErrDeploymentHideInFlight refuses to hide a deployment that is still in
+// flight. Hiding only sets deleted_at, so the pipeline would keep running on
+// a row no list shows; cancelling stops it.
+func ErrDeploymentHideInFlight(id, status string) *Problem {
+	return NewProblem(http.StatusConflict, CodeDeploymentHideInFlight,
+		"Cannot hide a deployment that is still in progress",
+		fmt.Sprintf("deployment %s is %s; hiding it would not stop it.", id, status)).
+		WithHint("Cancel the deployment first, then hide it.").
+		WithFix("Run: gregale release cancel " + id + ", then gregale release hide " + id).
 		WithDocs(docsBase + "/deploys#cancel")
 }
 

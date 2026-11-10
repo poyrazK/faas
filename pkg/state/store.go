@@ -499,6 +499,13 @@ var ErrDeploymentSuperseded = errors.New("state: deployment superseded by a newe
 // deployment_cancel_live_forbidden code (ADR-124).
 var ErrCancelLiveForbidden = errors.New("state: cancel of DeployLive deployment is forbidden; use deploys rollback")
 
+// ErrClearInFlightForbidden is returned by ClearDeployment for a row that is
+// still in flight (pending, building, imaging, snapshotting). Hiding it would
+// not stop the pipeline, and the row would vanish from every list while it
+// kept its build slot, admission and supersede chain (deploy review
+// 2026-11-10, D1). Cancel it first; a cancelled row can be hidden.
+var ErrClearInFlightForbidden = errors.New("state: deployment is still in flight; cancel it before hiding")
+
 // ErrReorderNotPending is returned by ReorderDeployment when the
 // caller attempts to reorder a deployment that has already left
 // DeployPending (typically because the build VM is running or the

@@ -117,6 +117,9 @@ type edgeMetrics struct {
 	// signals it follows (ADR-20261110123517 §8).
 	overloadLevel  prometheus.Gauge
 	overloadSignal *prometheus.GaugeVec
+	// hopFallbacks counts requests for the binary hop that went over
+	// HTTP/1.1 instead, by reason (ADR-20261110081523).
+	hopFallbacks *prometheus.CounterVec
 }
 
 // Label values of gatewayd_public_overload_signal.
@@ -169,6 +172,10 @@ func newEdgeMetrics() *edgeMetrics {
 			Name: "gatewayd_public_overload_signal",
 			Help: "The signals a compute edge's overload level follows, each over the last second: sched_delay_p99_seconds (the edge's goroutine scheduling delay), node_cpu_pressure (share of time any task waited for a CPU) and gateway_cpu_share (the gateway daemons' share of the node's CPUs) (ADR-20261110123517).",
 		}, []string{"signal"}),
+		hopFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gatewayd_public_internal_hop_fallback_total",
+			Help: "Requests a compute edge meant for its own node's gatewayd-internal in binary HTTP that went over HTTP/1.1 instead, by reason: no_socket (the hop socket is missing or nothing listens on it, as beside a gatewayd-internal from before the hop or while it restarts) and dial_error (ADR-20261110081523).",
+		}, []string{"reason"}),
 	}
 	for _, reason := range clientlimit.Reasons {
 		m.refused.WithLabelValues(reason)
@@ -179,6 +186,9 @@ func newEdgeMetrics() *edgeMetrics {
 	for _, signal := range []string{overloadSignalSchedDelay, overloadSignalNodePressure, overloadSignalGatewayShare} {
 		m.overloadSignal.WithLabelValues(signal)
 	}
+	for _, reason := range gateway.HopFallbackReasons {
+		m.hopFallbacks.WithLabelValues(reason)
+	}
 	for _, result := range placementResults {
 		m.placement.WithLabelValues(result)
 	}
@@ -187,7 +197,7 @@ func newEdgeMetrics() *edgeMetrics {
 			m.wakeFailover.WithLabelValues(reason, outcome)
 		}
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures, m.refused, m.overloadLevel, m.overloadSignal)
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures, m.refused, m.overloadLevel, m.overloadSignal, m.hopFallbacks)
 	return m
 }
 
@@ -197,6 +207,11 @@ func (m *edgeMetrics) observeOverload(s clientlimit.OverloadSignals, level float
 	m.overloadSignal.WithLabelValues(overloadSignalSchedDelay).Set(s.SchedDelayP99.Seconds())
 	m.overloadSignal.WithLabelValues(overloadSignalNodePressure).Set(s.NodeCPUPressure)
 	m.overloadSignal.WithLabelValues(overloadSignalGatewayShare).Set(s.GatewayCPUShare)
+}
+
+// observeHopFallback counts one binary hop request sent over HTTP/1.1.
+func (m *edgeMetrics) observeHopFallback(reason string) {
+	m.hopFallbacks.WithLabelValues(reason).Inc()
 }
 
 // observeWakeFailover is the gateway.WakeFailover observer.
@@ -231,6 +246,9 @@ type localFirstDialer struct {
 	// it (ADR-20261031105055); nil keeps every request local first.
 	placement     *edgePlacement
 	placementPool *computeGatewayPool
+	// hop, when set, dials this node's gatewayd-internal's binary HTTP
+	// socket, offered with the local upstream (ADR-20261110081523).
+	hop gateway.InternalDialer
 }
 
 // nodeInventory reports a compute node's registry state: whether it is
@@ -257,6 +275,18 @@ func (d *localFirstDialer) withPlacement(placement *edgePlacement, pool *compute
 	d.placement = placement
 	d.placementPool = pool
 	return d
+}
+
+// withBinaryHop offers the local upstream's binary HTTP socket, dialled
+// with hop (ADR-20261110081523).
+func (d *localFirstDialer) withBinaryHop(hop gateway.InternalDialer) *localFirstDialer {
+	d.hop = hop
+	return d
+}
+
+// dialHop opens a connection to this node's binary HTTP socket.
+func (d *localFirstDialer) dialHop(ctx context.Context) (net.Conn, error) {
+	return d.hop.DialContext(ctx, "")
 }
 
 // placementRoute returns the ready node a request's host was last served
@@ -361,7 +391,11 @@ func (d *localFirstDialer) PickUpstream(ctx context.Context, rec *gateway.DialRe
 	localExcluded := d.nodeName != "" && rec.Excluded(d.nodeName)
 	viaLocal := d.healthy.Load() && !localExcluded
 	if viaLocal && !slices.Contains(failed, localUpstreamKey) {
-		return gateway.Upstream{Key: localUpstreamKey, Node: d.nodeName, Dial: d.dialLocal}, nil
+		local := gateway.Upstream{Key: localUpstreamKey, Node: d.nodeName, Dial: d.dialLocal}
+		if d.hop != nil {
+			local.Hop = d.dialHop
+		}
+		return local, nil
 	}
 	pool, ok := d.fallback.(gateway.UpstreamPicker)
 	if !ok {
