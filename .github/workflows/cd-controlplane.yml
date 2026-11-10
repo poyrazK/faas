@@ -458,6 +458,11 @@ jobs:
           '
 
       - name: Build immutable release bundle
+        env:
+          # Per-environment billing switch: disabled (public-beta default) or
+          # live. scripts/ci/faas_billing_mode.sh validates it and stages the
+          # same value for Ansible so both renders of the drop-in match.
+          FAAS_BILLING_MODE_SETTING: ${{ vars.FAAS_BILLING_MODE }}
         run: |
           set -euo pipefail
           # Same umask as the canonical download step: see there.
@@ -612,11 +617,13 @@ jobs:
           [Service]
           Environment=FAAS_OUTBOUNDD_ROLE=control-plane
           EOF
+          billing_mode="$(bash scripts/ci/faas_billing_mode.sh resolve)"
           for service in faas-apid faas-meterd; do
             cat > "${BUNDLE_ROOT}/systemd/${service}.service.d/zz-faas-billing-mode.conf" <<'EOF'
           [Service]
-          Environment=FAAS_BILLING_MODE=disabled
+          Environment=FAAS_BILLING_MODE=@FAAS_BILLING_MODE@
           EOF
+            sed -i "s/@FAAS_BILLING_MODE@/${billing_mode}/" "${BUNDLE_ROOT}/systemd/${service}.service.d/zz-faas-billing-mode.conf"
           done
           cat > "${BUNDLE_ROOT}/systemd/faas-apid.service.d/zz-faas-public-status.conf" <<'EOF'
           [Service]
@@ -887,6 +894,7 @@ jobs:
           POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
           POSTGRES_COMPUTE_ROLE_KEY: ${{ secrets.POSTGRES_COMPUTE_ROLE_KEY }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
+          FAAS_BILLING_MODE_SETTING: ${{ vars.FAAS_BILLING_MODE }}
         run: |
           set -euo pipefail
           if [[ ! -f deploy/ansible/control_plane_converge.yml ]]; then
@@ -916,6 +924,11 @@ jobs:
           # production environment. A release cut before the script stages none.
           if [[ -f scripts/ci/faas_environment_vars.sh ]]; then
             bash scripts/ci/faas_environment_vars.sh "$work/vars.yml"
+          fi
+          # The environment's FAAS_BILLING_MODE, so Ansible renders the drop-in
+          # the bundle installs. A release cut before the script stages none.
+          if [[ -f scripts/ci/faas_billing_mode.sh ]]; then
+            bash scripts/ci/faas_billing_mode.sh vars "$work/vars.yml"
           fi
           # ADR-20261023104734: daemons log in as their own runtime roles when
           # the environment variable POSTGRES_RUNTIME_ROLES_ENABLED is true
@@ -1817,6 +1830,7 @@ jobs:
           POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
           POSTGRES_COMPUTE_ROLE_KEY: ${{ secrets.POSTGRES_COMPUTE_ROLE_KEY }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
+          FAAS_BILLING_MODE_SETTING: ${{ vars.FAAS_BILLING_MODE }}
           HOSTED_RUNNER: ${{ inputs.hosted_runner }}
           ROLES: ${{ steps.plan.outputs.roles }}
         run: |
@@ -1848,6 +1862,11 @@ jobs:
           # production environment. A release cut before the script stages none.
           if [[ -f scripts/ci/faas_environment_vars.sh ]]; then
             bash scripts/ci/faas_environment_vars.sh "$work/vars.yml"
+          fi
+          # The environment's FAAS_BILLING_MODE, so Ansible renders the drop-in
+          # the bundle installs. A release cut before the script stages none.
+          if [[ -f scripts/ci/faas_billing_mode.sh ]]; then
+            bash scripts/ci/faas_billing_mode.sh vars "$work/vars.yml"
           fi
           # ADR-20261023104734: daemons log in as their own runtime roles when
           # the environment variable POSTGRES_RUNTIME_ROLES_ENABLED is true

@@ -96,6 +96,21 @@ const (
 // sessions sign in again first.
 const RecentSignInWindow = 15 * time.Minute
 
+// DashboardSessionIdleTimeout ends a dashboard session after this long
+// without a request, within its 7-day maximum lifetime (ADR 20261110120000).
+// Activity is sessions.last_seen_at, touched at most every 5 minutes.
+const DashboardSessionIdleTimeout = 48 * time.Hour
+
+// UnverifiedAccountDeleteAfter schedules deletion of an account nobody
+// verified this long after signup (or after EmailVerificationEnforcedFrom,
+// when later), if it never created an app and has no billing customer. The
+// normal 30-day restore window still applies (ADR 20261110120000).
+// UnverifiedAccountExpiryBatch caps one hourly sweep.
+const (
+	UnverifiedAccountDeleteAfter = 60 * 24 * time.Hour
+	UnverifiedAccountExpiryBatch = 100
+)
+
 // EmailChangeRevertWindow is how long after a confirmed sign-in email
 // change an operator can move the account back to the previous address
 // (`gregalectl accounts revert-email`, ADR 20261110100000).
@@ -215,12 +230,13 @@ const (
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one
 // client address, and one network (IPv4 /24, IPv6 /48), may create per day.
 //
-// SignupAccountsPerDay caps the self-service accounts the whole platform
-// creates in any 24 hours (ADR-20261104145353). Each account carries a full
-// Free allowance, and the per-address and per-network caps reset with every
-// new address, so this bounds the Free compute, egress and storage a signup
-// farm can claim in a day. It counts every account created, so an operator-
-// or support-created account uses the same budget.
+// SignupAccountsPerDay caps the verified self-service accounts the whole
+// platform creates in any 24 hours (ADR-20261104145353 amendment 1). Each
+// verified account carries a full Free allowance, and the per-address and
+// per-network caps reset with every new address, so this bounds the Free
+// compute, egress and storage a signup farm can claim in a day. Unverified
+// accounts cannot deploy and do not count. An operator- or support-created
+// verified account uses the same budget.
 const (
 	SignupAccountsPerAddressPerDay = 10
 	SignupAccountsPerNetworkPerDay = 50
@@ -11080,7 +11096,7 @@ func (p Plan) PlanIncludedGBHours() int {
 const DefaultOverageCapAllowances = ManagedPostgresOverageCeilingMultiplier - 1
 
 // DefaultOverageCapCents returns the spend cap a paid plan starts with:
-// Hobby $2, Pro $10, Scale $30. Free stops at its allowance and has none.
+// Hobby $10, Pro $50, Scale $150. Free stops at its allowance and has none.
 func (p Plan) DefaultOverageCapCents() (int64, bool) {
 	if !p.IsPaid() {
 		return 0, false

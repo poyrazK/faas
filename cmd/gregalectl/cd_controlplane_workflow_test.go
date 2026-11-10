@@ -322,7 +322,9 @@ func TestCDControlPlaneConvergesOutbounddAndPublicBetaBilling(t *testing.T) {
 	for _, required := range []string{
 		"host-config/outboundd.toml",
 		"FAAS_OUTBOUNDD_ROLE=control-plane",
-		"FAAS_BILLING_MODE=disabled",
+		// The environment's FAAS_BILLING_MODE, disabled when unset
+		// (scripts/ci/faas_billing_mode.sh).
+		"Environment=FAAS_BILLING_MODE=@FAAS_BILLING_MODE@",
 		"/etc/faas/secrets/outboundd/outboundd.env",
 		"faas_map  faas-outboundd  faas",
 	} {
