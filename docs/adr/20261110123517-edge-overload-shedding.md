@@ -6,8 +6,7 @@
   limit for the node as a whole beside the per-address ones.
 - **Related:** ADR-20261107180000 (handshake gate shares),
   ADR-20261030100950 (CPU pressure backstop, the first reader of
-  `cpu.pressure`), ADR-20261031105055 (placement routing, whose host map this
-  reuses), ADR-20261110081523 (binary hop),
+  `cpu.pressure`), ADR-20261110081523 (binary hop),
   [the 2026-11-09 edge request cost report](../ops/evidence/20261109-edge-request-cpu/REPORT.md)
 
 This record has a date-and-time identifier because numbered ADRs collide
@@ -96,12 +95,12 @@ up and keep serving its customers.
    Each refusal is a 503 problem with code `edge_overloaded` and a
    `Retry-After` of 1–3 s, jittered, written by the edge. The connection
    stays open. The order:
-   - **Unknown hosts:** a host with no entry in the placement map
-     (ADR-20261031105055), meaning no app answered for it in the last 30
-     s, is refused first, with probability min(1, 2L). This includes 404s
-     for names with no app, and wakes of apps that haven't served a
-     response in the last 30 s.
-     With placement routing off, every host counts as known.
+   - **Unknown hosts:** a host no app has answered for is refused first,
+     with probability min(1, 2L). The edge already keeps that set for its
+     per-host limit (ADR-20261103163954 §4): a host enters it with its first
+     2xx, 101 or 304 answer, and a full set forgets hosts idle for 10
+     minutes. This catches 404s for names with no app, and leaves apps that
+     have served, warm or parked, as known.
    - **Heavy addresses:** each address's request limit is scaled down from
      `EdgeClientRequestsPerSecondPerAddr` toward
      `EdgeOverloadRequestsPerSecondPerAddrFloor`, by 1 − L. The heaviest
@@ -134,7 +133,9 @@ up and keep serving its customers.
    gatewayd-internal don't change. The edge sheds before forwarding, so
    gatewayd-internal sees less work, and the tenant slice gets the CPU the
    edge no longer uses.
-7. **Switch.** `FAAS_EDGE_OVERLOAD=off|observe|on`, `off` by default.
+7. **Switch.** `FAAS_EDGE_OVERLOAD=off|observe|on`, `off` by default, set
+   by the manifest's `public_edge.overload`. It needs the client limits
+   (`public_edge.front: none`).
    - `observe` computes and exports the signals and the level and refuses
      nothing.
    - Rollout: `observe` on both nodes for 7 days of normal traffic,
@@ -171,10 +172,9 @@ up and keep serving its customers.
   connections are refused first.
 - **No reconnect storm.** Fast refusals keep each connection's open streams
   low, so HTTP/2 clients have no reason to open more connections.
-- **Cold apps rank below warm ones.** While the level is under 0.5, a wake
-  for an app with no answer in 30 seconds is refused before a warm app's
-  request. A wake costs the node far more than a warm request, so under
-  overload that is the right order.
+- **A brand-new app ranks with the unknown hosts** until it answers once.
+  Apps that have served, warm or parked, are known and are refused only in
+  the later stages.
 - **Carrier-grade NAT:** an address that carries many users loses more of
   its share as the level rises, and can be cut off. It already has a
   per-address limit; overload makes that limit tighter, not new.
@@ -183,11 +183,12 @@ up and keep serving its customers.
   (decision 3). The flood fallback stays the answer to that. This record
   keeps the node alive until it lands.
 - **New code:**
-  - the controller in `pkg/clientlimit`;
-  - a scalable request limit in `clientlimit.Requests`;
-  - a refusal probability in the handshake gate;
-  - the cool-off set beside the listener's per-address table.
-  Each is small and table-tested with a fake clock and fake signals.
+  - the controller and its signal sampler in `pkg/clientlimit`;
+  - a request-shedding layer between the per-address and per-host limits,
+    sharing the per-host limit's known hosts;
+  - a refusal step in the handshake gate;
+  - the cool-off set.
+  Each is table-tested with a fake clock and fake signals.
 
 ## Rejected alternatives
 

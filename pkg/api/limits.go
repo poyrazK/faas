@@ -18474,6 +18474,49 @@ const (
 	EdgeControlPlaneForwardsInFlightPerAddrMax = 16
 )
 
+// A compute edge's overload level (ADR-20261110123517) follows three signals,
+// sampled every EdgeOverloadTick and each measured over the last
+// EdgeOverloadWindow: the edge's goroutine scheduling delay (99th
+// percentile), the node's CPU pressure (the share of time any task waited for
+// a CPU) and the gateway daemons' share of the node's CPUs. The edge is
+// overloaded when its scheduling delay passes EdgeOverloadSchedDelayP99, or
+// when node CPU pressure passes EdgeOverloadNodeCPUPressure while the
+// gateways use more than EdgeOverloadGatewayCPUShare. The level, from 0 to 1,
+// rises by EdgeOverloadLevelStep on each overloaded tick and falls by
+// EdgeOverloadLevelRecoveryStep on each tick where every signal is below
+// EdgeOverloadCalmFraction of its threshold. These are starting values for
+// observe mode to tune.
+const (
+	EdgeOverloadTick              = 100 * time.Millisecond
+	EdgeOverloadWindow            = time.Second
+	EdgeOverloadSchedDelayP99     = 10 * time.Millisecond
+	EdgeOverloadNodeCPUPressure   = 0.5
+	EdgeOverloadGatewayCPUShare   = 0.5
+	EdgeOverloadLevelStep         = 0.1
+	EdgeOverloadLevelRecoveryStep = 0.02
+	EdgeOverloadCalmFraction      = 0.7
+	// While the level is above 0, a new connection is reset before TLS with
+	// the level's probability, but EdgeOverloadHandshakesFloorPerCPU
+	// handshakes a second per CPU are always admitted, so new users can still
+	// connect at the deepest level.
+	EdgeOverloadHandshakesFloorPerCPU = 25
+	// Each client address's request limit scales down from
+	// EdgeClientRequestsPerSecondPerAddr toward
+	// EdgeOverloadRequestsPerSecondPerAddrFloor as the level rises.
+	EdgeOverloadRequestsPerSecondPerAddrFloor = 50
+	// An address refused more than EdgeOverloadRefusalsPerAddrMax times in
+	// one second while the level is above 0 is cut off for
+	// EdgeOverloadCooloff: its connections are closed and its new ones are
+	// reset before TLS.
+	EdgeOverloadRefusalsPerAddrMax = 200
+	EdgeOverloadCooloff            = 10 * time.Second
+	// A refusal's Retry-After is drawn from EdgeOverloadRetryAfterMin to
+	// EdgeOverloadRetryAfterMax seconds, so refused clients don't return
+	// together.
+	EdgeOverloadRetryAfterMin = 1
+	EdgeOverloadRetryAfterMax = 3
+)
+
 // The host firewall's backstop for a compute edge's public entry address
 // (ADR-20261103163954 §4). The edge refuses a client past its own
 // per-address limits only after the kernel has accepted the connection; the

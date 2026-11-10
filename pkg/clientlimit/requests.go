@@ -58,8 +58,16 @@ func Requests(next http.Handler, limits RequestLimits, clientAddr func(*http.Req
 // answered request makes it known and limited. Each client stays bounded by
 // the per-address limit in front of this one.
 func Hosts(next http.Handler, limits RequestLimits, host func(*http.Request) (string, bool), refused func(reason string), now func() time.Time) http.Handler {
+	return HostsWithKnown(next, limits, NewKnownHosts(limits.TrackedAddrsMax, now), host, refused, now)
+}
+
+// HostsWithKnown is Hosts recording the hosts that served an app's answer in
+// known, so another layer can share the set (Shed).
+func HostsWithKnown(next http.Handler, limits RequestLimits, known *KnownHosts, host func(*http.Request) (string, bool), refused func(reason string), now func() time.Time) http.Handler {
+	if known == nil {
+		known = NewKnownHosts(limits.TrackedAddrsMax, now)
+	}
 	t := newTable[string](limits.PerSecond, limits.Burst, limits.TrackedAddrsMax, now)
-	known := newKnownHosts(max(limits.TrackedAddrsMax, 1), now)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name, ok := host(r)
 		if !ok {
@@ -102,25 +110,26 @@ func servedByApp(status int) bool {
 // forgets it.
 const knownHostIdle = 10 * time.Minute
 
-// knownHosts is the set of hostnames that served an app's answer, with when
+// KnownHosts is the set of hostnames that served an app's answer, with when
 // each was last seen. Only real hosts enter it. A full set forgets hosts idle
 // past knownHostIdle; it never forgets a busy one, so a hot host cannot drop
 // out of its limit.
-type knownHosts struct {
+type KnownHosts struct {
 	mu  sync.Mutex
 	set map[string]time.Time
 	max int
 	now func() time.Time
 }
 
-func newKnownHosts(max int, now func() time.Time) *knownHosts {
+// NewKnownHosts returns an empty set of at most limit hosts.
+func NewKnownHosts(limit int, now func() time.Time) *KnownHosts {
 	if now == nil {
 		now = time.Now
 	}
-	return &knownHosts{set: map[string]time.Time{}, max: max, now: now}
+	return &KnownHosts{set: map[string]time.Time{}, max: max(limit, 1), now: now}
 }
 
-func (k *knownHosts) has(name string) bool {
+func (k *KnownHosts) has(name string) bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if _, ok := k.set[name]; !ok {
@@ -133,7 +142,7 @@ func (k *knownHosts) has(name string) bool {
 // add records name and reports whether it is newly known. A full set with no
 // idle host to forget admits nothing: that host passes untracked, as with
 // more real hosts than the set holds.
-func (k *knownHosts) add(name string) bool {
+func (k *KnownHosts) add(name string) bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	now := k.now()
