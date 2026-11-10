@@ -27,8 +27,11 @@ const (
 // the cookie does not move it.
 func signedInRecently(r *http.Request) bool {
 	sess, ok := sessionFrom(r)
-	return ok && !sess.IssuedAt.IsZero() && time.Since(sess.IssuedAt) <= api.RecentSignInWindow
+	return ok && !sess.IssuedAt.IsZero() && recentSignInNow().Sub(sess.IssuedAt) <= api.RecentSignInWindow
 }
+
+// recentSignInNow is the clock signedInRecently reads; tests move it.
+var recentSignInNow = time.Now
 
 // requireRecentSignIn lets the change through when the session signed in
 // recently. Otherwise it audits the refusal, writes recent_sign_in_required
