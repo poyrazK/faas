@@ -213,6 +213,8 @@ func runMigrationAdmissionTests(t *testing.T, newStore func(*testing.T) migratio
 			t.Fatalf("cleanup receipt overwritten: %v", err)
 		}
 	})
+	// An inbound migration reserves its destination's memory; its CPU and
+	// vCPUs are measured, never refused (ADR-20261109172421).
 	t.Run("ordinary_admission_cannot_spend_inbound_capacity", func(t *testing.T) {
 		for _, resource := range []string{"ram", "cpu", "vcpu"} {
 			t.Run(resource, func(t *testing.T) {
@@ -230,7 +232,14 @@ func runMigrationAdmissionTests(t *testing.T, newStore func(*testing.T) migratio
 					t.Fatal(err)
 				}
 				f.reserve(t)
-				if _, err := f.s.CreateInstance(t.Context(), f.instance.AppID, f.instance.DeploymentID, "cold_booting", 128, f.dest.ID, uuid.NewString()); !errors.Is(err, state.ErrNodeCapacity) {
+				_, err := f.s.CreateInstance(t.Context(), f.instance.AppID, f.instance.DeploymentID, "cold_booting", 128, f.dest.ID, uuid.NewString())
+				if resource != "ram" {
+					if err != nil {
+						t.Fatalf("CPU refused an admission memory fits: %v", err)
+					}
+					return
+				}
+				if !errors.Is(err, state.ErrNodeCapacity) {
 					t.Fatalf("ordinary admission spent reserved capacity: %v", err)
 				}
 			})
