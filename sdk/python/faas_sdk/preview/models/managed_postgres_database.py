@@ -59,6 +59,8 @@ class ManagedPostgresDatabase:
     restore_slot_until: datetime.datetime | Unset = UNSET
     """Set while a restored database is one past the plan's database limit. It becomes an ordinary database once
     the account has room; otherwise its delete is scheduled at this time."""
+    expires_at: datetime.datetime | Unset = UNSET
+    """Set on a database restored with ttl_seconds. Its bindings are revoked and it is purged at this time."""
     plan_excess: ManagedPostgresDatabasePlanExcess | Unset = UNSET
     """Set while the plan no longer includes this database, for example after a subscription ended, and it is
     suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept),
@@ -134,6 +136,10 @@ class ManagedPostgresDatabase:
         if not isinstance(self.restore_slot_until, Unset):
             restore_slot_until = self.restore_slot_until.isoformat()
 
+        expires_at: str | Unset = UNSET
+        if not isinstance(self.expires_at, Unset):
+            expires_at = self.expires_at.isoformat()
+
         plan_excess: str | Unset = UNSET
         if not isinstance(self.plan_excess, Unset):
             plan_excess = self.plan_excess
@@ -174,6 +180,8 @@ class ManagedPostgresDatabase:
             field_dict["restorable_until"] = restorable_until
         if restore_slot_until is not UNSET:
             field_dict["restore_slot_until"] = restore_slot_until
+        if expires_at is not UNSET:
+            field_dict["expires_at"] = expires_at
         if plan_excess is not UNSET:
             field_dict["plan_excess"] = plan_excess
         if restore_range is not UNSET:
@@ -284,6 +292,13 @@ class ManagedPostgresDatabase:
         else:
             restore_slot_until = datetime.datetime.fromisoformat(_restore_slot_until)
 
+        _expires_at = d.pop("expires_at", UNSET)
+        expires_at: datetime.datetime | Unset
+        if isinstance(_expires_at, Unset):
+            expires_at = UNSET
+        else:
+            expires_at = datetime.datetime.fromisoformat(_expires_at)
+
         _plan_excess = d.pop("plan_excess", UNSET)
         plan_excess: ManagedPostgresDatabasePlanExcess | Unset
         if isinstance(_plan_excess, Unset):
@@ -318,6 +333,7 @@ class ManagedPostgresDatabase:
             deleted_at=deleted_at,
             restorable_until=restorable_until,
             restore_slot_until=restore_slot_until,
+            expires_at=expires_at,
             plan_excess=plan_excess,
             restore_range=restore_range,
         )

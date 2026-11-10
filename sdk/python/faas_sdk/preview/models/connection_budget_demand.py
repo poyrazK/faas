@@ -25,6 +25,8 @@ class ConnectionBudgetDemand:
     control_headroom: int
     migration_headroom: int
     modeled_peak_connections: int
+    session_connection_ceiling: int | Unset = UNSET
+    """The session role connection limit per session binding; two roles while a binding rotates."""
     runtime_observations: ConnectionBudgetRuntimeObservations | Unset = UNSET
     """Authenticated workload reports of configured resident Data API pools, including the refresh reader. Not live
     SQL sessions or independent guest attestation. Parked runtimes and future wakes remain estimates; this does not
@@ -44,6 +46,8 @@ class ConnectionBudgetDemand:
 
         modeled_peak_connections = self.modeled_peak_connections
 
+        session_connection_ceiling = self.session_connection_ceiling
+
         runtime_observations: dict[str, Any] | Unset = UNSET
         if not isinstance(self.runtime_observations, Unset):
             runtime_observations = self.runtime_observations.to_dict()
@@ -60,6 +64,8 @@ class ConnectionBudgetDemand:
                 "modeled_peak_connections": modeled_peak_connections,
             }
         )
+        if session_connection_ceiling is not UNSET:
+            field_dict["session_connection_ceiling"] = session_connection_ceiling
         if runtime_observations is not UNSET:
             field_dict["runtime_observations"] = runtime_observations
 
@@ -82,6 +88,8 @@ class ConnectionBudgetDemand:
 
         modeled_peak_connections = d.pop("modeled_peak_connections")
 
+        session_connection_ceiling = d.pop("session_connection_ceiling", UNSET)
+
         _runtime_observations = d.pop("runtime_observations", UNSET)
         runtime_observations: ConnectionBudgetRuntimeObservations | Unset
         if isinstance(_runtime_observations, Unset):
@@ -96,6 +104,7 @@ class ConnectionBudgetDemand:
             control_headroom=control_headroom,
             migration_headroom=migration_headroom,
             modeled_peak_connections=modeled_peak_connections,
+            session_connection_ceiling=session_connection_ceiling,
             runtime_observations=runtime_observations,
         )
 

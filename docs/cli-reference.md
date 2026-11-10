@@ -2537,7 +2537,7 @@ Apply a saved service binding plan if reviewed settings are unchanged
 
 Evaluate recorded binding evidence and runtime freshness for CI
 
-`gregale app binding check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--release <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--queue-require <NAME=consumer_readiness>] [--require-bindings] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+`gregale app binding check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--release <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--queue-require <NAME=consumer_readiness>] [--require-bindings] [--ignore-manifest] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2552,6 +2552,7 @@ Evaluate recorded binding evidence and runtime freshness for CI
 | `--object-storage-require <PREFIX=read|write|read_write>` | require recorded storage operation evidence (repeatable; no writes) |  |
 | `--queue-require <NAME=consumer_readiness>` | require recorded push queue readiness (repeatable; connectivity remains partial) |  |
 | `--require-bindings` | fail when no active binding is in scope (default: warn and pass) |  |
+| `--ignore-manifest` | do not require the databases ./gregale.yaml declares for the app |  |
 | `--wait` | poll read-only inventory while probes, refreshes or application acknowledgements are pending |  |
 | `--timeout <DURATION>` | maximum waiting or policy-aware preflight time (default 5m) |  |
 | `--poll-interval <DURATION>` | inventory polling interval with --wait (default 1s) |  |
@@ -4542,6 +4543,51 @@ Restore a database to a new database
 |---|---|---|
 | `--name <NAME>` | name for the restored database | required |
 | `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
+
+### postgres branch
+
+Make, list and delete copy-on-write branches of a database
+
+Examples:
+
+```sh
+gregale postgres branch orders pr-42 --ttl 2h
+gregale postgres attach pr-42 my-api-pr-42 --env DATABASE_URL
+gregale postgres branch delete orders pr-42 --yes
+```
+
+A branch is a restore: a new database that shares its source&#39;s storage until written to. `gregale postgres branch &lt;database&gt; &lt;name&gt;` is `branch create`.
+
+It counts toward the plan&#39;s database limit like any restore, and may take the one restore slot past it.
+
+With --ttl the branch&#39;s bindings are revoked and it is purged when the TTL ends; the source is never touched.
+
+#### postgres branch create
+
+Branch a database from its latest point or a chosen time
+
+`gregale postgres branch create [--since <live|TIMESTAMP>] [--ttl <DURATION>] <database> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <live|TIMESTAMP>` | live (default) or an RFC3339 time inside the source&#39;s restore range (also --from) |  |
+| `--ttl <DURATION>` | purge the branch this long after it is created, from 5m to 30d (e.g. 2h, 7d) |  |
+
+#### postgres branch list
+
+List a database&#39;s branches
+
+`gregale postgres branch list <database>`
+
+#### postgres branch delete
+
+Purge a branch; refuses databases that are not its branches
+
+`gregale postgres branch delete [--yes] <database> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
 
 ### postgres bindings
 
