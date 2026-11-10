@@ -187,3 +187,20 @@ func TestSandboxTemplateBuildRejectsBadInput(t *testing.T) {
 		}
 	}
 }
+
+// `--json` prints the template as the API returned it.
+func TestSandboxTemplateGetJSON(t *testing.T) {
+	srv := (&fakeTemplateAPI{}).serve(t)
+	main.ResetJSONOut(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	out, restore := main.CaptureStdout(t)
+	code := main.Run([]string{"sandbox-templates", "get", "web-dev", "--json"})
+	restore()
+	var got api.SandboxTemplate
+	if code != 0 || json.Unmarshal(out.Bytes(), &got) != nil || got.Name != "web-dev" || got.Build == nil {
+		t.Fatalf("exit %d, output:\n%s", code, out)
+	}
+}

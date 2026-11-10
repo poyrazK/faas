@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -40,7 +39,7 @@ func TestRunSandboxStartup(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	runner := execRunner{uid: -1}
 	marker := filepath.Join(dir, "up")
-	var out bytes.Buffer
+	var out lockedBuffer
 	m := sandboxManifest{StartCmd: "echo starting; sleep 2; touch " + marker + "; sleep 30",
 		ReadyCmd: "test -e " + marker, ReadyTimeoutMs: 15_000}
 	start := time.Now()

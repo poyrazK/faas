@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -37,8 +38,10 @@ func runSandboxStartup(ctx context.Context, runner sandboxRunner, m sandboxManif
 			return fmt.Errorf("sandbox: start command: %w", err)
 		}
 		_ = p.stdin().Close()
-		go func() { _, _ = io.Copy(out, p.stdout()) }()
-		go func() { _, _ = io.Copy(out, p.stderr()) }()
+		// stdout and stderr share out, so their writes take turns.
+		shared := &sandboxLockedWriter{w: out}
+		go func() { _, _ = io.Copy(shared, p.stdout()) }()
+		go func() { _, _ = io.Copy(shared, p.stderr()) }()
 		go func() {
 			exit := p.wait()
 			p.closeOutput()
@@ -90,4 +93,17 @@ func runReadyAttempt(ctx context.Context, runner sandboxRunner, cmd string, env 
 	<-exited
 	p.closeOutput()
 	return -1, errors.New("sandbox: ready attempt timed out")
+}
+
+// sandboxLockedWriter serializes writes from several goroutines to one
+// writer.
+type sandboxLockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *sandboxLockedWriter) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(b)
 }

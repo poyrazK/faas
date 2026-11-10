@@ -136,10 +136,17 @@ func TestSandboxWarmSnapshots(t *testing.T) {
 	if s := session("other", ""); s.Snapshot == nil {
 		t.Fatal("another account's preset session did not restore the shared preset snapshot")
 	}
+	router.mu.Lock()
 	router.failRestore = true
-	session("acct", "")
+	router.mu.Unlock()
+	failed := session("acct", "").Snapshot
+	router.mu.Lock()
 	router.failRestore = false
-	if s := session("acct", ""); s.Snapshot != nil {
+	router.mu.Unlock()
+	// The failed session cold-booted, so it recaptures in the background
+	// (under the slot's fixed keys); the next session may restore that new
+	// capture, never the one that failed.
+	if s := session("acct", ""); failed == nil || s.Snapshot == failed {
 		t.Fatal("a snapshot that failed to restore was kept")
 	}
 	captured(2)

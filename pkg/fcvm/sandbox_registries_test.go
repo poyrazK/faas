@@ -43,8 +43,12 @@ func TestRegistriesSandboxBootsDNSGatedOn443(t *testing.T) {
 	if nc.GuestMAC != netns.SandboxGuestMAC || len(nc.GuestGuardCommands()) == 0 {
 		t.Fatalf("guest MAC %q; want the guarded %q", nc.GuestMAC, netns.SandboxGuestMAC)
 	}
-	period := api.PlanPro.CPUPeriodUS()
-	if got, err := leaseCPUMax(inst.Lease); err != nil || got != fmt.Sprintf("%d %d", 2*period, period) {
+	if inst.Lease.Plan != api.PlanPro {
+		t.Fatalf("lease plan %q, want %q", inst.Lease.Plan, api.PlanPro)
+	}
+	got, err := leaseCPUMax(inst.Lease)
+	var quota, period int
+	if _, scanErr := fmt.Sscanf(got, "%d %d", &quota, &period); err != nil || scanErr != nil || period <= 0 || quota != 2*period {
 		t.Fatalf("cpu.max = %q, %v; want two whole vCPUs", got, err)
 	}
 	pinned := false
