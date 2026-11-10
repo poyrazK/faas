@@ -7609,6 +7609,9 @@ type Querier interface {
 	SetCustomerOperationJobIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationJobIdentityParams) (int64, error)
 	SetCustomerOperationWorkflowIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationWorkflowIdentityParams) (int64, error)
 	SetDatabaseVMAlwaysOn(ctx context.Context, db DBTX, arg SetDatabaseVMAlwaysOnParams) (int64, error)
+	// imaged records whether it stamped a before_checkpoint hook into the
+	// deployment's guest manifest; NULL stays for deployments built earlier.
+	SetDeploymentBeforeCheckpointHook(ctx context.Context, db DBTX, arg SetDeploymentBeforeCheckpointHookParams) (int64, error)
 	// ADR-021 (G1, image digest enforcement hardening): durable
 	// carrier for the RFC 7807 failure code that imaged writes when a
 	// deployment transitions to `failed`. pkg/api.SentinelToCode maps

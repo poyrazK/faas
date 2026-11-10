@@ -8975,6 +8975,25 @@ func (m *MemStore) SetDeploymentSecretReloadSignal(ctx context.Context, id, sign
 	return nil
 }
 
+// SetDeploymentBeforeCheckpointHook mirrors PgStore (H32-49).
+func (m *MemStore) SetDeploymentBeforeCheckpointHook(ctx context.Context, id string, hook bool) error {
+	if id == "" {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	d.BeforeCheckpointHook, d.BeforeCheckpointHookKnown = hook, true
+	m.putDeploymentLocked(id, d)
+	return nil
+}
+
 func (m *MemStore) SetDeploymentSidecarSecretReloadSignal(ctx context.Context, deploymentID, sidecarName, signal string) error {
 	if deploymentID == "" || sidecarName == "" || !ValidSecretRuntimeWorkloadName(sidecarName) || !validSecretReloadSignal(signal) {
 		return ErrInvalidArgument

@@ -949,6 +949,13 @@ UPDATE deployments
    SET secret_reload_signal = sqlc.arg(signal)::text
  WHERE id = sqlc.arg(id)::uuid;
 
+-- name: SetDeploymentBeforeCheckpointHook :execrows
+-- imaged records whether it stamped a before_checkpoint hook into the
+-- deployment's guest manifest; NULL stays for deployments built earlier.
+UPDATE deployments
+   SET before_checkpoint_hook = sqlc.arg(hook)::boolean
+ WHERE id = sqlc.arg(id)::uuid;
+
 -- name: SumAccountCreditRefundReversal :one
 SELECT coalesce(sum(delta_cents), 0)::bigint AS reversed_cents
 FROM credit_ledger

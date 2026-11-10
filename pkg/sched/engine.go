@@ -8691,7 +8691,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// with the app's current machine configuration. Retire the old VM instead;
 	// the next request cold-boots the current shape and produces a compatible
 	// snapshot on its next park.
-	app, err := state.AppForInstance(ctx, e.store, ins)
+	app, dep, err := appForInstanceAndDeployment(ctx, e.store, ins)
 	if err != nil {
 		// A deleted environment tombstones its deployments before its VMs
 		// finish retiring. Such a VM must never publish into a recreated
@@ -8710,6 +8710,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		}
 		return fmt.Errorf("sched: park: load deployment app shape: %w", err)
 	}
+	app = withBuiltLifecycle(app, dep)
 	frozenFunction := functionlifetime.NativeQualificationBuild && app.Type == "function" && (app.Runtime == "node22" || app.Runtime == "node24")
 	if frozenFunction {
 		undoFreeze, err := e.freezeFunctionForPark(ctx, ins)
