@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/loglevel"
 )
 
 // isNoRunningInstanceLogs reports the degraded frame the runtime log stream
@@ -53,8 +55,8 @@ func parkedLogsSelection(instances []api.InstanceResponse, since time.Time) (api
 }
 
 // runParkedAppLogs prints the newest instance's retained logs for a parked
-// app, with a header naming what is shown. --grep applies to the retained
-// lines here; --level does not, and the header says so.
+// app, with a header naming what is shown. --grep and --level apply to the
+// retained lines as they do to the live stream.
 func runParkedAppLogs(ctx context.Context, client *Client, slug, deployment string, filter api.LogFilter, explain bool) int {
 	var since time.Time
 	if filter.Since != "" {
@@ -76,11 +78,8 @@ func runParkedAppLogs(ctx context.Context, client *Client, slug, deployment stri
 	}
 	header := fmt.Sprintf("%s is parked; showing the retained logs of its most recent instance %s (started %s, UTC day %s).", slug, instance.ID, instance.StartedAt, selector.Date)
 	header += parkedArchivePendingNote(instance, time.Now())
-	if filter.Level != "" {
-		header += " --level is not applied to retained logs."
-	}
 	_, _ = fmt.Fprintln(osStderr, header)
-	return runLogsExplainingMissingArchive(ctx, slug, deployment, api.LogFilter{Grep: filter.Grep}, &selector, false, explain,
+	return runLogsExplainingMissingArchive(ctx, slug, deployment, api.LogFilter{Grep: filter.Grep, Level: filter.Level}, &selector, false, explain,
 		parkedNoOutputMessage(instance))
 }
 
@@ -147,6 +146,28 @@ func parkedNoOutputMessage(ins api.InstanceResponse) string {
 // stream does: a case-insensitive literal substring.
 func retainedLineMatches(line, grep string) bool {
 	return grep == "" || strings.Contains(strings.ToLower(line), strings.ToLower(grep))
+}
+
+// retainedLineLevelMatches applies --level to an archived log frame the way
+// the live stream does (scheddgrpc.LevelMatcher): the level parsed at ring
+// intake when the frame carries one, else the shared line heuristic, at or
+// above the requested floor. A parked app is the usual state of a
+// scale-to-zero app, and its logs used to ignore --level entirely
+// (ADR-20261110090000).
+func retainedLineLevelMatches(data, level string) bool {
+	floor := loglevel.Rank(strings.ToLower(level))
+	if level == "" || floor < 0 {
+		return true
+	}
+	var event api.LogEvent
+	if json.Unmarshal([]byte(data), &event) != nil {
+		return false
+	}
+	detected := event.Level
+	if detected == "" {
+		detected = loglevel.Detect(event.Line)
+	}
+	return detected != "" && loglevel.Rank(detected) >= floor
 }
 
 // parkedArchiveUploadWindow covers vmmd's archive flush interval
