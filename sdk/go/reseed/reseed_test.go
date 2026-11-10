@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,7 +14,13 @@ import (
 // barrier stands in for guest-init's reseed socket.
 func barrier(t *testing.T) (string, <-chan net.Conn) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "reseed.sock")
+	// A short directory: macOS caps Unix socket paths at 104 bytes.
+	dir, err := os.MkdirTemp("", "rs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "s")
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
