@@ -23,17 +23,19 @@ database reservation boundary:
 
 | Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Free | — | — | — | — | — |
 | Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
-A Free-plan database needs enforced compute caps, because Free has no
-overage to pay for compute past its allowance. Until the platform enforces
-them, `gregale postgres create`, `gregale dev --postgres`, pipeline mirrors
-and restores answer `403 managed_postgres_not_in_plan` on Free, and a
-Compose `postgres` service is not provisioned (the deploy names the plan as
-the reason).
+The Free plan includes no managed PostgreSQL
+([ADR-20261110180000](adr/20261110180000-free-plan-includes-no-managed-postgres.md)):
+`gregale postgres create`, `gregale dev --postgres`, pipeline mirrors and
+restores answer `403 managed_postgres_not_in_plan` on Free, whatever the cap
+enforcement mode, and a Compose `postgres` service is not provisioned (the
+deploy names the plan as the reason). An account that falls to Free from a
+paid plan keeps its databases suspended as past the plan
+([Databases past a lowered plan](#databases-past-a-lowered-plan)).
 
 Storage is pooled across the account's databases: one database may use the
 whole pool. Storage and compute are limits unless a paid account turns

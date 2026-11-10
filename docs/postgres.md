@@ -17,11 +17,15 @@ Operators: see the [operator guide](managed-postgres.md).
 
 | Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Free | — | — | — | — | — |
 | Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
+- The Free plan includes no managed PostgreSQL: create, `gregale dev
+  --postgres`, a Compose `postgres` service and restores answer
+  `403 managed_postgres_not_in_plan` there. Upgrade to Hobby or above for a
+  database.
 - Storage is pooled across your databases: one database may use the whole
   pool.
 - Compute suspends when a database is idle. Always-on compute is not part of
@@ -46,9 +50,8 @@ Operators: see the [operator guide](managed-postgres.md).
   credentials and app bindings are kept, but it does not start until you
   upgrade, delete a database, or resize it to an included class. The next
   usage sweep, within minutes, resumes it.
-- When the platform is near capacity, new databases on the Free plan pause
-  first (`503 managed_postgres_new_databases_paused`); paid plans can still
-  create them.
+- A subscription that ends drops the account to Free, which includes no
+  databases, so every database it holds is suspended this way.
 
 ## Create a database
 

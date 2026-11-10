@@ -79,16 +79,13 @@ func managedPostgresNotConfiguredProblem(w http.ResponseWriter) {
 	).WithDocs("https://gregale.dev/docs/managed-postgres"))
 }
 
-// managedPostgresFreeClosed reports whether a Free-plan owner is refused a
-// new database. Free has no overage to pay for compute past its allowance,
-// and only enforced caps (FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on) suspend
-// it there. Under shadow or off a Free database with steady traffic ran its
-// provider compute all month (~730 compute-unit hours against 5) at
-// Gregale's cost, and Free sign-ups are unlimited. Every create path checks
-// it: the create route, Compose and dev databases here, and the service's
-// admission for the rest (bug hunt 33 H1).
-func managedPostgresFreeClosed(plan api.Plan, mode managedpostgres.CapEnforcementMode) bool {
-	return plan == api.PlanFree && mode != managedpostgres.CapEnforcementOn
+// managedPostgresNotInPlan reports whether the owner's plan includes no
+// managed PostgreSQL: Free (ADR-20261110180000), or an unknown plan. Every
+// create path checks it: the create route, Compose and dev databases here,
+// and the service's admission for the rest, restores and pipeline mirrors
+// included (bug hunt 33 H1).
+func managedPostgresNotInPlan(plan api.Plan) bool {
+	return !api.ManagedPostgresIncluded(plan)
 }
 
 func managedPostgresPlanDenied(w http.ResponseWriter, plan api.Plan, detail string) {
@@ -424,13 +421,9 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresNotConfiguredProblem(w)
 		return
 	}
-	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
-	if !ok || limits.DatabasesMax == 0 {
+	limits, _ := api.ManagedPostgresLimitsFor(acct.Plan)
+	if managedPostgresNotInPlan(acct.Plan) {
 		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to create a database")
-		return
-	}
-	if managedPostgresFreeClosed(acct.Plan, s.managedPostgresCapMode) {
-		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL opens to the Free plan once compute caps are enforced; upgrade to a paid plan to create a database")
 		return
 	}
 	var req api.CreateManagedPostgresDatabaseRequest

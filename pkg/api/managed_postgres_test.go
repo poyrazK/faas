@@ -1,5 +1,6 @@
 // adr: 1350 — managed PostgreSQL plan entitlements follow the October 2026
 // COGS report.
+// adr: 20261110180000 — the Free plan includes no managed PostgreSQL.
 package api
 
 import "testing"
@@ -9,8 +10,7 @@ func TestManagedPostgresLimitsFor(t *testing.T) {
 	const cuHour = int64(60 * 60)
 	const week = int64(7 * 24 * 60 * 60)
 	want := map[Plan]ManagedPostgresPlanLimits{
-		PlanFree: {DatabasesMax: 1, StorageLimitBytes: gib / 2, MonthlyComputeUnitSeconds: 5 * cuHour,
-			RestoreWindowSeconds: week, DevelopmentAllowed: true},
+		PlanFree: {NotIncluded: true},
 		PlanHobby: {DatabasesMax: 1, StorageLimitBytes: gib, MonthlyComputeUnitSeconds: 25 * cuHour,
 			RestoreWindowSeconds: week, DevelopmentAllowed: true},
 		PlanPro: {DatabasesMax: 3, StorageLimitBytes: 5 * gib, MonthlyComputeUnitSeconds: 75 * cuHour,
@@ -25,6 +25,11 @@ func TestManagedPostgresLimitsFor(t *testing.T) {
 		}
 		if got.AlwaysOnAllowed {
 			t.Fatalf("%s allows always-on compute; no plan includes it", plan)
+		}
+	}
+	for plan, included := range map[Plan]bool{PlanFree: false, PlanHobby: true, PlanPro: true, PlanScale: true, Plan("unknown"): false} {
+		if got := ManagedPostgresIncluded(plan); got != included {
+			t.Fatalf("ManagedPostgresIncluded(%s) = %v, want %v", plan, got, included)
 		}
 	}
 	if _, ok := ManagedPostgresLimitsFor(Plan("unknown")); ok {

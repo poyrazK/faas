@@ -6,6 +6,12 @@ import "time"
 // PostgreSQL. Provider adapters may impose a lower ceiling, but never raise
 // these plan limits.
 type ManagedPostgresPlanLimits struct {
+	// NotIncluded marks a plan that includes no managed PostgreSQL at all
+	// (Free, ADR-20261110180000): it creates none, and every database its
+	// subject still holds, say after a paid plan ended, is past the plan.
+	// The zero value with DatabasesMax 0 is an unknown plan instead, which
+	// suspends nothing.
+	NotIncluded  bool
 	DatabasesMax int
 	// StorageLimitBytes is the account's pooled storage (ADR-1430): every
 	// database together, and so also the most one database may use. The pool
@@ -33,9 +39,9 @@ const (
 
 // managedPostgresPlanLimits follows the October 2026 COGS report (ADR-1430):
 // databases, highest service class, pooled storage and monthly compute units.
+// Free includes no managed PostgreSQL (ADR-20261110180000).
 var managedPostgresPlanLimits = map[Plan]ManagedPostgresPlanLimits{
-	PlanFree: {DatabasesMax: 1, StorageLimitBytes: managedPostgresGiB / 2, MonthlyComputeUnitSeconds: 5 * managedPostgresComputeUnitHour,
-		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true},
+	PlanFree: {NotIncluded: true},
 	PlanHobby: {DatabasesMax: 1, StorageLimitBytes: managedPostgresGiB, MonthlyComputeUnitSeconds: 25 * managedPostgresComputeUnitHour,
 		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true},
 	PlanPro: {DatabasesMax: 3, StorageLimitBytes: 5 * managedPostgresGiB, MonthlyComputeUnitSeconds: 75 * managedPostgresComputeUnitHour,
@@ -53,6 +59,13 @@ func ManagedPostgresPlanDatabasesMax() int {
 		most = max(most, limits.DatabasesMax)
 	}
 	return most
+}
+
+// ManagedPostgresIncluded reports whether plan p includes managed PostgreSQL:
+// a known plan with at least one database.
+func ManagedPostgresIncluded(p Plan) bool {
+	limits, ok := managedPostgresPlanLimits[p]
+	return ok && !limits.NotIncluded && limits.DatabasesMax > 0
 }
 
 // ManagedPostgresLimitsFor returns a copy of the closed-set entitlement for p.

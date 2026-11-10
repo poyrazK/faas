@@ -58,10 +58,11 @@ func PlanAllowsClass(limits api.ManagedPostgresPlanLimits, class ServiceClass) b
 // includes to the reason. Databases rank oldest first; one ranked past the
 // plan's database limit, or in a service class the plan does not include, is
 // past the plan. A restore holding the restore slot, a deleting database and
-// one without a provider resource are not ranked. An unknown plan (no
-// database limit) has nothing past it.
+// one without a provider resource are not ranked. A plan that includes no
+// managed PostgreSQL (NotIncluded) has every ranked database past it; an
+// unknown plan (no database limit) has nothing past it.
 func PlanExcess(databases []Database, limits api.ManagedPostgresPlanLimits) map[string]string {
-	if limits.DatabasesMax <= 0 {
+	if limits.DatabasesMax <= 0 && !limits.NotIncluded {
 		return nil
 	}
 	ranked := make([]Database, 0, len(databases))

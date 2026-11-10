@@ -218,7 +218,8 @@ type CapLimits struct {
 
 	// Entitlement is the subject's plan: databases it no longer includes
 	// are suspended (ADR-20261102125208). A zero database limit means the
-	// plan is unknown, and nothing is suspended for it.
+	// plan is unknown, and nothing is suspended for it, unless NotIncluded
+	// says the plan has no managed PostgreSQL (ADR-20261110180000).
 	Entitlement api.ManagedPostgresPlanLimits
 
 	// Inactive marks a subject that may not run workloads: suspended,

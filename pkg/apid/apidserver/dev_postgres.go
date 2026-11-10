@@ -25,12 +25,12 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 	if s.managedPostgres == nil || s.managedPostgresBindings == nil {
 		return nil, managedpostgres.ErrUnavailable
 	}
-	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
-	if !ok || limits.DatabasesMax == 0 || !limits.DevelopmentAllowed {
-		return nil, managedpostgres.ErrQuotaExceeded
-	}
-	if managedPostgresFreeClosed(acct.Plan, s.managedPostgresCapMode) {
+	if managedPostgresNotInPlan(acct.Plan) {
 		return nil, managedpostgres.ErrNotInPlan
+	}
+	limits, _ := api.ManagedPostgresLimitsFor(acct.Plan)
+	if !limits.DevelopmentAllowed {
+		return nil, managedpostgres.ErrQuotaExceeded
 	}
 	ctx, err := postgresaccess.PersonalContext(ctx, s.store, acct.ID)
 	if err != nil {
