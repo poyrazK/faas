@@ -10517,6 +10517,7 @@
       "deleted_at",
       "desired_generation",
       "environment_clone_operation_id",
+      "expires_at",
       "id",
       "labels",
       "last_error_code",

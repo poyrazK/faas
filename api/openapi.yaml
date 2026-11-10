@@ -85619,6 +85619,10 @@ components:
           type: string
           format: date-time
           description: "Set while a restored database is one past the plan's database limit. It becomes an ordinary database once the account has room; otherwise its delete is scheduled at this time."
+        expires_at:
+          type: string
+          format: date-time
+          description: Set on a database restored with ttl_seconds. Its bindings are revoked and it is purged at this time.
         plan_excess:
           type: string
           enum: [database_limit, service_class]
@@ -85896,13 +85900,22 @@ components:
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
     RestoreManagedPostgresDatabaseRequest:
-      description: Point-in-time restore request that creates a new database.
+      description: Point-in-time restore request that creates a new database. A restore is a copy-on-write branch of the source where the backend supports it.
       type: object
       additionalProperties: false
-      required: [name, point_in_time]
+      required: [name]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
-        point_in_time: { type: string, format: date-time }
+        point_in_time:
+          type: string
+          format: date-time
+          description: A time inside the source's restore_range. Omit it to restore from the latest point, a couple of seconds before the request.
+        ttl_seconds:
+          type: integer
+          format: int64
+          minimum: 300
+          maximum: 2592000
+          description: Purge the new database this many seconds after it is created. Its bindings are revoked first; the source is never touched. The database shows expires_at.
     ManagedPostgresBinding:
       description: Workload binding metadata. Credentials are delivered through the app secret surface and never returned here.
       type: object

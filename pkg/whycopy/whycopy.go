@@ -59,6 +59,11 @@ type Render struct {
 	Observed func(observed any) (why, fix string)
 }
 
+// ReleaseTaskLeaseExpired is the app-task failure code schedd's sweep records
+// when a running task's worker lease expires: the command started and its
+// outcome is unknown (ADR-1448 amendment 1 calls it uncertain).
+const ReleaseTaskLeaseExpired = "lease_expired"
+
 const (
 	executionModeConflictWhy = "a worker must keep running without listening on a port, and a job must run to completion without serving; at startup your app did the other thing (the detail shows the port it bound or the code it exited with)"
 	executionModeConflictFix = "• set `execution_mode` in gregale.yaml to match the app: `request` or `service` for a server, `worker` for a long-running consumer, `job` for a run-to-completion task\n• or change the start command so the process matches the mode you declared"
@@ -262,6 +267,16 @@ var catalog = map[string]Render{
 		Hint:  "a platform problem stopped the release task; your release command did not cause it",
 		Why:   "Gregale could not prepare the release task's environment in time, lost the task's result channel, or got an invalid answer from the task VM, so the release command did not run to a result; the previous deployment is still live",
 		Fix:   "• deploy again; the release task runs from the start\n• if the release command changes data, read `gregale release summary <deployment-id>` first: when the result channel broke, the command may have run\n• if it keeps failing, contact support with the deployment id",
+		// observed is the release task's failure code. After a worker lease
+		// expired the command may have finished, and the next release
+		// command waits until a person records a check (ADR-1448).
+		Observed: func(observed any) (why, fix string) {
+			if code, _ := observed.(string); code != ReleaseTaskLeaseExpired {
+				return "", ""
+			}
+			return "Gregale lost track of the release task after your release command started, so whether it finished, and what it changed, is unknown; the previous deployment is still live",
+				"• check what the release command changed (for a migration, the database's migration table)\n• record the check with `gregale release resolve <deployment-id> --app <slug> --note TEXT`; until then no later release command runs\n• then deploy again; if it happens again, contact support with the deployment id"
+		},
 	},
 	api.CodeAppLayerTooBig: {
 		Title: "App too large",
@@ -318,21 +333,22 @@ func Decorate(p *api.Problem, code string, observed any) *api.Problem {
 	if row.Hint != "" {
 		p.Hint = row.Hint
 	}
+	why, fix := row.Why, row.Fix
 	if observed != nil && row.Observed != nil {
-		why, fix := row.Observed(observed)
-		if why != "" {
-			p.Why = why
+		// An empty templated half keeps the static one.
+		w, f := row.Observed(observed)
+		if w != "" {
+			why = w
 		}
-		if fix != "" {
-			p.Fix = fix
+		if f != "" {
+			fix = f
 		}
-	} else {
-		if row.Why != "" {
-			p.Why = row.Why
-		}
-		if row.Fix != "" {
-			p.Fix = row.Fix
-		}
+	}
+	if why != "" {
+		p.Why = why
+	}
+	if fix != "" {
+		p.Fix = fix
 	}
 	if code == api.CodeAppStartupTimeout {
 		if why, fix := startupFailureGuidance(p.Detail); why != "" {

@@ -8657,6 +8657,7 @@ type ManagedPostgresDatabase struct {
 	PreviewSourceDatabaseID     pgtype.UUID
 	PreviewEnvironmentID        pgtype.Text
 	PreviewPrNumber             pgtype.Int4
+	ExpiresAt                   pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabaseEndpoint struct {
