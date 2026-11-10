@@ -684,7 +684,7 @@ export class GithubService {
   }
   /**
    * List the GitHub installations a company organization owns.
-   * Company projects link repositories only through these installations (ADR-20261110200000). An owner or admin connects one from Connect GitHub with the organization selected. Members' personal installations are not listed; tokens are never returned.
+   * Company projects link repositories only through these installations. An owner or admin connects one from Connect GitHub with the organization selected. Members' personal installations are not listed; tokens are never returned.
    * @returns GitHubInstallationSummary The organization's installations; empty before one is connected or before billing adoption.
    * @throws ApiError
    */

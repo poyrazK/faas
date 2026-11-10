@@ -20114,7 +20114,7 @@ paths:
       tags: [github]
       operationId: listOrgGitHubInstallations
       summary: "List the GitHub installations a company organization owns."
-      description: "Company projects link repositories only through these installations (ADR-20261110200000). An owner or admin connects one from Connect GitHub with the organization selected. Members' personal installations are not listed; tokens are never returned."
+      description: "Company projects link repositories only through these installations. An owner or admin connects one from Connect GitHub with the organization selected. Members' personal installations are not listed; tokens are never returned."
       responses:
         '200':
           description: "The organization's installations; empty before one is connected or before billing adoption."

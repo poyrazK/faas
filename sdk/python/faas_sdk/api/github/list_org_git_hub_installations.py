@@ -82,9 +82,9 @@ def sync_detailed(
 ) -> Response[Problem | list[GitHubInstallationSummary]]:
     """List the GitHub installations a company organization owns.
 
-     Company projects link repositories only through these installations (ADR-20261110200000). An owner
-    or admin connects one from Connect GitHub with the organization selected. Members' personal
-    installations are not listed; tokens are never returned.
+     Company projects link repositories only through these installations. An owner or admin connects one
+    from Connect GitHub with the organization selected. Members' personal installations are not listed;
+    tokens are never returned.
 
     Args:
         organization (str):
@@ -115,9 +115,9 @@ def sync(
 ) -> Problem | list[GitHubInstallationSummary] | None:
     """List the GitHub installations a company organization owns.
 
-     Company projects link repositories only through these installations (ADR-20261110200000). An owner
-    or admin connects one from Connect GitHub with the organization selected. Members' personal
-    installations are not listed; tokens are never returned.
+     Company projects link repositories only through these installations. An owner or admin connects one
+    from Connect GitHub with the organization selected. Members' personal installations are not listed;
+    tokens are never returned.
 
     Args:
         organization (str):
@@ -143,9 +143,9 @@ async def asyncio_detailed(
 ) -> Response[Problem | list[GitHubInstallationSummary]]:
     """List the GitHub installations a company organization owns.
 
-     Company projects link repositories only through these installations (ADR-20261110200000). An owner
-    or admin connects one from Connect GitHub with the organization selected. Members' personal
-    installations are not listed; tokens are never returned.
+     Company projects link repositories only through these installations. An owner or admin connects one
+    from Connect GitHub with the organization selected. Members' personal installations are not listed;
+    tokens are never returned.
 
     Args:
         organization (str):
@@ -174,9 +174,9 @@ async def asyncio(
 ) -> Problem | list[GitHubInstallationSummary] | None:
     """List the GitHub installations a company organization owns.
 
-     Company projects link repositories only through these installations (ADR-20261110200000). An owner
-    or admin connects one from Connect GitHub with the organization selected. Members' personal
-    installations are not listed; tokens are never returned.
+     Company projects link repositories only through these installations. An owner or admin connects one
+    from Connect GitHub with the organization selected. Members' personal installations are not listed;
+    tokens are never returned.
 
     Args:
         organization (str):
