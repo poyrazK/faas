@@ -544,7 +544,10 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		// refuses it; githubd reports the reason on the commit.
 		active, freezeErr := freeze.ActiveFor(ctx, g.store, app, req.DeploymentScope, time.Now().UTC())
 		if freezeErr != nil {
-			g.log.Warn("githubd bridge: could not read deploy freezes; releasing", "app_id", app.ID, "err", freezeErr)
+			// ADR-20261019071733 amendment 13: an unreadable freeze refuses
+			// the push; githubd retries Unavailable.
+			g.log.Warn("githubd bridge: could not read deploy freezes; refusing", "app_id", app.ID, "err", freezeErr)
+			return nil, status.Error(codes.Unavailable, "could not read the app's deploy freezes")
 		} else if len(active) > 0 {
 			return nil, status.Error(codes.FailedPrecondition, freeze.Summary(app.Slug, active))
 		}

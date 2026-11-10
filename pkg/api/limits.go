@@ -2993,6 +2993,15 @@ const (
 	ObjectStorageInventorySweepBatch       = 50
 	ObjectStorageInventorySweepConcurrency = 8
 	ObjectStorageInventorySweepBudget      = 40 * time.Second
+	// Each worker takes the next due bucket as soon as it finishes, so one
+	// long listing no longer idles the rest (ADR-20261110151628 §1). At most
+	// ObjectStorageInventoryLongListingWorkers of them list a long bucket at
+	// once: one continuing an unfinished listing, or one whose last inventory
+	// counted more than ObjectStorageInventoryLongListingKeys keys (100 pages,
+	// 10–30 s of a worker at 100–300 ms a page). One-page buckets keep the
+	// other workers.
+	ObjectStorageInventoryLongListingWorkers = 4
+	ObjectStorageInventoryLongListingKeys    = 100_000
 	// The inventory sweep runs on its own loop, apart from billing: gateway
 	// reads and writes need an inventory no older than 900 s, so a slow month
 	// close or progress delivery must not delay it. Each billing step stops
