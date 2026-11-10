@@ -1891,6 +1891,12 @@ const (
 	// failed, timed out, or was cancelled. The previous deployment remains
 	// live; task output is available through the app-task inspection surface.
 	CodeReleaseCommandFailed = "release_command_failed"
+	// CodeReleaseInfrastructure means the deployment's release task failed
+	// before or around the command for a platform reason (its environment
+	// could not be prepared, the result channel broke, or the guest answered
+	// outside the protocol), so the command's own outcome is unknown or never
+	// happened. The previous deployment remains live; deploying again retries.
+	CodeReleaseInfrastructure = "release_infrastructure_failed"
 	// CodeReleasePhaseUnavailable means a deployment declares a release command
 	// but this imaged host has release-phase execution disabled. The candidate
 	// fails before serving VMs are booted so the command cannot be silently
