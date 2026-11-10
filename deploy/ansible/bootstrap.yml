@@ -341,6 +341,9 @@
     - role: builderd_service
     - role: compute_only_service
     - role: profiled_service
+    # ADR-20261110183000: observe-only runtime detection; off until
+    # faas_tetragon_enabled. Before alloy, so its export directory exists.
+    - role: tetragon
     # ADR-20261023124955 §2: ship this node's platform journal to Loki on the
     # control plane, with a Promtail leaf issued by the control plane's CA.
     - role: platform_logs_pki
