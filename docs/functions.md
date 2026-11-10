@@ -373,6 +373,79 @@ a checkout completes them; `gregale org activity` and the dashboard's
 activity feed show it. The design is recorded in
 [ADR-20261108160000](adr/20261108160000-functions-projects-from-repository-pushes.md).
 
+## Snapshot hooks
+
+A parked function wakes from a snapshot of its workers, so anything they set
+up at boot is copied into every instance restored from it. A Node or Python
+function can declare three hooks in its handler file to manage that state:
+
+- `init` runs in each worker after the module loads and before the worker is
+  ready, on cold boot and before the snapshot is taken. The snapshot waits for
+  it, so async setup (a warmed cache, a fetched config) is never captured half
+  done.
+- `beforeSnapshot` (Python `before_snapshot`) runs in every worker before a
+  new snapshot is captured. Close connections and flush buffers here.
+- `afterRestore` (Python `after_restore`) runs in every worker after a restore
+  and when a [frozen instance](cold-wake.md#frozen-instances) resumes, before
+  the instance serves traffic. Reopen connections and refresh values that must
+  be unique per instance here.
+
+```js
+// handler.js
+let db;
+export default {
+  async init() { db = await connect(process.env.DATABASE_URL); },
+  async beforeSnapshot() { await db.end(); },
+  async afterRestore() { db = await connect(process.env.DATABASE_URL); },
+  async fetch(request) { return Response.json(await db.query("select 1")); },
+};
+```
+
+```python
+# handler.py
+db = None
+
+async def init(ctx):
+    global db
+    db = await connect(os.environ["DATABASE_URL"])
+
+async def before_snapshot(ctx):
+    await db.close()
+
+async def after_restore(ctx):
+    global db
+    db = await connect(os.environ["DATABASE_URL"])
+
+async def handler(event, ctx):
+    return {"body": str(await db.fetchval("select 1"))}
+```
+
+In Node, hooks are methods on the default export or named exports beside
+`handler`; each receives `{signal}`, an `AbortSignal` that fires if the call
+is cancelled. In Python
+they are module functions, sync or async, with an optional `ctx` argument.
+
+`gregale deploy` finds the hooks in the handler file without running it, lists
+them under "Snapshot hooks in code:" in `gregale deploy --plan`, and points
+the app's `before_checkpoint` and `after_restore` lifecycle at the function
+runner, which calls the hook in every worker. A push to a [GitHub-connected
+functions project](#deploy-a-functions-project-from-github) does the same. A
+hook removed from the code is removed from the app on the next deploy. An
+app that already has its own `before_checkpoint` or `after_restore` path
+cannot also declare that hook in code; the deploy names the conflict.
+Lifecycle settings are app-wide, so only a production deploy changes them.
+
+The hooks have the [lifecycle hook contract](cold-wake.md#refresh-application-state-after-restore):
+`beforeSnapshot` and `afterRestore` have 500 ms. A failing `afterRestore`
+rejects the restored instance and Gregale cold-boots a fresh one. A failing
+`beforeSnapshot` on the first capture fails the deployment with
+`before_checkpoint_failed`, and declaring it turns off warm-tier snapshot
+captures for the function. A throwing `init` fails the deployment with
+`function_init_failed` and its error ([errors](errors.md)); an `init` that
+does not finish within the startup deadline fails it with
+`app_startup_timeout`. The design is recorded in
+[ADR-20261110190000](adr/20261110190000-function-snapshot-hooks-in-code.md).
+
 ## Concurrent requests per worker
 
 A Node or Python function runs your handler in up to four worker processes
