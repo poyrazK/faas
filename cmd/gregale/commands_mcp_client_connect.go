@@ -76,7 +76,7 @@ type mcpConnectSummary struct {
 	Clients  []mcpConnectResult `json:"clients"`
 }
 
-const mcpConnectUsage = "usage: gregale mcp connect [--client claude-code|codex]... [--project] [--toolsets LIST] [--headless] [--force] [--dry-run] [--yes]"
+const mcpConnectUsage = "usage: gregale mcp connect [--client claude-code|codex]... [--project] [--toolsets LIST] [--headless] [--force] [--dry-run] [--yes] | --check"
 
 func cmdMCPConnect(args []string) int {
 	fs := newFlagSet("mcp connect", flag.ContinueOnError)
@@ -88,10 +88,14 @@ func cmdMCPConnect(args []string) int {
 	force := fs.Bool("force", false, "replace an existing gregale entry that differs")
 	dryRun := fs.Bool("dry-run", false, "print what would be written without changing anything")
 	yes := fs.Bool("yes", false, "connect every detected client without asking")
-	flags, positional := splitArgsForFlags(args, "project", "headless", "force", "dry-run", "yes")
+	check := fs.Bool("check", false, "only check why an agent does not see Gregale; changes nothing")
+	flags, positional := splitArgsForFlags(args, "project", "headless", "force", "dry-run", "yes", "check")
 	if err := fs.Parse(flags); err != nil || len(positional) != 0 {
 		PrintUsage(os.Stderr, mcpConnectUsage, "mcp")
 		return 1
+	}
+	if *check {
+		return runMCPConnectCheck()
 	}
 	opts := mcpConnectOptions{URL: strings.TrimRight(apiBase(), "/") + "/mcp", Toolsets: strings.TrimSpace(*toolsets),
 		Project: *project, Headless: *headless, Force: *force, DryRun: *dryRun}
@@ -325,22 +329,7 @@ const (
 // other line, comment and table stays byte for byte.
 func upsertCodexServer(content, block string, force bool) (string, string) {
 	lines := strings.SplitAfter(content, "\n")
-	start, end := -1, len(lines)
-	for i, line := range lines {
-		header := codexTableHeader(line)
-		if header == "" {
-			continue
-		}
-		owned := header == "mcp_servers."+mcpServerName || strings.HasPrefix(header, "mcp_servers."+mcpServerName+".")
-		if start < 0 && owned {
-			start = i
-			continue
-		}
-		if start >= 0 && !owned {
-			end = i
-			break
-		}
-	}
+	start, end := codexServerSpan(lines)
 	if start < 0 {
 		sep := ""
 		if content != "" {
@@ -363,6 +352,37 @@ func upsertCodexServer(content, block string, force bool) (string, string) {
 		block += "\n"
 	}
 	return strings.Join(lines[:start], "") + block + tail, codexReplaced
+}
+
+// codexServerSpan finds the lines of the gregale server table and its
+// subtables: [start, end), or start -1 when there is none.
+func codexServerSpan(lines []string) (start, end int) {
+	start, end = -1, len(lines)
+	for i, line := range lines {
+		header := codexTableHeader(line)
+		if header == "" {
+			continue
+		}
+		owned := header == "mcp_servers."+mcpServerName || strings.HasPrefix(header, "mcp_servers."+mcpServerName+".")
+		if start < 0 && owned {
+			start = i
+			continue
+		}
+		if start >= 0 && !owned {
+			return start, i
+		}
+	}
+	return start, end
+}
+
+// codexServerTable returns the gregale server table of a Codex config, or "".
+func codexServerTable(content string) string {
+	lines := strings.SplitAfter(content, "\n")
+	start, end := codexServerSpan(lines)
+	if start < 0 {
+		return ""
+	}
+	return strings.Join(lines[start:end], "")
 }
 
 // codexTableHeader returns the dotted name of a TOML table header line, or
