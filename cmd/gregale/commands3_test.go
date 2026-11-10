@@ -867,8 +867,9 @@ func TestCmdSecretsRotateWaitForAckAfterKeyPair(t *testing.T) {
 	if code := main.CmdSecrets([]string{"rotate", "--app", "x", "DATABASE_URL=v2", "--wait-for-ack", "--timeout", "1s"}); code != 0 {
 		t.Fatalf("cmdSecrets rotate --wait-for-ack = %d, want 0", code)
 	}
-	if len(calls) != 2 || calls[0] != "rotate" || calls[1] != "status" {
-		t.Fatalf("calls = %v, want [rotate status]", calls)
+	// The first status read checks the key is set (Hunt 32 H32-82).
+	if strings.Join(calls, " ") != "status rotate status" {
+		t.Fatalf("calls = %v, want [status rotate status]", calls)
 	}
 	if !strings.Contains(stdout.String(), "All 1 active authorized runtime(s) confirmed") {
 		t.Fatalf("acknowledgement output = %q", stdout.String())
@@ -919,8 +920,8 @@ func TestCmdSecretsRotateRestartWaitsForColdStartAcknowledgement(t *testing.T) {
 	if code := main.CmdSecrets([]string{"rotate", "--app", "x", "DATABASE_URL=v2", "--restart", "--wait-for-ack", "--timeout", "1s"}); code != 0 {
 		t.Fatalf("cmdSecrets rotate --restart --wait-for-ack = %d", code)
 	}
-	if len(calls) != 4 || calls[0] != "rotate" || calls[1] != "restart" || calls[2] != "wake" || calls[3] != "status" {
-		t.Fatalf("calls = %v, want [rotate restart wake status]", calls)
+	if strings.Join(calls, " ") != "status rotate restart wake status" {
+		t.Fatalf("calls = %v, want [status rotate restart wake status]", calls)
 	}
 	if !strings.Contains(stdout.String(), "Restart completed") || !strings.Contains(stdout.String(), "All 1 active authorized runtime(s) confirmed") {
 		t.Fatalf("restart acknowledgement output = %q", stdout.String())

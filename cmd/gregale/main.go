@@ -170,6 +170,14 @@ func run(args []string) (status int) {
 			return printErr("Unknown flag", fmt.Errorf("gregale: unknown flag %s; run 'gregale %s --help' for its options", name, leadingWords(typed)))
 		}
 	}
+	// A bare group that has nothing to run on its own lists its commands, as
+	// its --help does; `gregale bucket` printed one subcommand's usage and
+	// `gregale mcp` the usage of `mcp server` (Hunt 32 H32-2).
+	if len(typed) == 1 && bareGroupListsCommands[typed[0]] {
+		if printTreeManifestHelp(osStderr, typed) {
+			return 1
+		}
+	}
 	// Help under a tree noun or a shortcut comes from the tree manifest the
 	// reference renders, so it names the same verbs at every depth.
 	if words, ok := treeHelpWords(typed); ok {
@@ -1203,3 +1211,7 @@ func findCliSubcommand(subcommands []cliSub, name string) (cliSub, bool) {
 	}
 	return cliSub{}, false
 }
+
+// bareGroupListsCommands names the groups whose bare invocation prints their
+// command list (on stderr, exit 1) instead of one subcommand's usage.
+var bareGroupListsCommands = map[string]bool{"bucket": true, "mcp": true}
