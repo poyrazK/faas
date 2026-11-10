@@ -2797,3 +2797,6 @@ var RefuseDevFunctionSet = refuseDevFunctionSet
 
 // MetricLabelFlags exposes the --metric-label parser.
 var MetricLabelFlags = metricLabelFlags
+
+// ManifestDeclaredBindings exposes the bindings check manifest reader (ADR-20261110180000).
+var ManifestDeclaredBindings = manifestDeclaredBindings
