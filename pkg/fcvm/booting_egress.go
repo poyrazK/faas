@@ -21,10 +21,13 @@ func (m *Manager) registerBootingEgressOwner(lease Lease, nc netns.Config, req W
 	if req.ExecutionOnly || qualification || lease.Networkless || nc.Netns == "" {
 		return
 	}
+	// AppTaskOnly stays false: a managed probe authenticates service calls
+	// from its task lease alone (gatewayd managedProbeCaller), which must keep
+	// waiting for publication. DNS grants need only the app identity.
 	owner := &Instance{
 		Lease: lease, Net: nc,
 		AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
-		AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused,
+		Paused: req.KeepPaused,
 		booting: true,
 	}
 	m.mu.Lock()

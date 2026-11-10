@@ -76,4 +76,6 @@ fixed, under the same exclusions as a live slot (qualification, execution,
 paused, builder, job), receives resolved and database grants, and hands them
 and its network generation to the published instance, so an answer captured
 during boot still applies after publication. Teardown drops it. Service calls
-are unchanged: they still require the caller's `running` instance row.
+are unchanged: they still require the caller's `running` instance row, and a
+booting managed probe resolves without its app-task flag, so its task lease
+cannot authenticate service calls before publication.

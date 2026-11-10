@@ -132,3 +132,17 @@ func TestBootingEgressOwnerSkipsSlotsWithoutAnIdentity(t *testing.T) {
 		})
 	}
 }
+
+// A booting managed probe resolves without the app-task flag, so gatewayd
+// cannot authenticate its service calls from the task lease before
+// publication; its DNS grants still carry the app identity.
+func TestBootingAppTaskIsNotAServiceCaller(t *testing.T) {
+	m := newTestManager(&fakeInputRunner{}, &fakeVMM{})
+	ip := netip.MustParseAddr("10.100.0.9")
+	m.registerBootingEgressOwner(Lease{Instance: "probe", HostIP: ip}, netns.Config{Netns: "ns-probe", HostIP: ip},
+		WakeRequest{AppID: "app", AccountID: "account", DeploymentID: "deployment", AppTaskOnly: true}, false)
+	identity, matched := m.ResolveServiceCaller(ip)
+	if !matched || identity.AppTask || identity.AppID != "app" {
+		t.Fatalf("booting probe identity = %+v, %v", identity, matched)
+	}
+}
