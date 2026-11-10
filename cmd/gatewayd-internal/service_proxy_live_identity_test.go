@@ -23,6 +23,15 @@ type liveCallerFixture struct {
 	rows          []state.Instance
 	err           error
 	ordinaryReads int
+	// instance is the row InstanceByID returns; nil answers ErrNotFound.
+	instance *state.Instance
+}
+
+func (f *liveCallerFixture) InstanceByID(_ context.Context, id string) (state.Instance, error) {
+	if f.instance == nil || f.instance.ID != id {
+		return state.Instance{}, state.ErrNotFound
+	}
+	return *f.instance, nil
 }
 
 func (f *liveCallerFixture) ResolveServiceCaller(_ context.Context, _ *vmmdpb.ResolveServiceCallerRequest, _ ...grpc.CallOption) (*vmmdpb.ResolveServiceCallerResponse, error) {
@@ -76,7 +85,7 @@ func TestManagedServiceCallerRequiresLiveTaskAndLease(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f := managedLiveCallerFixture()
 			test.edit(f)
-			rows, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "10.100.0.7")
+			rows, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "node-uuid", "10.100.0.7")
 			if err != nil || (len(rows) == 1) != test.want || f.ordinaryReads != 0 {
 				t.Fatalf("identity = %+v, %v; ordinary reads = %d", rows, err, f.ordinaryReads)
 			}
@@ -90,31 +99,31 @@ func TestManagedServiceCallerRequiresLiveTaskAndLease(t *testing.T) {
 func TestServiceCallerLiveLookupRollingUpgradeAndReusedAddress(t *testing.T) {
 	f := managedLiveCallerFixture()
 	f.err = status.Error(codes.Unimplemented, "old node")
-	rows, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "10.100.0.7")
+	rows, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "node-uuid", "10.100.0.7")
 	if err != nil || len(rows) != 1 || rows[0].AppID != "stale-tenant" {
 		t.Fatalf("ordinary rolling-upgrade compatibility = %+v, %v", rows, err)
 	}
 	f.err = errors.New("node unavailable")
-	if _, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "10.100.0.7"); err == nil {
+	if _, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "node-uuid", "10.100.0.7"); err == nil {
 		t.Fatal("real node error fell back to database")
 	}
 	f.err, f.live.AppTask = nil, false
-	rows, err = serviceProxyLiveIdentity(t.Context(), f, f, "node", "10.100.0.7")
+	rows, err = serviceProxyLiveIdentity(t.Context(), f, f, "node", "node-uuid", "10.100.0.7")
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("stale ordinary identity accepted for reused address: %+v, %v", rows, err)
 	}
 	f.rows = []state.Instance{{AppID: f.live.AppId, DeploymentID: f.live.DeploymentId}}
-	rows, err = serviceProxyLiveIdentity(t.Context(), f, f, "node", "10.100.0.7")
+	rows, err = serviceProxyLiveIdentity(t.Context(), f, f, "node", "node-uuid", "10.100.0.7")
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("matching ordinary caller rejected: %+v, %v", rows, err)
 	}
 	f.live.AppId, f.live.DeploymentId = "", ""
-	rows, err = serviceProxyLiveIdentity(t.Context(), f, f, "node", "10.100.0.7")
+	rows, err = serviceProxyLiveIdentity(t.Context(), f, f, "node", "node-uuid", "10.100.0.7")
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("unattributed slot inherited old identity: %+v, %v", rows, err)
 	}
 	f.live.JobTask = true
-	rows, err = serviceProxyLiveIdentity(t.Context(), f, f, "node", "10.100.0.7")
+	rows, err = serviceProxyLiveIdentity(t.Context(), f, f, "node", "node-uuid", "10.100.0.7")
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("managed Job lookup was not preserved: %+v, %v", rows, err)
 	}
@@ -139,7 +148,7 @@ func TestContainedCommandCallerRequiresExactLiveTaskAndRecorderSource(t *testing
 			f.task.BindingVerification = nil
 			f.rows = []state.Instance{{ID: f.task.ID, AppID: f.task.AppID, DeploymentID: f.task.DeploymentID}}
 			test.edit(f)
-			rows, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "10.100.0.7")
+			rows, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "node-uuid", "10.100.0.7")
 			if err != nil || (len(rows) == 1) != test.want {
 				t.Fatalf("contained caller = %+v, %v", rows, err)
 			}
@@ -184,5 +193,58 @@ func TestServiceCallerLiveLookupUsesLocalNodeIDWithoutCachingAddresses(t *testin
 		if asked != "node-uuid" {
 			t.Fatalf("vmmd dial used %q instead of node UUID", asked)
 		}
+	}
+}
+
+// A cold-booting guest runs its app and readiness check before its row turns
+// running and carries a host address, so a service call it made at startup
+// found no caller and was refused. vmmd owns the address for the booting
+// guest; its row, looked up by that instance id, must still be booting and
+// name the same app and deployment on this node.
+func TestBootingServiceCallerRequiresMatchingBootingRow(t *testing.T) {
+	booting := func() *liveCallerFixture {
+		return &liveCallerFixture{
+			live: &vmmdpb.ResolveServiceCallerResponse{Matched: true, InstanceId: "ins-1", AccountId: "account", AppId: "caller", DeploymentId: "dep-1"},
+			instance: &state.Instance{ID: "ins-1", AppID: "caller", DeploymentID: "dep-1", NodeID: "node-uuid",
+				State: string(state.StateColdBooting)},
+		}
+	}
+	for _, test := range []struct {
+		name string
+		edit func(*liveCallerFixture)
+		want bool
+	}{
+		{"cold booting", func(*liveCallerFixture) {}, true},
+		{"waking", func(f *liveCallerFixture) { f.instance.State = string(state.StateWaking) }, true},
+		{"no row", func(f *liveCallerFixture) { f.instance = nil }, false},
+		{"parked row", func(f *liveCallerFixture) { f.instance.State = string(state.StateParked) }, false},
+		{"failed row", func(f *liveCallerFixture) { f.instance.State = string(state.StateFailed) }, false},
+		{"other app", func(f *liveCallerFixture) { f.instance.AppID = "other" }, false},
+		{"other deployment", func(f *liveCallerFixture) { f.instance.DeploymentID = "other" }, false},
+		{"other node", func(f *liveCallerFixture) { f.instance.NodeID = "other-node" }, false},
+		{"app task slot", func(f *liveCallerFixture) { f.live.AppTask = true }, false},
+		{"unattributed slot", func(f *liveCallerFixture) { f.live.AppId, f.live.DeploymentId = "", "" }, false},
+		{"stale serving row wins", func(f *liveCallerFixture) {
+			f.rows = []state.Instance{{AppID: "stale-tenant", DeploymentID: "stale-deployment"}}
+		}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := booting()
+			test.edit(f)
+			rows, err := serviceProxyLiveIdentity(t.Context(), f, f, "compute-a", "node-uuid", "10.100.0.9")
+			if err != nil || (len(rows) == 1) != test.want {
+				t.Fatalf("identity = %+v, %v; want caller %v", rows, err, test.want)
+			}
+			if !test.want {
+				return
+			}
+			got := rows[0]
+			if got.ID != "ins-1" || got.AppID != "caller" || got.DeploymentID != "dep-1" || got.HostIP != "10.100.0.9" || got.NodeID != "compute-a" {
+				t.Fatalf("booting identity = %+v", got)
+			}
+			if identity := identityForHostIP(rows, "compute-a", "10.100.0.9"); identity.appID != "caller" {
+				t.Fatalf("resolver rejected the booting caller: %+v", identity)
+			}
+		})
 	}
 }

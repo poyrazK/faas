@@ -18,6 +18,7 @@ import (
 type serviceProxyLiveIdentityStore interface {
 	LiveServiceCallersByHostIP(context.Context, string, string) ([]state.Instance, error)
 	AppTaskByID(context.Context, string, string, string) (state.AppTask, error)
+	InstanceByID(context.Context, string) (state.Instance, error)
 }
 
 type resolveServiceCallerClient interface {
@@ -38,11 +39,14 @@ func newServiceProxyLiveLookup(store serviceProxyLiveIdentityStore, clients vmmd
 			return nil, gateway.ErrServiceProxyUnavailable
 		}
 		defer func() { _ = closer.Close() }()
-		return serviceProxyLiveIdentity(ctx, store, client, nodeName, hostIP)
+		return serviceProxyLiveIdentity(ctx, store, client, nodeName, nodeID, hostIP)
 	}
 }
 
-func serviceProxyLiveIdentity(ctx context.Context, store serviceProxyLiveIdentityStore, client resolveServiceCallerClient, nodeName, hostIP string) ([]state.Instance, error) {
+// serviceProxyLiveIdentity attributes a guest source address. nodeName is the
+// node's manifest name, as the serving rows carry it; nodeID is its
+// compute_nodes.id, which a booting instance's row is checked against.
+func serviceProxyLiveIdentity(ctx context.Context, store serviceProxyLiveIdentityStore, client resolveServiceCallerClient, nodeName, nodeID, hostIP string) ([]state.Instance, error) {
 	live, err := client.ResolveServiceCaller(ctx, &vmmdpb.ResolveServiceCallerRequest{SourceIp: hostIP})
 	if status.Code(err) == codes.Unimplemented {
 		// Preserve ordinary routing during rolling upgrades. App tasks have no
@@ -65,12 +69,47 @@ func serviceProxyLiveIdentity(ctx context.Context, store serviceProxyLiveIdentit
 	if err != nil || live.GetJobTask() {
 		return instances, err // The existing claimed managed-Job graph check applies.
 	}
+	if len(instances) == 0 {
+		return bootingServiceCaller(ctx, store, live, nodeName, nodeID, hostIP)
+	}
 	for _, instance := range instances {
 		if instance.AppID != live.GetAppId() || instance.DeploymentID != live.GetDeploymentId() {
 			return nil, nil
 		}
 	}
 	return instances, nil
+}
+
+// bootingServiceCaller attributes a guest whose instance is still booting. A
+// cold boot runs the app and waits for its readiness before the instance turns
+// running, and only then does its row carry a host address; a service call or
+// alias lookup the app made at startup found no caller and was refused, so a
+// readiness check that depends on a sibling service failed the deployment.
+// vmmd already owns the address for the booting guest (booting_egress.go);
+// its row must name the same app and deployment on this node and still be
+// booting. It answers no identity on any mismatch.
+func bootingServiceCaller(ctx context.Context, store serviceProxyLiveIdentityStore, live *vmmdpb.ResolveServiceCallerResponse, nodeName, nodeID, hostIP string) ([]state.Instance, error) {
+	if live.GetAppTask() || live.GetAppId() == "" || live.GetDeploymentId() == "" {
+		return nil, nil
+	}
+	instance, err := store.InstanceByID(ctx, live.GetInstanceId())
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	switch state.State(instance.State) {
+	case state.StateColdBooting, state.StateWaking:
+	default:
+		return nil, nil
+	}
+	if instance.ID != live.GetInstanceId() || instance.AppID != live.GetAppId() || instance.DeploymentID != live.GetDeploymentId() ||
+		nodeID == "" || instance.NodeID != nodeID {
+		return nil, nil
+	}
+	return []state.Instance{{ID: instance.ID, AppID: instance.AppID, DeploymentID: instance.DeploymentID,
+		NodeID: nodeName, HostIP: hostIP, State: string(state.StateRunning)}}, nil
 }
 
 func managedProbeCaller(ctx context.Context, store serviceProxyLiveIdentityStore, live *vmmdpb.ResolveServiceCallerResponse, nodeName, hostIP string) ([]state.Instance, error) {
