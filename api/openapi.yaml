@@ -38761,11 +38761,23 @@ paths:
       tags: [projects]
       operationId: deleteProject
       summary: Delete a project and detach its live workloads.
-      description: The apps remain live. Their project_id is cleared by the database foreign-key action.
+      description: |
+        The apps remain live. Their project_id is cleared by the database
+        foreign-key action. While the project's services call each other by
+        service name, deletion is refused with 409
+        project_services_call_each_other, because detached services no longer
+        resolve those names; pass detach_services=true once they do not.
+      parameters:
+        - name: detach_services
+          in: query
+          required: false
+          description: Confirms the project's services no longer call each other by service name.
+          schema: { type: boolean }
       responses:
         '204': { description: Project deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environment-clones:
@@ -66156,6 +66168,26 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/orgs/{organization}/github/installations:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    get:
+      tags: [github]
+      operationId: listOrgGitHubInstallations
+      summary: "List the GitHub installations a company organization owns."
+      description: "Company projects link repositories only through these installations. An owner or admin connects one from Connect GitHub with the organization selected. Members' personal installations are not listed; tokens are never returned."
+      responses:
+        '200':
+          description: "The organization's installations; empty before one is connected or before billing adoption."
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GitHubInstallationSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/orgs/{organization}/projects:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -85607,6 +85639,10 @@ components:
           type: string
           format: date-time
           description: "Set while a restored database is one past the plan's database limit. It becomes an ordinary database once the account has room; otherwise its delete is scheduled at this time."
+        expires_at:
+          type: string
+          format: date-time
+          description: Set on a database restored with ttl_seconds. Its bindings are revoked and it is purged at this time.
         plan_excess:
           type: string
           enum: [database_limit, service_class]
@@ -85884,13 +85920,22 @@ components:
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
     RestoreManagedPostgresDatabaseRequest:
-      description: Point-in-time restore request that creates a new database.
+      description: Point-in-time restore request that creates a new database. A restore is a copy-on-write branch of the source where the backend supports it.
       type: object
       additionalProperties: false
-      required: [name, point_in_time]
+      required: [name]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
-        point_in_time: { type: string, format: date-time }
+        point_in_time:
+          type: string
+          format: date-time
+          description: A time inside the source's restore_range. Omit it to restore from the latest point, a couple of seconds before the request.
+        ttl_seconds:
+          type: integer
+          format: int64
+          minimum: 300
+          maximum: 2592000
+          description: Purge the new database this many seconds after it is created. Its bindings are revoked first; the source is never touched. The database shows expires_at.
     ManagedPostgresBinding:
       description: Workload binding metadata. Credentials are delivered through the app secret surface and never returned here.
       type: object
@@ -85991,6 +86036,7 @@ components:
         auth_consumers: { type: integer, format: int64, minimum: 0 }
         migration_bindings: { type: integer, format: int64, minimum: 0 }
         other_bindings: { type: integer, format: int64, minimum: 0 }
+        session_bindings: { type: integer, format: int64, minimum: 0, description: Session bindings are modeled at their role connection limit and are not counted in other_bindings. }
         resident_instances: { type: integer, format: int64, minimum: 0 }
         parked_instances: { type: integer, format: int64, minimum: 0 }
         auxiliary_instances: { type: integer, format: int64, minimum: 0 }
@@ -86006,6 +86052,7 @@ components:
         data_api_resident_estimate: { type: integer, format: int64, minimum: 0 }
         data_api_wake_estimate: { type: integer, format: int64, minimum: 0 }
         auth_wake_estimate: { type: integer, format: int64, minimum: 0 }
+        session_connection_ceiling: { type: integer, format: int64, minimum: 0, description: The session role connection limit per session binding; two roles while a binding rotates. }
         control_headroom: { type: integer, format: int64, minimum: 0 }
         migration_headroom: { type: integer, format: int64, minimum: 0 }
         modeled_peak_connections: { type: integer, format: int64, minimum: 0 }
@@ -90750,7 +90797,7 @@ components:
           type: boolean
           example: false
         # Issue #470 / ADR-055: per-app two-tier snapshot flag +
-        # thresholds. True on Pro/Scale by default; Free/Hobby
+        # thresholds. Off by default (opt-in on Pro/Scale); Free/Hobby
         # always false (the only legal state on those tiers —
         # apid rejects PATCH-true with 403
         # plan_warm_snapshot_not_allowed). Customer PATCH may
@@ -90758,7 +90805,7 @@ components:
         # out-of-range threshold values are rejected with 422
         # invalid_warm_snapshot_min_*.
         warm_snapshot_enabled:
-          description: "Per-app two-tier snapshot flag. True on Pro/Scale by default; Free/Hobby always false."
+          description: "Per-app two-tier snapshot flag. False by default; Pro/Scale may opt in, Free/Hobby always false."
           type: boolean
           example: true
         warm_snapshot_min_requests:
@@ -110211,6 +110258,9 @@ components:
         public_url:
           type: string
           description: Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when wildcard app URLs are disabled.
+        public_auth_mode:
+          type: string
+          description: "Public URL auth the app will have after apply (bearer, basic, ...), from the existing app or the plan default for a new app. Omitted when the URL accepts anonymous requests."
         app_slug:
           type: string
           description: "Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug, which get the project-prefixed name."

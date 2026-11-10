@@ -42,6 +42,11 @@ func newWorkloadOutputPipe(dst io.Writer, uid, gid int) (*workloadOutputPipe, er
 	go func() {
 		defer close(p.done)
 		_, _ = io.Copy(dst, r)
+		// A redacting writer holds back a tail that may be the start of a
+		// secret value; at EOF it can only be ordinary output.
+		if f, ok := dst.(interface{ Flush() error }); ok {
+			_ = f.Flush()
+		}
 		_ = r.Close()
 	}()
 	return p, nil

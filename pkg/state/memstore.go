@@ -9542,7 +9542,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployRolledBack,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditData("abort_requested", reason)),
 		})
@@ -9612,7 +9612,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployTrafficChanged,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditDataWithDecision("advance", reason, decision)),
 		})
@@ -9650,7 +9650,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployTrafficChanged,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditDataWithDecision("promote", reason, decision)),
 		})
@@ -9682,7 +9682,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			predecessor.TrafficPercent = 100
 			m.putDeploymentLocked(expectedPredecessorID, predecessor)
 			m.putDeploymentLocked(target.ID, *target)
-			entry := DeploymentAudit{DeploymentID: uuid.MustParse(target.ID), Kind: DeployRolledBack, Actor: "operator:cli:recover_rollout", At: now,
+			entry := DeploymentAudit{DeploymentID: uuid.MustParse(target.ID), Kind: DeployRolledBack, Actor: rolloutRecoveryActor(ctx), At: now,
 				Data: json.RawMessage(withAuditDecision(rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx)), decision))}
 			if auditOverride != nil {
 				entry = *auditOverride
@@ -9721,7 +9721,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployRolledBack,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditDataWithDecision("abort", reason, decision)),
 		})
@@ -10861,6 +10861,9 @@ func (m *MemStore) ClearDeployment(_ context.Context, id, principal string) erro
 	}
 	if d.Status == DeployLive {
 		return ErrCancelLiveForbidden
+	}
+	if d.Status.IsCancelEligible() {
+		return ErrClearInFlightForbidden
 	}
 	now := time.Now().UTC()
 	d.DeletedAt = &now

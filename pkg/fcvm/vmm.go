@@ -773,6 +773,11 @@ func firecrackerControlLine(line []byte) bool {
 		// queue worker's customer log on production-us rc.294 (Hunt 14
 		// H14-5).
 		"spurious notification from api thread",
+		// Firecracker's vsock device losing a host-side stream, e.g. "vsock:
+		// error writing to local stream (lp=1027, pp=…): GuestMemoryMmap(
+		// IOError(Os { code: 32, kind: BrokenPipe … }))". It reached a
+		// function's customer log on production-us rc.336 (Hunt 32 H32-69).
+		"vsock: error ",
 	} {
 		if strings.Contains(body, marker) {
 			return true
@@ -6969,7 +6974,7 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		if len(tail) > 0 {
 			detail += ": " + string(tail)
 		}
-		return true, api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+		return true, startupCrashProblem(report.LogTail, detail)
 	}
 
 	switch executionMode {
@@ -7222,9 +7227,19 @@ func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 	// and exited. Without it the guest itself failed (overlay, pivot, init),
 	// which stays a platform failure (production-us hunt #9, H9-106).
 	if supervisedWorkloadExited(lines) {
-		return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+		return startupCrashProblem(strings.Join(lines, "\n"), detail)
 	}
 	return errors.New(detail)
+}
+
+// startupCrashProblem names a workload that exited during startup. A
+// function whose init hook failed says so in its output, and gets its own
+// code (ADR-20261110190000).
+func startupCrashProblem(output, detail string) *api.Problem {
+	if strings.Contains(output, api.FunctionInitFailedMarker) {
+		return api.NewProblem(422, api.CodeFunctionInitFailed, "function init failed", detail)
+	}
+	return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
 }
 
 // supervisedWorkloadMarkers are guest-init's own console lines for a

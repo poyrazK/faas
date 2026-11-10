@@ -274,6 +274,40 @@ every plan:
   never uses the slot: its copy becomes the app's database, so the account
   needs room for it inside the limit.
 
+## Branches
+
+A branch is a restore from the database's latest point: a new database that
+shares its source's storage until it is written to. Use one to test a
+migration or a destructive job against real data, then throw it away.
+
+```sh
+gregale postgres branch orders pr-42 --ttl 2h
+gregale postgres attach pr-42 my-api-pr-42 --env DATABASE_URL
+# run migrations and tests against pr-42
+gregale postgres branch delete orders pr-42 --yes
+```
+
+- `--from live` (the default) takes the latest point, a couple of seconds
+  before the request. `--from 2026-11-06T09:00:00Z` branches from any time in
+  the source's `restore_range`.
+- `--ttl` (5m to 30d, for example `90m`, `2h` or `7d`) purges the branch that
+  long after it is created. `get` and `list` show it as `expires_at`. At that
+  time its bindings are removed and it is purged: there is no undo window. A
+  branch that has branches of its own is kept until they are gone.
+- `gregale postgres branch list orders` lists the branches of `orders`.
+  `branch delete` purges a branch at once, and refuses a database that is not
+  a branch of the one you name.
+- The source and its apps are never changed. A source you delete while it has
+  branches is kept until they are gone.
+- A branch's name is its database name, so it is unique in your account like
+  any database name. With several databases, include the source in it, for
+  example `orders-pr-42`.
+- A branch is a restore: it counts toward your plan's database limit and may
+  take the one restore slot past it (see
+  [Restore to a point in time](#restore-to-a-point-in-time)).
+- In the API, a restore without `point_in_time` is a branch from the latest
+  point, and `ttl_seconds` sets its expiry.
+
 ## Change the compute class
 
 Resizing is in beta.

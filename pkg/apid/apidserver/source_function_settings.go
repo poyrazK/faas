@@ -47,6 +47,15 @@ func (s *server) applySourceFunctionSettings(ctx context.Context, acct state.Acc
 		push.Scope = state.DefaultEnvScope
 	}
 	req, changed := functionSettingsRequest(spec, app)
+	// Snapshot hooks declared in code point the app's lifecycle at the
+	// runner (ADR-20261110190000 §5). Lifecycle is app-wide, like RAM.
+	after, before, hooksChanged, err := spec.HookLifecycleUpdate(app.Manifest.AfterRestore, app.Manifest.BeforeCheckpoint)
+	if err != nil {
+		return app, api.ErrValidation(err.Error())
+	}
+	if hooksChanged {
+		req.AfterRestore, req.BeforeCheckpoint, changed = after, before, true
+	}
 	if changed && push.Scope == state.DefaultEnvScope {
 		updated, prob := s.applySourceFunctionAppSettings(ctx, acct, app, req, limits, push)
 		if prob != nil {
@@ -79,9 +88,16 @@ func (s *server) applySourceFunctionAppSettings(ctx context.Context, acct state.
 		fields = append(fields, "idle_timeout_s")
 	}
 	if req.FunctionConcurrency != nil {
-		manifest, _ := stateManifestForUpdate(app, &req)
-		params.Manifest = manifest
 		fields = append(fields, "function_concurrency")
+	}
+	if req.AfterRestore != nil {
+		fields = append(fields, "after_restore")
+	}
+	if req.BeforeCheckpoint != nil {
+		fields = append(fields, "before_checkpoint")
+	}
+	if manifest, ok := stateManifestForUpdate(app, &req); ok {
+		params.Manifest = manifest
 	}
 	updated, err := s.store.UpdateApp(ctx, app.ID, params)
 	if err != nil {

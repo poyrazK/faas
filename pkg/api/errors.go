@@ -781,6 +781,10 @@ const (
 	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
 	CodeConflict                        = "conflict"
+	// CodeProjectServicesCallEachOther (409, ADR-20261104221217): deleting the
+	// project would detach services that still call each other by service
+	// name. Pass detach_services=true once they no longer do.
+	CodeProjectServicesCallEachOther = "project_services_call_each_other"
 	// CodeIdempotencyKeyReused (422, ADR-20261022204036): the request's
 	// Idempotency-Key was used within its 24 h replay window for a different
 	// request. Nothing ran, and the first request's result is kept.
@@ -966,6 +970,10 @@ const (
 	// the row is already terminal and the cancel is meaningless.
 	// ADR-124; mirrors the state.CancelReason invalid path.
 	CodeDeploymentCancelNotCancellable = "deployment_cancel_not_cancellable"
+	// CodeDeploymentHideInFlight is returned by DELETE /v1/deployments/{id}
+	// when the row is still pending, building, imaging or snapshotting:
+	// hiding does not stop it, so it must be cancelled first.
+	CodeDeploymentHideInFlight = "deployment_hide_in_flight"
 	// CodeDeploymentReorderNotPending is returned by reorder
 	// when the row's status is not 'pending'. ADR-124.
 	CodeDeploymentReorderNotPending = "deployment_reorder_not_pending"
@@ -1887,6 +1895,15 @@ const (
 	// Distinct from app_startup_timeout (still running, never ready) and
 	// app_not_listening (running, nothing bound).
 	CodeAppStartupCrash = "app_startup_crash"
+	// CodeFunctionInitFailed means a function's init hook threw
+	// before its worker became ready (ADR-20261110190000); an init that never
+	// finishes is an app_startup_timeout. The adapter's
+	// FunctionInitFailedMarker line in the workload output names it; it is
+	// otherwise an app_startup_crash, and customer-caused like one.
+	CodeFunctionInitFailed = "function_init_failed"
+	// FunctionInitFailedMarker begins the line the Node and Python function
+	// adapters print to stderr when init fails (pkg/fnadapter).
+	FunctionInitFailedMarker = "gregale: function init failed:"
 	// CodeExecutionModeConflict means the workload's startup behavior
 	// contradicts its declared execution mode: a worker that bound a port or
 	// exited, or a job that served. Customer-caused, like app_startup_crash.
@@ -2328,7 +2345,7 @@ func StatusForCode(code string) int {
 		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeWorkflowStepRetryNotAllowed,
-		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
+		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable, CodeDeploymentHideInFlight,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
@@ -2423,6 +2440,7 @@ func StatusForCode(code string) int {
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
 		CodeAppStartupCrash,
+		CodeFunctionInitFailed,
 		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
@@ -3547,6 +3565,17 @@ func ErrUploadSessionOffsetConflict(uploadID string, expected, current int64) *P
 		WithDocs(docsBase + "/deploy-from-source#uploads")
 }
 
+// ErrUploadChecksumMismatch is returned by commit when the received bytes do
+// not hash to the declared sha256_hex. 410 like an expired session: this
+// session is gone and a fresh upload is the fix.
+func ErrUploadChecksumMismatch(uploadID, declared, got string) *Problem {
+	return NewProblem(http.StatusGone, CodeUploadChecksumMismatch,
+		"Uploaded archive does not match its checksum",
+		fmt.Sprintf("Upload session %q declared sha256 %s but the received bytes hash to %s; the session was cancelled.", uploadID, declared, got)).
+		WithHint("Start the upload again; gregale deploy does this automatically.").
+		WithDocs(docsBase + "/deploy-from-source#uploads")
+}
+
 // ErrUploadSessionExpired is returned when the reaper has marked the
 // row expired (or the request arrives after its TTL before the next
 // sweep). The CLI auto-rolls to a fresh POST /v1/uploads on receipt of
@@ -3896,6 +3925,15 @@ const CodePlanCronQuota = "plan_cron_quota"
 // event_triggers would leave more enabled event subscriptions than the plan's
 // per-app or per-account cap (ADR-20261031130000).
 const CodePlanEventSubscriptionQuota = "plan_event_subscription_quota"
+
+// CodeEventSubscriptionFilterTooLarge and CodeEventSubscriptionFilterTooDeep
+// are the 422s for an event_triggers filter over
+// EventSubscriptionFilterMaxBytes or EventSubscriptionFilterMaxDepth
+// (events hunt #9).
+const (
+	CodeEventSubscriptionFilterTooLarge = "event_subscription_filter_too_large"
+	CodeEventSubscriptionFilterTooDeep  = "event_subscription_filter_too_deep"
+)
 
 // CodeCronFireNowBusy is the 429 a manual cron run gets while the cron
 // already has CronFireNowActivePerCron runs waiting or running
@@ -4651,6 +4689,11 @@ const (
 	// already gone; the operator's fix is to start a fresh
 	// upload session.
 	CodeUploadSessionAlreadyCancelled = "upload_session_already_cancelled"
+	// CodeUploadChecksumMismatch is the 410 emitted by
+	// POST /v1/uploads/{id}/commit when the received archive's SHA-256
+	// differs from the sha256_hex declared at start. The session is
+	// cancelled, so the CLI restarts with a fresh upload.
+	CodeUploadChecksumMismatch = "upload_checksum_mismatch"
 )
 
 // ErrPlanCronsNotAllowed is returned by apid's createCron handler
@@ -4702,6 +4745,28 @@ func ErrPlanEventSubscriptionQuota(plan Plan, scope string, limit, observed int)
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/events#subscription-limits")
+}
+
+// ErrEventSubscriptionFilterTooLarge is the 422 for an event_triggers filter
+// whose compact JSON exceeds EventSubscriptionFilterMaxBytes.
+func ErrEventSubscriptionFilterTooLarge(field string, limit, observed int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeEventSubscriptionFilterTooLarge,
+		"Event filter too large",
+		fmt.Sprintf("%s is %d bytes as compact JSON; event filters are capped at %d bytes. Filter on fewer fields, or route by source and type instead.",
+			field, observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/events#filter-limits")
+}
+
+// ErrEventSubscriptionFilterTooDeep is the 422 for an event_triggers filter
+// nested deeper than EventSubscriptionFilterMaxDepth.
+func ErrEventSubscriptionFilterTooDeep(field string, limit, observed int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeEventSubscriptionFilterTooDeep,
+		"Event filter nested too deeply",
+		fmt.Sprintf("%s nests %d levels deep; event filters are capped at %d levels.",
+			field, observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/events#filter-limits")
 }
 
 // ErrCronConflict is the 409 for a cron another cron of the same app already
@@ -6021,6 +6086,18 @@ func ErrDeploymentCancelLiveForbidden(id string) *Problem {
 		WithHint("Use 'gregale deploys rollback <id>' to swap to a previous deployment.").
 		WithFix("Run: gregale deploys rollback --app <slug> --to <previous-deployment-id>").
 		WithWhy("Cancelling a live deployment has no well-defined semantics: it would either scale the app to zero (kills §6.2 INV 4) or park the app (kills INV 3). The deploys-rollback path is the user-correct escape.").
+		WithDocs(docsBase + "/deploys#cancel")
+}
+
+// ErrDeploymentHideInFlight refuses to hide a deployment that is still in
+// flight. Hiding only sets deleted_at, so the pipeline would keep running on
+// a row no list shows; cancelling stops it.
+func ErrDeploymentHideInFlight(id, status string) *Problem {
+	return NewProblem(http.StatusConflict, CodeDeploymentHideInFlight,
+		"Cannot hide a deployment that is still in progress",
+		fmt.Sprintf("deployment %s is %s; hiding it would not stop it.", id, status)).
+		WithHint("Cancel the deployment first, then hide it.").
+		WithFix("Run: gregale release cancel " + id + ", then gregale release hide " + id).
 		WithDocs(docsBase + "/deploys#cancel")
 }
 

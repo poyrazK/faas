@@ -89,11 +89,13 @@ func cmdReleaseDispatch(args []string) int {
 		return cmdReleaseReconcile(args[1:])
 	case subReleaseHistory:
 		return cmdReleaseHistory(args[1:])
+	case subReleaseVerify:
+		return cmdReleaseVerify(args[1:])
 	case flagHelpShort, flagHelpLong:
 		printReleaseUsage(os.Stderr)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "gregalectl release: unknown subcommand %q (expected: bundle | install | kgv | reconcile | history)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl release: unknown subcommand %q (expected: bundle | install | kgv | reconcile | history | verify)\n", args[0])
 		return 1
 	}
 }
@@ -110,6 +112,9 @@ Subcommands:
   reconcile Remove retained database rows for superseded failed rollouts.
   history   List release activations (deploys and rollbacks) on
             control-plane hosts and compute release installs, newest first.
+  verify    Check this host's current release against its signed manifest
+            and every platform process against a verified release
+            (ADR-20261110183000). Exit 1 on a mismatch.
 
 Flags (bundle):
   --bin-dir PATH        Path to the directory holding the daemon binaries

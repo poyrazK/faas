@@ -178,14 +178,32 @@ After billing adoption, deployment-rate admission shares the company's budget
 across these resource namespaces. Existing personal deployment windows stay with
 the individual account.
 
-The remaining reviewed project/environment paths mirror the existing APIs below
+Every reviewed project/environment path is also served below
 `/v1/orgs/{organization}/projects/{slug}`: environment inventories and creation,
-configuration/diffs, release sets, qualifications, promotion previews, approvals,
-promotions, rollbacks, source settings and deletion. The exact permission list is
+configuration/diffs, shared secrets, release sets (publish, activate,
+deactivate, rollback, staging and verification runs), feature flags, release
+secrets, deployment readiness, qualifications, promotion previews, approvals,
+promotions, rollbacks, source settings and deletion. Use these paths for a
+company project: `/v1/projects/{slug}` resolves the slug in your own
+namespace, which never holds an adopted company's projects. A key limited to
+projects reaches its company projects through these paths and the
+organization project list. The exact permission list is
 [`projectaccess/routes.go`](../pkg/apid/projectaccess/routes.go). Legacy project
 URLs and dashboard lists also enforce departure and role changes.
 
-GitHub/GitOps administration, async-route manifest bindings, resource/environment
+A company project links its repository through the company's own GitHub
+installation, never a member's personal one
+([ADR-20261110200000](adr/20261110200000-organization-owned-github-installations.md)).
+An owner or admin connects it from Connect GitHub with the company selected
+(the form's `organization` field); the role is checked again when GitHub
+returns. An installation belongs to one Gregale owner, so disconnect it from a
+personal account before connecting it for the company. Owners and admins then
+set `repo_full_name` with `PATCH /v1/orgs/{organization}/projects/{slug}`;
+members list the company's installations at
+`GET /v1/orgs/{organization}/github/installations`. A member leaving does not
+disconnect it.
+
+Other GitHub/GitOps administration, async-route manifest bindings, resource/environment
 cloning, browser approval exchange and other unreviewed integrations remain
 outside the reviewed project surface. Shared uploads reject async-route bindings
 before resolving personal services. Managed PostgreSQL bindings use the company
@@ -196,6 +214,11 @@ Go clients provide organization project methods such as `GetOrgProject`,
 `CreateOrgProjectEnvironment`, `DeployOrgProject`, `PromoteOrgProjectEnvironment`
 and `RollbackOrgProjectEnvironmentPromotion`. Generated Node/Python project
 clients include the organization routes. Personal clients retain their URLs.
+`Client.WithProjectOrganization("acme")` sends every project call of an existing
+client to the company's routes. In the CLI, put `--org` before the command:
+`gregale --org acme deploy --project`, `gregale --org acme projects list`. The
+reviewed-plan (`apply-plan`), safe-release and source-ref scan entry points have
+no company form; with `--org` the CLI refuses them before sending a request.
 See [ADR-202610171905](adr/202610171905-organization-project-ownership.md) for migration and
 acceptance requirements.
 

@@ -540,15 +540,13 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if req.RouteMetricsEnabled != nil {
 		rm = *req.RouteMetricsEnabled
 	}
-	// Issue #470 / ADR-055: per-app two-tier snapshot flag. Apply
-	// the plan-level default when the request didn't carry one —
-	// a Pro customer's brand-new app gets warm.snap capture
-	// without an extra PATCH round-trip. Free/Hobby default to
-	// false (the only legal value on those tiers; apid rejects
-	// PATCH-true with 403 plan_warm_snapshot_not_allowed). The
-	// per-request override on Pro/Scale lets a customer opt out
-	// (e.g. an app they know runs cold every request).
-	warmEnabled := acct.Plan.WarmSnapshotEnabled()
+	// Issue #470 / ADR-055: per-app two-tier snapshot flag. New apps
+	// are off on every plan (ADR-20261110180000): a warm snapshot
+	// restores the memory and /tmp of an instance's first requests in
+	// every later wake, so a Pro/Scale app opts in with the request
+	// field or a later PATCH. Free/Hobby may not (403
+	// plan_warm_snapshot_not_allowed).
+	warmEnabled := acct.Plan.WarmSnapshotNewAppDefault()
 	if req.WarmSnapshotEnabled != nil {
 		warmEnabled = *req.WarmSnapshotEnabled
 	}
@@ -1329,6 +1327,11 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 		// writes and reads this column; omitting it here made a successful
 		// PATCH appear to remain false to API clients.
 		MaintenanceMode: a.MaintenanceMode,
+		// Issue #475: the DTO documents eviction_priority as the field
+		// customers read to verify their PATCH; it was never projected, so
+		// `app get` showed best_effort after a successful switch to reserved
+		// (Hunt 32 H32-55).
+		EvictionPriority: state.EvictionPriorityOrBestEffort(a.EvictionPriority),
 	}
 }
 

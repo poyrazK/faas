@@ -10429,7 +10429,7 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 			    (deployment_id, account_id, kind, actor, at, data)
 			 values ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb)
 			 returning id`, dep.ID, nil, string(DeployRolledBack),
-			"operator:cli:recover_rollout", now,
+			rolloutRecoveryActor(ctx), now,
 			rolloutAuditData("abort_requested", reason)).Scan(&auditID); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort audit: %w", err)
 		}
@@ -10659,7 +10659,7 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 
 	// Audit emit rides the same tx as the deployment stamp. The actor
 	// distinguishes operator recovery from APID's worker-loss fallback.
-	actor := "operator:cli:recover_rollout"
+	actor := rolloutRecoveryActor(ctx)
 	if emergencyGrace != nil {
 		actor = "apid:safe_release_lease_expired"
 	}
@@ -11671,6 +11671,9 @@ func (s *PgStore) ClearDeployment(ctx context.Context, id, principal string) err
 	}
 	if status == DeployLive {
 		return ErrCancelLiveForbidden
+	}
+	if status.IsCancelEligible() {
+		return ErrClearInFlightForbidden
 	}
 	now := time.Now().UTC()
 	if _, err := tx.Exec(ctx, `

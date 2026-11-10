@@ -466,8 +466,19 @@ func renderAlertDeliveries(deliveries []api.AlertDeliveryResponse, includeTest b
 }
 
 // alertDeliverySummary is the one-line `alerts info` view of a delivery.
+// alertDeliverySummary names when the receiver got the alert, not only when the
+// rule fired: a delivery delayed behind retries read "delivered at <fire
+// time>" (ADR-20261110090000).
 func alertDeliverySummary(d api.AlertDeliveryResponse) string {
-	summary := fmt.Sprintf("%s at %s (attempts %d", d.Status, d.FiredAt.UTC().Format(time.RFC3339), d.AttemptCount)
+	at := d.FiredAt
+	if !d.DeliveredAt.IsZero() {
+		at = d.DeliveredAt
+	}
+	summary := fmt.Sprintf("%s at %s (", d.Status, at.UTC().Format(time.RFC3339))
+	if !at.Equal(d.FiredAt) {
+		summary += fmt.Sprintf("fired %s, ", d.FiredAt.UTC().Format(time.RFC3339))
+	}
+	summary += fmt.Sprintf("attempts %d", d.AttemptCount)
 	if d.LastStatusCode > 0 {
 		summary += fmt.Sprintf(", http %d", d.LastStatusCode)
 	}

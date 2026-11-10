@@ -951,6 +951,44 @@ groups:
           description: "tetragon.service is installed but not active on {{ $labels.instance }}, so guest-escape signals (setuid to root, secret opens, module loads, ptrace) are not reported. `journalctl -u tetragon -n 200` first; a crash loop stops restarting after 10 starts in 2 minutes (`systemctl reset-failed tetragon`)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
 
+  # ADR-20261110183000: each host proves hourly that its platform binaries
+  # and running daemons are the signed release's (gregalectl release verify).
+  - name: release_integrity
+    interval: 1m
+    rules:
+      - alert: FaasReleaseIntegrityFailed
+        expr: faas_release_integrity_ok == 0
+        for: 5m
+        labels:
+          severity: page
+          family: release_integrity
+        annotations:
+          summary: "Release integrity check failed on {{ $labels.instance }}"
+          description: "{{ $labels.instance }} found a platform binary that does not match its signed release manifest, or a daemon running a replaced binary or one outside any installed release. The failures are in Loki under {job=\"faas-security\", ident=\"faas-release-integrity\"}."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseIntegrity.md"
+
+      - alert: FaasReleaseIntegrityStale
+        expr: time() - faas_release_integrity_checked_timestamp_seconds > 3 * 3600
+        for: 15m
+        labels:
+          severity: warn
+          family: release_integrity
+        annotations:
+          summary: "Release integrity has not been checked on {{ $labels.instance }} for 3 hours"
+          description: "faas-release-integrity.timer runs hourly. A check that stops reporting can be a broken timer or someone stopping it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseIntegrity.md"
+
+      - alert: FaasReleaseManifestDiverged
+        expr: count by (release) (count by (release, digest) (faas_release_manifest_info == 1)) > 1
+        for: 5m
+        labels:
+          severity: page
+          family: release_integrity
+        annotations:
+          summary: "Hosts disagree on the signed manifest of release {{ $labels.release }}"
+          description: "Hosts on release {{ $labels.release }} report different signed-manifest digests. Every host that installed one release has the same manifest, so a host whose manifest differs was changed after install."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseIntegrity.md"
+
   # ADR 20261024014500: a honeytoken is a decoy API key that belongs to no
   # account, so nothing legitimate presents one. A single presentation means
   # the place it was planted, usually the secret store, has been read.

@@ -6079,9 +6079,12 @@ type LogQueryEvent struct {
 	Level        string    `json:"level,omitempty"`
 	Stream       string    `json:"stream,omitempty"`
 	Message      string    `json:"message"`
-	LatencyMS    int       `json:"latency_ms,omitempty"`
-	Count        int       `json:"count,omitempty"`
-	ColdBoot     bool      `json:"cold_boot,omitempty"`
+	// LatencyMS is set on every HTTP row, 0 ms included, and absent on rows
+	// with no latency (runtime and build lines). A plain omitempty int dropped
+	// the field from 0 ms requests (ADR-20261110090000).
+	LatencyMS *int `json:"latency_ms,omitempty"`
+	Count     int  `json:"count,omitempty"`
+	ColdBoot  bool `json:"cold_boot,omitempty"`
 }
 
 // AccountTraceLookupResponse is the tenant-scoped correlation envelope used
@@ -7683,8 +7686,11 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	AppSlug          string              `json:"app_slug,omitempty"`
-	PublicURL        string              `json:"public_url,omitempty"`
+	AppSlug   string `json:"app_slug,omitempty"`
+	PublicURL string `json:"public_url,omitempty"`
+	// PublicAuthMode is the public URL's auth after apply ("bearer",
+	// "basic", ...); omitted when the URL is open to anonymous requests.
+	PublicAuthMode   string              `json:"public_auth_mode,omitempty"`
 	Name             string              `json:"name"`
 	RootDir          string              `json:"root_dir"`
 	Dockerfile       string              `json:"dockerfile,omitempty"`

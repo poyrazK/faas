@@ -217,7 +217,8 @@ func (s *server) handleReorderDeployment(w http.ResponseWriter, r *http.Request,
 // 200 → {"id", "deleted_at"}. Free-allowed. Live deployments
 // return 409: clearing a live row would orphan INV 3 / INV 4
 // invariants. Customers should use `gregale deploys rollback`
-// for that.
+// for that. In-flight rows also return 409: hiding does not stop
+// the pipeline, so they must be cancelled first.
 func (s *server) handleClearDeployment(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
 	d, app, ok := s.resolveDeploymentAccount(w, r, acct, id)
@@ -231,6 +232,9 @@ func (s *server) handleClearDeployment(w http.ResponseWriter, r *http.Request, a
 		case errors.Is(err, state.ErrCancelLiveForbidden):
 			s.ops.ObserveDeploymentCleared("live_forbidden")
 			api.WriteProblem(w, api.ErrDeploymentCancelLiveForbidden(id))
+		case errors.Is(err, state.ErrClearInFlightForbidden):
+			s.ops.ObserveDeploymentCleared("in_flight")
+			api.WriteProblem(w, api.ErrDeploymentHideInFlight(id, string(d.Status)))
 		default:
 			s.ops.ObserveDeploymentCleared("error")
 			writeCustomerInternalProblem(w, r, s.log, "clear deployment",

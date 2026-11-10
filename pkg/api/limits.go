@@ -22,6 +22,13 @@ import (
 	"time"
 )
 
+// SSEMaxLineBytes bounds one line of a server-sent event stream read by the
+// CLI and SDK. A runtime log line may be up to 1 MiB (logbuf
+// MaxPartialLineBytes) and JSON escaping can grow it up to six times, so 8 MiB
+// carries the largest log frame apid sends. The old 64 KiB cap ended a whole
+// `gregale logs` stream at the first long line (ADR-20261110090000).
+const SSEMaxLineBytes = 8 << 20
+
 // Shared traffic counters bound each admission round trip and aggregate replay.
 const (
 	TrafficCounterOperationTimeout = 100 * time.Millisecond
@@ -2982,6 +2989,15 @@ const (
 	ObjectStorageInventorySweepBatch       = 50
 	ObjectStorageInventorySweepConcurrency = 8
 	ObjectStorageInventorySweepBudget      = 40 * time.Second
+	// Each worker takes the next due bucket as soon as it finishes, so one
+	// long listing no longer idles the rest (ADR-20261110151628 §1). At most
+	// ObjectStorageInventoryLongListingWorkers of them list a long bucket at
+	// once: one continuing an unfinished listing, or one whose last inventory
+	// counted more than ObjectStorageInventoryLongListingKeys keys (100 pages,
+	// 10–30 s of a worker at 100–300 ms a page). One-page buckets keep the
+	// other workers.
+	ObjectStorageInventoryLongListingWorkers = 4
+	ObjectStorageInventoryLongListingKeys    = 100_000
 	// The inventory sweep runs on its own loop, apart from billing: gateway
 	// reads and writes need an inventory no older than 900 s, so a slow month
 	// close or progress delivery must not delay it. Each billing step stops
@@ -5528,17 +5544,21 @@ type Limits struct {
 	// body has more entries.
 	PublicAuthIPAllowlistMaxEntries int
 
-	// WarmSnapshotEnabled (issue #470 / ADR-055) is the plan-gated
-	// default for the per-app two-tier snapshot flag. Free/Hobby =
-	// false (warm-tier apps keep both warm.snap + init.snap, which
-	// is +130 MB per app on the parked disk budget — Hobby's pricing
-	// tier is too cheap for that). Pro/Scale = true (the doubled
-	// parked footprint is inside the 452 GB budget). Apid's
-	// updateApp handler rejects Free/Hobby PATCH-true with
-	// 403 plan_warm_snapshot_not_allowed; the default is applied
-	// at CreateApp time so a Pro customer's brand-new app gets a
-	// warm.snap without an extra PATCH.
+	// WarmSnapshotEnabled (issue #470 / ADR-055) is the plan gate for
+	// the per-app two-tier snapshot flag (Plan.WarmSnapshotAllowed).
+	// Free/Hobby = false (warm-tier apps keep both warm.snap +
+	// init.snap, which is +130 MB per app on the parked disk budget —
+	// Hobby's pricing tier is too cheap for that). Pro/Scale = true
+	// (the doubled parked footprint is inside the 452 GB budget).
+	// Apid's updateApp handler rejects Free/Hobby PATCH-true with
+	// 403 plan_warm_snapshot_not_allowed.
 	WarmSnapshotEnabled bool
+	// WarmSnapshotNewAppDefault is the warm_snapshot_enabled value a
+	// new app gets when the create request does not set one. False on
+	// every plan (ADR-20261110180000): a warm snapshot keeps the memory
+	// and /tmp an instance built while serving its first requests and
+	// restores it in every later wake and instance, so an app opts in.
+	WarmSnapshotNewAppDefault bool
 	// WarmPoolAllowed (issue #1056 / ADR-074) permits a customer to
 	// retain paused warm-pool VMs. Free is disabled; Hobby and above
 	// may opt in with an app-level warm_pool_size setting.
@@ -7268,7 +7288,7 @@ var planLimits = map[Plan]Limits{
 		// breakdown by default).
 		RouteMetricsEnabled: true,
 		// Warm-snapshot (issue #470 / ADR-055): Pro is the first
-		// tier where warm-snapshot is on by default. Per the issue
+		// tier that may opt in (off by default, ADR-20261110180000). Per the issue
 		// body's acceptance: "for a Pro+ app that has served ≥5
 		// successful requests ≥2 s after first-ready, restore
 		// from warm.snap should be ≤50 % of init.snap p50".
@@ -12029,22 +12049,14 @@ const (
 	RoutePlanPriorityMax = 10000
 )
 
-// WarmSnapshotEnabled reports whether the plan's default for the
-// per-app two-tier snapshot flag is on. Pro/Scale return true; Free /
-// Hobby return false. The accessor is fail-closed — an unknown plan
-// reads as false, matching the Free default. Used by buildApp in
-// cmd/apid/handlers.go to populate a brand-new app's flag.
-//
-// Issue #470 / ADR-055: the equivalent gate ("can the customer opt in
-// to warm-snapshot?") lives on WarmSnapshotAllowed (separate method
-// below) so Free + Hobby PATCH-true can be rejected cleanly without
-// conflating the default and the gate.
-func (p Plan) WarmSnapshotEnabled() bool {
+// WarmSnapshotNewAppDefault is the warm-snapshot flag a new app gets when
+// its create request does not set one (ADR-20261110180000: opt-in).
+func (p Plan) WarmSnapshotNewAppDefault() bool {
 	l, ok := LimitsFor(p)
 	if !ok {
 		return false
 	}
-	return l.WarmSnapshotEnabled
+	return l.WarmSnapshotNewAppDefault
 }
 
 // WarmSnapshotAllowed reports whether the plan permits a customer to
@@ -16387,6 +16399,21 @@ const EventDeliveryAgeMaxMS int64 = 30 * 24 * 60 * 60 * 1000
 // Maximum explicit schema versions selected by one event subscription.
 const EventSubscriptionSchemaVersionsMax = 16
 
+// Event subscription filters (event_triggers[].filter) are copied into the
+// recipient snapshot of every event they may receive, so their size bounds
+// per-event storage, including uncharged gregale.* platform events (events
+// hunt #9). EventSubscriptionFilterMaxBytes caps the compact JSON encoding;
+// EventSubscriptionFilterMaxDepth caps object/array nesting, the top-level
+// object counting as 1 ({"data":{"amount":{"$gt":100}}} is depth 3).
+// EventSubscriptionFilterStoredMaxBytes is the event_subscriptions CHECK on
+// octet_length(filter::text): jsonb's text form adds a space after every ':'
+// and ',', so the database backstop allows twice the API cap.
+const (
+	EventSubscriptionFilterMaxBytes       = 8192
+	EventSubscriptionFilterMaxDepth       = 8
+	EventSubscriptionFilterStoredMaxBytes = 2 * EventSubscriptionFilterMaxBytes
+)
+
 // Event schema rollout previews are read-only and bound both input and observation.
 const (
 	EventSchemaRolloutIdentityMaxBytes   = 256
@@ -16911,6 +16938,12 @@ const (
 	EventDeliveryHealthWatchCountMax        int64 = 9007199254740991
 )
 
+// EventDeliveryObservationClockSkew is how far a server observed_at may run
+// ahead of the CLI's clock before a capacity snapshot or receipt budget counts
+// as future-dated. Client clocks are commonly a few hundred milliseconds off
+// NTP; without a tolerance every read on such a machine fails (Hunt 32 H32-74).
+const EventDeliveryObservationClockSkew = 5 * time.Second
+
 // EventDeadlineInvestigationAlertFileMaxBytes bounds one saved CLI alert object.
 const EventDeadlineInvestigationAlertFileMaxBytes = 64 << 10
 
@@ -17144,12 +17177,17 @@ const (
 //   - AlertWebhookBudget bounds one webhook delivery, retries included
 //     (pkg/webhookout's own policy allows minutes);
 //   - AlertAccountTickBudget is an account's share of one tick: once spent,
-//     its remaining rules wait for the next tick, which starts with them.
+//     its remaining rules wait for the next tick, which starts with them;
+//   - AlertAccountWebhookConcurrency webhook deliveries of one account run
+//     at once, off the evaluation path, so a receiver that fails or never
+//     answers no longer holds the account's next rules for its whole
+//     AlertWebhookBudget (ADR-20261110090000).
 const (
-	AlertEvaluationWorkers = 8
-	AlertObserveBudget     = 15 * time.Second
-	AlertWebhookBudget     = 30 * time.Second
-	AlertAccountTickBudget = 45 * time.Second
+	AlertEvaluationWorkers         = 8
+	AlertObserveBudget             = 15 * time.Second
+	AlertWebhookBudget             = 30 * time.Second
+	AlertAccountTickBudget         = 45 * time.Second
+	AlertAccountWebhookConcurrency = 4
 )
 
 // Alert delivery retention (ADR-20261029203000): meterd deletes settled
