@@ -1,0 +1,12 @@
+# Managed by the tetragon role (ADR-20261110183000). Observe only: a compute
+# node loads no kernel module after boot, so any load is reported.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: faas-module-load
+spec:
+  kprobes:
+    - call: sys_init_module
+      syscall: true
+    - call: sys_finit_module
+      syscall: true

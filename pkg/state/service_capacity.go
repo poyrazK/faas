@@ -165,11 +165,8 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 				scopes[normalizedDeploymentScope(d.Scope)] = struct{}{}
 			}
 		}
-		limits, _ := api.LimitsFor(m.accounts[app.AccountID].Plan)
-		vcpu := int64(limits.VCPU)
-		if vcpu <= 0 {
-			vcpu = 4
-		}
+		// A replica's vCPUs are its size's (ADR-20261109172421).
+		vcpu := int64(api.SizeVCPUs(app.RAMMB))
 		for scope := range scopes {
 			var sideRAM, sideCPU int64
 			live, pending := 0, false
@@ -209,15 +206,7 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 		dep := m.deployments[ins.DeploymentID]
 		key := app.ID + ":" + normalizedDeploymentScope(dep.Scope)
 		ram, cpu := capacitySidecarResources(dep.Sidecars)
-		limits, _ := api.LimitsFor(m.accounts[app.AccountID].Plan)
-		vcpu := int64(limits.VCPU)
-		if vcpu <= 0 {
-			vcpu = 4
-		}
-		if ins.AppID == "" {
-			vcpu = 1
-		}
-		cost := capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(m.instanceCapacityCPULocked(ins, app)) + cpu, VCPU: vcpu}
+		cost := capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(m.instanceCapacityCPULocked(ins, app)) + cpu, VCPU: m.instanceCapacityVCPULocked(ins, app)}
 		admitted := m.migrationResourceFloorLocked(ins, m.capacityInstanceResources[ins.ID])
 		cost.RAM = max(cost.RAM, admitted.RAM)
 		cost.CPU = max(cost.CPU, admitted.CPU)
@@ -464,19 +453,16 @@ func (m *MemStore) recordInstanceCapacityLocked(ins Instance) {
 }
 
 // instanceCapacityVCPULocked mirrors capture_instance_capacity's vCPUs: the
-// instance's stored guest vCPU count, else its plan's (ADR-20261109172421).
-func (m *MemStore) instanceCapacityVCPULocked(ins Instance, app App) int64 {
+// instance's stored guest vCPU count, else its size's, one per GB
+// (ADR-20261109172421).
+func (m *MemStore) instanceCapacityVCPULocked(ins Instance, _ App) int64 {
 	if ins.AppID == "" {
 		return 1
 	}
 	if booked := m.instanceBookings[ins.ID].vcpu; booked > 0 {
 		return int64(booked)
 	}
-	limits, _ := api.LimitsFor(m.accounts[app.AccountID].Plan)
-	if limits.VCPU <= 0 {
-		return 4
-	}
-	return int64(limits.VCPU)
+	return int64(api.SizeVCPUs(ins.RAMMB))
 }
 
 // instanceCapacityCPULocked mirrors capture_instance_capacity's main CPU:
