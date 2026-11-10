@@ -22,6 +22,12 @@ func applyFunctionHookLifecycle(ctx context.Context, client functionHookClient, 
 	spec := gregalemanifest.FunctionSpec{Name: slug, Hooks: gregalemanifest.FunctionHooksInDir(sourceDir, handler)}
 	app, err := client.GetApp(ctx, slug)
 	if err != nil {
+		// Code without hooks has nothing to set; an unreadable app only
+		// means a reserved path from an earlier deploy cannot be cleared
+		// now, and the next deploy clears it. Never fail such a deploy.
+		if len(spec.Hooks) == 0 {
+			return nil
+		}
 		return fmt.Errorf("read app %s: %w", slug, err)
 	}
 	after, before, changed, err := spec.HookLifecycleUpdate(app.Manifest.AfterRestore, app.Manifest.BeforeCheckpoint)
