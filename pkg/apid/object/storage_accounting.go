@@ -187,89 +187,64 @@ func (s *Service) RecordObjectStorageUsage(w http.ResponseWriter, r *http.Reques
 // inventory listings are platform maintenance: they never count toward the
 // account's request ceiling (ADR-20261023223000).
 func (s *Service) ReconcileObjectInventories(ctx context.Context, observe func(string)) error {
-	return s.reconcileObjectInventories(ctx, observe, nil)
+	_, err := s.reconcileObjectInventories(ctx, observe, nil)
+	return err
 }
 
-// reconcileObjectInventories drains due inventories in batches of
-// ObjectStorageInventorySweepBatch, scanning up to
-// ObjectStorageInventorySweepConcurrency buckets at once, and starts no new
-// batch once ObjectStorageInventorySweepBudget has passed. A bucket returned
-// twice in one sweep did not advance its claim, so the sweep stops there
-// rather than spin on it. page, when set, counts each provider listing page.
-func (s *Service) reconcileObjectInventories(ctx context.Context, observe func(string), page func()) error {
+// reconcileObjectInventories runs one sweep: up to
+// ObjectStorageInventorySweepConcurrency workers each take the next due
+// bucket as soon as they finish one, until nothing is due or
+// ObjectStorageInventorySweepBudget has passed; attempts in flight then finish
+// under their own timeout (ADR-20261110151628 §1). It reports more when work
+// was still due, or a long listing advanced without finishing, so the loop
+// runs the next sweep at once. page, when set, counts each provider listing
+// page.
+func (s *Service) reconcileObjectInventories(ctx context.Context, observe func(string), page func()) (more bool, err error) {
 	st, ok := s.Host.Store().(state.ObjectStorageAccountingStore)
 	if !ok || s.Host.ObjectStorage() == nil {
-		return nil
+		return false, nil
 	}
 	var observeMu sync.Mutex
+	var advanced bool
 	report := func(outcome string) {
+		observeMu.Lock()
+		defer observeMu.Unlock()
+		if outcome == "partial" {
+			advanced = true
+		}
 		if observe != nil {
-			observeMu.Lock()
-			defer observeMu.Unlock()
 			observe(outcome)
 		}
 	}
-	deadline := time.Now().Add(api.ObjectStorageInventorySweepBudget)
-	seen := map[string]bool{}
-	for time.Now().Before(deadline) {
-		rows, err := st.DueObjectInventories(ctx, api.ObjectStorageInventorySweepBatch)
-		if err != nil {
-			return err
-		}
-		batch := make([]state.ObjectBucket, 0, len(rows))
-		for _, b := range rows {
-			if !seen[b.ID] {
-				seen[b.ID] = true
-				batch = append(batch, b)
-			}
-		}
-		if len(batch) == 0 {
-			return nil
-		}
-		if err := s.reconcileObjectInventoryBatch(ctx, st, batch, report, page); err != nil {
-			return err
-		}
-		if len(rows) < api.ObjectStorageInventorySweepBatch || len(batch) < len(rows) {
-			return nil
-		}
-	}
-	return nil
-}
-
-// reconcileObjectInventoryBatch scans one batch with bounded concurrency and
-// returns the first store or configuration error after the batch finishes.
-func (s *Service) reconcileObjectInventoryBatch(ctx context.Context, st state.ObjectStorageAccountingStore, batch []state.ObjectBucket, report func(string), page func()) error {
-	work := make(chan state.ObjectBucket)
+	q := newInventoryQueue(inventoryDue(st), time.Now().Add(api.ObjectStorageInventorySweepBudget))
+	stop := q.run(ctx)
+	defer stop()
 	var wg sync.WaitGroup
-	var errMu sync.Mutex
-	var first error
-	for range min(api.ObjectStorageInventorySweepConcurrency, len(batch)) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for b := range work {
-				if err := s.reconcileObjectInventory(ctx, st, b, report, page); err != nil {
-					errMu.Lock()
-					if first == nil {
-						first = err
-					}
-					errMu.Unlock()
+	for range api.ObjectStorageInventorySweepConcurrency {
+		wg.Go(func() {
+			for {
+				b, long, ok := q.next(ctx)
+				if !ok {
+					return
+				}
+				err := s.reconcileObjectInventory(ctx, st, b, report, page)
+				q.done(long)
+				if err != nil {
+					q.fail(err)
 				}
 			}
-		}()
+		})
 	}
-	for _, b := range batch {
-		if ctx.Err() != nil {
-			break
-		}
-		work <- b
-	}
-	close(work)
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
-	return first
+	if err := q.failure(); err != nil {
+		return false, err
+	}
+	observeMu.Lock()
+	defer observeMu.Unlock()
+	return advanced || q.pending(), nil
 }
 
 func (s *Service) reconcileObjectInventory(ctx context.Context, st state.ObjectStorageAccountingStore, b state.ObjectBucket, report func(string), page func()) error {
@@ -431,17 +406,31 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 }
 
 // runObjectInventorySweeps refreshes due bucket inventories every minute, or
-// at once when bucket creation wakes it.
+// at once when bucket creation wakes it. A sweep that left work due is
+// followed by the next one immediately (ADR-20261110151628 §1).
 func (s *Service) runObjectInventorySweeps(ctx context.Context, observe func(string), page func(), succeeded func(time.Time)) {
+	s.runInventorySweepLoop(ctx, func(ctx context.Context) (bool, error) {
+		return s.reconcileObjectInventories(ctx, observe, page)
+	}, succeeded)
+}
+
+func (s *Service) runInventorySweepLoop(ctx context.Context, sweep func(context.Context) (bool, error), succeeded func(time.Time)) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
-		if err := s.reconcileObjectInventories(ctx, observe, page); err != nil {
+		more, err := sweep(ctx)
+		if err != nil {
 			if ctx.Err() == nil {
 				s.Host.Logger().Warn("object storage inventory sweep failed")
 			}
 		} else {
 			succeeded(time.Now())
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if more && err == nil {
+			continue
 		}
 		ticker.Reset(time.Minute)
 		select {

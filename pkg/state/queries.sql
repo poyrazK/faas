@@ -6058,11 +6058,17 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
 
 -- name: ObjectInventoriesDue :many
 -- A bucket whose listing is unfinished is due at once (ADR-20261030100835).
-SELECT b.* FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+-- The sweep's queue leaves out the buckets it already took (skip) and marks a
+-- long listing: one that continues, or a bucket whose last inventory counted
+-- more than long_keys keys (ADR-20261110151628 §1).
+SELECT sqlc.embed(b), (l.listing OR COALESCE(u.observed_keys, 0) > sqlc.arg(long_keys)::bigint)::boolean AS long_listing
+FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM object_storage_inventory_scans s WHERE s.bucket_id=b.id AND s.pages > 0 AND NOT s.complete
+  AND s.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND s.started_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second') AS listing) l
 WHERE b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning'))
-AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes' OR EXISTS (SELECT 1 FROM object_storage_inventory_scans s WHERE s.bucket_id=b.id AND s.pages > 0 AND NOT s.complete
-  AND s.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND s.started_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second'))
+AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes' OR l.listing)
 AND (u.lease_until IS NULL OR u.lease_until < now())
+AND NOT (b.id = ANY(COALESCE(sqlc.arg(skip)::uuid[], '{}')))
 ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT sqlc.arg(row_limit);
 
 -- name: ObjectInventoryClaim :execrows

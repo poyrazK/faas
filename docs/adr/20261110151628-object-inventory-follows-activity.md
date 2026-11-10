@@ -1,7 +1,7 @@
 # ADR: Object inventory follows bucket activity, and the sweep keeps its workers busy
 
 Date: 2026-11-10
-Status: Proposed
+Status: Accepted (2026-11-10)
 Amends: [ADR 20261023223000](20261023223000-object-storage-bucket-scoped-availability.md) (the 900 s window and the batched sweep), [ADR-20261030100835](20261030100835-object-storage-resumable-inventory.md) (when an unfinished listing is due)
 Related: [ADR-627](627-prospective-gateway-storage-safety-accounting.md), [ADR-20261024132844](20261024132844-gateway-metered-object-storage-billing.md), [ADR-20261029174627](20261029174627-object-storage-backend-pools.md), [ADR-20261031122757](20261031122757-s3-gateway-on-compute-nodes.md)
 
@@ -59,11 +59,15 @@ in flight: "a held bucket cannot grow, so a past inventory holds"
 - **No idle minute while work is due.** A sweep that stopped on its budget
   with buckets still due is followed by the next one immediately. The loop
   waits its minute, or for `InventoryWake`, only when nothing is due.
-- **Large listings take at most half the workers.** At most
-  `ObjectStorageInventoryContinuingWorkers` (4) attempts at a time continue an
-  unfinished listing, so one-page buckets keep their cadence beside them.
-  Continuing listings are still due on the next sweep, as ADR-20261030100835
-  decided.
+- **Long listings take at most half the workers.** At most
+  `ObjectStorageInventoryLongListingWorkers` (4) attempts at a time list a
+  long bucket, so one-page buckets keep their cadence beside them. A listing
+  is long when it continues an unfinished listing, or when the bucket's last
+  inventory counted more than `ObjectStorageInventoryLongListingKeys`
+  (100,000) keys. Without the second rule the first 45 s attempt of every
+  large bucket could still take all eight workers. Continuing listings are
+  still due on the next sweep, as ADR-20261030100835 decided, and a sweep
+  hands out each bucket at most once.
 
 ### 2. A quiet bucket's inventory stays fresh for a day
 

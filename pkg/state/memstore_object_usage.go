@@ -274,18 +274,32 @@ func (m *MemStore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStor
 }
 
 func (m *MemStore) DueObjectInventories(ctx context.Context, limit int32) ([]ObjectBucket, error) {
+	due, err := m.DueObjectInventoryQueue(ctx, limit, nil)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ObjectBucket, 0, len(due))
+	for _, d := range due {
+		out = append(out, d.Bucket)
+	}
+	return out, nil
+}
+
+func (m *MemStore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string) ([]ObjectInventoryDue, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
-		var zero0 []ObjectBucket
-		return zero0, err
+		return nil, err
 	}
-
+	skipped := make(map[string]bool, len(skip))
+	for _, id := range skip {
+		skipped[id] = true
+	}
 	now := time.Now()
-	out := []ObjectBucket{}
+	out := []ObjectInventoryDue{}
 	for _, b := range m.objectBuckets {
 		u := m.objectUsage[b.ID]
 		// Active deletions do not block a claim: they yield to it and the
@@ -293,13 +307,13 @@ func (m *MemStore) DueObjectInventories(ctx context.Context, limit int32) ([]Obj
 		// An unfinished listing is due at once (ADR-20261030100835).
 		scan := u.InventoryScan
 		listing := scan.Pages > 0 && !scan.Complete && scan.StartedAt.After(u.ObservedAt) && now.Sub(scan.StartedAt) < api.ObjectInventoryScanMaxAge
-		if !m.inventoryClaimFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute || listing) && !u.LeaseUntil.After(now) {
-			out = append(out, b)
+		if !skipped[b.ID] && !m.inventoryClaimFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute || listing) && !u.LeaseUntil.After(now) {
+			out = append(out, ObjectInventoryDue{Bucket: b, Long: listing || u.ObservedKeys > api.ObjectStorageInventoryLongListingKeys})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		a, b := m.objectUsage[out[i].ID].AttemptAt, m.objectUsage[out[j].ID].AttemptAt
-		return a.Before(b) || a.Equal(b) && out[i].ID < out[j].ID
+		a, b := m.objectUsage[out[i].Bucket.ID].AttemptAt, m.objectUsage[out[j].Bucket.ID].AttemptAt
+		return a.Before(b) || a.Equal(b) && out[i].Bucket.ID < out[j].Bucket.ID
 	})
 	if len(out) > int(limit) {
 		out = out[:limit]

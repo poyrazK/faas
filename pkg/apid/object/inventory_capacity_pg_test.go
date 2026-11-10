@@ -69,7 +69,7 @@ func TestInventorySweepCapacity(t *testing.T) {
 				outcomes := map[string]int{}
 				pagesBefore := lister.pages.Load()
 				start := time.Now()
-				err := svc.reconcileObjectInventories(t.Context(), func(outcome string) {
+				more, err := svc.reconcileObjectInventories(t.Context(), func(outcome string) {
 					mu.Lock()
 					outcomes[outcome]++
 					mu.Unlock()
@@ -80,11 +80,11 @@ func TestInventorySweepCapacity(t *testing.T) {
 				}
 				pages := lister.pages.Load() - pagesBefore
 				busy := time.Duration(pages) * sc.latency
-				t.Logf("sweep %d: %s, outcomes %v, pages %d, %.1f attempts/s, %.1f pages/s, listers busy %.0f%%",
+				t.Logf("sweep %d: %s, outcomes %v, pages %d, %.1f attempts/s, %.1f pages/s, listers busy %.0f%%, more %v",
 					sweep, elapsed.Round(time.Millisecond), outcomes, pages,
 					float64(outcomes["success"]+outcomes["partial"]+outcomes["failed"])/elapsed.Seconds(),
 					float64(pages)/elapsed.Seconds(),
-					100*busy.Seconds()/(float64(api.ObjectStorageInventorySweepConcurrency)*elapsed.Seconds()))
+					100*busy.Seconds()/(float64(api.ObjectStorageInventorySweepConcurrency)*elapsed.Seconds()), more)
 			}
 		})
 	}
