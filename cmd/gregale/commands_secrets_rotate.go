@@ -268,9 +268,9 @@ type secretsRotateReceipt struct {
 // 32 H32-82); rotate replaces a secret and env set creates one. The check is
 // best effort: when the list cannot be read, the rotation proceeds.
 func rotateTargetMissing(client *api.Client, app, scope, key string) error {
-	existing, err := client.ListSecretsWithScope(context.Background(), app, scope)
-	if err != nil || slices.Contains(secretMetadataKeys(&existing), key) {
-		return nil
+	existing, listErr := client.ListSecretsWithScope(context.Background(), app, scope)
+	if listErr == nil && !slices.Contains(secretMetadataKeys(&existing), key) {
+		return fmt.Errorf("%s is not set in scope %s of %s; rotate replaces an existing secret, create it with gregale env set %s=VALUE --app %s", key, scopeOrDefault(scope), app, key, app)
 	}
-	return fmt.Errorf("%s is not set in scope %s of %s; rotate replaces an existing secret, create it with gregale env set %s=VALUE --app %s", key, scopeOrDefault(scope), app, key, app)
+	return nil
 }
