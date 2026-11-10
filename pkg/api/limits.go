@@ -922,6 +922,14 @@ func ManagedPostgresPreviewDatabasesMax(p Plan) int {
 	return limits.PreviewApps * databases.DatabasesMax
 }
 
+// ManagedPostgresPreviewFleetSharePercent caps one account's PR preview
+// databases at this share of the operator's fleet database cap
+// (max_databases), at least one (ADR-20261102123523 amendment 2026-11-10).
+// An empty preview is its own provider project, so without it a few Scale
+// accounts (up to 200 previews each) could fill a fleet of about 1,000 and
+// pause every customer's new databases.
+const ManagedPostgresPreviewFleetSharePercent = 5
+
 // ManagedPostgresRestoreSlotNoticeLead is how long before a restore slot ends
 // without room the restoring account is emailed (ADR-20261031123259).
 const ManagedPostgresRestoreSlotNoticeLead = 48 * time.Hour
