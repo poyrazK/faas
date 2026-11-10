@@ -10852,7 +10852,8 @@ func (m *MemStore) ClearDeployment(_ context.Context, id, principal string) erro
 
 // ClearObsoleteDeployments (ADR-124) — memstore mirror. Honours
 // the "current + previous" retention window per app by skipping
-// the 2 most-recent rows per app regardless of status.
+// the 2 most-recent rows per app regardless of status, and keeps every
+// superseded deployment in its scope's rollback window.
 func (m *MemStore) ClearObsoleteDeployments(ctx context.Context, appID string, olderThan time.Time) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -10883,10 +10884,9 @@ func (m *MemStore) ClearObsoleteDeployments(ctx context.Context, appID string, o
 				}
 			}
 		}
+		// The two newest rows are the ones kept, as the SQL's rn<=2.
 		if len(arr) > 2 {
-			recentByApp[app] = arr[2:]
-		} else {
-			recentByApp[app] = nil
+			recentByApp[app] = arr[:2]
 		}
 	}
 	skippable := map[string]bool{}
@@ -10895,11 +10895,20 @@ func (m *MemStore) ClearObsoleteDeployments(ctx context.Context, appID string, o
 			skippable[r.id] = true
 		}
 	}
+	// The rollback window is decided before any row is cleared, as the
+	// Postgres statement sees one snapshot: clearing a row must not move an
+	// older one into or out of the window mid-call.
+	inRollbackWindow := map[string]bool{}
+	for id, d := range m.deployments {
+		if d.AppID == appID && m.rollbackWindowRetainsDeploymentLocked(d) {
+			inRollbackWindow[id] = true
+		}
+	}
 	for id, d := range m.deployments {
 		if d.AppID != appID {
 			continue
 		}
-		if skippable[id] {
+		if skippable[id] || inRollbackWindow[id] {
 			continue
 		}
 		if m.buildArtifactOriginPinnedLocked(id) || m.recoveryProtectedDeploymentLocked(id) {
