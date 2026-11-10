@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -58,6 +59,8 @@ import (
 //   - streamSourceTarball     — gRPC streaming + cap-bound + spool
 //   - auditSourceRefDeploy    — emits deploy.source_ref {…} + log
 //   - isValidRef              — ref-shape guard before the gRPC fetch
+//
+//nolint:contextcheck // From the GitHub fetch on, r carries a context detached from the deploy-submission budget under the upload commit's size-scaled bound (deploy review 2026-11-10, E1); idempotentDeploy replays the outcome.
 func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
 	if !ok {
@@ -155,6 +158,17 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 
 	maxBytes := int64(limits.SourceTarballMaxMB) * 1024 * 1024
+	// From here the deploy downloads, scans, hashes and publishes the whole
+	// repository archive before it records the deployment. Under the flat
+	// deploy-submission budget (RequestBudgetMax, 30 s) a large repository
+	// failed on the deadline the way uploads did before H10-26, so it gets
+	// the upload commit's size-scaled bound, sized by the plan's source cap
+	// because the archive's size is unknown until it arrives. idempotentDeploy
+	// replays the outcome to a client that stopped waiting (deploy review
+	// 2026-11-10, E1).
+	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(maxBytes))
+	defer cancel()
+	r = r.WithContext(ctx)
 	stream, p := s.streamSourceTarball(r.Context(), acct, installID, req.Repo, req.Ref, maxBytes)
 	if p != nil {
 		api.WriteProblem(w, p)

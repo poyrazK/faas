@@ -2599,6 +2599,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
 	}
+	if err := h.store.SetDeploymentBeforeCheckpointHook(ctx, dep.ID, manifest.BeforeCheckpoint != nil); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "persist before_checkpoint hook")
+		return fmt.Errorf("imaged: persist before_checkpoint hook: %w", err)
+	}
 	profile := frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: "unknown"}
 	if len(dep.InferredProfile) != 0 {
 		if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil {
@@ -3279,6 +3283,10 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
+	}
+	if err := h.store.SetDeploymentBeforeCheckpointHook(ctx, dep.ID, manifest.BeforeCheckpoint != nil); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "persist before_checkpoint hook")
+		return fmt.Errorf("imaged: persist before_checkpoint hook: %w", err)
 	}
 	// Source builds arrive with a builderd-produced local OCI archive in
 	// dep.RootfsPath. Keep the original source tarball for the customer

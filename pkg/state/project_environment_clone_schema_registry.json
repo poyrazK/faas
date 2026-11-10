@@ -5635,6 +5635,7 @@
     "columns": [
       "api_hosting_receipt",
       "app_id",
+      "before_checkpoint_hook",
       "build_id",
       "canary_preset",
       "canary_stages",
