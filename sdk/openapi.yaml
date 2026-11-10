@@ -24949,6 +24949,7 @@ components:
         auth_consumers: {type: integer, format: int64, minimum: 0}
         migration_bindings: {type: integer, format: int64, minimum: 0}
         other_bindings: {type: integer, format: int64, minimum: 0}
+        session_bindings: {type: integer, format: int64, minimum: 0, description: Session bindings are modeled at their role connection limit and are not counted in other_bindings.}
         resident_instances: {type: integer, format: int64, minimum: 0}
         parked_instances: {type: integer, format: int64, minimum: 0}
         auxiliary_instances: {type: integer, format: int64, minimum: 0}
@@ -24964,6 +24965,7 @@ components:
         data_api_resident_estimate: {type: integer, format: int64, minimum: 0}
         data_api_wake_estimate: {type: integer, format: int64, minimum: 0}
         auth_wake_estimate: {type: integer, format: int64, minimum: 0}
+        session_connection_ceiling: {type: integer, format: int64, minimum: 0, description: The session role connection limit per session binding; two roles while a binding rotates.}
         control_headroom: {type: integer, format: int64, minimum: 0}
         migration_headroom: {type: integer, format: int64, minimum: 0}
         modeled_peak_connections: {type: integer, format: int64, minimum: 0}
