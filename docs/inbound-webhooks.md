@@ -71,6 +71,9 @@ have expired during a cold start or retry. `X-Faas-Invocation-Source` is
 platform-owned and overwritten after queued headers are applied; use it to
 distinguish a verified webhook delivery from ordinary public or async traffic.
 Treat the `X-Gregale-*` fields as metadata only after checking that source.
+Gregale drops `X-Gregale-Webhook-*` and `X-Gregale-Event-*` headers from public
+requests, so a caller cannot send them to your app directly or through an
+async route.
 
 Stripe retries of the same event for the same endpoint return the same receipt
 ID with `duplicate: true` and do not enqueue a second delivery.
