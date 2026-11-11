@@ -1407,6 +1407,7 @@ func (runtime *mcpTaskRuntime) workerLoop(ctx context.Context) {
 		}
 	}
 	refreshCapabilities()
+	lastCapabilityHeartbeat := time.Now()
 	for {
 		if ctx.Err() != nil {
 			for len(semaphore) > 0 {
@@ -1423,6 +1424,10 @@ func (runtime *mcpTaskRuntime) workerLoop(ctx context.Context) {
 			lastCapabilityCleanup = time.Now()
 		}
 		for ctx.Err() == nil && len(semaphore) < cap(semaphore) {
+			if time.Since(lastCapabilityHeartbeat) >= 10*time.Second {
+				refreshCapabilities()
+				lastCapabilityHeartbeat = time.Now()
+			}
 			task, err := runtime.claim(ctx)
 			if err != nil || task == nil {
 				break
@@ -1455,6 +1460,7 @@ func (runtime *mcpTaskRuntime) workerLoop(ctx context.Context) {
 		case <-ticker.C:
 		case <-capabilityTicker.C:
 			refreshCapabilities()
+			lastCapabilityHeartbeat = time.Now()
 		}
 	}
 }

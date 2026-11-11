@@ -247,13 +247,13 @@ def remove_tool(name):
     return MCP_CATALOG.remove("tool", name)
 
 
-def register_resource(definition, handler):
+def register_resource(definition, handler, authorize=None):
     """Add a URI or URI-template resource with a process-local read handler."""
-    MCP_CATALOG.register("resource", definition, handler)
+    MCP_CATALOG.register("resource", definition, handler, authorize=authorize)
 
 
-def replace_resource(name, definition, handler):
-    MCP_CATALOG.register("resource", definition, handler, replace_name=name)
+def replace_resource(name, definition, handler, authorize=None):
+    MCP_CATALOG.register("resource", definition, handler, replace_name=name, authorize=authorize)
 
 
 def remove_resource(name):
@@ -532,7 +532,8 @@ def complete(request_id, params, authenticator, granted_scopes):
         if (resource_uri != "customer://records/{recordId}" or argument_name != "recordId"
                 or not registered or not authenticator.can_access_resource(resource_uri, granted_scopes)):
             return 400, rpc_error(request_id, -32602, "unknown completion reference or argument")
-        candidates = SAMPLE_RECORD_IDS
+        candidates = [record_id for record_id in SAMPLE_RECORD_IDS
+                      if authenticator.mode == "open" or getattr(granted_scopes, "subject", "") == SAMPLE_RECORD_OWNERS[record_id]]
     else:
         return 400, rpc_error(request_id, -32602, "unknown completion reference")
 
@@ -621,6 +622,29 @@ def call_tool(request_id, params, authenticator, granted_scopes, protocol=CURREN
     return tool_error(request_id, "unknown tool")
 
 
+def resource_access_allowed(uri, authenticator, identity, subscription=False):
+    if not authenticator.can_access_resource(uri, identity):
+        return False
+    entry = MCP_CATALOG.match_resource(uri)
+    if entry is None:
+        return False
+    authorizer = entry.get("authorize")
+    if authorizer is not None:
+        try:
+            return authorizer(uri, request_context(identity)) is True
+        except Exception:
+            return False
+    if entry["handler"] is not None:
+        # Existing read handlers retain their checks; subscription authorization
+        # must be explicit and cannot execute an arbitrary read for its effects.
+        return not subscription
+    if uri == "greeting://welcome":
+        return True
+    prefix = "customer://records/"
+    record_id = uri[len(prefix):] if uri.startswith(prefix) else ""
+    return record_id in SAMPLE_RECORD_OWNERS and (authenticator.mode == "open" or getattr(identity, "subject", "") == SAMPLE_RECORD_OWNERS[record_id])
+
+
 def read_resource(request_id, params, authenticator, granted_scopes, task_runtime=None):
     uri = params.get("uri")
     if not isinstance(uri, str) or not uri:
@@ -637,7 +661,7 @@ def read_resource(request_id, params, authenticator, granted_scopes, task_runtim
         content = {"uri": uri, "mimeType": "application/json", "text": json.dumps(task, separators=(",", ":"), allow_nan=False)}
         return 200, rpc_response(request_id, {"contents": [content]})
     entry = MCP_CATALOG.match_resource(uri)
-    if entry is None:
+    if entry is None or not resource_access_allowed(uri, authenticator, granted_scopes):
         return 404, rpc_error(request_id, -32002, "resource not found")
     if entry["handler"] is not None:
         try:
@@ -1116,7 +1140,7 @@ class MCPHandler(BaseHTTPRequestHandler):
                 if not self.server.authenticator.can_access_resource(uri, granted_scopes):
                     continue
                 if not uri.startswith("task://tasks/"):
-                    if configured_resource_uri(uri):
+                    if resource_access_allowed(uri, self.server.authenticator, granted_scopes, subscription=True):
                         generic_resource_uris.add(uri)
                     continue
                 task_id = task_id_from_uri(uri)
@@ -1201,8 +1225,7 @@ class MCPHandler(BaseHTTPRequestHandler):
 
             def enqueue_resource_update(uri):
                 if (not uri.startswith("task://tasks/")
-                        and (not configured_resource_uri(uri)
-                             or not self.server.authenticator.can_access_resource(uri, granted_scopes))):
+                        and not resource_access_allowed(uri, self.server.authenticator, granted_scopes, subscription=True)):
                     return
                 with pending_resource_updates_lock:
                     if uri in pending_resource_updates:
@@ -1344,6 +1367,8 @@ class MCPHandler(BaseHTTPRequestHandler):
                         if self.subscription_auth_expired(granted_scopes):
                             self.close_sse_stream()
                             return
+                        if not resource_uri.startswith("task://tasks/") and not resource_access_allowed(resource_uri, self.server.authenticator, granted_scopes, subscription=True):
+                            continue
                         self.write_subscription_resource_updated(request_id, resource_uri)
                     elif isinstance(update, tuple) and len(update) == 2 and update[0] == "catalog":
                         if self.subscription_auth_expired(granted_scopes):

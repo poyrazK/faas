@@ -6,6 +6,39 @@ import { createApp } from '../app.js';
 import { generateKeyPair, SignJWT } from 'jose';
 import { setTimeout as delay } from 'node:timers/promises';
 
+test('resource subscriptions enforce caller ownership and application revocation', {timeout: 5000}, async t => {
+  const {privateKey,publicKey} = await generateKeyPair('RS256');
+  const issuer='https://issuer.example';
+  const resource='https://mcp.example/mcp';
+  const token=await new SignJWT({scope:'mcp:catalog records:read'}).setProtectedHeader({alg:'RS256'})
+    .setIssuer(issuer).setAudience(resource).setSubject('demo-caller-a').setExpirationTime('5m').sign(privateKey);
+  const mcp=createApp({version:1,endpoint:'/mcp',transport:'streamable-http',mode:'stateless',legacy:false,allowed_origins:[],
+    auth:{mode:'external-oauth',issuer,jwks_url:issuer+'/jwks',resource,scopes:['mcp:catalog'],
+      resource_scopes:{'customer://records/{recordId}':['records:read'],'fixture://guarded':[]}}},
+    {keyResolver:async()=>publicKey,expectedCatalogSHA256:'',log(){}});
+  let allowed=true;
+  mcp.registerResource('guarded','fixture://guarded',{},async uri=>({contents:[{uri:String(uri),text:'ok'}]}),
+    (_uri,{authInfo})=>allowed && authInfo.extra.subject==='demo-caller-a');
+  const server=mcp.app.listen(0,'127.0.0.1');
+  await once(server,'listening');
+  t.after(async()=>{mcp.closeTaskSubscriptions();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));});
+  const own='customer://records/example-1', other='customer://records/example-2';
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/mcp`,{method:'POST',headers:{
+    Authorization:'Bearer '+token,'Content-Type':'application/json',Accept:'text/event-stream',
+    'MCP-Protocol-Version':'2026-07-28','Mcp-Method':'subscriptions/listen'},body:JSON.stringify({jsonrpc:'2.0',id:1,
+      method:'subscriptions/listen',params:{notifications:{resourceSubscriptions:[own,other,'fixture://guarded']},
+        _meta:{'io.modelcontextprotocol/protocolVersion':'2026-07-28'}}})});
+  const stream=streamMessages(response);
+  const ack=await stream.next();
+  assert.deepEqual(ack.params.notifications.resourceSubscriptions.sort(),[own,'fixture://guarded'].sort());
+  allowed=false;
+  mcp.notifyResourceUpdated(other);
+  mcp.notifyResourceUpdated('fixture://guarded');
+  mcp.notifyResourceUpdated(own);
+  assert.equal((await stream.next()).params.uri,own);
+  await stream.cancel();
+});
+
 function taskSnapshot(taskID, status, result) {
   return {
     resultType: 'complete', taskId: taskID, status,

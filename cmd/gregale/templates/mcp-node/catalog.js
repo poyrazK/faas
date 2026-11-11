@@ -3,6 +3,16 @@ import { createHash } from 'node:crypto';
 const NAME_PATTERN = /^[\x21-\x7e]{1,128}$/;
 const RESOURCE_VARIABLE_PATTERN = /\{([A-Za-z][A-Za-z0-9_.-]*)\}/g;
 
+// Copy mutable JSON metadata and raw schema shapes. SDK schema/template
+// instances retain their prototypes and are treated as immutable values.
+function snapshot(value) {
+  if (Array.isArray(value)) return value.map(snapshot);
+  if (value && typeof value === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(value))) {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, snapshot(child)]));
+  }
+  return value;
+}
+
 function canonicalJSON(value) {
   if (value === null || typeof value !== 'object') {
     if (typeof value === 'function' || typeof value === 'bigint' || value === undefined) {
@@ -64,8 +74,7 @@ export function createRuntimeCatalog({ normalizeDefinition = definition => defin
       }
     }
     revision += 1;
-    catalog.set(name, { ...entry, name, revision,
-      ...(entry.definition ? { definition: { ...entry.definition } } : {}) });
+    catalog.set(name, snapshot({ ...entry, name, revision }));
     for (const listener of [...listeners]) {
       try { listener(kind, revision); } catch { /* A listener must not block a catalog mutation. */ }
     }
@@ -91,14 +100,16 @@ export function createRuntimeCatalog({ normalizeDefinition = definition => defin
     add('tools', name, { definition, handler }, true);
   }
 
-  function registerResource(name, uriOrTemplate, definition, handler) {
+  function registerResource(name, uriOrTemplate, definition, handler, authorize) {
+    if (authorize !== undefined && typeof authorize !== 'function') throw new TypeError('Resource authorizer must be a function');
     const policyKey = validateResource(name, uriOrTemplate, definition, handler);
-    add('resources', name, { uriOrTemplate, policyKey, definition, handler });
+    add('resources', name, { uriOrTemplate, policyKey, definition, handler, authorize });
   }
 
-  function replaceResource(name, uriOrTemplate, definition, handler) {
+  function replaceResource(name, uriOrTemplate, definition, handler, authorize) {
+    if (authorize !== undefined && typeof authorize !== 'function') throw new TypeError('Resource authorizer must be a function');
     const policyKey = validateResource(name, uriOrTemplate, definition, handler);
-    add('resources', name, { uriOrTemplate, policyKey, definition, handler }, true);
+    add('resources', name, { uriOrTemplate, policyKey, definition, handler, authorize }, true);
   }
 
   function registerPrompt(name, definition, handler) {
@@ -121,9 +132,9 @@ export function createRuntimeCatalog({ normalizeDefinition = definition => defin
     registerPrompt,
     replacePrompt,
     removePrompt: name => remove('prompts', name),
-    tools: () => [...entries.tools.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    resources: () => [...entries.resources.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    prompts: () => [...entries.prompts.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    tools: () => [...entries.tools.values()].map(snapshot).sort((a, b) => a.name.localeCompare(b.name)),
+    resources: () => [...entries.resources.values()].map(snapshot).sort((a, b) => a.name.localeCompare(b.name)),
+    prompts: () => [...entries.prompts.values()].map(snapshot).sort((a, b) => a.name.localeCompare(b.name)),
     resourcePatterns: () => [...entries.resources.values()].map(entry => entry.policyKey),
     subscribe(listener) {
       if (typeof listener !== 'function') throw new TypeError('MCP catalog listener must be a function');
@@ -142,7 +153,7 @@ export function createRuntimeCatalog({ normalizeDefinition = definition => defin
         contract[kind] = [...entries[kind].values()]
           .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
           .map(entry => {
-            const definition = normalizeDefinition(entry.definition, singular);
+            const definition = normalizeDefinition(snapshot(entry.definition), singular);
             if (singular === 'resource') {
               const field = typeof entry.uriOrTemplate === 'string' ? 'uri' : 'uriTemplate';
               return { ...definition, name: entry.name, [field]: entry.policyKey };
@@ -156,7 +167,7 @@ export function createRuntimeCatalog({ normalizeDefinition = definition => defin
       const catalog = entries[kind];
       if (!catalog) throw new TypeError('unknown MCP catalog kind');
       return JSON.stringify([...catalog.values()]
-        .filter(entry => canAccess(kind, entry))
+        .filter(entry => canAccess(kind, snapshot(entry)))
         .map(entry => [entry.name, entry.revision]));
     },
   };

@@ -207,6 +207,22 @@ func (m *management) planCronChange(ctx context.Context, a cronChangeArgs) (any,
 		return nil, invalid("app_access_denied", "cron does not belong to the selected app")
 	}
 	p.Operation.ResourceID, p.Operation.ResourceHash = a.CronID, cronFingerprint(cron)
+	if !a.Delete {
+		desired := cron
+		if req.Schedule != nil {
+			desired.Schedule = *req.Schedule
+		}
+		if req.Path != nil {
+			desired.Path = *req.Path
+		}
+		if req.Timezone != nil {
+			desired.Timezone = *req.Timezone
+		}
+		if req.Enabled != nil {
+			desired.Enabled = *req.Enabled
+		}
+		p.Operation.DesiredResourceHash = cronFingerprint(desired)
+	}
 	p.Operation.Changes = p.Operation.Request
 	p.TrafficEffect = "Change the exact reviewed schedule. Deletion stops future scheduled requests; already running requests continue."
 	return m.savePlan(p)
@@ -236,7 +252,7 @@ func (m *management) planDomainRemoval(ctx context.Context, a domainRemovalArgs)
 	return m.savePlan(p)
 }
 
-func (m *management) applyResourceOperation(ctx context.Context, p *releasePlan) (any, error) {
+func (m *management) applyResourceOperation(ctx context.Context, p *releasePlan, retries ...bool) (any, error) {
 	if p.Operation.Kind == "domain_delete" {
 		d, err := m.client.GetDomain(ctx, p.Operation.ResourceID)
 		if notFound(err) {
@@ -258,7 +274,18 @@ func (m *management) applyResourceOperation(ctx context.Context, p *releasePlan)
 	if err != nil {
 		return nil, err
 	}
-	if c.ID != p.Operation.ResourceID || c.AppID != p.AppID || cronFingerprint(c) != p.Operation.ResourceHash {
+	if c.ID != p.Operation.ResourceID || c.AppID != p.AppID {
+		return nil, invalid("plan_stale", "cron ownership changed")
+	}
+	if len(retries) > 0 && retries[0] && p.Operation.Kind == "cron_update" && p.Operation.DesiredResourceHash != "" && cronFingerprint(c) == p.Operation.DesiredResourceHash {
+		// Reconcile the complete reviewed configuration, including unchanged
+		// fields, without replaying a PATCH over a concurrent writer.
+		return c, nil
+	}
+	if cronFingerprint(c) != p.Operation.ResourceHash {
+		if len(retries) > 0 && retries[0] {
+			return nil, invalid("outcome_unknown", "cron differs from the reviewed original and desired configuration; inspect before replanning")
+		}
 		return nil, invalid("plan_stale", "cron changed since review; inspect its current configuration")
 	}
 	if p.Operation.Kind == "cron_delete" {

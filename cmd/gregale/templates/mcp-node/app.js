@@ -113,7 +113,7 @@ function installDefaultCatalog(catalog) {
   });
   catalog.registerResource('welcome', 'greeting://welcome', {
     title: 'Welcome', description: 'A public example resource.', mimeType: 'text/plain',
-  }, async uri => ({ contents: [{ uri: uri.href, mimeType: 'text/plain', text: 'Welcome to the Gregale MCP starter.' }] }));
+  }, async uri => ({ contents: [{ uri: uri.href, mimeType: 'text/plain', text: 'Welcome to the Gregale MCP starter.' }] }), () => true);
   catalog.registerResource('customer_record', new ResourceTemplate('customer://records/{recordId}', {
     list: undefined,
     complete: {
@@ -123,7 +123,11 @@ function installDefaultCatalog(catalog) {
     title: 'Customer record', description: 'Example customer-record resource; enforce ownership in your own data lookup.', mimeType: 'application/json',
   }, async (uri, { recordId }) => ({
     contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify({ recordId, status: 'example' }) }],
-  }));
+  }), (uri, {authInfo, config}) => {
+    const recordID = String(uri).slice('customer://records/'.length);
+    return Object.hasOwn(SAMPLE_RECORD_OWNERS, recordID)
+      && (config.auth.mode === 'open' || SAMPLE_RECORD_OWNERS[recordID] === verifiedCallerIdentity(authInfo)?.subject);
+  });
   catalog.registerPrompt('summarize', {
     title: 'Summarize text', description: 'Create a concise summary request.',
     argsSchema: z.object({
@@ -162,6 +166,18 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
   };
   const catalog = createRuntimeCatalog({ normalizeDefinition: normalizeCatalogDefinition });
   installDefaultCatalog(catalog);
+  function resourceAuthorized(entry, uri, authInfo, subscription = false) {
+    if (typeof entry.authorize !== 'function') return !subscription;
+    try { return entry.authorize(String(uri), {authInfo, config}) === true; }
+    catch { return false; }
+  }
+  function resourceSubscriptionAllowed(uri, authInfo) {
+    if (!auth.resourcePolicy.canAccess(uri, authInfo)) return false;
+    const entries = catalog.resources();
+    const entry = entries.find(entry => entry.policyKey === uri)
+      || entries.find(entry => isConfiguredResourceURI(uri, new Set([entry.policyKey])));
+    return !!entry && resourceAuthorized(entry, uri, authInfo, true);
+  }
   if (expectedCatalogSHA256 !== undefined && typeof expectedCatalogSHA256 !== 'string') throw new TypeError('MCP_CATALOG_EXPECTED_SHA256 must be a string');
   expectedCatalogSHA256 = expectedCatalogSHA256?.trim().toLowerCase() || '';
   if (expectedCatalogSHA256 && !/^[a-f0-9]{64}$/.test(expectedCatalogSHA256)) {
@@ -226,6 +242,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
             recordId: value => SAMPLE_RECORD_IDS.filter(id => canReadSampleRecord(id) && id.startsWith(value.toLowerCase())),
           } }) : entry.uriOrTemplate;
       const callback = (uri, variables, ctx) => {
+        if (!resourceAuthorized(entry, uri, authInfo)) throw new Error('Resource not found');
         if (entry.name === 'customer_record' && !canReadSampleRecord(variables.recordId)) throw new Error('Resource not found');
         return typeof uriOrTemplate === 'string' ? entry.handler(uri, ctx || variables, {authInfo,config,taskRuntime})
           : entry.handler(uri,variables,ctx,{authInfo,config,taskRuntime});
@@ -307,7 +324,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     for (const uri of uniqueResourceURIs) {
       if (!auth.resourcePolicy.canAccess(uri, req.auth)) continue;
       if (!uri.startsWith('task://tasks/')) {
-        if (isConfiguredResourceURI(uri, new Set(catalog.resourcePatterns()))) genericResourceURIs.add(uri);
+        if (resourceSubscriptionAllowed(uri, req.auth)) genericResourceURIs.add(uri);
         continue;
       }
       const taskID = taskIDFromResourceURI(uri);
@@ -442,8 +459,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
             if (resourceTaskIDs.has(uri)) sendChange('notifications/resources/updated', { uri });
             return;
           }
-          if (auth.resourcePolicy.canAccess(uri, req.auth)
-            && isConfiguredResourceURI(uri, new Set(catalog.resourcePatterns()))) {
+          if (resourceSubscriptionAllowed(uri, req.auth)) {
             sendChange('notifications/resources/updated', { uri });
           }
         });

@@ -3310,6 +3310,16 @@ adapter, publisher events reach streams on that web process; multi-replica apps
 should connect a shared event adapter. Notification streams still reconcile on
 `--interval`, and servers without URI subscriptions use polling.
 
+Application resource subscriptions require an explicit authorization callback,
+shared with resource reads and checked again before each update. Pass a
+synchronous `authorize(uri, {authInfo, config})` callback as the fifth argument to
+Node's `registerResource`/`replaceResource`, `authorize(uri, caller)` to Python's
+`register_resource`/`replace_resource`, or an `MCPResourceAuthorizer` to Go's
+`RegisterMCPResource`/`ReplaceMCPResource`. Return true only when that caller may
+read the resource. Without this callback, existing custom read handlers retain
+their authorization checks and custom URI subscriptions are denied. The sample
+customer resources enforce caller ownership for reads, completions and updates.
+
 Use the same authorization context for both captures: a caller's scopes can change
 which definitions are visible. Review catalog metadata before committing it; it is supplied
 by the server and may contain private information. Snapshots do not record the

@@ -96,7 +96,7 @@ func (m *management) planUploadDeploy(ctx context.Context, args planUploadDeploy
 		m.opts.uploads.removeDir(dir)
 		return nil, invalid("invalid_argument", err.Error())
 	}
-	plan, err := m.planDirDeploy(ctx, dir, planLocalDeployArgs{Path: dir, App: args.App, Reason: args.Reason, CreateOnly: args.CreateOnly})
+	plan, err := m.planDirDeploy(ctx, dir, planLocalDeployArgs{uploaded: true, Path: dir, App: args.App, Reason: args.Reason, CreateOnly: args.CreateOnly})
 	if err != nil {
 		m.opts.uploads.removeDir(dir)
 		return nil, err

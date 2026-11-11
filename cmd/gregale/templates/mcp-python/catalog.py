@@ -30,11 +30,13 @@ class RuntimeCatalog:
             self._entries[kind][name] = {"definition": catalog_definition, "handler": None}
             self._revision += 1
 
-    def register(self, kind, definition, handler, replace_name=None, notify=True):
+    def register(self, kind, definition, handler, replace_name=None, notify=True, authorize=None):
         if kind not in self._entries:
             raise ValueError("unknown MCP catalog kind")
         if not callable(handler):
             raise TypeError("MCP catalog handler must be callable")
+        if authorize is not None and not callable(authorize):
+            raise TypeError("MCP resource authorizer must be callable")
         if not isinstance(definition, dict):
             raise TypeError("MCP catalog definition must be an object")
         try:
@@ -72,7 +74,7 @@ class RuntimeCatalog:
                         raise ValueError(f"MCP resource URI {uri_key!r} is already registered")
             if replace_name is not None and name != key:
                 del entries[key]
-            entries[name] = {"definition": catalog_definition, "handler": handler}
+            entries[name] = {"definition": catalog_definition, "handler": handler, "authorize": authorize}
             self._revision += 1
         if notify:
             self._publish()
@@ -93,7 +95,7 @@ class RuntimeCatalog:
             entry = self._entries.get(kind, {}).get(name)
             if entry is None:
                 return None
-            return {"definition": deepcopy(entry["definition"]), "handler": entry["handler"]}
+            return {"definition": deepcopy(entry["definition"]), "handler": entry["handler"], "authorize": entry.get("authorize")}
 
     def list(self, kind):
         with self._lock:
@@ -118,20 +120,20 @@ class RuntimeCatalog:
     def match_resource(self, uri):
         with self._lock:
             resources = [
-                {"definition": deepcopy(entry["definition"]), "handler": entry["handler"]}
+                {"definition": deepcopy(entry["definition"]), "handler": entry["handler"], "authorize": entry.get("authorize")}
                 for entry in self._entries["resource"].values()
             ]
         for entry in resources:
             definition = entry["definition"]
             if definition.get("uri") == uri:
-                return {"definition": definition, "handler": entry["handler"], "variables": {}}
+                return {**entry, "variables": {}}
         for entry in resources:
             definition = entry["definition"]
             template = definition.get("uriTemplate")
             if isinstance(template, str):
                 variables = match_uri_template(template, uri)
                 if variables is not None:
-                    return {"definition": definition, "handler": entry["handler"], "variables": variables}
+                    return {**entry, "variables": variables}
         return None
 
     def subscribe(self, listener):

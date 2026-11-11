@@ -73,6 +73,12 @@ func (m *management) recoveryTool(r Recovery, tool string, args map[string]any) 
 }
 
 func plannerFor(p *releasePlan) string {
+	if p.LocalSource != nil {
+		if p.LocalSource.Uploaded {
+			return "gregale_plan_upload_deploy"
+		}
+		return "gregale_plan_local_deploy"
+	}
 	if p.Operation != nil {
 		switch p.Operation.Kind {
 		case "env":
@@ -117,6 +123,12 @@ func retryPlanArguments(id, tool string) map[string]any {
 }
 
 func applyToolFor(p *releasePlan) string {
+	if p.LocalSource != nil {
+		if p.LocalSource.Uploaded {
+			return "gregale_apply_upload_deploy"
+		}
+		return "gregale_apply_local_deploy"
+	}
 	if p.Operation != nil {
 		if p.Operation.Kind == "env" {
 			return "gregale_apply_env_change"
@@ -151,6 +163,9 @@ func safePlanRetry(p *releasePlan, tool string) bool {
 		return p.Provision.Native != nil
 	}
 	if p.Operation != nil {
+		if p.Operation.Kind == "cron_update" {
+			return p.Operation.DesiredResourceHash != ""
+		}
 		return p.Operation.Kind != "config_rollback"
 	}
 	return p.Action == "deploy" && p.Source == nil && tool == "gregale_apply_deploy"
@@ -232,6 +247,11 @@ func (m *management) receiptRecovery(p *releasePlan, status string) Recovery {
 	if p.failure != nil && p.failure.Problem.Code == api.CodeQuotaExhausted {
 		return Recovery{Action: "inspect"}
 	}
+	if p.failure != nil && p.Operation != nil && p.Operation.Kind == "cron_update" && p.failure.Problem.Code == "outcome_unknown" {
+		// Reconciliation found neither the original nor desired configuration.
+		// Keep receipt guidance consistent with the refused replay.
+		return Recovery{Action: "inspect"}
+	}
 	if p.failure != nil && status != "completed" && status != "promoted" && recoveryForError(p.failure.Problem).Action == "request_access" {
 		return Recovery{Action: "request_access"}
 	}
@@ -264,7 +284,7 @@ func (m *management) receiptRecovery(p *releasePlan, status string) Recovery {
 		return m.recoveryTool(Recovery{Action: "inspect"}, "gregale_get_provision", map[string]any{"plan_id": p.ID})
 	case "interrupted", "outcome_unknown":
 		// Source-bearing temporary CLI plans cannot safely be replayed blindly.
-		if p.Operation != nil && p.Operation.Kind == "env" || p.Provision != nil && p.Provision.Native != nil || p.Action == "deploy" && p.Source == nil {
+		if p.Operation != nil && (p.Operation.Kind == "env" || p.Operation.Kind == "cron_update" && p.Operation.DesiredResourceHash != "") || p.Provision != nil && p.Provision.Native != nil || p.Action == "deploy" && p.Source == nil {
 			return m.recoveryTool(Recovery{Action: "retry_same_plan"}, applyToolFor(p), args)
 		}
 		return Recovery{Action: "inspect"}

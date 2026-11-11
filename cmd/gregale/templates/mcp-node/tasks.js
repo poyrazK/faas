@@ -94,7 +94,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
   const supportedHandlers = mcpTaskHandlerInventory(handlers);
   const executionHandlers = new Map();
   for (const [name, handler] of Object.entries(handlers)) {
-    if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(name)) throw new Error('Invalid MCP task handler name');
+    if (!/^[\x21-\x7e]{1,128}$/.test(name)) throw new Error('Invalid MCP task handler name');
     if (!handler || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version)) throw new Error('Invalid MCP task handler version');
     for (const [version, execute] of Object.entries({ ...handler.previousVersions, [handler.version]: handler.execute })) {
       if (!/^[A-Za-z0-9._-]{1,64}$/.test(version) || typeof execute !== 'function') throw new Error('Invalid MCP task handler registry');
@@ -119,6 +119,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
   const workerID = randomUUID();
   let lastWorkerHeartbeat = -Infinity;
   let workerHeartbeatPending;
+  const claims = new Set();
 
   function reportError() {
     try { onError(); } catch { /* Never let diagnostics stop task workers. */ }
@@ -352,7 +353,13 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
         // A busy queue can keep this loop running across many heartbeat periods.
         await refreshWorkerHeartbeat();
         if (closed) break;
-        const task = await store.claim(maxAttempts, LEASE_MS, supportedHandlers, workerID);
+        const claiming = Promise.resolve().then(() => store.claim(maxAttempts, LEASE_MS, supportedHandlers, workerID));
+        claims.add(claiming);
+        let task;
+        try {
+          task = await claiming;
+          if (task && closed && typeof store.releaseMany === 'function') await store.releaseMany([task]);
+        } finally { claims.delete(claiming); }
         // Do not start work from a claim that completed during shutdown.
         if (!task || closed) break;
         let work;
@@ -381,7 +388,8 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
       if (workerEnabled) {
         timer = setInterval(() => { void drain(); }, pollIntervalMs);
         if (!keepAlive) timer.unref?.();
-        await drain();
+        await refreshWorkerHeartbeat();
+        void drain();
       }
     },
     stop() {
@@ -430,6 +438,10 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
             try { watcher.onClose?.(); } catch { reportError(); }
             taskSubscriptions.delete(watcher);
           }
+          // A committed claim may still be returning to drain(). Its task must
+          // be released before this worker is declared stopped.
+          await Promise.allSettled([...claims]);
+          while (claims.size && !expired) await delay(1);
           await Promise.allSettled([...active]);
           if (!expired && workerEnabled && typeof store.workerStopped === 'function') {
             try { await store.workerStopped(workerID); } catch { reportError(); }

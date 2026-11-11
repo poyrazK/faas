@@ -23,7 +23,8 @@ import (
 
 // These are local protocol/output bounds, not platform or billing quotas.
 const (
-	MaxFrameBytes      = 128 << 10
+	// Budget for worst-case JSON escaping of 96 KiB of inline source plus paths.
+	MaxFrameBytes      = 2 << 20
 	maxResultBytes     = 128 << 10
 	maxPageSize        = 100
 	defaultPageSize    = 20
@@ -224,13 +225,7 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 	destructive := !readOnly
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: description, OutputSchema: toolOutputSchema(name), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: toolIdempotent(name, readOnly)}},
 		func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
-			timeout := m.opts.Timeout
-			switch name {
-			case "gregale_apply_local_deploy", "gregale_plan_upload_deploy", "gregale_apply_upload_deploy":
-				timeout = localDeployTimeout // the source upload, or unpacking one
-			case "gregale_apply_provision":
-				timeout = provisionTimeout // a database can take minutes
-			}
+			timeout := managementToolTimeout(name, m.opts.Timeout)
 			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			// Tools that ask the user something (SEP-2322 input requests) read the call.

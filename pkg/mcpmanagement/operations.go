@@ -19,14 +19,15 @@ import (
 // Requests are private journal inputs, not agent-facing plan contents. The
 // encrypted storedPlan explicitly saves them; plans expose only affected keys.
 type operationPlan struct {
-	Changes          json.RawMessage `json:"changes,omitempty"`
-	Kind             string          `json:"kind"`
-	Request          json.RawMessage `json:"-"`
-	Keys             []string        `json:"keys,omitempty"`
-	ResourceID       string          `json:"resource_id,omitempty"`
-	ExpectedRevision int64           `json:"expected_revision,omitempty"`
-	AppHash          string          `json:"app_configuration_hash"`
-	ResourceHash     string          `json:"resource_hash,omitempty"`
+	Changes             json.RawMessage `json:"changes,omitempty"`
+	Kind                string          `json:"kind"`
+	Request             json.RawMessage `json:"-"`
+	Keys                []string        `json:"keys,omitempty"`
+	ResourceID          string          `json:"resource_id,omitempty"`
+	ExpectedRevision    int64           `json:"expected_revision,omitempty"`
+	AppHash             string          `json:"app_configuration_hash"`
+	ResourceHash        string          `json:"resource_hash,omitempty"`
+	DesiredResourceHash string          `json:"desired_resource_hash,omitempty"`
 }
 
 var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "cron_update": true, "cron_delete": true, "domain_delete": true}
@@ -362,7 +363,7 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 		}
 		return m.client.RollbackConfig(ctx, p.App, p.Scope, revision)
 	case "cron_update", "cron_delete", "domain_delete":
-		return m.applyResourceOperation(ctx, p)
+		return m.applyResourceOperation(ctx, p, retry)
 	}
 	return nil, invalid("invalid_plan", "unsupported operation kind")
 }

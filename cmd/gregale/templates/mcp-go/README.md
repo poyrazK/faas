@@ -205,6 +205,12 @@ changed. In external OAuth mode, add dynamic entry names and resource patterns
 to the corresponding scope allow-lists. The registry is process-local, so
 every serving replica needs the same application registration code.
 
+Custom resource subscriptions require an `MCPResourceAuthorizer` passed to
+`RegisterMCPResource` or `ReplaceMCPResource`. It receives context, URI and verified
+caller context, and must return true only for authorized readers. Reads,
+subscription setup and delivery share this side-effect-free check. Custom resources
+without an authorizer retain their read handlers but deny subscriptions.
+
 ## Durable task handlers
 
 Register task handlers during package initialization, before
