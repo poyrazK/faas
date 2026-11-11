@@ -10577,6 +10577,21 @@ const (
 	// schedd keeps across nodes (ADR-20261027090013 §12); a shape past it
 	// cold-boots every session.
 	SandboxWarmSnapshotsMax = 512
+	// Measured charge and reservation of agent run VMs on agent nodes
+	// (ADR-20261027090015 §3, proposed; schedd agent_measured_charge). A run
+	// is charged max(memory, its version's p95 private peak,
+	// AgentChargeFloorMB) + 8 MB and books min(ram_mb,
+	// max(AgentReservationFloorMB, AgentReservationPeakFactorPercent of the
+	// peak)) + 8 MB against the overcommit bound. A version has a peak once
+	// AgentSizeHistoryMinRuns of its last AgentSizeHistoryWindowRuns runs
+	// were measured with at most AgentSizeHistoryMaxGapPercent of their
+	// samples missing; until then its runs book and are charged ram_mb.
+	AgentChargeFloorMB                = 64
+	AgentReservationFloorMB           = 128
+	AgentReservationPeakFactorPercent = 150
+	AgentSizeHistoryMinRuns           = 20
+	AgentSizeHistoryWindowRuns        = 100
+	AgentSizeHistoryMaxGapPercent     = 20
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2

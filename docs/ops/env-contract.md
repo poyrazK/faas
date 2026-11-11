@@ -900,6 +900,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SBOM_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_SCAN_SPOOL_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_ADDR` | meterd | `default` |  |  | `` |  |
+| `FAAS_SCHEDD_AGENT_MEASURED_CHARGE` | schedd | `default` |  |  | `` | ADR-20261027090015 §3 measured charge: 1 charges agent run VMs their measured memory or their version's p95 private peak and books a reservation from that peak, while measured admission is on; unset books and charges ram_mb + 8 |
 | `FAAS_SCHEDD_AGENT_RUNS` | schedd | `default` |  |  | `` | ADR-20261027090010 agent runs: 1 serves the RunAgent RPC and admits KindAgentRun on the agent pool; unset refuses it with Unimplemented |
 | `FAAS_SCHEDD_AGENT_RUN_BASE_KEY` | schedd | `default` |  |  | `` | ADR-20261027090010 agent runs: storage key (or host path) of the agent-base drive0; unset uses base/runner-agent-amd64.ext4, where an agent-pool imaged stages FAAS_AGENT_BASE_REF |
 | `FAAS_SCHEDD_AGENT_RUN_LAYER_KEY` | schedd | `default` |  |  | `` | ADR-20261027090010 agent runs: storage key (or host path) of the platform agent layer (drive1 holding /etc/faas/agent.json); unset uses base/agent-layer-v1-amd64.ext4, which an agent-pool imaged publishes |
