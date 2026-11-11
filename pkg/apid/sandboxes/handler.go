@@ -55,7 +55,7 @@ type Handler struct {
 	// EnsureImage gets or creates the image-run runner job caching a
 	// seller image and returns its ID and the normalized reference. Nil
 	// makes image sessions sandbox_unsupported.
-	EnsureImage func(ctx context.Context, acct state.Account, image string) (jobID, ref string, prob *api.Problem)
+	EnsureImage func(ctx context.Context, acct state.Account, src api.SandboxImageSource) (jobID, ref string, prob *api.Problem)
 	// TemplateApps creates and deletes sandbox templates' build apps.
 	TemplateApps TemplateApps
 }
@@ -74,7 +74,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	admission, prob := h.admission(acct, body)
 	if prob == nil && body.Image != "" {
-		prob = h.image(r.Context(), acct, body.Image, &admission)
+		prob = h.image(r.Context(), acct, api.SandboxImageSource{Image: body.Image, Pull: body.Pull, RegistryAuth: body.RegistryAuth}, &admission)
 	}
 	if prob == nil && body.Template != "" {
 		prob = h.template(r.Context(), acct, body.Template, &admission)
@@ -94,11 +94,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 
 // image caches a seller image for the session after every other check
 // passed, since ensuring may evict another cached image.
-func (h *Handler) image(ctx context.Context, acct state.Account, image string, a *agentstore.SandboxAdmission) *api.Problem {
+func (h *Handler) image(ctx context.Context, acct state.Account, src api.SandboxImageSource, a *agentstore.SandboxAdmission) *api.Problem {
 	if h.EnsureImage == nil {
 		return api.ErrSandboxUnsupported("image", "seller images need image runs, which are off on this control-plane host; name a preset")
 	}
-	jobID, ref, prob := h.EnsureImage(ctx, acct, image)
+	jobID, ref, prob := h.EnsureImage(ctx, acct, src)
 	if prob != nil {
 		return prob
 	}

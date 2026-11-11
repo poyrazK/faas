@@ -13068,7 +13068,7 @@ paths:
       tags: [account]
       operationId: restoreAccount
       summary: Restore a `deleted_pending` account.
-      description: Cancels a staged deletion. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
+      description: Cancels a staged deletion and emails the account. Needs a full-access (`admin`) key or a browser session, and two-factor authentication when it is required. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
       responses:
         '200':
           description: Restored.
