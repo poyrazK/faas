@@ -60,6 +60,17 @@
 # Default: false
 # adopt_running_vms = true
 
+# flat_tenant_cgroups: launch every new tenant VM directly under
+# faas-tenant.slice instead of its plan's sub-slice (ADR-20261109172421 step
+# 6.5), so a busy host shares CPU between all instances by cpu.weight. VMs in
+# a sub-slice stay there until they park. An older vmmd only knows the
+# sub-slices: turn this off, and let flat VMs park, before rolling vmmd back
+# past the release that added it. Not with native_process_recovery. The unit
+# environment's FAAS_VMMD_FLAT_TENANT_CGROUPS (ansible
+# vmmd_flat_tenant_cgroups) overrides it.
+# Default: false
+# flat_tenant_cgroups = true
+
 # adopt_admitted_runtimes: EXPERIMENTAL. Also adopt guests booted under an
 # application standard's runtime-admission receipt; schedd re-binds their
 # admission to the new vmmd (ADR-595 extension). Off, they are refused at
@@ -276,6 +287,9 @@
 # public_iface = "eth0"                 # outward NIC; FAAS_PUBLIC_IFACE wins
 # private_ingress_cidrs = ["10.42.0.0/24"]
 # private_ingress_tcp_ports = [50051, 8080, 9091, 9092, 9100, 9102, 9104, 9105]
+# private_control_ingress_cidrs = ["10.42.0.1/32"]   # ADR-20261110120000: replaces private_ingress_cidrs as the control-plane sources
+# private_peer_ingress_cidrs = ["10.42.0.3/32"]      # other compute nodes, admitted only to the peer ports
+# private_peer_ingress_tcp_ports = [50051, 9091]     # vmmd forwards and schedd wakes
 # overlay_cidr = "100.64.0.0/10"       # overlay subnet the detector prefers
 # overlay_interface = "tailscale0"     # optional NIC pin (Gap #5)
 # service_tcp_enabled = false          # ADR-576 private TCP service addresses; FAAS_SERVICE_TCP_ENABLED wins. Pair with the nftables role's faas_service_tcp_enabled.

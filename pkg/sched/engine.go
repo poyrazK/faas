@@ -397,15 +397,11 @@ func startupDeadlineForApp(app state.App, plan api.Plan) int32 {
 }
 
 // startupCPUBoostQuota mirrors VMMD's bounded startup profile so placement and
-// the node ledger reserve the same temporary peak that cpu.max will enforce.
-func startupCPUBoostQuota(plan api.Plan, configured int) int {
-	period := plan.CPUPeriodUS()
-	quota := plan.CPUQuotaUS()
-	if period <= 0 || quota <= 0 {
-		return configured
-	}
-	planCeiling := int(int64(quota) * 1000 / int64(period))
-	return max(configured, min(api.DefaultAppCPUMillicores, planCeiling))
+// the node ledger reserve the same temporary peak that cpu.max will enforce:
+// one core, or the configured ceiling when it is higher. It never depends on
+// the plan (ADR-20261109172421; the plan ceiling was one core on every plan).
+func startupCPUBoostQuota(configured int) int {
+	return max(configured, api.DefaultAppCPUMillicores)
 }
 
 // executionModeForApp resolves the manifest default before crossing the
@@ -3701,7 +3697,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	configuredCPU := appCPUBookingMillicores(app)
 	startupCPU := configuredCPU
 	if !dep.DisableStartupCPUBoost {
-		startupCPU = startupCPUBoostQuota(acct.Plan, configuredCPU)
+		startupCPU = startupCPUBoostQuota(configuredCPU)
 	}
 	placementRequest := Request{
 		AppID:                      appID,
@@ -4514,7 +4510,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	configuredBootCPU := int(bootInput.spec.CPUMillicores)
 	startupBootCPU := configuredBootCPU
 	if !bootInput.spec.DisableStartupCPUBoost {
-		startupBootCPU = startupCPUBoostQuota(bootInput.spec.Plan, configuredBootCPU)
+		startupBootCPU = startupCPUBoostQuota(configuredBootCPU)
 	}
 	if startupBootCPU > configuredBootCPU {
 		// vmmd's readiness boundary is inside the RPC; using response time plus
@@ -5285,17 +5281,18 @@ type placementSnapshot struct {
 	// preferred is nodes less those whose vmmd is restarting under a
 	// notice, when that leaves any (vmmd restart adoption ADR §3).
 	preferred []state.ComputeNode
-	// cpu is the ledger's cpu_admission (ADR-20261109172421).
+	// cpu counts what the CPU budgets would have refused
+	// (ADR-20261109172421).
 	cpu *cpuAdmission
 }
 
-// choose places r. Observing cpu_admission, a refusal for vCPU or CPU alone
-// is retried without those budgets, so a node with memory room is chosen and
-// the refusal is only counted (ADR-20261109172421). The first pass still
-// prefers a node within its CPU budgets.
+// choose places r. CPU decides where, never whether (ADR-20261109172421):
+// the first pass prefers a node within its vCPU and CPU budgets, and a
+// refusal for those alone is retried without them, so a node with memory
+// room is chosen and the refusal is only counted.
 func (s placementSnapshot) choose(r Request) (Placement, error) {
 	p, err := s.chooseOnce(r)
-	if err == nil || !s.cpu.observing() || !refusedForCPU(err) {
+	if err == nil || !refusedForCPU(err) {
 		return p, err
 	}
 	r.ignoreCPUBudgets = true
@@ -6983,7 +6980,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	primeConfiguredCPU := appCPUBookingMillicores(app)
 	primeStartupCPU := primeConfiguredCPU
 	if !dep.DisableStartupCPUBoost {
-		primeStartupCPU = startupCPUBoostQuota(acct.Plan, primeConfiguredCPU)
+		primeStartupCPU = startupCPUBoostQuota(primeConfiguredCPU)
 	}
 	primePlacementRequest := Request{
 		AppID: appID, Plan: acct.Plan,
@@ -8483,7 +8480,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 
 			if until, ok := startupCPUBoosts[ins.ID]; ok {
-				request.CPUStartupBoostMillicores = startupCPUBoostQuota(acct.Plan, request.CPUMillicores)
+				request.CPUStartupBoostMillicores = startupCPUBoostQuota(request.CPUMillicores)
 				request.CPUStartupBoostUntil = until
 			}
 			if err := e.ledger.Admit(request); err != nil {
@@ -8684,7 +8681,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// with the app's current machine configuration. Retire the old VM instead;
 	// the next request cold-boots the current shape and produces a compatible
 	// snapshot on its next park.
-	app, err := state.AppForInstance(ctx, e.store, ins)
+	app, dep, err := appForInstanceAndDeployment(ctx, e.store, ins)
 	if err != nil {
 		// A deleted environment tombstones its deployments before its VMs
 		// finish retiring. Such a VM must never publish into a recreated
@@ -8703,6 +8700,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		}
 		return fmt.Errorf("sched: park: load deployment app shape: %w", err)
 	}
+	app = withBuiltLifecycle(app, dep)
 	frozenFunction := functionlifetime.NativeQualificationBuild && app.Type == "function" && (app.Runtime == "node22" || app.Runtime == "node24")
 	if frozenFunction {
 		undoFreeze, err := e.freezeFunctionForPark(ctx, ins)

@@ -284,7 +284,7 @@ func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhook
 // returns false; the caller returns 1.
 func validateAlertClosedSets(metric, comparison, windowSpec, failureSource, action *string) bool {
 	if !api.AllowedAlertRuleMetric(*metric) {
-		return printErr("Invalid metric", fmt.Errorf("--metric %q is not in the closed set", *metric)) == 0
+		return printErr("Invalid metric", invalidAlertMetricError(*metric)) == 0
 	}
 	if !api.AllowedAlertRuleComparison(*comparison) {
 		return printErr("Invalid comparison", fmt.Errorf("--comparison %q must be one of gt|gte|lt|lte", *comparison)) == 0
@@ -466,8 +466,19 @@ func renderAlertDeliveries(deliveries []api.AlertDeliveryResponse, includeTest b
 }
 
 // alertDeliverySummary is the one-line `alerts info` view of a delivery.
+// alertDeliverySummary names when the receiver got the alert, not only when the
+// rule fired: a delivery delayed behind retries read "delivered at <fire
+// time>" (ADR-20261110090000).
 func alertDeliverySummary(d api.AlertDeliveryResponse) string {
-	summary := fmt.Sprintf("%s at %s (attempts %d", d.Status, d.FiredAt.UTC().Format(time.RFC3339), d.AttemptCount)
+	at := d.FiredAt
+	if !d.DeliveredAt.IsZero() {
+		at = d.DeliveredAt
+	}
+	summary := fmt.Sprintf("%s at %s (", d.Status, at.UTC().Format(time.RFC3339))
+	if !at.Equal(d.FiredAt) {
+		summary += fmt.Sprintf("fired %s, ", d.FiredAt.UTC().Format(time.RFC3339))
+	}
+	summary += fmt.Sprintf("attempts %d", d.AttemptCount)
 	if d.LastStatusCode > 0 {
 		summary += fmt.Sprintf(", http %d", d.LastStatusCode)
 	}
@@ -611,7 +622,7 @@ func cmdAlertUpdate(args []string) int {
 // Extracted so cmdAlertUpdate stays under the 50-line handler cap.
 func validateAlertUpdateFlags(metric, comparison, windowSpec, action *string, threshold *float64, cooldown *int) bool {
 	if *metric != "" && !api.AllowedAlertRuleMetric(*metric) {
-		return printErr("Invalid metric", fmt.Errorf("--metric %q is not in the closed set", *metric)) == 0
+		return printErr("Invalid metric", invalidAlertMetricError(*metric)) == 0
 	}
 	if *comparison != "" && !api.AllowedAlertRuleComparison(*comparison) {
 		return printErr("Invalid comparison", fmt.Errorf("--comparison %q must be one of gt|gte|lt|lte", *comparison)) == 0
@@ -805,4 +816,11 @@ func alertLogQuery(client *Client, slug, query, saved string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%s has no saved log search named %s (see gregale logs saved %s)", slug, saved, slug)
+}
+
+// invalidAlertMetricError names the metrics --metric accepts. It said only
+// "not in the closed set", and `alert create --help` listed a subset (Hunt 32
+// H32-18).
+func invalidAlertMetricError(metric string) error {
+	return fmt.Errorf("--metric %q is not a supported metric; use one of: %s", metric, strings.Join(api.AllowedAlertRuleMetrics, ", "))
 }

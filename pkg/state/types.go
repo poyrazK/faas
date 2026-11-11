@@ -1306,6 +1306,10 @@ type DeployToken struct {
 	Status        string
 	RevokedAt     *time.Time
 	RotatedFromID *string
+	// CreatedByAccountID is the member who minted or last rotated the
+	// token; "" for a token minted before the column existed. A token
+	// whose minter differs from AccountID authenticates as the minter.
+	CreatedByAccountID string
 }
 
 // App is a deployed application (or function). The Manifest carries the
@@ -1669,6 +1673,11 @@ type App struct {
 	// PlatformTenantRequired admits app traffic only after the gateway has
 	// verified a platform tenant through a linked key, surface, or JWT rule.
 	PlatformTenantRequired bool
+	// SandboxTemplate marks the platform-managed app that builds a sandbox
+	// template's image (ADR-20261027090013). It only builds (execution_mode
+	// job), counts against SandboxTemplatesMax instead of DeployedApps and
+	// stays out of ListApps and ListAppsByOrg. Set only at create.
+	SandboxTemplate bool
 	// PublicAuthBasicSealed (issue #477 / ADR-079) is the
 	// secretbox-sealed APP_BASIC_AUTH blob carrying the
 	// {username, password} pair the basic-auth path verifies
@@ -2878,6 +2887,13 @@ type Deployment struct {
 	// legacy deployment whose support has not been recorded yet.
 	SecretReloadSignal      string `json:"-"`
 	SecretReloadSignalKnown bool   `json:"-"`
+	// BeforeCheckpointHook records whether imaged stamped a before_checkpoint
+	// hook into this deployment's guest manifest. The guest only knows the
+	// hook its own layer was built with, so parks of this deployment must
+	// follow this value, not the app's current manifest (H32-49). Known is
+	// false for deployments built before the column existed.
+	BeforeCheckpointHook      bool `json:"-"`
+	BeforeCheckpointHookKnown bool `json:"-"`
 	// RuntimeBase is the shared runner base a source-built container app's
 	// layer was built for ("" for the app's own base). imaged stamps it with
 	// the deployment's source rootfs; schedd boots that base

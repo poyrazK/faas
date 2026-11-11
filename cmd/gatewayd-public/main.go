@@ -418,12 +418,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	var internalDialer gateway.InternalDialer
 	edgeMetricsSet := newEdgeMetrics()
 	edgeLimits.refused = edgeMetricsSet.refused
+	edgeLimits.runOverload(ctx, edgeMetricsSet, log)
 	// A dynamic dialer can pick a different upstream per request, so the
 	// transport must not pool connections under the one logical URL.
 	dynamicUpstream := upstreamMode == internalUpstreamDatabase
 	// ADR-20261031105055: a compute edge may route each host to the node
 	// that last served it. Off by default for a measured rollout.
 	var placement *edgePlacement
+	var lfd *localFirstDialer
 	if edgeMode == edgeModeCompute {
 		// ADR-1343 §2: this node's gatewayd-internal first, the compute pool
 		// only while it is unhealthy.
@@ -436,7 +438,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ADR-1343 §6: FAAS_NODE_NAME is the name vmmd registers this node
 		// under (the shared node-name drop-in), so a drain in the registry
 		// withdraws this edge's local path.
-		lfd := newLocalFirstDialer(localDialer, cgp, internalURL, edgeMetricsSet, log).
+		lfd = newLocalFirstDialer(localDialer, cgp, internalURL, edgeMetricsSet, log).
 			withDrainWatch(strings.TrimSpace(os.Getenv("FAAS_NODE_NAME")), cgp)
 		if envBoolOr(edgePlacementRoutingEnv, false) {
 			placement = newEdgePlacement()
@@ -511,6 +513,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// itself, so it keeps one connection per request.
 	if dynamicUpstream && envBoolOr(internalKeepAlivePerNodeEnv, false) && !proxy.WithUpstreamKeepAlive() {
 		log.Warn("gatewayd-public: " + internalKeepAlivePerNodeEnv + " ignored: this upstream cannot keep connections per node")
+	}
+	// ADR-20261110081523: requests to this node's gatewayd-internal in
+	// binary HTTP, on per-node keep-alive's transport.
+	if err := configureBinaryHop(proxy, lfd, edgeMetricsSet, os.Getenv, log); err != nil {
+		return err
 	}
 	// Issue #587 / PR-A: per-request drain tracker shared between
 	// the InternalReverseProxy and the control mux so every
@@ -745,7 +752,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			fenceOpen := startObjectStorageFence(runtimeCtx, pgStore, log)
 			reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 			defer stopReads()
-			localReads, err = publicObjectReads(pgStore, publicStorageRegistry, reads, transfers, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
+			localReads, err = publicObjectReads(pgStore, publicStorageRegistry, reads, transfers, hostLookups, publicReadClientKey(trustedIngressCIDRs), func() bool { return s3Flag.Load() && fenceOpen() },
 				tenantSurfacesFlag.Load, domains, controlPlaneHandler, log)
 			if err != nil {
 				return err
@@ -772,7 +779,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// flush runs before the pool closes.
 		reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 		defer stopReads()
-		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
+		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, hostLookups, publicReadClientKey(trustedIngressCIDRs), func() bool { return s3Flag.Load() && fenceOpen() },
 			tenantSurfacesFlag.Load, domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
@@ -823,6 +830,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// Cloudflare the request rate counts against CF-Connecting-IP.
 		publicHandler = edgeLimits.body(publicHandler)
 		publicHandler = edgeLimits.hosts(publicHandler)
+		publicHandler = edgeLimits.shed(publicHandler, trustedIngressCIDRs)
 		publicHandler = edgeLimits.requests(publicHandler, trustedIngressCIDRs)
 		// Outermost, so every layer below sees the canonical client address.
 		publicHandler = cloudflareClientIP(publicHandler, trustedIngressCIDRs)

@@ -23,17 +23,19 @@ database reservation boundary:
 
 | Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Free | — | — | — | — | — |
 | Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
-A Free-plan database needs enforced compute caps, because Free has no
-overage to pay for compute past its allowance. Until the platform enforces
-them, `gregale postgres create`, `gregale dev --postgres`, pipeline mirrors
-and restores answer `403 managed_postgres_not_in_plan` on Free, and a
-Compose `postgres` service is not provisioned (the deploy names the plan as
-the reason).
+The Free plan includes no managed PostgreSQL
+([ADR-20261110184700](adr/20261110184700-free-plan-includes-no-managed-postgres.md)):
+`gregale postgres create`, `gregale dev --postgres`, pipeline mirrors and
+restores answer `403 managed_postgres_not_in_plan` on Free, whatever the cap
+enforcement mode, and a Compose `postgres` service is not provisioned (the
+deploy names the plan as the reason). An account that falls to Free from a
+paid plan keeps its databases suspended as past the plan
+([Databases past a lowered plan](#databases-past-a-lowered-plan)).
 
 Storage is pooled across the account's databases: one database may use the
 whole pool. Storage and compute are limits unless a paid account turns
@@ -43,6 +45,12 @@ overage on ([Compute overage](#compute-overage)):
   allowance;
 - the pool doubles, and storage past the plan's pool, averaged over the
   month, costs $0.50 per GiB-month.
+
+Data your databases send counts toward your plan's monthly egress allowance
+together with your apps' egress (Free 10 GiB, Hobby 100 GiB, Pro 500 GiB,
+Scale 2,000 GiB; see [plans](plans.md)). Once the two together reach it, your
+databases stop and refuse connections until the month ends or the plan grows.
+Egress overage does not extend this for databases yet.
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -1274,7 +1282,15 @@ sweep. The same sweep suspends the databases the plan no longer includes
   source's project) is left running and logged as shared.
 - Each sweep recomputes the set. Once the subject fits (an upgrade, a deleted
   database, or a resize to an included class), the next sweep restores the
-  ordinary quota. Nothing is deleted.
+  ordinary quota.
+- A database that stays past the plan for 30 days
+  (`api.ManagedPostgresPlanExcessDeleteAfter`, counted from its first
+  suspension) is deleted
+  ([ADR-20261110184700](adr/20261110184700-free-plan-includes-no-managed-postgres.md)):
+  the sweep revokes its bindings and schedules its delete through the delete
+  grace period, so the owner can still recover it for 7 days. Fitting the
+  plan again clears the clock. A suspended, abuse-held or deleting account's
+  databases are never deleted this way.
 
 `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` selects the mode:
 
@@ -1282,6 +1298,17 @@ sweep. The same sweep suspends the databases the plan no longer includes
   project it would suspend, and writes nothing.
 - `on` writes the quota, only while `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` is
   `on` too; it logs `managed postgres plan excess suspended` when it does.
+- `off` does nothing.
+
+`FAAS_MANAGED_POSTGRES_PLAN_EXCESS_DELETE` selects the deletion pass. It acts
+only on databases the sweep suspends, so only while both modes above are `on`:
+
+- `shadow` (the default) logs `managed postgres plan excess due for deletion
+  (shadow)` for each database past its 30 days.
+- `on` deletes them and logs `managed postgres plan excess delete scheduled`.
+  The suspension email then names the deletion date. Turn it on only once
+  every apid runs the release that added it: an older apid cannot read that
+  email's payload.
 - `off` does nothing.
 
 While it is `on`, `GET /v1/postgres/databases` and the read show

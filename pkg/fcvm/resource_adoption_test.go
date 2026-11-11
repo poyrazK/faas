@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
@@ -536,6 +537,17 @@ func TestAdoptionClassifier(t *testing.T) {
 		{name: "other executable", mutate: func(_ *adoptionFixture, b *resourceAdoption) { b.Firecracker.Exe.Inode++ }, wantReason: adoptionRefusedExe},
 		{name: "wrong cgroup", mutate: func(f *adoptionFixture, _ *resourceAdoption) {
 			f.write(filepath.Join(f.proc, fmt.Sprint(adoptionTestPID), "cgroup"), "0::/faas.slice/faas-cp.slice/faas-vmmd.service\n")
+		}, wantReason: adoptionRefusedCgroup},
+		{name: "flat tenant slice", mutate: func(f *adoptionFixture, _ *resourceAdoption) {
+			// adr: 20261109172421 — a VM launched flat sits directly in the
+			// tenant slice; its record still names its plan.
+			flat := filepath.Join(CgroupMountRoot, PerInstanceScope(idLive))
+			f.write(filepath.Join(f.proc, fmt.Sprint(adoptionTestPID), "cgroup"), "0::/"+flat+"\n")
+			f.write(filepath.Join(f.cgroup, flat, "memory.max"), fenceMemoryMaxFor(f.lease)+"\n")
+		}},
+		{name: "another plan's sub-slice", mutate: func(f *adoptionFixture, _ *resourceAdoption) {
+			other := filepath.Join(ParentCgroupFor(api.PlanFree), PerInstanceScope(idLive))
+			f.write(filepath.Join(f.proc, fmt.Sprint(adoptionTestPID), "cgroup"), "0::/"+other+"\n")
 		}, wantReason: adoptionRefusedCgroup},
 		{name: "fence drifted", mutate: func(f *adoptionFixture, _ *resourceAdoption) {
 			f.write(filepath.Join(f.cgroup, vmCgroupParent(f.lease), PerInstanceScope(idLive), "memory.max"), "max\n")

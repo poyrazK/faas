@@ -499,6 +499,13 @@ var ErrDeploymentSuperseded = errors.New("state: deployment superseded by a newe
 // deployment_cancel_live_forbidden code (ADR-124).
 var ErrCancelLiveForbidden = errors.New("state: cancel of DeployLive deployment is forbidden; use deploys rollback")
 
+// ErrClearInFlightForbidden is returned by ClearDeployment for a row that is
+// still in flight (pending, building, imaging, snapshotting). Hiding it would
+// not stop the pipeline, and the row would vanish from every list while it
+// kept its build slot, admission and supersede chain (deploy review
+// 2026-11-10, D1). Cancel it first; a cancelled row can be hidden.
+var ErrClearInFlightForbidden = errors.New("state: deployment is still in flight; cancel it before hiding")
+
 // ErrReorderNotPending is returned by ReorderDeployment when the
 // caller attempts to reorder a deployment that has already left
 // DeployPending (typically because the build VM is running or the
@@ -556,6 +563,10 @@ const (
 	// inside the same critical section so a TOCTOU race can't slip
 	// past the cap.
 	QuotaErrorKindOpenAPIImports QuotaErrorKind = "openapi_imports"
+	// QuotaErrorKindSandboxTemplates trips when an account would hold more
+	// sandbox templates (their build apps) than Limits.SandboxTemplatesMax
+	// (ADR-20261027090013).
+	QuotaErrorKindSandboxTemplates QuotaErrorKind = "sandbox_templates"
 )
 
 type QuotaError struct {
@@ -2735,6 +2746,9 @@ type Store interface {
 	// the deployment so the secret-status surface can determine which active
 	// authorized runtimes can participate in an application reload barrier.
 	SetDeploymentSecretReloadSignal(ctx context.Context, id, signal string) error
+	// SetDeploymentBeforeCheckpointHook records whether the deployment's built
+	// guest manifest carries a before_checkpoint hook (H32-49).
+	SetDeploymentBeforeCheckpointHook(ctx context.Context, id string, hook bool) error
 	LatestDeployment(ctx context.Context, appID string) (Deployment, error)
 	// DeploymentOrdinal (issue #976 / ADR-122 / SAFE-RELEASES-C.2)
 	// returns the per-app 1-based ordinal of the deployment row,

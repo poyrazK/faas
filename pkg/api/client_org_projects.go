@@ -274,6 +274,14 @@ func (c *Client) ListOrgProjects(ctx context.Context, orgSlug string) ([]Project
 	return out, c.do(ctx, http.MethodGet, orgProjectPath(orgSlug), nil, &out)
 }
 
+// ListOrgGitHubInstallations lists the GitHub installations the named
+// organization owns; company projects link repositories only through them
+// (ADR-20261110200000).
+func (c *Client) ListOrgGitHubInstallations(ctx context.Context, orgSlug string) ([]GitHubInstallationSummary, error) {
+	var out []GitHubInstallationSummary
+	return out, c.do(ctx, http.MethodGet, "/v1/orgs/"+url.PathEscape(orgSlug)+"/github/installations", nil, &out)
+}
+
 // PreviewDeleteOrgProject addresses a project in the named organization.
 func (c *Client) PreviewDeleteOrgProject(ctx context.Context, orgSlug string, slug string) (ProjectDeletePreviewResponse, error) {
 	var out ProjectDeletePreviewResponse

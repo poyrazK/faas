@@ -78,9 +78,8 @@ type InstanceStatRow struct {
 	// counter delta for that row. Otherwise the rollup Adds
 	// the per-row delta to vmmd_cpu_throttle_seconds_total{account_id,
 	// app_id} via the per-(account_id, app_id) baseline in
-	// cpuThrottleLastSeen. NaN is treated as 0. The cpu.max
-	// ratio gauge (vmmd_cpu_throttle_ratio{slice}) is the
-	// alert source; this counter is the dashboard top-N view.
+	// cpuThrottleLastSeen. NaN is treated as 0. The counter is
+	// the dashboard top-N view.
 	ThrottledUsec float64
 }
 
@@ -1154,20 +1153,8 @@ type OpsMetrics struct {
 	// Layered above accountLabelSet the same way topTenantRPS
 	// is: an (account_id, app_id) pair admitted at the 10k
 	// account-id level can still be demoted past the top-100
-	// here. The counter is the dashboard top-N view; the
-	// FaasCpuStarvation alert (issue #301 acceptance #3) reads
-	// from the sibling throttleRatio gauge instead.
+	// here. The counter is the dashboard top-N view.
 	throttleSecondsTotal *prometheus.CounterVec
-	// throttleRatio (issue #301 / ADR-044): per-slice throttle
-	// ratio (throttle_delta / (throttle_delta + usage_delta))
-	// over the 5s sampler window. Gauge (not Counter) because
-	// the value is computed windowed, not cumulative. Labelled
-	// by slice ∈ {tenant-free, tenant-hobby, tenant-pro,
-	// tenant-scale}; the closed plan set is pre-instantiated at
-	// boot so the dashboard surfaces "no data" → "0" on an
-	// idle box. The FaasCpuStarvation alert reads
-	// throttleRatio{slice=~"tenant-.*"} > 0.8 for 5m.
-	throttleRatio *prometheus.GaugeVec
 	// topApps: the bounded top-N admission primitive that
 	// drives throttleSecondsTotal. Keyed on the composite
 	// (account_id, app_id); cap = topAppSetCap (100). See
@@ -3711,18 +3698,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Cumulative CPU-seconds consumed by live instances, per (app, node) — sum over live siblings, source is vmmd's cpu_seconds wire field (issue #279 / PR-B).",
 	}, []string{"app", "node"})
 	// issue #301 / ADR-044: per-app CPU-throttle counter (the
-	// dashboard top-N view) + per-slice throttle ratio gauge (the
-	// FaasCpuStarvation alert source). See the field doc comments
-	// on throttleSecondsTotal and throttleRatio for the cardinality
-	// contract and the two-tier admission via topAppSet.
+	// dashboard top-N view). See the field doc comment on
+	// throttleSecondsTotal for the cardinality contract and the
+	// two-tier admission via topAppSet.
 	throttleSecondsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_cpu_throttle_seconds_total",
-		Help: "Cumulative CPU-seconds the cgroup spent throttled, per (account_id, app_id) — sum over live siblings, source is vmmd's cpu.stat throttled_usec (issue #301, ADR-044). Bounded at topAppSetCap (100) real cached pairs plus the (\"other\", \"other\") overflow; the (account_id, app_id) tuple is layered above accountLabelSet so a customer id at the 10k level can still be demoted past the top-100 here. Default overflow label is (\"other\", \"other\"); the panel selector {app_id!=\"other\"} excludes the overflow bucket. The FaasCpuStarvation alert reads the sibling throttleRatio gauge instead.",
+		Help: "Cumulative CPU-seconds the cgroup spent throttled, per (account_id, app_id) — sum over live siblings, source is vmmd's cpu.stat throttled_usec (issue #301, ADR-044). Bounded at topAppSetCap (100) real cached pairs plus the (\"other\", \"other\") overflow; the (account_id, app_id) tuple is layered above accountLabelSet so a customer id at the 10k level can still be demoted past the top-100 here. Default overflow label is (\"other\", \"other\"); the panel selector {app_id!=\"other\"} excludes the overflow bucket.",
 	}, []string{"account_id", "app_id"})
-	throttleRatio := prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: prefix + "_cpu_throttle_ratio",
-		Help: "Per-slice throttle ratio (throttle_delta / (throttle_delta + usage_delta)) over the 5s sampler window (issue #301, ADR-044). Labelled by slice ∈ {tenant-free, tenant-hobby, tenant-pro, tenant-scale}; the closed plan set is pre-instantiated at boot so the dashboard surfaces 'no data' → '0' on an idle box. The FaasCpuStarvation alert reads slice=~\"tenant-.*\" > 0.8 for 5m. Ratio is the operationally meaningful number — a counter delta alone would conflate 'lots of CPU, low throttle' with 'no CPU, no throttle'.",
-	}, []string{"slice"})
 	// Issue #169 / #172: scale-up trigger observability. Outcome
 	// label set is closed ({admit, reject_at_cap, no_signal,
 	// cooldown_held, min_floor_already, overage_cap_reached});
@@ -4162,7 +4144,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		apidGithubdBridgeEnqueuedTotal,
 		githubdPathFilterTotal,
 		githubdPushSkippedTotal,
-		throttleSecondsTotal, throttleRatio,
+		throttleSecondsTotal,
 		egressSourceErrors,
 		wakePhaseEmitted, wakeIdentityInvalid, wakePhaseDur, recoveryEventEmitted,
 		// ADR-124 follow-up #2: plan_gate_rescued_by_exclude counter
@@ -5536,16 +5518,6 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// listener.go), which routes through topAccountSet and demotes past
 	// top-1000 into this bucket.
 	topTenantRPS.WithLabelValues(topAccountOtherLabel)
-	// issue #301 / ADR-044: pre-instantiate the closed "slice"
-	// label set for throttleRatio (the FaasCpuStarvation alert
-	// source) so the gauge surfaces "no data" → "0" on an idle
-	// box. The slice values are the api.Plan.SliceName() set
-	// (tenant-free, tenant-hobby, tenant-pro, tenant-scale);
-	// the alert's `slice=~"tenant-.*"` matcher stays stable
-	// for any future tenant-customer slice hierarchy.
-	for _, slice := range []string{"tenant-free", "tenant-hobby", "tenant-pro", "tenant-scale"} {
-		throttleRatio.WithLabelValues(slice)
-	}
 	// Pre-instantiate the ("other", "other") overflow bucket for
 	// throttleSecondsTotal so the dashboard's
 	// {app_id!="other"} selector excludes a series that exists
@@ -5766,7 +5738,6 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		topTenantRPS:                         topTenantRPS,
 		topAccounts:                          newTopAccountSet(topAccountSetCap),
 		throttleSecondsTotal:                 throttleSecondsTotal,
-		throttleRatio:                        throttleRatio,
 		topApps:                              newTopAppSet(topAppSetCap),
 		throttleSecondsLastSeen:              newCPUThrottleLastSeen(),
 		cpuSecondsLast:                       newCPUSecondsLastSeen(),
@@ -7946,21 +7917,6 @@ func (m *OpsMetrics) ThrottleSecondsLastSeenForTest(accountID, appID string) flo
 	return m.throttleSecondsLastSeen.m[accountID+"\x00"+appID]
 }
 
-// SetThrottleRatio sets the per-slice throttle ratio gauge
-// (issue #301, ADR-044). Called by the vmmd-side sampler after
-// computing the per-tick (throttle_delta / (throttle_delta +
-// usage_delta)) ratio. slice must be one of the api.Plan.SliceName
-// values ("tenant-free", "tenant-hobby", "tenant-pro",
-// "tenant-scale"); the closed set is pre-instantiated at boot
-// (see the loop at top of NewOpsMetrics) so /metrics always
-// surfaces a row. Safe on a nil receiver.
-func (m *OpsMetrics) SetThrottleRatio(slice string, ratio float64) {
-	if m == nil || m.throttleRatio == nil {
-		return
-	}
-	m.throttleRatio.WithLabelValues(slice).Set(ratio)
-}
-
 // ShouldReset returns true if the rolling 24h window has elapsed
 // since the last resetWindow. Cheap read; called from the 5s
 // sampler tick. Forwarded from *topAccountSet so the sampler stays
@@ -8711,6 +8667,7 @@ func (m *OpsMetrics) ObserveDeploymentReorder(outcome string) {
 // outcome is the closed label set:
 //   - "ok" — single deployment soft-deleted (status untouched)
 //   - "live_forbidden" — attempt to clear a DeployLive row (409)
+//   - "in_flight" — attempt to clear a row still in the pipeline (409)
 //   - "error" — internal failure (logged at the call site)
 //
 // Mirrors ObserveDeploymentCancelled's label set for §12 dashboard

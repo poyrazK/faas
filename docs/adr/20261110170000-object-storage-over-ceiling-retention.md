@@ -1,6 +1,6 @@
 # ADR-20261110170000: Object storage held above its ceiling is deleted after notice
 
-- **Status:** proposed (owner, 2026-11-10: "Notify, then delete", on the billing launch review; amended the same day for Object Lock, decision 8, owner choice "30-day delete + lock cap"; the details below await review before any code deletes customer data)
+- **Status:** accepted (owner, 2026-11-10: "Notify, then delete", on the billing launch review; amended the same day for Object Lock, decision 8, owner choice "30-day delete + lock cap"; open questions answered 2026-11-11: tighter lock caps, 30 days on every plan, newest first, a $0 cap starts the clock)
 - **Date:** 2026-11-10
 - **Owner:** apid and object storage maintainers
 - **Amends:** [ADR-20261101214152](20261101214152-object-storage-ceiling-follows-spend-cap.md): data above the ceiling is no longer kept indefinitely. Also bounds Object Lock retention per plan.
@@ -65,10 +65,12 @@ when parallel changes pick the next number.
      stops at the first protected version it meets and retries hourly forever,
      so it never completes. The protected data stays stored, unbilled, after
      the account is gone.
-   - COMPLIANCE mode becomes paid-only. Retention is capped per plan:
-     Free GOVERNANCE 30 days with no COMPLIANCE; Hobby 1 year; Pro 7 years;
-     Scale 10 years. The caps go in `pkg/api/limits.go` as
-     `ObjectStoragePlanLimits.MaxLockRetentionDays`. A retention date,
+   - Object Lock becomes paid-only, in both modes. Retention is capped per
+     plan (owner, 2026-11-11): Free none; Hobby 90 days; Pro 1 year; Scale
+     7 years. The caps go in `pkg/api/limits.go` as
+     `ObjectStoragePlanLimits.MaxLockRetentionDays` (0 = Object Lock not
+     included). Legal holds have no duration and stay available on paid
+     plans; the platform releases them as below. A retention date,
      default retention or bucket lock configuration beyond the plan's cap is
      refused at write with the limit and the observed value. Existing longer
      retention is reported, not shortened.
@@ -80,7 +82,7 @@ when parallel changes pick the next number.
      keep, and schedules the next attempt at their earliest retain-until
      instead of hourly.
    - Residual: COMPLIANCE versions written within a plan's cap outlive a lapse
-     by at most that cap (Scale: 10 years). They stay read-blocked and are
+     by at most that cap (Scale: 7 years). They stay read-blocked and are
      listed in the final email and the audit row. Accepted, because COMPLIANCE
      exists precisely so that no one, Gregale included, can delete early.
    - A downgrade (customer-initiated) is refused while COMPLIANCE retention in
@@ -94,16 +96,12 @@ when parallel changes pick the next number.
    - Last comes `on`. Notify must have run for at least 30 days before `on`,
      so no subject is deleted without having had the full notice.
 
-## Open questions for the owner
+## Owner answers (2026-11-11)
 
-- **Lock caps.** Free GOVERNANCE 30 days / Hobby 1 y / Pro 7 y / Scale 10 y
-  are proposed values; the owner chose capping, not these numbers.
-
-- **Grace length.** 30 days, or shorter for Free (for example, 14)?
-- **Deletion order.** Is newest-first right for current objects, or should
-  it be oldest-first?
-- **A customer's own $0 cap.** Should it start the clock like a lapsed plan?
-  It is the main way to keep data for free, so the default is yes.
+- **Lock caps:** Free none, Hobby 90 days, Pro 1 year, Scale 7 years.
+- **Grace length:** 30 days on every plan.
+- **Deletion order:** newest current objects first, as in decision 4.
+- **A customer's own $0 cap:** starts the clock like a lapsed plan.
 
 ## Consequences
 

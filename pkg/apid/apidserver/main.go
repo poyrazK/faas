@@ -855,6 +855,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runAlertRollbackWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runRollbackOn5xxWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runConfigGuardWorker(ctx) })
+		// ADR 20261110120000: never-verified accounts that hold nothing
+		// are scheduled for deletion 60 days after signup.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runUnverifiedAccountExpiry(ctx) })
 		// ADR-20261107220000 §2: agent activity is kept 7 days.
 		go background.Staggered(ctx, background.StartSpread, func() {
 			srv.runAgentActivitySweep(ctx)
@@ -1762,7 +1765,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
 		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink, RestoreSlotExpired: srv.recordManagedPostgresRestoreSlotExpired,
-			NotifyRestoreSlot: srv.noticeManagedPostgresRestoreSlot, NotifyPlanExcess: srv.noticeManagedPostgresPlanExcess}, ops.Registry())
+			BranchExpired: srv.recordManagedPostgresBranchExpired, NotifyRestoreSlot: srv.noticeManagedPostgresRestoreSlot, NotifyPlanExcess: srv.noticeManagedPostgresPlanExcess,
+			Egress: srv.managedPostgresEgressAllowance}, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
@@ -1786,6 +1790,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid live queries configuration: %w", err)
 	}
 	srv.configureAgents(deps.pool)
+	if err := srv.configureSandboxes(deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid sandbox sessions: %w", err)
+	}
 	srv.configureDataAPIUsage(deps.pool)
 	if err := srv.configureDataPipelines(*cfg, deps.pool); err != nil {
 		return err
@@ -1889,6 +1896,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		provName = loadedName
 		if err := object.ValidateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
+			return err
+		}
+		production := strings.EqualFold(strings.TrimSpace(deps.getenv("FAAS_ENVIRONMENT")), "production")
+		if err := object.RequireBilledObjectStorage(billingProv, objectRegistry, production); err != nil {
 			return err
 		}
 		if billingProv != nil {

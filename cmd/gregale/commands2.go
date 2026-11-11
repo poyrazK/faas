@@ -225,7 +225,7 @@ func cmdApp(args []string) int {
 	workloadRevision := int64(-1)
 	visibility := fs.String("visibility", "", "set public edge exposure: public|internal (Pro/Scale only for internal)")
 	ram := fs.Int("ram", 0, "update RAM (MB)")
-	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
+	cpuMillicores := fs.Int("cpu-millicores", 0, "cap CPU at 250 or 500 millicores; 1000 leaves it uncapped")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "update named resource size: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update the maximum instances (replicas) the app scales to")
@@ -2086,7 +2086,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "named app resource size: micro|small|medium|large|xlarge")
-	vcpu := fs.Int("vcpu", 0, "assert the plan guest vCPU shape (omit to use the plan default)")
+	vcpu := fs.Int("vcpu", 0, "assert the guest vCPU count, one per GB of RAM (omit to use the size's)")
 	executionMode := fs.String("execution-mode", "", "app lifecycle mode: request|service|worker|job")
 	restartPolicy := fs.String("restart-policy", "", "restart policy: no|on-failure|always|unless-stopped")
 	startupDeadlineS := fs.Int("startup-deadline-s", 0, "maximum startup deadline in seconds (0 = plan default)")
@@ -4156,6 +4156,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := deployManifestObjectStorageBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 		return printErr("Manifest object-storage bindings failed", err)
 	}
+	// Lifecycle is app-wide, so only a production deploy changes it, as a
+	// production push does (ADR-20261110190000 §5).
+	if resolvedShape == shapeFunction && *environment == "" && *image == "" && !isFunctionSetMember(ctx) {
+		if err := applyFunctionHookLifecycle(ctx, client, slug, sourceDir, deployHandler); err != nil {
+			return printErr("Could not apply snapshot hooks", err)
+		}
+	}
 	if len(deploySecrets) > 0 {
 		if err := setDeploySecretsWithScope(ctx, client, slug, deploySecrets, *environment); err != nil {
 			return printErr("Could not configure --secrets-file", err)
@@ -4838,6 +4845,11 @@ func cmdPark(args []string) int {
 		}))
 	}
 	PrintOK(osStdout, "Parked (cold)")
+	if app, getErr := client.GetApp(context.Background(), args[0]); getErr == nil && (inspectExecutionMode(app) == api.ExecutionModeWorker || app.WorkloadClass == "worker") {
+		// A parked worker pool does not autoscale on its backlog (H8-23):
+		// say how it comes back (Hunt 32 H32-32).
+		PrintWarn(osStderr, "%s is a worker pool: it stays parked, whatever its queue backlog, until `gregale app wake %s`", args[0], args[0])
+	}
 	return 0
 }
 
@@ -5467,15 +5479,34 @@ func cmdDomains(args []string) int {
 		fmt.Printf("Then run 'gregale domain list' to see when verification completes.\n")
 		return 0
 	case subRm:
-		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale domain delete <domain>", "domains")
+		// --yes / -y may come before or after the domain, like the other
+		// deletes; without it the CLI asks. It rejected a trailing --yes and
+		// deleted with no prompt (Hunt 32 H32-14).
+		var positional []string
+		yes := false
+		for _, arg := range args[1:] {
+			switch arg {
+			case "--yes", "-y", "--yes=true":
+				yes = true
+			default:
+				positional = append(positional, arg)
+			}
+		}
+		if len(positional) != 1 || strings.HasPrefix(positional[0], "-") {
+			PrintUsage(os.Stderr, "usage: gregale domain delete <domain> [--yes]", "domains")
 			return 1
+		}
+		domain := positional[0]
+		if !yes {
+			if code := confirmYesNo(fmt.Sprintf("Remove custom domain %s? Requests to it stop reaching the app.", domain), "--yes", "domain delete"); code != 0 {
+				return code
+			}
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		if err := client.DeleteDomain(context.Background(), args[1]); err != nil {
+		if err := client.DeleteDomain(context.Background(), domain); err != nil {
 			return printErr("Could not remove domain", err)
 		}
 		PrintOK(osStdout, "Removed")
@@ -7439,7 +7470,7 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 			return true, 1
 		}
 		if e.Data != "" {
-			if archive != nil && !retainedLineMatches(e.Data, filter.Grep) {
+			if archive != nil && (!retainedLineMatches(e.Data, filter.Grep) || !retainedLineLevelMatches(e.Data, filter.Level)) {
 				return false, 0
 			}
 			printedLines++

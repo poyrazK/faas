@@ -582,6 +582,7 @@ var ManagedPostgresSpecFromRequest = managedPostgresSpecFromRequest
 var ManagedPostgresUsageCeilings = managedPostgresUsageCeilings
 var ManagedPostgresUsageOperatorView = managedPostgresUsageOperatorView
 var ManagedPostgresUsageView = managedPostgresUsageView
+var ManagedPostgresUsageHoldView = managedPostgresUsageHoldView
 var ManagedPostgresView = managedPostgresView
 var ManagedWorkflowCanConsumeFailedDependencies = managedWorkflowCanConsumeFailedDependencies
 var MapReconcileError = mapReconcileError
@@ -592,6 +593,17 @@ var MustCreateAlertRule = mustCreateAlertRule
 var MustSeedApp = mustSeedApp
 var MustSeedAppFor = mustSeedAppFor
 var MustSeedDeployment = mustSeedDeployment
+var LockUploadSession = lockUploadSession
+
+// UploadSessionLockTracked reports whether key still has an entry in the
+// upload-session lock map.
+func UploadSessionLockTracked(key string) bool {
+	uploadSessionLocksMu.Lock()
+	defer uploadSessionLocksMu.Unlock()
+	_, ok := uploadSessionLocks[key]
+	return ok
+}
+
 var MustSeedEdgeRuleApp = mustSeedEdgeRuleApp
 var NearestRunningTelemetryRow = nearestRunningTelemetryRow
 var NewAppSecretCredentialSink = newAppSecretCredentialSink
@@ -787,6 +799,7 @@ var SetupWithScopes = setupWithScopes
 var SourceDeltaLimits = sourceDeltaLimits
 var SourceRefAsyncRouteTestFixture = sourceRefAsyncRouteTestFixture
 var SourceRefManifestNeedsRollback = sourceRefManifestNeedsRollback
+var SourceRefEventSubscriptionProblem = sourceRefEventSubscriptionProblem
 var SpoolRoot = spoolRoot
 var SseFanIn = sseFanIn
 var StartSSEStream = startSSEStream
@@ -1598,8 +1611,14 @@ func (r *server) UpsertWorkPolicy(p0 http.ResponseWriter, p1 *http.Request, p2 s
 func (r *server) ValidateProjectDeploymentEnvironment(p0 context.Context, p1 state.Account, p2 string, p3 string) *api.Problem {
 	return r.validateProjectDeploymentEnvironment(p0, p1, p2, p3)
 }
-func (r *server) VerifyOAuthAccountEmail(p0 context.Context, p1 state.Account) (state.Account, error) {
-	return r.verifyOAuthAccountEmail(p0, p1)
+func (r *server) VerifyOAuthAccountEmail(p0 context.Context, p1 state.Account, p2 string) (state.Account, error) {
+	return r.verifyOAuthAccountEmail(p0, p1, p2)
+}
+func (r *server) EndOtherAccessAfterMFAEnroll(p0 *http.Request, p1 state.Account) {
+	r.endOtherAccessAfterMFAEnroll(p0, p1)
+}
+func (r *server) RemoveForeignProviderLinks(p0 context.Context, p1 string, p2 string) {
+	r.removeForeignProviderLinks(p0, p1, p2)
 }
 func (r *server) VmmdMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.vmmdMetricsDiscovery(p0, p1)
@@ -2017,6 +2036,9 @@ var WriteExclusiveError = writeExclusiveError
 // (alert, log drain, webhook, channel) passes.
 var ResolveAndCheckEgress = resolveAndCheckEgress
 
+// LegacyNumericHost spots "2130706433"-style hosts before resolution.
+var LegacyNumericHost = legacyNumericHost
+
 // PlanDowngradeProblemForTest runs the pre-downgrade quota check (Hunt 17
 // H17-4) for a subject the HTTP route would resolve, such as an organization.
 func (r *server) PlanDowngradeProblemForTest(ctx context.Context, subject state.Account, target api.Plan) *api.Problem {
@@ -2077,6 +2099,24 @@ func AgeSignInsForTest(t testing.TB, d time.Duration) {
 	prev := recentSignInNow
 	recentSignInNow = func() time.Time { return time.Now().Add(d) }
 	t.Cleanup(func() { recentSignInNow = prev })
+}
+
+// ReserveTOTPAttempt counts one TOTP attempt; zero means allowed.
+func (r *server) ReserveTOTPAttempt(ctx context.Context, accountID string) time.Duration {
+	return r.reserveTOTPAttempt(ctx, accountID)
+}
+
+// ResetTOTPAttempts clears the counted TOTP attempts.
+func (r *server) ResetTOTPAttempts(ctx context.Context, accountID string) {
+	r.resetTOTPAttempts(ctx, accountID)
+}
+
+// TOTPMaxFailures is the per-account TOTP attempt limit.
+const TOTPMaxFailures = totpMaxFailures
+
+// ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
+func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
+	return r.expireUnverifiedAccounts(ctx)
 }
 
 // OperatorRevertEmail exposes the operator email revert.
@@ -2332,7 +2372,7 @@ func AppEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 // ApplySourceFunctionSettingsForTest runs applySourceFunctionSettings on a
 // server holding only store.
 func ApplySourceFunctionSettingsForTest(ctx context.Context, store state.Store, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec, scope string) (state.App, *api.Problem) {
-	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec, scope)
+	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec, sourcePush{Scope: scope, Pusher: "octocat"})
 }
 
 // WithPendingFunctionSteps exposes withPendingFunctionSteps.
@@ -2343,3 +2383,16 @@ var SourceLivenessOverrides = sourceLivenessOverrides
 
 // ValidateCustomMetricAlertLabels exposes the custom_metric rule label check.
 var ValidateCustomMetricAlertLabels = validateCustomMetricAlertLabels
+
+func (r *server) ManagedPostgresEgressAllowance(ctx context.Context, subjectID string, now time.Time) (managedpostgres.EgressAllowance, error) {
+	return r.managedPostgresEgressAllowance(ctx, subjectID, now)
+}
+
+// NewUsageSummaryEgressProvider is a billing provider whose egress meter
+// policy is mode for every paid plan.
+func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provider {
+	return &usageSummaryEgressProvider{mode: mode}
+}
+
+// PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
+var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode

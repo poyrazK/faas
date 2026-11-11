@@ -67,6 +67,37 @@ func TestMetalReleaseGuestConnections(t *testing.T) {
 	}
 }
 
+// adr: 20261110160000 — Park resets the capturing guest's off-guest
+// connections before the snapshot and a restore resets what it inherited, so a
+// restored guest wakes with its off-guest socket already failed and its
+// loopback socket intact, without the app reconnecting first.
+func TestMetalCaptureResetsConnections(t *testing.T) {
+	if os.Getenv("FAAS_TEST_KERNEL") == "" {
+		t.Skip("the default legacy test kernel has no TCP sock_diag; set FAAS_TEST_KERNEL to the release vmlinux")
+	}
+	tarball := compatGoRootfs(t)
+	probe := compatGoProbe(t, compatConnProbe)
+	p, inst := startCompatProbe(t, "conn-capture", tarball, "srv/probe", probe, []string{"/srv/probe"}, map[string]string{}, nil)
+	p.m.WithReleaseConnectionsOnDestroy(true)
+	before := p.getJSON(inst, "/state")
+	if before["off_open"] != true || before["lo_open"] != true {
+		t.Fatalf("probe connections not open before the capture: %v", before)
+	}
+	p.park()
+	inst = p.restore()
+	after := p.getJSON(inst, "/state")
+	t.Logf("before capture %v; after restore %v", before, after)
+	if after["off_open"] != false {
+		t.Errorf("restored guest inherited an open off-guest connection: %v", after)
+	}
+	if after["lo_open"] != true {
+		t.Errorf("loopback connection did not survive the capture: %v", after)
+	}
+	if err := p.m.Destroy(context.Background(), p.instance); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+}
+
 // compatConnProbe holds one connection to its own 10.0.0.2 listener and one
 // loopback connection, and reports on /state whether each still works: a read
 // with a short deadline that times out means open, any other result closed.

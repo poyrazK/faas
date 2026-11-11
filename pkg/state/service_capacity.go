@@ -165,11 +165,8 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 				scopes[normalizedDeploymentScope(d.Scope)] = struct{}{}
 			}
 		}
-		limits, _ := api.LimitsFor(m.accounts[app.AccountID].Plan)
-		vcpu := int64(limits.VCPU)
-		if vcpu <= 0 {
-			vcpu = 4
-		}
+		// A replica's vCPUs are its size's (ADR-20261109172421).
+		vcpu := int64(api.SizeVCPUs(app.RAMMB))
 		for scope := range scopes {
 			var sideRAM, sideCPU int64
 			live, pending := 0, false
@@ -209,15 +206,7 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 		dep := m.deployments[ins.DeploymentID]
 		key := app.ID + ":" + normalizedDeploymentScope(dep.Scope)
 		ram, cpu := capacitySidecarResources(dep.Sidecars)
-		limits, _ := api.LimitsFor(m.accounts[app.AccountID].Plan)
-		vcpu := int64(limits.VCPU)
-		if vcpu <= 0 {
-			vcpu = 4
-		}
-		if ins.AppID == "" {
-			vcpu = 1
-		}
-		cost := capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(m.instanceCapacityCPULocked(ins, app)) + cpu, VCPU: vcpu}
+		cost := capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(m.instanceCapacityCPULocked(ins, app)) + cpu, VCPU: m.instanceCapacityVCPULocked(ins, app)}
 		admitted := m.migrationResourceFloorLocked(ins, m.capacityInstanceResources[ins.ID])
 		cost.RAM = max(cost.RAM, admitted.RAM)
 		cost.CPU = max(cost.CPU, admitted.CPU)
@@ -292,12 +281,14 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 		}
 		other := s.Other[n.ID]
 		s.Other[n.ID] = other
-		slots := max(int64(0), min((int64(n.AdmissionCeilingMB)-other.RAM)/r.ReplicaRAMMB, (int64(n.VPCPUs)*1000*api.CPUOvercommit-other.CPU)/r.ReplicaCPUMillicores, (int64(n.VCPUBudget)-other.VCPU)/r.ReplicaVCPU))
+		// ADR-20261109172421: memory is the only capacity limit; CPU and
+		// vCPUs stay in the snapshot as telemetry.
+		slots := max(int64(0), (int64(n.AdmissionCeilingMB)-other.RAM)/r.ReplicaRAMMB)
 		r.HealthyNodes++
 		r.FleetSlots += slots
 		largest = max(largest, slots)
 		s.Placement[n.ID] = ServiceCapacitySlots{Slots: slots, Used: s.ServiceUsage[n.ID]}
-		if s.ServiceUsage[n.ID] > slots || other.RAM > int64(n.AdmissionCeilingMB) || other.CPU > int64(n.VPCPUs)*1000*api.CPUOvercommit || other.VCPU > int64(n.VCPUBudget) {
+		if s.ServiceUsage[n.ID] > slots || other.RAM > int64(n.AdmissionCeilingMB) {
 			r.PlacementsFit = false
 		}
 	}
@@ -330,14 +321,14 @@ func (m *MemStore) checkServiceCapacityChangeLocked(prior serviceCapacitySnapsho
 	grew, excess, physicalGrowth, serviceGrowth := false, false, false, false
 	for key, value := range next.Demands {
 		old := prior.Demands[key]
-		if value.Count > 0 && (value.Count > old.Count || value.RAM > old.RAM || value.CPU > old.CPU || value.VCPU > old.VCPU) {
+		// Only memory growth needs protected capacity (ADR-20261109172421).
+		if value.Count > 0 && (value.Count > old.Count || value.RAM > old.RAM) {
 			grew = true
 		}
 	}
 	for key, value := range next.Resident {
 		old := prior.Resident[key]
-		nodeGrowth := value.RAM > old.RAM || value.CPU > old.CPU || value.VCPU > old.VCPU
-		if !nodeGrowth {
+		if value.RAM <= old.RAM {
 			continue
 		}
 		physicalGrowth = true
@@ -345,7 +336,7 @@ func (m *MemStore) checkServiceCapacityChangeLocked(prior serviceCapacitySnapsho
 			return &ServiceCapacityError{}
 		}
 		other, oldOther := next.Other[key], prior.Other[key]
-		if other.RAM > oldOther.RAM || other.CPU > oldOther.CPU || other.VCPU > oldOther.VCPU {
+		if other.RAM > oldOther.RAM {
 			grew = true
 		}
 	}
@@ -356,7 +347,7 @@ func (m *MemStore) checkServiceCapacityChangeLocked(prior serviceCapacitySnapsho
 	if instanceWrite {
 		for node, other := range next.Other {
 			old := prior.Other[node]
-			if other.RAM > old.RAM || other.CPU > old.CPU || other.VCPU > old.VCPU {
+			if other.RAM > old.RAM {
 				grew = true
 			}
 		}
@@ -382,7 +373,7 @@ func (m *MemStore) checkServiceCapacityChangeLocked(prior serviceCapacitySnapsho
 	}
 	// Historical guest bounds can enlarge the uniform slot when a resident
 	// VM becomes a service, even though no new resources were allocated.
-	if next.Report.ReplicaRAMMB > prior.Report.ReplicaRAMMB || next.Report.ReplicaCPUMillicores > prior.Report.ReplicaCPUMillicores || next.Report.ReplicaVCPU > prior.Report.ReplicaVCPU {
+	if next.Report.ReplicaRAMMB > prior.Report.ReplicaRAMMB {
 		grew = true
 	}
 	if ((grew || excess) && next.Report.State != "protected") || ((physicalGrowth || serviceGrowth) && !next.Report.PlacementsFit) {
@@ -464,19 +455,16 @@ func (m *MemStore) recordInstanceCapacityLocked(ins Instance) {
 }
 
 // instanceCapacityVCPULocked mirrors capture_instance_capacity's vCPUs: the
-// instance's stored guest vCPU count, else its plan's (ADR-20261109172421).
-func (m *MemStore) instanceCapacityVCPULocked(ins Instance, app App) int64 {
+// instance's stored guest vCPU count, else its size's, one per GB
+// (ADR-20261109172421).
+func (m *MemStore) instanceCapacityVCPULocked(ins Instance, _ App) int64 {
 	if ins.AppID == "" {
 		return 1
 	}
 	if booked := m.instanceBookings[ins.ID].vcpu; booked > 0 {
 		return int64(booked)
 	}
-	limits, _ := api.LimitsFor(m.accounts[app.AccountID].Plan)
-	if limits.VCPU <= 0 {
-		return 4
-	}
-	return int64(limits.VCPU)
+	return int64(api.SizeVCPUs(ins.RAMMB))
 }
 
 // instanceCapacityCPULocked mirrors capture_instance_capacity's main CPU:

@@ -20,6 +20,7 @@ func TestRenderManifestAnsibleFiles_HotPath(t *testing.T) {
 		"faas_vmmd_local_data_socket: true\n",
 		"faas_gateway_local_vmmd_socket: true\n",
 		"faas_internal_keepalive_per_node: true\n",
+		"faas_edge_internal_hop_binary: true\n",
 		"faas_schedd_frozen_tier: true\n",
 		"faas_schedd_frozen_fast_path: true\n",
 		"faas_schedd_owner_cache: true\n",
@@ -34,7 +35,7 @@ func TestRenderManifestAnsibleFiles_HotPath(t *testing.T) {
 			want: []string{"faas_vmmd_local_data_socket: true\n", "faas_gateway_local_vmmd_socket: true\n"}},
 		{name: "all on", yaml: base + "public_edge:\n  compute_nodes: true\n" +
 			"hot_path:\n  local_request_id_journal: true\n  request_telemetry_minute_collapse: true\n  local_vmmd_data_socket: true\n" +
-			"  edge_keepalive_per_node: true\n  frozen_tier: true\n  frozen_fast_path: true\n  owner_cache: true\n", want: all},
+			"  edge_keepalive_per_node: true\n  edge_binary_hop: true\n  frozen_tier: true\n  frozen_fast_path: true\n  owner_cache: true\n", want: all},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, err := manifest.Parse([]byte(tc.yaml))

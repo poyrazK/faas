@@ -6,6 +6,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -47,6 +48,30 @@ func TestApplySourceFunctionSettings(t *testing.T) {
 	}
 	if len(env) != 1 || env[0].Key != "MODE" || env[0].Value != "prod" {
 		t.Errorf("env = %+v, want only MODE=prod", env)
+	}
+	// The push's env change is one config revision attributed to the pusher,
+	// so `gregale env history` shows it and config rollback can undo it.
+	revisions, err := store.ListConfigRevisions(ctx, app.ID, state.DefaultEnvScope, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(revisions) == 0 || revisions[0].Source != state.ConfigSourceEnvBatch || revisions[0].Actor != "github:octocat" ||
+		revisions[0].Variables["MODE"] != "prod" || revisions[0].Variables["STALE"] != "" {
+		t.Errorf("latest revision = %+v, want env.batch by github:octocat with MODE=prod and no STALE", revisions)
+	}
+
+	// Snapshot hooks declared in code wire the app's lifecycle to the runner
+	// (ADR-20261110190000 §5).
+	hooked := gregalemanifest.FunctionSpec{Name: "api", Hooks: []string{"init", "after_restore"}}
+	withHooks, prob := apidserver.ApplySourceFunctionSettingsForTest(ctx, store, acct, got, hooked, "")
+	if prob != nil {
+		t.Fatalf("apply hooks: %+v", prob)
+	}
+	if withHooks.Manifest.AfterRestore == nil || withHooks.Manifest.AfterRestore.Path != functionlifetime.FunctionAfterRestorePath || withHooks.Manifest.BeforeCheckpoint != nil {
+		t.Fatalf("lifecycle = after %+v before %+v, want only the reserved after-restore path", withHooks.Manifest.AfterRestore, withHooks.Manifest.BeforeCheckpoint)
+	}
+	if withHooks.RAMMB != 512 {
+		t.Errorf("hooks-only push changed RAM to %d", withHooks.RAMMB)
 	}
 
 	// A RAM above the plan is refused with PATCH's validation.

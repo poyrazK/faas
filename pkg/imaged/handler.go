@@ -2294,11 +2294,17 @@ func (h *Handler) applyReleaseTaskOutcome(ctx context.Context, dep state.Deploym
 		if task.FailureMessage != nil && *task.FailureMessage != "" {
 			detail += ": " + *task.FailureMessage
 		}
+		// Hunt 32 H32-12: the failure named neither the exit code nor where
+		// the output is. The output itself stays out of the deployment error,
+		// which reaches notifications; the task receipt keeps it.
+		if task.ExitCode != nil {
+			detail += fmt.Sprintf(" (exit code %d; the task's captured output is in its receipt, GET /v1/apps/{slug}/tasks/%s)", *task.ExitCode, task.ID)
+		}
 		var err error
 		if task.Status == state.AppTaskFailed && task.FailureCode != nil && releaseTaskInfrastructureFailure(*task.FailureCode) {
 			// The platform could not run or observe the command; the
 			// customer's command is not what failed.
-			explained := whycopy.Decorate(&api.Problem{Code: api.CodeReleaseInfrastructure}, api.CodeReleaseInfrastructure, nil)
+			explained := whycopy.Decorate(&api.Problem{Code: api.CodeReleaseInfrastructure}, api.CodeReleaseInfrastructure, *task.FailureCode)
 			_, err = h.store.SetDeploymentFailedEx(ctx, dep.ID, api.CodeReleaseInfrastructure, detail, explained.Hint, explained.Why, explained.Fix, nil)
 		} else {
 			_, err = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeReleaseCommandFailed, detail)
@@ -2598,6 +2604,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
+	}
+	if err := h.store.SetDeploymentBeforeCheckpointHook(ctx, dep.ID, manifest.BeforeCheckpoint != nil); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "persist before_checkpoint hook")
+		return fmt.Errorf("imaged: persist before_checkpoint hook: %w", err)
 	}
 	profile := frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: "unknown"}
 	if len(dep.InferredProfile) != 0 {
@@ -3279,6 +3289,10 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
+	}
+	if err := h.store.SetDeploymentBeforeCheckpointHook(ctx, dep.ID, manifest.BeforeCheckpoint != nil); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "persist before_checkpoint hook")
+		return fmt.Errorf("imaged: persist before_checkpoint hook: %w", err)
 	}
 	// Source builds arrive with a builderd-produced local OCI archive in
 	// dep.RootfsPath. Keep the original source tarball for the customer

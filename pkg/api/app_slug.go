@@ -41,7 +41,7 @@ func IsPlatformReservedSlug(slug string) bool {
 // every public allocation path must reject these names.
 func IsReservedAppSlug(slug string) bool {
 	_, ok := reservedAppSlugs[slug]
-	return ok || IsPreviewAppSlug(slug) || isOperatorReservedSlug(slug)
+	return ok || IsPreviewAppSlug(slug) || IsSandboxTemplateAppSlug(slug) || isOperatorReservedSlug(slug)
 }
 
 // operatorReservedSlugs holds the cell's own reserved labels
@@ -71,6 +71,25 @@ func isOperatorReservedSlug(slug string) bool {
 	}
 	_, ok := (*set)[slug]
 	return ok
+}
+
+// SandboxTemplateAppSlugPrefix starts a sandbox template build app's slug:
+// sbt- and 12 lowercase hex digits (ADR-20261027090013). Only apid names
+// such apps; customers cannot take the shape.
+const SandboxTemplateAppSlugPrefix = "sbt-"
+
+// IsSandboxTemplateAppSlug reports a template build app's slug.
+func IsSandboxTemplateAppSlug(slug string) bool {
+	hex, ok := strings.CutPrefix(slug, SandboxTemplateAppSlugPrefix)
+	if !ok || len(hex) != 12 {
+		return false
+	}
+	for _, c := range hex {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // PreviewAppSlugMaxLen is the longest PR preview slug: one DNS label. The

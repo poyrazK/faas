@@ -509,8 +509,8 @@ func TestCmdDeploysShow_WithStatusJSON(t *testing.T) {
 	if got.Status != "live" || got.StageState.Current != state.StageReadiness {
 		t.Errorf("status envelope: status=%q current=%q", got.Status, got.StageState.Current)
 	}
-	if got.TerminalAt == nil || !got.TerminalAt.Equal(now.Add(-30*time.Second)) {
-		t.Errorf("terminal_at: got %v, want %s", got.TerminalAt, now.Add(-30*time.Second).Format(time.RFC3339))
+	if got.TerminalAt == nil || !got.TerminalAt.Equal(now) {
+		t.Errorf("terminal_at: got %v, want %s (the last stage's end)", got.TerminalAt, now.Format(time.RFC3339))
 	}
 }
 

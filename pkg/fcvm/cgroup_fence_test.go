@@ -23,7 +23,7 @@ func fencedVM(t *testing.T, l Lease) (*JailerVMM, string) {
 	if err := os.MkdirAll(scope, 0o755); err != nil {
 		t.Fatalf("setup scope: %v", err)
 	}
-	writeCgroupFile(t, scope, "cpu.weight", itoa(vmCPUWeight(l.Plan, l.IsBuilder)))
+	writeCgroupFile(t, scope, "cpu.weight", itoa(vmCPUWeight(l.IsBuilder)))
 	v := &JailerVMM{}
 	if err := v.applyPreBootCgroupFence(l, nil); err != nil {
 		t.Fatalf("applyPreBootCgroupFence: %v", err)
@@ -66,7 +66,7 @@ func TestRepairCgroupFencesRestoresFenceAfterSystemdReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantWeight := itoa(api.PlanScale.CPUWeight())
+	wantWeight := itoa(vmCPUWeight(false))
 
 	if rep := v.RepairCgroupFences(context.Background()); rep.Checked != 1 || rep.Repaired != 0 {
 		t.Fatalf("intact fence: report = %+v, want 1 checked and nothing repaired", rep)
@@ -96,7 +96,7 @@ func TestRepairCgroupFencesRecreatesMissingFiles(t *testing.T) {
 	if rep := v.RepairCgroupFences(context.Background()); rep.Repaired != 1 {
 		t.Fatalf("report = %+v, want one repair", rep)
 	}
-	assertFence(t, scope, memoryMaxValue(api.BillableRAMMB(512)), itoa(api.PlanPro.CPUWeight()), "250000 500000")
+	assertFence(t, scope, memoryMaxValue(api.BillableRAMMB(512)), itoa(vmCPUWeight(false)), "50000 100000")
 }
 
 func TestRepairCgroupFencesFollowsRuntimeCPUChanges(t *testing.T) {
@@ -107,7 +107,7 @@ func TestRepairCgroupFencesFollowsRuntimeCPUChanges(t *testing.T) {
 	}
 	resetLikeSystemdReload(t, scope)
 	v.RepairCgroupFences(context.Background())
-	if got := readFenceFile(t, scope, "cpu.max"); got != "250000 500000" {
+	if got := readFenceFile(t, scope, "cpu.max"); got != "50000 100000" {
 		t.Errorf("cpu.max after repair = %q, want the runtime limit 250000 500000", got)
 	}
 
@@ -116,8 +116,8 @@ func TestRepairCgroupFencesFollowsRuntimeCPUChanges(t *testing.T) {
 	}
 	resetLikeSystemdReload(t, scope)
 	v.RepairCgroupFences(context.Background())
-	if got := readFenceFile(t, scope, "cpu.max"); got != "500000 500000" {
-		t.Errorf("cpu.max after repair = %q, want the configured limit 500000 500000", got)
+	if got := readFenceFile(t, scope, "cpu.max"); got != "100000 100000" {
+		t.Errorf("cpu.max after repair = %q, want the configured limit 100000 100000", got)
 	}
 }
 
@@ -186,7 +186,7 @@ func TestTrackFenceValueRevertKeepsNewerChange(t *testing.T) {
 // adr: 20261027090014 — an agent run's networkless VM gets the whole vCPUs its plan
 // sizes it with (two on Pro), while app leases keep the app CPU tiers.
 func TestCgroupFenceSizesAgentRunCPU(t *testing.T) {
-	period := api.PlanPro.CPUPeriodUS()
+	period := cpuMaxPeriodUS
 	for _, tc := range []struct {
 		name  string
 		lease Lease
@@ -195,7 +195,7 @@ func TestCgroupFenceSizesAgentRunCPU(t *testing.T) {
 		{"agent run 2 vCPU", Lease{Instance: "agent-1", Plan: api.PlanPro, MemoryMaxMiB: 1024, CPUMillicores: 2000, Networkless: true},
 			fmt.Sprintf("%d %d", 2*period, period)},
 		{"agent run 1 vCPU", Lease{Instance: "agent-2", Plan: api.PlanHobby, MemoryMaxMiB: 1024, CPUMillicores: 1000, Networkless: true},
-			fmt.Sprintf("%d %d", api.PlanHobby.CPUPeriodUS(), api.PlanHobby.CPUPeriodUS())},
+			fmt.Sprintf("%d %d", cpuMaxPeriodUS, cpuMaxPeriodUS)},
 		{"app 500m", Lease{Instance: "app-1", Plan: api.PlanPro, MemoryMaxMiB: 512, CPUMillicores: 500},
 			fmt.Sprintf("%d %d", period/2, period)},
 	} {

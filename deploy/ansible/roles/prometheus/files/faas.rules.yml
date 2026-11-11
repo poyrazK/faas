@@ -910,25 +910,25 @@ groups:
     rules:
       - alert: FaasHostSecurityCritical
         expr: |
-          sum by (host, event) (increase(faas_security_events_total{event=~"ssh_root_login|ssh_password_login|audit_disabled"}[15m])) > 0
+          sum by (host, event) (increase(faas_security_events_total{event=~"ssh_root_login|ssh_password_login|audit_disabled|tetragon_jailed_setuid_root|tetragon_jailed_secret_open"}[15m])) > 0
             or sum by (host, event) (
-              faas_security_events_total{event=~"ssh_root_login|ssh_password_login|audit_disabled"}
-                unless faas_security_events_total{event=~"ssh_root_login|ssh_password_login|audit_disabled"} offset 15m
+              faas_security_events_total{event=~"ssh_root_login|ssh_password_login|audit_disabled|tetragon_jailed_setuid_root|tetragon_jailed_secret_open"}
+                unless faas_security_events_total{event=~"ssh_root_login|ssh_password_login|audit_disabled|tetragon_jailed_setuid_root|tetragon_jailed_secret_open"} offset 15m
             )
         labels:
           severity: page
           family: host_security
         annotations:
           summary: "Host security event {{ $labels.event }} on {{ $labels.host }}"
-          description: "{{ $labels.host }} logged {{ $labels.event }}, which host_hardening's settings forbid: a root or password SSH login, or the kernel audit switched off. Treat the host as compromised until shown otherwise. The lines are in Loki under {job=\"faas-security\", host=\"{{ $labels.host }}\", event=\"{{ $labels.event }}\"}."
+          description: "{{ $labels.host }} logged {{ $labels.event }}, which host_hardening's settings forbid: a root or password SSH login, the kernel audit switched off, or a Firecracker jailer uid asking for root or opening a node secret. Treat the host as compromised until shown otherwise. The lines are in Loki under {job=\"faas-security\", host=\"{{ $labels.host }}\", event=\"{{ $labels.event }}\"}."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
 
       - alert: FaasHostSecurityEvent
         expr: |
-          sum by (host, event) (increase(faas_security_events_total{event=~"sudo_denied|account_change|kernel_lockdown|kernel_taint|audit_lost|auditd_stopped|secret_read_interactive|host_config_write_unattended"}[15m])) > 0
+          sum by (host, event) (increase(faas_security_events_total{event=~"sudo_denied|account_change|kernel_lockdown|kernel_taint|audit_lost|auditd_stopped|secret_read_interactive|host_config_write_unattended|tetragon_secret_open|tetragon_module_load|tetragon_ptrace"}[15m])) > 0
             or sum by (host, event) (
-              faas_security_events_total{event=~"sudo_denied|account_change|kernel_lockdown|kernel_taint|audit_lost|auditd_stopped|secret_read_interactive|host_config_write_unattended"}
-                unless faas_security_events_total{event=~"sudo_denied|account_change|kernel_lockdown|kernel_taint|audit_lost|auditd_stopped|secret_read_interactive|host_config_write_unattended"} offset 15m
+              faas_security_events_total{event=~"sudo_denied|account_change|kernel_lockdown|kernel_taint|audit_lost|auditd_stopped|secret_read_interactive|host_config_write_unattended|tetragon_secret_open|tetragon_module_load|tetragon_ptrace"}
+                unless faas_security_events_total{event=~"sudo_denied|account_change|kernel_lockdown|kernel_taint|audit_lost|auditd_stopped|secret_read_interactive|host_config_write_unattended|tetragon_secret_open|tetragon_module_load|tetragon_ptrace"} offset 15m
             )
         labels:
           severity: warn
@@ -937,6 +937,57 @@ groups:
           summary: "Host security event {{ $labels.event }} on {{ $labels.host }}"
           description: "{{ $labels.host }} logged {{ $labels.event }}. It can be an operator, a package upgrade or a deploy; check who and what in Loki under {job=\"faas-security\", host=\"{{ $labels.host }}\", event=\"{{ $labels.event }}\"} before closing it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
+
+      # ADR-20261110183000: the detector is installed (the unit exists) but
+      # not running, so nothing reports what an escaped guest does.
+      - alert: FaasTetragonDown
+        expr: node_systemd_unit_state{name="tetragon.service", state="active"} == 0
+        for: 10m
+        labels:
+          severity: warn
+          family: host_security
+        annotations:
+          summary: "Tetragon is not running on {{ $labels.instance }}"
+          description: "tetragon.service is installed but not active on {{ $labels.instance }}, so guest-escape signals (setuid to root, secret opens, module loads, ptrace) are not reported. `journalctl -u tetragon -n 200` first; a crash loop stops restarting after 10 starts in 2 minutes (`systemctl reset-failed tetragon`)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
+
+  # ADR-20261110183000: each host proves hourly that its platform binaries
+  # and running daemons are the signed release's (gregalectl release verify).
+  - name: release_integrity
+    interval: 1m
+    rules:
+      - alert: FaasReleaseIntegrityFailed
+        expr: faas_release_integrity_ok == 0
+        for: 5m
+        labels:
+          severity: page
+          family: release_integrity
+        annotations:
+          summary: "Release integrity check failed on {{ $labels.instance }}"
+          description: "{{ $labels.instance }} found a platform binary that does not match its signed release manifest, or a daemon running a replaced binary or one outside any installed release. The failures are in Loki under {job=\"faas-security\", ident=\"faas-release-integrity\"}."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseIntegrity.md"
+
+      - alert: FaasReleaseIntegrityStale
+        expr: time() - faas_release_integrity_checked_timestamp_seconds > 3 * 3600
+        for: 15m
+        labels:
+          severity: warn
+          family: release_integrity
+        annotations:
+          summary: "Release integrity has not been checked on {{ $labels.instance }} for 3 hours"
+          description: "faas-release-integrity.timer runs hourly. A check that stops reporting can be a broken timer or someone stopping it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseIntegrity.md"
+
+      - alert: FaasReleaseManifestDiverged
+        expr: count by (release) (count by (release, digest) (faas_release_manifest_info == 1)) > 1
+        for: 5m
+        labels:
+          severity: page
+          family: release_integrity
+        annotations:
+          summary: "Hosts disagree on the signed manifest of release {{ $labels.release }}"
+          description: "Hosts on release {{ $labels.release }} report different signed-manifest digests. Every host that installed one release has the same manifest, so a host whose manifest differs was changed after install."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseIntegrity.md"
 
   # ADR 20261024014500: a honeytoken is a decoy API key that belongs to no
   # account, so nothing legitimate presents one. A single presentation means
@@ -953,6 +1004,33 @@ groups:
           summary: "A honeytoken ({{ $labels.kind }}) was presented to the API"
           description: "Someone presented a decoy credential that belongs to no account. Whoever holds it has read the place it was planted, usually the secret store. Start the customer secret store compromise runbook; the security.honeytoken_presented audit event names the honeytoken and the caller."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHoneytokenPresented.md"
+
+  # ADR 20261110120000: account sign-up and security mail. The fleet cap
+  # (api.SignupAccountsPerDay) refuses every new customer once reached, and a
+  # dropped security mail is a password reset, sign-in link, verification or
+  # account notice the customer never gets.
+  - name: account_flow
+    rules:
+      - alert: FaasSignupFleetCapReached
+        expr: sum(increase(apid_signups_capped_total{scope="fleet"}[15m])) > 0
+        labels:
+          severity: warn
+          component: apid
+          family: account_flow
+        annotations:
+          summary: "The platform's daily sign-up cap is refusing new accounts"
+          description: "{{ $value | humanize }} sign-ups were refused in 15 minutes because the platform created api.SignupAccountsPerDay accounts in the last 24 hours. Either a sign-up farm is running or real demand outgrew the cap; check auth.signup and auth.signup_fleet_cap audit events before raising it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSignupFleetCapReached.md"
+      - alert: FaasSecurityMailDropped
+        expr: sum(increase(apid_background_mail_dropped_total[15m])) > 0
+        labels:
+          severity: warn
+          component: apid
+          family: account_flow
+        annotations:
+          summary: "apid dropped security mail because its mail pool was full"
+          description: "{{ $value | humanize }} password reset, sign-in link, verification or account notice mails were not sent in 15 minutes: every slot of apid's background mail pool was busy. Customers asked for mail and got none."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSecurityMailDropped.md"
 
   # ADR 20261024014500: every reader daemon counts the sealed values it
   # opens. A daemon in an attacker's hands can be made to open secrets in
@@ -2119,6 +2197,21 @@ groups:
           description: "The compute edge on {{ $labels.node }} answered {{ $value | humanize }} requests/s with 421 for hosts outside the apps domain for 15 minutes. The tunnel's ingress rules likely send platform or custom-domain hosts to the compute edge."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
+      # ADR-20261110123517: the edge's overload level has stayed above 0, in
+      # observe mode (it would be shedding) or on (it is).
+      - alert: FaasComputeEdgeShedding
+        expr: gatewayd_public_overload_level > 0
+        for: 2m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The app edge on {{ $labels.node }} is overloaded"
+          description: "The compute edge on {{ $labels.node }} has held an overload level of {{ $value | humanize }} for 2 minutes: its node's CPU is full of edge traffic. With FAAS_EDGE_OVERLOAD=on it is resetting new connections and answering 503 edge_overloaded; in observe mode it would be. Find the hosts and addresses sending the load, then move a flooded host behind Cloudflare or add a node."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
       # ADR-20261103163954 §3: edgednsd renews the apps domains' certificate
       # 4 days before its roughly 6.7-day certificate expires
       # (ADR-20261108100000), so an edge serving one with 2 days left means
@@ -2289,6 +2382,21 @@ groups:
         annotations:
           summary: "The S3 gateway on {{ $labels.node }} is not answering"
           description: "Prometheus cannot scrape s3-gatewayd's control listener on {{ $labels.node }}. Its s3 tunnel connector leaves the tunnel once the gateway's unit stops; check faas-s3-gatewayd-compute on that node."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+
+      # Object storage audit OS-10: the control-plane gateway behind
+      # s3.<domain> had no availability alert of its own.
+      - alert: FaasS3GatewayDown
+        expr: up{job="s3-gatewayd"} == 0
+        for: 2m
+        labels:
+          severity: page
+          component: s3-gatewayd
+          family: object_storage
+          public_status: internal
+        annotations:
+          summary: "The control-plane S3 gateway is not answering"
+          description: "Prometheus cannot scrape s3-gatewayd's control listener on the control plane. While it is down every request to s3.<domain> fails; check faas-s3-gatewayd there."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
 
       - alert: FaasComputeObjectGatewayConnectorDisconnected
@@ -4112,46 +4220,6 @@ groups:
           summary: "Failed-login rate > 20/min from {{ $labels.ip }} for 5m"
           description: "Failed logins from {{ $labels.ip }} exceeded 20/min over the rolling 5-minute window for 5m — the canonical credential-stuffing pattern. ip=\"__other__\" is the bounded admission overflow bucket (pkg/wire/metrics.go::maxIPLabelValues = 10_000); a single ip=\"__other__\" alert means the source IPs are past the admission cap — drill-down via the audit rows. SOC 2 CC7.2 evidence: select count(*) from events where kind = 'auth.login.failed' and at > now() - interval '5 minutes' group by data->>'ip_hash'. Companion: apid_failed_login_audit_dropped_total rising means the audit flusher is the bottleneck."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFailedLoginSpike.md"
-
-      # ─────────────────────────────────────────────────────────────────
-      # Per-plan CPU starvation (issue #301, ADR-044).
-      # Source: vmmd_cpu_throttle_ratio{slice} gauge (NOT
-      # node_cpu_cgroup_throttled_seconds_total — that one is the
-      # kernel counter without a usage denominator). The gauge is
-      # computed inside vmmd as throttle_delta / (throttle_delta +
-      # usage_delta) over the per-tick 5m window and labelled by the
-      # per-plan cgroup sub-slice (tenant-free|tenant-hobby|tenant-pro|
-      # tenant-scale). The slice label is the alert's fan-out key;
-      # Alertmanager groups by [alertname, slice] so a single plan
-      # starving fires one page with the slice in the summary.
-      #
-      # Threshold: > 80% throttle ratio for 5m — literal from the
-      # issue. The 5m window debounces a single hot-loop arrival
-      # (one tenant scales up → ratio spikes for 30s → falls) while
-      # still paging on a sustained saturation event. Severity: warn
-      # because CPU starvation ≠ customer action failing (the
-      # cgroup's cpu.max just caps their slice); the response is
-      # operator-side capacity work, not a customer-facing outage.
-      #
-      # Response cascade (docs/ops/FaasCpuStarvation.md §Recover):
-      # top-N panel → plan raise for the customer → consider
-      # faas-tenant slice CPUQuota bump (host threads − reserve,
-      # node_join.yml; ADR-20261109172421 §4). Memory
-      # is NOT in scope — the per-VM memory.max is enforced by
-      # vmmd via the jailer (spec §11/G6); a starved VM is a CPU
-      # signal, not a RAM one.
-      # ─────────────────────────────────────────────────────────────────
-      - alert: FaasCpuStarvation
-        expr: vmmd_cpu_throttle_ratio{slice=~"tenant-.*"} > 0.8
-        for: 5m
-        labels:
-          severity: warn
-          component: vmmd
-          family: cpu_starvation
-        annotations:
-          summary: "Tenant slice {{ $labels.slice }} throttled > 80% for 5m"
-          description: "Plan sub-slice {{ $labels.slice }} has been > 80% throttled over the rolling 5-minute window for 5m (issue #301 / ADR-044). The cpu.max quota for that plan is saturated; quiescent workloads are preempted. Cross-check the top-throttled-apps Grafana panel for which (account_id, app_id) is the dominant offender, then follow docs/runbooks/FaasCpuStarvation.md §Recover."
-          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCpuStarvation.md"
 
       # ─────────────────────────────────────────────────────────────────
       # githubd path-filter posture (issue #432 phase 5 follow-up /
@@ -7823,6 +7891,22 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "apid's object storage inventory sweep has not completed for over 10 minutes"
           description: "No inventory sweep has completed without error for {{ $value | humanizeDuration }}. Gateway reads and writes need a bucket inventory under 900 s old, so buckets start answering 503 within minutes."
+      # ADR-20261110151628 §3: the sweep falling behind shows here before
+      # admission refuses a bucket's transfers at 900 s. Buckets held by a
+      # configuration change or listing within the progress window are left
+      # out of the age.
+      - alert: FaasObjectStorageInventoryBacklog
+        expr: |
+          max(faas_object_storage_inventory_oldest_observation_age_seconds{class="active"}) > 600
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "apid's object storage inventory sweep is falling behind"
+          description: "The oldest bucket inventory admission still needs is {{ $value | humanizeDuration }} old. At 900 s that bucket's reads and writes answer 503; faas_object_storage_inventory_due_buckets shows the backlog."
       # Hunt 14 H14-14: a provider that refuses the credentials (here a closed
       # billing account) withdraws object storage; every bucket create failed
       # for three weeks with nothing paging.

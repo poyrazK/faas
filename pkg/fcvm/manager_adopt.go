@@ -65,6 +65,23 @@ type guestAdopter interface {
 	ResumeVM(ctx context.Context, l Lease) error
 }
 
+// WithFlatTenantCgroups launches every new tenant VM directly under
+// faas-tenant.slice instead of its plan's sub-slice (vmmd.toml
+// flat_tenant_cgroups, ADR-20261109172421 step 6.5), so a busy host shares
+// CPU between all instances by their cpu.weight. VMs already running in a
+// sub-slice stay there until they park. Startup only.
+func (m *Manager) WithFlatTenantCgroups(on bool) *Manager {
+	m.flatTenantCgroups = on
+	return m
+}
+
+// stampCgroupParent records the parent cgroup a new lease's VM launches under.
+func (m *Manager) stampCgroupParent(l *Lease) {
+	if m.flatTenantCgroups && !l.IsBuilder {
+		l.cgroupParent = CgroupMountRoot
+	}
+}
+
 // WithAdoptAdmittedRuntimes lets adoption keep guests booted under an ADR-595
 // runtime-admission receipt (vmmd.toml adopt_admitted_runtimes). Startup
 // only. Off, they are refused, and schedd re-admits them.
@@ -324,6 +341,11 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 		}
 	}
 	lease := m.beginProcessAttempt(r.Lease)
+	if !lease.IsBuilder {
+		// The record has no parent; pin the one the process was found in
+		// (checkCgroup), flat or the plan's sub-slice.
+		lease.cgroupParent = tenantCgroupParent(lease)
+	}
 	inst := m.adoptedInstance(lease, r.Adoption)
 	if restoreEgress {
 		if err := m.restoreAdoptedEgress(ctx, inst); err != nil {
@@ -520,7 +542,7 @@ func (m *Manager) resumeAdoptedGuest(ctx context.Context, adopter guestAdopter, 
 		// says thawed so the scheduler can settle a FROZEN row.
 		m.setFrozenSwap(inst.Lease, false)
 		m.mu.Lock()
-		inst.Frozen, inst.FrozenSince = false, time.Time{}
+		endFrozenLocked(inst, time.Now())
 		m.mu.Unlock()
 	}
 	if inst.Frozen {

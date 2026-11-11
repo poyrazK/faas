@@ -35,11 +35,18 @@ type mcpJSONClient struct {
 	project  string                   // project config, "" for none
 	root     string                   // object holding the servers
 	entry    func(url string) map[string]any
+	// keyRef is how the client reads the agent key from the environment.
+	keyRef string
 }
 
-// mcpEnvKeyRef is how Cursor, VS Code and Windsurf read an environment
-// variable inside their MCP config.
-const mcpEnvKeyRef = "${env:" + agentKeyEnv + "}"
+// mcpEnvKeyRef is how VS Code and Windsurf read an environment variable
+// inside their MCP config. Cursor's agent expands ${NAME} and sends
+// ${env:NAME} literally (cursor-agent 2026.04.17), so Cursor gets
+// mcpPlainKeyRef.
+const (
+	mcpEnvKeyRef   = "${env:" + agentKeyEnv + "}"
+	mcpPlainKeyRef = "${" + agentKeyEnv + "}"
+)
 
 var mcpJSONClients = map[string]mcpJSONClient{
 	mcpConnectCursor: {
@@ -49,6 +56,7 @@ var mcpJSONClients = map[string]mcpJSONClient{
 		project:  filepath.Join(".cursor", "mcp.json"),
 		root:     "mcpServers",
 		entry:    func(url string) map[string]any { return map[string]any{"url": url} },
+		keyRef:   mcpPlainKeyRef,
 	},
 	mcpConnectVSCode: {
 		name: "VS Code", binary: "code",
@@ -111,7 +119,11 @@ func mcpDirExists(dir func(string) string) bool {
 func mcpJSONEntry(c mcpJSONClient, opts mcpConnectOptions) map[string]any {
 	entry := c.entry(opts.URL)
 	headers := map[string]any{}
-	for _, h := range mcpConnectHeaders(opts, mcpEnvKeyRef) {
+	keyRef := c.keyRef
+	if keyRef == "" {
+		keyRef = mcpEnvKeyRef
+	}
+	for _, h := range mcpConnectHeaders(opts, keyRef) {
 		k, v, _ := strings.Cut(h, ": ")
 		headers[k] = v
 	}

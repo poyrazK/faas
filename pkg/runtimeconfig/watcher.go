@@ -53,6 +53,9 @@ const (
 	KeyGuestVCPUMillicores           = "guest_vcpu_millicores"
 	KeyGuestVCPUFromCPUApps          = "guest_vcpu_from_cpu_apps"
 	KeyCPUSizeApps                   = "cpu_size_apps"
+	// KeyCPUAdmission (enforce or observe) is retired too: CPU never
+	// refuses work.
+	KeyCPUAdmission = "cpu_admission"
 
 	// KeySnapshotRefresh is schedd's snapshot refresh after a release:
 	// off, shadow or on (ADR-20261106214916). KeySnapshotRefreshWindowHours
@@ -60,11 +63,6 @@ const (
 	// there. Defaults and bounds are in pkg/api/limits.go.
 	KeySnapshotRefresh            = "snapshot_refresh"
 	KeySnapshotRefreshWindowHours = "snapshot_refresh_window_hours"
-
-	// KeyCPUAdmission is schedd's CPU admission: enforce refuses work for
-	// the vCPU and CPU budgets, observe admits on memory alone and counts
-	// what those gates would have refused (ADR-20261109172421).
-	KeyCPUAdmission = "cpu_admission"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.
@@ -102,6 +100,9 @@ type Watcher struct {
 
 	mu       sync.Mutex
 	versions map[string]int64
+	// fingerprint is the global rows' fingerprint as of the last repair
+	// that applied every row it read; "" until one has.
+	fingerprint string
 	// failed is the last version whose apply failure was reported, so a
 	// value that keeps failing is recorded once rather than every repair.
 	failed map[string]int64
@@ -217,7 +218,7 @@ func (w *Watcher) runSubscription(ctx context.Context, notifications <-chan db.N
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := w.Reconcile(ctx); err != nil {
+			if err := w.Repair(ctx); err != nil {
 				w.Log.Warn("runtime_config reconcile failed", "err", err)
 			}
 		case _, ok := <-notifications:
@@ -229,6 +230,40 @@ func (w *Watcher) runSubscription(ctx context.Context, notifications <-chan db.N
 			}
 		}
 	}
+}
+
+// Repair is the periodic reconcile. A store that fingerprints its rows lets
+// it skip the full read while nothing changed since a reconcile that applied
+// everything it read; a notification, a failed apply or a fingerprint error
+// always reads the rows. The fingerprint is taken before the rows are listed,
+// so a write between the two only costs one more read.
+func (w *Watcher) Repair(ctx context.Context) error {
+	if w == nil || w.Store == nil || w.Apply == nil || len(w.Keys) == 0 {
+		return nil
+	}
+	fingerprinter, ok := w.Store.(state.RuntimeConfigFingerprinter)
+	if !ok {
+		return w.Reconcile(ctx)
+	}
+	fingerprint, err := fingerprinter.RuntimeConfigFingerprint(ctx, state.RuntimeConfigScopeGlobal)
+	if err != nil {
+		return w.Reconcile(ctx)
+	}
+	w.mu.Lock()
+	unchanged := fingerprint == w.fingerprint && len(w.failed) == 0
+	w.mu.Unlock()
+	if unchanged {
+		return nil
+	}
+	if err := w.Reconcile(ctx); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	if len(w.failed) == 0 {
+		w.fingerprint = fingerprint
+	}
+	w.mu.Unlock()
+	return nil
 }
 
 // Reconcile applies every acknowledged row for this daemon. Rows with a

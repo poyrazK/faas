@@ -178,3 +178,20 @@ WITH last_change AS MATERIALIZED (
 UPDATE accounts a SET email=x.old_email, email_verified_at=clock_timestamp()
 FROM target x WHERE a.id=x.id
 RETURNING a.id, x.old_email, x.new_email;
+
+-- Accounts never verified long after signup (ADR 20261110120000): still
+-- active, no app ever created and no billing customer. The grace clock
+-- starts at signup or at enforced_from, whichever is later.
+-- name: ListExpiredUnverifiedAccounts :many
+SELECT a.id FROM accounts a
+WHERE a.status='active' AND a.email_verified_at IS NULL
+  AND greatest(a.created_at, sqlc.arg(enforced_from)::timestamptz) < sqlc.arg(cutoff)::timestamptz
+  AND a.plan='free' AND coalesce(a.provider_customer_id,'')='' AND coalesce(a.stripe_subscription_item,'')=''
+  AND NOT EXISTS (SELECT 1 FROM apps p WHERE p.account_id=a.id)
+ORDER BY a.created_at
+LIMIT sqlc.arg(max_rows);
+
+-- A correct authenticator code clears the account's counted attempts
+-- (ADR 20261110120000).
+-- name: ClearAccountMailSlot :exec
+DELETE FROM account_mail_throttle WHERE account_id=$1 AND kind=$2;

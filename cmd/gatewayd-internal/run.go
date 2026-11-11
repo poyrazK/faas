@@ -87,6 +87,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
+	"github.com/onebox-faas/faas/pkg/sandboxtoken"
 	schedpkg "github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
@@ -114,6 +115,24 @@ var scheddSocket = envOrGateway("FAAS_SCHEDD_SOCKET", "/run/faas/schedd.sock")
 // via FAAS_GATEWAY_SYNTH_SOCKET so the e2e harness can place it on a
 // per-test path without needing /run/faas on the host (PR #203).
 var gatewaydInternalSocket = envOrGateway("FAAS_GATEWAY_SYNTH_SOCKET", "/run/faas/gatewayd-internal.sock")
+
+// gatewaydInternalHopSocket serves the same handler in binary HTTP to this
+// node's compute edge (ADR-20261110081523); "off" serves none. It listens
+// whether or not the edge uses it, so an edge may switch to it in any
+// release order. Unset, it sits beside the HTTP/1.1 socket:
+// /run/faas/gatewayd-internal-hop.sock in production.
+var gatewaydInternalHopSocket = os.Getenv("FAAS_INTERNAL_HOP_SOCKET")
+
+// binaryHopSocket is the hop's socket path, or "" for none.
+func binaryHopSocket() string {
+	switch gatewaydInternalHopSocket {
+	case "off":
+		return ""
+	case "":
+		return strings.TrimSuffix(gatewaydInternalSocket, ".sock") + "-hop.sock"
+	}
+	return gatewaydInternalHopSocket
+}
 
 const internalGatewayHealthHost = "gatewayd-internal.faas"
 
@@ -1332,7 +1351,13 @@ type runDeps struct {
 	edgeChallengeSecret    []byte
 	edgeChallengeKeySource string
 	trafficDeadlines       *trafficdeadline.Signer
-	trafficRevocations     *trafficrevocation.Registry
+	// sandboxTokens verifies sandbox session tokens with apid's public keys
+	// (ADR-20261027090013); nil keeps the sandbox data plane off.
+	sandboxTokens *sandboxtoken.Verifier
+	// sandboxPreviewDomain is FAAS_SANDBOX_PREVIEW_DOMAIN (ADR-20261027090013
+	// §11); "" keeps sandbox previews off.
+	sandboxPreviewDomain string
+	trafficRevocations   *trafficrevocation.Registry
 	// publicRoutingView admits ordinary public requests (ADR-20261027085556);
 	// runWithDeps builds it when nil.
 	publicRoutingView *publicrouting.Registry
@@ -1656,6 +1681,13 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	defer func() { _ = credentialAuth.Close() }()
 	credentialMatcher := apidgrpc.NewCredentialMatcher(credentialAuth)
 	deps.credentialMatcher = credentialMatcher
+	// ADR-20261027090013: sandbox session tokens verify with apid's public
+	// key, fetched over the same channel; the gateway can mint none.
+	deps.sandboxTokens = sandboxtoken.NewVerifier()
+	go apidgrpc.RefreshSandboxKeys(ctx, credentialAuth, deps.sandboxTokens, log)
+	if deps.sandboxPreviewDomain, err = api.NormalizeSandboxPreviewDomain(osGetenv("FAAS_SANDBOX_PREVIEW_DOMAIN")); err != nil {
+		return fmt.Errorf("gatewayd-internal: %w", err)
+	}
 	// Operation capabilities and dev-bridge tokens are keyed under rings this
 	// node never holds; apid matches them (amendment 1, decision 2).
 	credhash.SetRemote(credhash.FamilyScheduler, credentialMatcher.Remote())
@@ -2097,6 +2129,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// of the synthAdapter struct literal, which broke the compile.
 	// Restoring the off-the-brace call keeps both sides readable.
 	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, synth, log)
+	if hop := binaryHopSocket(); hop != "" {
+		deps.synth.WithBinaryHop(hop)
+	}
 	deps.syntheticDispatcher = synth
 	deps.synth.WithWorkerJobEvidence(pgStore.FinishProjectWorkerJobEvidence)
 	// ADR-119 — wire synth-side metrics and audit. The verifier is loaded
@@ -3879,6 +3914,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			&JobTaskLogsHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log, Traffic: deps.trafficRevocations})
 		apidHandler = jobTaskLogsCarveOut{logs: logsMux, next: apidHandler}
 	}
+	// ADR-20261027090013: sandbox session commands and files run in the
+	// session's VM, so they are compute-owned like attach.
+	if sandbox := newSandboxDataHandler(deps, deps.sandboxTokens, log); sandbox != nil {
+		apidHandler = sandboxDataCarveOut{sandbox: sandbox, next: apidHandler}
+	}
+	if preview := newSandboxPreviewHandler(deps, log); preview != nil {
+		apidHandler = sandboxPreviewCarveOut{preview: preview, next: apidHandler}
+	}
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-
@@ -4631,13 +4674,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if upstreams == nil {
 				upstreams = serviceDiscoveryUpstreams
 			}
-			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort} {
+			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort} {
 				dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, upstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 				if dnsErr != nil {
 					return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 				}
 				if dnsPort == gateway.RehearsalServiceDiscoveryDNSPort {
 					dnsHandler.WithPrivateServiceNamesOnly()
+				}
+				// ADR-20261027090013 §6: registries-mode sandbox sessions
+				// resolve package registries and git hosts only.
+				if dnsPort == gateway.SandboxRegistriesDNSPort {
+					dnsHandler.WithAllowedNamesOnly(api.SandboxRegistryHost)
 				}
 				if chaosMatchRecorder != nil {
 					dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)

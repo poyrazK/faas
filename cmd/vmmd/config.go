@@ -98,6 +98,13 @@ type Config struct {
 	// this process (docs/adr/20261018-runtime-admission-rebind.md). Off,
 	// they are refused and re-admitted. Requires adopt_running_vms.
 	AdoptAdmittedRuntimes bool `toml:"adopt_admitted_runtimes"`
+	// FlatTenantCgroups launches every new tenant VM directly under
+	// faas-tenant.slice instead of its plan's sub-slice
+	// (ADR-20261109172421 step 6.5). This release adopts and tears down VMs
+	// in either place; an older vmmd only knows the sub-slices, so turn it
+	// off, and let flat VMs park, before rolling vmmd back past this
+	// release. Not with native_process_recovery.
+	FlatTenantCgroups bool `toml:"flat_tenant_cgroups"`
 	// FailureReportDir is persistent root-owned storage for liveness/OOM
 	// reports (ADR-471). Keep it outside /run and the Firecracker jail tmpfs.
 	FailureReportDir string `toml:"failure_report_dir"`
@@ -487,6 +494,16 @@ type ComputeNodeConfig struct {
 	// rebuilds. Both are supplied by the vmmd systemd egress drop-in.
 	PrivateIngressCIDRs    []string `toml:"private_ingress_cidrs"`
 	PrivateIngressTCPPorts []int    `toml:"private_ingress_tcp_ports"`
+	// PrivateControlIngressCIDRs, when set, replaces PrivateIngressCIDRs as
+	// the sources of the control-plane rule: the control plane's exact
+	// addresses (ADR-20261110120000). PrivateIngressCIDRs keeps the wider
+	// list for a vmmd that predates these fields.
+	PrivateControlIngressCIDRs []string `toml:"private_control_ingress_cidrs"`
+	// PrivatePeerIngressCIDRs and PrivatePeerIngressTCPPorts admit the other
+	// compute nodes to the ports they use on this one (vmmd forwards, schedd
+	// wakes), as the boot policy's compute-peer rule does.
+	PrivatePeerIngressCIDRs    []string `toml:"private_peer_ingress_cidrs"`
+	PrivatePeerIngressTCPPorts []int    `toml:"private_peer_ingress_tcp_ports"`
 	// PublicIngressCIDRs, when set, restricts the public 80/443 accept to
 	// these sources, as the nftables role does for
 	// faas_cloudflare_origin_only. The vmmd egress drop-in supplies
@@ -784,6 +801,7 @@ func LoadConfig(path string) (*Config, error) {
 		{"FAAS_VMMD_ADOPTION_RECORD", &c.AdoptionRecord},
 		{"FAAS_VMMD_ADOPT_RUNNING_VMS", &c.AdoptRunningVMs},
 		{"FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES", &c.AdoptAdmittedRuntimes},
+		{"FAAS_VMMD_FLAT_TENANT_CGROUPS", &c.FlatTenantCgroups},
 	} {
 		if v := os.Getenv(sw.env); v != "" {
 			on, perr := strconv.ParseBool(v)
@@ -800,6 +818,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if c.AdoptAdmittedRuntimes && !c.AdoptRunningVMs {
 		return nil, errors.New("vmmd: adopt_admitted_runtimes requires adopt_running_vms = true")
+	}
+	if c.FlatTenantCgroups && c.NativeProcessRecovery {
+		return nil, errors.New("vmmd: flat_tenant_cgroups is not supported with native_process_recovery")
 	}
 	if err := validateAdoptionConfig(c.AdoptionRecord, c.AdoptRunningVMs, c.NativeProcessRecovery); err != nil {
 		return nil, err
@@ -888,6 +909,19 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("FAAS_PUBLIC_INGRESS_CIDRS"); v != "" {
 		c.ComputeNode.PublicIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_CONTROL_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PrivateControlIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_PEER_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PrivatePeerIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS"); v != "" {
+		ports, perr := parseTCPPorts(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS %q invalid: %w", v, perr)
+		}
+		c.ComputeNode.PrivatePeerIngressTCPPorts = ports
 	}
 	if v := os.Getenv("FAAS_PUBLIC_ENTRY_ADDRS"); v != "" {
 		c.ComputeNode.PublicEntryAddrs = splitNonEmpty(v)
@@ -1300,6 +1334,9 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: private_ingress_tcp_ports contains invalid TCP port %d", port)
 		}
 	}
+	if err := validatePrivatePeerIngress(&c.ComputeNode); err != nil {
+		return nil, err
+	}
 	for i, raw := range c.ComputeNode.PublicIngressCIDRs {
 		prefix, perr := netip.ParsePrefix(strings.TrimSpace(raw))
 		if perr != nil {
@@ -1448,16 +1485,12 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 	}
 	policy.TenantEgressIface = strings.TrimSpace(cfg.TenantEgressIface)
 	policy.MasqueradeCIDR = bridge.Masked().String()
-	for _, raw := range cfg.PrivateIngressCIDRs {
-		prefix, err := netip.ParsePrefix(raw)
-		if err != nil {
-			continue // LoadConfig validates; retain a safe pure helper for tests.
-		}
-		policy.PrivateInputAllowRules = append(policy.PrivateInputAllowRules, netns.PrivateInputAllowRule{
-			Source: prefix.Masked(),
-			Ports:  append([]int(nil), cfg.PrivateIngressTCPPorts...),
-		})
+	controlSources := cfg.PrivateIngressCIDRs
+	if len(cfg.PrivateControlIngressCIDRs) > 0 {
+		controlSources = cfg.PrivateControlIngressCIDRs
 	}
+	policy.PrivateInputAllowRules = appendPrivateInputRules(policy.PrivateInputAllowRules, controlSources, cfg.PrivateIngressTCPPorts)
+	policy.PrivateInputAllowRules = appendPrivateInputRules(policy.PrivateInputAllowRules, cfg.PrivatePeerIngressCIDRs, cfg.PrivatePeerIngressTCPPorts)
 	for _, raw := range cfg.PublicIngressCIDRs {
 		if prefix, err := netip.ParsePrefix(raw); err == nil {
 			policy.PublicInputSourceCIDRs = append(policy.PublicInputSourceCIDRs, prefix.Masked())

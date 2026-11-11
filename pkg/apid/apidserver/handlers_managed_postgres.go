@@ -79,16 +79,13 @@ func managedPostgresNotConfiguredProblem(w http.ResponseWriter) {
 	).WithDocs("https://gregale.dev/docs/managed-postgres"))
 }
 
-// managedPostgresFreeClosed reports whether a Free-plan owner is refused a
-// new database. Free has no overage to pay for compute past its allowance,
-// and only enforced caps (FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on) suspend
-// it there. Under shadow or off a Free database with steady traffic ran its
-// provider compute all month (~730 compute-unit hours against 5) at
-// Gregale's cost, and Free sign-ups are unlimited. Every create path checks
-// it: the create route, Compose and dev databases here, and the service's
-// admission for the rest (bug hunt 33 H1).
-func managedPostgresFreeClosed(plan api.Plan, mode managedpostgres.CapEnforcementMode) bool {
-	return plan == api.PlanFree && mode != managedpostgres.CapEnforcementOn
+// managedPostgresNotInPlan reports whether the owner's plan includes no
+// managed PostgreSQL: Free (ADR-20261110184700), or an unknown plan. Every
+// create path checks it: the create route, Compose and dev databases here,
+// and the service's admission for the rest, restores and pipeline mirrors
+// included (bug hunt 33 H1).
+func managedPostgresNotInPlan(plan api.Plan) bool {
+	return !api.ManagedPostgresIncluded(plan)
 }
 
 func managedPostgresPlanDenied(w http.ResponseWriter, plan api.Plan, detail string) {
@@ -170,6 +167,9 @@ func managedPostgresView(database managedpostgres.Database) api.ManagedPostgresD
 	if managedPostgresDeleteScheduled(database) {
 		out.RestorableUntil = database.PurgeAfter.UTC().Format(time.RFC3339Nano)
 	}
+	if !database.ExpiresAt.IsZero() && database.State != managedpostgres.StateDeleted {
+		out.ExpiresAt = database.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
 	if !database.RestoreSlotUntil.IsZero() && database.State != managedpostgres.StateDeleted {
 		out.RestoreSlotUntil = database.RestoreSlotUntil.UTC().Format(time.RFC3339Nano)
 	}
@@ -196,6 +196,19 @@ func (s *server) recordManagedPostgresRestoreSlotExpired(ctx context.Context, da
 	s.audit.Emit(ctx, "managed_postgres.database.restore_slot_expired", &accountID, map[string]any{
 		"database_id": database.ID, "source_database_id": database.RestoreSourceDatabaseID,
 		"restorable_until": database.PurgeAfter.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+// recordManagedPostgresBranchExpired records a branch whose purge started
+// because its TTL ended (ADR-20261106103654).
+func (s *server) recordManagedPostgresBranchExpired(ctx context.Context, database managedpostgres.Database) {
+	if s.audit == nil {
+		return
+	}
+	accountID := database.AccountID
+	s.audit.Emit(ctx, "managed_postgres.database.expired", &accountID, map[string]any{
+		"database_id": database.ID, "source_database_id": database.RestoreSourceDatabaseID,
+		"expires_at": database.ExpiresAt.UTC().Format(time.RFC3339Nano), "state": database.State,
 	})
 }
 
@@ -229,12 +242,14 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 		return
 	}
 	excess := s.managedPostgresPlanExcess(databases, acct.Plan)
+	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
 	items := make([]api.ManagedPostgresDatabase, 0, len(databases))
 	for _, database := range databases {
 		if filter.keep(database.ID) {
 			view := managedPostgresView(database)
 			view.Labels = filter.labelsOf(database.ID)
 			view.PlanExcess = excess[database.ID]
+			s.withManagedPostgresHold(&view, database, in, holdOK)
 			items = append(items, view)
 		}
 	}
@@ -333,6 +348,12 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	view := managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage)
+	in, err := s.managedPostgresHoldInputsFrom(r.Context(), acct, subject, summary)
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	managedPostgresUsageHoldView(&view, in)
 	if view.ComputeCapState == api.ManagedPostgresComputeCapSuspended {
 		if view.ComputeSuspendedAt, err = s.managedPostgres.CapSuspendedAt(r.Context(), subject, time.Now().UTC()); err != nil {
 			managedPostgresProblem(w, err)
@@ -424,13 +445,9 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresNotConfiguredProblem(w)
 		return
 	}
-	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
-	if !ok || limits.DatabasesMax == 0 {
+	limits, _ := api.ManagedPostgresLimitsFor(acct.Plan)
+	if managedPostgresNotInPlan(acct.Plan) {
 		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to create a database")
-		return
-	}
-	if managedPostgresFreeClosed(acct.Plan, s.managedPostgresCapMode) {
-		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL opens to the Free plan once compute caps are enforced; upgrade to a paid plan to create a database")
 		return
 	}
 	var req api.CreateManagedPostgresDatabaseRequest
@@ -483,6 +500,8 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 	view := managedPostgresView(database)
 	view.Labels = s.resourceLabels(r, acct, state.LabelKindDatabase, database.ID)
 	view.PlanExcess = s.managedPostgresPlanExcessOf(r.Context(), acct, database.ID)
+	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
+	s.withManagedPostgresHold(&view, database, in, holdOK)
 	writeJSON(w, http.StatusOK, view)
 }
 
@@ -602,21 +621,53 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}
-	pit, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(req.PointInTime))
-	if err != nil {
-		managedPostgresProblem(w, managedpostgres.ErrInvalid)
-		return
-	}
-	database, err := s.managedPostgres.Restore(r.Context(), managedpostgres.RestoreDatabaseRequest{AccountID: acct.ID, SourceDatabaseID: source.ID, Name: req.Name, PointInTime: pit})
+	restore, err := managedPostgresRestoreRequest(acct.ID, source.ID, req)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
 	}
-	s.audit.Emit(r.Context(), "managed_postgres.database.restored", &acct.ID, map[string]any{
-		"database_id": database.ID, "source_database_id": source.ID,
-		"point_in_time": pit.UTC().Format(time.RFC3339Nano),
-	})
+	database, err := s.managedPostgres.Restore(r.Context(), restore)
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	s.audit.Emit(r.Context(), "managed_postgres.database.restored", &acct.ID, managedPostgresRestoredEvent(database, restore.Latest))
 	writeJSON(w, http.StatusCreated, managedPostgresView(database))
+}
+
+// managedPostgresRestoreRequest turns a restore body into a service request.
+// No point_in_time restores from the latest point; ttl_seconds makes the copy
+// a branch (ADR-20261106103654).
+func managedPostgresRestoreRequest(accountID, sourceID string, req api.RestoreManagedPostgresDatabaseRequest) (managedpostgres.RestoreDatabaseRequest, error) {
+	restore := managedpostgres.RestoreDatabaseRequest{AccountID: accountID, SourceDatabaseID: sourceID, Name: req.Name}
+	if raw := strings.TrimSpace(req.PointInTime); raw == "" {
+		restore.Latest = true
+	} else {
+		pit, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return restore, managedpostgres.ErrInvalid
+		}
+		restore.PointInTime = pit
+	}
+	if req.TTLSeconds != 0 {
+		if req.TTLSeconds < api.ManagedPostgresBranchTTLMinSeconds || req.TTLSeconds > api.ManagedPostgresBranchTTLMaxSeconds {
+			return restore, fmt.Errorf("%w: ttl_seconds must be from %d to %d (got %d)", managedpostgres.ErrInvalid,
+				api.ManagedPostgresBranchTTLMinSeconds, api.ManagedPostgresBranchTTLMaxSeconds, req.TTLSeconds)
+		}
+		restore.TTL = time.Duration(req.TTLSeconds) * time.Second
+	}
+	return restore, nil
+}
+
+func managedPostgresRestoredEvent(database managedpostgres.Database, latest bool) map[string]any {
+	event := map[string]any{
+		"database_id": database.ID, "source_database_id": database.RestoreSourceDatabaseID,
+		"point_in_time": database.RestorePointInTime.UTC().Format(time.RFC3339Nano), "latest": latest,
+	}
+	if !database.ExpiresAt.IsZero() {
+		event["expires_at"] = database.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	return event
 }
 
 func (s *server) listManagedPostgresBindings(w http.ResponseWriter, r *http.Request, acct state.Account) {

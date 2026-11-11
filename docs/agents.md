@@ -29,7 +29,12 @@ config at `$GREGALE_AGENT_KEY`. When an agent does not see Gregale,
 problem: the client's config, this project's `.mcp.json`, the agent key, your
 connected agents and approval requests waiting for you. Projects made with
 `gregale init` include a `.mcp.json`, so agents opened there are offered
-Gregale (`--no-mcp` leaves it out). For other clients, add the server yourself:
+Gregale (`--no-mcp` leaves it out). For an agent in GitHub Actions, `gregale mcp connect --ci --repo OWNER/NAME`
+mints an agent key, stores it as the repository secret `GREGALE_AGENT_KEY`
+with `gh` (it is never shown), and writes `.github/workflows/gregale-agent.yml`
+for you to commit. The key needs your approval for deletes, production
+changes, credentials and billing unless you pass `--approvals`. For other
+clients, add the server yourself:
 
 Claude Code:
 
@@ -135,7 +140,12 @@ person before it deletes something, deploys or rolls back a production app,
 creates or rotates credentials, or changes billing. Previews are not
 gated. Project deploys, environment promotions, release-set changes and GitOps
 source changes count as production on every environment, because an
-environment does not say whether it serves production. Choose the categories when you create the key:
+environment does not say whether it serves production. Changing a production
+app's variables, secrets, secret references or settings also counts as
+production, because the app runs with them at its next wake; the same writes
+in a stage scope do not ask. Project environment configuration, shared
+secrets and workload policies ask on every environment. Choose the categories
+when you create the key:
 
 ```sh
 gregale key create ci-agent --scopes agent,deploy:write --approvals delete,billing
@@ -160,6 +170,22 @@ for your decision and repeat the request once when you approve:
 gregale --non-interactive --wait-for-approval app delete demo --yes
 ```
 
+An agent can say why it makes a request, so you are not deciding from the
+method and path alone. It sends the `Gregale-Agent-Reason` header (up to 280
+characters) on the write request; the CLI sends it with `--agent-reason`
+before the command, or `GREGALE_AGENT_REASON`:
+
+```sh
+gregale --agent-reason "remove the demo app we replaced with shop-api" app delete demo --yes
+```
+
+The reason shows on the review page, in the approval email, channel
+notification and webhook events, in `GET /v1/agent-approvals` (`reason`) and
+in the agent's activity log. It is the agent's own words, not evidence:
+what you approve is still the exact method, path and body shown. Over MCP,
+the bridge sends the `reason` of the plan you reviewed when it applies the
+plan. The Go SDK sets it per call with `api.WithAgentReason(ctx, text)`.
+
 If you deny, you can give the agent a reason. When the agent repeats a
 request you denied, or one that expired, within 30 minutes, it gets
 `403 approval_denied` (with your reason) or `410 approval_expired` instead of
@@ -182,7 +208,8 @@ and, for a new request, its review link. It never includes the request body.
 
 Gregale keeps each agent's write requests (`POST`, `PUT`, `PATCH` and
 `DELETE`) for 7 days: when, method, path, the response status, and the
-approval request it went through on, if any. Reads are not listed, and
+approval request it went through on, if any, and the reason the agent gave
+for it (`Gregale-Agent-Reason`), if any. Reads are not listed, and
 neither are requests waiting for approval. Request bodies are never kept.
 
 ```sh

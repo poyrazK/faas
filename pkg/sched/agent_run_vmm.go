@@ -60,16 +60,16 @@ type AgentRunHooks struct {
 // vmmdpb.AgentRunUsage, whose comments give each field's meaning.
 type AgentRunUsage struct {
 	Method, Samples, ExpectedSamples                                          int
-	MeasuredMillis, PausedMillis                                              int64
+	MeasuredMillis, PausedMillis, FrozenMillis                                int64
 	PrivateMBMillis, UnpausedPrivateMBMillis, BillableMBMillis, PeakPrivateMB int64
-	ColdBoot                                                                  bool
+	ColdBoot, Final                                                           bool
 }
 
 func agentRunUsageFromProto(u *vmmdpb.AgentRunUsage) AgentRunUsage {
 	return AgentRunUsage{Method: int(u.GetMethod()), Samples: int(u.GetSamples()), ExpectedSamples: int(u.GetExpectedSamples()),
 		MeasuredMillis: u.GetMeasuredMs(), PausedMillis: u.GetPausedMs(), PrivateMBMillis: u.GetPrivateMbMs(),
 		UnpausedPrivateMBMillis: u.GetUnpausedPrivateMbMs(), BillableMBMillis: u.GetBillableMbMs(),
-		PeakPrivateMB: u.GetPeakPrivateMb(), ColdBoot: u.GetColdBoot()}
+		PeakPrivateMB: u.GetPeakPrivateMb(), ColdBoot: u.GetColdBoot(), FrozenMillis: u.GetFrozenMs(), Final: u.GetFinal()}
 }
 
 type agentRunVMMClient interface {
@@ -238,4 +238,27 @@ func relayToProto(r *AgentRunRelay) *vmmdpb.RunAgentRelay {
 	}
 	return &vmmdpb.RunAgentRelay{RunId: r.RunID, LeaseToken: r.LeaseToken, TenantId: r.TenantID, AgentId: r.AgentID,
 		AgentVersion: int32(r.AgentVersion)}
+}
+
+// CaptureSandboxSnapshot asks vmmd to capture a session's warm snapshot
+// (ADR-20261027090013 §12). spec carries no session data or commands.
+func (c *VMMClient) CaptureSandboxSnapshot(ctx context.Context, spec SandboxSpec, namespace, captureID string) (*AgentRunSnapshot, error) {
+	if c == nil || c.cli == nil {
+		return nil, errors.New("sched: nil vmmd sandbox client")
+	}
+	fields, _ := wire.FromContext(ctx)
+	resp, err := c.cli.CaptureSandboxSnapshot(wire.WithCorrelationOutgoing(ctx, fields), &vmmdpb.CaptureSandboxSnapshotRequest{
+		Instance: spec.Instance, AccountId: spec.AccountID, Plan: string(spec.Plan), BaseKey: spec.BaseKey, LayerKey: spec.LayerKey,
+		ImageKey: spec.ImageKey, VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB), CpuMillicores: int32(spec.CPUMillicores),
+		NetworkMode: spec.Network, Namespace: namespace, CaptureId: captureID,
+	})
+	if err != nil {
+		return nil, liftErr(err)
+	}
+	snap := resp.GetSnapshot()
+	if snap.GetStorageKey() == "" || snap.GetVmstateStorageKey() == "" || snap.GetFcVersion() == "" || snap.GetMemBytes() < 1 {
+		return nil, errors.New("sched: vmmd returned an incomplete sandbox snapshot")
+	}
+	return &AgentRunSnapshot{StorageKey: snap.GetStorageKey(), VMStateStorageKey: snap.GetVmstateStorageKey(),
+		FCVersion: snap.GetFcVersion(), MemBytes: snap.GetMemBytes()}, nil
 }

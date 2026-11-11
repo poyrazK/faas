@@ -1362,26 +1362,32 @@ func (r *SnapshotRefresher) XResidentRAMForNode(nodeID string) int {
 	return r.e.ledger.ResidentRAMForNode(nodeID)
 }
 
-// XSetCPUAdmissionObserve makes l admit on memory alone (ADR-20261109172421).
-func (l *NodeLedger) XSetCPUAdmissionObserve(observe bool) { l.cpuAdmission.observe.Store(observe) }
-
-// XCPUAdmissionWouldRefuse is what gate would have refused while observing.
+// XCPUAdmissionWouldRefuse is how many admissions gate counted past a node's
+// CPU budgets (ADR-20261109172421).
 func (l *NodeLedger) XCPUAdmissionWouldRefuse(gate string) float64 {
 	return promtestutil.ToFloat64(l.cpuAdmission.wouldRefuse.WithLabelValues(gate))
 }
 
-// XAdmissionCompute is what an instance books at the durable node
-// reservation's vCPU and CPU budgets (ADR-20261109172421).
-func (e *Engine) XAdmissionCompute(nodeID string, vcpu, cpuMillicores int) state.NodeCompute {
-	return e.admissionCompute(nodeID, vcpu, cpuMillicores)
+// XCPUOverBudget is the refusal the ledger's vCPU or CPU budget would have
+// made for r on its node now, nil within both (ADR-20261109172421): Admit
+// counts it and admits. The vCPU budget is reported first.
+func (l *NodeLedger) XCPUOverBudget(r Request) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	node := l.resident[r.NodeID]
+	if node == nil {
+		node = &nodeReservation{}
+	}
+	if over := l.cpuOverBudget_locked(r, node); len(over) > 0 {
+		return over[0].err
+	}
+	return nil
 }
 
 // XChooseWithCPUAdmission places r over nodes as the engine's placement
-// snapshot does, enforcing or observing cpu_admission, and returns how many
-// refusals the placement gate counted.
-func XChooseWithCPUAdmission(nodes []state.ComputeNode, usedMB, usedVCPU, usedCPU map[string]int64, r Request, observe bool) (Placement, float64, error) {
+// snapshot does, and returns how many refusals the placement gate counted.
+func XChooseWithCPUAdmission(nodes []state.ComputeNode, usedMB, usedVCPU, usedCPU map[string]int64, r Request) (Placement, float64, error) {
 	c := newCPUAdmission()
-	c.observe.Store(observe)
 	p, err := placementSnapshot{nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU, usedCPUMillicores: usedCPU, cpu: c}.choose(r)
 	return p, promtestutil.ToFloat64(c.wouldRefuse.WithLabelValues(CPUGatePlacement)), err
 }

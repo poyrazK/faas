@@ -15,6 +15,7 @@ import (
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
+	"gopkg.in/yaml.v3"
 )
 
 // mcpConnectFixture fakes the machine `gregale mcp connect` runs on: which
@@ -26,6 +27,7 @@ type mcpConnectFixture struct {
 	claudeHas  string // URL of an existing Claude Code entry, "" for none
 	calls      []string
 	keyCreates int
+	keyRequest api.CreateKeyRequest // the last key minted
 	api        *httptest.Server
 	// connections and approvals answer GET /v1/agent-connections and
 	// /v1/agent-approvals for mcp connect --check.
@@ -45,6 +47,7 @@ func newMCPConnectFixture(t *testing.T, binaries ...string) *mcpConnectFixture {
 			f.keyCreates++
 			var req api.CreateKeyRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.keyRequest = req
 			if !strings.Contains(strings.Join(req.Scopes, ","), api.ScopeAgent) {
 				t.Errorf("minted key scopes = %v, want agent", req.Scopes)
 			}
@@ -519,5 +522,173 @@ func TestMCPConnectCheckJSONClients(t *testing.T) {
 	code, checks := f.check(t)
 	if code != 0 || checks["cursor"]["status"] != "ok" || checks["windsurf"]["status"] != "warn" || checks["vscode"]["status"] != "skip" || checks["claude-desktop"]["status"] != "skip" {
 		t.Fatalf("exit %d checks %v", code, checks)
+	}
+}
+
+// ghFake answers the gh commands `mcp connect --ci` runs.
+type ghFake struct {
+	secrets []string // names gh secret list reports
+	calls   []string
+	stored  map[string]string // secret name -> value read on stdin
+	noAuth  bool
+}
+
+func (f *mcpConnectFixture) withGH(t *testing.T, gh *ghFake) {
+	t.Helper()
+	f.binaries["gh"] = true
+	gh.stored = map[string]string{}
+	oldRun, oldStdin := *main.MCPConnectRun, *main.MCPConnectRunStdin
+	t.Cleanup(func() { *main.MCPConnectRun, *main.MCPConnectRunStdin = oldRun, oldStdin })
+	*main.MCPConnectRun = func(name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		gh.calls = append(gh.calls, call)
+		switch {
+		case call == "gh auth status":
+			if gh.noAuth {
+				return "You are not logged into any GitHub hosts", errors.New("exit status 1")
+			}
+			return "Logged in", nil
+		case strings.HasPrefix(call, "gh repo view"):
+			return "acme/api\n", nil
+		case strings.HasPrefix(call, "gh secret list"):
+			var list []map[string]string
+			for _, s := range gh.secrets {
+				list = append(list, map[string]string{"name": s})
+			}
+			data, _ := json.Marshal(list)
+			return string(data), nil
+		}
+		return oldRun(name, args...)
+	}
+	*main.MCPConnectRunStdin = func(stdin, name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		gh.calls = append(gh.calls, call)
+		if strings.HasPrefix(call, "gh secret set ") {
+			gh.stored[args[2]] = stdin
+		}
+		return "", nil
+	}
+}
+
+// mcp connect --ci (ADR-20261109121411 §8): the key goes to gh on stdin and
+// nowhere else; the workflow is written once.
+func TestMCPConnectCI(t *testing.T) {
+	f := newMCPConnectFixture(t)
+	gh := &ghFake{}
+	f.withGH(t, gh)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	code, out, errOut := f.run(t, "--ci")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+	if gh.stored["GREGALE_AGENT_KEY"] != "fp_live_agentsecret" || !containsCall(gh.calls, "gh secret set GREGALE_AGENT_KEY --repo acme/api") {
+		t.Fatalf("gh calls %v stored %v", gh.calls, gh.stored)
+	}
+	for _, c := range gh.calls {
+		if strings.Contains(c, "fp_live_agentsecret") {
+			t.Fatalf("the key was passed as an argument: %s", c)
+		}
+	}
+	if strings.Contains(out+errOut, "fp_live_agentsecret") {
+		t.Fatalf("the key was printed:\n%s%s", out, errOut)
+	}
+	if f.keyRequest.Label != "ci-acme-api" || strings.Join(f.keyRequest.Scopes, ",") != "agent,deploy:write" || f.keyRequest.ApprovalCategories != nil {
+		t.Fatalf("key request = %+v; want agent,deploy:write with the default approvals", f.keyRequest)
+	}
+	workflow, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", "gregale-agent.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		On   map[string]any `yaml:"on"`
+		Jobs map[string]struct {
+			Env   map[string]string `yaml:"env"`
+			Steps []map[string]any  `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(workflow, &parsed); err != nil {
+		t.Fatalf("the workflow is not valid YAML: %v\n%s", err, workflow)
+	}
+	if job := parsed.Jobs["agent"]; job.Env["GREGALE_AGENT_KEY"] != "${{ secrets.GREGALE_AGENT_KEY }}" || len(job.Steps) != 3 || parsed.On["workflow_dispatch"] == nil {
+		t.Fatalf("workflow = %+v", parsed)
+	}
+	for _, want := range []string{"secrets.GREGALE_AGENT_KEY", f.api.URL + "/mcp", "workflow_dispatch", "--mcp-config"} {
+		if !strings.Contains(string(workflow), want) {
+			t.Fatalf("workflow lacks %q:\n%s", want, workflow)
+		}
+	}
+	if !strings.Contains(out, "gh workflow run gregale-agent.yml --repo acme/api") {
+		t.Fatalf("output:\n%s", out)
+	}
+
+	// A second run refuses to replace the secret; --force mints a new key,
+	// stores it and rewrites the workflow.
+	gh.secrets = []string{"GREGALE_AGENT_KEY"}
+	if code, _, errOut := f.run(t, "--ci"); code == 0 || !strings.Contains(errOut, "--force") {
+		t.Fatalf("existing secret: exit %d %s", code, errOut)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".github", "workflows", "gregale-agent.yml"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := f.run(t, "--ci", "--repo", "acme/web", "--approvals", "none", "--force"); code != 0 {
+		t.Fatalf("--force exit %d\n%s\n%s", code, out, errOut)
+	}
+	if f.keyCreates != 2 || f.keyRequest.ApprovalCategories == nil || len(*f.keyRequest.ApprovalCategories) != 0 || f.keyRequest.Label != "ci-acme-web" {
+		t.Fatalf("second key = %+v (%d minted)", f.keyRequest, f.keyCreates)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, ".github", "workflows", "gregale-agent.yml")); string(data) == "mine\n" {
+		t.Fatal("--force kept the old workflow")
+	}
+}
+
+func TestMCPConnectCIRefusals(t *testing.T) {
+	f := newMCPConnectFixture(t)
+	t.Chdir(t.TempDir())
+	if code, _, errOut := f.run(t, "--ci"); code == 0 || !strings.Contains(errOut, "cli.github.com") {
+		t.Fatalf("no gh: exit %d %s", code, errOut)
+	}
+	gh := &ghFake{noAuth: true}
+	f.withGH(t, gh)
+	if code, _, errOut := f.run(t, "--ci"); code == 0 || !strings.Contains(errOut, "gh auth login") {
+		t.Fatalf("not signed in: exit %d %s", code, errOut)
+	}
+	gh.noAuth = false
+	if code, _, errOut := f.run(t, "--ci", "--repo", "not a repo"); code == 0 || !strings.Contains(errOut, "OWNER/NAME") {
+		t.Fatalf("bad repo: exit %d %s", code, errOut)
+	}
+	code, out, _ := f.run(t, "--ci", "--dry-run")
+	if code != 0 || !strings.Contains(out, "Dry run") || f.keyCreates != 0 || len(gh.stored) != 0 || fileExistsT(".github/workflows/gregale-agent.yml") {
+		t.Fatalf("dry run: exit %d, %d keys, stored %v\n%s", code, f.keyCreates, gh.stored, out)
+	}
+}
+
+func fileExistsT(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// Cursor's agent expands ${NAME} and sends ${env:NAME} literally, so a
+// headless Cursor config reads the key as ${GREGALE_AGENT_KEY}
+// (ADR-20261109121411 §7).
+func TestMCPConnectCursorHeadlessKeyRef(t *testing.T) {
+	f := newMCPConnectFixture(t, "cursor")
+	if code, out, errOut := f.run(t, "--client", "cursor", "--headless"); code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+	data, err := os.ReadFile(filepath.Join(f.home, ".cursor", "mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		MCPServers map[string]struct {
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := config.MCPServers["gregale"].Headers["Authorization"]; got != "Bearer ${GREGALE_AGENT_KEY}" {
+		t.Fatalf("Cursor Authorization header = %q, want Bearer ${GREGALE_AGENT_KEY}", got)
 	}
 }
