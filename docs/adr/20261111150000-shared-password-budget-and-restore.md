@@ -51,4 +51,4 @@ The 2026-11-10 account-flow audit found:
   touch the table.
 - CI keys with only `deploy:write` can no longer cancel a deletion; the
   owner restores from the dashboard or with a full-access key.
-- Migration `20261111145205161_login_failure_budget` (expand only).
+- Migration `20261111160635953_login_failure_budget` (expand only).

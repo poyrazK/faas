@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestPostgresReserveRecordsABranchExpiry(t *testing.T) {
@@ -15,7 +17,7 @@ func TestPostgresReserveRecordsABranchExpiry(t *testing.T) {
 	input := postgresTestDatabase(accountID, "pr-1", at.Add(time.Minute))
 	input.RestoreSourceDatabaseID, input.RestoreSourceResourceID, input.RestorePointInTime = source.ID, databaseDataResource(source), at
 	input.ExpiresAt = input.CreatedAt.Add(time.Hour)
-	reserved, created, err := store.Reserve(ctx, input, 10)
+	reserved, created, err := store.Reserve(reserveAsBranch(ctx, 10), input, 10)
 	if err != nil || !created || !reserved.ExpiresAt.Equal(input.ExpiresAt) {
 		t.Fatalf("Reserve = %+v created=%t, %v; want expires_at %v", reserved, created, err, input.ExpiresAt)
 	}
@@ -39,7 +41,7 @@ func TestPostgresExpiredBranchPagesSkipPurgesInProgress(t *testing.T) {
 		input := postgresTestDatabase(accountID, name, at.Add(time.Minute))
 		input.RestoreSourceDatabaseID, input.RestoreSourceResourceID, input.RestorePointInTime = source.ID, databaseDataResource(source), at
 		input.ExpiresAt = input.CreatedAt.Add(time.Duration(i+1) * time.Hour)
-		reserved, _, err := store.Reserve(ctx, input, 10)
+		reserved, _, err := store.Reserve(reserveAsBranch(ctx, 10), input, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,5 +74,41 @@ func TestPostgresExpiredBranchPagesSkipPurgesInProgress(t *testing.T) {
 	}
 	if _, err := store.ExpiredBranchesPage(ctx, now, BranchExpiryCursor{ID: branches[0].ID}, 1); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("half a cursor = %v, want invalid", err)
+	}
+}
+
+// TestPostgresShortLivedBranchesUseTheirOwnAllowance: a branch with a TTL of
+// at most 7 days takes a place in the branch allowance under the owner lock,
+// never the database limit or the restore slot; a longer TTL counts toward
+// the database limit (ADR-20261106103654 amendment 1).
+func TestPostgresShortLivedBranchesUseTheirOwnAllowance(t *testing.T) {
+	store, _, ctx, accountID := postgresStoreFixture(t)
+	at := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	source := postgresReadyDatabase(t, store, accountID, "source", at)
+	branch := func(name string, ttl time.Duration) Database {
+		input := postgresTestDatabase(accountID, name, at.Add(time.Minute))
+		input.RestoreSourceDatabaseID, input.RestoreSourceResourceID, input.RestorePointInTime = source.ID, databaseDataResource(source), at
+		input.ExpiresAt = input.CreatedAt.Add(ttl)
+		return input
+	}
+	for _, name := range []string{"short-1", "short-2"} {
+		reserved, created, err := store.Reserve(reserveAsBranch(ctx, 2), branch(name, api.ManagedPostgresAllowanceBranchTTLMax), 1)
+		if err != nil || !created || !reserved.RestoreSlotUntil.IsZero() {
+			t.Fatalf("Reserve %s = %+v created=%t, %v; want a branch outside the slot", name, reserved, created, err)
+		}
+	}
+	if _, _, err := store.Reserve(reserveAsBranch(ctx, 2), branch("short-3", time.Hour), 1); !errors.Is(err, ErrBranchLimit) {
+		t.Fatalf("third short-lived branch = %v, want the branch limit", err)
+	}
+	if _, _, err := store.Reserve(ctx, branch("unmarked", time.Hour), 1); !errors.Is(err, ErrBranchLimit) {
+		t.Fatalf("short-lived branch without an allowance = %v, want the branch limit", err)
+	}
+	count, err := store.CountSubjectDatabases(ctx, accountID)
+	if err != nil || count != 1 {
+		t.Fatalf("CountSubjectDatabases = %d, %v; want only the source", count, err)
+	}
+	long, created, err := store.Reserve(ctx, branch("long", api.ManagedPostgresAllowanceBranchTTLMax+time.Second), 1)
+	if err != nil || !created || long.RestoreSlotUntil.IsZero() {
+		t.Fatalf("Reserve long = %+v created=%t, %v; want the restore slot", long, created, err)
 	}
 }

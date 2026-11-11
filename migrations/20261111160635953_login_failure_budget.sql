@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261111145205161_login_failure_budget.sql
+-- filename: 20261111160635953_login_failure_budget.sql
 
 -- +goose Up
 -- Failed password checks per email address, shared by every apid

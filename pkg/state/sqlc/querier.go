@@ -792,6 +792,11 @@ type Querier interface {
 	CountLiveOperationSchedules(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountMCPOAuthRetirements(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountMCPPagerDutyAcknowledgementEvents(ctx context.Context, db DBTX, incidentID pgtype.UUID) (int64, error)
+	// ADR-20261106103654 amendment 1: the reservation owner's short-lived
+	// branches (a TTL of at most 7 days), read under its reservation lock and
+	// counted as the database limit counts, with the owner chosen as
+	// CountManagedPostgresPreviewDatabases chooses it.
+	CountManagedPostgresAllowanceBranches(ctx context.Context, db DBTX, arg CountManagedPostgresAllowanceBranchesParams) (int64, error)
 	CountManagedPostgresCutoverSourceBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresCutoverTargetBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresHealth(ctx context.Context, db DBTX, arg CountManagedPostgresHealthParams) (CountManagedPostgresHealthRow, error)
@@ -799,6 +804,9 @@ type Querier interface {
 	// kept for its restore copies (ADR-20261103091657).
 	// A PR preview environment's database is outside the plan's database limit
 	// (ADR-20261102123523) and is counted by CountManagedPostgresPreviewDatabases.
+	// So is a short-lived branch, a restore with a TTL of at most 7 days
+	// (api.ManagedPostgresAllowanceBranchTTLMax; ADR-20261106103654 amendment 1),
+	// counted by CountManagedPostgresAllowanceBranches.
 	CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Counts as CountManagedPostgresLifecycleDatabases does.
 	CountManagedPostgresOrgDatabases(ctx context.Context, db DBTX, orgID pgtype.UUID) (int64, error)
@@ -3988,7 +3996,8 @@ type Querier interface {
 	// when an older provider delivery keeps failing.
 	ListManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ListManagedPostgresOveragePendingParams) ([]ListManagedPostgresOveragePendingRow, error)
 	// ADR-20261110184700: when each database was first suspended past its plan,
-	// the clock its deletion runs on.
+	// and the deletion date its queued email named (NULL until one did). The
+	// deletion runs only on that date.
 	ListManagedPostgresPlanExcessSince(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ListManagedPostgresPlanExcessSinceRow, error)
 	// ADR-20261102123523: the preview-database sweep's page of undeleted preview
 	// databases across accounts, in ID order after after_id.
@@ -4820,6 +4829,9 @@ type Querier interface {
 	ManagedPostgresActivationLiveDeployments(ctx context.Context, db DBTX, arg ManagedPostgresActivationLiveDeploymentsParams) ([]ManagedPostgresActivationLiveDeploymentsRow, error)
 	ManagedPostgresAdmissionFenced(ctx context.Context, db DBTX, appID string) (bool, error)
 	ManagedPostgresBindingDatabaseID(ctx context.Context, db DBTX, arg ManagedPostgresBindingDatabaseIDParams) (ManagedPostgresBindingDatabaseIDRow, error)
+	// ADR-20261110160000: one threshold's event of the month; the egress hold is
+	// mailed through it, apart from the compute thresholds ranked above.
+	ManagedPostgresCapEvent(ctx context.Context, db DBTX, arg ManagedPostgresCapEventParams) (ManagedPostgresCapEventRow, error)
 	ManagedPostgresCapSuspendedAt(ctx context.Context, db DBTX, arg ManagedPostgresCapSuspendedAtParams) (pgtype.Timestamptz, error)
 	// ADR-20261023181931: a rollback database switch activates its cutover.
 	// Every query runs inside the activation or resume transaction, after the
@@ -6669,6 +6681,10 @@ type Querier interface {
 	// may queue for hours) and for the 24h source-retention window that
 	// `deploys retry` relies on. Cancelled and expired parts keep the 1h grace.
 	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
+	// ADR-20261110184700 amendment: while deletion is on, a notice whose email
+	// named no deletion date (mailed while deletion was off, or never mailed in
+	// its window) starts again, so the next pass mails the date.
+	RearmManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg RearmManagedPostgresPlanExcessNoticesParams) (int64, error)
 	// Preserve tenant cadence, version and admission priority, but invalidate the
 	// evaluated deployment so publish/pause/resume cannot replay the paused interval.
 	RearmTenantStoredWorkflowSchedules(ctx context.Context, db DBTX, arg RearmTenantStoredWorkflowSchedulesParams) error

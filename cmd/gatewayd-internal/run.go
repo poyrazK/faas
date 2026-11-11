@@ -43,6 +43,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -71,6 +72,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/activity"
+	"github.com/onebox-faas/faas/pkg/gateway/backlog"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
@@ -1195,6 +1197,10 @@ type runDeps struct {
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
 	apiMonetization func() bool
+	// awaitingResponseMax is the app-request backlog limit
+	// (pkg/gateway/backlog), kept current by the runtime-config watcher from
+	// gateway_awaiting_response_max. Nil holds api.GatewayAwaitingResponseMax.
+	awaitingResponseMax *atomic.Int64
 	// platformFlags is every platform flag gatewayd-internal decides (the
 	// api_monetization flag, ADR-20261020170649, the edge feature flags,
 	// ADR-20261023113721, and the product capability flags,
@@ -2251,10 +2257,15 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		defer runtimeCancel()
 		// ADR-20261101215228: per-instance request limits.
 		requestConcurrency := &runtimeconfig.RequestConcurrency{}
+		deps.awaitingResponseMax = new(atomic.Int64)
+		deps.awaitingResponseMax.Store(api.GatewayAwaitingResponseMax)
 		keys, apply := runtimeconfig.WithPlatformFlags(
-			append([]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.RequestConcurrencyKeys...),
+			append([]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones, runtimeconfig.KeyGatewayAwaitingResponseMax}, runtimeconfig.RequestConcurrencyKeys...),
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				if handled, err := requestConcurrency.Apply(key, value); handled {
+					return err
+				}
+				if handled, err := runtimeconfig.ApplyGatewayAwaitingResponseMax(deps.awaitingResponseMax, key, value); handled {
 					return err
 				}
 				enabled, err := runtimeconfig.Bool(value)
@@ -3897,7 +3908,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-741: the `gregale dev --debug` tunnel is compute-owned like the
 	// log stream. Its waker is the service proxy, wired below once built.
 	debugTunnel := newDevDebugTunnel(deps, log)
-	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, gateway.TrustedTrafficIngress(handler), logsHandler, writeGate, deps.domains.Platform, log))
+	// App traffic past gateway_awaiting_response_max requests awaiting their
+	// response head is answered 503 at once, so a CPU-saturated node sheds
+	// load instead of growing past its MemoryMax (pkg/gateway/backlog).
+	appTraffic := backlog.New(gateway.TrustedTrafficIngress(handler), deps.awaitingResponseMax, gatewayRegistry(deps.metrics))
+	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, appTraffic, logsHandler, writeGate, deps.domains.Platform, log))
 	// ADR-1037: interactive app-task attach is compute-owned too. The
 	// handler dials the task node's vmmd, which apid must never do.
 	if deps.authMw != nil && deps.pgStore != nil && deps.nodeCache != nil {
@@ -5335,4 +5350,13 @@ func applyWorkflowOperationHeaders(h http.Header, step *state.WorkflowOperationS
 	h.Set(api.OperationGenerationHeader, strconv.Itoa(step.Generation))
 	h.Set(api.OperationAttemptHeader, strconv.Itoa(step.Attempt))
 	h.Set(api.OperationWorkflowCapabilityHeader, step.Capability)
+}
+
+// gatewayRegistry is the registry gatewayd-internal's /metrics serves, or nil
+// when the daemon runs without gateway metrics (some tests).
+func gatewayRegistry(m *gateway.Metrics) prometheus.Registerer {
+	if m == nil {
+		return nil
+	}
+	return m.Registry()
 }

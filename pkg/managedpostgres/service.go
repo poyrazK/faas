@@ -39,6 +39,10 @@ type ServiceOptions struct {
 	// It is evaluated immediately before the store's atomic reservation so
 	// plan entitlements remain race-safe while the service stays provider-neutral.
 	MaxDatabasesPerAccount func(context.Context, string) (int, error)
+	// MaxBranchesPerAccount supplies the usage subject's branch allowance
+	// (ADR-20261106103654 amendment 1). Nil gives no allowance, so a
+	// short-lived branch is refused.
+	MaxBranchesPerAccount func(context.Context, string) (int, error)
 	// FreePlan reports whether a usage subject is on the Free plan, for the
 	// fleet's paid reserve. Nil reserves nothing.
 	FreePlan func(context.Context, string) (bool, error)
@@ -59,6 +63,7 @@ type Service struct {
 	admit                  func(context.Context, string) error
 	admitResize            func(context.Context, string, Spec) error
 	maxDatabasesPerAccount func(context.Context, string) (int, error)
+	maxBranchesPerAccount  func(context.Context, string) (int, error)
 	freePlan               func(context.Context, string) (bool, error)
 }
 
@@ -160,6 +165,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		admit:                  options.Admit,
 		admitResize:            options.AdmitResize,
 		maxDatabasesPerAccount: options.MaxDatabasesPerAccount,
+		maxBranchesPerAccount:  options.MaxBranchesPerAccount,
 		freePlan:               options.FreePlan,
 	}, nil
 }
@@ -302,7 +308,8 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		}
 		request.PointInTime = s.now().Add(-LatestRestoreLag)
 	}
-	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() || !validBranchTTL(request.TTL) {
+	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() || !validBranchTTL(request.TTL) ||
+		request.WithinLimit && request.TTL > 0 {
 		return Database{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
@@ -388,6 +395,14 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	var expiresAt time.Time
 	if request.TTL > 0 {
 		expiresAt = now.Add(request.TTL)
+	}
+	if inBranchAllowanceTTL(request.TTL) {
+		// A short-lived branch takes a place in the branch allowance, not
+		// the database limit (ADR-20261106103654 amendment 1).
+		if reservationLimit, err = s.branchAllowance(ctx, request.AccountID); err != nil {
+			return Database{}, false, err
+		}
+		ctx = reserveAsBranch(ctx, reservationLimit)
 	}
 	database, created, err := s.store.Reserve(ctx, Database{
 		ID:                      s.newID(),
@@ -888,6 +903,9 @@ func quotaDetail(err error, limit int) error {
 	// The restore slot refusal names the copy to purge itself.
 	if !errors.Is(err, ErrQuotaExceeded) || errors.Is(err, ErrRestoreSlotInUse) {
 		return err
+	}
+	if errors.Is(err, ErrBranchLimit) {
+		return fmt.Errorf("%w (%d of %d short-lived branches in use)", err, limit, limit)
 	}
 	return fmt.Errorf("%w: the account already has %d of %d databases (provisioning and restoring ones count); delete one or upgrade the plan", err, limit, limit)
 }

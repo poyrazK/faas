@@ -28,6 +28,7 @@ import (
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
 	"CompleteSnapshotPrimeHandoff":           true,
+	"GetEdgeRuleByID":                        true,
 	"ListEdgeRulesForApp":                    true,
 	"ApplyConfigRestore":                     true,
 	"EvaluateStoredWorkflowFailurePolicies":  true,
@@ -300,6 +301,15 @@ var memDispatched = map[string]bool{
 	"ListConsumerKeysForApp":                        true,
 	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
+}
+
+func (s *Mem) GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error) {
+	if over, ok := s.over.(interface {
+		GetEdgeRuleByID(context.Context, string) (state.EdgeRule, error)
+	}); ok {
+		return over.GetEdgeRuleByID(ctx, id)
+	}
+	return s.MemStore.GetEdgeRuleByID(ctx, id)
 }
 
 func (s *Mem) ListEdgeRulesForApp(ctx context.Context, app string) ([]state.EdgeRule, error) {

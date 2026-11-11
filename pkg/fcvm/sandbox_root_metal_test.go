@@ -199,7 +199,7 @@ ip neigh flush dev eth0; true`)
 	t.Run("cannot reach private, link-local, metadata or mail", func(t *testing.T) {
 		public := netip.MustParseAddr("1.1.1.1")
 		// Even an address the registries resolver answered opens only 443.
-		if err := m.AllowResolvedEgressNamed(ctx, inst.Net.HostIP, "registry.npmjs.org", []netip.Addr{public}, time.Minute, 0); err != nil {
+		if err := m.AllowResolvedEgressNamed(ctx, inst.Net.HostIP, resolvedOwner(t, m, inst.Net.HostIP), "registry.npmjs.org", []netip.Addr{public}, time.Minute, 0); err != nil {
 			t.Fatal(err)
 		}
 		dial := `python3 -c '
