@@ -14,6 +14,7 @@ import (
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/dbrefusal"
 	"github.com/onebox-faas/faas/pkg/dbsched"
 )
 
@@ -44,6 +45,8 @@ type DatabaseScheduler interface {
 	CaptureSnapshot(ctx context.Context, id, name string, point time.Time) (dbsched.Snapshot, error)
 	GetSnapshot(ctx context.Context, id, name string) (dbsched.Snapshot, error)
 	DeleteSnapshot(ctx context.Context, id, name string) error
+	SetHold(ctx context.Context, id string, held bool) (dbsched.VM, error)
+	SetComputeQuota(ctx context.Context, id string, quotaUnitSeconds int64) (dbsched.VM, error)
 }
 
 // WithDatabases enables the database RPCs.
@@ -88,7 +91,7 @@ func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
 		PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount), MemMib: int32(vm.MemMiB), VolumeBytes: vm.VolumeBytes,
 		AlwaysOn: vm.AlwaysOn, RestoreWindowSeconds: vm.RestoreWindowSeconds, RestoreSourceId: vm.RestoreSource,
 		ResizePending: vm.ResizePending, Replicated: vm.Replicated, StandbyNodeId: vm.StandbyNode, StandbySynced: vm.StandbySynced,
-		MajorHistoryComplete: true,
+		MajorHistoryComplete: true, Held: vm.Held, ComputeQuotaUnitSeconds: vm.ComputeQuotaUnitSeconds,
 	}
 	for _, span := range vm.MajorHistory {
 		rt.MajorHistory = append(rt.MajorHistory, &scheddpb.DatabaseMajorSpan{PostgresMajor: int32(span.Major), Until: timestamppb.New(span.Until)}) //nolint:gosec // persisted majors are 14-18
@@ -314,6 +317,37 @@ func (s *Server) SetDatabaseAlwaysOn(ctx context.Context, req *scheddpb.SetDatab
 	return databaseRuntime(vm), nil
 }
 
+// HoldDatabase holds or releases a database for apid's delete grace period
+// and compute cap sweep (ADR-1027 amendment 2026-11-10).
+func (s *Server) HoldDatabase(ctx context.Context, req *scheddpb.HoldDatabaseRequest) (*scheddpb.DatabaseRuntime, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	vm, err := d.SetHold(ctx, req.GetDatabaseId(), req.GetHeld())
+	if err != nil {
+		return nil, s.databaseStatus("hold", err)
+	}
+	return databaseRuntime(vm), nil
+}
+
+// SetDatabaseComputeQuota sets a database's monthly compute quota, the
+// compute cap's backstop between sweeps.
+func (s *Server) SetDatabaseComputeQuota(ctx context.Context, req *scheddpb.SetDatabaseComputeQuotaRequest) (*scheddpb.DatabaseRuntime, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetQuotaUnitSeconds() < 0 {
+		return nil, status.Error(codes.InvalidArgument, "a compute quota is not negative")
+	}
+	vm, err := d.SetComputeQuota(ctx, req.GetDatabaseId(), req.GetQuotaUnitSeconds())
+	if err != nil {
+		return nil, s.databaseStatus("set compute quota", err)
+	}
+	return databaseRuntime(vm), nil
+}
+
 // CaptureDatabaseSnapshot holds a database's archive at an instant for
 // the managed-Postgres driver's environment clones.
 func (s *Server) CaptureDatabaseSnapshot(ctx context.Context, req *scheddpb.CaptureDatabaseSnapshotRequest) (*scheddpb.DatabaseSnapshot, error) {
@@ -364,6 +398,10 @@ func databaseSnapshot(snap dbsched.Snapshot) *scheddpb.DatabaseSnapshot {
 func (s *Server) databaseStatus(op string, err error) error {
 	var code codes.Code
 	switch {
+	case errors.Is(err, dbsched.ErrHeld):
+		return dbrefusal.Status(op, dbrefusal.Held)
+	case errors.Is(err, dbsched.ErrComputeQuota):
+		return dbrefusal.Status(op, dbrefusal.ComputeQuota)
 	case errors.Is(err, dbsched.ErrNotFound):
 		code = codes.NotFound
 	case errors.Is(err, dbsched.ErrNoCapacity), errors.Is(err, dbsched.ErrBootSlotsBusy):
