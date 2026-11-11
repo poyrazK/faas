@@ -4,6 +4,7 @@
 package secretpg_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -52,13 +53,13 @@ func TestStoreOnPostgres(t *testing.T) {
 	if id, err := store.NodeIDByName(ctx, node.Name); err != nil || id != node.ID {
 		t.Fatalf("node by name = %q, %v", id, err)
 	}
-	if _, err := store.NodeIDByName(ctx, "no-such-node"); err != secretd.ErrUnknownNode {
+	if _, err := store.NodeIDByName(ctx, "no-such-node"); !errors.Is(err, secretd.ErrUnknownNode) {
 		t.Fatalf("unknown node = %v", err)
 	}
 	if err := st.SetComputeNodeActive(ctx, peer.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.NodeIDByName(ctx, peer.Name); err != secretd.ErrUnknownNode {
+	if _, err := store.NodeIDByName(ctx, peer.Name); !errors.Is(err, secretd.ErrUnknownNode) {
 		t.Fatalf("inactive node = %v", err)
 	}
 

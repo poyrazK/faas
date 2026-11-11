@@ -61,14 +61,13 @@ func (f *fakeStore) RecordOpen(_ context.Context, nodeID, appID, via string, _ i
 }
 
 type fixture struct {
-	store    *fakeStore
-	id       *age.X25519Identity
-	caller   string
-	now      time.Time
-	server   *secretd.Server
-	ctx      context.Context
-	seal     func(t *testing.T, account string, env secretbox.Envelope) []byte
-	sealFree func(t *testing.T, env secretbox.Envelope) []byte
+	store  *fakeStore
+	id     *age.X25519Identity
+	caller string
+	now    time.Time
+	server *secretd.Server
+	ctx    context.Context
+	seal   func(t *testing.T, account string, env secretbox.Envelope) []byte
 }
 
 func newFixture(t *testing.T, budget int) *fixture {

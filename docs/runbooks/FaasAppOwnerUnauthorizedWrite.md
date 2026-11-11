@@ -24,8 +24,8 @@ Per environment, in order:
    is false. The control plane's schedd must log in as `faas_schedd`
    (runtime roles enabled, ADR-20261023104734); one that still logs in as
    `faas` is also authorized.
-2. **Observe.** As the owner on the control plane:
-   `update app_owner_authority set mode = 'observe', updated_at = now();`
+2. **Observe.** As the owner on the control plane, set the mode to
+   `observe` (`docs/break-glass/app-owner-authority.md`, first recipe).
    This alert now fires for every owner change a node makes. That is
    expected until step 3: node-local schedds still claim and recover.
 3. **Move the decisions.** Set the Ansible variable
@@ -41,7 +41,7 @@ Per environment, in order:
 4. **Watch a week.** `faas_app_owner_unauthorized_writes` stays 0 and the
    alert stays quiet. Any row in `app_owner_writes where not authorized` is
    a path still writing owners from a node: fix it before step 5.
-5. **Enforce.** `update app_owner_authority set mode = 'enforce', updated_at = now();`
+5. **Enforce.** Set the mode to `enforce` the same way.
    Postgres now refuses an unauthorized owner change with SQLSTATE 42501
    and logs `faas_app_owner_refused app=... to=... login=...`. Refused
    changes leave no row (they roll back), so watch the Postgres log.
@@ -58,8 +58,8 @@ Back out by setting the mode to `observe` or `any`; the variable can stay.
    compromise of the node behind `to_node_id` or `login_role`:
    - Follow `docs/runbooks/compute-node-compromise.md` for that node.
    - Set the mode to `enforce` if it is not already.
-   - Move the affected apps back: clear the owner
-     (`update apps set node_id = null where id = ...` as the owner) and the
+   - Move the affected apps back: clear each app's owner as the owner
+     (`docs/break-glass/app-owner-authority.md`, second recipe) and the
      control plane's claim re-places it.
    - Rotate the secrets of the affected apps once the node has run them.
 4. A login that should be authorized but is not (for example the control
