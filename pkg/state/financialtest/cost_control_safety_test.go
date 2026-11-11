@@ -2,6 +2,7 @@ package financialtest
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -262,9 +263,22 @@ func TestCostControlMigrationReplayPreservesDurableDecisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261111160000420_cost_control_delivery_safety.sql")
+	sources, err := migrations.Sources()
 	if err != nil {
 		t.Fatal(err)
+	}
+	var raw []byte
+	for _, source := range sources {
+		if strings.HasSuffix(source.Filename, "_cost_control_delivery_safety.sql") {
+			raw, err = migrations.FS.ReadFile(source.Filename)
+			if err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	if len(raw) == 0 {
+		t.Fatal("cost-control delivery safety migration missing")
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
