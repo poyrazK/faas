@@ -676,4 +676,4 @@
       ansible.builtin.include_role:
         name: vmmd_service
         tasks_from: secretd_client.yml
-      when: faas_vmmd_secretd_target | default('') | length > 0
+      when: faas_secretd_target | default('') | length > 0

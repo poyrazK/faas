@@ -254,7 +254,10 @@ type LiveMigrationAdopt struct {
 type VMMRouter struct {
 	// notices retries a create on a node whose vmmd is restarting under a
 	// planned notice instead of failing it (vmmd restart adoption ADR §3).
-	notices          *RestartNotices
+	notices *RestartNotices
+	// secretGrants grants a peer the app's secrets before an instance of
+	// it is placed there (ADR-20261110210000 §3). nil grants nothing.
+	secretGrants     *SecretGrantor
 	computeAuthority state.FinancialComputeStore
 	mu               sync.Mutex
 	cache            map[string]VMM    // nodeID -> dialed client (targetURL stored separately for the dial path)
@@ -398,6 +401,21 @@ type ComputeNodeInfo struct {
 func (r *VMMRouter) WithRestartNotices(n *RestartNotices) *VMMRouter {
 	r.notices = n
 	return r
+}
+
+// WithSecretGrantor makes every create on another node first grant that
+// node the app's secrets (ADR-20261110210000 §3 slice 3c-2).
+func (r *VMMRouter) WithSecretGrantor(g *SecretGrantor) *VMMRouter {
+	r.secretGrants = g
+	return r
+}
+
+// NodeName returns the compute_nodes.name the router dials nodeID's vmmd as.
+func (r *VMMRouter) NodeName(nodeID string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	name, ok := r.names[nodeID]
+	return name, ok && name != ""
 }
 
 func (r *VMMRouter) SetClient(nodeID string, c VMM) {
@@ -575,6 +593,7 @@ func (r *VMMRouter) CreateColdBoot(ctx context.Context, nodeID, instance string,
 	if err = r.checkCheckpointWakeOwnershipSupport(ctx, cli); err != nil {
 		return nil, err
 	}
+	r.secretGrants.Ensure(ctx, nodeID, app.AppID)
 	ctx, err = r.prepareCloneWakeDispatch(ctx, nodeID, instance, app, "cold_boot")
 	if err != nil {
 		return nil, err
@@ -819,6 +838,7 @@ func (r *VMMRouter) CreateFromSnapshot(ctx context.Context, nodeID, instance str
 	if err = r.checkCheckpointWakeOwnershipSupport(ctx, cli); err != nil {
 		return nil, err
 	}
+	r.secretGrants.Ensure(ctx, nodeID, app.AppID)
 	ctx, err = r.prepareCloneWakeDispatch(ctx, nodeID, instance, app, "restore")
 	if err != nil {
 		return nil, err
@@ -848,6 +868,7 @@ func (r *VMMRouter) CreatePausedFromSnapshot(ctx context.Context, nodeID, instan
 	if err = r.checkCheckpointWakeOwnershipSupport(ctx, cli); err != nil {
 		return nil, err
 	}
+	r.secretGrants.Ensure(ctx, nodeID, app.AppID)
 	ctx, err = r.prepareCloneWakeDispatch(ctx, nodeID, instance, app, "restore")
 	if err != nil {
 		return nil, err

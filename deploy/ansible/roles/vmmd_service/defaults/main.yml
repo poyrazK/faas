@@ -26,12 +26,15 @@ faas_vmmd_outbound_relay_tls_managed: false
 faas_vmmd_outbound_relay_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
 
 # ADR-20261110210000 §3 slice 3c: secretd's tcp://<control plane private
-# address>:8098 (secretd_service's faas_secretd_listen). Set, vmmd opens app
-# secrets through secretd with a node-identity client leaf issued on the
-# control plane (tasks/secretd_client.yml); it needs
-# faas_seal_domain_runtime_binding_required. Empty keeps opening them with
-# this node's runtime identity. Turn on one node first.
-faas_vmmd_secretd_target: ""
+# address>:8098 (secretd_service's faas_secretd_listen). Set, this node gets a
+# node-identity secretd client leaf issued on the control plane
+# (tasks/secretd_client.yml) and its schedd grants peers the secrets of the
+# apps it owns (compute_only_service). Set it on every compute node first.
+faas_secretd_target: ""
+# Then, one node at a time: true makes vmmd open app secrets through secretd
+# instead of this node's runtime identity. Needs faas_secretd_target and
+# faas_seal_domain_runtime_binding_required.
+faas_vmmd_secretd_open: false
 faas_vmmd_secretd_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
 
 # ADR-149 prepared networks: vmmd keeps this many unused wake namespaces

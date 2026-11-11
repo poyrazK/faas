@@ -224,13 +224,13 @@ Until slice 3c nothing calls secretd, so turning it on changes no wake.
 
 **Slice 3c-1 (implemented, off until configured): vmmd asks secretd.**
 `FAAS_RUNTIME_SECRET_OPENER=secretd` (vmmd_service's
-`faas_vmmd_secretd_target`, one node at a time) routes every app-secret
+`faas_vmmd_secretd_open`, one node at a time) routes every app-secret
 open through secretd: the wake's env entries, sidecar app secrets, and live
 secret reload. vmmd still checks apid's writer signatures first, refuses a
 partial answer, and needs `FAAS_RUNTIME_SECRET_BINDING_REQUIRED`, since
 secretd refuses unbound envelopes. Its client leaf is the `secret-opener`
-feature leaf whose CN is the node's name. A wake on the app's owner node
-works; a wake on a peer is refused until slice 3c-2.
+feature leaf whose CN is the node's name, issued once `faas_secretd_target`
+is set.
 
 Still opened on the node with its runtime identity, so the node keeps it
 for now: sidecar direct env (`sidecar_env` byte envelopes) and the sealed
@@ -238,9 +238,19 @@ crash-capture keys, which are sealed to the node's current runtime
 recipient. Both move before node join stops staging the runtime identity
 (slice 3d).
 
-**Slice 3c-2 (next):** the owner's schedd asks secretd for a `GrantPeer`
-before it places an instance of its app on a peer, and renews it while the
-peer runs it.
+**Slice 3c-2 (implemented, off until configured): owner grants.** With
+`FAAS_SCHEDD_SECRETD_TARGET` (compute_only_service, from `faas_secretd_target`),
+a compute schedd dials secretd with the node's client leaf, handed to it as
+a credential, so secretd knows it as the owner node. Before `VMMRouter`
+creates or restores an instance on another node it calls `GrantPeer` (TTL
+1 h, reused while more than half remains); every 15 min it renews the
+grants whose app still has a live instance on that peer (the ledger) and
+forgets the rest, which then expire. A failed grant is logged and the
+create goes ahead: a peer still opening locally needs none, and a peer
+asking secretd is refused with `PermissionDenied`. Rollout: set
+`faas_secretd_target` on every compute node (leaves + grants), then
+`faas_vmmd_secretd_open` node by node, so peers are granted before any of
+them needs it.
 
 When a domain has moved, node join stops staging its identity, deletes
 leftovers (the `faas_compute_fleet_key_retired` pattern), and

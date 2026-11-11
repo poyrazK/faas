@@ -136,6 +136,28 @@
   loop:
     - 60-faas-frozen-tier.conf
 
+# ADR-20261110210000 §3 slice 3c-2: with vmmd_service's
+# faas_secretd_target set, schedd grants peers its apps' secrets through
+# secretd; vmmd_service has already installed the node's client leaf.
+- name: compute_only_service — install schedd's secretd drop-in (ADR-20261110210000)
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: 99-faas-schedd-secretd.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-schedd-secretd.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - faas_secretd_target | default('') | length > 0
+
+- name: compute_only_service — remove schedd's secretd drop-in while secretd is off (ADR-20261110210000)
+  notify: restart faas-schedd
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-schedd.service.d/99-faas-schedd-secretd.conf
+    state: absent
+  when: faas_secretd_target | default('') | length == 0
+
 - name: compute_only_service — install schedd node identity (M9)
   notify: restart faas-schedd
   ansible.builtin.template:

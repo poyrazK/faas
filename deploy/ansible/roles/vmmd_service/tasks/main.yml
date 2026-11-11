@@ -205,12 +205,13 @@
   ansible.builtin.include_tasks: outbound_relay_tls.yml
   when: faas_vmmd_outbound_relay_tls_managed | bool
 
-# ADR-20261110210000 §3 slice 3c: open app secrets through the control
-# plane's secretd once faas_vmmd_secretd_target is set; empty keeps opening
-# them with this node's runtime identity.
-- name: vmmd_service — converge vmmd's secretd client leaf (ADR-20261110210000)
+# ADR-20261110210000 §3 slice 3c: faas_secretd_target issues the node's
+# secretd client leaf (schedd grants peers with it); faas_vmmd_secretd_open
+# then makes vmmd open app secrets through secretd. Off keeps opening them
+# with this node's runtime identity.
+- name: vmmd_service — converge the node's secretd client leaf (ADR-20261110210000)
   ansible.builtin.include_tasks: secretd_client.yml
-  when: faas_vmmd_secretd_target | default('') | length > 0
+  when: faas_secretd_target | default('') | length > 0
 
 - name: vmmd_service — install vmmd's secretd drop-in (ADR-20261110210000)
   ansible.builtin.template:
@@ -220,14 +221,16 @@
     group: root
     mode: "0644"
   notify: restart faas-vmmd
-  when: faas_vmmd_secretd_target | default('') | length > 0
+  when:
+    - faas_secretd_target | default('') | length > 0
+    - faas_vmmd_secretd_open | default(false) | bool
 
-- name: vmmd_service — remove vmmd's secretd drop-in while secretd is off (ADR-20261110210000)
+- name: vmmd_service — remove vmmd's secretd drop-in while vmmd opens locally (ADR-20261110210000)
   ansible.builtin.file:
     path: /etc/systemd/system/faas-vmmd.service.d/99-faas-secretd-client.conf
     state: absent
   notify: restart faas-vmmd
-  when: faas_vmmd_secretd_target | default('') | length == 0
+  when: faas_secretd_target | default('') | length == 0 or not (faas_vmmd_secretd_open | default(false) | bool)
 
 - name: vmmd_service — install app outbound relay target (ADR-989)
   ansible.builtin.template:

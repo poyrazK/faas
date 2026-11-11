@@ -25,18 +25,27 @@ compute nodes can stop holding the runtime seal domain's identity.
 Prerequisite: `faas_seal_domain_runtime_binding_required: true` on compute
 (every stored runtime envelope is bound; secretd refuses unbound ones).
 
-1. Pick one node that serves no overflow placements: until slice 3c-2 a peer
-   is refused, so a wake placed on this node for an app another node owns
-   fails.
-2. Set `faas_vmmd_secretd_target: "tcp://<control plane private address>:8098"`
-   for that node and converge. vmmd_service issues the node's
-   `secret-opener` client leaf on the control plane and restarts vmmd with
-   `FAAS_RUNTIME_SECRET_OPENER=secretd`.
-3. Check: vmmd's journal shows `vmmd: app secrets opened by secretd`, and
-   wakes on the node add rows to `secret_open_audit` with `via = owner`.
+A peer can open an app's secrets only if the app's owner granted it, so
+grants go on everywhere before any vmmd asks secretd:
 
-Back out by clearing `faas_vmmd_secretd_target` and converging: vmmd opens
-with its own runtime identity again (it still holds it until slice 3d).
+1. **Grants (every compute node).** Set
+   `faas_secretd_target: "tcp://<control plane private address>:8098"` for
+   all compute nodes and converge. vmmd_service issues each node's
+   `secret-opener` client leaf on the control plane; compute_only_service
+   gives schedd `FAAS_SCHEDD_SECRETD_TARGET`. Nothing opens differently yet.
+   Check: each schedd's journal shows `schedd: peers granted app secrets
+   through secretd`; `secret_grants` gains rows as apps run on peers, and
+   `sched: secret grant refused or failed` stays absent.
+2. **Opening (one node at a time).** Set `faas_vmmd_secretd_open: true` for
+   one node and converge it (`--limit`). vmmd restarts with
+   `FAAS_RUNTIME_SECRET_OPENER=secretd`. Check: vmmd's journal shows `vmmd:
+   app secrets opened by secretd`, wakes there add `secret_open_audit` rows
+   (`via = owner`, `grant` for peer placements), and no wake fails with
+   PermissionDenied. Then the next node.
+
+Back out a node by setting `faas_vmmd_secretd_open: false` and converging:
+vmmd opens with its own runtime identity again (it still holds it until
+slice 3d).
 
 ## Rotation
 

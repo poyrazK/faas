@@ -764,6 +764,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// scheduler's fleet-wide placement; a configured owner pins this
 	// schedd to its registered compute node.
 	engine.WithOwnerNodeID(ownerNodeID)
+	// ADR-20261110210000 §3 slice 3c-2: the owner grants a peer its app's
+	// secrets before placing an instance there, and renews while it runs.
+	grantRPC, closeGrants, err := secretGrantRPCFromEnv(ctx, os.Getenv, ownerNodeID, log)
+	if err != nil {
+		return err
+	}
+	defer closeGrants()
+	if grantRPC != nil {
+		grantor := sched.NewSecretGrantor(grantRPC, ownerNodeID, vmmRouter.NodeName, appRunsOn(engine.Ledger()), log)
+		vmmRouter.WithSecretGrantor(grantor)
+		go grantor.Run(ctx)
+	}
 	// Workloads reach this installation's API through GREGALE_API_URL; unset
 	// leaves the SDK default, https://api.gregale.dev.
 	engine.WithPublicAPIURL(os.Getenv("FAAS_PUBLIC_API_URL"))
