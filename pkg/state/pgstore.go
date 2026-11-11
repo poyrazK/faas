@@ -30496,6 +30496,9 @@ func (s *PgStore) ConsumeOrgInvitation(ctx context.Context, hash []byte, accepti
 	if !strings.EqualFold(inv.Email, accepting.Email) {
 		return OrgMembership{}, OrgInvitation{}, ErrOrgInvitationInvalid
 	}
+	if err := checkInviterTx(ctx, tx, inv); err != nil {
+		return OrgMembership{}, OrgInvitation{}, err
+	}
 
 	// (3) Serialize status, plan and last-seat admission on the org row.
 	limit, err := lockOrgInvitationLimit(ctx, tx, inv.OrgID)

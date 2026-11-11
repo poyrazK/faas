@@ -167,6 +167,8 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 		"from_account": acct.ID,
 		"to_account":   newOwnerID,
 	})
+	s.mailOrgSecurityEvent(responseCtx, "org_ownership_transferred", mem.OrgID,
+		"ownership moved from "+s.orgMemberLabel(responseCtx, acct.ID)+" to "+s.orgMemberLabel(responseCtx, newOwnerID), acct.ID, newOwnerID)
 	updated, ok := s.rehydrateOrg(responseCtx, w, mem)
 	if !ok {
 		return
