@@ -43,7 +43,7 @@ Native validation requires the dedicated hosts described in
 and [the two-host qualification runbook](runbooks/financial-two-host-qualification.md).
 This development environment has PostgreSQL 16 but no `/dev/kvm`.
 
-Validated in this checkout:
+Validation recorded before integrating current main (base `46aad2a12`):
 
 - Complete `pkg/meter`, `pkg/billing`, `pkg/state/financialtest`, `pkg/authz`
   and `pkg/apid/orgbilling` suites pass, including migrated PostgreSQL 16.
@@ -65,6 +65,7 @@ The `-race` admission-cache and blocked-helper deadline runs pass, including
 the existing cache grace/error cases. PostgreSQL pricing also retains the
 recorded timestamp used to order activations in the same minute, matching the
 memory adapter and billing replay.
+Current integration validation is tracked in [PR #7036](https://github.com/poyrazK/faas/pull/7036).
 The full repository suite, full repository lint, native metal/leakcheck,
 physical cross-host scenarios and external-provider qualification have not
 been claimed. No deployment or external provider traffic was performed.

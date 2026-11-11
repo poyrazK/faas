@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -51,8 +52,17 @@ func (l *Loop) replayFinancialPlanActivations(ctx context.Context, store state.F
 	if err != nil {
 		return nil, err
 	}
+	// The sequence records causal plan writes; wall-clock timestamps can
+	// regress. Replay in write order and preserve the prior activation's
+	// lower bound, rather than installing a later plan before its predecessor.
+	sort.Slice(activations, func(i, j int) bool { return activations[i].Sequence < activations[j].Sequence })
+	var previous time.Time
 	byMonth := map[time.Time][]state.FinancialPriceSnapshot{start: current}
 	for _, a := range activations {
+		if a.At.Before(previous) {
+			a.At = previous
+		}
+		previous = a.At
 		month := time.Date(a.At.UTC().Year(), a.At.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
 		prices, loaded := byMonth[month]
 		if !loaded {
