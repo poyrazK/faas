@@ -181,7 +181,7 @@ a live external helpdesk.
 
 ## Deployment and recovery
 
-Apply `20261111151123001_support_service.sql` before deploying apid. It adds twelve
+Apply `20261111160000419_support_service.sql` before deploying apid. It adds twelve
 support tables without changing workload state. Support writes serialize under one
 bounded advisory transaction lock; reassess this strategy before high-volume
 operation. Back up support rows with the main database; restoring a database also

@@ -2691,7 +2691,8 @@
         "/v1/apps/{}/github",
         "/v1/apps/{}/install",
         "/v1/github",
-        "/v1/install"
+        "/v1/install",
+        "/v1/orgs/{}/github/installations"
       ],
       "cli": [
         "connect",

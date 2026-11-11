@@ -1,20 +1,20 @@
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
-CREATE TABLE support_staff (
+CREATE TABLE IF NOT EXISTS support_staff (
  account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK(revision>0),
  role text NOT NULL CHECK(role IN ('agent','manager','revoked')),
  profile jsonb NOT NULL CHECK(jsonb_typeof(profile)='object' AND octet_length(profile::text)<=16384)
 );
-CREATE TABLE support_resources (
+CREATE TABLE IF NOT EXISTS support_resources (
  id uuid PRIMARY KEY,
  kind text NOT NULL CHECK(kind IN ('policy','team')),
  revision bigint NOT NULL CHECK(revision>0),
  data jsonb NOT NULL CHECK(jsonb_typeof(data)='object' AND octet_length(data::text)<=65536),
  updated_at timestamptz NOT NULL CHECK(isfinite(updated_at))
 );
-CREATE TABLE support_tickets (
+CREATE TABLE IF NOT EXISTS support_tickets (
  id uuid PRIMARY KEY,
  scope_key text NOT NULL CHECK(octet_length(scope_key)<=64),
  account_id uuid REFERENCES accounts(id) ON DELETE CASCADE,
@@ -33,10 +33,10 @@ CREATE TABLE support_tickets (
  resolved_at timestamptz CHECK(resolved_at IS NULL OR isfinite(resolved_at)),
  CHECK((account_id IS NULL)<>(org_id IS NULL))
 );
-CREATE INDEX support_tickets_scope_idx ON support_tickets(scope_key,created_at DESC,id DESC);
-CREATE INDEX support_tickets_queue_idx ON support_tickets(team_id,status,created_at DESC,id DESC);
-CREATE INDEX support_tickets_assignee_idx ON support_tickets(assignee_id,status);
-CREATE TABLE support_messages (
+CREATE INDEX IF NOT EXISTS support_tickets_scope_idx ON support_tickets(scope_key,created_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS support_tickets_queue_idx ON support_tickets(team_id,status,created_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS support_tickets_assignee_idx ON support_tickets(assignee_id,status);
+CREATE TABLE IF NOT EXISTS support_messages (
  id uuid PRIMARY KEY,
  sequence bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
  ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
@@ -46,9 +46,9 @@ CREATE TABLE support_messages (
  redacted boolean NOT NULL DEFAULT false,
  created_at timestamptz NOT NULL CHECK(isfinite(created_at))
 );
-CREATE INDEX support_messages_ticket_idx ON support_messages(ticket_id,sequence);
-CREATE INDEX support_messages_search_idx ON support_messages USING gin(to_tsvector('simple',body));
-CREATE TABLE support_receipts (
+CREATE INDEX IF NOT EXISTS support_messages_ticket_idx ON support_messages(ticket_id,sequence);
+CREATE INDEX IF NOT EXISTS support_messages_search_idx ON support_messages USING gin(to_tsvector('simple',body));
+CREATE TABLE IF NOT EXISTS support_receipts (
  id uuid PRIMARY KEY,
  actor_id uuid REFERENCES accounts(id) ON DELETE SET NULL,
  ticket_id uuid REFERENCES support_tickets(id) ON DELETE CASCADE,
@@ -58,7 +58,7 @@ CREATE TABLE support_receipts (
  result jsonb NOT NULL CHECK(jsonb_typeof(result)='object' AND octet_length(result::text)<=8192),
  created_at timestamptz NOT NULL CHECK(isfinite(created_at))
 );
-CREATE TABLE support_events (
+CREATE TABLE IF NOT EXISTS support_events (
  id uuid PRIMARY KEY,
  sequence bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
  ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
@@ -67,15 +67,15 @@ CREATE TABLE support_events (
  data jsonb NOT NULL CHECK(jsonb_typeof(data)='object' AND octet_length(data::text)<=8192),
  created_at timestamptz NOT NULL CHECK(isfinite(created_at))
 );
-CREATE INDEX support_events_ticket_idx ON support_events(ticket_id,sequence);
-CREATE TABLE support_episodes (
+CREATE INDEX IF NOT EXISTS support_events_ticket_idx ON support_events(ticket_id,sequence);
+CREATE TABLE IF NOT EXISTS support_episodes (
  id uuid PRIMARY KEY,
  ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
  started_at timestamptz NOT NULL CHECK(isfinite(started_at)),
  data jsonb NOT NULL CHECK(jsonb_typeof(data)='object' AND octet_length(data::text)<=32768)
 );
-CREATE INDEX support_episodes_started_idx ON support_episodes(started_at,id);
-CREATE TABLE support_previews (
+CREATE INDEX IF NOT EXISTS support_episodes_started_idx ON support_episodes(started_at,id);
+CREATE TABLE IF NOT EXISTS support_previews (
  id uuid PRIMARY KEY,
  ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
  actor_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -83,19 +83,19 @@ CREATE TABLE support_previews (
  snapshot jsonb NOT NULL CHECK(jsonb_typeof(snapshot)='object' AND octet_length(snapshot::text)<=65536),
  expires_at timestamptz NOT NULL CHECK(isfinite(expires_at))
 );
-CREATE INDEX support_previews_expiry_idx ON support_previews(expires_at);
-CREATE TABLE support_engineering (
+CREATE INDEX IF NOT EXISTS support_previews_expiry_idx ON support_previews(expires_at);
+CREATE TABLE IF NOT EXISTS support_engineering (
  ticket_id uuid PRIMARY KEY REFERENCES support_tickets(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK(revision>0),
  data jsonb NOT NULL CHECK(jsonb_typeof(data)='object' AND octet_length(data::text)<=65536)
 );
-CREATE TABLE support_satisfaction (
+CREATE TABLE IF NOT EXISTS support_satisfaction (
  episode_id uuid PRIMARY KEY REFERENCES support_episodes(id) ON DELETE CASCADE,
  actor_id uuid REFERENCES accounts(id) ON DELETE SET NULL,
  rating integer NOT NULL CHECK(rating BETWEEN 1 AND 5),
  created_at timestamptz NOT NULL CHECK(isfinite(created_at))
 );
-CREATE TABLE support_outbox (
+CREATE TABLE IF NOT EXISTS support_outbox (
  id uuid PRIMARY KEY REFERENCES support_events(id) ON DELETE CASCADE,
  ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
  state text NOT NULL CHECK(state IN ('queued','inflight','accepted','failed','skipped')),
@@ -105,9 +105,9 @@ CREATE TABLE support_outbox (
  lease_until timestamptz CHECK(lease_until IS NULL OR isfinite(lease_until)),
  created_at timestamptz NOT NULL CHECK(isfinite(created_at))
 );
-CREATE INDEX support_outbox_ready_idx ON support_outbox(available_at,id) WHERE state IN ('queued','inflight');
+CREATE INDEX IF NOT EXISTS support_outbox_ready_idx ON support_outbox(available_at,id) WHERE state IN ('queued','inflight');
 
-CREATE TABLE support_admin_events (
+CREATE TABLE IF NOT EXISTS support_admin_events (
  id uuid PRIMARY KEY,
  sequence bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
  actor_id uuid REFERENCES accounts(id) ON DELETE SET NULL,

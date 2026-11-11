@@ -45044,7 +45044,7 @@ CREATE TABLE public.managed_postgres_cap_events (
     CONSTRAINT managed_postgres_cap_events_check CHECK ((isfinite(reached_at) AND (reached_at >= period_start))),
     CONSTRAINT managed_postgres_cap_events_check1 CHECK ((ceiling_unit_seconds >= allowance_unit_seconds)),
     CONSTRAINT managed_postgres_cap_events_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
-    CONSTRAINT managed_postgres_cap_events_threshold_check CHECK ((threshold = ANY (ARRAY['warning'::text, 'allowance'::text, 'ceiling_warning'::text, 'suspended'::text]))),
+    CONSTRAINT managed_postgres_cap_events_threshold_v2_check CHECK ((threshold = ANY (ARRAY['warning'::text, 'allowance'::text, 'ceiling_warning'::text, 'suspended'::text, 'egress_held'::text]))),
     CONSTRAINT managed_postgres_cap_events_used_unit_seconds_check CHECK ((used_unit_seconds >= 0))
 );
 
@@ -45677,6 +45677,7 @@ CREATE TABLE public.managed_postgres_plan_excess_notices (
     reason text NOT NULL,
     recorded_at timestamp with time zone NOT NULL,
     mail_intent_id uuid,
+    delete_at timestamp with time zone,
     CONSTRAINT managed_postgres_plan_excess_notices_reason_check CHECK ((reason = ANY (ARRAY['database_limit'::text, 'service_class'::text]))),
     CONSTRAINT managed_postgres_plan_excess_notices_recorded_at_check CHECK (isfinite(recorded_at))
 );
@@ -67014,6 +67015,14 @@ ALTER TABLE public.managed_postgres_overage_pending
 
 ALTER TABLE ONLY public.managed_postgres_overage_pending
     ADD CONSTRAINT managed_postgres_overage_pending_pkey PRIMARY KEY (provider, subject_id, period_start);
+
+
+--
+-- Name: managed_postgres_plan_excess_notices managed_postgres_plan_excess_notices_delete_at_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_plan_excess_notices
+    ADD CONSTRAINT managed_postgres_plan_excess_notices_delete_at_check CHECK (((delete_at IS NULL) OR (isfinite(delete_at) AND (mail_intent_id IS NOT NULL)))) NOT VALID;
 
 
 --
