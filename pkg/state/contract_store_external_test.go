@@ -30,6 +30,7 @@ type contractTestStore interface {
 	state.NotificationChannelStore
 	state.AppWorkPolicyStore
 	state.ObjectStorageCeilingGrantStore
+	state.ComplimentaryAccountStore
 	state.CreditDiscountStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher

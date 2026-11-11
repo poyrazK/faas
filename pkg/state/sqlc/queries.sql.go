@@ -8366,6 +8366,15 @@ func (q *Queries) ClearApplicationStandardControlBindings(ctx context.Context, d
 	return err
 }
 
+const clearComplimentaryAccount = `-- name: ClearComplimentaryAccount :exec
+DELETE FROM complimentary_accounts WHERE account_id=$1
+`
+
+func (q *Queries) ClearComplimentaryAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearComplimentaryAccount, accountID)
+	return err
+}
+
 const clearComputeNodeVMMDRestartNotice = `-- name: ClearComputeNodeVMMDRestartNotice :execrows
 UPDATE compute_nodes SET vmmd_restart_notice_until=NULL
 WHERE id=$1::uuid AND vmmd_restart_notice_until IS NOT NULL
@@ -10730,6 +10739,25 @@ func (q *Queries) CompleteWorkflowJoin(ctx context.Context, db DBTX, arg Complet
 		arg.StepName,
 	)
 	return err
+}
+
+const complimentaryAccount = `-- name: ComplimentaryAccount :one
+SELECT account_id, plan, reason, granted_by, granted_at, expires_at FROM complimentary_accounts WHERE account_id=$1
+`
+
+// ADR-20261111140000: an account given a paid plan without a subscription.
+func (q *Queries) ComplimentaryAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (ComplimentaryAccount, error) {
+	row := db.QueryRow(ctx, complimentaryAccount, accountID)
+	var i ComplimentaryAccount
+	err := row.Scan(
+		&i.AccountID,
+		&i.Plan,
+		&i.Reason,
+		&i.GrantedBy,
+		&i.GrantedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const computeNodeVMMDEpoch = `-- name: ComputeNodeVMMDEpoch :one
@@ -46870,6 +46898,31 @@ func (q *Queries) ListCommitPublications(ctx context.Context, db DBTX, arg ListC
 	return items, nil
 }
 
+const listComplimentaryAccountIDs = `-- name: ListComplimentaryAccountIDs :many
+SELECT account_id FROM complimentary_accounts ORDER BY account_id
+`
+
+// Every complimentary account, for meterd's push pass.
+func (q *Queries) ListComplimentaryAccountIDs(ctx context.Context, db DBTX) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listComplimentaryAccountIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var account_id pgtype.UUID
+		if err := rows.Scan(&account_id); err != nil {
+			return nil, err
+		}
+		items = append(items, account_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listComputeNodeHeartbeats = `-- name: ListComputeNodeHeartbeats :many
 select id, node_id, received_at, last_heartbeat_at, source
 from compute_node_heartbeats
@@ -50979,6 +51032,45 @@ func (q *Queries) ListExclusiveWorkPolicies(ctx context.Context, db DBTX, accoun
 			&i.Retired,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExpiredComplimentaryAccounts = `-- name: ListExpiredComplimentaryAccounts :many
+SELECT account_id, plan, reason, granted_by, granted_at, expires_at FROM complimentary_accounts
+WHERE expires_at IS NOT NULL AND expires_at <= $1::timestamptz
+ORDER BY expires_at, account_id LIMIT $2
+`
+
+type ListExpiredComplimentaryAccountsParams struct {
+	Now       pgtype.Timestamptz
+	BatchSize int32
+}
+
+// Complimentary accounts whose end date has passed, oldest first.
+func (q *Queries) ListExpiredComplimentaryAccounts(ctx context.Context, db DBTX, arg ListExpiredComplimentaryAccountsParams) ([]ComplimentaryAccount, error) {
+	rows, err := db.Query(ctx, listExpiredComplimentaryAccounts, arg.Now, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ComplimentaryAccount{}
+	for rows.Next() {
+		var i ComplimentaryAccount
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.Plan,
+			&i.Reason,
+			&i.GrantedBy,
+			&i.GrantedAt,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -106439,6 +106531,34 @@ type SetCommitSourceEnabledParams struct {
 
 func (q *Queries) SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCommitSourceEnabledParams) error {
 	_, err := db.Exec(ctx, setCommitSourceEnabled, arg.Enabled, arg.AccountID, arg.SourceID)
+	return err
+}
+
+const setComplimentaryAccount = `-- name: SetComplimentaryAccount :exec
+INSERT INTO complimentary_accounts (account_id, plan, reason, granted_by, granted_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (account_id) DO UPDATE SET plan = EXCLUDED.plan, reason = EXCLUDED.reason,
+  granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at, expires_at = EXCLUDED.expires_at
+`
+
+type SetComplimentaryAccountParams struct {
+	AccountID pgtype.UUID
+	Plan      string
+	Reason    string
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) SetComplimentaryAccount(ctx context.Context, db DBTX, arg SetComplimentaryAccountParams) error {
+	_, err := db.Exec(ctx, setComplimentaryAccount,
+		arg.AccountID,
+		arg.Plan,
+		arg.Reason,
+		arg.GrantedBy,
+		arg.GrantedAt,
+		arg.ExpiresAt,
+	)
 	return err
 }
 

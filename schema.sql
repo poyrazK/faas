@@ -34890,6 +34890,31 @@ CREATE TABLE public.commit_sources (
 
 
 --
+-- Name: complimentary_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.complimentary_accounts (
+    account_id uuid NOT NULL,
+    plan text NOT NULL,
+    reason text NOT NULL,
+    granted_by uuid NOT NULL,
+    granted_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone,
+    CONSTRAINT complimentary_accounts_check CHECK (((expires_at IS NULL) OR (isfinite(expires_at) AND (expires_at > granted_at)))),
+    CONSTRAINT complimentary_accounts_granted_at_check CHECK (isfinite(granted_at)),
+    CONSTRAINT complimentary_accounts_plan_check CHECK ((plan = ANY (ARRAY['hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT complimentary_accounts_reason_check CHECK ((reason ~ '^[a-z0-9_]{1,64}$'::text))
+);
+
+
+--
+-- Name: TABLE complimentary_accounts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.complimentary_accounts IS 'Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).';
+
+
+--
 -- Name: compute_node_heartbeat_hourly; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -62073,6 +62098,14 @@ ALTER TABLE ONLY public.commit_sources
 
 
 --
+-- Name: complimentary_accounts complimentary_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.complimentary_accounts
+    ADD CONSTRAINT complimentary_accounts_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: compute_node_heartbeat_hourly compute_node_heartbeat_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74777,6 +74810,13 @@ CREATE UNIQUE INDEX commit_receipts_operation_identity ON public.commit_receipts
 --
 
 CREATE INDEX commit_receipts_source_history ON public.commit_receipts USING btree (account_id, source_id, accepted_at, id);
+
+
+--
+-- Name: complimentary_accounts_expires_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX complimentary_accounts_expires_at_idx ON public.complimentary_accounts USING btree (expires_at) WHERE (expires_at IS NOT NULL);
 
 
 --
@@ -94156,6 +94196,14 @@ ALTER TABLE ONLY public.commit_sources
 
 ALTER TABLE ONLY public.commit_sources
     ADD CONSTRAINT commit_sources_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: complimentary_accounts complimentary_accounts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.complimentary_accounts
+    ADD CONSTRAINT complimentary_accounts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
