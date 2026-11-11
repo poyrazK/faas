@@ -73,3 +73,28 @@ func TestReleasePhaseEnabledFromEnvParsesLikeImaged(t *testing.T) {
 		}
 	}
 }
+
+// Hunt 33 H33-54: a function app's release command hung its deploy in
+// snapshotting (imaged had no image to run it in); it is refused at submit.
+func TestFunctionAppReleaseCommandIsRefused(t *testing.T) {
+	function := state.App{Type: state.AppTypeFunction}
+	for _, tc := range []struct {
+		name     string
+		files    map[string]string
+		manifest *gregalemanifest.Manifest
+	}{
+		{"gregale.yaml release", map[string]string{"handler.js": "x"}, &gregalemanifest.Manifest{Release: &gregalemanifest.ReleaseConfig{Command: "node migrate.js"}}},
+		{"procfile release", map[string]string{"Procfile": "release: node migrate.js\n"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			command, problem := apidserver.ResolveSourceReleaseCommandWithPhase(sourceArchive(t, tc.files), function, tc.manifest, true)
+			if problem == nil || problem.Status != http.StatusUnprocessableEntity || command != nil {
+				t.Fatalf("release = %v, %+v; want a 422 refusal", command, problem)
+			}
+		})
+	}
+	command, problem := apidserver.ResolveSourceReleaseCommandWithPhase(sourceArchive(t, map[string]string{"handler.js": "x"}), function, nil, true)
+	if problem != nil || command != nil {
+		t.Fatalf("function without a release command = %v, %+v; want none", command, problem)
+	}
+}
