@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from ..models.app_effective_limits import AppEffectiveLimits
     from ..models.app_manifest import AppManifest
     from ..models.app_response_function_callables import AppResponseFunctionCallables
+    from ..models.app_response_function_input_schema import AppResponseFunctionInputSchema
     from ..models.app_service_binding import AppServiceBinding
     from ..models.declared_route import DeclaredRoute
     from ..models.parked_deployment_ref import ParkedDeploymentRef
@@ -120,6 +121,10 @@ class AppResponse:
     function_callables: AppResponseFunctionCallables | Unset = UNSET
     """Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped
     into the guest as GREGALE_FUNCTIONS on the next deploy."""
+    function_input_schema: AppResponseFunctionInputSchema | Unset = UNSET
+    """JSON Schema an SDK functions client's calls to this function are checked against; a call whose body does not
+    match is refused with 422 function_input_invalid. Set from the function's input in gregale.yaml by CLI deploys.
+   """
     deployment_availability: AppResponseDeploymentAvailability | Unset = UNSET
     """Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from
     the app lifecycle status and does not assert that a historical artifact is safe to restore."""
@@ -340,6 +345,10 @@ class AppResponse:
         function_callables: dict[str, Any] | Unset = UNSET
         if not isinstance(self.function_callables, Unset):
             function_callables = self.function_callables.to_dict()
+
+        function_input_schema: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.function_input_schema, Unset):
+            function_input_schema = self.function_input_schema.to_dict()
 
         deployment_availability: str | Unset = UNSET
         if not isinstance(self.deployment_availability, Unset):
@@ -592,6 +601,8 @@ class AppResponse:
             field_dict["function_concurrency"] = function_concurrency
         if function_callables is not UNSET:
             field_dict["function_callables"] = function_callables
+        if function_input_schema is not UNSET:
+            field_dict["function_input_schema"] = function_input_schema
         if deployment_availability is not UNSET:
             field_dict["deployment_availability"] = deployment_availability
         if deleted_at is not UNSET:
@@ -701,6 +712,7 @@ class AppResponse:
         from ..models.app_effective_limits import AppEffectiveLimits
         from ..models.app_manifest import AppManifest
         from ..models.app_response_function_callables import AppResponseFunctionCallables
+        from ..models.app_response_function_input_schema import AppResponseFunctionInputSchema
         from ..models.app_service_binding import AppServiceBinding
         from ..models.declared_route import DeclaredRoute
         from ..models.parked_deployment_ref import ParkedDeploymentRef
@@ -801,6 +813,13 @@ class AppResponse:
             function_callables = UNSET
         else:
             function_callables = AppResponseFunctionCallables.from_dict(_function_callables)
+
+        _function_input_schema = d.pop("function_input_schema", UNSET)
+        function_input_schema: AppResponseFunctionInputSchema | Unset
+        if isinstance(_function_input_schema, Unset):
+            function_input_schema = UNSET
+        else:
+            function_input_schema = AppResponseFunctionInputSchema.from_dict(_function_input_schema)
 
         _deployment_availability = d.pop("deployment_availability", UNSET)
         deployment_availability: AppResponseDeploymentAvailability | Unset
@@ -1161,6 +1180,7 @@ class AppResponse:
             request_timeout_s=request_timeout_s,
             function_concurrency=function_concurrency,
             function_callables=function_callables,
+            function_input_schema=function_input_schema,
             deployment_availability=deployment_availability,
             deleted_at=deleted_at,
             delete_grace_until=delete_grace_until,

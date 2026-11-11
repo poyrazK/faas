@@ -116,6 +116,10 @@ export type UpdateAppRequest = {
    */
   function_callables?: any | null;
   /**
+   * Replaces the JSON Schema an SDK functions client's calls to this function are checked against; {} clears it. Takes effect on the next deploy. Function apps only.
+   */
+  function_input_schema?: any | null;
+  /**
    * Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment.
    */
   request_rate_limit_rps?: number | null;
