@@ -474,3 +474,25 @@ func TestSupportAgentCanClaimOwnUUIDInEitherSpelling(t *testing.T) {
 	ticket := f.create(t, "Help")
 	f.call(t, f.other, true, "triage", ticket, "", "", Change{ExpectedRevision: 1, Priority: "normal", AssigneeID: strings.ToUpper(f.other.ID), Reason: "claim"}, 202)
 }
+
+func TestSupportCreateReceiptIsBoundToScopeKindEvenWhenUUIDsOverlap(t *testing.T) {
+	f := supportDB(t)
+	key := newID()
+	in := api.CreateSupportTicketRequest{Subject: "Same request", Category: "account", Body: "Help"}
+	f.call(t, f.customer, false, "create", "", key, "", in, 202)
+	f.call(t, f.customer, false, "create", "", key, "", in, 202)
+	if _, e := f.pool.Exec(t.Context(), `INSERT INTO orgs(id,slug,plan,deleted_pending,personal_org) VALUES($1,'coincident','pro',false,false)`, f.customer.ID); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := f.pool.Exec(t.Context(), `INSERT INTO org_memberships(org_id,account_id,role) VALUES($1,$1,'owner')`, f.customer.ID); e != nil {
+		t.Fatal(e)
+	}
+	r := httptest.NewRequest("POST", "/v1/orgs/coincident/support/tickets", bytes.NewReader(raw(in)))
+	r.SetPathValue("org", "coincident")
+	r.Header.Set("Idempotency-Key", key)
+	w := httptest.NewRecorder()
+	f.s.Serve(w, r, f.customer, "create", false)
+	if w.Code != 409 {
+		t.Fatalf("cross-scope receipt replay: %d %s", w.Code, w.Body)
+	}
+}

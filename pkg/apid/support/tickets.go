@@ -38,11 +38,14 @@ func (x *session) admission(scope string, create bool) error {
 }
 func (x *session) create(key string, in api.CreateSupportTicketRequest) (any, error) {
 	original := in
+	// Account and organization UUID namespaces may overlap; bind the scope kind too.
+	operation := "create_account"
 	resource := x.scope.AccountID
 	if x.scope.OrgID != "" {
 		resource = x.scope.OrgID
+		operation = "create_org"
 	}
-	if v, e := x.receipt(key, "create", resource, in); v != nil || e != nil {
+	if v, e := x.receipt(key, operation, resource, in); v != nil || e != nil {
 		return v, e
 	}
 	if in.Priority == "" {
@@ -89,7 +92,7 @@ func (x *session) create(key string, in api.CreateSupportTicketRequest) (any, er
 		return nil, e
 	}
 	result := api.SupportSubmission{TicketID: ticketID, SubmissionID: key, Revision: 1}
-	return result, x.remember(key, "create", resource, ticketID, original, result)
+	return result, x.remember(key, operation, resource, ticketID, original, result)
 }
 func (x *session) checkContext(c api.SupportContext) error {
 	if c.RequestID != "" && (!bounded(c.RequestID, api.SupportSubjectMaxBytes) || len(c.RequestID) > api.SupportSubjectMaxBytes) {
