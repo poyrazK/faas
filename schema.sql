@@ -44875,6 +44875,21 @@ CREATE TABLE public.log_saved_searches (
 
 
 --
+-- Name: login_failure_budgets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.login_failure_budgets (
+    email_hash text NOT NULL,
+    window_started_at timestamp with time zone NOT NULL,
+    failures integer NOT NULL,
+    notified_at timestamp with time zone,
+    CONSTRAINT login_failure_budgets_failures_check CHECK (((failures >= 1) AND (failures <= 1000000))),
+    CONSTRAINT login_failure_budgets_hash_check CHECK (((char_length(email_hash) >= 16) AND (char_length(email_hash) <= 128))),
+    CONSTRAINT login_failure_budgets_times_check CHECK ((isfinite(window_started_at) AND ((notified_at IS NULL) OR isfinite(notified_at))))
+);
+
+
+--
 -- Name: login_tokens; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -66450,6 +66465,14 @@ ALTER TABLE ONLY public.log_saved_searches
 
 
 --
+-- Name: login_failure_budgets login_failure_budgets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.login_failure_budgets
+    ADD CONSTRAINT login_failure_budgets_pkey PRIMARY KEY (email_hash);
+
+
+--
 -- Name: login_tokens login_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -78747,6 +78770,13 @@ CREATE INDEX log_events_default_account_id_app_id_trace_id_occurred_at_i_idx ON 
 --
 
 CREATE INDEX log_events_default_occurred_at_id_idx ON public.log_events_default USING btree (occurred_at, id);
+
+
+--
+-- Name: login_failure_budgets_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX login_failure_budgets_window_idx ON public.login_failure_budgets USING btree (window_started_at);
 
 
 --

@@ -2235,7 +2235,9 @@ func (s *server) handler() http.Handler {
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.dashboardExportLimiter)(s.auth(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.exportAccount)))))
 	mux.HandleFunc("DELETE /v1/account", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.deleteAccount))))))
-	mux.HandleFunc("POST /v1/account/restore", s.auth(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreAccount)))
+	// Restoring re-enables every key and app the deletion stopped, so it
+	// needs a full-access key, like deleting (ADR-20261111150000).
+	mux.HandleFunc("POST /v1/account/restore", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.restoreAccount))))
 	mux.HandleFunc("GET /v1/account/dpa", s.dpaTemplate)
 
 	// IAM-3 server-side session revocation (ADR-039, issue #187

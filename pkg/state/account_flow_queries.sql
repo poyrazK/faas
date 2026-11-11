@@ -195,3 +195,39 @@ LIMIT sqlc.arg(max_rows);
 -- (ADR 20261110120000).
 -- name: ClearAccountMailSlot :exec
 DELETE FROM account_mail_throttle WHERE account_id=$1 AND kind=$2;
+
+-- Failed password checks per keyed email hash, shared by every apid (ADR
+-- 20261111150000). One fixed window per address; notify is true when this
+-- failure used up the budget and the owner was not told within the window.
+-- name: RecordLoginFailure :one
+INSERT INTO login_failure_budgets AS b (email_hash, window_started_at, failures, notified_at)
+VALUES (sqlc.arg(email_hash)::text, now(), 1,
+        CASE WHEN sqlc.arg(max_failures)::int <= 1 THEN now() END)
+ON CONFLICT (email_hash) DO UPDATE SET
+    window_started_at = CASE WHEN b.window_started_at <= now() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
+        THEN now() ELSE b.window_started_at END,
+    failures = CASE WHEN b.window_started_at <= now() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
+        THEN 1 ELSE LEAST(b.failures + 1, 1000000) END,
+    notified_at = CASE WHEN (CASE WHEN b.window_started_at <= now() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
+            THEN 1 ELSE b.failures + 1 END) >= sqlc.arg(max_failures)::int
+        AND (b.notified_at IS NULL OR b.notified_at <= now() - make_interval(secs => sqlc.arg(window_seconds)::double precision))
+        THEN now() ELSE b.notified_at END
+RETURNING (b.notified_at IS NOT DISTINCT FROM now())::boolean AS notify;
+
+-- Seconds until the address may try a password again; no row when it may.
+-- name: LoginFailureRetryAfter :one
+SELECT EXTRACT(EPOCH FROM (window_started_at + make_interval(secs => sqlc.arg(window_seconds)::double precision) - now()))::double precision AS wait_seconds
+FROM login_failure_budgets
+WHERE email_hash = sqlc.arg(email_hash)::text
+  AND failures >= sqlc.arg(max_failures)::int
+  AND window_started_at > now() - make_interval(secs => sqlc.arg(window_seconds)::double precision);
+
+-- name: ResetLoginFailures :exec
+DELETE FROM login_failure_budgets WHERE email_hash = $1;
+
+-- Bounded sweep of windows that ended; run after each recorded failure.
+-- name: SweepLoginFailures :execrows
+DELETE FROM login_failure_budgets WHERE email_hash IN (
+    SELECT email_hash FROM login_failure_budgets
+    WHERE window_started_at <= now() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
+    ORDER BY window_started_at LIMIT 200);
