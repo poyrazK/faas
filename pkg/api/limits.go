@@ -10577,6 +10577,10 @@ const (
 	// schedd keeps across nodes (ADR-20261027090013 §12); a shape past it
 	// cold-boots every session.
 	SandboxWarmSnapshotsMax = 512
+	// SandboxTemplateSnapshotSweepSec is how often schedd drops the warm
+	// snapshots of deleted templates and deletes their objects on the node
+	// (ADR-20261027090013 §12).
+	SandboxTemplateSnapshotSweepSec = 300
 	// Measured charge and reservation of agent run VMs on agent nodes
 	// (ADR-20261027090015 §3, proposed; schedd agent_measured_charge). A run
 	// is charged max(memory, its version's p95 private peak,

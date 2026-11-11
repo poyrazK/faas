@@ -2000,6 +2000,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if agentRunner.SandboxesEnabled() {
 			grpcHandler.WithSandboxRunner(agentRunner)
 			log.Info("sandbox sessions enabled")
+			// ADR-20261027090013 §12: a deleted template's warm snapshots go.
+			go agentRunner.RunSandboxTemplateSnapshotSweep(ctx)
 		}
 	}
 	// An empty NodeName is the single-box, Unix-socket posture. Passing a

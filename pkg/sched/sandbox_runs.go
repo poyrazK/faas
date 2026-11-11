@@ -222,7 +222,7 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	}
 	// A session that cold-booted and ended cleanly proves the shape boots;
 	// its capture runs under the session's reservation, which it releases.
-	if method == vmmdpb.WakeMethod_WAKE_COLD_BOOT.String() && r.claimSandboxCapture(shape) {
+	if method == vmmdpb.WakeMethod_WAKE_COLD_BOOT.String() && r.claimSandboxCapture(shape, spec) {
 		capturing = true
 		go r.captureSandbox(context.WithoutCancel(ctx), placement, spec, shape, release)
 	}

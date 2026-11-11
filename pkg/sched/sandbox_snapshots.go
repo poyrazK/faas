@@ -12,11 +12,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
@@ -81,8 +84,10 @@ func (r *AgentRunner) dropSandboxSnapshot(shape sandboxSnapshotShape, snap *Agen
 
 // claimSandboxCapture reports whether this caller should capture the
 // shape: snapshots are on, no capture runs, and the shape's slot is empty or
-// holds another build. The slots are bounded.
-func (r *AgentRunner) claimSandboxCapture(shape sandboxSnapshotShape) bool {
+// holds another build. A session that cold-booted while another session's
+// capture of the same build ran finds that capture in the slot and leaves
+// it. The slots are bounded.
+func (r *AgentRunner) claimSandboxCapture(shape sandboxSnapshotShape, spec SandboxSpec) bool {
 	if !r.cfg.SandboxSnapshots {
 		return false
 	}
@@ -91,7 +96,11 @@ func (r *AgentRunner) claimSandboxCapture(shape sandboxSnapshotShape) bool {
 	if r.sandboxCapturing[shape] {
 		return false
 	}
-	if _, ok := r.sandboxSnaps[shape]; !ok && len(r.sandboxSnaps)+len(r.sandboxCapturing) >= api.SandboxWarmSnapshotsMax {
+	s, ok := r.sandboxSnaps[shape]
+	if ok && s.driveKey == sandboxDriveKey(spec) {
+		return false
+	}
+	if !ok && len(r.sandboxSnaps)+len(r.sandboxCapturing) >= api.SandboxWarmSnapshotsMax {
 		return false
 	}
 	r.sandboxCapturing[shape] = true
@@ -151,4 +160,111 @@ func (r *VMMRouter) CaptureSandboxSnapshot(ctx context.Context, nodeID string, s
 		return nil, api.NewProblem(501, api.CodeNotImplemented, "Sandbox sessions unavailable", "vmmd client does not support sandbox snapshots")
 	}
 	return c.CaptureSandboxSnapshot(ctx, spec, namespace, captureID)
+}
+
+// sandboxSnapshotDeleter is the VMMRouter surface the template sweep uses.
+type sandboxSnapshotDeleter interface {
+	DeleteSandboxSnapshot(ctx context.Context, nodeID string, snap *AgentRunSnapshot) error
+}
+
+// DeleteSandboxSnapshot removes a warm session snapshot's objects on
+// nodeID's vmmd.
+func (r *VMMRouter) DeleteSandboxSnapshot(ctx context.Context, nodeID string, snap *AgentRunSnapshot) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	c, ok := cli.(interface {
+		DeleteSandboxSnapshot(context.Context, *AgentRunSnapshot) error
+	})
+	if !ok {
+		return api.NewProblem(501, api.CodeNotImplemented, "Sandbox sessions unavailable", "vmmd client does not support sandbox snapshots")
+	}
+	return c.DeleteSandboxSnapshot(ctx, snap)
+}
+
+// sandboxTemplateSlug is the build app slug of a template slot, or "" for a
+// preset or seller-image slot.
+func sandboxTemplateSlug(shape sandboxSnapshotShape) string {
+	slug, ok := strings.CutPrefix(shape.drive, "apps/")
+	if !ok || shape.account == "" || !api.IsSandboxTemplateAppSlug(slug) {
+		return ""
+	}
+	return slug
+}
+
+// sandboxTemplateGone reports whether a template slot's build app is
+// deleted, or no longer the slot account's template: no session will
+// restore the slot again.
+func (r *AgentRunner) sandboxTemplateGone(ctx context.Context, shape sandboxSnapshotShape, slug string) (bool, error) {
+	app, err := r.engine.store.AppBySlug(ctx, slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("sched: read template build app %s: %w", slug, err)
+	}
+	return app.Status == state.AppDeleted || !app.SandboxTemplate || app.AccountID != shape.account, nil
+}
+
+// SweepSandboxTemplateSnapshots drops the warm snapshots of templates whose
+// build app is gone and deletes their objects on the node
+// (ADR-20261027090013 §12). A slot whose objects could not be deleted is
+// dropped anyway and its failure logged: its keys are fixed per slot, and
+// nothing restores it again. It returns how many slots it dropped.
+func (r *AgentRunner) SweepSandboxTemplateSnapshots(ctx context.Context) int {
+	type slot struct {
+		shape sandboxSnapshotShape
+		snap  *AgentRunSnapshot
+		slug  string
+	}
+	r.snapMu.Lock()
+	var slots []slot
+	for shape, s := range r.sandboxSnaps {
+		if slug := sandboxTemplateSlug(shape); slug != "" {
+			slots = append(slots, slot{shape: shape, snap: s.snap, slug: slug})
+		}
+	}
+	r.snapMu.Unlock()
+	deleter, canDelete := r.router.(sandboxSnapshotDeleter)
+	dropped := 0
+	for _, s := range slots {
+		gone, err := r.sandboxTemplateGone(ctx, s.shape, s.slug)
+		if err != nil {
+			slog.Default().Warn("sched: sandbox template snapshot sweep", "app", s.slug, "err", err)
+			continue
+		}
+		if !gone {
+			continue
+		}
+		r.dropSandboxSnapshot(s.shape, s.snap)
+		dropped++
+		if !canDelete {
+			continue
+		}
+		if err := deleter.DeleteSandboxSnapshot(ctx, s.shape.node, s.snap); err != nil {
+			slog.Default().Warn("sched: delete a deleted template's sandbox snapshot", "node", s.shape.node, "app", s.slug,
+				"key", s.snap.StorageKey, "err", err)
+		}
+	}
+	return dropped
+}
+
+// RunSandboxTemplateSnapshotSweep sweeps every
+// api.SandboxTemplateSnapshotSweepSec until ctx ends. It does nothing while
+// warm session snapshots are off.
+func (r *AgentRunner) RunSandboxTemplateSnapshotSweep(ctx context.Context) {
+	if !r.cfg.SandboxSnapshots {
+		return
+	}
+	t := time.NewTicker(time.Duration(api.SandboxTemplateSnapshotSweepSec) * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			r.SweepSandboxTemplateSnapshots(ctx)
+		}
+	}
 }
