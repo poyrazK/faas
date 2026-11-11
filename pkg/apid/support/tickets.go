@@ -132,7 +132,7 @@ func (x *session) mutate(key, ticket, op string, in Change) (any, error) {
 	if in.ExpectedRevision != t.Revision {
 		return nil, conflict("ticket revision changed; reload before applying this action")
 	}
-	claim := op == "triage" && !t.AssigneeID.Valid && in.AssigneeID == x.actor.ID
+	claim := op == "triage" && !t.AssigneeID.Valid && uid(in.AssigneeID) == uid(x.actor.ID)
 	if x.role != "" && x.role != "manager" && id(t.AssigneeID) != x.actor.ID && !claim {
 		return nil, forbidden()
 	}
@@ -254,6 +254,18 @@ func (x *session) mutate(key, ticket, op string, in Change) (any, error) {
 func (x *session) triage(t *q.SupportTicket, st *ticketState, in Change) (map[string]any, error) {
 	if !bounded(in.Reason, api.SupportReasonMaxBytes) || !validSkills(in.RequiredSkills) || !oneOf(in.Priority, "low", "normal", "high", "urgent") {
 		return nil, invalid("handoff requires a reason, priority and valid skills")
+	}
+	if in.TeamID != "" {
+		if !uid(in.TeamID).Valid {
+			return nil, invalid("team requires a UUID")
+		}
+		in.TeamID = id(uid(in.TeamID))
+	}
+	if in.AssigneeID != "" {
+		if !uid(in.AssigneeID).Valid {
+			return nil, invalid("assignee requires a UUID")
+		}
+		in.AssigneeID = id(uid(in.AssigneeID))
 	}
 	if in.OverrideCapacity && x.role != "manager" {
 		return nil, forbidden()

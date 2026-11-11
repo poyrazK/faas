@@ -450,3 +450,27 @@ func TestSupportRejectsPolicyWhoseCalendarCannotFitItsTarget(t *testing.T) {
 		t.Fatal("rejected policy affected ticket intake")
 	}
 }
+
+func TestSupportUUIDSpellingCannotBypassCyclesOrBreakReceipts(t *testing.T) {
+	f := supportDB(t)
+	ticket := f.create(t, "Help")
+	key := newID()
+	in := Change{ExpectedRevision: 1, Body: "Details"}
+	f.call(t, f.customer, false, "reply", strings.ToUpper(ticket), key, "", in, 202)
+	f.call(t, f.customer, false, "reply", ticket, key, "", in, 202)
+	f.call(t, f.customer, false, "reply", strings.ToUpper(ticket), key, "", in, 202)
+	teamID := newID()
+	team := Team{ID: strings.ToUpper(teamID), Name: "Support", Enabled: true, FallbackID: teamID}
+	f.call(t, f.manager, true, "team_save", "", "", "", team, 400)
+	team.FallbackID = ""
+	key = newID()
+	f.call(t, f.manager, true, "team_save", "", key, "", team, 202)
+	f.call(t, f.manager, true, "team_save", "", key, "", team, 202)
+}
+
+func TestSupportAgentCanClaimOwnUUIDInEitherSpelling(t *testing.T) {
+	f := supportDB(t)
+	f.call(t, f.manager, true, "staff_save", "", "", "", Staff{AccountID: f.other.ID, Role: "agent", Profile: Profile{Available: true, Capacity: 50}}, 202)
+	ticket := f.create(t, "Help")
+	f.call(t, f.other, true, "triage", ticket, "", "", Change{ExpectedRevision: 1, Priority: "normal", AssigneeID: strings.ToUpper(f.other.ID), Reason: "claim"}, 202)
+}

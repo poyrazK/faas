@@ -187,6 +187,21 @@ func (x *session) saveTeam(key string, t Team) (any, error) {
 	if !uid(t.ID).Valid || !bounded(t.Name, api.SupportSubjectMaxBytes) || len(t.Members) > api.SupportStaffMax {
 		return nil, invalid("invalid team or member limit")
 	}
+	original := t
+	t.ID = id(uid(t.ID))
+	t.Members = slices.Clone(t.Members)
+	if t.FallbackID != "" {
+		if !uid(t.FallbackID).Valid {
+			return nil, invalid("fallback team requires a UUID")
+		}
+		t.FallbackID = id(uid(t.FallbackID))
+	}
+	for i, member := range t.Members {
+		if !uid(member).Valid {
+			return nil, invalid("team members require UUIDs")
+		}
+		t.Members[i] = id(uid(member))
+	}
 	if e := x.resourceRevision(t.ID, "team", t.Revision, api.SupportTeamsMax); e != nil {
 		return nil, e
 	}
@@ -224,7 +239,7 @@ func (x *session) saveTeam(key string, t Team) (any, error) {
 			current = next.FallbackID
 		}
 	}
-	input := t
+	input := original
 	t.Revision++
 	if e := x.q.ResourceSave(x.ctx, x.tx, q.ResourceSaveParams{ID: uid(t.ID), Kind: "team", Revision: t.Revision, Data: raw(t), UpdatedAt: ts(x.now)}); e != nil {
 		return nil, e
