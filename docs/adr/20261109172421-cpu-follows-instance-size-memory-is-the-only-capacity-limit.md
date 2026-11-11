@@ -248,6 +248,8 @@ schema change ships before its first user.
       *Merged (#6933), unreleased.*
 7. **Customer docs and plan pages** ("CPU follows memory: 1 vCPU per GB,
    bursts to idle CPU") once the change is tested on prod.
+   *Live since rc.337. This repo's plans page, UX spec and CLI help say it;
+   the web plan pages are separate.*
 
 ## Verification
 
