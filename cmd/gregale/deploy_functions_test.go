@@ -830,10 +830,21 @@ func TestFunctionSetBindsSiblingsForTypedClients(t *testing.T) {
 			t.Errorf("%s bindings = %+v, want %v under the declared policy", slug, bound, want)
 		}
 	}
-	if got := client.env["shop-web"]["GREGALE_FUNCTIONS"]; got != `{"billing-api":"billing-api","users":"shop-users"}` {
-		t.Errorf("shop-web GREGALE_FUNCTIONS = %q", got)
+	callables := func(slug string) map[string]string {
+		for _, u := range client.updates[slug] {
+			if u.FunctionCallables != nil {
+				return *u.FunctionCallables
+			}
+		}
+		return nil
 	}
-	if got := client.env["shop-users"]["GREGALE_FUNCTIONS"]; got != `{"web":"shop-web"}` {
-		t.Errorf("shop-users GREGALE_FUNCTIONS = %q", got)
+	if got := callables("shop-web"); !maps.Equal(got, map[string]string{"billing-api": "billing-api", "users": "shop-users"}) {
+		t.Errorf("shop-web function_callables = %v", got)
+	}
+	if got := callables("shop-users"); !maps.Equal(got, map[string]string{"web": "shop-web"}) {
+		t.Errorf("shop-users function_callables = %v", got)
+	}
+	if len(client.env["shop-web"]) != 0 {
+		t.Errorf("GREGALE_FUNCTIONS must not be written as user env: %v", client.env["shop-web"])
 	}
 }

@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	// FunctionsEnv is the env variable a deploy sets on each function app:
-	// a JSON object from the names it may call to their app slugs
-	// (ADR-20261111150000 §2). The SDK clients read it.
-	FunctionsEnv = "GREGALE_FUNCTIONS"
+	// FunctionsEnv is the variable imaged stamps from an app's
+	// function_callables: a JSON object from the names it may call to their
+	// app slugs (ADR-20261111150000 §2). The SDK clients read it.
+	FunctionsEnv = api.FunctionCallablesEnv
 	// FunctionSchemaMaxBytes caps one input or output schema.
 	FunctionSchemaMaxBytes = 64 << 10
 )

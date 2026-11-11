@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"maps"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/functionsrepo"
@@ -35,4 +36,12 @@ func (s *server) sourceFunctionCalls(ctx context.Context, acct state.Account, ap
 // appResponseBindings is the part of an app's response BindingUpdate reads.
 func appResponseBindings(app state.App) api.AppResponse {
 	return api.AppResponse{ServiceBindings: app.Manifest.ServiceBindings, ServiceBindingPolicy: app.Manifest.ServiceBindingPolicy}
+}
+
+// nonEmptyCallables stores an empty map as nil, so {} clears the field.
+func nonEmptyCallables(callables map[string]string) map[string]string {
+	if len(callables) == 0 {
+		return nil
+	}
+	return maps.Clone(callables)
 }

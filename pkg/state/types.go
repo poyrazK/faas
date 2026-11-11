@@ -2086,6 +2086,10 @@ type AppManifest struct {
 	// FunctionConcurrency is how many requests one function worker serves
 	// at once (ADR-1342); zero keeps one.
 	FunctionConcurrency int `json:"function_concurrency,omitempty"`
+	// FunctionCallables maps each name a function's typed client may call to
+	// its app slug (ADR-20261111150000); imaged stamps it as
+	// GREGALE_FUNCTIONS.
+	FunctionCallables map[string]string `json:"function_callables,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-

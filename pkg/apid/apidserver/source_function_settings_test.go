@@ -2,6 +2,7 @@ package apidserver_test
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"testing"
 
@@ -155,12 +156,8 @@ func TestApplySourceFunctionSettingsBindsSiblings(t *testing.T) {
 	if !slices.Equal(targets, []string{"billing-api", "shop-users"}) || got.Manifest.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
 		t.Fatalf("web bindings = %v policy %q, want billing-api + shop-users under declared", targets, got.Manifest.ServiceBindingPolicy)
 	}
-	env, err := store.ListAppEnvInScope(ctx, acct.ID, web.ID, state.DefaultEnvScope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(env) != 1 || env[0].Key != gregalemanifest.FunctionsEnv || env[0].Value != `{"billing-api":"billing-api","users":"shop-users"}` {
-		t.Fatalf("web env = %+v", env)
+	if want := map[string]string{"billing-api": "billing-api", "users": "shop-users"}; !maps.Equal(got.Manifest.FunctionCallables, want) {
+		t.Fatalf("web function_callables = %v, want %v", got.Manifest.FunctionCallables, want)
 	}
 
 	gotUsers, prob := apidserver.ApplySourceFunctionSettingsForTest(ctx, store, acct, users, gregalemanifest.FunctionSpec{Name: "users", ProjectFunctions: []string{"web", "users"}}, "")

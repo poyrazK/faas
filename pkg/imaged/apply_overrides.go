@@ -246,6 +246,26 @@ func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest 
 	return manifest
 }
 
+// applyFunctionCallables gives a function's typed client the names it may
+// call (ADR-20261111150000), as GREGALE_FUNCTIONS. Fixed at build time like
+// function_concurrency: a changed project needs a deploy, which it gets.
+func applyFunctionCallables(manifest api.AppManifest, app state.App) api.AppManifest {
+	if len(app.Manifest.FunctionCallables) == 0 {
+		return manifest
+	}
+	raw, err := json.Marshal(app.Manifest.FunctionCallables)
+	if err != nil {
+		return manifest
+	}
+	env := maps.Clone(manifest.Env)
+	if env == nil {
+		env = map[string]string{}
+	}
+	env[api.FunctionCallablesEnv] = string(raw)
+	manifest.Env = env
+	return manifest
+}
+
 // applyFunctionConcurrency tells a function's generated adapter how many
 // requests one worker may serve at once (ADR-1342). The default of one
 // leaves the env untouched, so existing functions build exactly as before.

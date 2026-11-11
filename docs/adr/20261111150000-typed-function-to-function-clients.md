@@ -54,10 +54,12 @@ Owner decisions on 2026-11-11 (all were the recommended options).
    `http://<slug>.internal:10081` through `createGregaleFetch` / the Python
    release transport: never public, authorized by the platform from the
    caller's VM, waking a parked callee, and carrying the remaining deadline,
-   release and chain deadline. The deploy also sets `GREGALE_FUNCTIONS`, a
-   JSON map from function name to app slug, so the runtime client needs no
-   code generation to find a sibling. A rename or removal updates the
-   bindings and the map on the next deploy.
+   release and chain deadline. The deploy also sets the app's
+   `function_callables`, a map from each callable name to its app slug;
+   imaged stamps it into the guest as `GREGALE_FUNCTIONS` (a platform
+   variable, like `FAAS_FUNCTION_CONCURRENCY`; `GREGALE_*` env is reserved),
+   so the runtime client needs no code generation to find a sibling. A
+   rename or removal updates the bindings and the map on the next deploy.
 
 3. **Two call styles.**
    - `await functions.users.call(input)` (Python `await functions.users.call(...)`
@@ -115,7 +117,7 @@ Owner decisions on 2026-11-11 (all were the recommended options).
   can call to its project plus `calls:`. A function that relied on calling
   an unrelated app by `.svc.gregale` must list it under `calls:`; the deploy
   plan names that change the first time.
-- `GREGALE_FUNCTIONS` is a reserved env name for function apps.
+- `function_callables` is a new app setting (PATCH and the app response), stamped as `GREGALE_FUNCTIONS`.
 
 ## Alternatives considered
 

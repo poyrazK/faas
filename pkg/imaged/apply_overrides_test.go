@@ -378,3 +378,19 @@ func TestApplyFunctionConcurrency(t *testing.T) {
 		t.Fatal("stamp mutated the input manifest's env")
 	}
 }
+
+// ADR-20261111150000: a function's callables reach its guest as
+// GREGALE_FUNCTIONS; none leaves the env alone.
+func TestApplyFunctionCallables(t *testing.T) {
+	base := api.AppManifest{Env: map[string]string{"A": "1"}}
+	if got := applyFunctionCallables(base, state.App{}); !reflect.DeepEqual(got.Env, base.Env) {
+		t.Fatalf("no callables changed env: %v", got.Env)
+	}
+	got := applyFunctionCallables(base, state.App{Manifest: state.AppManifest{FunctionCallables: map[string]string{"users": "shop-users", "billing-api": "billing-api"}}})
+	if want := `{"billing-api":"billing-api","users":"shop-users"}`; got.Env[api.FunctionCallablesEnv] != want || got.Env["A"] != "1" {
+		t.Fatalf("env = %v, want %s=%s", got.Env, api.FunctionCallablesEnv, want)
+	}
+	if _, shared := base.Env[api.FunctionCallablesEnv]; shared {
+		t.Fatal("stamp mutated the input manifest's env")
+	}
+}

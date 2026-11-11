@@ -1119,6 +1119,7 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
 		RequestTimeoutS:     a.Manifest.RequestTimeoutS,
 		FunctionConcurrency: a.Manifest.FunctionConcurrency,
+		FunctionCallables:   a.Manifest.FunctionCallables,
 		// Issue #559: platform-advertised per-VM concurrency cap
 		// for the customer's plan. Distinct from MaxConcurrency
 		// (the per-app instance cap above). Unknown plans fall

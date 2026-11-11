@@ -66,10 +66,10 @@ func (s *server) applySourceFunctionSettings(ctx context.Context, acct state.Acc
 		if bindings, bound := calls.BindingUpdate(appResponseBindings(app)); bound {
 			req.ServiceBindingTargets, req.ServiceBindingPolicy, changed = bindings.ServiceBindingTargets, bindings.ServiceBindingPolicy, true
 		}
-		if spec.Env == nil {
-			spec.Env = map[string]string{}
+		if !maps.Equal(app.Manifest.FunctionCallables, calls.Names) {
+			names := maps.Clone(calls.Names)
+			req.FunctionCallables, changed = &names, true
 		}
-		spec.Env[gregalemanifest.FunctionsEnv] = calls.Env()
 	}
 	if changed && push.Scope == state.DefaultEnvScope {
 		updated, prob := s.applySourceFunctionAppSettings(ctx, acct, app, req, limits, push)
@@ -112,7 +112,7 @@ func (s *server) applySourceFunctionAppSettings(ctx context.Context, acct state.
 		fields = append(fields, "before_checkpoint")
 	}
 	manifest, ok := stateManifestForUpdate(app, &req)
-	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil {
+	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.FunctionCallables != nil {
 		if !ok {
 			copied := app.Manifest
 			manifest, ok = &copied, true
@@ -124,6 +124,10 @@ func (s *server) applySourceFunctionAppSettings(ctx context.Context, acct state.
 		if req.ServiceBindingPolicy != nil {
 			manifest.ServiceBindingPolicy = *req.ServiceBindingPolicy
 			fields = append(fields, "service_binding_policy")
+		}
+		if req.FunctionCallables != nil {
+			manifest.FunctionCallables = nonEmptyCallables(*req.FunctionCallables)
+			fields = append(fields, "function_callables")
 		}
 	}
 	if ok {

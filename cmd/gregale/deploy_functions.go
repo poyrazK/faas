@@ -506,6 +506,10 @@ func (d functionSetDeploy) applySettings(ctx context.Context, client functionSet
 		if bindings, bound := fn.calls.BindingUpdate(app); bound {
 			update.ServiceBindingTargets, update.ServiceBindingPolicy, changed = bindings.ServiceBindingTargets, bindings.ServiceBindingPolicy, true
 		}
+		if !maps.Equal(app.FunctionCallables, fn.calls.Names) {
+			names := maps.Clone(fn.calls.Names)
+			update.FunctionCallables, changed = &names, true
+		}
 	}
 	if changed {
 		if _, err := client.UpdateApp(ctx, fn.slug, update); err != nil {
@@ -517,31 +521,12 @@ func (d functionSetDeploy) applySettings(ctx context.Context, client functionSet
 			return fmt.Errorf("set env %s: %w", key, err)
 		}
 	}
-	if callable {
-		if err := putFunctionsEnv(ctx, client, fn.slug, fn.calls.Env()); err != nil {
-			return err
-		}
-	}
 	if fn.spec.PruneEnv {
-		keep := maps.Clone(fn.spec.Env)
-		if keep == nil {
-			keep = map[string]string{}
-		}
-		keep[gregalemanifest.FunctionsEnv] = fn.calls.Env()
-		if err := pruneFunctionEnv(ctx, client, d.out, fn.slug, keep); err != nil {
+		if err := pruneFunctionEnv(ctx, client, d.out, fn.slug, fn.spec.Env); err != nil {
 			return err
 		}
 	}
 	return sealFunctionSecrets(ctx, client, fn.slug, fn.spec.SecretsFromEnv, d.lookupEnv())
-}
-
-// putFunctionsEnv sets GREGALE_FUNCTIONS, the name map the typed client
-// reads. The env API never returns values, so it is written on each deploy.
-func putFunctionsEnv(ctx context.Context, client functionSetClient, slug, value string) error {
-	if err := client.PutAppsSlugEnvKey(ctx, slug, gregalemanifest.FunctionsEnv, value); err != nil {
-		return fmt.Errorf("set env %s: %w", gregalemanifest.FunctionsEnv, err)
-	}
-	return nil
 }
 
 // pruneFunctionEnv removes the default-scope env keys a prune_env function

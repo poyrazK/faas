@@ -1050,6 +1050,10 @@ type UpdateAppRequest struct {
 	// worker serves at once (ADR-1342). It takes effect on the next deploy;
 	// an explicit 0 restores one request per worker.
 	FunctionConcurrency *int `json:"function_concurrency,omitempty"`
+	// FunctionCallables replaces the names a function's typed client may
+	// call and their app slugs (ADR-20261111150000); {} clears them. It takes
+	// effect on the next deploy, as GREGALE_FUNCTIONS.
+	FunctionCallables *map[string]string `json:"function_callables,omitempty"`
 	// RequestRateLimitRPS and RequestRateLimitBurst override the app-wide
 	// request token bucket without changing the deployment. Zero restores the
 	// plan default; positive values may lower, but never exceed, the plan cap.
@@ -2040,6 +2044,9 @@ type AppResponse struct {
 	// FunctionConcurrency is the requests one function worker serves at
 	// once (ADR-1342); omitted means one.
 	FunctionConcurrency int `json:"function_concurrency,omitempty"`
+	// FunctionCallables are the names the function's typed client may call
+	// and their app slugs (ADR-20261111150000).
+	FunctionCallables map[string]string `json:"function_callables,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
