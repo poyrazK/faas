@@ -190,6 +190,10 @@ type CreateSandboxRequest struct {
 	Labels       map[string]string `json:"labels,omitempty"`
 	// SnapshotID starts the session from a persisted workspace.
 	SnapshotID string `json:"snapshot_id,omitempty"`
+	// Ports exposes guest ports from the start, as POST
+	// /v1/sandboxes/{id}/ports does (visibility private by default). They
+	// need preview hosts (FAAS_SANDBOX_PREVIEW_DOMAIN).
+	Ports []ExposeSandboxPortRequest `json:"ports,omitempty"`
 	// Image boots the session from a customer OCI image in place of a
 	// preset; the session is queued until the image is cached (the
 	// image-run cache, ImageRunCachedImages).

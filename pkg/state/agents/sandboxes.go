@@ -89,6 +89,8 @@ type SandboxAdmission struct {
 	// TemplateID boots the session from a sandbox template's newest
 	// finished build; ImageRef is then template:<name>.
 	TemplateID string
+	// Ports are exposed with the session (ExposeSandboxPort's rows).
+	Ports []SandboxPort
 }
 
 // SandboxFilter narrows a session listing. Before pages backwards from a
@@ -132,6 +134,15 @@ func (s *Store) CreateSandbox(ctx context.Context, a SandboxAdmission) (Sandbox,
 			ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID), TemplateID: optText(a.TemplateID)})
 		if err != nil {
 			return fmt.Errorf("insert sandbox session: %w", err)
+		}
+		for _, p := range a.Ports {
+			if p.Port < 1 || p.Port > 65535 || (p.Visibility != SandboxPortPrivate && p.Visibility != SandboxPortPublic) {
+				return fmt.Errorf("insert sandbox session: invalid port %d or visibility %q", p.Port, p.Visibility)
+			}
+			if _, err := s.q.UpsertSandboxPort(ctx, tx, sqlc.UpsertSandboxPortParams{SandboxID: id, AccountID: a.AccountID,
+				Port: int32(p.Port), Visibility: p.Visibility}); err != nil {
+				return fmt.Errorf("insert sandbox port: %w", err)
+			}
 		}
 		return nil
 	})

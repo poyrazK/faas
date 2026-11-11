@@ -23,7 +23,6 @@ type createBody struct {
 	api.CreateSandboxRequest
 	Manifest json.RawMessage `json:"manifest"`
 	Env      json.RawMessage `json:"env"`
-	Ports    json.RawMessage `json:"ports"`
 }
 
 // notYet names each field sessions do not take yet, and what to use.
@@ -34,7 +33,6 @@ var notYet = []struct {
 }{
 	{"manifest", func(b createBody) json.RawMessage { return b.Manifest }, "manifests are not available yet; write files once the session is ready"},
 	{"env", func(b createBody) json.RawMessage { return b.Env }, "session environment is not available yet"},
-	{"ports", func(b createBody) json.RawMessage { return b.Ports }, "exposed ports are not available yet"},
 }
 
 // admission checks a create request against the plan and returns the
@@ -64,6 +62,7 @@ func (h *Handler) admission(acct state.Account, body createBody) (agentstore.San
 		func() *api.Problem { return validPreset(acct.Plan, &a, in.Image, in.Template, in.RAMMB) },
 		func() *api.Problem { return validTenant(&a, in.Tenant) },
 		func() *api.Problem { return validNetwork(&a, in.Network) },
+		func() *api.Problem { return h.validPorts(acct, &a, in.Ports) },
 		func() *api.Problem { return resourcelabels.Problem(labels.Change{Set: in.Labels}.Validate()) },
 	}
 	for _, check := range checks {
@@ -77,6 +76,36 @@ func (h *Handler) admission(acct state.Account, body createBody) (agentstore.San
 	}
 	a.IdleTimeoutSec, a.ExpiresAt = idle, h.now().UTC().Add(time.Duration(lifetime)*time.Second)
 	return a, nil
+}
+
+// validPorts checks the ports exposed at create as the ports route does,
+// each once and at most the plan's SandboxExposedPortsMax.
+func (h *Handler) validPorts(acct state.Account, a *agentstore.SandboxAdmission, ports []api.ExposeSandboxPortRequest) *api.Problem {
+	if len(ports) == 0 {
+		return nil
+	}
+	if h.PreviewDomain == "" {
+		return api.ErrSandboxPreviewsOff()
+	}
+	max := api.SandboxExposedPortsMax[acct.Plan.PlanIndex()]
+	if len(ports) > max {
+		return api.ErrAgentLimit(acct.Plan, "SandboxExposedPortsMax", max, len(ports))
+	}
+	seen := make(map[int]bool, len(ports))
+	for _, p := range ports {
+		if p.Visibility == "" {
+			p.Visibility = api.SandboxPortPrivate
+		}
+		if prob := portRequestProblem(acct, p); prob != nil {
+			return prob
+		}
+		if seen[p.Port] {
+			return api.ErrValidation(fmt.Sprintf("port %d is listed twice", p.Port))
+		}
+		seen[p.Port] = true
+		a.Ports = append(a.Ports, agentstore.SandboxPort{Port: p.Port, Visibility: p.Visibility})
+	}
+	return nil
 }
 
 func validKind(a *agentstore.SandboxAdmission) *api.Problem {

@@ -72,6 +72,15 @@ func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmissi
 		WorkspaceSnapshotID: a.WorkspaceSnapshotID, ImageRef: a.ImageRef}
 	f.admitted = a
 	f.sessions = append([]agentstore.Sandbox{sb}, f.sessions...)
+	if len(a.Ports) > 0 {
+		if f.ports == nil {
+			f.ports = map[string][]agentstore.SandboxPort{}
+		}
+		for _, p := range a.Ports {
+			p.CreatedAt = now
+			f.ports[sb.ID] = append(f.ports[sb.ID], p)
+		}
+	}
 	return sb, nil
 }
 
@@ -248,7 +257,8 @@ func TestCreateRules(t *testing.T) {
 		{"an image without image runs", pro(), `{"image":"ghcr.io/acme/box"}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
 		{"a manifest", pro(), `{"preset":"codex","manifest":{"entries":[]}}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
 		{"environment", pro(), `{"preset":"codex","env":{"A":"1"}}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
-		{"ports", pro(), `{"preset":"codex","ports":[3000]}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
+		{"ports without preview hosts", pro(), `{"preset":"codex","ports":[{"port":3000}]}`, http.StatusServiceUnavailable, api.CodeSandboxPreviewsOff},
+		{"ports as bare numbers", pro(), `{"preset":"codex","ports":[3000]}`, http.StatusBadRequest, ""},
 		{"a malformed snapshot", pro(), `{"preset":"codex","snapshot_id":"s-1"}`, http.StatusBadRequest, api.CodeValidation},
 		{"an unknown snapshot", pro(), `{"preset":"codex","snapshot_id":"` + unknownSnapshot + `"}`, http.StatusNotFound, api.CodeSandboxSnapshotNotFound},
 		{"a reserved label", pro(), `{"preset":"codex","labels":{"gregale.dev/app":"x"}}`, http.StatusBadRequest, ""},
