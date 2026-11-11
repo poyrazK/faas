@@ -1198,6 +1198,9 @@ type Manager struct {
 	// hostIdentities: the control plane's secretd (ADR-20261110210000 §3).
 	// nil opens them on this node.
 	runtimeOpener RuntimeSecretOpener
+	// captureRecipient, when set, is what crash-capture keys are sealed to
+	// in place of the first host identity's recipient (slice 3e).
+	captureRecipient *age.X25519Recipient
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),

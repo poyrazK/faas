@@ -8,6 +8,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/crashcrypt"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
@@ -130,6 +131,45 @@ func TestSealedCaptureKeyFromRuntimeOpener(t *testing.T) {
 	local.WithStorage(be)
 	if err := local.openSealedSnapshot(context.Background(), "app-1", &Snapshot{CaptureID: "cap-1", SealedKey: []byte("x")}); !errors.Is(err, ErrNoCaptureKey) {
 		t.Fatalf("local without identity = %v, want ErrNoCaptureKey", err)
+	}
+}
+
+// Slice 3e: a node with no runtime identity seals capture keys to the
+// runtime recipient it was given, so only the holder of the runtime
+// identity (secretd) opens them; this node cannot.
+func TestCaptureKeySealedToTheRuntimeRecipient(t *testing.T) {
+	be, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	m.WithStorage(be)
+	if _, _, err := m.SealCaptureStorage("cap-1"); !errors.Is(err, ErrNoCaptureKey) {
+		t.Fatalf("no identity, no recipient = %v, want ErrNoCaptureKey", err)
+	}
+	runtimeID, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetCaptureRecipient(runtimeID.Recipient())
+	_, sealed, err := m.SealCaptureStorage("cap-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := crashcrypt.OpenKey([]*age.X25519Identity{runtimeID}, "cap-1", sealed); err != nil {
+		t.Fatalf("the runtime identity does not open the capture key: %v", err)
+	}
+	// A host identity loaded beside it does not take over the sealing.
+	hostID, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetHostIdentities([]*age.X25519Identity{hostID})
+	if _, sealed, err = m.SealCaptureStorage("cap-2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := crashcrypt.OpenKey([]*age.X25519Identity{hostID}, "cap-2", sealed); err == nil {
+		t.Fatal("the node's own identity opens a capture key sealed to the runtime recipient")
 	}
 }
 

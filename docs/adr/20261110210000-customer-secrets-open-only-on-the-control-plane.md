@@ -534,6 +534,7 @@ Operations:
 | 2 | CI holds recipients only: key escrow on the control plane, `SEAL_DOMAIN_KEY_SOURCE=escrow`, escrow/rotate workflow, runbook (code in this PR); then the owner escrows, deletes the GitHub secrets and rotates | — |
 | 3 | `secretd` + `OpenWorkloadSecrets` (owner by protected `apps.node_id`, peers by owner-requested `secret_grants`) + audit + alerts; move `runtime`, then `build`, `edge`, `delivery`; `control` behind signd; node join stops staging, verify refuses leftovers | 1 |
 | 3d | Everything by reference: crash-capture keys, sidecar env, per-snapshot encryption with keys from secretd (latency-measured), app secrets; then the runtime identity leaves compute | 3 |
+| 3e | The runtime identity leaves compute (code in #7003): per node `faas_seal_domain_runtime_retired_on_compute` (needs contracted + `faas_vmmd_secretd_open`) removes `runtime.age`/`.previous`, stages `runtime.age.pub`; vmmd `FAAS_SEAL_DOMAIN_RUNTIME_RETIRED` refuses to start with a leftover identity or without secretd, and seals crash-capture keys to the recipient; fleet-wide `SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE` stops CD handing compute the key, so joining nodes never get it. Until 3d-3, park snapshots in the shared store still hold plaintext process memory | 3d (except 3d-3) |
 | 4 | HSM hardware, ceremony runbook, Tier A wrapped identities for every control-plane reader, measurements | — |
 | 5 | Tier B envelope v3 + re-seal of every sealed column | 4 |
 

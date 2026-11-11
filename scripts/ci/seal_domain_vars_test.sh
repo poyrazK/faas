@@ -95,6 +95,30 @@ grep -qxF runtime <<<"$listed" || fail "--identities control-plane omits runtime
 listed="$(env -i PATH="$PATH" "${all[@]}" bash "$script" --identities control-plane)"
 ! grep -qxF runtime <<<"$listed" || fail "--identities control-plane lists runtime without secretd: $listed"
 
+# ADR-20261110210000 slice 3e: retired compute nodes get the runtime
+# recipient alone, CD is not handed the runtime key, and the escrow list
+# leaves runtime out.
+no_runtime_key=()
+for v in "${all[@]}"; do [[ "$v" == SEAL_DOMAIN_RUNTIME_AGE_KEY=* ]] || no_runtime_key+=("$v"); done
+run compute retired "${no_runtime_key[@]}" SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE=true ||
+  fail "retired compute staging failed"
+grep -qxF "faas_seal_domain_runtime_recipient_src: \"$work/retired/out/runtime.age.pub\"" "$work/retired/vars.yml" || fail "retired compute is missing the runtime recipient: $(cat "$work/retired/vars.yml")"
+grep -qxF "faas_seal_domain_runtime_retired_on_compute: true" "$work/retired/vars.yml" || fail "retired compute is not told it is retired"
+! grep -q "runtime_identity_src" "$work/retired/vars.yml" || fail "retired compute got the runtime identity"
+[[ ! -e "$work/retired/out/runtime.age" ]] || fail "retired compute staged runtime.age"
+grep -qxF "faas_seal_domain_build_identity_src: \"$work/retired/out/build.age\"" "$work/retired/vars.yml" || fail "retired compute lost the build identity"
+listed="$(env -i PATH="$PATH" "${all[@]}" SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE=true bash "$script" --identities compute)"
+! grep -qxF runtime <<<"$listed" || fail "--identities compute lists runtime once retired: $listed"
+if run compute retired_no_secretd "${all[@]}" SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE=true 2>/dev/null; then
+  fail "retired compute without secretd on the control plane was accepted"
+fi
+if run compute retired_bad "${all[@]}" SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE=maybe 2>/dev/null; then
+  fail "a malformed retirement switch was accepted"
+fi
+if run compute not_retired_no_key "${no_runtime_key[@]}" 2>/dev/null; then
+  fail "a compute node that opens locally was staged without the runtime identity"
+fi
+
 # Half a pair, a malformed key, and variables CD owns all refuse.
 if run compute half SEAL_DOMAIN_RUNTIME_AGE_KEY="$(key runtime)" 2>/dev/null; then fail "half a pair was accepted"; fi
 if run compute bad SEAL_DOMAIN_RUNTIME_AGE_KEY="not-a-key" SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT="$(pub runtime)" 2>/dev/null; then

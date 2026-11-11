@@ -31,15 +31,28 @@ func (m *Manager) SealCaptureStorage(captureID string) (storage.StorageBackend, 
 	if m.storage == nil {
 		return nil, nil, errors.New("fcvm: sealed capture requires a storage backend")
 	}
-	recipient, err := secretbox.CurrentRecipient(m.hostIdentities)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", ErrNoCaptureKey, err)
+	recipient := m.captureRecipient
+	if recipient == nil {
+		var err error
+		recipient, err = secretbox.CurrentRecipient(m.hostIdentities)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", ErrNoCaptureKey, err)
+		}
 	}
 	identity, sealed, err := crashcrypt.NewKey(recipient, captureID)
 	if err != nil {
 		return nil, nil, err
 	}
 	return crashcrypt.Backend{Inner: m.storage, Identity: identity}, sealed, nil
+}
+
+// SetCaptureRecipient makes SealCaptureStorage seal capture keys to r
+// instead of the first host identity's recipient (ADR-20261110210000 slice
+// 3e): a node whose runtime identity is retired seals to the runtime
+// domain's public recipient, which only the control plane's secretd opens.
+// nil restores the default. NOT safe to call concurrently with captures.
+func (m *Manager) SetCaptureRecipient(r *age.X25519Recipient) {
+	m.captureRecipient = r
 }
 
 // CaptureKeyOpener opens a sealed capture's key somewhere other than this

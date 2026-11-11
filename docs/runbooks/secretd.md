@@ -44,8 +44,35 @@ grants go on everywhere before any vmmd asks secretd:
    PermissionDenied. Then the next node.
 
 Back out a node by setting `faas_vmmd_secretd_open: false` and converging:
-vmmd opens with its own runtime identity again (it still holds it until
-slice 3d).
+vmmd opens with its own runtime identity again (until step 3 retires it).
+
+## Take the runtime identity off compute (slice 3e)
+
+After step 2 has run on a node for a while with no refusals:
+
+3. **Retire (one node at a time).** Prerequisites on the node:
+   `faas_seal_domain_runtime_contracted: true` (the fleet identity also
+   opens runtime secrets) and `faas_vmmd_secretd_open: true`. Set
+   `faas_seal_domain_runtime_retired_on_compute: true` for it and converge
+   (`--limit`). The seal_domains role removes `runtime.age` and
+   `runtime.age.previous`, stages the public `runtime.age.pub`, stops
+   publishing the runtime probe from the node, and gives vmmd
+   `FAAS_SEAL_DOMAIN_RUNTIME_RETIRED=true`. vmmd still holds the identity it
+   loaded, so **drain the node and restart vmmd**. Check: vmmd's journal shows
+   `vmmd: runtime identity retired`; vmmd refuses to start while either
+   file is back on disk; crash captures taken there open (their keys are
+   sealed to the runtime recipient, which only secretd opens).
+4. **Fleet-wide (CD).** Once every compute node is retired, set the GitHub
+   environment variable `SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE=true` (it
+   needs `SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true`). cd-compute is then not
+   handed the runtime identity at all, does not fetch it from the escrow,
+   stages only the recipient, and marks every node, including nodes that
+   join later, as retired. A compute host now holds no key that opens a
+   tenant's runtime secrets.
+
+Back out a node by setting the switch to false and converging: the role
+stages the identity again and vmmd opens with it after a restart. With step 4
+on, unset the GitHub variable first.
 
 ## Rotation
 

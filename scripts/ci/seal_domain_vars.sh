@@ -17,7 +17,12 @@
 #   compute        identities of the domains read there (runtime, build, edge,
 #                  edge_tls, control, delivery), and storage's when the S3 gateway runs
 #                  on the compute nodes (SEAL_DOMAIN_STORAGE_ON_COMPUTE=true,
-#                  ADR-20261031122757)
+#                  ADR-20261031122757); runtime's recipient alone, and
+#                  faas_seal_domain_runtime_retired_on_compute: true, once
+#                  every compute node opens runtime secrets through secretd
+#                  (SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE=true,
+#                  ADR-20261110210000 slice 3e; needs
+#                  SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true)
 #
 # --identities ROLE prints, one per line, the domains whose private identity
 # ROLE's hosts get, so CD fetches only those from the key escrow.
@@ -55,6 +60,22 @@ else
   usage
 fi
 case "$role" in control-plane | compute) ;; *) usage ;; esac
+
+runtime_retired=false
+case "${SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE:-}" in
+  "" | false) ;;
+  true)
+    runtime_retired=true
+    if [[ "${SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE:-}" != true ]]; then
+      echo "::error::SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE=true needs SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true: secretd on the control plane is then the only opener of runtime secrets" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "::error::SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE is '${SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE}'; want true or false" >&2
+    exit 1
+    ;;
+esac
 
 domains=(outbound source alerting storage control delivery account runtime build edge edge_tls)
 
@@ -95,14 +116,18 @@ staged() { # ROLE DOMAIN
       if [[ "${SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE:-}" == true ]]; then echo both; else echo recipient; fi ;;
     control-plane/build | control-plane/edge | control-plane/edge_tls)
       echo recipient ;;
-    compute/runtime | compute/build | compute/edge | compute/edge_tls | compute/control | compute/delivery | control-plane/control | control-plane/account)
+    compute/runtime)
+      # ADR-20261110210000 slice 3e: retired compute nodes seal capture keys
+      # to the recipient and never hold the identity.
+      if $runtime_retired; then echo recipient; else echo identity; fi ;;
+    compute/build | compute/edge | compute/edge_tls | compute/control | compute/delivery | control-plane/control | control-plane/account)
       echo identity ;;
     compute/storage)
       if [[ "${SEAL_DOMAIN_STORAGE_ON_COMPUTE:-}" == true ]]; then echo identity; fi ;;
   esac
 }
 
-if ! $list_only && [[ -f "$vars" ]] && grep -qE '^(faas_seal_domains_managed|faas_seal_domain_[a-z_]+_(identity|recipient)_src):' "$vars"; then
+if ! $list_only && [[ -f "$vars" ]] && grep -qE '^(faas_seal_domains_managed|faas_seal_domain_runtime_retired_on_compute|faas_seal_domain_[a-z_]+_(identity|recipient)_src):' "$vars"; then
   echo "::error::$vars sets seal-domain key variables; CD stages them from the SEAL_DOMAIN_* secrets, so remove them from the environment's Ansible variables" >&2
   exit 1
 fi
@@ -167,11 +192,14 @@ for domain in "${domains[@]}"; do
   if [[ -z "$key" && -z "$pub" ]]; then
     continue
   fi
-  if [[ "$source_kind" == secrets && ( -z "$key" || -z "$pub" ) ]]; then
+  what=$(staged "$role" "$domain")
+  # A host that gets only the recipient needs no identity: a retired compute
+  # node's CD job is not handed the runtime key at all.
+  if [[ "$source_kind" == secrets && -z "$pub" ]] ||
+    [[ "$source_kind" == secrets && -z "$key" && "$what" != recipient ]]; then
     echo "::error::set both $key_var and $pub_var, or neither" >&2
     exit 1
   fi
-  what=$(staged "$role" "$domain")
   if $list_only; then
     if [[ "$what" == both || "$what" == identity ]]; then echo "$domain"; fi
     continue
@@ -210,6 +238,9 @@ if [[ -n "$added" ]]; then
     fi
     printf '%s' "$recipients"
     printf 'faas_seal_domains_managed: true\n'
+    if [[ "$role" == compute ]] && $runtime_retired; then
+      printf 'faas_seal_domain_runtime_retired_on_compute: true\n'
+    fi
     printf '%s' "$added"
   } >> "$vars"
   chmod 0600 "$vars"
