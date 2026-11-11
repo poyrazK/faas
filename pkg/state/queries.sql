@@ -5949,7 +5949,7 @@ s.accrued_through AS gateway_storage_through,
 i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete,
 (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready')
  OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')))::boolean AS inventory_held,
-a.mutated_at, a.active_since
+a.mutated_at, a.active_since, object_inventory_quiet_mode()::text AS inventory_quiet_mode
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
 LEFT JOIN object_bucket_activity a ON a.bucket_id = b.id
@@ -6089,16 +6089,27 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
 -- A bucket whose listing is unfinished is due at once (ADR-20261030100835).
 -- The sweep's queue leaves out the buckets it already took (skip) and marks a
 -- long listing: one that continues, or a bucket whose last inventory counted
--- more than long_keys keys (ADR-20261110151628 §1).
+-- more than long_keys keys (ADR-20261110151628 §1). With quiet set (gateway-
+-- safety accounting) and object_inventory_quiet on, a quiet bucket is due only
+-- once its observation is quiet_verify_seconds old, and it sorts by how close
+-- it is to quiet_max_age, as an active bucket's last attempt sorts by how
+-- close it is to 900 s (§2): a backlog of daily verifications never delays an
+-- active bucket that is nearer its limit.
+WITH q AS (SELECT sqlc.arg(quiet)::boolean AND object_inventory_quiet_mode()='on' AS quiet_on)
 SELECT sqlc.embed(b), (l.listing OR COALESCE(u.observed_keys, 0) > sqlc.arg(long_keys)::bigint)::boolean AS long_listing
-FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+FROM object_buckets b CROSS JOIN q LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+LEFT JOIN object_bucket_activity a ON a.bucket_id=b.id
 CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM object_storage_inventory_scans s WHERE s.bucket_id=b.id AND s.pages > 0 AND NOT s.complete
   AND s.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND s.started_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second') AS listing) l
+CROSS JOIN LATERAL (SELECT COALESCE(q.quiet_on AND u.observed_at IS NOT NULL AND u.inventory_scope='current'
+  AND COALESCE(a.mutated_at, '-infinity'::timestamptz) < u.observed_at - sqlc.arg(granularity_seconds)::bigint * interval '1 second', false) AS quiet) z
 WHERE b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning'))
 AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes' OR l.listing)
 AND (u.lease_until IS NULL OR u.lease_until < now())
 AND NOT (b.id = ANY(COALESCE(sqlc.arg(skip)::uuid[], '{}')))
-ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT sqlc.arg(row_limit);
+AND NOT (z.quiet AND NOT l.listing AND u.observed_at > now() - sqlc.arg(quiet_verify_seconds)::bigint * interval '1 second')
+ORDER BY CASE WHEN z.quiet THEN u.observed_at + (sqlc.arg(quiet_max_age_seconds)::bigint - sqlc.arg(window_seconds)::bigint) * interval '1 second'
+  ELSE u.attempt_at END NULLS FIRST, b.id LIMIT sqlc.arg(row_limit);
 
 -- name: ObjectInventoryBacklog :one
 -- ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
@@ -6108,8 +6119,11 @@ ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT sqlc.arg(row_limit);
 -- (with an observation), or whose listing advanced within progress_window on
 -- an observation under scan_max_age, stays fresh on an older one and does not
 -- count (objectBucketInventoryStale). A bucket never observed counts from its
--- creation.
-WITH r AS (
+-- creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
+-- counts toward oldest_quiet_age_seconds instead, and an active bucket that
+-- was quiet on its observation counts from when it turned active.
+WITH q AS (SELECT sqlc.arg(quiet)::boolean AND object_inventory_quiet_mode()='on' AS quiet_on),
+r AS (
   SELECT b.created_at, u.observed_at, u.attempt_at, u.lease_until,
     EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') AS versioning,
     EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')) AS reconciling,
@@ -6117,18 +6131,26 @@ WITH r AS (
     COALESCE(i.pages > 0 AND NOT i.complete AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz)
       AND i.started_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second', false) AS listing,
     COALESCE(i.pages > 0 AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND i.progress_at <= now()
-      AND i.progress_at >= now() - sqlc.arg(progress_window_seconds)::bigint * interval '1 second', false) AS progressing
-  FROM object_buckets b
+      AND i.progress_at >= now() - sqlc.arg(progress_window_seconds)::bigint * interval '1 second', false) AS progressing,
+    COALESCE(q.quiet_on AND u.observed_at IS NOT NULL AND u.inventory_scope='current'
+      AND COALESCE(a.mutated_at, '-infinity'::timestamptz) < u.observed_at - sqlc.arg(granularity_seconds)::bigint * interval '1 second', false) AS quiet,
+    CASE WHEN q.quiet_on AND u.inventory_scope='current' AND a.active_since > u.observed_at
+      AND a.active_since < u.observed_at + sqlc.arg(quiet_max_age_seconds)::bigint * interval '1 second'
+      THEN a.active_since ELSE COALESCE(u.observed_at, b.created_at) END AS anchor
+  FROM object_buckets b CROSS JOIN q
   LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
   LEFT JOIN object_storage_inventory_scans i ON i.bucket_id=b.id
+  LEFT JOIN object_bucket_activity a ON a.bucket_id=b.id
   WHERE b.state='ready'
 )
 SELECT
   (count(*) FILTER (WHERE NOT versioning AND NOT reconciling AND (attempt_at IS NULL OR attempt_at < now() - interval '5 minutes' OR listing)
-    AND (lease_until IS NULL OR lease_until < now())))::bigint AS due_buckets,
-  COALESCE(EXTRACT(EPOCH FROM now() - min(COALESCE(observed_at, created_at)) FILTER (WHERE NOT (observed_at IS NOT NULL AND (
+    AND (lease_until IS NULL OR lease_until < now())
+    AND NOT (quiet AND NOT listing AND observed_at > now() - sqlc.arg(quiet_verify_seconds)::bigint * interval '1 second')))::bigint AS due_buckets,
+  COALESCE(EXTRACT(EPOCH FROM now() - min(anchor) FILTER (WHERE NOT quiet AND NOT (observed_at IS NOT NULL AND (
     versioning OR locking OR reconciling
-    OR (progressing AND observed_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second'))))), 0)::float8 AS oldest_age_seconds
+    OR (progressing AND observed_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second'))))), 0)::float8 AS oldest_age_seconds,
+  COALESCE(EXTRACT(EPOCH FROM now() - min(observed_at) FILTER (WHERE quiet)), 0)::float8 AS oldest_quiet_age_seconds
 FROM r;
 
 -- name: ObjectInventoryClaim :execrows
@@ -6187,6 +6209,15 @@ RETURNING *;
 UPDATE object_storage_inventory_scans SET after_key=sqlc.arg(after_key), listed_bytes=sqlc.arg(listed_bytes), listed_keys=sqlc.arg(listed_keys),
 pages=sqlc.arg(pages), complete=sqlc.arg(complete), progress_at=now()
 WHERE bucket_id=$1 AND started_at=sqlc.arg(started_at) AND sqlc.arg(pages)::integer >= pages;
+
+-- name: ObjectInventoryVerificationRead :one
+-- What a bucket's previous listing counted, and whether anything was admitted
+-- to the bucket since that listing started, read before a new listing is
+-- published (ADR-20261110151628 §2 verification).
+SELECT u.observed_at, u.observed_bytes, u.observed_keys, u.inventory_scope,
+a.mutated_at, object_inventory_quiet_mode()::text AS quiet_mode
+FROM object_storage_bucket_usage u LEFT JOIN object_bucket_activity a ON a.bucket_id=u.bucket_id
+WHERE u.bucket_id=sqlc.arg(bucket_id);
 
 -- name: ObjectBucketMarkOutstandingMutations :exec
 -- A listing published while a source writer or deletion of its bucket is

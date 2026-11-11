@@ -121,6 +121,44 @@ buckets are.
 - **Noise.** Other sessions were rebuilding the shared Go cache during these
   runs. Identical small-only runs varied between 82% and 96% busy.
 
+## After step 4 (2026-11-11)
+
+Steps 3 and 4 of ADR-20261110151628 record when each bucket last changed and,
+with `object_inventory_quiet` on under gateway-safety accounting, leave a
+quiet bucket to a daily verification. Same harness, new scenario
+(`quiet-200ms`): 22,000 one-page buckets at 200 ms per page.
+
+- 20,000 quiet buckets, listed 2 h ago, nothing written since;
+- 1,000 active buckets, listed 10 minutes ago and written since;
+- 1,000 quiet buckets listed 23.5 h ago, due for verification.
+
+| | Result |
+|---|---|
+| Due at the start | 2,000 of 22,000 |
+| Sweep 1 | 40.4 s: all 1,000 active, then 471–473 verifications |
+| Sweep 2 | 14.4–14.6 s: the other 527–529 verifications, nothing left due |
+| Quiet buckets listed | 0 |
+| Due query (100 rows) | 92–98 ms with quiet on, 23 ms with it off |
+| Backlog query | 230–234 ms |
+
+- **Only active buckets and verifications are listed.** The sweep's rate is
+  unchanged (about 1,470 one-page buckets per 40 s sweep, 37 a second). With
+  the switch on, the work per 900 s is the active buckets plus 1/92 of the
+  quiet ones (one verification each 23 h). The rate covers, for example,
+  about 10,000 active and 2,000,000 quiet buckets, against 32,000 buckets in
+  all with every bucket on the 5-minute cadence.
+- **Active buckets first.** The due query orders a quiet bucket by how close
+  it is to 24 h, as it orders an active bucket's last attempt by how close it
+  is to 900 s. The first run of this scenario sorted by attempt time alone,
+  so the 1,000 verifications (attempted 23.5 h before) went ahead of the
+  active buckets (attempted 10 minutes before). That is fixed: the active
+  buckets now finish in the first sweep.
+- **The next limit is the due query.** It reads every ready bucket and,
+  with quiet on, cannot use an index for its filter or order: 96 ms for
+  22,000 buckets, linear in the bucket count. The sweep runs it each time its
+  queue refills. Near a few hundred thousand buckets it takes about a second
+  per refill. A due-time column with a partial index should come before then.
+
 ## Limits of this measurement
 
 - The provider latency is injected, not measured against OVH. The ranking of

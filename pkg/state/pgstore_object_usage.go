@@ -96,7 +96,9 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 	if err != nil {
 		return out, err
 	}
+	out.InventoryQuiet = api.ObjectInventoryQuietOff
 	for _, r := range rows {
+		out.InventoryQuiet = r.InventoryQuietMode
 		out.Buckets = append(out.Buckets, ObjectBucketUsage{
 			Bucket:         ObjectBucket{ID: pgUUIDString(r.ID), OrgID: pgUUIDString(r.OrgID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, PhysicalName: r.PhysicalName, State: r.State, PublicRead: r.PublicRead, ServeAt: r.ServeAt.String, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time},
 			MultipartBytes: r.MultipartBytes, InventoryScope: r.InventoryScope.String, BaselineBytes: r.BaselineBytes.Int64, BaselineKeys: r.BaselineKeys.Int64, GrantedBytes: r.GrantedBytes.Int64, GrantedKeys: r.GrantedKeys.Int64,
@@ -282,7 +284,7 @@ func (s *pgCore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStorag
 }
 
 func (s *pgCore) DueObjectInventories(ctx context.Context, limit int32) ([]ObjectBucket, error) {
-	due, err := s.DueObjectInventoryQueue(ctx, limit, nil)
+	due, err := s.DueObjectInventoryQueue(ctx, limit, nil, false)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +295,7 @@ func (s *pgCore) DueObjectInventories(ctx context.Context, limit int32) ([]Objec
 	return out, nil
 }
 
-func (s *pgCore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string) ([]ObjectInventoryDue, error) {
+func (s *pgCore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string, quiet bool) ([]ObjectInventoryDue, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrConflict
 	}
@@ -301,7 +303,11 @@ func (s *pgCore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip 
 	for _, id := range skip {
 		ids = append(ids, mustPgUUID(id))
 	}
-	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, sqlc.ObjectInventoriesDueParams{LongKeys: api.ObjectStorageInventoryLongListingKeys, ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), Skip: ids, RowLimit: limit})
+	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, sqlc.ObjectInventoriesDueParams{
+		LongKeys: api.ObjectStorageInventoryLongListingKeys, ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), Skip: ids, RowLimit: limit,
+		Quiet: quiet, GranularitySeconds: int64(api.ObjectInventoryMutationStampGranularity / time.Second), QuietVerifySeconds: int64(api.ObjectInventoryQuietVerifyAfter / time.Second),
+		QuietMaxAgeSeconds: int64(api.ObjectInventoryQuietMaxAge / time.Second), WindowSeconds: api.ObjectStorageInventoryMaxAgeSeconds,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -312,12 +318,17 @@ func (s *pgCore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip 
 	return out, nil
 }
 
-func (s *pgCore) ObjectInventoryBacklog(ctx context.Context) (ObjectInventoryBacklog, error) {
-	r, err := sqlc.New().ObjectInventoryBacklog(ctx, s.pool, sqlc.ObjectInventoryBacklogParams{ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), ProgressWindowSeconds: int64(api.ObjectInventoryScanProgressWindow / time.Second)})
+func (s *pgCore) ObjectInventoryBacklog(ctx context.Context, quiet bool) (ObjectInventoryBacklog, error) {
+	r, err := sqlc.New().ObjectInventoryBacklog(ctx, s.pool, sqlc.ObjectInventoryBacklogParams{
+		ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), ProgressWindowSeconds: int64(api.ObjectInventoryScanProgressWindow / time.Second),
+		Quiet: quiet, GranularitySeconds: int64(api.ObjectInventoryMutationStampGranularity / time.Second),
+		QuietMaxAgeSeconds: int64(api.ObjectInventoryQuietMaxAge / time.Second), QuietVerifySeconds: int64(api.ObjectInventoryQuietVerifyAfter / time.Second),
+	})
 	if err != nil {
 		return ObjectInventoryBacklog{}, err
 	}
-	return ObjectInventoryBacklog{DueBuckets: r.DueBuckets, OldestObservationAge: time.Duration(max(r.OldestAgeSeconds, 0) * float64(time.Second))}, nil
+	seconds := func(v float64) time.Duration { return time.Duration(max(v, 0) * float64(time.Second)) }
+	return ObjectInventoryBacklog{DueBuckets: r.DueBuckets, OldestObservationAge: seconds(r.OldestAgeSeconds), OldestQuietObservationAge: seconds(r.OldestQuietAgeSeconds)}, nil
 }
 
 func (s *pgCore) ClaimObjectInventory(ctx context.Context, bucket, token string) error {

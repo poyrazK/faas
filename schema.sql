@@ -22350,6 +22350,21 @@ END $_$;
 
 
 --
+-- Name: object_inventory_quiet_mode(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_inventory_quiet_mode() RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+SELECT COALESCE((
+  SELECT e.effective_value #>> '{}' FROM runtime_config_entries e
+  WHERE e.config_key='object_inventory_quiet' AND e.scope='global' AND e.scope_id='' AND e.status='applied'
+    AND jsonb_typeof(e.effective_value)='string' AND e.effective_value #>> '{}' IN ('off','shadow','on')
+), 'off')
+$$;
+
+
+--
 -- Name: object_lock_drained(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -92,40 +93,54 @@ func (s *pgCore) CheckpointObjectInventoryScan(ctx context.Context, bucket, toke
 }
 
 func (s *pgCore) FinishObjectInventoryScan(ctx context.Context, bucket, token string, scan ObjectInventoryScan) error {
+	_, err := s.FinishObjectInventoryScanVerified(ctx, bucket, token, scan)
+	return err
+}
+
+func (s *pgCore) FinishObjectInventoryScanVerified(ctx context.Context, bucket, token string, scan ObjectInventoryScan) (ObjectInventoryVerification, error) {
 	if token == "" || !scan.Complete || !validInventoryScanProgress(scan) {
-		return ErrConflict
+		return ObjectInventoryVerification{}, ErrConflict
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return ObjectInventoryVerification{}, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
 	account, err := q.ObjectUsageBucketAccount(ctx, tx, mustPgUUID(bucket))
 	if err != nil {
-		return mapErr(err)
+		return ObjectInventoryVerification{}, mapErr(err)
 	}
 	// Serialize inventory publication with account-wide quota decisions.
 	if _, err = lockObjectUsageScope(ctx, tx, account, mustPgUUID(bucket)); err != nil {
-		return mapErr(err)
+		return ObjectInventoryVerification{}, mapErr(err)
+	}
+	before, err := q.ObjectInventoryVerificationRead(ctx, tx, mustPgUUID(bucket))
+	if err != nil {
+		return ObjectInventoryVerification{}, mapErr(err)
+	}
+	previous := ObjectBucketUsage{ObservedAt: before.ObservedAt.Time, InventoryScope: before.InventoryScope, MutatedAt: before.MutatedAt.Time}
+	v := ObjectInventoryVerification{
+		Quiet:         before.QuietMode != api.ObjectInventoryQuietOff && objectBucketQuiet(previous),
+		PreviousBytes: before.ObservedBytes, PreviousKeys: before.ObservedKeys, Bytes: scan.Bytes, Keys: scan.Keys,
 	}
 	n, err := q.ObjectInventoryScanFinish(ctx, tx, sqlc.ObjectInventoryScanFinishParams{
 		BucketID: mustPgUUID(bucket), Token: token, StartedAt: objectUsageTime(scan.StartedAt), ListedBytes: scan.Bytes, ListedKeys: scan.Keys,
 	})
 	if err != nil {
-		return mapErr(err)
+		return ObjectInventoryVerification{}, mapErr(err)
 	}
 	if n != 1 {
-		return ErrConflict
+		return ObjectInventoryVerification{}, ErrConflict
 	}
 	if err = q.ObjectInventoryScanDelete(ctx, tx, mustPgUUID(bucket)); err != nil {
-		return err
+		return ObjectInventoryVerification{}, err
 	}
 	if err = q.ObjectBucketMarkOutstandingMutations(ctx, tx, mustPgUUID(bucket)); err != nil {
-		return err
+		return ObjectInventoryVerification{}, err
 	}
 	if err = q.ObjectInventorySample(ctx, tx, sqlc.ObjectInventorySampleParams{BucketID: mustPgUUID(bucket), Token: token}); err != nil {
-		return err
+		return ObjectInventoryVerification{}, err
 	}
-	return tx.Commit(ctx)
+	return v, tx.Commit(ctx)
 }

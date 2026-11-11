@@ -1208,3 +1208,13 @@ func (m *MemStore) AgeObjectBucketActivityForTest(bucket string, d time.Duration
 		m.objectBucketActivity[bucket] = a
 	}
 }
+
+// AgeObjectUsageForTest moves a bucket's observation and attempt back by d,
+// as the PG tests do with an UPDATE (ADR-20261110151628).
+func (m *MemStore) AgeObjectUsageForTest(bucket string, d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u := m.objectUsage[bucket]
+	u.ObservedAt, u.AttemptAt = u.ObservedAt.Add(-d), u.AttemptAt.Add(-d)
+	m.objectUsage[bucket] = u
+}
