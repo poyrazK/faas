@@ -102,6 +102,7 @@
     "columns": [
       "account_id",
       "body_sha256",
+      "budget_cost_millicents",
       "category",
       "consumed_at",
       "created_at",
@@ -116,6 +117,26 @@
       "path",
       "reason",
       "status"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "agent_budget_spend",
+    "columns": [
+      "key_id",
+      "month",
+      "spent_millicents",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_key_budgets",
+    "columns": [
+      "key_id",
+      "monthly_cents",
+      "updated_at",
+      "updated_by"
     ],
     "kind": "account_identity"
   },
@@ -13766,6 +13787,7 @@
       "agents_allowed",
       "allowed_scopes",
       "approval_categories",
+      "max_agent_budget_cents",
       "org_id",
       "updated_at",
       "updated_by"

@@ -1,9 +1,10 @@
 from typing import Literal
 
-AgentApprovalWebhookPayloadCategory = Literal["billing", "credentials", "delete", "production"]
+AgentApprovalWebhookPayloadCategory = Literal["billing", "budget", "credentials", "delete", "production"]
 
 AGENT_APPROVAL_WEBHOOK_PAYLOAD_CATEGORY_VALUES: set[AgentApprovalWebhookPayloadCategory] = {
     "billing",
+    "budget",
     "credentials",
     "delete",
     "production",

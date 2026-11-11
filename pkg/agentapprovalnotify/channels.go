@@ -36,8 +36,11 @@ func (n *Notifier) notifyChannels(ctx context.Context, item state.AgentApprovalN
 			label = line.Category
 		}
 		reason := ""
+		if cost := budgetCostLine(line); cost != "" {
+			reason = " " + cost
+		}
 		if line.Reason != "" {
-			reason = fmt.Sprintf(" The agent's reason (its own words): %q.", line.Reason)
+			reason += fmt.Sprintf(" The agent's reason (its own words): %q.", line.Reason)
 		}
 		msg := alertchannels.Message{
 			Event: alertchannels.EventFire, RuleName: item.AgentName + " needs approval",
