@@ -189,7 +189,15 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		return false
 	}
 	prefix := consumerKeyPrefixFromPlaintext(token)
-	key, err := h.consumerAuthStore.ConsumerKeyByAppAndPrefix(r.Context(), app.AccountID, app.ID, prefix)
+	keyAppID := app.ID
+	key, err := h.consumerAuthStore.ConsumerKeyByAppAndPrefix(r.Context(), app.AccountID, keyAppID, prefix)
+	if errors.Is(err, ErrConsumerAuthNotFound) && app.IsPreview && app.ProductionAppID != "" {
+		// A preview keeps its production app's consumer-auth gate, so it
+		// accepts that app's consumers' keys; without them a required-mode
+		// preview refused every request (ADR-20261105090226).
+		keyAppID = app.ProductionAppID
+		key, err = h.consumerAuthStore.ConsumerKeyByAppAndPrefix(r.Context(), app.AccountID, keyAppID, prefix)
+	}
 	if err != nil {
 		if !errors.Is(err, ErrConsumerAuthNotFound) {
 			if h.log != nil {
@@ -225,7 +233,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 			return h.consumerAuthUnavailable(w, r, rec, app)
 		}
 	}
-	if !matched || key.AccountID != app.AccountID || key.AppID != app.ID || key.Prefix != prefix || key.ConsumerID == "" {
+	if !matched || key.AccountID != app.AccountID || key.AppID != keyAppID || key.Prefix != prefix || key.ConsumerID == "" {
 		h.keyLookups.fail(source)
 		api.WriteProblem(w, api.ErrConsumerKeyInvalid())
 		rec.status = http.StatusUnauthorized
@@ -252,7 +260,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	if consumer.ID != key.ConsumerID || consumer.AccountID != app.AccountID || consumer.AppID != app.ID {
+	if consumer.ID != key.ConsumerID || consumer.AccountID != app.AccountID || consumer.AppID != keyAppID {
 		api.WriteProblem(w, api.ErrConsumerKeyInvalid())
 		rec.status = http.StatusUnauthorized
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -277,7 +285,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 	authenticated.PlatformTenantID = consumer.PlatformTenantID
 	ctx := authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{
 		ID:     consumer.ID,
-		AppID:  app.ID,
+		AppID:  keyAppID,
 		KeyID:  key.ID,
 		Scopes: key.Scopes,
 	})
