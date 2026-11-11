@@ -241,6 +241,14 @@ const (
 	CapThresholdAllowance      = "allowance"
 	CapThresholdCeilingWarning = "ceiling_warning"
 	CapThresholdSuspended      = "suspended"
+	// CapThresholdEgressHeld: the subject's databases and apps together sent
+	// the shared egress allowance, so its databases are held until the month
+	// ends (ADR-20261110160000). Used, Allowance and Ceiling are bytes: the
+	// shared egress, the plan's allowance and the hold ceiling. Overage is
+	// set when the ceiling is twice the allowance because database egress
+	// overage is billed. It is mailed on its own, never as the most severe
+	// compute threshold.
+	CapThresholdEgressHeld = "egress_held"
 )
 
 // CapEvent is one threshold a subject reached in a month.
@@ -265,6 +273,13 @@ type CapEventStore interface {
 	RecordCapEvent(ctx context.Context, event CapEvent) (bool, error)
 	CapSuspendedAt(ctx context.Context, subjectID string, periodStart time.Time) (*time.Time, error)
 	MostSevereCapEvent(ctx context.Context, subjectID string, periodStart time.Time) (*CapEvent, error)
+}
+
+// CapEventReader is an optional CapEventStore capability: one threshold's
+// event of a month, or nil. The egress hold is mailed through it, apart from
+// the compute thresholds MostSevereCapEvent ranks.
+type CapEventReader interface {
+	CapEvent(ctx context.Context, subjectID string, periodStart time.Time, threshold string) (*CapEvent, error)
 }
 
 // capMailWindow is how long after a threshold is reached its email may still
@@ -358,35 +373,88 @@ type EgressAllowanceFunc func(ctx context.Context, subjectID string, now time.Ti
 
 // uncappedHold is the hold reason for a subject without a compute ceiling:
 // egress, once its databases and apps spent the egress allowance, else none.
-func (e *CapEnforcer) uncappedHold(ctx context.Context, subjectID string) (string, error) {
+func (e *CapEnforcer) uncappedHold(ctx context.Context, subjectID string, now time.Time) (string, egressCheck, error) {
 	if e.egress == nil {
-		return capHoldNone, nil
+		return capHoldNone, egressCheck{}, nil
 	}
-	now := e.now().UTC()
 	snapshot, err := e.store.UsageSnapshot(ctx, subjectID, now)
 	if err != nil {
-		return capHoldNone, err
+		return capHoldNone, egressCheck{}, err
 	}
-	spent, err := e.egressSpent(ctx, subjectID, snapshot, now)
-	if err != nil || !spent {
-		return capHoldNone, err
+	check, err := e.egressSpent(ctx, subjectID, snapshot, now)
+	if err != nil || !check.spent {
+		return capHoldNone, check, err
 	}
-	return capHoldEgress, nil
+	return capHoldEgress, check, nil
+}
+
+// egressCheck is one sweep's read of a subject's shared egress: whether it is
+// spent, and the numbers its hold email reports.
+type egressCheck struct {
+	spent                    bool
+	used, allowance, ceiling int64
+	billed                   bool
 }
 
 // egressSpent reports whether the subject's databases and apps together sent
 // its whole egress allowance this month. A read failure is the subject's
 // failure for this sweep; the previous hold stays as it is.
-func (e *CapEnforcer) egressSpent(ctx context.Context, subjectID string, snapshot UsageSnapshot, now time.Time) (bool, error) {
+func (e *CapEnforcer) egressSpent(ctx context.Context, subjectID string, snapshot UsageSnapshot, now time.Time) (egressCheck, error) {
 	if e.egress == nil {
-		return false, nil
+		return egressCheck{}, nil
 	}
 	allowance, err := e.egress(ctx, subjectID, now)
 	if err != nil || allowance.CeilingBytes <= 0 {
-		return false, err
+		return egressCheck{}, err
 	}
-	ceiling := EgressHoldCeiling(allowance.CeilingBytes, allowance.OverageLifted && e.egressBillingLive)
-	return egressAllowanceReached(snapshot.EgressBytes, allowance.AppEgressBytes, ceiling), nil
+	billed := allowance.OverageLifted && e.egressBillingLive
+	ceiling := EgressHoldCeiling(allowance.CeilingBytes, billed)
+	used := max(snapshot.EgressBytes, 0) + max(allowance.AppEgressBytes, 0)
+	if used < 0 { // overflow
+		used = math.MaxInt64
+	}
+	return egressCheck{spent: egressAllowanceReached(snapshot.EgressBytes, allowance.AppEgressBytes, ceiling),
+		used: used, allowance: allowance.CeilingBytes, ceiling: ceiling, billed: billed}, nil
+}
+
+// noticeEgressHold records the month's egress hold the first time a sweep
+// holds the subject for it, and mails it once (ADR-20261110160000): without
+// it a customer sees ready databases refuse connections and no email says
+// why. Shadow mode records nothing. A failed email does not fail the sweep;
+// the next sweep retries it inside the mail window.
+func (e *CapEnforcer) noticeEgressHold(ctx context.Context, subjectID string, now time.Time, check egressCheck, summary *CapSweepSummary) {
+	store, ok := e.store.(CapEventStore)
+	if !ok || e.mode != CapEnforcementOn || !check.spent {
+		return
+	}
+	event := CapEvent{SubjectID: subjectID, PeriodStart: monthStart(now), Threshold: CapThresholdEgressHeld, ReachedAt: now,
+		Used: check.used, Allowance: max(check.allowance, 1), Ceiling: max(check.ceiling, check.allowance, 1), Overage: check.billed}
+	recorded, err := store.RecordCapEvent(ctx, event)
+	if err != nil {
+		summary.NotifyFailed++
+		e.logger.Warn("managed postgres egress hold not recorded", "subject_id", subjectID, "error", err)
+		return
+	}
+	if recorded {
+		summary.EventsRecorded++
+		e.logger.Info("managed postgres egress hold reached", "subject_id", subjectID,
+			"egress_bytes", check.used, "hold_ceiling_bytes", check.ceiling, "overage_billed", check.billed)
+	}
+	reader, ok := e.store.(CapEventReader)
+	if !ok || e.notify == nil {
+		return
+	}
+	stored, err := reader.CapEvent(ctx, subjectID, now, CapThresholdEgressHeld)
+	if err == nil && (stored == nil || stored.Mailed || now.Sub(stored.ReachedAt) >= capMailWindow) {
+		return
+	}
+	if err == nil {
+		err = e.notify(ctx, *stored)
+	}
+	if err != nil {
+		summary.NotifyFailed++
+		e.logger.Warn("managed postgres egress hold email not queued", "subject_id", subjectID, "error", err)
+	}
 }
 
 // EgressHoldCeiling is the shared egress at which a subject's databases are
@@ -709,11 +777,16 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		// An uncapped subject has no compute to stop, but its egress
 		// allowance still binds; otherwise a hold left from before is
 		// released.
-		reason, err := e.uncappedHold(ctx, accountID)
+		now := e.now().UTC()
+		reason, check, err := e.uncappedHold(ctx, accountID, now)
 		if err != nil {
 			return err
 		}
-		return e.holdDatabases(ctx, accountID, databases, reason, nil, summary)
+		if err := e.holdDatabases(ctx, accountID, databases, reason, nil, summary); err != nil {
+			return err
+		}
+		e.noticeEgressHold(ctx, accountID, now, check, summary)
+		return nil
 	}
 	if policy := e.registry.UsagePolicy(); policy.Enabled && policy.MaxMonthlyComputeUnitSeconds > 0 {
 		ceiling = min(ceiling, policy.MaxMonthlyComputeUnitSeconds)
@@ -768,7 +841,7 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	// The hold is what stops a database; the quota is a backstop, so a
 	// failed quota write does not skip it.
 	all := capHoldNone
-	egressSpent, egressErr := e.egressSpent(ctx, accountID, snapshot, now)
+	egress, egressErr := e.egressSpent(ctx, accountID, snapshot, now)
 	if egressErr != nil {
 		return errors.Join(append(failures, egressErr)...)
 	}
@@ -777,7 +850,7 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		all = capHoldInactive
 	case plan.suspended():
 		all = capHoldCeiling
-	case egressSpent:
+	case egress.spent:
 		all = capHoldEgress
 	}
 	if err := e.holdDatabases(ctx, accountID, databases, all, capHeldDatabases(databases, plan, suspended), summary); err != nil {
@@ -785,6 +858,9 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	}
 	if e.mode == CapEnforcementOn && len(failures) == 0 && !limits.Inactive {
 		e.notifyCapEvent(ctx, accountID, now, summary)
+		if all == capHoldEgress {
+			e.noticeEgressHold(ctx, accountID, now, egress, summary)
+		}
 	}
 	if e.planExcessEnforced() && len(failures) == 0 {
 		e.recordPlanExcessNotices(ctx, databases, suspended, now, summary)
