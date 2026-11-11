@@ -240,6 +240,10 @@ type Service struct {
 	// CapabilityAllowed decides a product capability's platform flag for an
 	// account (ADR-20261023115741). nil releases every capability.
 	CapabilityAllowed func(capability, accountID string) bool
+	// PreviewDatabaseEnvKeys lists the keys an app's PR previews get from
+	// their own databases (ADR-20261102123523). nil reads them from the
+	// store when it is a state.PreviewDatabaseEnvKeyStore.
+	PreviewDatabaseEnvKeys func(ctx context.Context, accountID, appID string) ([]string, error)
 }
 
 // NewService builds a Service. Tests inject fakes for the seams;

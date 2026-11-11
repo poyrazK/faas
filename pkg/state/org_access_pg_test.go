@@ -18,6 +18,10 @@ func TestPostgresOrgOffboardingCredentialsAndFence(t *testing.T) {
 	offboardingCredentials(t, state.NewPgStore(pgtest.OpenMigrated(t)))
 }
 
+func TestPostgresInvitationFollowsInviter(t *testing.T) {
+	invitationFollowsInviter(t, state.NewPgStore(pgtest.OpenMigrated(t)))
+}
+
 func TestPostgresDeployTokenMinter(t *testing.T) {
 	deployTokenMinter(t, state.NewPgStore(pgtest.OpenMigrated(t)))
 }

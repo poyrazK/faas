@@ -138,6 +138,11 @@ type Querier interface {
 	AppManagedPostgresBindingInventory(ctx context.Context, db DBTX, arg AppManagedPostgresBindingInventoryParams) ([]AppManagedPostgresBindingInventoryRow, error)
 	AppObjectStorageBindingInventory(ctx context.Context, db DBTX, arg AppObjectStorageBindingInventoryParams) ([]AppObjectStorageBindingInventoryRow, error)
 	AppOpenMonitorIncident(ctx context.Context, db DBTX, arg AppOpenMonitorIncidentParams) (AppOpenMonitorIncidentRow, error)
+	// ADR-20261102123523: the environment keys a PR preview of this app gets from
+	// its own preview databases, mirroring previewdb.Manager.Prepare: the app's
+	// bindings in the scopes production serves on personally owned databases
+	// with previews on.
+	AppPreviewDatabaseEnvKeys(ctx context.Context, db DBTX, arg AppPreviewDatabaseEnvKeysParams) ([]string, error)
 	AppQueueBindingConsumerInventory(ctx context.Context, db DBTX, arg AppQueueBindingConsumerInventoryParams) ([]AppQueueBindingConsumerInventoryRow, error)
 	AppReleaseSecretsPinned(ctx context.Context, db DBTX, arg AppReleaseSecretsPinnedParams) (bool, error)
 	// ADR-20261103222927: counts and offsets see only the immutable app/scope.

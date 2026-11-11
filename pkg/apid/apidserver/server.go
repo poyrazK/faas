@@ -5431,6 +5431,7 @@ func (s *server) handler() http.Handler {
 	// provider-confirmed checkout or portal flow. The local plan changes
 	// only after the provider webhook confirms the operation.
 	mux.Handle("POST /dashboard/postgres/overage", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardPostgresOverage))))))
+	mux.Handle("POST /dashboard/orgs/{slug}/github/{installationID}/disconnect", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDisconnectOrgGitHub))))
 	mux.Handle("POST /dashboard/account/plan", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.dashboardAccountPlan)))))
 	// Issue #561 — spend cap self-service form. Same CSRF-envelope
 	// envelope shape as dashboardDelete (see cmd/apid/dashboard_delete.go).

@@ -2062,7 +2062,7 @@ BEGIN
  JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,e NOWAIT;
  PERFORM id FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
  PERFORM id FROM instances WHERE app_id=NEW.app_id AND node_id=NEW.node_id
-  AND state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining') FOR SHARE NOWAIT;
+  AND state IN ('waking','cold_booting','running','snapshotting','migrating','warm','frozen','draining') FOR SHARE NOWAIT;
  actual:=application_standard_egress_target(NEW.app_id,NEW.node_id);
  IF actual IS NULL OR actual<>NEW.target OR actual->>'org_id'<>NEW.org_id::text
   OR actual->'identity'->>'ProtocolVersion'<>'2' OR actual->'identity'->>'Incarnation'=''
@@ -2111,7 +2111,7 @@ CREATE FUNCTION public.application_standard_egress_target(app uuid, node uuid) R
  AND e.effective_hash~'^[a-f0-9]{64}$' AND (e.exception_expires_at IS NULL OR e.exception_expires_at>clock_timestamp())
  AND n.active AND n.role IS DISTINCT FROM 'control-plane'
  AND EXISTS(SELECT 1 FROM instances i WHERE i.app_id=a.id AND i.node_id=n.id
-  AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining'));
+  AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','frozen','draining'));
 $_$;
 
 
@@ -3686,7 +3686,7 @@ BEGIN
   OR (OLD.application_standard_promotion_token IS NOT NULL AND NEW.application_standard_promotion_token IS DISTINCT FROM OLD.application_standard_promotion_token) THEN
   RAISE EXCEPTION 'native authority history is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
  END IF;
- IF NEW.state IN ('running','warm','migrating') AND OLD.state NOT IN ('waking','cold_booting','running','warm','migrating') THEN
+ IF NEW.state IN ('running','warm','frozen','migrating') AND OLD.state NOT IN ('waking','cold_booting','running','warm','frozen','migrating') THEN
   RAISE EXCEPTION 'historical native receipt cannot recreate residency' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
  RETURN NEW;
@@ -43275,7 +43275,8 @@ CREATE TABLE public.invoice_refunds (
     CONSTRAINT invoice_refunds_amount_cents_check CHECK ((amount_cents > 0)),
     CONSTRAINT invoice_refunds_idempotency_key_check CHECK ((idempotency_key <> ''::text)),
     CONSTRAINT invoice_refunds_provider_refund_id_check CHECK ((provider_refund_id <> ''::text)),
-    CONSTRAINT invoice_refunds_source_check CHECK ((source = ANY (ARRAY['operator'::text, 'credit'::text, 'webhook'::text])))
+    CONSTRAINT invoice_refunds_source_check CHECK ((source = ANY (ARRAY['operator'::text, 'credit'::text, 'webhook'::text]))),
+    CONSTRAINT invoice_refunds_status_check CHECK ((status ~ '^[a-z_-]{0,64}$'::text))
 );
 
 

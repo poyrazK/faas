@@ -20751,6 +20751,14 @@ func (m *MemStore) RecordInvoiceRefund(_ context.Context, refund InvoiceRefund) 
 			existing.Status = refund.Status
 		} else if oldState == invoiceRefundPending {
 			existing.Status = refund.Status
+		} else if oldState == invoiceRefundSettled && newState == invoiceRefundFailed {
+			// Matches PgStore: a refund that fails after settling is reversed.
+			settledDelta = -refund.AmountCents
+			if existing.Source == "credit" {
+				creditDelta -= refund.AmountCents
+				reverseCredit = true
+			}
+			existing.Status = refund.Status
 		}
 		storedRefund = existing
 	}
@@ -27967,6 +27975,9 @@ func (m *MemStore) ConsumeOrgInvitation(_ context.Context, hash []byte, acceptin
 	}
 	if !strings.EqualFold(inv.Email, acceptingAccount.Email) {
 		return OrgMembership{}, OrgInvitation{}, ErrOrgInvitationInvalid
+	}
+	if err := m.checkInviterLocked(inv); err != nil {
+		return OrgMembership{}, OrgInvitation{}, err
 	}
 	// Status, plan and member admission share this lock with org mutations.
 	org, ok := m.orgs[inv.OrgID]
