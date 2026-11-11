@@ -342,7 +342,7 @@ func cmdDev(args []string) int {
 	debug := fs.Bool("debug", false, "start the Node.js inspector and expose it on a local port (ADR-741)")
 	debugPort := fs.Int("debug-port", api.DevDebugNodePort, "local port for --debug")
 	all := fs.Bool("all", false, "run one developer loop per deployable workspace app below --path")
-	watch := fs.Bool("watch", false, "run the app's development server with hot reload instead of the production build (ADR-1170)")
+	watch := fs.Bool("watch", false, "use hot reload (automatic for supported apps); --watch=false uses the production build")
 	watchCommand := fs.String("watch-command", "", "development server command for --watch (default: the dev script or the detected framework's server)")
 	goCommand := fs.String("go-command", "", "build cmd/NAME of the Go module at --path, for a module with several commands")
 	if err := fs.Parse(args); err != nil {
@@ -357,6 +357,9 @@ func cmdDev(args []string) int {
 		return 1
 	}
 	explicitFlags := flagSetWasSet(fs)
+	if explicitFlags["watch"] && !*watch && explicitFlags["watch-command"] {
+		return printErr("Invalid flags", errors.New("--watch=false cannot be combined with --watch-command"))
+	}
 	if *stop && explicitFlags["bucket"] {
 		return printErr("Invalid flags", fmt.Errorf("--bucket cannot be combined with --stop"))
 	}
@@ -430,7 +433,6 @@ func cmdDev(args []string) int {
 		applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
 		applyDevSeedManifestDefault(manifest, explicitFlags, postgresSeed)
 		debugFromManifest = applyDevDebugManifestDefault(manifest, explicitFlags, debug, debugPort)
-		applyDevWatchManifestDefault(manifest, explicitFlags, watch, watchCommand)
 	}
 	var buckets []api.DevBucketRequest
 	if !*stop {
@@ -569,21 +571,26 @@ func cmdDev(args []string) int {
 	if *debug && !devDebugSupported(sourceDir, config) {
 		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only (not Bun or Deno)"))
 	}
-	devWatch, err := resolveDevWatch(sourceDir, config, *watch, *watchCommand)
+	devMode, err := resolveDevMode(sourceDir, config, manifest, explicitFlags, *watch, *watchCommand)
 	if err != nil {
 		return printErr("Invalid --watch", err)
 	}
-	var devWatchNotes []string
-	if devWatch != nil {
-		// Before the first sync, so a config edit ships with it.
-		devWatchNotes = prepareDevWatchSource(sourceDir, !jsonOutput && !nonInteractive && stdinIsTTY() && stdoutIsTTY(), osStdin, osStdout)
-	}
-	session, err := upsertDevSession(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...), *goCommand))
+	session, devMode, err := upsertDevSessionWithMode(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devMode.watch(), buckets...), *goCommand), devMode)
 	if err != nil {
 		return printErr("Could not create developer environment", err)
 	}
 	if session.GoCommand != *goCommand {
 		return printErr("Could not select the Go command", errDevGoCommandUnsupported(*goCommand))
+	}
+	devWatch := devMode.watch()
+	if err := reportDevMode(devMode); err != nil {
+		return jsonOut(err)
+	}
+	var devWatchNotes []string
+	if devWatch != nil {
+		// Prepare only an accepted watch session, before the first sync, so
+		// an automatic fallback never asks to edit framework configuration.
+		devWatchNotes = prepareDevWatchSource(sourceDir, !jsonOutput && !nonInteractive && stdinIsTTY() && stdoutIsTTY(), osStdin, osStdout)
 	}
 	if group != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -610,7 +617,6 @@ func cmdDev(args []string) int {
 			PrintProgress(osStdout, "Bucket: %s (%s); binding %s under %s", bucket.Bucket.Name, bucket.Bucket.State, bucket.Binding.Credential.Permission, bucket.Binding.Prefix)
 		}
 		if session.Watch != nil {
-			PrintProgress(osStdout, "watch mode: runs %q with hot reload; this environment does not run your production build", session.Watch.Command)
 			for _, note := range devWatchNotes {
 				PrintProgress(osStdout, "watch mode: %s", note)
 			}
