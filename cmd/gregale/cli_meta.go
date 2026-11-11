@@ -304,9 +304,11 @@ func (s cliSub) subcommandChoice() string {
 // subcommandSynopsis renders the child-verb slot of a usage line. A verb
 // that also runs on its own (`postgres resize --class ... <database>` beside
 // `postgres resize status`) shows the child as optional; `<status>` read as a
-// required argument of the resize itself (ChronoLake finding 22).
+// required argument of the resize itself (ChronoLake finding 22). Flags alone
+// mark such a verb too: `release list [alias] [flags]` lists without the
+// child (Hunt 33 H33-4).
 func (s cliSub) subcommandSynopsis() string {
-	if len(s.Flags) > 0 && len(s.Positionals) > 0 {
+	if len(s.Flags) > 0 {
 		return "[" + s.subcommandChoice() + "]"
 	}
 	return "<" + s.subcommandChoice() + ">"
@@ -771,6 +773,7 @@ var cliCommands = []cliCommand{
 				{Name: "list", Short: "List multipart sessions", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "cursor", Value: "ID", Short: "next page cursor"}}},
 				{Name: "status", Short: "Inspect a multipart session returned by an upload", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}},
 				{Name: "parts", Short: "List uploaded multipart parts", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "part-number-marker", Value: "N", Short: "last part from the previous page"}}},
+				{Name: "abort", Short: "Abort an unfinished multipart session, freeing the bucket it holds", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}},
 			}},
 			{Name: "upload", Short: "Upload a file with resumable multipart transfers", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<file>"}, Flags: []cliFlag{{Name: "content-type", Value: "TYPE", Short: "object MIME type"}, {Name: "if-match", Value: "ETAG", Short: "replace a matching object (single PUT only)"}, {Name: "if-none-match", Value: "*", Short: "create only if absent (single PUT only)"}, {Name: "resume", Value: "UPLOAD-ID", Short: "resume a multipart upload from its local checkpoint"}, {Name: "timeout", Value: "DURATION", Short: "transfer deadline (default 30m)"}}},
 			{Name: "sign", Short: "Mint a short-lived signed URL to download or upload one object", Positionals: []string{"<app>", "<bucket-id>", "<key>"}, Flags: []cliFlag{
@@ -792,13 +795,13 @@ var cliCommands = []cliCommand{
 				{Name: "revoke", Short: "Prevent new copy dispatch from a source", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>"}},
 			}}, {Name: "encryption-keys", Short: "List owned encryption capabilities and key references", Positionals: []string{"<app>", "<bucket-id>"}},
 			{Name: "encryption", Short: "Inspect or configure verified bucket encryption defaults", Subcommands: []cliSub{
-				{Name: "status", Short: "Show durable encryption progress", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "status", Aliases: []string{"get"}, Short: "Show durable encryption progress", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "clear", Short: "Remove the default for new writes", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "AES256", Short: "Set provider AES256 encryption", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "aws:kms", Short: "Set owned KMS encryption", Positionals: []string{"<app>", "<bucket-id>", "<owned-key-ref>", "[bucket-key-enabled]"}},
 				{Name: "aws:kms:dsse", Short: "Set owned dual-layer KMS encryption", Positionals: []string{"<app>", "<bucket-id>", "<owned-key-ref>"}},
 			}}, {Name: "object-lock", Short: "Inspect permanent Object Lock and configure retention defaults", Subcommands: []cliSub{
-				{Name: "status", Short: "Show durable Object Lock progress", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "status", Aliases: []string{"get"}, Short: "Show durable Object Lock progress", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "capabilities", Short: "Show enrolled bucket lock capabilities", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "enable", Short: "Permanently enable Object Lock without defaults", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "clear-default", Short: "Clear future defaults while keeping Object Lock enabled", Positionals: []string{"<app>", "<bucket-id>"}},
@@ -3645,6 +3648,7 @@ var cliCommands = []cliCommand{
 				{Name: "fail-on-regression", Short: "exit 1 when confirmed customer migration regressions are found"},
 			}}}}}},
 			{Name: "wait", Short: "Wait for a preview deployment to become ready", Examples: []string{"gregale preview wait pr-42-my-api --progress --open"}, Positionals: []string{"<preview-slug>"}, Flags: []cliFlag{
+				{Name: "commit", Short: "wait until the preview serves this commit (a full or abbreviated SHA), such as the pull request's head", Value: "SHA"},
 				{Name: "progress", Short: "print deployment transitions while waiting"},
 				{Name: "open", Short: "open the preview URL after it becomes ready"},
 				{Name: "timeout", Short: "maximum wait (seconds, or a duration such as 10m)", Value: "SECONDS|DURATION"},
@@ -6146,7 +6150,7 @@ var cliCommands = []cliCommand{
 				{Name: "delete", Short: "Delete a binding", Positionals: []string{"<id>"}},
 				{Name: "rotate", Short: "Rotate a binding, optionally waiting for the old credential", Notes: []string{"Waits until the previous credential retires."}, Positionals: []string{"<id>"}, Flags: []cliFlag{
 					{Name: "wait", Short: "wait for the previous credential to retire"},
-					{Name: "wait-timeout", Short: "maximum time to wait for rotation (default 5m)", Value: "DURATION"},
+					{Name: "wait-timeout", Short: "maximum time to wait for rotation (default 15m)", Value: "DURATION"},
 					{Name: "poll-interval", Short: "status polling interval while waiting (default 1s)", Value: "DURATION"},
 				}, Examples: []string{"gregale postgres bindings rotate BINDING_ID --wait"}},
 			}},

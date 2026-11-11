@@ -54,6 +54,11 @@ func TestBucketDefaultEncryptionCLI(t *testing.T) {
 			}
 		})
 	}
+	// Hunt 33 H33-23: `get` reads like status.
+	c := &defaultEncryptionCLIClient{}
+	if _, err := main.RunBucketDefaultEncryption(t.Context(), c, main.BucketStatusAlias([]string{"get", "demo", "bucket"})); err != nil || c.method != "GET" {
+		t.Fatal("get alias", c, err)
+	}
 	for _, args := range [][]string{
 		nil, {"unknown", "demo", "bucket"}, {"status", "demo", "bucket", "extra"},
 		{"AES256", "demo", "bucket", key}, {"aws:kms", "demo", "bucket"},
