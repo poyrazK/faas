@@ -229,7 +229,8 @@
         "regression_tests": [
           "TestAnalyticsHistoricalCoverageSurvivesLaterLossAndNodeOutage",
           "TestRequestTelemetryCompletenessPG",
-          "TestAnalyticsCountingHistoryIgnoresLaterRawLoss"
+          "TestAnalyticsCountingHistoryIgnoresLaterRawLoss",
+          "TestAnalyticsHistoryRequiresProofForRetiredSilentNodes"
         ],
         "branch": "fix/gregale-analytics-findings"
       }
@@ -616,5 +617,6 @@
     "deployment": "Not deployed. Apply the expand migration first, update every apid writer, then advance the audit start as documented in docs/adr/20261111140000-analytics-correctness.md. Mixed-version and earlier missing evidence remain unknown."
   },
   "integration_base": "1c3ca6851",
-  "integration_validation": "Rebased onto current main; local integration regressions and pull-request CI are being run."
+  "integration_validation": "Integrated with the current gateway-counting pipeline, hourly tiers, delta metrics, and labelled series. PostgreSQL, SDK and schema regressions are recorded in the PR; its checks are authoritative for the current head.",
+  "integration_pr": "https://github.com/poyrazK/faas/pull/7053"
 }

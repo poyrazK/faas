@@ -20733,7 +20733,8 @@
       "node_name",
       "previous_source_at",
       "registered_at",
-      "source_at"
+      "source_at",
+      "source_kind"
     ],
     "kind": "operational"
   },
@@ -20742,7 +20743,8 @@
     "columns": [
       "covered_since",
       "covered_until",
-      "node_name"
+      "node_name",
+      "source_kind"
     ],
     "kind": "operational"
   },
@@ -20753,7 +20755,8 @@
       "gap_from",
       "gap_until",
       "history_incomplete",
-      "node_name"
+      "node_name",
+      "source_kind"
     ],
     "kind": "operational"
   }
