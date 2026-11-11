@@ -16,13 +16,18 @@ func keyApprovalCategories(scopes []string, requested *[]string) (categories []s
 	if requested == nil {
 		return nil, false, nil
 	}
-	if !slices.Contains(scopes, api.ScopeAgent) {
-		return nil, false, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Approvals need an agent key",
-			"approval_categories apply only to keys with the agent scope")
-	}
 	categories, err := api.NormalizeAgentApprovalCategories(*requested)
 	if err != nil {
 		return nil, false, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Unknown approval category", err.Error())
+	}
+	if !slices.Contains(scopes, api.ScopeAgent) {
+		// A key without the agent scope never waits for an approval, so
+		// "none" already holds for it (Hunt 33 H33-9).
+		if len(categories) == 0 {
+			return nil, false, nil
+		}
+		return nil, false, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Approvals need an agent key",
+			"approval_categories apply only to keys with the agent scope")
 	}
 	return categories, true, nil
 }
