@@ -4367,11 +4367,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 
 	for _, app := range m.apps {
-		if app.ProjectID != projectID {
+		if app.ProjectID != projectID || app.Status == AppDeleted {
 			continue
 		}
 		for _, deployment := range m.deployments {
-			if deployment.AppID == app.ID && !deployment.Status.IsTerminal() &&
+			if deployment.AppID == app.ID && !deployment.Status.IsTerminal() && deployment.DeletedAt == nil &&
 				normalizedDeploymentScope(deployment.Scope) == slug {
 				return ProjectEnvironmentCleanupJob{}, ErrConflict
 			}
