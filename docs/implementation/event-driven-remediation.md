@@ -105,6 +105,9 @@ see the integration evidence alongside the earlier results.
 
 The migration generator allocated
 `20261111160000419_external_trigger_replay.sql` after main's latest migration.
-The schema snapshot/hash and SQLC were regenerated from a fresh local database,
+The migration also disables the short statement timeout while building its
+index and repairs an invalid index left by an interrupted build; that recovery
+was exercised in an isolated PostgreSQL database. The schema snapshot/hash and
+SQLC were regenerated from a fresh local database,
 and both SDKs were regenerated against the integrated spec. The pull request's
 checks are the integration gate. Deployment qualification remains pending.

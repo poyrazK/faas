@@ -5,6 +5,7 @@
 
 -- +goose Up
 SET lock_timeout = '5s';
+SET statement_timeout = 0;
 ALTER TABLE trigger_records ADD COLUMN IF NOT EXISTS operator_replay boolean NOT NULL DEFAULT false;
 
 -- Recover unified replays already acknowledged by the old implementation.
@@ -30,6 +31,17 @@ BEGIN
 END $backfill$;
 -- +goose StatementEnd
 
+-- A cancelled concurrent build leaves an invalid index that IF NOT EXISTS
+-- would retain. Remove that leftover before rebuilding it on a retry.
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF EXISTS (SELECT 1 FROM pg_index
+            WHERE indexrelid=to_regclass('trigger_operator_replay_due_idx') AND NOT indisvalid) THEN
+  DROP INDEX trigger_operator_replay_due_idx;
+ END IF;
+END $$;
+-- +goose StatementEnd
+
 CREATE INDEX CONCURRENTLY IF NOT EXISTS trigger_operator_replay_due_idx
 ON trigger_records(trigger_id, next_fire_at, id)
 WHERE operator_replay AND state IN ('pending', 'retry');
@@ -53,6 +65,7 @@ BEGIN
  END LOOP;
 END $redact$;
 -- +goose StatementEnd
+RESET statement_timeout;
 RESET lock_timeout;
 
 -- +goose Down

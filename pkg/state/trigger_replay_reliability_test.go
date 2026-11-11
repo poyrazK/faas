@@ -138,6 +138,18 @@ func TestExternalTriggerReplayMigrationPreservesRecoveryAndRedactsSecrets(t *tes
 	if _, err = provider.ApplyVersion(t.Context(), version, true); err != nil {
 		t.Fatalf("interrupted upgrade cannot resume: %v", err)
 	}
+	// A cancelled concurrent build can leave the same index name invalid.
+	// Simulate that state only in this isolated pgtest database.
+	if _, err = pool.Exec(t.Context(), `UPDATE pg_index SET indisvalid=false WHERE indexrelid=to_regclass('trigger_operator_replay_due_idx')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.ApplyVersion(t.Context(), version, true); err != nil {
+		t.Fatalf("invalid replay index cannot recover: %v", err)
+	}
+	var indexValid bool
+	if err = pool.QueryRow(t.Context(), `SELECT indisvalid FROM pg_index WHERE indexrelid=to_regclass('trigger_operator_replay_due_idx')`).Scan(&indexValid); err != nil || !indexValid {
+		t.Fatalf("replay index remains invalid: valid=%t error=%v", indexValid, err)
+	}
 	health, err := store.TriggerConsumerHealth(t.Context(), trigger.ID.String())
 	if err != nil {
 		t.Fatal(err)
