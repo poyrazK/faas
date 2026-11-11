@@ -3497,16 +3497,6 @@ func CustomDomainLimitsFor(p Plan) (perApp, perAccount int, ok bool) {
 	}
 }
 
-// VCPUPerPlan is the guest vCPU count a function execution boots with. App
-// instances follow their size instead (ADR-20261109172421); this goes with
-// the Limits table's VCPU once executions do too. Keep the two in lock-step.
-var VCPUPerPlan = map[Plan]int{
-	PlanFree:  2,
-	PlanHobby: 2,
-	PlanPro:   2,
-	PlanScale: 4,
-}
-
 // GuestVCPUMillicores is the sustained CPU quota one guest vCPU stands for
 // when an app's topology follows its quota instead of its plan
 // (ADR-20261101160231).
@@ -4395,8 +4385,8 @@ type Limits struct {
 	// without reading limits.go. Spec §13 hard-limits table.
 	ConcurrencyPerVMBound int // Free 4, Hobby 5, Pro 25, Scale 80
 
-	// Runtime shape.
-	VCPU         int // firecracker vcpu_count (spec §4.4)
+	// Runtime shape. No plan field sets a guest's vCPU count: it follows the
+	// guest's memory (SizeVCPUs, ADR-20261109172421).
 	IdleTimeoutS int // default idle-reaper timeout (spec §4.3)
 
 	// M-2 / ADR-137+138: per-plan tier tightening for
@@ -6036,7 +6026,6 @@ var planLimits = map[Plan]Limits{
 		// alignment comment; the value was 256 before this audit too.
 		AppLayerMaxMB:         256,
 		SourceTarballMaxMB:    100,
-		VCPU:                  2,
 		IdleTimeoutS:          60,
 		RequestBudgetMaxMs:    30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
 		CertExpiryWarningDays: 30,
@@ -6448,7 +6437,6 @@ var planLimits = map[Plan]Limits{
 		RAMMB:                 512,
 		AppLayerMaxMB:         512,
 		SourceTarballMaxMB:    100,
-		VCPU:                  2,
 		IdleTimeoutS:          60,
 		RequestBudgetMaxMs:    60_000, // request_timeout_s ceiling: 60 s (ADR-1150)
 		CertExpiryWarningDays: 30,
@@ -6896,7 +6884,6 @@ var planLimits = map[Plan]Limits{
 		RAMMB:                 1024,
 		AppLayerMaxMB:         1024,
 		SourceTarballMaxMB:    250,
-		VCPU:                  2,
 		IdleTimeoutS:          300,
 		RequestBudgetMaxMs:    300_000, // request_timeout_s ceiling: 5 min (ADR-1150)
 		CertExpiryWarningDays: 30,
@@ -7309,7 +7296,6 @@ var planLimits = map[Plan]Limits{
 		RAMMB:                 2048,
 		AppLayerMaxMB:         2048,
 		SourceTarballMaxMB:    250,
-		VCPU:                  4,
 		IdleTimeoutS:          600,
 		RequestBudgetMaxMs:    900_000, // request_timeout_s ceiling: 15 min (ADR-1150)
 		CertExpiryWarningDays: 30,
