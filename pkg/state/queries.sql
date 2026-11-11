@@ -5901,6 +5901,29 @@ ON CONFLICT (owner_id) DO UPDATE SET max_bytes = EXCLUDED.max_bytes, reason = EX
 -- name: ClearObjectStorageCeilingGrant :exec
 DELETE FROM object_storage_ceiling_grants WHERE owner_id=$1;
 
+-- name: ComplimentaryAccount :one
+-- ADR-20261111140000: an account given a paid plan without a subscription.
+SELECT account_id, plan, reason, granted_by, granted_at, expires_at FROM complimentary_accounts WHERE account_id=$1;
+
+-- name: SetComplimentaryAccount :exec
+INSERT INTO complimentary_accounts (account_id, plan, reason, granted_by, granted_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (account_id) DO UPDATE SET plan = EXCLUDED.plan, reason = EXCLUDED.reason,
+  granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at, expires_at = EXCLUDED.expires_at;
+
+-- name: ClearComplimentaryAccount :exec
+DELETE FROM complimentary_accounts WHERE account_id=$1;
+
+-- name: ListComplimentaryAccountIDs :many
+-- Every complimentary account, for meterd's push pass.
+SELECT account_id FROM complimentary_accounts ORDER BY account_id;
+
+-- name: ListExpiredComplimentaryAccounts :many
+-- Complimentary accounts whose end date has passed, oldest first.
+SELECT account_id, plan, reason, granted_by, granted_at, expires_at FROM complimentary_accounts
+WHERE expires_at IS NOT NULL AND expires_at <= sqlc.arg(now)::timestamptz
+ORDER BY expires_at, account_id LIMIT sqlc.arg(batch_size);
+
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
 

@@ -4716,6 +4716,10 @@ func (s *server) handler() http.Handler {
 	// billing subject's object-storage ceiling.
 	mux.Handle("POST /v1/admin/ops/accounts/{id}/object-storage-ceiling",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsObjectStorageCeiling))))
+	// ADR-20261111140000: an operator gives an account a paid plan without a
+	// subscription, or ends it.
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/complimentary",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountComplimentary))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/drain",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeDrain))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/force-drain",
