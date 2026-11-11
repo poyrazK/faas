@@ -8354,6 +8354,13 @@ type LogSavedSearch struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type LoginFailureBudget struct {
+	EmailHash       string
+	WindowStartedAt pgtype.Timestamptz
+	Failures        int32
+	NotifiedAt      pgtype.Timestamptz
+}
+
 type LoginToken struct {
 	TokenHash  []byte
 	AccountID  pgtype.UUID
