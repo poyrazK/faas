@@ -129,7 +129,7 @@ func TestMetalSandboxWarmSnapshot(t *testing.T) {
 				t.Fatalf("%s: no network after the restore:\n%s", id, out)
 			}
 			public := netip.MustParseAddr("1.1.1.1")
-			if err := m.AllowResolvedEgressNamed(ctx, inst.Net.HostIP, "registry.npmjs.org", []netip.Addr{public}, time.Minute, 0); err != nil {
+			if err := m.AllowResolvedEgressNamed(ctx, inst.Net.HostIP, resolvedOwner(t, m, inst.Net.HostIP), "registry.npmjs.org", []netip.Addr{public}, time.Minute, 0); err != nil {
 				t.Fatal(err)
 			}
 			out, code := rootExec(t, m, id, id+"-session", `python3 -c '

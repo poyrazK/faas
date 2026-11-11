@@ -1,6 +1,6 @@
 # ADR-20261110184700: The Free plan includes no managed PostgreSQL, and databases past their plan are deleted after 30 days
 
-- **Status:** accepted (owner, 2026-11-10: "Can we remove database service from free tier?", then "yes, do both with 30 days", on the billing launch review). Slices 1 and 2 built; the reminder email is later.
+- **Status:** accepted (owner, 2026-11-10: "Can we remove database service from free tier?", then "yes, do both with 30 days", on the billing launch review). Slices 1 and 2 built; amended 2026-11-11 so deletion needs a mailed date. The reminder email is later.
 - **Date:** 2026-11-10
 - **Owner:** apid and managed PostgreSQL maintainers
 - **Amends:**
@@ -85,6 +85,37 @@ when parallel changes pick the next number.
   effect only while the plan excess sweep itself is `on`.
 - **Scope.** Deletion covers only databases past their plan. A paid
   database inside its plan is never deleted for inactivity.
+
+## Amendment 2026-11-11: a database is deleted only on a date its owner was mailed
+
+Slice 2 could delete a database whose owner never saw a deletion date:
+
+- apid accepted `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_DELETE=on` with the
+  suspension email off, which is its default.
+- The email is sent once, within a day of the suspension. A database suspended
+  while deletion was `shadow` was told its data is kept, with no date. Once
+  deletion turned `on`, the first sweep deleted every database already past 30
+  days with no further email.
+
+The amendment:
+
+- **The date is stored with the email.** The mail outbox writes the deletion
+  date the email names (`delete_at` on the plan excess notice, migration
+  `20261111150000312`) in the same transaction that links the email to the
+  notice. The sweep deletes a database only once that date has come. An email
+  that failed, was skipped (account inactive), or named no date leaves the
+  database in place.
+- **Old notices start again.** While deletion is `on`, a notice mailed
+  without a date, or never mailed inside its one-day window, is restarted at
+  the sweep: a new `recorded_at` and no linked email. The next mail pass sends
+  the suspension email with a deletion date 30 days out. A database suspended
+  for months therefore gets a full 30 days' notice when deletion turns on.
+- **apid refuses deletion without the email.**
+  `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_DELETE=on` fails startup unless
+  `FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=1` and the
+  producer outbox are on, as compute cap enforcement does for its notice.
+- `shadow` still logs by the 30 days since suspension, so operators see what
+  `on` would schedule before the date is mailed.
 
 ## Consequences
 

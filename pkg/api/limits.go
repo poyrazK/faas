@@ -944,6 +944,31 @@ func ManagedPostgresPreviewDatabasesMax(p Plan) int {
 	return limits.PreviewApps * databases.DatabasesMax
 }
 
+// ManagedPostgresAllowanceBranchTTLMax is the longest TTL a branch may carry
+// and still sit in the plan's branch allowance instead of its database limit
+// (ADR-20261106103654 amendment 1). A branch with a longer TTL, or none,
+// counts toward DatabasesMax like any restore.
+const ManagedPostgresAllowanceBranchTTLMax = 7 * 24 * time.Hour
+
+// managedPostgresBranchesMax is how many short-lived branches (a TTL of at
+// most ManagedPostgresAllowanceBranchTTLMax) an account may hold at once
+// outside its database limit (ADR-20261106103654 amendment 1). On Neon a
+// branch lives in its source's project, which includes 25 branches, so the
+// allowance costs only the branch's compute and the data written to it,
+// both metered like any database.
+var managedPostgresBranchesMax = map[Plan]int{
+	PlanFree:  0,
+	PlanHobby: 2,
+	PlanPro:   5,
+	PlanScale: 20,
+}
+
+// ManagedPostgresBranchesMax returns the plan's branch allowance. Unknown
+// plans fail closed.
+func ManagedPostgresBranchesMax(p Plan) int {
+	return managedPostgresBranchesMax[p]
+}
+
 // ManagedPostgresPreviewFleetSharePercent caps one account's PR preview
 // databases at this share of the operator's fleet database cap
 // (max_databases), at least one (ADR-20261102123523 amendment 2026-11-10).
@@ -3696,6 +3721,12 @@ func ValidSnapshotRefresh(v string) bool {
 	return v == SnapshotRefreshOff || v == SnapshotRefreshShadow || v == SnapshotRefreshOn
 }
 
+// ValidGatewayAwaitingResponseMax reports whether v is a valid
+// `gateway_awaiting_response_max`.
+func ValidGatewayAwaitingResponseMax(v int) bool {
+	return v >= GatewayAwaitingResponseMaxMin && v <= GatewayAwaitingResponseMaxMax
+}
+
 // ValidSnapshotRefreshWindowHours reports whether v is a valid
 // `snapshot_refresh_window_hours`.
 func ValidSnapshotRefreshWindowHours(v int) bool {
@@ -4105,6 +4136,14 @@ type ObjectStoragePlanLimits struct {
 	IncludedBytes       int64
 	IncludedRequests    int64
 	IncludedEgressBytes int64
+	// MaxLockRetentionDays bounds Object Lock retention, in either mode, on
+	// the plan (ADR-20261111123000 decision 8): Free 0 (Object Lock and legal
+	// holds not included), Hobby 90, Pro 366 and Scale 2557 days (one and
+	// seven years, leap days included). Unlike the ceilings above, zero is a
+	// limit, not "no plan value". A retention date, event-hold duration,
+	// default retention or bucket lock configuration beyond it is refused at
+	// write; longer retention set before the cap is reported, not shortened.
+	MaxLockRetentionDays int32
 }
 
 // Anonymous reads of public bucket mounts (H9-S137, ADR-20261023223000).
@@ -6473,7 +6512,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30, MaxLockRetentionDays: 90},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -6920,7 +6959,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30, MaxLockRetentionDays: 366},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -7332,7 +7371,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30, MaxLockRetentionDays: 2557},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -8367,6 +8406,28 @@ const (
 	// WakeAdmissionPolicyForPlan in pkg/gateway; this is the cross-app bound.
 	GatewayWakeAdmissionQueueCap = 128
 
+	// GatewayAwaitingResponseMax bounds the app requests one gatewayd-internal
+	// process holds before their response head is written: waiting for a
+	// wake, a concurrency slot or the guest's first byte. Past it the gateway
+	// answers 503 gateway_overloaded at once instead of holding another one
+	// (pkg/gateway/backlog). A node saturated on CPU otherwise holds requests
+	// until the process passes its MemoryMax: on 2026-11-11 1,400 req/s at one
+	// node grew gatewayd-internal from ~120 MB to ~500 MB and the kernel
+	// killed it, taking the node's entry down. A waiting request held about
+	// 100 KB there, so 2,048 keeps the backlog near 200 MB, under the unit's
+	// GOMEMLIMIT of 384 MiB. A healthy node holds tens: 1,000 req/s at 60 ms.
+	// The gateway_awaiting_response_max runtime-config key changes it without
+	// a restart, between GatewayAwaitingResponseMaxMin and
+	// GatewayAwaitingResponseMaxMax; raise MemoryMax and GOMEMLIMIT with it.
+	GatewayAwaitingResponseMax    = 2048
+	GatewayAwaitingResponseMaxMin = 64
+	GatewayAwaitingResponseMaxMax = 65536
+	// A gateway_overloaded answer's Retry-After is drawn from
+	// GatewayOverloadedRetryAfterMin to GatewayOverloadedRetryAfterMax seconds,
+	// so refused clients don't return together.
+	GatewayOverloadedRetryAfterMin = 1
+	GatewayOverloadedRetryAfterMax = 3
+
 	// Gateway wake admission defaults are plan policy, kept here with the
 	// rest of the platform's quotas so gateway and scheduler-facing code do
 	// not grow separate copies of customer limits. Higher tiers are selected
@@ -8583,6 +8644,11 @@ const (
 	// MaxRequestBodyBytes (which bounds inbound request bodies, not
 	// schema documents).
 	MaxEdgeRuleValidateSchemaBytes = 64 * 1024 // 64 KiB
+	// Exact validation arithmetic has a separate per-number work bound
+	// (ADR-20261111140000), independent of the request/schema byte ceiling.
+	MaxEdgeRuleValidateNumberBytes     = 4096
+	MaxEdgeRuleValidateNumberExponent  = 4096
+	MaxEdgeRuleValidateNumberWorkBytes = MaxRequestBodyBytes
 
 	// MaxEdgeRuleRespondBodyBytes bounds the JSON body stored in a
 	// preview-only kind=respond rule. Keeping this bounded protects both
@@ -10577,6 +10643,21 @@ const (
 	// schedd keeps across nodes (ADR-20261027090013 §12); a shape past it
 	// cold-boots every session.
 	SandboxWarmSnapshotsMax = 512
+	// Measured charge and reservation of agent run VMs on agent nodes
+	// (ADR-20261027090015 §3, proposed; schedd agent_measured_charge). A run
+	// is charged max(memory, its version's p95 private peak,
+	// AgentChargeFloorMB) + 8 MB and books min(ram_mb,
+	// max(AgentReservationFloorMB, AgentReservationPeakFactorPercent of the
+	// peak)) + 8 MB against the overcommit bound. A version has a peak once
+	// AgentSizeHistoryMinRuns of its last AgentSizeHistoryWindowRuns runs
+	// were measured with at most AgentSizeHistoryMaxGapPercent of their
+	// samples missing; until then its runs book and are charged ram_mb.
+	AgentChargeFloorMB                = 64
+	AgentReservationFloorMB           = 128
+	AgentReservationPeakFactorPercent = 150
+	AgentSizeHistoryMinRuns           = 20
+	AgentSizeHistoryWindowRuns        = 100
+	AgentSizeHistoryMaxGapPercent     = 20
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2

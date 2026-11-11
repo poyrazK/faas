@@ -8778,6 +8778,7 @@ type ManagedPostgresPlanExcessNotice struct {
 	Reason       string
 	RecordedAt   pgtype.Timestamptz
 	MailIntentID pgtype.UUID
+	DeleteAt     pgtype.Timestamptz
 }
 
 type ManagedPostgresResize struct {

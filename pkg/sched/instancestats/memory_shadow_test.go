@@ -180,3 +180,25 @@ func TestMemoryShadowChargesIdleLadderFreezeTheFrozenFloor(t *testing.T) {
 		t.Fatalf("frozen = %d, want 0: a ladder freeze is not a schedd freeze", got.Frozen)
 	}
 }
+
+// adr: 20261027090015 — the reader keeps every VM's memory sample, agent run
+// VMs without an instances row included, for agent measured charge.
+func TestReaderVMMemory(t *testing.T) {
+	r := NewReader()
+	now := time.Unix(1_800_000_000, 0)
+	p := &Poller{Reader: r}
+	p.publishMemoryShadow([]state.Instance{
+		{ID: "a", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+	}, []InstanceStat{{InstanceID: "a", NodeID: "n1", RSSMB: 200}, {InstanceID: "agent-r1", NodeID: "n1", RSSMB: 310},
+		{InstanceID: "agent-r2", NodeID: "n1", RSSMB: math.NaN()}}, now)
+	mb, asOf, ok := r.VMMemory("n1", now)
+	if !ok || !asOf.Equal(now) || len(mb) != 2 || mb["a"] != 200 || mb["agent-r1"] != 310 {
+		t.Fatalf("VMMemory = %v, %v, %v", mb, asOf, ok)
+	}
+	if mb, _, ok := r.VMMemory("n2", now); !ok || len(mb) != 0 {
+		t.Fatalf("an unsampled node reports %v, %v", mb, ok)
+	}
+	if _, _, ok := r.VMMemory("n1", now.Add(time.Duration(api.MeasuredAdmissionSampleMaxAgeMillis+1)*time.Millisecond)); ok {
+		t.Fatal("a stale sample was reported fresh")
+	}
+}

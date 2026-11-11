@@ -620,6 +620,9 @@ func ValidateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 	if len(req.MatchPath) > 2048 {
 		return api.ErrValidation(fmt.Sprintf("match_path exceeds 2048 chars (got %d)", len(req.MatchPath)))
 	}
+	if prob := api.ValidateEdgeRuleMatchPath(req.MatchPath); prob != nil {
+		return prob
+	}
 	if prob := api.ValidateEdgeRuleMetadata(&req.Name, &req.Description, req.ExpiresAt, time.Now()); prob != nil {
 		return prob
 	}
@@ -1072,11 +1075,22 @@ func (s *Service) DeleteEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 		httpkit.NotFound(w, "no such edge rule")
 		return
 	}
+	unlock, err := s.LockEdgeRuleMutations(r.Context(), []string{row.AppID})
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("edge-rule mutation lock is unavailable; the rule was not deleted"))
+		return
+	}
+	defer unlock(context.WithoutCancel(r.Context()))
+	row, err = s.Host.Store().GetEdgeRuleByID(r.Context(), id)
+	if err != nil || row.AccountID != acct.ID {
+		httpkit.NotFound(w, "no such edge rule")
+		return
+	}
 	if prob := s.StoredRuleReachProblem(r.Context(), row); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	convergence, err := s.PrepareEdgeRuleMutation(r.Context(), row.AppID, row.ID, "deleted", row.MatchHost)
+	convergence, err := s.PrepareEdgeRuleMutationLocked(r.Context(), row.AppID, row.ID, "deleted", unlock, row.MatchHost)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not deleted"))
 		return

@@ -11492,6 +11492,30 @@ func (q *Queries) CountMCPPagerDutyAcknowledgementEvents(ctx context.Context, db
 	return count, err
 }
 
+const countManagedPostgresAllowanceBranches = `-- name: CountManagedPostgresAllowanceBranches :one
+SELECT count(*)::bigint AS count FROM managed_postgres_databases d
+WHERE d.preview_source_database_id IS NULL AND (d.environment_clone_operation_id IS NULL AND d.restore_source_database_id IS NOT NULL AND d.expires_at IS NOT NULL AND d.expires_at<=d.created_at+interval '7 days')
+ AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL)
+ AND CASE WHEN $1::uuid IS NOT NULL THEN d.org_id=$1::uuid
+     ELSE managed_postgres_usage_subject(d.org_id,d.account_id)=$2::uuid END
+`
+
+type CountManagedPostgresAllowanceBranchesParams struct {
+	OrgID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// ADR-20261106103654 amendment 1: the reservation owner's short-lived
+// branches (a TTL of at most 7 days), read under its reservation lock and
+// counted as the database limit counts, with the owner chosen as
+// CountManagedPostgresPreviewDatabases chooses it.
+func (q *Queries) CountManagedPostgresAllowanceBranches(ctx context.Context, db DBTX, arg CountManagedPostgresAllowanceBranchesParams) (int64, error) {
+	row := db.QueryRow(ctx, countManagedPostgresAllowanceBranches, arg.OrgID, arg.AccountID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countManagedPostgresCutoverTargetBindings = `-- name: CountManagedPostgresCutoverTargetBindings :one
 SELECT count(*) FROM managed_postgres_bindings WHERE database_id=$1::text::uuid AND state<>'deleted'
 `
@@ -11549,7 +11573,7 @@ func (q *Queries) CountManagedPostgresHealth(ctx context.Context, db DBTX, arg C
 const countManagedPostgresLifecycleDatabases = `-- name: CountManagedPostgresLifecycleDatabases :one
 SELECT ((SELECT count(*) FROM managed_postgres_databases d
  WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL)
- AND d.preview_source_database_id IS NULL)
+ AND d.preview_source_database_id IS NULL AND NOT (d.environment_clone_operation_id IS NULL AND d.restore_source_database_id IS NOT NULL AND d.expires_at IS NOT NULL AND d.expires_at<=d.created_at+interval '7 days'))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r
  JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=$1::uuid
@@ -11560,6 +11584,9 @@ SELECT ((SELECT count(*) FROM managed_postgres_databases d
 // kept for its restore copies (ADR-20261103091657).
 // A PR preview environment's database is outside the plan's database limit
 // (ADR-20261102123523) and is counted by CountManagedPostgresPreviewDatabases.
+// So is a short-lived branch, a restore with a TTL of at most 7 days
+// (api.ManagedPostgresAllowanceBranchTTLMax; ADR-20261106103654 amendment 1),
+// counted by CountManagedPostgresAllowanceBranches.
 func (q *Queries) CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, countManagedPostgresLifecycleDatabases, accountID)
 	var count int64
@@ -11569,7 +11596,7 @@ func (q *Queries) CountManagedPostgresLifecycleDatabases(ctx context.Context, db
 
 const countManagedPostgresOrgDatabases = `-- name: CountManagedPostgresOrgDatabases :one
 SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=$1::uuid AND state<>'deleted' AND NOT (state='deleting' AND purge_after IS NULL)
- AND d.preview_source_database_id IS NULL)
+ AND d.preview_source_database_id IS NULL AND NOT (d.environment_clone_operation_id IS NULL AND d.restore_source_database_id IS NOT NULL AND d.expires_at IS NOT NULL AND d.expires_at<=d.created_at+interval '7 days'))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE p.org_id=$1::uuid AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count
 `
@@ -52728,17 +52755,19 @@ func (q *Queries) ListManagedPostgresLifecycleUsageDatabases(ctx context.Context
 }
 
 const listManagedPostgresPlanExcessSince = `-- name: ListManagedPostgresPlanExcessSince :many
-SELECT database_id,recorded_at FROM managed_postgres_plan_excess_notices
+SELECT database_id,recorded_at,delete_at FROM managed_postgres_plan_excess_notices
 WHERE database_id=ANY($1::uuid[])
 `
 
 type ListManagedPostgresPlanExcessSinceRow struct {
 	DatabaseID pgtype.UUID
 	RecordedAt pgtype.Timestamptz
+	DeleteAt   pgtype.Timestamptz
 }
 
 // ADR-20261110184700: when each database was first suspended past its plan,
-// the clock its deletion runs on.
+// and the deletion date its queued email named (NULL until one did). The
+// deletion runs only on that date.
 func (q *Queries) ListManagedPostgresPlanExcessSince(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ListManagedPostgresPlanExcessSinceRow, error) {
 	rows, err := db.Query(ctx, listManagedPostgresPlanExcessSince, databaseIds)
 	if err != nil {
@@ -52748,7 +52777,7 @@ func (q *Queries) ListManagedPostgresPlanExcessSince(ctx context.Context, db DBT
 	items := []ListManagedPostgresPlanExcessSinceRow{}
 	for rows.Next() {
 		var i ListManagedPostgresPlanExcessSinceRow
-		if err := rows.Scan(&i.DatabaseID, &i.RecordedAt); err != nil {
+		if err := rows.Scan(&i.DatabaseID, &i.RecordedAt, &i.DeleteAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -94372,6 +94401,29 @@ func (q *Queries) ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]Reap
 		return nil, err
 	}
 	return items, nil
+}
+
+const rearmManagedPostgresPlanExcessNotices = `-- name: RearmManagedPostgresPlanExcessNotices :execrows
+UPDATE managed_postgres_plan_excess_notices SET recorded_at=$1::timestamptz,mail_intent_id=NULL
+WHERE database_id=ANY($2::uuid[]) AND delete_at IS NULL
+    AND (mail_intent_id IS NOT NULL OR recorded_at<=$3::timestamptz)
+`
+
+type RearmManagedPostgresPlanExcessNoticesParams struct {
+	Now         pgtype.Timestamptz
+	DatabaseIds []pgtype.UUID
+	StaleBefore pgtype.Timestamptz
+}
+
+// ADR-20261110184700 amendment: while deletion is on, a notice whose email
+// named no deletion date (mailed while deletion was off, or never mailed in
+// its window) starts again, so the next pass mails the date.
+func (q *Queries) RearmManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg RearmManagedPostgresPlanExcessNoticesParams) (int64, error) {
+	result, err := db.Exec(ctx, rearmManagedPostgresPlanExcessNotices, arg.Now, arg.DatabaseIds, arg.StaleBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const rearmTenantStoredWorkflowSchedules = `-- name: RearmTenantStoredWorkflowSchedules :exec
