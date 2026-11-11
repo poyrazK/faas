@@ -86,7 +86,8 @@ func cmdUpdate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	if fs.NArg() > 0 {
+		PrintUsage(osStderr, "usage: gregale update [--check] [--version <tag>]; unexpected argument(s): "+strings.Join(fs.Args(), " "), "update")
 		return 1
 	}
 	updater, err := newCLIUpdater()
@@ -161,7 +162,7 @@ func cmdUpdate(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStderr, "Downloading gregale %s (%s/%s)…\n", target, updater.goos, updater.goarch)
 	if err := updater.install(ctx, target, exe); err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update the CLI", err)
 	}
 	report.Updated = true
 	return updateFinish(report, fmt.Sprintf("Updated %s from %s to %s.", exe, wire.Version, target))
