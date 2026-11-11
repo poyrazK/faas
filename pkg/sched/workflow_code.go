@@ -1,6 +1,7 @@
 package sched
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -220,13 +221,17 @@ func (o *WorkflowOrchestrator) invokeCodeWorkflow(ctx context.Context, store sta
 	if len(input) == 0 {
 		input = json.RawMessage(`{}`)
 	}
-	body, err := json.Marshal(workflowcode.Request{
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	err = encoder.Encode(workflowcode.Request{
 		Protocol: api.WorkflowCodeProtocol, RunID: run.ID, Workflow: run.WorkflowName,
 		Input: input, Invocation: attempt, Journal: journal.Sent(time.Now().UTC()),
 	})
 	if err != nil {
 		return false, err
 	}
+	body := bytes.TrimSuffix(encoded.Bytes(), []byte("\n"))
 	if int64(len(body)) > api.WorkflowCodeRequestMaxBytes {
 		message := fmt.Sprintf("%s: entry request is %d bytes, limit %d", workflowcode.ErrLimit, len(body), api.WorkflowCodeRequestMaxBytes)
 		return false, o.finishCodeRunDead(ctx, store, run, attempt, nil, failures, seen, message)

@@ -187,6 +187,23 @@ func checkWorkflowOutboundCompletionTx(ctx context.Context, tx sqlc.DBTX, runID,
 	return nil
 }
 
+func (m *MemStore) workflowStepAttemptCurrentLocked(runID string, step WorkflowStep, attempt int) bool {
+	run := m.workflowRuns[runID]
+	if run.Status == WorkflowRunStatusSucceeded || run.Status == WorkflowRunStatusFailed || run.Status == WorkflowRunStatusDead || step.Status != WorkflowStepStatusRunning || step.Attempt != attempt {
+		return false
+	}
+	_, operation := m.operationForWorkflowLocked(runID)
+	strict := operation || run.ResumeCount > 0 || step.ForEachParent != nil || workflowOutboundSpec(run.DefinitionSnapshot, step.StepName) != nil
+	if strict && run.Status != WorkflowRunStatusRunning {
+		return false
+	}
+	lease, leased := m.workflowRunLeases[runID]
+	if leased && !lease.After(time.Now()) {
+		return false
+	}
+	return leased || !(operation || run.ResumeCount > 0 || step.ForEachParent != nil)
+}
+
 func (m *MemStore) recoverWorkflowStepsLocked(run WorkflowRun, now time.Time) {
 	for name, step := range m.workflowSteps[run.ID] {
 		if step.Status != WorkflowStepStatusRunning {
@@ -209,10 +226,13 @@ func (m *MemStore) recoverWorkflowStepsLocked(run WorkflowRun, now time.Time) {
 				m.workflowStepAttempts[key] = record
 			}
 		}
-		if outbound == nil && (step.ForEachParent != nil || run.ResumeCount > 0) {
+		if outbound == nil {
 			key := workflowStepAttemptKey{runID: run.ID, stepName: name, attempt: step.Attempt}
 			if record, ok := m.workflowStepAttempts[key]; ok && record.Status == WorkflowAttemptStatusRunning {
-				message := "for_each item result unknown after recovery"
+				message := "workflow handler result unknown after recovery"
+				if step.ForEachParent != nil {
+					message = "for_each item result unknown after recovery"
+				}
 				record.Status, record.Error, record.FinishedAt = WorkflowAttemptStatusFailed, &message, &now
 				m.workflowStepAttempts[key] = record
 			}
@@ -220,9 +240,6 @@ func (m *MemStore) recoverWorkflowStepsLocked(run WorkflowRun, now time.Time) {
 		step.outboundAttemptToken = ""
 		if step.Status == WorkflowStepStatusRunning {
 			step.Status = WorkflowStepStatusPending
-			if step.Attempt > 0 && outbound == nil && step.ForEachParent == nil && run.ResumeCount == 0 {
-				step.Attempt--
-			}
 			step.FinishedAt = nil
 			step.Error = nil
 			step.NextRetryAt = nil

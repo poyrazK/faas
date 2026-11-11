@@ -9420,11 +9420,12 @@ const closeLegacyWorkflowOutboundUnknownAttempts = `-- name: CloseLegacyWorkflow
 UPDATE workflow_step_attempts t SET status='failed',finished_at=now(),
 error=CASE WHEN s.status='dead' THEN s.error
  WHEN s.foreach_parent IS NOT NULL AND jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound') IS DISTINCT FROM 'object'
- THEN 'for_each item result unknown after recovery' ELSE 'outbound result unknown after recovery' END
+ THEN 'for_each item result unknown after recovery'
+ WHEN jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound') IS DISTINCT FROM 'object' THEN 'workflow handler result unknown after recovery'
+ ELSE 'outbound result unknown after recovery' END
 FROM workflow_steps s, workflow_runs r
 WHERE t.run_id=$1 AND s.run_id=t.run_id AND r.id=s.run_id AND r.operation_id IS NULL
 AND s.step_name=t.step_name AND s.attempt=t.attempt AND s.status IN ('running','dead') AND t.status='running'
-AND (r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
 `
 
 func (q *Queries) CloseLegacyWorkflowOutboundUnknownAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error {
@@ -9436,11 +9437,12 @@ const closeWorkflowOutboundUnknownAttempts = `-- name: CloseWorkflowOutboundUnkn
 UPDATE workflow_step_attempts t SET status='failed',finished_at=now(),
 error=CASE WHEN s.status='dead' THEN s.error
  WHEN s.foreach_parent IS NOT NULL AND jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound') IS DISTINCT FROM 'object'
- THEN 'for_each item result unknown after recovery' ELSE 'outbound result unknown after recovery' END
+ THEN 'for_each item result unknown after recovery'
+ WHEN jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound') IS DISTINCT FROM 'object' THEN 'workflow handler result unknown after recovery'
+ ELSE 'outbound result unknown after recovery' END
 FROM workflow_steps s, workflow_runs r
 WHERE t.run_id=$1 AND s.run_id=t.run_id AND r.id=s.run_id
 AND s.step_name=t.step_name AND s.attempt=t.attempt AND s.status IN ('running','dead') AND t.status='running'
-AND (EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id) OR r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
 `
 
 func (q *Queries) CloseWorkflowOutboundUnknownAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error {
@@ -97794,8 +97796,7 @@ func (q *Queries) RecoverLegacyWorkflowRun(ctx context.Context, db DBTX, id pgty
 const recoverLegacyWorkflowSteps = `-- name: RecoverLegacyWorkflowSteps :exec
 UPDATE workflow_steps s
 SET status='pending',
-attempt=CASE WHEN (s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
- THEN s.attempt WHEN r.resume_count>0 THEN s.attempt ELSE GREATEST(s.attempt-1,0) END,
+attempt=s.attempt,
 finished_at=NULL,error=NULL,next_retry_at=NULL,outbound_attempt_token=NULL
 FROM workflow_runs r WHERE s.run_id=r.id AND r.id=$1 AND r.operation_id IS NULL AND s.status='running'
 `
@@ -101852,8 +101853,7 @@ func (q *Queries) ResetWorkflowResumeStep(ctx context.Context, db DBTX, arg Rese
 const resetWorkflowRunningSteps = `-- name: ResetWorkflowRunningSteps :exec
 UPDATE workflow_steps s
 SET status='pending',
-attempt=CASE WHEN (s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
- THEN s.attempt WHEN r.resume_count>0 THEN s.attempt ELSE GREATEST(s.attempt-1,0) END,
+attempt=s.attempt,
 finished_at=NULL,error=NULL,next_retry_at=NULL,outbound_attempt_token=NULL
 FROM workflow_runs r WHERE s.run_id=r.id AND r.id=$1 AND s.status='running'
 `
@@ -113726,9 +113726,10 @@ const workflowOutboundCompletionCurrent = `-- name: WorkflowOutboundCompletionCu
 SELECT NOT EXISTS(
  SELECT 1 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
  WHERE r.id=$1 AND s.step_name=$2
- AND (EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id) OR r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
- AND (r.status<>'running' OR s.status<>'running' OR s.attempt<>$3
-  OR ((EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id) OR r.resume_count>0 OR s.foreach_parent IS NOT NULL) AND (r.lease_until IS NULL OR r.lease_until<=clock_timestamp())))
+ AND (r.status IN ('succeeded','failed','dead') OR s.status<>'running' OR s.attempt<>$3
+  OR ((EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id) OR r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object') AND r.status<>'running')
+  OR (r.lease_until IS NOT NULL AND r.lease_until<=clock_timestamp())
+  OR ((EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id) OR r.resume_count>0 OR s.foreach_parent IS NOT NULL) AND r.lease_until IS NULL))
 )
 `
 
@@ -113765,8 +113766,10 @@ const workflowOutboundStartCurrent = `-- name: WorkflowOutboundStartCurrent :one
 SELECT NOT EXISTS(
  SELECT 1 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
  WHERE r.id=$1 AND s.step_name=$2
- AND (EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id) OR r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
- AND (r.status<>'running' OR r.lease_until IS NULL OR r.lease_until<=clock_timestamp() OR s.status<>'pending' OR s.attempt<>$3::integer-1)
+ AND (s.attempt>=$3::integer
+  OR (r.lease_until IS NOT NULL AND r.lease_until<=clock_timestamp())
+  OR ((EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id) OR r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
+   AND (r.status<>'running' OR r.lease_until IS NULL OR s.status<>'pending' OR s.attempt<>$3::integer-1)))
 )
 `
 

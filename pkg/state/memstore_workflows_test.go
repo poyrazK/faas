@@ -573,8 +573,8 @@ func TestMemStore_WorkflowAdmissionRecoveryAndCancel(t *testing.T) {
 		t.Fatalf("RecoverWorkflowRun: %v", err)
 	}
 	steps, err := ms.GetWorkflowSteps(ctx, run.ID)
-	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusPending || steps[0].Attempt != 1 {
-		t.Fatalf("recovered steps = (%#v, %v), want first pending at attempt 1", steps, err)
+	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusPending || steps[0].Attempt != 2 {
+		t.Fatalf("recovered steps = (%#v, %v), want first pending at preserved attempt 2", steps, err)
 	}
 
 	const reason = "cancelled by test"

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,9 +128,18 @@ func WorkflowCodeDriverMaxAttempts(code WorkflowCodeSpec) int {
 }
 
 // ValidWorkflowCodeOpName reports whether name may label a code operation:
-// 1-128 bytes of [A-Za-z0-9_.:#/-] starting with a letter or digit. The
+// A 1-128 byte base of [A-Za-z0-9_.:#/-] starting with a letter or digit.
+// SDK-generated repeats may append #2 through #WorkflowCodeMaxOps. The
 // for_each item prefix and the '$' prefix stay reserved for the engine.
 func ValidWorkflowCodeOpName(name string) bool {
+	if len(name) > WorkflowCodeOpNameMaxBytes {
+		base, suffix, ok := strings.Cut(name, "#")
+		count, err := strconv.Atoi(suffix)
+		if !ok || err != nil || count < 2 || count > WorkflowCodeMaxOps || suffix != strconv.Itoa(count) {
+			return false
+		}
+		name = base
+	}
 	if name == "" || len(name) > WorkflowCodeOpNameMaxBytes || strings.HasPrefix(name, WorkflowForEachInternalPrefix) {
 		return false
 	}

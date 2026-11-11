@@ -2277,13 +2277,13 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 		t.Fatalf("GetWorkflowRun(recovered) = (%#v, %v), want pending", recovered, err)
 	}
 	steps, err := fx.Store.GetWorkflowSteps(fx.Ctx, run.ID)
-	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusPending || steps[0].Attempt != 1 {
-		t.Fatalf("GetWorkflowSteps(recovered) = (%#v, %v), want first pending at attempt 1", steps, err)
+	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusPending || steps[0].Attempt != 2 {
+		t.Fatalf("GetWorkflowSteps(recovered) = (%#v, %v), want first pending at preserved attempt 2", steps, err)
 	}
 
 	// production-us hunt #5 (H5-45): cancelling while a step's handler runs
 	// must close that step's attempt, not leave it running forever.
-	if _, err := fx.Store.StartWorkflowStep(fx.Ctx, run.ID, "first", 1, []byte(`{}`)); err != nil {
+	if _, err := fx.Store.StartWorkflowStep(fx.Ctx, run.ID, "first", 3, []byte(`{}`)); err != nil {
 		t.Fatalf("StartWorkflowStep: %v", err)
 	}
 	const reason = "cancelled by conformance"

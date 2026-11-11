@@ -1,0 +1,253 @@
+{
+  "scope": "Gregale workflow engine audit",
+  "date": "2026-11-11",
+  "branch": "codex/fix-workflow-audit",
+  "findings": [
+    {
+      "id": "GW-001",
+      "priority": "P1",
+      "title": "Workflow-start idempotency replay crosses platform-tenant boundaries",
+      "status": "fixed",
+      "resolution": "Scope start-key lookup, replay, and uniqueness by platform tenant; validate tenant binding before replay.",
+      "regression_tests": [
+        "pkg/apid/apidserver/workflow_idempotency_regression_test.go",
+        "pkg/state/workflow_idempotency_regression_test.go",
+        "migrations/20261111160000000_workflow_idempotency_tenant_scope_test.go"
+      ],
+      "original_trigger": "Two separately authenticated platform tenants start the same app/workflow with the same idempotency key and input.",
+      "original_observation": "Tenant B receives Tenant A's run ID and tenant identity; the response also exposes stored run data."
+    },
+    {
+      "id": "GW-002",
+      "priority": "P1",
+      "title": "A parked independent branch blocks for_each siblings and spins dispatch",
+      "status": "fixed",
+      "resolution": "Restore running custody for ready foreach items and report progress only when an item actually advances.",
+      "regression_tests": [
+        "pkg/sched/workflow_dispatch_regression_test.go"
+      ],
+      "original_trigger": "A timer root and independent two-item for_each root, with max_parallel=2.",
+      "original_observation": "Zero items execute; dispatch loops until cancellation in both MemStore and PgStore."
+    },
+    {
+      "id": "GW-003",
+      "priority": "P1",
+      "title": "Non-JSON successful HTTP responses bypass the retry budget",
+      "status": "fixed",
+      "resolution": "Persist successful text responses as JSON strings and preserve recovered attempt numbers so retry budgets remain bounded.",
+      "regression_tests": [
+        "pkg/sched/workflow_dispatch_regression_test.go"
+      ],
+      "original_trigger": "A normal declarative handler returns HTTP 200 with plain-text OK and retry.max_attempts=1.",
+      "original_observation": "Four consecutive ticks execute the handler four times; run stays pending and step attempt resets to zero."
+    },
+    {
+      "id": "GW-004",
+      "priority": "P2",
+      "title": "NUL characters in code-step errors cause unrecorded failures and requeue",
+      "status": "fixed",
+      "resolution": "Clean PostgreSQL-bound error text and truncate safely on UTF-8 boundaries.",
+      "regression_tests": [
+        "pkg/workflowcode/regression_test.go",
+        "pkg/sched/workflow_dispatch_regression_test.go"
+      ],
+      "original_trigger": "A code step reports error text containing a NUL character, even with non_retryable=true.",
+      "original_observation": "PgStore rejects the write with SQLSTATE 22021; the run returns to pending without recording the step failure."
+    },
+    {
+      "id": "GW-005",
+      "priority": "P2",
+      "title": "Terminal replay responses may omit recorded operations without nondeterminism detection",
+      "status": "fixed",
+      "resolution": "Report replay cursors in all SDKs; reject terminal responses that omit visited history or pending operations.",
+      "regression_tests": [
+        "pkg/workflowcode/regression_test.go",
+        "sdk/go/workflows_regression_test.go",
+        "sdk/python/tests/test_workflow_regressions.py",
+        "sdk/node/test/workflow-regressions.test.ts"
+      ],
+      "original_trigger": "A replay returns early after removing a previously recorded pending approval wait.",
+      "original_observation": "The Python SDK emits succeeded with no operations, and engine protocol validation accepts it."
+    },
+    {
+      "id": "GW-006",
+      "priority": "P2",
+      "title": "Python code-workflow SDK reports non-finite float results as successful invalid JSON",
+      "status": "fixed",
+      "resolution": "Reject non-finite JSON values in the Python SDK and report a nonretryable step failure.",
+      "regression_tests": [
+        "sdk/python/tests/test_workflow_regressions.py"
+      ],
+      "original_trigger": "A Python step returns float('nan') or infinity.",
+      "original_observation": "The SDK reports succeeded with an unrepresentable JSON float; JSON serialization emits NaN, which the Go entry protocol rejects."
+    },
+    {
+      "id": "GW-007",
+      "priority": "P2",
+      "title": "Timeout exception-route cycles pass DAG validation and strand runs",
+      "status": "fixed",
+      "resolution": "Include timeout and failure routing edges in DAG cycle detection.",
+      "regression_tests": [
+        "pkg/sched/workflow_recovery_regression_test.go"
+      ],
+      "original_trigger": "A wait routes on_timeout to itself, or depends on its own timeout handler.",
+      "original_observation": "ValidateWorkflowDAG accepts both definitions; dispatch leaves every step pending, run running, and no wait timer registered."
+    },
+    {
+      "id": "GW-008",
+      "priority": "P2",
+      "title": "External event payload can impersonate the timeout sentinel",
+      "status": "fixed",
+      "resolution": "Reject the reserved timeout-marker payload consistently at event and callback storage boundaries.",
+      "regression_tests": [
+        "pkg/sched/workflow_recovery_regression_test.go"
+      ],
+      "original_trigger": "An event wait with on_timeout receives the accepted payload {\"timeout\":true} before its deadline.",
+      "original_observation": "The timeout-only /notify handler executes and the run succeeds, in both MemStore and PgStore. The simulator rejects this payload shape but runtime ingestion accepts it."
+    },
+    {
+      "id": "GW-009",
+      "priority": "P1",
+      "title": "Internal HTML escaping kills code workflows with valid sub-limit input",
+      "status": "fixed",
+      "resolution": "Disable HTML escaping for internal code-workflow request encoding while preserving transport bounds.",
+      "regression_tests": [
+        "pkg/sched/workflow_recovery_regression_test.go"
+      ],
+      "original_trigger": "A code workflow starts with a 614402-byte JSON string containing 600 KiB of less-than characters; input limit is 1048576 bytes.",
+      "original_observation": "The internal request grows to 3686544 bytes against a 2883584-byte limit; the run becomes dead before its handler is called. An equal-sized x-only string succeeds. Reproduced on both stores."
+    },
+    {
+      "id": "GW-010",
+      "priority": "P1",
+      "title": "Expired ordinary HTTP worker can overwrite a recovered terminal step result",
+      "status": "fixed",
+      "resolution": "Preserve attempt numbers during recovery; reject stale starts, expired leases, and completions/retries for superseded attempts.",
+      "regression_tests": [
+        "pkg/sched/workflow_recovery_regression_test.go",
+        "pkg/state/conformance/conformance.go",
+        "pkg/state/memstore_workflows_test.go"
+      ],
+      "original_trigger": "A worker pauses beyond its lease; another worker reclaims the normal HTTP step and completes the run; the expired worker then records its old success.",
+      "original_observation": "Lease recovery reuses attempt 1 and resume generation 0. PgStore accepts the expired completion even after the replacement completed. The step output becomes {\"worker\":\"expired\"} while the succeeded run retains {\"worker\":\"current\"}."
+    },
+    {
+      "id": "GW-011",
+      "priority": "P2",
+      "title": "Python idle detection cancels valid nested asyncio.gather before the first durable operation",
+      "status": "fixed",
+      "resolution": "Detect durable suspension from the actual awaited task graph rather than a fixed number of event-loop turns.",
+      "regression_tests": [
+        "sdk/python/tests/test_workflow_regressions.py"
+      ],
+      "original_trigger": "A workflow reaches its first wf.step through eight nested asyncio.gather calls, without external I/O.",
+      "original_observation": "Depth 1 reaches the step. Depth 8 executes zero step bodies and returns ops=[] with result.status=running. The actual engine validator rejects this response because no operation is pending."
+    },
+    {
+      "id": "GW-012",
+      "priority": "P2",
+      "title": "Oversized errors bypass SDK response fitting, including NonRetryableError",
+      "status": "fixed",
+      "resolution": "Bound step and terminal errors and reserve metadata for every parallel operation before allocating response bytes.",
+      "regression_tests": [
+        "sdk/go/workflows_regression_test.go",
+        "sdk/python/tests/test_workflow_regressions.py",
+        "sdk/node/test/workflow-regressions.test.ts"
+      ],
+      "original_trigger": "A step raises a nonretryable error with a 2 MiB message.",
+      "original_observation": "Python emits 2097334 bytes and Go emits 2097317 bytes, both exceeding the 983040-byte SDK response cap. Both mark the operation non_retryable=true while leaving its error unbounded."
+    },
+    {
+      "id": "GW-013",
+      "priority": "P2",
+      "title": "Repeating a valid maximum-length operation name generates an invalid name after executing its body",
+      "status": "fixed",
+      "resolution": "Accept canonical repeat suffixes beyond a valid 128-byte base; classify an exhausted operation budget as a terminal limit failure.",
+      "regression_tests": [
+        "pkg/workflowcode/regression_test.go",
+        "sdk/go/workflows_regression_test.go",
+        "sdk/python/tests/test_workflow_regressions.py",
+        "sdk/node/test/workflow-regressions.test.ts"
+      ],
+      "original_trigger": "A workflow calls a step twice with an accepted 128-character base name.",
+      "original_observation": "Python and Go append #2, generating a 130-character second operation name. Both step bodies have already executed. The actual engine validator rejects the Python SDK response as an invalid operation name."
+    },
+    {
+      "id": "GW-014",
+      "priority": "P1",
+      "title": "Gateway HTML escaping makes valid code-workflow output exceed the scheduler response limit",
+      "status": "fixed",
+      "resolution": "Disable HTML escaping for authenticated native workflow gateway responses, retaining the scheduler response cap.",
+      "regression_tests": [
+        "pkg/gateway/workflow_response_regression_test.go"
+      ],
+      "original_trigger": "A Python code step successfully returns a 200 KiB string of less-than characters. Its SDK response is 204963 bytes, below the 983040-byte response cap.",
+      "original_observation": "The production gateway handler returns HTTP 200 but HTML-escapes the JSON result to 1228998 bytes. The actual bounded decoder used by the scheduler rejects it at 1048576 bytes. An equal-sized x-only control becomes 204998 bytes and decodes successfully."
+    }
+  ],
+  "paused_topics": [
+    {
+      "topic": "Bound webhook callback admission",
+      "status": "paused_by_user"
+    }
+  ],
+  "schema_version": 1,
+  "reviewed_commit": "46aad2a12e4d1be39d0948b6942cb18d8e71d0b2",
+  "deployment_status": "not_deployed",
+  "fixed_findings": 14,
+  "verification": {
+    "status": "passed_focused_checks",
+    "toolchain": {
+      "go": "1.26.10",
+      "python": "3.12.14",
+      "node": "24.19.0",
+      "typescript": "5.8.3",
+      "sqlc": "1.31.1",
+      "postgresql": "local PostgreSQL 16 fixture"
+    },
+    "go_protocol_suite": {
+      "top_level_tests": 14,
+      "status": "passed"
+    },
+    "focused_state_scheduler_api": {
+      "top_level_tests": 23,
+      "status": "passed"
+    },
+    "workflow_store_conformance": {
+      "memory": "passed",
+      "postgresql": "passed"
+    },
+    "gateway_response_and_migration_regressions": "passed",
+    "sdk_engine_interoperability": {
+      "tests": 2,
+      "status": "passed"
+    },
+    "sqlc_generation_consistency": "passed",
+    "migration_expand_contract_lint": "passed_against_base_commit",
+    "repository_policy_checks": [
+      "teststorecheck",
+      "sealdomaincheck",
+      "problemdetailcheck",
+      "trimpathcheck",
+      "gofmt",
+      "git diff --check"
+    ],
+    "scope": "Focused workflow test selection used temporary Go test overlays to exclude unrelated test files; all production files were included. Native regression tests are in the repository.",
+    "limitation": "The earlier broad store sweep exceeded its 10-minute budget during fixture cloning. Focused store regressions and workflow conformance passed afterward; a full repository test run was not performed.",
+    "deployment_status": "not_deployed",
+    "sdk_workflow_suites": {
+      "go": 20,
+      "python": 23,
+      "node": 19
+    }
+  },
+  "decision_record": "docs/adr/20261111163000-workflow-recovery-and-replay-integrity.md",
+  "rollout": [
+    "Apply expand migration 20261111160000000 before updating the control plane.",
+    "Upgrade all API replicas before applying contract migration 20261111160000001 in a full release.",
+    "Deploy the scheduler and internal gateway fixes, then redeploy applications with the updated workflow SDKs.",
+    "Full replay-cursor checks require the updated SDKs; older SDKs remain readable but may not omit pending operations.",
+    "The contract downgrade refuses shared cross-tenant keys until those keys are reconciled."
+  ],
+  "historical_evidence_note": "Original audit evidence is retained in the saved session findings register. Native tests supersede the historical ingress-success expectation for GW-008 and the generated-name length expectation for GW-013."
+}

@@ -127,7 +127,7 @@ def _message(error: BaseException) -> str:
 
 
 def _json_value(value: Any) -> Any:
-    return json.loads(json.dumps(value))
+    return json.loads(json.dumps(value, allow_nan=False))
 
 
 class WorkflowContext:
@@ -140,6 +140,7 @@ class WorkflowContext:
         self._names: dict[str, int] = {}
         self.ops: list[dict[str, Any]] = []
         self.pending: list[asyncio.Future[None]] = []
+        self._suspensions: set[asyncio.Future[Any]] = set()
         self.activity = 0
 
     @property
@@ -175,11 +176,12 @@ class WorkflowContext:
         self.ops.append(op)
         self.activity += 1
 
-    @staticmethod
-    async def _suspend() -> Any:
+    async def _suspend(self) -> Any:
         # A future nobody resolves: the function waits here until Gregale
         # calls again with the operation's result.
-        await asyncio.get_running_loop().create_future()
+        future = asyncio.get_running_loop().create_future()
+        self._suspensions.add(future)
+        await future
 
     async def step(self, name: str, fn: Callable[[StepContext], Any], *, retry: RetryPolicy | None = None) -> Any:
         """Runs ``fn`` (sync or async) and records its JSON result."""
@@ -266,15 +268,14 @@ async def run_workflow_invocation(definitions: WorkflowDefinition | Sequence[Wor
         raise UnknownWorkflowError(request["workflow"])
     wf = WorkflowContext(request)
     task = asyncio.ensure_future(definition.run(request.get("input"), wf))
-    # Suspend once the function has finished or nothing can make progress:
-    # every started step has settled and the loop went idle without activity.
-    while True:
-        before, steps = wf.activity, len(wf.pending)
+    # Drain runnable coroutine chains, regardless of their nesting depth.
+    # Only stop when the root is done or every branch it awaits is blocked
+    # on one of this invocation's durable suspension futures.
+    while not task.done():
         if wf.pending:
             await asyncio.gather(*wf.pending, return_exceptions=True)
-        for _ in range(5):
-            await asyncio.sleep(0)
-        if len(wf.pending) == steps and (task.done() or wf.activity == before):
+        await asyncio.sleep(0)
+        if all(item.done() for item in wf.pending) and _durably_suspended(task, wf._suspensions):
             break
     if wf.pending:
         await asyncio.gather(*wf.pending, return_exceptions=True)
@@ -293,7 +294,23 @@ async def run_workflow_invocation(definitions: WorkflowDefinition | Sequence[Wor
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-    return _fit_response({"protocol": WORKFLOW_CODE_PROTOCOL, "ops": sorted(wf.ops, key=lambda op: op["seq"]), "result": result})
+    return _fit_response({"protocol": WORKFLOW_CODE_PROTOCOL, "ops": sorted(wf.ops, key=lambda op: op["seq"]), "result": result,
+                          "replayed_ops": min(wf._seq, len(wf._journal))})
+
+
+def _durably_suspended(future: asyncio.Future[Any], suspensions: set[asyncio.Future[Any]]) -> bool:
+    if future in suspensions:
+        return True
+    if future.done():
+        return False  # Its parent's continuation can now run.
+    # asyncio exposes no public task dependency graph in Python 3.12/3.13.
+    # Inspect only the task waiter and gather children; an unknown awaitable
+    # is treated as runnable, never as evidence that work may be cancelled.
+    children = getattr(future, "_children", None)
+    if children is not None:
+        return any(not child.done() for child in children) and all(child.done() or _durably_suspended(child, suspensions) for child in children)
+    waiter = getattr(future, "_fut_waiter", None)
+    return waiter is not None and _durably_suspended(waiter, suspensions)
 
 
 def _byte_length(value: Any) -> int:
@@ -303,24 +320,53 @@ def _byte_length(value: Any) -> int:
 def _fit_response(response: dict[str, Any]) -> dict[str, Any]:
     """Fails, without retry, results that would overflow one call's answer."""
     budget = WORKFLOW_RESPONSE_MAX_BYTES - 1024
+    if "error" in response["result"]:
+        response["result"]["error"] = _truncate_error(response["result"]["error"], 4 * 1024)
+    if response["result"]["status"] == "failed":
+        budget -= _byte_length(response["result"])
     used = _byte_length({"protocol": response["protocol"], "ops": [], "result": {"status": "running"}})
+    remaining = sum(_minimal_op_size(op) for op in response["ops"])
     fitted = []
     for op in response["ops"]:
-        size = _byte_length(op) + 1
-        if op["kind"] == "step" and op.get("status") == "succeeded" and used + size > budget:
+        remaining -= _minimal_op_size(op)
+        available = budget - remaining
+        if "error" in op:
+            op["error"] = _truncate_error(op["error"], 4 * 1024)
+        size = _byte_length(op) + 2
+        if op["kind"] == "step" and op.get("status") == "succeeded" and used + size > available:
             op = {key: value for key, value in op.items() if key != "output"}
             op.update(
                 status="failed",
                 error=f"step result does not fit in one call's {WORKFLOW_RESPONSE_MAX_BYTES} byte answer; store large data elsewhere and return its key",
                 non_retryable=True,
             )
-            size = _byte_length(op) + 1
+            size = _byte_length(op) + 2
+        if used + size > available and op.get("error"):
+            op["error"] = _truncate_error(op["error"], max(0, len(op["error"].encode()) - (used + size - available)))
+            size = _byte_length(op) + 2
         used += size
         fitted.append(op)
     response["ops"] = fitted
     if response["result"]["status"] == "succeeded" and used + _byte_length(response["result"]) > budget:
         response["result"] = {"status": "failed", "error": f"workflow output does not fit in one call's {WORKFLOW_RESPONSE_MAX_BYTES} byte answer"}
+    if _byte_length(response) > WORKFLOW_RESPONSE_MAX_BYTES:
+        response["ops"] = []
+        response["result"] = {"status": "failed", "error": "workflow response metadata exceeds the response limit"}
     return response
+
+
+def _truncate_error(message: str, max_bytes: int) -> str:
+    return message.encode("utf-8", "replace")[:max_bytes].decode("utf-8", "ignore")
+
+
+def _minimal_op_size(op: Mapping[str, Any]) -> int:
+    minimal = dict(op)
+    if op["kind"] == "step":
+        minimal.pop("output", None)
+        minimal["error"] = ""
+        if op.get("status") == "succeeded":
+            minimal.update(status="failed", non_retryable=True)
+    return _byte_length(minimal) + 2
 
 
 def serve_workflows(definitions: WorkflowDefinition | Sequence[WorkflowDefinition], *, allow_unverified_callers: bool = False) -> Callable[..., Awaitable[None]]:

@@ -83397,10 +83397,10 @@ CREATE INDEX workflow_runs_app_tenant_history_idx ON public.workflow_runs USING 
 
 
 --
--- Name: workflow_runs_create_idempotency_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: workflow_runs_create_tenant_idempotency_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX workflow_runs_create_idempotency_idx ON public.workflow_runs USING btree (app_id, workflow_name, create_idempotency_key) WHERE (create_idempotency_key IS NOT NULL);
+CREATE UNIQUE INDEX workflow_runs_create_tenant_idempotency_idx ON public.workflow_runs USING btree (app_id, workflow_name, platform_tenant_id, create_idempotency_key) NULLS NOT DISTINCT WHERE (create_idempotency_key IS NOT NULL);
 
 
 --
