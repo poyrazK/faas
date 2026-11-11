@@ -100,6 +100,10 @@ def test_gitops_explanation_preserves_unknown_serving_and_scoped_actions() -> No
         "generation": 3,
         "intent_version": 5,
         "source_freshness": "stale",
+        "report_id": "current-report",
+        "report_status": "blocked",
+        "report_freshness": "fresh",
+        "report_observed_at": "2026-10-16T12:00:00+00:00",
         "approved_revision_id": "approved",
         "applied_revision_id": "historical",
         "workloads": [

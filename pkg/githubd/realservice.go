@@ -504,8 +504,8 @@ func (s *RealService) ListInstallableRepos(accountID string, installationID int6
 }
 
 // ListInstallableReposContext is the context-aware variant used by the
-// installation drift reconciler. The legacy ListInstallableRepos method is
-// retained for the gRPC surface, whose generated interface predates contexts.
+// installation drift reconciler and gRPC repository verification. The legacy
+// ListInstallableRepos method remains available for callers without a context.
 func (s *RealService) ListInstallableReposContext(ctx context.Context, accountID string, installationID int64) ([]githubdgrpc.Repo, error) {
 	if s.Auth == nil || s.Tokens == nil {
 		return nil, fmt.Errorf("githubd: OAuth not configured")

@@ -6447,7 +6447,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	matchCtx.requestID = rid
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
-			if api.IsReservedOperationHeader(name) || api.HasLowerPrefix(name, "x-gregale-event-") {
+			if isPlatformDeliveryHeader(name) {
 				delete(r.Header, name)
 			}
 		}

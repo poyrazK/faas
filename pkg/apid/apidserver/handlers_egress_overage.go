@@ -41,6 +41,12 @@ func (s *server) putEgressOverage(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", detail))
 		return
 	}
+	if *req.Enabled {
+		if problem := s.complimentaryRefusal(r.Context(), acct.ID); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	elections, ok := s.store.(state.EgressOverageStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrInternal("egress overage elections are unavailable"))

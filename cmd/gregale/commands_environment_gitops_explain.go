@@ -63,6 +63,9 @@ func writeEnvironmentGitOpsExplanation(w io.Writer, explanation api.EnvironmentG
 	fmt.Fprintf(&out, "GitOps: %s\n%s\n\n", clean(explanation.Status), clean(explanation.Summary))
 	fmt.Fprintf(&out, "Observed commit: %s (source %s)\nApproved revision: %s\nApplied revision: %s\nServing revision: %s\n\n",
 		known(explanation.ObservedCommitSHA), clean(explanation.SourceFreshness), known(explanation.ApprovedRevisionID), known(explanation.AppliedRevisionID), known(explanation.ServingRevisionID))
+	if explanation.ReportFreshness != "" {
+		fmt.Fprintf(&out, "Current report: %s (status %s; freshness %s)\n\n", known(explanation.ReportID), known(explanation.ReportStatus), clean(explanation.ReportFreshness))
+	}
 	for _, workload := range explanation.Workloads {
 		fmt.Fprintf(&out, "%s: artifact/build %s; qualification %s; activation %s; serving %s\n", clean(workload.Resource), known(workload.Preparation), known(workload.Qualification), known(workload.Activation), known(workload.Serving))
 		if workload.BuildCacheStatus != "" {
