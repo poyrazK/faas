@@ -310,9 +310,15 @@ gregale postgres branch delete orders pr-42 --yes
 - A branch's name is its database name, so it is unique in your account like
   any database name. With several databases, include the source in it, for
   example `orders-pr-42`.
-- A branch is a restore: it counts toward your plan's database limit and may
-  take the one restore slot past it (see
-  [Restore to a point in time](#restore-to-a-point-in-time)).
+- A branch with a TTL of 7 days or less does not count toward your plan's
+  database limit. Each plan includes short-lived branches at once: Hobby 2,
+  Pro 5, Scale 20. Past that, branch creation is refused with
+  `managed_postgres_branch_limit`; delete a branch or wait for one to expire.
+  The branch's compute and the data written to it count toward your plan's
+  usage like any database.
+- A branch with a longer TTL, or none, is an ordinary restore: it counts
+  toward your plan's database limit and may take the one restore slot past
+  it (see [Restore to a point in time](#restore-to-a-point-in-time)).
 - In the API, a restore without `point_in_time` is a branch from the latest
   point, and `ttl_seconds` sets its expiry.
 
@@ -355,8 +361,8 @@ databases by up to two hours.
   (`egress_bytes`) and what the apps sent (`app_egress_bytes`).
   `egress_state` is `warning` at 80% of the allowance and `held` once the two
   together reach it: the databases then refuse connections until the 1st of
-  next month or an upgrade. Data a database sends your app counts as
-  database egress.
+  next month or an upgrade, and the account is emailed once that month. Data
+  a database sends your app counts as database egress.
 - With egress overage on (`gregale billing egress-overage`), your apps use
   the allowance first and database egress past it is billed at $0.105 per GB.
   `egress_state` is then `overage`, and the databases are held only at twice

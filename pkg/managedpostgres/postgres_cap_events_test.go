@@ -38,6 +38,23 @@ func TestPostgresStoreCapEvents(t *testing.T) {
 	if next, err := store.MostSevereCapEvent(ctx, accountID, month.AddDate(0, 1, 0)); err != nil || next != nil {
 		t.Fatalf("next month: %+v, %v", next, err)
 	}
+	// ADR-20261110160000: the egress hold is read on its own and never
+	// ranks among the compute thresholds.
+	held := CapEvent{SubjectID: accountID, PeriodStart: month, Threshold: CapThresholdEgressHeld,
+		ReachedAt: month.Add(96 * time.Hour), Used: 600 << 30, Allowance: 500 << 30, Ceiling: 500 << 30}
+	if recorded, err := store.RecordCapEvent(ctx, held); err != nil || !recorded {
+		t.Fatalf("egress hold record: %v, %v", recorded, err)
+	}
+	if severe, err := store.MostSevereCapEvent(ctx, accountID, month); err != nil || severe == nil || severe.Threshold != CapThresholdSuspended {
+		t.Fatalf("most severe with an egress hold %+v, %v; want the suspension", severe, err)
+	}
+	read, err := store.CapEvent(ctx, accountID, month.Add(time.Hour), CapThresholdEgressHeld)
+	if err != nil || read == nil || read.Used != held.Used || read.Ceiling != held.Ceiling || read.Mailed || !read.ReachedAt.Equal(held.ReachedAt) {
+		t.Fatalf("egress hold read %+v, %v", read, err)
+	}
+	if none, err := store.CapEvent(ctx, accountID, month, CapThresholdCeilingWarning); err != nil || none != nil {
+		t.Fatalf("absent threshold %+v, %v", none, err)
+	}
 	at, err := store.CapSuspendedAt(ctx, accountID, month.Add(10*24*time.Hour))
 	if err != nil || at == nil || !at.Equal(event.ReachedAt) {
 		t.Fatalf("suspended at %v, %v; want the first record's %v", at, err, event.ReachedAt)

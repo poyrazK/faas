@@ -12,6 +12,7 @@ import (
 var _ ObjectStorageAccountingStore = (*MemStore)(nil)
 var _ ObjectStorageBillingStore = (*MemStore)(nil)
 var _ ObjectInventoryReleaser = (*MemStore)(nil)
+var _ ObjectBucketPlanLimitsStore = (*MemStore)(nil)
 
 func (m *MemStore) ObjectUsage(ctx context.Context, account string, now time.Time) (ObjectUsageSnapshot, error) {
 	m.mu.Lock()
@@ -35,13 +36,23 @@ func (m *MemStore) ObjectUsageForPeriod(ctx context.Context, account string, per
 	return m.objectUsageLockedForPeriod(account, periodStart), nil
 }
 
-func (m *MemStore) objectUsageLocked(account string, now time.Time) ObjectUsageSnapshot {
-	return m.objectUsageLockedForPeriod(account, ObjectStoragePeriod(now))
+// ObjectBucketPlanLimits returns the object-storage limits of the plan that
+// pays for the bucket now: its organization's when the organization owns its
+// resources, else its account's (ADR-20261111123000 decision 8).
+func (m *MemStore) ObjectBucketPlanLimits(ctx context.Context, account, bucket string) (api.ObjectStoragePlanLimits, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return api.ObjectStoragePlanLimits{}, err
+	}
+	b, ok := m.objectBuckets[bucket]
+	if !ok || b.AccountID != account {
+		return api.ObjectStoragePlanLimits{}, ErrNotFound
+	}
+	return m.objectPlanLimitsLocked(m.objectBillingSubjectLocked(b)), nil
 }
 
-func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.Time) ObjectUsageSnapshot {
-	periodStart = ObjectStoragePeriod(periodStart)
-	out := ObjectUsageSnapshot{Authorizations: m.objectAuthorizations[account+periodStart.String()]}
+func (m *MemStore) objectPlanLimitsLocked(account string) api.ObjectStoragePlanLimits {
 	var capCents, grantBytes *int64
 	if cents, ok := m.overageCapCents[account]; ok {
 		capCents = &cents
@@ -49,12 +60,23 @@ func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.T
 	if grant, ok := m.objectStorageCeilingGrants[account]; ok {
 		grantBytes = &grant.MaxBytes
 	}
+	var out api.ObjectStoragePlanLimits
 	if acct, ok := m.accounts[account]; ok {
-		out.PlanLimits = objectStoragePlanLimits(acct.Plan, grantBytes, capCents)
+		out = objectStoragePlanLimits(acct.Plan, grantBytes, capCents)
 	}
 	if org, ok := m.orgs[account]; ok && !org.Personal && org.ResourceOwnershipEnabled {
-		out.PlanLimits = objectStoragePlanLimits(org.Plan, grantBytes, capCents)
+		out = objectStoragePlanLimits(org.Plan, grantBytes, capCents)
 	}
+	return out
+}
+
+func (m *MemStore) objectUsageLocked(account string, now time.Time) ObjectUsageSnapshot {
+	return m.objectUsageLockedForPeriod(account, ObjectStoragePeriod(now))
+}
+
+func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.Time) ObjectUsageSnapshot {
+	periodStart = ObjectStoragePeriod(periodStart)
+	out := ObjectUsageSnapshot{Authorizations: m.objectAuthorizations[account+periodStart.String()], PlanLimits: m.objectPlanLimitsLocked(account)}
 	for _, b := range m.objectBuckets {
 		if m.objectBillingSubjectForPeriodLocked(b, periodStart) == account {
 			u := m.objectUsage[b.ID]

@@ -71,6 +71,22 @@ func (s *PostgresStore) reservationTakesRestoreSlot(ctx context.Context, tx sqlc
 	return true, nil
 }
 
+// countBranchAllowanceOwner counts the reservation owner's short-lived
+// branches (ADR-20261106103654 amendment 1), as countReservationOwner counts
+// its databases.
+func (s *PostgresStore) countBranchAllowanceOwner(ctx context.Context, tx sqlc.DBTX, database Database) (int64, error) {
+	q := sqlc.New()
+	owner, err := q.LockManagedPostgresReservationOwner(ctx, tx, sqlc.LockManagedPostgresReservationOwnerParams{OrgID: databaseNullableUUID(database.OrgID), AccountID: databaseNullableUUID(database.AccountID)})
+	if err != nil {
+		return 0, err
+	}
+	params := sqlc.CountManagedPostgresAllowanceBranchesParams{AccountID: databaseNullableUUID(database.AccountID)}
+	if !owner.PersonalOrg && owner.ResourceOwnershipEnabled {
+		params.OrgID = owner.ID
+	}
+	return q.CountManagedPostgresAllowanceBranches(ctx, tx, params)
+}
+
 func (s *PostgresStore) countReservationOwner(ctx context.Context, tx sqlc.DBTX, database Database) (int64, error) {
 	q := sqlc.New()
 	owner, err := q.LockManagedPostgresReservationOwner(ctx, tx, sqlc.LockManagedPostgresReservationOwnerParams{OrgID: databaseNullableUUID(database.OrgID), AccountID: databaseNullableUUID(database.AccountID)})

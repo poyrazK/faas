@@ -10719,6 +10719,7 @@
     "table": "managed_postgres_plan_excess_notices",
     "columns": [
       "database_id",
+      "delete_at",
       "mail_intent_id",
       "reason",
       "recorded_at"

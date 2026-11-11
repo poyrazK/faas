@@ -349,7 +349,7 @@ func TestMemoryStorePlanExcessNotices(t *testing.T) {
 	if err != nil || len(notices) != 1 || notices[0].DatabaseName != "events" || notices[0].ServiceClass != ClassProduction || notices[0].AccountID != "acct" {
 		t.Fatalf("unmailed = %+v, %v", notices, err)
 	}
-	store.markPlanExcessNoticeMailed("db-2")
+	store.markPlanExcessNoticeMailed("db-2", time.Time{})
 	if notices, _ := store.UnmailedPlanExcessNotices(ctx, at.Add(-time.Hour), 10); len(notices) != 0 {
 		t.Fatalf("a mailed notice is listed: %+v", notices)
 	}
