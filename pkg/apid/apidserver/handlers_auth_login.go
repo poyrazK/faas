@@ -484,7 +484,7 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 	}
 	// The reset link proved control of the address: lift a failed-sign-in
 	// pause someone else's guessing put on it.
-	s.loginFailures.reset(auth.HashEmail(acct.Email))
+	s.resetLoginFailures(r.Context(), acct.Email)
 	s.issueSessionCookie(w, r, acct)
 	target := "/dashboard/"
 	if len(leftKeys) > 0 {
@@ -697,6 +697,9 @@ func (s *server) accountChangeProof(w http.ResponseWriter, r *http.Request, acct
 	}
 
 	if replacing {
+		if s.refuseWhileLoginLimited(w, r, acct.Email) {
+			return "", true, false
+		}
 		matched, verr := auth.VerifyContext(r.Context(), hash, current)
 		if passwordNotChecked(verr) {
 			writePasswordCheckUnavailable(w)
@@ -709,6 +712,7 @@ func (s *server) accountChangeProof(w http.ResponseWriter, r *http.Request, acct
 			s.log.Error("set_password.verify", "account_id", acct.ID, "err", verr)
 		}
 		if verr != nil || !matched {
+			s.recordLoginFailure(r.Context(), acct.Email, &acct)
 			s.audit.Emit(r.Context(), "account.password_set_denied", &acct.ID, map[string]any{
 				"reason": "current_password",
 			})

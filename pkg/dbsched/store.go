@@ -153,8 +153,10 @@ type VM struct {
 	StateChangedAt time.Time
 	CreatedAt      time.Time
 	// NodeTarget is the node's vmmd dial target. The scheduler fills it on
-	// Wake and Get; stores do not persist it.
-	NodeTarget string
+	// Wake and Get; stores do not persist it. ReplicaTarget is the standby
+	// node's while the standby serves the database's reads (servesReads).
+	NodeTarget    string
+	ReplicaTarget string
 }
 
 // Upgrade results.

@@ -701,7 +701,7 @@ func cmdPostgresBindingsGet(args []string) int {
 
 func cmdPostgresBindingsRotate(args []string) int {
 	usage := "usage: gregale postgres bindings rotate ID [--wait] [--wait-timeout DURATION] [--poll-interval DURATION]"
-	positionals, waitOptions, ok := parseBindingRotationWaitArgs(args, "postgres bindings rotate", 1)
+	positionals, waitOptions, ok := parseBindingRotationWaitArgs(args, "postgres bindings rotate", 1, postgresBindingRotationWaitTimeoutDefault)
 	if !ok {
 		PrintUsage(osStderr, usage, "postgres")
 		return 1
@@ -746,7 +746,7 @@ func cmdPostgresBindingsRotate(args []string) int {
 		renderPostgresBinding(osStdout, result)
 	}
 	if timedOut {
-		PrintFail(osStderr, "timed out after %s waiting for PostgreSQL binding %s rotation", waitOptions.WaitTimeout, id)
+		PrintFail(osStderr, "timed out after %s waiting for PostgreSQL binding %s rotation; the rotation continues: check it with gregale postgres bindings get %s", waitOptions.WaitTimeout, id, id)
 		return 1
 	}
 	return 0

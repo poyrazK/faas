@@ -2420,6 +2420,14 @@ type BillingPaymentRecoveryReceipt struct {
 	ProcessedAt pgtype.Timestamptz
 }
 
+type BillingPlanActivation struct {
+	Sequence    int64
+	SubjectID   pgtype.UUID
+	FromPlan    string
+	ToPlan      string
+	EffectiveAt pgtype.Timestamptz
+}
+
 type BillingQuotaWarning struct {
 	AccountID           pgtype.UUID
 	WarningDay          pgtype.Timestamptz
@@ -2542,6 +2550,15 @@ type BillingUsageDelivery struct {
 	MbSeconds   int64
 	DeliveredAt pgtype.Timestamptz
 	UsageSource pgtype.Text
+}
+
+type BillingUsageIntent struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	Meter       string
+	WindowStart pgtype.Timestamptz
+	Quantity    int64
+	CreatedAt   pgtype.Timestamptz
 }
 
 type BindingVerificationRun struct {
@@ -8334,6 +8351,13 @@ type LogSavedSearch struct {
 	Query     string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type LoginFailureBudget struct {
+	EmailHash       string
+	WindowStartedAt pgtype.Timestamptz
+	Failures        int32
+	NotifiedAt      pgtype.Timestamptz
 }
 
 type LoginToken struct {
@@ -15512,6 +15536,19 @@ type SourceBuildRootf struct {
 type SourceBuildRootfsCurrent struct {
 	DeploymentID pgtype.UUID
 	ArtifactID   pgtype.UUID
+}
+
+type SpendCapNoticeOutbox struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	Month         pgtype.Timestamptz
+	CapCents      int64
+	ObservedCents int64
+	ReachedAt     pgtype.Timestamptz
+	State         string
+	LeaseToken    pgtype.UUID
+	NextAttemptAt pgtype.Timestamptz
+	DeliveredAt   pgtype.Timestamptz
 }
 
 type StaticEgressProvisioningGrant struct {

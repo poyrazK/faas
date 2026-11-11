@@ -451,7 +451,7 @@ Make a local view the project&#39;s default
 
 List or manage reusable local log filters
 
-`gregale logs views <copy|list|show|rename|update|delete|save> [--name <TEXT>] [--source <SOURCE>] [--details] [--app <SLUG>]`
+`gregale logs views [copy|list|show|rename|update|delete|save] [--name <TEXT>] [--source <SOURCE>] [--details] [--app <SLUG>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -931,12 +931,13 @@ Remove the linked project from this checkout
 
 Authenticate this machine
 
-`gregale login [--token <TOKEN>] [--token-stdin]`
+`gregale login [--token <TOKEN>] [--token-stdin] [--insecure-storage]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--token <TOKEN>` | use a pre-minted token (CI) |  |
 | `--token-stdin` | read a pre-minted token from stdin (CI) |  |
+| `--insecure-storage` | save the key to a plaintext file instead of the OS keychain (WSL, containers, SSH) |  |
 
 Examples:
 
@@ -1721,7 +1722,7 @@ gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.
 
 Build customer impact rosters and track route migrations
 
-`gregale preview customers <track|progress|migration> --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
+`gregale preview customers [track|progress|migration] --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2886,7 +2887,7 @@ gregale app rename my-api my-api-v2
 
 Restart from a snapshot or fresh configuration
 
-`gregale app restart <status> [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
+`gregale app restart [status] [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3640,7 +3641,7 @@ Manage edge rules, rule lists, caching and CORS
 
 Route, rewrite, protect or rate-limit an app&#39;s requests at the edge
 
-`gregale edge rule <waf|attack-mode|recipe|list|summary|trace|create|get|update|delete|history|recipes|suggest|stats|review|events|rollback> [--app <slug>] [--kind <value>]`
+`gregale edge rule [waf|attack-mode|recipe|list|summary|trace|create|get|update|delete|history|recipes|suggest|stats|review|events|rollback] [--app <slug>] [--kind <value>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4628,7 +4629,7 @@ Rotate a binding, optionally waiting for the old credential
 | Flag | Meaning | |
 |---|---|---|
 | `--wait` | wait for the previous credential to retire |  |
-| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 5m) |  |
+| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 15m) |  |
 | `--poll-interval <DURATION>` | status polling interval while waiting (default 1s) |  |
 
 Examples:
@@ -5745,7 +5746,7 @@ gregale workflow list --app billing --created-after 2026-10-01T00:00:00Z --creat
 
 Inspect recurring workflow schedules and preview their next fires
 
-`gregale workflow schedules <preview> --app <SLUG>`
+`gregale workflow schedules [preview] --app <SLUG>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6692,7 +6693,7 @@ Your current recovery codes stop working.
 
 Print the Data Processing Agreement template
 
-`gregale account dpa <get> [-o <PATH>]`
+`gregale account dpa [get] [-o <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7137,7 +7138,7 @@ Manage your account&#39;s API keys
 
 Read or update the rotation grace window
 
-`gregale key grace-window <set> [--reset] [--days <N>]`
+`gregale key grace-window [set] [--reset] [--days <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7233,7 +7234,7 @@ Plans: free, hobby, pro and scale. Paid upgrades open the billing provider&#39;s
 
 Show this month&#39;s usage, or daily, storage and summary views
 
-`gregale billing usage <daily|storage|summary> [--month <YYYY-MM>]`
+`gregale billing usage [daily|storage|summary] [--month <YYYY-MM>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7343,7 +7344,7 @@ gregale billing egress-overage set off --org acme
 
 Show the card on file
 
-`gregale billing payment-method <get> [--print] [--no-open]`
+`gregale billing payment-method [get] [--print] [--no-open]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7365,7 +7366,7 @@ Show the card on file
 
 Open the active billing provider&#39;s portal
 
-`gregale billing portal <open> [--print] [--no-open]`
+`gregale billing portal [open] [--print] [--no-open]`
 
 | Flag | Meaning | |
 |---|---|---|
