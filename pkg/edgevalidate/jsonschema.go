@@ -362,7 +362,9 @@ func (c *CompiledSchema) Validate(body []byte) (*FieldError, error) {
 		return fe, nil
 	}
 	if err := checkNumberWork(v, MaxNumberWorkBytes); err != nil {
-		return &FieldError{Field: "", Expected: "number", Got: err.Error()}, nil
+		// Numeric bounds follow the rule's block/observe/warn handling through
+		// FieldError, just like other client-side schema mismatches.
+		return &FieldError{Field: "", Expected: "number", Got: err.Error()}, nil //nolint:nilerr
 	}
 	if err := c.Schema.Validate(v); err != nil {
 		// jsonschema/v6 returns a *ValidationError. errors.As
