@@ -54,5 +54,9 @@ export type AgentApprovalResponse = {
    * Why the person denied this request, if they said; absent otherwise.
    */
   note?: string;
+  /**
+   * What the agent said the request is for (Gregale-Agent-Reason on the request that opened it), if it said. Untrusted agent text: it never changes what is approved.
+   */
+  reason?: string;
 };
 

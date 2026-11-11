@@ -6982,6 +6982,18 @@ BEGIN
         IF NOT FOUND THEN
             RAISE EXCEPTION 'organization access revoked' USING ERRCODE = '42501';
         END IF;
+        -- Nested: plpgsql resolves NEW.created_by_account_id even when an
+        -- AND's first operand is false, and api_keys has no such column.
+        IF TG_TABLE_NAME = 'deploy_tokens' THEN
+            IF NEW.created_by_account_id IS NOT NULL THEN
+                PERFORM 1 FROM org_memberships
+                WHERE org_id = target_org AND account_id = NEW.created_by_account_id AND removed_at IS NULL
+                FOR SHARE;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'organization access revoked' USING ERRCODE = '42501';
+                END IF;
+            END IF;
+        END IF;
     END IF;
     RETURN NEW;
 END;
@@ -26468,7 +26480,8 @@ BEGIN
         WHERE org_id = NEW.org_id AND account_id = NEW.account_id AND status <> 'revoked';
         UPDATE deploy_tokens t SET status = 'revoked', revoked_at = coalesce(t.revoked_at, now())
         FROM apps a WHERE t.app_id = a.id AND a.org_id = NEW.org_id
-          AND t.account_id = NEW.account_id AND t.status <> 'revoked';
+          AND (t.account_id = NEW.account_id OR t.created_by_account_id = NEW.account_id)
+          AND t.status <> 'revoked';
         UPDATE org_invitations SET revoked_at = coalesce(revoked_at, now())
         WHERE org_id = NEW.org_id AND consumed_at IS NULL AND revoked_at IS NULL
           AND lower(email::text) = (SELECT lower(email::text) FROM accounts WHERE id = NEW.account_id);
@@ -29959,6 +29972,7 @@ CREATE TABLE public.agent_activity (
     status integer NOT NULL,
     approval_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    reason text,
     CONSTRAINT agent_activity_method_check CHECK ((method = ANY (ARRAY['POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text]))),
     CONSTRAINT agent_activity_path_check CHECK (((char_length(path) >= 1) AND (char_length(path) <= 512))),
     CONSTRAINT agent_activity_status_check CHECK (((status >= 100) AND (status <= 599)))
@@ -30057,6 +30071,7 @@ CREATE TABLE public.agent_approval_requests (
     consumed_at timestamp with time zone,
     expires_at timestamp with time zone NOT NULL,
     decision_note text,
+    reason text,
     CONSTRAINT agent_approval_requests_body_sha256_check CHECK (((body_sha256 IS NULL) OR (length(body_sha256) = 32))),
     CONSTRAINT agent_approval_requests_category_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))),
     CONSTRAINT agent_approval_requests_check CHECK (((status = 'pending'::text) = (decided_at IS NULL))),
@@ -36878,6 +36893,7 @@ CREATE TABLE public.deploy_tokens (
     last_used_at timestamp with time zone,
     revoked_at timestamp with time zone,
     rotated_from_id uuid,
+    created_by_account_id uuid,
     CONSTRAINT deploy_tokens_agent_usage_scopes_chk CHECK (((cardinality(scopes) > 0) AND (((NOT ('agent'::text = ANY (scopes))) AND (scopes <@ ARRAY['deploy:write'::text])) OR (('agent'::text = ANY (scopes)) AND ('apps:read'::text = ANY (scopes)) AND (scopes <@ ARRAY['agent'::text, 'apps:read'::text, 'deploy:write'::text, 'env:write'::text, 'secrets:request'::text, 'storage:manage'::text, 'usage:read'::text]))))),
     CONSTRAINT deploy_tokens_expiry_chk CHECK ((expires_at > created_at)),
     CONSTRAINT deploy_tokens_hash_credhash_chk CHECK ((octet_length(token_sha256) = ANY (ARRAY[32, 33]))),
@@ -59508,6 +59524,14 @@ ALTER TABLE ONLY public.agent_activity
 
 
 --
+-- Name: agent_activity agent_activity_reason_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_activity
+    ADD CONSTRAINT agent_activity_reason_check CHECK (((reason IS NULL) OR ((char_length(reason) >= 1) AND (char_length(reason) <= 280)))) NOT VALID;
+
+
+--
 -- Name: agent_approval_email_log agent_approval_email_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -59537,6 +59561,14 @@ ALTER TABLE public.agent_approval_requests
 
 ALTER TABLE ONLY public.agent_approval_requests
     ADD CONSTRAINT agent_approval_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_approval_requests agent_approval_requests_reason_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_approval_requests
+    ADD CONSTRAINT agent_approval_requests_reason_check CHECK (((reason IS NULL) OR ((char_length(reason) >= 1) AND (char_length(reason) <= 280)))) NOT VALID;
 
 
 --
@@ -88770,7 +88802,7 @@ CREATE TRIGGER org_billing_identity AFTER INSERT OR UPDATE OF customer_id, subsc
 -- Name: deploy_tokens org_deploy_token_membership; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER org_deploy_token_membership BEFORE INSERT OR UPDATE OF status, app_id, account_id ON public.deploy_tokens FOR EACH ROW EXECUTE FUNCTION public.check_org_credential_membership();
+CREATE TRIGGER org_deploy_token_membership BEFORE INSERT OR UPDATE OF status, app_id, account_id, created_by_account_id ON public.deploy_tokens FOR EACH ROW EXECUTE FUNCTION public.check_org_credential_membership();
 
 
 --
@@ -94872,6 +94904,14 @@ ALTER TABLE ONLY public.deploy_tokens
 
 ALTER TABLE ONLY public.deploy_tokens
     ADD CONSTRAINT deploy_tokens_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deploy_tokens deploy_tokens_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deploy_tokens
+    ADD CONSTRAINT deploy_tokens_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

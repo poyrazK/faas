@@ -106,14 +106,12 @@ func cmdAddBucket(args []string) int {
 	}
 	*scope = resolvedScope
 	usage := "usage: gregale add bucket NAME --app APP [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--key-prefix KEYS/] [--wait-timeout DURATION]"
-	if strings.TrimSpace(*scope) == "" {
-		// Outside a linked project the scope has no default; the usage line
-		// alone did not say which argument was missing (Snapbox SB-2).
-		PrintFail(os.Stderr, "--env is required outside a linked project: a standalone app reads the default scope (pass --env default), a project app its environment's scope")
-		return 1
-	}
+	// A standalone app reads the default scope, so --env defaults to it once
+	// the app is known; only a project app outside a linked checkout needs
+	// --env (Snapbox SB-2). The CLI named the answer and still made the user
+	// pass it (Hunt 32 H32-23).
 	if fs.NArg() != 1 || strings.TrimSpace(*appSlug) == "" || !api.ValidAppSlug(strings.TrimSpace(*appSlug)) ||
-		strings.TrimSpace(*scope) == "" || api.ValidateScope(strings.TrimSpace(*scope)) != nil ||
+		(strings.TrimSpace(*scope) != "" && api.ValidateScope(strings.TrimSpace(*scope)) != nil) ||
 		!addBucketNameRE.MatchString(strings.TrimSpace(fs.Arg(0))) || !objectStoragePermissionOK(*permission) ||
 		(strings.TrimSpace(*label) == "" || len(strings.TrimSpace(*label)) > 64) ||
 		(strings.TrimSpace(*prefix) != "" && !addBucketPrefixRE.MatchString(strings.TrimSpace(*prefix))) ||
@@ -130,6 +128,13 @@ func cmdAddBucket(args []string) int {
 	app, err := client.GetApp(ctx, strings.TrimSpace(*appSlug))
 	if err != nil {
 		return printErr("Could not find app", err)
+	}
+	if strings.TrimSpace(*scope) == "" {
+		if app.ProjectID != "" {
+			PrintFail(os.Stderr, "--env is required outside a linked project: a project app's bucket credentials go to one of its environments' scopes")
+			return 1
+		}
+		*scope = "default"
 	}
 	appName := strings.TrimSpace(app.Slug)
 	if appName == "" {

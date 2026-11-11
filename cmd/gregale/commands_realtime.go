@@ -140,6 +140,7 @@ func cmdRealtimeEndpointRead(command, usage string, args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	app := realtimeEndpointApp(client, fs.Arg(0))
 	endpoint, err := client.GetManagedRealtimeEndpoint(context.Background(), fs.Arg(0), fs.Arg(1))
 	if err != nil {
 		return printErr("Could not load realtime endpoint", err)
@@ -148,6 +149,7 @@ func cmdRealtimeEndpointRead(command, usage string, args []string) int {
 		return jsonOut(writeJSON(endpoint))
 	}
 	renderRealtimeEndpoint(osStdout, endpoint)
+	printRealtimeClientURL(osStdout, app, endpoint.ID)
 	return 0
 }
 

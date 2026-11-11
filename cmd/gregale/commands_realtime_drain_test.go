@@ -135,7 +135,7 @@ func TestCmdRealtimeDrainDryRunWaitsForPreview(t *testing.T) {
 	var out bytes.Buffer
 	(*main.OsStdout) = &out
 	t.Cleanup(func() { (*main.OsStdout) = oldOut })
-	if code := main.CmdRealtimeDrain([]string{"demo", "endpoint-1", "--reason", "preview", "--dry-run"}); code != 0 {
+	if code := main.CmdRealtimeDrain([]string{"demo", "endpoint-1", "--reason", "preview", "--limit", "5", "--dry-run"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "Would close 3 realtime connection(s).") {

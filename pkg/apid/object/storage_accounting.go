@@ -392,15 +392,20 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 	swept := prometheus.NewGauge(prometheus.GaugeOpts{Name: "faas_object_storage_inventory_sweep_last_success_timestamp_seconds", Help: "Unix time of apid's last inventory sweep that completed without error; a stopped sweep shows as a growing age."})
 	accruals := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_gateway_storage_accruals_total", Help: "Gateway-metered stored byte-hour accruals (ADR-20261024132844)."}, []string{"outcome"})
 	placement := newPlacementMetrics()
+	backlog := newInventoryBacklogMetrics()
 	if s.Host.Ops() != nil {
 		s.Host.Ops().Registry().MustRegister(counter, pages, swept, accruals)
 		s.Host.Ops().Registry().MustRegister(placement.collectors()...)
+		s.Host.Ops().Registry().MustRegister(backlog.collectors()...)
 	}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.runObjectInventorySweeps(ctx, func(outcome string) { counter.WithLabelValues(outcome).Inc() }, pages.Inc, func(at time.Time) { swept.Set(float64(at.Unix())) })
+		s.runObjectInventorySweeps(ctx, func(outcome string) { counter.WithLabelValues(outcome).Inc() }, pages.Inc, func(at time.Time) {
+			swept.Set(float64(at.Unix()))
+			s.observeInventoryBacklog(ctx, backlog)
+		})
 	}()
 	s.runObjectStorageBilling(ctx, accruals, placement)
 	wg.Wait()
