@@ -61,6 +61,8 @@ export type { AgentApprovalPendingInfo } from './models/AgentApprovalPendingInfo
 export type { AgentApprovalResponse } from './models/AgentApprovalResponse.js';
 export type { AgentApprovalsResponse } from './models/AgentApprovalsResponse.js';
 export type { AgentApprovalWebhookPayload } from './models/AgentApprovalWebhookPayload.js';
+export type { AgentBudgetRequest } from './models/AgentBudgetRequest.js';
+export type { AgentBudgetResponse } from './models/AgentBudgetResponse.js';
 export type { AgentClientRequest } from './models/AgentClientRequest.js';
 export type { AgentConnectionResponse } from './models/AgentConnectionResponse.js';
 export type { AgentConnectionsResponse } from './models/AgentConnectionsResponse.js';

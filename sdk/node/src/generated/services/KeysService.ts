@@ -7,6 +7,8 @@ import type { AgentApprovalChannelsRequest } from '../models/AgentApprovalChanne
 import type { AgentApprovalChannelsResponse } from '../models/AgentApprovalChannelsResponse.js';
 import type { AgentApprovalResponse } from '../models/AgentApprovalResponse.js';
 import type { AgentApprovalsResponse } from '../models/AgentApprovalsResponse.js';
+import type { AgentBudgetRequest } from '../models/AgentBudgetRequest.js';
+import type { AgentBudgetResponse } from '../models/AgentBudgetResponse.js';
 import type { AgentClientRequest } from '../models/AgentClientRequest.js';
 import type { AgentConnectionsResponse } from '../models/AgentConnectionsResponse.js';
 import type { AgentConnectionsRevokeAllResponse } from '../models/AgentConnectionsRevokeAllResponse.js';
@@ -355,6 +357,108 @@ export class KeysService {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the calling agent's own budget.
+   * The monthly budget for always-on capacity that applies to the
+   * calling agent key and what it committed this month. Only an agent key
+   * can call it.
+   *
+   * @returns AgentBudgetResponse The calling agent's budget and spend.
+   * @throws ApiError
+   */
+  public static agentConnectionSelfBudget(): CancelablePromise<AgentBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-connections/self/budget',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a connected agent's budget.
+   * The monthly budget for always-on capacity (warm instances, schedule
+   * floors, prewarms) that applies to one of the account's agents, where
+   * it comes from, and what the agent committed this month. Past the
+   * budget, each change needs a person's approval. An agent key may read
+   * only its own.
+   *
+   * @returns AgentBudgetResponse The agent's budget and spend.
+   * @throws ApiError
+   */
+  public static agentConnectionBudget({
+    id,
+  }: {
+    /**
+     * API key id of the connected agent whose budget to read or set.
+     */
+    id: string,
+  }): CancelablePromise<AgentBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-connections/{id}/budget',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Set a connected agent's budget.
+   * Sets the agent's monthly budget, makes it unlimited (an organization's
+   * ceiling still applies) or returns it to the plan's default: half the
+   * plan's default spend cap. Needs an admin credential; an agent cannot
+   * change its own budget.
+   *
+   * @returns AgentBudgetResponse The agent's budget after the change.
+   * @throws ApiError
+   */
+  public static setAgentConnectionBudget({
+    id,
+    requestBody,
+  }: {
+    /**
+     * API key id of the connected agent whose budget to read or set.
+     */
+    id: string,
+    requestBody: AgentBudgetRequest,
+  }): CancelablePromise<AgentBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/agent-connections/{id}/budget',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

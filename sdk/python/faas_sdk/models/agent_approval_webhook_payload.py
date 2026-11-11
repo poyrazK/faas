@@ -33,7 +33,7 @@ class AgentApprovalWebhookPayload:
     key_id: UUID
     """The agent key that made the request."""
     category: AgentApprovalWebhookPayloadCategory
-    """Which kind of risky action the agent asked to take."""
+    """Which kind of risky action the agent asked to take; budget when it would go past its monthly budget."""
     method: str
     """HTTP method of the agent's request."""
     path: str

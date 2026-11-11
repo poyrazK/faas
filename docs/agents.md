@@ -204,6 +204,45 @@ gregale webhook account add --target-url https://example.com/approvals \
 Each event names the request, the key, the category, the method and path,
 and, for a new request, its review link. It never includes the request body.
 
+## Limit what an agent adds to your bill
+
+An agent can raise what you pay every month without any traffic: by keeping
+instances warm (`min_instances`, a scaling policy's floor or schedule
+windows), raising the RAM of warm instances, or prewarming. Each agent has a
+monthly budget for this always-on capacity. A change is priced by how much it
+adds, at the overage rate ($0.05 per GB-hour, RAM plus 8 MB per instance,
+730 hours a month), before it is made. Traffic-driven usage is not counted;
+your account's spend cap still bounds it.
+
+Within the budget the change goes through. Past it, Gregale answers
+`428 approval_required` with a review link, as for other approvals, and the
+review page shows the change's added monthly cost. Approving lets that one
+change through. Lowering cost never asks, and does not give budget back.
+
+Without a budget of its own, an agent gets half its plan's default spend cap:
+$5 a month on Hobby, $25 on Pro, $75 on Scale ($0 on Free, which cannot keep
+instances warm). Set a budget, make it unlimited, or go back to the default:
+
+```sh
+gregale mcp connection budget <id>             # budget and this month's use
+gregale mcp connection budget <id> --set 40    # $40 a month
+gregale mcp connection budget <id> --unlimited
+gregale mcp connection budget <id> --default
+```
+
+An agent reads its own with `gregale mcp connection budget --self`, so it can
+plan within it. An organization can cap every agent acting in it; the lower
+of the agent's budget and the ceiling applies:
+
+```sh
+gregale org agent policy set --org acme --agents allow --max-budget 100
+```
+
+In this release the budget covers `PATCH /v1/apps/{slug}`,
+`POST /v1/apps/{slug}/scaling` and `POST /v1/apps/{slug}/prewarm`. Replica
+minimums in deployment manifests and project environment settings are
+priced in a later release.
+
 ## See what an agent changed
 
 Gregale keeps each agent's write requests (`POST`, `PUT`, `PATCH` and

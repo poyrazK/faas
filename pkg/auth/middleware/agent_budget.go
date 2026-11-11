@@ -28,8 +28,7 @@ func (m *Middleware) ChargeAgentBudget(w http.ResponseWriter, r *http.Request, p
 		return noop, false
 	}
 	keyID := key.ID
-	commit = func() {
-		//nolint:contextcheck // the spend outlives the request, like the activity row.
+	commit = func() { //nolint:contextcheck // the spend outlives the request, like the activity row.
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := budgets.AddAgentBudgetSpend(ctx, keyID, time.Now(), millicents); err != nil && m.Log != nil {

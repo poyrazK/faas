@@ -1,9 +1,10 @@
 from typing import Literal
 
-AgentApprovalResponseCategory = Literal["billing", "credentials", "delete", "production"]
+AgentApprovalResponseCategory = Literal["billing", "budget", "credentials", "delete", "production"]
 
 AGENT_APPROVAL_RESPONSE_CATEGORY_VALUES: set[AgentApprovalResponseCategory] = {
     "billing",
+    "budget",
     "credentials",
     "delete",
     "production",

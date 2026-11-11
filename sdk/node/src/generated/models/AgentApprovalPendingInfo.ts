@@ -11,9 +11,9 @@ export type AgentApprovalPendingInfo = {
    */
   id: string;
   /**
-   * The kind of action that needs approval.
+   * The kind of action that needs approval; budget when the change would take the agent past its monthly budget.
    */
-  category: 'delete' | 'production' | 'credentials' | 'billing';
+  category: 'delete' | 'production' | 'credentials' | 'billing' | 'budget';
   /**
    * The page where a signed-in member who may decide approves or denies the request.
    */
