@@ -8,6 +8,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AppSecret struct {
+	AppID      pgtype.UUID
+	Scope      string
+	Key        string
+	Ciphertext []byte
+}
+
 type CrashCapture struct {
 	ID        pgtype.UUID
 	AppID     pgtype.UUID

@@ -41,6 +41,7 @@ const grantSweepInterval = 5 * time.Minute
 type config struct {
 	listen, certPath, keyPath, caPath, identityPath string
 	appsPerNodeHour                                 int
+	requireReferences                               bool
 }
 
 func configFromEnv(getenv func(string) string) (config, error) {
@@ -67,6 +68,13 @@ func configFromEnv(getenv func(string) string) (config, error) {
 			return config{}, fmt.Errorf("secretd: FAAS_SECRETD_APPS_PER_NODE_HOUR=%q: want a positive integer", raw)
 		}
 		cfg.appsPerNodeHour = n
+	}
+	switch raw := getenv("FAAS_SECRETD_REQUIRE_REFERENCES"); raw {
+	case "", "false", "0":
+	case "true", "1":
+		cfg.requireReferences = true
+	default:
+		return config{}, fmt.Errorf("secretd: FAAS_SECRETD_REQUIRE_REFERENCES=%q: want true or false", raw)
 	}
 	return cfg, nil
 }
@@ -128,7 +136,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("secretd: listen %s: %w", cfg.listen, err)
 	}
 	srv := grpc.NewServer(wire.ServerCredsOrEmpty(tlsCfg)...)
-	secretdpb.RegisterSecretdServer(srv, secretd.NewServer(store, identities, cfg.appsPerNodeHour, log))
+	secretdpb.RegisterSecretdServer(srv, secretd.NewServer(store, identities, cfg.appsPerNodeHour, log).RequireReferences(cfg.requireReferences))
 	go func() {
 		<-ctx.Done()
 		srv.GracefulStop()

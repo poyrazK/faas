@@ -42,6 +42,7 @@ func TestConfigFromEnv(t *testing.T) {
 		{name: "complete"},
 		{name: "budget", edit: map[string]string{"FAAS_SECRETD_APPS_PER_NODE_HOUR": "250"}, wantBudget: 250},
 		{name: "bad budget", edit: map[string]string{"FAAS_SECRETD_APPS_PER_NODE_HOUR": "0"}, want: "positive integer"},
+		{name: "bad reference switch", edit: map[string]string{"FAAS_SECRETD_REQUIRE_REFERENCES": "maybe"}, want: "want true or false"},
 		{name: "unix listener", edit: map[string]string{"FAAS_SECRETD_LISTEN": "unix:///run/faas/secretd.sock"}, want: "want tcp://"},
 		{name: "no listener", edit: map[string]string{"FAAS_SECRETD_LISTEN": ""}, want: "want tcp://"},
 		{name: "no TLS", edit: map[string]string{"FAAS_SECRETD_TLS_CA_PATH": ""}, want: "mutual TLS only"},
@@ -131,6 +132,10 @@ func (ownedBy) CaptureKey(context.Context, string) (string, []byte, error) {
 
 func (ownedBy) SidecarEnv(context.Context, string, string, string) (map[string][]byte, error) {
 	return nil, secretd.ErrUnknownSidecar
+}
+
+func (ownedBy) AppSecretCiphertext(context.Context, string, string, string) ([]byte, error) {
+	return nil, secretd.ErrUnknownSecret
 }
 
 // adr: 20261110210000 — the secret-opener feature leaves work end to end:

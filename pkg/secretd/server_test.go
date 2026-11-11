@@ -29,6 +29,7 @@ type fakeStore struct {
 	failRec     bool
 	captures    map[string]fakeCapture
 	deployments map[string]fakeDeployment
+	rows        map[rowKey][]byte
 }
 
 type fakeCapture struct {
@@ -42,6 +43,16 @@ func (f *fakeStore) SidecarEnv(_ context.Context, appID, deploymentID, sidecar s
 		return nil, secretd.ErrUnknownSidecar
 	}
 	return secretd.SidecarCiphertexts(d.sidecars, sidecar, nil)
+}
+
+type rowKey struct{ app, scope, key string }
+
+func (f *fakeStore) AppSecretCiphertext(_ context.Context, appID, scope, key string) ([]byte, error) {
+	ct, ok := f.rows[rowKey{appID, scope, key}]
+	if !ok {
+		return nil, secretd.ErrUnknownSecret
+	}
+	return ct, nil
 }
 
 type fakeDeployment struct {
@@ -302,5 +313,36 @@ func TestOpenCaptureKeyByReference(t *testing.T) {
 	f.store.grants[grantKey{"app-a", "n-peer"}] = f.now.Add(time.Hour)
 	if got, code := open("app-a", captureA); code != codes.OK || got != key.String() {
 		t.Fatalf("granted peer = %v", code)
+	}
+}
+
+// Slice 3d-4: an app-secret entry with a scope opens the app's own row; the
+// caller's ciphertext is ignored, and RequireReferences refuses entries
+// that are not references.
+func TestOpenAppSecretsByReference(t *testing.T) {
+	f := newFixture(t, 0)
+	own := f.seal(t, "acct-a", secretbox.Envelope{"DB_URL": "postgres://mine"})
+	theirs := f.seal(t, "acct-a", secretbox.Envelope{"DB_URL": "postgres://another-app"})
+	f.store.rows = map[rowKey][]byte{{"app-a", "default", "DB_URL"}: own}
+
+	// The reference wins over a smuggled ciphertext of another app.
+	values, code := f.open(t, "app-a", &secretdpb.SealedEntry{Key: "DB_URL", Scope: "default", Ciphertext: theirs})
+	if code != codes.OK || values["DB_URL"] != "postgres://mine" {
+		t.Fatalf("reference = %v, %v", values, code)
+	}
+	// A row the app does not have is refused.
+	if _, code := f.open(t, "app-a", &secretdpb.SealedEntry{Key: "API", Scope: "default"}); code != codes.FailedPrecondition {
+		t.Fatalf("missing row = %v", code)
+	}
+	// Ciphertext entries still open until references are required.
+	if _, code := f.open(t, "app-a", &secretdpb.SealedEntry{Key: "DB_URL", Ciphertext: own}); code != codes.OK {
+		t.Fatalf("ciphertext entry before the contract = %v", code)
+	}
+	f.server.RequireReferences(true)
+	if _, code := f.open(t, "app-a", &secretdpb.SealedEntry{Key: "DB_URL", Ciphertext: own}); code != codes.FailedPrecondition {
+		t.Fatalf("ciphertext entry after the contract = %v", code)
+	}
+	if _, code := f.open(t, "app-a", &secretdpb.SealedEntry{Key: "DB_URL", Scope: "default"}); code != codes.OK {
+		t.Fatalf("reference after the contract = %v", code)
 	}
 }

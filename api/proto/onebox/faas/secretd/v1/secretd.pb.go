@@ -231,7 +231,11 @@ type SealedEntry struct {
 	Key        string `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
 	Ciphertext []byte `protobuf:"bytes,2,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
 	// source_key names the single key inside the envelope; empty means key.
-	SourceKey     string `protobuf:"bytes,3,opt,name=source_key,json=sourceKey,proto3" json:"source_key,omitempty"`
+	SourceKey string `protobuf:"bytes,3,opt,name=source_key,json=sourceKey,proto3" json:"source_key,omitempty"`
+	// scope, when set, makes the entry a reference (slice 3d-4): secretd
+	// ignores ciphertext and opens the app's own app_secrets row
+	// (app_id, scope, source_key).
+	Scope         string `protobuf:"bytes,4,opt,name=scope,proto3" json:"scope,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -283,6 +287,13 @@ func (x *SealedEntry) GetCiphertext() []byte {
 func (x *SealedEntry) GetSourceKey() string {
 	if x != nil {
 		return x.SourceKey
+	}
+	return ""
+}
+
+func (x *SealedEntry) GetScope() string {
+	if x != nil {
+		return x.Scope
 	}
 	return ""
 }
@@ -507,14 +518,15 @@ const file_onebox_faas_secretd_v1_secretd_proto_rawDesc = "" +
 	"\n" +
 	"capture_id\x18\x02 \x01(\tR\tcaptureId\"4\n" +
 	"\x16OpenCaptureKeyResponse\x12\x1a\n" +
-	"\bidentity\x18\x01 \x01(\tR\bidentity\"^\n" +
+	"\bidentity\x18\x01 \x01(\tR\bidentity\"t\n" +
 	"\vSealedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1e\n" +
 	"\n" +
 	"ciphertext\x18\x02 \x01(\fR\n" +
 	"ciphertext\x12\x1d\n" +
 	"\n" +
-	"source_key\x18\x03 \x01(\tR\tsourceKey\"m\n" +
+	"source_key\x18\x03 \x01(\tR\tsourceKey\x12\x14\n" +
+	"\x05scope\x18\x04 \x01(\tR\x05scope\"m\n" +
 	"\x15OpenAppSecretsRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12=\n" +
 	"\aentries\x18\x02 \x03(\v2#.onebox.faas.secretd.v1.SealedEntryR\aentries\"\xa7\x01\n" +

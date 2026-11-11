@@ -59,7 +59,13 @@ type Store interface {
 	// deploymentID, a deployment of appID (SidecarCiphertexts), or
 	// ErrUnknownSidecar.
 	SidecarEnv(ctx context.Context, appID, deploymentID, sidecarName string) (map[string][]byte, error)
+	// AppSecretCiphertext returns the ciphertext of appID's app_secrets row
+	// (scope, key), or ErrUnknownSecret.
+	AppSecretCiphertext(ctx context.Context, appID, scope, key string) ([]byte, error)
 }
+
+// ErrUnknownSecret is returned by Store.AppSecretCiphertext.
+var ErrUnknownSecret = errors.New("secretd: the app has no secret of that scope and key")
 
 // ErrUnknownNode is returned by Store.NodeIDByName.
 var ErrUnknownNode = errors.New("secretd: no active compute node has that name")
@@ -92,6 +98,17 @@ type Server struct {
 	peerNode func(context.Context) (string, error)
 	now      func() time.Time
 	budget   *appBudget
+	// requireReferences refuses app-secret entries that carry ciphertext
+	// instead of naming the app's row (slice 3d-4 contract step).
+	requireReferences bool
+}
+
+// RequireReferences makes OpenAppSecrets refuse entries that are not
+// references to the app's own app_secrets rows (ADR-20261110210000 slice
+// 3d-4). Turn it on once every schedd and vmmd sends references.
+func (s *Server) RequireReferences(required bool) *Server {
+	s.requireReferences = required
+	return s
 }
 
 // NewServer returns a server that opens with identities, the runtime seal
@@ -162,7 +179,7 @@ func (s *Server) OpenAppSecrets(ctx context.Context, req *secretdpb.OpenAppSecre
 		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
 		return nil, rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
 	}
-	values, err := s.open(req.GetEntries(), target.AccountID)
+	values, err := s.open(ctx, appID, req.GetEntries(), target.AccountID)
 	if err != nil {
 		s.log.Warn("secretd: refused envelope", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
 		return nil, rpcErr(codes.FailedPrecondition, "secretd refused an envelope: "+err.Error())
@@ -192,8 +209,9 @@ func (s *Server) authorize(ctx context.Context, appID, nodeID string, target App
 }
 
 // open opens every entry, requiring each envelope to be bound to accountID
-// and to hold exactly the selected key.
-func (s *Server) open(entries []*secretdpb.SealedEntry, accountID string) (map[string]string, error) {
+// and to hold exactly the selected key. An entry with a scope is a
+// reference to appID's app_secrets row (slice 3d-4).
+func (s *Server) open(ctx context.Context, appID string, entries []*secretdpb.SealedEntry, accountID string) (map[string]string, error) {
 	if len(s.identities) == 0 {
 		return nil, errors.New("secretd holds no runtime identity")
 	}
@@ -212,7 +230,21 @@ func (s *Server) open(entries []*secretdpb.SealedEntry, accountID string) (map[s
 			clear(values)
 			return nil, fmt.Errorf("entry %s: duplicate key", logsanitize.Field(key))
 		}
-		inner, binding, err := secretbox.OpenMultiBound(s.identities, entry.GetCiphertext())
+		ciphertext := entry.GetCiphertext()
+		if scope := entry.GetScope(); scope != "" {
+			// Slice 3d-4: a reference names the app's own row; whatever
+			// ciphertext the caller sent is ignored.
+			row, err := s.store.AppSecretCiphertext(ctx, appID, scope, source)
+			if err != nil {
+				clear(values)
+				return nil, fmt.Errorf("entry %s: %w", logsanitize.Field(key), err)
+			}
+			ciphertext = row
+		} else if s.requireReferences {
+			clear(values)
+			return nil, fmt.Errorf("entry %s: not a reference, and this secretd opens app secrets only by reference", logsanitize.Field(key))
+		}
+		inner, binding, err := secretbox.OpenMultiBound(s.identities, ciphertext)
 		if err != nil {
 			clear(values)
 			return nil, fmt.Errorf("entry %s: %w", logsanitize.Field(key), err)

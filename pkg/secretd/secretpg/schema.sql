@@ -26,3 +26,13 @@ CREATE TABLE crash_captures (
     status     text  NOT NULL,
     sealed_key bytea
 );
+
+-- Projection of app_secrets: the key and ciphertext OpenAppSecrets reads by
+-- reference (ADR-20261110210000 slice 3d-4).
+CREATE TABLE app_secrets (
+    app_id     uuid  NOT NULL,
+    scope      text  NOT NULL,
+    key        text  NOT NULL,
+    ciphertext bytea NOT NULL,
+    PRIMARY KEY (app_id, scope, key)
+);

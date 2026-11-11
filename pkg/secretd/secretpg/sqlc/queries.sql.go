@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const appSecretCiphertext = `-- name: AppSecretCiphertext :one
+SELECT ciphertext FROM app_secrets
+ WHERE app_id = $1::uuid AND scope = $2::text AND key = $3::text
+`
+
+type AppSecretCiphertextParams struct {
+	AppID pgtype.UUID
+	Scope string
+	Key   string
+}
+
+// The app's own row (ADR-20261110210000 slice 3d-4).
+func (q *Queries) AppSecretCiphertext(ctx context.Context, db DBTX, arg AppSecretCiphertextParams) ([]byte, error) {
+	row := db.QueryRow(ctx, appSecretCiphertext, arg.AppID, arg.Scope, arg.Key)
+	var ciphertext []byte
+	err := row.Scan(&ciphertext)
+	return ciphertext, err
+}
+
 const crashCaptureSealedKey = `-- name: CrashCaptureSealedKey :one
 SELECT app_id, sealed_key FROM crash_captures
  WHERE id = $1::uuid AND status <> 'expired' AND sealed_key IS NOT NULL

@@ -4310,6 +4310,11 @@ type SealedEnvEntry struct {
 	// SourceKey binds an alias to the single source in its sealed envelope.
 	// Empty retains the legacy envelope merge contract.
 	SourceKey string
+	// Scope is the app_secrets scope of the row this value comes from
+	// (ADR-20261110210000 slice 3d-4). Set, a remote opener opens the app's
+	// own row (app, Scope, SourceKey) by reference and ignores Ciphertext.
+	// Empty for values that are not the app's app_secrets rows.
+	Scope string
 }
 
 // APIEnvEntry is one (key, value) plaintext pair as stored in app_envs

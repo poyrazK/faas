@@ -11,3 +11,7 @@ faas_secretd_listen: ""
 # How many distinct apps one compute node may open per rolling hour; empty
 # keeps secretd's default (pkg/secretd DefaultAppsPerNodeHour).
 faas_secretd_apps_per_node_hour: ""
+# Slice 3d-4 contract step: true refuses app-secret entries that carry
+# ciphertext instead of naming the app's own row. Turn on once every schedd
+# and vmmd runs a release that sends references.
+faas_secretd_require_references: false

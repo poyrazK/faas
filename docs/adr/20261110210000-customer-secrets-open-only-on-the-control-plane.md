@@ -325,6 +325,19 @@ mechanism end to end, so the restore side is already there:
   is streaming. Turn the flag on only after the reference node's restore
   p95 stays under 350 ms with it.
 
+**3d-4 (implemented): app secrets by reference.** Selection stays in
+schedd; what changes is the proof. Each app-secret entry on the wake wire
+(`SealedSecret.secret_scope`) and on vmmd's live-reload rows carries the
+app_secrets scope of its row, and vmmd forwards it to secretd
+(`SealedEntry.scope`). An entry with a scope is a reference: secretd ignores
+any ciphertext sent with it and opens the app's own row (app, scope,
+source key), still bound to the app's account. This closes slice 3a's
+same-account residual for app secrets. Entries without a scope (values
+inherited from another app's rows, an older schedd) keep the ciphertext
+path until `FAAS_SECRETD_REQUIRE_REFERENCES` (secretd_service's
+`faas_secretd_require_references`) refuses them, once every schedd and vmmd
+sends references. Writer signatures are still checked on the node.
+
 Order: 3d-1 crash-capture keys (already sealed today), 3d-2 sidecar env by
 reference, 3d-3 snapshot sealing at the source + key by reference (behind a
 flag until the restore measurement), 3d-4 app secrets by reference, then

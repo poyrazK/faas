@@ -26,3 +26,8 @@ VALUES (sqlc.arg(node_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(via)::text, sq
 -- A live capture's app and sealed key (ADR-20261110210000 slice 3d).
 SELECT app_id, sealed_key FROM crash_captures
  WHERE id = sqlc.arg(id)::uuid AND status <> 'expired' AND sealed_key IS NOT NULL;
+
+-- name: AppSecretCiphertext :one
+-- The app's own row (ADR-20261110210000 slice 3d-4).
+SELECT ciphertext FROM app_secrets
+ WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text AND key = sqlc.arg(key)::text;

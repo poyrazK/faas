@@ -9423,7 +9423,7 @@ func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appI
 			missing = append(missing, fmt.Sprintf("%q (-> %q)", envKey, ref))
 			continue
 		}
-		entry := fcvm.SealedEnvEntry{Key: envKey, Ciphertext: row.Ciphertext}
+		entry := fcvm.SealedEnvEntry{Key: envKey, Ciphertext: row.Ciphertext, Scope: row.Scope}
 		if envKey != row.Key || intentSources[envKey] {
 			entry.SourceKey = row.Key
 		}

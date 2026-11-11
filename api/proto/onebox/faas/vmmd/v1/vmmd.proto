@@ -1112,6 +1112,11 @@ message SealedSecret {
   // ADR-423: alias destination is key; source_key must match the single key
   // inside its sealed envelope. Empty preserves the legacy envelope contract.
   string source_key = 3;
+  // ADR-20261110210000 slice 3d-4: the app_secrets scope of the row this
+  // value comes from, so vmmd can ask secretd for (app, scope, source_key)
+  // by reference instead of sending the ciphertext. Empty for values that
+  // are not app_secrets rows (sidecar direct env) and from an older schedd.
+  string secret_scope = 4;
 }
 
 // APIEnvEntry is one (key, value) plaintext pair from app_envs

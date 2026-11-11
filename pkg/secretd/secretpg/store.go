@@ -166,6 +166,22 @@ func (s *Store) SidecarEnv(ctx context.Context, appID, deploymentID, sidecarName
 	return secretd.SidecarCiphertexts(dep.Sidecars, sidecarName, reseals)
 }
 
+// AppSecretCiphertext implements secretd.Store: the app's own row only.
+func (s *Store) AppSecretCiphertext(ctx context.Context, appID, scope, key string) ([]byte, error) {
+	app, err := pgUUID(appID)
+	if err != nil {
+		return nil, secretd.ErrUnknownSecret
+	}
+	ct, err := s.q.AppSecretCiphertext(ctx, s.db, sqlc.AppSecretCiphertextParams{AppID: app, Scope: scope, Key: key})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, secretd.ErrUnknownSecret
+	}
+	if err != nil {
+		return nil, fmt.Errorf("secretpg: app secret: %w", err)
+	}
+	return ct, nil
+}
+
 // DeleteExpiredGrants removes grants that expired before before.
 func (s *Store) DeleteExpiredGrants(ctx context.Context, before time.Time) (int64, error) {
 	return s.q.DeleteExpiredSecretGrants(ctx, s.db, pgTime(before))

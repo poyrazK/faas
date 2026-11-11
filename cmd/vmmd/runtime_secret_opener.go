@@ -83,7 +83,7 @@ type secretdOpener struct {
 func (o secretdOpener) OpenAppSecrets(ctx context.Context, appID string, entries []fcvm.SealedEnvEntry) (map[string]string, error) {
 	req := &secretdpb.OpenAppSecretsRequest{AppId: appID, Entries: make([]*secretdpb.SealedEntry, 0, len(entries))}
 	for _, e := range entries {
-		req.Entries = append(req.Entries, &secretdpb.SealedEntry{Key: e.Key, Ciphertext: e.Ciphertext, SourceKey: e.SourceKey})
+		req.Entries = append(req.Entries, &secretdpb.SealedEntry{Key: e.Key, Ciphertext: e.Ciphertext, SourceKey: e.SourceKey, Scope: e.Scope})
 	}
 	ctx, cancel := context.WithTimeout(ctx, secretdOpenTimeout)
 	defer cancel()

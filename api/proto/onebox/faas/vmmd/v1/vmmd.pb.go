@@ -1199,7 +1199,12 @@ type SealedSecret struct {
 	Ciphertext []byte                 `protobuf:"bytes,2,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
 	// ADR-423: alias destination is key; source_key must match the single key
 	// inside its sealed envelope. Empty preserves the legacy envelope contract.
-	SourceKey     string `protobuf:"bytes,3,opt,name=source_key,json=sourceKey,proto3" json:"source_key,omitempty"`
+	SourceKey string `protobuf:"bytes,3,opt,name=source_key,json=sourceKey,proto3" json:"source_key,omitempty"`
+	// ADR-20261110210000 slice 3d-4: the app_secrets scope of the row this
+	// value comes from, so vmmd can ask secretd for (app, scope, source_key)
+	// by reference instead of sending the ciphertext. Empty for values that
+	// are not app_secrets rows (sidecar direct env) and from an older schedd.
+	SecretScope   string `protobuf:"bytes,4,opt,name=secret_scope,json=secretScope,proto3" json:"secret_scope,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1251,6 +1256,13 @@ func (x *SealedSecret) GetCiphertext() []byte {
 func (x *SealedSecret) GetSourceKey() string {
 	if x != nil {
 		return x.SourceKey
+	}
+	return ""
+}
+
+func (x *SealedSecret) GetSecretScope() string {
+	if x != nil {
+		return x.SecretScope
 	}
 	return ""
 }
@@ -21645,14 +21657,15 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x0finitial_delay_s\x18\v \x01(\x05R\rinitialDelayS\x12\x18\n" +
 	"\aretries\x18\f \x01(\x05R\aretries\x12$\n" +
 	"\x0estart_period_s\x18\r \x01(\x05R\fstartPeriodS\x12!\n" +
-	"\fgrpc_service\x18\x0e \x01(\tR\vgrpcService\"_\n" +
+	"\fgrpc_service\x18\x0e \x01(\tR\vgrpcService\"\x82\x01\n" +
 	"\fSealedSecret\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1e\n" +
 	"\n" +
 	"ciphertext\x18\x02 \x01(\fR\n" +
 	"ciphertext\x12\x1d\n" +
 	"\n" +
-	"source_key\x18\x03 \x01(\tR\tsourceKey\"5\n" +
+	"source_key\x18\x03 \x01(\tR\tsourceKey\x12!\n" +
+	"\fsecret_scope\x18\x04 \x01(\tR\vsecretScope\"5\n" +
 	"\vAPIEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"F\n" +
