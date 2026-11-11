@@ -61,12 +61,19 @@ func WorkloadBearer(r *http.Request) bool {
 // must not lease, settle or extend production messages (ADR-1141 amendment
 // 2026-10-27).
 func (s Service) WorkloadScope(r *http.Request) (state.Account, state.App, string, error) {
+	return s.WorkloadScopeFor(r, workloadidentity.QueuesAudience, true)
+}
+
+// WorkloadScopeFor binds a token for audience to a live instance of the app
+// named in the path. productionOnly also refuses an instance that runs a
+// stage deployment, or a token that names one.
+func (s Service) WorkloadScopeFor(r *http.Request, audience string, productionOnly bool) (state.Account, state.App, string, error) {
 	verifier := s.Host.WorkloadVerifier()
 	if verifier == nil {
 		return state.Account{}, state.App{}, "", errors.New("workload trust is not configured")
 	}
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	c, err := verifier.Verify(token, workloadidentity.QueuesAudience, time.Now())
+	c, err := verifier.Verify(token, audience, time.Now())
 	if err != nil {
 		return state.Account{}, state.App{}, "", err
 	}
@@ -88,6 +95,9 @@ func (s Service) WorkloadScope(r *http.Request) (state.Account, state.App, strin
 	instance, err := store.InstanceByID(r.Context(), c.InstanceID)
 	if err != nil || instance.AppID != app.ID || !state.State(instance.State).CountsForConcurrency() {
 		return state.Account{}, state.App{}, "", errors.New("instance is not live")
+	}
+	if !productionOnly {
+		return acct, app, instance.ID, nil
 	}
 	if !state.ProductionDeploymentScope(c.Environment) {
 		return state.Account{}, state.App{}, "", errors.New("token names a stage environment")
