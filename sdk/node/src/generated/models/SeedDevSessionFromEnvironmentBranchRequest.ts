@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Deploys one workload of a simulated environment branch into a rehearsal member's developer session, reusing the branch's build.
+ */
 export type SeedDevSessionFromEnvironmentBranchRequest = {
   /**
    * The rehearsal run's workspace ID.

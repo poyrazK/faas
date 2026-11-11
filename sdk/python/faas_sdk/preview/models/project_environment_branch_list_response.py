@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ProjectEnvironmentBranchListResponse")
 
 @_attrs_define
 class ProjectEnvironmentBranchListResponse:
+    """The branches of one parent environment."""
+
     branches: list[ProjectEnvironmentBranchSummary]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

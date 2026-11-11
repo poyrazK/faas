@@ -22,6 +22,8 @@ T = TypeVar("T", bound="ProjectEnvironmentBranchSummary")
 
 @_attrs_define
 class ProjectEnvironmentBranchSummary:
+    """One environment branch in a list."""
+
     slug: str
     parent: str
     branch_point: datetime.datetime

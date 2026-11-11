@@ -11,6 +11,8 @@ T = TypeVar("T", bound="SeedDevSessionFromEnvironmentBranchResponse")
 
 @_attrs_define
 class SeedDevSessionFromEnvironmentBranchResponse:
+    """The member's deployment, which goes live after one boot."""
+
     app_slug: str
     deployment_id: str
     status: str

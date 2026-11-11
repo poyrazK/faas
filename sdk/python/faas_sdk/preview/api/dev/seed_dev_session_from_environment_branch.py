@@ -100,7 +100,9 @@ def sync_detailed(
 
     Args:
         project (str):
-        body (SeedDevSessionFromEnvironmentBranchRequest):
+        body (SeedDevSessionFromEnvironmentBranchRequest): Deploys one workload of a simulated
+            environment branch into a rehearsal member's developer session, reusing the branch's
+            build.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,7 +140,9 @@ def sync(
 
     Args:
         project (str):
-        body (SeedDevSessionFromEnvironmentBranchRequest):
+        body (SeedDevSessionFromEnvironmentBranchRequest): Deploys one workload of a simulated
+            environment branch into a rehearsal member's developer session, reusing the branch's
+            build.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -171,7 +175,9 @@ async def asyncio_detailed(
 
     Args:
         project (str):
-        body (SeedDevSessionFromEnvironmentBranchRequest):
+        body (SeedDevSessionFromEnvironmentBranchRequest): Deploys one workload of a simulated
+            environment branch into a rehearsal member's developer session, reusing the branch's
+            build.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -207,7 +213,9 @@ async def asyncio(
 
     Args:
         project (str):
-        body (SeedDevSessionFromEnvironmentBranchRequest):
+        body (SeedDevSessionFromEnvironmentBranchRequest): Deploys one workload of a simulated
+            environment branch into a rehearsal member's developer session, reusing the branch's
+            build.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

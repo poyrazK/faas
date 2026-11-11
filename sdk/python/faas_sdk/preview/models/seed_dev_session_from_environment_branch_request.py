@@ -11,6 +11,11 @@ T = TypeVar("T", bound="SeedDevSessionFromEnvironmentBranchRequest")
 
 @_attrs_define
 class SeedDevSessionFromEnvironmentBranchRequest:
+    """Deploys one workload of a simulated environment branch into a rehearsal member's developer session, reusing the
+    branch's build.
+
+    """
+
     workspace_id: str
     """The rehearsal run's workspace ID."""
     project: str

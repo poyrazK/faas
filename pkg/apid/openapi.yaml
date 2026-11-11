@@ -108281,6 +108281,7 @@ components:
         branch: { $ref: '#/components/schemas/ProjectEnvironmentBranchResponse' }
 
     SeedDevSessionFromEnvironmentBranchRequest:
+      description: "Deploys one workload of a simulated environment branch into a rehearsal member's developer session, reusing the branch's build."
       type: object
       required: [workspace_id, project, environment, workload]
       properties:
@@ -108292,6 +108293,7 @@ components:
         environment: { type: string, description: Slug of the simulated branch environment. }
         workload: { type: string, description: Workload name in the project. }
     SeedDevSessionFromEnvironmentBranchResponse:
+      description: "The member's deployment, which goes live after one boot."
       type: object
       required: [app_slug, deployment_id, status]
       properties:
@@ -108351,6 +108353,7 @@ components:
         status: { type: string }
 
     ProjectEnvironmentBranchListResponse:
+      description: "The branches of one parent environment."
       type: object
       required: [branches]
       properties:
@@ -108359,6 +108362,7 @@ components:
           items: { $ref: '#/components/schemas/ProjectEnvironmentBranchSummary' }
 
     ProjectEnvironmentBranchSummary:
+      description: "One environment branch in a list."
       type: object
       required: [slug, parent, branch_point, expires_at, egress, private_networks, depth, data, created_at]
       properties:
