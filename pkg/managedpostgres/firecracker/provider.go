@@ -49,6 +49,10 @@ type Scheduler interface {
 	CaptureDatabaseSnapshot(ctx context.Context, in *scheddpb.CaptureDatabaseSnapshotRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseSnapshot, error)
 	GetDatabaseSnapshot(ctx context.Context, in *scheddpb.DatabaseSnapshotRef, opts ...grpc.CallOption) (*scheddpb.DatabaseSnapshot, error)
 	DeleteDatabaseSnapshot(ctx context.Context, in *scheddpb.DatabaseSnapshotRef, opts ...grpc.CallOption) (*scheddpb.DeleteDatabaseSnapshotResponse, error)
+	// HoldDatabase and SetDatabaseComputeQuota carry the compute cap and
+	// the delete grace period's hold (compute_cap.go).
+	HoldDatabase(ctx context.Context, in *scheddpb.HoldDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
+	SetDatabaseComputeQuota(ctx context.Context, in *scheddpb.SetDatabaseComputeQuotaRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 }
 
 // Verifiers publishes role verifiers to pgproxyd; *dbcreds.VerifierStore

@@ -223,7 +223,9 @@ After each function deploys, Gregale applies its manifest settings:
 - **`queue_bindings`**: queues whose messages are pushed to the function,
   with the same fields as an app's `queue_bindings:` (`name`, `queue_name`,
   `max_concurrency`, `enabled`, `retry_policy`). A function consumes by
-  push, so `mode` defaults to `push` and `workload_class` to `http`. The
+  push, so `mode` defaults to `push` and `workload_class` to `http`, as it
+  does for a single function app's top-level `queue_bindings:` and for
+  `gregale queue bindings create` on a function app. The
   function's bindings match the list by name: one you remove is deleted,
   and `queue_bindings: []` removes them all. Without the key, bindings
   made by hand are left alone.

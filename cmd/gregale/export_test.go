@@ -1554,6 +1554,15 @@ func NewTenantCustomerOperationSignalClient(client *api.Client, definition strin
 	return tenantCustomerOperationSignalClient{client: client, definition: definition}
 }
 
+// DialDevDebugTunnel dials one debugger tunnel (ADR-20261111150000).
+func DialDevDebugTunnel(ctx context.Context, tunnelURL, token string) error {
+	conn, err := newDevDebugDialer(tunnelURL, token)(ctx)
+	if conn != nil {
+		_ = conn.Close()
+	}
+	return err
+}
+
 // NewEnvironmentAppClient builds a stage app client whose revision pin starts unset.
 func NewEnvironmentAppClient(client *api.Client, environment string, revision *int64) EnvironmentAppClient {
 	return environmentAppClient{Client: client, environment: environment, revision: revision}
@@ -1865,6 +1874,7 @@ var RunBindingVerificationJobs = runBindingVerificationJobs
 var RunBucketCapacity = runBucketCapacity
 var RunBucketCopySources = runBucketCopySources
 var RunBucketDefaultEncryption = runBucketDefaultEncryption
+var BucketStatusAlias = bucketStatusAlias
 var RunBucketDelete = runBucketDelete
 var RunBucketLifecycle = runBucketLifecycle
 var RunBucketList = runBucketList

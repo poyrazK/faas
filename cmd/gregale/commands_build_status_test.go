@@ -52,6 +52,8 @@ func TestPrintBuildStatus_TerminalSucceeded(t *testing.T) {
 		"started_at:            2026-08-10T12:34:58Z",
 		"finished_at:           2026-08-10T12:36:20Z",
 		"duration_seconds:      82",
+		// Hunt 33 H33-29: the build log is read through the deployment.
+		"logs:                  gregale release logs 00000000000000000000000000000001",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected line %q in output; got:\n%s", want, out)
@@ -68,7 +70,7 @@ func TestFormatArtifactCacheSummary(t *testing.T) {
 		name, status, key, want string
 	}{
 		{name: "hit with key", status: "hit", key: key, want: "hit (sha256:" + key + ")"},
-		{name: "miss without key", status: "miss", want: "miss (no artifact hit; dependency cache is separate—see build logs)"},
+		{name: "miss without key", status: "miss", want: "miss (no artifact hit; dependency cache is separate—see gregale release logs)"},
 		{name: "invalidated with key", status: "invalidated", key: key, want: "invalidated (sha256:" + key + ")"},
 		{name: "empty status", key: key, want: ""},
 	}

@@ -64,7 +64,7 @@ func TestDashboardPostgresOverageForm(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/dashboard/postgres?overage=on" {
 		t.Fatalf("turn on = %d %q\n%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
 	}
-	if on, err := service.Overage(t.Context(), acct.ID); err != nil || !on {
+	if on, chosen, err := service.Overage(t.Context(), acct.ID); err != nil || !on || !chosen {
 		t.Fatalf("stored overage = %v, %v; want on", on, err)
 	}
 	body, _ = renderPostgresDashboard(t, h, sid, "/dashboard/postgres?overage=on")

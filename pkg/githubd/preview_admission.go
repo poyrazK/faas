@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -24,12 +25,12 @@ import (
 // app's pr-preview scope (ADR-20261028090000), so those are what is checked.
 // previewed are the production apps whose previews this PR builds. It
 // returns "" when every such service has a value.
-func (s *Service) previewDatastoreShortfall(ctx context.Context, fsys fs.FS, accountID string, scan reposcan.Result,
+func (s *Service) previewDatastoreShortfall(ctx context.Context, fsys fs.FS, subject platformflags.Subject, scan reposcan.Result,
 	previewed []state.App, headValues map[string]map[string]string) (string, error) {
 	if len(scan.Managed) == 0 {
 		return "", nil
 	}
-	env, err := reposcan.ReadProjectEnv(fsys, s.scanOptions(accountID), scan.Workloads)
+	env, err := reposcan.ReadProjectEnv(fsys, s.scanOptions(subject), scan.Workloads)
 	if err != nil {
 		// The PR head's values could not be read either; the build reports it.
 		return "", nil //nolint:nilerr // an unreadable Compose file is the build's failure to report, not this check's.
@@ -40,7 +41,7 @@ func (s *Service) previewDatastoreShortfall(ctx context.Context, fsys fs.FS, acc
 			byWorkload[strings.ToLower(app.WorkloadName)] = app
 		}
 	}
-	previewDatabases := s.capabilityAllowed(PreviewDatabasesCapability, accountID)
+	previewDatabases := s.capabilityAllowed(PreviewDatabasesCapability, subject)
 	var missing []string
 	seen := map[string]bool{}
 	provided := map[string]map[string]bool{}
