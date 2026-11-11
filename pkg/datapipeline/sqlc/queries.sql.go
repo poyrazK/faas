@@ -1428,7 +1428,7 @@ func (q *Queries) PipelineRequestTableCancellation(ctx context.Context, db DBTX,
 const pipelineRequestTableRecovery = `-- name: PipelineRequestTableRecovery :execrows
 UPDATE data_pipelines SET revision=revision+1,retry_at=clock_timestamp(),
  schema_change=jsonb_set(schema_change,'{Recovery}',CASE WHEN $1::text='live'
- THEN (schema_change->'Recovery')||jsonb_build_object('State','requested','ID','','Stage','quarantined')
+ THEN (schema_change->'Recovery')||jsonb_build_object('State','requested','ID','','Stage','quarantined','CopyRetry',reason IN ('table_copy_stalled','table_addition_tracking_lost'))
  ELSE jsonb_build_object('Table',$2::text,'Kind',$1::text,'State','requested') END)
 WHERE account_id=$3::text::uuid AND id=$4::text::uuid AND revision=$5
  AND desired_state='running' AND state='blocked'
@@ -1440,7 +1440,9 @@ WHERE account_id=$3::text::uuid AND id=$4::text::uuid AND revision=$5
  AND (($1::text='live' AND schema_change->'Recovery'->>'Kind'='live' AND reason IN ('live_table_mismatch','replica_mismatch')
  AND verification_progress->>'State'='mismatch' AND verification_progress->>'Table'=$2::text)
  OR ($1::text='' AND coalesce(schema_change->'Recovery'->>'Kind','')<>'live' AND reason='replica_mismatch' AND verification_progress->>'State'='mismatch' AND verification_progress->>'Table'=$2::text)
- OR ($1::text='copy' AND reason IN ('table_copy_stalled','table_addition_tracking_lost')
+ OR (($1::text='copy' OR ($1::text='live' AND schema_change->'Recovery'->>'Kind'='live'
+ AND schema_change->'Recovery'->>'State'='blocked' AND schema_change->'Recovery'->>'Stage'='copying'))
+ AND reason IN ('table_copy_stalled','table_addition_tracking_lost')
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(schema_change->'Copies','[]')) c WHERE c->>'Table'=$2::text
  AND coalesce(c->>'NativeState','')<>'r' AND (coalesce((c->>'Stalled')::boolean,false) OR c->>'Phase'='missing'))
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(schema_change->'Copies','[]')) other_copy WHERE other_copy->>'Table'<>$2::text AND coalesce(other_copy->>'NativeState','')='')))
@@ -1613,7 +1615,9 @@ func (q *Queries) PipelineRotateConnection(ctx context.Context, db DBTX, arg Pip
 }
 
 const pipelineSchemaApps = `-- name: PipelineSchemaApps :many
-SELECT DISTINCT a.id,a.slug,a.status FROM managed_postgres_bindings b JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+SELECT DISTINCT a.id,a.slug,a.status,
+ EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.status='live') AS has_live_deployment
+FROM managed_postgres_bindings b JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
 WHERE b.account_id=$1::text::uuid AND b.database_id=$2::text::uuid AND b.state<>'deleted' AND a.status<>'deleted'
 ORDER BY a.id LIMIT $3
 `
@@ -1625,9 +1629,10 @@ type PipelineSchemaAppsParams struct {
 }
 
 type PipelineSchemaAppsRow struct {
-	ID     pgtype.UUID
-	Slug   string
-	Status string
+	ID                pgtype.UUID
+	Slug              string
+	Status            string
+	HasLiveDeployment bool
 }
 
 func (q *Queries) PipelineSchemaApps(ctx context.Context, db DBTX, arg PipelineSchemaAppsParams) ([]PipelineSchemaAppsRow, error) {
@@ -1639,7 +1644,12 @@ func (q *Queries) PipelineSchemaApps(ctx context.Context, db DBTX, arg PipelineS
 	items := []PipelineSchemaAppsRow{}
 	for rows.Next() {
 		var i PipelineSchemaAppsRow
-		if err := rows.Scan(&i.ID, &i.Slug, &i.Status); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Status,
+			&i.HasLiveDeployment,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1723,6 +1733,23 @@ func (q *Queries) PipelineSchemaRefreshPrune(ctx context.Context, db DBTX, arg P
 	return err
 }
 
+const pipelineSchemaRefreshQueued = `-- name: PipelineSchemaRefreshQueued :one
+SELECT EXISTS(SELECT 1 FROM notification_outbox WHERE channel='runtime_config_restart'
+ AND payload::jsonb->>'app_id'=$1::text AND payload::jsonb->>'wake_id'=$2::text)
+`
+
+type PipelineSchemaRefreshQueuedParams struct {
+	AppID  string
+	WakeID string
+}
+
+func (q *Queries) PipelineSchemaRefreshQueued(ctx context.Context, db DBTX, arg PipelineSchemaRefreshQueuedParams) (bool, error) {
+	row := db.QueryRow(ctx, pipelineSchemaRefreshQueued, arg.AppID, arg.WakeID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const pipelineSchemaRefreshSnapshots = `-- name: PipelineSchemaRefreshSnapshots :exec
 UPDATE snapshots SET stale=true WHERE NOT stale AND deployment_id IN (SELECT id FROM deployments WHERE app_id=$1::text::uuid)
 `
@@ -1775,6 +1802,30 @@ func (q *Queries) PipelineSetupByName(ctx context.Context, db DBTX, arg Pipeline
 		&i.UpdatedAt,
 		&i.CreatedAt,
 	)
+	return i, err
+}
+
+const pipelineSetupCheckOwner = `-- name: PipelineSetupCheckOwner :one
+SELECT phase,database_id::text AS database_id FROM data_pipeline_setups
+WHERE account_id=$1::text::uuid AND source_connection_id=$2::text::uuid
+ AND state='working' AND phase IN ('checking_source','provisioning','checking_mirror','starting') AND pipeline_id=''
+FOR UPDATE
+`
+
+type PipelineSetupCheckOwnerParams struct {
+	AccountID    string
+	ConnectionID string
+}
+
+type PipelineSetupCheckOwnerRow struct {
+	Phase      string
+	DatabaseID string
+}
+
+func (q *Queries) PipelineSetupCheckOwner(ctx context.Context, db DBTX, arg PipelineSetupCheckOwnerParams) (PipelineSetupCheckOwnerRow, error) {
+	row := db.QueryRow(ctx, pipelineSetupCheckOwner, arg.AccountID, arg.ConnectionID)
+	var i PipelineSetupCheckOwnerRow
+	err := row.Scan(&i.Phase, &i.DatabaseID)
 	return i, err
 }
 
@@ -1996,6 +2047,32 @@ func (q *Queries) PipelineSetupInsert(ctx context.Context, db DBTX, arg Pipeline
 	return i, err
 }
 
+const pipelineSetupInvalidateFailedCheck = `-- name: PipelineSetupInvalidateFailedCheck :exec
+UPDATE data_connection_checks SET observed_at=NULL
+WHERE account_id=$1::text::uuid AND connection_id=$2::text::uuid
+ AND database_id=$3::text
+ AND (state='blocked' OR (state='passed' AND $4::boolean AND
+  (coalesce(result#>>'{capacity,source,state}','')<>'ready' OR
+   (database_id<>'' AND coalesce(result#>>'{capacity,destination,state}','')<>'ready'))))
+`
+
+type PipelineSetupInvalidateFailedCheckParams struct {
+	AccountID     string
+	ConnectionID  string
+	DatabaseID    string
+	CapacityRetry bool
+}
+
+func (q *Queries) PipelineSetupInvalidateFailedCheck(ctx context.Context, db DBTX, arg PipelineSetupInvalidateFailedCheckParams) error {
+	_, err := db.Exec(ctx, pipelineSetupInvalidateFailedCheck,
+		arg.AccountID,
+		arg.ConnectionID,
+		arg.DatabaseID,
+		arg.CapacityRetry,
+	)
+	return err
+}
+
 const pipelineSetupList = `-- name: PipelineSetupList :many
 SELECT id, account_id, source_connection_id, name, request, mirror_plan, data_api_plan, database_id, mirror_name, pipeline_id, state, phase, reason, revision, lease_token, lease_until, retry_at, updated_at, created_at FROM data_pipeline_setups WHERE account_id=$1::text::uuid ORDER BY created_at DESC,id LIMIT $2
 `
@@ -2043,6 +2120,42 @@ func (q *Queries) PipelineSetupList(ctx context.Context, db DBTX, arg PipelineSe
 		return nil, err
 	}
 	return items, nil
+}
+
+const pipelineSetupLock = `-- name: PipelineSetupLock :one
+SELECT id, account_id, source_connection_id, name, request, mirror_plan, data_api_plan, database_id, mirror_name, pipeline_id, state, phase, reason, revision, lease_token, lease_until, retry_at, updated_at, created_at FROM data_pipeline_setups WHERE account_id=$1::text::uuid AND id=$2::text::uuid FOR UPDATE
+`
+
+type PipelineSetupLockParams struct {
+	AccountID string
+	ID        string
+}
+
+func (q *Queries) PipelineSetupLock(ctx context.Context, db DBTX, arg PipelineSetupLockParams) (DataPipelineSetup, error) {
+	row := db.QueryRow(ctx, pipelineSetupLock, arg.AccountID, arg.ID)
+	var i DataPipelineSetup
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.SourceConnectionID,
+		&i.Name,
+		&i.Request,
+		&i.MirrorPlan,
+		&i.DataApiPlan,
+		&i.DatabaseID,
+		&i.MirrorName,
+		&i.PipelineID,
+		&i.State,
+		&i.Phase,
+		&i.Reason,
+		&i.Revision,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.UpdatedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const pipelineSetupOtherReservations = `-- name: PipelineSetupOtherReservations :one

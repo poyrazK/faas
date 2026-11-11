@@ -493,3 +493,57 @@ func TestPgScheduledCommandCronRetryReusesOccurrence(t *testing.T) {
 		t.Fatalf("ListCronAppTaskRuns = %+v, %v; want one logical row with two attempts", runs, err)
 	}
 }
+
+// Hunt 32 H32-46: a command cron that had ever run could not be deleted;
+// detaching its finished runs hit "terminal app task ... is immutable"
+// (SQLSTATE 23514) and the customer saw a retry-forever 503. The delete
+// now succeeds and keeps the finished run, unchanged apart from the link.
+func TestPgDeleteCommandCronKeepsFinishedRunHistory(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	_, appID, deploymentID := seedLiveDeploy(t, store, ctx, "delete-command-cron-"+uuid.NewString(), "delete-cron-"+uuid.NewString()[:8])
+	if err := store.SetDeploymentRootfs(ctx, deploymentID, "/tmp/delete-cron.ext4", "apps/delete/rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := store.CreateCronWithOptions(ctx, appID, "* * * * *", "", true, state.CronOptions{
+		Command: []string{"bin/report"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	firedAt := time.Now().UTC().Truncate(time.Minute)
+	task, created, err := store.CreateScheduledCronAppTask(ctx, cron.ID, nil, firedAt)
+	if err != nil || !created {
+		t.Fatalf("CreateScheduledCronAppTask = %+v, created=%t, err=%v", task, created, err)
+	}
+	claimed, err := store.ClaimNextAppTask(ctx, "delete-cron-worker", firedAt.Add(time.Second), time.Minute)
+	if err != nil || claimed.ID != task.ID {
+		t.Fatalf("ClaimNextAppTask = %+v, err %v", claimed, err)
+	}
+	running, err := store.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, firedAt.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("MarkAppTaskRunning: %v", err)
+	}
+	exitCode := 0
+	finished, err := store.CompleteAppTask(ctx, state.CompleteAppTaskParams{
+		ID: task.ID, LeaseToken: *running.LeaseToken, Status: state.AppTaskSucceeded,
+		ExitCode: &exitCode, FinishedAt: firedAt.Add(3 * time.Second),
+	})
+	if err != nil || finished.Status != state.AppTaskSucceeded {
+		t.Fatalf("CompleteAppTask = %+v, err %v", finished, err)
+	}
+
+	if err := store.DeleteCron(ctx, cron.ID, appID); err != nil {
+		t.Fatalf("DeleteCron of a command cron with a finished run: %v", err)
+	}
+	if _, err := store.CronByID(ctx, cron.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("CronByID after delete: err = %v, want ErrNotFound", err)
+	}
+	kept, err := store.AppTaskByID(ctx, finished.AccountID, appID, task.ID)
+	if err != nil {
+		t.Fatalf("finished run after cron delete: %v", err)
+	}
+	if kept.CronID != "" || kept.Status != state.AppTaskSucceeded || kept.ExitCode == nil || *kept.ExitCode != 0 ||
+		kept.FinishedAt == nil || !kept.FinishedAt.Equal(*finished.FinishedAt) {
+		t.Fatalf("finished run after cron delete = %+v; want the same outcome with no cron link", kept)
+	}
+}

@@ -13,12 +13,16 @@ import (
 
 // Developer sessions are leased previews. Reclaiming their buckets before
 // tombstoning the app keeps a vanished CLI from leaving a physical bucket and
-// an app row that cannot pass the permanent-purge bucket guard.
+// an app row that cannot pass the permanent-purge bucket guard. A PR
+// preview's databases go the same way (ADR-20261102123523).
 func (s *server) cleanupDevSessionResources(ctx context.Context, app state.App) error {
 	if err := s.cleanupDevSessionBuckets(ctx, app); err != nil {
 		return err
 	}
-	return s.cleanupDevPostgres(ctx, app)
+	if err := s.cleanupDevPostgres(ctx, app); err != nil {
+		return err
+	}
+	return s.releasePreviewDatabases(ctx, app)
 }
 
 func (s *server) cleanupDevSessionBuckets(ctx context.Context, app state.App) error {

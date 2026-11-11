@@ -28,6 +28,7 @@ import (
 	"net/textproto"
 	"sort"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -101,12 +102,7 @@ func StrippedRequestHeaders(rule state.MirrorRule, src http.Header) http.Header 
 }
 
 func safeMirrorMethod(method string) bool {
-	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return true
-	default:
-		return false
-	}
+	return api.MirrorSafeMethod(method)
 }
 
 // MirrorComparison is the body-free result of comparing bounded source and

@@ -1,0 +1,49 @@
+# Managed by the tetragon role (ADR-20261110183000). Observe only: a request
+# to become root (uid or effective uid 0). The jailer drops each VM to its own
+# uid in 20000-29999 and never asks for root back, so Alloy pages when a
+# process with such a uid makes one of these calls.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: faas-setuid-root
+spec:
+  kprobes:
+    - call: sys_setuid
+      syscall: true
+      args:
+        - index: 0
+          type: int
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: Equal
+              values:
+                - "0"
+    - call: sys_setreuid
+      syscall: true
+      args:
+        - index: 0
+          type: int
+        - index: 1
+          type: int
+      selectors:
+        - matchArgs:
+            - index: 1
+              operator: Equal
+              values:
+                - "0"
+    - call: sys_setresuid
+      syscall: true
+      args:
+        - index: 0
+          type: int
+        - index: 1
+          type: int
+        - index: 2
+          type: int
+      selectors:
+        - matchArgs:
+            - index: 1
+              operator: Equal
+              values:
+                - "0"

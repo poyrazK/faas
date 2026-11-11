@@ -47,9 +47,10 @@ func checkRelease(ctx context.Context, r *report, store Reader, account state.Ac
 		_, sourceErr = serviceadditions.Plan(ctx, store, account, project, safe, apps, scan)
 		r.identities["service_additions"] = api.ProjectReleaseAdditionsPolicyID(safe.Additions)
 	} else {
+		apps, sourceErr = state.ProjectAppsForEnvironment(ctx, store, account.ID, project.ID, "production", apps)
 		var serving []state.App
 		dormant := map[string]bool{}
-		if reader, ok := store.(state.ProjectReleaseAdditionsStore); ok {
+		if reader, ok := store.(state.ProjectReleaseAdditionsStore); ok && sourceErr == nil {
 			dormant, sourceErr = reader.DormantProjectReleaseApps(ctx, account.ID, project.ID)
 		}
 		for _, app := range apps {

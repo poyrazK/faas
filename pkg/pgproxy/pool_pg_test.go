@@ -305,3 +305,61 @@ func TestPooledCapIsSharedAndBounded(t *testing.T) {
 		t.Fatal("the database's cap of one server was exceeded")
 	}
 }
+
+// noLiveIdleServer reports whether the database has no pooled server idle
+// and still alive.
+func (h *harness) noLiveIdleServer(databaseID string) bool {
+	s := h.proxy.pools
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, pl := range s.pools {
+		if key.databaseID != databaseID {
+			continue
+		}
+		pl.mu.Lock()
+		for _, srv := range pl.idle {
+			if !srv.ended.Load() {
+				pl.mu.Unlock()
+				return false
+			}
+		}
+		pl.mu.Unlock()
+	}
+	return true
+}
+
+// A database that stops under an idle pooled server (a resize, upgrade,
+// restart, eviction or failover) ends that server. The next transaction
+// gets a new one, in the slot the dead one held, instead of its 08006.
+func TestPooledServerEndedWhileIdleIsNotLent(t *testing.T) {
+	h := newHarnessWith(t, func(c *Config) { c.PoolMaxServers = 1; c.PoolWait = 2 * time.Second })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	databaseID := uuid.NewString()
+	role, password := h.addRole(t, databaseID)
+	conn, err := h.connect(ctx, databaseID+pooledSuffix+"."+testSuffix, role, password, h.dbName, "require", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var before int
+	if err := conn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.backend.Exec(ctx, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = $1", role); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); !h.noLiveIdleServer(databaseID); {
+		if time.Now().After(deadline) {
+			t.Fatal("the pool kept a server whose backend ended as alive")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	var after int
+	if err := conn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&after); err != nil {
+		t.Fatalf("first transaction after the idle server ended: %v", err)
+	}
+	if after == before {
+		t.Fatalf("the transaction ran on backend %d, which was terminated", after)
+	}
+}

@@ -13,7 +13,9 @@ import (
 // email verification) one account receives. Those routes were limited per
 // client IP only, so many addresses could mail-bomb one customer, hurt sender
 // reputation, and fill the outbox's pending budget so other mail got
-// ErrQuota. Per apid process; the routes' per-IP limits still apply.
+// ErrQuota. The database counter (takeSharedMailSlot) is shared by every
+// apid; this per-process one stands in when it is unavailable. The routes'
+// per-IP limits still apply.
 type securityMailLimiter struct {
 	mu   sync.Mutex
 	now  func() time.Time
@@ -53,10 +55,38 @@ func (l *securityMailLimiter) allow(accountID, kind string) bool {
 	return true
 }
 
+// securityMailSlot is the per-account cap on one kind of security mail.
+var securityMailSlot = state.MailSlotLimit{
+	Window:       time.Hour,
+	MaxPerWindow: api.SecurityMailPerAccountPerHour,
+	MinInterval:  api.SecurityMailPerAccountInterval,
+}
+
+// takeSharedMailSlot counts a mail in the database, so every apid shares
+// the account's cap (ADR 20261108160000). ok is false when the store has no
+// counter or the count failed; the caller then uses its own process's
+// counter instead of sending unbounded or refusing.
+func (s *server) takeSharedMailSlot(ctx context.Context, accountID, kind string, limit state.MailSlotLimit) (allowed, ok bool) {
+	st, has := s.store.(state.AccountMailThrottleStore)
+	if !has || accountID == "" {
+		return false, false
+	}
+	allowed, err := st.TakeAccountMailSlot(ctx, accountID, kind, limit)
+	if err != nil {
+		s.log.Warn("auth: shared mail throttle unavailable, using this process's", "account", accountID, "kind", kind, "err", err)
+		return false, false
+	}
+	return allowed, true
+}
+
 // allowSecurityMail applies the per-account cap; a refused send is logged
 // and audited, and the public endpoint still answers its constant 200.
 func (s *server) allowSecurityMail(ctx context.Context, acct state.Account, kind string) bool {
-	if s.securityMail.allow(acct.ID, kind) {
+	allowed, shared := s.takeSharedMailSlot(ctx, acct.ID, kind, securityMailSlot)
+	if !shared {
+		allowed = s.securityMail.allow(acct.ID, kind)
+	}
+	if allowed {
 		return true
 	}
 	s.log.Info("auth: sign-in mail throttled for account", "account", acct.ID, "kind", kind)

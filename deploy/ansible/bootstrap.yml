@@ -62,6 +62,24 @@
         faas_private_dns_address: "{{ faas_private_address | default(ansible_facts.default_ipv4.address, true) }}"
       tags: [private-endpoints]
 
+# ADR-20261109120000: every host's Tang key server comes up before any host's
+# storage role binds an encrypted data volume to the others' servers, so a
+# whole new fleet converges in one run. A no-op without disk_encryption.
+- name: Bring up the Tang key servers encrypted data volumes unlock from
+  hosts: control_plane:compute_nodes
+  gather_facts: false
+  become: true
+  tags: [tang]
+  pre_tasks:
+    - name: End the Tang play on the release-only fast path
+      ansible.builtin.meta: end_host
+      when: >-
+        (faas_join_bootstrap_contract_current | default(false) | bool) or
+        (faas_join_rollout_phase | default('full')) == 'prepare' or
+        not (faas_disk_encryption | default(false) | bool)
+  roles:
+    - role: tang_server
+
 - name: Bootstrap a Gate-B control-plane node (fsn-1)
   hosts: control_plane
   gather_facts: false
@@ -225,6 +243,10 @@
       when:
         - faas_edgednsd_managed | default(false) | bool
         - faas_cp_converge_roles | default(none) is none or 'edgednsd_service' in faas_cp_converge_roles
+    # ADR-20261109170000: the artifact signer. Off (and removed) while
+    # faas_signd_listen is empty.
+    - role: signd_service
+      when: faas_cp_converge_roles | default(none) is none or 'signd_service' in faas_cp_converge_roles
     # ADR-20261023104734 contract amendment: after every role that installs a
     # unit running as the shared `faas` OS user, move those units to faas_shared.
     - role: postgres_shared_runtime_role
@@ -237,6 +259,9 @@
     # legacy one-box services left on an existing control-plane host.
     - role: role_convergence
       when: faas_cp_converge_roles | default(none) is none or 'role_convergence' in faas_cp_converge_roles
+    # ADR-20261110183000: hourly check that this host runs the signed release.
+    - role: release_integrity
+      when: faas_cp_converge_roles | default(none) is none or 'release_integrity' in faas_cp_converge_roles
     # ADR-143: prove convergence. Lenient here (first bootstrap has no
     # enabled units yet); `make verify-fleet` runs the strict form.
     - role: fleet_verify
@@ -319,6 +344,9 @@
     - role: builderd_service
     - role: compute_only_service
     - role: profiled_service
+    # ADR-20261110183000: observe-only runtime detection; off until
+    # faas_tetragon_enabled. Before alloy, so its export directory exists.
+    - role: tetragon
     # ADR-20261023124955 §2: ship this node's platform journal to Loki on the
     # control plane, with a Promtail leaf issued by the control plane's CA.
     - role: platform_logs_pki
@@ -334,6 +362,8 @@
     - role: log_archive
     - role: optional_credentials
     - role: role_convergence
+    # ADR-20261110183000: hourly check that this host runs the signed release.
+    - role: release_integrity
     - role: fleet_verify
       # node_join imports this bootstrap before it installs the requested
       # release. Existing enabled daemons may still execute an older binary

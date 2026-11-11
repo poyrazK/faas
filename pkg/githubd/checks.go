@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/githubscope"
 	"io"
 	"log/slog"
 	"net/http"
@@ -273,6 +274,12 @@ func (c *ChecksAPI) writeCheckRunForInstallation(ctx context.Context, installati
 }
 
 func (c *ChecksAPI) writeCheckRunWithToken(ctx context.Context, token, repoFullName, commitSHA, checkName string, payload checkRunRequest) error {
+	if tag := githubscope.Tag(ctx); tag != "" {
+		checkName += " / " + tag
+		payload.Name = checkName
+		payload.ExternalID += "/" + tag
+	}
+
 	method := http.MethodPost
 	endpoint := fmt.Sprintf("%s/repos/%s/check-runs", GitHubAPI, repoFullName)
 	existingID := int64(0)
@@ -1191,7 +1198,7 @@ func WriteCheckCoalesced(ctx context.Context, c ChecksWriter, repoFullName, comm
 	if c == nil {
 		return nil
 	}
-	key := repoFullName + "@" + commitSHA
+	key := repoFullName + "@" + commitSHA + "@" + githubscope.Account(ctx)
 	checksCoalesceMu.Lock()
 	last, seen := checksCoalesceCache[key]
 	checksCoalesceMu.Unlock()

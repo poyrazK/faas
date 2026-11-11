@@ -36,6 +36,9 @@ func TestConfigDefaultsToThePlatformAPIHost(t *testing.T) {
 	if cfg, err := parse(t, "--state-key-file", "k", "--oauth-redirect-uri", "http://localhost/callback"); err != nil || cfg.resourceURL != "https://api.gregale.io/mcp" {
 		t.Fatalf("platform domain ignored: %+v %v", cfg, err)
 	}
+	if cfg, err := parse(t, "--state-key-file", "k", "--oauth-redirect-uri", "http://localhost/callback", "--tools", "core"); err != nil || len(cfg.toolsets) != 1 || cfg.toolsets[0] != "core" {
+		t.Fatalf("operator ceiling ignored: %+v %v", cfg, err)
+	}
 }
 
 func TestConfigRefusesUnsafeSettings(t *testing.T) {

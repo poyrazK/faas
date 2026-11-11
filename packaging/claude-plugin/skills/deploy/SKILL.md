@@ -51,18 +51,22 @@ Use the project's own deploy command if it has one. Otherwise:
 gregale --non-interactive --json deploy --name <app>
 ```
 
+The command prints nothing until the release is live, and a first build can
+take several minutes. To get the receipt at once, add `--no-wait`, then run
+the receipt's `resume_command` to wait for that same deployment.
+
 The receipt has the deployment `id`, its `status` and the `app_url`.
 
-- `"timed_out": true`: run the receipt's `resume_command`. Don't deploy
-  again.
+- `"timed_out": true`, or your process stopped while waiting: run the
+  receipt's `resume_command`. Don't deploy again.
 - Exit code `3` (temporary failure): the server may already have the deploy.
-  Run `gregale --non-interactive --json deploys status <deployment-id> --app <app>`
+  Run `gregale --non-interactive --json release get <deployment-id> --app <app>`
   before trying again.
 - A failed build or start: read why, fix it, and deploy again. Stop and ask
   the user after two failed attempts.
 
   ```sh
-  gregale --non-interactive --json deploys logs <deployment-id> --app <app>
+  gregale --non-interactive --json release logs <deployment-id> --app <app>
   ```
 
   With the Gregale MCP tools, `gregale_get_deployment` returns the failure
@@ -70,9 +74,19 @@ The receipt has the deployment `id`, its `status` and the `app_url`.
 
 ## 4. Verify
 
-Request the `app_url` (or the health path from `gregale.yaml` or the README)
-and check the response. A deploy that is live but answers with errors isn't
-done: read the logs.
+Call the deployed app through the CLI and check the response:
+
+```sh
+gregale --non-interactive --json invoke <app> --method GET --path /
+```
+
+Use a path the README names if `/` isn't a real page. On Hobby, Pro and Scale
+a new app is private: requesting `app_url` directly answers 401, while
+`invoke` sends the request with your credential. Never put a key in a URL.
+`/healthz` on `app_url` answers from Gregale's edge, not from the app, so it
+doesn't show your code ran.
+
+A deploy that is live but answers with errors isn't done: read the logs.
 
 ```sh
 gregale --non-interactive --json logs <app> --since 15m --level error
@@ -86,7 +100,7 @@ If the new release is broken and the previous one worked, ask the user before
 touching production. Then find the previous release and roll back to it:
 
 ```sh
-gregale --non-interactive --json deployments --app <app> --limit 5
+gregale --non-interactive --json release list --app <app> --limit 5
 gregale --non-interactive --json rollback <app> --to <deployment-id-or-vN>
 ```
 

@@ -311,6 +311,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// dashboard reflects reality on every box.
 	webhookSvc.Ops = ops
 	webhookSvc.Bindings = storeAdapter
+	webhookSvc.DeliveryTargets = deliveryStore
 	webhookSvc.IssueCallbacks = storeAdapter.store
 	webhookSvc.Installs = installsAdapter
 	webhookSvc.Source = source
@@ -508,6 +509,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				ops.Registry().MustRegister(appConfigMetrics)
 				go githubd.RunHookDeliveryMonitor(ctx, &githubd.HookDeliveryMonitor{
 					MintJWT:          auth.MintAppJWT,
+					Recovery:         deliveryStore,
 					Client:           deps.httpClient(),
 					Metrics:          hookDeliveryMetrics,
 					AppConfigMetrics: appConfigMetrics,

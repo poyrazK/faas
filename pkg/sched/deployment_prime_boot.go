@@ -72,8 +72,9 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 	}
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: primeLayer,
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
-		EgressMbit: int32(limits.EgressMbit),
+		VCPUCount: int32(appVCPUs(app)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(appCPUMillicores(app)),
+		CPUWeight: appCPUWeight(app), CPUUncapped: true,
+		EgressMbit: int32(limits.EgressMbit), RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
 		// as ordinary wakes, so first boot and later wakes agree.
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
@@ -89,10 +90,10 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
-		APIEnv: appendPlatformIdentity(
+		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(
 			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
-		),
+		)),
 		// ADR-031: see the Wake builder above. Prime is the
 		// deploy-pipeline first boot — same wire shape, same
 		// per-netns ruleset; a freshly-deployed app starts under
@@ -100,6 +101,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// wake.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:                 app.EgressPorts,
+		EgressRevision:              app.EgressAllowlistRevision,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,

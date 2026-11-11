@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -224,6 +225,92 @@ func (f canaryStoreFixture) advance(t *testing.T, regressed bool) *api.ProjectSa
 
 func TestProjectCanaryStoreMemory(t *testing.T) {
 	testProjectCanaryStore(t, func(*testing.T) Store { return NewMemStore() })
+}
+
+func TestProjectRollbackIgnoresCanaryRetentionMemory(t *testing.T) {
+	testProjectRollbackIgnoresCanaryRetention(t, NewMemStore())
+}
+
+func testProjectRollbackIgnoresCanaryRetention(t *testing.T, store Store) {
+	f := newCanaryStoreFixture(t, store)
+	ctx := t.Context()
+	graphs := store.(ProjectReleaseSetStore)
+	checkpoint, err := store.(ProjectCanaryStore).ProjectCanaryCheckpoint(ctx, f.account, f.attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.(ProjectCanaryControlStore).ControlProjectCanary(ctx, f.account, f.attempt, "abort", api.ProjectReleaseControlRequest{RequestID: strings.Repeat("d", 32), ExpectedGeneration: checkpoint.Generation}); err != nil {
+		t.Fatal(err)
+	}
+	// This staged graph retains the unchanged baseline member. Its future
+	// retention deadline must not replace that member's actual serving cutoff.
+	staged, err := graphs.PublishProjectReleaseSet(ctx, f.account, f.project, "production", 1800, f.old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	safe := &api.ProjectSafeRelease{ReleaseID: staged.ID, PreviousReleaseID: f.baseline, TTLSeconds: 1800, Verification: &api.ProjectReleaseVerification{Progressive: true}}
+	switch s := store.(type) {
+	case *MemStore:
+		s.mu.Lock()
+		err = s.stageProjectCanaryLocked(f.account, "retained-unchanged-member", f.project, safe)
+		s.mu.Unlock()
+	case *PgStore:
+		tx, beginErr := s.pool.Begin(ctx)
+		if beginErr != nil {
+			t.Fatal(beginErr)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		err = stageProjectCanaryDB(ctx, tx, f.account, "retained-unchanged-member", f.project, safe)
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+	default:
+		t.Fatalf("unsupported store %T", store)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := store.(ProjectReleaseSetReader).ProjectReleaseSetByID(ctx, f.account, f.project, "production", f.progress(t).ReleaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := graphs.PublishProjectReleaseSet(ctx, f.account, f.project, "production", 1800, candidate.Members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := store.CreateDeployment(ctx, Deployment{AppID: f.apps[0].ID, Scope: "production", Kind: DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("a", 64), ReleaseCommand: []string{"bin/migrate"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []DeploymentStatus{DeployBuilding, DeployImaging, DeploySnapshotting} {
+		if err = store.UpdateDeploymentStatus(ctx, d.ID, status, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = store.SetDeploymentRootfs(ctx, d.ID, "/migration.ext4", "migration/"+d.ID, 4096); err != nil {
+		t.Fatal(err)
+	}
+	tasks := store.(AppTaskStore)
+	now := time.Now().UTC()
+	task, err := tasks.CreateAppTask(ctx, CreateAppTaskParams{AccountID: f.account, AppID: f.apps[0].ID, DeploymentID: d.ID, Kind: AppTaskKindRelease, Command: []string{"bin/migrate"}, CreatedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := tasks.ClaimNextAppTask(ctx, "canary-retention", now, time.Minute)
+	if err != nil || claimed.ID != task.ID {
+		t.Fatalf("claim: %+v %v", claimed, err)
+	}
+	if _, err = tasks.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.(ProjectReleaseSetPromotionStore).PublishProjectReleaseSetIfActive(ctx, f.account, f.project, "production", current.ID, nil, 1800, f.old)
+	if !errors.Is(err, ErrRollbackCrossesRelease) {
+		t.Fatalf("canary retention hid a later migration: %v", err)
+	}
+	_, route, err := graphs.ResolveProjectRelease(ctx, f.apps[0].ID, "production", "")
+	if err != nil || route != releaseMemberForApp(candidate, f.apps[0].ID) {
+		t.Fatalf("refused rollback changed graph: %s %v", route, err)
+	}
 }
 
 func TestProjectCanaryWorkersAndPinnedRetryMemory(t *testing.T) {

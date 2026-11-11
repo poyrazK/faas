@@ -20,7 +20,7 @@ func parseWorkflowReadTarget(verb string, args []string) (workflowReadTarget, in
 		return workflowReadTarget{}, 1
 	}
 	if fs.NArg() != 1 || (fs.Arg(0) != "latest" && !workflowUUIDPattern.MatchString(fs.Arg(0))) {
-		return workflowReadTarget{}, printErr("Invalid workflow read target", fmt.Errorf("usage: gregale workflows %s RUN_ID | latest [--workflow-name NAME] [--app SLUG]", verb))
+		return workflowReadTarget{}, printErr("Invalid workflow read target", fmt.Errorf("usage: gregale workflow %s RUN_ID | latest [--workflow-name NAME] [--app SLUG]", verb))
 	}
 	return validateWorkflowReadTarget(fs.Arg(0), *app, *name)
 }

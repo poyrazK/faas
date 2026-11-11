@@ -43,6 +43,7 @@ func TestPushPendingMidHourIdentityPreservesAllowance(t *testing.T) {
 					unit = 1 << 30
 					included = unit
 					provider = &recordingEgressProvider{mode: billing.MeterDeliveryLive}
+					electEgressOverage(t, ctx, store, acct.ID)
 					capCents = 2
 				}
 				prefix := included
@@ -104,6 +105,12 @@ type failingBoundaryStore struct {
 	err error
 }
 
+// EgressOverageElection forwards to the wrapped store, which the embedded
+// interface hides (ADR-20261104204500).
+func (s *failingBoundaryStore) EgressOverageElection(ctx context.Context, subjectID string) (state.EgressOverageElection, error) {
+	return billing.EgressOverageElectionFor(ctx, s.Store, subjectID)
+}
+
 func (s *failingBoundaryStore) BillingIdentity(ctx context.Context, accountID, provider string) (state.BillingIdentity, error) {
 	if s.err != nil {
 		return state.BillingIdentity{}, s.err
@@ -123,6 +130,7 @@ func TestPushPendingRetriesFailedBoundaryRead(t *testing.T) {
 			if kind == state.BillingMeterEgress {
 				compute, egress = 0, 2<<30
 				provider = &recordingEgressProvider{mode: billing.MeterDeliveryLive}
+				electEgressOverage(t, ctx, store, acct.ID)
 			}
 			if err := store.AppendUsage(ctx, acct.ID, "app", "instance", hour, compute, 0, 0, 0, egress, 0, 0, 0); err != nil {
 				t.Fatal(err)

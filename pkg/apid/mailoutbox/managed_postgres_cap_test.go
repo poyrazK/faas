@@ -118,6 +118,34 @@ func TestPGManagedPostgresCapQueuesOnceAndDeliversTheSnapshot(t *testing.T) {
 	assertMFAAlertErased(t, row(t, f, intents[0]))
 }
 
+// ADR-20261110160000: the egress hold goes through the cap email path and
+// reports egress, not compute.
+func TestPGManagedPostgresCapMailsTheEgressHold(t *testing.T) {
+	f := capFixture(t)
+	id := account(t, f)
+	reached := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	event := capEvent(t, f, id, "egress_held", false, reached)
+	if err := f.service.NoticeManagedPostgresCap(t.Context(), id, event); err != nil {
+		t.Fatal(err)
+	}
+	intents := capIntents(t, f, id)
+	if len(intents) != 1 {
+		t.Fatalf("intents %v; want one", intents)
+	}
+	if err := f.service.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.sender.calls) != 1 {
+		after := row(t, f, intents[0])
+		t.Fatalf("sent %d messages; intent %s %s", len(f.sender.calls), after.State, after.Code)
+	}
+	message := f.sender.calls[0].message
+	if !strings.Contains(message.Subject, "paused until next month") || !strings.Contains(message.TextBody, "monthly egress allowance") ||
+		strings.Contains(message.TextBody, "compute-unit") {
+		t.Fatalf("message %+v is not the egress hold", message)
+	}
+}
+
 func TestPGManagedPostgresCapSkipsWhatItMustNotMail(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	for _, tc := range []struct {

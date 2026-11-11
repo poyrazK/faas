@@ -67,13 +67,14 @@ const (
 	// The copied buckets would take the account past its object storage
 	// limits (ADR-20261103160000).
 	CloneFailureObjectCapacity = "object_storage_capacity_exceeded"
+	CloneFailureObjectCopySize = "object_storage_copy_size_unsupported"
 )
 
 // ProjectEnvironmentCloneFailedDirectly reports whether the coordinator ended
 // this directly compensable clone itself.
 func ProjectEnvironmentCloneFailedDirectly(op ProjectEnvironmentCloneOperation) bool {
 	switch op.ErrorCode {
-	case CloneFailureTargetDeployment, CloneFailureTargetDatabase, CloneFailureSourceChanged, CloneFailureDeadline, CloneFailureObjectCapacity:
+	case CloneFailureTargetDeployment, CloneFailureTargetDatabase, CloneFailureSourceChanged, CloneFailureDeadline, CloneFailureObjectCapacity, CloneFailureObjectCopySize:
 		return ProjectEnvironmentCloneIsDirectlyCompensable(op)
 	}
 	return false

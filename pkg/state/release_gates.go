@@ -45,6 +45,10 @@ type ReleaseGate struct {
 	SyntheticCheckID  string
 	MaxFailurePercent int
 	MaxChangePercent  int
+	// MetricLabels selects one labelled series of a custom_metric or
+	// metric_change gate's metric (ADR-20261108160000 slice C2); nil reads
+	// the aggregate.
+	MetricLabels map[string]string
 }
 
 // ReleaseGateSLOTarget is the part of an SLO a gate judges by.
@@ -94,7 +98,9 @@ type ReleaseGateEvidenceStore interface {
 	ReleaseGateSLO(ctx context.Context, appID, sloID string) (ReleaseGateSLOTarget, error)
 	ReleaseGateDeploymentSLI(ctx context.Context, appID, deploymentID string, since, until time.Time, latencyThresholdMS int) (ReleaseGateSLISample, error)
 	ReleaseGateNewErrorGroups(ctx context.Context, appID, deploymentID string, minEvents int) ([]ReleaseGateErrorGroup, error)
-	ReleaseGateCustomMetricWindow(ctx context.Context, appID, name string, since, until time.Time) (samples int64, average float64, err error)
+	// ReleaseGateCustomMetricWindow reads the metric's aggregate, or with
+	// a non-empty seriesKey that one labelled series.
+	ReleaseGateCustomMetricWindow(ctx context.Context, appID, name, seriesKey string, since, until time.Time) (samples int64, average float64, err error)
 	ReleaseGateDeploymentAI(ctx context.Context, appID, deploymentID string, since, until time.Time) (ReleaseGateAIWindow, error)
 }
 
@@ -119,6 +125,11 @@ func (m *MemStore) CreateReleaseGate(_ context.Context, g ReleaseGate, maxGates 
 	if g.ID == "" {
 		g.ID = uuid.NewString()
 	}
+	// app_release_gates_metric_labels_chk.
+	if len(g.MetricLabels) > 0 && g.Kind != ReleaseGateCustomMetric && g.Kind != ReleaseGateMetricChange {
+		return ReleaseGate{}, ErrInvalidArgument
+	}
+	g.MetricLabels = cloneCustomMetricLabels(g.MetricLabels)
 	g.CreatedAt = now.UTC()
 	if m.releaseGates == nil {
 		m.releaseGates = map[string]ReleaseGate{}

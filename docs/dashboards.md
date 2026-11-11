@@ -60,6 +60,9 @@ has a series.
 - `window` is `5m`, `1h` (the default), `6h`, `24h` or `7d`; SLO widgets use
   the SLO's own window. A `log_count` with a text filter (`q`) covers at most
   24 hours.
-- Widgets name apps you own by slug. If an app is deleted later, its widgets
-  show as unavailable and the rest of the dashboard still loads.
+- Widgets name apps by slug: your own, and in an organization any of its
+  apps your role lets you read, whoever created it. A widget follows the
+  plan of the app's owner (the organization, for its apps). If an app is
+  deleted later, or you lose access to it, its widgets show as unavailable
+  and the rest of the dashboard still loads.
 - An account keeps up to 20 dashboards of up to 24 widgets each.

@@ -56,6 +56,30 @@ month-close and idempotent billing-delivery records remain the downstream
 boundary. A backend migration preserves the old backend's evidence for its
 part of the month; a new backend does not replace or erase it.
 
+The legacy OVH access-log adapter requires an operator-owned coverage manifest
+from an independently qualified collector before publishing a report. It binds
+the backend placement, UTC month, covered-through time, exact physical bucket
+set and SHA-256 digests of the complete log object set. Quiet buckets require
+explicit coverage too. Neither old/unrelated log files nor a delivery delay
+prove zero usage. The repository does not manufacture this evidence from
+best-effort logs; without a qualified producer the export remains unavailable.
+Identical records with the same bucket and provider request ID count once;
+conflicting identities, absent IDs or changed object bytes reject the export.
+This closes the legacy evidence gap without qualifying a paid rate card or
+changing the report schema and monotonic import contract.
+
+OVH financial quantities use `/usage/current` for the live UTC month and one
+complete finalized `/usage/history` document for a closed month. The enclosing
+document establishes EUR currency; per-storage prices are native decimal
+numbers converted to integer millicents exactly, with positive remainders
+rounded up. Current reports retain native `lastUpdate`, and request evidence
+must reach that same instant. Closed reports require full-month coverage and
+use its last representable microsecond. Missing financial rows do not become
+zero. Export requests bound observation time without advancing the provider's
+watermark. Every report in a batch shares one actual observation. Publisher
+and importer share the 4 MiB/10,000-row limits; an oversized export leaves the
+previous complete file intact.
+
 ## Provider cost and safety budgets
 
 Provider cost is an optional, separately sourced **operator** observation,

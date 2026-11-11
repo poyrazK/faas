@@ -115,7 +115,10 @@ func (s *PgStore) AcceptCommitPublication(ctx context.Context, account, source s
 	if err != nil {
 		return CommitReceipt{}, ErrInvalidArgument
 	}
-	envelope, err := (eventcontract.Envelope{ID: "commit." + sourceUUID.String() + "." + event.ID, Source: "app." + appUUID.String(), Type: event.Type, Data: event.Data, SchemaVersion: event.SchemaVersion}).Normalize(account, time.Now().UTC())
+	envelope, err := (eventcontract.Envelope{ID: "commit." + sourceUUID.String() + "." + event.ID, Source: "app." + appUUID.String(),
+		// The app speaks for itself, so its company bounds the recipients
+		// (ADR-20261025211616), as for in-guest publishes.
+		Producer: eventcontract.AppProducer(appUUID.String()), Type: event.Type, Data: event.Data, SchemaVersion: event.SchemaVersion}).Normalize(account, time.Now().UTC())
 	if err != nil {
 		return CommitReceipt{}, ErrInvalidArgument
 	}

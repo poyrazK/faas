@@ -20,13 +20,11 @@ package receivers
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -268,43 +266,143 @@ func allZeroBytes(value []byte) bool {
 	return true
 }
 
-// IncrementRequestTelemetry streams per-record telemetry rows
-// from the gateway edge. The server commits each record inside
-// its own transaction (per-record commit; load-bearing for the
-// rate-limit-then-continues shape — a rate-limited row MUST NOT
-// abort the batch).
+// IncrementRequestTelemetry streams per-record telemetry rows from the
+// gateway edge, and answers each record with its own outcome, in order.
+// Records that arrive together (a gateway sends a whole batch, then
+// half-closes) are handled as one group: each record's checks (usage, plan,
+// analytics rollups, ingest cap) run as before, and the group's rows to
+// insert commit in one transaction (ADR-127 amendment, group commit). If
+// that transaction fails, its rows are written one by one, so each still
+// gets its own outcome and a bad or rate-limited row never costs the others
+// theirs. A group ends when the client half-closes, at
+// RequestTelemetryReceiveGroupMax records, or when no record arrives for
+// RequestTelemetryReceiveGroupWait, so a client that waits for each outcome
+// is still answered.
 //
-// Outcome ∈ {inserted, rate_limited, db_error}. The first is a
-// success; the latter two are observability signals — the gateway
-// MUST NOT retry on them (a retry would double-count).
+// Outcome ∈ {inserted, not_retained, rate_limited, db_error}. The first two
+// are successes; rate_limited is final, and the gateway retries only
+// db_error.
 func (r *requestTelemetryReceiver) IncrementRequestTelemetry(stream apidpb.RequestTelemetry_IncrementRequestTelemetryServer) error {
 	if !r.enabled {
 		return status.Error(codes.Unavailable, "request_telemetry disabled by FAAS_REQUEST_TELEMETRY_ENABLED")
 	}
+	ctx := stream.Context()
+	recv := make(chan *apidpb.IncrementRequestTelemetryRequest, api.RequestTelemetryReceiveGroupMax)
+	go func() {
+		defer close(recv)
+		for {
+			// io.EOF (the client half-closed) or a cancelled stream ends it.
+			req, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			select {
+			case recv <- req:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	group := make([]*apidpb.IncrementRequestTelemetryRequest, 0, api.RequestTelemetryReceiveGroupMax)
 	for {
-		req, err := stream.Recv()
-		if err != nil {
-			// io.EOF or context cancel: end of stream.
-			//nolint:nilerr // io.EOF on stream.Recv is the canonical "client half-closed" signal — returning nil closes the stream cleanly without surfacing the EOF as an error.
+		req, ok := <-recv
+		if !ok {
 			return nil
 		}
-		release, err := r.gate.acquire(stream.Context())
-		if err != nil {
+		group = append(group[:0], req)
+		open := collectTelemetryGroup(recv, &group)
+		if err := r.handleGroup(stream, group); err != nil {
 			return err
 		}
-		out := r.HandleOne(stream.Context(), req)
-		release()
-		if err := stream.Send(out); err != nil {
-			return err
+		if !open {
+			return nil
 		}
 	}
 }
 
-// handleOne processes a single record and returns the per-record
-// outcome. Never returns an error — every failure path maps to
-// one of the closed outcome strings, with the matching metric
-// increment.
+// collectTelemetryGroup appends the records that follow without a
+// RequestTelemetryReceiveGroupWait pause, up to the group bound. It reports
+// whether the stream is still open.
+func collectTelemetryGroup(recv <-chan *apidpb.IncrementRequestTelemetryRequest, group *[]*apidpb.IncrementRequestTelemetryRequest) bool {
+	idle := time.NewTimer(api.RequestTelemetryReceiveGroupWait)
+	defer idle.Stop()
+	for len(*group) < api.RequestTelemetryReceiveGroupMax {
+		select {
+		case req, ok := <-recv:
+			if !ok {
+				return false
+			}
+			*group = append(*group, req)
+			idle.Reset(api.RequestTelemetryReceiveGroupWait)
+		case <-idle.C:
+			return true
+		}
+	}
+	return true
+}
+
+// handleGroup prepares every record of a group, inserts the rows the plans
+// keep together, and sends the outcomes in record order. The group holds
+// one ingest gate slot, as it uses one database connection at a time.
+func (r *requestTelemetryReceiver) handleGroup(stream apidpb.RequestTelemetry_IncrementRequestTelemetryServer, group []*apidpb.IncrementRequestTelemetryRequest) error {
+	ctx := stream.Context()
+	release, err := r.gate.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	outs := make([]*apidpb.IncrementRequestTelemetryResponse, len(group))
+	var pending []state.RequestTelemetryInsert
+	var pendingOuts []*apidpb.IncrementRequestTelemetryResponse
+	for i, req := range group {
+		out, insert := r.prepareOne(ctx, req)
+		outs[i] = out
+		if insert != nil {
+			pending = append(pending, *insert)
+			pendingOuts = append(pendingOuts, out)
+		}
+	}
+	r.insertGroup(ctx, pending, pendingOuts)
+	release()
+	for _, out := range outs {
+		if err := stream.Send(out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// insertGroup commits the rows in one transaction when the store can, and
+// one by one otherwise or when that transaction fails, setting each row's
+// outcome.
+func (r *requestTelemetryReceiver) insertGroup(ctx context.Context, pending []state.RequestTelemetryInsert, outs []*apidpb.IncrementRequestTelemetryResponse) {
+	if batch, ok := r.store.(state.RequestTelemetryBatchLogStore); ok && len(pending) > 1 {
+		if batch.InsertRequestTelemetryBatchWithLogEvents(ctx, pending) == nil {
+			for _, out := range outs {
+				r.finishInsert(out, nil)
+			}
+			return
+		}
+	}
+	for i := range pending {
+		r.finishInsert(outs[i], r.store.InsertRequestTelemetryWithLogEvent(ctx, pending[i].Params, pending[i].EventID))
+	}
+}
+
+// HandleOne processes a single record and returns its outcome. Never
+// returns an error: every failure path maps to one of the closed outcome
+// strings, with the matching metric increment.
 func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.IncrementRequestTelemetryRequest) *apidpb.IncrementRequestTelemetryResponse {
+	out, pending := r.prepareOne(ctx, req)
+	if pending != nil {
+		r.finishInsert(out, r.store.InsertRequestTelemetryWithLogEvent(ctx, pending.Params, pending.EventID))
+	}
+	return out
+}
+
+// prepareOne validates a record and runs every step before its insert:
+// usage, plan, analytics rollups and the ingest cap. A row to insert comes
+// back as pending, its outcome set by finishInsert.
+func (r *requestTelemetryReceiver) prepareOne(ctx context.Context, req *apidpb.IncrementRequestTelemetryRequest) (*apidpb.IncrementRequestTelemetryResponse, *state.RequestTelemetryInsert) {
 	out := &apidpb.IncrementRequestTelemetryResponse{}
 
 	// ---- 1. Validate UUIDs ----
@@ -312,19 +410,19 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 	if err != nil {
 		r.observe(rtOutcomeDBError)
 		out.Outcome = rtOutcomeDBError
-		return out
+		return out, nil
 	}
 	appID, err := uuid.Parse(req.GetAppId())
 	if err != nil {
 		r.observe(rtOutcomeDBError)
 		out.Outcome = rtOutcomeDBError
-		return out
+		return out, nil
 	}
 	deploymentID, err := uuid.Parse(req.GetDeploymentId())
 	if err != nil {
 		r.observe(rtOutcomeDBError)
 		out.Outcome = rtOutcomeDBError
-		return out
+		return out, nil
 	}
 	var consumerID pgtype.UUID
 	consumerKey := state.AnonymousConsumerKey
@@ -333,7 +431,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		if parseErr != nil {
 			r.observe(rtOutcomeDBError)
 			out.Outcome = rtOutcomeDBError
-			return out
+			return out, nil
 		}
 		consumerID = state.NewPgtypeUUID(parsed)
 		consumerKey = parsed.String()
@@ -347,7 +445,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		if parseErr != nil || consumerKey != state.AnonymousConsumerKey {
 			r.observe(rtOutcomeDBError)
 			out.Outcome = rtOutcomeDBError
-			return out
+			return out, nil
 		}
 		platformTenantSurfaceID = parsed.String()
 	}
@@ -356,7 +454,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		if parseErr != nil || consumerKey != state.AnonymousConsumerKey || platformTenantSurfaceID != "" {
 			r.observe(rtOutcomeDBError)
 			out.Outcome = rtOutcomeDBError
-			return out
+			return out, nil
 		}
 		platformTenantJWTAuthorizationRuleID = parsed.String()
 	}
@@ -365,7 +463,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		if parseErr != nil || (consumerKey == state.AnonymousConsumerKey && platformTenantSurfaceID == "" && platformTenantJWTAuthorizationRuleID == "") {
 			r.observe(rtOutcomeDBError)
 			out.Outcome = rtOutcomeDBError
-			return out
+			return out, nil
 		}
 		platformTenantID = parsed.String()
 		platformTenantUUID = parsed
@@ -378,7 +476,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 	if req.GetHttpStatus() < 100 || req.GetHttpStatus() > 599 {
 		r.observe(rtOutcomeDBError)
 		out.Outcome = rtOutcomeDBError
-		return out
+		return out, nil
 	}
 	windowStart := msToTime(req.GetReceivedAtUnixMs())
 	if windowStart.IsZero() {
@@ -402,7 +500,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		if !ok {
 			r.observe(rtOutcomeDBError)
 			out.Outcome = rtOutcomeDBError
-			return out
+			return out, nil
 		}
 		_, usageErr := usageStore.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
 			EventID: eventID, AccountID: accountID.String(), AppID: appID.String(),
@@ -414,7 +512,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		if usageErr != nil {
 			r.observe(rtOutcomeDBError)
 			out.Outcome = rtOutcomeDBError
-			return out
+			return out, nil
 		}
 	}
 
@@ -429,7 +527,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		// doesn't retry forever.
 		r.observe(rtOutcomeDBError)
 		out.Outcome = rtOutcomeDBError
-		return out
+		return out, nil
 	}
 	limits := plan.Limits
 	if !limits.DebugTelemetryEnabled {
@@ -438,13 +536,16 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		// retry Free-plan rows with backoff and count them as lost.
 		r.observe(rtOutcomeNotRetained)
 		out.Outcome = rtOutcomeNotRetained
-		return out
+		return out, nil
 	}
 
 	// ---- 3. Analytics rollups ----
 	// Every row the plan keeps counts toward analytics, including the rows
-	// the debugger's ingest cap below turns away (ADR-20261103113952).
-	r.addRollup(req, accountID, appID, deploymentID, eventID, count, consumerID)
+	// the debugger's ingest cap below turns away (ADR-20261103113952),
+	// unless its gateway counted it into its own rollups (amendment 5).
+	if !req.GetAnalyticsCounted() {
+		r.addRollup(req, accountID, appID, deploymentID, eventID, count, consumerID)
+	}
 
 	// ---- 4. Per-account token bucket check ----
 	// Each row is charged to its app as well, so one busy app cannot use
@@ -456,7 +557,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		// Counter carries `rate_limited` as a label so dashboards
 		// can split insert success vs bucket-overflow cleanly.
 		r.observe(rtOutcomeRateLimited)
-		return out
+		return out, nil
 	}
 
 	// ---- 5. INSERT ----
@@ -492,20 +593,20 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		!validRequestTelemetryGuestErrorClass(guestErrorClass) {
 		r.observe(rtOutcomeDBError)
 		out.Outcome = rtOutcomeDBError
-		return out
+		return out, nil
 	}
 	flagEvidence, flagErr := flags.CanonicalEvidence([]byte(req.GetFlagEvidenceJson()))
 	if flagErr != nil {
 		r.observe(rtOutcomeDBError)
 		out.Outcome = rtOutcomeDBError
-		return out
+		return out, nil
 	}
 	// ADR-1188: an outcome this apid does not know is dropped, not the row.
 	contentOutcome := req.GetContentOutcome()
 	if !api.ValidContentOutcome(contentOutcome) {
 		contentOutcome = ""
 	}
-	insertErr := r.store.InsertRequestTelemetryWithLogEvent(ctx, sqlc.InsertRequestTelemetryParams{
+	return out, &state.RequestTelemetryInsert{EventID: eventID, Params: sqlc.InsertRequestTelemetryParams{
 		AccountID:                   state.NewPgtypeUUID(accountID),
 		AppID:                       state.NewPgtypeUUID(appID),
 		DeploymentID:                state.NewPgtypeUUID(deploymentID),
@@ -543,29 +644,20 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		DeploymentTag:               req.GetDeploymentTag(),
 		DeploymentCreatedAt:         req.GetDeploymentCreatedAt(),
 		ImageDigest:                 req.GetImageDigest(),
-	}, eventID)
+	}}
+}
+
+// finishInsert sets the outcome of a row the plan keeps from its insert.
+func (r *requestTelemetryReceiver) finishInsert(out *apidpb.IncrementRequestTelemetryResponse, insertErr error) {
 	if insertErr != nil {
-		if isConstraintViolation(insertErr) {
-			r.observe(rtOutcomeDBError)
-			out.Outcome = rtOutcomeDBError
-			return out
-		}
-		var pgErr *pgconn.PgError
-		// Check if it's a CHECK constraint violation
-		// (count >= 1, status BETWEEN 100..599, etc).
-		if errorsAsPgError(insertErr, &pgErr) && pgErr.Code == "23514" {
-			r.observe(rtOutcomeDBError)
-			out.Outcome = rtOutcomeDBError
-			return out
-		}
+		// A constraint or CHECK violation (count >= 1, status BETWEEN
+		// 100..599, ...) or any other failure is a db_error.
 		r.observe(rtOutcomeDBError)
 		out.Outcome = rtOutcomeDBError
-		return out
+		return
 	}
-
 	r.observe(RtOutcomeInserted)
 	out.Outcome = RtOutcomeInserted
-	return out
 }
 
 func validRequestTelemetryGuestRuntime(value string) bool {
@@ -614,12 +706,4 @@ func RegisterRequestTelemetryReceiver(s *grpc.Server, store RequestTelemetryStor
 		}
 	}
 	apidpb.RegisterRequestTelemetryServer(s, receiver)
-}
-
-// errorsAsPgError is a tiny helper that returns true when err is
-// (or wraps) a *pgconn.PgError, populating *target. Delegates to
-// errors.As so the errorlint pass is happy and the unwrap chain is
-// semantically correct for pgx v5.
-func errorsAsPgError(err error, target **pgconn.PgError) bool {
-	return errors.As(err, target)
 }

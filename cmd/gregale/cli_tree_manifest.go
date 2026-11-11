@@ -151,6 +151,32 @@ func (d cliTreeDiscovery) runsToday(words []string) (string, bool) {
 	return path, true
 }
 
+// groupListsRunner reports whether the tree group at path lists, among its
+// verbs, the tree path that runs today's command old while another of its
+// verbs runs a different command: `event backfill` runs `events backfill`,
+// which the table names `event backfill create`, beside `get`
+// (`events backfill-status`). A group whose verbs all run old
+// (`edge rule attack-mode set|get`) shares old's flags, so it keeps them.
+func (d cliTreeDiscovery) groupListsRunner(path []string, old string, verbs []cliSub) bool {
+	if len(verbs) == 0 {
+		return false
+	}
+	prefix := strings.Join(path, " ") + " "
+	runsOld, runsOther := false, false
+	for _, alias := range cliTreeAliases {
+		verb, under := strings.CutPrefix(alias.New, prefix)
+		if !under || strings.Contains(verb, " ") || !slices.ContainsFunc(verbs, func(sub cliSub) bool { return sub.Name == verb }) {
+			continue
+		}
+		if alias.Old == old {
+			runsOld = true
+		} else {
+			runsOther = true
+		}
+	}
+	return runsOld && runsOther
+}
+
 // cliTreeRenamesPath reports a path of today's that the table gives a tree
 // name of its own.
 func cliTreeRenamesPath(old string) bool {
@@ -231,6 +257,13 @@ func (d cliTreeDiscovery) treeSubs(prefix []string) []cliSub {
 					sub.Subcommands = nil
 				case !sub.SubcommandsAfterPositionals:
 					sub.Subcommands = d.treeSubs(child)
+				}
+				if d.groupListsRunner(child, old, sub.Subcommands) {
+					// The group (`event backfill`) runs today's leaf only
+					// through one of its verbs (`create`), so the leaf's
+					// positionals and flags belong to that verb: on the group
+					// they told `get <job-id>` to take `<app> --from ...`.
+					sub.Positionals, sub.Flags, sub.Examples, sub.Notes = nil, nil, nil, nil
 				}
 				add(sub)
 			}
@@ -324,7 +357,7 @@ func withAppTarget(sub cliSub, target string) cliSub {
 }
 
 // standardCliVerbs spells verbs in their standard form, dropping a synonym
-// whose standard verb is also listed (`rm` beside `delete`).
+// that is an alias of its listed standard verb (`rm` beside `delete`).
 func standardCliVerbs(subs []cliSub) []cliSub {
 	standard := make([]cliSub, 0, len(subs))
 	for _, sub := range subs {

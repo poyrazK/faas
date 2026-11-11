@@ -36,6 +36,9 @@ class ServiceRolloutBindingGate:
     action: ServiceRolloutBindingGateAction
     deployment_id: UUID
     status: ServiceRolloutBindingGateStatus
+    traffic_percent: int | Unset = UNSET
+    """Exact recipient traffic percentage authorized by this routing check. Omission denotes the legacy full
+    cutover."""
     code: str | Unset = UNSET
     blockers: list[BindingCheckFinding] | Unset = UNSET
     checked_at: datetime.datetime | None | Unset = UNSET
@@ -51,6 +54,8 @@ class ServiceRolloutBindingGate:
         deployment_id = str(self.deployment_id)
 
         status: str = self.status
+
+        traffic_percent = self.traffic_percent
 
         code = self.code
 
@@ -83,6 +88,8 @@ class ServiceRolloutBindingGate:
                 "status": status,
             }
         )
+        if traffic_percent is not UNSET:
+            field_dict["traffic_percent"] = traffic_percent
         if code is not UNSET:
             field_dict["code"] = code
         if blockers is not UNSET:
@@ -108,6 +115,8 @@ class ServiceRolloutBindingGate:
         deployment_id = UUID(d.pop("deployment_id"))
 
         status = check_service_rollout_binding_gate_status(d.pop("status"))
+
+        traffic_percent = d.pop("traffic_percent", UNSET)
 
         code = d.pop("code", UNSET)
 
@@ -146,6 +155,7 @@ class ServiceRolloutBindingGate:
             action=action,
             deployment_id=deployment_id,
             status=status,
+            traffic_percent=traffic_percent,
             code=code,
             blockers=blockers,
             checked_at=checked_at,

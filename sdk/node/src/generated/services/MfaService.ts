@@ -15,6 +15,7 @@ import type { MFARecoverRequest } from '../models/MFARecoverRequest.js';
 import type { MFARecoverResponse } from '../models/MFARecoverResponse.js';
 import type { MFAVerifyRequest } from '../models/MFAVerifyRequest.js';
 import type { MFAVerifyResponse } from '../models/MFAVerifyResponse.js';
+import type { RecoveryCodesResponse } from '../models/RecoveryCodesResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -36,6 +37,7 @@ export class MfaService {
       url: '/v1/account/mfa/enroll',
       errors: {
         401: `code: unauthorized`,
+        403: `An API key was used, or the account has no password and the browser session signed in more than 15 minutes ago (\`recent_sign_in_required\`): sign in again.`,
         409: `Already enrolled. Call /v1/account/mfa/disable first.`,
         503: `MFA unavailable — host age key not loaded.`,
       },
@@ -121,6 +123,41 @@ export class MfaService {
       errors: {
         401: `No matching recovery code.`,
         409: `MFA setup is incomplete, or only the last recovery code remains.`,
+      },
+    });
+  }
+  /**
+   * Replace the recovery codes.
+   * Browser sessions with a recent authenticator verification only.
+   * Creates a new set of recovery codes, shown once; the previous codes
+   * stop working and the account gets an email notice. CSRF: action
+   * `mfa_recovery_codes`.
+   *
+   * @returns RecoveryCodesResponse New recovery codes.
+   * @throws ApiError
+   */
+  public static mfaRegenerateRecoveryCodes({
+    requestBody,
+  }: {
+    requestBody: {
+      csrf_token: string;
+    },
+  }): CancelablePromise<RecoveryCodesResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/mfa/recovery-codes',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `CSRF token missing or wrong for a browser session.`,
+        401: `code: unauthorized`,
+        403: `Recovery codes need a browser session with a recent authenticator verification (\`step_up_required\`); API keys are refused.`,
+        409: `Two-factor authentication is not set up.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
       },
     });
   }

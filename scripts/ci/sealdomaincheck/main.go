@@ -138,6 +138,11 @@ func scanCredentials(root string) ([]string, error) {
 		if ext == ".service" {
 			unit = strings.TrimSuffix(filepath.Base(p), ".service")
 			key = "unit:" + unit
+		} else if u := sealDomainContractTemplate(filepath.ToSlash(rel)); u != "" {
+			// A contract drop-in resets the unit's credentials and re-adds
+			// some of them: what it loads is that unit's, never more.
+			unit = u
+			key = "unit:" + unit
 		}
 		readerDomain := sealDomainReaderTemplate(filepath.ToSlash(rel))
 		for _, m := range credentialRe.FindAllStringSubmatch(string(body), -1) {
@@ -190,6 +195,23 @@ func sealDomainReaderTemplate(rel string) sealdomain.Domain {
 		return ""
 	}
 	return d
+}
+
+var contractTemplateRe = regexp.MustCompile(`^deploy/ansible/roles/seal_domains/templates/\d+-faas-seal-domain-([a-z-]+)-contract\.conf\.j2$`)
+
+// sealDomainContractTemplate returns the unit a seal_domains contract
+// drop-in is installed into ("faas-schedd" for ...-schedd-contract.conf.j2),
+// or "" when rel is not one. The edge contract drop-in names a domain, not
+// a daemon; it loads nothing, so it needs no unit.
+func sealDomainContractTemplate(rel string) string {
+	m := contractTemplateRe.FindStringSubmatch(rel)
+	if m == nil {
+		return ""
+	}
+	if _, err := sealdomain.Parse(m[1]); err == nil {
+		return ""
+	}
+	return "faas-" + m[1]
 }
 
 var loaderCalls = map[string]map[string]bool{

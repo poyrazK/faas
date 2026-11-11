@@ -75,10 +75,8 @@ func (s *server) appHasAuthBinding(ctx context.Context, acct state.Account, app 
 // dashboardAppOrigin matches the app's canonical URL in the API, which
 // `gregale auth create` used as the Auth app's external URL.
 func (s *server) dashboardAppOrigin(ctx context.Context, app state.App) string {
-	if resolver, ok := s.store.(state.DefaultCustomDomainStore); ok {
-		if domain, err := resolver.DefaultCustomDomain(ctx, app.ID); err == nil && domain != "" {
-			return "https://" + strings.ToLower(domain)
-		}
+	if domain := s.defaultCustomDomain(ctx, app.ID); domain != "" {
+		return "https://" + strings.ToLower(domain)
 	}
 	return appURLForDomain(app.Slug, s.domain)
 }

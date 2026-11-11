@@ -83,7 +83,7 @@ func plannerFor(p *releasePlan) string {
 		switch p.Operation.Kind {
 		case "env":
 			return "gregale_plan_env_change"
-		case "config_rollback":
+		case "config_rollback", "config_rollback_guarded":
 			return "gregale_plan_config_rollback"
 		case "cron_update", "cron_delete":
 			return "gregale_plan_cron_change"
@@ -163,10 +163,7 @@ func safePlanRetry(p *releasePlan, tool string) bool {
 		return p.Provision.Native != nil
 	}
 	if p.Operation != nil {
-		if p.Operation.Kind == "cron_update" {
-			return p.Operation.DesiredResourceHash != ""
-		}
-		return p.Operation.Kind != "config_rollback"
+		return p.Operation.Kind != "config_rollback" && p.Operation.Kind != "config_rollback_guarded" && p.Operation.Kind != "cron_update" && p.Operation.Kind != "cron_delete"
 	}
 	return p.Action == "deploy" && p.Source == nil && tool == "gregale_apply_deploy"
 }
@@ -178,7 +175,11 @@ func (m *management) operationFailure(p *releasePlan, err error, priorAttempt bo
 	status := "outcome_unknown"
 	if p.configReceipt != nil {
 		status = "partial"
-	} else if !priorAttempt && p.Operation.Kind != "config_rollback" {
+	} else if p.Operation.Kind == "scale" && knownScalingRefusal(err) {
+		// Atomic receipts are returned before revision checks, so this native
+		// conflict proves the reviewed request did not commit, even on retry.
+		status = "refused"
+	} else if !priorAttempt && p.Operation.Kind != "config_rollback" && p.Operation.Kind != "config_rollback_guarded" {
 		var native *api.APIError
 		if errors.As(err, &native) && native.Problem.Status >= 400 && native.Problem.Status < 500 &&
 			native.Problem.Status != 408 && native.Problem.Status != 425 && native.Problem.Status != 429 {
@@ -198,6 +199,10 @@ func (m *management) operationFailure(p *releasePlan, err error, priorAttempt bo
 func (m *management) toolErrorForCall(name string, args any, err error) *mcp.CallToolResult {
 	result := m.toolError(err)
 	p := result.StructuredContent.(ToolError)
+	if p.Approval != nil {
+		// A person decides; the plan and its retry advice wait for them.
+		return result
+	}
 	var lookup planLookupArgs
 	raw, _ := json.Marshal(args)
 	_ = json.Unmarshal(raw, &lookup)
@@ -247,11 +252,6 @@ func (m *management) receiptRecovery(p *releasePlan, status string) Recovery {
 	if p.failure != nil && p.failure.Problem.Code == api.CodeQuotaExhausted {
 		return Recovery{Action: "inspect"}
 	}
-	if p.failure != nil && p.Operation != nil && p.Operation.Kind == "cron_update" && p.failure.Problem.Code == "outcome_unknown" {
-		// Reconciliation found neither the original nor desired configuration.
-		// Keep receipt guidance consistent with the refused replay.
-		return Recovery{Action: "inspect"}
-	}
 	if p.failure != nil && status != "completed" && status != "promoted" && recoveryForError(p.failure.Problem).Action == "request_access" {
 		return Recovery{Action: "request_access"}
 	}
@@ -284,7 +284,7 @@ func (m *management) receiptRecovery(p *releasePlan, status string) Recovery {
 		return m.recoveryTool(Recovery{Action: "inspect"}, "gregale_get_provision", map[string]any{"plan_id": p.ID})
 	case "interrupted", "outcome_unknown":
 		// Source-bearing temporary CLI plans cannot safely be replayed blindly.
-		if p.Operation != nil && (p.Operation.Kind == "env" || p.Operation.Kind == "cron_update" && p.Operation.DesiredResourceHash != "") || p.Provision != nil && p.Provision.Native != nil || p.Action == "deploy" && p.Source == nil {
+		if p.Operation != nil && p.Operation.Kind == "env" || p.Provision != nil && p.Provision.Native != nil || p.Action == "deploy" && p.Source == nil {
 			return m.recoveryTool(Recovery{Action: "retry_same_plan"}, applyToolFor(p), args)
 		}
 		return Recovery{Action: "inspect"}

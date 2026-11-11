@@ -181,7 +181,7 @@ key from the step.
   `gregale workflow attempts RUN_ID '$driver'`.
 - A run that exceeds a limit, or replays non-deterministically, is `dead`.
 - Code-first runs cannot be resumed with `gregale workflow resume`, linked to
-  Operations or simulated by the automation simulator; start a new run instead.
+  Operations or simulated by the stored workflow simulator; start a new run instead.
 
 ## Test locally
 

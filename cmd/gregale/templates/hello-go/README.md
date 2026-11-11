@@ -28,8 +28,25 @@ offers to update the same app and tests the new response. For scripts,
 Use the app name (slug) that Start showed:
 
 ```
-gregale open <slug>             # browser
-gregale logs <slug> --follow    # app logs
+gregale invoke <slug> --method GET --path /    # request your handler
+gregale logs <slug> --follow                   # app logs
+gregale open <slug>                            # browser
+```
+
+On Hobby, Pro and Scale a new app is private: every request needs an API key
+as `Authorization: Bearer <key>`, and the browser shows `401 unauthorized`.
+`gregale invoke` sends the request with your login, so it is the way to test.
+Never put a key in the URL. To make the app public on purpose, run
+`gregale app update <slug> --no-require-authn`.
+
+`GET /` returns your greeting and the Go version, as `go_version`; that
+response comes from your handler. The public `/healthz` URL answers
+`{"status":"ok","source":"edge"}` without a key: Gregale's edge reports that
+the route is up, not that your code ran. Your handler's own health check
+returns `{"ok":true}`:
+
+```
+gregale invoke <slug> --method GET --path /healthz
 ```
 
 ## Run it locally

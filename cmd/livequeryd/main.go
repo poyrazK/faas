@@ -28,6 +28,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/livequery"
 	"github.com/onebox-faas/faas/pkg/livequery/liveserver"
 	"github.com/onebox-faas/faas/pkg/livequery/seal"
@@ -88,7 +89,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := dbbounds.NewBoundedPool(ctx, dsn, 4)
 	if err != nil {
 		return fmt.Errorf("livequeryd: connect: %w", err)
 	}

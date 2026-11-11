@@ -186,8 +186,11 @@ func evaluate(waf coraza.WAF, s gateway.WAFSample) (Result, error) {
 // boundHeaders returns the headers a check scores: each value cut to
 // api.EdgeWAFMaxInspectHeaderValueBytes, and at most
 // api.EdgeWAFMaxInspectHeaderBytes of names and values in all, in name order
-// (ADR-831 amendment 19). Headers within both bounds are returned as they are.
+// (ADR-831 amendment 19). Cookie headers are split into one value per cookie
+// first (api.EdgeWAFInspectHeaders, amendment 20), so a long Cookie header is
+// bounded per cookie. Headers within both bounds are returned as they are.
 func boundHeaders(h http.Header) http.Header {
+	h = api.EdgeWAFInspectHeaders(h)
 	total, within := 0, true
 	for name, values := range h {
 		for _, v := range values {

@@ -123,3 +123,7 @@ faas_realtime_live_tls_issuer_host: "{{ groups['control_plane'] | default([]) | 
 # node's instances first, and name every node of the app for the edges. The
 # manifest's public_edge.local_first sets it on compute nodes.
 faas_gateway_edge_local_first: false
+# Request-path switches the manifest's hot_path sets on compute nodes.
+faas_request_id_journal_local: false
+faas_request_telemetry_minute_collapse: false
+faas_gateway_local_vmmd_socket: false

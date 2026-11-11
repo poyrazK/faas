@@ -60,6 +60,11 @@ func (s *Service) Read(ctx context.Context, acct state.Account, id string) (api.
 	if err != nil {
 		return api.DashboardData{}, err
 	}
+	release, err := s.Reads.acquire(acct.ID)
+	if err != nil {
+		return api.DashboardData{}, err
+	}
+	defer release()
 	var widgets []api.DashboardWidget
 	_ = json.Unmarshal(row.Widgets, &widgets)
 	now := s.now()
@@ -92,6 +97,13 @@ func (s *Service) resolve(ctx context.Context, acct state.Account, w api.Dashboa
 	v := api.DashboardWidgetValue{DashboardWidget: w}
 	app, ok := s.Host.AppForAccount(ctx, acct, w.App)
 	if !ok {
+		v.Error = "app unavailable"
+		return v
+	}
+	// The widget reads as the app's owner (ADR-20261109153000): an
+	// organization app follows the organization's plan, and its rows are
+	// held under its creator's account, not the viewer's.
+	if acct, ok = s.Host.AppOwner(ctx, app); !ok {
 		v.Error = "app unavailable"
 		return v
 	}

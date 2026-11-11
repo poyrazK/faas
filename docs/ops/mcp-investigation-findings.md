@@ -1,6 +1,6 @@
 # Gregale MCP investigation findings
 
-All 21 retained findings have fixes in the working tree on `fix/mcp-investigation-backlog`, with passing local regression checks. They have not been deployed. Original investigation checkout: `46aad2a12e4d1be39d0948b6942cb18d8e71d0b2` (2026-11-11 investigation). Stable IDs and the original evidence are retained below. Historical code locations describe the investigated checkout; each resolution describes the current fix.
+All 21 retained findings have fixes on `fix/mcp-investigation-backlog`, with passing local regression checks. They have not been deployed. Original investigation checkout: `46aad2a12e4d1be39d0948b6942cb18d8e71d0b2` (2026-11-11 investigation). Stable IDs and the original evidence are retained below. Historical code locations describe the investigated checkout; each resolution describes the current fix.
 
 ## Finding index
 
@@ -102,7 +102,7 @@ Evidence: `TestInvestigationCronUpdateLostResponse` commits a schedule change an
 
 Remediation direction: recover a durable native receipt or reconcile the exact reviewed desired cron configuration while preserving concurrent-writer guards. If safe recovery cannot be established, return consistent inspection guidance instead of promising a replay that cannot work. Never blindly overwrite a newer cron configuration.
 
-Resolution (2026-11-11): Cron plans retain a fingerprint of the complete reviewed desired configuration. An ambiguous retry reconciles that exact configuration without another PATCH; a different current configuration returns inspection guidance and is never overwritten. The lost-response regression and a concurrent-writer negative control pass. Legacy plans without the new desired fingerprint receive inspection guidance.
+Resolution (2026-11-11, integrated with current main): Ambiguous cron updates now consistently request inspection in both the tool error and saved receipt. Replaying an attempted cron change without a durable native receipt is refused before another PATCH, including if the desired configuration is visible. This retains main’s audit-history safety contract rather than attributing another writer’s matching state to this request. Lost-response and concurrent-writer regression controls verify inspection guidance and no repeated write.
 
 ## MCP008 Valid inline source exceeds the smaller HTTP JSON frame limit
 
@@ -164,7 +164,7 @@ Evidence: `registration owns the nested definition it advertises` changes a reta
 
 Remediation direction: own snapshots of mutable definition metadata and avoid exposing writable internal catalog entries. Account for supported Zod/schema objects rather than blindly JSON-serializing entire SDK definitions. Route intentional updates through the existing revision and notification path.
 
-Resolution (2026-11-11): Node catalog registration and accessors copy mutable nested JSON definitions, including values passed to normalization/policy callbacks, while preserving supported SDK schema/template instances. Pure catalog and real HTTP discovery regressions confirm retained-object mutation no longer changes advertised definitions or digests.
+Resolution (2026-11-11): Node catalog registration and accessors copy mutable nested JSON definitions, including values passed to normalization/policy callbacks. Integration retains main’s stronger snapshots of Standard Schema/Zod metadata and validation behavior. Pure catalog and real HTTP discovery regressions confirm retained-object mutation no longer changes advertised definitions or digests.
 
 ## MCP014 Busy Go workers stop refreshing their capability heartbeat
 
@@ -258,7 +258,7 @@ Remediation direction: authenticate every retained v1 payload field with bounded
 
 Original documentation follow-up (resolved with MCP021): the Node README's introductory Task instructions promise owner-key rotation followed by `payload_encryption_version: 2` background rewrapping, while its later rotation section requires a stable owner key and the separate `encryption_keys_env` mechanism. These instructions should be reconciled when addressing key-management guidance; this note is not counted as another reproduced runtime defect.
 
-Resolution (2026-11-11): Node startup, migration and Doctor authenticate every unexpired encrypted field using a server-side cursor with eight-row batches and a total time bound. Removing a required legacy reader key now fails preflight; restoring it passes. PostgreSQL crypto/task tests pass. README rotation guidance now consistently requires a stable owner key and the separate payload-key ring.
+Resolution (2026-11-11): Node startup, migration and Doctor authenticate every unexpired encrypted field using main’s shared retained-payload checker and a server-side cursor with bounded batches inside the caller’s bounded transaction. Removing a required legacy reader key now fails preflight; restoring it passes. PostgreSQL crypto/task tests pass. README rotation guidance now consistently requires a stable owner key and the separate payload-key ring.
 
 ## Remediation validation
 

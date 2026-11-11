@@ -40,6 +40,12 @@ func TestListenCatalogChangeSendsFiltersAndReturnsSelectedNotification(t *testin
 		if err := json.Unmarshal(request.Params.Notifications["taskIds"], &taskIDs); err != nil || len(taskIDs) != 0 {
 			t.Errorf("catalog listen taskIds=%v err=%v, want empty array", taskIDs, err)
 		}
+		var resources []string
+		if err := json.Unmarshal(request.Params.Notifications["resourceSubscriptions"], &resources); err != nil || resources == nil || len(resources) != 0 {
+			t.Errorf("catalog listen resourceSubscriptions=%s err=%v, want empty array", request.Params.Notifications["resourceSubscriptions"], err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		flusher := w.(http.Flusher)

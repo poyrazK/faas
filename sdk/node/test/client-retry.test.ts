@@ -298,3 +298,16 @@ test('transport failures remain caller-owned and do not retry a write', async t 
   await assert.rejects(AppsService.createApp({ requestBody: { slug: 'report' } }), error => error === reason);
   assert.equal(attempts, 1);
 });
+
+test('ordinary SDK calls have a default deadline and SSE keeps caller cancellation', async t => {
+  const signals: Array<AbortSignal | null | undefined> = [];
+  clientFixture(t, async (_input, init) => {
+    signals.push(init?.signal);
+    return Response.json({ ok: true });
+  }, { retry: { maxAttempts: 1, backoffMs: 0 } });
+  await globalThis.fetch('https://api.example.test/v1/apps');
+  assert.ok(signals[0] instanceof AbortSignal);
+  const caller = new AbortController();
+  await globalThis.fetch('https://api.example.test/v1/apps/logs', { headers: { Accept: 'text/event-stream' }, signal: caller.signal });
+  assert.equal(signals[1], caller.signal);
+});

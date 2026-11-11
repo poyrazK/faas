@@ -17,18 +17,33 @@ type requestTelemetryMinutes struct {
 	index map[string]int
 	// ready holds closed and exact rows in shipping order.
 	ready []RequestTelemetryRow
+	// exact counts the exact samples each open bucket has shipped
+	// (ADR-127 amendment 2026-10-31); a bucket's count goes when its minute
+	// closes.
+	exact map[string]exactSamples
+}
+
+type exactSamples struct {
+	n      int
+	minute time.Time
 }
 
 func newRequestTelemetryMinutes() *requestTelemetryMinutes {
-	return &requestTelemetryMinutes{index: make(map[string]int)}
+	return &requestTelemetryMinutes{index: make(map[string]int), exact: make(map[string]exactSamples)}
 }
 
 // add folds row into its open bucket. An exact row never folds: it is ready
-// at once, as it is on the per-batch path.
-func (m *requestTelemetryMinutes) add(row RequestTelemetryRow) {
-	row, key := requestTelemetryBucketed(row)
+// at once, as it is on the per-batch path. So are the first
+// requestTelemetryExactPerBucket exact samples of a bucket's minute.
+func (m *requestTelemetryMinutes) add(original RequestTelemetryRow) {
+	row, key := requestTelemetryBucketed(original)
 	if key == "" {
 		m.ready = append(m.ready, row)
+		return
+	}
+	if sampled := m.exact[key]; original.exactSample && sampled.n < exactSamplesPerBucket(original) {
+		m.exact[key] = exactSamples{n: sampled.n + 1, minute: row.ReceivedAt}
+		m.ready = append(m.ready, exactTelemetryRow(original, row))
 		return
 	}
 	if idx, ok := m.index[key]; ok {
@@ -60,9 +75,15 @@ func (m *requestTelemetryMinutes) closeAll() {
 	m.ready = append(m.ready, m.rows...)
 	m.keys, m.rows = nil, nil
 	clear(m.index)
+	clear(m.exact)
 }
 
 func (m *requestTelemetryMinutes) closeBefore(cutoff time.Time) {
+	for key, sampled := range m.exact {
+		if sampled.minute.Before(cutoff) {
+			delete(m.exact, key)
+		}
+	}
 	keys, rows := m.keys[:0], m.rows[:0]
 	clear(m.index)
 	for i, row := range m.rows {
@@ -124,9 +145,16 @@ func (m *requestTelemetryMinutes) takeAll() []RequestTelemetryRow {
 // counting them kept every app with traffic permanently "pending", which
 // blocked route removal for good (ADR-20261028110044 amendment 4).
 func (m *requestTelemetryMinutes) undeliveredByApp() map[uuid.UUID]int {
+	return m.undeliveredWhere(func(RequestTelemetryRow) bool { return true })
+}
+
+// undeliveredWhere is undeliveredByApp over the rows keep accepts.
+func (m *requestTelemetryMinutes) undeliveredWhere(keep func(RequestTelemetryRow) bool) map[uuid.UUID]int {
 	counts := make(map[uuid.UUID]int)
 	for _, row := range m.ready {
-		counts[row.AppID] += normalizedRequestTelemetryCount(row.Count)
+		if keep(row) {
+			counts[row.AppID] += normalizedRequestTelemetryCount(row.Count)
+		}
 	}
 	return counts
 }

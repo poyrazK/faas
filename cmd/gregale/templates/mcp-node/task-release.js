@@ -1,11 +1,13 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { randomUUID } from 'node:crypto';
 import { checkMcpTaskCompatibility, mcpTaskHandlerInventory } from './task-compatibility.js';
 import { createMcpTaskAdmissionController } from './task-admission.js';
 
 // Hooks manage deployment processes; database registration alone never stops a worker.
-export async function releaseMcpTasks({ pool, namespace, store, handlers, migrate, start, drain, timeoutMs = 60000, checkpoint, saveCheckpoint = async () => {} }) {
+export async function releaseMcpTasks({ pool, namespace, store, handlers, migrate, start, drain, timeoutMs = 60000, releaseID, checkpoint, saveCheckpoint = async () => {} }) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 600000 || ![migrate, start, drain].every(fn => typeof fn === 'function')) throw new Error('Invalid release settings');
   const inventory = mcpTaskHandlerInventory(handlers);
+  const requestedID = releaseID ?? checkpoint?.releaseID ?? randomUUID();
   const lock = await pool.connect();
   let locked = false;
   const report = { ok: false, stage: 'release_lock' };
@@ -13,6 +15,15 @@ export async function releaseMcpTasks({ pool, namespace, store, handlers, migrat
     const result = await lock.query('SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired', [`gregale_mcp_release:${namespace}`]);
     if (!result.rows[0].acquired) throw new Error('Release already running');
     locked = true;
+    report.stage = 'checkpoint';
+    if (typeof requestedID !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(requestedID)) throw new Error('Invalid release ID');
+    if (checkpoint) {
+      validateReleaseCheckpoint(checkpoint, namespace);
+      if (checkpoint.releaseID !== requestedID) {
+        if (!checkpoint.completed) throw new Error('Finish the pending release before starting another');
+        checkpoint = undefined;
+      }
+    }
     report.stage = 'migrations';
     await migrate();
     report.stage = 'candidate_preflight';
@@ -26,13 +37,14 @@ export async function releaseMcpTasks({ pool, namespace, store, handlers, migrat
     };
     await preflight();
     const workers = async () => (await pool.query(`SELECT worker_id::text, handlers, draining, heartbeat_at, heartbeat_at > clock_timestamp() - interval '45 seconds' AS fresh FROM gregale_mcp_task_workers WHERE namespace = $1 AND expires_at > clock_timestamp()`, [namespace])).rows;
-    if (checkpoint && (checkpoint.namespace !== namespace || !Array.isArray(checkpoint.previousWorkerIDs) || !Number.isFinite(Date.parse(checkpoint.startedAt)))) throw new Error('Invalid release checkpoint');
     const previous = checkpoint?.previousWorkerIDs ?? (await workers()).map(row => row.worker_id);
     const since = checkpoint ? new Date(checkpoint.startedAt) : (await pool.query('SELECT clock_timestamp() AS now')).rows[0].now;
-    await saveCheckpoint({ namespace, previousWorkerIDs: previous, startedAt: since.toISOString() });
+    const record = { version: 1, namespace, releaseID: requestedID, previousWorkerIDs: previous, startedAt: since.toISOString() };
+    if (!checkpoint) await saveCheckpoint(record);
     report.stage = 'start_replacements';
-    const ids = await start({ previousWorkerIDs: previous, timeoutMs });
-    if (!Array.isArray(ids) || !ids.length || ids.length > 4096 || new Set(ids).size !== ids.length || ids.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) || previous.includes(id))) throw new Error('Invalid replacement worker IDs');
+    const ids = checkpoint?.replacementWorkerIDs ?? await start({ releaseID: requestedID, previousWorkerIDs: previous, timeoutMs });
+    if (!validReleaseWorkerIDs(ids) || ids.some(id => previous.includes(id))) throw new Error('Invalid replacement worker IDs');
+    if (!checkpoint?.replacementWorkerIDs) await saveCheckpoint({ ...record, replacementWorkerIDs: ids });
     report.stage = 'replacement_readiness';
     const ready = async () => {
       const rows = await workers();
@@ -45,6 +57,10 @@ export async function releaseMcpTasks({ pool, namespace, store, handlers, migrat
         await delay(Math.min(250, Math.max(1, deadline - Date.now())));
       }
     };
+    if (checkpoint?.completed) {
+      if (!await ready() || (await workers()).some(row => previous.includes(row.worker_id))) throw new Error('Completed release readiness lost');
+      return { ok: true, stage: 'complete', replacementWorkerIDs: ids };
+    }
     await wait(ready);
     await preflight();
     report.stage = 'drain_previous';
@@ -55,6 +71,8 @@ export async function releaseMcpTasks({ pool, namespace, store, handlers, migrat
     });
     await preflight();
     if (!await ready()) throw new Error('Replacement readiness lost');
+    report.stage = 'checkpoint_complete';
+    await saveCheckpoint({ ...record, replacementWorkerIDs: ids, completed: true });
     report.ok = true;
     report.stage = 'complete';
     report.replacementWorkerIDs = ids;
@@ -66,6 +84,25 @@ export async function releaseMcpTasks({ pool, namespace, store, handlers, migrat
     try {
       if (locked) await lock.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [`gregale_mcp_release:${namespace}`]);
     } finally { lock.release(); }
+  }
+}
+
+function validReleaseWorkerIDs(ids, allowEmpty = false) {
+  return Array.isArray(ids) && (allowEmpty || ids.length > 0) && ids.length <= 4096
+    && new Set(ids).size === ids.length && ids.every(id => typeof id === 'string'
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id));
+}
+
+function validateReleaseCheckpoint(checkpoint, namespace) {
+  if (checkpoint.version !== 1 || checkpoint.namespace !== namespace
+      || typeof checkpoint.releaseID !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(checkpoint.releaseID)
+      || !validReleaseWorkerIDs(checkpoint.previousWorkerIDs, true)
+      || typeof checkpoint.startedAt !== 'string' || !Number.isFinite(Date.parse(checkpoint.startedAt))
+      || (checkpoint.completed !== undefined && typeof checkpoint.completed !== 'boolean')
+      || (checkpoint.completed && !checkpoint.replacementWorkerIDs)
+      || (checkpoint.replacementWorkerIDs !== undefined && (!validReleaseWorkerIDs(checkpoint.replacementWorkerIDs)
+        || checkpoint.replacementWorkerIDs.some(id => checkpoint.previousWorkerIDs.includes(id))))) {
+    throw new Error('Invalid or legacy release checkpoint; reconcile it before proceeding');
   }
 }
 

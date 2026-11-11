@@ -20,9 +20,9 @@ func TestWorkflowRecoveryAttentionClassification(t *testing.T) {
 		{name: "stall boundary", state: "queued", age: 60, want: "stalled"},
 		{name: "fresh", state: "running", age: 59, want: "running"},
 		{name: "progress", state: "running", age: 100, progress: 50, want: "running"},
-		{name: "capacity", state: "queued", wait: api.AutomationQueueAppCapacity, age: 100, want: "capacity_wait"},
-		{name: "scheduled", state: "queued", wait: api.AutomationQueueScheduled, age: 100, want: "scheduled_wait"},
-		{name: "deadline while scheduled", state: "queued", wait: api.AutomationQueueScheduled, age: 120, deadline: 120, want: "deadline_exceeded"},
+		{name: "capacity", state: "queued", wait: api.StoredWorkflowQueueAppCapacity, age: 100, want: "capacity_wait"},
+		{name: "scheduled", state: "queued", wait: api.StoredWorkflowQueueScheduled, age: 100, want: "scheduled_wait"},
+		{name: "deadline while scheduled", state: "queued", wait: api.StoredWorkflowQueueScheduled, age: 120, deadline: 120, want: "deadline_exceeded"},
 		{name: "missing generation", state: "unknown", age: 120, deadline: 120, want: "unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

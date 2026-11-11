@@ -12,6 +12,10 @@ type invocationDispatchAuthority struct {
 	EnvironmentID, AppID, AccountID  string
 	QueueBindingID, QueueName, Scope string
 	QueueCanary                      bool
+	// EdgeJWTIssuer and EdgeJWTSubject are the stored caller identity
+	// (ADR-091 amendment 2026-11-04, round 11). Dispatch takes them only
+	// from here, never from the transport that names the invocation.
+	EdgeJWTIssuer, EdgeJWTSubject string
 }
 type invocationDispatchAuthorityReader interface {
 	invocationDispatchAuthority(context.Context, string) (invocationDispatchAuthority, error)
@@ -35,7 +39,7 @@ func readInvocationDispatchAuthority(ctx context.Context, db sqlc.DBTX, id strin
 	if err != nil {
 		return invocationDispatchAuthority{}, mapErr(err)
 	}
-	return invocationDispatchAuthority{EnvironmentID: row.EnvironmentID, AppID: pgUUIDString(row.AppID), AccountID: pgUUIDString(row.AccountID), QueueCanary: row.QueueCanary, QueueBindingID: row.QueueBindingID, QueueName: row.QueueName, Scope: row.DeploymentScope}, nil
+	return invocationDispatchAuthority{EnvironmentID: row.EnvironmentID, AppID: pgUUIDString(row.AppID), AccountID: pgUUIDString(row.AccountID), QueueCanary: row.QueueCanary, QueueBindingID: row.QueueBindingID, QueueName: row.QueueName, Scope: row.DeploymentScope, EdgeJWTIssuer: row.EdgeJwtIssuer, EdgeJWTSubject: row.EdgeJwtSubject}, nil
 }
 
 func (m *MemStore) invocationDispatchAuthority(_ context.Context, id string) (invocationDispatchAuthority, error) {
@@ -55,5 +59,5 @@ func (m *MemStore) invocationDispatchAuthorityLocked(id string) (invocationDispa
 		return invocationDispatchAuthority{}, ErrNotFound
 	}
 	_, canary := m.queueBindingCanaries[id]
-	return invocationDispatchAuthority{EnvironmentID: inv.EnvironmentID, AppID: inv.AppID, AccountID: inv.AccountID, QueueCanary: canary, QueueBindingID: inv.QueueBindingID, QueueName: inv.QueueName, Scope: inv.DeploymentScope}, nil
+	return invocationDispatchAuthority{EnvironmentID: inv.EnvironmentID, AppID: inv.AppID, AccountID: inv.AccountID, QueueCanary: canary, QueueBindingID: inv.QueueBindingID, QueueName: inv.QueueName, Scope: inv.DeploymentScope, EdgeJWTIssuer: inv.EdgeJWTIssuer, EdgeJWTSubject: inv.EdgeJWTSubject}, nil
 }

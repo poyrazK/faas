@@ -4,6 +4,7 @@
 - **Date:** 2026-09-05
 - **Scope:** `cmd/gregale`, multipart source deploys, `builderd`, guest-init, deployment state
 - **Related:** ADR-086 (nested-marker deploy hint), ADR-088 (shared marker detection), ADR-090 (repo decomposition)
+- **Amended by:** [Source upload admission parity](20261105023000-source-upload-admission-parity.md) for configured app defaults and explicit archive-root selection.
 
 ## Context
 

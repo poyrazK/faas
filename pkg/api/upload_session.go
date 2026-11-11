@@ -22,8 +22,9 @@ type UploadDeployOptions struct {
 	Runtime     string                 `json:"runtime,omitempty"`
 	Handler     string                 `json:"handler,omitempty"`
 	Dockerfile  bool                   `json:"dockerfile,omitempty"`
-	SourceRoot  string                 `json:"source_root,omitempty"`
-	Scope       string                 `json:"scope,omitempty"`
+	// SourceRoot defaults to the app's configured root; "." selects the archive root.
+	SourceRoot string `json:"source_root,omitempty"`
+	Scope      string `json:"scope,omitempty"`
 	// SourceURL and CommitSHA preserve local Git provenance across the
 	// resumable session boundary. The values are informational only; the
 	// uploaded archive remains the source of truth and apid never fetches
@@ -59,9 +60,9 @@ type UploadDeployOptions struct {
 // UploadStartRequest is the JSON body of POST /v1/uploads. total_size
 // is required and must be ≤ the per-plan SourceTarballMaxMB cap (Free
 // / Hobby 100 MB, Pro / Scale 250 MB); the handler returns 413 +
-// source_too_large otherwise. sha256_hex is recorded for the
-// build_provenance audit row only — the server does NOT re-verify it
-// at commit time (ADR-115 trust boundary).
+// source_too_large otherwise. sha256_hex is optional; when set it must
+// be 64 hex digits, and commit refuses an archive whose SHA-256 differs
+// (410 upload_checksum_mismatch; the session is cancelled).
 type UploadStartRequest struct {
 	AppSlug       string               `json:"app_slug"`
 	TotalSize     int64                `json:"total_size"`

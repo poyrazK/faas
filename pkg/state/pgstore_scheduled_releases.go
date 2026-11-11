@@ -117,8 +117,20 @@ func (s *PgStore) ListScheduledReleases(ctx context.Context, accountID, appID st
 }
 
 func (s *PgStore) DueScheduledReleases(ctx context.Context, now time.Time, limit int) ([]ScheduledRelease, error) {
+	return s.DueScheduledReleasesPage(ctx, now, limit, ReleaseScanCursor{})
+}
+
+func (s *PgStore) DueScheduledReleasesPage(ctx context.Context, now time.Time, limit int, cursor ReleaseScanCursor) ([]ScheduledRelease, error) {
+	afterAt, afterID, err := cursor.parameters()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
 	rows, err := sqlc.New().ListDueScheduledReleases(ctx, s.pool, sqlc.ListDueScheduledReleasesParams{
 		Now: pgTimestamptzUTC(now), MaxRows: int32(limit),
+		AfterReleaseAt: afterAt, AfterID: afterID,
 	})
 	if err != nil {
 		return nil, mapErr(err)

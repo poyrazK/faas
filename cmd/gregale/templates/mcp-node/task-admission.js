@@ -1,8 +1,9 @@
+import { isMcpTaskToolName } from './task-compatibility.js';
 const TABLE = 'gregale_mcp_task_admission';
 const TASKS = 'gregale_mcp_tasks';
 
 export function validateMcpTaskAdmissionHandlers(handlers) {
-  if (!Array.isArray(handlers) || handlers.length > 4096 || handlers.some(handler => !handler || typeof handler.name !== 'string' || !/^[\x21-\x7e]{1,128}$/.test(handler.name) || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version))) throw new Error('Invalid MCP Task admission handlers');
+  if (!Array.isArray(handlers) || handlers.length > 4096 || handlers.some(handler => !handler || !isMcpTaskToolName(handler.name) || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version))) throw new Error('Invalid MCP Task admission handlers');
   return handlers;
 }
 

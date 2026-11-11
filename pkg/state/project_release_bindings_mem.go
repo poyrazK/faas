@@ -71,10 +71,8 @@ func (m *MemStore) checkCheckedDeactivationLocked(ctx context.Context, accountID
 		byApp[member.AppID] = member.DeploymentID
 	}
 	count := 0
-	for _, app := range m.apps {
-		if app.AccountID != accountID || app.ProjectID != projectID || app.Status == AppDeleted || app.PreviewOfSlug != "" {
-			continue
-		}
+	for _, id := range m.projectEnvironmentAppIDsLocked(accountID, projectID, environment) {
+		app := m.apps[id]
 		count++
 		if m.environmentGitOpsManagedForScopeLocked(app.ID, environment) {
 			return ErrConflict

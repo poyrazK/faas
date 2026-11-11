@@ -2,7 +2,7 @@
 
 Retained regression probes for the 21 findings in `docs/ops/mcp-investigation-findings.md`, based on commit `46aad2a12e4d1be39d0948b6942cb18d8e71d0b2`.
 
-Passing remediation evidence and exact validation commands are in [remediation/README.md](remediation/README.md). Historical failure descriptions below refer to the original checkout. Two Node race probes now wait for explicit readiness/claim handoff so their assertions can pass with the corrected asynchronous lifecycle.
+Passing remediation evidence and exact validation commands are in [remediation/README.md](remediation/README.md). Historical failure descriptions below refer to the original checkout. Two Node race probes now wait for explicit readiness/claim handoff so their assertions can pass with the corrected asynchronous lifecycle. After integrating current main, the cron probe verifies consistent inspection guidance and refusal of blind replay; main requires durable receipt evidence before attributing an accepted mutation.
 
 Run from the repository root:
 

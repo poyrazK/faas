@@ -14,7 +14,7 @@ func verificationSchema() map[string]any {
 	statuses := []string{"required", "pending", "verified", "failed", "blocked", "unknown", "not_required"}
 	return map[string]any{"type": "object", "required": []string{"status", "goal", "checks"}, "additionalProperties": false, "properties": map[string]any{
 		"status": map[string]any{"type": "string", "enum": statuses},
-		"goal":   map[string]any{"type": "string", "enum": []string{"manual_review", "configuration_commit", "restart_processing_and_health", "release_readiness", "worker_generation_residency"}},
+		"goal":   map[string]any{"type": "string", "enum": []string{"manual_review", "configuration_commit", "scaling_configuration", "restart_processing_and_health", "release_readiness", "worker_generation_residency"}},
 		"checks": map[string]any{"type": "array", "items": map[string]any{"type": "object", "required": []string{"criterion", "status", "reason"}, "additionalProperties": false, "properties": map[string]any{
 			"criterion": map[string]any{"type": "string"}, "status": map[string]any{"type": "string", "enum": statuses}, "reason": map[string]any{"type": "string"}, "resource_id": map[string]any{"type": "string"},
 		}}},
@@ -55,7 +55,7 @@ func strengthenResultSchema(name string, schema map[string]any) {
 		} else {
 			schema["anyOf"] = []any{
 				map[string]any{"properties": map[string]any{"kind": map[string]any{"const": "restart"}, "result": map[string]any{"type": "object", "required": []string{"wake_id"}, "properties": map[string]any{"wake_id": map[string]any{"type": "string"}}}}},
-				map[string]any{"properties": map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"env", "scale", "config_rollback", "cron_update", "cron_delete", "domain_delete"}}}},
+				map[string]any{"properties": map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"env", "scale", "config_rollback", "config_rollback_guarded", "cron_update", "cron_delete", "domain_delete"}}}},
 			}
 		}
 	case "gregale_apply_route_budgets":

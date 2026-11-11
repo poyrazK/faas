@@ -542,7 +542,7 @@ export class ConsumersService {
      */
     since?: string,
     /**
-     * RFC3339 exclusive upper bound. Defaults to UTC midnight today.
+     * RFC3339 exclusive upper bound, snapped to UTC midnight. Defaults to the next UTC midnight, so today is included.
      */
     until?: string,
   }): CancelablePromise<APIConsumerUsageResponse> {
@@ -593,7 +593,7 @@ export class ConsumersService {
      */
     since?: string,
     /**
-     * Optional RFC3339 exclusive upper bound for the quote period; defaults to UTC midnight today.
+     * Optional RFC3339 exclusive upper bound for the quote period; defaults to the next UTC midnight, so today is included.
      */
     until?: string,
   }): CancelablePromise<APIConsumerUsageQuoteResponse> {

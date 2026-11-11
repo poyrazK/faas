@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // MCPRequestContext contains verified caller details safe for application
@@ -22,8 +24,8 @@ type MCPRequestContext struct {
 	Scopes   []string
 }
 
-// MCPToolHandler runs a registered tool. The handler must validate arguments
-// against its advertised inputSchema and return a normal MCP tool result.
+// MCPToolHandler runs a registered tool after inputSchema validation. The
+// handler must enforce its business rules and return a normal MCP tool result.
 type MCPToolHandler func(context.Context, map[string]any, *MCPRequestContext) (map[string]any, error)
 
 // MCPResourceHandler reads a registered resource and returns MCP resource
@@ -38,12 +40,14 @@ type MCPResourceAuthorizer func(context.Context, string, *MCPRequestContext) boo
 type MCPPromptHandler func(context.Context, map[string]any, *MCPRequestContext) (map[string]any, error)
 
 type mcpCatalogEntry struct {
-	definition map[string]any
-	version    uint64
-	tool       MCPToolHandler
-	resource   MCPResourceHandler
-	prompt     MCPPromptHandler
-	authorize  MCPResourceAuthorizer
+	definition   map[string]any
+	version      uint64
+	tool         MCPToolHandler
+	resource     MCPResourceHandler
+	prompt       MCPPromptHandler
+	authorize    MCPResourceAuthorizer
+	inputSchema  *jsonschema.Resolved
+	outputSchema *jsonschema.Resolved
 }
 
 type mcpCatalog struct {
@@ -166,6 +170,17 @@ func (catalog *mcpCatalog) register(kind, previousName string, definition map[st
 	if !validCatalogName(name) {
 		return errors.New("MCP catalog name must be 1 to 128 visible ASCII characters without whitespace")
 	}
+	var inputSchema, outputSchema *jsonschema.Resolved
+	if kind == "tool" && tool != nil {
+		inputSchema, err = compileMCPToolSchema(clone, "inputSchema")
+		if err != nil {
+			return err
+		}
+		outputSchema, err = compileMCPToolSchema(clone, "outputSchema")
+		if err != nil {
+			return err
+		}
+	}
 	key := name
 	if previousName != "" {
 		key = previousName
@@ -233,6 +248,9 @@ func (catalog *mcpCatalog) register(kind, previousName string, definition map[st
 	if len(authorize) == 1 {
 		entry.authorize = authorize[0]
 	}
+
+	entry.inputSchema = inputSchema
+	entry.outputSchema = outputSchema
 	entries[name] = entry
 	catalog.mu.Unlock()
 	if notify {

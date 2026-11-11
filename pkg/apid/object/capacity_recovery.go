@@ -111,7 +111,7 @@ func CompleteObjectInventory(ctx context.Context, p objectstorage.Provider, phys
 		if e != nil {
 			return 0, 0, e
 		}
-		if len(page.Items) > api.MaxObjectS3ListItems || len(page.CommonPrefixes) != 0 || len(page.Items) == 0 && page.NextCursor != "" {
+		if len(page.Items) > api.MaxObjectS3ListItems || len(page.CommonPrefixes) != 0 {
 			return 0, 0, objectstorage.ErrInvalid
 		}
 		for _, o := range page.Items {

@@ -155,6 +155,7 @@ func TestPgObjectMultipartMutationBindingGuardsAndRollback(t *testing.T) {
 	if _, err = tx.Exec(ctx, checksumParts[0]); err != nil {
 		t.Fatal(err)
 	}
+	reapplyObjectAccountNoKeyLocks(t, ctx, tx, "guard_bound_multipart_mutation")
 	if err := tx.QueryRow(ctx, shape).Scan(&after); err != nil || before != after {
 		t.Fatal("migration round trip changed binding", err)
 	}

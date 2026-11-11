@@ -81,6 +81,11 @@ func (m *MemStore) RequestTelemetryByDeployment(_ context.Context, _ sqlc.Reques
 	return nil, errMemStoreRequestTelemetry
 }
 
+// RequestTelemetryLatencyWeightsByRoute — MemStore stub. Postgres-only.
+func (m *MemStore) RequestTelemetryLatencyWeightsByRoute(_ context.Context, _ sqlc.RequestTelemetryLatencyWeightsByRouteParams) ([]sqlc.RequestTelemetryLatencyWeightsByRouteRow, error) {
+	return nil, errMemStoreRequestTelemetry
+}
+
 // RequestTelemetryBaselineP95ByRoute (ADR-127 PR-B) — MemStore
 // stub. Postgres-only.
 func (m *MemStore) RequestTelemetryBaselineP95ByRoute(_ context.Context, _ sqlc.RequestTelemetryBaselineP95ByRouteParams) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, error) {

@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -68,7 +69,7 @@ func cmdRealtimeCreate(args []string) int {
 	var audience, algorithms, origins realtimeStringList
 	var claims realtimeClaimsFlag
 	fs.Var(&audience, "auth-audience", "OIDC audience (repeatable)")
-	fs.Var(&algorithms, "auth-algorithm", "OIDC signing algorithm (repeatable)")
+	fs.Var(&algorithms, "auth-algorithm", "OIDC signing algorithm, required for oidc_jwt (repeatable)")
 	fs.Var(&claims, "auth-claim", "required OIDC claim as KEY=VALUE (repeatable)")
 	fs.Var(&origins, "allowed-origin", "exact browser origin (repeatable)")
 	maxConnections := fs.Int("max-connections", -1, "per-endpoint connection cap (0 inherits daemon default)")
@@ -136,15 +137,16 @@ func cmdRealtimeCreate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	app := realtimeEndpointApp(client, positional[0])
 	endpoint, err := client.CreateManagedRealtimeEndpoint(context.Background(), positional[0], request)
 	if err != nil {
 		return printErr("Could not create realtime endpoint", err)
 	}
-	return renderRealtimeLifecycleEndpoint(endpoint)
+	return renderRealtimeLifecycleEndpoint(app, endpoint)
 }
 
 func cmdRealtimeUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "callback-auth-token-stdin", "auth-token-stdin", "enable", "disable", "clear-allowed-origins", "clear-auth-claims")
+	flags, positional := splitArgsForFlags(args, "callback-auth-token-stdin", "auth-token-stdin", "enable", "disable", "enabled", "clear-allowed-origins", "clear-auth-claims")
 	fs := newFlagSet("realtime update", flag.ContinueOnError)
 	callbackURL := fs.String("callback-url", "", "new application callback URL")
 	callbackToken := fs.String("callback-auth-token", "", "new callback bearer token (prefer --callback-auth-token-stdin)")
@@ -170,16 +172,29 @@ func cmdRealtimeUpdate(args []string) int {
 	maxConnectionAge := fs.Int64("max-connection-age-seconds", -1, "new per-endpoint connection age cap")
 	enable := fs.Bool("enable", false, "enable the endpoint")
 	disable := fs.Bool("disable", false, "disable the endpoint")
+	// create spells it --enabled[=bool]; update accepts the same form
+	// (Hunt 32 H32-71) beside --enable/--disable.
+	enabled := fs.Bool("enabled", false, "--enabled or --enabled=false, as on create")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 {
 		PrintUsage(osStderr, "usage: gregale realtime update APP_SLUG ENDPOINT_ID [configuration flags]", "realtime")
 		return 1
 	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name != "enabled" {
+			return
+		}
+		if *enabled {
+			*enable = true
+		} else {
+			*disable = true
+		}
+	})
 	if strings.TrimSpace(positional[0]) == "" || strings.TrimSpace(positional[1]) == "" {
 		PrintUsage(osStderr, "usage: gregale realtime update APP_SLUG ENDPOINT_ID [configuration flags]", "realtime")
 		return 1
 	}
 	if *enable && *disable {
-		return printErr("Invalid flags", fmt.Errorf("--enable and --disable are mutually exclusive"))
+		return printErr("Invalid flags", fmt.Errorf("--enable and --disable (or --enabled=true and --enabled=false) are mutually exclusive"))
 	}
 	if *callbackTokenStdin && *authTokenStdin {
 		return printErr("Invalid secret input", fmt.Errorf("--callback-auth-token-stdin and --auth-token-stdin cannot be used together; stdin carries one secret per command"))
@@ -270,11 +285,12 @@ func cmdRealtimeUpdate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	app := realtimeEndpointApp(client, positional[0])
 	endpoint, err := client.UpdateManagedRealtimeEndpoint(context.Background(), positional[0], positional[1], request)
 	if err != nil {
 		return printErr("Could not update realtime endpoint", err)
 	}
-	return renderRealtimeLifecycleEndpoint(endpoint)
+	return renderRealtimeLifecycleEndpoint(app, endpoint)
 }
 
 func cmdRealtimeDelete(args []string) int {
@@ -377,12 +393,46 @@ func requestHasNoRealtimeChanges(request api.UpdateManagedRealtimeEndpointReques
 	return request.CallbackURL == nil && request.ConnectPath == nil && request.MessagePath == nil && request.DisconnectPath == nil && request.CallbackAuthToken == nil && request.AuthToken == nil && request.AuthMode == nil && request.AuthIssuer == nil && request.AuthJWKSURL == nil && request.AuthAudience == nil && request.AuthAlgorithms == nil && request.AuthRequiredClaims == nil && request.AllowedOrigins == nil && request.MaxConnections == nil && request.MaxMessageBytes == nil && request.MaxConnectionAgeSeconds == nil && request.Enabled == nil
 }
 
-func renderRealtimeLifecycleEndpoint(endpoint api.ManagedRealtimeEndpointResponse) int {
+func renderRealtimeLifecycleEndpoint(app api.AppResponse, endpoint api.ManagedRealtimeEndpointResponse) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(endpoint))
 	}
 	renderRealtimeEndpoint(osStdout, endpoint)
+	printRealtimeClientURL(osStdout, app, endpoint.ID)
 	return 0
+}
+
+// realtimeEndpointApp reads the app whose host clients connect to; get and
+// create never showed that URL (Hunt 32 H32-71). It is best effort: without
+// the app the URL line is left out. It runs before the endpoint call so a
+// failure here never hides that call's own result.
+func realtimeEndpointApp(client *api.Client, slug string) api.AppResponse {
+	if jsonOutput {
+		return api.AppResponse{}
+	}
+	app, err := client.GetApp(context.Background(), slug)
+	if err != nil {
+		return api.AppResponse{}
+	}
+	return app
+}
+
+func printRealtimeClientURL(w io.Writer, app api.AppResponse, endpointID string) {
+	if u := realtimeClientURL(app, endpointID); u != "" {
+		_, _ = fmt.Fprintf(w, "  client_url:                   %s\n", u)
+	}
+}
+
+func realtimeClientURL(app api.AppResponse, endpointID string) string {
+	base := app.CanonicalURL
+	if base == "" {
+		base = app.URL
+	}
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Host == "" || endpointID == "" {
+		return ""
+	}
+	return "wss://" + parsed.Host + "/__gregale/realtime/" + url.PathEscape(endpointID)
 }
 
 // cmdRealtimeCreateWithAuth wires an endpoint to an application Auth app:
@@ -450,6 +500,7 @@ func cmdRealtimeCreateWithAuth(app, authApp string, fs *flag.FlagSet, origins re
 	if maxConnectionAge >= 0 {
 		request.MaxConnectionAgeSeconds = maxConnectionAge
 	}
+	appInfo := realtimeEndpointApp(client, app)
 	endpoint, err := client.CreateManagedRealtimeEndpoint(ctx, app, request)
 	if err != nil {
 		_ = client.UnsetSecretWithScope(ctx, authApp, secretName, api.DefaultEnvScope)
@@ -459,5 +510,5 @@ func cmdRealtimeCreateWithAuth(app, authApp string, fs *flag.FlagSet, origins re
 	if _, err := client.RestartAppFresh(ctx, authApp); err != nil {
 		PrintWarn(osStderr, "the endpoint exists, but restarting %s failed (%v); run `gregale app restart %s --fresh` before clients subscribe", authApp, err, authApp)
 	}
-	return renderRealtimeLifecycleEndpoint(endpoint)
+	return renderRealtimeLifecycleEndpoint(appInfo, endpoint)
 }

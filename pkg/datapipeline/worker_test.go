@@ -205,6 +205,44 @@ func TestWorkerEmptyQueueWaitsAndCancels(t *testing.T) {
 	}
 }
 
+func TestWorkerRetriesCatalogOutageWithoutSpinning(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var calls atomic.Int32
+	recovered := make(chan struct{})
+	next := func(context.Context) (bool, error) {
+		if calls.Add(1) == 1 {
+			return false, ErrUnavailable
+		}
+		select {
+		case <-recovered:
+		default:
+			close(recovered)
+		}
+		return false, nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- runWorkerQueues(ctx, workerQueue{1, next}) }()
+	time.Sleep(api.DataPipelineWorkerIdleInterval / 10)
+	if calls.Load() != 1 {
+		t.Fatal("catalog outage caused a busy loop", calls.Load())
+	}
+	select {
+	case <-recovered:
+	case <-time.After(3 * api.DataPipelineWorkerIdleInterval):
+		t.Fatal("worker did not retry the catalog")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not stop")
+	}
+}
+
 func TestWorkerShutdownPreservesCancellationAfterSanitizedStoreError(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

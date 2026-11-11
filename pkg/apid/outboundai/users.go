@@ -129,7 +129,7 @@ func (e *userUsageExport) start() {
 func (e *userUsageExport) write(row state.OutboundAIUserUsageRow) error {
 	e.start()
 	if e.csv != nil {
-		return e.csv.Write([]string{row.UsageDate, row.EndUser, strconv.FormatInt(row.Requests, 10),
+		return e.csv.Write([]string{row.UsageDate, api.CSVSafeCell(row.EndUser), strconv.FormatInt(row.Requests, 10),
 			strconv.FormatInt(row.ErrorRequests, 10), strconv.FormatInt(row.InputTokens, 10), strconv.FormatInt(row.OutputTokens, 10),
 			strconv.FormatInt(row.InputTokens+row.OutputTokens, 10), strconv.FormatInt(row.CostMillicents, 10)})
 	}

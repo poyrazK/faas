@@ -2,7 +2,7 @@
 -- comparing JSON representations. In particular, timestamptz output depends
 -- on the observing session's timezone. Never rewrite historical evidence.
 CREATE OR REPLACE FUNCTION gregale_repair.normalize_values(target regclass, recorded jsonb) RETURNS jsonb
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' AS $$
+LANGUAGE plpgsql STABLE SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET lc_monetary = 'C' AS $$
 DECLARE definitions text; normalized jsonb;
 BEGIN
  SELECT string_agg(format('%I %s',a.attname,format_type(a.atttypid,a.atttypmod)),',' ORDER BY a.attnum)
@@ -18,7 +18,7 @@ END $$;
 -- Compare native output, including float zero signs and numeric scale. Use the
 -- current row as the base so unrelated domains and raw JSON stay untouched.
 CREATE OR REPLACE FUNCTION gregale_repair.values_match(observed anyelement, recorded jsonb) RETURNS boolean
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' AS $$
+LANGUAGE plpgsql STABLE SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET lc_monetary = 'C' AS $$
 DECLARE fields text; restored_fields text; matches boolean;
 BEGIN
  IF jsonb_typeof(recorded) IS DISTINCT FROM 'object' OR recorded='{}'::jsonb THEN

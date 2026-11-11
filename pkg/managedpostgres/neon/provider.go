@@ -164,6 +164,9 @@ type createdProjectResponse struct {
 
 func (p *Provider) Capabilities() managedpostgres.Capabilities {
 	access := []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration}
+	if p.sessionEnabled {
+		access = append(access, managedpostgres.CredentialSession)
+	}
 	if p.dataAPIEnabled {
 		access = append(access, managedpostgres.CredentialDataAPI)
 	}
@@ -438,10 +441,19 @@ func probeDSN(material managedpostgres.CredentialMaterial) (string, error) {
 		Host:   net.JoinHostPort(selected.Host, fmt.Sprintf("%d", selected.Port)),
 		Path:   "/" + material.Database,
 	}
-	query := url.Values{"sslmode": {material.TLSMode}}
+	// Every connection built here is the platform's own (owner role SQL,
+	// probes, qualification), across the public internet to Neon. Neon's
+	// connection URI says sslmode=require, which encrypts but checks no
+	// certificate, so pin verify-full as the maintenance, copy and pipeline
+	// connections do; Neon endpoints carry publicly trusted certificates.
+	query := url.Values{"sslmode": {platformTLSMode}}
 	u.RawQuery = query.Encode()
 	return u.String(), nil
 }
+
+// platformTLSMode is the sslmode of every connection Gregale itself opens to
+// a Neon endpoint.
+const platformTLSMode = "verify-full"
 
 func probeQuery(ctx context.Context, dsn string) error {
 	conn, err := pgx.Connect(ctx, dsn)

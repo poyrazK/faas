@@ -86,3 +86,19 @@ The post-release watch and the first-wake 5xx guard mark a release rolled back w
 ## Amendment 5 (2026-11-02): a newer release that never served does not end the watch
 
 The watch judged a release only while it was the newest deployment in its scope, so that a rollback target, which is older than the release it replaced, is not judged as a fresh release. But any newer deployment that had not failed counted: a release staged with `--no-traffic`, one parked for a scheduled start, or a build still running. A second CI push within the window, a staged preview, or scheduling tomorrow's release stopped the watch for the release that served, and its timeline still said "Post-release watch passed". The watch now ends only when a newer release served (it serves now, or `serving_ended_at` records that it did). The timeline ends the watch when a newer release replaced the release before the window closed, and says so, and it no longer names a release that never served as the replacement.
+
+## Amendment 6 (2026-11-05): healthy releases do not monopolize the watch
+
+Each worker retains a process-local `(rollout_completed_at, id)` cursor across
+100-candidate sweeps. Healthy releases remain watched, but later candidates are
+evaluated on following ticks rather than waiting for older releases to age out.
+The cursor wraps after a short or empty page so a later regression in an earlier
+healthy release is still detected. Removed candidates cannot shift the next
+page past another release. The watch window, telemetry comparison and guarded
+rollback remain unchanged; the cursor grants no execution authority.
+
+## Amendment 7 (2026-11-10): latency is judged on the routes both releases served
+
+A production test (Hunt 32 H32-33, 2026-11-09) shipped a release of a small app that added an endpoint which is slow by design (an egress check, 3 s). The release served 34 requests in its window. Three of them were that endpoint and one was a cold health check, so its whole-app p95 was 800 ms against its predecessor's 40 ms, and the watch rolled production back to the predecessor seven minutes after the deploy had exited 0. The predecessor had never served the new endpoint, so the comparison measured the change in traffic mix, not a regression.
+
+When the whole-app p95 rule fires, the watch now runs one more query: the release's and the predecessor's p95 over only the method and route pairs both of them served in their windows (`RequestTelemetrySharedRouteLatency`, long-lived sessions excluded as before). It rolls back only if the canary latency rule (factor, absolute delta, and the 20-request floor on both sides) also holds on that shared sample. The decision summary then says "on routes both releases served". A route only one side served, and a shared sample below the floor, cannot trigger a latency rollback. The 5xx rules and release gates are unchanged, so a new route that fails still rolls back. The query runs only after the whole-app rule fired, so a healthy release costs no extra read. A telemetry reader without the query keeps the whole-app verdict. The in-rollout canary comparison (ADR-1446) is unchanged.

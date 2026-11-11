@@ -264,7 +264,6 @@ LatestDeployment
 LatestHeartbeatStats
 LatestParkedDeploymentForApp
 LatestSnapshotBytes
-LatestSupersededDeployment
 ListAPIConsumersForApp
 ListAPIKeys
 ListAccountCredits
@@ -435,7 +434,6 @@ NodeListDrainable
 NodeListRecoverable
 NodeMarkDrainCompleted
 NodeMarkRecovered
-OAuthLinkByProviderSubject
 OldestDoctorObservation
 OperatorActionTraceCompleteness
 OperatorAuditTraceCoverage
@@ -450,7 +448,6 @@ PaddleOverageDedupeSchema
 PerAccountRateLimitAggregate
 Ping
 ProjectByID
-ProjectByRepo
 ProjectBySlug
 ProjectEnvironmentApprovalByID
 ProjectEnvironmentApprovalByToken
@@ -464,7 +461,6 @@ PutManagedObjectStorageSecret
 PutManagedPostgresSecret
 QueueDeadLetter
 QueuePeek
-QueueState
 ReadActiveInstanceForWakeID
 ReadMFASecret
 ReapExpiredUploadSessions
@@ -503,7 +499,9 @@ RequestTelemetryBaselineP95ByRoute
 RequestTelemetryByDeployment
 RequestTelemetryCoverage
 RequestTelemetryErrorsByRoute
+RequestTelemetryLatencyWeightsByRoute
 ResetAppWebhookDeliveryFromDead
+ResolveRegressionObservationsNotSeenSince
 ResolveStaleRegressionObservations
 ResolveStatusIncident
 RetireRuntimeSnapshot
@@ -598,7 +596,6 @@ UpsertDeploymentSecretFindings
 UpsertDoctorObservation
 UpsertGithubWebhookSecret
 UpsertNodeKey
-UpsertOAuthLink
 UpsertRegressionObservation
 UpsertRuntimeConfig
 UsageByAccount

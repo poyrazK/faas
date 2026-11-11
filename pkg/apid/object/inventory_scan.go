@@ -111,7 +111,7 @@ func ResumeObjectInventory(ctx context.Context, p objectstorage.ObjectV2Lister, 
 			}
 			return err
 		}
-		if len(page.Items) > api.MaxObjectS3ListItems || len(page.CommonPrefixes) != 0 || len(page.Items) == 0 && page.NextCursor != "" {
+		if len(page.Items) > api.MaxObjectS3ListItems || len(page.CommonPrefixes) != 0 {
 			return objectstorage.ErrInvalid
 		}
 		next := *scan

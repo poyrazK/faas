@@ -58,6 +58,9 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 			if err == nil {
 				err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
 			}
+			if err == nil {
+				s.startAllVersionAccounting(callCtx, backend.Provider, b)
+			}
 		}
 	} else {
 		owned, err = s.ownedBucketCleanupRequired(callCtx, b)

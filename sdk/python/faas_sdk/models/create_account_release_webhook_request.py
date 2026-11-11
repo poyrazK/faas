@@ -25,12 +25,13 @@ T = TypeVar("T", bound="CreateAccountReleaseWebhookRequest")
 
 @_attrs_define
 class CreateAccountReleaseWebhookRequest:
-    """Subscribe to account release outcomes and environment GitOps status transitions.
+    """Subscribe to account release outcomes, environment GitOps status transitions, and agent approval requests and
+    decisions.
 
-    Example:
-        {'target_url': 'https://example.com/releases', 'webhook_secret': 'replace-with-random-secret', 'event_filter':
-            ['deployment.live', 'deployment.failed'], 'retry_policy': 'default', 'delivery_format': 'cloudevents',
-            'enabled': True}
+        Example:
+            {'target_url': 'https://example.com/releases', 'webhook_secret': 'replace-with-random-secret', 'event_filter':
+                ['deployment.live', 'deployment.failed'], 'retry_policy': 'default', 'delivery_format': 'cloudevents',
+                'enabled': True}
 
     """
 

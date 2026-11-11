@@ -149,12 +149,27 @@ func TestMCPDeploySecretsFileRejectsGlobalCatalogPin(t *testing.T) {
 }
 
 func TestMCPCallUsesExplicitInputResponsesFile(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		name := "fields"
+		if empty {
+			name = "empty consent"
+		}
+		t.Run(name, func(t *testing.T) { testMCPCallInputResponsesFile(t, empty) })
+	}
+}
+
+func testMCPCallInputResponsesFile(t *testing.T, empty bool) {
+	t.Helper()
 	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 	var output, stderr bytes.Buffer
 	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &output, &stderr, true
 	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
+	content, properties := `{"from":"2026-06-01","to":"2026-06-30"}`, `{"from":{"type":"string"},"to":{"type":"string"}}`
+	if empty {
+		content, properties = `{}`, `{}`
+	}
 	responses := filepath.Join(t.TempDir(), "responses.json")
-	if err := os.WriteFile(responses, []byte(`{"dates":{"action":"accept","content":{"from":"2026-06-01","to":"2026-06-30"}}}`), 0600); err != nil {
+	if err := os.WriteFile(responses, fmt.Appendf(nil, `{"dates":{"action":"accept","content":%s}}`, content), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
@@ -180,12 +195,17 @@ func TestMCPCallUsesExplicitInputResponsesFile(t *testing.T) {
 				t.Errorf("interactive capability missing: %v", caps)
 			}
 			if count == 1 {
-				_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"input_required","requestState":"opaque","inputRequests":{"dates":{"method":"elicitation/create","params":{"mode":"form","message":"Choose dates","requestedSchema":{"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}}}}}}}}`, request.ID)
+				_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"input_required","requestState":"opaque","inputRequests":{"dates":{"method":"elicitation/create","params":{"mode":"form","message":"Approve report?","requestedSchema":{"type":"object","properties":%s}}}}}}`, request.ID, properties)
 				return
 			}
 			inputResponses, _ := request.Params["inputResponses"].(map[string]any)
 			if inputResponses == nil || request.Params["requestState"] != "opaque" {
 				t.Errorf("missing response or opaque state: %v", request.Params)
+			}
+			response, _ := inputResponses["dates"].(map[string]any)
+			gotContent, ok := response["content"].(map[string]any)
+			if response["action"] != "accept" || !ok || empty && len(gotContent) != 0 {
+				t.Error("accepted form response lost its content object")
 			}
 			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete","content":[{"type":"text","text":"preview ready"}]}}`, request.ID)
 		default:
@@ -268,6 +288,61 @@ func TestMCPCLIWaitsForAndResumesTaskHandles(t *testing.T) {
 	output.Reset()
 	if code := main.CmdMCP([]string{"task-cancel", "--url", server.URL + "/mcp", "--task-id", "task-123"}); code != 0 || !strings.Contains(output.String(), `"cancellation_requested": true`) {
 		t.Fatalf("task-cancel exit=%d stdout=%s", code, output.String())
+	}
+}
+
+func TestMCPCLIResumedWaitCancellationIsExplicit(t *testing.T) {
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	var output, stderr bytes.Buffer
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &output, &stderr, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
+	var cancellations atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch request.Method {
+		case "server/discover":
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":[%q],"capabilities":{"tools":{},"extensions":{"%s":{}}}}}`, request.ID, mcphosting.ProtocolVersion, mcphosting.TasksExtensionID)
+		case "tasks/get":
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete","taskId":"saved","status":"working","createdAt":"2026-10-06T12:00:00Z","lastUpdatedAt":"2026-10-06T12:00:00Z","ttlMs":60000}}`, request.ID)
+		case "subscriptions/listen":
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/subscriptions/acknowledged\",\"params\":{\"notifications\":{\"taskIds\":[\"saved\"]}}}\n\n")
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		case "tasks/cancel":
+			cancellations.Add(1)
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete"}}`, request.ID)
+		default:
+			t.Errorf("unexpected method %q", request.Method)
+		}
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want int32
+	}{
+		{"observe", nil, 0},
+		{"cancel", []string{"--cancel-on-timeout"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output.Reset()
+			stderr.Reset()
+			cancellations.Store(0)
+			args := []string{"task-wait", "--url", server.URL + "/mcp", "--task-id", "saved", "--timeout", "100ms"}
+			args = append(args, tc.args...)
+			if code := main.CmdMCP(args); code == 0 || cancellations.Load() != tc.want {
+				t.Fatalf("exit=%d cancellations=%d want=%d stderr=%s", code, cancellations.Load(), tc.want, stderr.String())
+			}
+		})
 	}
 }
 

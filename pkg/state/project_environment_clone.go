@@ -102,7 +102,7 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 	if _, err := m.projectEnvironmentBySlugLocked(clone.ProjectID, clone.TargetSlug); err == nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
 	}
-	apps := m.projectCloneAppsLocked(clone.ProjectID)
+	apps := m.projectCloneAppsLocked(clone.ProjectID, clone.SourceSlug)
 	if clone.CloneOperationID != "" {
 		var records []projectCloneWorkloadRecord
 		clone.capturedValueScopes = map[string]string{}
@@ -314,7 +314,17 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 			Revision: 1, Hash: hash, Settings: captured, CreatedAt: now,
 		}
 		m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
-		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(created.ID, appID)] = spec.ID
+		m.putWorkloadSpecHeadLocked(spec)
+		// A legacy production identity must not become stage-only merely
+		// because its first desired head was created by this clone.
+		if clone.SourceSlug == "production" && clone.CloneOperationID == "" &&
+			m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(source.ID, appID)] == "" {
+			admitted := spec
+			admitted.ID, admitted.EnvironmentID, admitted.EnvironmentSlug = newID(), source.ID, source.Slug
+			admitted.Revision = m.nextWorkloadSpecRevisionLocked(source.ID, appID)
+			m.projectEnvironmentWorkloadSpecs[admitted.ID] = admitted
+			m.putWorkloadSpecHeadLocked(admitted)
+		}
 	}
 	result := m.copyProjectEnvironmentConfigLocked(clone, created.CreatedAt, frozenConfig)
 	result.WorkloadsCopied = len(apps)
@@ -394,12 +404,10 @@ func (m *MemStore) validateProjectCloneTrafficPoliciesLocked(apps map[string]str
 	return nil
 }
 
-func (m *MemStore) projectCloneAppsLocked(projectID string) map[string]string {
+func (m *MemStore) projectCloneAppsLocked(projectID, source string) map[string]string {
 	apps := map[string]string{}
-	for _, app := range m.apps {
-		if app.ProjectID == projectID && app.Status != AppDeleted && app.PreviewOfSlug == "" {
-			apps[app.ID] = app.Slug
-		}
+	for _, id := range m.projectEnvironmentAppIDsLocked(m.projects[projectID].AccountID, projectID, source) {
+		apps[id] = m.apps[id].Slug
 	}
 	return apps
 }

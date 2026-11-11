@@ -439,12 +439,51 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 	if p.ImagePort < 0 || p.ImagePort > 65535 {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: port %d out of range", p.ImagePort)
 	}
+	reader, _ := any(store).(BuildMinutesStore)
+	if problem := buildMinutesProblem(ctx, reader, p); problem != nil {
+		return EnqueueResult{}, problem
+	}
 	sourceStorage, err := sourceBackendFromEnv(ctx)
 	if err != nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: %w", err)
 	}
 
 	return enqueueWithSourceStorage(ctx, store, notif, p, sourceStorage)
+}
+
+// BuildMinutesStore reads the builder time the account paying for an app used
+// this UTC month (ADR-20261104132753). *state.PgStore implements it.
+type BuildMinutesStore interface {
+	BuildSecondsThisMonth(ctx context.Context, appID string, now time.Time) (api.Plan, int64, error)
+}
+
+// buildMinutesNow is the clock of the build-minute check; tests replace it.
+var buildMinutesNow = time.Now
+
+// buildMinutesProblem refuses a build once the paying account used its plan's
+// monthly build minutes (ADR-20261104132753). A store without the read, a read
+// error or an unknown plan admits the build: the quota bounds shared builder
+// time, and an outage of its read must not stop every deploy.
+func buildMinutesProblem(ctx context.Context, reader BuildMinutesStore, p EnqueueParams) *api.Problem {
+	if reader == nil {
+		return nil
+	}
+	plan, usedSeconds, err := reader.BuildSecondsThisMonth(ctx, p.AppID, buildMinutesNow())
+	if err != nil {
+		if p.Log != nil {
+			p.Log.Warn("apidsource: build minutes read failed; admitting build", "app_id", p.AppID, "err", err)
+		}
+		return nil
+	}
+	limits, ok := api.LimitsFor(plan)
+	if !ok || limits.BuildMinutesPerMonth <= 0 {
+		return nil
+	}
+	used := int(usedSeconds / 60)
+	if used < limits.BuildMinutesPerMonth {
+		return nil
+	}
+	return api.ErrPlanLimitBuildMinutes(limits, used)
 }
 
 func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, p EnqueueParams, sourceStorage storage.StorageBackend) (EnqueueResult, error) {

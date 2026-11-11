@@ -69,3 +69,13 @@ func TestResizeViewShowsStorageTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestResizeViewShowsTerminalRejection(t *testing.T) {
+	completed := time.Date(2026, 11, 4, 22, 0, 0, 0, time.UTC)
+	view := ResizeView(managedpostgres.ResizeOperation{
+		State: managedpostgres.ResizeFailed, ErrorCode: "invalid", CompletedAt: completed,
+	})
+	if view.State != "failed" || view.LastErrorCode != "invalid" || view.CompletedAt != "2026-11-04T22:00:00Z" {
+		t.Fatalf("terminal rejection not exposed: %+v", view)
+	}
+}

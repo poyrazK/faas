@@ -17,18 +17,19 @@ import (
 
 type policyNetworkRunner struct {
 	fakeRunner
-	inputMu   sync.Mutex
-	inputs    []string
-	failInput bool
-	entered   chan struct{}
-	release   chan struct{}
-	blockOnce sync.Once
+	inputMu       sync.Mutex
+	inputs        []string
+	failInput     bool
+	failPortsOnly bool
+	entered       chan struct{}
+	release       chan struct{}
+	blockOnce     sync.Once
 }
 
 func (r *policyNetworkRunner) RunInput(ctx context.Context, argv []string, input []byte) error {
 	r.inputMu.Lock()
 	r.inputs = append(r.inputs, string(input))
-	fail := r.failInput
+	fail := r.failInput && (!r.failPortsOnly || strings.Contains(string(input), "flush set"))
 	r.inputMu.Unlock()
 	if r.entered != nil {
 		var blocked bool
@@ -51,6 +52,10 @@ func (r *policyNetworkRunner) inputCount() int {
 	r.inputMu.Lock()
 	defer r.inputMu.Unlock()
 	return len(r.inputs)
+}
+
+func (r *policyNetworkRunner) RunCapture(_ context.Context, _ []string) ([]byte, error) {
+	return []byte("iifname \"tap0\" ip daddr { 8.8.8.0/24 } tcp dport != 25 accept # handle 100\n"), nil
 }
 
 func seedPolicyInstance(m *Manager, id, app string, plan api.Plan) {
@@ -99,7 +104,7 @@ func TestAppEgressPolicyRejectsStaleConflictingAndLegacyWrites(t *testing.T) {
 
 func TestAppEgressPolicyCanonicalRetryAndDefensiveCopies(t *testing.T) {
 	run := &policyNetworkRunner{}
-	m := newTestManager(run, &fakeVMM{})
+	m := newTestManager(run, &fakeVMM{}).WithCaptureRunner(run)
 	seedPolicyInstance(m, "live", "app", api.PlanPro)
 	prefixes := []netip.Prefix{netip.MustParsePrefix("8.8.8.1/24"), netip.MustParsePrefix("1.1.1.0/24"), netip.MustParsePrefix("8.8.8.0/24")}
 	ports := []uint16{6379, 80, 5432, 6379}
@@ -117,8 +122,8 @@ func TestAppEgressPolicyCanonicalRetryAndDefensiveCopies(t *testing.T) {
 }
 
 func TestAppEgressPolicyPartialFailureRetainsNewIntentAndRetries(t *testing.T) {
-	run := &policyNetworkRunner{failInput: true}
-	m := newTestManager(run, &fakeVMM{})
+	run := &policyNetworkRunner{failInput: true, failPortsOnly: true}
+	m := newTestManager(run, &fakeVMM{}).WithCaptureRunner(run)
 	seedPolicyInstance(m, "live", "app", api.PlanPro)
 	// Start with an installed allowlist so the CIDR write uses the live
 	// handle patch and only the subsequent port transaction fails.
@@ -221,6 +226,57 @@ func TestAppEgressPolicyWakeUsesAcceptedProjection(t *testing.T) {
 	}
 	if !run.ran("add element ip faas egress_ports { 80,443,5432 }") {
 		t.Fatal("correct cache did not reach network setup")
+	}
+}
+
+// Found on n2 (ADR-20261106105015 check): the node cached revision 1 (no
+// allowlist) and an app task woke after the app's egress changed to
+// revision 2; the cache replaced the request's newer allowlist and ports.
+func TestAppEgressPolicyWakePrefersNewerRequestRevision(t *testing.T) {
+	cached := []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24")}
+	for _, tc := range []struct {
+		name          string
+		revision      int64
+		wantAllowlist []netip.Prefix
+		wantPorts     []uint16
+	}{
+		{"newer request wins", 3, []netip.Prefix{netip.MustParsePrefix("198.18.0.254/32")}, []uint16{80, 443, 6379}},
+		{"same revision keeps cache", 2, cached, []uint16{80, 443, 5432}},
+		{"older request keeps cache", 1, cached, []uint16{80, 443, 5432}},
+		{"unknown revision keeps cache", 0, cached, []uint16{80, 443, 5432}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run := &fakeRunner{}
+			m := newTestManager(run, &fakeVMM{})
+			if err := m.UpdateAppEgressPolicy(t.Context(), "app", 2, cached, []uint16{5432}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = m.Destroy(context.Background(), "wake") })
+			inst, err := m.Wake(t.Context(), WakeRequest{Instance: "wake", AppID: "app", BaseKey: "/base.ext4", LayerKey: "/layer.ext4", VcpuCount: 1, MemSizeMiB: 512, Plan: api.PlanPro,
+				EgressAllowlist: []string{"198.18.0.254/32"}, EgressPorts: []uint16{6379}, EgressRevision: tc.revision, Snapshot: usableSnapshot()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(inst.Net.EgressAllowlist, tc.wantAllowlist) || !slices.Equal(inst.Net.EgressPorts, tc.wantPorts) {
+				t.Fatalf("wake egress = %v ports %v, want %v ports %v", inst.Net.EgressAllowlist, inst.Net.EgressPorts, tc.wantAllowlist, tc.wantPorts)
+			}
+			if got := m.appEgressPolicies["app"].revision; got != 2 {
+				t.Fatalf("wake changed the cached revision to %d; schedd's push owns it", got)
+			}
+		})
+	}
+}
+
+func TestAppEgressPolicyNewerWakeRequestStaysWithinPlan(t *testing.T) {
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	if err := m.UpdateAppEgressPolicy(t.Context(), "app", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), "wake") })
+	_, err := m.Wake(t.Context(), WakeRequest{Instance: "wake", AppID: "app", BaseKey: "/base.ext4", LayerKey: "/layer.ext4", VcpuCount: 1, MemSizeMiB: 512, Plan: api.PlanHobby,
+		EgressPorts: []uint16{5432}, EgressRevision: 2, Snapshot: usableSnapshot()})
+	if err == nil {
+		t.Fatal("a newer request with ports beyond the plan replaced the plan-checked cache")
 	}
 }
 

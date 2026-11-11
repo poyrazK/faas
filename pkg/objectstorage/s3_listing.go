@@ -42,6 +42,8 @@ func objectListingPage(out *s3.ListObjectsV2Output, r ObjectListRequest) (Object
 			return ObjectPage{}, ErrUnavailable
 		}
 		page.NextCursor = next // Tokens are opaque; only keys are URL-decoded.
+	} else if aws.ToString(out.NextContinuationToken) != "" {
+		return ObjectPage{}, ErrUnavailable
 	}
 	return page, nil
 }
@@ -70,6 +72,8 @@ func multipartPartsPage(out *s3.ListPartsOutput, bucket string, r MultipartListP
 			return MultipartPartsPage{}, ErrUnavailable
 		}
 		page.NextPartNumberMarker = last
+	} else if next := aws.ToString(out.NextPartNumberMarker); next != "" && next != "0" {
+		return MultipartPartsPage{}, ErrUnavailable
 	}
 	return page, nil
 }

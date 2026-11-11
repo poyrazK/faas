@@ -196,12 +196,20 @@ func LoadConfig(path string) (*Config, error) {
 
 // overlayQuietPauseUnbilled applies FAAS_QUIET_PAUSE_UNBILLED over
 // [meter] quiet_pause_unbilled (ADR-20261023171905). A value other than off,
-// shadow or on refuses to start rather than guessing how to bill.
+// shadow or on refuses to start rather than guessing how to bill. It also
+// applies FAAS_BILLING_USAGE_SOURCE over [meter] billing_usage_source
+// (ADR-20261107105126) the same way.
 func (c *Config) overlayQuietPauseUnbilled() error {
 	if v := os.Getenv("FAAS_QUIET_PAUSE_UNBILLED"); v != "" {
 		c.Meter.QuietPauseUnbilled = v
 	}
 	if _, err := meter.ParseQuietPauseMode(c.Meter.QuietPauseUnbilled); err != nil {
+		return fmt.Errorf("meterd: %w", err)
+	}
+	if v := os.Getenv("FAAS_BILLING_USAGE_SOURCE"); v != "" {
+		c.Meter.BillingUsageSource = v
+	}
+	if _, err := meter.ParseUsageSource(c.Meter.BillingUsageSource); err != nil {
 		return fmt.Errorf("meterd: %w", err)
 	}
 	return nil

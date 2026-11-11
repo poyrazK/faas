@@ -29,7 +29,18 @@ func (t *memFinancialComputeTxn) workloadScopes(key, instance, deployment string
 	if d, ok := t.m.deployments[deployment]; !ok || d.AppID != app.ID {
 		deployment = ""
 	}
-	return computeScopes{Project: app.ProjectID, Deployment: deployment, Environment: t.m.computeDeploymentEnvironmentLocked(deployment)}, nil
+	return computeScopes{Project: app.ProjectID, Deployment: deployment, Environment: t.m.computeDeploymentEnvironmentLocked(deployment), OrgPaid: t.m.computeOrgPaidLocked(app)}, nil
+}
+
+// computeOrgPaidLocked mirrors the org_paid column of PgStore's strict
+// compute reads: an organization that owns its resources pays for app, so its
+// creator's strict budgets never cover it (ADR-20261107160000).
+func (m *MemStore) computeOrgPaidLocked(app App) bool {
+	if app.OrgID == "" {
+		return false
+	}
+	org, ok := m.orgs[app.OrgID]
+	return ok && !org.Personal && org.ResourceOwnershipEnabled
 }
 
 // computeDeploymentEnvironmentLocked mirrors the SQL function

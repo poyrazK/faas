@@ -56,7 +56,10 @@ type traceBroker struct {
 type traceAppEntry struct {
 	accountID string
 	enabled   bool
-	expires   time.Time
+	// metrics is tracing.metrics: the app may send metric frames
+	// (ADR-20261108160000 slice B).
+	metrics bool
+	expires time.Time
 }
 
 const (
@@ -119,6 +122,7 @@ func (b *traceBroker) appTracing(ctx context.Context, appID string) (traceAppEnt
 	entry = traceAppEntry{
 		accountID: app.AccountID,
 		enabled:   app.Manifest.Tracing != nil && app.Manifest.Tracing.Enabled,
+		metrics:   app.Manifest.Tracing != nil && app.Manifest.Tracing.Enabled && app.Manifest.Tracing.Metrics,
 		expires:   now.Add(traceAppCacheTTL),
 	}
 	b.mu.Lock()
@@ -174,7 +178,7 @@ func (b *traceBroker) handle(ctx context.Context, instance string, conn net.Conn
 		return "limited", fmt.Errorf("trace broker busy for instance")
 	}
 	defer b.releaseVM(instance)
-	codec, logs, payload, reason, err := readTraceFrame(conn)
+	codec, signal, payload, reason, err := readTraceFrame(conn)
 	if err != nil {
 		if reason == "protocol" {
 			ack = api.TraceAckRejected
@@ -201,11 +205,15 @@ func (b *traceBroker) handle(ctx context.Context, instance string, conn net.Conn
 		ack = api.TraceAckRejected
 		return "disabled", fmt.Errorf("tracing disabled for instance")
 	}
+	if signal == api.TraceCodecMetricsSignal && !app.metrics {
+		ack = api.TraceAckRejected
+		return "disabled", fmt.Errorf("tracing.metrics disabled for instance")
+	}
 	req := &apidpb.IngestGuestSpansRequest{
 		AccountId: identity.AccountID, AppId: identity.AppID, DeploymentId: identity.DeploymentID,
 		InstanceId: instance, Codec: uint32(codec), Payload: payload,
 	}
-	outcome, reason, err := b.forward(requestCtx, req, logs)
+	outcome, reason, err := b.forward(requestCtx, req, signal)
 	if err != nil {
 		if reason == "unsupported" {
 			ack = api.TraceAckRejected
@@ -219,44 +227,55 @@ func (b *traceBroker) handle(ctx context.Context, instance string, conn net.Conn
 // readTraceFrame reads one length-prefixed frame within the connection's
 // deadline and api.TraceMaxFrameBytes, and splits its codec byte. On error
 // the reason is "read", or "protocol" for a frame that breaks the protocol.
-func readTraceFrame(conn io.Reader) (codec byte, logs bool, payload []byte, reason string, err error) {
+func readTraceFrame(conn io.Reader) (codec, signal byte, payload []byte, reason string, err error) {
 	var length [4]byte
 	if _, err := io.ReadFull(conn, length[:]); err != nil {
-		return 0, false, nil, "read", err
+		return 0, 0, nil, "read", err
 	}
 	n := binary.BigEndian.Uint32(length[:])
 	if n < 2 || n > api.TraceMaxFrameBytes+1 {
-		return 0, false, nil, "protocol", fmt.Errorf("trace frame exceeds bounds")
+		return 0, 0, nil, "protocol", fmt.Errorf("trace frame exceeds bounds")
 	}
 	frame := make([]byte, int(n))
 	if _, err := io.ReadFull(conn, frame); err != nil {
-		return 0, false, nil, "read", err
+		return 0, 0, nil, "read", err
 	}
-	codec, logs = api.SplitTraceCodec(frame[0])
+	codec, signal, ok := api.TraceFrameSignal(frame[0])
+	if !ok {
+		return 0, 0, nil, "protocol", fmt.Errorf("trace frame carries two signals")
+	}
 	if _, _, ok := api.TraceCodecMediaType(codec); !ok {
-		return 0, false, nil, "protocol", fmt.Errorf("unknown trace frame codec")
+		return 0, 0, nil, "protocol", fmt.Errorf("unknown trace frame codec")
 	}
-	return codec, logs, frame[1:], "", nil
+	return codec, signal, frame[1:], "", nil
 }
 
 // forward sends one frame to apid and returns its ingest outcome. An apid
 // from before log forwarding (release N-1) cannot ingest logs and answers
 // Unimplemented; the reason "unsupported" tells the caller to refuse the
 // frame permanently so the SDK stops retrying.
-func (b *traceBroker) forward(ctx context.Context, req *apidpb.IngestGuestSpansRequest, logs bool) (outcome, reason string, err error) {
-	if !logs {
+//
+// Metric frames (ADR-20261108160000 slice B) go to IngestGuestMetrics, with
+// the same Unimplemented handling for an apid that predates it.
+func (b *traceBroker) forward(ctx context.Context, req *apidpb.IngestGuestSpansRequest, signal byte) (outcome, reason string, err error) {
+	var got interface{ GetOutcome() string }
+	switch signal {
+	case api.TraceCodecLogsSignal:
+		got, err = b.client.IngestGuestLogs(ctx, req)
+	case api.TraceCodecMetricsSignal:
+		got, err = b.client.IngestGuestMetrics(ctx, req)
+	default:
 		resp, err := b.client.IngestGuestSpans(ctx, req)
 		if err != nil {
 			return "", "forward", err
 		}
 		return resp.GetOutcome(), "", nil
 	}
-	resp, err := b.client.IngestGuestLogs(ctx, req)
 	if status.Code(err) == codes.Unimplemented {
 		return "", "unsupported", err
 	}
 	if err != nil {
 		return "", "forward", err
 	}
-	return resp.GetOutcome(), "", nil
+	return got.GetOutcome(), "", nil
 }

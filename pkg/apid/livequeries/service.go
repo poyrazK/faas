@@ -244,7 +244,7 @@ func (s *Service) issueLogin(ctx context.Context, db managedpostgres.Database) (
 		return nil, err
 	}
 	recipient := s.Recipient.String()
-	return &livekeys.Login{Sealed: sealed, Recipient: recipient, Identity: live.ProviderIdentityID, Slot: slot, Awake: live.Awake,
+	return &livekeys.Login{Sealed: sealed, Recipient: recipient, Identity: live.ProviderIdentityID, DataResourceID: db.DataResourceID, Slot: slot, Awake: live.Awake,
 		Signature: s.Signer.Sign(livekeys.SignatureKindLogin, db.ID, "", recipient, sealed)}, nil
 }
 

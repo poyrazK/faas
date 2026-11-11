@@ -2,9 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { GitHubAccountConnections } from '../models/GitHubAccountConnections.js';
 import type { GitHubActivityRetryResponse } from '../models/GitHubActivityRetryResponse.js';
+import type { GitHubConnectionManageRequest } from '../models/GitHubConnectionManageRequest.js';
+import type { GitHubConnectionVerification } from '../models/GitHubConnectionVerification.js';
 import type { GitHubDeploymentPolicy } from '../models/GitHubDeploymentPolicy.js';
 import type { GitHubDeploymentPolicyPatch } from '../models/GitHubDeploymentPolicyPatch.js';
+import type { GitHubInstallationSummary } from '../models/GitHubInstallationSummary.js';
 import type { GitHubInstallMutationRequest } from '../models/GitHubInstallMutationRequest.js';
 import type { GitHubInstallStatus } from '../models/GitHubInstallStatus.js';
 import type { InstallBindRequest } from '../models/InstallBindRequest.js';
@@ -14,6 +18,75 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class GithubService {
+  /**
+   * List this account's GitHub deployment connections.
+   * @returns GitHubAccountConnections Deployment installations and a fresh management CSRF token; credentials are never returned.
+   * @throws ApiError
+   */
+  public static listGitHubAccountConnections(): CancelablePromise<GitHubAccountConnections> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/install/connections',
+    });
+  }
+  /**
+   * Remove only this account's deployment access and bindings. Preserve login and other accounts.
+   * @returns void
+   * @throws ApiError
+   */
+  public static disconnectGitHubAccountConnection({
+    installationId,
+    requestBody,
+  }: {
+    /**
+     * GitHub installation whose deployment connection should be removed from this account.
+     */
+    installationId: number,
+    requestBody: GitHubConnectionManageRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/install/connections/{installationID}',
+      path: {
+        'installationID': installationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Missing or invalid management CSRF token.`,
+      },
+    });
+  }
+  /**
+   * Verify live GitHub repository access and installation permissions.
+   * @returns GitHubConnectionVerification Current access granted on GitHub.
+   * @throws ApiError
+   */
+  public static verifyGitHubAccountConnection({
+    installationId,
+    requestBody,
+  }: {
+    /**
+     * Connected GitHub installation whose current access should be verified for this account.
+     */
+    installationId: number,
+    requestBody: GitHubConnectionManageRequest,
+  }): CancelablePromise<GitHubConnectionVerification> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/install/connections/{installationID}/verify',
+      path: {
+        'installationID': installationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Verification requires a valid management CSRF token and installation identifier.`,
+        404: `Installation not connected to this account.`,
+        503: `GitHub verification temporarily unavailable.`,
+      },
+    });
+  }
   /**
    * List repos the user's GitHub App installation can see.
    * Cookie-session-authenticated (NOT API-key). Hydrates the
@@ -605,6 +678,38 @@ export class GithubService {
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List the GitHub installations a company organization owns.
+   * Company projects link repositories only through these installations. An owner or admin connects one from Connect GitHub with the organization selected. Members' personal installations are not listed; tokens are never returned.
+   * @returns GitHubInstallationSummary The organization's installations; empty before one is connected or before billing adoption.
+   * @throws ApiError
+   */
+  public static listOrgGitHubInstallations({
+    organization,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+  }): CancelablePromise<Array<GitHubInstallationSummary>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/github/installations',
+      path: {
+        'organization': organization,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });

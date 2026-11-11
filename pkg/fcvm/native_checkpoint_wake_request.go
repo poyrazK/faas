@@ -36,7 +36,7 @@ func checkpointWakeRequestDigest(frame state.ProjectEnvironmentCloneWakeDispatch
 	if req.Instance != frame.InstanceID || req.AppID != frame.AppID || req.DeploymentID != frame.DeploymentID || req.Plan != lease.Plan || req.ExecutionOnly || req.AppTaskOnly || req.KeepPaused || req.ExportDir != "" || req.BuildTimeoutSec != 0 || req.ExecutionLeaseToken != "" || len(req.ExecutionOutboundIntegrationIDs) != 0 || len(req.preparedSecretsEnvJSON) != 0 || len(req.preparedAPIEnvJSON) != 0 {
 		return "", errors.New("native checkpoint wake: request differs from original ordinary workload")
 	}
-	if req.MemSizeMiB <= 0 || req.VcpuCount <= 0 || req.BaseKey == "" || req.LayerKey == "" || lease.MemoryMaxMiB != wakeGuestMemoryMiB(req) || lease.CPUMillicores != req.CPUMillicores || lease.DisableStartupCPUBoost != req.DisableStartupCPUBoost || lease.BuildTimeoutSec != 0 {
+	if req.MemSizeMiB <= 0 || req.VcpuCount <= 0 || req.BaseKey == "" || req.LayerKey == "" || lease.MemoryMaxMiB != wakeGuestMemoryMiB(req) || lease.CPUMillicores != req.CPUMillicores || lease.DisableStartupCPUBoost != req.DisableStartupCPUBoost || lease.CPUWeight != req.CPUWeight || lease.CPUUncapped != req.CPUUncapped || lease.BuildTimeoutSec != 0 {
 		return "", errors.New("native checkpoint wake: request differs from physical resource binding")
 	}
 	if (frame.Method == "cold_boot") != (req.Snapshot == nil) || (req.Snapshot != nil && (req.Snapshot.DeploymentID != frame.DeploymentID || req.Snapshot.Networkless || req.Snapshot.Stale || req.Snapshot.StorageKey == "" || req.Snapshot.FCVersion == "" || (req.Snapshot.VMStatePath == "" && req.Snapshot.VMStateStorageKey == ""))) {

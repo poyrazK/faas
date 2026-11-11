@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // The caller holds the source environment lock; app locks also fence legacy
@@ -23,6 +24,17 @@ func copyProjectEnvironmentWorkloadSpecs(ctx context.Context, tx pgx.Tx, clone P
 	if err != nil {
 		return mapErr(err)
 	}
+	var scopes map[string]string
+	if err := json.Unmarshal(clone.sourceValueScopesJSON, &scopes); err != nil {
+		return err
+	}
+	selected := apps[:0]
+	for _, app := range apps {
+		if scopes[app.ID] != "" {
+			selected = append(selected, app)
+		}
+	}
+	apps = selected
 	captures := map[string]projectCloneWorkloadRecord{}
 	if clone.CloneOperationID != "" {
 		records, err := cloneWorkloadRecordsDB(ctx, tx, clone.AccountID, clone.ProjectID, clone.CloneOperationID)
@@ -78,6 +90,14 @@ func copyProjectEnvironmentWorkloadSpecs(ctx context.Context, tx pgx.Tx, clone P
 		raw, err := json.Marshal(settings)
 		if err != nil {
 			return ErrInvalidArgument
+		}
+		if source.ID == "" && clone.SourceSlug == "production" && clone.CloneOperationID == "" {
+			if err := sqlc.New().AdmitLegacyProjectEnvironmentCloneSource(ctx, tx, sqlc.AdmitLegacyProjectEnvironmentCloneSourceParams{
+				ProjectID: mustPgUUID(clone.ProjectID), AppID: mustPgUUID(app.ID),
+				SpecID: mustPgUUID(uuid.NewString()), ConfigHash: hash, Settings: raw,
+			}); err != nil {
+				return mapErr(err)
+			}
 		}
 		id := uuid.NewString()
 		if _, err := tx.Exec(ctx, `insert into project_environment_workload_specs

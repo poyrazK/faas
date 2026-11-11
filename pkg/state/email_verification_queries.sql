@@ -19,3 +19,10 @@ WITH candidate AS MATERIALIZED (
 )
 UPDATE accounts a SET email_verified_at=coalesce(a.email_verified_at,clock_timestamp())
 FROM consumed c WHERE a.id=c.account_id RETURNING a.id;
+
+-- The account a usable verification link belongs to, without consuming it:
+-- the link verifies only from a browser signed in to that account
+-- (ADR 20261109120000).
+-- name: EmailVerificationTokenAccount :one
+SELECT t.account_id FROM email_verification_tokens t
+WHERE t.token_hash=$1 AND t.consumed_at IS NULL AND t.expires_at>clock_timestamp();

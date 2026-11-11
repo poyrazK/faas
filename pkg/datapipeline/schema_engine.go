@@ -58,12 +58,19 @@ func reconcileSchema(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 	if json.Unmarshal(spec, &baseline) != nil {
 		return false, false, ErrConflict
 	}
+	copy(relations, preserveMissingMetadata(relations, baseline))
 	if len(baseline) == 0 && saved == hash {
 		encoded, _ := json.Marshal(relations)
 		_, err = target.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET schema_spec=$3 WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation, encoded)
 		return false, false, err
 	}
 	same := saved == hash && reflect.DeepEqual(baseline, relations)
+	if sourceQualificationFence(p, change) && phase == "verifying" {
+		if !same {
+			return false, false, &blocked{"source_schema_changed", true}
+		}
+		return false, false, nil
+	}
 	if same {
 		if phase == "" && p.SchemaChange != nil && p.SchemaChange.State == "pending" && p.SchemaChange.ID != change {
 			copy := *p.SchemaChange

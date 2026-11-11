@@ -333,12 +333,16 @@ client pool, so on Neon runtime credentials use its pooled endpoint
   still owed, so a transaction keeps its server. A client that leaves
   mid-transaction gets its server closed, which rolls the transaction
   back, rather than returned.
-- **Prepared statements.** Named protocol-level prepared statements (pgx
-  caches them; psycopg prepares after five uses) are renamed by content
+- **Prepared statements.** Named and unnamed protocol-level prepared statements
+  (pgx caches named statements; psycopg prepares after five uses) are renamed by content
   (`gregale_<hash>`), prepared again on whichever server runs them, and
   answered in order through a queue of expected responses, as pgbouncer
   1.21+ does. A client's Close only forgets its name. A server holding over
-  1000 statements is closed when released.
+  1000 statements is closed when released. Each client owns its unnamed
+  statement across backend borrows; simple queries, Close and failed Parse
+  invalidate it with PostgreSQL's protocol semantics (ADR-20261105123632).
+  Skipped Parse and Close changes roll back for every client statement
+  name after an extended-protocol error (ADR-20261105130932).
 - **Limits.** At most `pool_max_servers` (default 10, at most 20) servers
   per database. A role waiting at the cap reclaims another role's idle
   server. A transaction waits up to `pool_wait` (30 s), then the client gets
@@ -834,26 +838,32 @@ guest PostgreSQL --archive_command--> guest-init archive-wal --vsock 5434-->
     base backup under its own markers (`<db>/uploaded-offsite/`). It works
     apart from the bucket's uploader and releases the store's lock while
     it uploads, so a slow or unreachable mirror never delays the bucket's
-    recovery point, pruning or drops.
+    recovery point or drops. Pruning verifies the mirror's holds outside
+    that lock (ADR-20261105120854).
   - Changes the mirror must follow go first into a local journal
     (`.offsite-journal/` under the store root, one fsynced file per
     entry, replayed in order). That covers every pruned file, a dropped
     database's whole archive, each hold placed or removed, and each file
     a handoff releases before the mirror uploaded it. A copy reads from
-    the bucket. Pruning and drops never wait on the mirror.
+    the bucket. Drops never wait on the mirror; pruning defers deletion
+    when either tier's hold inventory cannot be verified.
   - The mirror deletes only what the journal says the store deleted. It
-    never infers a deletion from what the bucket lacks, so an emptied
-    bucket cannot empty the mirror.
+    never infers a deletion from what the bucket lacks. Replay also
+    protects the mirror's own held recovery anchor, deferring unsafe
+    queued deletions while allowing later hold releases to proceed.
   - Reads fall back to the mirror. A WAL file or a backup the bucket fails
-    to serve or lacks comes from it, and when the bucket cannot be listed
-    the mirror's catalog stands in.
+    to serve or lacks comes from it. The mirror's catalog stands in when
+    the bucket cannot be listed, is empty, or has no backup consistent at
+    the requested restore time.
   - `dbarchive_offsite_pending_oldest_seconds` is the mirror's recovery
     point: the age of the oldest file or journal entry not yet applied.
     `FaasDatabaseArchiveOffsiteStale` warns past an hour.
-  - Holds and pruning still read the bucket alone. While it is down,
-    pruning stops, which is the safe failure. If it is gone for good, the
-    operator makes the mirror the bucket (runbook), and its holds come
-    along.
+  - Hold mutations and lookups use the primary bucket. Pruning verifies
+    both tiers and honors their earliest pin, even after primary metadata
+    loss. An unavailable tier defers destructive pruning, without
+    blocking primary uploads. A released hold can retain data until its
+    release reaches the mirror. For permanent primary loss, the operator
+    makes the mirror the bucket (runbook), and its holds come along.
   - A node lost before it mirrored everything leaves those files only in
     the bucket, and no node uploads them again. schedd's lost-node sweep
     already has a live node prune that database's bucket archive. That

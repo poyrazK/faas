@@ -99,9 +99,12 @@ func newContractFixture(t *testing.T, store Store) canaryStoreFixture {
 	if err = store.(ProjectMigrationTaskRuntimeStore).BindProjectMigrationTaskRuntime(t.Context(), task, fence); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tasks.MarkAppTaskRunning(t.Context(), task.ID, *task.LeaseToken, at.Add(time.Millisecond)); err != nil {
+	task, err = tasks.MarkAppTaskRunning(t.Context(), task.ID, *task.LeaseToken, at.Add(time.Millisecond))
+	if err != nil {
 		t.Fatal(err)
 	}
+	// Release admission may advance the start beyond the fixture clock.
+	at = task.UpdatedAt
 	zero := 0
 	if _, err = tasks.CompleteAppTask(t.Context(), CompleteAppTaskParams{ID: task.ID, LeaseToken: *task.LeaseToken, Status: AppTaskSucceeded, ExitCode: &zero, FinishedAt: at.Add(2 * time.Millisecond)}); err != nil {
 		t.Fatal(err)

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -13,6 +14,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/dbcreds"
 	"github.com/onebox-faas/faas/pkg/overlay"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // ScheddWaker wakes databases through schedd.
@@ -25,15 +27,26 @@ func NewScheddWaker(client scheddpb.ScheddClient) *ScheddWaker {
 	return &ScheddWaker{client: client}
 }
 
-func (w *ScheddWaker) Wake(ctx context.Context, databaseID string) (string, error) {
+func (w *ScheddWaker) Wake(ctx context.Context, databaseID string) (Backend, error) {
 	rt, err := w.client.WakeDatabase(ctx, &scheddpb.DatabaseRef{DatabaseId: databaseID})
 	if err != nil {
-		return "", err
+		return Backend{}, err
 	}
-	if rt.GetVmmdTarget() == "" {
-		return "", errors.New("pgproxy: schedd returned no vmmd target")
+	if rt.GetVmmdTarget() == "" || rt.GetNodeId() == "" {
+		return Backend{}, errors.New("pgproxy: schedd returned no vmmd target or node")
 	}
-	return rt.GetVmmdTarget(), nil
+	return Backend{Target: rt.GetVmmdTarget(), Node: rt.GetNodeId()}, nil
+}
+
+// nodeCN is the CN a database node's vmmd leaf carries: <id>.faas
+// (`gregalectl pki issue-bundle --box-role database --cn <id>`), as
+// dbsched.NodeCN.
+func nodeCN(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" || strings.HasSuffix(id, ".faas") {
+		return id
+	}
+	return id + ".faas"
 }
 
 func (w *ScheddWaker) Touch(ctx context.Context, databaseID string, egressBytes int64) error {
@@ -48,7 +61,7 @@ type VmmdDialer struct {
 	dial func(ctx context.Context, target string, tlsCfg *tls.Config) (*grpc.ClientConn, error)
 
 	mu    sync.Mutex
-	conns map[string]*grpc.ClientConn
+	conns map[Backend]*grpc.ClientConn
 }
 
 // NewVmmdDialer dials vmmd through the overlay with pgproxyd's client mTLS.
@@ -60,35 +73,39 @@ func NewVmmdDialer(tlsCfg *tls.Config) *VmmdDialer {
 
 // NewVmmdDialerWith is NewVmmdDialer with an injected dialer.
 func NewVmmdDialerWith(tlsCfg *tls.Config, dial func(context.Context, string, *tls.Config) (*grpc.ClientConn, error)) *VmmdDialer {
-	return &VmmdDialer{tls: tlsCfg, dial: dial, conns: map[string]*grpc.ClientConn{}}
+	return &VmmdDialer{tls: tlsCfg, dial: dial, conns: map[Backend]*grpc.ClientConn{}}
 }
 
 var _ SessionDialer = (*VmmdDialer)(nil)
 
-func (d *VmmdDialer) client(ctx context.Context, target string) (vmmdpb.VmmdClient, error) {
+func (d *VmmdDialer) client(ctx context.Context, backend Backend) (vmmdpb.VmmdClient, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	conn, ok := d.conns[target]
+	conn, ok := d.conns[backend]
 	if !ok {
 		var err error
-		if conn, err = d.dial(ctx, target, d.tls); err != nil {
+		// Only the woken node's vmmd leaf answers for it; a connection is
+		// never shared between nodes with one target (ADR-20261108124106).
+		if conn, err = d.dial(ctx, backend.Target, wire.ExpectPeerCN(d.tls, nodeCN(backend.Node))); err != nil {
 			return nil, err
 		}
-		d.conns[target] = conn
+		d.conns[backend] = conn
 	}
 	return vmmdpb.NewVmmdClient(conn), nil
 }
 
 // Dial opens a session. The stream outlives ctx, which only bounds setup;
 // Close ends it.
-func (d *VmmdDialer) Dial(ctx context.Context, target, databaseID string) (io.ReadWriteCloser, error) {
-	c, err := d.client(ctx, target)
+func (d *VmmdDialer) Dial(ctx context.Context, backend Backend, databaseID string) (io.ReadWriteCloser, error) {
+	c, err := d.client(ctx, backend)
 	if err != nil {
 		return nil, err
 	}
 	// The session must outlive the setup context, so it keeps ctx's values
 	// but not its cancellation.
 	streamCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stopSetup := context.AfterFunc(ctx, cancel)
+	defer stopSetup()
 	stream, err := c.DatabaseSession(streamCtx)
 	if err != nil {
 		cancel()
@@ -98,6 +115,10 @@ func (d *VmmdDialer) Dial(ctx context.Context, target, databaseID string) (io.Re
 		cancel()
 		return nil, err
 	}
+	if !stopSetup() || ctx.Err() != nil {
+		cancel()
+		return nil, ctx.Err()
+	}
 	return &sessionStream{stream: stream, cancel: cancel}, nil
 }
 
@@ -105,9 +126,9 @@ func (d *VmmdDialer) Dial(ctx context.Context, target, databaseID string) (io.Re
 func (d *VmmdDialer) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for target, conn := range d.conns {
+	for key, conn := range d.conns {
 		_ = conn.Close()
-		delete(d.conns, target)
+		delete(d.conns, key)
 	}
 	return nil
 }
@@ -151,8 +172,8 @@ func (s *sessionStream) Write(p []byte) (int, error) {
 }
 
 func (s *sessionStream) Close() error {
-	_ = s.stream.CloseSend()
 	s.cancel()
+	_ = s.stream.CloseSend()
 	return nil
 }
 

@@ -21,6 +21,7 @@ const (
 	devDiagBindFailure     = "developer_bind_failure"
 	devDiagUpstreamFailure = "developer_upstream_failure"
 	devDiagSeedFailed      = "developer_seed_failed"
+	devDiagAPIUnreachable  = "developer_api_unreachable"
 )
 
 type devDiagnostic struct {
@@ -166,6 +167,11 @@ func decorateDevDiagnosticProblem(p *api.Problem, code string) {
 		p.Hint = "the source is live, but the seed command did not complete"
 		p.Why = "the seed runs inside the developer app as a one-off task with DATABASE_URL bound, and that task did not succeed"
 		p.Fix = "• fix the seed command or script (it must be safe to run again)\n• save again to retry the seed after the next live sync\n• or restart with --reseed to run it unconditionally"
+	case devDiagAPIUnreachable:
+		p.Title = "Could not reach the Gregale API"
+		p.Hint = "the CLI's request to the API failed or timed out before an answer came back"
+		p.Why = "the sync request never got a response, so nothing ran on the platform side: this is a network or API problem, not a build or app failure"
+		p.Fix = "• check your network connection and `gregale doctor`\n• save again to retry the sync"
 	case devDiagSyncFailed:
 		p.Title = "Developer sync failed"
 		p.Hint = "the latest source did not become live"
@@ -183,6 +189,8 @@ func errString(err error) string {
 func inferDevDiagnosticCode(detail, phase, reason string) string {
 	text := strings.ToLower(detail + " " + reason)
 	switch {
+	case strings.Contains(text, "could not reach the api"), strings.Contains(text, "timeout awaiting response headers"):
+		return devDiagAPIUnreachable
 	case strings.Contains(text, "out of memory"), strings.Contains(text, "oomkilled"), strings.Contains(text, "oom-kill"):
 		if phase == "image_build" || phase == "build" {
 			return api.CodeStageImageBuildOOM
@@ -195,7 +203,10 @@ func inferDevDiagnosticCode(detail, phase, reason string) string {
 			}
 			return api.CodeStageSnapshotPrepareTimeout
 		}
-		return api.CodeStageImageBuildTimeout
+		if phase == "image_build" || phase == "build" {
+			return api.CodeStageImageBuildTimeout
+		}
+		return devDiagSyncFailed
 	case strings.Contains(text, "cannot find module"), strings.Contains(text, "module not found"), strings.Contains(text, "modulenotfounderror"), strings.Contains(text, "no module named"):
 		return devDiagImportFailure
 	case strings.Contains(text, "eaddrinuse"), strings.Contains(text, "address already in use"):

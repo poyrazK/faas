@@ -16,7 +16,7 @@ export type PlanDetectedBy = {
   /**
    * closed vocabulary — the detector that won identity for this workload
    */
-  detector: 'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'app_yaml' | 'other';
+  detector: 'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'app_yaml' | 'functions' | 'other';
   /**
    * Concrete source marker for the winning detector, such as compose.yaml or Procfile; excludes the workload name.
    */
@@ -36,6 +36,6 @@ export type PlanDetectedBy = {
    * get its own workload?" — it merged into the compose `web`.
    *
    */
-  merged_from?: Array<'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'app_yaml' | 'other'>;
+  merged_from?: Array<'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'app_yaml' | 'functions' | 'other'>;
 };
 

@@ -73,6 +73,30 @@ tests:
                 unset. Customers' SLO budgets then read as no data and slo_budget alerts never fire.
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md
 
+  - name: a synthetic backlog past one interval fires, a short one does not
+    interval: 1m
+    input_series:
+      - series: meterd_observability_loop_backlog_seconds{job="meterd",instance="a",loop="synthetic_checks"}
+        values: 420x40
+      - series: meterd_observability_loop_backlog_seconds{job="meterd",instance="b",loop="synthetic_checks"}
+        values: 120x40
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasSyntheticChecksBacklogged
+        exp_alerts:
+          - exp_labels:
+              job: meterd
+              instance: a
+              loop: synthetic_checks
+              severity: warn
+              component: meterd
+              family: customer_observability
+              public_status: internal
+            exp_annotations:
+              summary: Synthetic checks are waiting more than 5 minutes for a probe slot
+              description: meterd's synthetic runner has had due checks waiting over 5 minutes for 15 minutes. One account holds at most two probes, so this is the fleet's checks outgrowing the runner's slots, or probes generally slow through the edge. Customers' checks run late and their alerts can go unknown.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md
+
   - name: platform item failures fire, customers' failing checks do not
     interval: 1m
     input_series:

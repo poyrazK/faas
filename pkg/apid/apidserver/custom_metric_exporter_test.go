@@ -55,10 +55,38 @@ func TestCustomMetricExporterCachesWithinScrapeWindow(t *testing.T) {
 	}
 }
 
+// adr: 20261108160000 — slice C: fresh labelled series are exported with
+// their canonical key, next to the metric's aggregate.
+func TestCustomMetricExporterExportsLabelledSeries(t *testing.T) {
+	store := state.NewMemStore()
+	now := time.Now()
+	lim := state.CustomMetricSeriesLimits{Names: 5, SeriesPerMetric: 5, SeriesPerApp: 5, GaugeFreshness: 5 * time.Minute}
+	for key, v := range map[string]float64{"queue=a": 3, "queue=b": 7} {
+		if err := store.PutCustomMetricSeries(context.Background(), "app-1", state.CustomMetricSeriesWrite{
+			Name: "depth", SeriesKey: key, Labels: map[string]string{"queue": key[6:]}, Kind: state.CustomMetricKindGauge, Value: v, ObservedAt: now,
+		}, lim); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exporter := newCustomMetricExporter(store, func() time.Time { return now }, nil)
+	want := `
+# HELP gregale_app_custom_metric Latest fresh value an app pushed for a custom metric (ADR-202/ADR-745).
+# TYPE gregale_app_custom_metric gauge
+gregale_app_custom_metric{app="app-1",name="depth"} 7
+# HELP gregale_app_custom_metric_series Latest fresh value of one labelled series of an app's custom metric (ADR-20261108160000).
+# TYPE gregale_app_custom_metric_series gauge
+gregale_app_custom_metric_series{app="app-1",labels="queue=a",name="depth"} 3
+gregale_app_custom_metric_series{app="app-1",labels="queue=b",name="depth"} 7
+`
+	if err := testutil.CollectAndCompare(exporter, strings.NewReader(want)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCustomMetricExporterExportsNothingOnReadFailure(t *testing.T) {
 	store := &countingExportStore{err: errors.New("db down")}
 	exporter := newCustomMetricExporter(store, time.Now, nil)
-	if got := exporter.samples(); len(got) != 0 {
+	if got, _ := exporter.samples(); len(got) != 0 {
 		t.Fatalf("a failed read must export nothing, got %v", got)
 	}
 }

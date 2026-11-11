@@ -780,7 +780,13 @@ Omit `triggers` to preserve existing managed configuration. Set `triggers: []` t
 clear only the managed rules. Manual notifications are retained; incompatible
 filter overlap fails instead of replacing them. Declare triggers once per
 resolved bucket, even when it has multiple binding prefixes. Keep input and
-output prefixes separate to avoid invoking the same worker on its own output.
+output prefixes separate to avoid invoking the same worker on its own output:
+Gregale does not detect loops. A worker that writes under its own trigger's
+prefix (or, with no prefix, anywhere in the bucket) invokes itself again for
+every write, and keeps doing so until you change the trigger. Each run is billed
+compute and spends the bucket's monthly request budget, and once that runs out
+every request to your buckets is refused until the month ends. Write results
+under a different prefix, or to another bucket.
 
 `gregale deploy` and manifest-backed `gregale dev` read the notification revision
 and reconcile through the control API. A concurrent edit returns a conflict;

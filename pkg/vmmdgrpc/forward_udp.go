@@ -34,6 +34,10 @@ func (s *Server) ForwardUDPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	if init == nil || init.Instance == "" || init.Port == 0 || init.Port > 65535 || init.MaxBytes < 0 {
 		return status.Error(codes.InvalidArgument, "UDP init requires instance, guest port 1..65535 and nonnegative caps")
 	}
+	// Register before checking liveness so teardown cannot miss an admitted
+	// stream. The derived context also interrupts a blocked duplex pump.
+	ctx, release := s.forwardSessions.track(stream.Context(), init.Instance)
+	defer release()
 	netnsName, ok := s.vmm.NetnsFor(init.Instance)
 	if !ok {
 		return status.Error(codes.NotFound, "UDP instance not live")
@@ -44,10 +48,10 @@ func (s *Server) ForwardUDPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	}
 	s.beginActivity(init.Instance)
 	defer s.endActivity(init.Instance)
-	if err := s.prepareGuest(stream.Context(), init.Instance); err != nil {
+	if err := s.prepareGuest(ctx, init.Instance); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancel(stream.Context())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ctx, err = s.publicForwardContext(ctx, init.Instance)
 	if err != nil {
@@ -65,14 +69,19 @@ func (s *Server) ForwardUDPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	if err := stream.Send(&vmmdpb.ForwardUDPResponse{Frame: &vmmdpb.ForwardUDPResponse_Init{Init: &vmmdpb.ForwardUDPResponseInit{}}}); err != nil {
 		return err
 	}
-	return udpBridgeFrames(stream, conn.input, conn.output, init)
+	return udpBridgeFramesContext(ctx, stream, conn.input, conn.output, init)
 }
 
 // Either direction must be able to end the handler even if the other is
 // blocked in gRPC flow control. Returning cancels the server stream through
 // gRPC; joining its Send/Recv goroutines before returning would deadlock.
 // The caller closes helper pipes and kills/reaps its process on every return.
-func udpBridgeFrames(stream grpc.BidiStreamingServer[vmmdpb.ForwardUDPRequest, vmmdpb.ForwardUDPResponse], input io.Writer, output io.Reader, init *vmmdpb.ForwardUDPRequestInit) error {
+func udpBridgeFramesContext(ctx context.Context, stream grpc.BidiStreamingServer[vmmdpb.ForwardUDPRequest, vmmdpb.ForwardUDPResponse], input io.Writer, output io.Reader, init *vmmdpb.ForwardUDPRequestInit) (retErr error) {
+	defer func() {
+		if instanceStopped(ctx) {
+			retErr = status.Error(codes.Unavailable, "UDP stream: instance stopped")
+		}
+	}()
 	requests := make(chan error, 1)
 	responses := make(chan error, 1)
 	go func() { requests <- udpRequestFrames(stream, input, newUDPBudget(init)) }()
@@ -82,8 +91,8 @@ func udpBridgeFrames(stream grpc.BidiStreamingServer[vmmdpb.ForwardUDPRequest, v
 		return err
 	case err := <-responses:
 		return err
-	case <-stream.Context().Done():
-		return status.FromContextError(stream.Context().Err()).Err()
+	case <-ctx.Done():
+		return status.FromContextError(ctx.Err()).Err()
 	}
 }
 

@@ -202,8 +202,14 @@ func TestHandlerAcceptsOnlyLiveWorkloadsOfActiveApps(t *testing.T) {
 			if tc.change != nil {
 				tc.change(f)
 			}
-			if w := f.serve(token, body); w.Code != http.StatusUnauthorized || len(f.publisher.events) != 0 {
-				t.Fatalf("status %d, %d published", w.Code, len(f.publisher.events))
+			// A stage is refused for good (403), so its relay stops instead
+			// of retrying; every other refusal is retried (401).
+			want, code := http.StatusUnauthorized, api.CodeUnauthorized
+			if strings.HasPrefix(tc.name, "stage ") {
+				want, code = http.StatusForbidden, api.CodeWorkloadNotProduction
+			}
+			if w := f.serve(token, body); w.Code != want || !strings.Contains(w.Body.String(), `"code":"`+code+`"`) || len(f.publisher.events) != 0 {
+				t.Fatalf("status %d (%s), %d published", w.Code, w.Body, len(f.publisher.events))
 			}
 		})
 	}

@@ -85,6 +85,7 @@ func TestPushPendingEgressIncludesDeliveredGaps(t *testing.T) {
 				t.Fatal(err)
 			}
 			provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive}
+			electEgressOverage(t, ctx, store, acct.ID)
 			pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(3 * time.Hour) }, nil)
 			completeUsageThrough(t, ctx, store, start.Add(3*time.Hour))
 			if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 1 {

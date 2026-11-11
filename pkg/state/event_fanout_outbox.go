@@ -1021,9 +1021,9 @@ func (m *MemStore) PruneSettledPublishedEvents(_ context.Context, now time.Time,
 				m.loseSubscriptionExecutionCoverageLocked(recipient.Recipient.ID, "receipt_deleted", time.Now().UTC())
 			}
 			delete(m.eventFanout, key)
-			for receiptKey, receipt := range m.webhookAutomationReceipts {
+			for receiptKey, receipt := range m.webhookWorkflowReceipts {
 				if receipt.outboxID == work.ID {
-					delete(m.webhookAutomationReceipts, receiptKey)
+					delete(m.webhookWorkflowReceipts, receiptKey)
 				}
 			}
 			for _, recipient := range work.RecipientSnapshot {

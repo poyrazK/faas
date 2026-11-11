@@ -5,10 +5,13 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"time"
 
 	gcs "cloud.google.com/go/storage"
-	"github.com/onebox-faas/faas/pkg/api"
 	"google.golang.org/api/googleapi"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 const physicalState = "gregale-ci-state"
@@ -39,6 +42,8 @@ func NewGCSObjects(ctx context.Context, bucket string) (*GCSObjects, error) {
 func (g *GCSObjects) Close() error { return g.client.Close() }
 
 func (g *GCSObjects) checkBucket(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(api.CIJobsTransferSeconds)*time.Second)
+	defer cancel()
 	attrs, err := g.bucket.Attrs(ctx)
 	if err != nil || attrs.VersioningEnabled || attrs.RetentionPolicy != nil || len(attrs.Lifecycle.Rules) != 0 ||
 		attrs.PublicAccessPrevention != gcs.PublicAccessPreventionEnforced || !attrs.UniformBucketLevelAccess.Enabled ||
@@ -54,6 +59,8 @@ func validPhysicalKey(key string) bool {
 }
 
 func (g *GCSObjects) Publish(ctx context.Context, key string, object RuntimeObject, body io.Reader) error {
+	ctx, cancelRequest := context.WithTimeout(ctx, time.Duration(api.CIJobsTransferSeconds)*time.Second)
+	defer cancelRequest()
 	if !validPhysicalKey(key) || object.Bytes < 0 || object.Bytes > api.CIArtifactMaxBytes || !artifactDigestPattern.MatchString(object.Digest) {
 		return ErrStorageUnavailable
 	}
@@ -115,7 +122,12 @@ func (g *GCSObjects) Retire(ctx context.Context, key string) error {
 		return err
 	}
 	object := g.bucket.Object(key)
-	for range api.CIJobsTransferMaxAttempts {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(api.CIJobsTransferSeconds)*time.Second)
+	defer cancel()
+	for attempt := range api.CIJobsTransferMaxAttempts {
+		if err := retry.Wait(ctx, 100*time.Millisecond, 2*time.Second, attempt); err != nil {
+			return err
+		}
 		attrs, err := object.Attrs(ctx)
 		condition := gcs.Conditions{DoesNotExist: true}
 		if err == nil {

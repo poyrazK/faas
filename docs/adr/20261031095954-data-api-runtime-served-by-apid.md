@@ -65,3 +65,14 @@ As a result:
   one.
 - The dashboard does not show the comparison yet. It can call the runtime
   route and the API's `/healthz` in the same way the CLI does.
+
+## Amendment (2026-11-07): readiness checks are cached briefly
+
+`/healthz` is public and sits outside admission, rate limits and usage. Every
+check asked the database: PostgREST's `/ready` and, under coordinated refresh,
+the refresh reader. Requests were combined only while one was already in
+flight, so anyone polling `/healthz` kept the database busy, unmetered. A
+completed set of checks now answers further health checks for
+`DataAPIHealthCache` (5 s), so polling reaches the database at most once per
+interval per instance. Admission figures are read live; the response shape is
+unchanged.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -121,7 +122,9 @@ func applyTestAssertionProfile(phase *testLoadChaosPhaseSpec, name string, profi
 		return fmt.Errorf("assertion profile %q: %w", name, err)
 	}
 	var copyProfile testAssertionProfile
-	if err := json.Unmarshal(data, &copyProfile); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&copyProfile); err != nil {
 		return fmt.Errorf("assertion profile %q: %w", name, err)
 	}
 	if len(copyProfile.RequestDeadlines) > 0 && phase.RequestDeadlines == nil {

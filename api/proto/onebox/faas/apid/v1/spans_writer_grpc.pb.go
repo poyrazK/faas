@@ -37,9 +37,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SpansWriter_WriteSpansSummary_FullMethodName = "/onebox.faas.apid.v1.SpansWriter/WriteSpansSummary"
-	SpansWriter_IngestGuestSpans_FullMethodName  = "/onebox.faas.apid.v1.SpansWriter/IngestGuestSpans"
-	SpansWriter_IngestGuestLogs_FullMethodName   = "/onebox.faas.apid.v1.SpansWriter/IngestGuestLogs"
+	SpansWriter_WriteSpansSummary_FullMethodName  = "/onebox.faas.apid.v1.SpansWriter/WriteSpansSummary"
+	SpansWriter_IngestGuestSpans_FullMethodName   = "/onebox.faas.apid.v1.SpansWriter/IngestGuestSpans"
+	SpansWriter_IngestGuestLogs_FullMethodName    = "/onebox.faas.apid.v1.SpansWriter/IngestGuestLogs"
+	SpansWriter_IngestGuestMetrics_FullMethodName = "/onebox.faas.apid.v1.SpansWriter/IngestGuestMetrics"
 )
 
 // SpansWriterClient is the client API for SpansWriter service.
@@ -78,6 +79,13 @@ type SpansWriterClient interface {
 	// decodes, redacts and bounds each record, and writes log_events rows with
 	// source runtime. Outcomes ride on the response, not gRPC errors.
 	IngestGuestLogs(ctx context.Context, in *IngestGuestSpansRequest, opts ...grpc.CallOption) (*IngestGuestLogsResponse, error)
+	// IngestGuestMetrics accepts one raw OTLP/HTTP metrics export from the
+	// in-guest bridge (ADR-20261108160000 slice B), for apps with
+	// tracing.metrics set. Same identity and codec as IngestGuestLogs (metrics
+	// signal bit cleared). apid checks the plan and the per-account export
+	// cap, translates the export like the public OTLP metrics endpoint and
+	// stores the app's custom metrics. Outcomes ride on the response.
+	IngestGuestMetrics(ctx context.Context, in *IngestGuestSpansRequest, opts ...grpc.CallOption) (*IngestGuestMetricsResponse, error)
 }
 
 type spansWriterClient struct {
@@ -112,6 +120,16 @@ func (c *spansWriterClient) IngestGuestLogs(ctx context.Context, in *IngestGuest
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(IngestGuestLogsResponse)
 	err := c.cc.Invoke(ctx, SpansWriter_IngestGuestLogs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *spansWriterClient) IngestGuestMetrics(ctx context.Context, in *IngestGuestSpansRequest, opts ...grpc.CallOption) (*IngestGuestMetricsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IngestGuestMetricsResponse)
+	err := c.cc.Invoke(ctx, SpansWriter_IngestGuestMetrics_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +172,13 @@ type SpansWriterServer interface {
 	// decodes, redacts and bounds each record, and writes log_events rows with
 	// source runtime. Outcomes ride on the response, not gRPC errors.
 	IngestGuestLogs(context.Context, *IngestGuestSpansRequest) (*IngestGuestLogsResponse, error)
+	// IngestGuestMetrics accepts one raw OTLP/HTTP metrics export from the
+	// in-guest bridge (ADR-20261108160000 slice B), for apps with
+	// tracing.metrics set. Same identity and codec as IngestGuestLogs (metrics
+	// signal bit cleared). apid checks the plan and the per-account export
+	// cap, translates the export like the public OTLP metrics endpoint and
+	// stores the app's custom metrics. Outcomes ride on the response.
+	IngestGuestMetrics(context.Context, *IngestGuestSpansRequest) (*IngestGuestMetricsResponse, error)
 	mustEmbedUnimplementedSpansWriterServer()
 }
 
@@ -172,6 +197,9 @@ func (UnimplementedSpansWriterServer) IngestGuestSpans(context.Context, *IngestG
 }
 func (UnimplementedSpansWriterServer) IngestGuestLogs(context.Context, *IngestGuestSpansRequest) (*IngestGuestLogsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method IngestGuestLogs not implemented")
+}
+func (UnimplementedSpansWriterServer) IngestGuestMetrics(context.Context, *IngestGuestSpansRequest) (*IngestGuestMetricsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method IngestGuestMetrics not implemented")
 }
 func (UnimplementedSpansWriterServer) mustEmbedUnimplementedSpansWriterServer() {}
 func (UnimplementedSpansWriterServer) testEmbeddedByValue()                     {}
@@ -248,6 +276,24 @@ func _SpansWriter_IngestGuestLogs_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SpansWriter_IngestGuestMetrics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IngestGuestSpansRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SpansWriterServer).IngestGuestMetrics(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SpansWriter_IngestGuestMetrics_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SpansWriterServer).IngestGuestMetrics(ctx, req.(*IngestGuestSpansRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SpansWriter_ServiceDesc is the grpc.ServiceDesc for SpansWriter service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -266,6 +312,10 @@ var SpansWriter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "IngestGuestLogs",
 			Handler:    _SpansWriter_IngestGuestLogs_Handler,
+		},
+		{
+			MethodName: "IngestGuestMetrics",
+			Handler:    _SpansWriter_IngestGuestMetrics_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

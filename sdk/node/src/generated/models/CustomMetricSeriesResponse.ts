@@ -12,6 +12,10 @@ export type CustomMetricSeriesResponse = {
    * counter histories are a per-second rate of the cumulative count.
    */
   kind: 'gauge' | 'counter';
+  /**
+   * The series key this history is for; absent for the metric's aggregate.
+   */
+  labels?: string;
   range: '1h' | '6h' | '24h' | '7d' | '15d';
   /**
    * Prometheus step between points.

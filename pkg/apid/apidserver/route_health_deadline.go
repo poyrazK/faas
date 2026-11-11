@@ -46,7 +46,7 @@ func (s *server) abortRouteHealthHoldPastDeadline(ctx context.Context, err error
 	if encodeErr != nil {
 		return
 	}
-	if _, _, abortErr := decisions.RecoverRolloutWithDecision(ctx, app.ID, "abort", "route health: "+summary, decision); abortErr != nil {
+	if _, _, abortErr := decisions.RecoverRolloutWithDecision(state.WithRolloutRecoveryActor(ctx, state.RolloutRecoveryActorRouteHealth), app.ID, "abort", "route health: "+summary, decision); abortErr != nil {
 		s.log.Warn("apid: abort route health hold failed", "deployment", d.ID, "err", abortErr)
 		return
 	}

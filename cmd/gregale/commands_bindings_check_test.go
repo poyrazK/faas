@@ -78,6 +78,14 @@ func bindingCheckCLICodes(report bindingcheck.Report) []string {
 	return result
 }
 
+func bindingCheckCLIWarningCodes(report bindingcheck.Report) []string {
+	result := []string{}
+	for _, warning := range report.Warnings {
+		result = append(result, warning.Code)
+	}
+	return result
+}
+
 func TestCmdBindingsCheckUsesOneInventoryReadAndJSONExitStatus(t *testing.T) {
 	for _, args := range [][]string{
 		{"bindings", "check", "api", "--json"},
@@ -187,12 +195,11 @@ func TestCmdBindingsCheckScopeAssertAndUnsupportedWaiver(t *testing.T) {
 			}
 			code, stdout, _ := runBindingCheckCLI(t, inventory, "", args...)
 			report := decodeBindingCheckCLI(t, stdout)
-			want := 1
-			if allow {
-				want = 0
-			}
-			if code != want || report.Passed != allow || report.Coverage != "partial" || report.Bindings[1].Status != "unsupported" || report.AllowUnsupported != allow {
-				t.Fatalf("coverage waiver exit=%d report=%+v", code, report)
+			// ADR-20261109180000: a pull consumer runs in the customer's own
+			// worker, so the gate skips it with a warning instead of blocking.
+			if code != 0 || !report.Passed || report.Bindings[1].Status != "skipped" || report.Bindings[1].Reason != "pull_consumer_external" ||
+				report.AllowUnsupported != allow || !slices.Contains(bindingCheckCLIWarningCodes(report), "queue_pull_consumer_unverified") {
+				t.Fatalf("pull consumer exit=%d report=%+v", code, report)
 			}
 		})
 	}

@@ -119,7 +119,7 @@ func cmdDevSetup(args []string) int {
 	var linkedContext localProjectContext
 	linkedErr := errProjectContextNotFound
 	if *name == "" {
-		linkedContext, _, linkedErr = linkedProjectContext(sourceDir)
+		linkedContext, _, linkedErr = targetProjectContext(sourceDir)
 		if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
 			return printErr("Could not read local project context", linkedErr)
 		}

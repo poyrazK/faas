@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -41,7 +42,8 @@ func TestUDPIngressPostgresStartupAndShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "udp-startup", Status: state.AppActive, RAMMB: 256})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "udp-startup", Status: state.AppActive, RAMMB: 256,
+		Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 5353, Protocol: api.WorkloadPortUDP}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +78,20 @@ func TestUDPIngressPostgresStartupAndShutdown(t *testing.T) {
 		t.Fatalf("shutdown retained socket: %v", err)
 	}
 	_ = probe.Close()
+	if _, err := store.SetAccountAbuseHold(ctx, account.ID, state.AccountAbuseHoldOperator, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	heldStop, err := startUDPIngress(ctx, log, edge, nil)
+	if err != nil || heldStop == nil {
+		t.Fatalf("held-owner startup stop present=%v err=%v", heldStop != nil, err)
+	}
+	t.Cleanup(heldStop)
+	probe, err = net.ListenUDP("udp4", address)
+	if err != nil {
+		t.Fatalf("held-owner startup published a socket: %v", err)
+	}
+	_ = probe.Close()
+	heldStop()
 	pool.Close()
 	failedStop, err := startUDPIngress(ctx, log, edge, nil)
 	if err == nil || failedStop != nil {

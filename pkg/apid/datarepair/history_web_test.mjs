@@ -132,3 +132,87 @@ test('standalone history inspection cannot resume an old approval or invent an a
   assert.equal(document.getElementById('repair-id').value, '');
   assert.deepEqual(visited, [original], 'history inspection erased an earlier uncertain apply URL');
 });
+
+function managedPrepareView(historical = false) {
+  const document = dom(), calls = [], drafts = new Map();
+  const source = randomUUID(), oldID = randomUUID();
+  const plan = id => ({id, digest: 'a'.repeat(64), scope, source_operation_id: source, source_release: 'import',
+    items: [], candidates: 1, conflicts: 0, unavailable: 0, expires_at: '2099-01-01T00:00:00Z'});
+  const response = id => ({operation: {id, latest_sequence: 1, data_repair: {phase: 'prepared'}}, plan: plan(id)});
+  const location = {pathname: '/v1/apps/products/data-repair/review', search: historical ?
+    '?' + new URLSearchParams({source, plan: oldID, environment: scope.environment, customer: scope.platform_tenant_id}) : '?operation=' + oldID};
+  let fail = true;
+  const context = vm.createContext({document, location, URLSearchParams,
+    crypto: {randomUUID},
+    history: {replaceState(_a, _b, value) { location.search = value; }},
+    fetch: async (path, options) => {
+      calls.push({path, options});
+      if (options.method === 'POST') {
+        const id = options.headers['Idempotency-Key'];
+        drafts.set(id, response(id));
+        if (fail) throw new Error('Response lost after commit');
+        return {ok: true, json: async () => drafts.get(id)};
+      }
+      const id = path.split('/').at(-1);
+      const data = path.endsWith('/source-scopes') ? {scopes: [scope]} : path.includes('/sources/') ?
+        {plan: plan(oldID), execution: {availability: 'not_retained'}} : drafts.get(id) || response(oldID);
+      return {ok: true, json: async () => data};
+    }});
+  for (const file of ['sources', 'doctor', 'history', 'checks', 'validation', 'verification', 'replacement', 'resolution', 'managed']) load(context, file);
+  return {document, location, calls, drafts, source, succeed() { fail = false; },
+    submit() { document.getElementById('prepare').onsubmit({preventDefault() {}}); }};
+}
+
+const settled = () => new Promise(resolve => setImmediate(resolve));
+
+test('prepare retries retain the same identity after a lost response with an existing plan open', async () => {
+  const view = managedPrepareView();
+  await settled();
+  view.document.getElementById('source').value = view.source;
+  view.submit();
+  view.submit(); // A duplicate submit while busy must not reserve another ID.
+  await settled();
+  const first = view.calls.filter(call => call.options.method === 'POST');
+  assert.equal(first.length, 1);
+  const id = first[0].options.headers['Idempotency-Key'];
+  assert.equal(new URLSearchParams(view.location.search).get('operation'), id);
+  assert.equal(view.document.getElementById('review').hidden, true);
+  for (const action of ['apply', 'approve', 'replace', 'resolve']) assert.equal(view.document.getElementById(action).disabled, true);
+  view.succeed();
+  view.submit();
+  await settled();
+  const attempts = view.calls.filter(call => call.options.method === 'POST');
+  assert.deepEqual(attempts.map(call => call.options.headers['Idempotency-Key']), [id, id]);
+  assert.equal(view.drafts.size, 1, 'retry created another hosted draft');
+  assert.equal(view.document.getElementById('review').hidden, false);
+  assert.equal(new URLSearchParams(view.location.search).get('operation'), id);
+  // A subsequent explicit preparation after recovery does create a new plan.
+  view.submit();
+  await settled();
+  assert.equal(view.drafts.size, 2);
+});
+
+test('refresh recovers pending preparation instead of reopening the previous historical plan', async () => {
+  const view = managedPrepareView(true);
+  await settled();
+  view.submit();
+  await settled();
+  const id = [...view.drafts.keys()][0];
+  await view.document.getElementById('refresh').onclick();
+  assert.equal(view.calls.at(-1).path, '/v1/apps/products/data-repair/operations/' + id);
+  assert.equal(new URLSearchParams(view.location.search).get('operation'), id);
+  assert.equal(view.document.getElementById('rehearse').disabled, false);
+});
+
+test('changing the source after failed preparation reserves a distinct identity', async () => {
+  const view = managedPrepareView();
+  await settled();
+  view.document.getElementById('source').value = view.source;
+  view.submit();
+  await settled();
+  view.document.getElementById('source').value = randomUUID();
+  view.submit();
+  await settled();
+  const attempts = view.calls.filter(call => call.options.method === 'POST');
+  assert.notEqual(attempts[0].options.headers['Idempotency-Key'], attempts[1].options.headers['Idempotency-Key']);
+});

@@ -143,11 +143,13 @@ that moment. The cron next runs at the first scheduled time after the change.
 It never runs immediately because of the change, and it does not catch up on
 the times it passed while it was off.
 
-Disabling a cron stops future runs. It does not cancel a run that is already
-queued or in progress. Removing a cron, whether you delete it, a deploy's
+Disabling a cron stops it: its runs that have not started, including runs
+waiting to retry and manual runs still queued, are cancelled when they come
+due, and a run already in progress finishes. A suspended cron's queued runs
+are cancelled the same way. Removing a cron, whether you delete it, a deploy's
 `gregale.yaml` drops it or its app is deleted, also cancels its runs that have
-not started, including runs waiting to retry; a run already in progress
-finishes.
+not started. A run queued before you change the cron's path goes to the new
+path.
 
 ### Suspension
 

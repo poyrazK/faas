@@ -179,7 +179,9 @@ ROOT_WRAPPER_MODULES = (
     "pre_auth_target.py",
     "secret_reload_runtime.py",
     "async_secret_reload_runtime.py",
+    "lifecycle_runtime.py",
     "workflows.py",
+    "functions.py",
     "_binding_client_runtime.py",
     "_async_binding_client_runtime.py",
 )
@@ -733,6 +735,14 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
     for path in sdk_root.rglob("*.py"):
         text = path.read_text()
         original = text
+
+        # Generated low-level clients also need the facade's 30s default.
+        # An explicitly supplied timeout=None still opts out for streams.
+        if path.name == "client.py":
+            text = text.replace(
+                'field(default=None, kw_only=True, alias="timeout")',
+                'field(factory=lambda: httpx.Timeout(30.0), kw_only=True, alias="timeout")',
+            )
         # Preserve the optional WorkerScaling.name contract for every Unset
         # instance, including callers that construct Unset() explicitly.
         if path.relative_to(sdk_root).as_posix() in ("models/worker_scaling.py", "preview/models/worker_scaling.py"):
@@ -842,6 +852,8 @@ Public surface:
   and return the stable delivery ID for receiver-side deduplication.
 * `pre_auth_target_digest` - opaque login-target signal for selected failed
   responses on opt-in pre-auth routes.
+* `function` - decorator declaring a function's deploy settings next to
+  its handler (cron, queue, RAM, ...); `gregale deploy` reads it statically.
 """
 
 from ._rfc7807 import (
@@ -861,6 +873,7 @@ from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
+from .functions import FunctionHookContext, function
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
@@ -869,6 +882,7 @@ from .idempotency import (
 )
 from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
+    GREGALE_DEADLINE_MS_HEADER,
     GREGALE_RELEASE_HEADER,
     GREGALE_REQUEST_DEADLINE_HEADER,
     GREGALE_REVISION_HEADER,
@@ -877,6 +891,7 @@ from .release_context import (
     GregaleReleaseTransport,
     current_gregale_release,
     current_gregale_request_deadline,
+    gregale_request_time_remaining_ms,
     with_gregale_release,
     with_gregale_request_context,
 )
@@ -927,6 +942,8 @@ def __dir__() -> list[str]:
 
 
 __all__ = (
+    "function",
+    "FunctionHookContext",
     "FaaSClient",
     "FaaSClientOptions",
     "Client",
@@ -938,9 +955,11 @@ __all__ = (
     "with_idempotency_key",
     "mint_idempotency_key",
     "current_idempotency_key",
+    "GREGALE_DEADLINE_MS_HEADER",
     "GREGALE_RELEASE_HEADER",
     "GREGALE_REQUEST_DEADLINE_HEADER",
     "current_gregale_request_deadline",
+    "gregale_request_time_remaining_ms",
     "with_gregale_request_context",
     "GREGALE_REVISION_HEADER",
     "GregaleReleaseMiddleware",
@@ -1011,6 +1030,7 @@ from .. import (
     with_idempotency_key,
     mint_idempotency_key,
     current_idempotency_key,
+    GREGALE_DEADLINE_MS_HEADER,
     GREGALE_RELEASE_HEADER,
     GREGALE_REQUEST_DEADLINE_HEADER,
     GREGALE_REVISION_HEADER,
@@ -1019,6 +1039,7 @@ from .. import (
     AsyncGregaleReleaseTransport,
     current_gregale_release,
     current_gregale_request_deadline,
+    gregale_request_time_remaining_ms,
     with_gregale_release,
     with_gregale_request_context,
     verify_webhook,
@@ -1031,6 +1052,7 @@ from .. import (
     DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
     PRE_AUTH_TARGET_HEADER,
     pre_auth_target_digest,
+    function,
     Problem,
     FaasError,
     FaasProblemError,

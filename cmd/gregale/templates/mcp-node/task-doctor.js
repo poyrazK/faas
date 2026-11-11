@@ -5,8 +5,8 @@ import { mcpTaskHandlers } from './tasks.js';
 import { createMcpTaskAdmissionController } from './task-admission.js';
 import { checkMcpTaskCompatibility } from './task-compatibility.js';
 import { resolveMcpTaskSettings } from './task-runtime.js';
-import { createMcpTaskPayloadCipher } from './task-crypto.js';
-import { createMcpTaskQueueObserver, authenticateMcpTaskPayloads } from './task-store.js';
+import { authenticateRetainedMcpTaskPayloads, createMcpTaskPayloadCipher } from './task-crypto.js';
+import { createMcpTaskQueueObserver } from './task-store.js';
 
 // Read-only preflight: no schema initialization, claims, or payload output.
 const report = { ok: true, checks: [] };
@@ -50,7 +50,7 @@ try {
     for (const [id, fingerprint] of cipher.fingerprints) {
       if (!known.has(id) || !known.get(id).equals(fingerprint)) throw new Error('keys');
     }
-    await authenticateMcpTaskPayloads(client, settings.namespace, cipher);
+    await authenticateRetainedMcpTaskPayloads(client, settings.namespace, cipher);
     add('encryption_keys', 'passed', 'Configured fingerprints match and retained payload key versions are readable');
     }
     await client.query('ROLLBACK');

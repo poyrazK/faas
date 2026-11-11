@@ -176,6 +176,9 @@ func testRuntimeAppEnvStageLifetimeAndLegacy(t *testing.T, store runtimeAppEnvTe
 	if err != nil || len(got.Values) != 1 || got.Values[0].Value != "legacy-only" {
 		t.Fatalf("legacy scoped read: %+v %v", got, err)
 	}
+	if err := store.UpdateDeploymentStatus(ctx, legacy.ID, state.DeployCancelled, "stopped before environment deletion"); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.DeleteProjectEnvironment(ctx, f.account.ID, f.project.ID, "legacy"); err != nil {
 		t.Fatal(err)
 	}

@@ -37,8 +37,9 @@ func (s *server) keyProjects(ctx context.Context, acct state.Account, orgID stri
 			fmt.Sprintf("a key can be limited to at most %d projects; got %d", state.MaxKeyProjects, len(slugs)))
 	}
 	projects := make([]state.Project, 0, len(slugs))
+	owners, _ := s.store.(state.ProjectOwnershipStore)
 	for _, slug := range slugs {
-		project, err := s.store.ProjectBySlug(ctx, acct.ID, slug)
+		project, err := s.keyProjectBySlug(ctx, owners, acct, orgID, slug)
 		if errors.Is(err, state.ErrNotFound) || err == nil && orgID != "" && project.OrgID != "" && project.OrgID != orgID {
 			return nil, projectNotFound(slug)
 		}
@@ -48,6 +49,19 @@ func (s *server) keyProjects(ctx context.Context, acct state.Account, orgID stri
 		projects = append(projects, project)
 	}
 	return projects, nil
+}
+
+// keyProjectBySlug finds a project a key names: an organization's key looks
+// in that organization first, where a company project's slug is unique, then
+// among the creator's own projects.
+func (s *server) keyProjectBySlug(ctx context.Context, owners state.ProjectOwnershipStore, acct state.Account, orgID, slug string) (state.Project, error) {
+	if orgID != "" && owners != nil {
+		project, err := owners.ProjectByOrgSlug(ctx, orgID, slug)
+		if !errors.Is(err, state.ErrNotFound) {
+			return project, err
+		}
+	}
+	return s.store.ProjectBySlug(ctx, acct.ID, slug)
 }
 
 // limitKeyToProjects records a new key's project limit. When it cannot, it

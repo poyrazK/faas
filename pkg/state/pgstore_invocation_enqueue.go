@@ -40,6 +40,8 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 		WorkFairnessLimit:  pgtype.Int4{Int32: int32(inv.WorkFairnessLimit), Valid: inv.WorkFairnessLimit != 0},
 		DeploymentScope:    inv.DeploymentScope,
 		StartDeadlineAt:    nullableTimestamptzPtr(inv.StartDeadlineAt),
+		EdgeJwtIssuer:      inv.EdgeJWTIssuer,
+		EdgeJwtSubject:     inv.EdgeJWTSubject,
 	}
 	if inv.FailureRules != nil {
 		params.FailureRules, err = json.Marshal(inv.FailureRules)
@@ -131,6 +133,7 @@ func invocationFromSQL(row sqlc.Invocation) (Invocation, error) {
 		RetryPolicyJSON: row.RetryPolicy, ResultRetentionUntil: timestamptzToTimePtr(row.ResultRetentionUntil),
 		LastReplayedAt:         timestamptzToTimePtr(row.LastReplayedAt),
 		OnSuccessDestinationID: uuidString(row.OnSuccessDestinationID), OnFailureDestinationID: uuidString(row.OnFailureDestinationID),
+		EdgeJWTIssuer: row.EdgeJwtIssuer.String, EdgeJWTSubject: row.EdgeJwtSubject.String,
 	}
 	if row.CronID.Valid {
 		id := uuidString(row.CronID)

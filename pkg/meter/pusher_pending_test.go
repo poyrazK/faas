@@ -220,7 +220,7 @@ func TestPushPendingOverageCapBillsCrossingWindowUpToCap(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
 	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
-	store.SetOverageCapCentsForTest(acct.ID, 1)
+	store.SetOverageCapCentsForTest(acct.ID, overageCentsPerGBHour) // one GB-h
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	allowance := int64(acct.Plan.PlanIncludedGBHours()) * api.SecondsPerGBHour
 	if err := store.AppendUsage(ctx, acct.ID, "app-a", "instance-a", now.Add(-3*time.Hour), allowance, 0, 0, 0, 0, 0, 0, 0); err != nil {
@@ -244,7 +244,7 @@ func TestPushPendingOverageCapBillsCrossingWindowUpToCap(t *testing.T) {
 	if pushed != 2 {
 		t.Fatalf("PushPending pushed = %d, want the window below the cap and the crossing window", pushed)
 	}
-	// The 1-cent cap allows 1 GB-h of overage: the first half GB-h window in
+	// The one-GB-h cap allows 1 GB-h of overage: the first half GB-h window in
 	// full, then only half of the crossing 1 GB-h window.
 	calls := provider.Calls()
 	if len(calls) != 2 || calls[0].MBSeconds != halfGBHour || calls[1].MBSeconds != halfGBHour {
@@ -316,6 +316,7 @@ func TestPushPendingEgressLiveSubtractsMonthlyAllowance(t *testing.T) {
 	}
 
 	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive}
+	electEgressOverage(t, ctx, store, acct.ID)
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
 	completeUsageThrough(t, ctx, store, now)
 	pushed, err := pusher.PushPending(ctx, 24*time.Hour)
@@ -368,6 +369,7 @@ func TestPushPendingEgressLiveHonorsCombinedOverageCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive}
+	electEgressOverage(t, ctx, store, acct.ID)
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
 	completeUsageThrough(t, ctx, store, now)
 	// 1 GiB of egress overage costs 2 cents; the 1-cent cap bills exactly half
@@ -397,6 +399,7 @@ func TestPushPendingEgressLiveNeverBackfillsBeforeActivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive, effectiveFrom: activation}
+	electEgressOverage(t, ctx, store, acct.ID)
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
 	completeUsageThrough(t, ctx, store, now)
 	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 1 {

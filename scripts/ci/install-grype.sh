@@ -16,16 +16,10 @@ archive="${archive_dir}/grype_${version}_linux_amd64.tar.gz"
 extract_dir="${archive_dir}/grype-extract-${version}"
 
 mkdir -p "$(dirname "${destination}")" "${extract_dir}"
-curl --fail --silent --show-error --location \
-  --retry 3 --retry-all-errors --retry-delay 2 \
-  -o "${archive}" \
-  "https://github.com/anchore/grype/releases/download/v${version}/grype_${version}_linux_amd64.tar.gz"
-
-if command -v sha256sum >/dev/null 2>&1; then
-  printf '%s  %s\n' "${expected_sha}" "${archive}" | sha256sum --check --strict
-else
-  printf '%s  %s\n' "${expected_sha}" "${archive}" | shasum -a 256 -c -
-fi
+# Pin checked; falls back to the GitHub API (needs GH_TOKEN) when github.com's
+# release download fails (2026-11-08: 504s failed every image build).
+bash "$(dirname "${BASH_SOURCE[0]}")/fetch-release-asset.sh" anchore/grype "v${version}" \
+  "grype_${version}_linux_amd64.tar.gz" "${expected_sha}" "${archive}"
 
 tar -xzf "${archive}" -C "${extract_dir}" grype
 install -m 0755 "${extract_dir}/grype" "${destination}"

@@ -41,7 +41,7 @@ class CapabilityStatus:
     when enabled; older servers may omit it."""
     unavailable_detail: str | Unset = UNSET
     """Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason
-    for automation. Omitted when enabled; older servers may omit it."""
+    for stored workflow. Omitted when enabled; older servers may omit it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

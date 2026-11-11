@@ -189,7 +189,11 @@ func (s *server) profileCaptureKinds(r *http.Request, acct state.Account, app st
 			out = append(out, dashboard.ProfileCaptureKindView{Kind: kind, Error: "Profile data is unavailable."})
 			continue
 		}
-		merged, _, merr := profiling.MergeCapture(profilecapture.KindProfiles(blobs, kind), kind)
+		merged, busy, merr := s.profileCaptures.MergeBlobs(blobs, kind)
+		if busy {
+			out = append(out, dashboard.ProfileCaptureKindView{Kind: kind, Error: "Profile views are busy; reload the page shortly."})
+			continue
+		}
 		view, verr := profiling.CaptureView(merged, kind)
 		if merr != nil || verr != nil {
 			out = append(out, dashboard.ProfileCaptureKindView{Kind: kind, Error: "The profile exceeds what the dashboard can display; download the pprof file instead."})

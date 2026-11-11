@@ -157,6 +157,7 @@ func TestPgObjectMultipartInitiationMigrationRoundTrip(t *testing.T) {
 	if _, err := tx.Exec(ctx, `DO $$ DECLARE declaration text; BEGIN SELECT pg_get_functiondef(to_regprocedure('guard_object_multipart_initiation_dispatch()')) INTO declaration; EXECUTE replace(declaration,'FROM accounts ','FROM resource_namespaces '); END $$`); err != nil {
 		t.Fatal(err)
 	}
+	reapplyObjectAccountNoKeyLocks(t, ctx, tx, "guard_object_multipart_initiation_dispatch")
 	if err := tx.QueryRow(ctx, shape).Scan(&after); err != nil || before != after {
 		t.Fatal("round trip changed initiation guards", err)
 	}

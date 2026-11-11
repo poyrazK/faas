@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // DefaultCustomDomainBatchReader reads many apps' default custom domains in
@@ -31,27 +34,14 @@ func (s *PgStore) DefaultCustomDomains(ctx context.Context, appIDs []string) (ma
 	if len(appIDs) == 0 {
 		return out, nil
 	}
-	rows, err := s.pool.Query(ctx, `
-		select ad.app_id::text, d.domain
-		  from app_default_domains ad
-		join custom_domains d on d.domain = ad.domain
-		 where ad.app_id = any($1::uuid[])
-		   and d.app_id = ad.app_id
-		   and d.verified_at is not null
-		   and d.environment_id is null
-		   and d.domain not like '*.%'`, appIDs)
+	rows, err := sqlc.New().ReadUsableCustomDomainDefaults(ctx, s.pool, sqlc.ReadUsableCustomDomainDefaultsParams{AppIds: appIDs, TenantSurfaces: customDomainTenantRouting(ctx)})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read usable custom-domain defaults: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var appID, domain string
-		if err := rows.Scan(&appID, &domain); err != nil {
-			return nil, err
-		}
-		out[appID] = domain
+	for _, row := range rows {
+		out[row.AppID] = row.Domain
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // DefaultCustomDomains is DefaultCustomDomain for a set of apps.

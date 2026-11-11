@@ -125,3 +125,24 @@ test('opt-in query shapes use catalog metadata and redact values, claims, bodies
  assert.equal(logs.at(-1).operation,undefined)
  assert.throws(()=>runtimeConfig({ DATABASE_URL:'postgres://restricted:p@localhost/db',DATA_API_ISSUER:'https://issuer.example',DATA_API_JWKS_URL:'https://issuer.example/jwks',DATA_API_AUDIENCE:'notes',DATA_API_QUERY_SHAPES:'anything' }))
 })
+
+// ChronoLake finding 19: a startup crash logged only
+// data_api_configuration_invalid; the stage and a value-free reason say why.
+test('startup failures name a stage and a value-free reason', t => {
+  const lines = []
+  t.mock.method(process.stderr, 'write', line => { lines.push(line); return true })
+  let configError
+  try { runtimeConfig({ DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' }) } catch (error) { configError = error }
+  assert.ok(configError)
+  runtimeFailure('data_api_configuration_invalid', { stage: 'configuration', error: configError })
+  const driver = Object.assign(new Error('password authentication failed for user "secret-sentinel" at postgres://u:secret-sentinel@h/db'), { code: '28P01' })
+  runtimeFailure('data_api_database_unavailable', { stage: 'inspection', error: driver })
+  runtimeFailure('data_api_configuration_invalid', { stage: 'forged\nstage', error: { message: 'postgres://u:secret-sentinel@h', name: 'Bad Name!' } })
+  const records = lines.map(line => JSON.parse(line))
+  assert.deepEqual([records[0].stage, records[0].reason], ['configuration', configError.message])
+  assert.match(records[0].reason, /^Invalid [A-Z_]+$/)
+  assert.deepEqual([records[1].event, records[1].stage, records[1].reason], ['data_api_database_unavailable', 'inspection', '28P01'])
+  assert.equal(records[2].stage, undefined)
+  assert.equal(records[2].reason, 'Error')
+  assert.doesNotMatch(lines.join(''), /secret-sentinel|postgres:|forged/)
+})

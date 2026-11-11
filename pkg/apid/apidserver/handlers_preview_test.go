@@ -246,8 +246,10 @@ func TestDestroyPreview_CancelsDeploymentAndRejectsLatePromotion(t *testing.T) {
 	if err := e.store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, ""); !errors.Is(err, state.ErrInvalidStateTransition) {
 		t.Fatalf("late snapshot transition = %v, want ErrInvalidStateTransition", err)
 	}
-	if err := e.store.MarkDeploymentLive(context.Background(), dep.ID); !errors.Is(err, state.ErrInvalidStateTransition) {
-		t.Fatalf("late live promotion = %v, want ErrInvalidStateTransition", err)
+	// The destroyed preview's app is gone, so the promotion may be refused as
+	// not found before the cancelled status is consulted; either way it fails.
+	if err := e.store.MarkDeploymentLive(context.Background(), dep.ID); !errors.Is(err, state.ErrInvalidStateTransition) && !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("late live promotion = %v, want ErrInvalidStateTransition or ErrNotFound", err)
 	}
 	gotDep, _ = e.store.DeploymentByID(context.Background(), dep.ID)
 	if gotDep.Status != state.DeployCancelled {

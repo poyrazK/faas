@@ -1,0 +1,48 @@
+name: guest-init-stability
+
+# ADR-20261105150000: every runtime base embeds guest-init as PID 1 and ADR-510
+# refuses to restore a snapshot onto a base whose bytes changed. The release
+# keeps the previous release's guest-init while its code is the same
+# (scripts/reuse-release-guest-init.sh); that only helps if an edit elsewhere in
+# the repository leaves the code alone. This builds guest-init twice with the
+# release recipe, once with a file added to pkg/api that nothing references, and
+# fails when the code differs. Two builds, about 4 runner-minutes: nightly, and
+# on the files that decide the recipe, not on every pull request.
+#
+# Locally: python3 scripts/ci/guest_init_stability.py
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - Makefile
+      - guest/init/**
+      - scripts/ci/guest_init_*.py
+      - scripts/ci/daemon_deps.json
+      - .github/workflows/guest-init-stability.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Keep in lock-step with ci-light.yml.
+  GO_VERSION: "1.26.10"
+
+jobs:
+  stability:
+    name: guest-init code is stable
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Build guest-init with and without an unreferenced pkg/api file
+        run: python3 scripts/ci/guest_init_stability.py

@@ -14,7 +14,7 @@ test('inbound webhook SDK accepts the generic HMAC provider', () => {
   assert.equal(endpoint.provider, 'generic');
 });
 
-test('webhook automation bindings preserve revision zero, takeover and receipt routes', async t => {
+test('webhook stored workflow bindings preserve revision zero, takeover and receipt routes', async t => {
   let seen = 0;
   const server = createServer((req, res) => {
     void (async () => {
@@ -22,13 +22,13 @@ test('webhook automation bindings preserve revision zero, takeover and receipt r
       assert.equal(req.headers.authorization, 'Bearer token');
       res.setHeader('content-type', 'application/json');
       if (req.method === 'DELETE') {
-        assert.ok(req.url?.endsWith('/automation-binding?expected_version=7'));
+        assert.ok(req.url?.endsWith('/workflow-binding?expected_version=7'));
         res.statusCode = 204; res.end(); return;
       }
-      if (req.url?.endsWith('/automation-receipts/evt_1')) {
+      if (req.url?.endsWith('/workflow-receipts/evt_1')) {
         res.end(JSON.stringify({ receipt_id: 'receipt', endpoint_id: 'endpoint', provider_event_id: 'evt_1', workflow_name: 'paid', status: 'accepted', duplicate: false, accepted_at: '2026-10-03T12:00:00Z', event_source: 'gregale.inbound.stripe.endpoint', routing_status: 'enqueued', run_id: 'run' })); return;
       }
-      assert.equal(req.url, '/v1/apps/billing/inbound-webhooks/endpoint/automation-binding');
+      assert.equal(req.url, '/v1/apps/billing/inbound-webhooks/endpoint/workflow-binding');
       if (req.method === 'PUT') {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -42,10 +42,10 @@ test('webhook automation bindings preserve revision zero, takeover and receipt r
   t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'token', retry: { maxAttempts: 1, backoffMs: 0 } });
-  const binding = await InboundWebhooksService.putWebhookAutomationBinding({ slug: 'billing', id: 'endpoint', requestBody: { expected_version: 0, workflow_name: 'paid', event_type: 'invoice.*', take_over_delivery: true } });
+  const binding = await InboundWebhooksService.putWebhookWorkflowBinding({ slug: 'billing', id: 'endpoint', requestBody: { expected_version: 0, workflow_name: 'paid', event_type: 'invoice.*', take_over_delivery: true } });
   assert.equal(binding.version, 7);
-  assert.equal((await InboundWebhooksService.getWebhookAutomationBinding({ slug: 'billing', id: 'endpoint' })).workflow_name, 'paid');
-  assert.equal((await InboundWebhooksService.getWebhookAutomationReceipt({ slug: 'billing', id: 'endpoint', eventId: 'evt_1' })).run_id, 'run');
-  await InboundWebhooksService.deleteWebhookAutomationBinding({ slug: 'billing', id: 'endpoint', expectedVersion: 7 });
+  assert.equal((await InboundWebhooksService.getWebhookWorkflowBinding({ slug: 'billing', id: 'endpoint' })).workflow_name, 'paid');
+  assert.equal((await InboundWebhooksService.getWebhookWorkflowReceipt({ slug: 'billing', id: 'endpoint', eventId: 'evt_1' })).run_id, 'run');
+  await InboundWebhooksService.deleteWebhookWorkflowBinding({ slug: 'billing', id: 'endpoint', expectedVersion: 7 });
   assert.equal(seen, 4);
 });

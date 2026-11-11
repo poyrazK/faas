@@ -37,16 +37,7 @@ func (h *Handler) objectTags(w http.ResponseWriter, r *http.Request, req request
 	if !ok {
 		return
 	}
-	call := func(callCtx context.Context) (api.ObjectTaggingResult, error) {
-		return h.taggingService(req, key).Do(callCtx, req.bucket, r.Method, key, selector, tags)
-	}
-	var out api.ObjectTaggingResult
-	var err error
-	if r.Method == http.MethodGet {
-		out, err = call(r.Context())
-	} else {
-		out, err = objectstorageactivity.Execute(r.Context(), h.store, req.bucket, call)
-	}
+	out, err := objectstorageactivity.Tag(r.Context(), h.store, req.bucket, h.taggingService(req, key), r.Method, key, selector, tags)
 	if err != nil {
 		h.taggingError(w, r, req, err, key, selector)
 		return
@@ -70,9 +61,11 @@ func writeObjectTaggingResult(w http.ResponseWriter, method, requestID string, o
 
 func (h *Handler) taggingService(req requestContext, key string) objectstorage.TaggingService {
 	refs, _ := h.store.(state.ObjectVersionReferenceStore)
-	return objectstorage.TaggingService{References: refs, Provider: req.provider, BeforeRequest: func(ctx context.Context) error {
-		if err := h.store.AdmitObjectURL(ctx, req.bucket.AccountID, req.bucket.ID, key, 0, false, h.registry.Accounting); err != nil {
-			return err
+	return objectstorage.TaggingService{References: refs, Provider: req.provider, BeforeOperation: func(ctx context.Context) error {
+		return h.store.AdmitObjectURL(ctx, req.bucket.AccountID, req.bucket.ID, key, 0, false, h.registry.Accounting)
+	}, BeforeRequest: func(ctx context.Context) error {
+		if h.registry.Accounting.GatewaySafety() {
+			return objectstorage.RecordGatewayProviderRequest(ctx, h.requestMetrics, req.bucket.ID, h.now().UTC(), h.registry.Accounting)
 		}
 		if h.requestMetrics != nil {
 			return h.requestMetrics.RecordObjectStorageProviderRequest(ctx, req.bucket.ID, h.now().UTC())

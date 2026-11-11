@@ -7,6 +7,27 @@ import (
 	"time"
 )
 
+// accountSecuritySurface covers the account self-service commands of ADR
+// 20261107103000: display name, sign-in providers, browser sessions and
+// email verification status. The journey account is verified, so a resend
+// reports already_verified and mails nothing.
+func accountSecuritySurface(t *testing.T, tg *target) {
+	name := "Journey " + tg.slug("name")
+	tg.ok(t, time.Minute, "account", "update", "--name", name)
+	t.Cleanup(func() { tg.run(t, time.Minute, "account", "update", "--clear-name") })
+	if who := object(t, tg.ok(t, time.Minute, "whoami").stdout); str(who, "display_name") != name {
+		t.Fatalf("whoami display_name = %q, want %q", str(who, "display_name"), name)
+	}
+	providers := object(t, tg.ok(t, time.Minute, "account", "provider", "list").stdout)
+	if _, ok := providers["providers"]; !ok {
+		t.Fatalf("account provider list has no providers field: %s", compact(providers))
+	}
+	tg.ok(t, time.Minute, "account", "sessions", "list")
+	if status := str(object(t, tg.ok(t, time.Minute, "account", "email", "verify").stdout), "status"); status != "already_verified" {
+		t.Fatalf("account email verify on a verified account = %q", status)
+	}
+}
+
 // TestAccountAndKeys covers the signed-in account surface: identity, plan
 // limits, scoped API keys end to end, usage, invoices and the audit log
 // (inventory rows 138, 140, 142, 144, 151).
@@ -78,6 +99,9 @@ func TestAccountAndKeys(t *testing.T) {
 			}
 			return strings.Contains(string(res.stdout), keyID), "no audit event mentions key " + keyID
 		})
+	})
+	s.check("account_security_surface", func(t *testing.T) {
+		accountSecuritySurface(t, tg)
 	})
 	s.step("revoke_key", func(t *testing.T) {
 		tg.ok(t, time.Minute, "key", "delete", keyID)

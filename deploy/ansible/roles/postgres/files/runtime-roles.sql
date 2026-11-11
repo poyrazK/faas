@@ -25,7 +25,7 @@ BEGIN
 	END IF;
 	ALTER ROLE faas_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 	FOREACH r IN ARRAY ARRAY['faas_apid', 'faas_schedd', 'faas_meterd', 'faas_githubd',
-		'faas_outboundd', 'faas_bridged', 'faas_mcp_bridge', 'faas_shared'] LOOP
+		'faas_outboundd', 'faas_bridged', 'faas_mcp_bridge', 'faas_shared', 'faas_signd'] LOOP
 		IF to_regrole(r) IS NULL THEN
 			EXECUTE format('CREATE ROLE %I LOGIN', r);
 		END IF;
@@ -34,12 +34,18 @@ BEGIN
 			EXECUTE format('GRANT faas_runtime TO %I', r);
 		END IF;
 	END LOOP;
-	IF to_regrole('faas_compute') IS NOT NULL THEN
-		ALTER ROLE faas_compute LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-		IF NOT pg_has_role('faas_compute', 'faas_runtime', 'MEMBER') THEN
-			GRANT faas_runtime TO faas_compute;
+	-- Password-authenticated compute roles: faas_compute, and the per-daemon
+	-- compute roles of step 3 (scripts/ci/compute_db_roles.py UNIT_ROLES),
+	-- each present only once Ansible has created it from its secret.
+	FOREACH r IN ARRAY ARRAY['faas_compute', 'faas_vmmd', 'faas_node_schedd', 'faas_imaged',
+		'faas_builderd', 'faas_gatewayd_internal', 'faas_gatewayd_edge'] LOOP
+		IF to_regrole(r) IS NOT NULL THEN
+			EXECUTE format('ALTER ROLE %I LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', r);
+			IF NOT pg_has_role(r, 'faas_runtime', 'MEMBER') THEN
+				EXECUTE format('GRANT faas_runtime TO %I', r);
+			END IF;
 		END IF;
-	END IF;
+	END LOOP;
 END
 $$;
 
@@ -70,6 +76,23 @@ BEGIN
 	-- only read it, so none can rewrite what was deployed.
 	IF to_regclass('public.platform_release_activations') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE ON public.platform_release_activations FROM faas_runtime;
+	END IF;
+	-- ADR-20261107180000: the apps domains' certificates are edgednsd's.
+	-- Every compute node logs in as a faas_runtime member (faas_compute), and
+	-- a row it wrote would be served by every edge and trusted by the
+	-- Certificate Transparency watch. Only faas_shared, the control plane's
+	-- `faas` OS user that edgednsd runs as, inserts and prunes them.
+	IF to_regclass('public.edge_tls_certificates') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE ON public.edge_tls_certificates FROM faas_runtime;
+		GRANT INSERT, DELETE ON public.edge_tls_certificates TO faas_shared;
+	END IF;
+	-- ADR-20261109170000: a row in artifact_signatures is the control plane's
+	-- word that a node built that layer for that deployment, and signd signs
+	-- each key once. Only faas_signd, the control plane's signd, inserts one;
+	-- nobody updates or deletes a row.
+	IF to_regclass('public.artifact_signatures') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE ON public.artifact_signatures FROM faas_runtime;
+		GRANT SELECT, INSERT ON public.artifact_signatures TO faas_signd;
 	END IF;
 END
 $$;

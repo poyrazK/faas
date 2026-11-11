@@ -11,19 +11,19 @@ import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { rewriteImportsToJs, writeModelsBarrel, patchBinaryResponses, patchAutomationPathEncoding } from '../scripts/post-process.mjs';
+import { rewriteImportsToJs, writeModelsBarrel, patchBinaryResponses, patchStoredWorkflowPathEncoding } from '../scripts/post-process.mjs';
 
-test('automation path post-processing is repeatable and fails closed on generator drift', async () => {
+test('stored workflow path post-processing is repeatable and fails closed on generator drift', async () => {
   await withTempDir(async dir => {
     await mkdir(join(dir, 'core'));
     const path = join(dir, 'core', 'request.ts');
     await writeFile(path, 'const encoder = config.ENCODE_PATH || encodeURI;\n');
-    await patchAutomationPathEncoding(dir);
+    await patchStoredWorkflowPathEncoding(dir);
     const first = await readFile(path, 'utf8');
-    await patchAutomationPathEncoding(dir);
+    await patchStoredWorkflowPathEncoding(dir);
     assert.equal(await readFile(path, 'utf8'), first);
     await writeFile(path, 'generator changed\n');
-    await assert.rejects(patchAutomationPathEncoding(dir), /generator anchor missing/);
+    await assert.rejects(patchStoredWorkflowPathEncoding(dir), /generator anchor missing/);
   });
 });
 

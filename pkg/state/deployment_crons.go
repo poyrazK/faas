@@ -232,6 +232,16 @@ func (s *PgStore) ApplyDeploymentCronStaging(ctx context.Context, appID string, 
 	if p.Request.Operation == "prepare" || p.Request.Operation == "cancel" || p.Request.Operation == "track_upload" {
 		return s.prepareCronActivation(ctx, appID, p)
 	}
+	var result DeploymentCronStagingResult
+	err := s.retryAfterDetachingCronHistory(ctx, func() error {
+		var err error
+		result, err = s.applyDeploymentCronStagingOnce(ctx, appID, p)
+		return err
+	})
+	return result, err
+}
+
+func (s *PgStore) applyDeploymentCronStagingOnce(ctx context.Context, appID string, p DeploymentCronStagingParams) (DeploymentCronStagingResult, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return DeploymentCronStagingResult{}, err
@@ -314,6 +324,13 @@ func (s *PgStore) writeCronSet(ctx context.Context, tx pgx.Tx, appID, subject st
 	}
 	data, err := json.Marshal(target)
 	if err != nil {
+		return err
+	}
+	removed, err := removedHTTPCronIDsTx(ctx, tx, appID, data)
+	if err != nil {
+		return err
+	}
+	if err = prepareCronRemovalTx(ctx, tx, removed); err != nil {
 		return err
 	}
 	if err = q.DeleteDeploymentHTTPcrons(ctx, tx, sqlc.DeleteDeploymentHTTPcronsParams{AppID: appID, Crons: data}); err != nil {

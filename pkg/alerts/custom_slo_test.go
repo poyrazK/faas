@@ -60,8 +60,9 @@ func TestEvaluator_SLOBudgetBurnUsesTheSLOsObjective(t *testing.T) {
 	_, _, ident := seedSLORule(t, store, state.AlertMetricSLOBudgetBurn, state.AlertGt, 14.4)
 	// 2% failing in both windows against a 99.9% objective: burn 20 > 14.4.
 	// (ADR-082's fixed 99.5% panel would only see a burn of 4.)
+	// The availability SLI is class="2xx" over class=~"2xx|5xx".
 	prom := &selectivePromQL{fn: func(q string) (float64, error) {
-		if strings.Contains(q, "5..") {
+		if strings.Contains(q, "5xx") {
 			return 1000, nil
 		}
 		return 980, nil

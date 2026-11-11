@@ -1,0 +1,16 @@
+from typing import Literal
+
+AgentApprovalPendingInfoCategory = Literal["billing", "credentials", "delete", "production"]
+
+AGENT_APPROVAL_PENDING_INFO_CATEGORY_VALUES: set[AgentApprovalPendingInfoCategory] = {
+    "billing",
+    "credentials",
+    "delete",
+    "production",
+}
+
+
+def check_agent_approval_pending_info_category(value: str) -> AgentApprovalPendingInfoCategory:
+    if value in AGENT_APPROVAL_PENDING_INFO_CATEGORY_VALUES:
+        return value
+    raise TypeError(f"Unexpected value {value!r}. Expected one of {AGENT_APPROVAL_PENDING_INFO_CATEGORY_VALUES!r}")

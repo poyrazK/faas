@@ -232,6 +232,18 @@ func (c *RegistryClient) resolveHTTPClient() {
 		// Never leave a registry client without a deadline.
 		c.hc.Timeout = time.Duration(api.OCIPullTimeoutSeconds) * time.Second
 	}
+	transport := c.hc.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	if base, ok := transport.(*http.Transport); ok {
+		clone := base.Clone()
+		// Retain at least one idle socket per parallel setup slot. Active
+		// blob bodies have a separate stall budget and may outlive these slots.
+		clone.MaxIdleConnsPerHost = max(clone.MaxIdleConnsPerHost, cap(c.pullSlots))
+		clone.MaxIdleConns = max(clone.MaxIdleConns, clone.MaxIdleConnsPerHost)
+		c.hc.Transport = clone
+	}
 	c.stallTimeout = c.hc.Timeout
 	c.blobHC = blobClient(c.hc)
 }
@@ -253,10 +265,10 @@ func blobClient(hc *http.Client) *http.Client {
 	default:
 		return nil
 	}
-	if tr.ResponseHeaderTimeout == 0 {
+	if tr.ResponseHeaderTimeout <= 0 || tr.ResponseHeaderTimeout > hc.Timeout {
 		tr.ResponseHeaderTimeout = hc.Timeout
 	}
-	if tr.TLSHandshakeTimeout == 0 {
+	if tr.TLSHandshakeTimeout <= 0 || tr.TLSHandshakeTimeout > hc.Timeout {
 		tr.TLSHandshakeTimeout = hc.Timeout
 	}
 	clone := *hc

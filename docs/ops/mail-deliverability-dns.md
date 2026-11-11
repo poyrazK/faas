@@ -149,6 +149,16 @@ Three dashboards surface when the deliverability story drifts:
   #246 item 2; reason enum: `bad_signature`, `rate_limited`,
   `unauthorized`, `server`, `unknown`). Sustained non-zero
   rate over 5 minutes = operator paging.
+- **Prometheus, no transport** — `apid_mail_send_failures_total{reason="no_transport"}`
+  counts every email dropped because `FAAS_MAIL_TRANSPORT=noop` on a
+  production box (each drop is also a `mail.dropped` ERROR log record, and
+  boot logs an ERROR `mail.transport transport=noop`). Any non-zero value
+  means customers are not receiving address-verification, password-reset or
+  magic-link mail: set `FAAS_MAIL_TRANSPORT=resend` (or `postmark`) plus
+  `FAAS_MAIL_FROM` and the provider key in `/etc/faas/sealed.env`, then
+  restart apid. Accounts that signed up meanwhile recover by signing in
+  again: login mints and sends a fresh verification link while the address
+  is unverified.
 - **Audit log** — `webhook.replay_rejected` rows from the
   `webhookdedupe` table are normal (Resend retries every
   few seconds on a 5xx), but a 100x jump in

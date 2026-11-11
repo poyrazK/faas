@@ -819,9 +819,10 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if !d.engine.ownsApp(app) {
 		return
 	}
-	if d.cronRunOrphaned(ctx, inv) {
+	cronPath, cronStopped := d.cronRunTarget(ctx, inv)
+	if cronStopped {
 		if _, err := d.store.CancelPendingInvocation(ctx, inv.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
-			d.log.Warn("drain: cancel a deleted cron's run", "inv", inv.ID, "err", err)
+			d.log.Warn("drain: cancel a removed or stopped cron's run", "inv", inv.ID, "err", err)
 		}
 		return
 	}
@@ -934,6 +935,9 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// Use the post-claim row for attempt-aware retry/dead-letter decisions.
 	// ClaimInvocation increments attempts atomically; keeping the pre-claim
 	// snapshot here would delay the terminal callback by one delivery cycle.
+	if cronPath != "" {
+		claimed.Path = cronPath
+	}
 	if timeout > api.AsyncInvocationTimeoutFloor {
 		go func() {
 			defer release()
@@ -1183,15 +1187,17 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		}
 	}
 	if err != nil {
-		// Permanent invoke errors (4xx) terminal-fail; transient
-		// (network / 5xx) retry. The gateway is the source of
-		// truth — it knows whether the failure is recoverable.
+		// The gateway's verdict decides first: permanent invoke errors
+		// (the app's own 4xx or thrown handler) terminal-fail, transient
+		// ones (network, platform 5xx) retry. applicationFailure then
+		// retries or dead-letters the app's own failures on durable async
+		// sources so none ends as a plain, unreplayable failure.
 		retryAfter := d.invocationRetryDelay(ctx, inv)
 		if errors.Is(err, ErrPermanentInvoke) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		retryAfter, budget = d.eventDeliveryFailure(ctx, inv, err, retryAfter, budget)
+		retryAfter, budget = d.applicationFailure(ctx, inv, err, retryAfter, budget)
 		if errors.Is(err, ErrDispatchRefused) {
 			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
@@ -1566,30 +1572,51 @@ func invocationRetryPolicy(inv state.Invocation, app *state.App) dispatch.RetryP
 // DeleteCron cancels its own runs, but a cron removed by a deploy's
 // gregale.yaml, a project apply or an app's deletion left its queued and
 // retrying runs to reach the app (crons audit 2026-11-02).
-func (d *Drain) cronRunOrphaned(ctx context.Context, inv state.Invocation) bool {
+//
+// cronRunTarget also stops a run whose cron is disabled or suspended, and
+// returns the cron's current path. Disabling a cron, or the suspension of an
+// app without a live deployment, left its queued runs (those the spend cap or
+// a budget held back, retries, manual runs) to reach the app, and a run
+// queued before a path change was delivered to the old path (crons audit
+// 2026-11-05). A read error other than not-found delivers the run as queued.
+func (d *Drain) cronRunTarget(ctx context.Context, inv state.Invocation) (path string, stopped bool) {
 	if inv.Source != state.InvocationCron {
-		return false
+		return "", false
 	}
 	if inv.CronID == nil {
-		return true
+		return "", true
 	}
-	_, err := d.store.CronByID(ctx, *inv.CronID)
-	return errors.Is(err, state.ErrNotFound)
+	c, err := d.store.CronByID(ctx, *inv.CronID)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", true
+	}
+	if err != nil {
+		return "", false
+	}
+	if !c.Enabled || c.SuspendedReason != "" {
+		return "", true
+	}
+	return c.Path, false
 }
 
 // financialHoldDeferral is how far a row of an app held by its compute
 // budget moves back: out of the head of the walk, attempts untouched.
 const financialHoldDeferral = time.Minute
 
-// eventDeliveryFailure applies ADR-20261031100001 to a failed event
-// delivery. A handler that threw (the runner's 500) or asked to be retried
-// (408, 429) retries with the event backoff and is dead-lettered when its
-// attempts run out; any other 4xx is final but dead-lettered at once, so it
-// can be replayed after a fix. Every other invocation keeps the gateway's
-// verdict, as does a failure the app's code did not return.
-func (d *Drain) eventDeliveryFailure(ctx context.Context, inv state.Invocation, err error, retryAfter time.Duration, budget int) (time.Duration, int) {
+// applicationFailure applies ADR-20261031100001 to a failed event delivery
+// and, since its 2026-11-07 amendment, to every durable async source
+// (state.RetriesApplicationFailures): async invocations, async routes,
+// inbound webhooks, queue messages and delayed tasks. A handler that threw
+// (the runner's 500) or asked to be retried (408, 429) retries with the
+// invocation's backoff and is dead-lettered when its attempts run out; any
+// other 4xx is final but dead-lettered at once, so it can be replayed after a
+// fix. Before the amendment a thrown handler on those sources failed after
+// one attempt with no dead letter, and an inbound provider that had already
+// received 202 never sent the event again. Cron runs and exclusive operations
+// keep the gateway's verdict, as does a failure the app's code did not return.
+func (d *Drain) applicationFailure(ctx context.Context, inv state.Invocation, err error, retryAfter time.Duration, budget int) (time.Duration, int) {
 	var appErr applicationStatusError
-	if !state.IsEventDelivery(inv) || !errors.As(err, &appErr) {
+	if !state.RetriesApplicationFailures(inv) || !errors.As(err, &appErr) {
 		return retryAfter, budget
 	}
 	delay := d.invocationRetryDelay(ctx, inv)

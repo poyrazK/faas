@@ -74,21 +74,22 @@ func (a *apidEnqueuer) Enqueue(ctx context.Context, spec BuildSpec) (state.Build
 	}
 
 	req := &githubdpb.EnqueueBuildRequest{
-		AccountId:            spec.App.AccountID,
-		AppId:                spec.App.ID,
-		DeliveryId:           spec.DeliveryID,
-		CommitSha:            spec.CommitSHA,
-		SourcePath:           spec.SourcePath,
-		SourceUrl:            spec.SourceURL,
-		SourceBytes:          spec.SourceBytes,
-		RepoFullName:         spec.RepoFullName,
-		Ref:                  spec.Ref,
-		Tag:                  spec.Tag,
-		Branch:               spec.Branch,
-		DeploymentScope:      spec.Scope,
-		GithubSourceRef:      spec.GitHubSourceRef,
-		GithubInstallationId: spec.GitHubInstallationID,
-		Pusher:               spec.Pusher,
+		AccountId:               spec.App.AccountID,
+		AppId:                   spec.App.ID,
+		DeliveryId:              spec.DeliveryID,
+		CommitSha:               spec.CommitSHA,
+		SourcePath:              spec.SourcePath,
+		SourceUrl:               spec.SourceURL,
+		SourceBytes:             spec.SourceBytes,
+		RepoFullName:            spec.RepoFullName,
+		Ref:                     spec.Ref,
+		Tag:                     spec.Tag,
+		Branch:                  spec.Branch,
+		DeploymentScope:         spec.Scope,
+		GithubSourceRef:         spec.GitHubSourceRef,
+		GithubInstallationId:    spec.GitHubInstallationID,
+		ComposeServiceAddresses: spec.ComposeServiceAddresses,
+		Pusher:                  spec.Pusher,
 		// Issue #977 / ADR-116: thread the annotation surface from
 		// the dispatcher. PRNumber is int32 on the wire (the proto3
 		// convention); the bridge converts to int for the apidsource.

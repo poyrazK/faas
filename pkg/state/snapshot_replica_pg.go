@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/retry"
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
@@ -70,6 +71,9 @@ func (s *PgStore) ReconcileSnapshotReplicas(ctx context.Context, nodeID string) 
 	// snapshot with 40001; retry it whole rather than fail the tick
 	// (production-us hunt #5: "could not serialize access").
 	for attempt := 0; ; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return 0, true, err
+		}
 		added, err := s.enqueueSnapshotReplicasForNodeOnce(ctx, nodeID)
 		var pgErr *pgconn.PgError
 		if attempt >= 2 || !errors.As(err, &pgErr) || pgErr.Code != "40001" {

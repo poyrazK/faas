@@ -114,8 +114,8 @@ func main() {
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// Response handlers install a bounded write deadline; task subscriptions
-		// clear it and remain open until disconnect or token expiry.
+		// Response handlers install bounded write deadlines. Subscriptions
+		// refresh the deadline for each write and remain open while idle.
 		WriteTimeout: 0,
 		IdleTimeout:  60 * time.Second,
 	}
@@ -488,13 +488,18 @@ func callTool(w http.ResponseWriter, r *http.Request, id, rawParams json.RawMess
 	if params.Arguments == nil {
 		params.Arguments = map[string]any{}
 	}
+	if entry.inputSchema != nil && entry.inputSchema.Validate(params.Arguments) != nil {
+		writeToolError(w, id, "tool arguments do not match inputSchema")
+		return
+	}
 	if tasks != nil && protocol == currentProtocol && clientSupportsMcpTasks(params.Meta.ClientCapabilities) {
 		if _, registered := tasks.taskHandlers[params.Name]; registered {
 			if params.Name == "build_report" && params.Arguments["request_approval"] == true && !containsString(taskInputMethodsFor(params.Meta.ClientCapabilities), "elicitation/create:form") {
 				writeToolError(w, id, "request_approval requires client support for elicitation form requests")
 				return
 			}
-			result, err := tasks.create(r.Context(), params.Name, params.Arguments, identity, params.Meta.ClientCapabilities)
+			outputSchema, _ := entry.definition["outputSchema"].(map[string]any)
+			result, err := tasks.create(r.Context(), params.Name, params.Arguments, identity, params.Meta.ClientCapabilities, outputSchema)
 			if err != nil {
 				writeToolError(w, id, "invalid task arguments or task queue unavailable")
 				return
@@ -509,8 +514,13 @@ func callTool(w http.ResponseWriter, r *http.Request, id, rawParams json.RawMess
 			writeToolError(w, id, "tool execution failed")
 			return
 		}
-		if _, err := json.Marshal(result); err != nil {
+		encoded, err := json.Marshal(result)
+		if err != nil {
 			writeToolError(w, id, "tool handler returned an invalid result")
+			return
+		}
+		if validateMCPToolOutput(entry.outputSchema, encoded) != nil {
+			writeToolError(w, id, "tool output does not match outputSchema")
 			return
 		}
 		writeRPCResult(w, id, result)

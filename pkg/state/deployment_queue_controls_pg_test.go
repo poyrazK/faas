@@ -237,9 +237,17 @@ func TestPg_ReorderDeployment_NonPending_Refuses(t *testing.T) {
 	}
 }
 
-func TestPg_ClearDeployment_Pending_Happy(t *testing.T) {
+// A pending row is refused (hiding would not stop it, deploy review
+// 2026-11-10 D1); once cancelled it can be hidden.
+func TestPg_ClearDeployment_Pending_RefusedUntilCancelled(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, _, depID := seedPendingDeployPg(t, s, ctx, "clear-pending")
+	if err := s.ClearDeployment(ctx, depID, "operator:test"); !errors.Is(err, state.ErrClearInFlightForbidden) {
+		t.Fatalf("ClearDeployment(pending) = %v, want ErrClearInFlightForbidden", err)
+	}
+	if _, _, err := s.CancelDeploymentTx(ctx, depID, "operator:test", state.CancelReasonUser); err != nil {
+		t.Fatalf("CancelDeploymentTx: %v", err)
+	}
 	if err := s.ClearDeployment(ctx, depID, "operator:test"); err != nil {
 		t.Fatalf("ClearDeployment: %v", err)
 	}

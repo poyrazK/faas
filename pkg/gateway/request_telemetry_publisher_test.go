@@ -26,6 +26,7 @@
 package gateway
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -298,6 +299,55 @@ func TestCollapseRequestTelemetry_LatencyCardinalityIsBounded(t *testing.T) {
 	}
 	if represented != len(rows) {
 		t.Fatalf("represented request count = %d, want %d", represented, len(rows))
+	}
+}
+
+// adr: 127 — amendment 2026-10-31: server errors and requests to apps with
+// in-guest tracing keep a bounded number of exact rows per bucket (own trace,
+// time, latency) so a request ID resolves to its request and its guest spans
+// have a row; the rest fold as before and Count totals are unchanged.
+func TestCollapseRequestTelemetry_KeepsBoundedExactSamples(t *testing.T) {
+	t.Parallel()
+	accountID, appID, deployID := uuid.New(), uuid.New(), uuid.New()
+	base := time.Date(2026, 10, 31, 12, 0, 7, 0, time.UTC)
+	var rows []RequestTelemetryRow
+	for i := range 12 {
+		row := makeCollapseRow(accountID, appID, deployID, "GET /checkout", "GET", 500, 13, false,
+			fmt.Sprintf("%032x", i+1), base.Add(time.Duration(i)*time.Millisecond))
+		row.exactSample = true
+		rows = append(rows, row)
+	}
+	for i := range 4 {
+		rows = append(rows, makeCollapseRow(accountID, appID, deployID, "GET /checkout", "GET", 200, 13, false,
+			fmt.Sprintf("%032x", 100+i), base.Add(time.Duration(i)*time.Millisecond)))
+	}
+
+	collapsed := collapseRequestTelemetry(rows)
+	var exact, folded []RequestTelemetryRow
+	total := 0
+	for _, row := range collapsed {
+		total += row.Count
+		if row.Count == 1 && row.Status == 500 && row.ReceivedAt != base.Truncate(time.Minute) {
+			exact = append(exact, row)
+		} else {
+			folded = append(folded, row)
+		}
+	}
+	if total != 16 {
+		t.Fatalf("counts sum to %d, want 16: %+v", total, collapsed)
+	}
+	if len(exact) != requestTelemetryExactPerBucket {
+		t.Fatalf("exact rows = %d, want %d", len(exact), requestTelemetryExactPerBucket)
+	}
+	for i, row := range exact {
+		if row.TraceID != fmt.Sprintf("%032x", i+1) || row.LatencyMS != 13 || !row.ReceivedAt.Equal(base.Add(time.Duration(i)*time.Millisecond)) {
+			t.Fatalf("exact row %d = trace %s latency %d at %v; want its own trace, exact latency and time", i, row.TraceID, row.LatencyMS, row.ReceivedAt)
+		}
+	}
+	// The remaining 7 errors fold into one bucket row; the 200s are not
+	// exact samples and fold into their own.
+	if len(folded) != 2 || folded[0].Status != 500 || folded[0].Count != 12-requestTelemetryExactPerBucket || folded[1].Count != 4 {
+		t.Fatalf("folded rows = %+v", folded)
 	}
 }
 

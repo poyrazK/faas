@@ -111,6 +111,7 @@ func newKeyedReplay(parent Invocation, opts KeyedInvocationReplayOptions, sequen
 	inv := Invocation{
 		ID: uuid.NewString(), AppID: parent.AppID, AccountID: parent.AccountID,
 		DeploymentScope: parent.DeploymentScope, PlatformTenantID: parent.PlatformTenantID,
+		EdgeJWTIssuer: parent.EdgeJWTIssuer, EdgeJWTSubject: parent.EdgeJWTSubject,
 		Source: InvocationReplay, State: InvocationPending, Method: parent.Method, Path: parent.Path,
 		Payload: bytes.Clone(parent.Payload), Headers: bytes.Clone(parent.Headers), DueAt: now, CreatedAt: now,
 		WorkPolicyName: parent.WorkPolicyName, WorkPolicyRevision: parent.WorkPolicyRevision,

@@ -15,6 +15,42 @@ class TaskRecoveryTests(unittest.TestCase):
     setUp = execution_tests.TaskExecutionPostgresTests.setUp
     insert_task = execution_tests.TaskExecutionPostgresTests.insert_task
 
+    def test_heartbeat_rechecks_expiry_after_row_lock(self):
+        for field in ("lease_expires_at", "expires_at"):
+            with self.subTest(field=field):
+                task_id = self.insert_task()
+                task = self.runtime._claim()
+                with self.runtime.pool.connection() as connection:
+                    connection.execute(f"UPDATE gregale_mcp_tasks SET {field}=clock_timestamp()+interval '1 second' WHERE task_id=%s", (task_id,))
+                results = []
+                def renew():
+                    try:
+                        results.append(self.runtime._heartbeat(task_id, task["lease_token"]))
+                    except Exception as error:
+                        results.append(error)
+                worker = threading.Thread(target=renew, daemon=True)
+                deadline = time.monotonic() + 5
+                with self.runtime.pool.connection() as lock:
+                    lock.execute("SELECT task_id FROM gregale_mcp_tasks WHERE task_id=%s FOR UPDATE", (task_id,))
+                    worker.start()
+                    while True:
+                        with self.runtime.pool.connection() as connection:
+                            waiting = connection.execute("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%%UPDATE gregale_mcp_tasks%%lease_expires_at%%') AS waiting").fetchone()["waiting"]
+                        if waiting:
+                            break
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(.005)
+                    while not lock.execute(f"SELECT {field}<=clock_timestamp() AS expired FROM gregale_mcp_tasks WHERE task_id=%s", (task_id,)).fetchone()["expired"]:
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(.005)
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(results, [None])
+                if field == "lease_expires_at":
+                    replacement = self.runtime._claim()
+                    self.assertNotEqual(replacement["lease_token"], task["lease_token"])
+                    self.runtime._finish(replacement, "completed", {"content": []})
+
     def test_uuid_case_preserves_payload_reads_and_input_updates(self):
         runtime = self.runtime
         identity = execution_tests.AuthContext(subject="alice", client_id="test-client", resource="https://example.com/mcp")

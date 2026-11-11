@@ -21,7 +21,7 @@ func TestResolveSimpleAppPlanUsesHostingOverrides(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("hosting:\n  port: 9000\n  health: /ready\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := main.ResolveSimpleAppPlan(dir, "demo", "small", simpleapp.SourceDirectory, false, false)
+	plan, err := main.ResolveSimpleAppPlan(dir, "demo", "small", simpleapp.SourceDirectory, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestResolveSimpleAppPlanUsesCanonicalFrameworkDefaults(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			plan, err := main.ResolveSimpleAppPlan(dir, "demo", "", simpleapp.SourceDirectory, false, false)
+			plan, err := main.ResolveSimpleAppPlan(dir, "demo", "", simpleapp.SourceDirectory, false, false, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,7 +147,7 @@ func TestResolveSimpleAppPlanRejectsFunctionShape(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "handler.js"), []byte("exports.handler = () => {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := main.ResolveSimpleAppPlan(dir, "demo", "", simpleapp.SourceDirectory, false, false); err == nil || !strings.Contains(err.Error(), "gregale deploy --diff") {
+	if _, err := main.ResolveSimpleAppPlan(dir, "demo", "", simpleapp.SourceDirectory, false, false, ""); err == nil || !strings.Contains(err.Error(), "gregale deploy --diff") {
 		t.Fatalf("error = %v, want function-path guidance", err)
 	}
 }

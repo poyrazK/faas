@@ -238,7 +238,7 @@ func runDataAPISync(ctx context.Context, client *api.Client, slug string, config
 		}
 	}
 	dataAPISyncProgress("Refreshing the Data API and waiting for readiness")
-	restart, err := client.RestartAppFresh(ctx, slug)
+	restart, err := refreshDataAPIFresh(ctx, client, slug)
 	receipt.WakeID = restart.WakeID
 	if err != nil {
 		return receipt, fmt.Errorf("request schema refresh: %w", err)

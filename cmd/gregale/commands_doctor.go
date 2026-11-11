@@ -133,6 +133,43 @@ func (r doctorReport) HasProfileWarnings() bool {
 	return r.Profile != nil && len(r.Profile.Warnings) > 0
 }
 
+// actionableProfileWarnings are the profile warnings doctor reports as
+// findings: the source is broken as written. A malformed package.json
+// (package_json_invalid, missing_start_command) passed --strict and read "No
+// local findings" while its profile already named the problem (CLI journey
+// 2026-11-05, #6640). The other codes stay advisory, in the JSON profile
+// only: container_command_deferred is every Dockerfile app,
+// loopback_bind_possible matches any "localhost" (the loopback-bind check is
+// the precise one), and an undetected framework may still build.
+var actionableProfileWarnings = map[string]bool{
+	"package_json_invalid":  true,
+	"missing_start_command": true,
+}
+
+// ActionableProfileWarnings lists the profile warnings doctor reports.
+func (r doctorReport) ActionableProfileWarnings() []frameworkprofile.Warning {
+	if r.Profile == nil {
+		return nil
+	}
+	return filterActionableProfileWarnings(r.Profile.Warnings)
+}
+
+func filterActionableProfileWarnings(warnings []frameworkprofile.Warning) []frameworkprofile.Warning {
+	var out []frameworkprofile.Warning
+	for _, warning := range warnings {
+		if actionableProfileWarnings[warning.Code] {
+			out = append(out, warning)
+		}
+	}
+	return out
+}
+
+// HasStrictWarnings is what `doctor --strict` and `deploy check --strict`
+// fail on: warn checks and actionable profile warnings.
+func (r doctorReport) HasStrictWarnings() bool {
+	return r.HasWarnings() || len(r.ActionableProfileWarnings()) > 0
+}
+
 func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 	if jsonMode {
 		_ = json.NewEncoder(osStderr).Encode(struct {
@@ -141,12 +178,20 @@ func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 		}{Doctor: rep, Exit: 0})
 		return
 	}
-	if rep.HasErrors() || rep.HasWarnings() {
+	if rep.HasErrors() || rep.HasStrictWarnings() {
 		renderDoctorHuman(osStderr, rep)
 	}
 	if rep.HasProfileWarnings() {
-		_, _ = fmt.Fprintln(osStderr, "gregale deploy — profile warnings")
+		var advisory []frameworkprofile.Warning
 		for _, warning := range rep.Profile.Warnings {
+			if !actionableProfileWarnings[warning.Code] { // the report above shows those
+				advisory = append(advisory, warning)
+			}
+		}
+		if len(advisory) > 0 {
+			_, _ = fmt.Fprintln(osStderr, "gregale deploy — profile warnings")
+		}
+		for _, warning := range advisory {
 			_, _ = fmt.Fprintf(osStderr, "  ! %s — %s\n", warning.Code, warning.Message)
 			if len(warning.Sources) > 0 {
 				_, _ = fmt.Fprintf(osStderr, "    sources: %s\n", strings.Join(warning.Sources, ", "))
@@ -214,6 +259,9 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	}
 	appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
 	report := withSourceCheck(runDoctorChecksForApp(abs, detectShape(abs), &appEnv), abs)
+	if check, found := doctorCheckCapabilities(context.Background(), abs); found {
+		report.Checks = append([]doctorCheck{check}, report.Checks...)
+	}
 	// Honour --strict: a warn under strict promotes to exit 1.
 	// Use the doctorReport helpers so the standalone cmdDoctor
 	// exit semantics stay in sync with `gregale deploy --doctor-strict`
@@ -221,7 +269,7 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	// value (e.g. "skipped") only needs to extend the helpers,
 	// not three parallel iteration sites.
 	exit := 0
-	if report.HasErrors() || (*strict && report.HasWarnings()) {
+	if report.HasErrors() || (*strict && report.HasStrictWarnings()) {
 		exit = 1
 	}
 	if *jsonOut || jsonOutput {
@@ -1086,6 +1134,20 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 			if c.Reason != "" {
 				_, _ = fmt.Fprintf(w, "    reason: %s\n", c.Reason)
 			}
+		}
+	}
+	// Actionable profile warnings are findings too: a malformed package.json
+	// read "No local findings" (#6640).
+	for _, warning := range rep.ActionableProfileWarnings() {
+		hasFinding = true
+		if Enabled() {
+			_, _ = fmt.Fprintf(w, "  ! profile %s — warn\n", warning.Code)
+		} else {
+			_, _ = fmt.Fprintf(w, "  profile %s — warn\n", warning.Code)
+		}
+		RenderHintRow(w, warning.Message)
+		if len(warning.Sources) > 0 {
+			_, _ = fmt.Fprintf(w, "    sources: %s\n", strings.Join(warning.Sources, ", "))
 		}
 	}
 	if !hasFinding {

@@ -8,6 +8,8 @@ CREATE TABLE managed_postgres_databases (
  state text NOT NULL,
  backend_id text NOT NULL,
  backend_fingerprint text NOT NULL,
+ provider_resource_id text,
+ data_resource_id text,
  deleted_at timestamptz
 );
 CREATE TABLE managed_postgres_bindings (
@@ -40,5 +42,11 @@ CREATE TABLE managed_postgres_live_logins (
  slot text NOT NULL,
  awake text NOT NULL DEFAULT '',
  created_at timestamptz NOT NULL DEFAULT now(),
- sealed_login_sig bytea
+ sealed_login_sig bytea,
+ data_resource_id text,
+ authorized_identity_id text
+);
+CREATE TABLE managed_postgres_live_login_attempts (
+ database_id uuid PRIMARY KEY,
+ attempted_at timestamptz NOT NULL
 );

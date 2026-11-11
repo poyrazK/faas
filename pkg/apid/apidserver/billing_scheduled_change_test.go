@@ -216,8 +216,10 @@ func TestCancellingTwiceAndDeletingAfterCancelling(t *testing.T) {
 	fake := &scheduledPolar{cancelling: true}
 	e := scheduledEnv(t, fake)
 	rec := e.Do(t, http.MethodPost, "/v1/billing/cancel", nil, nil)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("second cancel = %d %s, want 409", rec.Code, rec.Body)
+	// The code was "conflict", with billing_already_cancelled in the title,
+	// so the CLI's "no active subscription" hint never matched.
+	if p := scheduledProblem(t, rec); rec.Code != http.StatusConflict || p.Code != api.CodeBillingAlreadyCancelled {
+		t.Fatalf("second cancel = %d %+v, want 409 %s", rec.Code, p, api.CodeBillingAlreadyCancelled)
 	}
 	_, _, before := fake.state()
 	if rec := e.Do(t, http.MethodDelete, "/v1/account", nil, nil); rec.Code != http.StatusOK {

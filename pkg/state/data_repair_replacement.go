@@ -35,6 +35,9 @@ func reserveDataRepairReplacement(op *Operation, in DataRepairAdvance, now time.
 	if op.DataRepair.ReplacementOperationID != "" {
 		return api.OperationEvent{}, ErrConflict
 	}
+	if expiredRepairDraft(*op, now) {
+		op.State, op.FailureCode = api.OperationFailed, "repair_plan_expired"
+	}
 	op.DataRepair.ReplacementOperationID = in.ReplacementOperationID
 	op.DataRepair.Phase, op.DataRepair.PhaseStartedAt = api.DataRepairReplacing, now
 	if !op.State.Terminal() {
@@ -56,5 +59,20 @@ func finishDataRepairReplacement(parent *Operation, in DataRepairAdmission, now 
 	}
 	p.Phase, p.PhaseStartedAt = api.DataRepairReplaced, now
 	parent.State, parent.FailureCode, parent.Waiting = api.OperationCancelled, "repair_plan_replaced", nil
+	renewRepairRetention(parent, now)
 	return dataRepairEvent(parent, "cancelled", now), nil
+}
+
+// The child can only become a historical failed operation. Its exact reserved
+// lineage is checked before this path may bypass new-execution admission gates.
+func expiredReplacementRecovery(in DataRepairAdmission, now time.Time) bool {
+	return in.Plan.ReplacesPlanID != "" && !in.Plan.PlanExpiresAt.After(now)
+}
+
+func replacementRecoveryLimits(parent Operation) (api.OperationPlanLimits, error) {
+	limits := parent.PlanLimits
+	if !limits.Allowed || limits.ResultRetentionSeconds <= 0 || limits.EventRetentionSeconds <= 0 {
+		return limits, ErrConflict
+	}
+	return limits, nil
 }

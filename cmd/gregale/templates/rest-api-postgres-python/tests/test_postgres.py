@@ -166,11 +166,12 @@ class PostgresTests(unittest.IsolatedAsyncioTestCase):
                 async with self.pools[-1].connection() as connection:
                     with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                         await connection.execute("CREATE TABLE public.forbidden (id int)")
+                # ADR-20261109180000: restore runs no SQL, so a missing schema
+                # passes the hook and closes readiness instead.
                 await self.database_admin.execute("DROP TABLE public.notes")
-                self.assertEqual((await self.restore(client)).status_code, 503)
+                self.assertEqual((await self.restore(client)).status_code, 204)
                 self.assertEqual((await client.get("/healthz")).status_code, 503)
                 await self.migrate()
-                self.assertEqual((await self.restore(client)).status_code, 204)
                 self.assertEqual((await client.get("/healthz")).status_code, 200)
 
     async def test_before_checkpoint_closes_every_server_session_and_restore_reconnects(self):
@@ -196,7 +197,7 @@ class PostgresTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.db.generation, 1)
                 self.assertEqual((await client.get("/healthz")).status_code, 200)
 
-    async def test_restore_queued_and_active_validation_timeouts_are_fenced(self):
+    async def test_restore_queued_behind_a_blocked_reload_is_fenced_and_restore_skips_sql(self):
         app = create_app(self.database)
         async with app.router.lifespan_context(app):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app, client=("127.0.0.1", 1)), base_url="http://example") as client:
@@ -213,15 +214,12 @@ class PostgresTests(unittest.IsolatedAsyncioTestCase):
                     await self.db.binding.wait_for_retirement(5)
                     self.publish("c", self.uri(self.runtime, self.first))
                     self.assertEqual((await self.restore(client)).status_code, 204)
+                    # ADR-20261109180000: restore stays off a blocked database;
+                    # readiness waits for it instead and times out on its own.
                     await lock.execute("LOCK TABLE public.notes IN ACCESS EXCLUSIVE MODE")
-                    restore = asyncio.create_task(self.restore(client))
-                    await self.wait_for_blocked_validator()
-                    self.assertEqual((await restore).status_code, 503)
-                    self.assertEqual(len(self.acks), 2)
-                    await lock.rollback()
-                    await self.db.binding.wait_for_retirement(5)
-                    self.assertEqual(len(self.acks), 2)
                     self.assertEqual((await self.restore(client)).status_code, 204)
+                    self.assertEqual((await client.get("/healthz")).status_code, 503)
+                    await lock.rollback()
                     self.assertEqual((await client.get("/healthz")).status_code, 200)
                 finally:
                     await lock.close()

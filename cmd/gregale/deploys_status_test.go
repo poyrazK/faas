@@ -28,7 +28,7 @@ import (
 // renders the closed 6-stage block with the "live since <ts>"
 // footer. Pins the errgroup parallel fetch (both endpoints
 // hit), the footer branch (status="live"), and the
-// deriveTerminalAt logic (first history row's StartedAt).
+// deriveTerminalAt logic (the last stage's EndedAt).
 func TestCmdDeploysStatus_HappyPath(t *testing.T) {
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	srv := showServerDual(t,
@@ -64,11 +64,10 @@ func TestCmdDeploysStatus_HappyPath(t *testing.T) {
 	if !strings.Contains(got, "live since") {
 		t.Errorf("expected 'live since' footer for status=live\nfull: %s", got)
 	}
-	// Pin the timestamp matches the first history row's
-	// StartedAt (now-30s) rather than the column's CreatedAt,
-	// so a future refactor that picks the wrong row's
-	// StartedAt fails this test loudly.
-	wantTs := now.Add(-30 * time.Second).UTC().Format(time.RFC3339)
+	// Pin the timestamp to the last stage's EndedAt (now), the go-live
+	// moment, rather than the first row's StartedAt (now-30s), which read
+	// minutes early on production (Hunt 32 H32-10).
+	wantTs := now.UTC().Format(time.RFC3339)
 	if !strings.Contains(got, wantTs) {
 		t.Errorf("expected 'live since %s' footer\nfull: %s", wantTs, got)
 	}
@@ -326,7 +325,9 @@ func TestCmdDeploysStatus_JSON(t *testing.T) {
 	if len(got.StageState.History) != 6 {
 		t.Errorf("stage_state.history len: got %d, want 6 (closed set)", len(got.StageState.History))
 	}
-	wantTerminalAt := now.Add(-30 * time.Second).Format(time.RFC3339)
+	// Hunt 32 H32-10: the go-live moment is the last stage's end, not the
+	// first stage's start.
+	wantTerminalAt := now.Format(time.RFC3339)
 	if got.TerminalAt != wantTerminalAt {
 		t.Errorf("terminal_at: got %q, want %q", got.TerminalAt, wantTerminalAt)
 	}

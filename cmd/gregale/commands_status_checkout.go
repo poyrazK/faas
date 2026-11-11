@@ -30,7 +30,7 @@ func statusTarget(explicitApp string) (localProjectContext, bool, error) {
 	if err != nil {
 		return localProjectContext{}, false, err
 	}
-	linked, _, err := linkedProjectContext(cwd)
+	linked, _, err := targetProjectContext(cwd)
 	switch {
 	case errors.Is(err, errProjectContextNotFound):
 		linked = localProjectContext{}

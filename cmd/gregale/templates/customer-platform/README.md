@@ -154,8 +154,8 @@ timezone, overlap behavior, and input. A schedule trigger may opt in to
 tenant-specific cadence controls with `tenant_configurable: true`; the app owner
 still controls the workflow definition and input, and the app-wide concurrency
 limit is shared across tenants. Grant a tenant token
-`platform_tenant:automations:read` to list opted-in schedules and
-`platform_tenant:automations:manage` to change that tenant's schedule:
+`platform_tenant:stored_workflows:read` to list opted-in schedules and
+`platform_tenant:stored_workflows:manage` to change that tenant's schedule:
 
 ```http
 GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules

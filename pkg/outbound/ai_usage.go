@@ -23,7 +23,10 @@ type AIUsage struct {
 	InputTokens       int64
 	CachedInputTokens int64
 	CacheWriteTokens  int64
-	OutputTokens      int64
+	// CacheWrite1hTokens is the part of CacheWriteTokens written with a
+	// one-hour TTL (Anthropic), priced above the five-minute rate.
+	CacheWrite1hTokens int64
+	OutputTokens       int64
 	// Media usage (ADR-997). InputImageTokens and OutputImageTokens are the
 	// image parts of InputTokens and OutputTokens. Images counts images a
 	// call is billed for per image, AudioSeconds the input audio of a
@@ -372,6 +375,11 @@ type aiUsageFields struct {
 
 	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+	// Anthropic's cache-write breakdown by TTL: one-hour writes cost twice
+	// the input price, five-minute writes 1.25 times (review round 3 #3).
+	CacheCreation *struct {
+		Ephemeral1h *int64 `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
 	// Anthropic server tool uses (ADR-1433).
 	ServerToolUse *struct {
 		WebSearchRequests *int64 `json:"web_search_requests"`
@@ -537,6 +545,7 @@ func vertexPredictionTokens(envelope aiEnvelope) *int64 {
 // providers repeat or grow counts across events, never shrink them.
 type aiRawUsage struct {
 	prompt, completion, input, output, cached, cacheRead, cacheCreation int64
+	cacheCreation1h                                                     int64
 	seenPrompt, seenCompletion, seen                                    bool
 	// Gemini, Bedrock Converse and Bedrock invocation metrics counts.
 	geminiPrompt, geminiCandidates, geminiCached, geminiThoughts     int64
@@ -618,6 +627,9 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	}
 	take(&r.cacheRead, fields.CacheReadInputTokens)
 	take(&r.cacheCreation, fields.CacheCreationInputTokens)
+	if fields.CacheCreation != nil {
+		take(&r.cacheCreation1h, fields.CacheCreation.Ephemeral1h)
+	}
 	if fields.ServerToolUse != nil && fields.ServerToolUse.WebSearchRequests != nil {
 		r.webSearchRequests = max(r.webSearchRequests, min(max(*fields.ServerToolUse.WebSearchRequests, 0), api.OutboundAIToolUsesPerCallMax))
 	}
@@ -802,6 +814,7 @@ func (r aiRawUsage) normalizeTokens(format aiWireFormat, media aiMediaKind) AIUs
 		usage.InputTokens = r.input + r.cacheRead + r.cacheCreation
 		usage.CachedInputTokens = r.cacheRead
 		usage.CacheWriteTokens = r.cacheCreation
+		usage.CacheWrite1hTokens = min(r.cacheCreation1h, r.cacheCreation)
 		usage.OutputTokens = r.output
 	case format == aiFormatGemini:
 		// promptTokenCount includes cached content; thinking is billed as

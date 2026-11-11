@@ -49,12 +49,16 @@ const (
 	Vmmd_RestoreExecution_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
 	Vmmd_RunAgent_FullMethodName                                = "/onebox.faas.vmmd.v1.Vmmd/RunAgent"
 	Vmmd_CaptureAgentSnapshot_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/CaptureAgentSnapshot"
+	Vmmd_CaptureSandboxSnapshot_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/CaptureSandboxSnapshot"
 	Vmmd_RestoreAppTask_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/RestoreAppTask"
 	Vmmd_RestoreRehearsalAppTask_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/RestoreRehearsalAppTask"
 	Vmmd_ExecuteAppTask_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
 	Vmmd_ExecForkCommand_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/ExecForkCommand"
 	Vmmd_ExecuteAppTaskStream_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTaskStream"
 	Vmmd_AttachAppTask_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/AttachAppTask"
+	Vmmd_SandboxCall_FullMethodName                             = "/onebox.faas.vmmd.v1.Vmmd/SandboxCall"
+	Vmmd_RunSandbox_FullMethodName                              = "/onebox.faas.vmmd.v1.Vmmd/RunSandbox"
+	Vmmd_PersistSandboxWorkspace_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/PersistSandboxWorkspace"
 	Vmmd_WaitJobExit_FullMethodName                             = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
 	Vmmd_WarmSnapshot_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
@@ -64,6 +68,7 @@ const (
 	Vmmd_ThawInstance_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/ThawInstance"
 	Vmmd_WaitBuilderReady_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
 	Vmmd_DeleteWarmSnapshot_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
+	Vmmd_SnapshotBackingCurrent_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/SnapshotBackingCurrent"
 	Vmmd_RetireNativeRuntimeSnapshotObject_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/RetireNativeRuntimeSnapshotObject"
 	Vmmd_FrameworkReady_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
 	Vmmd_Destroy_FullMethodName                                 = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
@@ -88,6 +93,7 @@ const (
 	Vmmd_UpdatePrivateNetwork_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
 	Vmmd_ReconcilePrivateNetworkFabric_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkFabric"
 	Vmmd_ReconcilePrivateNetworkPeerings_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkPeerings"
+	Vmmd_RestrictPrivateNetworkPeerings_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/RestrictPrivateNetworkPeerings"
 	Vmmd_RemovePrivateNetworkFabric_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RemovePrivateNetworkFabric"
 	Vmmd_SeccompStatus_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
 	Vmmd_Logs_FullMethodName                                    = "/onebox.faas.vmmd.v1.Vmmd/Logs"
@@ -210,6 +216,11 @@ type VmmdClient interface {
 	// waits for guest-init, and captures a preset snapshot for its machine
 	// shape (ADR-20261027090010 §2, rollout step 9). The VM is destroyed afterwards.
 	CaptureAgentSnapshot(ctx context.Context, in *CaptureAgentSnapshotRequest, opts ...grpc.CallOption) (*CaptureAgentSnapshotResponse, error)
+	// CaptureSandboxSnapshot captures a sandbox session VM's warm snapshot
+	// (ADR-20261027090013 §12): booted with no session data and no template
+	// command, snapshotted once guest-init is ready, then destroyed. schedd's
+	// certificate only.
+	CaptureSandboxSnapshot(ctx context.Context, in *CaptureSandboxSnapshotRequest, opts ...grpc.CallOption) (*CaptureAgentSnapshotResponse, error)
 	// RestoreAppTask creates a fresh deployment-attached VM without carrying
 	// command data. The command crosses the trust boundary only after schedd
 	// has committed the durable running fence.
@@ -233,6 +244,26 @@ type VmmdClient interface {
 	// ExecuteAppTaskStream, then relays stdin/resize frames to the guest and
 	// output plus one terminal result back.
 	AttachAppTask(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachAppTaskRequest, AttachAppTaskEvent], error)
+	// SandboxCall runs one sandbox session operation (ADR-20261027090013 §4).
+	// The first frame names the instance, the sandbox it must be and the
+	// sandboxproto request; vmmd resumes a quiet-paused guest, dials its
+	// sandbox port and relays sandboxproto frames both ways until the guest
+	// answers. An instance that is not that sandbox's VM is NotFound.
+	SandboxCall(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SandboxCallRequest, SandboxCallEvent], error)
+	// RunSandbox boots one sandbox session VM and keeps it for the stream's
+	// life (ADR-20261027090013 §4, §5). The first frame is start; booted
+	// follows once the guest's sandbox server listens. The caller may then ask
+	// to freeze the VM or close it; vmmd reports call activity, and a call
+	// that finds the VM frozen thaws it in place and reports thawed. The VM is
+	// destroyed on close and whenever the stream ends.
+	RunSandbox(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RunSandboxRequest, RunSandboxEvent], error)
+	// PersistSandboxWorkspace archives a session's workspace to the artifact
+	// store (ADR-20261027090013 step 7). vmmd asks agentd, on the session's
+	// RunSandbox stream, for a reservation within the account's snapshot
+	// quota, streams the guest's archive to the reserved key, and answers once
+	// agentd has recorded the snapshot. A refused reservation is
+	// FailedPrecondition carrying the limit problem.
+	PersistSandboxWorkspace(ctx context.Context, in *PersistSandboxWorkspaceRequest, opts ...grpc.CallOption) (*PersistSandboxWorkspaceResponse, error)
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error)
@@ -307,6 +338,12 @@ type VmmdClient interface {
 	// DeleteWarmSnapshot removes the two storage objects created by a builder
 	// warm capture. Missing objects are treated as an idempotent success.
 	DeleteWarmSnapshot(ctx context.Context, in *DeleteWarmSnapshotRequest, opts ...grpc.CallOption) (*DeleteWarmSnapshotResponse, error)
+	// SnapshotBackingCurrent answers, without starting a VM, whether a parked
+	// capture would restore on this node: the Firecracker version pin and the
+	// ADR-510 backing check a wake runs before it loads a snapshot. schedd asks
+	// after a release to find captures the release made stale and refresh them
+	// before a customer request wakes the app (ADR-20261106214916).
+	SnapshotBackingCurrent(ctx context.Context, in *SnapshotBackingCurrentRequest, opts ...grpc.CallOption) (*SnapshotBackingCurrentResponse, error)
 	// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
 	// capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
 	// imaged decides what to collect; vmmd accepts only a v2 capture object key
@@ -487,6 +524,7 @@ type VmmdClient interface {
 	// Atomically replaces the complete account/region L3 peering policy.
 	// Callers must prepare every listed fabric before publishing app routes.
 	ReconcilePrivateNetworkPeerings(ctx context.Context, in *ReconcilePrivateNetworkPeeringsRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkPeeringsAck, error)
+	RestrictPrivateNetworkPeerings(ctx context.Context, in *ReconcilePrivateNetworkPeeringsRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkPeeringsAck, error)
 	// RemovePrivateNetworkFabric tears down the node-local bridge and optional
 	// regional VXLAN link for a deleted Gregale-owned network. The operation is
 	// idempotent so durable delete notifications may be replayed safely.
@@ -1034,6 +1072,16 @@ func (c *vmmdClient) CaptureAgentSnapshot(ctx context.Context, in *CaptureAgentS
 	return out, nil
 }
 
+func (c *vmmdClient) CaptureSandboxSnapshot(ctx context.Context, in *CaptureSandboxSnapshotRequest, opts ...grpc.CallOption) (*CaptureAgentSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CaptureAgentSnapshotResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CaptureSandboxSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) RestoreAppTask(ctx context.Context, in *RestoreAppTaskRequest, opts ...grpc.CallOption) (*RestoreAppTaskResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RestoreAppTaskResponse)
@@ -1105,6 +1153,42 @@ func (c *vmmdClient) AttachAppTask(ctx context.Context, opts ...grpc.CallOption)
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_AttachAppTaskClient = grpc.BidiStreamingClient[AttachAppTaskRequest, AttachAppTaskEvent]
+
+func (c *vmmdClient) SandboxCall(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SandboxCallRequest, SandboxCallEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_SandboxCall_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SandboxCallRequest, SandboxCallEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_SandboxCallClient = grpc.BidiStreamingClient[SandboxCallRequest, SandboxCallEvent]
+
+func (c *vmmdClient) RunSandbox(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RunSandboxRequest, RunSandboxEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_RunSandbox_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RunSandboxRequest, RunSandboxEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_RunSandboxClient = grpc.BidiStreamingClient[RunSandboxRequest, RunSandboxEvent]
+
+func (c *vmmdClient) PersistSandboxWorkspace(ctx context.Context, in *PersistSandboxWorkspaceRequest, opts ...grpc.CallOption) (*PersistSandboxWorkspaceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PersistSandboxWorkspaceResponse)
+	err := c.cc.Invoke(ctx, Vmmd_PersistSandboxWorkspace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 func (c *vmmdClient) WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -1190,6 +1274,16 @@ func (c *vmmdClient) DeleteWarmSnapshot(ctx context.Context, in *DeleteWarmSnaps
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteWarmSnapshotResponse)
 	err := c.cc.Invoke(ctx, Vmmd_DeleteWarmSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) SnapshotBackingCurrent(ctx context.Context, in *SnapshotBackingCurrentRequest, opts ...grpc.CallOption) (*SnapshotBackingCurrentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SnapshotBackingCurrentResponse)
+	err := c.cc.Invoke(ctx, Vmmd_SnapshotBackingCurrent_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1436,6 +1530,16 @@ func (c *vmmdClient) ReconcilePrivateNetworkPeerings(ctx context.Context, in *Re
 	return out, nil
 }
 
+func (c *vmmdClient) RestrictPrivateNetworkPeerings(ctx context.Context, in *ReconcilePrivateNetworkPeeringsRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkPeeringsAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReconcilePrivateNetworkPeeringsAck)
+	err := c.cc.Invoke(ctx, Vmmd_RestrictPrivateNetworkPeerings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) RemovePrivateNetworkFabric(ctx context.Context, in *RemovePrivateNetworkFabricRequest, opts ...grpc.CallOption) (*RemovePrivateNetworkFabricAck, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RemovePrivateNetworkFabricAck)
@@ -1458,7 +1562,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1477,7 +1581,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[9], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1490,7 +1594,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[10], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1503,7 +1607,7 @@ type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, F
 
 func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[9], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[11], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1516,7 +1620,7 @@ type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, F
 
 func (c *vmmdClient) ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[10], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[12], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1719,7 +1823,7 @@ func (c *vmmdClient) DatabaseArchiveHold(ctx context.Context, in *DatabaseArchiv
 
 func (c *vmmdClient) ExportDatabaseVolume(ctx context.Context, in *ExportDatabaseVolumeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DatabaseVolumeChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[11], Vmmd_ExportDatabaseVolume_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[13], Vmmd_ExportDatabaseVolume_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1738,7 +1842,7 @@ type Vmmd_ExportDatabaseVolumeClient = grpc.ServerStreamingClient[DatabaseVolume
 
 func (c *vmmdClient) ImportDatabaseVolume(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DatabaseVolumeChunk, ImportDatabaseVolumeResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[12], Vmmd_ImportDatabaseVolume_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[14], Vmmd_ImportDatabaseVolume_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1791,7 +1895,7 @@ func (c *vmmdClient) DatabaseControl(ctx context.Context, in *DatabaseControlReq
 
 func (c *vmmdClient) DatabaseSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[13], Vmmd_DatabaseSession_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[15], Vmmd_DatabaseSession_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1804,7 +1908,7 @@ type Vmmd_DatabaseSessionClient = grpc.BidiStreamingClient[DatabaseSessionFrame,
 
 func (c *vmmdClient) DatabaseReplication(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[14], Vmmd_DatabaseReplication_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[16], Vmmd_DatabaseReplication_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1928,6 +2032,11 @@ type VmmdServer interface {
 	// waits for guest-init, and captures a preset snapshot for its machine
 	// shape (ADR-20261027090010 §2, rollout step 9). The VM is destroyed afterwards.
 	CaptureAgentSnapshot(context.Context, *CaptureAgentSnapshotRequest) (*CaptureAgentSnapshotResponse, error)
+	// CaptureSandboxSnapshot captures a sandbox session VM's warm snapshot
+	// (ADR-20261027090013 §12): booted with no session data and no template
+	// command, snapshotted once guest-init is ready, then destroyed. schedd's
+	// certificate only.
+	CaptureSandboxSnapshot(context.Context, *CaptureSandboxSnapshotRequest) (*CaptureAgentSnapshotResponse, error)
 	// RestoreAppTask creates a fresh deployment-attached VM without carrying
 	// command data. The command crosses the trust boundary only after schedd
 	// has committed the durable running fence.
@@ -1951,6 +2060,26 @@ type VmmdServer interface {
 	// ExecuteAppTaskStream, then relays stdin/resize frames to the guest and
 	// output plus one terminal result back.
 	AttachAppTask(grpc.BidiStreamingServer[AttachAppTaskRequest, AttachAppTaskEvent]) error
+	// SandboxCall runs one sandbox session operation (ADR-20261027090013 §4).
+	// The first frame names the instance, the sandbox it must be and the
+	// sandboxproto request; vmmd resumes a quiet-paused guest, dials its
+	// sandbox port and relays sandboxproto frames both ways until the guest
+	// answers. An instance that is not that sandbox's VM is NotFound.
+	SandboxCall(grpc.BidiStreamingServer[SandboxCallRequest, SandboxCallEvent]) error
+	// RunSandbox boots one sandbox session VM and keeps it for the stream's
+	// life (ADR-20261027090013 §4, §5). The first frame is start; booted
+	// follows once the guest's sandbox server listens. The caller may then ask
+	// to freeze the VM or close it; vmmd reports call activity, and a call
+	// that finds the VM frozen thaws it in place and reports thawed. The VM is
+	// destroyed on close and whenever the stream ends.
+	RunSandbox(grpc.BidiStreamingServer[RunSandboxRequest, RunSandboxEvent]) error
+	// PersistSandboxWorkspace archives a session's workspace to the artifact
+	// store (ADR-20261027090013 step 7). vmmd asks agentd, on the session's
+	// RunSandbox stream, for a reservation within the account's snapshot
+	// quota, streams the guest's archive to the reserved key, and answers once
+	// agentd has recorded the snapshot. A refused reservation is
+	// FailedPrecondition carrying the limit problem.
+	PersistSandboxWorkspace(context.Context, *PersistSandboxWorkspaceRequest) (*PersistSandboxWorkspaceResponse, error)
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error)
@@ -2025,6 +2154,12 @@ type VmmdServer interface {
 	// DeleteWarmSnapshot removes the two storage objects created by a builder
 	// warm capture. Missing objects are treated as an idempotent success.
 	DeleteWarmSnapshot(context.Context, *DeleteWarmSnapshotRequest) (*DeleteWarmSnapshotResponse, error)
+	// SnapshotBackingCurrent answers, without starting a VM, whether a parked
+	// capture would restore on this node: the Firecracker version pin and the
+	// ADR-510 backing check a wake runs before it loads a snapshot. schedd asks
+	// after a release to find captures the release made stale and refresh them
+	// before a customer request wakes the app (ADR-20261106214916).
+	SnapshotBackingCurrent(context.Context, *SnapshotBackingCurrentRequest) (*SnapshotBackingCurrentResponse, error)
 	// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
 	// capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
 	// imaged decides what to collect; vmmd accepts only a v2 capture object key
@@ -2205,6 +2340,7 @@ type VmmdServer interface {
 	// Atomically replaces the complete account/region L3 peering policy.
 	// Callers must prepare every listed fabric before publishing app routes.
 	ReconcilePrivateNetworkPeerings(context.Context, *ReconcilePrivateNetworkPeeringsRequest) (*ReconcilePrivateNetworkPeeringsAck, error)
+	RestrictPrivateNetworkPeerings(context.Context, *ReconcilePrivateNetworkPeeringsRequest) (*ReconcilePrivateNetworkPeeringsAck, error)
 	// RemovePrivateNetworkFabric tears down the node-local bridge and optional
 	// regional VXLAN link for a deleted Gregale-owned network. The operation is
 	// idempotent so durable delete notifications may be replayed safely.
@@ -2559,6 +2695,9 @@ func (UnimplementedVmmdServer) RunAgent(grpc.BidiStreamingServer[RunAgentRequest
 func (UnimplementedVmmdServer) CaptureAgentSnapshot(context.Context, *CaptureAgentSnapshotRequest) (*CaptureAgentSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CaptureAgentSnapshot not implemented")
 }
+func (UnimplementedVmmdServer) CaptureSandboxSnapshot(context.Context, *CaptureSandboxSnapshotRequest) (*CaptureAgentSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CaptureSandboxSnapshot not implemented")
+}
 func (UnimplementedVmmdServer) RestoreAppTask(context.Context, *RestoreAppTaskRequest) (*RestoreAppTaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestoreAppTask not implemented")
 }
@@ -2576,6 +2715,15 @@ func (UnimplementedVmmdServer) ExecuteAppTaskStream(*ExecuteAppTaskRequest, grpc
 }
 func (UnimplementedVmmdServer) AttachAppTask(grpc.BidiStreamingServer[AttachAppTaskRequest, AttachAppTaskEvent]) error {
 	return status.Error(codes.Unimplemented, "method AttachAppTask not implemented")
+}
+func (UnimplementedVmmdServer) SandboxCall(grpc.BidiStreamingServer[SandboxCallRequest, SandboxCallEvent]) error {
+	return status.Error(codes.Unimplemented, "method SandboxCall not implemented")
+}
+func (UnimplementedVmmdServer) RunSandbox(grpc.BidiStreamingServer[RunSandboxRequest, RunSandboxEvent]) error {
+	return status.Error(codes.Unimplemented, "method RunSandbox not implemented")
+}
+func (UnimplementedVmmdServer) PersistSandboxWorkspace(context.Context, *PersistSandboxWorkspaceRequest) (*PersistSandboxWorkspaceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PersistSandboxWorkspace not implemented")
 }
 func (UnimplementedVmmdServer) WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitJobExit not implemented")
@@ -2603,6 +2751,9 @@ func (UnimplementedVmmdServer) WaitBuilderReady(context.Context, *WaitBuilderRea
 }
 func (UnimplementedVmmdServer) DeleteWarmSnapshot(context.Context, *DeleteWarmSnapshotRequest) (*DeleteWarmSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteWarmSnapshot not implemented")
+}
+func (UnimplementedVmmdServer) SnapshotBackingCurrent(context.Context, *SnapshotBackingCurrentRequest) (*SnapshotBackingCurrentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SnapshotBackingCurrent not implemented")
 }
 func (UnimplementedVmmdServer) RetireNativeRuntimeSnapshotObject(context.Context, *RetireNativeRuntimeSnapshotObjectRequest) (*RetireNativeRuntimeSnapshotObjectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetireNativeRuntimeSnapshotObject not implemented")
@@ -2675,6 +2826,9 @@ func (UnimplementedVmmdServer) ReconcilePrivateNetworkFabric(context.Context, *R
 }
 func (UnimplementedVmmdServer) ReconcilePrivateNetworkPeerings(context.Context, *ReconcilePrivateNetworkPeeringsRequest) (*ReconcilePrivateNetworkPeeringsAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReconcilePrivateNetworkPeerings not implemented")
+}
+func (UnimplementedVmmdServer) RestrictPrivateNetworkPeerings(context.Context, *ReconcilePrivateNetworkPeeringsRequest) (*ReconcilePrivateNetworkPeeringsAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestrictPrivateNetworkPeerings not implemented")
 }
 func (UnimplementedVmmdServer) RemovePrivateNetworkFabric(context.Context, *RemovePrivateNetworkFabricRequest) (*RemovePrivateNetworkFabricAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemovePrivateNetworkFabric not implemented")
@@ -3218,6 +3372,24 @@ func _Vmmd_CaptureAgentSnapshot_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_CaptureSandboxSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CaptureSandboxSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CaptureSandboxSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CaptureSandboxSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CaptureSandboxSnapshot(ctx, req.(*CaptureSandboxSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_RestoreAppTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RestoreAppTaskRequest)
 	if err := dec(in); err != nil {
@@ -3307,6 +3479,38 @@ func _Vmmd_AttachAppTask_Handler(srv interface{}, stream grpc.ServerStream) erro
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_AttachAppTaskServer = grpc.BidiStreamingServer[AttachAppTaskRequest, AttachAppTaskEvent]
+
+func _Vmmd_SandboxCall_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).SandboxCall(&grpc.GenericServerStream[SandboxCallRequest, SandboxCallEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_SandboxCallServer = grpc.BidiStreamingServer[SandboxCallRequest, SandboxCallEvent]
+
+func _Vmmd_RunSandbox_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).RunSandbox(&grpc.GenericServerStream[RunSandboxRequest, RunSandboxEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_RunSandboxServer = grpc.BidiStreamingServer[RunSandboxRequest, RunSandboxEvent]
+
+func _Vmmd_PersistSandboxWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PersistSandboxWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).PersistSandboxWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_PersistSandboxWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).PersistSandboxWorkspace(ctx, req.(*PersistSandboxWorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
 
 func _Vmmd_WaitJobExit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(WaitJobExitRequest)
@@ -3466,6 +3670,24 @@ func _Vmmd_DeleteWarmSnapshot_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).DeleteWarmSnapshot(ctx, req.(*DeleteWarmSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_SnapshotBackingCurrent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SnapshotBackingCurrentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).SnapshotBackingCurrent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_SnapshotBackingCurrent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).SnapshotBackingCurrent(ctx, req.(*SnapshotBackingCurrentRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3898,6 +4120,24 @@ func _Vmmd_ReconcilePrivateNetworkPeerings_Handler(srv interface{}, ctx context.
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).ReconcilePrivateNetworkPeerings(ctx, req.(*ReconcilePrivateNetworkPeeringsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_RestrictPrivateNetworkPeerings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReconcilePrivateNetworkPeeringsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RestrictPrivateNetworkPeerings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RestrictPrivateNetworkPeerings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RestrictPrivateNetworkPeerings(ctx, req.(*ReconcilePrivateNetworkPeeringsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -4569,6 +4809,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_CaptureAgentSnapshot_Handler,
 		},
 		{
+			MethodName: "CaptureSandboxSnapshot",
+			Handler:    _Vmmd_CaptureSandboxSnapshot_Handler,
+		},
+		{
 			MethodName: "RestoreAppTask",
 			Handler:    _Vmmd_RestoreAppTask_Handler,
 		},
@@ -4583,6 +4827,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExecForkCommand",
 			Handler:    _Vmmd_ExecForkCommand_Handler,
+		},
+		{
+			MethodName: "PersistSandboxWorkspace",
+			Handler:    _Vmmd_PersistSandboxWorkspace_Handler,
 		},
 		{
 			MethodName: "WaitJobExit",
@@ -4619,6 +4867,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteWarmSnapshot",
 			Handler:    _Vmmd_DeleteWarmSnapshot_Handler,
+		},
+		{
+			MethodName: "SnapshotBackingCurrent",
+			Handler:    _Vmmd_SnapshotBackingCurrent_Handler,
 		},
 		{
 			MethodName: "RetireNativeRuntimeSnapshotObject",
@@ -4715,6 +4967,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReconcilePrivateNetworkPeerings",
 			Handler:    _Vmmd_ReconcilePrivateNetworkPeerings_Handler,
+		},
+		{
+			MethodName: "RestrictPrivateNetworkPeerings",
+			Handler:    _Vmmd_RestrictPrivateNetworkPeerings_Handler,
 		},
 		{
 			MethodName: "RemovePrivateNetworkFabric",
@@ -4860,6 +5116,18 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "AttachAppTask",
 			Handler:       _Vmmd_AttachAppTask_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "SandboxCall",
+			Handler:       _Vmmd_SandboxCall_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "RunSandbox",
+			Handler:       _Vmmd_RunSandbox_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

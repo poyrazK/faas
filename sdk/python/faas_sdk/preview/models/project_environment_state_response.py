@@ -35,6 +35,10 @@ class ProjectEnvironmentStateResponse:
     workloads: list[ProjectEnvironmentStateWorkloadResponse]
     shared_resources: list[ProjectEnvironmentSharedResourceResponse]
     generated_at: datetime.datetime
+    project_secrets_revision_hash: str | Unset = UNSET
+    """Opaque shared-secret set identity observed before qualification probes. Submit it as the project:secrets
+    entry in secret_revision_hashes; it changes on secret additions, rotations, and deletions, but not master-key
+    reseals. Omitted by older servers."""
     feature_flags_hash: str | Unset = UNSET
     """Fingerprint of the environment identity, current flag version, and configuration observed before
     qualification probes. Omitted only for the legacy identity with no published flags. Combine with each released
@@ -68,6 +72,8 @@ class ProjectEnvironmentStateResponse:
 
         generated_at = self.generated_at.isoformat()
 
+        project_secrets_revision_hash = self.project_secrets_revision_hash
+
         feature_flags_hash = self.feature_flags_hash
 
         active_release_set: dict[str, Any] | None | Unset
@@ -95,6 +101,8 @@ class ProjectEnvironmentStateResponse:
                 "generated_at": generated_at,
             }
         )
+        if project_secrets_revision_hash is not UNSET:
+            field_dict["project_secrets_revision_hash"] = project_secrets_revision_hash
         if feature_flags_hash is not UNSET:
             field_dict["feature_flags_hash"] = feature_flags_hash
         if active_release_set is not UNSET:
@@ -136,6 +144,8 @@ class ProjectEnvironmentStateResponse:
 
         generated_at = datetime.datetime.fromisoformat(d.pop("generated_at"))
 
+        project_secrets_revision_hash = d.pop("project_secrets_revision_hash", UNSET)
+
         feature_flags_hash = d.pop("feature_flags_hash", UNSET)
 
         def _parse_active_release_set(data: object) -> None | ProjectReleaseSetResponse | Unset:
@@ -170,6 +180,7 @@ class ProjectEnvironmentStateResponse:
             workloads=workloads,
             shared_resources=shared_resources,
             generated_at=generated_at,
+            project_secrets_revision_hash=project_secrets_revision_hash,
             feature_flags_hash=feature_flags_hash,
             active_release_set=active_release_set,
             release_set_status=release_set_status,

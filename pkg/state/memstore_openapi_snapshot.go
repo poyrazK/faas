@@ -43,6 +43,10 @@ func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(ctx context.Context, d
 	if err != nil {
 		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("memstore: capture route policy for %s: %w", d.ID, err)
 	}
+	// A historical deployment keeps its captured contract when primed again.
+	if retained, ok := m.openAPISnapshots[d.ID]; ok {
+		return retained, policySnapshot, nil
+	}
 	var importedDoc []byte
 	if imported, ok := m.openAPIImports[d.AppID]; ok {
 		importedDoc = append([]byte(nil), imported.Doc...)

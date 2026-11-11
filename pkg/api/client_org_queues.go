@@ -56,6 +56,11 @@ func (c *Client) SendOrgQueueMessage(ctx context.Context, organization, slug str
 	err := c.do(ctx, http.MethodPost, orgQueueAppPath(organization, slug)+"/queues/send", req, &out)
 	return out, err
 }
+func (c *Client) SendOrgQueueMessageBatch(ctx context.Context, organization, slug string, req QueueSendBatchRequest) (QueueSendBatchResponse, error) {
+	var out QueueSendBatchResponse
+	err := c.do(ctx, http.MethodPost, orgQueueAppPath(organization, slug)+"/queues/send-batch", req, &out)
+	return out, err
+}
 func (c *Client) ReceiveOrgQueueResult(ctx context.Context, organization, slug string) (QueueReceiveResponse, error) {
 	var out QueueReceiveResponse
 	err := c.do(ctx, http.MethodPost, orgQueueAppPath(organization, slug)+"/queues/receive", nil, &out)

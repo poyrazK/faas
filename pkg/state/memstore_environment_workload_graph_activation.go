@@ -107,7 +107,7 @@ func (m *MemStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, l
 			normalizedDeploymentScope(deployment.Scope) != normalizedDeploymentScope(memory.source.EnvironmentSlug) {
 			return ProjectReleaseSet{}, false, ErrConflict
 		}
-		if err := m.checkDeploymentAutomationsLocked(deployment); err != nil {
+		if err := m.checkDeploymentStoredWorkflowsLocked(deployment); err != nil {
 			return ProjectReleaseSet{}, false, err
 		}
 		previous[deployment.ID] = deployment

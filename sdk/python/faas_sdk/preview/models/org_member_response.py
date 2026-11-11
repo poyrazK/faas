@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.org_member_response_role import OrgMemberResponseRole, check_org_member_response_role
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OrgMemberResponse")
 
@@ -25,6 +26,8 @@ class OrgMemberResponse:
     email: str
     role: OrgMemberResponseRole
     joined_at: datetime.datetime
+    display_name: str | Unset = UNSET
+    """The member's display name; absent when unset."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -36,6 +39,8 @@ class OrgMemberResponse:
 
         joined_at = self.joined_at.isoformat()
 
+        display_name = self.display_name
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -46,6 +51,8 @@ class OrgMemberResponse:
                 "joined_at": joined_at,
             }
         )
+        if display_name is not UNSET:
+            field_dict["display_name"] = display_name
 
         return field_dict
 
@@ -60,11 +67,14 @@ class OrgMemberResponse:
 
         joined_at = datetime.datetime.fromisoformat(d.pop("joined_at"))
 
+        display_name = d.pop("display_name", UNSET)
+
         org_member_response = cls(
             account_id=account_id,
             email=email,
             role=role,
             joined_at=joined_at,
+            display_name=display_name,
         )
 
         org_member_response.additional_properties = d

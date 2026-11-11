@@ -65,6 +65,12 @@ func (m *MemStore) promotionWorkloadActivationsLocked(promotion ProjectEnvironme
 		if hash != targetHash {
 			projected.ScalingPolicyRevision++
 		}
+		if projected.ScalingRevision < 1 {
+			projected.ScalingRevision = 1
+		}
+		if scalingSettings(projected) != scalingSettings(app) {
+			projected.ScalingRevision++
+		}
 		changes = append(changes, promotionWorkloadActivation{environmentID: prepared.EnvironmentID,
 			appID: app.ID, specID: targetID, app: projected, projectApp: promotion.ToEnvironment == "production"})
 	}
@@ -93,7 +99,7 @@ func (m *MemStore) applyPromotionWorkloadActivationsLocked(changes []promotionWo
 		if change.specID == "" {
 			delete(m.projectEnvironmentWorkloadHeads, key)
 		} else {
-			m.projectEnvironmentWorkloadHeads[key] = change.specID
+			m.putWorkloadSpecHeadLocked(m.projectEnvironmentWorkloadSpecs[change.specID])
 		}
 		if change.projectApp {
 			m.apps[change.appID] = change.app
@@ -105,7 +111,7 @@ func (m *MemStore) syncProductionWorkloadSpecLocked(app App, params UpdateAppPar
 	updated, spec, err := m.prepareProductionWorkloadSpecLocked(app, params)
 	if err == nil && spec.ID != "" {
 		m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
-		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(spec.EnvironmentID, app.ID)] = spec.ID
+		m.putWorkloadSpecHeadLocked(spec)
 	}
 	return updated, err
 }

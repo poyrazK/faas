@@ -78,6 +78,20 @@ func TestGraphActivationEvidenceCountsRestoreWithoutCallingItSmoke(t *testing.T)
 		!slices.Contains(withReady.BlockingReasons, "environment_serving_evidence_missing") {
 		t.Fatalf("complete qualification evidence should qualify while activation and serving stay gated: %+v", withReady)
 	}
+	// An app without a runtime runner never signals framework-ready, so its
+	// candidate qualifies without that receipt, as production stamps none.
+	runtimeless := graph
+	runtimeless.Members = []EnvironmentWorkloadGraphMember{graph.Members[0]}
+	runtimeless.Members[0].NoFrameworkReadySignal = true
+	for _, readySet := range []map[string]EnvironmentQualificationFrameworkReadyReceipt{nil, {frame.InstanceID: ready}} {
+		withoutSignal := graphActivationEvidence(runtimeless, map[string]EnvironmentQualificationSnapshotReceipt{deploymentID: capture}, map[string]EnvironmentQualificationRestoreReceipt{
+			frame.InstanceID: restore,
+		}, map[string]EnvironmentQualificationSmokeReceipt{frame.InstanceID: smoke}, configs, readySet)
+		if !withoutSignal.Qualified || withoutSignal.FrameworkReadyAcknowledgementsRecorded != 0 ||
+			slices.Contains(withoutSignal.BlockingReasons, "environment_framework_ready_evidence_missing") {
+			t.Fatalf("runtime-less candidate still owed framework-ready evidence: %+v", withoutSignal)
+		}
+	}
 	wrongReady := ready
 	wrongReady.InstanceID = frame.InstanceID
 	wrongReadyEvidence := graphActivationEvidence(graph, map[string]EnvironmentQualificationSnapshotReceipt{deploymentID: capture}, map[string]EnvironmentQualificationRestoreReceipt{

@@ -15,10 +15,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func seedWebhookAutomationAPI(t *testing.T) (apidserver.TestEnv, state.App, api.InboundWebhookEndpointResponse) {
+func seedWebhookWorkflowAPI(t *testing.T) (apidserver.TestEnv, state.App, api.InboundWebhookEndpointResponse) {
 	t.Helper()
 	e := setupWebhookTest(t, api.PlanHobby)
-	app := seedWorkflowApp(t, e, "webhook-automation")
+	app := seedWorkflowApp(t, e, "webhook-stored-workflow")
 	dep, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending, ImageDigest: "sha256:webhook", Workflows: json.RawMessage(`[{"name":"paid","steps":[{"name":"main","path":"/receipt","input":{"invoice":"{{input.data.data.object.id}}"}}]}]`)})
 	if err != nil {
 		t.Fatal(err)
@@ -28,22 +28,22 @@ func seedWebhookAutomationAPI(t *testing.T) (apidserver.TestEnv, state.App, api.
 	}
 	return e, app, mustCreateInboundWebhook(t, e, app.Slug)
 }
-func TestWebhookAutomationAPIReceiptsAndRouting(t *testing.T) {
-	e, app, endpoint := seedWebhookAutomationAPI(t)
+func TestWebhookWorkflowAPIReceiptsAndRouting(t *testing.T) {
+	e, app, endpoint := seedWebhookWorkflowAPI(t)
 	path := "/v1/apps/" + app.Slug + "/inbound-webhooks/" + endpoint.ID
 	zero := int64(0)
-	body := api.PutWebhookAutomationBindingRequest{ExpectedVersion: &zero, WorkflowName: "paid", EventType: "invoice.*", TakeOverDelivery: true, Filter: json.RawMessage(`{"data":{"data":{"object":{"amount_paid":{"$gt":100}}}}}`)}
-	headers := map[string]string{"Idempotency-Key": "bind-stripe-automation"}
-	response := e.Do(t, "PUT", path+"/automation-binding", body, headers)
-	var binding api.WebhookAutomationBindingResponse
+	body := api.PutWebhookWorkflowBindingRequest{ExpectedVersion: &zero, WorkflowName: "paid", EventType: "invoice.*", TakeOverDelivery: true, Filter: json.RawMessage(`{"data":{"data":{"object":{"amount_paid":{"$gt":100}}}}}`)}
+	headers := map[string]string{"Idempotency-Key": "bind-stripe-stored-workflow"}
+	response := e.Do(t, "PUT", path+"/workflow-binding", body, headers)
+	var binding api.WebhookWorkflowBindingResponse
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &binding) != nil || binding.Version == 0 {
 		t.Fatalf("bind=%d %s", response.Code, response.Body.String())
 	}
-	replay := e.Do(t, "PUT", path+"/automation-binding", body, headers)
+	replay := e.Do(t, "PUT", path+"/workflow-binding", body, headers)
 	if replay.Code != 200 || replay.Body.String() != response.Body.String() {
 		t.Fatalf("replay=%d %s", replay.Code, replay.Body.String())
 	}
-	if stale := e.Do(t, "PUT", path+"/automation-binding", body, nil); stale.Code != 409 {
+	if stale := e.Do(t, "PUT", path+"/workflow-binding", body, nil); stale.Code != 409 {
 		t.Fatalf("stale=%d %s", stale.Code, stale.Body.String())
 	}
 	providerBody := []byte(`{"id":"evt_start","type":"invoice.paid","data":{"object":{"id":"in_1","amount_paid":150}}}`)
@@ -51,11 +51,11 @@ func TestWebhookAutomationAPIReceiptsAndRouting(t *testing.T) {
 	if bad.Code == 202 {
 		t.Fatal("accepted invalid signature")
 	}
-	if _, err := (*e.Store()).GetWebhookAutomationReceipt(t.Context(), endpoint.ID, "evt_start"); err == nil {
+	if _, err := (*e.Store()).GetWebhookWorkflowReceipt(t.Context(), endpoint.ID, "evt_start"); err == nil {
 		t.Fatal("bad signature wrote receipt")
 	}
 	first := postStripeInboundWebhook(t, e, endpoint.EndpointURL, providerBody, inboundWebhookTestSecret)
-	var receipt api.WebhookAutomationReceiptResponse
+	var receipt api.WebhookWorkflowReceiptResponse
 	if first.Code != 202 || json.Unmarshal(first.Body.Bytes(), &receipt) != nil || receipt.Duplicate || receipt.Status != "accepted" {
 		t.Fatalf("ingress=%d %s", first.Code, first.Body.String())
 	}
@@ -77,11 +77,11 @@ func TestWebhookAutomationAPIReceiptsAndRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := e.Do(t, "GET", path+"/automation-receipts/evt_start", nil, nil)
+	got := e.Do(t, "GET", path+"/workflow-receipts/evt_start", nil, nil)
 	if got.Code != 200 || json.Unmarshal(got.Body.Bytes(), &receipt) != nil || receipt.RunID != runID {
 		t.Fatalf("inspect=%d %s", got.Code, got.Body.String())
 	}
-	removed := e.Do(t, "DELETE", path+"/automation-binding?expected_version="+strconv.FormatInt(binding.Version, 10), nil, nil)
+	removed := e.Do(t, "DELETE", path+"/workflow-binding?expected_version="+strconv.FormatInt(binding.Version, 10), nil, nil)
 	if removed.Code != 204 {
 		t.Fatalf("remove=%d %s", removed.Code, removed.Body.String())
 	}
@@ -102,12 +102,12 @@ func TestWebhookAutomationAPIReceiptsAndRouting(t *testing.T) {
 	}
 }
 
-func TestGenericWebhookAutomationAPIUsesSignedHeadersAndDurableFanout(t *testing.T) {
-	e, app, _ := seedWebhookAutomationAPI(t)
+func TestGenericWebhookWorkflowAPIUsesSignedHeadersAndDurableFanout(t *testing.T) {
+	e, app, _ := seedWebhookWorkflowAPI(t)
 	endpoint := mustCreateGenericInboundWebhook(t, e, app.Slug)
 	path := "/v1/apps/" + app.Slug + "/inbound-webhooks/" + endpoint.ID
 	zero := int64(0)
-	bound := e.Do(t, http.MethodPut, path+"/automation-binding", api.PutWebhookAutomationBindingRequest{
+	bound := e.Do(t, http.MethodPut, path+"/workflow-binding", api.PutWebhookWorkflowBindingRequest{
 		ExpectedVersion: &zero, WorkflowName: "paid", EventType: "invoice.*", TakeOverDelivery: true,
 	}, nil)
 	if bound.Code != http.StatusOK {
@@ -116,7 +116,7 @@ func TestGenericWebhookAutomationAPIUsesSignedHeadersAndDurableFanout(t *testing
 	body := []byte(`{"data":{"object":{"id":"in_generic","amount_paid":150}}}`)
 	timestamp := time.Now().UTC()
 	first := postGenericInboundWebhook(t, e, endpoint.EndpointURL, body, genericInboundWebhookTestSecret, "evt_generic_invoice", "invoice.paid", timestamp)
-	var receipt api.WebhookAutomationReceiptResponse
+	var receipt api.WebhookWorkflowReceiptResponse
 	if first.Code != http.StatusAccepted || json.Unmarshal(first.Body.Bytes(), &receipt) != nil || receipt.Status != "accepted" || receipt.Duplicate {
 		t.Fatalf("generic automation start=%d %s", first.Code, first.Body.String())
 	}
@@ -141,8 +141,8 @@ func TestGenericWebhookAutomationAPIUsesSignedHeadersAndDurableFanout(t *testing
 	}
 }
 
-func TestWebhookAutomationAPIValidationOwnershipAndRuntime(t *testing.T) {
-	e, app, endpoint := seedWebhookAutomationAPI(t)
+func TestWebhookWorkflowAPIValidationOwnershipAndRuntime(t *testing.T) {
+	e, app, endpoint := seedWebhookWorkflowAPI(t)
 	path := "/v1/apps/" + app.Slug + "/inbound-webhooks/" + endpoint.ID
 	for _, body := range []map[string]any{
 		{"workflow_name": "paid", "event_type": "invoice.paid", "take_over_delivery": true},
@@ -150,17 +150,17 @@ func TestWebhookAutomationAPIValidationOwnershipAndRuntime(t *testing.T) {
 		{"expected_version": 0, "workflow_name": "paid", "event_type": "bad.*.type", "take_over_delivery": true},
 		{"expected_version": 0, "workflow_name": "paid", "event_type": "invoice.paid", "take_over_delivery": true, "extra": true},
 	} {
-		response := e.Do(t, "PUT", path+"/automation-binding", body, nil)
+		response := e.Do(t, "PUT", path+"/workflow-binding", body, nil)
 		if response.Code != 400 {
 			t.Fatalf("invalid=%d %s", response.Code, response.Body.String())
 		}
 	}
-	huge := e.Do(t, "PUT", path+"/automation-binding", map[string]any{"padding": strings.Repeat("x", int(api.WorkflowWebhookBindingMaxBytes))}, nil)
+	huge := e.Do(t, "PUT", path+"/workflow-binding", map[string]any{"padding": strings.Repeat("x", int(api.WorkflowWebhookBindingMaxBytes))}, nil)
 	if huge.Code != 413 {
 		t.Fatalf("size=%d %s", huge.Code, huge.Body.String())
 	}
 	zero := int64(0)
-	response := e.Do(t, "PUT", path+"/automation-binding", api.PutWebhookAutomationBindingRequest{ExpectedVersion: &zero, WorkflowName: "paid", EventType: "*", TakeOverDelivery: true}, nil)
+	response := e.Do(t, "PUT", path+"/workflow-binding", api.PutWebhookWorkflowBindingRequest{ExpectedVersion: &zero, WorkflowName: "paid", EventType: "*", TakeOverDelivery: true}, nil)
 	if response.Code != 200 {
 		t.Fatalf("bind=%d %s", response.Code, response.Body.String())
 	}
@@ -176,7 +176,7 @@ func TestWebhookAutomationAPIValidationOwnershipAndRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, suffix := range []string{"/automation-binding", "/automation-receipts/evt_gate"} {
+	for _, suffix := range []string{"/workflow-binding", "/workflow-receipts/evt_gate"} {
 		response = e.Do(t, http.MethodGet, path+suffix, nil, map[string]string{"Authorization": "Bearer " + token})
 		if response.Code != 404 {
 			t.Fatalf("foreign=%d %s", response.Code, response.Body.String())
@@ -188,7 +188,7 @@ func TestWebhookAutomationAPIValidationOwnershipAndRuntime(t *testing.T) {
 	if response.Code != 503 {
 		t.Fatalf("runtime=%d %s", response.Code, response.Body.String())
 	}
-	if _, err := (*e.Store()).GetWebhookAutomationReceipt(t.Context(), endpoint.ID, "evt_gate"); err == nil {
+	if _, err := (*e.Store()).GetWebhookWorkflowReceipt(t.Context(), endpoint.ID, "evt_gate"); err == nil {
 		t.Fatal("unavailable runtime wrote acceptance")
 	}
 }

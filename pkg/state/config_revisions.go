@@ -42,17 +42,19 @@ type ConfigSecretFingerprint struct {
 
 // ConfigRevision is one app scope's complete config after a change.
 type ConfigRevision struct {
-	ID        string
-	AccountID string
-	AppID     string
-	Scope     string
-	Revision  int64
-	Source    string
-	Key       string
-	Actor     string
-	Variables map[string]string
-	Secrets   map[string]ConfigSecretFingerprint
-	GuardID   string
+	// RestoreGuard is populated for an atomic reviewed rollback response only.
+	RestoreGuard *api.ConfigGuardSummary `json:"-"`
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Revision     int64
+	Source       string
+	Key          string
+	Actor        string
+	Variables    map[string]string
+	Secrets      map[string]ConfigSecretFingerprint
+	GuardID      string
 	// GuardStatus is the status of GuardID's guard on reads; empty otherwise.
 	GuardStatus      string
 	RestoredRevision int64

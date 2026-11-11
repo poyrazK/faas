@@ -61,3 +61,21 @@ resolver, which tells vmmd the answered addresses before replying.
   is not reused.
 - Unit tests cover rendering, vmmd admission and seeding, the RPC, the
   resolver index and the sink; the namespace rule still needs a metal run.
+
+## Amendment 2026-11-10: booting guests
+
+A guest's workload runs before vmmd publishes the instance (a cold boot waits
+for readiness and characterization), but the grant above needed a live owner.
+A connection made at boot got its DNS answer and then timed out at the egress
+gate: a Data API reached its database 16 s late or crash-looped (prod test
+2026-11-09). The same held for ADR-373 resolved egress.
+
+vmmd now registers each booting guest's network owner once its namespace
+exists (`pkg/fcvm/booting_egress.go`). It resolves as the identity the wake
+fixed, under the same exclusions as a live slot (qualification, execution,
+paused, builder, job), receives resolved and database grants, and hands them
+and its network generation to the published instance, so an answer captured
+during boot still applies after publication. Teardown drops it. Service calls
+are unchanged: they still require the caller's `running` instance row, and a
+booting managed probe resolves without its app-task flag, so its task lease
+cannot authenticate service calls before publication.

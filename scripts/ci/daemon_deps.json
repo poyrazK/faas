@@ -1,6 +1,11 @@
 {
   "rules": [
     {
+      "package": "pkg/db",
+      "binaries": ["init"],
+      "reason": "Guest pool deadlines use pkg/pgpoolbounds. The server DB package embeds migrations and imports goose, which pulls text/template and its reflection code into PID 1."
+    },
+    {
       "package": "pkg/sched",
       "binaries": [
         "vmmd",
@@ -27,6 +32,21 @@
       "except": ["apid"],
       "allow_importers": ["html/template", "github.com/pressly/goose/v3"],
       "reason": "Executing a template reaches reflect.Value.MethodByName (see the html/template rule). goose only parses its migration-file template at init and never executes it in a daemon; html/template is covered by its own rule."
+    },
+    {
+      "package": "golang.org/x/net/trace",
+      "binaries": ["init"],
+      "reason": "Reaching reflect.Value.MethodByName makes the linker keep every exported method of every type guest-init converts to an interface (all of pkg/api's), so a change to the body of any of their methods changes PID 1, every runtime base and every snapshot taken on one (docs/adr/20261105150000-guest-init-reuse-keeps-bases-and-snapshots.md). gRPC links golang.org/x/net/trace unless the grpcnotrace tag is set (Makefile GUEST_TAGS); its pages, and html/template and text/template execution, reach MethodByName."
+    },
+    {
+      "package": "html/template",
+      "binaries": ["init"],
+      "reason": "Reaching reflect.Value.MethodByName makes the linker keep every exported method of every type guest-init converts to an interface (all of pkg/api's), so a change to the body of any of their methods changes PID 1, every runtime base and every snapshot taken on one (docs/adr/20261105150000-guest-init-reuse-keeps-bases-and-snapshots.md). gRPC links golang.org/x/net/trace unless the grpcnotrace tag is set (Makefile GUEST_TAGS); its pages, and html/template and text/template execution, reach MethodByName."
+    },
+    {
+      "package": "text/template",
+      "binaries": ["init"],
+      "reason": "Reaching reflect.Value.MethodByName makes the linker keep every exported method of every type guest-init converts to an interface (all of pkg/api's), so a change to the body of any of their methods changes PID 1, every runtime base and every snapshot taken on one (docs/adr/20261105150000-guest-init-reuse-keeps-bases-and-snapshots.md). gRPC links golang.org/x/net/trace unless the grpcnotrace tag is set (Makefile GUEST_TAGS); its pages, and html/template and text/template execution, reach MethodByName."
     }
   ]
 }

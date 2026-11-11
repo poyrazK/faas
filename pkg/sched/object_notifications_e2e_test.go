@@ -18,7 +18,7 @@ import (
 )
 
 // adr: 552
-func objectNotificationsSDKEndToEnd(t *testing.T, st objectEventIntegrationStore, restart func() objectEventIntegrationStore, account state.Account, b state.ObjectBucket, c *awss3.Client, qapp, fapp state.App) {
+func objectNotificationsSDKEndToEnd(t *testing.T, st objectEventIntegrationStore, restart func() objectEventIntegrationStore, account state.Account, b state.ObjectBucket, c *awss3.Client, fapp state.App) {
 	t.Helper()
 	ctx := t.Context()
 	// The fixture's first native-version response correctly fences current-only
@@ -35,7 +35,18 @@ func objectNotificationsSDKEndToEnd(t *testing.T, st objectEventIntegrationStore
 	if _, e = st.StageObjectVersionInventoryPage(ctx, j.ID, j.Token, "", []state.ObjectVersionInventoryRecord{{Identity: hex.EncodeToString(hash[:]), Bytes: 4}}); e != nil {
 		t.Fatal(e)
 	}
-	qb, err := st.CreateQueueBinding(ctx, state.QueueBinding{AccountID: account.ID, AppID: qapp.ID, Name: "storage", QueueName: "storage", Enabled: true, Mode: "pull", WorkloadClass: "worker", MaxConcurrency: 1, RetryPolicyJSON: json.RawMessage(`{"max_attempts":3}`)})
+	project, err := st.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "notifications-" + uuid.NewString()[:8]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	qapp, err := st.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: account.ID, ProjectID: project.ID, WorkloadName: "worker", Slug: "storage-worker-" + uuid.NewString(), Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker, RAMMB: 128, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qb, err := st.CreateQueueBinding(ctx, state.QueueBinding{AccountID: account.ID, AppID: qapp.ID, DeploymentScope: "staging", Name: "storage", QueueName: "storage", Enabled: true, Mode: "pull", WorkloadClass: "worker", MaxConcurrency: 1, RetryPolicyJSON: json.RawMessage(`{"max_attempts":3}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +80,7 @@ func objectNotificationsSDKEndToEnd(t *testing.T, st objectEventIntegrationStore
 	}
 	fillers := []string{}
 	for i := 0; i < api.MustLimitsFor(account.Plan).MaxQueueDepth; i++ {
-		row, e := st.EnqueueInvocation(ctx, state.Invocation{AppID: qapp.ID, AccountID: account.ID, Source: state.InvocationQueue, QueueName: qb.QueueName, Payload: json.RawMessage(`{}`), DueAt: time.Now()})
+		row, e := st.EnqueueInvocation(ctx, state.Invocation{AppID: qapp.ID, AccountID: account.ID, Source: state.InvocationQueue, DeploymentScope: qb.DeploymentScope, QueueName: qb.QueueName, Payload: json.RawMessage(`{}`), DueAt: time.Now()})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -165,6 +176,9 @@ func objectNotificationsSDKEndToEnd(t *testing.T, st objectEventIntegrationStore
 			continue
 		}
 		received++
+		if row.QueueBindingID != qb.ID || row.DeploymentScope != "staging" || row.EnvironmentID != "" {
+			t.Fatal("S3 notification lost captured queue scope", row)
+		}
 		var msg objectNotificationMessage
 		if err = json.Unmarshal(row.Payload, &msg); err != nil || len(msg.Records) != 1 {
 			t.Fatal(msg, err)

@@ -19,3 +19,5 @@ func signalLocalAppProcess(*exec.Cmd, bool) error {
 func localAppProcessGroupAlive(*exec.Cmd) bool { return false }
 
 func testTerminationSignals() []os.Signal { return []os.Signal{os.Interrupt} }
+
+func surviveBrokenOutput() (stop func()) { return func() {} }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -40,7 +41,10 @@ func directCloneFailure(op state.ProjectEnvironmentCloneOperation, stepErr error
 	if state.ProjectEnvironmentCloneHasManagedDatabases(op) || cloneOperationHasObjectResources(op) {
 		deadline = projectEnvironmentCloneDatabaseDeadline
 	}
+	var copySize *objectstorage.SnapshotCopySizeError
 	switch {
+	case errors.As(stepErr, &copySize):
+		return state.CloneFailureObjectCopySize
 	case errors.Is(stepErr, errCloneTargetDeploymentFailed):
 		return state.CloneFailureTargetDeployment
 	case errors.Is(stepErr, errCloneTargetDatabaseFailed):

@@ -213,6 +213,9 @@ func (v Verifier) verifyDeployment(ctx context.Context, slug, path, deploymentID
 	if v.RequestTimeout > 0 {
 		requestTimeout = v.RequestTimeout
 	}
+	if _, bounded := verifyCtx.Deadline(); !bounded && requestTimeout <= 0 && client.Timeout <= 0 {
+		requestTimeout = 10 * time.Second
+	}
 	if requestTimeout > 0 || deploymentID != "" {
 		copy := *client
 		if requestTimeout > 0 {

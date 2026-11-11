@@ -343,6 +343,9 @@ func newKafkaPoller(t sqlc.Trigger) (triggerSource, error) {
 		MinBytes:       1,
 		MaxBytes:       10e6,
 		MaxWait:        250 * time.Millisecond,
+		MaxAttempts:    3,
+		ReadBackoffMin: 100 * time.Millisecond,
+		ReadBackoffMax: 5 * time.Second,
 		CommitInterval: 0, // explicit commits only
 		Dialer:         dialer,
 		ErrorLogger:    group.logger(),

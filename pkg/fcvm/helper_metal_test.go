@@ -95,5 +95,5 @@ func NewAcceptanceManager(t *testing.T) *Manager {
 		t.Fatal(err)
 	}
 	v := newMetalVMM(t, 30*time.Second).WithStorage(backend)
-	return NewManager(wire.ExecRunner{}, v, Paths{Kernel: os.Getenv("FAAS_TEST_KERNEL")}, os.Getenv("FAAS_TEST_FC_VERSION"), nil, nil)
+	return NewManager(wire.ExecRunner{}, v, Paths{Kernel: os.Getenv("FAAS_TEST_KERNEL")}, os.Getenv("FAAS_TEST_FC_VERSION"), nil, nil).WithCaptureRunner(wire.ExecRunner{})
 }

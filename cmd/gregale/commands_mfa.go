@@ -14,7 +14,7 @@ import (
 func cmdMfa(args []string) int {
 	parent, _ := lookupCliCommand("mfa")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale account mfa <enroll|confirm|verify|recover|disable>", "mfa")
+		PrintUsage(os.Stderr, "usage: gregale account mfa <enroll|confirm|verify|recover|disable|rotate>", "mfa")
 		return 1
 	}
 	switch args[0] {
@@ -28,9 +28,16 @@ func cmdMfa(args []string) int {
 		return cmdMfaRecover(args[1:])
 	case "disable":
 		return cmdMfaDisable(args[1:])
+	case "rotate":
+		// New recovery codes; the dashboard action keeps its name.
+		if len(args) > 1 {
+			PrintUsage(os.Stderr, "usage: gregale account mfa rotate", "mfa")
+			return 1
+		}
+		return openMFAForm("recovery-codes")
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		printCommandValidation(os.Stderr, "gregale account mfa: unknown subcommand %q (known: enroll, confirm, verify, recover, disable)\n", args[0])
+		printCommandValidation(os.Stderr, "gregale account mfa: unknown subcommand %q (known: enroll, confirm, verify, recover, disable, rotate)\n", args[0])
 		maybeSuggestSub(sug)
 		return 1
 	}

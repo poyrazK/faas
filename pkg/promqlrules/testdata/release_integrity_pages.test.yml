@@ -1,0 +1,64 @@
+# Page fixtures for FaasReleaseIntegrityFailed and FaasReleaseManifestDiverged
+# (ADR-20261110183000: faas-release-integrity checks every host hourly).
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: a host whose release integrity check fails pages after five minutes
+    interval: 1m
+    input_series:
+      - series: faas_release_integrity_ok{job="node",instance="fsn-2"}
+        values: 1 0 0 0 0 0 0 0 0 0
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasReleaseIntegrityFailed
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasReleaseIntegrityFailed
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              family: release_integrity
+              job: node
+              instance: fsn-2
+            exp_annotations:
+              summary: "Release integrity check failed on fsn-2"
+              description: "fsn-2 found a platform binary that does not match its signed release manifest, or a daemon running a replaced binary or one outside any installed release. The failures are in Loki under {job=\"faas-security\", ident=\"faas-release-integrity\"}."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseIntegrity.md"
+
+  - name: hosts on one release with different signed manifests page after five minutes
+    interval: 1m
+    input_series:
+      - series: faas_release_manifest_info{job="node",instance="fsn-2",release="v0.1.18-rc.340",digest="sha256:aaaa"}
+        values: 1x10
+      - series: faas_release_manifest_info{job="node",instance="fsn-3",release="v0.1.18-rc.340",digest="sha256:bbbb"}
+        values: 1x10
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasReleaseManifestDiverged
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasReleaseManifestDiverged
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              family: release_integrity
+              release: v0.1.18-rc.340
+            exp_annotations:
+              summary: "Hosts disagree on the signed manifest of release v0.1.18-rc.340"
+              description: "Hosts on release v0.1.18-rc.340 report different signed-manifest digests. Every host that installed one release has the same manifest, so a host whose manifest differs was changed after install."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseIntegrity.md"
+
+  - name: hosts on one release with the same manifest stay quiet
+    interval: 1m
+    input_series:
+      - series: faas_release_manifest_info{job="node",instance="fsn-2",release="v0.1.18-rc.340",digest="sha256:aaaa"}
+        values: 1x10
+      - series: faas_release_manifest_info{job="node",instance="fsn-3",release="v0.1.18-rc.340",digest="sha256:aaaa"}
+        values: 1x10
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: FaasReleaseManifestDiverged
+        exp_alerts: []

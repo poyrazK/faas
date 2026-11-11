@@ -35,6 +35,15 @@ type BudgetSpec struct {
 	Enabled          bool        `json:"enabled"`
 }
 
+// The closed vocabularies ValidateBudget accepts.
+var (
+	BudgetScopeKinds  = []string{"account", "project", "environment", "app", "job"}
+	BudgetBases       = []string{"net_usage", "gross_usage"}
+	BudgetModes       = []string{"monitored", "strict"}
+	BudgetActions     = []string{"notify", "reject_traffic", "suspend_background", "stop_previews", "suspend_workloads"}
+	BudgetResumeRules = []string{"manual", "next_period"}
+)
+
 // ValidateBudget checks the semantic contract. Store/API adapters separately
 // enforce operational bounds from pkg/api/limits.go and account ownership.
 func ValidateBudget(p BudgetSpec) error {
@@ -51,7 +60,7 @@ func ValidateBudget(p BudgetSpec) error {
 			return fmt.Errorf("%w: scope requires resource id", ErrInvalid)
 		}
 	default:
-		return fmt.Errorf("%w: budget scope", ErrInvalid)
+		return fmt.Errorf("%w: budget scope must be one of %s", ErrInvalid, strings.Join(BudgetScopeKinds, ", "))
 	}
 	if len(p.Meters) == 0 || !slices.IsSorted(p.Meters) {
 		return fmt.Errorf("%w: meters must be sorted and unique", ErrInvalid)
@@ -66,16 +75,16 @@ func ValidateBudget(p BudgetSpec) error {
 			return fmt.Errorf("%w: object_storage needs a monitored account budget", ErrInvalid)
 		}
 	}
-	if p.Basis != "net_usage" && p.Basis != "gross_usage" {
-		return fmt.Errorf("%w: budget basis", ErrInvalid)
+	if !slices.Contains(BudgetBases, p.Basis) {
+		return fmt.Errorf("%w: budget basis must be one of %s", ErrInvalid, strings.Join(BudgetBases, ", "))
 	}
-	if p.Mode != "monitored" && p.Mode != "strict" {
-		return fmt.Errorf("%w: budget mode", ErrInvalid)
+	// Each refusal names the allowed values; "budget mode" alone left the
+	// caller guessing (Hunt 32 H32-60).
+	if !slices.Contains(BudgetModes, p.Mode) {
+		return fmt.Errorf("%w: budget mode must be one of %s", ErrInvalid, strings.Join(BudgetModes, ", "))
 	}
-	switch p.Action {
-	case "notify", "reject_traffic", "suspend_background", "stop_previews", "suspend_workloads":
-	default:
-		return fmt.Errorf("%w: budget action", ErrInvalid)
+	if !slices.Contains(BudgetActions, p.Action) {
+		return fmt.Errorf("%w: budget action must be one of %s", ErrInvalid, strings.Join(BudgetActions, ", "))
 	}
 	if p.Scope.Kind == "job" && (p.Action == "reject_traffic" || p.Action == "stop_previews") {
 		return fmt.Errorf("%w: action cannot target jobs", ErrInvalid)
@@ -83,8 +92,8 @@ func ValidateBudget(p BudgetSpec) error {
 	if p.Action == "notify" && p.DrainSeconds != 0 {
 		return fmt.Errorf("%w: notify has no drain", ErrInvalid)
 	}
-	if p.ResumeRule != "manual" && p.ResumeRule != "next_period" {
-		return fmt.Errorf("%w: budget resume rule", ErrInvalid)
+	if !slices.Contains(BudgetResumeRules, p.ResumeRule) {
+		return fmt.Errorf("%w: budget resume rule must be one of %s", ErrInvalid, strings.Join(BudgetResumeRules, ", "))
 	}
 	for i, amount := range p.NotifyMillicents {
 		if amount < 0 || amount > p.LimitMillicents || (i > 0 && amount <= p.NotifyMillicents[i-1]) {

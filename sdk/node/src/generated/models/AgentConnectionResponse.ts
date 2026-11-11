@@ -50,5 +50,9 @@ export type AgentConnectionResponse = {
    * Slugs of the projects the agent is limited to; absent when it reaches every project.
    */
   projects?: Array<string>;
+  /**
+   * Kinds of action the agent must have a person approve, including its organization's floor.
+   */
+  approvals?: Array<'delete' | 'production' | 'credentials' | 'billing'>;
 };
 

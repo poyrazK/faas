@@ -60,15 +60,16 @@ func TestMCPRegressionCronUpdateLostResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	recovery := failure.Recovery
-	if recovery.Action != "retry_same_plan" {
-		t.Fatalf("unexpected recovery: %+v", recovery)
+	if recovery.Action != "inspect" {
+		t.Fatalf("ambiguous cron must request inspection: %+v", recovery)
 	}
-	replay, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: recovery.Tool, Arguments: recovery.Arguments})
-	if err != nil {
-		t.Fatal(err)
+	receipt := callTool(t, ctx, cs, "gregale_get_plan", map[string]any{"plan_id": id}, false)
+	if err := json.Unmarshal(receipt["recovery"], &recovery); err != nil || recovery.Action != "inspect" {
+		t.Fatalf("receipt must request inspection: %s, %v", receipt["recovery"], err)
 	}
-	if replay.IsError {
-		t.Fatalf("committed cron update cannot recover its receipt through prescribed replay: %+v", replay.StructuredContent)
+	replay, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "gregale_apply_operation", Arguments: map[string]any{"plan_id": id}})
+	if err != nil || !replay.IsError {
+		t.Fatalf("ambiguous cron cannot be replayed without a native receipt: %+v, %v", replay, err)
 	}
 	mu.Lock()
 	committedWrites := writes
@@ -93,7 +94,7 @@ func TestMCPRegressionCronUpdateLostResponse(t *testing.T) {
 	if err := json.Unmarshal(raw, &failure); err != nil || failure.Recovery.Action != "inspect" {
 		t.Fatalf("conflicting replay must request inspection: %s, %v", raw, err)
 	}
-	receipt := callTool(t, ctx, cs, "gregale_get_plan", map[string]any{"plan_id": nextID}, false)
+	receipt = callTool(t, ctx, cs, "gregale_get_plan", map[string]any{"plan_id": nextID}, false)
 	if err := json.Unmarshal(receipt["recovery"], &recovery); err != nil || recovery.Action != "inspect" {
 		t.Fatalf("conflicting receipt must request inspection: %s, %v", receipt["recovery"], err)
 	}

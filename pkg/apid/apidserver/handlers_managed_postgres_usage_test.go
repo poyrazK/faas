@@ -178,3 +178,32 @@ func TestManagedPostgresUsageViewComputeCapState(t *testing.T) {
 		}
 	})
 }
+
+// adr: 20261110160000 — amendment 2026-11-10: usage shows the shared egress
+// allowance and the account-wide hold, so a customer whose ready databases
+// refuse connections can see why.
+func TestManagedPostgresUsageHoldView(t *testing.T) {
+	view := api.ManagedPostgresUsageResponse{EgressBytes: 60}
+	apidserver.ManagedPostgresUsageHoldView(&view, managedpostgres.HoldInputs{Mode: managedpostgres.CapEnforcementOn,
+		DatabaseEgress: 60, AppEgress: 40, EgressCeiling: 100})
+	if view.EgressAllowanceBytes != 100 || view.AppEgressBytes != 40 || view.EgressState != api.ManagedPostgresEgressHeld || view.Hold != api.ManagedPostgresHoldEgress {
+		t.Fatalf("held usage view = %+v", view)
+	}
+	quiet := api.ManagedPostgresUsageResponse{}
+	apidserver.ManagedPostgresUsageHoldView(&quiet, managedpostgres.HoldInputs{Mode: managedpostgres.CapEnforcementShadow,
+		DatabaseEgress: 60, AppEgress: 40, EgressCeiling: 100})
+	if quiet.EgressState != api.ManagedPostgresEgressWarning || quiet.Hold != "" {
+		t.Fatalf("shadow mode must not report a hold: %+v", quiet)
+	}
+	none := api.ManagedPostgresUsageResponse{}
+	apidserver.ManagedPostgresUsageHoldView(&none, managedpostgres.HoldInputs{Mode: managedpostgres.CapEnforcementOn})
+	encoded, err := json.Marshal(none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"egress_allowance_bytes", "app_egress_bytes", "egress_state", `"hold"`} {
+		if strings.Contains(string(encoded), key) {
+			t.Fatalf("%s present without an allowance or hold: %s", key, encoded)
+		}
+	}
+}

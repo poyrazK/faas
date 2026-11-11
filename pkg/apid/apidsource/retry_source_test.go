@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 type retainedSourceBackend struct{ *memBackend }
@@ -67,5 +68,48 @@ func TestRetrySource_DurableQueueAndRetainedArchive(t *testing.T) {
 				t.Fatalf("original deployment changed: %+v %v", original, err)
 			}
 		})
+	}
+}
+
+// copyingSourceBackend is a retained-source backend with a native copy.
+type copyingSourceBackend struct {
+	retainedSourceBackend
+	copyErr error
+	copies  []string
+}
+
+func (b *copyingSourceBackend) CopyObject(_ context.Context, src, dst string) error {
+	if b.copyErr != nil {
+		return b.copyErr
+	}
+	b.copies = append(b.copies, src+"->"+dst)
+	return nil
+}
+
+// ChronoLake report: `release retry` timed out in the CLI because the retry
+// streamed the original archive through apid. A backend with a native copy
+// republishes it server side; one without a copy, or missing the retained
+// object, still streams.
+func TestPublishRetrySourceCopiesServerSide(t *testing.T) {
+	params := EnqueueParams{SourceBuildID: "previous-build", SourcePath: filepath.Join(t.TempDir(), "gone.tar.gz"), SourceBytes: 16}
+	copying := &copyingSourceBackend{retainedSourceBackend: retainedSourceBackend{newMemBackend()}}
+	if err := publishRetrySource(t.Context(), copying, "new-build", params); err != nil {
+		t.Fatal(err)
+	}
+	if len(copying.copies) != 1 || copying.copies[0] != "sources/previous-build.tar.gz->sources/new-build.tar.gz" || len(copying.puts) != 0 {
+		t.Fatalf("copies=%v puts=%d; want one server-side copy and no upload", copying.copies, len(copying.puts))
+	}
+	for _, copyErr := range []error{errors.ErrUnsupported, storage.ErrNotFound} {
+		fallback := &copyingSourceBackend{retainedSourceBackend: retainedSourceBackend{newMemBackend()}, copyErr: copyErr}
+		if err := publishRetrySource(t.Context(), fallback, "new-build", params); err != nil {
+			t.Fatalf("%v: %v", copyErr, err)
+		}
+		if string(fallback.puts["sources/new-build.tar.gz"]) != "original archive" {
+			t.Fatalf("%v: archive was not streamed", copyErr)
+		}
+	}
+	failing := &copyingSourceBackend{retainedSourceBackend: retainedSourceBackend{newMemBackend()}, copyErr: errors.New("permission denied")}
+	if err := publishRetrySource(t.Context(), failing, "new-build", params); err == nil {
+		t.Fatal("a failed copy was swallowed")
 	}
 }

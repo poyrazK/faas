@@ -812,7 +812,7 @@ Closed preview admission, a missing definition or capacity limits return 503
 with `Retry-After`, so the provider keeps the event and retries. Deleting the
 binding with its `expected_version` returns the endpoint to ordinary delivery;
 admitted operations and their receipts are retained. An endpoint has one
-delivery mode: remove an automation or exclusive operation binding first. See
+delivery mode: remove a stored workflow or exclusive operation binding first. See
 [ADR-1193](adr/1193-webhook-submitted-customer-operations.md).
 
 ### Resume waiting Operations from a webhook

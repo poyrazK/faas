@@ -77,6 +77,12 @@ class Database:
                 raise
 
         async def validate(pool, cancel):
+            # after_restore stays off the network (ADR-20261109180000): the pool
+            # is lazy (min_size=0), so the first query reconnects and reports
+            # database_unavailable itself. Validating here made every wake wait
+            # for a scale-to-zero database and missed the hook deadline.
+            if self._restoring is not None:
+                return
             async with asyncio.timeout(self._sql_timeout):
                 await self._transaction(pool, READINESS_SQL, (), False, cancel)
 

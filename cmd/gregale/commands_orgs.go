@@ -28,6 +28,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -53,7 +54,7 @@ var orgSlugRe = regexp.MustCompile(api.OrgSlugPattern)
 func cmdOrgs(args []string) int {
 	parent, _ := lookupCliCommand("orgs")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs <list|create|info|activity|update|rm|members|invitations|keys|agent-policy|transfer-ownership|seat-usage> [args]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale orgs <list|create|info|activity|update|rm|members|invitations|keys|agent-policy|transfer-ownership|leave|seat-usage> [args]", "orgs")
 		return 1
 	}
 	switch args[0] {
@@ -86,6 +87,8 @@ func cmdOrgs(args []string) int {
 		return cmdOrgsAgentPolicy(args[1:])
 	case "transfer-ownership":
 		return cmdOrgsTransferOwnership(args[1:])
+	case "leave":
+		return cmdOrgsLeave(args[1:])
 	case "seat-usage":
 		return cmdOrgsSeatUsage(args[1:])
 	case "me":
@@ -223,14 +226,19 @@ func cmdOrgsCreate(args []string) int {
 	fs := newFlagSet("orgs create", flag.ContinueOnError)
 	slug := fs.String("slug", "", "org slug (required; lowercase alphanumeric + dashes)")
 	name := fs.String("name", "", "display name (required)")
-	if err := fs.Parse(args); err != nil {
+	// `org create acme --name "Acme"` names the slug positionally, as
+	// `org get <slug>` does; it stopped parsing at the slug and reported
+	// the flags as positional arguments (Hunt 32 H32-6).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	if *slug == "" && fs.NArg() == 1 {
+		*slug = fs.Arg(0)
+	} else if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *name == "" {
-		PrintUsage(os.Stderr, "usage: gregale org create --slug <slug> --name <display>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org create [--slug] <slug> --name <display>", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -346,12 +354,15 @@ func validOrgActivityActor(actor string) bool {
 	}
 }
 
+// activityDisplayTime prints a server timestamp in UTC with its zone, like
+// `audit list` and `org get`. It used the Mac's local zone with no label
+// (Hunt 32 H32-5), so one activity row and its audit row disagreed.
 func activityDisplayTime(raw string) string {
 	at, err := time.Parse(time.RFC3339Nano, raw)
 	if err != nil {
 		return raw
 	}
-	return at.Local().Format("2006-01-02 15:04")
+	return at.UTC().Format("2006-01-02 15:04 UTC")
 }
 
 // cmdOrgsRm takes its flags before or after the slug: `org delete acme -q`
@@ -414,7 +425,11 @@ func cmdOrgsMembersLs(args []string) int {
 		return jsonOut(writeNDJSON(resp.Members))
 	}
 	for _, m := range resp.Members {
-		fmt.Printf("%-36s %-32s %-12s %s\n", m.AccountID, m.Email, m.Role, m.JoinedAt)
+		name := m.DisplayName
+		if name == "" {
+			name = "-"
+		}
+		fmt.Printf("%-36s %-32s %-24s %-12s %s\n", m.AccountID, m.Email, name, m.Role, m.JoinedAt)
 	}
 	return 0
 }
@@ -626,9 +641,9 @@ func cmdOrgsSeatUsage(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	fmt.Printf("plan:  %s\n", resp.Plan)
-	fmt.Printf("used:  %d\n", resp.Used)
-	fmt.Printf("limit: %d\n", resp.Limit)
+	// "used: 1 limit: 200" named no unit (Hunt 32 H32-54): these are seats.
+	_, _ = fmt.Fprintf(osStdout, "plan:  %s\n", resp.Plan)
+	_, _ = fmt.Fprintf(osStdout, "seats: %d used of %d\n", resp.Used, resp.Limit)
 	return 0
 }
 
@@ -673,18 +688,19 @@ func cmdInvitationsAccept(args []string) int {
 		return 1
 	}
 	token := fs.Arg(0)
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	m, err := client.AcceptInvitation(context.Background(), token)
-	if err != nil {
-		return printErr("Could not accept invitation", err)
-	}
+	target := dashboardBaseURL(apiBase()) + "/dashboard/invitations/" + url.PathEscape(token)
 	if jsonOutput {
-		return jsonOut(writeJSON(m))
+		return jsonOut(writeJSON(struct {
+			URL             string `json:"url"`
+			RequiresBrowser bool   `json:"requires_browser"`
+		}{target, true}))
 	}
-	PrintOK(osStdout, "Joined %s as %s", m.AccountID, m.Role)
+	PrintProgress(osStdout, "Review and accept this invitation in your signed-in browser: %s", target)
+	if !nonInteractive {
+		if err := openBrowser(target); err != nil {
+			PrintProgress(osStderr, "Open the URL above in your browser: %v", err)
+		}
+	}
 	return 0
 }
 
@@ -811,6 +827,7 @@ func cmdOrgsKeysAdd(args []string) int {
 	label := fs.String("label", "", "key label (required)")
 	scopesCSV := fs.String("scopes", "", "comma-separated scopes (default: [admin])")
 	projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")
+	approvalsCSV := fs.String("approvals", "", "kinds of action an agent key must have a person approve: delete,production,credentials,billing, all or none (default all)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -819,7 +836,7 @@ func cmdOrgsKeysAdd(args []string) int {
 	}
 	projects := splitList(*projectsCSV)
 	if *slug == "" || *label == "" || flagWasSet(fs, "projects") && len(projects) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale org keys add --org <slug> --label <text> [--scopes admin,apps:read,...] [--projects slug,...]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org keys add --org <slug> --label <text> [--scopes admin,apps:read,...] [--projects slug,...] [--approvals category,...|none]", "orgs")
 		return 1
 	}
 	var scopes []string
@@ -835,7 +852,11 @@ func cmdOrgsKeysAdd(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	k, err := client.CreateOrgAPIKey(context.Background(), *slug, *label, scopes, projects...)
+	approvals, err := approvalsFlag(fs, *approvalsCSV)
+	if err != nil {
+		return printErr("Invalid approvals", err)
+	}
+	k, err := client.CreateOrgAPIKeyWith(context.Background(), *slug, api.CreateOrgAPIKeyRequest{Label: *label, Scopes: scopes, Projects: projects, ApprovalCategories: approvals})
 	if err != nil {
 		return printErr("Could not create org API key", err)
 	}

@@ -166,7 +166,9 @@ prom_targets:
     host: 127.0.0.1
     port: 9096
     box_roles: [control-plane]
-    enabled: "{{ faas_object_storage_gateway_managed | default(false) | bool }}"
+    # Managed, or installed by hand (the unit exists): a running gateway is
+    # always scraped (object storage audit OS-10).
+    enabled: "{{ (faas_object_storage_gateway_managed | default(false) | bool) or (prom_s3_gateway_unit.stat.exists | default(false) | bool) }}"
   - job: livequeryd
     host: 127.0.0.1
     port: 9471

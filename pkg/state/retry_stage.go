@@ -37,7 +37,7 @@ func RetryStageStateAt(requested StageName, startedAt time.Time) StageState {
 // failed deployment. Mutable execution state is reset: canaries restart at
 // their first rung with a new soak timer, service rollouts restart their
 // readiness gate, and prior wake/scan/failure state stays on the old row.
-func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
+func retryDeploymentInput(src Deployment, now time.Time, legacyServiceMode ...bool) (Deployment, error) {
 	if src.EnvironmentWorkloadManaged() {
 		return Deployment{}, ErrInvalidArgument
 	}
@@ -49,7 +49,21 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 	if canaryPreset == "" {
 		canaryPreset = "none"
 	}
-	trafficPercent := src.TrafficPercent
+	intent, err := readDeploymentRetryIntent(src)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if intent == nil {
+		// A legacy failed explicit zero could have requested any percentage.
+		// Canary ladders retain their first rung independently of live weights.
+		if src.CanaryTotalSteps == 0 && src.TrafficPercentExplicit && src.TrafficPercent == 0 {
+			return Deployment{}, ErrRetryIntentUnavailable
+		}
+		fallback := newDeploymentRetryIntent(src)
+		fallback.ServiceRollout = src.CanaryTotalSteps == 0 && (IsServiceRollout(src) || len(legacyServiceMode) > 0 && legacyServiceMode[0] && !src.TrafficPercentExplicit)
+		intent = &fallback
+	}
+	trafficPercent := intent.TrafficPercent
 	if src.CanaryTotalSteps > 0 {
 		preset, err := deploymentCanaryPreset(src, canaryPreset)
 		if err != nil {
@@ -68,7 +82,7 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 	stepStartedAt := now.UTC()
 	rolloutState := "pending"
 	var rolloutStartedAt *time.Time
-	if IsServiceRollout(src) {
+	if intent.ServiceRollout && src.CanaryTotalSteps == 0 {
 		rolloutState = "rolling_out"
 		trafficPercent = 0
 		started := stepStartedAt
@@ -79,10 +93,16 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 		value := *src.FullRootfsOverride
 		fullRootfsOverride = &value
 	}
+	imageDigest := src.ImageDigest
+	if src.Kind != DeploymentKindImage && src.Kind != "" {
+		// A source retry rebuilds its artifact. Its previous OCI digest is an
+		// output, while a registry image's digest remains its immutable input.
+		imageDigest = ""
+	}
 
 	return Deployment{
 		AppID:                  src.AppID,
-		ImageDigest:            src.ImageDigest,
+		ImageDigest:            imageDigest,
 		Kind:                   src.Kind,
 		SourcePath:             src.SourcePath,
 		SourceRoot:             src.SourceRoot,
@@ -108,7 +128,7 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 		FullRootfsOverride:     fullRootfsOverride,
 		MinInstances:           src.MinInstances,
 		TrafficPercent:         trafficPercent,
-		TrafficPercentExplicit: src.TrafficPercentExplicit,
+		TrafficPercentExplicit: intent.TrafficPercentExplicit,
 		Scope:                  src.Scope,
 		Priority:               src.Priority,
 		DeployedVia:            src.DeployedVia,

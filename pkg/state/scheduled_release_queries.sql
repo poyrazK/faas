@@ -54,6 +54,8 @@ SELECT sqlc.embed(sr), d.revision
   FROM scheduled_releases sr
   JOIN deployments d ON d.id = sr.deployment_id
  WHERE sr.state = 'scheduled' AND sr.release_at <= sqlc.arg(now)::timestamptz
+   AND (sqlc.narg(after_release_at)::timestamptz IS NULL OR
+        (sr.release_at, sr.id) > (sqlc.narg(after_release_at)::timestamptz, sqlc.narg(after_id)::uuid))
  ORDER BY sr.release_at, sr.id
  LIMIT sqlc.arg(max_rows)::integer;
 

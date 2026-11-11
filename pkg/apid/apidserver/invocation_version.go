@@ -108,6 +108,11 @@ func (s *server) enqueuePreparedInvocation(ctx context.Context, inv state.Invoca
 		if errors.Is(err, state.ErrPlatformTenantSuspended) {
 			return state.Invocation{}, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Platform tenant suspended", "resume this customer before enqueueing work")
 		}
+		// Hunt 32 H32-20: concurrent queue sends answered this 503 with no
+		// log line naming the store error.
+		if s.log != nil {
+			s.log.ErrorContext(ctx, "invocation enqueue failed", "operation", capacityDetail, "app_id", inv.AppID, "source", string(inv.Source), "err", err)
+		}
 		return state.Invocation{}, api.ErrCapacity(capacityDetail)
 	}
 	return created, nil

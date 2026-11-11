@@ -34,8 +34,8 @@ class CreateDeploymentFilesBody:
     """JSON object of non-secret environment overrides applied to this deployment revision only; values follow the
     plan's deployment override limits."""
     source_root: str | Unset = UNSET
-    """Optional repository-relative directory to build from when source contains a workspace context. Empty or
-    omitted means the archive root."""
+    """Optional repository-relative build directory. Empty or omitted uses the app's configured root; '.'
+    explicitly selects the archive root."""
     scope: str | Unset = UNSET
     """Named environment scope read by the developer deployment; omitted uses default."""
     source_url: str | Unset = UNSET

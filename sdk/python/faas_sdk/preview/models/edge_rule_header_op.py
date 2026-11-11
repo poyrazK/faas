@@ -25,6 +25,22 @@ class EdgeRuleHeaderOp:
     $$ is a literal $). Control characters are dropped and each
     value is capped at 1 KiB. Not allowed with action=remove.
     """
+    secret: bool | Unset = UNSET
+    """Seal `value` (request headers only): it is
+    stored encrypted to the edge seal domain and never returned.
+    Authorization, Proxy-Authorization, Cookie and names containing
+    token, secret, password, api-key, apikey, signature or credential
+    are sealed without it. Not allowed with template or action=remove.
+    """
+    secret_id: str | Unset = UNSET
+    """The sealed value of a secret op, returned in place of `value`.
+    Send it back with no `value` to keep that value.
+    """
+    redacted: bool | Unset = UNSET
+    """Set in responses on a credential-named value stored before
+    sealing, which is left out. Send the op back with no `value` to
+    seal the stored value.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +51,12 @@ class EdgeRuleHeaderOp:
         value = self.value
 
         template = self.template
+
+        secret = self.secret
+
+        secret_id = self.secret_id
+
+        redacted = self.redacted
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -48,6 +70,12 @@ class EdgeRuleHeaderOp:
             field_dict["value"] = value
         if template is not UNSET:
             field_dict["template"] = template
+        if secret is not UNSET:
+            field_dict["secret"] = secret
+        if secret_id is not UNSET:
+            field_dict["secret_id"] = secret_id
+        if redacted is not UNSET:
+            field_dict["redacted"] = redacted
 
         return field_dict
 
@@ -62,11 +90,20 @@ class EdgeRuleHeaderOp:
 
         template = d.pop("template", UNSET)
 
+        secret = d.pop("secret", UNSET)
+
+        secret_id = d.pop("secret_id", UNSET)
+
+        redacted = d.pop("redacted", UNSET)
+
         edge_rule_header_op = cls(
             name=name,
             action=action,
             value=value,
             template=template,
+            secret=secret,
+            secret_id=secret_id,
+            redacted=redacted,
         )
 
         edge_rule_header_op.additional_properties = d

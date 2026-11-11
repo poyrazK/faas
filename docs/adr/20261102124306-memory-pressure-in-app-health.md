@@ -86,7 +86,8 @@ Off, the response is unchanged.
    PR).
 2. Release the flag to the owner's account; compare the warnings with real
    OOM kills.
-3. A plan right-sizing hint in `app health` and `gregale debug status`.
+3. A plan right-sizing hint in `app health` (amendment 1) and `gregale debug
+   status` (amendment 2).
 
 ## Amendment 1 (2026-11-04): how much RAM the app needs
 
@@ -118,7 +119,7 @@ The rollup only records episodes at or below 15% available, so it cannot show
 that an app is too large. A suggestion to shrink would need sampled guest
 memory, which the rollup does not hold, so this step does not suggest one.
 `gregale debug status` gains the suggestion in a later change; it needs a new
-response field.
+response field (amendment 2).
 
 ### Fix: the check codes are in the API enum
 
@@ -129,3 +130,24 @@ generated Python SDK raises on a value outside the enum, so releasing either
 flag would have broken Python clients that read app health. The enum now lists
 them, the `reason` enum lists `memory_pressure`, and the generated Node and
 Python models match. Both flags were still off everywhere.
+
+## Amendment 2 (2026-11-05): the suggestion in debug status
+
+`GET /v1/apps/{slug}/debug/status` gains an optional `memory_pressure` object
+(`api.DebugStatusMemory`) and `gregale debug status` shows it: a "Memory
+pressure" line with the rollup's low point, episode count and newest episode,
+and the suggestion under "Memory:" after any OOM remedy.
+
+- It is the same evidence and arithmetic as the memory check:
+  `apphealth.DebugMemory` reads the rollup and calls `api.RightSizeMemory`, and
+  the sentence is `api.MemoryRightSizing.Advice`, which the memory check now
+  uses too.
+- It is present only for accounts the `app_health_memory` flag releases, when
+  the rollup's newest episode is within `api.AppHealthMemoryPressureWindow`
+  and the plan is known. A failed rollup read leaves it out; the status never
+  fails for it.
+- It does not change the status verdict. The dashboard's status card is
+  unchanged.
+- The field is new and optional (preview spec only), so older CLIs and SDKs
+  ignore it. The generated Node and Python preview models include it.
+

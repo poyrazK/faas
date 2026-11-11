@@ -20,6 +20,10 @@ export type UpdateDeploymentTrafficRequest = {
    */
   expected_serving_deployment_id?: string;
   /**
+   * Optional split the change was planned from: every live release in the deployment's environment with positive traffic, keyed by deployment id, mapped to its percent (1-100, summing to 100, at most 100 releases). If the split differs at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic. Cannot be combined with expected_serving_deployment_id or expected_review.
+   */
+  expected_traffic?: Record<string, number>;
+  /**
    * Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the transaction also requires the unchanged account revision and fresh replay from every currently registered serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on fleet membership.
    */
   expected_mcp_access_policy?: {

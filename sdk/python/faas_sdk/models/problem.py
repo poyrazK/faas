@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.agent_approval_pending_info import AgentApprovalPendingInfo
     from ..models.binding_check_report import BindingCheckReport
     from ..models.field_error import FieldError
     from ..models.log_excerpt import LogExcerpt
@@ -56,6 +57,10 @@ class Problem:
     """Stable machine-readable error code. See StatusForCode."""
     current_sequence: int | Unset = UNSET
     """Observed channel head on realtime_sequence_conflict."""
+    agent_approval: AgentApprovalPendingInfo | Unset = UNSET
+    """The approval request behind an approval_required, approval_denied or approval_expired problem. On
+    approval_required a person opens review_url to decide, then the agent repeats the same request once; on the
+    other two the agent should stop repeating it."""
     condition_field: str | Unset = UNSET
     condition_index: int | Unset = UNSET
     field_exists: bool | Unset = UNSET
@@ -174,6 +179,10 @@ class Problem:
         code = self.code
 
         current_sequence = self.current_sequence
+
+        agent_approval: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.agent_approval, Unset):
+            agent_approval = self.agent_approval.to_dict()
 
         condition_field = self.condition_field
 
@@ -304,6 +313,8 @@ class Problem:
         )
         if current_sequence is not UNSET:
             field_dict["current_sequence"] = current_sequence
+        if agent_approval is not UNSET:
+            field_dict["agent_approval"] = agent_approval
         if condition_field is not UNSET:
             field_dict["condition_field"] = condition_field
         if condition_index is not UNSET:
@@ -377,6 +388,7 @@ class Problem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.agent_approval_pending_info import AgentApprovalPendingInfo
         from ..models.binding_check_report import BindingCheckReport
         from ..models.field_error import FieldError
         from ..models.log_excerpt import LogExcerpt
@@ -394,6 +406,13 @@ class Problem:
         code = d.pop("code")
 
         current_sequence = d.pop("current_sequence", UNSET)
+
+        _agent_approval = d.pop("agent_approval", UNSET)
+        agent_approval: AgentApprovalPendingInfo | Unset
+        if isinstance(_agent_approval, Unset):
+            agent_approval = UNSET
+        else:
+            agent_approval = AgentApprovalPendingInfo.from_dict(_agent_approval)
 
         condition_field = d.pop("condition_field", UNSET)
 
@@ -548,6 +567,7 @@ class Problem:
             status=status,
             code=code,
             current_sequence=current_sequence,
+            agent_approval=agent_approval,
             condition_field=condition_field,
             condition_index=condition_index,
             field_exists=field_exists,

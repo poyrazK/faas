@@ -5,7 +5,7 @@
 -- Subjects that may owe overage for the month: those that reached the
 -- compute allowance (as the cap sweep recorded it), those with overage on,
 -- whose storage past the pool is billed (ADR-20261031110037 amendment 2), and
--- those already charged.
+-- those already charged or with a reserved step awaiting reconciliation.
 SELECT s.subject_id, max(s.allowance_unit_seconds)::bigint AS allowance_unit_seconds,
     bool_or(s.overage_enabled) AS overage_enabled
 FROM (
@@ -20,12 +20,34 @@ FROM (
     SELECT d.subject_id, 0::bigint, false
     FROM managed_postgres_overage_deliveries d
     WHERE d.period_start = sqlc.arg(period_start)::timestamptz
+    UNION ALL
+    SELECT p.subject_id, 0::bigint, false
+    FROM managed_postgres_overage_pending p
+    WHERE p.period_start = sqlc.arg(period_start)::timestamptz
+    UNION ALL
+    -- ADR-20261110160000 slice 3: subjects with databases whose egress
+    -- overage election was in force during the month may owe database egress.
+    SELECT x.subject_id, 0::bigint, false
+    FROM (
+        SELECT DISTINCT managed_postgres_usage_subject(db.org_id, db.account_id) AS subject_id
+        FROM managed_postgres_databases db
+        WHERE db.state <> 'deleted' OR db.deleted_at >= sqlc.arg(period_start)::timestamptz
+    ) x
+    WHERE EXISTS (
+        SELECT 1 FROM accounts a WHERE a.id = x.subject_id
+          AND a.egress_overage_enabled_at < sqlc.arg(period_start)::timestamptz + interval '1 month'
+          AND (a.egress_overage_disabled_at IS NULL OR a.egress_overage_disabled_at > sqlc.arg(period_start)::timestamptz))
+       OR EXISTS (
+        SELECT 1 FROM orgs o WHERE o.id = x.subject_id
+          AND o.egress_overage_enabled_at < sqlc.arg(period_start)::timestamptz + interval '1 month'
+          AND (o.egress_overage_disabled_at IS NULL OR o.egress_overage_disabled_at > sqlc.arg(period_start)::timestamptz))
 ) s
 GROUP BY s.subject_id
 ORDER BY s.subject_id;
 
 -- name: ManagedPostgresOverageDelivered :one
-SELECT d.live, d.billed_unit_seconds, d.delivered_millicents, d.updated_at, d.billed_storage_byte_seconds
+SELECT d.live, d.billed_unit_seconds, d.delivered_millicents, d.updated_at, d.billed_storage_byte_seconds,
+    d.billed_egress_bytes
 FROM managed_postgres_overage_deliveries d
 WHERE d.provider = sqlc.arg(provider)::text AND d.subject_id = sqlc.arg(subject_id)::uuid
   AND d.period_start = sqlc.arg(period_start)::timestamptz;
@@ -36,14 +58,16 @@ WHERE d.provider = sqlc.arg(provider)::text AND d.subject_id = sqlc.arg(subject_
 -- nothing. A live delivery may replace a shadow row, which charged nothing; a
 -- shadow delivery never replaces a live one (bug hunt 33).
 INSERT INTO managed_postgres_overage_deliveries AS d (provider, subject_id, period_start, live,
-    billed_unit_seconds, delivered_millicents, updated_at, billed_storage_byte_seconds)
+    billed_unit_seconds, delivered_millicents, updated_at, billed_storage_byte_seconds, billed_egress_bytes)
 VALUES (sqlc.arg(provider)::text, sqlc.arg(subject_id)::uuid, sqlc.arg(period_start)::timestamptz,
     sqlc.arg(live)::boolean, sqlc.arg(billed_unit_seconds)::bigint, sqlc.arg(delivered_millicents)::bigint,
-    sqlc.arg(updated_at)::timestamptz, sqlc.arg(billed_storage_byte_seconds)::bigint)
+    sqlc.arg(updated_at)::timestamptz, sqlc.arg(billed_storage_byte_seconds)::bigint,
+    sqlc.arg(billed_egress_bytes)::bigint)
 ON CONFLICT (provider, subject_id, period_start) DO UPDATE
 SET live = EXCLUDED.live, billed_unit_seconds = EXCLUDED.billed_unit_seconds,
     delivered_millicents = EXCLUDED.delivered_millicents, updated_at = EXCLUDED.updated_at,
-    billed_storage_byte_seconds = EXCLUDED.billed_storage_byte_seconds
+    billed_storage_byte_seconds = EXCLUDED.billed_storage_byte_seconds,
+    billed_egress_bytes = EXCLUDED.billed_egress_bytes
 WHERE d.delivered_millicents = sqlc.arg(previous_millicents)::bigint
   AND d.live = sqlc.arg(previous_live)::boolean
   AND (EXCLUDED.live OR NOT d.live)
@@ -57,7 +81,8 @@ RETURNING true AS recorded;
 -- name: ManagedPostgresOveragePending :one
 SELECT p.live, p.step_at, p.used_unit_seconds, p.allowance_unit_seconds, p.billed_unit_seconds,
     p.from_millicents, p.target_millicents, p.used_storage_byte_seconds, p.storage_pool_bytes,
-    p.billed_storage_byte_seconds, p.previous_millicents, p.previous_live
+    p.billed_storage_byte_seconds, p.previous_millicents, p.previous_live,
+    p.used_egress_bytes, p.app_egress_bytes, p.egress_allowance_bytes, p.billed_egress_bytes
 FROM managed_postgres_overage_pending p
 WHERE p.provider = sqlc.arg(provider)::text AND p.subject_id = sqlc.arg(subject_id)::uuid
   AND p.period_start = sqlc.arg(period_start)::timestamptz;
@@ -67,14 +92,16 @@ WHERE p.provider = sqlc.arg(provider)::text AND p.subject_id = sqlc.arg(subject_
 -- reserves nothing.
 INSERT INTO managed_postgres_overage_pending (provider, subject_id, period_start, live, step_at,
     used_unit_seconds, allowance_unit_seconds, billed_unit_seconds, from_millicents, target_millicents,
-    used_storage_byte_seconds, storage_pool_bytes, billed_storage_byte_seconds, previous_millicents, previous_live)
+    used_storage_byte_seconds, storage_pool_bytes, billed_storage_byte_seconds, previous_millicents, previous_live,
+    used_egress_bytes, app_egress_bytes, egress_allowance_bytes, billed_egress_bytes)
 VALUES (sqlc.arg(provider)::text, sqlc.arg(subject_id)::uuid, sqlc.arg(period_start)::timestamptz,
     sqlc.arg(live)::boolean, sqlc.arg(step_at)::timestamptz, sqlc.arg(used_unit_seconds)::bigint,
     sqlc.arg(allowance_unit_seconds)::bigint, sqlc.arg(billed_unit_seconds)::bigint,
     sqlc.arg(from_millicents)::bigint, sqlc.arg(target_millicents)::bigint,
     sqlc.arg(used_storage_byte_seconds)::bigint, sqlc.arg(storage_pool_bytes)::bigint,
     sqlc.arg(billed_storage_byte_seconds)::bigint, sqlc.arg(previous_millicents)::bigint,
-    sqlc.arg(previous_live)::boolean)
+    sqlc.arg(previous_live)::boolean, sqlc.arg(used_egress_bytes)::bigint, sqlc.arg(app_egress_bytes)::bigint,
+    sqlc.arg(egress_allowance_bytes)::bigint, sqlc.arg(billed_egress_bytes)::bigint)
 ON CONFLICT (provider, subject_id, period_start) DO NOTHING
 RETURNING true AS reserved;
 
@@ -82,3 +109,12 @@ RETURNING true AS reserved;
 DELETE FROM managed_postgres_overage_pending
 WHERE provider = sqlc.arg(provider)::text AND subject_id = sqlc.arg(subject_id)::uuid
   AND period_start = sqlc.arg(period_start)::timestamptz AND target_millicents = sqlc.arg(target_millicents)::bigint;
+
+-- name: ListManagedPostgresOveragePending :many
+-- Reservations survive month close and are paged without starving later keys
+-- when an older provider delivery keeps failing.
+SELECT subject_id,period_start FROM managed_postgres_overage_pending
+WHERE provider=sqlc.arg(provider)::text AND period_start<=sqlc.arg(through)::timestamptz
+ AND (sqlc.narg(after_period)::timestamptz IS NULL
+  OR (period_start,subject_id)>(sqlc.narg(after_period)::timestamptz,sqlc.narg(after_subject)::uuid))
+ORDER BY period_start,subject_id LIMIT sqlc.arg(page_limit)::int;
