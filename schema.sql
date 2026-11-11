@@ -8141,11 +8141,16 @@ BEGIN
                 RETURN NEW;
             END IF;
         END IF;
-        -- Deleting a cron detaches its run history (Hunt 32 H32-46): a
-        -- terminal task may drop its cron_id and nothing else, so its
-        -- outcome evidence stays immutable.
-        IF OLD.cron_id IS NOT NULL AND NEW.cron_id IS NULL
-           AND (to_jsonb(NEW) - 'cron_id') = (to_jsonb(OLD) - 'cron_id') THEN
+        -- Deleting a cron detaches its run history (Hunt 32 H32-46, Hunt 33
+        -- H33-17): its FKs set cron_id and, through the cascade-deleted
+        -- schedule_occurrences, occurrence_id to NULL. A terminal task may
+        -- drop either link and nothing else, so its outcome evidence stays
+        -- immutable.
+        IF (OLD.cron_id IS NOT NULL OR OLD.occurrence_id IS NOT NULL)
+           AND (NEW.cron_id IS NULL OR NEW.cron_id = OLD.cron_id)
+           AND (NEW.occurrence_id IS NULL OR NEW.occurrence_id = OLD.occurrence_id)
+           AND (to_jsonb(NEW) - ARRAY['cron_id', 'occurrence_id']) =
+               (to_jsonb(OLD) - ARRAY['cron_id', 'occurrence_id']) THEN
             RETURN NEW;
         END IF;
         IF NEW IS DISTINCT FROM OLD THEN

@@ -4555,6 +4555,9 @@ const (
 	// customers write runbooks that key on code !=
 	// insufficient_scope without parsing titles.
 	CodeGeoDenied = "geo_denied"
+	// CodeWAFBlocked is the 403 a blocking kind=waf edge rule sends. It
+	// answered insufficient_scope, the API-key scope code (Hunt 33 H33-18).
+	CodeWAFBlocked = "waf_blocked"
 	// CodeRequestValidationFailed is the 422 a kind=validate edge
 	// rule emits when the inbound request body fails the customer's
 	// JSON Schema. Carries Problem.Errors (Cloudflare / Stripe shape)
