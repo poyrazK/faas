@@ -20673,9 +20673,11 @@
     "columns": [
       "always_on",
       "bootstrapped",
+      "compute_quota_unit_seconds",
       "created_at",
       "database_id",
       "drop_standby_slot",
+      "held",
       "last_active_at",
       "last_backup_at",
       "last_error",
