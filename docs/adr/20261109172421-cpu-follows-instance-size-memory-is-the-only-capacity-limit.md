@@ -235,16 +235,36 @@ schema change ships before its first user.
       that show them, and the SQL `plan_vcpus` fallbacks.
       *The API and CLI show an app's size (#6944), the SQL capacity paths
       count an instance's size vCPUs (#6948), and `CPUWeight`, `CPUQuotaUS`
-      and `CPUPeriodUS` are gone. Left: `VCPU` and `VCPUPerPlan`, which
-      function executions still boot at, and the `plan_vcpus` contract
-      migration.*
+      and `CPUPeriodUS` are gone (#6998). Function executions boot at their
+      size's vCPUs too (one for every execution shape), so `VCPU` and
+      `VCPUPerPlan` are gone. The `service_capacity_policy.plan_vcpus` and
+      `cpu_overcommit` columns stay, unread: issued migrations that read them
+      must stay replayable, and the repo's replay tests run them against the
+      current schema.*
    5. The flat hierarchy: app instances directly under `faas-tenant.slice`,
       with vmmd still adopting VMs in the old sub-slices for a release.
+      *Behind the vmmd switch `flat_tenant_cgroups`
+      (`FAAS_VMMD_FLAT_TENANT_CGROUPS`, ansible `vmmd_flat_tenant_cgroups`),
+      default off. With it on, a new tenant VM launches directly under
+      `faas-tenant.slice`. vmmd fences, freezes, adopts and tears down VMs in
+      either place: a VM's lease carries its parent, and a lease rebuilt from
+      a record finds it from the process's cgroup. Deploy adds the
+      `faas-tenant-fence.slice` pin, so `faas-tenant.slice` keeps its
+      controllers once the sub-slices go, and gives
+      `faas-tenant-ibridge.slice` `CPUWeight=1000`, since flat instances'
+      weights (`ram_mb / 16`, about 3,000 on a full host) would otherwise
+      crowd out the bridges. Order: release, a builder-native metal run of
+      it, the switch on per node, and the sub-slices removed only after a
+      release with every node on. An older vmmd knows only the sub-slices:
+      turn the switch off, and let flat VMs park, before rolling vmmd back
+      past that release. Not with `native_process_recovery`.*
    6. The dead `FaasCpuStarvation` alert (nothing feeds its throttle
       ratio) and the spec text.
       *Merged (#6933), unreleased.*
 7. **Customer docs and plan pages** ("CPU follows memory: 1 vCPU per GB,
    bursts to idle CPU") once the change is tested on prod.
+   *Live since rc.337. This repo's plans page, UX spec and CLI help say it;
+   the web plan pages are separate.*
 
 ## Verification
 

@@ -20,6 +20,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -278,6 +279,16 @@ type Server struct {
 	// hostCPU is the host CPU busy window Stats reports (ADR 20261030100950).
 	// The zero value is ready to use.
 	hostCPU hostCPUSampler
+	// sandboxRuns tracks the calls of each sandbox session VM RunSandbox
+	// keeps (ADR-20261027090013 §5), keyed by instance. The zero value is
+	// ready to use.
+	sandboxRuns sync.Map
+	// sandboxUsageEvery is how often RunSandbox reports a session's usage;
+	// zero is api.SandboxUsageReportSec. Tests shorten it.
+	sandboxUsageEvery time.Duration
+	// sandboxStorage keeps persisted sandbox workspaces (ADR-20261027090013
+	// step 7); nil persists none. See WithSandboxWorkspaces.
+	sandboxStorage storage.StorageBackend
 
 	vmm VmmdAPI
 	ops *wire.OpsMetrics

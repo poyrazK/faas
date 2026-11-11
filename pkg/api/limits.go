@@ -877,6 +877,18 @@ const ManagedPostgresOverageMillicentsPerComputeUnitHour = ManagedPostgresNeonSc
 // arrive (ADR-20261031110037).
 const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
 
+// ManagedPostgresNeonMillicentsPerEgressGB is what Neon charges Gregale per GB
+// (10^9 bytes, Neon's unit) of data transfer past its plan's organization
+// allowance ($0.10, neon.com/pricing on 2026-11-02, ADR-20261102072425).
+const ManagedPostgresNeonMillicentsPerEgressGB = 10_000
+
+// ManagedPostgresEgressOverageMillicentsPerGB prices database egress past the
+// plan's shared egress allowance for a subject that elected egress overage:
+// Neon's price plus the markup, $0.105 per GB (ADR-20261110160000 slice 3).
+// Apps use the allowance first; at most one more allowance is billed, as the
+// 2x ceiling allows.
+const ManagedPostgresEgressOverageMillicentsPerGB = ManagedPostgresNeonMillicentsPerEgressGB * (100 + ManagedPostgresOverageMarkupPercent) / 100
+
 // ManagedPostgresStorageOverageMillicentsPerGiBMonth prices storage a subject
 // with overage on holds past its plan's pool: $0.50 per GiB-month, averaged
 // over the UTC month (ADR-20261102072425; ADR-20261031110037 amendment 2).
@@ -891,6 +903,12 @@ const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
 // PostgreSQL delete can be undone before the provider resource is deleted
 // (ADR-20261029174950). Usage in the window is not billed.
 const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
+
+// ManagedPostgresPlanExcessDeleteAfter is how long a managed PostgreSQL
+// database stays suspended past its subject's plan before its delete is
+// scheduled, with ManagedPostgresDeleteGracePeriod still to undo it
+// (ADR-20261110184700).
+const ManagedPostgresPlanExcessDeleteAfter = 30 * 24 * time.Hour
 
 // ManagedPostgresUsageWaiverPeriod bounds the usage waiver of a scheduled
 // delete (ADR-20261029174950 decision 6, amendment 1): a database's waiver
@@ -925,6 +943,14 @@ func ManagedPostgresPreviewDatabasesMax(p Plan) int {
 	}
 	return limits.PreviewApps * databases.DatabasesMax
 }
+
+// ManagedPostgresPreviewFleetSharePercent caps one account's PR preview
+// databases at this share of the operator's fleet database cap
+// (max_databases), at least one (ADR-20261102123523 amendment 2026-11-10).
+// An empty preview is its own provider project, so without it a few Scale
+// accounts (up to 200 previews each) could fill a fleet of about 1,000 and
+// pause every customer's new databases.
+const ManagedPostgresPreviewFleetSharePercent = 5
 
 // ManagedPostgresRestoreSlotNoticeLead is how long before a restore slot ends
 // without room the restoring account is emailed (ADR-20261031123259).
@@ -3485,16 +3511,6 @@ func CustomDomainLimitsFor(p Plan) (perApp, perAccount int, ok bool) {
 	}
 }
 
-// VCPUPerPlan is the guest vCPU count a function execution boots with. App
-// instances follow their size instead (ADR-20261109172421); this goes with
-// the Limits table's VCPU once executions do too. Keep the two in lock-step.
-var VCPUPerPlan = map[Plan]int{
-	PlanFree:  2,
-	PlanHobby: 2,
-	PlanPro:   2,
-	PlanScale: 4,
-}
-
 // GuestVCPUMillicores is the sustained CPU quota one guest vCPU stands for
 // when an app's topology follows its quota instead of its plan
 // (ADR-20261101160231).
@@ -4102,6 +4118,15 @@ const (
 	PublicObjectReadRatePerBucket  = 100
 	PublicObjectReadBurstPerBucket = 200
 	MaxPublicObjectReadLimiters    = 10_000
+	// PublicObjectReadRatePerClient bounds one client address's anonymous
+	// reads of one bucket per gatewayd-public process (burst
+	// PublicObjectReadBurstPerClient), so a single stranger cannot spend a
+	// bucket's whole rate and the owner's anonymous share with it (object
+	// storage audit OS-5). At most MaxPublicObjectReadClientLimiters
+	// address-bucket pairs are tracked.
+	PublicObjectReadRatePerClient     = 10
+	PublicObjectReadBurstPerClient    = 50
+	MaxPublicObjectReadClientLimiters = 100_000
 	// PublicObjectReadMaxAgeSeconds bounds how long a CDN or browser may keep
 	// a public object without revalidating, so a delete or overwrite takes
 	// effect within minutes rather than a year (H9-S144).
@@ -4196,15 +4221,18 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
 
-// ObjectStoragePlanLimitsMax is the largest storage ceiling and monthly egress
-// any plan sells. An installation's safety policy (ObjectStoragePolicy) must
-// allow at least these, because apid enforces the tighter of the two and a
-// smaller policy value silently sells every plan less.
+// ObjectStoragePlanLimitsMax is the largest storage ceiling, monthly requests
+// and monthly egress any plan sells. An installation's safety policy
+// (ObjectStoragePolicy) must allow at least these, because apid enforces the
+// tighter of the two and a smaller policy value silently sells every plan less.
+// Monthly authorizations follow requests, so they must allow the most
+// requests too.
 func ObjectStoragePlanLimitsMax() ObjectStoragePlanLimits {
 	var most ObjectStoragePlanLimits
 	for _, p := range Plans {
 		l := MustLimitsFor(p).ObjectStorage
 		most.MaxAccountBytes = max(most.MaxAccountBytes, l.MaxAccountBytes)
+		most.MaxMonthlyRequests = max(most.MaxMonthlyRequests, l.MaxMonthlyRequests)
 		most.MaxMonthlyEgressBytes = max(most.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
 	}
 	return most
@@ -4251,6 +4279,10 @@ func (l ObjectStoragePlanLimits) Policy(p ObjectStoragePolicy) ObjectStoragePoli
 	p.MaxAccountBytes = tighterObjectStorageLimit(p.MaxAccountBytes, l.MaxAccountBytes)
 	p.MaxBucketBytes = tighterObjectStorageLimit(p.MaxBucketBytes, p.MaxAccountBytes)
 	p.MaxMonthlyRequests = tighterObjectStorageLimit(p.MaxMonthlyRequests, l.MaxMonthlyRequests)
+	// Every admitted read and write spends one authorization, so a plan's
+	// authorizations follow its requests; the operator value is only an
+	// upper safety bound (object storage audit OS-1, 2026-11-10).
+	p.MaxMonthlyAuthorizations = tighterObjectStorageLimit(p.MaxMonthlyAuthorizations, l.MaxMonthlyRequests)
 	p.MaxMonthlyEgressBytes = tighterObjectStorageLimit(p.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
 	if p.AnonymousReads {
 		p.MaxMonthlyRequests = publicObjectReadShare(p.MaxMonthlyRequests)
@@ -4383,8 +4415,8 @@ type Limits struct {
 	// without reading limits.go. Spec §13 hard-limits table.
 	ConcurrencyPerVMBound int // Free 4, Hobby 5, Pro 25, Scale 80
 
-	// Runtime shape.
-	VCPU         int // firecracker vcpu_count (spec §4.4)
+	// Runtime shape. No plan field sets a guest's vCPU count: it follows the
+	// guest's memory (SizeVCPUs, ADR-20261109172421).
 	IdleTimeoutS int // default idle-reaper timeout (spec §4.3)
 
 	// M-2 / ADR-137+138: per-plan tier tightening for
@@ -6024,7 +6056,6 @@ var planLimits = map[Plan]Limits{
 		// alignment comment; the value was 256 before this audit too.
 		AppLayerMaxMB:         256,
 		SourceTarballMaxMB:    100,
-		VCPU:                  2,
 		IdleTimeoutS:          60,
 		RequestBudgetMaxMs:    30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
 		CertExpiryWarningDays: 30,
@@ -6436,7 +6467,6 @@ var planLimits = map[Plan]Limits{
 		RAMMB:                 512,
 		AppLayerMaxMB:         512,
 		SourceTarballMaxMB:    100,
-		VCPU:                  2,
 		IdleTimeoutS:          60,
 		RequestBudgetMaxMs:    60_000, // request_timeout_s ceiling: 60 s (ADR-1150)
 		CertExpiryWarningDays: 30,
@@ -6884,7 +6914,6 @@ var planLimits = map[Plan]Limits{
 		RAMMB:                 1024,
 		AppLayerMaxMB:         1024,
 		SourceTarballMaxMB:    250,
-		VCPU:                  2,
 		IdleTimeoutS:          300,
 		RequestBudgetMaxMs:    300_000, // request_timeout_s ceiling: 5 min (ADR-1150)
 		CertExpiryWarningDays: 30,
@@ -7297,7 +7326,6 @@ var planLimits = map[Plan]Limits{
 		RAMMB:                 2048,
 		AppLayerMaxMB:         2048,
 		SourceTarballMaxMB:    250,
-		VCPU:                  4,
 		IdleTimeoutS:          600,
 		RequestBudgetMaxMs:    900_000, // request_timeout_s ceiling: 15 min (ADR-1150)
 		CertExpiryWarningDays: 30,
@@ -10371,6 +10399,16 @@ var (
 // account gets a limit error even when the agents capability is released to
 // it. The surfaces are gated off by default (the internal agents capability)
 // and stay out of docs/plans.md until launch.
+// Sandbox preview bounds (ADR-20261027090013 §11).
+const (
+	// SandboxPreviewTokenTTLSec is a private preview token's life, and the
+	// preview cookie's.
+	SandboxPreviewTokenTTLSec = 3600
+	// SandboxPreviewConnsPerSession bounds a session's open preview
+	// connections, each of which holds one of guest-init's 64 operations.
+	SandboxPreviewConnsPerSession = 32
+)
+
 var (
 	// AgentsPerAccount caps the agents an account defines.
 	AgentsPerAccount = [4]int{0, 10, 50, 200}
@@ -10401,6 +10439,49 @@ var (
 
 	// AgentRunVCPUMax caps a run's vCPUs (ADR-20261027090014 §3).
 	AgentRunVCPUMax = [4]int{0, 1, 2, 2}
+
+	// Sandbox sessions (ADR-20261027090013 §7). Free is 0 everywhere (D9):
+	// a plan whose SandboxMaxLifetimeSec is 0 creates no session. A
+	// session's RAM follows AgentRunRAMMBMax, and sessions count against
+	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
+	// runs. SandboxMaxLifetimeSec is a session's longest life.
+	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
+	// command.
+	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}
+	SandboxExecOutputMaxBytes = [4]int{0, 1 << 20, 4 << 20, 16 << 20}
+	// SandboxWorkspaceMaxMB sizes a session's /workspace scratch drive.
+	SandboxWorkspaceMaxMB = [4]int{0, 2048, 8192, 20_480}
+	// SandboxSnapshotBytesPerAccount and SandboxSnapshotRetentionDays bound
+	// persisted workspaces.
+	SandboxSnapshotBytesPerAccount = [4]int64{0, 1 << 30, 10 << 30, 50 << 30}
+	SandboxSnapshotRetentionDays   = [4]int{0, 7, 30, 90}
+	// SandboxArchiveEntriesMax bounds the entries one workspace archive
+	// unpacks (workspace:hydrate, and a session started from a snapshot).
+	SandboxArchiveEntriesMax = 1_000_000
+	// SandboxSnapshotPendingSec is how long agentd waits for a reserved
+	// workspace archive before its sweep drops the reservation and deletes
+	// the archive; it outlasts SandboxPersistTimeoutSec.
+	SandboxSnapshotPendingSec = 3600
+	// SandboxPersistTimeoutSec bounds one workspace:persist call.
+	SandboxPersistTimeoutSec = 1800
+	// SandboxExposedPortsMax, SandboxPreviewRequestsPerSec and
+	// SandboxPublicPreview govern preview URLs (§11): ports per session,
+	// requests per second per session, and whether a port may be public.
+	SandboxExposedPortsMax       = [4]int{0, 2, 5, 10}
+	SandboxPreviewRequestsPerSec = [4]int{0, 20, 50, 200}
+	SandboxPublicPreview         = [4]bool{false, false, true, true}
+	// SandboxReservedPorts are guest-init's own loopback listeners
+	// (workload identity, the outbound relay, tracing, profile health and
+	// profiles); no preview may expose them.
+	SandboxReservedPorts = []int{2773, 2774, 4318, 9160, 9191}
+	// SandboxTemplatesMax caps an account's sandbox templates
+	// (ADR-20261027090013): each is a platform-managed app that builds an
+	// image, counted in this pool instead of DeployedApps.
+	SandboxTemplatesMax = [4]int{0, 3, 20, 100}
+	// SandboxTemplateReadyTimeoutSecMax bounds how long a template's ready
+	// command may hold a new session in starting.
+	SandboxTemplateReadyTimeoutSecMax = 600
 
 	// AgentImageLayerMaxMB caps a custom harness layer (drive1). The shared
 	// agent base (drive0) is not counted. Matches AppLayerMaxMB.
@@ -10488,6 +10569,14 @@ const (
 	// AgentRunUsageSampleMillis is how often vmmd samples an agent run VM's
 	// private memory (ADR-20261027090011 Measurement).
 	AgentRunUsageSampleMillis = 1000
+	// SandboxUsageReportSec is how often vmmd reports a sandbox session
+	// VM's cumulative usage (ADR-20261027090013 step 11). A report lost
+	// with vmmd costs at most this much measurement.
+	SandboxUsageReportSec = 60
+	// SandboxWarmSnapshotsMax bounds the warm session snapshot slots one
+	// schedd keeps across nodes (ADR-20261027090013 §12); a shape past it
+	// cold-boots every session.
+	SandboxWarmSnapshotsMax = 512
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2
@@ -10512,6 +10601,14 @@ const (
 	// at most 30 days ahead. A sleep also counts against the endpoint's
 	// realtime schedules (state.ManagedRealtimeScheduleLimit).
 	AgentSleepMaxSeconds = 2_592_000
+	// SandboxIdleFreezeSec freezes a sandbox session with no calls, and
+	// SandboxIdleExpirySec ends it (ADR-20261027090013 §5). The expiry equals
+	// FrozenTTLSeconds and bounds a session's idle timeout.
+	SandboxIdleFreezeSec = 30
+	SandboxIdleExpirySec = 600
+	// SandboxTokenTTLSec is a session token's life. Reading the session
+	// mints a fresh one (ADR-20261027090013 §3).
+	SandboxTokenTTLSec = 900
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).

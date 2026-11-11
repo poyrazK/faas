@@ -23,6 +23,9 @@ type PlanExcessNotice struct {
 	ServiceClass ServiceClass
 	Reason       string
 	RecordedAt   time.Time
+	// DeleteAt is when the database is deleted if it still does not fit,
+	// set only while the deletion pass is on (ADR-20261110184700).
+	DeleteAt time.Time
 }
 
 // PlanExcessNoticeStore is the optional store capability the cap sweep uses

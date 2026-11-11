@@ -17,11 +17,15 @@ Operators: see the [operator guide](managed-postgres.md).
 
 | Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Free | — | — | — | — | — |
 | Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
+- The Free plan includes no managed PostgreSQL: create, `gregale dev
+  --postgres`, a Compose `postgres` service and restores answer
+  `403 managed_postgres_not_in_plan` there. Upgrade to Hobby or above for a
+  database.
 - Storage is pooled across your databases: one database may use the whole
   pool.
 - Compute suspends when a database is idle. Always-on compute is not part of
@@ -35,8 +39,7 @@ Operators: see the [operator guide](managed-postgres.md).
   lists the databases to delete and the ones to move to a class the plan
   includes. A database whose delete is scheduled no longer counts.
 - A plan can also drop without that check, for example when a subscription
-  ends. Databases the new plan no longer includes are then suspended, never
-  deleted:
+  ends. Databases the new plan no longer includes are then suspended:
   - your oldest databases are kept, up to the plan's database limit;
   - a newer one shows `plan_excess: database_limit`;
   - one in a class the plan does not include shows
@@ -46,9 +49,11 @@ Operators: see the [operator guide](managed-postgres.md).
   credentials and app bindings are kept, but it does not start until you
   upgrade, delete a database, or resize it to an included class. The next
   usage sweep, within minutes, resumes it.
-- When the platform is near capacity, new databases on the Free plan pause
-  first (`503 managed_postgres_new_databases_paused`); paid plans can still
-  create them.
+  - A database still suspended 30 days later is deleted. The email names the
+    date. Its app bindings are removed, and `gregale postgres recover` brings
+    it back for 7 days after that.
+- A subscription that ends drops the account to Free, which includes no
+  databases, so every database it holds is suspended this way.
 
 ## Create a database
 
@@ -266,10 +271,13 @@ every plan:
   happen together, so a worker restart cannot lose the notice.
 - A second restore past the limit while a copy holds the slot returns
   `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
-- A copy can replace its source on a one-database plan: detach the source's
-  apps and purge it. The source no longer counts, so the copy becomes an
-  ordinary database. The source is kept, with its name and storage, until the
-  copy is deleted.
+- A copy can replace its source on a one-database plan: point your app at
+  the copy, then delete the source. A normal delete is enough; you do not
+  have to purge. Once the source's delete is scheduled, the copy becomes an
+  ordinary database and keeps its bindings past `restore_slot_until`. The
+  source keeps its 7-day undo, but recovering it then needs room under your
+  plan's limit (delete or purge the copy, or upgrade). A purged source is
+  kept, with its name and storage, until the copy is deleted.
 - A [rollback that restores the database](deploys.md#rollbacks-that-restore-the-database)
   never uses the slot: its copy becomes the app's database, so the account
   needs room for it inside the limit.
@@ -342,6 +350,23 @@ databases by up to two hours.
 - Storage: at the pooled storage limit, writes that would grow a database
   fail. Reads, deletes and `VACUUM` keep working, and nothing is suspended or
   deleted.
+- Egress: your apps and databases share the plan's monthly egress
+  allowance. `usage` shows `egress_allowance_bytes`, what the databases sent
+  (`egress_bytes`) and what the apps sent (`app_egress_bytes`).
+  `egress_state` is `warning` at 80% of the allowance and `held` once the two
+  together reach it: the databases then refuse connections until the 1st of
+  next month or an upgrade. Data a database sends your app counts as
+  database egress.
+- With egress overage on (`gregale billing egress-overage`), your apps use
+  the allowance first and database egress past it is billed at $0.105 per GB.
+  `egress_state` is then `overage`, and the databases are held only at twice
+  the allowance.
+
+When the platform stops a database that is still `ready`, `get`, `list` and
+the API say why in `hold`: `compute_ceiling`, `egress`, `inactive` (the
+account is suspended), `plan_excess` or `preview` (a PR preview database once
+the account used 80% of its compute). `usage` shows `hold` when every database
+of the account is held. A held database keeps its data.
 
 ## Delete, recover and purge
 

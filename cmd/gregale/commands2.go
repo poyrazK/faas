@@ -225,7 +225,7 @@ func cmdApp(args []string) int {
 	workloadRevision := int64(-1)
 	visibility := fs.String("visibility", "", "set public edge exposure: public|internal (Pro/Scale only for internal)")
 	ram := fs.Int("ram", 0, "update RAM (MB)")
-	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
+	cpuMillicores := fs.Int("cpu-millicores", 0, "cap CPU at 250 or 500 millicores; 1000 leaves it uncapped")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "update named resource size: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update the maximum instances (replicas) the app scales to")
@@ -4158,7 +4158,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	// Lifecycle is app-wide, so only a production deploy changes it, as a
 	// production push does (ADR-20261110190000 §5).
-	if resolvedShape == shapeFunction && *environment == "" && *image == "" {
+	if resolvedShape == shapeFunction && *environment == "" && *image == "" && !isFunctionSetMember(ctx) {
 		if err := applyFunctionHookLifecycle(ctx, client, slug, sourceDir, deployHandler); err != nil {
 			return printErr("Could not apply snapshot hooks", err)
 		}

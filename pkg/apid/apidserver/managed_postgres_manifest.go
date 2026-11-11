@@ -283,7 +283,7 @@ func (s *server) manifestDatabaseCreateSpec(ctx context.Context, acct state.Acco
 			"Cannot create managed PostgreSQL database", detail("creating a database needs a credential with postgres:manage; deploy tokens and deploy:write keys can only bind existing databases"))
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
-	if !ok || limits.DatabasesMax == 0 || managedPostgresFreeClosed(acct.Plan, s.managedPostgresCapMode) {
+	if !ok || managedPostgresNotInPlan(acct.Plan) {
 		return managedpostgres.Spec{}, managedPostgresManifestProblem(managedpostgres.ErrNotInPlan, detail("the plan does not include managed databases"))
 	}
 	discovery, err := s.managedPostgres.DiscoverCapabilities(ctx, acct.ID, strings.TrimSpace(create.Region))

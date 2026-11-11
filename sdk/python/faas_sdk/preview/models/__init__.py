@@ -2675,6 +2675,7 @@ from .managed_postgres_cutover_writer_isolation import ManagedPostgresCutoverWri
 from .managed_postgres_cutover_writer_isolation_state import ManagedPostgresCutoverWriterIsolationState
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
+from .managed_postgres_database_hold import ManagedPostgresDatabaseHold
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
 from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
@@ -2702,7 +2703,9 @@ from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperat
 from .managed_postgres_usage_operator_response_guardrail_state import ManagedPostgresUsageOperatorResponseGuardrailState
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
+from .managed_postgres_usage_response_egress_state import ManagedPostgresUsageResponseEgressState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
+from .managed_postgres_usage_response_hold import ManagedPostgresUsageResponseHold
 from .managed_realtime_access_request import ManagedRealtimeAccessRequest
 from .managed_realtime_access_request_action import ManagedRealtimeAccessRequestAction
 from .managed_realtime_access_response import ManagedRealtimeAccessResponse
@@ -8952,6 +8955,7 @@ __all__ = (
     "ManagedPostgresCutoverWriterIsolationState",
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
+    "ManagedPostgresDatabaseHold",
     "ManagedPostgresDatabaseList",
     "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
@@ -8979,7 +8983,9 @@ __all__ = (
     "ManagedPostgresUsageOperatorResponseGuardrailState",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseComputeCapState",
+    "ManagedPostgresUsageResponseEgressState",
     "ManagedPostgresUsageResponseGuardrailState",
+    "ManagedPostgresUsageResponseHold",
     "ManagedRealtimeAccessRequest",
     "ManagedRealtimeAccessRequestAction",
     "ManagedRealtimeAccessResponse",

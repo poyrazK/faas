@@ -319,6 +319,16 @@ service Schedd {
   // Cancel stops the harness, or ends the run before the boot. Events after
   // proceed: booted, output chunks, then one result.
   rpc RunAgent(stream AgentRunRequest) returns (stream AgentRunEvent);
+  // RunSandbox admits one sandbox session on the agent pool and keeps its VM
+  // for the stream's life (ADR-20261027090013 §4). The first client frame is
+  // start; after placed (the reservation is held, nothing booted) schedd
+  // waits for proceed, which agentd sends once it has recorded the session's
+  // placement. Then agentd may freeze or close the session; schedd relays
+  // vmmd's booted, activity, frozen, freeze_refused and thawed events, and
+  // relays a workspace persist's request and done events up and agentd's
+  // grant and recorded answers down. The VM is destroyed and the
+  // reservation released when the stream ends.
+  rpc RunSandbox(stream SandboxRunRequest) returns (stream SandboxRunEvent);
   // ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
   // memory-pressure report: MemAvailable fell to the pressure share of
   // MemTotal while a profile collector was registered. schedd queues one
@@ -1249,6 +1259,105 @@ message FlowSummary {
 
 // AgentRunRequest is a client frame on RunAgent. Start occurs exactly once,
 // first.
+message SandboxRunRequest {
+  oneof frame {
+    SandboxRunStart start = 1;
+    AgentRunProceed proceed = 2;
+    SandboxRunFreeze freeze = 3;
+    SandboxRunClose close = 4;
+    SandboxRunPersistGrant persist_grant = 5;
+    SandboxRunPersistRecorded persist_recorded = 6;
+  }
+}
+
+// SandboxRunStart is the session's machine, already checked against the
+// account's plan.
+message SandboxRunStart {
+  string sandbox_id = 1;
+  string account_id = 2;
+  string plan = 3;
+  int32 ram_mb = 4;
+  int32 vcpu = 5;
+  int32 cpu_millicores = 6;
+  // network_mode is "none" or "registries" (ADR-20261027090013 §6).
+  string network_mode = 7;
+  // workspace_key is the persisted workspace the session starts from
+  // (ADR-20261027090013 step 7).
+  string workspace_key = 8;
+  // image_key is the seller image's full-rootfs artifact (the image-run
+  // cache's jobs/<job>.ext4) the session boots as drive1 in place of the
+  // platform sandbox layer; empty for a preset session.
+  string image_key = 9;
+  // start_cmd, ready_cmd and ready_timeout_ms are a template session's
+  // commands (ADR-20261027090013 step 10): guest-init runs the start command
+  // at boot and serves once the ready command exits 0.
+  string start_cmd = 10;
+  string ready_cmd = 11;
+  int64 ready_timeout_ms = 12;
+}
+
+message SandboxRunFreeze {}
+
+message SandboxRunClose {}
+
+message SandboxRunEvent {
+  oneof frame {
+    AgentRunPlaced placed = 1;
+    AgentRunBooted booted = 2;
+    SandboxRunActivity activity = 3;
+    SandboxRunFrozen frozen = 4;
+    SandboxRunFreezeRefused freeze_refused = 5;
+    SandboxRunThawed thawed = 6;
+    SandboxRunPersistRequested persist_requested = 7;
+    SandboxRunPersistDone persist_done = 8;
+    // usage relays vmmd's cumulative usage of the session VM.
+    AgentRunUsage usage = 9;
+  }
+}
+
+// SandboxRunActivity is vmmd's report of the session's calls.
+message SandboxRunActivity {
+  int32 calls_in_flight = 1;
+  int64 last_call_ended_unix_ms = 2;
+}
+
+message SandboxRunFrozen {}
+
+message SandboxRunFreezeRefused {
+  string reason = 1;
+}
+
+message SandboxRunThawed {}
+
+// The workspace persist exchange (ADR-20261027090013 step 7), relayed
+// between vmmd and agentd: see vmmd's RunSandboxPersist* messages.
+message SandboxRunPersistRequested {
+  string request_id = 1;
+}
+
+message SandboxRunPersistGrant {
+  string request_id = 1;
+  string snapshot_id = 2;
+  string storage_key = 3;
+  int64 max_bytes = 4;
+  int64 expires_at_unix_ms = 5;
+  // refusal is an RFC 7807 problem as JSON.
+  bytes refusal = 6;
+}
+
+message SandboxRunPersistDone {
+  string request_id = 1;
+  string snapshot_id = 2;
+  int64 bytes = 3;
+  string sha256 = 4;
+  bool failed = 5;
+}
+
+message SandboxRunPersistRecorded {
+  string request_id = 1;
+  bool recorded = 2;
+}
+
 message AgentRunRequest {
   oneof frame {
     AgentRunStart start = 1;
@@ -1341,6 +1450,8 @@ message AgentRunUsage {
   int64 billable_mb_ms = 8;
   int64 peak_private_mb = 9;
   bool cold_boot = 10;
+  int64 frozen_ms = 11;
+  bool final = 12;
 }
 
 message ReportMemoryPressureRequest {

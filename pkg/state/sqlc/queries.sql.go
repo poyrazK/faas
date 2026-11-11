@@ -1786,6 +1786,47 @@ func (q *Queries) AppOpenMonitorIncident(ctx context.Context, db DBTX, arg AppOp
 	return i, err
 }
 
+const appPreviewDatabaseEnvKeys = `-- name: AppPreviewDatabaseEnvKeys :many
+SELECT DISTINCT b.environment_key
+FROM managed_postgres_bindings b
+JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.database_account_id
+JOIN orgs o ON o.id = d.org_id AND o.personal_org AND o.personal_owner_account_id = b.account_id
+WHERE b.account_id = $1 AND b.app_id = $2
+  AND b.scope IN ('default', 'production') AND b.state NOT IN ('deleting', 'deleted')
+  AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
+  AND d.state NOT IN ('deleting', 'deleted')
+ORDER BY b.environment_key
+`
+
+type AppPreviewDatabaseEnvKeysParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// ADR-20261102123523: the environment keys a PR preview of this app gets from
+// its own preview databases, mirroring previewdb.Manager.Prepare: the app's
+// bindings in the scopes production serves on personally owned databases
+// with previews on.
+func (q *Queries) AppPreviewDatabaseEnvKeys(ctx context.Context, db DBTX, arg AppPreviewDatabaseEnvKeysParams) ([]string, error) {
+	rows, err := db.Query(ctx, appPreviewDatabaseEnvKeys, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var environment_key string
+		if err := rows.Scan(&environment_key); err != nil {
+			return nil, err
+		}
+		items = append(items, environment_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const appQueueBindingConsumerInventory = `-- name: AppQueueBindingConsumerInventory :many
 SELECT b.id AS binding_id, COALESCE(consumer.id::text, '') AS consumer_id,
        COALESCE(consumer.enabled, false) AS consumer_enabled,
@@ -25717,12 +25758,12 @@ func (q *Queries) GetApplicationStandardAssignmentInventory(ctx context.Context,
 const getApplicationStandardConsumerRoster = `-- name: GetApplicationStandardConsumerRoster :one
 WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
  app_scope AS MATERIALIZED (
- SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled, a.scaling_revision,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
+ SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled, a.scaling_revision, a.sandbox_template,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
  FROM apps a LEFT JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted'
  ), live AS MATERIALIZED (
  SELECT i.id,i.node_id,i.deployment_id,i.state FROM instances i JOIN app_scope a ON a.id=i.app_id
- WHERE i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')
+ WHERE i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','frozen','draining')
  ), members AS (
  SELECT n.id AS node_id FROM compute_nodes n LEFT JOIN application_standard_log_consumers c ON c.node_id=n.id
  WHERE n.role IS DISTINCT FROM 'control-plane' OR c.node_id IS NOT NULL
@@ -46120,7 +46161,7 @@ const listApplicationStandardObservationArtifacts = `-- name: ListApplicationSta
 SELECT d.id,application_standard_native_runtime_snapshot(d.app_id,d.id)::jsonb AS input
  FROM deployments d WHERE d.app_id=$1::uuid
  AND (d.status NOT IN ('failed','superseded','cancelled')
-  OR EXISTS(SELECT 1 FROM instances i WHERE i.deployment_id=d.id AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining'))
+  OR EXISTS(SELECT 1 FROM instances i WHERE i.deployment_id=d.id AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','frozen','draining'))
   OR EXISTS(SELECT 1 FROM snapshots s WHERE s.deployment_id=d.id AND NOT s.stale AND NOT s.delete_pending))
  ORDER BY d.id
 `
@@ -52686,6 +52727,38 @@ func (q *Queries) ListManagedPostgresLifecycleUsageDatabases(ctx context.Context
 	return items, nil
 }
 
+const listManagedPostgresPlanExcessSince = `-- name: ListManagedPostgresPlanExcessSince :many
+SELECT database_id,recorded_at FROM managed_postgres_plan_excess_notices
+WHERE database_id=ANY($1::uuid[])
+`
+
+type ListManagedPostgresPlanExcessSinceRow struct {
+	DatabaseID pgtype.UUID
+	RecordedAt pgtype.Timestamptz
+}
+
+// ADR-20261110184700: when each database was first suspended past its plan,
+// the clock its deletion runs on.
+func (q *Queries) ListManagedPostgresPlanExcessSince(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ListManagedPostgresPlanExcessSinceRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresPlanExcessSince, databaseIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListManagedPostgresPlanExcessSinceRow{}
+	for rows.Next() {
+		var i ListManagedPostgresPlanExcessSinceRow
+		if err := rows.Scan(&i.DatabaseID, &i.RecordedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedPostgresPreviewDatabasePage = `-- name: ListManagedPostgresPreviewDatabasePage :many
 SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases
 WHERE preview_source_database_id IS NOT NULL AND deleted_at IS NULL AND id>$1::uuid
@@ -53637,7 +53710,7 @@ func (q *Queries) ListPendingAlertRollbacks(ctx context.Context, db DBTX, batchS
 const listPendingApplicationStandardEgress = `-- name: ListPendingApplicationStandardEgress :many
 WITH serving AS (
  SELECT DISTINCT i.app_id,i.node_id FROM instances i WHERE i.node_id IS NOT NULL
- AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')
+ AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','frozen','draining')
  AND ($3::text='' OR i.app_id::text=$3::text)
 ), targets AS (
  SELECT s.app_id, s.node_id,application_standard_egress_target(s.app_id,s.node_id) AS target FROM serving s
@@ -81791,7 +81864,7 @@ SELECT application_standard_log_inventory($1::uuid)::jsonb AS inventory,
   FROM compute_nodes n LEFT JOIN application_standard_log_consumers c ON c.node_id=n.id
   WHERE (n.role IS DISTINCT FROM 'control-plane' AND c.stopped_at IS NULL)
    OR EXISTS(SELECT 1 FROM instances i WHERE i.app_id=$1::uuid AND i.node_id=n.id
-     AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')))::timestamptz AS heartbeat_until
+     AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','frozen','draining')))::timestamptz AS heartbeat_until
 `
 
 type ReadApplicationStandardObservationLoggingParams struct {

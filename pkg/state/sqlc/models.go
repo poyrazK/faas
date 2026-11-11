@@ -1061,6 +1061,7 @@ type App struct {
 	GithubProductionTrigger           pgtype.Text
 	GithubPreviewEnabled              pgtype.Bool
 	ScalingRevision                   int64
+	SandboxTemplate                   bool
 }
 
 type AppApiRoute struct {
@@ -8745,6 +8746,7 @@ type ManagedPostgresOverageDelivery struct {
 	DeliveredMillicents      int64
 	UpdatedAt                pgtype.Timestamptz
 	BilledStorageByteSeconds int64
+	BilledEgressBytes        int64
 }
 
 // A managed PostgreSQL overage step reserved before it is sent to the billing provider; written only by apid (ADR-20261101143527).
@@ -8764,6 +8766,10 @@ type ManagedPostgresOveragePending struct {
 	BilledStorageByteSeconds int64
 	PreviousMillicents       int64
 	PreviousLive             bool
+	UsedEgressBytes          int64
+	AppEgressBytes           int64
+	EgressAllowanceBytes     int64
+	BilledEgressBytes        int64
 }
 
 // Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
@@ -14995,6 +15001,97 @@ type SafeReleaseWorkerLease struct {
 	Singleton bool
 	HealthyAt pgtype.Timestamptz
 	ExpiresAt pgtype.Timestamptz
+}
+
+// ADR-20261027090013 §11 exposed sandbox ports; apid inserts and deletes rows; gatewayd-internal caches them to route preview hosts.
+type SandboxPort struct {
+	SandboxID  pgtype.UUID
+	AccountID  pgtype.UUID
+	Port       int32
+	Visibility string
+	CreatedAt  pgtype.Timestamptz
+}
+
+// ADR-20261027090013 sandbox sessions; apid inserts queued intents, closes queued ones and requests the close of live ones; agentd (ADR-20261027090014) owns every other transition.
+type SandboxSession struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	TenantID            pgtype.UUID
+	Kind                string
+	Preset              string
+	RamMb               int32
+	NetworkMode         string
+	State               string
+	IdleTimeoutSec      int32
+	ExpiresAt           pgtype.Timestamptz
+	Labels              []byte
+	OutcomeCode         pgtype.Text
+	OutcomeMessage      pgtype.Text
+	LeaseOwner          pgtype.Text
+	LeaseToken          pgtype.Text
+	LeaseExpiresAt      pgtype.Timestamptz
+	NodeID              pgtype.Text
+	InstanceID          pgtype.Text
+	CloseRequestedAt    pgtype.Timestamptz
+	LastActivityAt      pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	ClosedAt            pgtype.Timestamptz
+	WorkspaceSnapshotID pgtype.UUID
+	ImageRef            pgtype.Text
+	// ADR-20261027090013: the image-run runner job (ADR-1161) caching the session image; a live session keeps it from eviction.
+	ImageJobID pgtype.UUID
+	// ADR-20261027090013: the sandbox template the session boots; NULL for a preset or image session, or once the template is deleted.
+	TemplateID pgtype.UUID
+}
+
+// ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.
+type SandboxSessionUsage struct {
+	SandboxID           pgtype.UUID
+	AccountID           pgtype.UUID
+	Method              int16
+	Samples             int32
+	ExpectedSamples     int32
+	MeasuredMs          int64
+	PausedMs            int64
+	FrozenMs            int64
+	PrivateMbMs         int64
+	UnpausedPrivateMbMs int64
+	BillableMbMs        int64
+	PeakPrivateMb       int64
+	ColdBoot            bool
+	Final               bool
+	RecordedAt          pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+// ADR-20261027090013: named sandbox templates; each owns one apps row with sandbox_template = true that builds its image.
+type SandboxTemplate struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	Name          string
+	AppID         pgtype.UUID
+	StartCmd      pgtype.Text
+	ReadyCmd      pgtype.Text
+	ReadyTimeoutS int32
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+// ADR-20261027090013 step 7 persisted sandbox workspaces; agentd inserts, completes and deletes rows; apid reads them and sets delete_requested_at.
+type SandboxWorkspaceSnapshot struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	SandboxID         pgtype.UUID
+	State             string
+	StorageKey        string
+	ReservedBytes     int64
+	Bytes             pgtype.Int8
+	Sha256            pgtype.Text
+	ExpiresAt         pgtype.Timestamptz
+	DeleteRequestedAt pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	ReadyAt           pgtype.Timestamptz
 }
 
 type SavedRouteRequirement struct {

@@ -69,6 +69,9 @@
      - A customer's delete of a source database purges its preview copies first: on Neon a copy is a branch of the source's project and would go with it. Empty preview databases do not depend on their source and stay with their PR. An internal delete of a source (plan excess, account erasure) does not purge copies first; the copy's teardown or the sweep removes its row and bindings later.
   5. **Limits.**
      - Preview databases are outside the plan's `DatabasesMax`, like the restore slot (ADR-20261031123259). They are bounded by the preview allowance instead: one per open preview environment and source database. That is at most `PreviewApps × DatabasesMax` per account (Free 1, Hobby 2, Pro 15, Scale 200), counted under the owner's reservation lock.
+     - **Amendment 2026-11-10 (owner: "Per-account fleet share"):** an empty preview is its own Neon project and every preview passed fleet admission as a paid database, so about five Scale accounts could fill a fleet of about 1,000 (`max_databases`) and pause every customer's new databases. Two bounds now apply on top of the plan allowance:
+       - One account holds at most `api.ManagedPostgresPreviewFleetSharePercent` (5%) of `max_databases` preview databases, at least one (`FleetPolicy.PreviewShare`). It is enforced as the reservation's limit, so the refusal is the same `managed_postgres_preview_database_limit`.
+       - Previews never take the paid reserve, whatever the plan: inside the fleet's last `paid_reserve_databases` a new preview is refused with `ErrFleetPaused`, while paid production creates are still admitted.
      - Setup also needs a plan that may create a development database (`DevelopmentAllowed`, and not Free while caps are not enforced, as for developer sessions).
      - No plan number changes, so the financial model is unchanged. Preview databases use the account's pooled compute and are metered like any database.
   6. **Previews never take what production needs.**
@@ -116,6 +119,7 @@
 - **Consequences:**
   - An account can hold more databases than `DatabasesMax` while previews are open. Each one is a scale-to-zero development database inside the account's pooled compute, and it is gone when its PR is.
   - On Neon, an empty preview database is a new project (a few seconds to create), and a copy is a branch (shared pages until written).
+  - githubd's preview datastore check (ADR-20261108140000) counts a key the preview's own database binds as provided, when the capability is on. Before 2026-11-11 it read only the `pr-preview` scope and refused previews whose Compose service reads `DATABASE_URL` even though the preview would have received one.
   - On the native backend (ADR-1027), both are a database VM. A copy is a full restore with no shared pages, so its storage costs what its source does.
   - A held preview database fails its preview's queries for the rest of the month. That is the point of the hold: production keeps the last fifth of the ceiling.
   - On Neon a copy is a branch of its source's project and would go with it. Deleting the source through Gregale purges the copies first.

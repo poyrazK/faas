@@ -55,6 +55,12 @@ func newPublicReadLimiters() *publicReadLimiters {
 	return newKeyedLimiters(api.PublicObjectReadRatePerBucket, api.PublicObjectReadBurstPerBucket, api.MaxPublicObjectReadLimiters)
 }
 
+// newPublicReadClientLimiters bounds each client's anonymous reads of each
+// bucket (audit OS-5).
+func newPublicReadClientLimiters() *publicReadLimiters {
+	return newKeyedLimiters(api.PublicObjectReadRatePerClient, api.PublicObjectReadBurstPerClient, api.MaxPublicObjectReadClientLimiters)
+}
+
 // AccountRequestLimiter bounds each bucket owner's authenticated S3 requests
 // per gateway process (ADR-20261030075301).
 type AccountRequestLimiter struct{ limiters *keyedLimiters }

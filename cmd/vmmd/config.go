@@ -98,6 +98,13 @@ type Config struct {
 	// this process (docs/adr/20261018-runtime-admission-rebind.md). Off,
 	// they are refused and re-admitted. Requires adopt_running_vms.
 	AdoptAdmittedRuntimes bool `toml:"adopt_admitted_runtimes"`
+	// FlatTenantCgroups launches every new tenant VM directly under
+	// faas-tenant.slice instead of its plan's sub-slice
+	// (ADR-20261109172421 step 6.5). This release adopts and tears down VMs
+	// in either place; an older vmmd only knows the sub-slices, so turn it
+	// off, and let flat VMs park, before rolling vmmd back past this
+	// release. Not with native_process_recovery.
+	FlatTenantCgroups bool `toml:"flat_tenant_cgroups"`
 	// FailureReportDir is persistent root-owned storage for liveness/OOM
 	// reports (ADR-471). Keep it outside /run and the Firecracker jail tmpfs.
 	FailureReportDir string `toml:"failure_report_dir"`
@@ -794,6 +801,7 @@ func LoadConfig(path string) (*Config, error) {
 		{"FAAS_VMMD_ADOPTION_RECORD", &c.AdoptionRecord},
 		{"FAAS_VMMD_ADOPT_RUNNING_VMS", &c.AdoptRunningVMs},
 		{"FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES", &c.AdoptAdmittedRuntimes},
+		{"FAAS_VMMD_FLAT_TENANT_CGROUPS", &c.FlatTenantCgroups},
 	} {
 		if v := os.Getenv(sw.env); v != "" {
 			on, perr := strconv.ParseBool(v)
@@ -810,6 +818,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if c.AdoptAdmittedRuntimes && !c.AdoptRunningVMs {
 		return nil, errors.New("vmmd: adopt_admitted_runtimes requires adopt_running_vms = true")
+	}
+	if c.FlatTenantCgroups && c.NativeProcessRecovery {
+		return nil, errors.New("vmmd: flat_tenant_cgroups is not supported with native_process_recovery")
 	}
 	if err := validateAdoptionConfig(c.AdoptionRecord, c.AdoptRunningVMs, c.NativeProcessRecovery); err != nil {
 		return nil, err
