@@ -69,5 +69,6 @@ func (m *MemStore) FinishObjectInventoryScan(ctx context.Context, bucket, token 
 	u.InventoryScan = ObjectInventoryScan{}
 	u.Token, u.LeaseUntil = "", time.Time{}
 	m.objectUsage[bucket] = u
+	m.markOutstandingObjectMutationsLocked(bucket)
 	return nil
 }

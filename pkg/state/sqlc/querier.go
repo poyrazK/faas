@@ -5123,6 +5123,12 @@ type Querier interface {
 	ObjectBucketListForKey(ctx context.Context, db DBTX, arg ObjectBucketListForKeyParams) ([]ObjectBucket, error)
 	ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBucketLockAppParams) (pgtype.UUID, error)
 	ObjectBucketLockProvisioning(ctx context.Context, db DBTX, arg ObjectBucketLockProvisioningParams) (pgtype.UUID, error)
+	// A listing published while a source writer or deletion of its bucket is
+	// still outstanding may have missed it: stamp the bucket's activity so it is
+	// not quiet on that listing (ADR-20261110151628 §2). The writer's own stamp
+	// when it settles may come after the listing started or never (a lost reply
+	// leaves it outstanding).
+	ObjectBucketMarkOutstandingMutations(ctx context.Context, db DBTX, bucketID pgtype.UUID) error
 	ObjectBucketMutationFinish(ctx context.Context, db DBTX, arg ObjectBucketMutationFinishParams) (int64, error)
 	ObjectBucketMutationInsert(ctx context.Context, db DBTX, arg ObjectBucketMutationInsertParams) (ObjectBucketMutation, error)
 	// ADR-531: these statements run after ObjectBucketMutationLock in one

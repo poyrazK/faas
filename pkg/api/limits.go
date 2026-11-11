@@ -3103,6 +3103,12 @@ const (
 	// longer ago than that starts again.
 	ObjectInventoryScanMaxAge         = time.Hour
 	ObjectInventoryScanProgressWindow = 5 * time.Minute
+	// Postgres stamps a bucket's mutated_at at most once per
+	// ObjectInventoryMutationStampGranularity (object_bucket_mark_mutated, a
+	// literal there), so a burst of writes rewrites its activity row once. A
+	// bucket is quiet only when mutated_at is older than its listing's start by
+	// more than this (ADR-20261110151628 §2).
+	ObjectInventoryMutationStampGranularity = 30 * time.Second
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute

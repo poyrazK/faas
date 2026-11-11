@@ -104,7 +104,7 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 			RequestCount: r.GatewayRequestCount, EgressBytes: r.GatewayEgressBytes, GatewayMetricsKnown: true,
 			StoredByteHours: r.GatewayStoredByteHours, StorageMeteredThrough: r.GatewayStorageThrough.Time,
 			InventoryScan: ObjectInventoryScan{StartedAt: r.ScanStartedAt.Time, ProgressAt: r.ScanProgressAt.Time, Bytes: r.ScanBytes.Int64, Keys: r.ScanKeys.Int64, Pages: int(r.ScanPages.Int32), Complete: r.ScanComplete.Bool},
-			InventoryHeld: r.InventoryHeld,
+			InventoryHeld: r.InventoryHeld, MutatedAt: r.MutatedAt.Time, ActiveSince: r.ActiveSince.Time,
 		})
 	}
 	reports, err := q.ObjectUsageReports(ctx, db, sqlc.ObjectUsageReportsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(periodStart)})
@@ -372,6 +372,9 @@ func (s *pgCore) FinishObjectInventory(ctx context.Context, bucket, token string
 	}
 	if n != 1 {
 		return ErrConflict
+	}
+	if err = q.ObjectBucketMarkOutstandingMutations(ctx, tx, mustPgUUID(bucket)); err != nil {
+		return err
 	}
 	if err = q.ObjectInventorySample(ctx, tx, sqlc.ObjectInventorySampleParams{BucketID: mustPgUUID(bucket), Token: token}); err != nil {
 		return err

@@ -68439,6 +68439,22 @@ func (q *Queries) ObjectBucketLockProvisioning(ctx context.Context, db DBTX, arg
 	return id, err
 }
 
+const objectBucketMarkOutstandingMutations = `-- name: ObjectBucketMarkOutstandingMutations :exec
+SELECT object_bucket_mark_mutated($1::uuid)
+WHERE EXISTS(SELECT 1 FROM object_bucket_mutations m WHERE m.bucket_id=$1::uuid)
+OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1::uuid AND d.state IN ('prepared','dispatched'))
+`
+
+// A listing published while a source writer or deletion of its bucket is
+// still outstanding may have missed it: stamp the bucket's activity so it is
+// not quiet on that listing (ADR-20261110151628 §2). The writer's own stamp
+// when it settles may come after the listing started or never (a lost reply
+// leaves it outstanding).
+func (q *Queries) ObjectBucketMarkOutstandingMutations(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectBucketMarkOutstandingMutations, bucketID)
+	return err
+}
+
 const objectBucketMutationFinish = `-- name: ObjectBucketMutationFinish :execrows
 DELETE FROM object_bucket_mutations
 WHERE id=$1 AND bucket_id=$2 AND kind='request' AND upload_id IS NULL AND multipart_upload_id IS NULL AND multipart_part_writer_id IS NULL
@@ -75426,9 +75442,11 @@ COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
 s.accrued_through AS gateway_storage_through,
 i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete,
 (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready')
- OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')))::boolean AS inventory_held
+ OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')))::boolean AS inventory_held,
+a.mutated_at, a.active_since
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
+LEFT JOIN object_bucket_activity a ON a.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = $1
 LEFT JOIN object_storage_gateway_storage s ON s.bucket_id = b.id AND s.period_start = $1
 WHERE (b.account_id = $2 OR b.org_id = $2)
@@ -75486,6 +75504,8 @@ type ObjectUsageBucketsRow struct {
 	ScanPages                      pgtype.Int4
 	ScanComplete                   pgtype.Bool
 	InventoryHeld                  bool
+	MutatedAt                      pgtype.Timestamptz
+	ActiveSince                    pgtype.Timestamptz
 }
 
 // Every bucket billed to one usage subject, with its usage. A subject is
@@ -75548,6 +75568,8 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsa
 			&i.ScanPages,
 			&i.ScanComplete,
 			&i.InventoryHeld,
+			&i.MutatedAt,
+			&i.ActiveSince,
 		); err != nil {
 			return nil, err
 		}

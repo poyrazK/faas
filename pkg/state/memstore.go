@@ -460,6 +460,7 @@ type MemStore struct {
 	syntheticRuns                 map[string][]SyntheticCheckRun
 	objectBuckets                 map[string]ObjectBucket
 	objectMutations               map[string]ObjectBucketMutation
+	objectBucketActivity          map[string]objectBucketActivity // ADR-20261110151628 §2
 	objectNodeSettlements         map[string]ObjectNodeSettlement
 	objectWriteFences             map[string]ObjectBucketWriteFence
 	objectUploadGrants            map[string]ObjectUploadGrant

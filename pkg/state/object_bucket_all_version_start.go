@@ -98,6 +98,7 @@ func (m *MemStore) StartObjectBucketAllVersionAccounting(ctx context.Context, ac
 		m.objectCapacityJobs = map[string]ObjectCapacityReconciliation{}
 	}
 	m.objectCapacityJobs[job.ID] = job
+	m.markObjectBucketMutatedLocked(job.BucketID)
 	propagated := now
 	m.saveObjectVersioningLocked(ObjectBucketVersioning{ObjectBucketVersioning: api.ObjectBucketVersioning{BucketID: bucket, DesiredStatus: "Suspended", ObservedStatus: "Suspended", State: "ready", Revision: 1, VersionsRequired: true, PropagationUntil: &propagated, CapacityJobID: job.ID, UpdatedAt: now},
 		AccountID: b.AccountID, AppID: b.AppID, RetryAt: now})

@@ -88,6 +88,9 @@ func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.T
 				u.StoredByteHours, u.StorageMeteredThrough = int64(g.byteHours), g.through
 			}
 			u.InventoryHeld = m.objectBucketTransitionLocked(b.ID)
+			if a, ok := m.objectBucketActivity[b.ID]; ok {
+				u.MutatedAt, u.ActiveSince = a.mutatedAt, a.activeSince
+			}
 			u.MultipartBytes = 0
 			for id, upload := range m.objectMultipartUploads {
 				if upload.BucketID == b.ID && upload.State != ObjectMultipartCompleted {
@@ -434,6 +437,7 @@ func (m *MemStore) FinishObjectInventory(ctx context.Context, bucket, token stri
 	u.ObservedBytes, u.ObservedKeys, u.ObservedAt = bytes, objects, u.AttemptAt
 	u.Token, u.LeaseUntil = "", time.Time{}
 	m.objectUsage[bucket] = u
+	m.markOutstandingObjectMutationsLocked(bucket)
 	return nil
 }
 

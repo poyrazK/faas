@@ -10102,6 +10102,12 @@ type ObjectBucket struct {
 	OrgID                          pgtype.UUID
 }
 
+type ObjectBucketActivity struct {
+	BucketID    pgtype.UUID
+	MutatedAt   pgtype.Timestamptz
+	ActiveSince pgtype.Timestamptz
+}
+
 type ObjectBucketCor struct {
 	BucketID  pgtype.UUID
 	Rules     []byte

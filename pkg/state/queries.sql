@@ -5948,9 +5948,11 @@ COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
 s.accrued_through AS gateway_storage_through,
 i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete,
 (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready')
- OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')))::boolean AS inventory_held
+ OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')))::boolean AS inventory_held,
+a.mutated_at, a.active_since
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
+LEFT JOIN object_bucket_activity a ON a.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = sqlc.arg(period_start)
 LEFT JOIN object_storage_gateway_storage s ON s.bucket_id = b.id AND s.period_start = sqlc.arg(period_start)
 WHERE (b.account_id = sqlc.arg(account_id) OR b.org_id = sqlc.arg(account_id))
@@ -6185,6 +6187,16 @@ RETURNING *;
 UPDATE object_storage_inventory_scans SET after_key=sqlc.arg(after_key), listed_bytes=sqlc.arg(listed_bytes), listed_keys=sqlc.arg(listed_keys),
 pages=sqlc.arg(pages), complete=sqlc.arg(complete), progress_at=now()
 WHERE bucket_id=$1 AND started_at=sqlc.arg(started_at) AND sqlc.arg(pages)::integer >= pages;
+
+-- name: ObjectBucketMarkOutstandingMutations :exec
+-- A listing published while a source writer or deletion of its bucket is
+-- still outstanding may have missed it: stamp the bucket's activity so it is
+-- not quiet on that listing (ADR-20261110151628 §2). The writer's own stamp
+-- when it settles may come after the listing started or never (a lost reply
+-- leaves it outstanding).
+SELECT object_bucket_mark_mutated(sqlc.arg(bucket_id)::uuid)
+WHERE EXISTS(SELECT 1 FROM object_bucket_mutations m WHERE m.bucket_id=sqlc.arg(bucket_id)::uuid)
+OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=sqlc.arg(bucket_id)::uuid AND d.state IN ('prepared','dispatched'));
 
 -- name: ObjectInventoryScanFinish :execrows
 -- ObjectInventoryFinish for a listing that may have spanned several attempts:
