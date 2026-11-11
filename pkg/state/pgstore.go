@@ -22894,7 +22894,9 @@ func classifyInvoiceRefundStatus(status string) invoiceRefundLifecycle {
 // RecordInvoiceRefund stores a provider refund and advances its lifecycle in
 // one transaction. Pending refunds reserve refundable value separately from
 // settled money; a later webhook updates the same row and moves the aggregate
-// exactly once. Terminal state cannot be regressed by an out-of-order event.
+// exactly once. A settled refund can still fail (the provider reports the
+// refund returned); failed is terminal and is never regressed by an
+// out-of-order event.
 func (s *PgStore) RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund) error {
 	if refund.InvoiceID == "" || refund.ProviderRefundID == "" || refund.IdempotencyKey == "" || refund.AmountCents <= 0 {
 		return errors.New("state: invoice refund requires invoice, provider refund, idempotency key, and positive amount")
@@ -22998,6 +23000,18 @@ func (s *PgStore) RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund)
 			}
 			existing.Status = refund.Status
 		} else if oldState == invoiceRefundPending {
+			existing.Status = refund.Status
+		} else if oldState == invoiceRefundSettled && newState == invoiceRefundFailed {
+			// A provider can fail a refund after reporting it succeeded (the
+			// receiving bank returned it): the money was never refunded, so
+			// the settled amount and any credit it consumed are reversed.
+			// Failed is the only absorbing state (implicit state machines
+			// audit 2026-11-08, finding 5).
+			settledDelta = -refund.AmountCents
+			if existing.Source == "credit" {
+				creditDelta -= refund.AmountCents
+				reverseCredit = true
+			}
 			existing.Status = refund.Status
 		}
 		if _, err := tx.Exec(ctx,
