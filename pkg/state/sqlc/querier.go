@@ -3982,6 +3982,9 @@ type Querier interface {
 	// Reservations survive month close and are paged without starving later keys
 	// when an older provider delivery keeps failing.
 	ListManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ListManagedPostgresOveragePendingParams) ([]ListManagedPostgresOveragePendingRow, error)
+	// ADR-20261110184700: when each database was first suspended past its plan,
+	// the clock its deletion runs on.
+	ListManagedPostgresPlanExcessSince(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ListManagedPostgresPlanExcessSinceRow, error)
 	// ADR-20261102123523: the preview-database sweep's page of undeleted preview
 	// databases across accounts, in ID order after after_id.
 	ListManagedPostgresPreviewDatabasePage(ctx context.Context, db DBTX, arg ListManagedPostgresPreviewDatabasePageParams) ([]ManagedPostgresDatabase, error)
