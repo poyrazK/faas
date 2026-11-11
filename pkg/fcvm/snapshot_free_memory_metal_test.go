@@ -237,7 +237,7 @@ func freeMemoryRun(t *testing.T, m *Manager, store *storage.LocalStorageBackend,
 
 func freeMemoryGet(t *testing.T, url string) (time.Duration, []byte) {
 	t.Helper()
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second, Transport: freeMemoryTransport()}
 	start := time.Now()
 	resp, err := client.Get(url)
 	if err != nil {
@@ -251,8 +251,19 @@ func freeMemoryGet(t *testing.T, url string) (time.Duration, []byte) {
 	return time.Since(start), body
 }
 
+// freeMemoryTransport opens a new connection per request. Every restore of a
+// snapshot gets the same guest address, so a pooled keep-alive connection to
+// the previous VM would be reused against the next one.
+// FAAS_FREE_MEMORY_KEEPALIVE=1 keeps the shared pool, to reproduce that.
+func freeMemoryTransport() http.RoundTripper {
+	if os.Getenv("FAAS_FREE_MEMORY_KEEPALIVE") == "1" {
+		return http.DefaultTransport
+	}
+	return &http.Transport{DisableKeepAlives: true}
+}
+
 func freeMemoryTry(url string, timeout time.Duration) (time.Duration, error) {
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{Timeout: timeout, Transport: freeMemoryTransport()}
 	start := time.Now()
 	resp, err := client.Get(url)
 	if err != nil {
