@@ -1194,6 +1194,10 @@ type Manager struct {
 	// envelopes before any is opened (ADR 20261028161502, amendment 1).
 	// nil checks nothing.
 	runtimeSignatures *sealsig.RuntimeChecker
+	// runtimeOpener, when set, opens app-secret entries in place of
+	// hostIdentities: the control plane's secretd (ADR-20261110210000 §3).
+	// nil opens them on this node.
+	runtimeOpener RuntimeSecretOpener
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
@@ -1699,6 +1703,23 @@ func (m *Manager) SetHostIdentities(ids []*age.X25519Identity) {
 // production wires it before serving traffic.
 func (m *Manager) RequireSecretBinding(required bool) {
 	m.requireSecretBinding = required
+}
+
+// RuntimeSecretOpener opens an app's selected app-secret entries somewhere
+// other than this node (ADR-20261110210000 §3: the control plane's secretd).
+// It returns one value per entry, keyed by entry.Key, and refuses any entry
+// whose envelope is not bound to the app's account or does not hold exactly
+// its selected source key.
+type RuntimeSecretOpener interface {
+	OpenAppSecrets(ctx context.Context, appID string, entries []SealedEnvEntry) (map[string]string, error)
+}
+
+// SetRuntimeSecretOpener routes every app-secret open (wake env, sidecar app
+// secrets, live secret reload) through o instead of this node's runtime
+// identities. Writer signatures are still checked here first. nil restores
+// local opening. NOT safe to call concurrently with Wake.
+func (m *Manager) SetRuntimeSecretOpener(o RuntimeSecretOpener) {
+	m.runtimeOpener = o
 }
 
 // WithRuntimeSecretSignatures makes every path that opens runtime secrets
@@ -3572,7 +3593,7 @@ func jsonMarshalEnvelope(e secretbox.Envelope) ([]byte, error) {
 func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
 	var merged secretbox.Envelope
 	if len(req.SealedEnvEntries) > 0 {
-		merged, err = m.openSealedEnvEntries(ctx, req.SealedEnvEntries, req.AccountID)
+		merged, err = m.openSealedEnvEntries(ctx, req.AppID, req.SealedEnvEntries, req.AccountID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -3610,9 +3631,16 @@ func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secret
 // openSealedEnvEntries opens a workload's selected ciphertext for accountID,
 // the account the workload runs for. An envelope bound to another account
 // (ADR-20261023173624) is refused before any of its values are used.
-func (m *Manager) openSealedEnvEntries(ctx context.Context, entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
+func (m *Manager) openSealedEnvEntries(ctx context.Context, appID string, entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
 	if len(entries) == 0 {
 		return nil, nil
+	}
+	if m.runtimeOpener != nil {
+		values, err := m.openRemote(ctx, appID, entries)
+		if err != nil {
+			return nil, fmt.Errorf("open sealed env: %w", err)
+		}
+		return secretbox.Envelope(values), nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
@@ -3646,10 +3674,18 @@ func (m *Manager) openSealedEnvEntries(ctx context.Context, entries []SealedEnvE
 // requires each envelope to contain exactly its selected source key. Plaintext
 // remains in caller memory only; callers must not log or persist it outside
 // the guest's runtime projection. accountID is the account the workload runs
-// for; an envelope bound to another account is refused.
-func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, entries []SealedEnvEntry, accountID string) (map[string]string, error) {
+// for; an envelope bound to another account is refused. appID names the app
+// the entries belong to, which a remote opener authorizes the node for.
+func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, appID string, entries []SealedEnvEntry, accountID string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return map[string]string{}, nil
+	}
+	if m.runtimeOpener != nil {
+		secrets, err := m.openRemote(ctx, appID, entries)
+		if err != nil {
+			return nil, fmt.Errorf("open runtime secrets: %w", err)
+		}
+		return secrets, nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
@@ -3673,6 +3709,33 @@ func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, entries []SealedEnvE
 		secrets[entry.Key] = value
 	}
 	return secrets, nil
+}
+
+// openRemote checks the writer signatures here, then has the remote opener
+// open the entries. Every entry must come back exactly once, under its key:
+// a partial answer is refused rather than run with a missing secret.
+func (m *Manager) openRemote(ctx context.Context, appID string, entries []SealedEnvEntry) (map[string]string, error) {
+	if appID == "" {
+		return nil, errors.New("remote secret open needs the app id")
+	}
+	if err := m.checkRuntimeSignatures(ctx, entries); err != nil {
+		return nil, err
+	}
+	values, err := m.runtimeOpener.OpenAppSecrets(ctx, appID, entries)
+	if err != nil {
+		return nil, err
+	}
+	if got := len(values); got != len(entries) {
+		clear(values)
+		return nil, fmt.Errorf("remote opener returned %d values for %d entries", got, len(entries))
+	}
+	for _, entry := range entries {
+		if _, ok := values[entry.Key]; !ok {
+			clear(values)
+			return nil, fmt.Errorf("remote opener returned no value for %s", logsanitize.Field(entry.Key))
+		}
+	}
+	return values, nil
 }
 
 // openBoundEntry opens one entry and enforces its account binding. With
@@ -3724,7 +3787,9 @@ func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) 
 		if len(entries) == 0 && len(secretEntries) == 0 {
 			continue
 		}
-		if len(m.hostIdentities) == 0 {
+		// Direct sidecar env still opens on this node; app secrets go
+		// through the runtime opener when one is set.
+		if len(m.hostIdentities) == 0 && (len(entries) > 0 || m.runtimeOpener == nil) {
 			return ErrNoHostKey
 		}
 		merged := make(map[string]string)
@@ -3741,7 +3806,7 @@ func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) 
 			}
 			merged[entry.Key] = string(plaintext)
 		}
-		secrets, err := m.UnsealRuntimeSecrets(ctx, secretEntries, req.AccountID)
+		secrets, err := m.UnsealRuntimeSecrets(ctx, req.AppID, secretEntries, req.AccountID)
 		if err != nil {
 			return fmt.Errorf("open sidecar app secrets: %w", err)
 		}

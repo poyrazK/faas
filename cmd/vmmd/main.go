@@ -1371,6 +1371,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.RequireSecretBinding {
 		log.Info("vmmd: runtime secrets must be bound to their account (ADR-20261023173624)")
 	}
+	opener, closeOpener, err := runtimeSecretOpenerFromEnv(ctx, os.Getenv, cfg.RequireSecretBinding, log)
+	if err != nil {
+		return err
+	}
+	defer closeOpener()
+	if opener != nil {
+		mgr.SetRuntimeSecretOpener(opener)
+	}
 	var signatureStore any
 	if store != nil {
 		signatureStore = store

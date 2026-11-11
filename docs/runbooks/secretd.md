@@ -20,7 +20,23 @@ compute nodes can stop holding the runtime seal domain's identity.
    `journalctl -u faas-secretd` shows `secretd: serving` with
    `identities=1` (2 during a rotation).
 
-Until slice 3c, no compute node calls it.
+## Turn it on for a compute node (slice 3c-1)
+
+Prerequisite: `faas_seal_domain_runtime_binding_required: true` on compute
+(every stored runtime envelope is bound; secretd refuses unbound ones).
+
+1. Pick one node that serves no overflow placements: until slice 3c-2 a peer
+   is refused, so a wake placed on this node for an app another node owns
+   fails.
+2. Set `faas_vmmd_secretd_target: "tcp://<control plane private address>:8098"`
+   for that node and converge. vmmd_service issues the node's
+   `secret-opener` client leaf on the control plane and restarts vmmd with
+   `FAAS_RUNTIME_SECRET_OPENER=secretd`.
+3. Check: vmmd's journal shows `vmmd: app secrets opened by secretd`, and
+   wakes on the node add rows to `secret_open_audit` with `via = owner`.
+
+Back out by clearing `faas_vmmd_secretd_target` and converging: vmmd opens
+with its own runtime identity again (it still holds it until slice 3d).
 
 ## Rotation
 

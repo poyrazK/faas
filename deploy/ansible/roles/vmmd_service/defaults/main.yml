@@ -25,6 +25,15 @@ vmmd_outbound_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
 faas_vmmd_outbound_relay_tls_managed: false
 faas_vmmd_outbound_relay_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
 
+# ADR-20261110210000 §3 slice 3c: secretd's tcp://<control plane private
+# address>:8098 (secretd_service's faas_secretd_listen). Set, vmmd opens app
+# secrets through secretd with a node-identity client leaf issued on the
+# control plane (tasks/secretd_client.yml); it needs
+# faas_seal_domain_runtime_binding_required. Empty keeps opening them with
+# this node's runtime identity. Turn on one node first.
+faas_vmmd_secretd_target: ""
+faas_vmmd_secretd_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
+
 # ADR-149 prepared networks: vmmd keeps this many unused wake namespaces
 # (netns + TAP + nft) ready so a restore claims one instead of building it.
 # The code default is 0 (off). PR #4396 measured the restore p95 target only

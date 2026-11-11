@@ -222,6 +222,26 @@ deploy yet; that is slice 3b.
 
 Until slice 3c nothing calls secretd, so turning it on changes no wake.
 
+**Slice 3c-1 (implemented, off until configured): vmmd asks secretd.**
+`FAAS_RUNTIME_SECRET_OPENER=secretd` (vmmd_service's
+`faas_vmmd_secretd_target`, one node at a time) routes every app-secret
+open through secretd: the wake's env entries, sidecar app secrets, and live
+secret reload. vmmd still checks apid's writer signatures first, refuses a
+partial answer, and needs `FAAS_RUNTIME_SECRET_BINDING_REQUIRED`, since
+secretd refuses unbound envelopes. Its client leaf is the `secret-opener`
+feature leaf whose CN is the node's name. A wake on the app's owner node
+works; a wake on a peer is refused until slice 3c-2.
+
+Still opened on the node with its runtime identity, so the node keeps it
+for now: sidecar direct env (`sidecar_env` byte envelopes) and the sealed
+crash-capture keys, which are sealed to the node's current runtime
+recipient. Both move before node join stops staging the runtime identity
+(slice 3d).
+
+**Slice 3c-2 (next):** the owner's schedd asks secretd for a `GrantPeer`
+before it places an instance of its app on a peer, and renews it while the
+peer runs it.
+
 When a domain has moved, node join stops staging its identity, deletes
 leftovers (the `faas_compute_fleet_key_retired` pattern), and
 `fleet-seal verify` refuses a compute node that still holds it.
