@@ -46,23 +46,48 @@ func (l *Loop) RunFinancialBudgetsOnce(ctx context.Context) error {
 		if len(active) == 0 {
 			continue
 		}
-		report, readErr := billing.ReadFinancialCosts(ctx, l.store, subject, start, now)
-		for _, p := range active {
-			e := financial.BudgetEvaluation{PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), AsOf: start, EvaluatedAt: now, Reasons: []string{"cost_evaluation_unavailable"}}
-			var evalErr error
-			if readErr == nil {
-				e, evalErr = billing.EvaluateFinancialBudget(report, p.Spec, now)
-			}
-			if evalErr != nil {
-				e = financial.BudgetEvaluation{PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), AsOf: start, EvaluatedAt: now, Reasons: []string{"cost_evaluation_unavailable"}}
-			}
-			commitErr := monitor.RecordFinancialBudgetEvaluation(ctx, subject, p.ID, p.Revision, e)
-			if !errors.Is(commitErr, state.ErrConflict) {
-				failures = append(failures, commitErr)
-			}
-			failures = append(failures, evalErr)
+		periods := []time.Time{start}
+		// The final minute is sampled after midnight, and catch-up can add
+		// earlier minutes for the same finality window as provider delivery.
+		if now.Sub(start) <= api.MeterUsageFinalAfter+time.Minute {
+			periods = []time.Time{start.AddDate(0, -1, 0), start}
 		}
-		failures = append(failures, readErr)
+		for _, period := range periods {
+			failures = append(failures, l.evaluateFinancialBudgetPeriod(ctx, monitor, subject, active, period, now))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// evaluateFinancialBudgetPeriod also closes threshold alerts after delayed
+// samples arrive. Historical evaluation never creates new stops/projections.
+func (l *Loop) evaluateFinancialBudgetPeriod(ctx context.Context, monitor state.FinancialBudgetMonitorStore, subject string, policies []state.FinancialBudget, start, now time.Time) error {
+	end := start.AddDate(0, 1, 0)
+	eligible := make([]state.FinancialBudget, 0, len(policies))
+	for _, p := range policies {
+		if !now.Before(end) && (!p.CreatedAt.Before(end) || !p.UpdatedAt.Before(end)) {
+			continue // this revision did not exist before the month closed
+		}
+		eligible = append(eligible, p)
+	}
+	if len(eligible) == 0 {
+		return nil
+	}
+	report, readErr := billing.ReadFinancialCosts(ctx, l.store, subject, start, now)
+	failures := []error{readErr}
+	for _, p := range eligible {
+		e := financial.BudgetEvaluation{PeriodStart: start, PeriodEnd: end, AsOf: start, EvaluatedAt: now, Reasons: []string{"cost_evaluation_unavailable"}}
+		var err error
+		if readErr == nil {
+			e, err = billing.EvaluateFinancialBudget(report, p.Spec, now)
+		}
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if err = monitor.RecordFinancialBudgetEvaluation(ctx, subject, p.ID, p.Revision, e); !errors.Is(err, state.ErrConflict) {
+			failures = append(failures, err)
+		}
 	}
 	return errors.Join(failures...)
 }

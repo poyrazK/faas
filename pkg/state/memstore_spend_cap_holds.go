@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"time"
 )
 
 func (m *MemStore) PutSpendCapHold(_ context.Context, hold SpendCapHold) error {
@@ -20,11 +19,20 @@ func (m *MemStore) PutSpendCapHold(_ context.Context, hold SpendCapHold) error {
 		m.spendCapHolds = make(map[string]SpendCapHold)
 	}
 	hold.Month = hold.Month.UTC()
-	hold.ReachedAt = time.Now().UTC()
+	if hold.ReachedAt.IsZero() {
+		hold.ReachedAt = m.clock().UTC()
+	}
 	if prior, ok := m.spendCapHolds[hold.AccountID]; ok && prior.Month.Equal(hold.Month) && prior.CapCents == hold.CapCents {
 		hold.ReachedAt = prior.ReachedAt
 	}
 	m.spendCapHolds[hold.AccountID] = hold
+	if m.spendCapNotices == nil {
+		m.spendCapNotices = map[string]spendCapMemoryNotice{}
+	}
+	id := spendCapNoticeID(hold)
+	if _, exists := m.spendCapNotices[id]; !exists {
+		m.spendCapNotices[id] = spendCapMemoryNotice{SpendCapNoticeDelivery: SpendCapNoticeDelivery{SpendCapHold: hold, ID: id}, nextAttempt: hold.ReachedAt}
+	}
 	return nil
 }
 

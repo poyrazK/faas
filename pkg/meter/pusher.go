@@ -189,6 +189,11 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 			p.log.Warn("meter: calculate billable usage", "account", acct.ID, "hour", start, "mb_seconds", mbSec, "err", err)
 			continue
 		}
+		billableMBSeconds, err = p.reserveUsageIntent(ctx, ops.opLabel, acct.ID, state.BillingMeterCompute, start, billableMBSeconds)
+		if err != nil {
+			p.log.Warn("meter: reserve billing intent", "account", acct.ID, "err", err)
+			continue
+		}
 		if billableMBSeconds <= 0 {
 			continue
 		}
@@ -261,29 +266,20 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 		byID[acct.ID] = acct
 	}
 	mode := providerUsageMode(p.pusher)
-	var caps map[string]int64
-	if _, hasSecondaryMeters := p.pusher.(billing.MeterUsagePolicyProvider); mode == billing.UsageModeOverage || hasSecondaryMeters {
-		// A cap is a billing safety boundary, so a read failure must fail
-		// closed. The bulk read keeps replay at one database round-trip
-		// instead of turning every usage window into an account lookup.
-		caps, err = p.store.LoadAllOverageCapCents(ctx)
-		if err != nil {
-			return 0, fmt.Errorf("meter: load overage caps: %w", err)
-		}
+	// Every supported provider's cap is a billing safety boundary.
+	caps, err := p.store.LoadAllOverageCapCents(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("meter: load overage caps: %w", err)
 	}
 	ordered := append([]state.UsageWindow(nil), windows...)
-	if mode == billing.UsageModeOverage {
-		// Postgres already returns hour order; sorting the copy also makes the
-		// in-memory implementation and narrow test stores obey the same
-		// cumulative-month contract.
-		sort.SliceStable(ordered, func(i, j int) bool {
-			left, right := ordered[i], ordered[j]
-			if !left.Hour.Equal(right.Hour) {
-				return left.Hour.Before(right.Hour)
-			}
-			return left.AccountID < right.AccountID
-		})
-	}
+	// Replay in cumulative month order even for raw-quantity cap contracts.
+	sort.SliceStable(ordered, func(i, j int) bool {
+		left, right := ordered[i], ordered[j]
+		if !left.Hour.Equal(right.Hour) {
+			return left.Hour.Before(right.Hour)
+		}
+		return left.AccountID < right.AccountID
+	})
 	cursors := make(map[string]overageCursor)
 	grants := p.newMonthGrants()
 	held := newHeldUsage(start)
@@ -341,7 +337,7 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 		billableMBSeconds := window.MBSeconds
 		if free {
 			billableMBSeconds = 0 // settled below with a zero receipt
-		} else if mode == billing.UsageModeOverage {
+		} else if _, capped := caps[acct.ID]; mode == billing.UsageModeOverage || capped {
 			billableMBSeconds, err = p.billablePendingUsage(ctx, acct, window, cursors, caps, grants)
 			if err != nil {
 				if firstErr == nil {
@@ -350,6 +346,13 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 				p.log.Warn("meter: calculate replay billable usage", "account", acct.ID, "hour", window.Hour, "mb_seconds", window.MBSeconds, "err", err)
 				continue
 			}
+		}
+		billableMBSeconds, err = p.reserveUsageIntent(ctx, ops.opLabel, acct.ID, state.BillingMeterCompute, window.Hour, billableMBSeconds)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		if billableMBSeconds <= 0 {
 			// Within the allowance, or entirely above the spend cap: settle
@@ -614,6 +617,13 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 			}
 			continue
 		}
+		billable, err = p.reserveUsageIntent(ctx, ops.opLabel, acct.ID, meter, window.Hour, billable)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
 		if billable <= 0 {
 			if err := p.recordReceipt(ctx, ops.opLabel, acct.ID, meter, window.Hour, 0); err != nil && firstErr == nil {
 				firstErr = err
@@ -747,7 +757,24 @@ func providerUsageMode(provider billing.Provider) billing.UsageMode {
 
 func (p *Pusher) billableUsage(ctx context.Context, acct state.Account, hour time.Time, raw int64) (int64, error) {
 	if providerUsageMode(p.pusher) != billing.UsageModeOverage {
-		return raw, nil
+		capCents, capped, err := p.store.GetAccountOverageCapCents(ctx, acct.ID)
+		if err != nil {
+			return 0, fmt.Errorf("load overage cap: %w", err)
+		}
+		if !capped {
+			return raw, nil
+		}
+		window := hour.UTC().Truncate(time.Hour)
+		month := time.Date(window.Year(), window.Month(), 1, 0, 0, 0, 0, time.UTC)
+		prior, err := sumUsageRows(ctx, p.store, acct.ID, month, window)
+		if err != nil {
+			return 0, err
+		}
+		current, err := addUsageQuantity(prior, raw)
+		if err != nil {
+			return 0, err
+		}
+		return p.computeWithinCap(ctx, acct, window, capCents, prior, current)
 	}
 	window := hour.UTC().Truncate(time.Hour)
 	monthStart := time.Date(window.Year(), window.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -787,6 +814,12 @@ func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, w
 	if err != nil {
 		return 0, err
 	}
+	raw := providerUsageMode(p.pusher) != billing.UsageModeOverage
+	if raw {
+		// Legacy per-unit providers charge the raw quantity they receive.
+		// Their cap must bound that quantity, including its included portion.
+		included = 0
+	}
 	key := acct.ID + "\x00" + monthStart.Format("2006-01")
 	cursor, ok := cursors[key]
 	start := hour
@@ -809,6 +842,9 @@ func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, w
 		// The cap bounds what the month is billed, which after a plan change
 		// is not usage above this hour's allowance (ADR-20261031100000).
 		billed, err := grants.billedBefore(ctx, p.store, acct, hour, prior)
+		if raw {
+			billed, err = prior, nil
+		}
 		if err != nil {
 			return 0, err
 		}

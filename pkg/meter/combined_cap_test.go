@@ -129,6 +129,10 @@ func (s *failedCapReadStore) UsageByHour(ctx context.Context, accountID string, 
 	return s.Store.UsageByHour(ctx, accountID, start, end)
 }
 
+func (s *failedCapReadStore) ReserveBillingUsageIntent(ctx context.Context, provider, account string, meter state.BillingMeter, hour time.Time, quantity int64) (int64, error) {
+	return s.Store.(state.BillingUsageIntentStore).ReserveBillingUsageIntent(ctx, provider, account, meter, hour, quantity)
+}
+
 func TestCombinedCapReadFailureLeavesUsagePending(t *testing.T) {
 	ctx := context.Background()
 	mem := state.NewMemStore()

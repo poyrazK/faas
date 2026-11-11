@@ -57,7 +57,13 @@ func (m *MemStore) notePlanChangeLocked(id string, from, to api.Plan) {
 	if m.planChangedAt == nil {
 		m.planChangedAt = map[string]time.Time{}
 	}
-	m.planChangedAt[id] = time.Now().UTC()
+	at := m.clock().UTC()
+	m.planChangedAt[id] = at
+	if m.planActivations == nil {
+		m.planActivations = map[string][]BillingPlanActivation{}
+	}
+	m.planActivationHead++
+	m.planActivations[id] = append(m.planActivations[id], BillingPlanActivation{Sequence: m.planActivationHead, From: from, To: to, At: at})
 }
 
 // SetPlanChangedAt overrides when subjectID's plan last changed; tests use it
@@ -69,4 +75,8 @@ func (m *MemStore) SetPlanChangedAt(subjectID string, at time.Time) {
 		m.planChangedAt = map[string]time.Time{}
 	}
 	m.planChangedAt[subjectID] = at.UTC()
+	if rows := m.planActivations[subjectID]; len(rows) > 0 {
+		rows[len(rows)-1].At = at.UTC()
+		m.planActivations[subjectID] = rows
+	}
 }

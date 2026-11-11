@@ -13,6 +13,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// CanReadInvoices keeps invoice enrichment behind the same permission as the
+// invoice endpoint, even when the containing usage report is readable by all
+// organization members.
+func CanReadInvoices(r *http.Request, target state.Account) bool {
+	if target.ResourceOrgID == "" {
+		return true
+	}
+	_, _, member, ok := authmw.PrincipalFrom(r)
+	return ok && member != nil && member.OrgID == target.ResourceOrgID && authz.Can(member.Role, authz.OrgActionManageBilling)
+}
+
 func Scope(store state.AppOwnerReader, audit authz.AuditEmitter, action authz.OrgAction, next authmw.AccountHandler) authmw.AccountHandler {
 	return func(w http.ResponseWriter, r *http.Request, actor state.Account) {
 		if problem := authz.AuthorizeOrgAction(r.Context(), action, audit); problem != nil {

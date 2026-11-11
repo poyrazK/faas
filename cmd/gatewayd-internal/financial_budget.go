@@ -51,6 +51,7 @@ type budgetAdmissionDecision struct {
 	at         time.Time // when the store last answered
 	err        error     // nil when admitted, the held problem when held
 	refreshing bool
+	generation uint64 // assigned before a read starts
 }
 
 // budgetAdmissionCache keeps budget admission off the request path
@@ -68,6 +69,7 @@ type budgetAdmissionCache struct {
 	grace time.Duration
 	spawn func(func())
 	rows  map[budgetAdmissionKey]budgetAdmissionDecision
+	next  uint64
 }
 
 func newBudgetAdmissionCache(now func() time.Time, grace time.Duration) *budgetAdmissionCache {
@@ -82,42 +84,56 @@ func (c *budgetAdmissionCache) check(ctx context.Context, key budgetAdmissionKey
 		refresh := now.Sub(d.at) >= api.FinancialBudgetAdmissionCacheTTL && !d.refreshing
 		if refresh {
 			d.refreshing = true
+			c.next++
+			d.generation = c.next
 			c.rows[key] = d
 		}
 		c.mu.Unlock()
 		if refresh {
 			// The request ends before the refresh does; keep its values only.
 			detached := context.WithoutCancel(ctx)
-			c.spawn(func() { c.refresh(detached, key, read) })
+			c.spawn(func() { c.refresh(detached, key, d.generation, read) })
 		}
 		return d.err
 	}
+	if _, exists := c.rows[key]; !exists && len(c.rows) >= api.FinancialBudgetAdmissionCacheSize {
+		clear(c.rows)
+	}
+	d := c.rows[key]
+	c.next++
+	d.generation = c.next
+	c.rows[key] = d
 	c.mu.Unlock()
 	err := read(ctx)
-	c.record(key, now, err)
-	return err
+	return c.record(key, c.now(), d.generation, err)
 }
 
 // refresh re-reads one decision off the request path.
-func (c *budgetAdmissionCache) refresh(ctx context.Context, key budgetAdmissionKey, read func(context.Context) error) {
+func (c *budgetAdmissionCache) refresh(ctx context.Context, key budgetAdmissionKey, generation uint64, read func(context.Context) error) {
 	ctx, cancel := context.WithTimeout(ctx, api.FinancialBudgetAdmissionRefreshTimeout)
 	defer cancel()
 	err := read(ctx)
-	c.record(key, c.now(), err)
+	_ = c.record(key, c.now(), generation, err) // background publication has no waiting request
 }
 
 // record stores a decision, drops the key when the store answered that the
 // admission cannot be evaluated (the app is gone or the read is inconsistent),
 // and otherwise keeps the last decision: an unavailable store is never cached.
-func (c *budgetAdmissionCache) record(key budgetAdmissionKey, at time.Time, err error) {
+func (c *budgetAdmissionCache) record(key budgetAdmissionKey, at time.Time, generation uint64, err error) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	current, exists := c.rows[key]
+	if !exists || current.generation != generation {
+		// A later read or eviction revoked this publication. Preserve its
+		// decision and return a newer hold to the stale request as well.
+		if exists && errors.Is(current.err, state.ErrFinancialBudgetHeld) {
+			return current.err
+		}
+		return err
+	}
 	switch {
 	case err == nil || errors.Is(err, state.ErrFinancialBudgetHeld):
-		if _, ok := c.rows[key]; !ok && len(c.rows) >= api.FinancialBudgetAdmissionCacheSize {
-			clear(c.rows)
-		}
-		c.rows[key] = budgetAdmissionDecision{at: at, err: err}
+		c.rows[key] = budgetAdmissionDecision{at: at, err: err, generation: generation}
 	case errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrConflict):
 		delete(c.rows, key)
 	default:
@@ -126,4 +142,5 @@ func (c *budgetAdmissionCache) record(key budgetAdmissionKey, at time.Time, err 
 			c.rows[key] = d
 		}
 	}
+	return err
 }

@@ -223,6 +223,8 @@ func (s *MemoryStore) OverageSubjects(_ context.Context, periodStart time.Time) 
 			merge(OverageSubject{SubjectID: key.subject})
 		}
 	}
+	// An unacknowledged first storage step has no receipt or compute cap
+	// event yet. Opting out must not hide its provider reconciliation work.
 	for key := range s.overagePending {
 		if key.period.Equal(month) {
 			merge(OverageSubject{SubjectID: key.subject})
