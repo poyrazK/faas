@@ -11,9 +11,9 @@ export type AgentApprovalResponse = {
    */
   id: string;
   /**
-   * The kind of action.
+   * The kind of action; budget for a change past the agent's monthly budget.
    */
-  category: 'delete' | 'production' | 'credentials' | 'billing';
+  category: 'delete' | 'production' | 'credentials' | 'billing' | 'budget';
   /**
    * The HTTP method of the request the approval allows.
    */

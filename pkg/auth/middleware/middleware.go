@@ -638,6 +638,14 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				var activity *agentActivityNote
 				if ProjectLimitable(key) && (agentWrite(r.Method) || agentapproval.RecordedRead(r.Pattern)) {
 					*r = *r.WithContext(withAgentActivityNote(r.Context(), &activity))
+					// ADR-20261111114059: a budget approval binds the exact
+					// change, so take the binding before the handler reads
+					// the body.
+					if agentapproval.ChargesBudget(r.Pattern) {
+						if binding, err := approvalBinding(r, key.ID); err == nil {
+							activity.binding = &binding
+						}
+					}
 				}
 				// ADR-20261104140058: an agent's risky request waits for a
 				// person's approval.
