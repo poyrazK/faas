@@ -10476,6 +10476,17 @@ type ObjectStorageMultipartUpload struct {
 	ChecksumVerified           bool
 }
 
+// ADR-20261111123000: billing subjects storing more object-storage bytes than their ceiling, with the date their excess is deleted; written only by apid.
+type ObjectStorageOverCeiling struct {
+	SubjectID           pgtype.UUID
+	OverCeilingSince    pgtype.Timestamptz
+	DeletionScheduledAt pgtype.Timestamptz
+	StoredBytes         int64
+	CeilingBytes        int64
+	ObservedAt          pgtype.Timestamptz
+	NoticesSent         int16
+}
+
 type ObjectStorageRequestMetric struct {
 	BucketID     pgtype.UUID
 	PeriodStart  pgtype.Timestamptz

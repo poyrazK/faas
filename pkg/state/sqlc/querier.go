@@ -586,6 +586,7 @@ type Querier interface {
 	ClearManagedPostgresRestoreSlot(ctx context.Context, db DBTX, arg ClearManagedPostgresRestoreSlotParams) (int64, error)
 	ClearMovedDomainDefault(ctx context.Context, db DBTX, domain string) error
 	ClearObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) error
+	ClearObjectStorageOverCeiling(ctx context.Context, db DBTX, subjectID pgtype.UUID) (int64, error)
 	ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error)
 	// Account flow queries (ADR 20261107103000).
 	ClearPendingAccountEmailChanges(ctx context.Context, db DBTX, accountID pgtype.UUID) error
@@ -2382,6 +2383,7 @@ type Querier interface {
 	// first-use auto-create path (PR-A) and the dashboard's Refine
 	// form (PR-C).
 	GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTrustPolicyParams) (GetOIDCTrustPolicyRow, error)
+	GetObjectStorageOverCeiling(ctx context.Context, db DBTX, subjectID pgtype.UUID) (ObjectStorageOverCeiling, error)
 	GetOperationApprovalFormByKey(ctx context.Context, db DBTX, arg GetOperationApprovalFormByKeyParams) (CustomerOperationApprovalForm, error)
 	// ADR-20261018183000 Child Operations.
 	GetOperationChildByKey(ctx context.Context, db DBTX, arg GetOperationChildByKeyParams) (pgtype.UUID, error)
@@ -5406,6 +5408,9 @@ type Querier interface {
 	ObjectWriteSettle(ctx context.Context, db DBTX, arg ObjectWriteSettleParams) (int64, error)
 	ObserveEnvironmentGitOpsIntent(ctx context.Context, db DBTX, arg ObserveEnvironmentGitOpsIntentParams) ([]byte, error)
 	ObserveEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, arg ObserveEnvironmentGitOpsRuntimeParams) ([]ObserveEnvironmentGitOpsRuntimeRow, error)
+	// ADR-20261111123000: the first observation fixes the clock; later ones only
+	// refresh what the subject stores and may store.
+	ObserveObjectStorageOverCeiling(ctx context.Context, db DBTX, arg ObserveObjectStorageOverCeilingParams) (ObjectStorageOverCeiling, error)
 	ObserveTrafficRetryOriginal(ctx context.Context, db DBTX, arg ObserveTrafficRetryOriginalParams) error
 	// ADR-20261028110044: which of the given route labels ("METHOD /path") the
 	// app served at or after since, so saving a route guard or monitor can warn

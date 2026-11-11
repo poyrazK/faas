@@ -8532,6 +8532,18 @@ func (q *Queries) ClearObjectStorageCeilingGrant(ctx context.Context, db DBTX, o
 	return err
 }
 
+const clearObjectStorageOverCeiling = `-- name: ClearObjectStorageOverCeiling :execrows
+DELETE FROM object_storage_over_ceiling WHERE subject_id=$1
+`
+
+func (q *Queries) ClearObjectStorageOverCeiling(ctx context.Context, db DBTX, subjectID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, clearObjectStorageOverCeiling, subjectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearObsoleteDeploymentsRetainingRecovery = `-- name: ClearObsoleteDeploymentsRetainingRecovery :execrows
 UPDATE deployments SET deleted_at=$1::timestamptz,deleted_by_principal='system'
 WHERE app_id=$2::uuid AND status IN ('superseded','failed','cancelled')
@@ -29169,6 +29181,26 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AuditLogin,
+	)
+	return i, err
+}
+
+const getObjectStorageOverCeiling = `-- name: GetObjectStorageOverCeiling :one
+SELECT subject_id, over_ceiling_since, deletion_scheduled_at, stored_bytes, ceiling_bytes, observed_at, notices_sent
+FROM object_storage_over_ceiling WHERE subject_id=$1
+`
+
+func (q *Queries) GetObjectStorageOverCeiling(ctx context.Context, db DBTX, subjectID pgtype.UUID) (ObjectStorageOverCeiling, error) {
+	row := db.QueryRow(ctx, getObjectStorageOverCeiling, subjectID)
+	var i ObjectStorageOverCeiling
+	err := row.Scan(
+		&i.SubjectID,
+		&i.OverCeilingSince,
+		&i.DeletionScheduledAt,
+		&i.StoredBytes,
+		&i.CeilingBytes,
+		&i.ObservedAt,
+		&i.NoticesSent,
 	)
 	return i, err
 }
@@ -76465,6 +76497,45 @@ func (q *Queries) ObserveEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const observeObjectStorageOverCeiling = `-- name: ObserveObjectStorageOverCeiling :one
+INSERT INTO object_storage_over_ceiling (subject_id, over_ceiling_since, deletion_scheduled_at, stored_bytes, ceiling_bytes, observed_at)
+VALUES ($1, $2, $3, $4, $5, $2)
+ON CONFLICT (subject_id) DO UPDATE SET stored_bytes = EXCLUDED.stored_bytes, ceiling_bytes = EXCLUDED.ceiling_bytes,
+  observed_at = GREATEST(object_storage_over_ceiling.observed_at, EXCLUDED.observed_at)
+RETURNING subject_id, over_ceiling_since, deletion_scheduled_at, stored_bytes, ceiling_bytes, observed_at, notices_sent
+`
+
+type ObserveObjectStorageOverCeilingParams struct {
+	SubjectID           pgtype.UUID
+	ObservedAt          pgtype.Timestamptz
+	DeletionScheduledAt pgtype.Timestamptz
+	StoredBytes         int64
+	CeilingBytes        int64
+}
+
+// ADR-20261111123000: the first observation fixes the clock; later ones only
+// refresh what the subject stores and may store.
+func (q *Queries) ObserveObjectStorageOverCeiling(ctx context.Context, db DBTX, arg ObserveObjectStorageOverCeilingParams) (ObjectStorageOverCeiling, error) {
+	row := db.QueryRow(ctx, observeObjectStorageOverCeiling,
+		arg.SubjectID,
+		arg.ObservedAt,
+		arg.DeletionScheduledAt,
+		arg.StoredBytes,
+		arg.CeilingBytes,
+	)
+	var i ObjectStorageOverCeiling
+	err := row.Scan(
+		&i.SubjectID,
+		&i.OverCeilingSince,
+		&i.DeletionScheduledAt,
+		&i.StoredBytes,
+		&i.CeilingBytes,
+		&i.ObservedAt,
+		&i.NoticesSent,
+	)
+	return i, err
 }
 
 const observeTrafficRetryOriginal = `-- name: ObserveTrafficRetryOriginal :exec

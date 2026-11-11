@@ -48675,6 +48675,34 @@ COMMENT ON TABLE public.object_storage_ceiling_grants IS 'Object-storage ceiling
 
 
 --
+-- Name: object_storage_over_ceiling; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_over_ceiling (
+    subject_id uuid NOT NULL,
+    over_ceiling_since timestamp with time zone NOT NULL,
+    deletion_scheduled_at timestamp with time zone NOT NULL,
+    stored_bytes bigint NOT NULL,
+    ceiling_bytes bigint NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    notices_sent smallint DEFAULT 0 NOT NULL,
+    CONSTRAINT object_storage_over_ceiling_ceiling_bytes_check CHECK (((ceiling_bytes >= 0) AND (ceiling_bytes < stored_bytes))),
+    CONSTRAINT object_storage_over_ceiling_check CHECK ((isfinite(deletion_scheduled_at) AND (deletion_scheduled_at > over_ceiling_since))),
+    CONSTRAINT object_storage_over_ceiling_check1 CHECK ((isfinite(observed_at) AND (observed_at >= over_ceiling_since))),
+    CONSTRAINT object_storage_over_ceiling_notices_sent_check CHECK (((notices_sent >= 0) AND (notices_sent <= 3))),
+    CONSTRAINT object_storage_over_ceiling_over_ceiling_since_check CHECK (isfinite(over_ceiling_since)),
+    CONSTRAINT object_storage_over_ceiling_stored_bytes_check CHECK ((stored_bytes > 0))
+);
+
+
+--
+-- Name: TABLE object_storage_over_ceiling; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_storage_over_ceiling IS 'ADR-20261111123000: billing subjects storing more object-storage bytes than their ceiling, with the date their excess is deleted; written only by apid.';
+
+
+--
 -- Name: object_storage_customer_usage_reports_v2; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -67928,6 +67956,14 @@ ALTER TABLE ONLY public.object_storage_capacity_reconciliations
 
 ALTER TABLE ONLY public.object_storage_ceiling_grants
     ADD CONSTRAINT object_storage_ceiling_grants_pkey PRIMARY KEY (owner_id);
+
+
+--
+-- Name: object_storage_over_ceiling object_storage_over_ceiling_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_over_ceiling
+    ADD CONSTRAINT object_storage_over_ceiling_pkey PRIMARY KEY (subject_id);
 
 
 --

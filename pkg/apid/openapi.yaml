@@ -86699,6 +86699,15 @@ components:
           type: string
           format: date-time
           description: UTC month boundary at which shadow/live handling starts. Periods before it are never charged.
+        over_ceiling: { $ref: '#/components/schemas/ObjectStorageOverCeilingDeletion' }
+    ObjectStorageOverCeilingDeletion:
+      description: Present while the account stores more than its object-storage ceiling. Unless the account gets back under the ceiling first, Gregale deletes the excess on deletion_scheduled_at (ADR-20261111123000).
+      type: object
+      required: [over_ceiling_since, deletion_scheduled_at, excess_bytes]
+      properties:
+        over_ceiling_since: { type: string, format: date-time }
+        deletion_scheduled_at: { type: string, format: date-time }
+        excess_bytes: { type: integer, format: int64, minimum: 1, description: Bytes stored above the ceiling at the last check. }
     ObjectStorageUsageReport:
       description: Authoritative cumulative provider usage for one account, backend and UTC month. Missing data is not zero; costs are EUR millicents.
       type: object

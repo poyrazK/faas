@@ -5901,6 +5901,22 @@ ON CONFLICT (owner_id) DO UPDATE SET max_bytes = EXCLUDED.max_bytes, reason = EX
 -- name: ClearObjectStorageCeilingGrant :exec
 DELETE FROM object_storage_ceiling_grants WHERE owner_id=$1;
 
+-- name: GetObjectStorageOverCeiling :one
+SELECT subject_id, over_ceiling_since, deletion_scheduled_at, stored_bytes, ceiling_bytes, observed_at, notices_sent
+FROM object_storage_over_ceiling WHERE subject_id=$1;
+
+-- name: ObserveObjectStorageOverCeiling :one
+-- ADR-20261111123000: the first observation fixes the clock; later ones only
+-- refresh what the subject stores and may store.
+INSERT INTO object_storage_over_ceiling (subject_id, over_ceiling_since, deletion_scheduled_at, stored_bytes, ceiling_bytes, observed_at)
+VALUES (@subject_id, @observed_at, @deletion_scheduled_at, @stored_bytes, @ceiling_bytes, @observed_at)
+ON CONFLICT (subject_id) DO UPDATE SET stored_bytes = EXCLUDED.stored_bytes, ceiling_bytes = EXCLUDED.ceiling_bytes,
+  observed_at = GREATEST(object_storage_over_ceiling.observed_at, EXCLUDED.observed_at)
+RETURNING subject_id, over_ceiling_since, deletion_scheduled_at, stored_bytes, ceiling_bytes, observed_at, notices_sent;
+
+-- name: ClearObjectStorageOverCeiling :execrows
+DELETE FROM object_storage_over_ceiling WHERE subject_id=$1;
+
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
 

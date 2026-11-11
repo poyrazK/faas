@@ -31,6 +31,7 @@ const (
 	runtimeConfigRekey                              = "rekey_enabled"
 	runtimeConfigHSTS                               = "hsts_enabled"
 	runtimeConfigS3                                 = "s3_enabled"
+	runtimeConfigObjectStorageOverCeiling           = "object_storage_over_ceiling_deletion"
 	runtimeConfigFrontendHosting                    = "frontend_hosting_enabled"
 	runtimeConfigFrontendHostingDurable             = "frontend_hosting_durable_routing_enabled"
 	runtimeConfigFrontendHostingConfig              = "frontend_hosting_config_enabled"
@@ -118,6 +119,7 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeconfig.KeyCPUSizeApps, Label: "Apps whose CPU follows instance size (retired)", Description: "Retired (ADR-20261109172421): every app instance's CPU follows its size, so no daemon reads this; the entry stays read-only for the value already stored. Was: Comma-separated app IDs, or * for every app, whose CPU follows instance size instead of plan (ADR-20261109172421): one guest vCPU per GB of instance RAM, a cpu.weight of one per 16 MB, no CPU quota unless the app chose 250 or 500 millicores, and a booking of its RAM's CPU baseline. Empty keeps every app on its plan; it takes precedence over guest_vcpu_from_cpu_apps. A listed app whose vCPU count changes cold-boots once. Before listing apps: every node runs a vmmd that accepts cpu_weight and cpu_uncapped, and cpu_admission is observe (the durable guard still books the plan's vCPUs); turn snapshot_refresh on before listing many.", Category: "Retired", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: false, Mutable: false, Validate: validateGuestVCPUApps},
 	{Key: runtimeconfig.KeySnapshotRefresh, Label: "Snapshot refresh after a release", Description: "After a node takes a release, find the snapshots of recently active apps that the release made stale (ADR-20261106214916). off does nothing; shadow logs and counts them without booting anything; on boots each one on its node, captures a fresh snapshot and parks it, unbilled.", Category: "Snapshots", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateSnapshotRefresh},
 	{Key: runtimeconfig.KeySnapshotRefreshWindowHours, Label: "Snapshot refresh window (hours)", Description: "An app that parked on a node within this many hours is a snapshot refresh candidate on that node (ADR-20261106214916).", Category: "Snapshots", Kind: "integer", Default: json.RawMessage("168"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.SnapshotRefreshWindowHoursMin, api.SnapshotRefreshWindowHoursMax, api.ValidSnapshotRefreshWindowHours)},
+	{Key: runtimeConfigObjectStorageOverCeiling, Label: "Object storage over-ceiling deletion", Description: "Rollout of deleting object storage held above an account's ceiling after 30 days' notice (ADR-20261111123000). off: nothing. shadow: record each account's clock and log it, with no customer effect. notify: also show the deletion date in the usage API. on: reserved for deletion. Run notify for at least 30 days before on.", Category: "Feature flags", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateObjectStorageOverCeiling},
 	{Key: runtimeConfigS3, Label: "S3 object storage", Description: "Allow bucket provisioning and new signed URLs. Disabling preserves metadata and cleanup; existing URLs expire normally. Provider configuration is still required.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -727,4 +729,15 @@ func runRuntimeConfigSubscriber(ctx context.Context, pool *pgxpool.Pool, srv *se
 			}
 		}
 	}
+}
+
+func validateObjectStorageOverCeiling(value json.RawMessage) error {
+	mode, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	if !api.ValidObjectStorageOverCeilingMode(mode) {
+		return fmt.Errorf("%q is not off, shadow, notify or on", mode)
+	}
+	return nil
 }

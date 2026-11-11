@@ -129,7 +129,12 @@ func (s *Service) GetObjectStorageUsage(w http.ResponseWriter, r *http.Request, 
 		BucketProblem(w, err)
 		return
 	}
-	httpkit.WriteJSON(w, 200, s.ObjectStorageUsageResponse(usage, charges, snapshot.PlanLimits))
+	out := s.ObjectStorageUsageResponse(usage, charges, snapshot.PlanLimits)
+	if out.OverCeiling, err = s.OverCeilingDeletion(r.Context(), acct.ResourceOwnerID()); err != nil {
+		BucketProblem(w, err)
+		return
+	}
+	httpkit.WriteJSON(w, 200, out)
 }
 
 // ObjectStorageUsageResponse reports the account's effective policy: the
@@ -452,7 +457,7 @@ func (s *Service) runInventorySweepLoop(ctx context.Context, sweep func(context.
 // close and progress delivery. Each step is bounded, so one slow account or
 // provider call delays only the next billing tick.
 func (s *Service) runObjectStorageBilling(ctx context.Context, accruals *prometheus.CounterVec, placement placementMetrics) {
-	var finalizedPeriod, finalizeRetryAt, estimatedAt, progressAt time.Time
+	var finalizedPeriod, finalizeRetryAt, estimatedAt, progressAt, overCeilingAt time.Time
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
@@ -461,6 +466,17 @@ func (s *Service) runObjectStorageBilling(ctx context.Context, accruals *prometh
 				s.Host.Logger().Warn("object storage budget estimates failed", "err", err)
 			}
 			estimatedAt = now
+		}
+		if now := time.Now().UTC(); now.Sub(overCeilingAt) >= api.ObjectStorageOverCeilingSweepInterval {
+			stepCtx, cancel := context.WithTimeout(ctx, api.ObjectStorageBillingStepTimeout)
+			sweep, err := s.SweepObjectStorageOverCeiling(stepCtx, now)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				s.Host.Logger().Warn("object storage over-ceiling sweep failed", "err", err)
+			} else if sweep.Over > 0 || sweep.Cleared > 0 {
+				s.Host.Logger().Info("object storage over-ceiling sweep", "over", sweep.Over, "started", sweep.Started, "cleared", sweep.Cleared, "due", sweep.Due, "stale", sweep.Stale)
+			}
+			overCeilingAt = now
 		}
 		if s.Host.ObjectStorage() != nil {
 			st, ok := s.Host.Store().(state.ObjectStorageAccountingStore)

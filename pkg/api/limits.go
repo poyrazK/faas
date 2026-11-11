@@ -4260,6 +4260,46 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
 
+// Storage held above a subject's ceiling (ADR-20261111123000). The first
+// sweep that sees a subject store more than its ceiling starts a clock and
+// schedules deletion ObjectStorageOverCeilingGraceDays later; getting back
+// under the ceiling clears it. Notices go out when the clock starts and
+// ObjectStorageOverCeilingNoticeDays before deletion. apid sweeps every
+// ObjectStorageOverCeilingSweepInterval.
+//
+// apid's `object_storage_over_ceiling_deletion` runtime config rolls it out:
+// off, shadow (record clocks and log, no customer effect), notify (also show
+// the date and send the notices) and on (also delete). Notify must run for
+// the full grace before on, so no subject is deleted without the notice.
+const (
+	ObjectStorageOverCeilingGraceDays     = 30
+	ObjectStorageOverCeilingSweepInterval = time.Hour
+
+	ObjectStorageOverCeilingOff    = "off"
+	ObjectStorageOverCeilingShadow = "shadow"
+	ObjectStorageOverCeilingNotify = "notify"
+	ObjectStorageOverCeilingOn     = "on"
+	// DefaultObjectStorageOverCeiling is the compiled
+	// `object_storage_over_ceiling_deletion`.
+	DefaultObjectStorageOverCeiling = ObjectStorageOverCeilingOff
+)
+
+// ObjectStorageOverCeilingNoticeDays are the days before deletion that a
+// reminder goes out, besides the notice when the clock starts.
+var ObjectStorageOverCeilingNoticeDays = []int{7, 1}
+
+// ValidObjectStorageOverCeilingMode reports a valid
+// `object_storage_over_ceiling_deletion` value.
+func ValidObjectStorageOverCeilingMode(v string) bool {
+	return v == ObjectStorageOverCeilingOff || v == ObjectStorageOverCeilingShadow || v == ObjectStorageOverCeilingNotify || v == ObjectStorageOverCeilingOn
+}
+
+// ObjectStorageOverCeilingVisible reports a mode in which customers see the
+// clock: the usage API's deletion date and the notices.
+func ObjectStorageOverCeilingVisible(mode string) bool {
+	return mode == ObjectStorageOverCeilingNotify || mode == ObjectStorageOverCeilingOn
+}
+
 // ObjectStoragePlanLimitsMax is the largest storage ceiling, monthly requests
 // and monthly egress any plan sells. An installation's safety policy
 // (ObjectStoragePolicy) must allow at least these, because apid enforces the
