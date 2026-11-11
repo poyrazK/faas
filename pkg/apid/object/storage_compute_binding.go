@@ -99,16 +99,16 @@ func (s *Service) ListObjectStorageComputeBindings(w http.ResponseWriter, r *htt
 		BucketProblem(w, err)
 		return
 	}
+	pending, err := store.PendingObjectS3CredentialRotations(r.Context(), acct.ID, bucket.ID)
+	if err != nil {
+		BucketProblem(w, err)
+		return
+	}
 	items := make([]api.ObjectStorageComputeBinding, 0, len(rows))
 	for _, row := range rows {
 		if row.ManagedAppID == app.ID && row.ManagedPrefix != "" {
-			wakeID, err := store.PendingObjectS3CredentialRotation(r.Context(), acct.ID, bucket.ID, row.ID)
-			if err != nil {
-				BucketProblem(w, err)
-				return
-			}
 			item := viewObjectStorageComputeBinding(row)
-			item.RotationPending = wakeID != ""
+			item.RotationPending = pending[row.ID] != ""
 			items = append(items, item)
 		}
 	}

@@ -35,6 +35,7 @@ func TestCapEnforcerHoldsSpentEgress(t *testing.T) {
 		dbEgress    int64
 		allowance   EgressAllowance
 		allowErr    error
+		billingLive bool
 		held        map[string]bool
 		wantChanges map[string]bool
 		wantErr     error
@@ -50,6 +51,17 @@ func TestCapEnforcerHoldsSpentEgress(t *testing.T) {
 		{name: "lifted egress overage releases the hold", limits: room, dbEgress: 50 * gib,
 			allowance: EgressAllowance{}, held: map[string]bool{"proj-a": true, "proj-b": true},
 			wantChanges: map[string]bool{"proj-a": false, "proj-b": false}},
+		{name: "billed egress overage holds at twice the allowance, not at it", limits: room, dbEgress: 15 * gib, billingLive: true,
+			allowance: EgressAllowance{CeilingBytes: 10 * gib, AppEgressBytes: 4 * gib, OverageLifted: true}},
+		{name: "billed egress overage still holds past twice the allowance", limits: room, dbEgress: 16 * gib, billingLive: true,
+			allowance:   EgressAllowance{CeilingBytes: 10 * gib, AppEgressBytes: 4 * gib, OverageLifted: true},
+			wantChanges: map[string]bool{"proj-a": true, "proj-b": true}},
+		{name: "an election not billed live keeps the hold at the allowance", limits: room, dbEgress: 6 * gib,
+			allowance:   EgressAllowance{CeilingBytes: 10 * gib, AppEgressBytes: 4 * gib, OverageLifted: true},
+			wantChanges: map[string]bool{"proj-a": true, "proj-b": true}},
+		{name: "live billing without an election keeps the hold at the allowance", limits: room, dbEgress: 6 * gib, billingLive: true,
+			allowance:   EgressAllowance{CeilingBytes: 10 * gib, AppEgressBytes: 4 * gib},
+			wantChanges: map[string]bool{"proj-a": true, "proj-b": true}},
 		{name: "an unreadable allowance fails the subject", limits: room, dbEgress: 50 * gib,
 			allowErr: errRead, wantErr: errRead},
 	} {
@@ -82,7 +94,8 @@ func TestCapEnforcerHoldsSpentEgress(t *testing.T) {
 			}}, egress: tc.dbEgress}
 			enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{
 				Mode: CapEnforcementOn, Now: func() time.Time { return now }, Qualification: testCapQualification(backend),
-				Ceiling: func(context.Context, string) (CapLimits, error) { return tc.limits, nil },
+				EgressBillingLive: tc.billingLive,
+				Ceiling:           func(context.Context, string) (CapLimits, error) { return tc.limits, nil },
 				Egress: func(_ context.Context, subject string, at time.Time) (EgressAllowance, error) {
 					if subject != "acct-a" || !at.Equal(now) {
 						t.Errorf("egress read for %q at %v, want acct-a at %v", subject, at, now)

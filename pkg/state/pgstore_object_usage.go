@@ -289,6 +289,14 @@ func (s *pgCore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip 
 	return out, nil
 }
 
+func (s *pgCore) ObjectInventoryBacklog(ctx context.Context) (ObjectInventoryBacklog, error) {
+	r, err := sqlc.New().ObjectInventoryBacklog(ctx, s.pool, sqlc.ObjectInventoryBacklogParams{ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), ProgressWindowSeconds: int64(api.ObjectInventoryScanProgressWindow / time.Second)})
+	if err != nil {
+		return ObjectInventoryBacklog{}, err
+	}
+	return ObjectInventoryBacklog{DueBuckets: r.DueBuckets, OldestObservationAge: time.Duration(max(r.OldestAgeSeconds, 0) * float64(time.Second))}, nil
+}
+
 func (s *pgCore) ClaimObjectInventory(ctx context.Context, bucket, token string) error {
 	if token == "" {
 		return ErrConflict

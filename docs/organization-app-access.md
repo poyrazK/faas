@@ -150,7 +150,15 @@ sealed configuration and storage paths remain stable after creator erasure.
 | Project/environment deletion | yes | yes | no | no | no |
 
 API-key scopes and human MFA/verification still apply. App-scoped deploy tokens
-cannot administer an entire project. A company key cannot access personal
+cannot administer an entire project. A deploy token acts as the member who
+minted or last rotated it, with that member's current role, so it stops working
+when they leave; tokens minted before 2026-11-10 act as the app's creator
+(ADR-20261110190000). Only a key's holder can rotate an organization key,
+because rotation returns the new key's plaintext; owners and admins can still
+revoke anyone's. An organization key cannot manage its holder's personal
+account, keys or sessions (`/v1/keys`, `/v1/auth/sessions`, account deletion,
+restore, export, email, MFA, sign-in methods, billing and plan); it can still
+read `GET /v1/account`. A company key cannot access personal
 projects or another company's project, even when its human belongs to both.
 The API rechecks current membership before replaying responses; promotion and
 rollback operation keys are partitioned by actor and credential.
@@ -183,7 +191,19 @@ organization project list. The exact permission list is
 [`projectaccess/routes.go`](../pkg/apid/projectaccess/routes.go). Legacy project
 URLs and dashboard lists also enforce departure and role changes.
 
-GitHub/GitOps administration, async-route manifest bindings, resource/environment
+A company project links its repository through the company's own GitHub
+installation, never a member's personal one
+([ADR-20261110200000](adr/20261110200000-organization-owned-github-installations.md)).
+An owner or admin connects it from Connect GitHub with the company selected
+(the form's `organization` field); the role is checked again when GitHub
+returns. An installation belongs to one Gregale owner, so disconnect it from a
+personal account before connecting it for the company. Owners and admins then
+set `repo_full_name` with `PATCH /v1/orgs/{organization}/projects/{slug}`;
+members list the company's installations at
+`GET /v1/orgs/{organization}/github/installations`. A member leaving does not
+disconnect it.
+
+Other GitHub/GitOps administration, async-route manifest bindings, resource/environment
 cloning, browser approval exchange and other unreviewed integrations remain
 outside the reviewed project surface. Shared uploads reject async-route bindings
 before resolving personal services. Managed PostgreSQL bindings use the company
@@ -251,7 +271,8 @@ for backfill, rollout and acceptance requirements.
 
 `DELETE /v1/orgs/{slug}/members/{user_id}` removes the member and revokes their
 organization API keys (including rotation grace keys), deploy tokens for the
-organization's apps, and outstanding invitations to their email in the org, in
+organization's apps (those on apps they created and those they minted on
+teammates' apps), and outstanding invitations to their email in the org, in
 one transaction. Personal sessions/credentials and other organizations' keys
 remain valid. Company applications and already accepted workloads keep running.
 

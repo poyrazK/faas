@@ -51,6 +51,7 @@ func (s *server) operatorResetMFA(ctx context.Context, targetID string) (int, er
 	}
 	s.forgetTrustedBrowsers(ctx, targetID, "operator_mfa_reset")
 	s.endPendingGrants(ctx, targetID, "operator_mfa_reset")
+	s.removeForeignProviderLinks(ctx, targetID, "operator_mfa_reset")
 	s.audit.Emit(ctx, "account.mfa_disabled", &targetID, map[string]any{"method": "operator"})
 	if target, err := s.store.AccountByID(ctx, targetID); err == nil {
 		subject, body := mailpkg.OperatorMFAResetBody(target.Email, time.Now())

@@ -41,17 +41,19 @@ type overageUsageStore struct {
 	*MemoryStore
 	used   map[string]int64
 	stored map[string]int64 // storage byte-seconds
+	egress map[string]int64 // database egress bytes
 }
 
 func (s *overageUsageStore) UsageSnapshot(_ context.Context, subjectID string, at time.Time) (UsageSnapshot, error) {
 	key := subjectID + monthStart(at).Format("2006-01")
-	return UsageSnapshot{PeriodStart: monthStart(at), ComputeUnitSeconds: s.used[key], StorageByteSeconds: s.stored[key]}, nil
+	return UsageSnapshot{PeriodStart: monthStart(at), ComputeUnitSeconds: s.used[key], StorageByteSeconds: s.stored[key], EgressBytes: s.egress[key]}, nil
 }
 
 type overageFixture struct {
 	store     *overageUsageStore
 	now       time.Time
 	limits    CapLimits
+	egress    EgressAllowance // nil biller Egress while zero
 	monthly   map[string]CapLimits
 	published []OverageChargeStep
 	fail      error
@@ -62,7 +64,7 @@ type overageFixture struct {
 
 func newOverageFixture(t *testing.T, now time.Time) *overageFixture {
 	t.Helper()
-	return &overageFixture{store: &overageUsageStore{MemoryStore: NewMemoryStore(), used: map[string]int64{}, stored: map[string]int64{}}, now: now,
+	return &overageFixture{store: &overageUsageStore{MemoryStore: NewMemoryStore(), used: map[string]int64{}, stored: map[string]int64{}, egress: map[string]int64{}}, now: now,
 		limits: CapLimits{Allowance: testAllowance, Ceiling: 2 * testAllowance, Overage: true}}
 }
 
@@ -78,6 +80,9 @@ func (f *overageFixture) biller(t *testing.T, live bool, from time.Time) *Overag
 			}
 			return f.limits, nil
 		}}
+	if f.egress != (EgressAllowance{}) {
+		options.Egress = func(context.Context, string, time.Time) (EgressAllowance, error) { return f.egress, nil }
+	}
 	if live {
 		options.Publish = func(_ context.Context, step OverageChargeStep) error {
 			if f.fail != nil {

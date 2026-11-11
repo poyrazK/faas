@@ -112,7 +112,7 @@ func TestEmailOwnershipClaimRevokesPreVerificationCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv2.verifyOAuthAccountEmail(context.Background(), acct2); err != nil {
+	if _, err := srv2.verifyOAuthAccountEmail(context.Background(), acct2, acct2.Email); err != nil {
 		t.Fatal(err)
 	}
 	if code := bearerStatus(h2, key2); code != http.StatusUnauthorized {
@@ -136,7 +136,7 @@ func TestEmailOwnershipClaimClearsPreVerificationTOTP(t *testing.T) {
 	if err := store.MarkMFAEnrolled(context.Background(), acct.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.verifyOAuthAccountEmail(context.Background(), acct); err != nil {
+	if _, err := srv.verifyOAuthAccountEmail(context.Background(), acct, acct.Email); err != nil {
 		t.Fatal(err)
 	}
 	after, err := store.AccountByID(context.Background(), acct.ID)

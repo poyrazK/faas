@@ -323,6 +323,12 @@ type CapEnforcerOptions struct {
 	// holds every database of the subject until the month ends, the plan
 	// grows or egress overage lifts the ceiling. Nil leaves egress unchecked.
 	Egress EgressAllowanceFunc
+	// EgressBillingLive is set while database egress past the allowance is
+	// billed (ADR-20261110160000 slice 3): the managed PostgreSQL overage
+	// charges are delivered live. Only then does a subject's egress overage
+	// election move its databases' egress hold to twice the allowance;
+	// otherwise the election would make database egress free.
+	EgressBillingLive bool
 }
 
 // EgressAllowance is a subject's monthly egress allowance shared by its apps
@@ -331,6 +337,11 @@ type CapEnforcerOptions struct {
 type EgressAllowance struct {
 	CeilingBytes   int64
 	AppEgressBytes int64
+	// OverageLifted is set while the subject's egress overage election lifts
+	// the allowance for its apps (billing.EgressOverageLifted): database
+	// egress past it is then billed at Neon's price plus 5%
+	// (ADR-20261110160000 slice 3).
+	OverageLifted bool
 }
 
 // EgressAllowanceFunc reads a subject's EgressAllowance at now.
@@ -365,12 +376,23 @@ func (e *CapEnforcer) egressSpent(ctx context.Context, subjectID string, snapsho
 	if err != nil || allowance.CeilingBytes <= 0 {
 		return false, err
 	}
-	databaseEgress := max(snapshot.EgressBytes, 0)
-	appEgress := max(allowance.AppEgressBytes, 0)
-	if databaseEgress > math.MaxInt64-appEgress {
-		return true, nil
+	ceiling := EgressHoldCeiling(allowance.CeilingBytes, allowance.OverageLifted && e.egressBillingLive)
+	return egressAllowanceReached(snapshot.EgressBytes, allowance.AppEgressBytes, ceiling), nil
+}
+
+// EgressHoldCeiling is the shared egress at which a subject's databases are
+// held: the plan's allowance, or twice it while the subject's egress overage
+// election lifts the allowance and database egress is billed live
+// (ADR-20261110160000 slice 3). Past the allowance the databases' egress is
+// billed, at most one more allowance, as the 2x ceiling allows.
+func EgressHoldCeiling(allowanceBytes int64, billedOverage bool) int64 {
+	if allowanceBytes <= 0 || !billedOverage {
+		return allowanceBytes
 	}
-	return databaseEgress+appEgress >= allowance.CeilingBytes, nil
+	if allowanceBytes > math.MaxInt64/api.ManagedPostgresOverageCeilingMultiplier {
+		return math.MaxInt64
+	}
+	return allowanceBytes * api.ManagedPostgresOverageCeilingMultiplier
 }
 
 // CapSweepSummary counts one enforcement sweep. Scopes are provider quota
@@ -436,6 +458,8 @@ type CapEnforcer struct {
 	planExcess  CapEnforcementMode
 	planNotify  func(context.Context, PlanExcessNotice) error
 	egress      EgressAllowanceFunc
+	// egressBillingLive: see CapEnforcerOptions.EgressBillingLive.
+	egressBillingLive bool
 }
 
 func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOptions) (*CapEnforcer, error) {
@@ -495,7 +519,7 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 		registry: registry, store: store, mode: options.Mode, storageMode: options.StorageMode, ceiling: options.Ceiling,
 		now: options.Now, logger: options.Logger, observe: options.Observe, notify: options.Notify,
 		batchSize: options.BatchSize, planExcess: options.PlanExcessMode, planNotify: options.NotifyPlanExcess,
-		egress: options.Egress,
+		egress: options.Egress, egressBillingLive: options.EgressBillingLive,
 	}, nil
 }
 

@@ -80,8 +80,11 @@ func (s *server) updateProject(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 
-	if _, shared := projectaccess.From(r.Context()); shared && req.RepoFullName != nil && strings.TrimSpace(*req.RepoFullName) != "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Repository ownership migration required", "organization GitHub installation binding is not available on shared project updates"))
+	// A company project's repository resolves through its organization's
+	// installations only (ADR-20261110200000).
+	installOwner, problem := s.projectInstallOwner(r.Context(), acct, project)
+	if problem != nil && req.RepoFullName != nil && strings.TrimSpace(*req.RepoFullName) != "" {
+		api.WriteProblem(w, problem)
 		return
 	}
 	repo, branch, installID := project.RepoFullName, project.ProductionBranch, project.InstallID
@@ -104,7 +107,7 @@ func (s *server) updateProject(w http.ResponseWriter, r *http.Request, acct stat
 				return
 			}
 			if repo != project.RepoFullName || installID == 0 {
-				resolved, problem := s.resolveRepositoryInstallation(r.Context(), acct.ID, repo)
+				resolved, problem := s.resolveRepositoryInstallation(r.Context(), installOwner, repo)
 				if problem != nil {
 					api.WriteProblem(w, problem)
 					return
@@ -114,7 +117,7 @@ func (s *server) updateProject(w http.ResponseWriter, r *http.Request, acct stat
 		}
 	}
 
-	updated, err := s.store.UpdateProjectBinding(r.Context(), acct.ID, project.ID, repo, branch, installID)
+	updated, err := s.store.UpdateProjectBinding(r.Context(), project.AccountID, project.ID, repo, branch, installID)
 	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrNotFound):
