@@ -24,6 +24,7 @@ type devLocalAppOptions struct {
 	root, command string
 	plan          devLocalAppPlan
 	env           []string
+	envConfig     devLocalEnvConfig
 	port          int
 	noReload      bool
 	out, errOut   io.Writer
@@ -156,7 +157,7 @@ func devLocalAppProxy(backend string, ready *atomic.Bool, transport http.RoundTr
 }
 
 func superviseDevLocalApp(ctx context.Context, opts devLocalAppOptions, env []string, backend string, ready *atomic.Bool, served <-chan error) (result error) {
-	previous, err := devSourceFingerprint(opts.root)
+	previous, err := opts.envConfig.sourceFingerprint(opts.root)
 	if err != nil {
 		return fmt.Errorf("watch local app source: %w", err)
 	}
@@ -211,7 +212,7 @@ func superviseDevLocalApp(ctx context.Context, opts devLocalAppOptions, env []st
 			if opts.noReload {
 				continue
 			}
-			current, err := devSourceFingerprint(opts.root)
+			current, err := opts.envConfig.sourceFingerprint(opts.root)
 			if err != nil {
 				continue // editors can rename/remove files during a scan
 			}
@@ -227,6 +228,13 @@ func superviseDevLocalApp(ctx context.Context, opts devLocalAppOptions, env []st
 				_, _ = fmt.Fprintf(opts.errOut, "Could not reload local app: %v; fix the configuration and save again.\n", err)
 				continue
 			}
+			baseEnv, err := opts.envConfig.load()
+			if err != nil {
+				_, _ = fmt.Fprintf(opts.errOut, "Could not reload local config: %v; fix the env file and save again.\n", err)
+				continue
+			}
+			_, port, _ := net.SplitHostPort(backend)
+			env = devLocalAppEnv(opts.root, baseEnv, port)
 			ready.Store(false)
 			if err := process.stop(); err != nil {
 				return err
