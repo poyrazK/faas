@@ -869,6 +869,8 @@ func runSidecarAt(root string, spec workloadSpec, apiEnv, workloadEnv map[string
 	// starting, so only shared-root workloads get the restore reseed preload.
 	if directRoot == "" {
 		env = StampRestoreReseedEnv(env)
+		// The instance identity file lives under /run/guest-init as well.
+		env = StampInstanceIdentityEnv(env)
 	}
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust(root, directRoot)

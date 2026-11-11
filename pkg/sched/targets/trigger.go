@@ -164,7 +164,7 @@ const (
 	queueTelemetryInterval = 30 * time.Second
 	// queueTelemetryLimit bounds each gauge count; a larger backlog reports
 	// the limit.
-	queueTelemetryLimit = 100_000
+	queueTelemetryLimit = api.QueueStatusCountLimit
 )
 
 // BrokerLagReader supplies broker-reported consumer lag / queue depth for an app.
@@ -181,6 +181,13 @@ type BrokerLagReader interface {
 // filtered by wall clock would make a back-dated evaluation silently wrong.
 type CustomMetricReader interface {
 	ListCustomMetrics(ctx context.Context, appID string) ([]state.CustomMetric, error)
+}
+
+// customMetricSeriesReader is the optional read a labelled custom target
+// needs (ADR-20261108160000 slice C2); both stores implement it. Without it a
+// labelled target reports no signal.
+type customMetricSeriesReader interface {
+	ListCustomMetricSeries(ctx context.Context, appID string) ([]state.CustomMetricSeries, error)
 }
 
 // queueDepthSignal keeps the aggregate queue projection used by the generic
@@ -714,6 +721,25 @@ func (t *Trigger) queueTelemetryDue(appID string, now time.Time) bool {
 	return true
 }
 
+// forgetQueueTelemetry drops the gauges of apps this trigger published queue
+// telemetry for but no longer keeps: another schedd owns them now, or they
+// stopped being workers or queue-scaled. Their frozen last values would keep
+// a backlog alert firing (ADR-20261018101500 amendment 2026-10-31).
+func (t *Trigger) forgetQueueTelemetry(keep map[string]bool) {
+	t.queueSampleMu.Lock()
+	var gone []string
+	for id := range t.queueSampledAt {
+		if !keep[id] {
+			gone = append(gone, id)
+			delete(t.queueSampledAt, id)
+		}
+	}
+	t.queueSampleMu.Unlock()
+	for _, id := range gone {
+		t.metrics.ForgetQueueApp(id)
+	}
+}
+
 // sampleQueueTelemetry refreshes app's queue gauges at most once per
 // queueTelemetryInterval with bounded counts, so every worker's backlog is
 // visible and alertable without a backlog-sized read each tick
@@ -818,9 +844,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 	}
 	var workerPools workerPoolRuns
 	workerApps := map[string]state.App{}
+	queueApps := map[string]bool{}
 	defer func() {
 		t.rememberWorkerPoolApps(workerApps)
 		t.startWorkerPoolRuns(ctx, workerPools)
+		t.forgetQueueTelemetry(queueApps)
 	}()
 	for _, app := range apps {
 		// A parked or suspended app is not scaled: the reaper parks whatever
@@ -838,6 +866,9 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		queueTarget, haveQueueTarget := policy.TargetFor(api.ScalingMetricQueueDepth)
 		queueLagTarget, haveQueueLagTarget := policy.TargetFor(api.ScalingMetricQueueLag)
 		workerWorkload := app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
+		if workerWorkload || haveQueueTarget || haveQueueLagTarget {
+			queueApps[app.ID] = true
+		}
 		// Every worker's queue gauges refresh here, whatever it scales on,
 		// unless the queue-scaling read below publishes them.
 		if _, scoped := t.engine.(ScopedWorkerPoolEngine); workerWorkload && (scoped || !haveQueueTarget && !haveQueueLagTarget) {
@@ -1046,9 +1077,13 @@ func (t *Trigger) Tick(ctx context.Context) error {
 					stored[row.Name] = row
 				}
 			}
+			series := t.labelledCustomSeries(ctx, app.ID, customTargets)
 			freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
 			for _, ct := range customTargets {
 				row, ok := stored[ct.Name]
+				if len(ct.Labels) > 0 {
+					row, ok = series[ct.Name+"\x00"+api.CustomMetricSeriesKey(ct.Labels)]
+				}
 				fresh := ok && now.Sub(row.ObservedAt) <= freshness
 				obs = append(obs, scalesignal.Observation{
 					Metric:   api.ScalingMetricCustom,
@@ -1229,6 +1264,33 @@ const oversubscribedLogInterval = time.Minute
 // customTargetsOf returns the app's ADR-202 targets. Separate from
 // ScalingPolicy.TargetFor because custom targets are keyed by name and an app
 // may declare more than one, which a metric-keyed lookup cannot express.
+// labelledCustomSeries reads an app's gauge series, keyed name+"\x00"+series
+// key, only when one of its custom targets selects labels; counters are left
+// out as for the aggregate (a growing total is not a backlog).
+func (t *Trigger) labelledCustomSeries(ctx context.Context, appID string, targets []state.ScalingTarget) map[string]state.CustomMetric {
+	labelled := false
+	for _, ct := range targets {
+		labelled = labelled || len(ct.Labels) > 0
+	}
+	reader, ok := t.customMetrics.(customMetricSeriesReader)
+	if !labelled || !ok {
+		return nil
+	}
+	rows, err := reader.ListCustomMetricSeries(ctx, appID)
+	if err != nil {
+		t.log.Warn("targets: custom metric series failed", "app_id", appID, "err", err)
+		return nil
+	}
+	out := make(map[string]state.CustomMetric, len(rows))
+	for _, row := range rows {
+		if row.Kind == state.CustomMetricKindCounter {
+			continue
+		}
+		out[row.Name+"\x00"+row.SeriesKey] = state.CustomMetric{Name: row.Name, Value: row.Value, ObservedAt: row.ObservedAt, Kind: row.Kind}
+	}
+	return out
+}
+
 func customTargetsOf(policy *state.ScalingPolicy) []state.ScalingTarget {
 	var out []state.ScalingTarget
 	for _, t := range policy.EffectiveTargets() {

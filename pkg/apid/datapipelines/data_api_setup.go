@@ -156,6 +156,12 @@ func (s *DataAPISetup) ownedApp(ctx context.Context, job datapipeline.Setup) (st
 
 func (s *DataAPISetup) Prepare(ctx context.Context, job datapipeline.Setup) (string, bool, error) {
 	a, app, err := s.ownedApp(ctx, job)
+	if err != nil && (a.ID == "" || !errors.Is(err, datapipeline.ErrNotFound)) {
+		return "", false, err
+	}
+	if s.DataAPIReleased != nil && !s.DataAPIReleased(a) {
+		return "", false, datapipeline.ErrUnavailable
+	}
 	if errors.Is(err, datapipeline.ErrNotFound) {
 		// Only create after verifying Auth independently; an absent/foreign Auth
 		// app must never cause a new customer resource to be reserved.
@@ -216,6 +222,11 @@ func (s *DataAPISetup) Deploy(ctx context.Context, job datapipeline.Setup) (stri
 	} else if !errors.Is(readErr, state.ErrNotFound) {
 		return "", "", dataAPIError(readErr)
 	}
+	// Accepted deployments remain recoverable, but a saved plan cannot
+	// authorize a new build after its capability has been withdrawn.
+	if !accepted && s.DataAPIReleased != nil && !s.DataAPIReleased(a) {
+		return "", "", datapipeline.ErrUnavailable
+	}
 	latest, latestErr := s.Store.LatestDeployment(ctx, app.ID)
 	if latestErr == nil && latest.ID != deployment && latest.ID != job.DataAPIPlan.PreviousDeploymentID {
 		return "", "", datapipeline.ErrConflict
@@ -237,6 +248,9 @@ func (s *DataAPISetup) Deploy(ctx context.Context, job datapipeline.Setup) (stri
 	}
 	source, size, err := s.source(job)
 	if err != nil {
+		if !accepted && errors.Is(err, datapipeline.ErrConflict) {
+			return "", "", datapipeline.ErrDataAPISourceChanged
+		}
 		return "", "", dataAPIError(err)
 	}
 	if expectedSource != "" {
@@ -250,11 +264,18 @@ func (s *DataAPISetup) Deploy(ctx context.Context, job datapipeline.Setup) (stri
 	}
 	settings, _ := json.Marshal(map[string]string{"DATA_API_SCHEMAS": "public", "DATA_API_ISSUER": job.DataAPIPlan.Issuer, "DATA_API_JWKS_URL": job.DataAPIPlan.JWKSURL, "DATA_API_AUDIENCE": job.DataAPIPlan.Audience, "DATA_API_READ_ONLY": "true"})
 	health, _ := json.Marshal(api.DeploymentHealthcheck{Path: "/healthz"})
+	// Liveness checks the process only, where the plan has liveness probes:
+	// /healthz reports SQL readiness, which a busy pool or a database blip
+	// fails without the runtime being wedged.
+	var liveness json.RawMessage
+	if api.MustLimitsFor(a.Plan).LivenessPeriodSeconds > 0 {
+		liveness, _ = json.Marshal(api.DeploymentLivenessProbe{Path: api.DataAPILivenessPath})
+	}
 	reason := "Saved pipeline setup " + job.ID
 	if job.DataAPIPlan.PreviousDeploymentID != "" {
 		reason += "; retry of " + job.DataAPIPlan.PreviousDeploymentID
 	}
-	result, err := apidsource.Enqueue(ctx, s.Store, s.Notifier, apidsource.EnqueueParams{IntentID: job.DataAPIPlan.IntentID, AppID: app.ID, Kind: state.DeploymentKindDockerfile, SourcePath: source, SourceBytes: size, Scope: api.DefaultEnvScope, LogSpool: s.Spool, Log: s.Log, OverrideEnv: settings, OverrideHealthcheck: health, Reason: reason, ActorUserID: a.ID, ActorVia: "dashboard"})
+	result, err := apidsource.Enqueue(ctx, s.Store, s.Notifier, apidsource.EnqueueParams{IntentID: job.DataAPIPlan.IntentID, AppID: app.ID, Kind: state.DeploymentKindDockerfile, SourcePath: source, SourceBytes: size, Scope: api.DefaultEnvScope, LogSpool: s.Spool, Log: s.Log, OverrideEnv: settings, OverrideHealthcheck: health, OverrideLivenessProbe: liveness, Reason: reason, ActorUserID: a.ID, ActorVia: "dashboard"})
 	if err != nil {
 		return "", "", dataAPIError(err)
 	}

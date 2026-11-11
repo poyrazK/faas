@@ -32,13 +32,18 @@ agent asks you to connect again. Revoke it any time with
 [See and revoke connected agents](#see-and-revoke-connected-agents)). An
 account can have 10 connections at a time.
 
-The hosted server lists the `core` and `provision` toolsets. A connection
-sees only the tools its consent covers:
+The hosted server starts with the focused `core` catalog. When connecting through
+browser sign-in or an API key, select additional toolsets or explicitly choose
+`all`. This choice survives reconnects and never expands the server operator's
+configured toolsets. Selecting tools does not grant permissions. Tool execution
+still follows connection consent, including separate per-app diagnostic access:
 
 | Consent | Tools |
 |---|---|
 | Inspection | Apps, deployments, logs, metrics, health, error groups |
-| Write access | Deploys, promotion, rollback, custom domains, crons |
+| Write access | Deploys, promotion, rollback, restart, scaling, custom domains and crons |
+| Non-secret configuration | Variable changes and configuration rollback (`env:write`) |
+| Usage and costs | App-attributed cost reads (`usage:read`), including on a read-only connection |
 | Ask me for secrets | `gregale_request_secret`, `gregale_get_secret_request` |
 | Buckets | `gregale_plan_bucket` |
 | PostgreSQL | `gregale_plan_postgres` |
@@ -53,8 +58,9 @@ A cloud agent deploys code it wrote in one of three ways:
 - **GitHub:** `gregale_plan_source_deploy` deploys a commit from a connected
   repository.
 
-Then call `gregale_apply_upload_deploy` with the `plan_id`. Like a local
-deploy:
+For uploads and inline files, call `gregale_apply_upload_deploy` with the
+`plan_id`. Git source plans use `gregale_apply_deploy`, or the native workload
+apply tool for a service/worker. Like a local deploy:
 - a new app goes live;
 - a serving app is staged at 0% until `gregale_promote_deployment`.
 
@@ -76,6 +82,9 @@ Only keys with the `agent` scope work here; a deploy key or an admin key is
 refused with a pointer to agent keys. The key's other scopes stand in for the
 consent screen:
 
+The table describes scope eligibility; the selected catalog also controls which
+of those tools are listed.
+
 | Key scope | Tools |
 |---|---|
 | `agent` (always with `apps:read`) | Inspection |
@@ -86,8 +95,48 @@ consent screen:
 
 The key reaches every app in its account. Agent keys expire after 90 days by
 default; rotate them like any key. Revoking the key ends the agent's access at
-its next request. Release plans made with a key are kept in memory, so after a
-server restart the agent plans again.
+its next request. The hosted journal preserves completed receipts and resumable release plans
+for the same key across bridge restarts. Pending upload files are temporary;
+after a restart, inspect deployments and resources before uploading or planning
+again. `gregale_get_plan` recovers an unexpired receipt without repeating a write.
+
+Hosted agent-key connections use the `core` catalog unless the client sends a
+`Gregale-MCP-Toolsets` header on every MCP request. Select a comma-separated
+catalog such as `core,operate`, `core,diagnose` or `all`:
+
+```sh
+claude mcp add --transport http gregale https://api.gregale.dev/mcp \
+  --header "Authorization: Bearer $GREGALE_AGENT_KEY" \
+  --header "Gregale-MCP-Toolsets: core,operate"
+```
+
+The selection is bounded by the bridge operator's allowed toolsets. Its hosted
+default allows all toolsets to be selected while each connection defaults to
+`core`; an operator can restrict the maximum with `mcp-bridged --tools`.
+Selecting a catalog does not grant key scopes or app access. Requests using the
+same key share one plan journal even when their selected catalogs differ. OAuth
+connections choose their catalog during consent; the agent-key header does not
+change an OAuth grant's selection.
+
+### Limit a headless agent to one app
+
+Create an app-bound credential instead of an account-wide key:
+
+```sh
+gregale app deploy-token create --app my-api --agent \
+  --label coding-agent --scopes deploy:write,env:write
+```
+
+Use its one-time plaintext as the hosted MCP bearer token. The native API
+pins it to that app's immutable ID, so it also refuses other apps and account
+inventory outside MCP. `agent` and `apps:read` are added automatically;
+`env:write`, `secrets:request`, `storage:manage` and `usage:read` are optional app-safe scopes.
+For inspection only, request `--scopes apps:read`. It cannot create a new app or
+use project-registry operations. Use OAuth's selected app/environment consent
+for named-environment delegation. Ordinary deploy tokens still cannot open MCP.
+
+App-bound agents appear in `gregale mcp connection list` with kind `app_agent`
+and can be revoked there or through `gregale app deploy-token delete`.
 
 ### See and revoke connected agents
 
@@ -161,6 +210,81 @@ The API is `GET`/`PUT /v1/orgs/{slug}/agent-policy` and
 `/v1/orgs/{slug}/agent-connections`, with `DELETE .../{id}` and
 `POST .../revoke_all`.
 
+### Limit an agent to projects
+
+A connection can reach only some projects of the account or organization it
+acts in. On the approval page, tick the projects under **Limit the agent to
+projects**; leave every box clear to give it all of them. A headless agent
+key takes the same limit:
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write --projects api,web
+gregale org keys add --org acme --label ci-agent --scopes agent --projects api
+```
+
+A limited agent reaches the apps of those projects, including apps added to
+them later, and the projects themselves. Every other app and project answers
+as if it did not exist, account-wide routes answer 403, and the app and
+project lists show only what the limit allows. Databases belong to the
+account or organization rather than a project, so a limited agent cannot
+manage them. Its edge rules stay on its own apps too: they may match only
+`@app`, the app's own host or its custom domains, route only to apps of its
+projects, and it cannot change or roll back a rule another credential wrote
+for wider hosts. The limit is fixed when the agent connects; to change it,
+connect again. `gregale mcp connection list` and `GET /v1/account`
+(`key_projects`) name a connection's projects.
+
+### Approve an agent's risky actions
+
+An agent connection asks a person before it does something hard to undo
+or that reaches production traffic. Gregale checks this for every client
+of the agent's key: the hosted MCP server, the CLI and direct API calls.
+
+| Kind | What needs approval |
+|---|---|
+| `delete` | Deleting anything: apps, databases, buckets, domains, secrets, keys |
+| `production` | Deploying, rolling back, restarting or moving traffic of a production app (previews and `gregale dev` environments are free) |
+| `credentials` | Minting or rotating API keys, deploy tokens, secrets and signing secrets |
+| `billing` | Plan, subscription, payment and budget changes |
+
+By default an agent needs approval for all four. When it asks, Gregale
+answers `428 approval_required` with a review link. Open the link while
+signed in. Approve or deny the request there; then the agent repeats the
+same request, and the approval lets it through once. A request expires
+after 30 minutes. The member who connected the agent can decide, and so can
+the organization's owners and admins. No API key can approve a request.
+
+Choose the kinds when you create an agent key, or `none` to let it act
+alone:
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write --approvals delete,billing
+gregale key create sandbox-agent --scopes agent,deploy:write --approvals none
+```
+
+An organization can require approvals for every agent acting in it,
+whatever each connection chose:
+
+```sh
+gregale org agent policy set --org acme --agents allow --approvals delete,production
+```
+
+`gregale mcp connection list` shows each connection's approvals, and
+`GET /v1/agent-approvals` lists the requests waiting for you.
+
+Over MCP, the tool error carries the request in `approval` (its id, review
+link, category and expiry) and a recovery of `await_approval` naming
+`gregale_wait_for_approval`. The agent shows you the link, then calls that
+tool, which waits up to 50 seconds per call. When you approve, the tool
+answers `retry_original` and the agent repeats its call once with the same
+inputs. When you deny it or it expires, the agent gets `stop`, with your
+reason, and stops. `gregale_agent_activity` lists the agent's own write
+requests of the last 7 days (`operate` toolset).
+
+When the bridge applies a plan, it sends the plan's reviewable `reason` as
+the `Gregale-Agent-Reason` header, so the review page, notifications and the
+activity log show you why the agent asked.
+
 ## Connect a local agent to Gregale
 
 `gregale mcp serve` exposes Gregale management tools over stdio, with writes
@@ -203,13 +327,25 @@ turn. `--tools` lists only the selected toolsets, comma-separated
 
 | Toolset | Tools |
 |---|---|
-| `core` | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback (20 tools, about a fifth of the catalog) |
+| `core` (default) | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets, preflight, account deployment history |
 | `diagnose` | Request, analytics, profile, wake, trace, regression and incident diagnostics |
-| `provision` | Local connections: custom domains, buckets, managed PostgreSQL and crons (ADR-20261026174727) |
-| `all` | Every tool (the default) |
+| `provision` | Custom domains, buckets, managed PostgreSQL and crons: provisioning, inventory and reviewed domain/cron changes |
+| `operate` | Configuration metadata/history/rollback, restart status, scaling, plan receipts and app costs |
+| `all` | Every tool allowed by the server operator (explicit opt-in) |
 
 For example, `gregale mcp serve --transport stdio --tools core,diagnose`.
+Use `--tools all` to retain the full catalog. The local CLI and hosted bridge
+both default to `core`; hosted connections also select their catalog during
+onboarding. Existing connections without a saved selection use `core` when the
+operator permits it, or the operator's narrower selection. An explicitly empty
+selection stays empty.
+Plan receipt and verification tools accompany `core`, `release`, `provision`
+and `operate`. Core includes saved-plan review, checks and retained action
+history and outcome lookups, as well as `gregale_get_restart` for configuration
+changes that request a restart. These reads use the same connection and app
+consent as other tools; inclusion in the catalog grants no additional access.
+The resource-change apply tool also accompanies `provision`.
 Write tools still need `--allow-writes`. Resources and prompts are always
 listed.
 
@@ -224,8 +360,15 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 
 | Tool | Behavior |
 |---|---|
-| `gregale_preflight` | Read-only app/environment consent, release-review/health/operations compatibility and durable-state checks. Unknown capabilities require native review/admission. |
+| `gregale_preflight` | Read-only consent, native operation authorization, release-review/health/operations compatibility and durable-state checks. `operation` is `deploy` (default), `restart`, `scale` or `env_change`; admission is checked separately. |
 | `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
+| `gregale_list_actions` | Bounded connection-local deploy, rollback, service/worker rollout, service abort, configuration, scaling, cron, route-budget and regression-triage history for one exact app/environment, with keyset continuation. |
+| `gregale_get_action` | One recorded plan's attempts, redacted native receipts and recovery guidance; historical acceptance does not prove deployment completion. |
+| `gregale_list_environment_actions` | Connection-local promotion/rollback history for an exact project and target environment; requires consent for both environments and every project workload. |
+| `gregale_get_environment_action` | One environment plan's recorded approval/attempt, redacted promotion reference and recovery guidance; no approval credentials or automatic execution. |
+| `gregale_list_apps` | Apps sorted by slug; `limit` defaults to 20, maximum 100; continue with `next_offset`. |
+| `gregale_get_app` | One app's status, URLs, deployment availability, and resource settings. |
+
 | `gregale_list_apps` | Apps sorted by slug; `limit` defaults to 20, maximum 100; continue with `next_offset`. `selector` (preview) keeps the apps whose labels match a Kubernetes selector such as `team=billing,tier in (web,api)`. |
 | `gregale_get_app` | One app's status, URLs, deployment availability, resource settings and, with the resource-labels preview, labels. |
 | `gregale_list_deployments` | Account deployment history; bounded `limit`; continue with `next_before`. |
@@ -257,6 +400,9 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_list_instances` | Instance pages with optional history; host addresses are excluded. |
 | `gregale_get_health` | Current health, readiness checks, freshness, and serving releases. |
 | `gregale_get_routes` | Observed routes and telemetry coverage, including unavailable sources. |
+| `gregale_get_action_outcome` | Read supported native receipts for a retained action attempt, including after plan expiry; missing evidence stays unresolved. |
+| `gregale_wait_for_approval` | Wait up to 50 seconds for a person to decide an agent approval request; answers `retry_original`, `await_approval` or `stop`. |
+| `gregale_agent_activity` | The calling agent key's write requests of the last 7 days, with status and the approval each used. |
 | `gregale_get_route_budgets` | Effective advisory budgets, inheritance source and policy revisions for the selected environment. |
 | `gregale_plan_route_budgets` | Review an environment override or return to app-budget inheritance without saving intent. |
 | `gregale_apply_route_budgets` | Opt-in write: apply the reviewed budget plan with native revision guards and durable replay. |
@@ -1729,6 +1875,604 @@ only currently consented identities. These are independent reads, not an atomic
 snapshot. The tool and prompt add no probes, replay, collection, model requests
 or platform writes, and do not plan/apply configuration changes.
 
+## Resolve an ambiguous request rollback
+
+Exact default-scope request rollbacks persist an opaque attempt before POST.
+The native `Rollback-Attempt-ID` is 32 lowercase hexadecimal characters; its UUID
+representation identifies the original checked operation. Acceptance commits that
+identity and readiness work atomically. Reusing an accepted identity returns
+`409 rollback_attempt_accepted` without another rollback, including after the
+operation finishes or fails. A changed original pair or reason returns
+`rollback_attempt_conflict`. Implicit targets, alert attribution, release
+acknowledgement, database restoration, named-scope and worker attempts cannot
+use this header.
+
+Call `gregale_get_action_outcome` with the original app/plan ID and default
+`apply` phase. It verifies the exact operation, target/current pair, immutable
+app/scope and request fingerprint. A `verified_receipt` establishes historical
+acceptance and returns a redacted operation ID plus an exact
+`gregale_get_rollback` call. Observe asynchronous completion and current
+traffic/health separately; later failure preserves historical acceptance.
+
+Encrypted references survive restart and plan expiry. History and passive saved
+recipes expose `recovery.outcome` without reading native receipts or changing
+history. Current read consent, original identities, retention and storage remain
+mandatory. Missing evidence stays unresolved; never reconstruct an expired
+request or issue another rollback to resolve ambiguity. Legacy attempted plans
+receive no replacement identity. Default-scope service rollback recovery and
+reviewed default/named-environment service-abort recovery are described below.
+Request rollback adds no tool or migration. See
+[ADR-20261105000513](adr/20261105000513-management-mcp-rollback-outcomes.md).
+
+## Resolve an ambiguous reviewed service abort
+
+New reviewed service-abort plans in default and named environments persist an
+opaque attempt before POST. After a lost response, restart or plan expiry, follow the retained history's
+`outcome` link to `gregale_get_action_outcome` (default `phase=apply`). It verifies
+the original native receipt and returns the exact candidate rollout observation
+call plus `receipt.recovery_request_id`. Compare that ID with the observed native
+handoff; a different current request does not prove the original abort completed.
+Acceptance remains separate from gateway acknowledgement, request draining and
+current health. Recovery is read-only, works with writes disabled, and never
+changes history, extends expiry or permits replay. Missing evidence remains
+unresolved. Current read consent, immutable target identity and retained storage
+are mandatory. Older attempted plans receive no new identity. Native API callers
+can explicitly persist `Service-Abort-Attempt-ID`
+before reviewed recovery and read the owned
+`GET /v1/apps/{slug}/service-aborts/{attempt_id}` receipt. Named receipts bind the
+original project and environment UUIDs. Use the original `project` and `environment` selectors; the observation call
+preserves both. Deleted, recreated or moved targets cannot release the old receipt.
+A later protection change allows historical reads but never authorizes a fresh
+write. Retained acceptance still blocks duplicate attempts even when scoped reads
+are unavailable. See [ADR-20261104173000](adr/20261104173000-management-mcp-named-service-abort-outcomes.md) and
+[ADR-20261104144000](adr/20261104144000-management-mcp-service-abort-outcomes.md).
+
+## Resolve an ambiguous request promotion
+
+Action history and saved-plan recipes now expose `promotion_outcome` separately
+from the existing apply `outcome` call. Follow its exact original selectors:
+
+```json
+{"app":"orders","plan_id":"<original plan ID>","phase":"promotion"}
+```
+
+New promotions persist an encrypted lookup before sending a stable native
+`Deployment-Promotion-Attempt-ID`. APID commits its receipt atomically with the
+guarded 100% traffic write. The receipt binds the candidate, original serving
+guard, exact request hash and immutable named environment. Reusing an accepted
+attempt cannot move traffic a second time, even after a later release or rollback.
+An accepted native retry returns `409 deployment_promotion_attempt_accepted`;
+read the owned app's `/deployment-promotions/{attempt_id}` receipt explicitly.
+
+The MCP lookup works after plan expiry with current read consent. A verified
+result reports `phase: promotion`, the original candidate ID and an exact
+`gregale_get_deployment` observation call. It proves historical acceptance only;
+inspect current traffic and health separately. Missing, unavailable or mismatched
+evidence stays unresolved. Legacy attempted plans never receive a new identity.
+Recovery reads do not replay writes, alter history, renew authority or fetch
+receipts while merely retrieving a prompt/resource recipe. Both original phases
+remain independently discoverable, including when only promotion lookup survives.
+See [ADR-20261105000512](adr/20261105000512-management-mcp-promotion-outcomes.md).
+
+## Resolve an ambiguous deployment submission
+
+`gregale_get_action_outcome` now supports the original apply phase of request
+deployments and native service/worker rollouts, for both image and exact-commit
+GitHub source submissions. It also continues to support route-budget attempts.
+Use the exact `recovery.outcome` call returned by action history or its recipe,
+including after the original mutation plan expires.
+
+New deployment attempts persist and send a stable native `Deployment-Attempt-ID`
+before any write. The encrypted companion reference retains only that ID, an
+artifact fingerprint and the immutable history binding. It shares existing
+history limits/retention and grant revocation; it cannot reconstruct an expired
+payload. Older already-attempted plans without a reference remain unresolved
+through this reader and are never assigned a replacement native identity.
+
+A `verified_receipt` returns `phase: apply`, `receipt.deployment_id`, an exact
+`observation` call and `native_completion: not_observed`. Follow the returned
+`gregale_get_deployment` or `gregale_get_rollout` call explicitly. Acceptance can
+remain verified after the deployment fails or is superseded. Build/rollout
+completion, health, traffic promotion, service recovery and worker queue
+acknowledgement require separate evidence. Missing/unavailable/mismatched
+receipts stay unresolved and never prove non-acceptance.
+
+History and recipes remain passive. An expired deployment recipe without a
+known deployment ID contains history/outcome calls only; follow the observation
+returned by the outcome rather than inventing a target. Current read consent,
+immutable identities, storage and the retained reference are checked again before
+release. No read replays a write, extends expiry or changes recorded uncertainty.
+Default-scope service rollback acceptance is described below. Reviewed default
+and named-environment service-abort acceptance, exact request rollback and
+explicit request promotion recovery are described above. See
+[ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
+
+## Resolve an ambiguous route-budget write
+
+`gregale_get_action_outcome` accepts the original `plan_id`, `app`, and,
+for a named environment, `project` and `environment`. It works with read-only
+connections and retained history after the original 15-minute plan expires:
+
+```json
+{"app":"orders","project":"shop","environment":"staging","plan_id":"<original plan ID>"}
+```
+
+A `verified_receipt` includes only the original budget revision, app-policy
+revision and policy source. It confirms historical policy intent; current
+configuration and runtime health must still be inspected separately. The tool
+never replays the write, changes recorded action history, restores an expired
+plan or extends its expiry. `native_completion` remains `not_observed`.
+
+Unavailable, missing or mismatched receipts return `unresolved`. This never
+proves that the original write did not commit. Deployment and service/worker rollout apply acceptance use the submission lookup
+described above; explicit request promotions support phase=promotion. Reviewed
+default and named-environment service-abort acceptance is described above.
+Default-scope service rollback acceptance is described below. Older bridges/APIs
+and expired legacy actions without a saved
+lookup reference also remain unresolved; do not create a replacement request
+to resolve ambiguity.
+
+The bridge saves only the original request UUID, exact request fingerprint and
+immutable history binding in its encrypted `budget-outcome-lookups/` companion
+namespace, atomically with the attempt before sending the write. It retains no
+mutation payload in that reference. References share action history's existing
+retention and capacity, are grant-local, and are purged on OAuth revocation.
+Current storage, account/app/environment identities, API scope/MFA and read
+consent are checked again before releasing the result.
+
+The native read is `GET /v1/apps/{slug}/route-budgets/receipts/{request_id}` with
+exactly one selector: `scope=default` or `environment=<slug>`. Native clients
+receive the request UUID/fingerprint for verification, immutable target IDs and
+original revision/source metadata; policy configuration and routes are omitted.
+Go, Node and Python clients expose this read. No schema migration is needed.
+See [ADR-20261024210000](adr/20261024210000-management-mcp-budget-outcomes.md).
+
+## Management MCP service rollback acceptance recovery (ADR-20261105082446)
+
+Exact default-environment service rollbacks can retain the original native
+operation identity before submission. The optional `Rollback-Attempt-ID` commits
+as that operation's UUID under the app lock. Matching accepted attempts cannot
+start another readiness/handoff cycle, including after terminal failure;
+conflicting original pairs or reasons are rejected. Existing serving CAS,
+artifact, approval, release and binding guards still apply. Workers, named
+scopes, database restoration and release acknowledgement are excluded.
+
+After a lost response, encrypted bridge restart or plan expiry, follow retained
+history to `gregale_get_action_outcome`. It verifies the exact original service
+operation and returns redacted historical acceptance. `observation` reads the
+operation, `rollout_observation` inspects target handoff/drain and
+`health_observation` reads current app health. Invoke them separately: acceptance
+does not prove ACKs, drain completion, current serving traffic or health.
+
+Service references use an independent encrypted namespace with a tagged binding,
+shared history retention and grant cleanup. N-1 journal writes preserve it;
+legacy attempted plans never gain new identities. Missing evidence remains
+unresolved. Reads, prompts and resources work with writes disabled, recheck
+consent/identity/retention/storage, and never replay, modify history or renew
+expired authority. The existing tools, prompts and resource templates suffice.
+See [ADR-20261105082446](adr/20261105082446-management-mcp-service-rollback-outcomes.md).
+
+## Recover reviewed actions
+
+Use `gregale_list_actions` with `app` and optional `project`/`environment` to find
+this connection's recorded image/source deploy, rollback, service/worker rollout,
+service abort, configuration, scaling, cron, route-budget and regression-triage plans. Use `gregale_get_action`
+with the same selector and an exact `plan_id` to inspect its apply phase and, for request deploys,
+separate promotion phase.
+These tools are read-only and remain available when writes are disabled.
+History helpers are available in `core`, `operate`, `release` and `diagnose`, or through
+`--tools all`; `provision` also includes the action list and action detail reads.
+Environment history belongs to `release`. Catalog discovery follows the selected
+toolsets, transport and current grant.
+`gregale_get_plan` reads an operation receipt; `gregale_get_saved_plan` reviews
+the original proposal for supported release actions. Scaling and configuration
+history identify `operation_scale`, `operation_env`, and
+`operation_config_rollback_guarded` actions; their recipes provide outcome
+recovery rather than saved-plan review or applicability checks.
+
+For a new identity-pinned configuration batch, history and its recipe link to
+`gregale_get_action_outcome` even after the plan expires. The lookup reads the
+original native value-free receipt without repeating the batch. It checks the
+original private receipt proof, request, app, scope, environment identity, expected revision and key
+set; it exposes neither variable names nor values. A `verified_receipt` confirms
+the historical configuration commit only. `restart_requested` reports whether
+the original plan requested a restart; `restart_status: not_observed` does not
+claim that restart succeeded or failed. Inspect current configuration, any known
+restart and health independently. Missing, mismatched or expired receipts remain
+unresolved and never prove non-commit.
+
+Retained references contain no replayable request or values and are encrypted
+when durable bridge storage is configured. Native receipt retention and bridge
+history retention have separate clocks. Older unpinned MCP plans and legacy
+named-environment receipts cannot prove the immutable target and do not gain a
+new lookup. Identity-pinned plans require a control plane that understands the
+new batch identity fields; older control planes reject those requests before a
+write. Current read consent and immutable identity checks still apply.
+
+Reviewed configuration rollback plans pin the current revision and immutable
+app and environment identities in the native restore transaction. An intervening
+change is refused rather than overwritten, including for a no-op restore.
+After a lost response, use the retained `operation_config_rollback_guarded`
+action and `gregale_get_action_outcome` to inspect the value-free original
+receipt. Recovery uses current read access and a private proof, never replays
+the restore, and reports the historical configuration revision plus
+`config_changed` to distinguish a restore from a no-op. Secret restoration,
+restart and health remain separate. Missing receipts remain unresolved.
+Older MCP rollback plans without native guards cannot be applied by this bridge.
+An older bridge fails closed on new guarded plans, and an older control plane
+rejects the new request fields before writing. See
+[ADR-20261105152500](adr/20261105152500-management-mcp-reviewed-config-rollback.md).
+
+Cron history records the exact cron ID and whether the bridge received a
+successful response or the original attempt remains unknown. It omits the
+cron schedule, path and review reason. A successful response is historical;
+it does not prove the cron's current state or completion of already-running
+work. Legacy delete receipts that predate the missing-cron safeguard remain
+unknown. History never repeats a cron write, and it cannot recover a native
+receipt that does not yet exist.
+
+For an attempted scaling plan, the retained `recovery.outcome` call checks the
+original native scaling receipt after plan expiry, and after a bridge restart when
+durable storage is configured.
+It verifies the immutable app/environment, request identity, reviewed revision
+and resulting settings. A `verified_receipt` confirms that configuration commit
+only; follow its `gregale_get_app` observation to inspect current configuration
+and check runtime health separately. Missing or mismatched receipts remain
+`unresolved` and do not prove non-commit. The reference contains a settings digest,
+not a replayable request; durable storage encrypts it. Recovery never changes configuration,
+renews the plan or authorizes a retry. Retention and current read consent apply.
+Scaling plans and applies are in the `operate` toolset; the recovery reads also
+accompany `core`.
+
+Use `gregale_get_saved_plan` with the same app/project/environment selector and
+`plan_id` to reopen the original unexpired proposal. Environment promotion and
+rollback plans use `gregale_get_environment_plan` with project, target environment
+and plan ID. Available history entries provide a `review` tool and exact
+`arguments`; invoke that call explicitly. Both tools remain available when writes
+are disabled.
+
+A saved review includes original targets, proposed changes, pinned revisions and
+expiry. Its `review_kind: saved_original_proposal` and
+`apply_eligibility: not_checked` distinguish stored intent from current native
+state. A changed source branch, policy or deployment does not rewrite the review.
+Inspect current native state separately and use the original guarded apply tool
+only after reviewing the proposal. Existing consent, native CAS and human
+approval checks still run on apply.
+
+The review excludes request/retry keys, promotion/approval credentials,
+browser-review links and environment-variable/secret values. Environment rollback plans
+expose their exact promotion reference with `change_coverage:
+promotion_reference_only`; they do not invent a stored workload diff. Both
+immutable environments and every current project workload need read consent;
+regression plan reviews additionally require diagnostic consent. Expired plans
+return no private proposal. Reads never renew expiry or approval, refresh the
+proposal, persist state or perform a write. See
+[ADR-20261023184309](adr/20261023184309-management-mcp-saved-plan-review.md).
+
+Use `gregale_check_plan` or `gregale_check_environment_plan` with the same
+selectors as saved review to observe the original apply phase. Subsequent request
+traffic promotion retains its separate guards. Results
+include the original `expires_at`, `observed_at`, `baseline_check`, `blockers`
+and advisory `apply_eligibility`. `no_observed_blockers` is not a guarantee:
+native transaction gates still decide. Configuration/release, budget revisions
+and regression observation changes can return `blocked`. Failed native reads
+return `unknown`; required environment approval returns `approval_not_checked`
+and is never started, polled or granted. Rollback coverage is explicitly
+`partial_native_rollback_guard_required`.
+
+Checks also return a `drift` array explaining observed first-attempt baseline
+changes. For example:
+
+```json
+{"field":"serving_deployment_id","expected":"release-old","observed":"release-new"}
+```
+
+Fields distinguish `serving_deployment_id`, `latest_deployment_id`,
+`environment_budget_revision`, `app_budget_revision` and
+`regression_observation_version`. Original/current metadata values are returned
+only after scoped validation; zero revisions and empty deployment IDs are explicit.
+Opaque `app_settings`, `configuration_baseline` and `promotion_baseline` changes
+return only `{"field":"configuration_baseline","values_omitted":true}`.
+Identity mismatches also omit values. Promotion eligibility/config-sync and
+rollback/running-state changes use fixed boolean fields. Credentials, private
+preview hashes/tokens, configuration values and raw native responses are excluded.
+
+Observed changes use `baseline_check: changed`. Missing or inconsistent evidence
+remains `not_verified` with no invented comparison. An empty array alone does not
+prove a plan is current: inspect eligibility, blockers and coverage together.
+Review changed native state before explicitly creating a replacement plan;
+attempted plans preserve the original retry and return no drift comparisons.
+See [ADR-20261024123000](adr/20261024123000-management-mcp-plan-drift-details.md).
+
+After an attempted operation, checks preserve `retry_original_plan` and skip
+baseline comparisons: the original request may already have committed. A saved
+receipt returns `receipt_recorded`, with `native_completion: not_observed`.
+Current write consent and enablement still apply; checks may report blockers on
+an original retry. Expired/inaccessible plans return structured tool errors.
+Checking never changes the saved proposal, expiry, replay payload or durable
+state, resolves a source branch, probes workloads or executes a mutation. See
+[ADR-20261024120000](adr/20261024120000-management-mcp-plan-applicability.md).
+
+Two read-only prompts provide an original-plan recovery recipe:
+
+- `gregale_saved_plan_review`: required `app` and `plan_id`; supply both `project`
+  and `environment` for a named target.
+- `gregale_environment_plan_review`: required `project`, target `environment`
+  and original `plan_id`.
+
+Prompt retrieval verifies current read consent and an available unexpired plan
+from this connection, or a retained attempted deployment, rollout or route-budget action with a valid
+outcome lookup. Environment prompts require both original environments and
+every current project workload; regression plans require diagnostic consent.
+The result contains fixed guidance and exact JSON calls to the matching history,
+saved-review and applicability tools. It includes no saved-plan prose, private
+execution material or configuration values. Unknown/inaccessible plans and
+expired plans without an eligible outcome lookup return errors; retrieval does
+not fetch fresh baselines, receipts or native completion,
+renew expiry, poll approval, create a plan or execute a mutation.
+
+Follow the recipe as a read-only review. Explain stale unattempted intent before
+separately requested replanning, preserve ambiguous original retries, and use
+consented exact native observations to distinguish receipts from completion.
+Future mutations require separate explicit instruction and existing guarded
+tools. Plan-ID completion never enumerates IDs; use consented action history.
+The pinned Codex app-server API has no prompt-get RPC;
+prompt retrieval is covered by native MCP SDK clients on both supported protocols,
+while Codex acceptance verifies tool/resource compatibility. See
+[ADR-20261105000511](adr/20261105000511-management-mcp-saved-plan-recovery-prompts.md).
+
+The same recovery recipe is available as a JSON resource, including to the
+pinned Codex app-server through `mcpServer/resource/read`:
+
+- `gregale://default/apps/{app}/plans/{plan_id}/review`
+- `gregale://projects/{project}/environments/{environment}/apps/{app}/plans/{plan_id}/review`
+- `gregale://projects/{project}/environments/{environment}/plans/{plan_id}/review`
+
+Fill the exact original plan ID and target selectors from consented history.
+Use canonical URIs without credentials, query/fragment suffixes or encoded path
+segments. Reads require an original unexpired plan in this connection (or a
+retained outcome lookup for app resources), current read/diagnostic consent and immutable identities; environment plans require both
+original environments and every current project workload. Other grants cannot
+use a known URI to inherit a recipe.
+
+Resources return `review_kind: saved_plan_recovery_recipe`, `freshness:
+not_checked`, `native_completion: not_observed`, fixed `guidance` and a
+`workflow` containing the same history/review/check calls as the prompts. No saved
+proposal prose, configuration values, approval material or retry keys are included.
+Retrieval does not fetch fresh baselines, receipts or native completion, create
+plans, perform writes, poll approval or renew expiry. Cached recipes grant no
+authority: reread after reconnecting and use the existing guarded tools. Recipes
+are snapshots and do not support subscriptions; plan-ID completion never enumerates
+IDs. Discover available recipes through the current resource catalog. See
+[ADR-20261024160000](adr/20261024160000-management-mcp-saved-plan-recovery-resources.md).
+
+Available original plans in app/environment action list and detail rows now
+include a `recovery` object with an exact `resource_uri`, a `prompt` name and
+string arguments, and a `check` tool call. Follow these returned links to keep the
+original plan and scope intact. The existing `review` call remains available.
+These links are read-only discovery metadata: they grant no write, retry or
+approval authority. `recovery.check` concerns the original apply phase; inspect
+recorded promotion state separately for later traffic promotion.
+
+Expired, missing or mismatched plans omit saved review/check links. Eligible
+retained deployment/rollout/budget attempts keep read-only outcome recovery links, as described
+below; other unavailable plans omit recovery links. New links require selectors that the shared prompt/resource validator can render
+exactly. Final read guards
+also remove discovery/retry hints when availability changes during a history
+read, retaining recorded phases/receipts and native-inspection guidance. An
+initially unavailable snapshot never gains new hints later in the same read.
+Consent/storage failure still withholds output. Discovery performs no native
+freshness checks, approval polling, persistence, replanning or expiry renewal.
+Every followed resource, prompt and tool enforces current access independently.
+See [ADR-20261024180000](adr/20261024180000-management-mcp-history-recovery-discovery.md).
+
+For an attempted route-budget action, `recovery.outcome` supplies the exact
+`gregale_get_action_outcome` call when its retained encrypted lookup is available.
+The resource and prompt remain discoverable after original plan expiry. An
+expired recipe's `workflow` contains only `history`, `outcome` and `observation`;
+`review` and `check` are omitted. Live budget recipes retain their existing calls
+and can add the same outcome and observation calls. Unattempted actions, unsupported
+action kinds and expired legacy actions without a lookup receive no outcome hint. Deployment and
+service/worker rollout actions can also advertise the same outcome link; their
+lookup returns the exact observation once the deployment identity is verified.
+
+Follow the outcome call explicitly, then `workflow.observation` to inspect current
+policy. A verified historical receipt can report revision 1 while current policy
+has advanced to revision 2. Missing evidence stays unresolved and never proves
+non-commit. Recipe retrieval does not fetch either receipt or policy data, renew
+expiry or grant replay authority. Current consent, identities, retention, storage
+and lookup bindings are rechecked before release. See
+[ADR-20261024223000](adr/20261024223000-management-mcp-outcome-recovery-discovery.md).
+
+For a lost apply response:
+
+1. Read `gregale_list_actions` with `{"app":"demo","limit":20}`.
+2. Inspect the selected `plan_id` through `gregale_get_action`; if its original
+   plan is available, read its `recovery.resource_uri` or reopen the saved proposal
+   through the returned `review` call.
+3. An `outcome_unknown` phase means the native request may have committed.
+   If the original plan is available and writes are enabled, retry the indicated
+   existing apply/promotion tool with that **same plan ID**. Normal expiry,
+   current authority, consent and immutable identity checks still run.
+4. If an expired route-budget action provides `recovery.outcome`, follow that
+   read-only call and its recipe's current-policy observation. Otherwise inspect
+   the relevant native state before planning anything new. Historical metadata cannot recreate a replay payload or extend
+   expiry. A missing record is not proof that no write occurred.
+
+`not_attempted` records no native attempt; review the original full plan before
+applying it. `accepted` records a deployment/rollback API receipt, including a
+deployment ID and asynchronous rollback operation ID when supplied. Follow those
+IDs through `gregale_get_deployment`/`gregale_get_rollback` and scoped health.
+Acceptance and promotion receipts do not establish completion or healthy traffic.
+`committed` identifies a guarded triage receipt and its version/state; resolving
+triage does not prove service recovery. `native_completion` is explicitly
+`not_observed` for this historical view. Inspection grants no write permission.
+
+Workload records include `workload.mode` (`service` or `worker`). Retained rollouts
+can identify `workload.retained_deployment_id`; service aborts pin
+`workload.deployment_id` and `workload.predecessor_deployment_id`. An accepted
+receipt identifies the exact created deployment or abort candidate, with a
+`recovery_request_id` for reverse handoff. A native `handoff_generation` is present
+only when supplied; it is not a deployment revision or worker generation counter.
+Source commits, images, rollout policies and gateway/error details are excluded.
+
+When a deployment ID is known, `observation` supplies `tool: gregale_get_rollout`
+and exact app/deployment/project/environment `arguments`. Invoke it explicitly
+to observe native barriers or worker residency. History performs no follow-up
+reads and continues to report `native_completion: not_observed`. A lost rollout
+response has no fabricated deployment target. A lost abort response can still
+point to its reviewed candidate. Retry through `gregale_apply_workload_rollout`
+or `gregale_apply_service_abort` with the original unexpired plan and current
+consent. Accepted service aborts may still await routing acknowledgements and
+draining; accepted worker rollouts do not prove queue acknowledgement or delivery.
+
+Route-budget records include `budget.change` (`set_override` or
+`inherit_app_policy`) and the reviewed `expected_revision` and
+`expected_app_revision`. A `committed` receipt reports `budget_revision`,
+`app_policy_revision` (including zero) and `budget_source`. This records policy
+persistence; it does not establish improved performance or fresh completed
+observation windows. Routes, thresholds, enabled/configuration payloads, reasons
+and native request keys are excluded.
+
+Budget `observation` selects `gregale_get_route_budgets` with the exact
+app/project/environment arguments. Invoke it to inspect **current** policy,
+which may have advanced beyond the historical revision. History does not perform
+this read or infer native completion. Retry an ambiguous budget attempt only
+through `gregale_apply_route_budgets` with the original available plan and current
+write consent. Expired metadata never recreates that plan. Budget history needs
+app/environment read consent, independently of request-diagnostic consent.
+See [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
+
+History retains at most 256 records shared across app/workload and environment
+actions per connection, through 24 hours after each
+plan's original expiry. Live supported plans take priority over archived records.
+Paging accepts `limit` 1–50 (default 20) and the returned `next_before` cursor,
+bound to the connection, account and immutable app/environment. New records do
+not shift subsequent pages; pruning may remove older entries during paging.
+`recorded_at` is when this bridge first recorded/imported the plan;
+`updated_at` changes with its recorded attempt/receipt.
+
+With encrypted HTTP state, replay payloads and redacted history commit in the
+same fsynced snapshot before a native write and after its receipt. History
+survives restart and OAuth refresh for the same grant; a new grant has separate
+history. Revocation removes its stored history. Stdio/ephemeral HTTP history is
+memory-only and lost on restart; `durable` reports the distinction. Storage
+failure withholds history rather than publishing an uncommitted result.
+
+Reads recheck current account, app and named-environment identities before
+releasing data. Regression records additionally require current diagnostic
+consent; lists omit them without it. Reasons, routes, source/configuration
+payloads, secrets, native error prose, approval tokens and replay keys are excluded.
+This is bounded connection history, not a complete account audit log.
+Existing unexpired supported plans are imported on upgrade; previously
+expired/discarded plans cannot be recovered. Older bridges ignore the additive
+history namespaces, so their later actions may be absent after their plan expires.
+Workload records use a companion namespace to preserve N-1 readers of the original
+history format; all history namespaces share the 256-record bound and atomic commit.
+Phase states describe the last recorded bridge snapshot; inspect native state
+before replanning an expired action even if its old phase was `not_attempted`. See
+[ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md) and
+[ADR-20261022183756](adr/20261022183756-management-mcp-workload-action-history.md).
+
+### Recover an ambiguous environment promotion
+
+New promotions retain their original opaque attempt and reviewed fingerprint
+before POST. Native promotion creation, workloads, approval consumption and the
+acceptance receipt commit atomically. An accepted modern attempt cannot dispatch
+again, including after failure. Legacy explicit original-key continuation keeps
+its existing checks and cannot acquire a receipt retroactively.
+
+Follow `recovery.outcome` from environment action history, or call
+`gregale_get_environment_action_outcome` with the original project, target
+environment and plan ID. It now supports promotions as well as rollbacks.
+It works after restart and expiry with writes disabled. A verified receipt
+returns the exact native promotion ID and a `gregale_get_environment_promotion`
+observation. Run that observation explicitly; workload handoff and health remain
+separate. Missing evidence never proves non-commit.
+
+Prompts/resources discover the read passively without fetching receipts. An
+unknown promotion has no guessed observation ID before lookup. Recovery never
+rewrites history, renews expiry, replays, replans or approves. Current immutable
+scope/workload identities, read consent, storage and retention remain required.
+Replaced environments cannot inherit evidence. Catalog counts are unchanged.
+
+The native read is `GET /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}`,
+with an equivalent organization route. Optional promotion POST headers
+`Environment-Promotion-Attempt-ID` and `Environment-Promotion-Request-Hash` must
+be paired. Neither header nor a retry key is forwarded to receipt GETs.
+See [ADR-20261105153007](adr/20261105153007-management-mcp-environment-promotion-outcomes.md).
+
+### Recover an ambiguous environment rollback
+
+New project-level environment rollback plans save an opaque original attempt and
+scope fingerprint before their first POST. The native acceptance receipt commits
+atomically with rollback admission and pins the promotion ID/hash plus immutable
+project, source and target environment IDs. Matching accepted attempt-bearing POSTs cannot
+admit work again, including after failure. Explicit legacy original-key retries
+retain native checkpoint continuation without minting or altering the receipt.
+Changed attempts conflict; earlier legacy
+or automatic rollbacks never acquire a replacement receipt.
+
+Follow `recovery.outcome` from `gregale_get_environment_action`, or call
+`gregale_get_environment_action_outcome` with the original project, target
+environment and plan ID. It works after encrypted restart and plan expiry with
+writes disabled. `verified_receipt` confirms admission only and supplies the
+exact `gregale_get_environment_promotion` observation. Follow that explicitly,
+then inspect each workload's restoration, handoff/drain and health independently.
+A failed rollback can still have a verified original acceptance receipt.
+
+Retained history and the existing environment review prompt/resource discover
+this lookup passively. Retrieving a recipe does not fetch native receipts or
+restore review/check/apply authority to an expired plan. Missing, unavailable or
+mismatched receipts stay unresolved and never prove non-commit. Reads never
+replay, replan, approve, modify history or renew expiry. Current source/target
+consent, all project workload identities, storage, retention and the original
+reference are checked again before release. Replacement environment slugs cannot
+inherit an old receipt. Legacy attempts without a saved lookup remain unresolved.
+
+The native read is `GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}`,
+with an equivalent organization route. Optional POST headers
+`Environment-Rollback-Attempt-ID` and `Environment-Rollback-Request-Hash` must be
+provided together. One immutable receipt is retained per promotion; no credentials,
+retry keys, configuration or workload payloads appear in the receipt. Existing
+release/protection/CAS/binding guards remain in force. This adds one read tool;
+existing prompt and resource-template counts are unchanged.
+See [ADR-20261105102920](adr/20261105102920-management-mcp-environment-rollback-outcomes.md).
+
+### Recover environment promotions and rollbacks
+
+Use `gregale_list_environment_actions` with
+`{"project":"shop","environment":"production","limit":20}`, then
+`gregale_get_environment_action` with the same selectors and exact `plan_id`.
+These project-level records require current read consent for both source and
+target environments and every project workload. Source consent removal omits
+records from lists and withholds detail; identity or membership changes can deny
+the entire read. App history remains app-scoped.
+
+`approval_pending` records the bridge's last human-review state and optional
+`approval_expires_at`. Inspection does not check whether the human has since
+approved or denied it. Review URLs, tickets, private exchange codes, approval
+credentials, preview tokens/hashes, reasons and workload payloads are excluded.
+Resume only through `gregale_apply_environment_promotion` with the **same
+unexpired plan ID**; its existing flow obtains/polls human review and enforces
+current target write consent. Expired review metadata cannot extend approval.
+
+`outcome_unknown` preserves the original retry handle after a lost response.
+Retry the indicated existing promotion/rollback tool with that same unexpired
+plan and current authorization. After expiry, use an exact retained promotion/rollback outcome lookup when available;
+otherwise inspect native state before replanning. `accepted` records a checked promotion ID, not observed completion or
+traffic health, even if a native rollback receipt reported completion. When known,
+`observation` points explicitly to `gregale_get_environment_promotion` with exact
+selectors. A rollback can reference its reviewed promotion before acceptance;
+an unknown new promotion has no guessed operation ID.
+
+Environment history follows the same retention/page bounds, encrypted restart,
+OAuth grant isolation and shared capacity as app history.
+`capacity_scope: all_connection_action_history` makes the shared bound explicit.
+All replay and history records commit atomically. The additive environment
+namespace preserves older readers; upgrades import only live original plans.
+See [ADR-20261022192200](adr/20261022192200-management-mcp-environment-action-history.md).
+
 ## Enable reviewed release actions
 
 Add `--allow-writes` to the agent's subprocess arguments to expose
@@ -1786,15 +2530,15 @@ deploy a project directory with the local tools below; mutable image tags keep
 their CLI release workflow.
 Image and reviewed source service/worker rollouts use the native workflow below. Apps with multiple serving
 releases require explicit traffic-split review in the CLI. Secret values are
-never accepted, and other configuration mutations are not exposed.
+never accepted; non-secret configuration changes use the reviewed tools below.
 
 ## Deploy a local project and set variables
 
-On a local stdio connection, the server can deploy a project directory and set
-non-secret variables. It runs the same `gregale` binary as a subprocess with
-`--non-interactive --json` and the connection's credential, so each step does
-exactly what the matching CLI command does (ADR-20261026141841). These four
-tools are absent from remote OAuth connections.
+On a local stdio connection, directory deployment runs the same `gregale` binary
+as a subprocess with `--non-interactive --json` and the connection's credential
+(ADR-20261026141841). The two local-directory deployment tools are absent from
+remote OAuth connections. Non-secret configuration tools use the native API
+and work on both transports.
 
 1. Call `gregale_plan_local_deploy` with the absolute `path` of the project
    directory, the `app` slug and a `reason`. The plan:
@@ -1818,21 +2562,24 @@ tools are absent from remote OAuth connections.
 3. To create an app before its first deploy, for example to set variables
    first, plan with `create_only: true`.
 
-To set variables, call `gregale_plan_env_change` with the `app`, up to 50
-`values` (keys match `^[A-Z][A-Z0-9_]*$`, values hold no newlines), a
-`reason`, and optional `restart`.
-- The plan runs `gregale env push --dry-run --secret-scan strict` on the
-  default scope and pins the newest config revision.
-- A value that looks like a credential refuses the plan. The agent should
-  request it with `gregale_request_secret` (below) and never handle a secret
-  value.
-- `gregale_apply_env_change` applies the plan only if no other config change
-  landed since planning. The config guard judges the change as it does any
-  push.
+To set non-secret variables, call `gregale_plan_env_change` with `app`,
+`values`, `reason` and optional `project`/`environment`. This works locally and
+on a hosted connection with write access and `env:write` consent. Apply with
+`gregale_apply_env_change`. The API credential needs `env:write`, rather than
+secret-write access. Plans hide values, refuse sensitive names and detected
+credentials, and check the observed configuration revision before writing.
+All variables, one history revision, snapshot invalidation and a value-free
+receipt commit in one native transaction. A concurrent change refuses the entire
+batch. After an uncertain response, retry the same plan ID to recover the
+original receipt; do not create another plan for that attempt. `restart: true`
+also requests a fresh restart of the default app; a named scope cannot request
+an app-wide restart.
 
-The credential needs `deploy:write` to create and deploy apps. It needs
-`secrets:write` to set variables, because `env push` stores them through the
-secrets API.
+Revision zero is accepted only for an empty scope with no history. If a legacy
+writer has stored a value before recording its revision, wait for its history
+before replanning. On an older nonempty scope without history, the first batch
+records its current baseline and refuses the variable changes. Review that
+new revision and create a new plan; no manual variable write is needed.
 
 ## Ask the user for a secret
 
@@ -1882,7 +2629,8 @@ and its `plan_id`.
 - **Buckets and databases.** Each binds the resource to the app's default
   scope as sealed variables: `GREGALE_S3_<NAME>_*` for a bucket and
   `DATABASE_URL` for a database. Receipts name the variables and never contain
-  their values. Restart or redeploy the app to pick them up. A database can
+  their values. Plan a fresh restart with `gregale_plan_restart`, then apply it with
+  `gregale_apply_operation`, or redeploy the app to pick them up. A database can
   take up to ten minutes and is billed.
 - **Crons.** The plan reports `duplicate_of` if the app already has a cron
   with the same schedule and path.
@@ -1890,6 +2638,200 @@ and its `plan_id`.
 Object storage and managed PostgreSQL are preview capabilities; when one is
 off for the account, apply returns the API's error. Jobs and `gregale run`
 stay in the CLI.
+
+## Configure, inspect and recover
+
+Add `operate` locally, or select an operations profile during hosted sign-in.
+All writes still require connection write access; protected named targets use
+their native approval workflow.
+
+| Tool | Behavior |
+|---|---|
+| `gregale_get_config` | Variable names, latest revision and guard; no values |
+| `gregale_list_config_history` | Bounded revision metadata and guard decisions |
+| `gregale_plan_config_rollback` | Restore variables from an exact revision; sealed secret values are not restored |
+| `gregale_plan_restart`, `gregale_get_restart` | Review a default-app cold restart; inspect durable native processing by `wake_id`, then check app health |
+| `gregale_plan_scale` | Review RAM, CPU, concurrency or warm-instance changes; native quotas and named-workload revision checks apply |
+| `gregale_apply_operation` | Apply one reviewed restart, scale, config rollback or resource-lifecycle plan |
+| `gregale_get_plan`, `gregale_list_plans` | Recover unexpired plan status and completed receipts without repeating writes |
+| `gregale_get_costs` | Native app-attributed costs for an optional UTC `month` (`YYYY-MM`); requires `usage:read`, including for app-bound credentials. No local CLI is required. |
+
+Cost reads use `GET /v1/apps/{slug}/costs` and preserve exact integer
+millicents. They include only retained compute and interface-egress allocations
+attributed to the selected immutable app ID. They exclude account totals,
+invoices, forecasts and other apps. Sampling-window coverage remains visible;
+per-app quantity coverage is unknown, and the result is not a bill estimate.
+An app-bound credential needs explicit `usage:read`; this grants no access to
+`/v1/billing/costs`. An older control plane without the native app endpoint
+returns an unavailable read; the bridge does not fall back to account billing.
+
+The `provision` toolset also includes `gregale_list_domains`,
+`gregale_list_crons`, `gregale_list_buckets`, `gregale_get_storage_bindings`
+and `gregale_list_databases`. These metadata reads require `apps:read`, including
+for app-bound read-only credentials. Native filtering and pagination select only
+the immutable app and exact scope, without account-wide domain/database walks.
+Continue using `next_offset`; `pagination.has_more` explicitly marks the end.
+Storage binding pages count bindings, rather than buckets. Each page is a fresh
+snapshot, so concurrent changes can move offsets. Domain and cron inventory is
+app-wide and requires default-scope access.
+
+Metadata includes dependency names, linkage IDs, configuration references and
+catalog state. It grants no object reads, SQL connections, credentials or lifecycle
+access. Native resource capability flags still apply. An older server without
+`GET /v1/apps/{slug}/resource-inventory` returns an unavailable read; the bridge
+does not fall back to account inventory. Counts exclude other apps and scopes.
+
+For local read-only inspection with an app-bound token in `FAAS_TOKEN`:
+
+```sh
+gregale mcp serve --tools core,provision
+```
+
+Native pages default to 20 entries, cap at 100 and accept offsets up to 1,000,000.
+The inventory tools validate backend identities and continuations before exposing
+the page. Command payloads, domain challenges and credential/provider material
+are excluded; catalog state does not prove connectivity or runtime readiness.
+
+Use `gregale_plan_cron_change` to update or delete an exact cron, or
+`gregale_plan_domain_removal` to detach a domain. Apply with
+`gregale_apply_operation`; changed resource ownership/configuration refuses
+the old plan when the bridge observes the change before sending the write.
+The native cron mutation does not yet check that reviewed state atomically;
+concurrent edits can still race with an apply. After an interrupted cron update
+or deletion, inspect the exact cron and its native audit trail rather than
+repeating the write. A missing cron alone does not establish which actor
+deleted it. Native policies remain authoritative. The proposed native guard
+and resumable deletion design is tracked in
+[ADR-20261105161908](adr/20261105161908-reviewed-cron-mutation-recovery.md).
+
+For long provisioning, pass `async: true` to `gregale_apply_provision`. It
+returns a `plan_id` immediately. Poll `gregale_get_provision`, or request
+cancellation with `gregale_cancel_provision`. Cancellation does not undo a
+resource already created. The bridge bounds workers, preserves OAuth authorization
+expiry and cancels work on OAuth revocation or shutdown. Native API calls also
+recheck headless credentials.
+
+When the bridge has a persistent state store, provisioning uses native APIs and
+journals its reviewed inputs, reserved database identity, resource and binding
+IDs, phase and sanitized failure. These operations can resume for 24 hours from
+the first apply, including after a process restart. Polling is read-only; an
+interrupted operation returns a `next` call to `gregale_apply_provision` with
+the same `plan_id`. Resume explicitly with that ID. Cancellation is retained
+after restart and does not delete resources; another explicit apply resumes
+the approved intent under current authorization. Completed receipts are kept
+for 24 hours after completion.
+
+Ephemeral local connections use the existing CLI flow and retain unfinished
+plans only in memory. Inspect resource inventory before replanning after that
+connection is lost. Source uploads retain their separate temporary-input
+lifecycle.
+
+Tool output schemas require stable plan, receipt and identity fields while
+allowing additive native evidence. Errors and plan/status receipts include
+`schema_version: 1` and a structured `recovery` object. Agents should follow
+`recovery.action` rather than infer a retry from problem prose:
+
+| Action | Agent behavior |
+|---|---|
+| `none` | No recovery is needed. |
+| `inspect` | Read the indicated receipt or inspect current state before deciding. |
+| `retry_read` | Repeat the read with the original inputs. |
+| `retry_same_plan` | Apply the original `plan_id`; do not create a replacement plan. |
+| `replan` | Obtain a new review with the indicated planning tool. |
+| `request_access` | Restore current authorization or the required capability before continuing. |
+| `await_approval` | Show the user `approval.review_url`, then call `gregale_wait_for_approval` with the given `approval_id`. |
+| `retry_original` | A person approved: repeat the original call once with exactly the same inputs. |
+| `stop` | A person denied the request, or it expired: do not retry; tell the user, with `approval.note` if present. |
+
+When supplied, `tool` and `arguments` identify a listed tool and value-free
+selectors such as `plan_id`. `reuse_original_inputs` tells the agent to reuse
+its own inputs without echoing configuration values in the error. Honor
+`after_seconds` before retrying or polling. A `toolsets` suggestion means the
+needed tool is outside the selected catalog; select that toolset on a new
+connection before calling it.
+
+A `refused` receipt means the native operation rejected the first attempt;
+repeated application of that plan does not write again. A `partial` configuration
+receipt records the committed revision and changed keys when an optional restart
+failed, so the same plan can finish without writing configuration twice.
+`outcome_unknown` retains uncertainty after an interrupted or ambiguous request.
+Only operations with a safe recovery path recommend `retry_same_plan`. These
+outcomes and checkpoints survive bridge restarts. Cancelled provisioning is not
+automatically resumed. Large integer telemetry is preserved exactly in both text
+and structured output.
+
+Mutation completion and runtime verification are separate. Apply results and
+plan receipts include `verification` with a goal, value-free checks and exact
+resource IDs. When `verification.next` is present, call the indicated
+`gregale_verify_plan` with the original `plan_id`, respecting `after_seconds`.
+The tool performs one bounded set of passive reads; it does not repeat writes,
+wake an app or promote a staged deployment.
+
+| Verification status | Meaning |
+|---|---|
+| `required` | A receipt identifies a runtime outcome that still needs observation. |
+| `pending` | The native restart or rollout is still progressing. |
+| `verified` | The stated goal was established at `checked_at`. |
+| `failed` | Native processing, deployment or fresh health evidence reports failure. |
+| `blocked` | A prerequisite such as explicit promotion or an unchanged configuration revision is missing. |
+| `unknown` | The available evidence does not establish the goal. |
+| `not_required` | The stated goal, such as a committed change without a requested restart, needs no additional runtime check. |
+
+Restart verification follows the exact `wake_id`, then requires fresh passive
+health evaluated at or after restart processing completed. Configuration must
+still match the native batch revision before and after health inspection.
+This establishes processing and app health, not variable values loaded by a
+particular replacement instance or public reachability. Deployment verification
+uses exact rollout and health attribution; zero traffic is blocked until explicit
+promotion. Worker verification covers resident generation convergence only.
+
+Scaling plans pin a native scaling revision. Applying a plan commits RAM, CPU,
+concurrency and instance-floor changes with one durable request receipt. Retry
+`gregale_apply_operation` with the same plan ID after an interruption; it recovers
+the original request or safely resubmits it against the reviewed revision.
+A revision conflict requires a new review. Named environments also pin their
+immutable UUID and require an existing workload revision. Their settings take
+effect on a subsequent deployment.
+
+Scaling verification uses the `scaling_configuration` goal. It confirms the exact
+request receipt and checks that its revision and settings remain current. A later
+write reports `blocked` as superseded. `verified` establishes desired configuration;
+it does not establish running guest readiness or replica convergence.
+
+Writes pin `--expected-app-id` from the reviewed snapshot, so reusing a deleted
+app name cannot retarget an earlier request. The same native recovery is available through `gregale app scaling APP`:
+
+```sh
+gregale app scaling my-api
+gregale app scaling my-api --expected-app-id 612e5aba-cd70-49e7-b29a-e5f73c29dcf2 --expected-revision 3 --request-id 4ed5f921-9eae-4bd0-a7ab-f851d38f745b --ram 512
+gregale app scaling my-api --receipt 4ed5f921-9eae-4bd0-a7ab-f851d38f745b
+```
+
+For a named target, pass `--environment ENV` on every call and
+`--expected-environment-id UUID` from its snapshot on writes. Reuse the original
+request UUID, revision and body for retries. Receipt reads require current access.
+
+Targets are reconstructed from journaled receipts across reconnects and bridge
+restarts. Each verification reads again and reports its own observation time;
+`get_plan` describes the obligation rather than caching healthy status. Current
+consent and immutable app/environment identity are checked around inspection.
+Revocation during a read withholds its result. Unsupported postconditions,
+including aggregate environment promotions, service abort reverse handoff and
+provider binding activation in running apps, remain `unknown` with the
+`manual_review` goal.
+
+MCP-owned app, deployment, plan and resource inventory tools include `pagination`
+with `mode`, `has_more`, and the matching `next_offset` or `next_before` when
+more native results remain. An empty filtered deployment page may still have
+more results; preserve its cursor. Existing fields remain available and native
+diagnostic projections retain their own pagination contracts.
+`gregale_list_plans` defaults to 20 receipts and accepts `limit` (1–100) and
+`offset`; use its returned continuation to inspect larger journals.
+
+Run `make test-mcp-agent-workflows` to evaluate discovery, schema conformance,
+conflict replanning, lost-response recovery, partial configuration recovery,
+post-write verification and authorization revocation. These evaluations use a deterministic MCP
+client and native API fixtures; they do not measure a language model's reasoning.
 
 ## Reviewed Git source deployments
 
@@ -2036,9 +2978,14 @@ bound to their registered identity; release promotion does not copy them.
 Registered project environments use Gregale's guarded promotion workflow. These
 tools reuse existing immutable source releases. Direct image staging also accepts
 an explicit project/environment. `gregale_preflight` accepts the same app and
-optional project/environment selection. It reports each read compatibility and consent
-check independently; unknown results do not grant write permission. It creates no
-plans or source reviews. Store status describes an open encrypted journal, not a
+optional project/environment selection and `operation`. Its native preview
+reports current scope and organization role authorization separately from local
+write consent. A passed `api_write_authorization` check is an observation for
+that operation, not permission to exceed connection consent. Account standing,
+route availability and environment restrictions are separate admission checks;
+exact request validation and quota admission remain unknown until apply. An
+older, stale or incompatible native preview leaves authorization unknown.
+Preflight creates no plans, reservations, source reviews or approval requests. Store status describes an open encrypted journal, not a
 restart qualification or a guarantee that future writes will succeed.
 The tool catalog has 49 read/planning tools, or
 58 with writes.
@@ -2582,6 +3529,26 @@ endpoint for changing catalogs. In a multi-replica app, register the same
 definitions in each serving process and make any runtime mutation on every
 replica.
 
+The Node starter supports visible-ASCII catalog names that coincide with
+JavaScript prototype properties, including `constructor` and `__proto__`.
+Replacing the sample `customer_record` resource uses the supplied URI/template,
+handler and completion callbacks. Custom handlers enforce ownership of their
+application data; the original sample retains its own ownership checks.
+
+Custom tool arguments are validated against the declared `inputSchema` before
+the handler runs or a task is queued. Validation leaves argument values and
+defaults unchanged. Go supports Draft 7 and 2020-12 schemas; Python uses
+`jsonschema` (2020-12 by default). Local schema references work without network
+access. Go rejects unresolved external references at registration; Python
+rejects calls requiring external retrieval. Handlers enforce business rules
+and ownership. A custom tool handler's successful result must include
+`structuredContent` matching its declared `outputSchema`. Error results with
+`isError: true` and intermediate `input_required` responses may omit structured
+output. Both schemas are checked before
+catalog registration or replacement, and invalid output is returned as a
+redacted tool error. Node uses the SDK's resource-template matcher for both reads
+and subscriptions, including parameter names such as `{item.id}`.
+
 For a serving guard against catalog drift, set the same
 `MCP_CATALOG_EXPECTED_SHA256` environment value on every serving replica. Start
 one instance without the pin and read `catalog_sha256` from `/healthz`, then
@@ -2593,6 +3560,13 @@ on load-balancer sampling or trust an app-supplied instance ID. The digest cover
 sorted advertised tool, resource, and prompt definitions, OAuth per-entry allow-lists, and
 whether durable Tasks are enabled; it excludes handler code and the local
 revision counter. `/healthz` reports `catalog_revision` and `catalog_sha256`.
+Node registration snapshots Standard Schema input/output JSON representations,
+including nested Zod `.meta()` values, while preserving validation and prompt
+completion callbacks. Later metadata or registry mutations leave that registration
+unchanged; use the explicit replacement APIs to publish a change. Input/argument
+contracts use the input representation and output contracts use the output
+representation. Review catalog pins when upgrading schemas whose two
+representations differ.
 With a pin configured, a mismatch returns HTTP 503 from `/healthz` and blocks
 MCP endpoint requests until the process has the expected catalog. A runtime
 catalog mutation therefore needs a coordinated pin update or a restart with
@@ -2772,6 +3746,10 @@ The CLI sends form responses only after an explicit opt-in and bounds the
 number and size of requests it handles. Calls without either input option keep
 the existing single-request behavior.
 
+Consent forms with `properties: {}` are supported in interactive calls and Task
+input requests. They still require an explicit response; accepting an empty form
+uses `"action": "accept", "content": {}`.
+
 ## MCP Tasks
 
 Gregale's Go client supports the `io.modelcontextprotocol/tasks` extension, and
@@ -2780,6 +3758,29 @@ tools. Tasks use the modern `2026-07-28` protocol. Each starter includes
 `build_report`, a safe example that returns a task handle for opted-in clients
 when durable tasks are enabled. Other calls stay synchronous. The server
 returns the handle only after PostgreSQL can read the new row.
+
+For tools declaring `outputSchema`, each starter saves a JSON snapshot with the
+task at admission. Workers check final successful `structuredContent` against
+that original contract, including after retry, input pause, worker restart or
+catalog replacement. Invalid output fails with a redacted error and is not saved
+as a successful result. Tool results marked `isError: true` may omit structured
+output. Node also awaits asynchronous task validators before persistence and
+keeps handle delivery separate from final output validation.
+
+The Go worker also catches panics raised by application Task executors and records
+a generic terminal failure without logging the panic value. Cancellation,
+shutdown and lease ownership checks still apply, and the worker can process
+subsequent Tasks.
+
+Existing Task databases require an explicit starter migration to add the nullable
+`output_schema` JSONB column, even if schema version 1 is installed: use
+`npm run tasks:migrate -- apply`, `go run . tasks-migrate apply`, or
+`python task_schema.py apply` with the migration binding. Migrate first, then
+upgrade and drain all older workers before deploying producers that rely on the
+contract check; old workers ignore this metadata. Tasks without a saved schema
+retain their prior behavior. Schemas contain reviewed catalog metadata in
+plaintext; task payload encryption is unchanged. See
+[the Task output-contract decision](adr/20261105161206-mcp-task-output-contracts.md).
 
 The Go and Python starters support durable enqueue, worker execution, task
 status reads, cancellation, encrypted client input through `tasks/update`, the
@@ -2961,6 +3962,10 @@ the worker then replays the handler from its beginning with the saved responses
 available under the same keys. Request and response payloads are encrypted
 with the task key, and request keys cannot be reused for a different prompt.
 The original client must have declared support for each embedded request type.
+An `elicitation/create` request without `params.mode` uses form mode in all three
+starters and requires the client's form elicitation capability. Explicit modes
+must be `form` or `url`. Requests retain their original shape when persisted so
+the same handler request can replay after the client responds.
 Keep handlers idempotent because worker recovery can also replay them after a
 crash.
 
@@ -2979,6 +3984,19 @@ and Python starters also compare catalogs on a bounded poll, so a missed hint
 is recovered within five seconds (or the configured task poll interval when
 longer). A snapshot poll also recovers missed task notifications and listener
 reconnects. Active streams and watched task IDs are capped per process.
+
+Node also caps pending setup messages and socket output at 1 MiB each. It closes
+a stream on overflow or when backpressure persists for 15 seconds; later events
+cannot extend that deadline. Go bounds each subscription write and flush,
+including keepalive comments, by 15 seconds or the remaining verified token
+lifetime. Idle streams retain their normal lifetime. Clients can reconnect for
+fresh task snapshots and refetch resource contents after a stream closes.
+
+Python closes the HTTP connection when rejecting a POST before reading its body,
+so a subsequent retry starts on a clean connection. Successful requests preserve
+normal HTTP keepalive. Node reports malformed JSON as HTTP 400 with JSON-RPC
+parse error `-32700`, and bodies over 1 MiB as HTTP 413 with `request_too_large`;
+neither response includes submitted content.
 
 Each starter exposes a resource update publisher for application-owned changes:
 Node returns `notifyResourceUpdated(uri)` from `createApp`, Go provides
@@ -3011,11 +4029,15 @@ on other web replicas.
 `mcp call --wait` also opts in and returns the final tool result. It listens for
 task status notifications when the server supports subscriptions, reopening a
 dropped stream from a fresh snapshot. It falls back to `tasks/get` polling when
-subscriptions are unavailable or keep disconnecting. It reports status changes
+subscriptions are unavailable or keep disconnecting, and periodically reconciles
+a quiet stream using `tasks/get` (at least 30 seconds apart, or the server's
+longer poll interval). It reports status changes
 on stderr. If the task requests form input, use `--interactive` or
 `--input-responses-file`; the CLI sends those replies through `tasks/update`.
-When either wait command reaches its timeout, it makes a best-effort cooperative
-`tasks/cancel` request. Tasks require the modern `2026-07-28` protocol; legacy
+When `call --wait` reaches its timeout, it makes a best-effort cooperative
+`tasks/cancel` request. Resuming a saved task with `client wait` stops observing
+at its deadline without cancelling the task; add `--cancel-on-timeout` to request
+cancellation. Tasks require the modern `2026-07-28` protocol; legacy
 calls keep their existing behavior. Task IDs are opaque and must be saved by
 the caller if they need to resume waiting after a CLI restart.
 `task-wait` resumes waiting on a saved handle after a restart; it accepts the same
@@ -3083,6 +4105,10 @@ after changing a resource so clients can re-read it. With the default local
 adapter, publisher events reach streams on that web process; multi-replica apps
 should connect a shared event adapter. Notification streams still reconcile on
 `--interval`, and servers without URI subscriptions use polling.
+
+The Node starter counts pending Task/resource subscription setup toward its
+128-stream process limit. Disconnects, setup errors and drain release reservations.
+Asynchronous resource registrations that finish after cancellation are immediately disposed.
 
 Use the same authorization context for both captures: a caller's scopes can change
 which definitions are visible. Review catalog metadata before committing it; it is supplied
@@ -3229,6 +4255,25 @@ entries missing from it; `{}` hides and denies every entry of that catalog
 type. Null maps and scope arrays fail configuration validation. Open mode
 accepts only empty scope arrays. The generated public starter lists its
 harmless entries explicitly.
+
+Provider JWKs must permit signature verification: when `key_ops` is present,
+it must contain `verify`. Encryption-only or signing-only keys cannot validate
+access tokens. Failed JWKS refreshes have a 30-second cooldown in every starter,
+including HTTP, network and malformed-response failures. A still-fresh cached
+verification key remains usable during the cooldown; expired keys are not used.
+JWKS responses are limited to 1 MiB in every starter. Refreshes have a total
+five-second deadline, including body reads. Python coalesces concurrent
+refreshes, discards results arriving after the deadline, and verifies tokens
+with fresh cached keys while a refresh is pending.
+Go likewise coalesces refreshes without holding the cache lock during network
+I/O, so fresh cached keys remain usable while a rotation refresh is pending.
+The token algorithm must also match a JWK's declared `alg`. Without a JWT
+`kid`, selection requires exactly one key eligible for that algorithm, key
+type, purpose and operation; ambiguous key sets are rejected. A mixed RSA/EC
+key set can provide one eligible key for each supported algorithm.
+The OAuth provider doctor's signing-key check applies the same `key_ops`
+requirement and does not count encryption-only or malformed-operation keys
+as usable verification keys.
 
 All three starters filter `tools/list`, `resources/list`,
 `resources/templates/list` and `prompts/list` using verified JWT scopes for each
@@ -3876,8 +4921,8 @@ explanation instead of being interpreted as zero work. Queue explanations includ
 `unsupported_handler`, `no_active_workers`, and `idle_queue`.
 
 Workers register their supported tool/handler-version pairs in
-`gregale_mcp_task_workers`. Heartbeats refresh at a bounded cadence (20–30 seconds,
-depending on polling), expire after 90 seconds using database time, and are
+`gregale_mcp_task_workers` in all three starters. Heartbeats refresh at a bounded cadence (10–30 seconds,
+depending on the runtime and polling), expire after 90 seconds using database time, and are
 withdrawn when a worker stops accepting work. Worker registrations describe
 availability to claim work; they are not a guarantee that a handler succeeds.
 Expired registrations do not participate in inventory and are pruned by workers.
@@ -3885,6 +4930,15 @@ The observer reads this table without writing registrations or migrating schema.
 Run `npm run tasks:migrate -- apply` with migration credentials before
 starting an upgraded observer. Include read access to the worker registry in any
 observer database grants, and upgrade every worker so the inventory is complete.
+
+For Go and Python upgrades, run their explicit `tasks-migrate apply` command
+before deploying the new runtime, even when the native schema marker is already
+version 1. This creates the shared worker registry used by the complete health
+gauges. Runtime worker roles need `SELECT`, `INSERT`, `UPDATE` and `DELETE` on
+`gregale_mcp_task_workers`; observer roles need only `SELECT` on that table.
+Native workers mark themselves draining before withdrawing handler availability,
+retain their drain registration through the configured drain deadline, and remove
+it when stopping. Late local heartbeats cannot reactivate the worker.
 
 `mcp_tasks_active_workers` counts unexpired registrations.
 `mcp_tasks_unsupported_handler_tasks` counts unexpired queued Tasks and
@@ -4226,6 +5280,12 @@ require the manual upgrade procedure above. Unsupported projects are rejected
 before control-plane requests or release journal creation; read-only journal
 status remains available.
 
+The web app must have an explicit, non-secret `MCP_TASK_NAMESPACE` matching the
+local release binding. The adapter checks it before deployment, during endpoint
+verification, immediately before promotion, and before each previous-worker park.
+A protocol-ready web app
+connected to another Task queue cannot qualify the release.
+
 The observer must have a non-secret `MCP_TASK_NAMESPACE` matching the local
 release binding and a non-secret `MCP_TASKS_SCALING_APP_SLUG` matching
 `observer_metric_app`. A fresh heartbeat from another namespace or destination
@@ -4259,7 +5319,20 @@ apps must be distinct. The worker source must start `npm run start:tasks-worker`
 and use a worker manifest; the web source must use the web-only Task role.
 All apps and local migration/runtime bindings must share the same Task namespace,
 database schema, ownership secret and required key ring. Previous worker stop
-grace must exceed the Task shutdown deadline (30 seconds by default).
+grace must exceed every running replica's actual Task shutdown deadline. Node
+defaults to 10 seconds and applies `MCP_DRAIN_TIMEOUT_SECONDS` before the config
+value. The startup event reports that effective value as `shutdownTimeoutMs`.
+Native checks require a valid receipt for each current instance before promotion
+and each park, including candidate retirement. Missing, invalid or conflicting
+receipts block the action. Workers refresh the same immutable process receipt
+every ten seconds. When retained receipts have left the instance's live log
+buffer, the CLI follows a bounded live window for up to thirty seconds and
+requires a valid receipt for every current running replica. Older workers still
+work while their startup receipt is retained; update them to refresh receipts
+before relying on native handoffs after log eviction. Previous worker pools may
+already be scaled to zero: they require no receipt, and their recorded deployment
+is still checked before promotion and conditional parking. A pool that restarts
+during the rollout must pass the running-replica receipt and stop-grace checks.
 
 The adapter deploys candidate workers into a separate app because an in-place
 worker deployment can retire the previous generation before readiness is checked.
@@ -4280,6 +5353,12 @@ previous worker apps and the gate verifies registrations
 have disappeared. The adapter never parks the web or observer apps.
 
 Keep the journal and its `.gate` checkpoint outside both source directories.
+Source roots are resolved through symlinks before checking containment and
+fingerprinting, so an aliased parent directory cannot admit a journal inside
+either deployment source.
+The native adapter binds its versioned `.gate` checkpoint to the source
+fingerprint as the release ID. The gate persists replacement IDs and completion
+so retries can reuse the same generation without starting extra workers.
 They contain deployment/worker IDs and progress, never credentials. Use
 `gregale mcp server tasks deploy status --plan release.json --state release-state.json`
 to inspect progress; rerun the same release command with the same source files,

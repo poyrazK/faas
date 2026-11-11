@@ -78,8 +78,10 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, payload snapshotBootPa
 	}
 	p, err := images.BeginImagePreparation(ctx, dep.ID, node)
 	if errors.Is(err, state.ErrNotFound) {
-		return nil
-	} // legacy in-flight or already handed off
+		// Legacy in-flight or already handed off. A handed-off release
+		// held for approval resumes here (ADR-20261020085706 amendment 12).
+		return h.resumeReleaseApprovalHold(ctx, dep)
+	}
 	if errors.Is(err, state.ErrImagePreparationNotOwned) {
 		return db.ErrNotificationNotOwned
 	}
@@ -93,7 +95,7 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, payload snapshotBootPa
 			h.markFailedOnUnhandledError(ctx, dep.ID, &err)
 		}
 	}()
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return err
 	}
@@ -269,7 +271,7 @@ func (h *Handler) finishImageHandoff(ctx context.Context, images state.Deploymen
 		return nil
 	}
 	dep = current
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return imageRecoveryError(err)
 	}

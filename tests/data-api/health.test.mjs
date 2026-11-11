@@ -33,6 +33,9 @@ test('compiled health CLI validates runtime pool observations over trusted TLS a
   })
   await new Promise(resolve => engine.listen(0, '127.0.0.1', resolve))
   const config = runtimeConfig({ DATABASE_URL: 'postgres://restricted:test-only@localhost/db', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
+  // Each scenario changes the pool seconds apart; public /healthz would reuse
+  // a ready answer for DataAPIHealthCache (ADR-20261109160000).
+  config.healthCacheMs = 0
   const gateway = createServer(config, async () => { throw Error('health must not verify JWTs') }, engine.address().port, engine.address().port, () => {})
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
   const serving = https.createServer({ key: await readFile(key), cert: await readFile(cert) }, (req, res) => {
@@ -50,6 +53,7 @@ test('compiled health CLI validates runtime pool observations over trusted TLS a
     assert.equal(req.headers.authorization, 'Bearer private-owner-token')
     if (req.url === '/v1/apps/notes') return res.end(JSON.stringify({ slug: 'notes', canonical_url: `https://127.0.0.1:${serving.address().port}` }))
     if (req.url === '/v1/apps/notes/data-api/connection-budget') return res.end(JSON.stringify({ version: 1, app: 'notes', state: 'not_applicable', truncated: false, databases: [] }))
+    if (req.url === '/v1/apps/notes/data-api/status') return res.end(JSON.stringify({ runtime_version: runtimeVersion, runtime_reports: 'available' }))
     if (req.url === '/v1/apps/notes/data-api/runtime') {
       return res.end(JSON.stringify({ version: runtimeVersion, archive_sha256: createHash('sha256').update(servedArchive).digest('hex'), archive: servedArchive.toString('base64') }))
     }

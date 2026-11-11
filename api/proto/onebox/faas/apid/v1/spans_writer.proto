@@ -58,6 +58,14 @@ service SpansWriter {
   // decodes, redacts and bounds each record, and writes log_events rows with
   // source runtime. Outcomes ride on the response, not gRPC errors.
   rpc IngestGuestLogs(IngestGuestSpansRequest) returns (IngestGuestLogsResponse);
+
+  // IngestGuestMetrics accepts one raw OTLP/HTTP metrics export from the
+  // in-guest bridge (ADR-20261108160000 slice B), for apps with
+  // tracing.metrics set. Same identity and codec as IngestGuestLogs (metrics
+  // signal bit cleared). apid checks the plan and the per-account export
+  // cap, translates the export like the public OTLP metrics endpoint and
+  // stores the app's custom metrics. Outcomes ride on the response.
+  rpc IngestGuestMetrics(IngestGuestSpansRequest) returns (IngestGuestMetricsResponse);
 }
 
 // WriteSpansSummaryRequest is one coalesced spans_summary
@@ -148,5 +156,15 @@ message IngestGuestLogsResponse {
   string outcome = 1;
   int64 accepted_records = 2;
   int64 rejected_records = 3;
+  int64 retry_after_ms = 4;
+}
+
+// IngestGuestMetricsResponse reports how many data points from one export
+// were stored and how many were rejected (unsupported type, attributes,
+// negative values, names beyond the app's cap).
+message IngestGuestMetricsResponse {
+  string outcome = 1;
+  int64 accepted_points = 2;
+  int64 rejected_points = 3;
   int64 retry_after_ms = 4;
 }

@@ -1,6 +1,8 @@
 // adr: 20261029151111 — under measured CPU admission the CPU gate charges a
 // measured instance its measured CPU, the vCPU gate stops counting its guest
-// vCPUs, and every booking stays within the overcommit cap.
+// vCPUs, and every booking stays within the overcommit cap. Since
+// ADR-20261109172421 the gates count rather than refuse: these tests read
+// where an admission would pass them (XCPUOverBudget).
 package sched_test
 
 import (
@@ -51,7 +53,8 @@ func TestMeasuredCPUAdmission(t *testing.T) {
 		// used is each measured instance's host CPU millicores.
 		used int
 		// want is how many 2 vCPU, 1000 millicore instances fit an 8 vCPU,
-		// 4000 millicore node when every admitted one is measured.
+		// 4000 millicore node's budgets when every admitted one is
+		// measured.
 		want int
 	}{
 		// 20 real millicores charge 160, so the CPU gate fits 19: a 20th
@@ -77,16 +80,19 @@ func TestMeasuredCPUAdmission(t *testing.T) {
 				clock.tick()
 				sample.measureAll(admitted, tc.used, clock.now())
 				clock.tick()
-				err := l.Admit(quietReq(admitted))
-				if err != nil {
+				r := quietReq(admitted)
+				if err := l.XCPUOverBudget(r); err != nil {
 					if !isCapacityRefusal(err) {
-						t.Fatalf("admit %d: %v, want a capacity refusal", admitted, err)
+						t.Fatalf("admit %d: %v, want a budget refusal", admitted, err)
 					}
 					break
 				}
+				if err := l.Admit(r); err != nil {
+					t.Fatalf("admit %d: %v", admitted, err)
+				}
 				admitted++
 				if admitted > 100 {
-					t.Fatal("admission never refused")
+					t.Fatal("admission never passed a budget")
 				}
 			}
 			if admitted != tc.want {
@@ -107,20 +113,23 @@ func TestMeasuredCPUAdmissionNeedsTheSample(t *testing.T) {
 		}
 	}
 	// No sample: bookings fill the 8 vCPU budget.
-	if err := l.Admit(quietReq(4)); !isCapacityRefusal(err) {
-		t.Fatalf("admit without a sample: %v, want a capacity refusal", err)
+	if err := l.XCPUOverBudget(quietReq(4)); !isCapacityRefusal(err) {
+		t.Fatalf("admit without a sample: %v, want past the budget", err)
 	}
 	// A sample taken before the instances were admitted cannot discount them.
 	sample.measureAll(4, 0, clock.now().Add(-time.Hour))
-	if err := l.Admit(quietReq(4)); !isCapacityRefusal(err) {
-		t.Fatalf("admit on a sample older than the bookings: %v, want a capacity refusal", err)
+	if err := l.XCPUOverBudget(quietReq(4)); !isCapacityRefusal(err) {
+		t.Fatalf("admit on a sample older than the bookings: %v, want past the budget", err)
 	}
 	sample.measureAll(4, 0, clock.now())
 	sample.ok = false
-	if err := l.Admit(quietReq(4)); !isCapacityRefusal(err) {
-		t.Fatalf("admit on a stale sample: %v, want a capacity refusal", err)
+	if err := l.XCPUOverBudget(quietReq(4)); !isCapacityRefusal(err) {
+		t.Fatalf("admit on a stale sample: %v, want past the budget", err)
 	}
 	sample.ok = true
+	if err := l.XCPUOverBudget(quietReq(4)); err != nil {
+		t.Fatalf("admit on a fresh sample: %v, want within the budget", err)
+	}
 	if err := l.Admit(quietReq(4)); err != nil {
 		t.Fatalf("admit on a fresh sample: %v", err)
 	}
@@ -163,9 +172,9 @@ func TestMeasuredCPUWithQuietPause(t *testing.T) {
 	}
 }
 
-// End to end on one node: placement, the ledger and the durable guard agree
-// on the measured discount, so a wake the vCPU bookings would refuse lands.
-func TestMeasuredCPUAdmissionReachesTheDurableGuard(t *testing.T) {
+// End to end on one node: a wake past the vCPU bookings lands whether or not
+// a sample discounts them; CPU never refuses work (ADR-20261109172421).
+func TestMeasuredCPUWakePastTheBudgetLands(t *testing.T) {
 	ctx := context.Background()
 	mem := state.NewMemStore()
 	existing, err := mem.ListComputeNodes(ctx, true)
@@ -177,11 +186,10 @@ func TestMeasuredCPUAdmissionReachesTheDurableGuard(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	vcpus := api.MustLimitsFor(api.PlanPro).VCPU
 	f := &failoverFleet{store: mem, ctx: ctx, vmm: newRefusingVMM(nil), ops: wire.NewOpsMetrics("schedd")}
 	node, err := mem.CreateComputeNode(ctx, state.ComputeNode{
 		Name: "measured-cpu", TargetURL: "tcp://10.0.5.2:7000",
-		VPCPUs: 80, MemMB: 16384, MaxConcurrency: 50, AdmissionCeilingMB: 8192, VCPUBudget: 2 * vcpus, Active: true,
+		VPCPUs: 80, MemMB: 16384, MaxConcurrency: 50, AdmissionCeilingMB: 8192, VCPUBudget: 2, Active: true, // two 256 MB instances fill it
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -199,24 +207,23 @@ func TestMeasuredCPUAdmissionReachesTheDurableGuard(t *testing.T) {
 		}
 		sample.millicores[res.InstanceID] = 20
 	}
-	third := f.app(t, api.PlanPro, 256, 1)
-	if _, err := f.e.Wake(ctx, third.ID, "", "", sched.TriggerCronSched); !isCapacityRefusal(err) {
-		t.Fatalf("wake with the vCPU budget booked and no sample: %v, want a capacity refusal", err)
-	}
-	sample.asOf, sample.ok = time.Now(), true
-	res, err := f.e.Wake(ctx, third.ID, "", "", sched.TriggerCronSched)
+	res, err := f.e.Wake(ctx, f.app(t, api.PlanPro, 256, 1).ID, "", "", sched.TriggerCronSched)
 	if err != nil {
-		t.Fatalf("wake with both booked instances measured idle: %v", err)
+		t.Fatalf("wake with the vCPU budget booked and no sample: %v, want it placed on memory", err)
 	}
 	if res.NodeID != node.ID {
 		t.Fatalf("wake placed on %s, want %s", res.NodeID, node.ID)
 	}
+	sample.asOf, sample.ok = time.Now(), true
+	if _, err := f.e.Wake(ctx, f.app(t, api.PlanPro, 256, 1).ID, "", "", sched.TriggerCronSched); err != nil {
+		t.Fatalf("wake with the booked instances measured: %v", err)
+	}
 }
 
 // Random admissions, releases, CPU changes and samples. At every admission
-// the node's CPU, computed independently from what the sample saw (measured
-// charges for instances it measured, bookings for the rest), must fit the
-// budget, and the bookings must fit the cap.
+// within the budgets the node's CPU, computed independently from what the
+// sample saw (measured charges for instances it measured, bookings for the
+// rest), must fit the budget, and the bookings must fit the cap.
 func TestMeasuredCPUAdmissionRandomTraffic(t *testing.T) {
 	rng := rand.New(rand.NewSource(1029))
 	sample := &fakeCPUSample{millicores: map[string]int{}}
@@ -257,11 +264,14 @@ func TestMeasuredCPUAdmissionRandomTraffic(t *testing.T) {
 				used += 1000
 				unmeasuredVCPU += 2
 			}
-			if err := l.Admit(r); err != nil {
+			if err := l.XCPUOverBudget(r); err != nil {
 				if !isCapacityRefusal(err) {
 					t.Fatalf("step %d: %v", step, err)
 				}
 				continue
+			}
+			if err := l.Admit(r); err != nil {
+				t.Fatalf("step %d: %v", step, err)
 			}
 			if used+1000 > quietCPUBudget {
 				t.Fatalf("step %d: admitted with %d CPU in use + 1000 over the %d budget", step, used, quietCPUBudget)

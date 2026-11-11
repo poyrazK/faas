@@ -113,7 +113,21 @@ type edgeMetrics struct {
 	// refused counts connections and requests the per-client-address
 	// limits turned away, by reason (ADR-20261103163954 §4).
 	refused *prometheus.CounterVec
+	// overloadLevel and overloadSignal export the overload level and the
+	// signals it follows (ADR-20261110123517 §8).
+	overloadLevel  prometheus.Gauge
+	overloadSignal *prometheus.GaugeVec
+	// hopFallbacks counts requests for the binary hop that went over
+	// HTTP/1.1 instead, by reason (ADR-20261110081523).
+	hopFallbacks *prometheus.CounterVec
 }
+
+// Label values of gatewayd_public_overload_signal.
+const (
+	overloadSignalSchedDelay   = "sched_delay_p99_seconds"
+	overloadSignalNodePressure = "node_cpu_pressure"
+	overloadSignalGatewayShare = "gateway_cpu_share"
+)
 
 func newEdgeMetrics() *edgeMetrics {
 	m := &edgeMetrics{
@@ -148,11 +162,32 @@ func newEdgeMetrics() *edgeMetrics {
 		}),
 		refused: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gatewayd_public_edge_refused_total",
-			Help: "Connections and requests a compute edge's client limits turned away, by reason: open_connections, connection_rate and handshakes (reset before TLS), request_rate (answered 429), body_rate (a body slower than the minimum rate, its read failed) and forward_in_flight (answered 503 at the cap on requests forwarded to the control plane) (ADR-20261103163954 §4).",
+			Help: "Connections and requests a compute edge's client limits turned away, by reason: open_connections, connection_rate and handshakes (reset before TLS), request_rate and host_request_rate (answered 429), body_rate (a body slower than the minimum rate, its read failed) and forward_in_flight (answered 503 at the cap on requests forwarded to the control plane) (ADR-20261103163954 §4); handshakes_per_address and forward_in_flight_per_address (one address's share, ADR-20261107180000); and, while the edge sheds load, overload_connection and overload_cooloff (reset before TLS, or a cut-off address's request) and overload_unknown_host, overload_address and overload_request (answered 503 edge_overloaded) (ADR-20261110123517).",
+		}, []string{"reason"}),
+		overloadLevel: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gatewayd_public_overload_level",
+			Help: "A compute edge's overload level, from 0 to 1, in observe and on modes; the edge sheds by it only when FAAS_EDGE_OVERLOAD=on (ADR-20261110123517).",
+		}),
+		overloadSignal: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gatewayd_public_overload_signal",
+			Help: "The signals a compute edge's overload level follows, each over the last second: sched_delay_p99_seconds (the edge's goroutine scheduling delay), node_cpu_pressure (share of time any task waited for a CPU) and gateway_cpu_share (the gateway daemons' share of the node's CPUs) (ADR-20261110123517).",
+		}, []string{"signal"}),
+		hopFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gatewayd_public_internal_hop_fallback_total",
+			Help: "Requests a compute edge meant for its own node's gatewayd-internal in binary HTTP that went over HTTP/1.1 instead, by reason: no_socket (the hop socket is missing or nothing listens on it, as beside a gatewayd-internal from before the hop or while it restarts) and dial_error (ADR-20261110081523).",
 		}, []string{"reason"}),
 	}
 	for _, reason := range clientlimit.Reasons {
 		m.refused.WithLabelValues(reason)
+	}
+	for _, reason := range clientlimit.OverloadReasons {
+		m.refused.WithLabelValues(reason)
+	}
+	for _, signal := range []string{overloadSignalSchedDelay, overloadSignalNodePressure, overloadSignalGatewayShare} {
+		m.overloadSignal.WithLabelValues(signal)
+	}
+	for _, reason := range gateway.HopFallbackReasons {
+		m.hopFallbacks.WithLabelValues(reason)
 	}
 	for _, result := range placementResults {
 		m.placement.WithLabelValues(result)
@@ -162,8 +197,21 @@ func newEdgeMetrics() *edgeMetrics {
 			m.wakeFailover.WithLabelValues(reason, outcome)
 		}
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures, m.refused)
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures, m.refused, m.overloadLevel, m.overloadSignal, m.hopFallbacks)
 	return m
+}
+
+// observeOverload exports one tick of the overload controller.
+func (m *edgeMetrics) observeOverload(s clientlimit.OverloadSignals, level float64) {
+	m.overloadLevel.Set(level)
+	m.overloadSignal.WithLabelValues(overloadSignalSchedDelay).Set(s.SchedDelayP99.Seconds())
+	m.overloadSignal.WithLabelValues(overloadSignalNodePressure).Set(s.NodeCPUPressure)
+	m.overloadSignal.WithLabelValues(overloadSignalGatewayShare).Set(s.GatewayCPUShare)
+}
+
+// observeHopFallback counts one binary hop request sent over HTTP/1.1.
+func (m *edgeMetrics) observeHopFallback(reason string) {
+	m.hopFallbacks.WithLabelValues(reason).Inc()
 }
 
 // observeWakeFailover is the gateway.WakeFailover observer.
@@ -198,6 +246,9 @@ type localFirstDialer struct {
 	// it (ADR-20261031105055); nil keeps every request local first.
 	placement     *edgePlacement
 	placementPool *computeGatewayPool
+	// hop, when set, dials this node's gatewayd-internal's binary HTTP
+	// socket, offered with the local upstream (ADR-20261110081523).
+	hop gateway.InternalDialer
 }
 
 // nodeInventory reports a compute node's registry state: whether it is
@@ -224,6 +275,18 @@ func (d *localFirstDialer) withPlacement(placement *edgePlacement, pool *compute
 	d.placement = placement
 	d.placementPool = pool
 	return d
+}
+
+// withBinaryHop offers the local upstream's binary HTTP socket, dialled
+// with hop (ADR-20261110081523).
+func (d *localFirstDialer) withBinaryHop(hop gateway.InternalDialer) *localFirstDialer {
+	d.hop = hop
+	return d
+}
+
+// dialHop opens a connection to this node's binary HTTP socket.
+func (d *localFirstDialer) dialHop(ctx context.Context) (net.Conn, error) {
+	return d.hop.DialContext(ctx, "")
 }
 
 // placementRoute returns the ready node a request's host was last served
@@ -328,7 +391,11 @@ func (d *localFirstDialer) PickUpstream(ctx context.Context, rec *gateway.DialRe
 	localExcluded := d.nodeName != "" && rec.Excluded(d.nodeName)
 	viaLocal := d.healthy.Load() && !localExcluded
 	if viaLocal && !slices.Contains(failed, localUpstreamKey) {
-		return gateway.Upstream{Key: localUpstreamKey, Node: d.nodeName, Dial: d.dialLocal}, nil
+		local := gateway.Upstream{Key: localUpstreamKey, Node: d.nodeName, Dial: d.dialLocal}
+		if d.hop != nil {
+			local.Hop = d.dialHop
+		}
+		return local, nil
 	}
 	pool, ok := d.fallback.(gateway.UpstreamPicker)
 	if !ok {
@@ -523,12 +590,12 @@ func newControlPlaneForwarder(target string, trusted []netip.Prefix, log *slog.L
 // next: upload routes and their receipts are forwarded; public bucket reads
 // go to localReads when the edge serves them itself and are forwarded
 // otherwise; everything else goes to next.
-func computeEdgeRoot(next, forward, localReads http.Handler, store objectstorage.PublicReadStore, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
+func computeEdgeRoot(next, forward, localReads http.Handler, store objectstorage.PublicReadStore, hostLookups *objectstorage.HostLookupBudget, tenantSurfaces func() bool, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
 	publicRead := localReads
 	if publicRead == nil {
 		var err error
 		publicRead, err = objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
-			Store: store, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
+			Store: store, HostLookups: hostLookups, TenantSurfacesEnabled: tenantSurfaces, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
 		})
 		if err != nil {
 			return nil, err

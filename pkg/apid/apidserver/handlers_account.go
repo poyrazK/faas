@@ -196,6 +196,9 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 // returns the same envelope (status + scheduled_at + restore_until)
 // without re-stamping the timestamp or re-sending the email.
 func (s *server) deleteAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !s.sessionPresenceForIrreversible(w, r, acct, "account_delete") {
+		return
+	}
 	fresh, err := s.scheduleDeletion(r.Context(), acct, "rest", r.URL.Query().Get(includeManagedPostgresParam) == "true")
 	if err != nil {
 		api.WriteProblem(w, err)
@@ -398,6 +401,9 @@ func (s *server) cancelDeletion(ctx context.Context, acct state.Account, via str
 			"this deletion was scheduled for non-payment; paying the outstanding balance cancels it: "+wire.DashboardBillingURL)
 	}
 	if err := s.store.RestoreAccount(ctx, acct.ID); err != nil {
+		if !errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrNotFound) {
+			return acct, api.ErrCapacity("could not restore account; try again")
+		}
 		return acct, api.NewProblem(http.StatusConflict, api.CodeAccountNotRestorable,
 			"Grace expired",
 			"the 30-day grace window has lapsed; restore is no longer possible")
@@ -804,11 +810,12 @@ func writeAccountExportJSON(ctx context.Context, s *server, acct state.Account, 
 		{"builds", func() (any, error) { return listBuildsForAccountExport(ctx, s.store, acct.ID, depByID) }},
 		{"instances", func() (any, error) { return listInstancesForAccountExport(ctx, s.store, acct.ID) }},
 		{"usage", func() (any, error) { return listUsageForAccountExport(ctx, s.store, acct.ID) }},
-		{"domains", func() (any, error) { return listDomainsForAccountExport(ctx, s.store, acct.ID) }},
+		{"domains", func() (any, error) { return listDomainsForAccountExport(s.defaultDomainContext(ctx), s.store, acct.ID) }},
 		{"crons", func() (any, error) { return listCronsForAccountExport(ctx, s.store, acct.ID) }},
 		{"api_keys", func() (any, error) { return listKeysForAccountExport(ctx, s.store, acct.ID) }},
 		{"edge_rules", func() (any, error) { return s.listEdgeRulesForAccountExport(ctx, acct) }},
 		{"edge_rule_lists", func() (any, error) { return listEdgeRuleListsForAccountExport(ctx, s.store, acct.ID) }},
+		{"cors_presets", func() (any, error) { return s.listCorsPresetsForAccountExport(ctx, acct) }},
 	}
 	for _, section := range sections {
 		value, err := section.load()
@@ -1078,11 +1085,20 @@ func (s *server) setGraceWindow(w http.ResponseWriter, r *http.Request, acct sta
 			"days must be >= 0 (0 = atomic rotation, null = use plan default)"))
 		return
 	}
+	if req.Days != nil && *req.Days > api.APIKeyGraceWindowMaxDays {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid grace window",
+			fmt.Sprintf("days must be at most %d (got %d); see %s", api.APIKeyGraceWindowMaxDays, *req.Days, wire.DocsBaseURL+"/api-keys")))
+		return
+	}
 
 	// Read the prior value for the audit row. The cache may
 	// short-circuit this — invalidated-or-stale cache is fine.
 	oldDays, _ := s.resolveGraceWindow(r.Context(), acct.ID) // best-effort
-	_ = s.store.SetAccountKeyGraceWindow(r.Context(), acct.ID, req.Days)
+	if err := s.store.SetAccountKeyGraceWindow(r.Context(), acct.ID, req.Days); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not save key rotation grace window; try again"))
+		return
+	}
 	if s.graceWindowCache != nil {
 		s.graceWindowCache.Invalidate(acct.ID)
 	}

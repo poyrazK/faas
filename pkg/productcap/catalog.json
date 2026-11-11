@@ -26,8 +26,11 @@
         "/logout",
         "/signup",
         "=/v1/account",
+        "/v1/account/email",
         "/v1/account/mfa",
         "/v1/account/rate-limits",
+        "/v1/account/security-activity",
+        "/v1/account/sign-in-methods",
         "/v1/auth/capabilities",
         "/v1/auth/csrf",
         "/v1/auth/github",
@@ -69,7 +72,7 @@
       "id": "agents",
       "name": "Agents",
       "category": "runtime",
-      "description": "Run a coding-agent harness in a one-shot microVM from the API, an automation step or a broker trigger.",
+      "description": "Run a coding-agent harness in a one-shot microVM from the API, a stored workflow step or a broker trigger.",
       "maturity": "internal",
       "plans": [],
       "docs_url": "/docs/adr/20261027090010-agent-runs-and-agent-step",
@@ -78,7 +81,13 @@
         "/v1/agent-callbacks",
         "/v1/agent-runs",
         "/v1/agent-tools",
-        "/v1/agents"
+        "/v1/agents",
+        "/v1/sandbox-snapshots",
+        "/v1/sandbox-templates",
+        "/v1/sandboxes"
+      ],
+      "cli": [
+        "sandbox-templates"
       ],
       "consumers": [
         "schedd"
@@ -341,6 +350,7 @@
       "routes": [
         "/dashboard/account/keys",
         "/v1/account/keys",
+        "/v1/agent-approvals",
         "/v1/agent-connections",
         "/v1/keys",
         "/v1/orgs/{}/agent-connections",
@@ -416,7 +426,8 @@
       "parent": "billing",
       "routes": [
         "/dashboard/app-costs",
-        "/v1/billing/costs"
+        "/v1/billing/costs",
+        "/v1/apps/{}/costs"
       ],
       "cli": [
         "app costs",
@@ -467,7 +478,8 @@
       "cli": [
         "app cp",
         "app exec",
-        "app port-forward"
+        "app port-forward",
+        "postgres connect"
       ]
     },
     {
@@ -509,7 +521,9 @@
         "/v1/apps/{}/inbox",
         "/v1/apps/{}/outbox",
         "/v1/apps/{}/queues/send",
-        "/v1/orgs/{}/apps/{}/queues/send"
+        "/v1/apps/{}/queues/send-batch",
+        "/v1/orgs/{}/apps/{}/queues/send",
+        "/v1/orgs/{}/apps/{}/queues/send-batch"
       ],
       "cli": [
         "send",
@@ -558,11 +572,15 @@
         "/dashboard/apps/{}/restore",
         "=/v1/apps",
         "=/v1/apps/{}",
+        "/v1/apps/{}/operation-preview",
+        "/v1/apps/{}/resource-inventory",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
+        "/v1/apps/{}/service-aborts",
         "/v1/deleted-apps",
         "/dashboard/apps/{}/deployment-submissions",
         "/dashboard/apps/{}/deployments",
+        "/v1/apps/{}/deployment-promotions",
         "/v1/apps/{}/deployment-submissions",
         "=/v1/apps/{}/deployments",
         "/v1/apps/{}/deployments/clear-obsolete",
@@ -665,28 +683,6 @@
       ]
     },
     {
-      "id": "automations",
-      "name": "Automations",
-      "category": "async",
-      "description": "Run steps against an app manually, on a schedule or on an event.",
-      "maturity": "internal",
-      "plans": [],
-      "docs_url": "/docs/automations",
-      "acceptance_test": "pkg/apid/apidserver/handlers_automations_test.go::TestAutomationAPI",
-      "routes": [
-        "/dashboard/apps/{}/automations",
-        "/v1/apps/{}/automations",
-        "/v1/apps/{}/automations:publish-policy",
-        "/v1/apps/{}/automations:simulate",
-        "/v1/apps/{}/automations:validate",
-        "/v1/apps/{}/inbound-webhooks/{}/automation-binding",
-        "/v1/apps/{}/inbound-webhooks/{}/automation-receipts"
-      ],
-      "cli": [
-        "automations"
-      ]
-    },
-    {
       "id": "autoscaling",
       "name": "Autoscaling",
       "category": "runtime",
@@ -699,6 +695,9 @@
       ],
       "docs_url": "/docs/scaling-policy",
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestUpdateAppAutoscaleDisableZero",
+      "routes": [
+        "/v1/apps/{}/scaling"
+      ],
       "settings": [
         "app.function_concurrency",
         "app.max_concurrency",
@@ -734,7 +733,7 @@
       "id": "billing",
       "name": "Billing",
       "category": "billing",
-      "description": "Choose a plan, see usage and invoices and set an overage cap.",
+      "description": "Choose a plan, see usage and invoices, set an overage cap and elect to pay for egress above the allowance.",
       "maturity": "ga",
       "plans": [
         "free",
@@ -756,6 +755,7 @@
         "/dashboard/upgrade",
         "/dashboard/usage",
         "/v1/account/billing",
+        "/v1/account/egress-overage",
         "/v1/account/overage-cap",
         "/v1/account/plan",
         "/v1/account/statement-invoices",
@@ -768,6 +768,7 @@
         "/v1/billing/status",
         "/v1/invoices",
         "/v1/orgs/{}/billing",
+        "/v1/orgs/{}/egress-overage",
         "/v1/orgs/{}/invoices",
         "/v1/orgs/{}/overage-cap",
         "/v1/orgs/{}/plan",
@@ -783,7 +784,8 @@
         "invoices",
         "plan",
         "usage",
-        "overage-cap"
+        "overage-cap",
+        "billing egress-overage"
       ]
     },
     {
@@ -903,8 +905,8 @@
       "id": "budgets",
       "name": "Budgets",
       "category": "billing",
-      "description": "Set budgets with projections, alerts and automatic stops.",
-      "maturity": "beta",
+      "description": "Set account, organization, project, environment, app and job budgets with projected overruns, threshold alerts to email, Slack and PagerDuty, and automatic preview stops.",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -1247,6 +1249,7 @@
         "=/dashboard",
         "/dashboard/apps/new",
         "/dashboard/assets",
+        "/doctor.js",
         "/history.js",
         "/replacement.js",
         "/resolution.js",
@@ -1263,7 +1266,6 @@
       "description": "Serve a managed Postgres database over a generated HTTP API.",
       "maturity": "preview",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -1393,7 +1395,6 @@
       "docs_url": "/docs/cli",
       "acceptance_test": "pkg/apid/apidserver/handlers_debug_running_test.go::TestDebugRunning_IsPlanGated",
       "routes": [
-        "/dashboard/apps/{}/debug",
         "/v1/apps/{}/debug"
       ],
       "cli": [
@@ -1738,7 +1739,10 @@
       "acceptance_test": "cmd/gatewayd-public/main_test.go::TestInstallPublicStaticRoutes_SecurityTxt",
       "core": true,
       "routes": [
-        "/docs"
+        "/acceptable-use",
+        "/docs",
+        "/privacy",
+        "/terms"
       ]
     },
     {
@@ -2222,7 +2226,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/env",
+      "docs_url": "/docs/environment-gitops",
       "acceptance_test": "pkg/apid/apidserver/handlers_environment_gitops_test.go::TestEnvironmentGitOpsHTTPScopedConfigWorkflow",
       "parent": "environments",
       "routes": [
@@ -3163,7 +3167,6 @@
       "description": "Create a managed PostgreSQL database and bind it to an app.",
       "maturity": "ga",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -3509,9 +3512,9 @@
     },
     {
       "id": "object-storage-compute",
-      "name": "Object storage compute triggers",
+      "name": "Object storage compute bindings and triggers",
       "category": "data",
-      "description": "Run app code on bucket notifications.",
+      "description": "Bind buckets to apps and run app code on bucket notifications.",
       "maturity": "preview",
       "plans": [
         "hobby",
@@ -3529,6 +3532,22 @@
         "/v1/orgs/{}/apps/{}/buckets/{}/compute-triggers",
         "/v1/orgs/{}/apps/{}/buckets/{}/notifications"
       ]
+    },
+    {
+      "id": "object-storage-key-scopes",
+      "name": "Key-scoped bucket bindings",
+      "category": "data",
+      "description": "Limit an app's bucket binding to object keys under one prefix.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/apid/object/key_scope_test.go::TestKeyScopedBindingsNeedTheCapability",
+      "parent": "object-storage"
     },
     {
       "id": "object-versioning",
@@ -3874,6 +3893,7 @@
       "docs_url": "/docs/orgs",
       "acceptance_test": "pkg/apid/apidserver/handlers_org_test.go::TestOrgUUID_Pin",
       "routes": [
+        "/dashboard/invitations/{}",
         "/dashboard/orgs",
         "/v1/invitations",
         "=/v1/orgs",
@@ -3882,6 +3902,7 @@
         "/v1/orgs/{}/activity",
         "/v1/orgs/{}/apps",
         "/v1/orgs/{}/invitations",
+        "/v1/orgs/{}/leave",
         "/v1/orgs/{}/members",
         "/v1/orgs/{}/transfer_ownership"
       ],
@@ -3901,7 +3922,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/networking",
+      "docs_url": "/docs/outbound-integrations",
       "acceptance_test": "pkg/apid/apidserver/handlers_outbound_ai_test.go::TestCreateOutboundIntegrationRejectsInvalidAIPolicy",
       "routes": [
         "/dashboard/apps/{}/outbound-bindings",
@@ -4001,7 +4022,6 @@
       "description": "Bind databases to apps and rotate their credentials.",
       "maturity": "ga",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -4010,6 +4030,7 @@
       "acceptance_test": "cmd/gregale/commands_postgres_egress_test.go::TestPostgresBindingDeliveryGuidance",
       "parent": "managed-postgres",
       "routes": [
+        "/v1/apps/{}/postgres-bindings",
         "/v1/orgs/{}/postgres/bindings",
         "/v1/postgres/bindings",
         "/v1/postgres/databases/{}/bindings"
@@ -4105,7 +4126,6 @@
       "description": "Restore a database to an earlier point in time.",
       "maturity": "ga",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -4148,6 +4168,27 @@
       ]
     },
     {
+      "id": "preview-databases",
+      "name": "PR preview databases",
+      "category": "data",
+      "description": "Each pull request's preview gets its own managed PostgreSQL database, migrated by its release command and removed with the preview.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/preview-databases",
+      "acceptance_test": "pkg/apid/apidserver/preview_databases_test.go::TestPreviewDatabasesFollowTheirPreview",
+      "parent": "pr-previews",
+      "routes": [
+        "/v1/postgres/databases/{}/previews"
+      ],
+      "cli": [
+        "postgres previews"
+      ]
+    },
+    {
       "id": "private-apps",
       "name": "Private apps",
       "category": "edge",
@@ -4183,7 +4224,8 @@
         "/v1/networks"
       ],
       "cli": [
-        "app network"
+        "app network attach",
+        "app network detach"
       ]
     },
     {
@@ -4240,7 +4282,7 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_pgstore_test.go::TestPGHandler_DebuggerRequestAndRegressionReadPaths",
       "parent": "debug",
       "routes": [
-        "/dashboard/apps/{}/debug/requests",
+        "/dashboard/apps/{}/debug",
         "/v1/apps/{}/debug/compare",
         "/v1/apps/{}/debug/critical-paths",
         "/v1/apps/{}/debug/requests",
@@ -4380,6 +4422,9 @@
       ],
       "docs_url": "/docs/multi-service",
       "acceptance_test": "cmd/e2e/multi_service_project_e2e_test.go::TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName",
+      "settings": [
+        "manifest.project"
+      ],
       "routes": [
         "/dashboard/projects",
         "/v1/orgs/{}/projects",
@@ -4391,11 +4436,15 @@
         "=/v1/projects/{}",
         "/v1/projects/{}/delete-preview",
         "/v1/projects/{}/deployment-readiness",
+        "/v1/projects/{}/environments/{}/config",
+        "/v1/projects/{}/environments/{}/secrets",
         "/v1/projects/{}/exclusions",
         "/v1/projects/{}/release-secrets"
       ],
       "cli": [
-        "projects"
+        "projects",
+        "projects environments config",
+        "projects environments secrets"
       ]
     },
     {
@@ -4722,6 +4771,9 @@
       ],
       "docs_url": "/docs/deploys",
       "acceptance_test": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_PinsProcfileReleaseCommand",
+      "routes": [
+        "/v1/deployments/{}/release-outcome"
+      ],
       "settings": [
         "manifest.release"
       ]
@@ -4773,6 +4825,20 @@
       "acceptance_test": "pkg/reposcan/scan_test.go::TestScan_RootsOnly",
       "cli": [
         "scan"
+      ]
+    },
+    {
+      "id": "repository-functions",
+      "name": "Functions projects from repository pushes",
+      "category": "delivery",
+      "description": "Deploy a gregale.yaml functions project from a connected repository, one function app per function.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261108160000-functions-projects-from-repository-pushes",
+      "acceptance_test": "pkg/reposcan/functions_test.go::TestScanFunctionsProject",
+      "parent": "projects",
+      "consumers": [
+        "githubd"
       ]
     },
     {
@@ -5585,6 +5651,28 @@
       ]
     },
     {
+      "id": "stored-workflows",
+      "name": "Stored workflows",
+      "category": "async",
+      "description": "Run steps against an app manually, on a schedule or on an event.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/stored-workflows",
+      "acceptance_test": "pkg/apid/apidserver/handlers_stored_workflows_test.go::TestStoredWorkflowAPI",
+      "routes": [
+        "/dashboard/apps/{}/workflows/stored",
+        "/v1/apps/{}/workflows/stored",
+        "/v1/apps/{}/workflows/stored:publish-policy",
+        "/v1/apps/{}/workflows/stored:simulate",
+        "/v1/apps/{}/workflows/stored:validate",
+        "/v1/apps/{}/inbound-webhooks/{}/workflow-binding",
+        "/v1/apps/{}/inbound-webhooks/{}/workflow-receipts"
+      ],
+      "cli": [
+        "stored-workflows"
+      ]
+    },
+    {
       "id": "streaming-and-grpc",
       "name": "Streaming and gRPC",
       "category": "edge",
@@ -5606,6 +5694,22 @@
         "/dashboard/apps/{}/streaming-cap",
         "/v1/apps/{}/streaming-cap"
       ]
+    },
+    {
+      "id": "strict-budgets",
+      "name": "Strict budgets",
+      "category": "billing",
+      "description": "Cap compute and egress spending with budgets that stop workloads before they spend past the limit.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/billing",
+      "acceptance_test": "pkg/state/financialtest/financial_compute_account_test.go::TestFinancialComputeAccountReservations",
+      "parent": "budgets"
     },
     {
       "id": "synthetic-checks",

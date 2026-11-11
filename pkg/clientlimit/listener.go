@@ -15,13 +15,20 @@ const (
 	ReasonOpenConnections = "open_connections"
 	ReasonConnectionRate  = "connection_rate"
 	ReasonHandshakes      = "handshakes"
-	ReasonRequestRate     = "request_rate"
-	ReasonBodyRate        = "body_rate"
-	ReasonForwardInFlight = "forward_in_flight"
+	// ReasonHandshakesPerAddress refuses a connection whose address already
+	// has its share of the handshakes in progress (ADR-20261107180000).
+	ReasonHandshakesPerAddress = "handshakes_per_address"
+	ReasonRequestRate          = "request_rate"
+	ReasonBodyRate             = "body_rate"
+	ReasonForwardInFlight      = "forward_in_flight"
+	// ReasonForwardInFlightPerAddress refuses a forward from an address that
+	// already has its share of them (ADR-20261107180000).
+	ReasonForwardInFlightPerAddress = "forward_in_flight_per_address"
+	ReasonHostRequestRate           = "host_request_rate"
 )
 
 // Reasons lists every refusal reason, so a counter can start each at zero.
-var Reasons = []string{ReasonOpenConnections, ReasonConnectionRate, ReasonHandshakes, ReasonRequestRate, ReasonBodyRate, ReasonForwardInFlight}
+var Reasons = []string{ReasonOpenConnections, ReasonConnectionRate, ReasonHandshakes, ReasonRequestRate, ReasonBodyRate, ReasonForwardInFlight, ReasonHostRequestRate}
 
 // ConnLimits bound one client address's connections to a listener.
 type ConnLimits struct {
@@ -32,6 +39,16 @@ type ConnLimits struct {
 	NewBurst     int
 	// TrackedAddrsMax bounds the addresses kept in memory.
 	TrackedAddrsMax int
+	// Exempt are a proxy's addresses, each carrying many clients: their
+	// connections are not limited or tracked. The proxy's clients are
+	// limited per request by the address it forwards instead.
+	//
+	// The proxy's ranges also carry traffic the proxy does not vouch for
+	// (another customer's zone, its VPN users), so an exempt connection is
+	// only provisionally free: Settle decides after the TLS handshake
+	// whether it stays exempt or is counted like any client
+	// (ADR-20261104221012).
+	Exempt []netip.Prefix
 }
 
 // Listener refuses a connection, with a TCP reset, when its address already
@@ -41,7 +58,7 @@ type ConnLimits struct {
 type Listener struct {
 	net.Listener
 	limits  ConnLimits
-	table   *table
+	table   *table[netip.Prefix]
 	refused func(reason string)
 }
 
@@ -51,7 +68,7 @@ func NewListener(inner net.Listener, limits ConnLimits, refused func(reason stri
 	return &Listener{
 		Listener: inner,
 		limits:   limits,
-		table:    newTable(limits.NewPerSecond, limits.NewBurst, limits.TrackedAddrsMax, now),
+		table:    newTable[netip.Prefix](limits.NewPerSecond, limits.NewBurst, limits.TrackedAddrsMax, now),
 		refused:  refused,
 	}
 }
@@ -68,6 +85,9 @@ func (l *Listener) Accept() (net.Conn, error) {
 		if !ok {
 			return c, nil
 		}
+		if l.exempt(key) {
+			return &limitedConn{Conn: c, key: key, pending: true}, nil
+		}
 		e, reason := l.admit(key)
 		if reason != "" {
 			l.refused(reason)
@@ -76,6 +96,16 @@ func (l *Listener) Accept() (net.Conn, error) {
 		}
 		return &limitedConn{Conn: c, release: func() { l.release(e) }}, nil
 	}
+}
+
+// exempt reports whether key belongs to an exempt proxy.
+func (l *Listener) exempt(key netip.Prefix) bool {
+	for _, p := range l.limits.Exempt {
+		if p.Contains(key.Addr()) {
+			return true
+		}
+	}
+	return false
 }
 
 // admit counts a new connection from key, or names the limit it breaks.
@@ -103,15 +133,56 @@ func (l *Listener) release(e *entry) {
 	l.table.mu.Unlock()
 }
 
-// limitedConn gives its address's slot back when it closes.
+// Settle decides a connection from an exempt address once its TLS handshake
+// is done. vouched reports that the proxy proved itself (it presented the
+// client certificate only our zone holds): the connection stays exempt.
+// Otherwise it is admitted against its address's limits now, as if it had
+// just arrived; the returned reason names the limit it breaks, and the caller
+// refuses it. c is the raw connection under TLS (tls.Conn.NetConn). A
+// connection Accept already limited, or one from an untracked address,
+// passes unchanged.
+func (l *Listener) Settle(c net.Conn, vouched bool) (reason string, ok bool) {
+	lc, isLimited := c.(*limitedConn)
+	if !isLimited {
+		return "", true
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if !lc.pending {
+		return "", true
+	}
+	lc.pending = false
+	if vouched {
+		return "", true
+	}
+	e, reason := l.admit(lc.key)
+	if reason != "" {
+		return reason, false
+	}
+	lc.release = func() { l.release(e) }
+	return "", true
+}
+
+// limitedConn gives its address's slot back when it closes. A pending
+// connection is from an exempt address and holds no slot until Settle.
 type limitedConn struct {
 	net.Conn
 	once    sync.Once
+	mu      sync.Mutex
+	key     netip.Prefix
+	pending bool
 	release func()
 }
 
 func (c *limitedConn) Close() error {
-	c.once.Do(c.release)
+	c.once.Do(func() {
+		c.mu.Lock()
+		release := c.release
+		c.mu.Unlock()
+		if release != nil {
+			release()
+		}
+	})
 	return c.Conn.Close()
 }
 

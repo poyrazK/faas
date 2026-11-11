@@ -29,7 +29,12 @@ Use Gregale ARNs with canonical account/application UUIDs:
 Validate same account and bucket region, a non-deleted owned application, plan
 entitlement, and an existing enabled queue binding. Destination validation is
 local and cannot be skipped. It does not send an AWS `s3:TestEvent` or probe a
-function. Queue and CloudFunction XML configurations are supported. SNS,
+function. Company applications use their adopted organization's current plan
+for configuration and destination admission, including queue depth; the
+creator's personal plan does not grant or remove company entitlement. An
+unqualified queue ARN must identify exactly one enabled binding across the
+application's environments. Ambiguous names are rejected during configuration.
+Queue and CloudFunction XML configurations are supported. SNS,
 EventBridge and AWS ARNs are rejected. Configuration limits live in
 `pkg/api/limits.go`; unknown/repeated XML fields and unsupported events fail
 before replacement. ObjectCreated PUT/copy/multipart completion, ObjectRemoved
@@ -45,7 +50,12 @@ and ID determine the recipient identity; the existing event identity determines
 its stable invocation ID. Policy removal/replacement cannot redirect accepted
 events. Removed queue bindings cannot redirect a receipt to a newly created
 binding with the same name. Deleted destinations fail through existing fanout
-failure/replay inspection. No historical backfill occurs.
+failure/replay inspection. Delivery resolves the captured binding ID, persists
+its immutable deployment scope on the invocation, and checks that its original
+environment remains available. Renaming the binding or adding a same-name queue
+in another environment cannot redirect accepted work. If a name becomes
+ambiguous before mutation capture, the mutation still settles and the captured
+recipient fails as unavailable. No historical backfill occurs.
 
 Functions receive ordinary async POST invocations and queues receive named
 queue invocations. Both carry a JSON `Records` array using S3 event schema 2.1,
@@ -58,8 +68,10 @@ identity. Provider sequencer, request/actor provenance and AWS test-message
 semantics are outside this profile; there is no provider mutation ordering
 proof from which to invent those values.
 
-Notification queue admission locks the account and application, counts live
-queue rows and inserts through SQLC in one transaction. The application lock
+Notification queue admission locks the current policy owner, the captured
+binding's environment and the application in that order, counts live queue rows
+across the application and inserts through SQLC in one transaction. The
+application lock
 also excludes key-share locks from concurrent invocation FK inserts. A
 committed identical admission succeeds before capacity is checked again,
 covering a lost recipient checkpoint at full depth. Queue capacity/entitlement

@@ -322,13 +322,22 @@ func TestCDControlPlaneConvergesOutbounddAndPublicBetaBilling(t *testing.T) {
 	for _, required := range []string{
 		"host-config/outboundd.toml",
 		"FAAS_OUTBOUNDD_ROLE=control-plane",
-		"FAAS_BILLING_MODE=disabled",
+		// The environment's FAAS_BILLING_MODE, disabled when unset
+		// (scripts/ci/faas_billing_mode.sh).
+		"Environment=FAAS_BILLING_MODE=@FAAS_BILLING_MODE@",
 		"/etc/faas/secrets/outboundd/outboundd.env",
 		"faas_map  faas-outboundd  faas",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("control-plane workflow is missing convergence contract %q", required)
 		}
+	}
+	// ADR-20261023104734 step 2: on a contracted cluster the legacy owner
+	// mapping is removed, never appended again.
+	guard := strings.Index(workflow, `/faas-owner-contracted" ]]; then`)
+	appendAt := strings.Index(workflow, "printf 'faas_map  faas-outboundd  faas")
+	if guard < 0 || appendAt < 0 || guard > appendAt {
+		t.Errorf("the outboundd owner mapping must be skipped and removed once the owner is contracted: guard=%d append=%d", guard, appendAt)
 	}
 	prerequisites := strings.Index(workflow, "outboundd was added after the original")
 	deploy := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")

@@ -15,6 +15,7 @@ import (
 const (
 	ConfigSourceBaseline     = "baseline"
 	ConfigSourceEnvSet       = "env.set"
+	ConfigSourceEnvBatch     = "env.batch"
 	ConfigSourceEnvDelete    = "env.delete"
 	ConfigSourceSecretSet    = "secret.set"
 	ConfigSourceSecretDelete = "secret.delete"
@@ -41,17 +42,19 @@ type ConfigSecretFingerprint struct {
 
 // ConfigRevision is one app scope's complete config after a change.
 type ConfigRevision struct {
-	ID        string
-	AccountID string
-	AppID     string
-	Scope     string
-	Revision  int64
-	Source    string
-	Key       string
-	Actor     string
-	Variables map[string]string
-	Secrets   map[string]ConfigSecretFingerprint
-	GuardID   string
+	// RestoreGuard is populated for an atomic reviewed rollback response only.
+	RestoreGuard *api.ConfigGuardSummary `json:"-"`
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Revision     int64
+	Source       string
+	Key          string
+	Actor        string
+	Variables    map[string]string
+	Secrets      map[string]ConfigSecretFingerprint
+	GuardID      string
 	// GuardStatus is the status of GuardID's guard on reads; empty otherwise.
 	GuardStatus      string
 	RestoredRevision int64
@@ -168,7 +171,7 @@ type ConfigGuardTelemetryStore interface {
 }
 
 var configRevisionSources = map[string]bool{
-	ConfigSourceBaseline: true, ConfigSourceEnvSet: true, ConfigSourceEnvDelete: true,
+	ConfigSourceBaseline: true, ConfigSourceEnvSet: true, ConfigSourceEnvBatch: true, ConfigSourceEnvDelete: true,
 	ConfigSourceSecretSet: true, ConfigSourceSecretDelete: true, ConfigSourceSecretRotate: true,
 	ConfigSourceRollback: true, ConfigSourceGuardRestore: true,
 }
@@ -180,7 +183,7 @@ var configGuardClosedStatuses = map[string]bool{
 
 // configSourceHasKey reports whether a revision of this source names one key.
 func configSourceHasKey(source string) bool {
-	return source != ConfigSourceBaseline && source != ConfigSourceRollback && source != ConfigSourceGuardRestore
+	return source != ConfigSourceBaseline && source != ConfigSourceEnvBatch && source != ConfigSourceRollback && source != ConfigSourceGuardRestore
 }
 
 func configSourceRestores(source string) bool {

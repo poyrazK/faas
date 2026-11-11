@@ -41,8 +41,11 @@ for d in /srv/fc/jail/firecracker*/*/; do
   note "jail chroot $d"
 done
 
-# 4. Current plan/builder scopes and the legacy tenant hierarchy.
-for scope in /sys/fs/cgroup/faas.slice/faas-tenant.slice/tenant-*/*/ \
+# 4. Flat tenant scopes (ADR-20261109172421 step 6.5), current plan/builder
+#    scopes and the legacy tenant hierarchy.
+for scope in /sys/fs/cgroup/faas.slice/faas-tenant.slice/*/ \
+             /sys/fs/cgroup/faas.slice/faas-tenant.slice/faas-tenant-*.slice/*/ \
+             /sys/fs/cgroup/faas.slice/faas-tenant.slice/tenant-*/*/ \
              /sys/fs/cgroup/faas.slice/faas-cp.slice/faas-cp-build.slice/*/ \
              /sys/fs/cgroup/faas.slice/faas-cp.slice/faas-vmmd.service/gregale-host-helpers/*/ \
              /sys/fs/cgroup/gregale-host-helpers/*/ \
@@ -50,6 +53,7 @@ for scope in /sys/fs/cgroup/faas.slice/faas-tenant.slice/tenant-*/*/ \
   case "$scope" in
     *.slice/) continue ;; # systemd child slices (spec §11 fence pins), not VM scopes
     /sys/fs/cgroup/faas-tenant.slice/tenant-free/|/sys/fs/cgroup/faas-tenant.slice/tenant-hobby/|/sys/fs/cgroup/faas-tenant.slice/tenant-pro/|/sys/fs/cgroup/faas-tenant.slice/tenant-scale/) continue ;;
+    /sys/fs/cgroup/faas.slice/faas-tenant.slice/tenant-free/|/sys/fs/cgroup/faas.slice/faas-tenant.slice/tenant-hobby/|/sys/fs/cgroup/faas.slice/faas-tenant.slice/tenant-pro/|/sys/fs/cgroup/faas.slice/faas-tenant.slice/tenant-scale/) continue ;; # legacy plan dirs; their children are checked
   esac
   [[ -e "$scope/cgroup.procs" ]] && note "cgroup scope $scope"
 done

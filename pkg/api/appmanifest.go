@@ -67,7 +67,7 @@ func (h *BeforeCheckpointHook) Validate() error {
 	if h == nil {
 		return nil
 	}
-	return validateLifecycleHook("before_checkpoint", h.Path, h.TimeoutMS)
+	return validateLifecycleHook("before_checkpoint", h.Path, h.TimeoutMS, AfterRestoreHookMaxTimeoutMS)
 }
 
 func (h *BeforeCheckpointHook) EffectiveTimeout() time.Duration {
@@ -81,10 +81,12 @@ func (h *AfterRestoreHook) Validate() error {
 	if h == nil {
 		return nil
 	}
-	return validateLifecycleHook("after_restore", h.Path, h.TimeoutMS)
+	// The bound-app cap applies here; apid refuses more than
+	// AfterRestoreHookMaxTimeoutMS for an app without a managed binding.
+	return validateLifecycleHook("after_restore", h.Path, h.TimeoutMS, AfterRestoreHookBoundMaxTimeoutMS)
 }
 
-func validateLifecycleHook(name, path string, timeoutMS int) error {
+func validateLifecycleHook(name, path string, timeoutMS, maxTimeoutMS int) error {
 	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
 		strings.ContainsAny(path, "?#%") {
 		return fmt.Errorf("%s.path must be an absolute path without query, fragment, or percent escapes", name)
@@ -94,8 +96,8 @@ func validateLifecycleHook(name, path string, timeoutMS int) error {
 			return fmt.Errorf("%s.path must not contain control characters", name)
 		}
 	}
-	if timeoutMS < 0 || timeoutMS > AfterRestoreHookMaxTimeoutMS {
-		return fmt.Errorf("%s.timeout_ms must be between 0 and %d", name, AfterRestoreHookMaxTimeoutMS)
+	if timeoutMS < 0 || timeoutMS > maxTimeoutMS {
+		return fmt.Errorf("%s.timeout_ms must be between 0 and %d", name, maxTimeoutMS)
 	}
 	return nil
 }
@@ -589,6 +591,28 @@ func (p WorkloadPort) EffectiveProtocol() WorkloadPortProtocol {
 func IsInternalWorkloadPort(ports []WorkloadPort, protocol WorkloadPortProtocol, port int) bool {
 	for _, declared := range ports {
 		if declared.Internal && declared.EffectiveProtocol() == protocol && declared.Port == port {
+			return true
+		}
+	}
+	return false
+}
+
+// DeclaresPublicWorkloadPort requires the current public name/protocol/port
+// tuple. An internal reservation wins even for malformed duplicate entries.
+func DeclaresPublicWorkloadPort(ports []WorkloadPort, name string, protocol WorkloadPortProtocol, port int) bool {
+	if IsInternalWorkloadPort(ports, protocol, port) {
+		return false
+	}
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, declared := range ports {
+		if declared.Internal || declared.EffectiveProtocol() != protocol || declared.Port != port {
+			continue
+		}
+		declaredName := strings.ToLower(strings.TrimSpace(declared.Name))
+		if declaredName == "" {
+			declaredName = fmt.Sprintf("%s-%d", protocol, port)
+		}
+		if declaredName == name {
 			return true
 		}
 	}

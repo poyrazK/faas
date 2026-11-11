@@ -48,6 +48,11 @@ type ObjectBucketUsage struct {
 	// InventoryScan is the bucket's listing in progress, if any
 	// (ADR-20261030100835).
 	InventoryScan ObjectInventoryScan
+	// InventoryHeld is set while a versioning, Object Lock or capacity
+	// transition fences the bucket's capacity. The inventory sweep skips
+	// such a bucket, and no admitted write can grow it, so its last
+	// inventory remains the bound for admission until the transition ends.
+	InventoryHeld bool
 }
 
 type ObjectUsageSnapshot struct {
@@ -95,6 +100,47 @@ type ObjectStorageAccountingStore interface {
 	ClaimObjectInventory(context.Context, string, string) error
 	FinishObjectInventory(context.Context, string, string, int64, int64) error
 }
+
+// ObjectInventoryDue is one due bucket in the inventory sweep's queue. Long
+// marks a listing that holds a worker for long: one that continues an
+// unfinished listing, or a bucket whose last inventory counted more than
+// api.ObjectStorageInventoryLongListingKeys keys (ADR-20261110151628 §1).
+type ObjectInventoryDue struct {
+	Bucket ObjectBucket
+	Long   bool
+}
+
+// ObjectInventoryQueueStore lists due inventories in DueObjectInventories'
+// order, leaving out skip, the buckets the sweep already took.
+type ObjectInventoryQueueStore interface {
+	DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string) ([]ObjectInventoryDue, error)
+}
+
+var (
+	_ ObjectInventoryQueueStore = (*PgStore)(nil)
+	_ ObjectInventoryQueueStore = (*MemStore)(nil)
+)
+
+// ObjectInventoryBacklog is how far the inventory sweep is behind
+// (ADR-20261110151628 §3): the buckets due now, and the age of the oldest
+// observation admission still holds to the 900 s window. Buckets that stay
+// fresh on an older observation (held by a configuration change, or listing
+// within the progress window) do not count toward the age; a bucket never
+// observed counts from its creation.
+type ObjectInventoryBacklog struct {
+	DueBuckets           int64
+	OldestObservationAge time.Duration
+}
+
+// ObjectInventoryBacklogStore reports the inventory sweep's backlog.
+type ObjectInventoryBacklogStore interface {
+	ObjectInventoryBacklog(ctx context.Context) (ObjectInventoryBacklog, error)
+}
+
+var (
+	_ ObjectInventoryBacklogStore = (*PgStore)(nil)
+	_ ObjectInventoryBacklogStore = (*MemStore)(nil)
+)
 
 // ObjectInventoryReleaser gives up an inventory claim without publishing it,
 // so deletions waiting for the claim continue at once (ADR-20261025115958).

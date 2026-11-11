@@ -34,7 +34,46 @@ through systemd `LoadCredential`:
 | `/etc/faas/secrets/edge-tls/origin.key` | the control plane's `/etc/caddy/tls/cloudflare-origin.key` |
 | `/etc/faas/secrets/edge-tls/origin-pull-ca.pem` | `origin-pull-ca.pem` from step 1 |
 
-Never put them in the repository or in inventory.
+Never put them in the repository or in inventory. The edge and the
+`gatewayd_public_edge_service` role refuse Cloudflare's shared origin-pull CA
+(`CN=origin-pull.cloudflare.net`), which Cloudflare's documentation ships under
+the same file name: every Cloudflare zone satisfies it (ADR-20261107180000).
+
+**Or the certificate edgednsd keeps** (ADR-20261103163954 §3). With nothing
+in front, the edge needs a publicly trusted certificate for the apps domain.
+edgednsd orders it from Let's Encrypt and stores its key sealed to the
+`edge-tls` seal domain; each edge loads it with
+`faas_edge_public_tls_cert_source: database` and opens the key in memory
+with the domain's identity, so no certificate or key file sits on the node.
+Order first, then switch the edges:
+
+1. `gregalectl seal-domain init --domain edge-tls`, then the seal_domains
+   role: the recipient on the control plane, the identity on compute nodes.
+   CD stages them from the `SEAL_DOMAIN_EDGE_TLS_AGE_KEY` and
+   `SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT` environment secrets.
+2. In the manifest, `public_edge.dns.certificate.names` (for example
+   `["*.gregale.dev"]`); `ca` stays `letsencrypt-staging` until the path is
+   proven. Converge the control plane and wait for
+   `edge_certificate_orders_total{result="issued"}`.
+3. `public_edge.dns.certificate.serve` set to that CA, then converge the
+   compute nodes: each edge serves the certificate stored from it. An edge
+   is not ready until it has loaded one, so edgednsd keeps it out of DNS
+   until then.
+4. To move to production, set `ca: letsencrypt` and converge the control
+   plane; only once `edge_certificate_orders_total{ca="letsencrypt",
+   result="issued"}` counts it, set `serve: letsencrypt` and converge the
+   compute nodes. Changing both at once would restart every edge on a CA it
+   has no certificate from yet.
+5. `public_edge.dns.certificate.transparency` turns on the Certificate
+   Transparency watch: `domain` (the apps domain) and `allow_names`, the
+   names other parties' certificates may carry without a page. For
+   gregale.dev today: `gregale.dev` and `*.gregale.dev` (Cloudflare's own
+   edge certificate, which platform hosts still use) and
+   `operations.gregale.dev` (hosted elsewhere). Turn it on with step 2, before
+   the edges serve the certificate.
+
+Only `origin-pull-ca.pem` is still staged by hand. Alerts and failures:
+[FaasEdgeCertificate](FaasEdgeCertificate.md).
 
 ## 3. Turn on zone-level Authenticated Origin Pulls
 
@@ -47,6 +86,26 @@ The token needs Zone > SSL and Certificates: Edit, and Zone > Config Rules:
 Edit. Cloudflare then presents the client certificate to every origin in the
 zone. Origins that do not ask for one, such as the control plane's Caddy and
 Vercel, ignore it.
+
+### The control plane's Caddy
+
+The control plane's platform site needs the same certificate check
+(ADR-20261103172551): it admits Cloudflare's address ranges, which every
+Cloudflare customer's zone also uses. The public_edge role refuses to deploy
+without it.
+
+1. Upload the client certificate to every zone the site serves (the platform,
+   apps, deployment-preview and alias domains), all signed by the same CA.
+2. Install `origin-pull-ca.pem` on the control plane at
+   `/etc/caddy/tls/cloudflare-origin-pull-ca.pem` (root-owned, 0644).
+3. Set `dns.origin_pull: required` in the manifest and deploy (it renders
+   `faas_public_edge_authenticated_origin_pulls: true`).
+
+Never install Cloudflare's shared origin-pull CA there: Cloudflare presents
+that certificate for every zone, and the role refuses it. To deploy before
+the certificate is in place, set `dns.origin_pull: any_zone` (it renders
+`faas_public_edge_allow_any_cloudflare_zone: true`), and change it to
+`required` once the check is on.
 
 ## 4. Check the edges' certificate for app hosts
 
@@ -145,6 +204,16 @@ injected failure as soon as it is measured.
   `CF-Connecting-IP`; with no front it is the connection's peer, whatever the
   request claims. A refusal is `429 rate_limited` with `Retry-After: 1`,
   `x-faas-rate-limit-scope: client-address`, the limit and the observed value.
+- **Requests a second per hostname**, on any front, per node, before the
+  request is forwarded or wakes anything (`EdgeHostRequests*`): twice the
+  highest plan's per-app limit, so the gateway's plan limit answers an app
+  first. A refusal is `429 rate_limited` with
+  `x-faas-rate-limit-scope: host`. Only a host that has served an app's
+  answer (a 2xx, 101 or 304) is tracked and limited; any other name passes
+  to routing without taking one of the `EdgeHostTrackedMax` slots. A flood
+  of random `Host` values therefore neither refuses tenant hosts nor fills
+  the table, and a real host first seen during one is limited from its first
+  answered request.
 - **Open connections, new connections a second and TLS handshakes in
   progress**, only with `faas_edge_public_front: none`. A refused connection
   is reset before TLS; a handshake slot is held at most
@@ -159,10 +228,79 @@ injected failure as soon as it is measured.
 
 `gatewayd_public_edge_refused_total{reason}` counts refusals by
 `open_connections`, `connection_rate`, `handshakes`, `request_rate`,
-`body_rate` and `forward_in_flight`. A
+`host_request_rate`, `body_rate` and `forward_in_flight`. A
 burst on one reason from many addresses is a flood; a steady stream from one
 address may be carrier-grade NAT, where the starting values need raising.
 An edge with no front and the limits off logs a warning at start.
+
+### The kernel backstop
+
+On a node with entry addresses (`faas_public_entry_addrs`, vmmd's
+`FAAS_PUBLIC_ENTRY_ADDRS`) the host firewall also drops a source's new
+connections to an entry address's 443 before the edge sees them, at twice
+the edge's own limits (`PublicEntry*` in `pkg/api/limits.go`): open
+connections per source, and new connections a second per source.
+Cloudflare's ranges get their own, higher limits when the node keeps them
+(`faas_cloudflare_origin_only`, which `front: none` keeps on):
+`PublicEntryProxy*`, 16 times the per-source values, because a host moved
+back behind Cloudflare arrives from a few of its addresses, each carrying many
+clients. They are not exempt: every Cloudflare customer connects from them.
+
+The edge's own connection limits exempt a connection from those ranges only
+once its TLS handshake presented the zone's origin-pull client certificate
+(ADR-20261104221012). Any other connection from them is counted against its
+address after the handshake and reset when that address is over its limits.
+
+While a handshake is in progress, one address (an IPv4 address or an IPv6
+/64) holds at most 32 of the node's handshake slots, an address in
+Cloudflare's ranges 64, and a connection must send its ClientHello within 3 s
+(ADR-20261107180000). One address also holds at most 16 of the 256 requests
+the edge forwards to the control plane at once. Refusals show in the edge's
+refusal counter as `handshakes_per_address` and
+`forward_in_flight_per_address`.
+
+The firewall counts an IPv4 source by its address and an IPv6 source by its
+/64, as the edge does. The drops are counted on their rules:
+
+```bash
+sudo nft list chain inet faas input | grep 'per source'
+```
+
+The nftables role also raises the conntrack table to
+`faas_public_entry_conntrack_max`, shortens its `SYN_RECV` timeout to
+`faas_public_entry_conntrack_syn_recv_timeout` seconds and deepens the SYN
+queue, so a spoofed SYN flood, which per-source limits cannot stop, does not
+fill the conntrack table that tenant NAT shares. Watch
+`node_nf_conntrack_entries` against `node_nf_conntrack_entries_limit`.
+
+### Block a source on the entry addresses (ADR-20261103163954 §2)
+
+On a node with entry addresses, vmmd keeps `public_block_v4/v6`, sets the
+firewall checks before anything else on those addresses, so a blocked
+source's open connections stop too. List each range with an expiry in
+`/etc/faas/public-block-list` on every compute node, one per line:
+
+```text
+# <prefix in canonical form> <expiry, RFC 3339> [reason]
+192.0.2.0/24 2026-11-04T18:00:00Z SYN flood, ticket 123
+2001:db8:1234::/48 2026-11-05T00:00:00Z
+```
+
+vmmd re-reads the file every 30 s (`PublicBlockListRefreshInterval`) and
+after every ruleset reload, which would otherwise flush the sets; a
+malformed line is skipped and logged (`journalctl -u faas-vmmd | grep 'public
+block list'`). An entry lasts at most 90 days. Check:
+
+```bash
+sudo nft list set inet faas public_block_v4
+sudo nft list chain inet faas input | grep 'block list'
+```
+
+To unblock before the expiry, delete the line and the element:
+`sudo nft delete element inet faas public_block_v4 { 192.0.2.0/24 }`.
+Lengthening an entry's expiry takes effect when the old one lapses (at most
+30 s later). A hand-made `nft` rule does not survive vmmd's next reload; use
+the file.
 
 ## Nothing in front (ADR-20261103163954), pilot
 
@@ -176,7 +314,8 @@ records. The owner decides each step marked **owner**.
    wider, and on any other rule that opens 80 or 443 to everyone.
 2. **owner:** run `deploy/scripts/gcp-compute-edge-address.sh entry NODE...`,
    read what it would do, then rerun with `APPLY=1`. It creates
-   `gregale-direct-entry-v4` once and tags each node. The forwarding rule from
+   `gregale-direct-entry-v4` once, in the VPC of the node's first interface
+   (`NETWORK` overrides it), and tags each node. The forwarding rule from
    step 5 must already exist: it carries 443 alone, so the node's own
    addresses stay unreachable.
 3. **owner:** put a publicly trusted certificate for the apps domain (a
@@ -214,6 +353,57 @@ records. The owner decides each step marked **owner**.
 To put one host back behind Cloudflare, add it to `public_edge.dns.proxied`
 and release: edgednsd switches its records to proxied in place.
 
+## Under attack: back behind Cloudflare (ADR-20261103163954)
+
+With nothing in front, the node's provider absorbs network floods and the
+edge's per-address limits shed what one address sends. A flood that fills the
+entry addresses, or an application flood from many addresses, needs Cloudflare
+back in front. The fallback works because:
+
+- the edge still verifies the zone's client certificate when given, and then
+  takes the client from `CF-Connecting-IP`, so request limits stay per client
+  (keep zone-level Authenticated Origin Pulls on, step 3, so Cloudflare
+  presents it);
+- Cloudflare's ranges skip the per-address connection limits, in the edge
+  (`FAAS_EDGE_PROXY_CIDRS`) and in the host firewall's backstop
+  (`public_entry_proxy_v4/v6`), as long as the node keeps
+  `faas_cloudflare_origin_only`, which `front: none` keeps on;
+- the edge's certificate is publicly trusted, which Cloudflare's Full (strict)
+  accepts;
+- on GCP, `gregale-cloudflare-origin-v4/v6` still admit Cloudflare on 443 to
+  the `gregale-origin` tag, with or without `gregale-direct-entry-v4`.
+
+Fastest first. Each step is the operator's (**owner**); it needs the zone
+token on the control plane, which only edgednsd reads.
+
+1. **One host or every app host, minutes:** on the control plane, set the
+   affected entries of `FAAS_EDGEDNS_NAMES` in
+   `/etc/systemd/system/faas-edgednsd.service.d/50-faas-edgednsd.conf` from
+   `:dns-only` to `:proxied` (the wildcard entry moves every app host), then
+   `systemctl daemon-reload && systemctl restart faas-edgednsd`. edgednsd
+   switches the records in place on its next pass. DNS-only records carry a
+   60 s TTL, so resolvers follow within about a minute; clients holding
+   connections to the entry addresses keep them until they reconnect. Record
+   the same names under `public_edge.dns.proxied` in the manifest before the
+   next release, which rewrites that file. Do not flip records in the
+   dashboard while edgednsd runs: it switches them back.
+2. **The entry addresses themselves are the target** (attackers who learned
+   them keep sending after the records are proxied):
+   `APPLY=1 deploy/scripts/gcp-compute-edge-address.sh unentry NODE...`
+   untags the nodes, and Google's firewall drops everything but Cloudflare on
+   443 before it reaches them. Proxied hosts keep working; DNS-only ones stop,
+   so do step 1 for every app host first.
+3. **Stay behind Cloudflare:** set `public_edge.front: cloudflare` and
+   release. The edge then requires the client certificate again.
+
+Check after each step: `dig +short <host>` returns Cloudflare's addresses
+(step 1); `gatewayd_public_edge_refused_total` and the firewall's `per source`
+counters fall; `curl -sI https://<host>` shows `server: cloudflare` and
+`cf-ray`. Undo in reverse: `entry` again, then the names back to `:dns-only`.
+
+Rehearse steps 1 and 2 on the pilot host before the wildcard leaves
+Cloudflare, and time them (ADR-20261103163954).
+
 ## Undo
 
 - **Nothing in front:** set `public_edge.front: cloudflare` (or remove it)
@@ -227,3 +417,25 @@ and release: edgednsd switches its records to proxied in place.
 - **GCP addresses:** `APPLY=1 gcp-compute-edge-address.sh delete NODE...`.
 - **Configuration rule:** delete it in the dashboard (Rules > Configuration Rules).
 - **Zone-level Authenticated Origin Pulls:** turn it off in the dashboard (SSL/TLS > Origin Server).
+
+## edgednsd and the node registry (ADR-20261107180000)
+
+Every compute node can write `compute_nodes`, so edgednsd takes only the
+drain flag from it:
+
+- It probes each edge's `/readyz` at the address the manifest gives the
+  host (`FAAS_EDGEDNS_NODE_PRIVATE_ADDRESSES`), never the registry's
+  `target_url`. A host missing from that list stays unready.
+- It withdraws drained nodes whose edges still pass only while at least half
+  of the passing nodes stay in. Otherwise it keeps them, logs "refusing to
+  withdraw drained nodes" and sets `edge_dns_drain_refused_nodes{mode}`. A
+  non-zero value with no planned maintenance means someone drained most of
+  the fleet through the registry: check `gregalectl` node lifecycle history
+  and the compute nodes before anything else. To take most nodes out on
+  purpose, stop their edges (they fail their probes and go) or remove them
+  from the manifest.
+
+Only the control plane writes `edge_tls_certificates` (edgednsd, as the
+schema owner or `faas_shared`); compute nodes only read it. An edge serves a
+certificate for the names in its leaf, only while the leaf is valid, and, for
+Let's Encrypt, only when its chain verifies.

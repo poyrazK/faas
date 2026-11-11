@@ -147,8 +147,7 @@ func schedulerSuspendFixture(t *testing.T, running ...bool) (*Engine, *state.Mem
 	}
 	vmm := &suspendRoutingVMM{fakeVMM: &fakeVMM{}, owner: owner, store: store, app: app.ID}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-	limits := api.MustLimitsFor(api.PlanPro)
-	if err = e.Ledger().Admit(Request{Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro, RAMMB: 128, VCPU: limits.VCPU, CPUMillicores: 1000, MaxConcurrency: 1, NodeID: node.ID}); err != nil {
+	if err = e.Ledger().Admit(Request{Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro, RAMMB: 128, VCPU: api.SizeVCPUs(128), CPUMillicores: 1000, MaxConcurrency: 1, NodeID: node.ID}); err != nil {
 		t.Fatal(err)
 	}
 	if managed {

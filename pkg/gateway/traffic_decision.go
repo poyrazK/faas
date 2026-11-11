@@ -82,6 +82,19 @@ type trafficDecisionSnapshot struct {
 	durations      [trafficPhaseCount]int64
 	streamDetached bool
 	edgeResponse   bool
+	// deploymentPinned: the request named its deployment (a deployment
+	// preview or alias URL, or a revision pin), not production routing.
+	deploymentPinned bool
+	// longLivedSession: the response is a session whose duration is not a
+	// request latency: an upgraded socket, an event stream or a gRPC stream
+	// (ADR-20261028110044 amendment 7). A streaming-enabled app's ordinary
+	// response detaches its budget too but is not a session.
+	longLivedSession bool
+	// selectedDeployment is the deployment production routing, a pin or a
+	// release chose before the gateway looked for its target. A request that
+	// fails before reaching a target (a wake or capacity failure) is still that
+	// deployment's evidence (ADR-20261028110044 amendment 7).
+	selectedDeployment string
 }
 
 type trafficDecision struct {
@@ -181,8 +194,49 @@ func recordTrafficAttempt(ctx context.Context) {
 	})
 }
 
+// recordTrafficDeploymentPinned marks a request that named its deployment, so
+// route evidence leaves it out (ADR-20261028110044 amendment 5).
+func recordTrafficDeploymentPinned(ctx context.Context) {
+	mutateTrafficDecision(ctx, func(value *trafficDecisionSnapshot) { value.deploymentPinned = true })
+}
+
 func recordTrafficStreamDetached(ctx context.Context) {
 	mutateTrafficDecision(ctx, func(value *trafficDecisionSnapshot) { value.streamDetached = true })
+}
+
+// recordTrafficSelectedDeployment remembers the deployment the request was
+// routed to before its target was resolved.
+func recordTrafficSelectedDeployment(ctx context.Context, deploymentID string) {
+	if deploymentID == "" {
+		return
+	}
+	mutateTrafficDecision(ctx, func(value *trafficDecisionSnapshot) { value.selectedDeployment = deploymentID })
+}
+
+// telemetryDeployment attributes a response to the deployment that served
+// it, or, when none did, to the deployment routing selected for it. A
+// platform refusal stays unattributed: neither deployment caused it.
+func (value trafficDecisionSnapshot) telemetryDeployment(target Target, status int) string {
+	if target.DeploymentID != "" {
+		return target.DeploymentID
+	}
+	if value.platformRefusal(status) {
+		return ""
+	}
+	return value.selectedDeployment
+}
+
+// recordTrafficLongLivedSession marks a response that is a session rather
+// than a request: route evidence leaves its duration out of latency.
+func recordTrafficLongLivedSession(ctx context.Context) {
+	mutateTrafficDecision(ctx, func(value *trafficDecisionSnapshot) { value.longLivedSession = true })
+}
+
+// longLived reports whether telemetry should mark the response long-lived:
+// a declared session, or a detached response that outlived the ordinary
+// request budget (ADR-20261028110044 amendment 7).
+func (value trafficDecisionSnapshot) longLived(outlivedBudget bool) bool {
+	return value.longLivedSession || value.streamDetached && outlivedBudget
 }
 
 func recordTrafficRetryStop(ctx context.Context, reason string) {
@@ -215,7 +269,8 @@ func recordTrafficRefusal(ctx context.Context, reason string) {
 func recordTrafficPolicyStage(ctx context.Context, stage string) {
 	switch stage {
 	case "routing_read_timeout", "routing_owner_unverified", "routing_read_error", "routing_snapshot_invalid",
-		"routing_encode", "routing_host_pin_denied", "routing_empty_roster", "routing_no_selection":
+		"routing_encode", "routing_host_pin_denied", "routing_empty_roster", "routing_no_selection",
+		"workload_admission_unavailable", "workload_retired":
 	default:
 		stage = "other"
 	}
@@ -338,7 +393,16 @@ func (value trafficDecisionSnapshot) attributes() []attribute.KeyValue {
 	if value.path == "" {
 		return nil
 	}
-	attributes := []attribute.KeyValue{
+	return value.appendAttributes(make([]attribute.KeyValue, 0, 18))
+}
+
+// appendAttributes appends the decision's span attributes to dst; a decision
+// without a path adds none.
+func (value trafficDecisionSnapshot) appendAttributes(dst []attribute.KeyValue) []attribute.KeyValue {
+	if value.path == "" {
+		return dst
+	}
+	attributes := append(dst,
 		attribute.String("gregale.traffic.decision_version", "v1"),
 		attribute.String("gregale.traffic.path", value.path),
 		attribute.String("gregale.traffic.phase", value.phase.String()),
@@ -356,7 +420,7 @@ func (value trafficDecisionSnapshot) attributes() []attribute.KeyValue {
 		attribute.Int64("gregale.traffic.wake_admission_ms", value.durations[trafficWake]/int64(time.Millisecond)),
 		attribute.Int64("gregale.traffic.capacity_wait_ms", value.durations[trafficCapacity]/int64(time.Millisecond)),
 		attribute.Int64("gregale.traffic.retry_backoff_ms", value.durations[trafficBackoff]/int64(time.Millisecond)),
-	}
+	)
 	if value.policyStage != "" {
 		attributes = append(attributes, attribute.String("gregale.traffic.policy_stage", value.policyStage))
 	}

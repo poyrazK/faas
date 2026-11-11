@@ -254,8 +254,7 @@ func TestJailerCommand_Mega4(t *testing.T) {
 		args := JailerCommand(JailerSpec{
 			Instance: "i-1", UID: 100, GID: 100, Netns: "fc-i-1", ExecFile: "",
 		})
-		// Empty plan: CPUWeight() returns 100 (kernel default
-		// for unknown plans, per api.Plan.CPUWeight comment).
+		// No weight of its own: the cgroup v2 default 100.
 		if !containsKV(args, "cpu.weight=100") {
 			t.Errorf("missing cpu.weight=100: %v", args)
 		}
@@ -265,15 +264,12 @@ func TestJailerCommand_Mega4(t *testing.T) {
 		}
 	})
 
-	t.Run("plan-derived weight", func(t *testing.T) {
+	t.Run("no weight depends on the plan", func(t *testing.T) {
 		t.Parallel()
 		args := JailerCommand(JailerSpec{
 			Instance: "i-1", UID: 1, GID: 1, Netns: "fc-i-1", Plan: api.PlanPro,
 		})
-		want := api.PlanPro.CPUWeight()
-		if want <= 0 {
-			t.Fatal("PlanPro.CPUWeight: non-positive test fixture")
-		}
+		want := 100
 		if !containsKV(args, "cpu.weight="+itoa_Mega4(want)) {
 			t.Errorf("missing cpu.weight=%d: %v", want, args)
 		}

@@ -95,7 +95,7 @@ func agentRunUsageToProto(u *fcvm.AgentRunUsage) *vmmdpb.AgentRunUsage {
 	return &vmmdpb.AgentRunUsage{Method: int32(u.Method), Samples: int32(u.Samples), ExpectedSamples: int32(u.ExpectedSamples),
 		MeasuredMs: u.MeasuredMillis, PausedMs: u.PausedMillis, PrivateMbMs: u.PrivateMBMillis,
 		UnpausedPrivateMbMs: u.UnpausedPrivateMBMillis, BillableMbMs: u.BillableMBMillis, PeakPrivateMb: u.PeakPrivateMB,
-		ColdBoot: u.ColdBoot}
+		ColdBoot: u.ColdBoot, FrozenMs: u.FrozenMillis}
 }
 
 func agentRunStartFromProto(start *vmmdpb.RunAgentStart) (fcvm.AgentRunWakeRequest, agentrunproto.Request, *api.Problem) {

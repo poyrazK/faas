@@ -166,7 +166,7 @@ func runCoordinatedDataAPISync(ctx context.Context, client *api.Client, slug str
 		}
 	}
 	dataAPISyncProgress("Refreshing the engine while the durable barrier remains paused")
-	restart, err := client.RestartAppFresh(ctx, slug)
+	restart, err := refreshDataAPIFresh(ctx, client, slug)
 	receipt.WakeID = restart.WakeID
 	if err != nil {
 		return receipt, err

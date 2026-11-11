@@ -15,14 +15,15 @@ with a different environment.
 | `meterd_observability_loop_enabled{loop}` | 1 while `synthetic_checks` (ADR-748) or `slo_rollup` (ADR-747) runs. `slo_rollup` also needs `FAAS_PROMETHEUS_URL` on meterd. |
 | `meterd_observability_loop_last_pass_timestamp_seconds{loop}` | Last pass that finished without an error; 0 until the first. |
 | `meterd_observability_loop_passes_total{loop,outcome}` | Passes by `ok` or `error`. |
-| `meterd_observability_loop_items_total{loop,outcome}` | Synthetic runs (`ok`, `failed` = the customer's check failed, `record_error`) and SLO hours (`recorded`, `failed`). |
+| `meterd_observability_loop_items_total{loop,outcome}` | Synthetic runs (`ok`, `failed` = the customer's check failed, `record_error`, `deferred` = due but waiting a pass for a probe slot) and SLO hours (`recorded`, `failed`). |
+| `meterd_observability_loop_backlog_seconds{loop}` | How late the most overdue synthetic check waiting for a probe slot was at the last pass; 0 when none waits. |
 | `apid_log_projection_events_total{source,outcome}` | Build and deploy events apid projected into `log_events` (`inserted`, `failed`). |
 | `apid_runtime_log_events_total{outcome}` | vmmd's runtime lines at apid: `inserted`, `rejected`, `rate_limited`, `not_released` (the account does not have log search), `db_error`. |
 | `apid_log_search_ingest_enabled` | 1 while `FAAS_LOG_SEARCH_ENABLED` lets apid project events and accept runtime lines. |
 | `vmmd_runtime_log_events_total{outcome}` | vmmd's side: `over_budget`, `queue_full`, `paused`, `forward_failed`, and apid's answers. `forward_failed` and `paused` are expected while `apid_log_search_ingest_enabled` is 0. |
 | `meterd_alert_channel_deliveries_total{kind,outcome}` | Slack, PagerDuty and email deliveries: `delivered`, `failed`, `unseal_failed`. |
 | `meterd_op_duration_seconds{op="alerts"}` | Duration of each alert evaluation tick (accounts are evaluated in parallel, ADR-20261028101615). |
-| `meterd_alert_rules_skipped_total{reason}` | Rules a tick did not evaluate: `deferred` (the account spent its 45 s tick budget; they run first next tick), `not_released` (the account's plan or capability flags no longer cover them). |
+| `meterd_alert_rules_skipped_total{reason}` | Rules a tick did not evaluate: `deferred` (the account spent its 45 s tick budget; they run first next tick), `not_released` (the account's plan or capability flags no longer cover them), `over_plan_limit` (past the plan's per-app or per-account rule cap, kept from a bigger plan; the oldest rules keep running). |
 
 No label carries an account, app, check or channel ID.
 
@@ -49,6 +50,22 @@ meterd. Customers' SLOs show "no data" until then, and the rollup backfills
 up to 14 days of missed hours on start. `synthetic_checks` is disabled only by a store
 that predates ADR-748, which means meterd runs against the wrong binary or
 database.
+
+## FaasSyntheticChecksBacklogged
+
+Due synthetic checks have waited more than 5 minutes for a probe slot for 15
+minutes. A pass starts probes as slots free up and never waits for them;
+meterd runs 32 at once and at most 2 per account, so one account's hanging
+app delays only that account's checks. A backlog therefore means the
+fleet's checks outgrew the slots, or every probe is slow.
+
+1. Read `meterd: synthetic checks` log lines: `started`, `deferred` and
+   `backlog_seconds` per pass.
+2. If probes are slow everywhere (most runs near their timeout), look at the
+   public edge and the control plane's route to it first.
+3. If the edge is healthy, the number of checks grew past what the slots
+   serve: raise `syntheticCheckConcurrency` in `cmd/meterd/synthetic_checks.go`
+   in a release, with an ADR amendment.
 
 ## FaasObservabilityLoopItemsFailing
 

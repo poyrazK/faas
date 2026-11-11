@@ -274,6 +274,14 @@ func (c *Client) ListOrgProjects(ctx context.Context, orgSlug string) ([]Project
 	return out, c.do(ctx, http.MethodGet, orgProjectPath(orgSlug), nil, &out)
 }
 
+// ListOrgGitHubInstallations lists the GitHub installations the named
+// organization owns; company projects link repositories only through them
+// (ADR-20261110200000).
+func (c *Client) ListOrgGitHubInstallations(ctx context.Context, orgSlug string) ([]GitHubInstallationSummary, error) {
+	var out []GitHubInstallationSummary
+	return out, c.do(ctx, http.MethodGet, "/v1/orgs/"+url.PathEscape(orgSlug)+"/github/installations", nil, &out)
+}
+
 // PreviewDeleteOrgProject addresses a project in the named organization.
 func (c *Client) PreviewDeleteOrgProject(ctx context.Context, orgSlug string, slug string) (ProjectDeletePreviewResponse, error) {
 	var out ProjectDeletePreviewResponse
@@ -285,14 +293,14 @@ func (c *Client) PreviewDeleteOrgProject(ctx context.Context, orgSlug string, sl
 func (c *Client) PromoteOrgProjectEnvironment(ctx context.Context, orgSlug string, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := orgProjectPath(orgSlug) + "/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.do(ctx, http.MethodPost, path, req, &out)
+	return out, c.doWithHeaders(ctx, http.MethodPost, path, req, &out, environmentPromotionHeaders(ctx))
 }
 
 // PromoteOrgProjectEnvironmentWithIdempotencyKey addresses a project in the named organization.
 func (c *Client) PromoteOrgProjectEnvironmentWithIdempotencyKey(ctx context.Context, orgSlug string, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest, idempotencyKey string) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := orgProjectPath(orgSlug) + "/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, req, &out, idempotencyKey)
+	return out, c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, http.MethodPost, path, req, &out, idempotencyKey, environmentPromotionHeaders(ctx))
 }
 
 // PublishOrgProjectReleaseSet addresses a project in the named organization.

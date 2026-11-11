@@ -24,28 +24,37 @@ func (w Worker) Step(ctx context.Context) (bool, error) {
 	}
 	attempt, cancel := context.WithTimeout(ctx, api.IssueSlackAttemptTimeout)
 	defer cancel()
-	result := state.IssueSlackResult{Status: "dead", Error: "token_unavailable"}
+	result := state.IssueSlackResult{Status: "failed", Error: "token_unavailable", RetryAt: time.Now().Add(time.Minute)}
 	if w.OpenToken != nil {
 		token, e := w.OpenToken(c.TokenSealed)
 		if e == nil {
 			if actions, ok := w.Store.(state.IssueSlackInteractionStore); ok {
 				c.Interactive, e = actions.PrepareIssueSlackActions(attempt, c)
 				if e != nil {
-					return true, e
+					return w.finishPreflight(ctx, c, e)
 				}
 			}
 			ready, e := w.Store.IssueSlackDeliveryReady(attempt, c)
 			if e != nil {
-				return true, e
+				return w.finishPreflight(ctx, c, e)
 			}
 			if !ready {
 				result = state.IssueSlackResult{Status: "canceled", Error: "destination_unavailable"}
 			} else {
-				client := w.Client
-				if client == nil {
-					client = NewClient(nil)
+				if e = w.Store.BeginIssueSlackAttempt(attempt, c); e != nil {
+					if !errors.Is(e, state.ErrIssuePolicyChanged) {
+						return w.finishPreflight(ctx, c, e)
+					}
+					result = state.IssueSlackResult{Status: "canceled", Error: "destination_unavailable"}
+				} else {
+					client := w.Client
+					if client == nil {
+						client = NewClient(nil)
+					}
+					sendCtx, cancelSend := context.WithTimeout(ctx, api.IssueSlackAttemptTimeout)
+					result = client.Send(sendCtx, c, token, w.DashboardBase)
+					cancelSend()
 				}
-				result = client.Send(attempt, c, token, w.DashboardBase)
 			}
 		}
 	}
@@ -57,20 +66,38 @@ func (w Worker) Step(ctx context.Context) (bool, error) {
 	}
 	return true, err
 }
+
+func (w Worker) finishPreflight(ctx context.Context, c state.IssueSlackClaim, cause error) (bool, error) {
+	receipt, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.IssueSlackAttemptTimeout)
+	defer cancel()
+	err := w.Store.FinishIssueSlackDelivery(receipt, c, state.IssueSlackResult{Status: "failed", Error: "transport_error", RetryAt: time.Now().Add(time.Minute)})
+	if errors.Is(err, state.ErrIssueSlackClaimLost) {
+		return true, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	return true, cause
+}
 func (w Worker) Batch(ctx context.Context) error {
+	var batchErr error
 	for range api.IssueSlackBatch {
 		if err := ctx.Err(); err != nil {
-			return err
+			return errors.Join(batchErr, err)
 		}
 		ok, err := w.Step(ctx)
 		if err != nil {
-			return err
+			batchErr = errors.Join(batchErr, err)
+			if !ok {
+				return batchErr
+			}
+			continue
 		}
 		if !ok {
-			return nil
+			return batchErr
 		}
 	}
-	return nil
+	return batchErr
 }
 func retry(c state.IssueSlackClaim, reason string, code int, after string) state.IssueSlackResult {
 	now := time.Now()

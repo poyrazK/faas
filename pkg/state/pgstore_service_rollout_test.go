@@ -199,6 +199,13 @@ func TestPgStoreAbortServiceRolloutRestoresPrevious(t *testing.T) {
 func TestPgStoreRecoverServiceRolloutRequestsReverseHandoff(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	stable, rollout := seedServiceRollout(t, s)
+	node, err := s.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateInstanceWithMode(t.Context(), stable.AppID, stable.ID, "running", 128, node.ID, uuid.NewString(), "service"); err != nil {
+		t.Fatal(err)
+	}
 
 	requested, auditID, err := s.RecoverRollout(t.Context(), rollout.AppID, "abort", "operator stop")
 	if err != nil {

@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 from server import DrainingHTTPServer,MCPHandler,load_config
-from auth import Authenticator,AuthConfigurationError
+from auth import Authenticator,AuthConfigurationError,AuthFailure
 
 class MCPStarterTests(unittest.TestCase):
     def setUp(self):
@@ -45,6 +45,10 @@ class MCPStarterTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as failure:
             urlopen(Request(self.base+"/healthz",headers={"Origin":"https://untrusted.example"}),timeout=3)
         self.assertEqual(failure.exception.code,403)
+    def test_health_names_serving_instance(self):
+        # Instances restored from one snapshot share their boot env.
+        with urlopen(Request(self.base+"/healthz",headers={"X-Faas-Instance-Id":"inst-restored"}),timeout=3) as response:
+            self.assertEqual(json.load(response)["instance_id"],"inst-restored")
     def test_draining_rejects_new_work(self):
         self.http.draining.set()
         with self.assertRaises(HTTPError) as failure:urlopen(self.base+"/healthz",timeout=3)
@@ -54,6 +58,63 @@ class MCPStarterTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 path=Path(directory)/"gregale-mcp.json";path.write_text(json.dumps({**self.config,**change}))
                 with self.assertRaises(AuthConfigurationError):load_config(path)
+
+
+class MCPKeepAliveFramingTests(unittest.TestCase):
+    setUp = MCPStarterTests.setUp
+    tearDown = MCPStarterTests.tearDown
+
+    def post(self, connection, headers=None, path="/mcp"):
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        connection.request("POST", path, body, headers={
+            "Content-Type": "application/json", "MCP-Protocol-Version": "2026-07-28",
+            "Mcp-Method": "tools/list", **(headers or {}),
+        })
+        response = connection.getresponse()
+        response.read()
+        return response
+
+    def assert_retry_reconnects(self, status, headers=None, path="/mcp", reset=lambda: None):
+        connection = http.client.HTTPConnection(*self.http.server_address, timeout=3)
+        try:
+            rejected = self.post(connection, headers, path)
+            self.assertEqual(rejected.status, status)
+            self.assertEqual(rejected.getheader("Connection"), "close")
+            self.assertTrue(rejected.will_close)
+            reset()
+            # HTTPConnection automatically reconnects after the close response.
+            self.assertEqual(self.post(connection).status, 200)
+        finally:
+            connection.close()
+
+    def test_content_type_retry_reconnects(self):
+        self.assert_retry_reconnects(415, {"Content-Type": "text/plain"})
+
+    def test_auth_challenge_retry_reconnects(self):
+        original = self.http.authenticator.authenticate
+        def require_auth(_authorization):
+            raise AuthFailure(401, "authentication_required", challenge=False)
+        self.http.authenticator.authenticate = require_auth
+        self.assert_retry_reconnects(401, reset=lambda: setattr(self.http.authenticator, "authenticate", original))
+
+    def test_other_early_rejections_close_unread_bodies(self):
+        self.assert_retry_reconnects(403, {"Origin": "https://untrusted.example"})
+        self.assert_retry_reconnects(404, path="/unknown")
+        self.http.draining.set()
+        self.assert_retry_reconnects(503, reset=self.http.draining.clear)
+        self.http.expected_catalog_sha256 = "f" * 64
+        self.assert_retry_reconnects(503, reset=lambda: setattr(self.http, "expected_catalog_sha256", ""))
+
+    def test_successful_requests_keep_the_connection(self):
+        connection = http.client.HTTPConnection(*self.http.server_address, timeout=3)
+        try:
+            self.assertFalse(self.post(connection).will_close)
+            first = connection.sock
+            self.assertFalse(self.post(connection).will_close)
+            self.assertIs(connection.sock, first)
+            self.assertTrue(self.post(connection, {"Connection": "close"}).will_close)
+        finally:
+            connection.close()
 
 
 class MCPCORSTests(unittest.TestCase):

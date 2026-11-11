@@ -13,13 +13,13 @@ func accountWebhookCLISubcommand() cliSub {
 	}
 	add := []cliFlag{
 		{Name: "target-url", Short: "HTTPS receiver URL", Value: "URL", Req: true},
-		{Name: "event", Short: "distinct release event (repeatable)", Value: "EVENT", Req: true, Repeatable: true, ClosedSet: api.AllowedAccountReleaseWebhookEvents},
+		{Name: "event", Short: "distinct account event (repeatable)", Value: "EVENT", Req: true, Repeatable: true, ClosedSet: api.AllowedAccountReleaseWebhookEvents},
 	}
 	add = append(add, secret...)
 	add = append(add, settings...)
 	update := []cliFlag{
 		{Name: "target-url", Short: "replacement HTTPS receiver URL", Value: "URL"},
-		{Name: "event", Short: "replacement release event filter (repeatable)", Value: "EVENT", Repeatable: true, ClosedSet: api.AllowedAccountReleaseWebhookEvents},
+		{Name: "event", Short: "replacement account event filter (repeatable)", Value: "EVENT", Repeatable: true, ClosedSet: api.AllowedAccountReleaseWebhookEvents},
 		{Name: "enable", Short: "enable the receiver; mutually exclusive with --disable"},
 		{Name: "disable", Short: "disable the receiver; mutually exclusive with --enable"},
 	}
@@ -30,7 +30,7 @@ func accountWebhookCLISubcommand() cliSub {
 		{Name: "add", Short: "Create a receiver; omitted signing secret is generated and shown once", Flags: add},
 		{Name: "info", Short: "Show one receiver with a masked signing secret", Positionals: []string{"<id>"}},
 		{Name: "update", Short: "Update a receiver", Positionals: []string{"<id>"}, Flags: update},
-		{Name: "rm", Short: "Delete a receiver", Positionals: []string{"<id>"}},
+		{Name: "rm", Short: "Delete a receiver", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "yes", Short: "accepted for consistency; rm does not prompt", Bool: true}}},
 		{Name: "deliveries", Short: "Page through receiver deliveries", Positionals: []string{"<id>"}, Flags: []cliFlag{
 			{Name: "page-size", Short: "delivery page size (1..100, default 50)", Value: "N"},
 			{Name: "page-token", Short: "opaque delivery cursor", Value: "CURSOR"},
@@ -81,7 +81,7 @@ func appNetworkCLISubcommand() cliSub {
 func debugRequestFilterCLIFlags() []cliFlag {
 	return []cliFlag{
 		{Name: "since", Short: "lookback window", Value: "DURATION"},
-		{Name: "route", Short: "exact route filter", Value: "PATH"},
+		{Name: "route", Short: "route filter: /path matches every method", Value: "PATH"},
 		{Name: "deployment-id", Short: "deployment filter", Value: "UUID"},
 		{Name: "status", Short: "exact HTTP status (100..599)", Value: "N"},
 		{Name: "cold-boot", Short: "cold-start filter", Value: "BOOL", ClosedSet: []string{"true", "false"}},
@@ -100,16 +100,14 @@ func debugRequestsCLISubcommand() cliSub {
 		cliFlag{Name: "interval", Short: "poll interval (250ms..1h)", Value: "DURATION"},
 		cliFlag{Name: "once", Short: "poll once and exit"})
 	inspect := append(debugRequestFilterCLIFlags(), cliFlag{Name: "latest", Short: "select the newest retained request matching the filters"})
+	export := append(debugRequestFilterCLIFlags(),
+		cliFlag{Name: "format", Short: "export format (default ndjson)", Value: "FORMAT", ClosedSet: []string{"ndjson", "csv"}},
+		cliFlag{Name: "limit", Short: "maximum exported rows (1..10000)", Value: "N"},
+		cliFlag{Name: "output", Short: "destination file; - writes stdout", Value: "PATH"})
 	request := []string{"<slug>", "<request-id-or-row-id>"}
 	return cliSub{Name: "requests", Short: "Per-request telemetry and root-cause synthesis", Subcommands: []cliSub{
 		{Name: "list", Short: "List recent request telemetry", Positionals: []string{"<slug>"}, Flags: list},
-		{Name: "export", Short: "Export metadata-only request telemetry", Positionals: []string{"<slug>"}, Flags: []cliFlag{
-			{Name: "since", Short: "lookback window", Value: "DURATION"},
-			{Name: "route", Short: "exact route filter", Value: "PATH"},
-			{Name: "format", Short: "export format (default ndjson)", Value: "FORMAT", ClosedSet: []string{"ndjson", "csv"}},
-			{Name: "limit", Short: "maximum exported rows (1..10000)", Value: "N"},
-			{Name: "output", Short: "destination file; - writes stdout", Value: "PATH"},
-		}},
+		{Name: "export", Short: "Export metadata-only request telemetry", Positionals: []string{"<slug>"}, Flags: export},
 		{Name: "watch", Short: "Watch new or changed telemetry rows", Positionals: []string{"<slug>"}, Flags: watch},
 		{Name: "get", Short: "Show request metadata", Positionals: request},
 		{Name: "show", Short: "Show the request timeline and evidence", Positionals: request},

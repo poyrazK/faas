@@ -78,5 +78,13 @@ export type AppEffectiveLimits = {
    * Maximum inbound request body accepted for this app's plan, in bytes.
    */
   request_body_max_bytes: number;
+  /**
+   * Idle timeout the platform applies: the app's own setting or its type's default, within the plan bounds (seconds).
+   */
+  idle_timeout_s?: number;
+  /**
+   * When the platform may pause the VM: the declared value or the default for the app's type. Apps on a private network are never paused.
+   */
+  pause?: 'between_requests' | 'when_idle' | 'never';
 };
 

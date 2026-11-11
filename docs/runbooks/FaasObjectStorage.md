@@ -1,12 +1,14 @@
 # FaasObjectStorage
 
 Alerts: `FaasObjectStorageProviderRefusingCredentials`,
-`FaasObjectStorageBucketOperationsStalled`, `FaasObjectStorageInventoryFailing`, `FaasS3GatewayErrorRateHigh`,
+`FaasObjectStorageBucketOperationsStalled`, `FaasObjectStorageInventoryFailing`,
+`FaasObjectStorageInventorySweepStopped`, `FaasObjectStorageInventoryBacklog`,
+`FaasS3GatewayErrorRateHigh`,
 `FaasObjectStorageUsageExportStale`, `FaasObjectStorageRegionNearlyFull`,
 `FaasObjectStorageRegionFull`, `FaasS3GatewayReadUsageFlushFailing`,
 `FaasPublicObjectReadUsageFlushFailing`, `FaasS3GatewayPortShareSaturated`,
-`FaasComputeObjectGatewayDown`, `FaasComputeObjectGatewayConnectorDisconnected`,
-`FaasComputeObjectGatewayUnavailable`.
+`FaasS3GatewayDown`, `FaasComputeObjectGatewayDown`,
+`FaasComputeObjectGatewayConnectorDisconnected`, `FaasComputeObjectGatewayUnavailable`.
 Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
 `s3-gatewayd` (`pkg/s3gateway`), apid's provider usage exporter
 (`pkg/apid/object/usage_export.go`), and public bucket reads in `gatewayd-public`
@@ -14,6 +16,9 @@ Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
 Metrics: `faas_object_storage_provider_refusing_credentials`,
 `faas_object_storage_recovery_attempts_total{operation,outcome}`,
 `faas_object_storage_inventory_scans_total{outcome}`,
+`faas_object_storage_inventory_sweep_last_success_timestamp_seconds`,
+`faas_object_storage_inventory_due_buckets`,
+`faas_object_storage_inventory_oldest_observation_age_seconds{class}`,
 `faas_object_storage_inventory_provider_requests_total`,
 `s3_gateway_ops_total{op="s3_request",code}`,
 `faas_object_storage_usage_export_last_success_timestamp_seconds{backend}`,
@@ -34,6 +39,7 @@ Metrics: `faas_object_storage_provider_refusing_credentials`,
 `cloudflared_tunnel_ha_connections{job="cloudflared-s3"}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
 [ADR 20261030100835](../adr/20261030100835-object-storage-resumable-inventory.md) (resumable inventory),
+[ADR 20261110151628](../adr/20261110151628-object-inventory-follows-activity.md) (sweep scheduling and backlog),
 [ADR 20261029174627](../adr/20261029174627-object-storage-backend-pools.md) (bucket placement),
 [ADR 20261030075301](../adr/20261030075301-object-storage-reads-off-the-database.md) (cached read admission),
 [ADR 20261031122757](../adr/20261031122757-s3-gateway-on-compute-nodes.md) (gateway on compute nodes, port share).
@@ -41,6 +47,12 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
 
 ## Symptom
 
+- **Control-plane gateway down.** `FaasS3GatewayDown`: Prometheus cannot
+  scrape `faas-s3-gatewayd` on the control plane (`127.0.0.1:9096`), and every
+  request to `s3.<domain>` fails. Check `systemctl status faas-s3-gatewayd`
+  and its journal, then restart it. Prometheus scrapes the gateway whenever
+  its unit exists, managed by the manifest or not; before 2026-11-10 only a
+  managed gateway was scraped, so production-us's gateway alerts never fired.
 - **Provider refusing credentials.** A provider answered 401/403 to a bucket
   operation. apid withdraws object storage for an hour: capabilities report
   it off, `gregale feature list` shows it disabled, and bucket creates answer
@@ -52,6 +64,23 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
   temporarily unavailable` on one bucket while the account's other buckets
   work. A bucket needs a successful inventory every 900 s, or a listing that
   is still advancing and an inventory under an hour old.
+- **Inventory sweep stopped.** No sweep has completed for 10 minutes, so
+  every bucket heads for the 900 s limit together and reads and writes start
+  answering 503. The sweep runs on its own loop, apart from billing; check
+  apid is running and its database pool is not exhausted, then look for
+  `object storage inventory sweep failed` in apid's log.
+- **Inventory backlog.** Sweeps complete, but the oldest inventory that
+  admission still needs is over 600 s old, so the sweep is falling behind:
+  that bucket answers 503 at 900 s. Buckets held by a versioning, Object Lock
+  or capacity change, and buckets listing within the 5-minute progress
+  window, are left out of the age. Compare
+  `faas_object_storage_inventory_due_buckets` with the sweep's rate
+  (`rate(faas_object_storage_inventory_scans_total[5m])`) and its listing
+  pages (`rate(faas_object_storage_inventory_provider_requests_total[5m])`):
+  a growing backlog with steady scans means more buckets than one sweep
+  keeps fresh; scans that slowed point at provider listing latency. One
+  sweep keeps about 32,000 one-page buckets fresh at 200 ms per page
+  ([evidence](../ops/evidence/20261110-object-inventory-capacity/REPORT.md)).
 - **Gateway 5xx.** S3 clients get `ServiceUnavailable` (provider unreachable
   or accounting stale) or `SlowDown` (another delete or write of the same
   key, or an inventory scan of the bucket, is still settling). Both count as

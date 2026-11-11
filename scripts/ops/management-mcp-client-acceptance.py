@@ -98,7 +98,16 @@ def preflight_call(rpc, thread_id):
     if not isinstance(value, dict):
         value = json.loads(next(item["text"] for item in result["content"] if item["type"]=="text"))
     checks = value.get("checks", {})
-    if value.get("scope") != "default" or checks.get("api_write_authorization", {}).get("status") != "unknown" or checks.get("write_consent", {}).get("status") != "blocked":
+    authorization, admission = "unknown", "unknown"
+    preview = value.get("authorization_preview")
+    if preview is not None:
+        if not isinstance(preview, dict) or preview.get("schema_version") != 1 or preview.get("app_id") != value.get("app_id") or preview.get("scope") != "default" or preview.get("operation") != "deploy":
+            raise RuntimeError("Codex preflight lost the native authorization identity")
+        authorization = {"allowed": "passed", "blocked": "blocked", "unknown": "unknown"}.get(preview.get("authorization"))
+        admission = {"unknown": "unknown", "blocked": "blocked"}.get(preview.get("admission"))
+        if authorization is None or admission is None or preview.get("checks", {}).get("quota", {}).get("status") != "unknown":
+            raise RuntimeError("Codex preflight inferred request admission from native authorization")
+    if value.get("scope") != "default" or checks.get("api_write_authorization", {}).get("status") != authorization or checks.get("native_admission", {}).get("status") != admission or checks.get("write_consent", {}).get("status") != "blocked":
         raise RuntimeError("Codex preflight confused read access with write admission")
 
 
@@ -273,6 +282,13 @@ def remote_fixture_acceptance(args):
     config = "mcp_servers={gregale={url=" + toml_string(resource) + ",startup_timeout_sec=20,tool_timeout_sec=20}}"
     with tempfile.TemporaryDirectory(prefix="gregale-codex-remote-") as workdir:
         phase = 0
+        history_plan_id = None
+        workload_history_plan_id = None
+        environment_history_plan_id = None
+        budget_history_plan_id = None
+        saved_reviews = {}
+        saved_recoveries = {}
+        saved_discovery_links = {}
         def start():
             nonlocal phase
             phase += 1
@@ -289,8 +305,298 @@ def remote_fixture_acceptance(args):
             server = next((item for item in status["data"] if item["name"] == "gregale"), None)
             return thread_id, server
 
+        def saved_review_call(rpc, thread_id, tool, selector):
+            result, review = invoke(rpc, thread_id, tool, selector)
+            plan = review.get("plan", {})
+            if result.get("isError") or plan.get("plan_id") != selector["plan_id"] or review.get("review_kind") != "saved_original_proposal" or review.get("apply_eligibility") != "not_checked" or review.get("native_completion") != "not_observed" or review.get("durable") is not True:
+                raise RuntimeError("Codex could not reopen its original saved review")
+            forbidden = {"request_id", "idempotency_key", "approval_token", "promotion_token", "promotion_hash", "exchange_code", "review_url", "ticket", "secret_changes", "environment_changes"}
+            def check_keys(value):
+                if isinstance(value, dict):
+                    if forbidden.intersection(value):
+                        raise RuntimeError("Codex saved review exposed private execution/configuration material")
+                    for item in value.values():
+                        check_keys(item)
+                elif isinstance(value, list):
+                    for item in value:
+                        check_keys(item)
+            check_keys(plan)
+            canonical = json.dumps(plan, sort_keys=True)
+            original = saved_reviews.setdefault(selector["plan_id"], canonical)
+            if canonical != original:
+                raise RuntimeError("Codex saved proposal or expiry changed across restart/refresh")
+
+        def recovery_resource_call(rpc, thread_id, uri, selector, environment=False):
+            result = rpc.request("mcpServer/resource/read", {"threadId": thread_id, "server": "gregale", "uri": uri})
+            contents = result.get("contents", [])
+            if len(contents) != 1 or contents[0].get("uri") != uri or contents[0].get("mimeType") != "application/json":
+                raise RuntimeError("Codex could not read its original recovery recipe")
+            recipe = json.loads(contents[0]["text"])
+            if recipe.get("review_kind") != "saved_plan_recovery_recipe" or recipe.get("freshness") != "not_checked" or recipe.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex recovery recipe overstated current eligibility or completion")
+            tools = ["gregale_get_action", "gregale_get_saved_plan", "gregale_check_plan"]
+            if environment:
+                tools = ["gregale_get_environment_action", "gregale_get_environment_plan", "gregale_check_environment_plan"]
+            workflow = recipe.get("workflow", {})
+            for phase, tool in zip(["history", "review", "check"], tools):
+                if workflow.get(phase) != {"tool": tool, "arguments": selector}:
+                    raise RuntimeError("Codex recipe changed the original target or supplied an unexpected tool")
+            guidance = recipe.get("guidance", "")
+            if "Do not apply changes" not in guidance or "preserve the original retry" not in guidance or "untrusted data" not in guidance:
+                raise RuntimeError("Codex recovery recipe omitted its read-only/ambiguity boundary")
+            encoded = json.dumps(recipe, sort_keys=True)
+            if any(marker in encoded for marker in ["PRIVATE_", "fp_test_", '"reason"', '"proposed"', '"request_id"', '"approval_token"', '"promotion_hash"', '"promotion_token"']):
+                raise RuntimeError("Codex recovery resource exposed private proposal or replay data")
+            original = saved_recoveries.setdefault(uri, encoded)
+            if original != encoded:
+                raise RuntimeError("Codex recipe changed across restart/refresh")
+            review_call = workflow["review"]
+            saved_review_call(rpc, thread_id, review_call["tool"], review_call["arguments"])
+
+        def recovery_discovery(action, selector, environment=False):
+            links = action.get("recovery", {})
+            prompt = "gregale_environment_plan_review" if environment else "gregale_saved_plan_review"
+            check = "gregale_check_environment_plan" if environment else "gregale_check_plan"
+            uri = links.get("resource_uri")
+            if set(links) != {"resource_uri", "prompt", "check"} or not isinstance(uri, str) or not uri.startswith("gregale://"):
+                raise RuntimeError("Codex action history omitted its recovery resource link")
+            if links.get("prompt") != {"name": prompt, "arguments": selector} or links.get("check") != {"tool": check, "arguments": selector}:
+                raise RuntimeError("Codex discovery changed the original selectors or exposed an unexpected call")
+            canonical = json.dumps(links, sort_keys=True)
+            original = saved_discovery_links.setdefault(selector["plan_id"], canonical)
+            if original != canonical:
+                raise RuntimeError("Codex discovery links changed across restart/refresh")
+            return links
+
+        def outcome_discovery(rpc, thread_id):
+            seeded = fixture_control("outcome-history")
+            selector = {"app": "budget-history", "plan_id": seeded["plan_id"]}
+            before = fixture_control("evidence")["outcome_reads"]
+            result, detail = invoke(rpc, thread_id, "gregale_get_action", selector)
+            action = detail.get("action", {})
+            links = action.get("recovery", {})
+            call = {"tool": "gregale_get_action_outcome", "arguments": selector}
+            if result.get("isError") or action.get("plan_available") is not False or action.get("apply", {}).get("state") != "outcome_unknown" or action.get("retry_tool") or action.get("review") or set(links) != {"resource_uri", "prompt", "outcome"} or links.get("outcome") != call or links.get("prompt") != {"name": "gregale_saved_plan_review", "arguments": selector}:
+                raise RuntimeError("Codex expired history lost outcome discovery or restored replay authority")
+            result, page = invoke(rpc, thread_id, "gregale_list_actions", {"app": "budget-history"})
+            row = next((item for item in page.get("items", []) if item.get("plan_id") == selector["plan_id"]), {})
+            if result.get("isError") or row.get("recovery") != links:
+                raise RuntimeError("Codex expired history list/detail discovery differs")
+            uri = links["resource_uri"]
+            result = rpc.request("mcpServer/resource/read", {"threadId": thread_id, "server": "gregale", "uri": uri})
+            contents = result.get("contents", [])
+            if len(contents) != 1 or contents[0].get("uri") != uri:
+                raise RuntimeError("Codex expired outcome recipe is unavailable")
+            recipe = json.loads(contents[0]["text"])
+            workflow = recipe.get("workflow", {})
+            observation = {"tool": "gregale_get_route_budgets", "arguments": {"app": "budget-history"}}
+            if set(workflow) != {"history", "outcome", "observation"} or workflow.get("history") != {"tool": "gregale_get_action", "arguments": selector} or workflow.get("outcome") != call or workflow.get("observation") != observation or recipe.get("freshness") != "not_checked" or recipe.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex expired recipe offered live-plan calls or lost exact read selectors")
+            encoded = json.dumps(recipe, sort_keys=True)
+            if any(marker in encoded for marker in ["PRIVATE_", "fp_test_", '"request_id"', '"request_hash"', '"proposed"']):
+                raise RuntimeError("Codex outcome discovery exposed private lookup data")
+            if saved_recoveries.setdefault(uri, encoded) != encoded:
+                raise RuntimeError("Codex expired outcome recipe changed across restart/refresh")
+            if fixture_control("evidence")["outcome_reads"] != before:
+                raise RuntimeError("Codex recipe retrieval fetched a native receipt")
+            result, outcome = invoke(rpc, thread_id, call["tool"], call["arguments"])
+            if result.get("isError") or outcome.get("outcome") != "verified_receipt" or outcome.get("receipt", {}).get("budget_revision") != 1 or outcome.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex did not follow its discovered historical receipt call")
+            result, current = invoke(rpc, thread_id, observation["tool"], observation["arguments"])
+            if result.get("isError") or current.get("revision") != 2 or fixture_control("evidence")["outcome_reads"] != before + 1:
+                raise RuntimeError("Codex historical receipt observation flow performed unexpected reads")
+
+        def deployment_outcome_discovery(rpc, thread_id):
+            seeded = fixture_control("deployment-outcome-history")
+            selector = {"app": "alpha", "plan_id": seeded["plan_id"]}
+            before = fixture_control("evidence")["submission_reads"]
+            result, detail = invoke(rpc, thread_id, "gregale_get_action", selector)
+            action = detail.get("action", {})
+            links = action.get("recovery", {})
+            call = {"tool": "gregale_get_action_outcome", "arguments": selector}
+            if result.get("isError") or action.get("plan_available") is not False or action.get("apply", {}).get("state") != "outcome_unknown" or action.get("retry_tool") or action.get("review") or links.get("outcome") != call or "check" in links:
+                raise RuntimeError("Codex expired deployment history lost receipt recovery or restored replay")
+            uri = links["resource_uri"]
+            result = rpc.request("mcpServer/resource/read", {"threadId": thread_id, "server": "gregale", "uri": uri})
+            contents = result.get("contents", [])
+            if len(contents) != 1:
+                raise RuntimeError("Codex deployment recipe is unavailable")
+            recipe = json.loads(contents[0]["text"])
+            workflow = recipe.get("workflow", {})
+            if set(workflow) != {"history", "outcome"} or workflow.get("outcome") != call or recipe.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex deployment recipe invented an observation target or live-plan call")
+            encoded = json.dumps(recipe, sort_keys=True)
+            if saved_recoveries.setdefault(uri, encoded) != encoded or fixture_control("evidence")["submission_reads"] != before:
+                raise RuntimeError("Codex recipe changed or fetched a receipt during retrieval")
+            result, outcome = invoke(rpc, thread_id, call["tool"], call["arguments"])
+            observation = {"tool": "gregale_get_deployment", "arguments": {"deployment_id": "accepted-source-deployment"}}
+            if result.get("isError") or outcome.get("phase") != "apply" or outcome.get("outcome") != "verified_receipt" or outcome.get("receipt") != {"deployment_id": "accepted-source-deployment"} or outcome.get("observation") != observation or outcome.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex deployment receipt lost exact acceptance identity or overstated completion")
+            if any(marker in json.dumps(outcome) for marker in ['"attempt_id"', '"artifact_hash"', '"expected_source"', 'PRIVATE_']):
+                raise RuntimeError("Codex deployment outcome exposed private attempt data")
+            result, deployment = invoke(rpc, thread_id, observation["tool"], observation["arguments"])
+            if result.get("isError") or deployment.get("status") != "failed" or fixture_control("evidence")["submission_reads"] != before + 1:
+                raise RuntimeError("Codex failed deployment was confused with non-acceptance")
+
+        def rollback_outcome_discovery(rpc, thread_id, service=False):
+            seeded = fixture_control("service-rollback-outcome-history" if service else "rollback-outcome-history")
+            selector = {"app": "alpha", "plan_id": seeded["plan_id"]}
+            counter = "service_rollback_reads" if service else "rollback_reads"
+            before = fixture_control("evidence")[counter]
+            result, detail = invoke(rpc, thread_id, "gregale_get_action", selector)
+            action = detail.get("action", {})
+            links = action.get("recovery", {})
+            call = {"tool": "gregale_get_action_outcome", "arguments": selector}
+            if result.get("isError") or action.get("plan_available") or action.get("apply", {}).get("state") != "outcome_unknown" or links.get("outcome") != call or "check" in links:
+                raise RuntimeError("Codex did not discover expired original rollback recovery")
+            uri = links["resource_uri"]
+            result = rpc.request("mcpServer/resource/read", {"threadId": thread_id, "server": "gregale", "uri": uri})
+            contents = result.get("contents", [])
+            if len(contents) != 1:
+                raise RuntimeError("Codex rollback recipe unavailable")
+            recipe = json.loads(contents[0]["text"])
+            workflow = recipe.get("workflow", {})
+            if set(workflow) != {"history", "outcome"} or workflow.get("outcome") != call:
+                raise RuntimeError("Codex rollback recipe granted live-plan authority")
+            encoded = json.dumps(recipe, sort_keys=True)
+            if saved_recoveries.setdefault(uri, encoded) != encoded or fixture_control("evidence")[counter] != before:
+                raise RuntimeError("Codex passive rollback recipe changed or read native receipt")
+            result, outcome = invoke(rpc, thread_id, call["tool"], call["arguments"])
+            observation = {"tool": "gregale_get_rollback", "arguments": {"app": "alpha", "operation_id": seeded["operation_id"]}}
+            if result.get("isError") or outcome.get("phase") != "apply" or outcome.get("outcome") != "verified_receipt" or outcome.get("receipt") != {"deployment_id": "rollback-target", "rollback_operation_id": seeded["operation_id"]} or outcome.get("observation") != observation or outcome.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex rollback acceptance lost original identity or overstated completion")
+            if service and (outcome.get("rollout_observation") != {"tool": "gregale_get_rollout", "arguments": {"app": "alpha", "deployment_id": "rollback-target"}} or outcome.get("health_observation") != {"tool": "gregale_get_health", "arguments": {"app": "alpha"}}):
+                raise RuntimeError("Codex service rollback lost independent rollout/health observations")
+            if any(marker in json.dumps(outcome) for marker in ['"attempt_id"', '"request_hash"', '"reason"', 'PRIVATE_']):
+                raise RuntimeError("Codex rollback outcome leaked private original metadata")
+            result, progress = invoke(rpc, thread_id, observation["tool"], observation["arguments"])
+            if result.get("isError") or progress.get("status") != "failed" or fixture_control("evidence")[counter] != before + 2:
+                raise RuntimeError("Codex rollback acceptance was confused with later failure")
+
+        def environment_rollback_outcome_discovery(rpc, thread_id):
+            seeded = fixture_control("environment-rollback-outcome-history")
+            selector = {"project": "shop", "environment": "production", "plan_id": seeded["plan_id"]}
+            before = fixture_control("evidence")["environment_rollback_reads"]
+            result, detail = invoke(rpc, thread_id, "gregale_get_environment_action", selector)
+            action = detail.get("action", {})
+            links = action.get("recovery", {})
+            call = {"tool": "gregale_get_environment_action_outcome", "arguments": selector}
+            if result.get("isError") or action.get("plan_available") or action.get("apply", {}).get("state") != "outcome_unknown" or links.get("outcome") != call or "check" in links:
+                raise RuntimeError("Codex lost expired environment rollback outcome discovery")
+            uri = links["resource_uri"]
+            resource = rpc.request("mcpServer/resource/read", {"threadId": thread_id, "server": "gregale", "uri": uri})
+            recipe = json.loads(resource["contents"][0]["text"])
+            observation = {"tool": "gregale_get_environment_promotion", "arguments": {"project": "shop", "environment": "production", "promotion_id": seeded["promotion_id"]}}
+            if set(recipe.get("workflow", {})) != {"history", "outcome", "environment_observation"} or recipe["workflow"]["outcome"] != call or recipe["workflow"]["environment_observation"] != observation:
+                raise RuntimeError("Codex environment recipe lost observation or granted live-plan authority")
+            encoded = json.dumps(recipe, sort_keys=True)
+            if saved_recoveries.setdefault(uri, encoded) != encoded or fixture_control("evidence")["environment_rollback_reads"] != before:
+                raise RuntimeError("Codex passive environment recipe changed or fetched a receipt")
+            result, outcome = invoke(rpc, thread_id, call["tool"], call["arguments"])
+            if result.get("isError") or outcome.get("outcome") != "verified_receipt" or outcome.get("receipt") != {"promotion_id": seeded["promotion_id"]} or outcome.get("observation") != observation or outcome.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex environment receipt lost original acceptance or overstated completion")
+            if any(marker in json.dumps(outcome) for marker in ['"attempt_id"', '"request_hash"', '"promotion_hash"', 'PRIVATE_']):
+                raise RuntimeError("Codex environment receipt exposed private lookup metadata")
+            result, progress = invoke(rpc, thread_id, observation["tool"], observation["arguments"])
+            if result.get("isError") or progress.get("rollback_status") != "rollback_failed" or fixture_control("evidence")["environment_rollback_reads"] != before + 1:
+                raise RuntimeError("Codex confused environment rollback acceptance with later failure")
+
+        def environment_promotion_outcome_discovery(rpc, thread_id):
+            seeded = fixture_control("environment-promotion-outcome-history")
+            selector = {"project": "shop", "environment": "production", "plan_id": seeded["plan_id"]}
+            before = fixture_control("evidence")["environment_promotion_reads"]
+            result, detail = invoke(rpc, thread_id, "gregale_get_environment_action", selector)
+            action = detail.get("action", {})
+            links = action.get("recovery", {})
+            call = {"tool": "gregale_get_environment_action_outcome", "arguments": selector}
+            if result.get("isError") or action.get("plan_available") or action.get("apply", {}).get("state") != "outcome_unknown" or links.get("outcome") != call or "check" in links:
+                raise RuntimeError("Codex lost expired environment promotion outcome discovery")
+            uri = links["resource_uri"]
+            resource = rpc.request("mcpServer/resource/read", {"threadId": thread_id, "server": "gregale", "uri": uri})
+            recipe = json.loads(resource["contents"][0]["text"])
+            observation = {"tool": "gregale_get_environment_promotion", "arguments": {"project": "shop", "environment": "production", "promotion_id": seeded["promotion_id"]}}
+            if set(recipe.get("workflow", {})) != {"history", "outcome"} or recipe["workflow"]["outcome"] != call:
+                raise RuntimeError("Codex environment recipe lost observation or granted live-plan authority")
+            encoded = json.dumps(recipe, sort_keys=True)
+            if saved_recoveries.setdefault(uri, encoded) != encoded or fixture_control("evidence")["environment_promotion_reads"] != before:
+                raise RuntimeError("Codex passive environment recipe changed or fetched a receipt")
+            result, outcome = invoke(rpc, thread_id, call["tool"], call["arguments"])
+            if result.get("isError") or outcome.get("outcome") != "verified_receipt" or outcome.get("receipt") != {"promotion_id": seeded["promotion_id"]} or outcome.get("observation") != observation or outcome.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex environment receipt lost original acceptance or overstated completion")
+            if any(marker in json.dumps(outcome) for marker in ['"attempt_id"', '"request_hash"', '"promotion_hash"', 'PRIVATE_']):
+                raise RuntimeError("Codex environment receipt exposed private lookup metadata")
+            result, progress = invoke(rpc, thread_id, observation["tool"], observation["arguments"])
+            if result.get("isError") or progress.get("status") != "failed" or fixture_control("evidence")["environment_promotion_reads"] != before + 1:
+                raise RuntimeError("Codex confused environment promotion acceptance with later failure")
+
+        def service_abort_outcome_discovery(rpc, thread_id, named=False):
+            seeded = fixture_control("named-service-abort-outcome-history" if named else "service-abort-outcome-history")
+            selector = {"app": "alpha", "plan_id": seeded["plan_id"]}
+            if named:
+                selector.update(project="shop", environment="staging")
+            before = fixture_control("evidence")["service_abort_reads"]
+            result, detail = invoke(rpc, thread_id, "gregale_get_action", selector)
+            action = detail.get("action", {})
+            links = action.get("recovery", {})
+            call = {"tool": "gregale_get_action_outcome", "arguments": selector}
+            if result.get("isError") or action.get("plan_available") or action.get("apply", {}).get("state") != "outcome_unknown" or links.get("outcome") != call or "check" in links:
+                raise RuntimeError("Codex expired service abort lost original acceptance discovery")
+            uri = links["resource_uri"]
+            resource = rpc.request("mcpServer/resource/read", {"threadId": thread_id, "server": "gregale", "uri": uri})
+            recipe = json.loads(resource["contents"][0]["text"])
+            if set(recipe.get("workflow", {})) != {"history", "outcome"} or recipe["workflow"]["outcome"] != call:
+                raise RuntimeError("Codex service-abort recipe granted live-plan authority")
+            encoded = json.dumps(recipe, sort_keys=True)
+            if saved_recoveries.setdefault(uri, encoded) != encoded or fixture_control("evidence")["service_abort_reads"] != before:
+                raise RuntimeError("Codex passive service-abort discovery fetched evidence or changed")
+            result, outcome = invoke(rpc, thread_id, call["tool"], call["arguments"])
+            observation = {"tool": "gregale_get_rollout", "arguments": {"app": "alpha", "deployment_id": seeded["deployment_id"]}}
+            if named:
+                observation["arguments"].update(project="shop", environment="staging")
+            expected = {"deployment_id": seeded["deployment_id"], "recovery_request_id": seeded["request_id"]}
+            if result.get("isError") or outcome.get("phase") != "apply" or outcome.get("outcome") != "verified_receipt" or outcome.get("receipt") != expected or outcome.get("observation") != observation or outcome.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex service-abort acceptance lost its original request or overstated completion")
+            if any(marker in json.dumps(outcome) for marker in ['"attempt_id"', '"request_hash"', '"reason"', 'PRIVATE_']):
+                raise RuntimeError("Codex service-abort recovery leaked original metadata")
+            result, observed = invoke(rpc, thread_id, observation["tool"], observation["arguments"])
+            handoff = observed.get("deployment", {}).get("service_rollout_handoff", {})
+            if result.get("isError") or handoff.get("bindings_check", {}).get("request_id") != seeded["observed_request_id"] or fixture_control("evidence")["service_abort_reads"] != before + 1:
+                raise RuntimeError("Codex later handoff was confused with original service-abort completion")
+
+        def promotion_outcome_discovery(rpc, thread_id):
+            seeded = fixture_control("promotion-outcome-history")
+            selector = {"app": "alpha", "plan_id": seeded["plan_id"]}
+            before = fixture_control("evidence")["promotion_reads"]
+            result, detail = invoke(rpc, thread_id, "gregale_get_action", selector)
+            action = detail.get("action", {})
+            links = action.get("recovery", {})
+            call = {"tool": "gregale_get_action_outcome", "arguments": {**selector, "phase": "promotion"}}
+            if result.get("isError") or action.get("plan_available") or action.get("promotion", {}).get("state") != "outcome_unknown" or links.get("promotion_outcome") != call or "check" in links:
+                raise RuntimeError("Codex expired promotion lost exact phase discovery")
+            uri = links["resource_uri"]
+            result = rpc.request("mcpServer/resource/read", {"threadId": thread_id, "server": "gregale", "uri": uri})
+            contents = result.get("contents", [])
+            if len(contents) != 1:
+                raise RuntimeError("Codex expired promotion recipe unavailable")
+            recipe = json.loads(contents[0]["text"])
+            workflow = recipe.get("workflow", {})
+            if set(workflow) != {"history", "promotion_outcome"} or workflow.get("promotion_outcome") != call:
+                raise RuntimeError("Codex promotion-only recipe reconstructed expired authority")
+            encoded = json.dumps(recipe, sort_keys=True)
+            if saved_recoveries.setdefault(uri, encoded) != encoded or fixture_control("evidence")["promotion_reads"] != before:
+                raise RuntimeError("Codex passive promotion recipe changed or fetched receipt")
+            result, outcome = invoke(rpc, thread_id, call["tool"], call["arguments"])
+            observation = {"tool": "gregale_get_deployment", "arguments": {"deployment_id": "promoted-source-deployment"}}
+            if result.get("isError") or outcome.get("phase") != "promotion" or outcome.get("outcome") != "verified_receipt" or outcome.get("receipt") != {"deployment_id": "promoted-source-deployment"} or outcome.get("observation") != observation or outcome.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex did not verify original historical promotion")
+            result, current = invoke(rpc, thread_id, observation["tool"], observation["arguments"])
+            if result.get("isError") or current.get("status") != "superseded" or current.get("traffic_percent") != 0 or fixture_control("evidence")["promotion_reads"] != before + 1:
+                raise RuntimeError("Codex promotion acceptance was confused with current traffic")
+
         def read(rpc):
+            nonlocal history_plan_id, workload_history_plan_id, environment_history_plan_id, budget_history_plan_id
             thread_id, server = connect(rpc)
+            discoveries = []
             if not server or server.get("toolsError") or not server["tools"]:
                 raise RuntimeError("Codex remote MCP discovery failed")
             inventory = server["tools"]
@@ -304,8 +610,115 @@ def remote_fixture_acceptance(args):
             if not {"gregale_plan_source_deploy", "gregale_plan_workload_rollout", "gregale_plan_service_abort", "gregale_get_rollout", "gregale_get_request_analytics", "gregale_get_request_analytics_timeseries", "gregale_list_error_groups", "gregale_list_error_requests", "gregale_get_wake_history", "gregale_get_wake_timeline", "gregale_get_profiles"}.issubset(names):
                 raise RuntimeError("Codex remote source tool is missing")
             source_planning_call(rpc, thread_id)
+            if not {"gregale_list_actions", "gregale_get_action"}.issubset(names):
+                raise RuntimeError("Codex action history tools are missing")
+            result, page = invoke(rpc, thread_id, "gregale_list_actions", {"app": "alpha", "limit": 20})
+            if result.get("isError") or not page.get("items") or page.get("durable") is not True:
+                raise RuntimeError("Codex did not discover the recorded source plan")
+            if history_plan_id is None:
+                history_plan_id = page["items"][0]["plan_id"]
+            result, detail = invoke(rpc, thread_id, "gregale_get_action", {"app": "alpha", "plan_id": history_plan_id})
+            action = detail.get("action", {})
+            if result.get("isError") or action.get("plan_id") != history_plan_id or action.get("apply", {}).get("state") != "not_attempted" or action.get("plan_available") is not True or detail.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex action history lost its original plan across restart/refresh")
+            discoveries.append((recovery_discovery(action, {"app": "alpha", "plan_id": history_plan_id}, environment=False), {"app": "alpha", "plan_id": history_plan_id}, False))
+            for value in (page, detail):
+                encoded = json.dumps(value)
+                if any(marker in encoded for marker in ["read-only source planning acceptance", '"source"', '"configuration_hash"', "fp_test_", '"reason"', '"requested_ref"']):
+                    raise RuntimeError("Codex action history exposed excluded plan data")
+            if not {"workload_rollout", "service_abort"}.issubset(page.get("supported_actions", [])):
+                raise RuntimeError("Codex workload history coverage is missing")
+            if workload_history_plan_id is None:
+                fixture_control("history-worker")
+                try:
+                    result, planned = invoke(rpc, thread_id, "gregale_plan_workload_rollout", {"app": "alpha", "image": "registry.example/team/app@sha256:" + "a" * 64, "reason": "PRIVATE_WORKLOAD_HISTORY"})
+                    if result.get("isError") or planned.get("action") != "workload_rollout":
+                        raise RuntimeError("Codex workload history planning failed")
+                    workload_history_plan_id = planned["plan_id"]
+                finally:
+                    fixture_control("history-request")
+            result, detail = invoke(rpc, thread_id, "gregale_get_action", {"app": "alpha", "plan_id": workload_history_plan_id})
+            action = detail.get("action", {})
+            if result.get("isError") or action.get("plan_id") != workload_history_plan_id or action.get("workload", {}).get("mode") != "worker" or action.get("apply", {}).get("state") != "not_attempted" or action.get("plan_available") is not True or detail.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex workload history changed across restart/refresh")
+            discoveries.append((recovery_discovery(action, {"app": "alpha", "plan_id": workload_history_plan_id}, environment=False), {"app": "alpha", "plan_id": workload_history_plan_id}, False))
+            if any(marker in json.dumps(detail) for marker in ["PRIVATE_WORKLOAD_HISTORY", '"image"', '"rollout_policy"', '"configuration_hash"']):
+                raise RuntimeError("Codex workload history exposed excluded plan data")
+            if not {"gregale_list_environment_actions", "gregale_get_environment_action"}.issubset(names):
+                raise RuntimeError("Codex environment history tools are missing")
+            if environment_history_plan_id is None:
+                result, planned = invoke(rpc, thread_id, "gregale_plan_environment_promotion", {"project": "shop", "from_environment": "staging", "to_environment": "production", "reason": "PRIVATE_ENV_REASON"})
+                if result.get("isError") or planned.get("action") != "environment_promotion":
+                    raise RuntimeError("Codex environment history planning failed")
+                environment_history_plan_id = planned["plan_id"]
+            selector = {"project": "shop", "environment": "production"}
+            result, page = invoke(rpc, thread_id, "gregale_list_environment_actions", selector)
+            if result.get("isError") or not any(item.get("plan_id") == environment_history_plan_id for item in page.get("items", [])):
+                raise RuntimeError("Codex did not discover its original environment plan")
+            result, detail = invoke(rpc, thread_id, "gregale_get_environment_action", dict(selector, plan_id=environment_history_plan_id))
+            action = detail.get("action", {})
+            if result.get("isError") or action.get("plan_id") != environment_history_plan_id or action.get("from_environment") != "staging" or action.get("apply", {}).get("state") != "not_attempted" or action.get("approval_required") is not True or action.get("plan_available") is not True or detail.get("native_completion") != "not_observed" or detail.get("durable") is not True:
+                raise RuntimeError("Codex environment history changed across restart/refresh")
+            discoveries.append((recovery_discovery(action, {"project": "shop", "environment": "production", "plan_id": environment_history_plan_id}, environment=True), {"project": "shop", "environment": "production", "plan_id": environment_history_plan_id}, True))
+            if any(marker in json.dumps(detail) for marker in ["PRIVATE_ENV_REASON", "PRIVATE_ENV_PREVIEW", '"promotion_hash"', '"promotion_token"', '"approval_token"', '"changes"', '"review_url"', '"exchange_code"']):
+                raise RuntimeError("Codex environment history exposed excluded plan data")
+            if budget_history_plan_id is None:
+                result, planned = invoke(rpc, thread_id, "gregale_plan_route_budgets", {"app": "budget-history", "reason": "PRIVATE_BUDGET_HISTORY", "inherit": True, "enabled": False, "routes": []})
+                if result.get("isError") or planned.get("action") != "route_budgets":
+                    raise RuntimeError("Codex budget history planning failed: " + str(planned.get("code", "unexpected_action")))
+                budget_history_plan_id = planned["plan_id"]
+            result, page = invoke(rpc, thread_id, "gregale_list_actions", {"app": "budget-history"})
+            if result.get("isError") or "route_budgets" not in page.get("supported_actions", []) or not any(item.get("plan_id") == budget_history_plan_id for item in page.get("items", [])):
+                raise RuntimeError("Codex did not discover its original budget plan")
+            result, detail = invoke(rpc, thread_id, "gregale_get_action", {"app": "budget-history", "plan_id": budget_history_plan_id})
+            action = detail.get("action", {})
+            if result.get("isError") or action.get("plan_id") != budget_history_plan_id or action.get("budget", {}).get("change") != "inherit_app_policy" or action.get("apply", {}).get("state") != "not_attempted" or action.get("plan_available") is not True or action.get("observation") != {"tool": "gregale_get_route_budgets", "arguments": {"app": "budget-history"}} or detail.get("native_completion") != "not_observed" or detail.get("durable") is not True:
+                raise RuntimeError("Codex budget history changed across restart/refresh")
+            discoveries.append((recovery_discovery(action, {"app": "budget-history", "plan_id": budget_history_plan_id}, environment=False), {"app": "budget-history", "plan_id": budget_history_plan_id}, False))
+            if any(marker in json.dumps(detail) for marker in ["PRIVATE_BUDGET_HISTORY", '"routes"', '"config"', '"request_id"', '"reason"']):
+                raise RuntimeError("Codex budget history exposed excluded plan data")
+            result, outcome = invoke(rpc, thread_id, "gregale_get_action_outcome", {"app": "budget-history", "plan_id": budget_history_plan_id})
+            if result.get("isError") or outcome.get("plan_id") != budget_history_plan_id or outcome.get("outcome") != "unresolved" or outcome.get("reason") != "no_recorded_attempt" or outcome.get("receipt") is not None or outcome.get("native_completion") != "not_observed":
+                raise RuntimeError("Codex unattempted budget outcome fabricated receipt evidence")
+            outcome_discovery(rpc, thread_id)
+            deployment_outcome_discovery(rpc, thread_id)
+            promotion_outcome_discovery(rpc, thread_id)
+            rollback_outcome_discovery(rpc, thread_id)
+            rollback_outcome_discovery(rpc, thread_id, service=True)
+            environment_rollback_outcome_discovery(rpc, thread_id)
+            environment_promotion_outcome_discovery(rpc, thread_id)
+            service_abort_outcome_discovery(rpc, thread_id)
+            service_abort_outcome_discovery(rpc, thread_id, named=True)
+            if not {"gregale_get_saved_plan", "gregale_get_environment_plan"}.issubset(names):
+                raise RuntimeError("Codex saved review tools are missing")
+            for plan_id in (history_plan_id, workload_history_plan_id):
+                saved_review_call(rpc, thread_id, "gregale_get_saved_plan", {"app": "alpha", "plan_id": plan_id})
+            saved_review_call(rpc, thread_id, "gregale_get_saved_plan", {"app": "budget-history", "plan_id": budget_history_plan_id})
+            saved_review_call(rpc, thread_id, "gregale_get_environment_plan", {"project": "shop", "environment": "production", "plan_id": environment_history_plan_id})
+            if not {"gregale_check_plan", "gregale_check_environment_plan"}.issubset(names):
+                raise RuntimeError("Codex applicability tools are missing")
+            for links, selector, _environment in discoveries:
+                check_tool = links["check"]["tool"]
+                result, checked = invoke(rpc, thread_id, check_tool, links["check"]["arguments"])
+                if result.get("isError") or checked.get("plan_id") != selector["plan_id"] or checked.get("apply_eligibility") != "blocked" or "writes_disabled" not in checked.get("blockers", []) or checked.get("native_completion") != "not_observed":
+                    raise RuntimeError("Codex applicability check lost read-only authority or original identity")
+                original = json.loads(saved_reviews[selector["plan_id"]])
+                if checked.get("expires_at") != original.get("expires_at"):
+                    raise RuntimeError("Codex applicability check renewed original expiry")
+            fixture_control("plan-drift-on")
+            try:
+                result, checked = invoke(rpc, thread_id, "gregale_check_plan", {"app": "alpha", "plan_id": history_plan_id})
+                if result.get("isError") or checked.get("baseline_check") != "changed" or "plan_stale" not in checked.get("blockers", []) or checked.get("drift") != [{"field": "app_settings", "values_omitted": True}]:
+                    raise RuntimeError("Codex did not receive a safe explanation of original-plan drift")
+                if checked.get("expires_at") != json.loads(saved_reviews[history_plan_id]).get("expires_at"):
+                    raise RuntimeError("Codex drift explanation changed original expiry")
+            finally:
+                fixture_control("plan-drift-off")
+            saved_review_call(rpc, thread_id, "gregale_get_saved_plan", {"app": "alpha", "plan_id": history_plan_id})
             scoped_telemetry_calls(rpc, thread_id)
             rollout_watch_call(rpc, thread_id)
+            for links, selector, environment in discoveries:
+                recovery_resource_call(rpc, thread_id, links["resource_uri"], selector, environment=environment)
             context_resource_call(rpc, thread_id)
             preflight_call(rpc, thread_id)
             if request_mode:
@@ -1115,9 +1528,18 @@ def remote_fixture_acceptance(args):
             _thread_id, server = connect(rpc)
             if server and not server.get("toolsError") and server.get("tools"):
                 raise RuntimeError("Codex retained remote tools after grant revocation")
+            for uri in saved_recoveries:
+                try:
+                    result = rpc.request("mcpServer/resource/read", {"threadId": _thread_id, "server": "gregale", "uri": uri})
+                except RuntimeError as error:
+                    if "timed out" in str(error).lower() or "timeout" in str(error).lower():
+                        raise
+                    continue
+                if result.get("contents"):
+                    raise RuntimeError("Codex retained recovery resource access after revocation")
         finally:
             rpc.close()
-        print(json.dumps({"client": "codex", "fixture": True, "transport": "streamable-http", "tools": tools, "oauth_login": "passed", "discovery": "passed", "read_calls": "passed", "source_planning": "passed", "scoped_telemetry": "passed", "rollout_watch": "passed", "resources": "passed", "restart": "passed", "refresh": "passed", "revocation": "passed", "request_diagnostics": request_mode, "request_discovery": "passed" if request_mode else "not_requested", "performance_diagnosis": "passed" if request_mode else "not_requested", "empty_performance": "passed" if request_mode == "approved" else "not_requested", "residency_diagnosis": "passed" if request_mode else "not_requested", "empty_residency": "passed" if request_mode == "approved" else "not_requested", "critical_paths": "passed" if request_mode else "not_requested", "empty_critical_paths": "passed" if request_mode == "approved" else "not_requested", "deployment_comparison": "passed" if request_mode else "not_requested", "empty_comparison": "passed" if request_mode == "approved" else "not_requested", "regression_inbox": "passed" if request_mode else "not_requested", "regression_resource": "passed" if request_mode else "not_requested", "fleet_regressions": "passed" if request_mode else "not_requested", "incident_bundle": "passed" if request_mode else "not_requested", "selected_trace": "passed" if request_mode else "not_requested", "partial_trace": "passed" if request_mode == "approved" else "not_requested", "empty_regressions": "passed" if request_mode == "approved" else "not_requested", "request_explanations": "passed" if request_mode else "not_requested", "empty_request_explanation": "passed" if request_mode == "approved" else "not_requested", "request_critical_path": "passed" if request_mode else "not_requested", "empty_request_critical_path": "passed" if request_mode == "approved" else "not_requested", "guest_execution": "passed" if request_mode else "not_requested", "missing_guest_execution": "passed" if request_mode == "approved" else "not_requested", "request_regression_context": "passed" if request_mode else "not_requested", "missing_request_regression": "passed" if request_mode == "approved" else "not_requested", "request_dependency_comparison": "passed" if request_mode else "not_requested", "missing_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "truncated_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "dependency_impact": "passed" if request_mode else "not_requested", "empty_dependency_impact": "passed" if request_mode == "approved" else "not_requested", "request_analytics": "passed" if request_mode else "not_requested", "empty_request_analytics": "passed" if request_mode == "approved" else "not_requested", "request_analytics_timeseries": "passed" if request_mode else "not_requested", "empty_request_analytics_timeseries": "passed" if request_mode == "approved" else "not_requested", "request_wake": "passed" if request_mode else "not_requested", "missing_request_wake": "passed" if request_mode == "approved" else "not_requested", "invalid_request_wake": "passed" if request_mode == "approved" else "not_requested", "request_wake_recommendation": "passed" if request_mode == "approved" else "not_requested", "wake_pagination": "passed" if request_mode else "not_requested", "wake_history_pagination": "passed" if request_mode else "not_requested", "wake_timeline": "passed" if request_mode else "not_requested", "empty_wake_timeline": "passed" if request_mode == "approved" else "not_requested", "wake_history": "passed" if request_mode else "not_requested", "empty_wake_history": "passed" if request_mode == "approved" else "not_requested", "error_triage": "passed" if request_mode else "not_requested", "empty_error_triage": "passed" if request_mode == "approved" else "not_requested", "profiles": "passed" if request_mode else "not_requested", "empty_profiles": "passed" if request_mode == "approved" else "not_requested", "model_requests": 0, "deployment_writes": 0}))
+        print(json.dumps({"action_history": "passed", "workload_action_history": "passed", "environment_action_history": "passed", "environment_rollback_outcomes": "passed", "environment_promotion_outcomes": "passed", "budget_action_history": "passed", "action_outcomes": "passed", "outcome_discovery": "passed", "deployment_outcomes": "passed", "promotion_outcomes": "passed", "rollback_outcomes": "passed", "service_rollback_outcomes": "passed", "service_abort_outcomes": "passed", "named_service_abort_outcomes": "passed", "saved_plan_review": "passed", "plan_applicability": "passed", "plan_drift": "passed", "recovery_resources": "passed", "recovery_discovery": "passed", "client": "codex", "fixture": True, "transport": "streamable-http", "tools": tools, "oauth_login": "passed", "discovery": "passed", "read_calls": "passed", "source_planning": "passed", "scoped_telemetry": "passed", "rollout_watch": "passed", "resources": "passed", "restart": "passed", "refresh": "passed", "revocation": "passed", "request_diagnostics": request_mode, "request_discovery": "passed" if request_mode else "not_requested", "performance_diagnosis": "passed" if request_mode else "not_requested", "empty_performance": "passed" if request_mode == "approved" else "not_requested", "residency_diagnosis": "passed" if request_mode else "not_requested", "empty_residency": "passed" if request_mode == "approved" else "not_requested", "critical_paths": "passed" if request_mode else "not_requested", "empty_critical_paths": "passed" if request_mode == "approved" else "not_requested", "deployment_comparison": "passed" if request_mode else "not_requested", "empty_comparison": "passed" if request_mode == "approved" else "not_requested", "regression_inbox": "passed" if request_mode else "not_requested", "regression_resource": "passed" if request_mode else "not_requested", "fleet_regressions": "passed" if request_mode else "not_requested", "incident_bundle": "passed" if request_mode else "not_requested", "selected_trace": "passed" if request_mode else "not_requested", "partial_trace": "passed" if request_mode == "approved" else "not_requested", "empty_regressions": "passed" if request_mode == "approved" else "not_requested", "request_explanations": "passed" if request_mode else "not_requested", "empty_request_explanation": "passed" if request_mode == "approved" else "not_requested", "request_critical_path": "passed" if request_mode else "not_requested", "empty_request_critical_path": "passed" if request_mode == "approved" else "not_requested", "guest_execution": "passed" if request_mode else "not_requested", "missing_guest_execution": "passed" if request_mode == "approved" else "not_requested", "request_regression_context": "passed" if request_mode else "not_requested", "missing_request_regression": "passed" if request_mode == "approved" else "not_requested", "request_dependency_comparison": "passed" if request_mode else "not_requested", "missing_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "truncated_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "dependency_impact": "passed" if request_mode else "not_requested", "empty_dependency_impact": "passed" if request_mode == "approved" else "not_requested", "request_analytics": "passed" if request_mode else "not_requested", "empty_request_analytics": "passed" if request_mode == "approved" else "not_requested", "request_analytics_timeseries": "passed" if request_mode else "not_requested", "empty_request_analytics_timeseries": "passed" if request_mode == "approved" else "not_requested", "request_wake": "passed" if request_mode else "not_requested", "missing_request_wake": "passed" if request_mode == "approved" else "not_requested", "invalid_request_wake": "passed" if request_mode == "approved" else "not_requested", "request_wake_recommendation": "passed" if request_mode == "approved" else "not_requested", "wake_pagination": "passed" if request_mode else "not_requested", "wake_history_pagination": "passed" if request_mode else "not_requested", "wake_timeline": "passed" if request_mode else "not_requested", "empty_wake_timeline": "passed" if request_mode == "approved" else "not_requested", "wake_history": "passed" if request_mode else "not_requested", "empty_wake_history": "passed" if request_mode == "approved" else "not_requested", "error_triage": "passed" if request_mode else "not_requested", "empty_error_triage": "passed" if request_mode == "approved" else "not_requested", "profiles": "passed" if request_mode else "not_requested", "empty_profiles": "passed" if request_mode == "approved" else "not_requested", "model_requests": 0, "deployment_writes": 0}))
 
 
 def main():
@@ -1158,7 +1580,7 @@ def main():
         command_args = ["--non-interactive"]
         if args.profile:
             command_args += ["--profile", args.profile]
-        command_args += ["mcp", "serve", "--transport", "stdio"]
+        command_args += ["mcp", "serve", "--transport", "stdio", "--tools", "all"]
         fields += ["command=" + toml_string(binary), "args=" + json.dumps(command_args)]
         fields.append('env_vars=["FAAS_TOKEN","FAAS_API","XDG_CONFIG_HOME"]')
         env_fields = []

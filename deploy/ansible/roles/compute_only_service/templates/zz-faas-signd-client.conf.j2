@@ -1,0 +1,11 @@
+# Managed by compute_only_service (ADR-20261109170000): imaged signs app
+# layers through the control plane's signd with this node's identity leaf.
+# Runtime bases and the agent layer keep the local signer while sign.key is
+# still on this node.
+[Service]
+LoadCredential=signd_client_key:/etc/faas/tls/signd-client/imaged.key
+Environment=FAAS_ARTIFACT_SIGNER=signd
+Environment=FAAS_SIGND_TARGET={{ faas_imaged_signd_target }}
+Environment=FAAS_SIGND_TLS_CERT_PATH=/etc/faas/tls/signd-client/imaged.crt
+Environment=FAAS_SIGND_TLS_KEY_PATH=%d/signd_client_key
+Environment=FAAS_SIGND_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt

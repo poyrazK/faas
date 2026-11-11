@@ -1,10 +1,11 @@
-import { mcpTaskHandlerInventory } from './task-compatibility.js';
+import { isMcpTaskToolName, mcpTaskHandlerInventory } from './task-compatibility.js';
+import { createMcpTaskLeaseDeadline } from './task-lease.js';
+import { snapshotTaskOutputSchema, validateTaskOutput } from './task-output.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import * as z from 'zod/v4';
 
 export const MCP_TASKS_EXTENSION_ID = 'io.modelcontextprotocol/tasks';
-const TASK_TOOL_NAME_PATTERN = /^[\x21-\x7e]{1,128}$/;
 const TASK_HANDLER_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const LEASE_MS = 30_000;
 const HEARTBEAT_MS = 5_000;
@@ -50,6 +51,10 @@ function wireTask(task, pollIntervalMs) {
   return result;
 }
 
+function elicitationMode(params) {
+  return Object.hasOwn(params, 'mode') ? params.mode : 'form';
+}
+
 function validateInputRequests(requests) {
   if (!requests || typeof requests !== 'object' || Array.isArray(requests)) throw new Error('MCP task input requests must be an object');
   const entries = Object.entries(requests);
@@ -62,7 +67,7 @@ function validateInputRequests(requests) {
     if (!request.params || typeof request.params !== 'object' || Array.isArray(request.params)) {
       throw new Error('MCP task input request params must be an object');
     }
-    if (request.method === 'elicitation/create' && !['form', 'url'].includes(request.params.mode)) {
+    if (request.method === 'elicitation/create' && !['form', 'url'].includes(elicitationMode(request.params))) {
       throw new Error('MCP elicitation task requests must declare form or url mode');
     }
   }
@@ -94,7 +99,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
   const supportedHandlers = mcpTaskHandlerInventory(handlers);
   const executionHandlers = new Map();
   for (const [name, handler] of Object.entries(handlers)) {
-    if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(name)) throw new Error('Invalid MCP task handler name');
+    if (!isMcpTaskToolName(name)) throw new Error('Invalid MCP task handler name');
     if (!handler || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version)) throw new Error('Invalid MCP task handler version');
     for (const [version, execute] of Object.entries({ ...handler.previousVersions, [handler.version]: handler.execute })) {
       if (!/^[A-Za-z0-9._-]{1,64}$/.test(version) || typeof execute !== 'function') throw new Error('Invalid MCP task handler registry');
@@ -119,6 +124,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
   const workerID = randomUUID();
   let lastWorkerHeartbeat = -Infinity;
   let workerHeartbeatPending;
+  let pendingClaim;
 
   function reportError() {
     try { onError(); } catch { /* Never let diagnostics stop task workers. */ }
@@ -208,6 +214,11 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
             watcher.last.set(taskID, fingerprint);
             try { watcher.onTask(detail); } catch { reportError(); }
           }
+          if (watcher.taskIDs.size === 0 && !watcher.closed) {
+            watcher.closed = true;
+            removeTaskSubscription(watcher);
+            try { watcher.onClose?.('empty'); } catch { reportError(); }
+          }
         }
       } while (pendingTaskChanges.size > 0 && !closed);
       if (![...taskSubscriptions].some(watcher => watcher.taskIDs.size > 0)) {
@@ -241,7 +252,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
     return taskStoreSubscribePromise;
   }
 
-  async function runTask(task) {
+  async function runTask(task, claimStartedAt) {
     const execute = executionHandlers.get(JSON.stringify([task.tool_name, task.handler_version]));
     if (!execute) {
       await store.fail(task.task_id, task.lease_token, { code: -32603, message: 'Task handler is unavailable' });
@@ -252,19 +263,24 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
     let abortReason = '';
     let heartbeatBusy = false;
     let pausedForInput = false;
+    const lease = createMcpTaskLeaseDeadline({ leaseMs: LEASE_MS, startedAt: claimStartedAt, onExpired() {
+      abortReason = 'lease_lost';
+      controller.abort();
+    } });
     const heartbeat = setInterval(async () => {
       if (heartbeatBusy || controller.signal.aborted || pausedForInput) return;
       heartbeatBusy = true;
+      const startedAt = performance.now();
       try {
         const state = await store.heartbeat(task.task_id, task.lease_token, LEASE_MS);
-        if (abortReason === 'shutdown') return;
+        if (controller.signal.aborted || pausedForInput) return;
         if (!state.owned) {
           abortReason = 'lease_lost';
           controller.abort();
         } else if (state.cancelRequested) {
           abortReason = 'cancelled';
           controller.abort();
-        }
+        } else lease.renew(startedAt);
       } catch {
         // A transient database error should not immediately interrupt useful work.
         reportError();
@@ -275,6 +291,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
     heartbeat.unref?.();
     const abandon = () => {
       abortReason = 'shutdown';
+      lease.close();
       clearInterval(heartbeat);
       controller.abort();
     };
@@ -282,11 +299,12 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
     executions.add(abandon);
 
     try {
+      if (controller.signal.aborted) return;
       const requestInputs = async requests => {
         if (abortReason === 'shutdown') throw new Error('Task worker is stopping');
         validateInputRequests(requests);
         for (const request of Object.values(requests)) {
-          const capability = request.method === 'elicitation/create' ? `${request.method}:${request.params.mode}` : request.method;
+          const capability = request.method === 'elicitation/create' ? `${request.method}:${elicitationMode(request.params)}` : request.method;
           if (!task.input_methods?.includes(capability)) throw new Error(`MCP task client did not declare support for ${request.method}`);
         }
         const state = await store.requestInputs({ taskID: task.task_id, leaseToken: task.lease_token, requests });
@@ -310,7 +328,10 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
         },
       });
       if (abortReason === 'cancelled') await store.finishCancelled(task.task_id, task.lease_token);
-      else if (abortReason !== 'lease_lost' && abortReason !== 'shutdown') await store.complete(task.task_id, task.lease_token, result);
+      else if (abortReason !== 'lease_lost' && abortReason !== 'shutdown') {
+        validateTaskOutput(result, task.output_schema);
+        await store.complete(task.task_id, task.lease_token, result);
+      }
     } catch (error) {
       if (error === TASK_INPUT_REQUIRED) return;
       if (abortReason === 'cancelled') await store.finishCancelled(task.task_id, task.lease_token);
@@ -320,6 +341,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
         await store.fail(task.task_id, task.lease_token, { code: -32603, message: 'Task execution failed' }, { retryable: error instanceof RetryableMcpTaskError, maxAttempts, retryDelayMs });
       }
     } finally {
+      lease.close();
       clearInterval(heartbeat);
       executions.delete(abandon);
     }
@@ -352,15 +374,27 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
         // A busy queue can keep this loop running across many heartbeat periods.
         await refreshWorkerHeartbeat();
         if (closed) break;
-        const task = await store.claim(maxAttempts, LEASE_MS, supportedHandlers, workerID);
-        // Do not start work from a claim that completed during shutdown.
-        if (!task || closed) break;
-        let work;
-        work = runTask(task).catch(reportError).finally(() => {
-          active.delete(work);
-          void drain();
-        });
-        active.add(work);
+        const claim = (async () => {
+          const startedAt = performance.now();
+          const task = await store.claim(maxAttempts, LEASE_MS, supportedHandlers, workerID);
+          if (!task) return false;
+          // A completed drain must include claims that committed before stop.
+          // Requeue without spending another attempt when no handler was started.
+          if (closed || performance.now() - startedAt >= LEASE_MS) {
+            await store.releaseMany?.([task]);
+            return false;
+          }
+          let work;
+          work = runTask(task, startedAt).catch(reportError).finally(() => {
+            active.delete(work);
+            void drain();
+          });
+          active.add(work);
+          return true;
+        })();
+        pendingClaim = claim;
+        try { if (!await claim) break; }
+        finally { if (pendingClaim === claim) pendingClaim = undefined; }
       }
     } catch {
       reportError();
@@ -398,11 +432,13 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
         let registryBusy = false;
         let expired = false;
         let expiredTasks = [];
+        let expiredClaims = 0;
         const deadlineAt = new Date(Date.now()+shutdownTimeoutMs).toISOString();
         try { onDrain({state:'draining',activeTasks:executions.size,deadline:deadlineAt}); } catch { reportError(); }
         const deadline = new Promise(resolve => {
           deadlineTimer = setTimeout(() => {
             expired = true;
+            expiredClaims = pendingClaim ? 1 : 0;
             expiredTasks=[...executions].map(abandon=>abandon.task);
             for (const abandon of executions) abandon();
             reportError();
@@ -430,6 +466,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
             try { watcher.onClose?.(); } catch { reportError(); }
             taskSubscriptions.delete(watcher);
           }
+          await pendingClaim?.catch(reportError);
           await Promise.allSettled([...active]);
           if (!expired && workerEnabled && typeof store.workerStopped === 'function') {
             try { await store.workerStopped(workerID); } catch { reportError(); }
@@ -441,18 +478,20 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
         if (expiredTasks.length && typeof store.releaseMany === 'function') {
           try { await store.releaseMany(expiredTasks); } catch { reportError(); }
         }
-        try { onDrain({state:expired?'timed_out':'completed',unfinishedTasks:expiredTasks.length,deadline:deadlineAt}); } catch { reportError(); }
+        try { onDrain({state:expired?'timed_out':'completed',unfinishedTasks:expiredTasks.length+expiredClaims,deadline:deadlineAt}); } catch { reportError(); }
         // Lease expiry remains the fallback if database cleanup is unavailable.
         return { timedOut: expired };
       })();
       return stopping;
     },
-    async create(toolName, args, authInfo, authMode, clientCapabilities = {}) {
+    async create(toolName, args, authInfo, authMode, clientCapabilities = {}, outputSchema) {
       if (stopping) throw new Error('MCP task runtime is draining');
       const handler = handlers[toolName];
       if (!handler || typeof handler.execute !== 'function') throw new Error('MCP task tool is not registered');
-      handler.validate?.(args);
-      const task = await store.create({ toolName, handlerVersion: handler.version, args, authInfo, authMode, inputMethods: inputMethodsFor(clientCapabilities) });
+      const outputContract = snapshotTaskOutputSchema(outputSchema);
+      await handler.validate?.(args);
+      if (stopping) throw new Error('MCP task runtime is draining');
+      const task = await store.create({ toolName, handlerVersion: handler.version, args, authInfo, authMode, inputMethods: inputMethodsFor(clientCapabilities), outputSchema: outputContract });
       if (workerEnabled) void drain();
       return {
         resultType: 'task', taskId: task.task_id, status: 'working',
@@ -489,7 +528,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
       }
       if (typeof onTask !== 'function') throw new Error('MCP task subscriptions require an update handler');
       if (taskSubscriptions.size >= MAX_TASK_SUBSCRIPTIONS) throw new Error('MCP task subscription capacity reached');
-      const ids = [...new Set(taskIDs)];
+      const ids = [...new Set(taskIDs.map(taskID => taskID.toLowerCase()))];
       const watchedCount = [...taskSubscriptions].reduce((count, watcher) => count + watcher.taskIDs.size, 0);
       if (watchedCount + ids.length > MAX_WATCHED_TASKS) throw new Error('MCP task subscription capacity reached');
 
@@ -519,6 +558,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
         else {
           watcher.closed = true;
           removeTaskSubscription(watcher);
+          try { watcher.onClose?.('empty'); } catch { reportError(); }
         }
         return {
           taskIds: [...watcher.taskIDs],
@@ -562,7 +602,7 @@ export const mcpTaskHandlers = new Proxy(registeredMcpTaskHandlers, {
 // version stable across all processes sharing a queue and retain old versions
 // until their queued tasks have drained.
 export function registerMcpTaskHandler(name, handler) {
-  if (typeof name !== 'string' || !TASK_TOOL_NAME_PATTERN.test(name)) throw new TypeError('MCP task tool name must contain 1 to 128 visible ASCII characters');
+  if (!isMcpTaskToolName(name)) throw new TypeError('MCP task tool name must contain 1 to 128 visible ASCII characters');
   if (!handler || typeof handler !== 'object' || Array.isArray(handler)
     || typeof handler.version !== 'string' || !TASK_HANDLER_VERSION_PATTERN.test(handler.version)
     || typeof handler.validate !== 'function' || typeof handler.execute !== 'function') {

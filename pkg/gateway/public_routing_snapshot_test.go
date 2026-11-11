@@ -2,9 +2,11 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -699,5 +701,36 @@ func TestPublicRoutingBurstKeepsSingleAppWorkerAndSelectedDeployment(t *testing.
 	}
 	if generation.err != nil || fixture.HealthyCount(fixture.app.ID) != 3 {
 		t.Fatalf("burst did not fill admitted cohort: %v", generation.err)
+	}
+}
+
+// A public-routing wake that schedd refuses for a platform reason answers the
+// visitor with a generic detail; the operator log keeps the cause.
+func TestPublicRoutingWakeFailureLogsHiddenDetail(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	var logs bytes.Buffer
+	h.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	deployment := uuid.NewString()
+	wrapped := &publicSnapshotBackend{fakeBackend: backend}
+	h.backend = wrapped
+	h.WithPublicRoutingPolicy(func(ctx context.Context, app App, inputs PublicRoutingInputs) (PublicRoutingSnapshot, error) {
+		snapshot := publicSnapshotFixture(app, inputs)
+		snapshot.Weights = []DeploymentWeightsRow{{ID: deployment, TrafficPercent: 100}}
+		return snapshot, nil
+	})
+	const cause = "sched: wake: running lookup: scheduler-only cause"
+	wrapped.onAdmit = func(context.Context, string, string, int) error {
+		return api.NewProblem(http.StatusInternalServerError, "internal", "schedd operation failed", cause)
+	}
+	h.WithForwarding(func(Target) http.Handler {
+		return http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("refused wake forwarded") })
+	})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+backend.host+"/", nil))
+	if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), cause) {
+		t.Fatalf("visitor answer = %d %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(logs.String(), `"msg":"gateway: wake failed"`) || !strings.Contains(logs.String(), cause) {
+		t.Fatalf("operator log lost the wake cause: %s", logs.String())
 	}
 }

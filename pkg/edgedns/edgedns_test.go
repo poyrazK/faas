@@ -132,8 +132,8 @@ func TestReconcilerMovesANameToDNSOnlyWithoutDroppingARecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodes := []edgedns.Node{
-		{Name: "a", Public: addrA, Active: true, Ready: true},
-		{Name: "b", Public: addrB, Active: true, Ready: true},
+		{Name: "a", Public: addrA, Active: true, Ready: true, Direct: true},
+		{Name: "b", Public: addrB, Active: true, Ready: true, Direct: true},
 	}
 	if err := r.Step(context.Background(), nodes); err != nil {
 		t.Fatal(err)

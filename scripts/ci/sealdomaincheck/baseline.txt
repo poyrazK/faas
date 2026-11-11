@@ -42,13 +42,17 @@ loader pkg/apid/apidserver/project_environment_clone_worker.go 2
 loader pkg/apid/mailoutbox/verification_config.go 1
 loader pkg/datapipeline/config.go 2
 loader pkg/internalmail/keyring_config.go 2
+plain account_email_changes.token_hash
 plain accounts.mfa_recovery_codes_hash
+plain agent_approval_requests.body_sha256
 plain api_consumer_signups.claim_hash
 plain api_keys.key_sha256
+plain app_env_batch_receipts.request_sha256
 plain app_fork_execs.stderr
 plain app_fork_execs.stdout
 plain app_forks.access_token_hash
 plain app_openapi_docs.doc_sha256
+plain app_scaling_receipts.request_hash
 plain app_task_attach_sessions.attach_token_sha256
 plain app_trusted_signers.cosign_public_key
 plain application_standard_publishers.public_key_der
@@ -117,6 +121,7 @@ plain managed_realtime_worker_credentials.token_hash
 plain mcp_bridge_state.sealed
 plain mfa_disable_requests.token_hash
 plain mfa_disable_tokens.token_hash
+plain mfa_trusted_browsers.token_hash
 plain migration_admissions.adoption_receipt
 plain mirror_invocation_results.body_hash
 plain mirror_invocation_results.schema_hash
@@ -148,6 +153,6 @@ plain runtime_upgrade_native_public_startups.envelope
 plain runtime_upgrade_native_public_startups.review
 plain trigger_records.work_fairness_digest
 plain trigger_records.work_key_digest
-plain workflow_automation_live_verifications.request_fingerprint
+plain stored_workflow_live_verifications.request_fingerprint
 plain workflow_runs.create_request_fingerprint
 plain workflow_webhook_receipts.body_hash

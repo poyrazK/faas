@@ -31,7 +31,8 @@ func testReleaseGates(t *testing.T, fx *Fixture) {
 	gates := []state.ReleaseGate{
 		{AccountID: acct, AppID: app, Name: "checkout-slo", Kind: state.ReleaseGateSLO, SLOID: slo.ID, MaxBurnRate: 10, MinSamples: 20, CreatedBy: "user:conformance"},
 		{AccountID: acct, AppID: app, Name: "new-errors", Kind: state.ReleaseGateNewErrors, MaxNewGroups: 0, MinEvents: 3, MinSamples: 1, CreatedBy: "user:conformance"},
-		{AccountID: acct, AppID: app, Name: "orders", Kind: state.ReleaseGateCustomMetric, MetricName: "orders_per_minute", Comparison: "below", Threshold: 2.5, MinSamples: 5, CreatedBy: "user:conformance"},
+		{AccountID: acct, AppID: app, Name: "orders", Kind: state.ReleaseGateCustomMetric, MetricName: "orders_per_minute", Comparison: "below", Threshold: 2.5, MinSamples: 5, CreatedBy: "user:conformance",
+			MetricLabels: map[string]string{"region": "eu"}},
 	}
 	for _, g := range gates {
 		if _, err := store.CreateReleaseGate(fx.Ctx, g, 3, now); err != nil {
@@ -48,10 +49,11 @@ func testReleaseGates(t *testing.T, fx *Fixture) {
 	if g := listed[0]; g.SLOID != slo.ID || g.MaxBurnRate != 10 || g.MinSamples != 20 {
 		t.Fatalf("slo gate = %+v", g)
 	}
-	if g := listed[1]; g.MaxNewGroups != 0 || g.MinEvents != 3 {
+	if g := listed[1]; g.MaxNewGroups != 0 || g.MinEvents != 3 || g.MetricLabels != nil {
 		t.Fatalf("new_errors gate = %+v", g)
 	}
-	if g := listed[2]; g.MetricName != "orders_per_minute" || g.Comparison != "below" || g.Threshold != 2.5 {
+	// ADR-20261108160000 slice C2: a metric gate's label filter round-trips.
+	if g := listed[2]; g.MetricName != "orders_per_minute" || g.Comparison != "below" || g.Threshold != 2.5 || len(g.MetricLabels) != 1 || g.MetricLabels["region"] != "eu" {
 		t.Fatalf("custom_metric gate = %+v", g)
 	}
 	if _, err := store.CreateReleaseGate(fx.Ctx, state.ReleaseGate{AccountID: acct, AppID: app, Name: "fourth", Kind: state.ReleaseGateNewErrors,

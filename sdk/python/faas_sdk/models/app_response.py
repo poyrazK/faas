@@ -220,7 +220,7 @@ class AppResponse:
     """Per-app cosign signature-enforcement flag. When true, OCI image deploys must carry a valid signature from a
     publisher in the per-app trusted_signers list. Default false."""
     warm_snapshot_enabled: bool | Unset = UNSET
-    """Per-app two-tier snapshot flag. True on Pro/Scale by default; Free/Hobby always false."""
+    """Per-app two-tier snapshot flag. False by default; Pro/Scale may opt in, Free/Hobby always false."""
     warm_snapshot_min_requests: int | Unset = UNSET
     """Effective per-app request-count threshold for warm-tier capture on this app. Range [1, 100]."""
     warm_snapshot_min_ms: int | Unset = UNSET

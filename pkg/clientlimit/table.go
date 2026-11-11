@@ -49,26 +49,27 @@ type entry struct {
 	open   int
 }
 
-// table keeps per-address token buckets, bounded to max addresses. When it
+// table keeps per-key token buckets (a client address, or a hostname),
+// bounded to max keys. When it
 // is full and holds no idle address, every further address shares one
 // overflow bucket, so a flood from more addresses than the bound is still
 // metered and memory stays flat.
-type table struct {
+type table[K comparable] struct {
 	mu        sync.Mutex
 	rate      float64
 	burst     float64
 	max       int
 	now       func() time.Time
-	entries   map[netip.Prefix]*entry
+	entries   map[K]*entry
 	overflow  entry
 	lastSweep time.Time
 }
 
-func newTable(rate float64, burst, max int, now func() time.Time) *table {
+func newTable[K comparable](rate float64, burst, max int, now func() time.Time) *table[K] {
 	if now == nil {
 		now = time.Now
 	}
-	t := &table{rate: rate, burst: float64(burst), max: max, now: now, entries: map[netip.Prefix]*entry{}}
+	t := &table[K]{rate: rate, burst: float64(burst), max: max, now: now, entries: map[K]*entry{}}
 	t.overflow.tokens = t.burst
 	t.lastSweep = now()
 	return t
@@ -77,7 +78,7 @@ func newTable(rate float64, burst, max int, now func() time.Time) *table {
 // lookup returns key's entry with its tokens refilled to now, creating it
 // when there is room. It reports false for the shared overflow entry. The
 // caller holds t.mu.
-func (t *table) lookup(key netip.Prefix, now time.Time) (*entry, bool) {
+func (t *table[K]) lookup(key K, now time.Time) (*entry, bool) {
 	if now.Sub(t.lastSweep) >= sweepInterval {
 		t.sweep(now)
 	}
@@ -97,7 +98,7 @@ func (t *table) lookup(key netip.Prefix, now time.Time) (*entry, bool) {
 	return e, true
 }
 
-func (t *table) refill(e *entry, now time.Time) {
+func (t *table[K]) refill(e *entry, now time.Time) {
 	if elapsed := now.Sub(e.last).Seconds(); elapsed > 0 {
 		e.tokens = min(t.burst, e.tokens+elapsed*t.rate)
 	}
@@ -106,7 +107,7 @@ func (t *table) refill(e *entry, now time.Time) {
 
 // sweep drops addresses with nothing open and a full bucket: forgetting them
 // changes nothing. The caller holds t.mu.
-func (t *table) sweep(now time.Time) {
+func (t *table[K]) sweep(now time.Time) {
 	for key, e := range t.entries {
 		t.refill(e, now)
 		if e.open == 0 && e.tokens >= t.burst {
@@ -118,7 +119,7 @@ func (t *table) sweep(now time.Time) {
 
 // take spends one token from key's bucket. It reports whether one was left
 // and how many remain.
-func (t *table) take(key netip.Prefix) (bool, float64) {
+func (t *table[K]) take(key K) (bool, float64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e, _ := t.lookup(key, t.now())
@@ -129,8 +130,41 @@ func (t *table) take(key netip.Prefix) (bool, float64) {
 	return true, e.tokens
 }
 
+// takeN spends n tokens from key's bucket and reports whether it held them.
+// Spending 1/s tokens a request scales the bucket's rate and burst by s, so a
+// caller can tighten a limit without rebuilding the table.
+func (t *table[K]) takeN(key K, n float64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	e, _ := t.lookup(key, t.now())
+	if e.tokens < n {
+		return false
+	}
+	e.tokens -= n
+	return true
+}
+
+// takeTracked is take for a table whose keys the client chooses freely, such
+// as a hostname: a key the full table cannot track passes without spending
+// from the shared overflow bucket. Otherwise anyone who can send that many
+// distinct keys between sweeps would drain the one bucket every untracked key
+// shares and refuse them all (a node's every hostname, for Hosts).
+func (t *table[K]) takeTracked(key K) (bool, float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	e, tracked := t.lookup(key, t.now())
+	if !tracked {
+		return true, t.burst
+	}
+	if e.tokens < 1 {
+		return false, e.tokens
+	}
+	e.tokens--
+	return true, e.tokens
+}
+
 // size is the number of addresses tracked, for tests.
-func (t *table) size() int {
+func (t *table[K]) size() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.entries)

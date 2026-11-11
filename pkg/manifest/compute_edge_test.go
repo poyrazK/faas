@@ -99,6 +99,16 @@ func TestPublicEdgeDNS(t *testing.T) {
 		{name: "no names", edge: PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryBoth, DNS: &PublicEdgeDNS{ZoneID: "zone-1"}}, hosts: fleet, wantErr: "public_edge.dns.names"},
 		{name: "no addressed compute host", edge: direct, hosts: []Host{fleet[0], {Name: "cn-1", Role: "compute-only"}}, wantErr: "needs a compute-only host with public_ipv4"},
 		{name: "not an IPv4 address", edge: direct, hosts: []Host{fleet[0], {Name: "cn-1", Role: "compute-only", PublicIPv4: "2001:db8::1"}}, wantErr: "fleet.hosts[1].public_ipv4"},
+		{name: "a certificate", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, CA: EdgeCertificateCAProduction, Serve: EdgeCertificateCAStaging}), hosts: fleet},
+		{name: "serving an unknown CA", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Serve: "true"}), hosts: fleet, wantErr: "public_edge.dns.certificate.serve"},
+		{name: "a certificate without names", edge: withCertificate(direct, &PublicEdgeCertificate{}), hosts: fleet, wantErr: "public_edge.dns.certificate.names"},
+		{name: "a certificate naming a host twice", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev", "*.Gregale.dev"}}), hosts: fleet, wantErr: "public_edge.dns.certificate.names[1]"},
+		{name: "a certificate for a deep wildcard", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.*.gregale.dev"}}), hosts: fleet, wantErr: "public_edge.dns.certificate.names[0]"},
+		{name: "a certificate from another CA", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, CA: "zerossl"}), hosts: fleet, wantErr: "public_edge.dns.certificate.ca"},
+		{name: "a transparency watch", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{Domain: "gregale.dev", AllowNames: []string{"gregale.dev", "*.gregale.dev"}}}), hosts: fleet},
+		{name: "a watch without a domain", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{}}), hosts: fleet, wantErr: "public_edge.dns.certificate.transparency.domain"},
+		{name: "a watch on a wildcard", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{Domain: "*.gregale.dev"}}), hosts: fleet, wantErr: "public_edge.dns.certificate.transparency.domain"},
+		{name: "a watch allowing a name twice", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{Domain: "gregale.dev", AllowNames: []string{"gregale.dev", "Gregale.dev"}}}), hosts: fleet, wantErr: "public_edge.dns.certificate.transparency.allow_names[1]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			errs := tc.edge.validate(tc.hosts)
@@ -220,5 +230,57 @@ func TestHostEntryAddress(t *testing.T) {
 		if got := tc.host.EntryAddress(); got != tc.want {
 			t.Errorf("%+v.EntryAddress() = %q, want %q", tc.host, got, tc.want)
 		}
+	}
+}
+
+// withCertificate returns edge with its DNS settings copied and cert set.
+func withCertificate(edge PublicEdge, cert *PublicEdgeCertificate) PublicEdge {
+	dns := *edge.DNS
+	dns.Certificate = cert
+	edge.DNS = &dns
+	return edge
+}
+
+func TestPublicEdgeCertificateCADefaultsToStaging(t *testing.T) {
+	if got := (PublicEdgeCertificate{}).CAOrDefault(); got != EdgeCertificateCAStaging {
+		t.Fatalf("CAOrDefault = %q, want %q", got, EdgeCertificateCAStaging)
+	}
+}
+
+// adr: 20261110123517 — public_edge.overload extends the client limits, so it
+// needs front: none.
+func TestPublicEdgeOverload(t *testing.T) {
+	control := Host{Name: "cp-1", Role: "control-plane"}
+	entered := Host{Name: "cn-1", Role: "compute-only", Address: "10.42.0.2:50051", PublicIPv4: "203.0.113.2", EntryIPv4: "198.51.100.2"}
+	noFront := PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryBoth, Front: PublicEdgeFrontNone}
+	behindCloudflare := PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryBoth}
+	for _, tc := range []struct {
+		name     string
+		edge     PublicEdge
+		hosts    []Host
+		overload string
+		wantErr  string
+	}{
+		{name: "unset", edge: noFront, hosts: []Host{control, entered}},
+		{name: "off behind Cloudflare", edge: behindCloudflare, hosts: []Host{control, {Name: "cn-1", Role: "compute-only", Address: "10.42.0.2:50051"}}, overload: PublicEdgeOverloadOff},
+		{name: "observe", edge: noFront, hosts: []Host{control, entered}, overload: PublicEdgeOverloadObserve},
+		{name: "on", edge: noFront, hosts: []Host{control, entered}, overload: PublicEdgeOverloadOn},
+		{name: "on behind Cloudflare", edge: behindCloudflare, hosts: []Host{control, {Name: "cn-1", Role: "compute-only", Address: "10.42.0.2:50051"}}, overload: PublicEdgeOverloadOn, wantErr: "needs public_edge.front: none"},
+		{name: "not a mode", edge: noFront, hosts: []Host{control, entered}, overload: "1", wantErr: `"1" is not off, observe or on`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := tc.edge
+			e.Overload = tc.overload
+			errs := e.validate(tc.hosts)
+			if tc.wantErr == "" {
+				if len(errs) != 0 {
+					t.Fatalf("validate = %v, want no errors", errs)
+				}
+				return
+			}
+			if !strings.Contains(errs.Error(), tc.wantErr) {
+				t.Fatalf("validate = %v, want %q", errs, tc.wantErr)
+			}
+		})
 	}
 }

@@ -30,12 +30,12 @@ func open(t *testing.T) *pgxpool.Pool {
 	pool := pgtest.Open(t)
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `CREATE TABLE managed_postgres_databases (id uuid PRIMARY KEY, account_id uuid NOT NULL, state text NOT NULL,
-		backend_id text NOT NULL DEFAULT 'native-a', backend_fingerprint text NOT NULL DEFAULT 'fp', deleted_at timestamptz);
+		backend_id text NOT NULL DEFAULT 'native-a', backend_fingerprint text NOT NULL DEFAULT 'fp', provider_resource_id text, data_resource_id text, deleted_at timestamptz);
 		CREATE TABLE managed_postgres_bindings (account_id uuid NOT NULL, database_id uuid NOT NULL, app_id uuid NOT NULL, scope text NOT NULL DEFAULT 'default',
 			access text NOT NULL DEFAULT 'read_write', provider_identity_id text, state text NOT NULL, created_at timestamptz NOT NULL DEFAULT clock_timestamp(), deleted_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261021100642318_managed_postgres_live_logins.sql", "20261028161544217_managed_postgres_live_signatures.sql", "20261028161546331_managed_postgres_live_signatures_validate.sql"} {
+	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261021100642318_managed_postgres_live_logins.sql", "20261028161544217_managed_postgres_live_signatures.sql", "20261028161546331_managed_postgres_live_signatures_validate.sql", "20261105141918793_managed_postgres_live_login_dataset.sql", "20261105141918803_managed_postgres_live_login_dataset_validate.sql", "20261105141918820_managed_postgres_live_login_attempts.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

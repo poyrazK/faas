@@ -547,6 +547,69 @@ func TestRenderManifestAnsibleFiles_CustomDomainEdge(t *testing.T) {
 	}
 }
 
+// ADR-20261103172551: dns.origin_pull sets how the control plane's Caddy
+// treats Cloudflare, the zone's client certificate or, knowingly, any zone;
+// unset renders neither, so the public_edge role refuses to deploy.
+func TestRenderManifestAnsibleFiles_DNSOriginPull(t *testing.T) {
+	const (
+		required = "faas_public_edge_authenticated_origin_pulls: true"
+		anyZone  = "faas_public_edge_allow_any_cloudflare_zone: true"
+	)
+	for _, tc := range []struct {
+		originPull string
+		want       []string
+		absent     []string
+	}{
+		{"", nil, []string{required, anyZone}},
+		{manifest.DNSOriginPullRequired, []string{required}, []string{anyZone}},
+		{manifest.DNSOriginPullAnyZone, []string{anyZone}, []string{required}},
+	} {
+		t.Run("origin_pull="+tc.originPull, func(t *testing.T) {
+			yaml := strings.Replace(validManifestYAML,
+				"    - name: fsn-1\n      role: control-plane\n",
+				"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+			if tc.originPull != "" {
+				yaml = strings.Replace(yaml, "  mode: cloudflare\n", "  mode: cloudflare\n  origin_pull: "+tc.originPull+"\n", 1)
+			}
+			m, err := manifest.Parse([]byte(yaml))
+			if err != nil {
+				t.Fatalf("manifest.Parse: %v", err)
+			}
+			if errs := m.Validate(); errs != nil {
+				t.Fatalf("manifest.Validate: %v", errs)
+			}
+			files, err := renderManifestAnsibleFiles(m, t.TempDir())
+			if err != nil {
+				t.Fatalf("renderManifestAnsibleFiles: %v", err)
+			}
+			var controlVars, computeVars string
+			for _, file := range files {
+				switch {
+				case strings.HasSuffix(file.Path, "fsn-1.yml"):
+					controlVars = string(file.Body)
+				case strings.HasSuffix(file.Path, "fsn-2.yml"):
+					computeVars = string(file.Body)
+				}
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(controlVars, want) {
+					t.Errorf("control host vars missing %q:\n%s", want, controlVars)
+				}
+			}
+			for _, absent := range append(tc.absent, tc.want...) {
+				if strings.Contains(computeVars, absent) {
+					t.Errorf("compute host vars carry %q:\n%s", absent, computeVars)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(controlVars, absent) {
+					t.Errorf("control host vars carry %q:\n%s", absent, controlVars)
+				}
+			}
+		})
+	}
+}
+
 // ADR-1343: public_edge.compute_nodes runs the app edge on the compute nodes.
 // The control plane gets a private listener for the edges' forwarded routes,
 // each compute node gets that listener as its target and admits its peers'
@@ -634,6 +697,7 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 			wantDNS := "faas_edgednsd_managed: true\n" +
 				"faas_edgednsd_names: [\"zone-1:pilot.example.dev\"]\n" +
 				"faas_edgednsd_node_addresses: [\"fsn-2.faas=203.0.113.2\"]\n" +
+				"faas_edgednsd_node_private_addresses: [\"fsn-2.faas=10.42.0.2\"]\n" +
 				"faas_edgednsd_dry_run: true\n"
 			if got := strings.Contains(controlVars, wantDNS); got != tc.edgedns {
 				t.Errorf("control plane edgednsd vars = %v, want %v:\n%s", got, tc.edgedns, controlVars)
@@ -723,6 +787,81 @@ func TestRenderManifestAnsibleFiles_EdgeWithNoFront(t *testing.T) {
 	for _, want := range []string{"faas_public_entry_addrs: [\"203.0.113.2\"]\n", "faas_edgednsd_node_addresses: [\"fsn-2.faas=203.0.113.2\"]\n"} {
 		if !strings.Contains(rendered.String(), want) {
 			t.Errorf("forwarded public_ipv4 render missing %q:\n%s", want, rendered.String())
+		}
+	}
+}
+
+// ADR-20261103163954 §3: public_edge.dns.certificate turns on edgednsd's
+// certificate in the managed zone; serve switches the compute edges to it.
+func TestRenderManifestAnsibleFiles_EdgeCertificate(t *testing.T) {
+	base := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n      public_ipv4: 203.0.113.2\n      entry_ipv4: 198.51.100.2\n", 1) +
+		"public_edge:\n  compute_nodes: true\n  entry: both\n  front: none\n  dns:\n    zone_id: zone-1\n    names: [\"*.example.dev\"]\n"
+	render := func(t *testing.T, yaml string) (controlVars, computeVars string) {
+		t.Helper()
+		m, err := manifest.Parse([]byte(yaml))
+		if err != nil {
+			t.Fatalf("manifest.Parse: %v", err)
+		}
+		if errs := m.Validate(); errs != nil {
+			t.Fatalf("manifest.Validate: %v", errs)
+		}
+		files, err := renderManifestAnsibleFiles(m, t.TempDir())
+		if err != nil {
+			t.Fatalf("renderManifestAnsibleFiles: %v", err)
+		}
+		for _, file := range files {
+			switch {
+			case strings.HasSuffix(file.Path, "fsn-1.yml"):
+				controlVars = string(file.Body)
+			case strings.HasSuffix(file.Path, "fsn-2.yml"):
+				computeVars = string(file.Body)
+			}
+		}
+		return controlVars, computeVars
+	}
+	controlVars, computeVars := render(t, base)
+	if strings.Contains(controlVars+computeVars, "certificate") || strings.Contains(computeVars, "cert_source") {
+		t.Fatalf("no certificate configured, yet one rendered:\n%s\n%s", controlVars, computeVars)
+	}
+	controlVars, computeVars = render(t, base+"    certificate:\n      names: [\"*.example.dev\"]\n")
+	for _, want := range []string{
+		"faas_edgednsd_certificate_names: [\"*.example.dev\"]\n",
+		"faas_edgednsd_certificate_zone_id: \"zone-1\"\n",
+		"faas_edgednsd_acme_ca: \"letsencrypt-staging\"\n",
+	} {
+		if !strings.Contains(controlVars, want) {
+			t.Errorf("control plane vars missing %q:\n%s", want, controlVars)
+		}
+	}
+	if strings.Contains(computeVars, "faas_edge_public_tls_cert_source") {
+		t.Errorf("the edges serve the certificate before serve is set:\n%s", computeVars)
+	}
+	if strings.Contains(controlVars, "faas_edgednsd_ct_") {
+		t.Errorf("a transparency watch rendered without its block:\n%s", controlVars)
+	}
+	controlVars, _ = render(t, base+"    certificate:\n      names: [\"*.example.dev\"]\n      transparency:\n        domain: Example.dev\n        allow_names: [\"example.dev\", \"*.example.dev\"]\n")
+	for _, want := range []string{
+		"faas_edgednsd_ct_domain: \"example.dev\"\n",
+		"faas_edgednsd_ct_allow_names: [\"example.dev\", \"*.example.dev\"]\n",
+	} {
+		if !strings.Contains(controlVars, want) {
+			t.Errorf("control plane vars missing %q:\n%s", want, controlVars)
+		}
+	}
+	// The move to production: edgednsd orders from it while the edges still
+	// serve the staging certificate it stored before.
+	controlVars, computeVars = render(t, base+"    certificate:\n      names: [\"*.example.dev\"]\n      ca: letsencrypt\n      serve: letsencrypt-staging\n")
+	if !strings.Contains(controlVars, "faas_edgednsd_acme_ca: \"letsencrypt\"\n") {
+		t.Errorf("control plane vars miss the production CA:\n%s", controlVars)
+	}
+	for _, want := range []string{"faas_edge_public_tls_cert_source: \"database\"\n", "faas_edge_public_tls_cert_ca: \"letsencrypt-staging\"\n"} {
+		if !strings.Contains(computeVars, want) {
+			t.Errorf("compute vars missing %q:\n%s", want, computeVars)
+		}
+		if strings.Contains(controlVars, want) {
+			t.Errorf("%q rendered on the control plane", want)
 		}
 	}
 }
@@ -1034,6 +1173,48 @@ func TestRenderManifestAnsibleFiles_ComputeObjectGateway(t *testing.T) {
 				if !strings.Contains(body, want) {
 					t.Errorf("compute host vars missing %q:\n%s", want, body)
 				}
+			}
+		}
+	}
+}
+
+// ADR-20261110123517: public_edge.overload reaches the compute hosts only, and
+// only when it is not off.
+func TestRenderManifestAnsibleFiles_EdgeOverload(t *testing.T) {
+	for _, tc := range []struct {
+		overload, want string
+	}{
+		{overload: "", want: ""},
+		{overload: "  overload: off\n", want: ""},
+		{overload: "  overload: observe\n", want: "faas_edge_overload: \"observe\"\n"},
+		{overload: "  overload: on\n", want: "faas_edge_overload: \"on\"\n"},
+	} {
+		yaml := strings.Replace(validManifestYAML,
+			"    - name: fsn-1\n      role: control-plane\n",
+			"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n      public_ipv4: 203.0.113.2\n      entry_ipv4: 198.51.100.2\n", 1) +
+			"public_edge:\n  compute_nodes: true\n  entry: both\n  front: none\n" + tc.overload
+		m, err := manifest.Parse([]byte(yaml))
+		if err != nil {
+			t.Fatalf("manifest.Parse: %v", err)
+		}
+		if errs := m.Validate(); errs != nil {
+			t.Fatalf("manifest.Validate: %v", errs)
+		}
+		files, err := renderManifestAnsibleFiles(m, t.TempDir())
+		if err != nil {
+			t.Fatalf("renderManifestAnsibleFiles: %v", err)
+		}
+		for _, file := range files {
+			body := string(file.Body)
+			compute := strings.HasSuffix(file.Path, "fsn-2.yml")
+			has := strings.Contains(body, "faas_edge_overload")
+			switch {
+			case compute && tc.want != "" && !strings.Contains(body, tc.want):
+				t.Errorf("%q: compute host vars missing %q:\n%s", tc.overload, tc.want, body)
+			case compute && tc.want == "" && has:
+				t.Errorf("%q: compute host vars set the overload level:\n%s", tc.overload, body)
+			case !compute && has:
+				t.Errorf("%q: %s sets the overload level:\n%s", tc.overload, file.Path, body)
 			}
 		}
 	}

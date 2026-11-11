@@ -215,6 +215,14 @@ clear the stamp. To roll back, turn off DNS answers first. Callers fall back to 
 address within one TTL. Then disable the listener and the host rules.
 Addresses stay allocated, so re-enabling restores the same addresses.
 
+Amendment (2026-11-09): a rollout re-renders node settings from the
+deployment manifest, so the flags above are staged there, not set by hand.
+The manifest's `service_tcp` block has `node` (step 3: vmmd's drop-in and the
+nftables rules), `listener` (step 4) and `dns` (step 5); each needs the one
+before it, and `gregalectl manifest ansible` renders them for compute-only
+hosts (`deploy/manifest/README.md`). Turn one stage on per rollout and off in
+reverse.
+
 ## Alternatives
 
 - **Platform-allocated port on the bridge address.** Simpler and needs no DNS

@@ -16,19 +16,20 @@
 #   faas-obs.slice    : MemoryMax=faas_obs_slice_memory_max (default 3584M; Prometheus,
 #                       Alertmanager, Grafana, Loki, Promtail; ADR-20261023124955)
 #
-# Per-plan sub-slices (issue #301, ADR-044):
-#   faas-tenant.slice/faas-tenant-free.slice  : CPUWeight=2
-#   faas-tenant.slice/faas-tenant-hobby.slice : CPUWeight=4
-#   faas-tenant.slice/faas-tenant-pro.slice   : CPUWeight=8
-#   faas-tenant.slice/faas-tenant-scale.slice: CPUWeight=16
-# The weights encode the issue's literal ratio (Free:2 / Hobby:4 / Pro:8 /
-# Scale:16) — see pkg/api/limits.go::Limits.CPUWeight and the SliceName()
-# mapping (tenant-free/hobby/pro/scale). These weights are KERNEL-ACCOUNTED
-# from boot so the cgroup is correctly weighted even before vmmd writes the
-# per-VM cpu.max. Memory charge stays pooled to faas-tenant.slice; per-VM
-# memory.max is still written by vmmd via the jailer (spec §13, Gotchas).
-# We do NOT set MemoryMax / CPUQuota here — doing so would override the
-# parent's hard fence.
+# Per-plan sub-slices (issue #301, ADR-044, ADR-20261109172421):
+#   faas-tenant.slice/faas-tenant-{free,hobby,pro,scale}.slice
+#     : CPUWeight=faas_tenant_plan_slice_cpu_weight (16)
+# ADR-20261109172421 §3 ends plan priority on a busy host: every sub-slice
+# gets the same weight, Scale's former 16, so the plans share the tenant
+# slice equally. The sub-slices stay until vmmd's cgroup paths stop depending
+# on the plan; then every instance sits directly under faas-tenant.slice.
+# Memory charge stays pooled to faas-tenant.slice; per-VM memory.max is still
+# written by vmmd via the jailer (spec §13, Gotchas). We do NOT set MemoryMax
+# / CPUQuota here — doing so would override the parent's hard fence.
+#
+# faas-tenant.slice's CPUQuota=1600% below is the single-box reference. On a
+# compute node, node_join.yml's 90-host-capacity.conf drop-in replaces it
+# with (host threads - faas_tenant_cpu_reserve_threads) x 100%.
 #
 # The slot definitions alone are not enough — the corresponding
 # daemon `daemon.slice` units land in M5. Until then the slices are
@@ -51,35 +52,41 @@
       CPUQuota=1600%
   register: tenant_slice
 
-# ADR-044 — per-plan CPUWeight sub-slices. The loop mirrors
-# pkg/api/limits.go::Plan.SliceName() + Limits.CPUWeight (Free=2, Hobby=4,
-# Pro=8, Scale=16). The `faas-tenant-<plan>.slice` names are deliberate:
-# systemd derives their parent as `faas-tenant.slice`; the old `Parent=`
-# key was invalid and silently left the slices detached. No MemoryMax /
-# CPUQuota on the sub-slices — the parent's hard fence is the only memory
-# ceiling, and per-instance cpu.max is written by vmmd.
+# ADR-044 — per-plan sub-slices, one per pkg/api/limits.go::Plan.SliceName(),
+# all with the same CPUWeight (ADR-20261109172421 §3). The
+# `faas-tenant-<plan>.slice` names are deliberate: systemd derives their
+# parent as `faas-tenant.slice`; the old `Parent=` key was invalid and
+# silently left the slices detached. No MemoryMax / CPUQuota on the
+# sub-slices — the parent's hard fence is the only memory ceiling, and
+# per-instance cpu.max is written by vmmd.
+- name: systemd_slices — validate the tenant sub-slice weight
+  ansible.builtin.assert:
+    that:
+      - faas_tenant_plan_slice_cpu_weight | string is match('^[0-9]+$')
+      - faas_tenant_plan_slice_cpu_weight | int >= 1 and faas_tenant_plan_slice_cpu_weight | int <= 10000
+    fail_msg: >-
+      faas_tenant_plan_slice_cpu_weight must be an integer in 1..10000
+      (got {{ faas_tenant_plan_slice_cpu_weight }}).
+
 - name: systemd_slices — write per-plan tenant sub-slices (CPUWeight only)
   ansible.builtin.copy:
-    dest: "/etc/systemd/system/faas-tenant-{{ item.plan }}.slice"
+    dest: "/etc/systemd/system/faas-tenant-{{ item }}.slice"
     owner: root
     group: root
     mode: "0644"
     content: |
       [Unit]
-      Description=onebox-faas tenant-{{ item.plan }} microVMs (CPUWeight {{ item.weight }}, ADR-044)
-      # issue #301, ADR-044 — see pkg/api/limits.go::(Plan).SliceName() and
-      # Limits.CPUWeight. No MemoryMax — memory charge pools to
+      Description=onebox-faas tenant-{{ item }} microVMs (ADR-044, ADR-20261109172421)
+      # issue #301, ADR-044 — see pkg/api/limits.go::(Plan).SliceName().
+      # Every plan has the same weight: no plan priority on a busy host
+      # (ADR-20261109172421 §3). No MemoryMax — memory charge pools to
       # faas-tenant.slice; per-VM memory.max is written by vmmd (jailer).
 
       [Slice]
-      CPUWeight={{ item.weight }}
-  loop:
-    - { plan: free, weight: 2 }
-    - { plan: hobby, weight: 4 }
-    - { plan: pro, weight: 8 }
-    - { plan: scale, weight: 16 }
+      CPUWeight={{ faas_tenant_plan_slice_cpu_weight }}
+  loop: [free, hobby, pro, scale]
   loop_control:
-    label: "faas-tenant-{{ item.plan }}.slice"
+    label: "faas-tenant-{{ item }}.slice"
   register: plan_slices
 
 # Connection-survival ADR §2 (slice 1c): with FAAS_INSTANCE_BRIDGE_UNIT=1 each
@@ -98,6 +105,11 @@
       Description=onebox-faas instance bridges (inside the tenant fence, connection-survival ADR)
 
       [Slice]
+      # Bridges forward every request their instance serves. Once VMs sit
+      # directly under faas-tenant.slice (ADR-20261109172421 step 6.5) they
+      # compete with each instance's cpu.weight (ram_mb / 16), so the slice
+      # gets enough weight to keep forwarding on a saturated host.
+      CPUWeight={{ faas_tenant_ibridge_cpu_weight }}
       MemoryAccounting=yes
       TasksAccounting=yes
   register: ibridge_slice
@@ -174,6 +186,42 @@
       IOWeight={{ faas_obs_slice_io_weight }}
   register: obs_slice
 
+- name: systemd_slices — validate user.slice weights
+  ansible.builtin.assert:
+    that:
+      - faas_user_slice_cpu_weight | string is match('^[0-9]+$')
+      - faas_user_slice_cpu_weight | int >= 1 and faas_user_slice_cpu_weight | int <= 10000
+      - faas_user_slice_io_weight | string is match('^[0-9]+$')
+      - faas_user_slice_io_weight | int >= 1 and faas_user_slice_io_weight | int <= 10000
+    fail_msg: >-
+      faas_user_slice_cpu_weight and faas_user_slice_io_weight must be
+      integers in 1..10000 (got {{ faas_user_slice_cpu_weight }} /
+      {{ faas_user_slice_io_weight }}).
+
+- name: systemd_slices — create the user.slice drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/user.slice.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ADR-20261023124955 amendment 2026-11-06: SSH sessions yield CPU and IO to
+# PostgreSQL and the daemons under contention, as the observability slice
+# does. daemon-reload applies the drop-in to the running slice.
+- name: systemd_slices — weight user.slice below the services
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/user.slice.d/50-faas-priority.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Operator and Ansible sessions yield to PostgreSQL and the daemons.
+      [Slice]
+      CPUWeight={{ faas_user_slice_cpu_weight }}
+      IOWeight={{ faas_user_slice_io_weight }}
+  register: user_slice
+
 - name: systemd_slices — write faas-cp-build.slice
   ansible.builtin.copy:
     dest: /etc/systemd/system/faas-cp-build.slice
@@ -224,6 +272,7 @@
       MemoryAccounting=yes
       TasksAccounting=yes
   loop:
+    - faas-tenant
     - faas-tenant-free
     - faas-tenant-hobby
     - faas-tenant-pro
@@ -234,7 +283,7 @@
 - name: systemd_slices — daemon-reload
   ansible.builtin.systemd:
     daemon_reload: true
-  when: cp_slice is changed or obs_slice is changed or build_slice is changed or tenant_slice is changed or plan_slices is changed or legacy_plan_slices is changed or legacy_build_slice is changed or fence_slices is changed or ibridge_slice is changed
+  when: cp_slice is changed or obs_slice is changed or user_slice is changed or build_slice is changed or tenant_slice is changed or plan_slices is changed or legacy_plan_slices is changed or legacy_build_slice is changed or fence_slices is changed or ibridge_slice is changed
 
 - name: systemd_slices — start cgroup parents before jailer can attach VMs
   ansible.builtin.systemd:
@@ -254,6 +303,7 @@
     name: "{{ item }}-fence.slice"
     state: started
   loop:
+    - faas-tenant
     - faas-tenant-free
     - faas-tenant-hobby
     - faas-tenant-pro

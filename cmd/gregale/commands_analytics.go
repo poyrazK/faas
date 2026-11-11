@@ -23,7 +23,7 @@ var analyticsGroupBys = map[string]struct{}{
 // analyticsValueFlags are the command's flags that take a value, so the
 // argument after one is never mistaken for the slug.
 var analyticsValueFlags = map[string]struct{}{
-	"since": {}, "until": {}, "by": {}, "app": {},
+	"since": {}, "until": {}, "by": {}, "app": {}, "range": {},
 }
 
 func cmdAnalytics(args []string) int {
@@ -32,8 +32,14 @@ func cmdAnalytics(args []string) int {
 	until := fs.String("until", "", "exclusive RFC3339 end timestamp")
 	by := fs.String("by", "route", "grouping dimension")
 	app := fs.String("app", "", appSlugFlagUsage)
+	// `gregale metric requests` runs this command, and the metric noun's
+	// help names --range for every view: accept it as the lookback window.
+	window := fs.String("range", "", "lookback window; same as --since")
 	if err := fs.Parse(normalizeAnalyticsArgs(args)); err != nil {
 		return 1
+	}
+	if *window != "" {
+		*since = *window
 	}
 	pos, err := mergeAppFlag(fs.Args(), *app, 1)
 	if err != nil || len(pos) > 1 {
@@ -114,8 +120,13 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 	_, _ = fmt.Fprintf(w, "App:        %s\n", response.Slug)
 	_, _ = fmt.Fprintf(w, "Group by:   %s\n", response.GroupBy)
 	_, _ = fmt.Fprintf(w, "Window:     %s (%s to %s)\n", response.Since, analyticsWindowTime(response.From), analyticsWindowTime(response.Until))
-	_, _ = fmt.Fprintf(w, "Requests:   %d\n", response.Requests)
-	_, _ = fmt.Fprintf(w, "Errors:     %d (%.2f%%)\n", response.ErrorRequests, response.ErrorRatePct)
+	// Recorded request log, so it can trail the gateway counters that
+	// `gregale metric <app>` reads (Hunt 32 H32-27).
+	_, _ = fmt.Fprintf(w, "Requests:   %d (recorded request log)\n", response.Requests)
+	// Request analytics count every HTTP status >= 400 (MCP error_basis
+	// http_status_gte_400); alerts, SLOs and app health count only 5xx, so
+	// the label says which one this is (ADR-20261110090000).
+	_, _ = fmt.Fprintf(w, "Errors:     %d (%.2f%%, 4xx+5xx)\n", response.ErrorRequests, response.ErrorRatePct)
 	_, _ = fmt.Fprintf(w, "Cold boots: %d\n", response.ColdBoots)
 	_, _ = fmt.Fprintf(w, "Latency:    p50=%dms p95=%dms p99=%dms\n", response.P50MS, response.P95MS, response.P99MS)
 	if len(response.Groups) == 0 {
@@ -125,7 +136,7 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 		renderRequestAnalyticsClampNote(w, response)
 		return
 	}
-	_, _ = fmt.Fprintln(w, "\nValue\tMethod\tRequests\tErrors\tp50\tp95\tp99")
+	_, _ = fmt.Fprintln(w, "\nValue\tMethod\tRequests\tErrors (4xx+5xx)\tp50\tp95\tp99")
 	for _, group := range response.Groups {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d (%.2f%%)\t%dms\t%dms\t%dms\n",
 			group.Value, group.Method, group.Requests, group.ErrorRequests,

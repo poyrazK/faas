@@ -1069,14 +1069,14 @@ func TestHandleInvalidation_TerminalStatesEvict(t *testing.T) {
 }
 
 // TestAccountRateLimit_ThreeOhOneReturns429 — ADR-040 / issue #1680:
-// 301 requests from the same Free account without refill, the 301st
+// burst+1 requests from the same Free account without refill, the last
 // returns 429. Wires the production gateway handler against a real
 // pgRouter + MemStore + PGBackend so the AccountID plumbing is exercised
 // end-to-end (issue #292 threat model: botnet rotating across one
 // customer's apps). The per-app limiter is bypassed so the test isolates
 // the per-account scope; the per-account limiter uses a frozen clock so
-// sequential requests don't refill mid-loop (Free plan: 300/min RPM
-// burst = 300 tokens).
+// sequential requests don't refill mid-loop (Free plan: the burst is
+// RateLimitPerAccountRPM tokens).
 func TestAccountRateLimit_ThreeOhOneReturns429(t *testing.T) {
 	store := state.NewMemStore()
 	app := seedApp(t, store, "ratelimited", api.PlanFree) // Free: per-account burst 300
@@ -1117,14 +1117,16 @@ func TestAccountRateLimit_ThreeOhOneReturns429(t *testing.T) {
 	h.WithLimiter(unlimitedLimiterForTest()) // bypass per-app scope
 	h.WithAccountLimiter(acctLim)            // frozen-clock per-account
 
-	// Drive 301 requests sequentially. The first 300 succeed (Free burst),
-	// and request 301 is a 429 with x-faas-rate-limit-scope: account.
+	// Drive burst+1 requests sequentially. The first burst succeed, and
+	// the last is a 429 with x-faas-rate-limit-scope: account. (The test
+	// name dates from the 300 RPM Free burst.)
+	burst := api.PlanFree.RateLimitPerAccountRPM()
 	var (
 		ok200   int
 		ok429   int
 		last429 *httptest.ResponseRecorder
 	)
-	for i := 0; i < 301; i++ {
+	for i := 0; i <= burst; i++ {
 		req := httptest.NewRequest("GET", "http://ratelimited.apps.gregale.dev/", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -1138,9 +1140,9 @@ func TestAccountRateLimit_ThreeOhOneReturns429(t *testing.T) {
 			t.Fatalf("request %d: status = %d, want 200 or 429", i, rec.Code)
 		}
 	}
-	// 300 successful (Free burst), then one 429.
-	if ok200 != 300 {
-		t.Errorf("ok200 = %d, want 300 (Free per-account burst)", ok200)
+	// burst successful, then one 429.
+	if ok200 != burst {
+		t.Errorf("ok200 = %d, want %d (Free per-account burst)", ok200, burst)
 	}
 	if ok429 != 1 {
 		t.Errorf("ok429 = %d, want 1", ok429)

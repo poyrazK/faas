@@ -7,7 +7,7 @@
  */
 export type SetGraceWindowRequest = {
   /**
-   * Per-account override in days. 0 = atomic, null = use plan default.
+   * Per-account override in days, at most 30 (`api.APIKeyGraceWindowMaxDays`). 0 = atomic, null = use plan default. Changing it needs a recent step-up when the account uses two-factor authentication.
    */
   days?: number | null;
 };

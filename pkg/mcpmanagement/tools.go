@@ -68,13 +68,19 @@ func (m *management) connection(ctx context.Context, _ noArgs) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	toolsets := m.opts.Toolsets
+	if selected, ok := ctx.Value(agentKeyToolsetsContextKey{}).([]string); m.opts.agentKeyToolsetSelection && ok {
+		toolsets = selected
+	}
 	return map[string]any{
 		"profile": m.opts.Profile, "api_base": m.opts.APIBase, "read_only": !m.opts.AllowWrites,
-		"account":            map[string]string{"id": account.ID, "plan": account.Plan, "status": account.Status},
-		"capabilities":       capabilities,
-		"allowed_apps":       m.opts.AllowedApps,
-		"environment_access": m.opts.Environments,
-		"request_access":     m.requestAccessMetadata(),
+		"toolsets":                toolsets,
+		"connection_capabilities": m.opts.Capabilities,
+		"account":                 map[string]string{"id": account.ID, "plan": account.Plan, "status": account.Status},
+		"capabilities":            capabilities,
+		"allowed_apps":            m.opts.AllowedApps,
+		"environment_access":      m.opts.Environments,
+		"request_access":          m.requestAccessMetadata(),
 	}, nil
 }
 
@@ -109,6 +115,27 @@ func (m *management) listApps(ctx context.Context, args appsArgs) (any, error) {
 // (ADR-20261031100025). The selector is checked before any request, and the
 // returned labels are matched again: an apid without labels ignores it.
 func (m *management) selectedApps(ctx context.Context, selector string) ([]api.AppResponse, error) {
+	if m.opts.agentKey && m.opts.AllowedApps != nil {
+		var apps []api.AppResponse
+		for slug, id := range m.opts.AllowedApps {
+			app, err := m.client.GetApp(ctx, slug)
+			if err != nil {
+				return nil, err
+			}
+			if app.ID != id {
+				return nil, invalid("app_access_denied", "app identity changed")
+			}
+			apps = append(apps, app)
+		}
+		if selector != "" {
+			sel, err := labels.Parse(selector)
+			if err != nil {
+				return nil, invalid(labels.CodeInvalidSelector, err.Error())
+			}
+			apps = slices.DeleteFunc(apps, func(a api.AppResponse) bool { return !sel.Matches(a.Labels) })
+		}
+		return apps, nil
+	}
 	if selector == "" {
 		return listApps(ctx, m.client, m.opts.Org)
 	}

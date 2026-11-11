@@ -5,5 +5,31 @@ LoadCredential=cf_token:/etc/faas/secrets/edgednsd/cf-token
 Environment=FAAS_EDGEDNS_CF_TOKEN_FILE=%d/cf_token
 Environment=FAAS_EDGEDNS_NAMES={{ faas_edgednsd_names | join(',') }}
 Environment=FAAS_EDGEDNS_NODE_ADDRESSES={{ faas_edgednsd_node_addresses | join(',') }}
+Environment=FAAS_EDGEDNS_NODE_PRIVATE_ADDRESSES={{ faas_edgednsd_node_private_addresses | join(',') }}
 Environment=FAAS_EDGEDNS_DRY_RUN={{ '1' if (faas_edgednsd_dry_run | string | lower) in ['true', 'yes', 'on', '1'] else '0' }}
 Environment=FAAS_EDGEDNS_METRICS_ADDR={{ faas_edgednsd_metrics_listen }}
+{% if faas_edgednsd_certificate_names | default([], true) | length > 0 %}
+# The apps domains' certificate (ADR-20261103163954 §3). The ACME account key
+# and the edge-tls recipient arrive as credentials.
+LoadCredential=acme_account_key:/etc/faas/secrets/edgednsd/acme-account.key
+LoadCredential=edge_tls_recipient:/etc/faas/secrets/domains/edge-tls.age.pub
+Environment=FAAS_EDGEDNS_CERT_NAMES={{ faas_edgednsd_certificate_names | join(',') }}
+Environment=FAAS_EDGEDNS_CERT_ZONE_ID={{ faas_edgednsd_certificate_zone_id }}
+Environment=FAAS_EDGEDNS_ACME_CA={{ faas_edgednsd_acme_ca }}
+{% if faas_edgednsd_acme_email | default('', true) | length > 0 %}
+Environment=FAAS_EDGEDNS_ACME_EMAIL={{ faas_edgednsd_acme_email }}
+{% endif %}
+Environment=FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE=%d/acme_account_key
+Environment=FAAS_EDGEDNS_CERT_RECIPIENT_FILE=%d/edge_tls_recipient
+{% endif %}
+{% if faas_edgednsd_ct_domain | default('', true) | length > 0 %}
+# The Certificate Transparency watch (ADR-20261103163954 §3).
+Environment=FAAS_EDGEDNS_CT_DOMAIN={{ faas_edgednsd_ct_domain }}
+{% if faas_edgednsd_ct_allow_names | default([], true) | length > 0 %}
+Environment=FAAS_EDGEDNS_CT_ALLOW_NAMES={{ faas_edgednsd_ct_allow_names | join(',') }}
+{% endif %}
+{% if (faas_edgednsd_ct_api_key_staged | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %}
+LoadCredential=certspotter_api_key:/etc/faas/secrets/edgednsd/certspotter-api-key
+Environment=FAAS_EDGEDNS_CT_API_KEY_FILE=%d/certspotter_api_key
+{% endif %}
+{% endif %}

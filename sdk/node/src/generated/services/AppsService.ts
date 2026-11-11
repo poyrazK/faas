@@ -13,14 +13,19 @@ import type { AppForkListResponse } from '../models/AppForkListResponse.js';
 import type { AppForkResponse } from '../models/AppForkResponse.js';
 import type { AppHealthHistoryPage } from '../models/AppHealthHistoryPage.js';
 import type { AppHealthResponse } from '../models/AppHealthResponse.js';
+import type { ApplyAppScalingRequest } from '../models/ApplyAppScalingRequest.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppOperationalSummary } from '../models/AppOperationalSummary.js';
+import type { AppOperationPreview } from '../models/AppOperationPreview.js';
 import type { AppReleaseReview } from '../models/AppReleaseReview.js';
+import type { AppResourceInventoryResponse } from '../models/AppResourceInventoryResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
 import type { AppRoutesResponse } from '../models/AppRoutesResponse.js';
 import type { ApproveRouteLifecycleRequest } from '../models/ApproveRouteLifecycleRequest.js';
 import type { ApproveRouteRemovalRequest } from '../models/ApproveRouteRemovalRequest.js';
+import type { AppScalingReceipt } from '../models/AppScalingReceipt.js';
+import type { AppScalingSnapshot } from '../models/AppScalingSnapshot.js';
 import type { AppSLOResponse } from '../models/AppSLOResponse.js';
 import type { AppsMetricsResponse } from '../models/AppsMetricsResponse.js';
 import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
@@ -84,6 +89,7 @@ import type { DeletedAppSummary } from '../models/DeletedAppSummary.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { EdgeProtectionResponse } from '../models/EdgeProtectionResponse.js';
+import type { EnvironmentRouteBudgetReceipt } from '../models/EnvironmentRouteBudgetReceipt.js';
 import type { EnvironmentRouteBudgets } from '../models/EnvironmentRouteBudgets.js';
 import type { GuardedDebugRegressionActionRequest } from '../models/GuardedDebugRegressionActionRequest.js';
 import type { Issue } from '../models/Issue.js';
@@ -2629,6 +2635,7 @@ export class AppsService {
     slug,
     name,
     range = '24h',
+    labels,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -2642,6 +2649,10 @@ export class AppsService {
      * History window. Default 24h.
      */
     range?: '1h' | '6h' | '24h' | '7d' | '15d',
+    /**
+     * One labelled series, by the `key` the metric list returns for it (for example `queue=emails`). Omitted: the metric's aggregate.
+     */
+    labels?: string,
   }): CancelablePromise<CustomMetricSeriesResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -2652,6 +2663,7 @@ export class AppsService {
       },
       query: {
         'range': range,
+        'labels': labels,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -3281,7 +3293,7 @@ export class AppsService {
   /**
    * Read an app's change timeline.
    * Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
-   * otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+   * otherwise 403 `change_timeline_unavailable`. Requires apps:read or
    * admin; no MFA required.
    *
    * Merges deployment audit, edge-rule changes, the latest runtime-config
@@ -3513,7 +3525,7 @@ export class AppsService {
    * Overage computation: `overage_gb_hours = max(0, gb_hours -
    * plan_included_gb_hours)`. The included band is echoed from
    * `acct.Plan.PlanIncludedGBHours`; the overage figure is the
-   * integer-rounded float the Stripe pusher bills at $0.01/GB-h.
+   * integer-rounded float the Stripe pusher bills at $0.05/GB-h.
    *
    * Source: `usage_minutes` today (after the 30d retention cap).
    * `usage_daily` / `mixed` land with the trail-period reader
@@ -6622,9 +6634,12 @@ export class AppsService {
    * available for spreadsheet and support workflows. The export uses the
    * same plan retention boundary as the debugger list, never includes
    * request bodies, headers, source IPs, or raw span attributes, and is
-   * capped at 10,000 rows. `X-Faas-Request-Log-Window` and
-   * `X-Faas-Request-Log-Retention-Clamped` describe the effective window
-   * applied to the artifact.
+   * capped at 10,000 rows. It takes the request list's filters.
+   * `X-Faas-Request-Log-Window` and `X-Faas-Request-Log-Retention-Clamped`
+   * describe the effective window applied to the artifact, and
+   * `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+   * In CSV, a value that would start a spreadsheet formula is written
+   * with a leading apostrophe.
    *
    * @returns binary Metadata-only request telemetry export.
    * @throws ApiError
@@ -6635,6 +6650,11 @@ export class AppsService {
     route,
     format = 'ndjson',
     limit,
+    deploymentId,
+    status,
+    coldBoot,
+    consumerId,
+    minLatencyMs,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -6656,6 +6676,26 @@ export class AppsService {
      * Maximum number of retained rows to export.
      */
     limit?: number | null,
+    /**
+     * Export only rows served by this deployment UUID.
+     */
+    deploymentId?: string | null,
+    /**
+     * Export only rows with this HTTP status.
+     */
+    status?: number | null,
+    /**
+     * Export only cold-start rows when true, or only warm rows when false.
+     */
+    coldBoot?: boolean | null,
+    /**
+     * Export only one consumer's rows (UUID), or __anonymous__ for rows without a stable consumer identity.
+     */
+    consumerId?: string | null,
+    /**
+     * Export only rows whose latency bucket bound is at least this many milliseconds.
+     */
+    minLatencyMs?: number | null,
   }): CancelablePromise<Blob> {
     return __request(OpenAPI, {
       responseType: 'blob',
@@ -6669,6 +6709,11 @@ export class AppsService {
         'route': route,
         'format': format,
         'limit': limit,
+        'deployment_id': deploymentId,
+        'status': status,
+        'cold_boot': coldBoot,
+        'consumer_id': consumerId,
+        'min_latency_ms': minLatencyMs,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -8983,6 +9028,59 @@ export class AppsService {
     });
   }
   /**
+   * Read an original durable environment budget receipt.
+   * Requires current app read access and completed MFA. Matches account, app and current immutable project/environment identities. Returns historical committed policy revisions and the exact original request fingerprint, excluding configuration values. Later policy edits do not replace this receipt. A missing, inaccessible or unavailable receipt never proves non-commit. This endpoint performs no mutation, replay, approval or expiry renewal and does not establish runtime health.
+   * @returns EnvironmentRouteBudgetReceipt Historical policy-intent receipt, not current configuration or runtime completion.
+   * @throws ApiError
+   */
+  public static getEnvironmentRouteBudgetReceipt({
+    slug,
+    requestId,
+    scope,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact original nonzero request UUID.
+     */
+    requestId: string,
+    /**
+     * Select scope=default or one registered environment; exactly one selector is required.
+     */
+    scope?: 'default',
+    /**
+     * Current named environment containing the original receipt; mutually exclusive with scope=default.
+     */
+    environment?: string,
+  }): CancelablePromise<EnvironmentRouteBudgetReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-budgets/receipts/{request_id}',
+      path: {
+        'slug': slug,
+        'request_id': requestId,
+      },
+      query: {
+        'scope': scope,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Read advisory production route monitoring intent.
    * Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA. Configuration is independent of the canary guard. customer_group_by optionally evaluates the same absolute budgets per request-time tenant or API consumer.
    * @returns RouteMonitorConfig Current advisory production monitor configuration.
@@ -10958,6 +11056,152 @@ export class AppsService {
     });
   }
   /**
+   * Read scaling settings and their revision.
+   * Requires read access. Named environments must have a materialized workload revision.
+   * @returns AppScalingSnapshot Current desired configuration; does not imply running instance convergence.
+   * @throws ApiError
+   */
+  public static getAppScaling({
+    slug,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Named project environment; omit for the default app.
+     */
+    environment?: string,
+  }): CancelablePromise<AppScalingSnapshot> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/scaling',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Commit reviewed scaling settings with a recoverable request ID.
+   * Requires deploy:write and the same MFA, plan and capacity admission as app settings updates.
+   * The expected app UUID and revision are checked under the write lock. Default revisions advance for
+   * every accepted request and for legacy changes to RAM, CPU, concurrency or min instances.
+   * Named environments use their workload revision, including no-op revision semantics.
+   * Settings and the receipt commit atomically. Reuse request_id with the exact original
+   * body after an interruption to recover the original receipt even after later writes.
+   * Changing the body under an accepted ID returns scaling_request_conflict; a stale
+   * revision returns scaling_revision_conflict. Receipts survive until the app is purged.
+   * Named production and protected environments require their existing approved workflow.
+   * A receipt confirms desired configuration only; named settings require a subsequent
+   * deployment, and default settings do not prove guest readiness or replica convergence.
+   *
+   * @returns AppScalingReceipt Original durable configuration receipt, including on replay.
+   * @throws ApiError
+   */
+  public static applyAppScaling({
+    slug,
+    requestBody,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Reviewed scaling fields and the revision and request identity to preserve on retry.
+     */
+    requestBody: ApplyAppScalingRequest,
+    /**
+     * Named project environment; omit for the default app.
+     */
+    environment?: string,
+  }): CancelablePromise<AppScalingReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/scaling',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `Write permission, MFA, capability or plan admission denied.`,
+        404: `code: not_found`,
+        409: `Scaling revision changed, request ID reused, or environment protected.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Commit outcome uncertain; recover or retry the original request ID and body.`,
+      },
+    });
+  }
+  /**
+   * Recover a scaling configuration receipt without performing a write.
+   * Requires current read access to the app and selected environment. Receipt settings may have been superseded; read the current revision separately.
+   * @returns AppScalingReceipt Original durable configuration receipt.
+   * @throws ApiError
+   */
+  public static getAppScalingReceipt({
+    slug,
+    requestId,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Original scaling request UUID.
+     */
+    requestId: string,
+    /**
+     * Environment of the original scaling request; omit to recover a default-app request.
+     */
+    environment?: string,
+  }): CancelablePromise<AppScalingReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/scaling/requests/{request_id}',
+      path: {
+        'slug': slug,
+        'request_id': requestId,
+      },
+      query: {
+        'environment': environment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Account-wide per-app metrics rollup.
    * One call replaces N per-app `/v1/apps/{slug}/metrics` calls. Returns the same `AppMetricsResponse` shape
    * per app, keyed by `app_slug`, so the dashboard can render
@@ -11166,6 +11410,124 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a bounded page of app resource metadata.
+   * Requires apps:read and current application access. App-bound readers may
+   * inspect only their immutable app. This is metadata access: object data,
+   * database connections, credentials and lifecycle operations retain their
+   * own permissions. Counts and offsets are filtered by app, kind and exact
+   * scope in the native catalog before pagination. Resource capability flags
+   * still apply. Domains and crons are app-wide; omit environment for them.
+   * Pages are individual read snapshots; concurrent changes may move offsets.
+   * Metadata state does not establish runtime readiness or connectivity.
+   * No provider calls, probes, reservations or writes are performed.
+   *
+   * @returns AppResourceInventoryResponse Filtered resource metadata and explicit continuation evidence.
+   * @throws ApiError
+   */
+  public static getAppResourceInventory({
+    slug,
+    kind,
+    environment,
+    limit = 20,
+    offset,
+  }: {
+    /**
+     * Application whose resource references are requested.
+     */
+    slug: string,
+    /**
+     * One metadata collection within the selected application.
+     */
+    kind: 'domains' | 'crons' | 'buckets' | 'storage_bindings' | 'databases',
+    /**
+     * Exact named environment in the app project; omit for default-scope inventory.
+     */
+    environment?: string,
+    /**
+     * Maximum metadata entries in this backend page.
+     */
+    limit?: number,
+    /**
+     * Offset within the selected app, resource kind and scope only.
+     */
+    offset?: number,
+  }): CancelablePromise<AppResourceInventoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/resource-inventory',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'kind': kind,
+        'environment': environment,
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview authorization for an application operation without writing intent.
+   * Requires application read or deployment scope and current application access.
+   * Evaluates the target operation's native scope, organization role and release
+   * policy. Authorization is a snapshot; admission remains unknown when exact
+   * request validation, quotas, approval or runtime capacity need apply-time checks.
+   * This endpoint creates no plan, approval, reservation or customer intent.
+   *
+   * @returns AppOperationPreview Native authorization snapshot and explicit admission limitations.
+   * @throws ApiError
+   */
+  public static getAppOperationPreview({
+    slug,
+    operation,
+    environment,
+  }: {
+    /**
+     * Application slug to inspect.
+     */
+    slug: string,
+    /**
+     * Native application operation whose current authorization is inspected.
+     */
+    operation: 'deploy' | 'restart' | 'scale' | 'env_change',
+    /**
+     * Named environment in the application's project; omit for default scope.
+     */
+    environment?: string,
+  }): CancelablePromise<AppOperationPreview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/operation-preview',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'operation': operation,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

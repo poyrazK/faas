@@ -516,28 +516,7 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 		// boundary, and the per-flush tx_bytes increments
 		// attribute every egress byte to
 		// (instance_id, current minute).
-		buf := make([]byte, 8*1024)
-		for {
-			n, rerr := bodySrc.Read(buf)
-			if n > 0 {
-				if serr := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
-					Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{
-						BodyChunk: append([]byte(nil), buf[:n]...),
-					},
-				}); serr != nil {
-					streamErrCh <- status.Errorf(codes.Internal, "send body chunk: %v", serr)
-					return
-				}
-			}
-			if errors.Is(rerr, io.EOF) {
-				streamErrCh <- nil
-				return
-			}
-			if rerr != nil {
-				streamErrCh <- status.Errorf(codes.Internal, "read body: %v", rerr)
-				return
-			}
-		}
+		streamErrCh <- sendForwardResponseBody(stream, bodySrc)
 	}()
 
 	// Drain the body-copy goroutine BEFORE waiting on the bridge.
@@ -1556,6 +1535,12 @@ type quietReporter interface {
 	QuietPauseReport(instance string) fcvm.QuietPauseReport
 }
 
+// idleLadderReporter reports the idle ladder level vmmd holds an instance
+// at (ADR-20261107122928).
+type idleLadderReporter interface {
+	IdleLadderLevel(instance string, now time.Time) fcvm.IdleLevel
+}
+
 // addQuietPauseState fills InstanceStats' quiet pause fields: the current
 // pause, so schedd can leave a quiet-paused instance's vCPUs out of the
 // node's active vCPU (ADR-1151), and the last completed pause with the
@@ -1576,6 +1561,13 @@ func (s *Server) addQuietPauseState(row *vmmdpb.InstanceStats) {
 		row.QuietLastPauseStartedAt = timestamppb.New(r.LastStarted)
 		row.QuietLastPauseEndedAt = timestamppb.New(r.LastEnded)
 		row.QuietPausedNsTotal = wrapperspb.Int64(r.PausedTotal.Nanoseconds())
+	}
+	// The ladder level is only meaningful for a guest the row reports
+	// paused: measured admission charges level 2 with the frozen floor.
+	if l, ok := s.vmm.(idleLadderReporter); ok && row.QuietPaused {
+		if level := l.IdleLadderLevel(row.GetInstance(), time.Now()); level > fcvm.IdleRunning {
+			row.IdleLadderLevel = int32(level)
+		}
 	}
 }
 
@@ -1967,28 +1959,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	streamErrCh := make(chan error, 1)
 	go func() {
 		defer close(streamErrCh)
-		buf := make([]byte, 8*1024)
-		for {
-			n, rerr := httpResp.Body.Read(buf)
-			if n > 0 {
-				if serr := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
-					Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{
-						BodyChunk: append([]byte(nil), buf[:n]...),
-					},
-				}); serr != nil {
-					streamErrCh <- status.Errorf(codes.Internal, "send body chunk: %v", serr)
-					return
-				}
-			}
-			if errors.Is(rerr, io.EOF) {
-				streamErrCh <- nil
-				return
-			}
-			if rerr != nil {
-				streamErrCh <- status.Errorf(codes.Internal, "read body: %v", rerr)
-				return
-			}
-		}
+		streamErrCh <- sendForwardResponseBody(stream, httpResp.Body)
 	}()
 
 	// 10. Wait for the body goroutine, then the response reader.
@@ -2463,5 +2434,46 @@ func waitForUnixSock(path string, cap time.Duration) error {
 			return fmt.Errorf("timeout waiting for %s: %w", path, err)
 		}
 		time.Sleep(min(2*time.Millisecond, remaining))
+	}
+}
+
+// forwardResponseBodyBuffers holds the 8 KiB read buffers of response-body
+// pumps. A buffer per response was vmmd's largest allocation per request
+// (2026-11-06 allocs profile), mostly for bodies of a few bytes.
+var forwardResponseBodyBuffers = sync.Pool{New: func() any {
+	buf := make([]byte, 8*1024)
+	return &buf
+}}
+
+// forwardResponseSender is the response half of a ForwardHTTPStream.
+type forwardResponseSender interface {
+	Send(*vmmdpb.ForwardHTTPStreamResponse) error
+}
+
+// sendForwardResponseBody streams body to the gateway in chunks of at most
+// 8 KiB, as each read returns them, and reports nil at EOF. Each chunk is a
+// copy: gRPC may still hold a sent message, so the read buffer is reused only
+// for the next read.
+func sendForwardResponseBody(stream forwardResponseSender, body io.Reader) error {
+	pooled := forwardResponseBodyBuffers.Get().(*[]byte)
+	defer forwardResponseBodyBuffers.Put(pooled)
+	buf := *pooled
+	for {
+		n, rerr := body.Read(buf)
+		if n > 0 {
+			if serr := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
+				Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{
+					BodyChunk: append([]byte(nil), buf[:n]...),
+				},
+			}); serr != nil {
+				return status.Errorf(codes.Internal, "send body chunk: %v", serr)
+			}
+		}
+		if errors.Is(rerr, io.EOF) {
+			return nil
+		}
+		if rerr != nil {
+			return status.Errorf(codes.Internal, "read body: %v", rerr)
+		}
 	}
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
+	"github.com/onebox-faas/faas/pkg/retry"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -129,6 +130,9 @@ func (o LocalRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime.
 func (o LocalRealtimeNodeOperator) Endpoints(ctx context.Context) ([]string, error) {
 	return o.Client.Endpoints(ctx)
 }
+func (o LocalRealtimeNodeOperator) EndpointsWithPreviews(ctx context.Context) ([]string, []string, error) {
+	return o.Client.EndpointsWithPreviews(ctx)
+}
 func (o LocalRealtimeNodeOperator) ChannelRoutes(ctx context.Context) ([]realtime.ChannelRoute, error) {
 	return o.Client.ChannelRoutes(ctx)
 }
@@ -195,6 +199,9 @@ func (o remoteRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime
 }
 func (o remoteRealtimeNodeOperator) Endpoints(ctx context.Context) ([]string, error) {
 	return o.client.Endpoints(ctx)
+}
+func (o remoteRealtimeNodeOperator) EndpointsWithPreviews(ctx context.Context) ([]string, []string, error) {
+	return o.client.EndpointsWithPreviews(ctx)
 }
 func (o remoteRealtimeNodeOperator) ChannelRoutes(ctx context.Context) ([]realtime.ChannelRoute, error) {
 	return o.client.ChannelRoutes(ctx)
@@ -415,6 +422,9 @@ func (o *leasedRealtimeOwner) resolve(ctx context.Context, endpointID, connectio
 
 func (o *leasedRealtimeOwner) connectionOperation(ctx context.Context, endpointID, connectionID string, closeAfter bool, fn func(state.ManagedRealtimeConnectionOwner, RealtimeNodeOperator) error) error {
 	for attempt := 0; attempt < 2; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return err
+		}
 		lease, op, err := o.resolve(ctx, endpointID, connectionID)
 		if err != nil {
 			return err
@@ -1144,10 +1154,15 @@ func (o *leasedRealtimeOwner) ListEndpointInventory(ctx context.Context) (realti
 	for _, node := range nodes {
 		op, err := o.nodeOperator(node)
 		if err == nil {
-			var ids []string
-			ids, err = op.Endpoints(ctx)
+			var ids, previews []string
+			if lister, ok := op.(nodePreviewLister); ok {
+				ids, previews, err = lister.EndpointsWithPreviews(ctx)
+			} else {
+				ids, err = op.Endpoints(ctx)
+			}
 			if err == nil {
 				o.endpointSync.recordInventory(node.ID, ids)
+				o.endpointSync.recordPreviews(node.ID, previews)
 				inventory.NodesQueried++
 				for _, id := range ids {
 					seen[id] = struct{}{}

@@ -399,6 +399,12 @@ func TestIsComputeOwnedGatewayPath(t *testing.T) {
 		{path: "/v1/jobs/ir-abc/runs/5f0c/tasks/0/attach", want: true},
 		{path: "/v1/jobs/ir-abc/runs/5f0c/tasks/0/attach/x", want: false},
 		{path: "/v1/jobs/ir-abc/runs/5f0c/tasks/0", want: false},
+		// ADR-20261027090013 sandbox data plane; the session and its ports
+		// stay on apid.
+		{path: "/v1/sandboxes/sbx-1/exec", want: true},
+		{path: "/v1/sandboxes/sbx-1/files:list", want: true},
+		{path: "/v1/sandboxes/sbx-1", want: false},
+		{path: "/v1/sandboxes/sbx-1/ports", want: false},
 	} {
 		if got := isComputeOwnedGatewayPath(tc.path); got != tc.want {
 			t.Errorf("isComputeOwnedGatewayPath(%q) = %v, want %v", tc.path, got, tc.want)

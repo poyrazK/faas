@@ -313,6 +313,7 @@ func isComputeOwnedGatewayPath(path string) bool {
 		api.IsAppTaskAttachPath(path) ||
 		api.IsJobTaskLogStreamPath(path) ||
 		api.IsJobTaskAttachPath(path) ||
+		api.IsSandboxDataPath(path) ||
 		path == "/v1/synthesize" ||
 		path == "/v1/invocations:dispatch" ||
 		path == "/v1/invocations:dispatch_batch"

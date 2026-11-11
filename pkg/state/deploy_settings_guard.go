@@ -11,14 +11,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// DeploySettingsGuard is only used by API recovery updates. Prepare compares
-// targeted fields, validates and builds the patch from the locked current app.
+// DeploySettingsGuard fences API recovery and source-manifest compensation.
+// Prepare compares targeted fields and builds the patch from the locked app.
 // It must not perform I/O or invoke the store while the lock is held.
 type DeploySettingsGuard struct {
 	AppID        string
 	AccountID    string
 	DeploymentID string
-	Prepare      func(App) (UpdateAppParams, error)
+	// Source staging and compensation follow deployment identity even as the
+	// baseline release progresses. Public recovery requires a live deployment.
+	MatchDeploymentIDOnly bool
+	Prepare               func(App) (UpdateAppParams, error)
 }
 
 type DeploySettingsConflictError struct {
@@ -42,7 +45,7 @@ func prepareDeploySettingsUpdate(app App, latestID string, latestStatus Deployme
 	if guard.AppID != app.ID || guard.AccountID != app.AccountID || app.Status == AppDeleted {
 		return p, &DeploySettingsConflictError{Reason: "app_identity_changed"}
 	}
-	if latestID != guard.DeploymentID || latestStatus != DeployLive {
+	if latestID != guard.DeploymentID || (!guard.MatchDeploymentIDOnly && latestStatus != DeployLive) {
 		return p, &DeploySettingsConflictError{Reason: "deployment_changed"}
 	}
 	if guard.Prepare == nil {

@@ -30,7 +30,7 @@ func registerUploadDeploys(s *mcp.Server, m *management) {
 	if m.opts.uploads == nil || m.opts.LocalCLI == nil || !m.remote() || !m.opts.AllowWrites {
 		return
 	}
-	register(s, m, "gregale_create_source_upload", "Get a one-time URL to upload a project as a .tar.gz, valid for 15 minutes. Upload it with the returned command, then call gregale_plan_upload_deploy with upload_id. For a few small files, pass them to gregale_plan_upload_deploy instead.", m.createSourceUpload)
+	registerTool(s, m, "gregale_create_source_upload", "Get a one-time URL to upload a project as a .tar.gz, valid for 15 minutes. Upload it with the returned command, then call gregale_plan_upload_deploy with upload_id. For a few small files, pass them to gregale_plan_upload_deploy instead.", false, m.createSourceUpload)
 	register(s, m, "gregale_plan_upload_deploy", "Review deploying an uploaded project, or files passed inline, as one app; pins the files and the app's release state for 15 minutes. Apply makes a new or non-serving app live; a serving app is staged at 0% for gregale_promote_deployment.", m.planUploadDeploy)
 	registerTool(s, m, "gregale_apply_upload_deploy", "Apply a reviewed upload deploy plan with a stable idempotency key, creating the app if planned. This can incur build/runtime costs. Retry with the same plan ID after ambiguous errors; follow with gregale_wait_deployment.", false, m.applyLocalDeploy)
 }
@@ -72,29 +72,37 @@ func (m *management) planUploadDeploy(ctx context.Context, args planUploadDeploy
 	if (args.UploadID == "") == (len(args.Files) == 0) {
 		return nil, invalid("invalid_argument", "pass either upload_id or files")
 	}
-	dir, err := m.opts.uploads.newDir()
-	if err != nil {
-		return nil, err
-	}
+	var dir string
 	if args.UploadID != "" {
 		up, archive, err := m.opts.uploads.take(m.opts.grantID, args.UploadID)
 		if err != nil {
-			m.opts.uploads.removeDir(dir)
 			return nil, err
 		}
 		if up.app != args.App {
-			m.opts.uploads.removeDir(dir)
+			_ = os.Remove(archive)
 			return nil, invalid("invalid_argument", "this upload was created for app "+up.app)
 		}
-		err = extractUpload(archive, dir, up.maxBytes*4)
+		// The plan directory takes over the upload's reservation, unpacked.
+		dir, err = m.opts.uploads.newDir(up.accountID, up.maxBytes*unpackFactor)
+		if err != nil {
+			_ = os.Remove(archive)
+			return nil, err
+		}
+		err = extractUpload(archive, dir, up.maxBytes*unpackFactor)
 		_ = os.Remove(archive)
 		if err != nil {
 			m.opts.uploads.removeDir(dir)
 			return nil, invalid("invalid_upload", err.Error())
 		}
-	} else if err := writeInlineFiles(dir, args.Files); err != nil {
-		m.opts.uploads.removeDir(dir)
-		return nil, invalid("invalid_argument", err.Error())
+	} else {
+		var err error
+		if dir, err = m.opts.uploads.newDir("grant:"+m.opts.grantID, maxInlineBytes); err != nil {
+			return nil, err
+		}
+		if err := writeInlineFiles(dir, args.Files); err != nil {
+			m.opts.uploads.removeDir(dir)
+			return nil, invalid("invalid_argument", err.Error())
+		}
 	}
 	plan, err := m.planDirDeploy(ctx, dir, planLocalDeployArgs{Path: dir, App: args.App, Reason: args.Reason, CreateOnly: args.CreateOnly})
 	if err != nil {

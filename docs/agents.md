@@ -12,6 +12,30 @@ directly.
 Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
 
+With the Gregale CLI installed, one command sets up Claude Code, Codex,
+Cursor, VS Code and Windsurf, and prints the steps for Claude Desktop:
+
+```sh
+gregale mcp connect
+```
+
+It finds the agents on your machine, asks before changing each one, adds the
+server user-wide, and checks that Gregale answers. `--client codex` picks one,
+`--project` writes this project's `.mcp.json` instead, `--toolsets` selects
+toolsets, and `--dry-run` shows the change first. For an agent with no person
+at a browser, `--headless` mints an agent key, prints it once, and points the
+config at `$GREGALE_AGENT_KEY`. When an agent does not see Gregale,
+`gregale mcp connect --check` changes nothing and names the fix for each
+problem: the client's config, this project's `.mcp.json`, the agent key, your
+connected agents and approval requests waiting for you. Projects made with
+`gregale init` include a `.mcp.json`, so agents opened there are offered
+Gregale (`--no-mcp` leaves it out). For an agent in GitHub Actions, `gregale mcp connect --ci --repo OWNER/NAME`
+mints an agent key, stores it as the repository secret `GREGALE_AGENT_KEY`
+with `gh` (it is never shown), and writes `.github/workflows/gregale-agent.yml`
+for you to commit. The key needs your approval for deletes, production
+changes, credentials and billing unless you pass `--approvals`. For other
+clients, add the server yourself:
+
 Claude Code:
 
 ```sh
@@ -45,7 +69,12 @@ When the agent first connects, your browser opens:
    same page.
 2. Choose what the agent may do: inspect apps, deploy and roll back, ask you
    for secrets, add buckets and databases.
-3. Choose which apps it may use, and connect.
+3. Choose which tools it gets. "Core tools" (the default) inspects, deploys
+   and rolls back. "Diagnose and recover" adds request, regression and
+   latency diagnostics; "Deploy and operate" adds releases, domains, data,
+   crons, restarts and scaling. See [toolsets](#run-the-mcp-server-locally)
+   for what each contains.
+4. Choose which apps it may use, and connect.
 
 The agent can then inspect and deploy apps, promote and roll back. It
 deploys code it wrote by uploading the project or passing small projects as
@@ -70,16 +99,130 @@ gregale key create coding-agent --scopes apps:read,deploy:write
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
 `deploy:write` lets it create apps, deploy, roll back, and add custom domains
-and crons. Add `secrets:write` only if the agent should set environment
-variables or ask you for secrets: `gregale env push` stores them through the
-secrets API. Add `storage:manage` for buckets, and `postgres:manage` with
-`postgres:read` for databases. A key without `--scopes` is a full-access
+and crons. Add `env:write` for the MCP tools that set non-secret variables.
+Add `secrets:write` only if the agent stores secrets itself with
+`gregale env push`. Add `storage:manage` for buckets, and `postgres:manage`
+with `postgres:read` for databases. A key without `--scopes` is a full-access
 `admin` key.
 
 Put the key in the agent's environment as `FAAS_TOKEN`. It overrides the
 saved login for every `gregale` command and for the MCP server. Don't paste
 it into a prompt, a command argument or a committed file. Remove it with
 `gregale key delete <id>` when the agent no longer needs it.
+
+For an agent restricted to one existing app, create an app-bound credential:
+
+```sh
+gregale app deploy-token create --app my-api --agent \
+  --label app-inspector --scopes usage:read
+```
+
+The credential works only for that app, and always includes `agent` and
+`apps:read`. `--scopes usage:read`, as in the example, lets the agent see
+what the app costs. It still can't see your account's billing or other apps, and the
+figures are usage Gregale recorded for the app, not an invoice estimate.
+
+With the `provision` toolset (`gregale mcp serve --tools core,provision`, the
+credential in `FAAS_TOKEN`), the same credential can also list the app's
+domains, crons, buckets and databases. It sees their settings only: no
+object contents, no SQL access and no database passwords. It stays read-only
+unless you add `--allow-writes`.
+
+Before a change, the agent can call `gregale_preflight` (in the `release`
+toolset) with `deploy`, `restart`, `scale` or `env_change` to learn whether
+its credential and connection allow it. A yes isn't a guarantee: quotas and
+the exact request are checked again when the change runs.
+
+## Approve an agent's risky requests
+
+An agent key, and an agent you connect to the hosted MCP server, must ask a
+person before it deletes something, deploys or rolls back a production app,
+creates or rotates credentials, or changes billing. Previews are not
+gated. Project deploys, environment promotions, release-set changes and GitOps
+source changes count as production on every environment, because an
+environment does not say whether it serves production. Changing a production
+app's variables, secrets, secret references or settings also counts as
+production, because the app runs with them at its next wake; the same writes
+in a stage scope do not ask. Project environment configuration, shared
+secrets and workload policies ask on every environment. Choose the categories
+when you create the key:
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write --approvals delete,billing
+```
+
+`--approvals` takes `delete`, `production`, `credentials`, `billing`, `all`
+(the default) or `none`. An organization can require categories for every
+agent acting in it with `gregale org agent policy set --approvals`.
+
+When a request needs approval, Gregale answers `428 approval_required` with
+a review link. The agent shows you the link; you open it signed in to the
+dashboard and approve or deny. Only the member who connected the agent, or an
+owner or admin of its organization, can decide, and only from a signed-in
+session, never with an API key. After you approve, the agent repeats exactly
+the same request once. A request expires 30 minutes after it was made.
+
+The CLI prints the review link with the error. Put `--wait-for-approval`
+before the command (or set `GREGALE_WAIT_FOR_APPROVAL=1`) to have it wait
+for your decision and repeat the request once when you approve:
+
+```sh
+gregale --non-interactive --wait-for-approval app delete demo --yes
+```
+
+An agent can say why it makes a request, so you are not deciding from the
+method and path alone. It sends the `Gregale-Agent-Reason` header (up to 280
+characters) on the write request; the CLI sends it with `--agent-reason`
+before the command, or `GREGALE_AGENT_REASON`:
+
+```sh
+gregale --agent-reason "remove the demo app we replaced with shop-api" app delete demo --yes
+```
+
+The reason shows on the review page, in the approval email, channel
+notification and webhook events, in `GET /v1/agent-approvals` (`reason`) and
+in the agent's activity log. It is the agent's own words, not evidence:
+what you approve is still the exact method, path and body shown. Over MCP,
+the bridge sends the `reason` of the plan you reviewed when it applies the
+plan. The Go SDK sets it per call with `api.WithAgentReason(ctx, text)`.
+
+If you deny, you can give the agent a reason. When the agent repeats a
+request you denied, or one that expired, within 30 minutes, it gets
+`403 approval_denied` (with your reason) or `410 approval_expired` instead of
+a new link, so it knows to stop and ask you. `GET /v1/agent-approvals/{id}`
+shows a request's status.
+
+To hear about requests when nobody is watching the agent, subscribe an
+account webhook to `agent.approval.requested`, `agent.approval.approved` and
+`agent.approval.denied`:
+
+```sh
+gregale webhook account add --target-url https://example.com/approvals \
+  --event agent.approval.requested --event agent.approval.denied
+```
+
+Each event names the request, the key, the category, the method and path,
+and, for a new request, its review link. It never includes the request body.
+
+## See what an agent changed
+
+Gregale keeps each agent's write requests (`POST`, `PUT`, `PATCH` and
+`DELETE`) for 7 days: when, method, path, the response status, and the
+approval request it went through on, if any, and the reason the agent gave
+for it (`Gregale-Agent-Reason`), if any. Reads are not listed, and
+neither are requests waiting for approval. Request bodies are never kept.
+
+```sh
+gregale mcp connection list                 # find the agent's id
+gregale mcp connection activity <id>
+gregale mcp connection activity <id> --org acme   # an agent acting in an organization
+```
+
+You can read the activity of agents you connected; owners and admins of an
+organization can read the activity of every agent acting in it. An agent reads
+its own with `gregale mcp connection activity --self`, for example to check
+what it already did before repeating work. Pages hold 50 rows; pass the
+printed `--cursor` value for older ones.
 
 ## Run the CLI non-interactively
 
@@ -103,7 +246,7 @@ credentials are redacted from both.
 | `0` | — | Continue |
 | `1` | `invalid_request` | Fix the arguments or the project; don't retry unchanged |
 | `2` | `authentication` | Stop and ask for a valid `FAAS_TOKEN` |
-| `3` | `temporary_failure` | Inspect state, then retry |
+| `3` | `temporary_failure` | Run the `resume_command` if the output has one; otherwise inspect state, then retry |
 | `4` | `not_found` | Check the app or deployment name |
 | `5` | `conflict` | Read the current state before retrying |
 | `6` | `permission_denied` | The key lacks a scope or the plan lacks the feature |
@@ -161,13 +304,16 @@ so list only the toolsets it needs:
 
 | Toolset | Tools |
 |---|---|
-| `core` | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back. About a fifth of the full catalog. |
+| `core` (default) | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back, then verify readiness. About a quarter of the full catalog. |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets |
 | `diagnose` | Request, performance, wake, trace and regression diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons |
-| `all` | Everything (the default) |
+| `operate` | Configuration, restart, scaling, plan receipts and costs |
+| `all` | Everything allowed by the server operator (explicit opt-in) |
 
 Combine them with commas, for example `--tools core,diagnose`.
+Use `--tools all` for the full catalog. Hosted connections select additional
+toolsets during onboarding, within the operator's configured selection.
 
 The tools are read-only by default. They list apps and deployments, read logs,
 metrics and health, explain a failed deployment and group recurring errors;
@@ -186,12 +332,23 @@ from a directory to a live app:
    `gregale_apply_local_deploy` uploads it, creating the app on its first
    deploy.
 2. `gregale_plan_env_change` and `gregale_apply_env_change` set non-secret
-   variables; the key also needs `secrets:write` for these.
+   variables; the key also needs `env:write` for these.
 3. Later deploys of a serving app are staged at 0% traffic until
    `gregale_promote_deployment`.
 
-These tools run the `gregale` CLI on your machine, so they do exactly what the
-matching commands do.
+Directory deployments run the `gregale` CLI on your machine. Configuration
+changes use the native non-secret variable API and also work on hosted
+connections with `env:write` consent. Add `operate` for configuration history,
+reviewed rollback, restart/scaling and completed-plan receipt recovery.
+
+A completed apply means Gregale recorded the change, not that the app works
+with it. After applying, follow `verification.next` when present:
+`gregale_verify_plan` checks that the deployment is ready, or that a restart
+finished and the app is healthy again. Wait as long as it says between
+checks, and report what it checked and when. A staged deployment serves no
+traffic until it is promoted. For workers, verification shows every instance
+runs the new version; it doesn't show they are processing the queue, so
+check that separately.
 
 The agent never handles a secret value. With `--allow-writes`,
 `gregale_request_secret` opens a one-time Gregale page where you type the
@@ -223,8 +380,10 @@ claude plugin install gregale@gregale
   health, errors and logs.
 
 The first time Claude Code connects, you sign in to Gregale in the browser as
-above. The skills deploy with the `gregale` CLI, so install it and log in or
-set `FAAS_TOKEN` first.
+above. Choose "Diagnose and recover" there if you want `/gregale:diagnose` to
+use the request and regression tools; with "Core tools" it runs the matching
+`gregale` CLI commands instead. The skills deploy with the `gregale` CLI, so
+install it and log in or set `FAAS_TOKEN` first.
 
 ## Project instructions for agents
 

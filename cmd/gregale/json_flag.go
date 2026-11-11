@@ -297,6 +297,9 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 		if hint := globalFlagPlacementHint(diagnostic, path); hint != "" {
 			diagnostic += "\n  " + hint
 		}
+		if hint := appSettingFlagHint(diagnostic, w.name); hint != "" {
+			diagnostic += "\n  " + hint
+		}
 		path = strings.TrimPrefix(spellUsageForTree("gregale "+path), "gregale ")
 		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
 			diagnostic, cliTreeSpellPath(path))
@@ -315,6 +318,7 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 func globalFlagPlacementHint(diagnostic, path string) string {
 	for _, global := range []struct{ name, example string }{
 		{"non-interactive", "--non-interactive"},
+		{"wait-for-approval", "--wait-for-approval"},
 		{"profile", "--profile NAME"},
 	} {
 		if diagnostic == "unknown flag --"+global.name || strings.HasPrefix(diagnostic, "unknown flag --"+global.name+"=") {
@@ -322,6 +326,23 @@ func globalFlagPlacementHint(diagnostic, path string) string {
 		}
 	}
 	return ""
+}
+
+// appSettingFlagHint points a setting flag given to `app scale` at the
+// command that takes it: `app scale --websocket-enabled` answered only
+// "unknown flag" (rc.318 field report).
+func appSettingFlagHint(diagnostic, flagSet string) string {
+	name, ok := strings.CutPrefix(diagnostic, "unknown flag --")
+	if !ok || flagSet != "app scale" {
+		return ""
+	}
+	name, _, _ = strings.Cut(name, "=")
+	// `app update` runs the app command's own flags.
+	app, ok := lookupCliCommand("app")
+	if !ok || !slices.ContainsFunc(app.Flags, func(f cliFlag) bool { return f.Name == name }) {
+		return ""
+	}
+	return fmt.Sprintf("--%s is an app setting, not a scale setting: run 'gregale app update <app> --%s'", name, name)
 }
 
 type jsonFlagErrorWriter struct {

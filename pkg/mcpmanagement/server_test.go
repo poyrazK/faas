@@ -24,6 +24,15 @@ func connectTestServer(t *testing.T, backend *httptest.Server, timeout time.Dura
 }
 
 func connectConfiguredTestServer(t *testing.T, backend *httptest.Server, opts Options, version string) (*mcp.ClientSession, context.Context) {
+	// Existing feature fixtures deliberately exercise the complete catalog.
+	// Default-catalog evaluations use connectSelectedTestServer directly.
+	if opts.Toolsets == nil {
+		opts.Toolsets = []string{ToolsetAll}
+	}
+	return connectSelectedTestServer(t, backend, opts, version)
+}
+
+func connectSelectedTestServer(t *testing.T, backend *httptest.Server, opts Options, version string) (*mcp.ClientSession, context.Context) {
 	t.Helper()
 	c := api.NewClient(backend.URL, testToken)
 	c.SetCompletionCache(nil)
@@ -54,6 +63,15 @@ func callTool(t *testing.T, ctx context.Context, cs *mcp.ClientSession, name str
 		t.Fatal(err)
 	}
 	if result.IsError != wantError {
+		if result.IsError {
+			raw, _ := json.Marshal(result.StructuredContent)
+			var detail struct {
+				Code    string
+				Message string
+			}
+			_ = json.Unmarshal(raw, &detail)
+			t.Fatalf("%s error=%v, want %v; code=%s message=%s", name, result.IsError, wantError, detail.Code, detail.Message)
+		}
 		t.Fatalf("%s error=%v, want %v; content=%v", name, result.IsError, wantError, result.Content)
 	}
 	data, err := json.Marshal(result.StructuredContent)
@@ -130,11 +148,11 @@ func TestManagementMCPJourney(t *testing.T) {
 			defer backend.Close()
 			cs, ctx := connectTestServer(t, backend, 0, version)
 			catalog, err := cs.ListTools(ctx, nil)
-			if err != nil || len(catalog.Tools) != 49 {
-				t.Fatalf("catalog=%+v error=%v", catalog, err)
+			if err != nil || len(catalog.Tools) != 79 {
+				t.Fatalf("catalog count=%d catalog=%+v error=%v", len(catalog.Tools), catalog, err)
 			}
 			for _, tool := range catalog.Tools {
-				if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || tool.InputSchema == nil {
+				if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || tool.InputSchema == nil || tool.OutputSchema == nil {
 					t.Errorf("tool lacks read-only annotation or schema: %s", tool.Name)
 				}
 			}

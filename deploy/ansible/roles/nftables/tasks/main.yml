@@ -219,6 +219,47 @@
     fail_msg: "faas_public_entry_addrs entry {{ item }} must be a plain IPv4 or lowercase IPv6 address in canonical form"
   loop: "{{ faas_public_entry_addrs }}"
 
+# ADR-20261109100000: on bare metal every host has a public card. With
+# faas_private_iface set, private services accept only on that card; with
+# faas_ssh_restricted, sshd answers only faas_ssh_private_cidrs (the overlay)
+# and faas_ssh_allowed_cidrs (an operator bastion or VPN). Unset keeps the
+# cloud behaviour, where the provider firewall (GCP IAP) bounds sshd. The
+# template's faas_sshd macro renders the sshd rules.
+#
+# Restricting sshd from a source it no longer admits would cut this very
+# converge off at its next connection, so the play first proves the address
+# Ansible connects from is admitted.
+- name: nftables — read the address this converge connects from
+  ansible.builtin.shell: 'printf "%s" "${SSH_CLIENT%% *}"'
+  become: false
+  register: faas_nft_ssh_source
+  changed_when: false
+  check_mode: false
+  when:
+    - faas_ssh_restricted | default(false) | bool
+    - ansible_connection | default('ssh') not in ['local', 'community.docker.docker']
+
+- name: nftables — refuse an sshd restriction that would lock this converge out
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -I
+      - -c
+      - |
+        import ipaddress, json, sys
+        src = ipaddress.ip_address(sys.argv[1])
+        nets = [ipaddress.ip_network(c, strict=False) for c in json.loads(sys.argv[2])]
+        sys.exit(0 if any(src in n for n in nets) else 1)
+      - "{{ faas_nft_ssh_source.stdout }}"
+      - "{{ ((faas_ssh_private_cidrs | default([])) + (faas_ssh_allowed_cidrs | default([]))) | to_json }}"
+  register: faas_nft_ssh_source_admitted
+  changed_when: false
+  check_mode: false
+  failed_when: faas_nft_ssh_source_admitted.rc != 0
+  when:
+    - faas_ssh_restricted | default(false) | bool
+    - faas_nft_ssh_source.stdout | default('') | length > 0
+
 # The input chain's br-tenants rules let guests reach only the bridge
 # services (the per-netns chain narrows the ports), the public edge for
 # hairpin calls, and ICMP; the drop keeps bridge traffic from the rules below
@@ -259,3 +300,57 @@
     state: started
   register: nft_svc
   failed_when: nft_svc.failed and ansible_service_mgr == 'systemd'
+
+# ADR-20261103163954 §4: conntrack and SYN-queue headroom on a node whose
+# entry addresses take connections from anywhere (defaults/main.yml). The
+# netfilter keys exist only once nf_conntrack is loaded, so it is loaded at
+# boot before systemd-sysctl applies the file.
+- name: nftables — load nf_conntrack at boot on a public entry node
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/faas-public-entry.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Gregale Ansible (nftables role, ADR-20261103163954 §4).
+      nf_conntrack
+  when: faas_public_entry_addrs | default([]) | length > 0
+
+- name: nftables — kernel settings for a public entry node
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/60-faas-public-entry.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Gregale Ansible (nftables role, ADR-20261103163954 §4).
+      net.netfilter.nf_conntrack_max = {{ faas_public_entry_conntrack_max }}
+      net.netfilter.nf_conntrack_tcp_timeout_syn_recv = {{ faas_public_entry_conntrack_syn_recv_timeout }}
+      net.ipv4.tcp_max_syn_backlog = {{ faas_public_entry_tcp_max_syn_backlog }}
+  register: faas_public_entry_sysctl
+  when: faas_public_entry_addrs | default([]) | length > 0
+
+- name: nftables — load nf_conntrack now on a public entry node
+  ansible.builtin.command:
+    argv: [modprobe, nf_conntrack]
+  changed_when: false
+  when: faas_public_entry_addrs | default([]) | length > 0
+
+- name: nftables — apply the public entry kernel settings now
+  ansible.builtin.command:
+    argv: [sysctl, -p, /etc/sysctl.d/60-faas-public-entry.conf]
+  changed_when: true
+  when:
+    - faas_public_entry_addrs | default([]) | length > 0
+    - faas_public_entry_sysctl.changed
+
+# Once the entry addresses are gone the files go too; the live values stay
+# until the next boot, which is harmless on a node nothing public reaches.
+- name: nftables — remove the public entry kernel settings
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/sysctl.d/60-faas-public-entry.conf
+    - /etc/modules-load.d/faas-public-entry.conf
+  when: faas_public_entry_addrs | default([]) | length == 0

@@ -80,8 +80,11 @@ func (s *server) updateProject(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 
-	if _, shared := projectaccess.From(r.Context()); shared && req.RepoFullName != nil && strings.TrimSpace(*req.RepoFullName) != "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Repository ownership migration required", "organization GitHub installation binding is not available on shared project updates"))
+	// A company project's repository resolves through its organization's
+	// installations only (ADR-20261110200000).
+	installOwner, problem := s.projectInstallOwner(r.Context(), acct, project)
+	if problem != nil && req.RepoFullName != nil && strings.TrimSpace(*req.RepoFullName) != "" {
+		api.WriteProblem(w, problem)
 		return
 	}
 	repo, branch, installID := project.RepoFullName, project.ProductionBranch, project.InstallID
@@ -104,7 +107,7 @@ func (s *server) updateProject(w http.ResponseWriter, r *http.Request, acct stat
 				return
 			}
 			if repo != project.RepoFullName || installID == 0 {
-				resolved, problem := s.resolveRepositoryInstallation(r.Context(), acct.ID, repo)
+				resolved, problem := s.resolveRepositoryInstallation(r.Context(), installOwner, repo)
 				if problem != nil {
 					api.WriteProblem(w, problem)
 					return
@@ -114,7 +117,7 @@ func (s *server) updateProject(w http.ResponseWriter, r *http.Request, acct stat
 		}
 	}
 
-	updated, err := s.store.UpdateProjectBinding(r.Context(), acct.ID, project.ID, repo, branch, installID)
+	updated, err := s.store.UpdateProjectBinding(r.Context(), project.AccountID, project.ID, repo, branch, installID)
 	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrNotFound):
@@ -219,6 +222,12 @@ func (s *server) deleteProject(w http.ResponseWriter, r *http.Request, acct stat
 	if problem := s.projectStagesRemainProblem(r, acct, project); problem != nil {
 		api.WriteProblem(w, problem)
 		return
+	}
+	if r.URL.Query().Get(projectDetachServicesParam) != "true" {
+		if problem := s.projectServiceCallsProblem(r, acct, project); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	checked, ok := s.store.(state.CheckedProjectDeleteStore)
 	if !ok {
@@ -548,6 +557,9 @@ func (s *server) persistProjectEnvironment(r *http.Request, acct state.Account, 
 func writeCreateProjectEnvironmentError(w http.ResponseWriter, projectSlug string, req api.CreateProjectEnvironmentRequest, acct state.Account, err error) {
 	var quota *state.ProjectEnvironmentCloneQuotaError
 	switch {
+	case errors.Is(err, state.ErrProjectEnvironmentCleanupPending):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "environment_cleanup_pending", "Environment cleanup in progress",
+			"Managed resources from the previous environment are still being removed. Retry after cleanup finishes."))
 	case errors.Is(err, errProjectEnvironmentCloneCleanup):
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Clone cleanup incomplete",
 			"resource cleanup could not be confirmed; the target environment may exist. Inspect it before retrying."))
@@ -613,6 +625,15 @@ func (s *server) updateProjectEnvironment(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, projectEnvironmentResponse(environment))
 }
 
+// logEnvironmentDeleteFailure records why an environment delete answered 503;
+// Hunt 32 H32-36 saw "could not delete project environment" with no log
+// line to explain it.
+func (s *server) logEnvironmentDeleteFailure(projectID, environmentSlug, step string, err error) {
+	if s.log != nil {
+		s.log.Error("project environment delete failed", "project_id", projectID, "environment", environmentSlug, "step", step, "err", err)
+	}
+}
+
 func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	project, ok := s.loadProject(w, r, acct)
 	if !ok {
@@ -624,12 +645,14 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environmentSlug))
 		} else {
+			s.logEnvironmentDeleteFailure(project.ID, environmentSlug, "load environment", err)
 			api.WriteProblem(w, api.ErrCapacity("could not load project environment"))
 		}
 		return
 	}
 	resourceCleanup, err := s.planProjectEnvironmentManagedResourceCleanup(r.Context(), acct, project, environmentSlug)
 	if err != nil {
+		s.logEnvironmentDeleteFailure(project.ID, environmentSlug, "inspect managed resources", err)
 		if errors.Is(err, managedpostgres.ErrUnavailable) || errors.Is(err, managedpostgres.ErrConflict) ||
 			errors.Is(err, managedpostgres.ErrNotFound) {
 			api.WriteProblem(w, managedPostgresManifestProblem(err, "managed resources could not be inspected; the environment was not deleted"))
@@ -668,8 +691,9 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 				"Project environment cannot be deleted",
-				"only unprotected, non-production environments without live releases can be deleted"))
+				"only unprotected, non-production environments without live or in-progress deployments can be deleted"))
 		default:
+			s.logEnvironmentDeleteFailure(project.ID, environmentSlug, "delete environment", err)
 			api.WriteProblem(w, api.ErrCapacity("could not delete project environment"))
 		}
 		return

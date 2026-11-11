@@ -35,6 +35,7 @@ type dataAPILiveReceipt struct {
 	Changed        []string `json:"changed"`
 	Warnings       []string `json:"warnings,omitempty"`
 	Restarted      bool     `json:"restarted,omitempty"`
+	Parked         bool     `json:"parked,omitempty"`
 }
 
 func cmdDataAPILive(args []string) int {
@@ -83,10 +84,11 @@ func cmdDataAPILiveRun(args []string, enable bool) int {
 			return printErr("Could not enable live reads", err)
 		}
 		if slices.Contains(receipt.Changed, "usage_reporting") && !*noRestart {
-			if _, err := client.RestartAppFresh(ctx, app.Slug); err != nil {
+			_, parked, err := restartDataAPISettings(ctx, client, app.Slug)
+			if err != nil {
 				return printErr("Settings stored; fresh restart failed", err)
 			}
-			receipt.Restarted = true
+			receipt.Restarted, receipt.Parked = !parked, parked
 		}
 	}
 	if jsonOutput {
@@ -162,6 +164,8 @@ func readDataAPILive(ctx context.Context, client *api.Client, app api.AppRespons
 
 // enableDataAPILive turns on whatever readDataAPILive found missing.
 func enableDataAPILive(ctx context.Context, client *api.Client, app api.AppResponse, receipt *dataAPILiveReceipt) error {
+	// Live reads follow the access settings the runtime reports.
+	warnDataAPIRuntimeReports(ctx, client, app.Slug, "Live reads", "live clients are refused until it does")
 	if !receipt.LiveQueries {
 		// The issued live secret seals backend queries; Data API reads do not
 		// use it, so it is not stored. postgres live rotate --app issues one to keep.
@@ -238,6 +242,8 @@ func renderDataAPILive(r dataAPILiveReceipt, enabled bool) {
 	case enabled:
 		if r.Restarted {
 			_, _ = fmt.Fprintln(osStdout, "The Data API restarts to report its settings; live reads without a token work once it has.")
+		} else if r.Parked {
+			_, _ = fmt.Fprintln(osStdout, "The Data API is parked; it reports its settings on its next wake, and live reads without a token work once it has.")
 		}
 		_, _ = fmt.Fprintf(osStdout, "\nIn the browser:\n  const connection = new LiveConnection({ connect: liveSocket('%s') })\n  connection.query({ database: '%s', token: () => session.accessToken, ...liveRead(data.from('messages').select('id, body')) })\n", r.URL, r.DatabaseID)
 	}

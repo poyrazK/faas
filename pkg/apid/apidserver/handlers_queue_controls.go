@@ -15,6 +15,7 @@ package apidserver
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -216,7 +217,8 @@ func (s *server) handleReorderDeployment(w http.ResponseWriter, r *http.Request,
 // 200 → {"id", "deleted_at"}. Free-allowed. Live deployments
 // return 409: clearing a live row would orphan INV 3 / INV 4
 // invariants. Customers should use `gregale deploys rollback`
-// for that.
+// for that. In-flight rows also return 409: hiding does not stop
+// the pipeline, so they must be cancelled first.
 func (s *server) handleClearDeployment(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
 	d, app, ok := s.resolveDeploymentAccount(w, r, acct, id)
@@ -230,6 +232,9 @@ func (s *server) handleClearDeployment(w http.ResponseWriter, r *http.Request, a
 		case errors.Is(err, state.ErrCancelLiveForbidden):
 			s.ops.ObserveDeploymentCleared("live_forbidden")
 			api.WriteProblem(w, api.ErrDeploymentCancelLiveForbidden(id))
+		case errors.Is(err, state.ErrClearInFlightForbidden):
+			s.ops.ObserveDeploymentCleared("in_flight")
+			api.WriteProblem(w, api.ErrDeploymentHideInFlight(id, string(d.Status)))
 		default:
 			s.ops.ObserveDeploymentCleared("error")
 			writeCustomerInternalProblem(w, r, s.log, "clear deployment",
@@ -277,11 +282,10 @@ func (s *server) handleClearObsoleteDeployments(w http.ResponseWriter, r *http.R
 			"invalid clear-obsolete body", "body must be JSON with an optional older_than"))
 		return
 	}
-	olderThan := 168 * time.Hour
-	if req.OlderThan != "" {
-		if d, err := time.ParseDuration(req.OlderThan); err == nil {
-			olderThan = d
-		}
+	olderThan, prob := clearObsoleteOlderThan(req.OlderThan)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	count, err := s.store.ClearObsoleteDeployments(r.Context(), app.ID, time.Now().UTC().Add(-olderThan))
 	if err != nil {
@@ -297,4 +301,20 @@ func (s *server) handleClearObsoleteDeployments(w http.ResponseWriter, r *http.R
 	// asked, the store found nothing).
 	reconcile.EmitClearObsoleteDeployments(r.Context(), s.audit.pkgAuditor(), acct.ID, app.ID, count, olderThan.String())
 	writeJSON(w, http.StatusOK, map[string]any{"app_slug": app.Slug, "count": count, "older_than": olderThan.String()})
+}
+
+// clearObsoleteOlderThan parses clear-obsolete's older_than: a Go duration,
+// zero or more, 168h when omitted. An unreadable value used to fall back to
+// 168h silently, and a negative one moved the cutoff into the future, which
+// cleared every eligible deployment.
+func clearObsoleteOlderThan(raw string) (time.Duration, *api.Problem) {
+	if raw == "" {
+		return 168 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "invalid older_than",
+			fmt.Sprintf("older_than %q must be a non-negative duration such as 168h", raw))
+	}
+	return d, nil
 }

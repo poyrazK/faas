@@ -261,8 +261,8 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 	err = tx.QueryRow(ctx, `select preview_set.member_app_ids, root.account_id::text,
 		coalesce(root.project_id::text, ''), root.status::text, coalesce(root.preview_pr_state, '')
 		from pr_preview_sets preview_set join apps root on root.id = preview_set.root_app_id
-		where preview_set.installation_id = $1 and preview_set.repo_full_name = $2 and preview_set.pr_number = $3`,
-		head.InstallationID, head.RepoFullName, head.PRNumber).Scan(&previous, &previousAccount, &previousProject, &previousStatus, &previousState)
+		where preview_set.installation_id = $1 and preview_set.repo_full_name = $2 and preview_set.pr_number = $3 and preview_set.account_id = $4::uuid`,
+		head.InstallationID, head.RepoFullName, head.PRNumber, apps[0].AccountID).Scan(&previous, &previousAccount, &previousProject, &previousStatus, &previousState)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("state: load previous PR preview set: %w", err)
 	}
@@ -334,9 +334,10 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 	if _, err := tx.Exec(ctx, `insert into pr_preview_sets
 		(installation_id, repo_full_name, pr_number, commit_sha, root_app_id, member_app_ids)
 		values ($1, $2, $3, $4, $5, $6)
-		on conflict (installation_id, repo_full_name, pr_number)
+		on conflict (account_id, installation_id, repo_full_name, pr_number)
 		do update set commit_sha = excluded.commit_sha, root_app_id = excluded.root_app_id,
-		member_app_ids = excluded.member_app_ids, closed_at = null, setup_error = null, updated_at = now()`,
+		member_app_ids = excluded.member_app_ids, closed_at = null, setup_error = null,
+		member_pins = null, member_pins_head = null, updated_at = now()`,
 		set.InstallationID, set.RepoFullName, set.PRNumber, set.CommitSHA, set.RootAppID, set.MemberAppIDs); err != nil {
 		return nil, fmt.Errorf("state: replace PR preview set: %w", err)
 	}
@@ -456,9 +457,13 @@ func (s *PgStore) FailPRPreviewSetup(ctx context.Context, head PRPreviewHead, re
 	if head.InstallationID <= 0 || head.RepoFullName == "" || head.PRNumber <= 0 || !previewSetSHA.MatchString(head.CommitSHA) {
 		return fmt.Errorf("state: invalid PR preview head: %w", ErrConflict)
 	}
+	set, err := s.GetPRPreviewSet(ctx, head.InstallationID, head.RepoFullName, head.PRNumber)
+	if err != nil {
+		return err
+	}
 	tag, err := s.pool.Exec(ctx, `update pr_preview_sets set commit_sha = $4, setup_error = $5, updated_at = now()
-		where installation_id = $1 and repo_full_name = $2 and pr_number = $3 and closed_at is null`,
-		head.InstallationID, head.RepoFullName, head.PRNumber, head.CommitSHA, boundedSetupError(reason))
+		where installation_id = $1 and repo_full_name = $2 and pr_number = $3 and closed_at is null and root_app_id=$6`,
+		head.InstallationID, head.RepoFullName, head.PRNumber, head.CommitSHA, boundedSetupError(reason), set.RootAppID)
 	if err != nil {
 		return fmt.Errorf("state: record PR preview setup failure: %w", err)
 	}
@@ -468,13 +473,16 @@ func (s *PgStore) FailPRPreviewSetup(ctx context.Context, head PRPreviewHead, re
 	return nil
 }
 
-func (m *MemStore) FailPRPreviewSetup(_ context.Context, head PRPreviewHead, reason string) error {
+func (m *MemStore) FailPRPreviewSetup(ctx context.Context, head PRPreviewHead, reason string) error {
 	if head.InstallationID <= 0 || head.RepoFullName == "" || head.PRNumber <= 0 || !previewSetSHA.MatchString(head.CommitSHA) {
 		return fmt.Errorf("state: invalid PR preview head: %w", ErrConflict)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := previewSetKey(head.InstallationID, head.RepoFullName, head.PRNumber)
+	key, err := m.previewSetKeyForAccountLocked(ctx, head.InstallationID, head.RepoFullName, head.PRNumber)
+	if err != nil {
+		return err
+	}
 	set, ok := m.previewSets[key]
 	if !ok || set.Closed {
 		return ErrNotFound
@@ -586,7 +594,7 @@ func (m *MemStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, 
 	for i := range apps {
 		m.ensureAppOrgLocked(&apps[i])
 	}
-	key := previewSetKey(head.InstallationID, head.RepoFullName, head.PRNumber)
+	key := apps[0].AccountID + "\x00" + previewSetKey(head.InstallationID, head.RepoFullName, head.PRNumber)
 	previous := m.previewSets[key]
 	if previous.RootAppID != "" {
 		root, ok := m.apps[previous.RootAppID]

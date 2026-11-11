@@ -106,7 +106,7 @@ func (e *ResponseTruncatedError) Error() string {
 	return fmt.Sprintf("API response was truncated: expected %d bytes, received %d", e.Expected, e.Received)
 }
 
-var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
+var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/capabilities(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
 
 // Client is a typed wrapper over the v1 REST API. Construct with
 // NewClient (30s default timeout) or NewClientWithDeployTimeout
@@ -124,6 +124,9 @@ var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/(sessions|capabilities)(/.*)?|
 type Client struct {
 	baseURL string
 	token   string
+	// projectOrg routes /v1/projects calls to a company's projects
+	// (WithProjectOrganization).
+	projectOrg string
 
 	http       *http.Client // 30s default — used for every JSON call
 	deployHTTP *http.Client // optional, used by DeployMultipart
@@ -139,6 +142,12 @@ type Client struct {
 	// noConfigGuard sends `guard=false` on env and secret writes, so they
 	// open no config guard (ADR-1451, CLI --no-guard).
 	noConfigGuard bool
+
+	// approvalWait makes a call answered approval_required wait for a
+	// person's decision and retry once (WaitForApproval).
+	approvalWait   bool
+	approvalNotify func(AgentApprovalPendingInfo)
+	approvalPoll   time.Duration
 }
 
 // WithoutConfigGuard returns a client whose env and secret writes open no
@@ -190,9 +199,11 @@ const DefaultClientTimeout = 30 * time.Second
 // settings without coupling this client to that global lifecycle.
 func newClientTransport() http.RoundTripper {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
-		return transport.Clone()
+		clone := transport.Clone()
+		clone.ResponseHeaderTimeout = DefaultClientTimeout
+		return agentReasonTransport{next: clone}
 	}
-	return http.DefaultTransport
+	return agentReasonTransport{next: http.DefaultTransport}
 }
 
 // SetCompletionCache wires a (possibly nil) cache. Passing nil
@@ -327,6 +338,10 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			"the gregale CLI cannot reach this route — use the dashboard at "+docsBase+"/dashboards#sessions",
 		).WithDocs(docsBase + "/cli#cookie-only-routes")
 	}
+	path, err := c.projectRoute(path)
+	if err != nil {
+		return err
+	}
 	var payload []byte
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -349,12 +364,22 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 	} else {
 		idempotencyKey = ""
 	}
+	waitedForApproval := false
 	for attempt := 1; ; attempt++ {
 		req, err := c.newJSONRequest(ctx, method, path, payload, body != nil, idempotencyKey, headers)
 		if err != nil {
 			return err
 		}
 		err = c.doReq(cli, req, out)
+		if pending, ok := pendingApproval(err); ok && c.approvalWait && !waitedForApproval {
+			// The approval gate answers before the idempotency layer, so
+			// the retry may carry the same Idempotency-Key.
+			waitedForApproval = true
+			if waitErr := c.awaitApproval(ctx, pending, err); waitErr != nil {
+				return waitErr
+			}
+			continue
+		}
 		pause, retry := trafficPolicyRetryPause(err, attempt)
 		if !retry {
 			return err
@@ -511,17 +536,27 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 // caller passes a *[]byte and receives the body untouched. Returns
 // (nil, *APIError) on a non-2xx, same shape as do.
 func (c *Client) doBytes(ctx context.Context, method, path string, body, out any) error {
+	_, err := c.doBytesWithHeader(ctx, method, path, body, out)
+	return err
+}
+
+// doBytesWithHeader is doBytes that also returns the response headers.
+func (c *Client) doBytesWithHeader(ctx context.Context, method, path string, body, out any) (http.Header, error) {
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("marshal request: %w", err)
+			return nil, fmt.Errorf("marshal request: %w", err)
 		}
 		r = bytes.NewReader(b)
 	}
+	path, err := c.projectRoute(path)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -534,31 +569,31 @@ func (c *Client) doBytes(ctx context.Context, method, path string, body, out any
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("could not reach the API: %w", err)
+		return nil, fmt.Errorf("could not reach the API: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := readBoundedResponse(resp, maxResponseBodyBytes)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		return apiErrorFromResponse(resp, data)
+		return nil, apiErrorFromResponse(resp, data)
 	}
 	if out != nil {
 		if bp, ok := out.(*[]byte); ok {
 			*bp = data
-			return nil
+			return resp.Header, nil
 		}
 		// Fall through: caller wants JSON-decoded, do the same
 		// unmarshal as doReq. Untyped callers will get a decode
 		// error if they pass anything other than *[]byte.
 		if len(data) > 0 {
 			if err := json.Unmarshal(data, out); err != nil {
-				return fmt.Errorf("decode response: %w", err)
+				return nil, fmt.Errorf("decode response: %w", err)
 			}
 		}
 	}
-	return nil
+	return resp.Header, nil
 }
 
 func readBoundedResponse(resp *http.Response, limit int64) ([]byte, error) {
@@ -1530,8 +1565,8 @@ func (c *Client) DeployMultipart(ctx context.Context, slug string, source io.Rea
 
 // DeployMultipartWithSourceRoot is the workspace-aware source upload path.
 // sourceRoot is a repository-relative directory inside the uploaded archive;
-// an empty value means the archive root. The legacy DeployMultipart method
-// delegates here with an empty root so existing callers remain unchanged.
+// an empty value uses the app's configured root (the archive root for standalone
+// apps). An explicit "." selects the archive root even for a nested app.
 func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations) (DeploymentResponse, error) {
 	ctx = deploymentSubmissionContext(ctx)
 	storedRoot, err := normalizeMultipartSourceRoot(sourceRoot)
@@ -1665,14 +1700,13 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	if _, err := io.Copy(fw, tarball); err != nil {
 		return DeploymentResponse{}, fmt.Errorf("copy tarball: %w", err)
 	}
-	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
-	// (the server treats missing sidecar as zero provenance).
-	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Environment != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
-		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.MCPTaskMigrationOverride || sidecar.Healthcheck != nil || sidecar.NoTriggers || sidecar.OverrideFreeze != "" {
-		sidecarJSON, err := json.Marshal(sidecar)
-		if err != nil {
-			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
-		}
+	// Derive presence from the wire object so every supplied option, including
+	// scheduling fields, survives without a separate field allowlist.
+	sidecarJSON, err := json.Marshal(sidecar)
+	if err != nil {
+		return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
+	}
+	if string(sidecarJSON) != "{}" {
 		if err := w.WriteField("sidecar", string(sidecarJSON)); err != nil {
 			return DeploymentResponse{}, fmt.Errorf("write sidecar: %w", err)
 		}
@@ -1909,7 +1943,11 @@ func (c *Client) ScanProjectWithBindingEnvironment(
 	if err := w.Close(); err != nil {
 		return PlanResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/projects/scan", &b)
+	scanPath, err := c.projectRoute("/v1/projects/scan")
+	if err != nil {
+		return PlanResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+scanPath, &b)
 	if err != nil {
 		return PlanResponse{}, err
 	}
@@ -2065,7 +2103,11 @@ func (c *Client) applyProjectPlan(
 	if err := w.Close(); err != nil {
 		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
-	endpoint := c.baseURL + projectApplyRequestPath(ctx)
+	applyPath, err := c.projectRoute(projectApplyRequestPath(ctx))
+	if err != nil {
+		return ApplyResponse{}, err
+	}
+	endpoint := c.baseURL + applyPath
 	if planToken != "" {
 		endpoint += "?plan_token=" + url.QueryEscape(planToken)
 	}
@@ -2389,7 +2431,7 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentApprovalsApproval(ctx con
 func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.do(ctx, http.MethodPost, path, req, &out)
+	return out, c.doWithHeaders(ctx, http.MethodPost, path, req, &out, environmentPromotionHeaders(ctx))
 }
 
 // PromoteProjectEnvironmentWithIdempotencyKey executes a promotion with an
@@ -2397,7 +2439,7 @@ func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, tar
 func (c *Client) PromoteProjectEnvironmentWithIdempotencyKey(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest, idempotencyKey string) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, req, &out, idempotencyKey)
+	return out, c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, http.MethodPost, path, req, &out, idempotencyKey, environmentPromotionHeaders(ctx))
 }
 
 // PostProjectsSlugEnvironmentsEnvironmentPromote is the route-shaped SDK
@@ -2453,7 +2495,7 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentPromotionsPromotion(ctx c
 func (c *Client) RollbackProjectEnvironmentPromotion(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
 	var out ProjectEnvironmentPromotionStatusResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotions/" + url.PathEscape(promotionID) + "/rollback"
-	return out, c.do(ctx, http.MethodPost, path, nil, &out)
+	return out, c.doWithHeaders(ctx, http.MethodPost, path, nil, &out, environmentRollbackHeaders(ctx))
 }
 
 // PostProjectsSlugEnvironmentsEnvironmentPromotionsPromotionRollback is the
@@ -2472,6 +2514,14 @@ func (c *Client) PreviewDeleteProject(ctx context.Context, slug string) (Project
 // DeleteProject removes the project row and detaches its live workloads.
 func (c *Client) DeleteProject(ctx context.Context, slug string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug), nil, nil)
+}
+
+// DeleteProjectDetachingServices deletes a project whose services may still
+// call each other by service name: the caller confirms they no longer do, so
+// the API's 409 project_services_call_each_other refusal is waived
+// (ADR-20261104221217).
+func (c *Client) DeleteProjectDetachingServices(ctx context.Context, slug string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug)+"?detach_services=true", nil, nil)
 }
 
 func writeProjectTenantPolicy(w *multipart.Writer, policy []*bool) error {
@@ -2729,6 +2779,15 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 		UpdateDeploymentTrafficRequest{TrafficPercent: percent}, &out)
 }
 
+// PatchDeploymentTrafficIfSplit updates traffic only if the environment's
+// split still matches expected (live release ID → positive percent) at the
+// transaction boundary; otherwise apid answers 409 traffic_serving_changed.
+func (c *Client) PatchDeploymentTrafficIfSplit(ctx context.Context, id string, percent int, expected map[string]int) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
+		UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedTraffic: expected}, &out)
+}
+
 // PatchDeploymentTrafficIfServing updates traffic only if the named live
 // sibling still owns all production traffic at the transaction boundary.
 // An empty servingID requires no live sibling with positive traffic.
@@ -2739,7 +2798,7 @@ func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string,
 // PatchDeploymentTrafficIfServingWithMCPAccess atomically fences serving and stored access policy.
 func (c *Client) PatchDeploymentTrafficIfServingWithMCPAccess(ctx context.Context, id string, percent int, servingID string, policy *MCPAccessPolicyExpectation) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	err := c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID, ExpectedMCPAccessPolicy: policy}, &out)
+	err := c.doWithHeaders(ctx, "PATCH", "/v1/deployments/"+id+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID, ExpectedMCPAccessPolicy: policy}, &out, deploymentPromotionHeaders(ctx))
 	return out, err
 }
 
@@ -4124,6 +4183,14 @@ func (c *Client) QueueSend(ctx context.Context, slug string, req QueueSendReques
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/queues/send", req, &out)
 }
 
+// QueueSendBatch sends up to QueueSendBatchMaxMessages messages to one queue
+// in order, as one API request. Each result says whether its message was
+// accepted.
+func (c *Client) QueueSendBatch(ctx context.Context, slug string, req QueueSendBatchRequest) (QueueSendBatchResponse, error) {
+	var out QueueSendBatchResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/queues/send-batch", req, &out)
+}
+
 // SendAppMessage reliably enqueues a CloudEvents-wrapped message for another
 // Gregale application. The returned invocation id is visible through the
 // ordinary invocation and DLQ APIs.
@@ -4558,9 +4625,12 @@ func (c *Client) ListKeys(ctx context.Context) ([]APIKeyResponse, error) {
 	var out []APIKeyResponse
 	return out, c.do(ctx, "GET", "/v1/keys", nil, &out)
 }
-func (c *Client) CreateKey(ctx context.Context, label string, scopes []string) (APIKeyResponse, error) {
+
+// CreateKey mints an account key; projects limits an agent key to those
+// projects' apps (ADR-20261104085712).
+func (c *Client) CreateKey(ctx context.Context, label string, scopes []string, projects ...string) (APIKeyResponse, error) {
 	var out APIKeyResponse
-	return out, c.do(ctx, "POST", "/v1/keys", CreateKeyRequest{Label: label, Scopes: scopes}, &out)
+	return out, c.do(ctx, "POST", "/v1/keys", CreateKeyRequest{Label: label, Scopes: scopes, Projects: projects}, &out)
 }
 func (c *Client) DeleteKey(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/keys/"+id, nil, nil)
@@ -4618,10 +4688,11 @@ func (c *Client) ListOrgAPIKeys(ctx context.Context, slug string) (ListOrgAPIKey
 // CreateOrgAPIKey mints a new API key against the org. Returns the
 // standard APIKeyResponse — plaintext is present on this single
 // response and never returned again. `scopes` is optional; nil
-// defaults to ["admin"] on the server side (mirrors CreateKey).
-func (c *Client) CreateOrgAPIKey(ctx context.Context, slug, label string, scopes []string) (APIKeyResponse, error) {
+// defaults to ["admin"] on the server side (mirrors CreateKey). projects
+// limits an agent key to those projects' apps (ADR-20261104085712).
+func (c *Client) CreateOrgAPIKey(ctx context.Context, slug, label string, scopes []string, projects ...string) (APIKeyResponse, error) {
 	var out APIKeyResponse
-	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/keys", CreateOrgAPIKeyRequest{Label: label, Scopes: scopes}, &out)
+	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/keys", CreateOrgAPIKeyRequest{Label: label, Scopes: scopes, Projects: projects}, &out)
 }
 
 // GetOrgAPIKey fetches a single key by id within the org. Cross-org
@@ -5205,9 +5276,26 @@ func (c *Client) GetConfigGuard(ctx context.Context, slug, scope string) (Config
 
 // RollbackConfig restores a scope's variables to a config revision.
 func (c *Client) RollbackConfig(ctx context.Context, slug, scope string, revision int64) (ConfigRollbackResponse, error) {
+	return c.RollbackConfigReviewed(ctx, slug, scope, ConfigRollbackRequest{Revision: revision})
+}
+
+// RollbackConfigReviewed submits the original revision and optional native guards.
+func (c *Client) RollbackConfigReviewed(ctx context.Context, slug, scope string, request ConfigRollbackRequest) (ConfigRollbackResponse, error) {
 	var out ConfigRollbackResponse
 	return out, c.do(ctx, "POST", c.configWriteQuery("/v1/apps/"+url.PathEscape(slug)+"/config/rollback", scope),
-		ConfigRollbackRequest{Revision: revision}, &out)
+		request, &out)
+}
+
+// GetConfigRollbackReceipt reads an original reviewed rollback without replaying it.
+func (c *Client) GetConfigRollbackReceipt(ctx context.Context, slug, scope, requestID, proof string) (ConfigRollbackReceipt, error) {
+	var out ConfigRollbackReceipt
+	path := "/v1/apps/" + url.PathEscape(slug) + "/config/rollback/requests/" + url.PathEscape(requestID)
+	headers := http.Header{}
+	if proof != "" {
+		headers.Set(EnvBatchReceiptProofHeader, proof)
+	}
+	err := c.doWithHeaders(ctx, http.MethodGet, c.scopeQuery(path, scope), nil, &out, headers)
+	return out, err
 }
 
 // scopeQuery appends "?scope=<name>" to path when scope is
@@ -7539,6 +7627,24 @@ func (c *Client) ListAppDebugRequestsAll(ctx context.Context, slug string, opts 
 // Limit is capped by the server at 10,000 rows. Request bodies, headers, and
 // raw span attributes are never included.
 func (c *Client) ExportAppDebugRequests(ctx context.Context, slug string, opts DebugTelemetryExportOptions) ([]byte, error) {
+	export, err := c.ExportAppDebugRequestsWithInfo(ctx, slug, opts)
+	return export.Data, err
+}
+
+// DebugTelemetryExport is a downloaded export with what the server applied:
+// the effective window, whether plan retention clamped it, and whether the
+// row limit cut it short. It is assembled from the response headers, not a
+// wire schema.
+type DebugTelemetryExport struct {
+	Data             []byte
+	Window           string
+	RetentionClamped bool
+	Truncated        bool
+}
+
+// ExportAppDebugRequestsWithInfo is ExportAppDebugRequests with the window
+// the server applied and whether the row limit cut the export short.
+func (c *Client) ExportAppDebugRequestsWithInfo(ctx context.Context, slug string, opts DebugTelemetryExportOptions) (DebugTelemetryExport, error) {
 	path := "/v1/apps/" + slug + "/debug/requests/export"
 	q := url.Values{}
 	if opts.Since != "" {
@@ -7553,11 +7659,33 @@ func (c *Client) ExportAppDebugRequests(ctx context.Context, slug string, opts D
 	if opts.Limit > 0 {
 		q.Set("limit", strconv.Itoa(opts.Limit))
 	}
+	if opts.DeploymentID != "" {
+		q.Set("deployment_id", opts.DeploymentID)
+	}
+	if opts.Status != 0 {
+		q.Set("status", strconv.Itoa(opts.Status))
+	}
+	if opts.ColdBoot != nil {
+		q.Set("cold_boot", strconv.FormatBool(*opts.ColdBoot))
+	}
+	if opts.ConsumerID != "" {
+		q.Set("consumer_id", opts.ConsumerID)
+	}
+	if opts.MinLatencyMS > 0 {
+		q.Set("min_latency_ms", strconv.Itoa(opts.MinLatencyMS))
+	}
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out []byte
-	return out, c.doBytes(ctx, http.MethodGet, path, nil, &out)
+	var out DebugTelemetryExport
+	header, err := c.doBytesWithHeader(ctx, http.MethodGet, path, nil, &out.Data)
+	if err != nil {
+		return out, err
+	}
+	out.Window = header.Get("X-Faas-Request-Log-Window")
+	out.RetentionClamped, _ = strconv.ParseBool(header.Get("X-Faas-Request-Log-Retention-Clamped"))
+	out.Truncated, _ = strconv.ParseBool(header.Get("X-Faas-Request-Log-Truncated"))
+	return out, nil
 }
 
 // GetAppDebugCoverage returns observed debugger signal coverage for one app.

@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
+	"github.com/onebox-faas/faas/pkg/apid/previewdb"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
@@ -94,7 +95,22 @@ type githubdBridge struct {
 	// agentSteps reports whether an account may deploy workflow agent steps
 	// (ADR-20261027090010 §1); nil refuses them.
 	agentSteps func(state.Account) bool
+	// releasePhaseOff refuses a push that declares a release command while
+	// FAAS_RELEASE_PHASE_ENABLED is off on apid.
+	releasePhaseOff bool
+	// applySettings applies the source gregale.yaml's app settings (lifecycle
+	// hooks, restart policy, timeouts, scaling, retries) before the deployment
+	// row exists, and returns their undo for a failed enqueue
+	// (ADR-20261104221217). Nil skips them.
+	applySettings bridgeSettingsApplier
+	// previewDatabases sets up a PR preview build's managed PostgreSQL
+	// databases (ADR-20261102123523); nil sets up none.
+	previewDatabases func(context.Context, state.Account, api.Plan, state.App) error
 }
+
+// bridgeSettingsApplier is server.applyBridgeSourceSettings. push names the
+// environment the push deploys ("" is production) and who pushed.
+type bridgeSettingsApplier func(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, push sourcePush) (state.App, func(context.Context), *api.Problem)
 
 // checkSourcePlanLimit refuses a GitHub build whose source is above the
 // account's plan limit. githubd fetches every push with Scale's limits, so
@@ -346,7 +362,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if err := bridgeSourcePolicy(g.log, req.SourcePath, app, resource.Plan); err != nil {
 		return nil, err
 	}
-	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, resource.Plan, g.agentSteps != nil && g.agentSteps(acct))
+	function, manifest, manifestProblem := bridgeSourceManifest(req.SourcePath, app, resource.Plan, g.agentSteps != nil && g.agentSteps(acct))
 	if manifestProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)
 	}
@@ -354,9 +370,16 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if buildErr != nil {
 		return nil, buildErr
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest)
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest, g.releasePhaseOff)
 	if releaseProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: release command: %s", releaseProblem.Detail)
+	}
+	// A preview build waits for its databases before it spends the deploy
+	// window, so the retries while one provisions cost no deploys.
+	if eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+		if err := g.preparePreviewDatabases(ctx, acct, resource.Plan, app); err != nil {
+			return nil, err
+		}
 	}
 	// PR preview builds stop at their share of the window, so a busy pull
 	// request cannot spend the deploys production needs (ADR-20261028100000).
@@ -449,6 +472,10 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	}
 	kind := eventKindToDeploymentKind(req.EventKind)
 	activity := g.newDeploymentActivity(ctx, acct, app, req)
+	if steps := function.Plan.Spec.RepositoryDeferredSteps(); len(steps) > 0 {
+		withPendingFunctionSteps(activity, steps)
+		g.log.Info("githubd bridge: function settings left to gregale deploy", notifyAppField, app.ID, "steps", len(steps))
+	}
 	params := apidsource.EnqueueParams{
 		OperationDefinitions: sourceOperationSpecs(manifest),
 		Activity:             activity,
@@ -471,6 +498,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		GitHubSourceRef:      req.GithubSourceRef,
 		GitHubInstallationID: req.GithubInstallationId,
 		FunctionRuntime:      functionRuntimeForApp(app),
+		Handler:              function.Plan.Handler,
 		Scope:                req.DeploymentScope,
 		LogSpool:             g.spool,
 		Log:                  g.log,
@@ -516,7 +544,10 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		// refuses it; githubd reports the reason on the commit.
 		active, freezeErr := freeze.ActiveFor(ctx, g.store, app, req.DeploymentScope, time.Now().UTC())
 		if freezeErr != nil {
-			g.log.Warn("githubd bridge: could not read deploy freezes; releasing", "app_id", app.ID, "err", freezeErr)
+			// ADR-20261019071733 amendment 13: an unreadable freeze refuses
+			// the push; githubd retries Unavailable.
+			g.log.Warn("githubd bridge: could not read deploy freezes; refusing", "app_id", app.ID, "err", freezeErr)
+			return nil, status.Error(codes.Unavailable, "could not read the app's deploy freezes")
 		} else if len(active) > 0 {
 			return nil, status.Error(codes.FailedPrecondition, freeze.Summary(app.Slug, active))
 		}
@@ -538,6 +569,9 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 			}
 		}
 	}
+	if function.Plan.Runtime != "" {
+		params.FunctionRuntime = function.Plan.Runtime
+	}
 	ctx, _, cronProblem := g.prepareDeliveryCrons(ctx, req, resource, app, manifest, kind, params)
 	if cronProblem != nil {
 		return nil, grpcerr.ToStatus(cronProblem)
@@ -547,8 +581,40 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: %v", err)
 	}
 	params.SourcePath = spooled
+	undoSettings := func(context.Context) {}
+	if g.applySettings != nil && manifest != nil {
+		updated, undo, problem := g.applySettings(ctx, resource, app, pushSettingsManifest(manifest, params), sourcePush{Scope: req.DeploymentScope, Pusher: req.Pusher})
+		if problem != nil {
+			if spooled != req.SourcePath {
+				_ = os.Remove(spooled)
+			}
+			return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: gregale.yaml settings: %s", problem.Detail)
+		}
+		undoSettings = undo
+		app = updated
+		params.ServiceRollout = app.Manifest.ExecutionMode == api.ExecutionModeService
+	}
+	if kind == state.DeploymentKindGitHub {
+		imported, importErr := g.importPushSiblingAddresses(ctx, resource, app, req.DeploymentScope, req.GetComposeServiceAddresses())
+		if importErr != nil {
+			undoSettings(context.WithoutCancel(ctx))
+			if spooled != req.SourcePath {
+				_ = os.Remove(spooled)
+			}
+			code := codes.Unavailable
+			var limit *siblingAddressLimitError
+			if errors.As(importErr, &limit) {
+				code = codes.FailedPrecondition
+			}
+			return nil, status.Errorf(code, "EnqueueBuild: service addresses: %v", importErr)
+		}
+		if len(imported) > 0 {
+			g.log.Info("githubd bridge: imported sibling service addresses", notifyAppField, app.ID, "keys", imported)
+		}
+	}
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)
 	if err != nil {
+		undoSettings(context.WithoutCancel(ctx))
 		if spooled != req.SourcePath {
 			_ = os.Remove(spooled)
 		}
@@ -832,7 +898,7 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
 		store:       store,
 		notif:       notif,
@@ -842,7 +908,58 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		stagingRoot: filepath.Join(stagingRoot, "build-sources"),
 		spoolRoot:   spool,
 		agentSteps:  agentSteps,
+
+		releasePhaseOff:  releasePhaseOff,
+		applySettings:    applySettings,
+		previewDatabases: previewDatabases,
 	})
+}
+
+// preparePreviewDatabases sets up a PR preview build's databases
+// (ADR-20261102123523). One still provisioning answers Unavailable, which
+// githubd retries; a refusal answers ResourceExhausted, which githubd
+// reports on the pull request as a setup failure.
+func (g *githubdBridge) preparePreviewDatabases(ctx context.Context, acct state.Account, plan api.Plan, preview state.App) error {
+	if g.previewDatabases == nil {
+		return nil
+	}
+	err := g.previewDatabases(ctx, acct, plan, preview)
+	if err != nil && !errors.Is(err, previewdb.ErrPending) {
+		g.log.Warn("githubd bridge: preview databases", "app_id", preview.ID, "err", err)
+	}
+	return previewDatabasesStatus(err)
+}
+
+// previewDatabasesStatus is the bridge's answer to a preview database setup
+// error: Unavailable for one githubd should retry, ResourceExhausted for a
+// refusal it reports on the pull request.
+func previewDatabasesStatus(err error) error {
+	var refused *previewdb.RefusedError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &refused):
+		return status.Errorf(codes.ResourceExhausted, "EnqueueBuild: %s", refused.Reason)
+	case errors.Is(err, previewdb.ErrPending):
+		return status.Error(codes.Unavailable, "EnqueueBuild: the preview's managed PostgreSQL database is still provisioning")
+	default:
+		return status.Error(codes.Unavailable, "EnqueueBuild: the preview's managed PostgreSQL database could not be set up yet")
+	}
+}
+
+// pushSettingsManifest drops a function's settings from a release staged
+// without traffic: its RAM, idle timeout, concurrency and env take effect at
+// the environment's next wake, so a staged release would change what the live
+// one runs with before it is promoted (apps/projects review 2026-11-10, P11).
+// Crons follow the same rule (prepareDeliveryCrons).
+func pushSettingsManifest(manifest *gregalemanifest.Manifest, params apidsource.EnqueueParams) *gregalemanifest.Manifest {
+	staged := params.TrafficPercentExplicit && params.TrafficPercent == 0 && params.CanaryTotalSteps == 0
+	if manifest == nil || manifest.FunctionSettings == nil || !staged {
+		return manifest
+	}
+	withoutFunction := *manifest
+	withoutFunction.FunctionSettings = nil
+	return &withoutFunction
 }
 
 // prepareDeliveryCrons stages the crons a push's gregale.yaml declares for the

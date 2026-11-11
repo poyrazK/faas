@@ -6,6 +6,8 @@ package main
 // gateway, which forwards it to the inspector port of a running instance.
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -27,13 +29,21 @@ import (
 )
 
 // devDebugSupported reports whether the source is a Node.js workload, the
-// only runtime with debugger support so far.
+// only runtime with debugger support so far. Bun and Deno projects also ship a
+// package.json but ignore NODE_OPTIONS, so the inspector would never start.
 func devDebugSupported(sourceDir string, config devSourceConfig) bool {
 	if config.shape == shapeFunction {
 		return strings.HasPrefix(config.runtime, "node")
 	}
-	_, err := os.Stat(filepath.Join(sourceDir, "package.json"))
-	return err == nil
+	if _, err := os.Stat(filepath.Join(sourceDir, "package.json")); err != nil {
+		return false
+	}
+	for _, marker := range []string{"bun.lockb", "bun.lock", "bunfig.toml", "deno.json", "deno.jsonc", "deno.lock"} {
+		if _, err := os.Stat(filepath.Join(sourceDir, marker)); err == nil {
+			return false
+		}
+	}
+	return true
 }
 
 type devDebugSecrets interface {
@@ -78,8 +88,12 @@ func devDebugTunnelURL(base, slug string) (string, error) {
 
 type devDebugDialer func(ctx context.Context) (net.Conn, error)
 
+// devDebugHandshakeTimeout covers the server's wake of a parked environment
+// (api.DevDebugWakeTimeout) before it answers the upgrade, plus the hops.
+const devDebugHandshakeTimeout = api.DevDebugWakeTimeout + 30*time.Second
+
 func newDevDebugDialer(tunnelURL, token string) devDebugDialer {
-	dialer := websocket.Dialer{Proxy: http.ProxyFromEnvironment, HandshakeTimeout: 30 * time.Second}
+	dialer := websocket.Dialer{Proxy: http.ProxyFromEnvironment, HandshakeTimeout: devDebugHandshakeTimeout}
 	headers := http.Header{"Authorization": {"Bearer " + token}}
 	return func(ctx context.Context) (net.Conn, error) {
 		socket, response, err := dialer.DialContext(ctx, tunnelURL, headers)
@@ -99,11 +113,17 @@ func newDevDebugDialer(tunnelURL, token string) devDebugDialer {
 // serveDevDebugProxy accepts local debugger connections until ctx ends and
 // joins each to its own tunnel connection. Failures are reported through
 // onError and never stop the developer loop.
+//
+// Target discovery (GET /json, /json/list, /json/version) is answered from a
+// short cache: chrome://inspect and editors poll it every second or so, and
+// each poll would otherwise be a full authenticated tunnel that also keeps
+// the environment from parking.
 func serveDevDebugProxy(ctx context.Context, listener net.Listener, dial devDebugDialer, onError func(error)) {
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()
 	}()
+	discovery := &devDebugDiscoveryCache{ttl: devDebugDiscoveryTTL}
 	for {
 		local, err := listener.Accept()
 		if err != nil {
@@ -111,16 +131,144 @@ func serveDevDebugProxy(ctx context.Context, listener net.Listener, dial devDebu
 		}
 		go func() {
 			defer func() { _ = local.Close() }()
+			reader := bufio.NewReaderSize(local, 8<<10)
+			if path, ok := devDebugDiscoveryRequest(reader); ok {
+				if err := discovery.serve(ctx, local, reader, path, dial); err != nil {
+					onError(err)
+				}
+				return
+			}
 			remote, err := dial(ctx)
 			if err != nil {
 				onError(err)
 				return
 			}
 			defer func() { _ = remote.Close() }()
-			joinDevDebugConns(local, remote)
+			joinDevDebugConns(&devDebugBufferedConn{Conn: local, reader: reader}, remote)
 		}()
 	}
 }
+
+// devDebugDiscoveryTTL bounds how stale a cached target list may be. A
+// restarted process gets a new target ID, which a debugger then sees within
+// this interval.
+const devDebugDiscoveryTTL = 2 * time.Second
+
+// devDebugDiscoveryRequest peeks at a new connection and reports the path of
+// a plain discovery GET. Anything else, notably the WebSocket upgrade that
+// attaches the debugger, is left untouched for the tunnel.
+func devDebugDiscoveryRequest(reader *bufio.Reader) (string, bool) {
+	head, err := reader.Peek(5)
+	if err != nil || string(head) != "GET /" {
+		return "", false
+	}
+	// Peek the whole request head, up to its blank line. Each Peek asks for
+	// one byte more than is buffered, so it only waits while the head is
+	// still arriving and never for bytes a waiting client will not send.
+	for {
+		block, _ := reader.Peek(reader.Buffered())
+		if end := strings.Index(string(block), "\r\n\r\n"); end >= 0 {
+			line, headers, _ := strings.Cut(string(block[:end]), "\r\n")
+			fields := strings.Fields(line)
+			if len(fields) != 3 || strings.Contains(strings.ToLower(headers), "upgrade:") {
+				return "", false
+			}
+			switch path := strings.TrimSuffix(fields[1], "/"); path {
+			case "/json", "/json/list", "/json/version":
+				return path, true
+			}
+			return "", false
+		}
+		if reader.Buffered() >= reader.Size() {
+			return "", false
+		}
+		if _, err := reader.Peek(reader.Buffered() + 1); err != nil {
+			return "", false
+		}
+	}
+}
+
+type devDebugDiscoveryCache struct {
+	ttl     time.Duration
+	mu      sync.Mutex
+	entries map[string]devDebugDiscoveryEntry
+}
+
+type devDebugDiscoveryEntry struct {
+	response []byte
+	at       time.Time
+}
+
+// serve answers one discovery request from the cache, or forwards it through
+// a tunnel and caches the complete response.
+func (c *devDebugDiscoveryCache) serve(ctx context.Context, local net.Conn, reader *bufio.Reader, path string, dial devDebugDialer) error {
+	request, err := http.ReadRequest(reader)
+	if err != nil {
+		return nil
+	}
+	_ = request.Body.Close()
+	// The inspector builds webSocketDebuggerUrl from the request's Host, so
+	// clients that address the port differently get their own entry.
+	key := path + "|" + request.Host
+	c.mu.Lock()
+	entry, ok := c.entries[key]
+	c.mu.Unlock()
+	if ok && time.Since(entry.at) < c.ttl {
+		_, err := local.Write(entry.response)
+		return devDebugIgnoreClosed(err)
+	}
+	remote, err := dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = remote.Close() }()
+	request.Close = true
+	if err := request.Write(remote); err != nil {
+		return err
+	}
+	response, err := http.ReadResponse(bufio.NewReader(remote), request)
+	if err != nil {
+		return err
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	_ = response.Body.Close()
+	if err != nil {
+		return err
+	}
+	response.Body = io.NopCloser(bytes.NewReader(body))
+	response.ContentLength = int64(len(body))
+	response.TransferEncoding = nil
+	response.Close = true
+	var encoded bytes.Buffer
+	if err := response.Write(&encoded); err != nil {
+		return err
+	}
+	if response.StatusCode == http.StatusOK {
+		c.mu.Lock()
+		if c.entries == nil {
+			c.entries = map[string]devDebugDiscoveryEntry{}
+		}
+		c.entries[key] = devDebugDiscoveryEntry{response: encoded.Bytes(), at: time.Now()}
+		c.mu.Unlock()
+	}
+	_, err = local.Write(encoded.Bytes())
+	return devDebugIgnoreClosed(err)
+}
+
+func devDebugIgnoreClosed(err error) error {
+	if err == nil || errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+		return nil
+	}
+	return err
+}
+
+// devDebugBufferedConn reads first what the discovery peek buffered.
+type devDebugBufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *devDebugBufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
 
 func joinDevDebugConns(a, b net.Conn) {
 	var wg sync.WaitGroup
@@ -181,7 +329,7 @@ func startDevDebugProxy(ctx context.Context, port int, dial devDebugDialer, onEr
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)))
 	if err != nil {
 		if errors.Is(err, syscall.EADDRINUSE) {
-			return "", fmt.Errorf("port %d is in use; pass --debug-port", port)
+			return "", fmt.Errorf("port %d is in use; pass --debug-port, or set dev.debug_port in gregale.yaml (each app of `gregale dev --all` needs its own)", port)
 		}
 		return "", err
 	}

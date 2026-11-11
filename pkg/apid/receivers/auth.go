@@ -33,6 +33,7 @@ import (
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/credhash"
+	"github.com/onebox-faas/faas/pkg/sandboxtoken"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -59,6 +60,15 @@ type authReceiver struct {
 	// sessions opens dashboard session cookies for VerifySession; nil
 	// answers Unavailable.
 	sessions SessionOpener
+	// sandboxKey verifies sandbox session tokens, derived from the session
+	// key when sessions has one; nil answers SandboxTokenKeys Unavailable.
+	sandboxKey *sandboxtoken.PublicKey
+}
+
+// sessionKeyHolder is a SessionOpener that can derive keys:
+// *session.Manager.
+type sessionKeyHolder interface {
+	BindingKey() []byte
 }
 
 // SessionOpener opens a dashboard session cookie: apid's *session.Manager.
@@ -68,7 +78,23 @@ type SessionOpener interface {
 
 // newAuthReceiver wires a production receiver.
 func newAuthReceiver(store authStore, tracing TracingReleased, sessions SessionOpener) *authReceiver {
-	return &authReceiver{store: store, tracing: tracing, sessions: sessions}
+	r := &authReceiver{store: store, tracing: tracing, sessions: sessions}
+	if holder, ok := sessions.(sessionKeyHolder); ok && holder != nil {
+		if issuer, err := sandboxtoken.NewIssuer(holder.BindingKey()); err == nil {
+			pub := issuer.PublicKey()
+			r.sandboxKey = &pub
+		}
+	}
+	return r
+}
+
+// SandboxTokenKeys returns the public key that verifies sandbox session
+// tokens; it mints nothing.
+func (r *authReceiver) SandboxTokenKeys(context.Context, *apidpb.SandboxTokenKeysRequest) (*apidpb.SandboxTokenKeysResponse, error) {
+	if r.sandboxKey == nil {
+		return nil, status.Error(codes.Unavailable, "sandbox tokens are not configured")
+	}
+	return &apidpb.SandboxTokenKeysResponse{Keys: []*apidpb.SandboxTokenKey{{Id: r.sandboxKey.ID, PublicKey: r.sandboxKey.Key}}}, nil
 }
 
 // AuthenticateKey resolves the bearer token to (account_id, plan).
