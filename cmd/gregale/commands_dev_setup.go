@@ -49,6 +49,7 @@ type devSetupReceipt struct {
 	Doctor                  *devSetupDoctorSummary `json:"doctor,omitempty"`
 	Configuration           *devConfiguration      `json:"configuration,omitempty"`
 	SavedConfig             *devSetupSavedConfig   `json:"saved_config,omitempty"`
+	Development             *devModeSelection      `json:"development,omitempty"`
 }
 
 type devSetupHosting struct {
@@ -186,6 +187,11 @@ func cmdDevSetup(args []string) int {
 		return printErr("Invalid developer configuration", err)
 	}
 	receipt := buildDevSetupReceipt(cwd, sourceDir, project, config, envFilePath, envKeyCount, serviceOverrideFilePath, serviceOverrideKeyCount, *start, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease, configuration.evaluate(nil))
+	mode, err := resolveDevMode(sourceDir, config, manifest, nil, false, "")
+	if err != nil {
+		return printErr("Invalid developer mode", err)
+	}
+	receipt.Development = &mode
 
 	receipt.Buckets = buckets
 	receipt.StartCommand = appendDevBucketArgs(receipt.StartCommand, bucketNames)
@@ -507,6 +513,12 @@ func renderDevSetup(stdout, stderr io.Writer, receipt devSetupReceipt) {
 	PrintProgress(stdout, "detected: %s", detected)
 	if receipt.Configuration != nil {
 		receipt.Configuration.render(stdout)
+	}
+	if receipt.Development != nil {
+		receipt.Development.render(stdout)
+		if receipt.Development.Mode == "watch" {
+			PrintProgress(stdout, "Watch-mode RAM and access requirements are checked when starting.")
+		}
 	}
 	if len(receipt.DependencyFiles) > 0 {
 		PrintProgress(stdout, "dependency inputs: %s", strings.Join(receipt.DependencyFiles, ", "))
