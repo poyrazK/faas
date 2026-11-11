@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
 	"reflect"
 	"sort"
 	"strings"
@@ -57,6 +58,14 @@ func (r DeploymentCronStagingRequest) Validate() error {
 		}
 	} else if r.UploadID != "" {
 		return fmt.Errorf("upload identity requires track_upload")
+	}
+	if r.Environment != "" {
+		if ValidateScope(r.Environment) != nil || r.Environment == "production" || r.Environment == "default" {
+			return fmt.Errorf("invalid cron staging environment")
+		}
+		if r.Operation == "stage" || r.Operation == "restore" {
+			return fmt.Errorf("an environment's crons are staged with prepare")
+		}
 	}
 	if err := ValidateDeploymentCrons(r.Before); err != nil {
 		return err
@@ -116,8 +125,18 @@ func (r DeploymentCronStagingRequest) Fingerprint() string {
 }
 
 func (c *Client) GetDeploymentCronStagingSnapshot(ctx context.Context, slug string) (DeploymentCronStagingSnapshot, error) {
+	return c.GetEnvironmentDeploymentCronStagingSnapshot(ctx, slug, "")
+}
+
+// GetEnvironmentDeploymentCronStagingSnapshot reads the manifest HTTP crons of
+// one environment; an empty environment is production.
+func (c *Client) GetEnvironmentDeploymentCronStagingSnapshot(ctx context.Context, slug, environment string) (DeploymentCronStagingSnapshot, error) {
 	var out DeploymentCronStagingSnapshot
-	err := c.do(ctx, "GET", "/v1/apps/"+slug+"/deployment-cron-staging", nil, &out)
+	path := "/v1/apps/" + slug + "/deployment-cron-staging"
+	if environment != "" {
+		path += "?environment=" + url.QueryEscape(environment)
+	}
+	err := c.do(ctx, "GET", path, nil, &out)
 	return out, err
 }
 

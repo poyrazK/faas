@@ -88,7 +88,7 @@ func checkCronReplacementQuota(appCount, accountCount, oldCount, newCount int, p
 func (m *MemStore) httpCronsLocked(appID string) []Cron {
 	out := []Cron{}
 	for _, c := range m.crons {
-		if c.AppID == appID && len(c.Command) == 0 {
+		if c.AppID == appID && c.DeploymentScope == "" && len(c.Command) == 0 {
 			out = append(out, c)
 		}
 	}
@@ -116,6 +116,9 @@ func (m *MemStore) DeploymentCronStagingSnapshot(_ context.Context, accountID, a
 func (m *MemStore) ApplyDeploymentCronStaging(_ context.Context, appID string, p DeploymentCronStagingParams) (DeploymentCronStagingResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if p.Request.Environment != "" {
+		return m.prepareEnvironmentCronActivationLocked(appID, p)
+	}
 	if p.Request.Operation == "prepare" || p.Request.Operation == "cancel" || p.Request.Operation == "track_upload" {
 		return m.prepareCronActivationLocked(appID, p)
 	}
@@ -229,6 +232,9 @@ func (s *PgStore) DeploymentCronStagingSnapshot(ctx context.Context, accountID, 
 	return api.DeploymentCronStagingSnapshot{AppID: row.AppID, Revision: row.DeploymentCronRevision, LatestDeploymentID: row.LatestDeploymentID, Crons: crons}, err
 }
 func (s *PgStore) ApplyDeploymentCronStaging(ctx context.Context, appID string, p DeploymentCronStagingParams) (DeploymentCronStagingResult, error) {
+	if p.Request.Environment != "" {
+		return s.prepareEnvironmentCronActivation(ctx, appID, p)
+	}
 	if p.Request.Operation == "prepare" || p.Request.Operation == "cancel" || p.Request.Operation == "track_upload" {
 		return s.prepareCronActivation(ctx, appID, p)
 	}
@@ -326,7 +332,7 @@ func (s *PgStore) writeCronSet(ctx context.Context, tx pgx.Tx, appID, subject st
 	if err != nil {
 		return err
 	}
-	removed, err := removedHTTPCronIDsTx(ctx, tx, appID, data)
+	removed, err := removedHTTPCronIDsTx(ctx, tx, appID, "", data)
 	if err != nil {
 		return err
 	}

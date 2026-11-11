@@ -14183,6 +14183,9 @@ type DeploymentCronStagingSnapshot struct {
 	Revision           int64                  `json:"revision"`
 	LatestDeploymentID string                 `json:"latest_deployment_id"`
 	Crons              []DeploymentCronConfig `json:"crons"`
+	// Environment is the non-production environment the snapshot reads;
+	// omitted for production (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
 }
 
 type DeploymentCronStagingRequest struct {
@@ -14194,6 +14197,10 @@ type DeploymentCronStagingRequest struct {
 	ExpectedRevision     int64                  `json:"expected_revision"`
 	Before               []DeploymentCronConfig `json:"before"`
 	Desired              []DeploymentCronConfig `json:"desired"`
+	// Environment stages the manifest's HTTP crons into a non-production
+	// environment; omitted for production. Only the deferred operations
+	// (prepare, cancel, track_upload) take one (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
 }
 
 // EventRoutingRecoveryExpectation pins a reviewed automation routing attempt.

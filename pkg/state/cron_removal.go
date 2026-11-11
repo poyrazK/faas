@@ -113,11 +113,13 @@ func (s *PgStore) retryAfterDetachingCronHistory(ctx context.Context, run func()
 
 // removedHTTPCronIDsTx lists appID's HTTP crons that target (a JSON array of
 // objects with an "id") does not keep.
-func removedHTTPCronIDsTx(ctx context.Context, tx pgx.Tx, appID string, target []byte) ([]string, error) {
+// removedHTTPCronIDsTx lists the HTTP crons of one environment of appID
+// (scope ” is production) that target no longer holds.
+func removedHTTPCronIDsTx(ctx context.Context, tx pgx.Tx, appID, scope string, target []byte) ([]string, error) {
 	return cronIDsTx(ctx, tx, `
 		select id::text from crons
-		 where app_id = $1::text::uuid and cardinality(command) = 0
-		   and id not in (select (value->>'id')::uuid from jsonb_array_elements($2::jsonb))`, appID, target)
+		 where app_id = $1::text::uuid and cardinality(command) = 0 and deployment_scope = $3
+		   and id not in (select (value->>'id')::uuid from jsonb_array_elements($2::jsonb))`, appID, target, scope)
 }
 
 // appCronIDsTx lists every cron of appID.

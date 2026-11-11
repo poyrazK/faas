@@ -635,6 +635,11 @@ type MemStore struct {
 	deploymentPolicyStates       map[string]deploymentPolicyState
 	deploymentCronStates         map[string]deploymentPolicyState
 	deploymentCronActivations    map[string]cronActivation
+	// environmentCronRevisions and environmentCronActivations hold a
+	// non-production environment's manifest cron staging, keyed by
+	// environmentCronKey (ADR-20261104120000).
+	environmentCronRevisions   map[string]int64
+	environmentCronActivations map[string]cronActivation
 	// eventSubscriptionIntents is keyed by deployment id (ADR-20261101030512).
 	eventSubscriptionIntents map[string]memEventSubscriptionIntent
 	deploymentCronOutcomes   map[string]cronOutcome
