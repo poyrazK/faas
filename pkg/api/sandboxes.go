@@ -197,6 +197,20 @@ type CreateSandboxRequest struct {
 	// Template boots the session from a sandbox template's newest finished
 	// build in place of a preset or image.
 	Template string `json:"template,omitempty"`
+	// Pull and RegistryAuth go with Image, as on image runs: "always"
+	// re-pulls a cached image so a moved tag resolves again, and
+	// RegistryAuth is stored sealed on the image's runner job for its
+	// registry host.
+	Pull         string                `json:"pull,omitempty"`
+	RegistryAuth *ImageRunRegistryAuth `json:"registry_auth,omitempty"`
+}
+
+// SandboxImageSource is a seller image to cache for a session: the image,
+// its pull policy and its registry credential (CreateSandboxRequest).
+type SandboxImageSource struct {
+	Image        string
+	Pull         string
+	RegistryAuth *ImageRunRegistryAuth
 }
 
 // SandboxPresetTemplate is the preset recorded for a session booted from a
