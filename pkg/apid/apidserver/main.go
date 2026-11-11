@@ -858,6 +858,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ADR 20261110120000: never-verified accounts that hold nothing
 		// are scheduled for deletion 60 days after signup.
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runUnverifiedAccountExpiry(ctx) })
+		// ADR-20261111140000: complimentary accounts return to Free at
+		// their end date.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runComplimentaryExpiry(ctx) })
 		// ADR-20261107220000 §2: agent activity is kept 7 days.
 		go background.Staggered(ctx, background.StartSpread, func() {
 			srv.runAgentActivitySweep(ctx)
