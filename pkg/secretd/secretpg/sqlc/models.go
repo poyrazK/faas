@@ -44,3 +44,10 @@ type SecretOpenAudit struct {
 	Entries  int32
 	OpenedAt pgtype.Timestamptz
 }
+
+type Trigger struct {
+	ID     pgtype.UUID
+	AppID  pgtype.UUID
+	Kind   string
+	Config []byte
+}

@@ -6,6 +6,7 @@ package secretpg_test
 import (
 	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -197,8 +198,20 @@ func TestReferenceLookupsOnPostgres(t *testing.T) {
 		 'sealed', '\x01'::bytea, now())`, captureID, account.ID, appA.ID, dep.ID, uuid.NewString()); err != nil {
 		t.Fatal(err)
 	}
+	// Triggers (slice 3g): a trigger of the named app only.
+	triggerID := uuid.NewString()
+	if _, err := conn.Exec(ctx, `INSERT INTO triggers (id, account_id, app_id, kind, slug, config)
+		VALUES ($1, $2, $3, 'kafka', 'orders', '{"topic":"orders"}'::jsonb)`, triggerID, account.ID, appA.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := conn.Exec(ctx, `RESET session_replication_role`); err != nil {
 		t.Fatal(err)
+	}
+	if kind, cfg, err := store.TriggerConfig(ctx, appA.ID, triggerID); err != nil || kind != "kafka" || !strings.Contains(string(cfg), "orders") {
+		t.Fatalf("own trigger = %s %s %v", kind, cfg, err)
+	}
+	if _, _, err := store.TriggerConfig(ctx, appB.ID, triggerID); !errors.Is(err, secretd.ErrUnknownTrigger) {
+		t.Fatalf("another app's trigger = %v", err)
 	}
 	if app, sealed, err := store.CaptureKey(ctx, captureID); err != nil || app != appA.ID || len(sealed) != 1 {
 		t.Fatalf("capture key = %s %x %v", app, sealed, err)

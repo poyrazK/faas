@@ -44,3 +44,12 @@ CREATE TABLE app_log_drains (
     app_id             uuid  NOT NULL,
     auth_header_sealed bytea
 );
+
+-- Projection of triggers: the sealed config OpenTriggerConfig reads by
+-- reference (ADR-20261110210000 slice 3g).
+CREATE TABLE triggers (
+    id     uuid  NOT NULL PRIMARY KEY,
+    app_id uuid,
+    kind   text  NOT NULL,
+    config jsonb NOT NULL
+);

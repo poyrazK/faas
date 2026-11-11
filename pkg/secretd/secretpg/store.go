@@ -203,6 +203,26 @@ func (s *Store) LogDrainHeader(ctx context.Context, appID, drainID string) ([]by
 	return sealed, nil
 }
 
+// TriggerConfig implements secretd.Store: a trigger of appID only.
+func (s *Store) TriggerConfig(ctx context.Context, appID, triggerID string) (string, []byte, error) {
+	app, err := pgUUID(appID)
+	if err != nil {
+		return "", nil, secretd.ErrUnknownTrigger
+	}
+	trigger, err := pgUUID(triggerID)
+	if err != nil {
+		return "", nil, secretd.ErrUnknownTrigger
+	}
+	row, err := s.q.TriggerConfig(ctx, s.db, sqlc.TriggerConfigParams{ID: trigger, AppID: app})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, secretd.ErrUnknownTrigger
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("secretpg: trigger config: %w", err)
+	}
+	return row.Kind, row.Config, nil
+}
+
 // DeleteExpiredGrants removes grants that expired before before.
 func (s *Store) DeleteExpiredGrants(ctx context.Context, before time.Time) (int64, error) {
 	return s.q.DeleteExpiredSecretGrants(ctx, s.db, pgTime(before))

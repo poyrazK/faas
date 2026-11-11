@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -73,6 +74,44 @@ func (s secretdGrants) GrantPeer(ctx context.Context, appID, nodeName string, tt
 		return time.Time{}, fmt.Errorf("secretd: grant expiry %q: %w", resp.GetExpiresAt(), err)
 	}
 	return exp, nil
+}
+
+// OpenTriggerConfig opens a broker trigger's credentials by reference
+// (ADR-20261110210000 slice 3g).
+func (s secretdGrants) OpenTriggerConfig(ctx context.Context, appID, triggerID string) (json.RawMessage, error) {
+	resp, err := s.rpc.OpenTriggerConfig(ctx, &secretdpb.OpenTriggerConfigRequest{AppId: appID, TriggerId: triggerID})
+	if err != nil {
+		return nil, fmt.Errorf("secretd: %w", err)
+	}
+	return resp.GetConfigJson(), nil
+}
+
+// deliveryOpenerFromEnv reads FAAS_SCHEDD_DELIVERY_OPENER
+// (ADR-20261110210000 slice 3g): "local" (or unset) opens delivery values
+// with this node's identities; "secretd" makes a compute node's schedd ask
+// secretd for broker trigger credentials, leave webhook delivery to the
+// control plane's schedd, and refuse the features that would still open
+// delivery values here (execution dispatch, the commit relay). It needs
+// secretd (FAAS_SCHEDD_SECRETD_TARGET), which only a compute node's schedd
+// has.
+func deliveryOpenerFromEnv(getenv func(string) string, haveSecretd, executionEnabled bool) (bool, error) {
+	switch mode := getenv("FAAS_SCHEDD_DELIVERY_OPENER"); mode {
+	case "", "local":
+		return false, nil
+	case "secretd":
+	default:
+		return false, fmt.Errorf("schedd: FAAS_SCHEDD_DELIVERY_OPENER=%q: want local or secretd", mode)
+	}
+	if !haveSecretd {
+		return false, errors.New("schedd: FAAS_SCHEDD_DELIVERY_OPENER=secretd needs FAAS_SCHEDD_SECRETD_TARGET")
+	}
+	if executionEnabled {
+		return false, errors.New("schedd: FAAS_SCHEDD_DELIVERY_OPENER=secretd cannot run execution dispatch: its payloads open only with a local delivery identity")
+	}
+	if v := getenv("FAAS_COMMIT_RELAY_ENABLED"); v != "" && v != "false" {
+		return false, errors.New("schedd: FAAS_SCHEDD_DELIVERY_OPENER=secretd cannot run the commit relay: its connections open only with a local delivery identity")
+	}
+	return true, nil
 }
 
 // appRunsOn reports whether the ledger holds a live instance of appID on

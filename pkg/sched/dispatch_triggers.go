@@ -94,7 +94,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
-	"github.com/onebox-faas/faas/pkg/triggerconfig"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -464,7 +463,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// 1. Poller lookup. Cached on the Loop. A poller that cannot be built
 	// (unreachable broker, credentials that do not open) is the trigger's
 	// health error too, so the customer sees it, not only the scheduler log.
-	poller, _, err := l.pollerForTrigger(t)
+	poller, _, err := l.pollerForTrigger(ctx, t)
 	if err != nil {
 		l.recordTriggerConsumerHealth(ctx, store, t, PollResult{Error: err})
 		return err
@@ -2179,7 +2178,7 @@ func (l *Loop) recordTriggerConsumerHealth(ctx context.Context, store storeLike,
 		Error:      errText,
 	}
 	if res.Error == nil {
-		if poller, _, err := l.pollerForTrigger(t); err == nil && poller != nil {
+		if poller, _, err := l.pollerForTrigger(ctx, t); err == nil && poller != nil {
 			if ss, ok := poller.(triggerStatsSource); ok {
 				stats := ss.BrokerStats(ctx, t)
 				if stats.Available {
@@ -2542,7 +2541,7 @@ func ackSingle(ctx context.Context, t sqlc.Trigger, rec SourceRecord, l *Loop) e
 
 // pollerForTrigger returns the cached triggerSource for t, constructing
 // and caching it if not yet present.
-func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
+func (l *Loop) pollerForTrigger(ctx context.Context, t sqlc.Trigger) (triggerSource, bool, error) {
 	if l == nil {
 		return nil, false, nil
 	}
@@ -2567,7 +2566,7 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	// ADR-20261101104512): a broker connect, or a Kafka reader leaving its
 	// group, can take seconds while other lanes look up their pollers.
 	l.closeTriggerPoller(id, stale)
-	src, registered, err := l.buildTriggerPoller(t)
+	src, registered, err := l.buildTriggerPoller(ctx, t)
 	if err != nil || !registered {
 		return nil, registered, err
 	}
@@ -2614,9 +2613,9 @@ func (l *Loop) cachedTriggerPoller(t sqlc.Trigger) triggerSource {
 }
 
 // buildTriggerPoller opens a trigger's credentials and builds its poller.
-func (l *Loop) buildTriggerPoller(t sqlc.Trigger) (triggerSource, bool, error) {
+func (l *Loop) buildTriggerPoller(ctx context.Context, t sqlc.Trigger) (triggerSource, bool, error) {
 	pollerTrigger := t
-	openedConfig, err := triggerconfig.Open(api.TriggerKind(t.Kind), t.Config, l.triggerSecretIdentities)
+	openedConfig, err := l.openTriggerConfig(ctx, t)
 	if err != nil {
 		return nil, false, fmt.Errorf("open %s trigger credentials: %w", t.Kind, err)
 	}

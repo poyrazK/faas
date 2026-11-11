@@ -139,6 +139,15 @@
 # ADR-20261110210000 §3 slice 3c-2: with vmmd_service's
 # faas_secretd_target set, schedd grants peers its apps' secrets through
 # secretd; vmmd_service has already installed the node's client leaf.
+- name: compute_only_service — require secretd for delivery through secretd (ADR-20261110210000 slice 3g)
+  ansible.builtin.assert:
+    that:
+      - faas_secretd_target | default('') | length > 0
+    fail_msg: >-
+      faas_schedd_secretd_delivery needs faas_secretd_target (vmmd_service):
+      schedd asks secretd for broker trigger credentials.
+  when: faas_schedd_secretd_delivery | default(false) | bool
+
 - name: compute_only_service — install schedd's secretd drop-in (ADR-20261110210000)
   notify: restart faas-schedd
   ansible.builtin.template:

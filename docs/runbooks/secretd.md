@@ -96,6 +96,29 @@ Back out a node with `faas_gateway_secretd_log_drains: false`. The edge
 identity stays on compute until basic auth (3h) and edge-rule headers (3i)
 move too.
 
+## Delivery values through secretd (slice 3g)
+
+secretd opens broker trigger credentials (Kafka SASL passwords and TLS
+keys, Redis Streams passwords, NATS URLs) by reference for the app's owner
+node; it reads the delivery identity the control plane already holds for its
+schedd. Webhook signing secrets are not opened on compute at all in this
+mode: account webhooks have no app to authorize by, so the control plane's
+schedd delivers every webhook.
+
+1. Converge the control plane: secretd restarts with
+   `FAAS_SECRETD_DELIVERY_IDENTITY`. Check: `delivery_identities=1` in its
+   journal.
+2. One compute node at a time, with `faas_secretd_target` set: set
+   `faas_schedd_secretd_delivery: true` and converge it. schedd restarts with
+   `FAAS_SCHEDD_DELIVERY_OPENER=secretd`. Check: its journal shows `webhook
+   delivery left to the control plane`, broker triggers keep consuming, and
+   `faas_secretd_opens_total{rpc="OpenTriggerConfig"}` rises as pollers are
+   built. Execution dispatch and the commit relay refuse to start in this
+   mode.
+
+The delivery identity stays on compute until every node runs this way and it
+is retired like the runtime identity.
+
 ## Rotation
 
 The runtime domain rotates as before (`docs/runbooks/seal-domain-key-escrow.md`).

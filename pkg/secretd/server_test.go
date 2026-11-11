@@ -31,6 +31,20 @@ type fakeStore struct {
 	deployments map[string]fakeDeployment
 	rows        map[rowKey][]byte
 	drains      map[[2]string][]byte // {app, drain} -> sealed header
+	triggers    map[[2]string]fakeTrigger
+}
+
+func (f *fakeStore) TriggerConfig(_ context.Context, appID, triggerID string) (string, []byte, error) {
+	t, ok := f.triggers[[2]string{appID, triggerID}]
+	if !ok {
+		return "", nil, secretd.ErrUnknownTrigger
+	}
+	return t.kind, t.config, nil
+}
+
+type fakeTrigger struct {
+	kind   string
+	config []byte
 }
 
 func (f *fakeStore) LogDrainHeader(_ context.Context, appID, drainID string) ([]byte, error) {

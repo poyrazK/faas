@@ -122,6 +122,29 @@ func (q *Queries) SecretGrantValid(ctx context.Context, db DBTX, arg SecretGrant
 	return valid, err
 }
 
+const triggerConfig = `-- name: TriggerConfig :one
+SELECT kind, config FROM triggers
+ WHERE id = $1::uuid AND app_id = $2::uuid
+`
+
+type TriggerConfigParams struct {
+	ID    pgtype.UUID
+	AppID pgtype.UUID
+}
+
+type TriggerConfigRow struct {
+	Kind   string
+	Config []byte
+}
+
+// A trigger of the named app only (ADR-20261110210000 slice 3g).
+func (q *Queries) TriggerConfig(ctx context.Context, db DBTX, arg TriggerConfigParams) (TriggerConfigRow, error) {
+	row := db.QueryRow(ctx, triggerConfig, arg.ID, arg.AppID)
+	var i TriggerConfigRow
+	err := row.Scan(&i.Kind, &i.Config)
+	return i, err
+}
+
 const upsertSecretGrant = `-- name: UpsertSecretGrant :one
 INSERT INTO secret_grants (app_id, node_id, granted_by_node_id, expires_at)
 VALUES ($1::uuid, $2::uuid, $3::uuid, $4::timestamptz)

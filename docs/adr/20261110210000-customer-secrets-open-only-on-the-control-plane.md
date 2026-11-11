@@ -568,7 +568,8 @@ Operations:
 | 3d | Everything by reference: crash-capture keys, sidecar env, per-snapshot encryption with keys from secretd (latency-measured), app secrets; then the runtime identity leaves compute | 3 |
 | 3e | The runtime identity leaves compute (code in #7003): per node `faas_seal_domain_runtime_retired_on_compute` (needs contracted + `faas_vmmd_secretd_open`) removes `runtime.age`/`.previous`, stages `runtime.age.pub`; vmmd `FAAS_SEAL_DOMAIN_RUNTIME_RETIRED` refuses to start with a leftover identity or without secretd, and seals crash-capture keys to the recipient; fleet-wide `SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE` stops CD handing compute the key, so joining nodes never get it. Until 3d-3, park snapshots in the shared store still hold plaintext process memory | 3d (except 3d-3) |
 | 3f | Log drain headers by reference: secretd `OpenLogDrainHeader` (edge identity on the control plane with `SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE`), gatewayd-internal `FAAS_GATEWAY_LOG_DRAIN_OPENER=secretd` per node (`faas_gateway_secretd_log_drains`) (code in #7003) | 3c |
-| 3g–3j | Delivery by reference, basic-auth verifiers, edge-rule headers injected on the instance's node, CP registry pull proxy (decided above) | 3f |
+| 3g-1 | Broker trigger credentials by reference (secretd `OpenTriggerConfig` with the CP's delivery identity); compute schedd `FAAS_SCHEDD_DELIVERY_OPENER=secretd` (`faas_schedd_secretd_delivery`) also leaves webhook delivery to the CP schedd, since account webhooks have no app to authorize by, and refuses execution dispatch and the commit relay (not deployed) (code in #7003) | 3f |
+| 3g-2–3j | Delivery identity retired from compute, basic-auth verifiers, edge-rule headers injected on the instance's node, CP registry pull proxy (decided above) | 3f |
 | 4 | HSM hardware, ceremony runbook, Tier A wrapped identities for every control-plane reader, measurements | — |
 | 5 | Tier B envelope v3 + re-seal of every sealed column | 4 |
 

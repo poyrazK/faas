@@ -771,6 +771,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	defer closeGrants()
+	// ADR-20261110210000 slice 3g: delivery values by reference.
+	deliveryViaSecretd, err := deliveryOpenerFromEnv(os.Getenv, grantRPC != nil, executionEnabled)
+	if err != nil {
+		return err
+	}
 	if grantRPC != nil {
 		grantor := sched.NewSecretGrantor(grantRPC, ownerNodeID, vmmRouter.NodeName, appRunsOn(engine.Ledger()), log)
 		vmmRouter.WithSecretGrantor(grantor)
@@ -2169,6 +2174,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithPrivateNetworkPeeringSubscriber(privateNetworkPeeringSubscriber).
 		WithPrivateNetworkFabricDeletionSubscriber(privateNetworkFabricDeletionSubscriber).
 		WithTriggerSecretIdentities(deliveryReaders).
+		WithTriggerConfigOpener(triggerConfigOpenerFor(grantRPC, deliveryViaSecretd)).
 		// Broker triggers take at most their plan's
 		// TriggerRecordsPerSecondPerApp; records over it stay on the
 		// broker for a later poll (ADR-20261101093015).
@@ -2909,6 +2915,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// POSTs on SIGTERM. The HTTP graceful-stop 5s budget above
 	// applies to gsrv + httpSrv only — they do not gate the
 	// dispatcher's drain.
+	// ADR-20261110210000 slice 3g: a compute schedd that opens delivery
+	// values through secretd leaves webhook delivery (account webhooks have
+	// no app to authorize by) to the control plane's schedd.
 	webhookDispatcher := webhook.NewDispatcher(store, schedulerAuditor, log)
 	webhookDispatcher.HealthMetrics = webhook.NewDeliveryHealthMetrics(ops.Registry(), "schedd")
 	go (&webhook.RetentionWorker{
@@ -2924,6 +2933,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// a clean shutdown and ignored.
 	webhookLoopErr := make(chan error, 1)
 	go func() {
+		if deliveryViaSecretd {
+			log.Info("schedd: webhook delivery left to the control plane (FAAS_SCHEDD_DELIVERY_OPENER=secretd)")
+			webhookLoopErr <- nil
+			return
+		}
 		err := webhookDispatcher.Run(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			webhookLoopErr <- err

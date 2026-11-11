@@ -36,3 +36,8 @@ SELECT ciphertext FROM app_secrets
 -- A drain of the named app only (ADR-20261110210000 slice 3f).
 SELECT auth_header_sealed FROM app_log_drains
  WHERE id = sqlc.arg(id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
+
+-- name: TriggerConfig :one
+-- A trigger of the named app only (ADR-20261110210000 slice 3g).
+SELECT kind, config FROM triggers
+ WHERE id = sqlc.arg(id)::uuid AND app_id = sqlc.arg(app_id)::uuid;

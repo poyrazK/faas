@@ -27,6 +27,7 @@ const (
 	Secretd_OpenCaptureKey_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenCaptureKey"
 	Secretd_OpenSidecarEnv_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenSidecarEnv"
 	Secretd_OpenLogDrainHeader_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenLogDrainHeader"
+	Secretd_OpenTriggerConfig_FullMethodName  = "/onebox.faas.secretd.v1.Secretd/OpenTriggerConfig"
 )
 
 // SecretdClient is the client API for Secretd service.
@@ -54,6 +55,12 @@ type SecretdClient interface {
 	// (ADR-20261110210000 slice 3f). Drains ship only from the app's owner
 	// node, so the owner-or-grant rule applies.
 	OpenLogDrainHeader(ctx context.Context, in *OpenLogDrainHeaderRequest, opts ...grpc.CallOption) (*OpenLogDrainHeaderResponse, error)
+	// OpenTriggerConfig opens a broker trigger's sealed credentials by
+	// reference: secretd reads triggers.config for a trigger of app_id and
+	// returns it with its credential leaves opened by the delivery seal domain
+	// (ADR-20261110210000 slice 3g). Broker triggers are polled only by the
+	// app's owner node, so the owner-or-grant rule applies.
+	OpenTriggerConfig(ctx context.Context, in *OpenTriggerConfigRequest, opts ...grpc.CallOption) (*OpenTriggerConfigResponse, error)
 }
 
 type secretdClient struct {
@@ -114,6 +121,16 @@ func (c *secretdClient) OpenLogDrainHeader(ctx context.Context, in *OpenLogDrain
 	return out, nil
 }
 
+func (c *secretdClient) OpenTriggerConfig(ctx context.Context, in *OpenTriggerConfigRequest, opts ...grpc.CallOption) (*OpenTriggerConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OpenTriggerConfigResponse)
+	err := c.cc.Invoke(ctx, Secretd_OpenTriggerConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecretdServer is the server API for Secretd service.
 // All implementations must embed UnimplementedSecretdServer
 // for forward compatibility.
@@ -139,6 +156,12 @@ type SecretdServer interface {
 	// (ADR-20261110210000 slice 3f). Drains ship only from the app's owner
 	// node, so the owner-or-grant rule applies.
 	OpenLogDrainHeader(context.Context, *OpenLogDrainHeaderRequest) (*OpenLogDrainHeaderResponse, error)
+	// OpenTriggerConfig opens a broker trigger's sealed credentials by
+	// reference: secretd reads triggers.config for a trigger of app_id and
+	// returns it with its credential leaves opened by the delivery seal domain
+	// (ADR-20261110210000 slice 3g). Broker triggers are polled only by the
+	// app's owner node, so the owner-or-grant rule applies.
+	OpenTriggerConfig(context.Context, *OpenTriggerConfigRequest) (*OpenTriggerConfigResponse, error)
 	mustEmbedUnimplementedSecretdServer()
 }
 
@@ -163,6 +186,9 @@ func (UnimplementedSecretdServer) OpenSidecarEnv(context.Context, *OpenSidecarEn
 }
 func (UnimplementedSecretdServer) OpenLogDrainHeader(context.Context, *OpenLogDrainHeaderRequest) (*OpenLogDrainHeaderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method OpenLogDrainHeader not implemented")
+}
+func (UnimplementedSecretdServer) OpenTriggerConfig(context.Context, *OpenTriggerConfigRequest) (*OpenTriggerConfigResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OpenTriggerConfig not implemented")
 }
 func (UnimplementedSecretdServer) mustEmbedUnimplementedSecretdServer() {}
 func (UnimplementedSecretdServer) testEmbeddedByValue()                 {}
@@ -275,6 +301,24 @@ func _Secretd_OpenLogDrainHeader_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Secretd_OpenTriggerConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpenTriggerConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretdServer).OpenTriggerConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Secretd_OpenTriggerConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretdServer).OpenTriggerConfig(ctx, req.(*OpenTriggerConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Secretd_ServiceDesc is the grpc.ServiceDesc for Secretd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -301,6 +345,10 @@ var Secretd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OpenLogDrainHeader",
 			Handler:    _Secretd_OpenLogDrainHeader_Handler,
+		},
+		{
+			MethodName: "OpenTriggerConfig",
+			Handler:    _Secretd_OpenTriggerConfig_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

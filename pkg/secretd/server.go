@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/crashcrypt"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/triggerconfig"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -65,7 +66,13 @@ type Store interface {
 	// LogDrainHeader returns the sealed authentication header of drainID, a
 	// log drain of appID, or ErrUnknownDrain.
 	LogDrainHeader(ctx context.Context, appID, drainID string) ([]byte, error)
+	// TriggerConfig returns the kind and stored (sealed) config of
+	// triggerID, a trigger of appID, or ErrUnknownTrigger.
+	TriggerConfig(ctx context.Context, appID, triggerID string) (kind string, config []byte, err error)
 }
+
+// ErrUnknownTrigger is returned by Store.TriggerConfig.
+var ErrUnknownTrigger = errors.New("secretd: the app has no trigger of that id")
 
 // ErrUnknownDrain is returned by Store.LogDrainHeader.
 var ErrUnknownDrain = errors.New("secretd: the app has no log drain with a header of that id")
@@ -119,6 +126,17 @@ type Server struct {
 	// edgeIdentities open the edge seal domain (slice 3f): log drain
 	// headers. Empty refuses OpenLogDrainHeader.
 	edgeIdentities []*age.X25519Identity
+	// deliveryIdentities open the delivery seal domain (slice 3g): broker
+	// trigger credentials. Empty refuses OpenTriggerConfig.
+	deliveryIdentities []*age.X25519Identity
+}
+
+// WithDeliveryIdentities lets secretd open delivery seal-domain values
+// (current first, then previous) for OpenTriggerConfig (ADR-20261110210000
+// slice 3g).
+func (s *Server) WithDeliveryIdentities(ids []*age.X25519Identity) *Server {
+	s.deliveryIdentities = ids
+	return s
 }
 
 // WithEdgeIdentities lets secretd open edge seal-domain values (current
@@ -482,6 +500,47 @@ func (s *Server) OpenLogDrainHeader(ctx context.Context, req *secretdpb.OpenLogD
 	}
 	s.metrics.open(rpcOpenLogDrainHeader, via)
 	return &secretdpb.OpenLogDrainHeaderResponse{Header: string(plaintext)}, nil
+}
+
+// OpenTriggerConfig implements secretdpb.SecretdServer (ADR-20261110210000
+// slice 3g): the caller names a trigger; secretd reads its stored config,
+// which must be a trigger of the app, and opens its credential leaves with
+// the delivery domain. Broker triggers are polled only by the app's owner
+// node, so owner or grant authorizes.
+func (s *Server) OpenTriggerConfig(ctx context.Context, req *secretdpb.OpenTriggerConfigRequest) (*secretdpb.OpenTriggerConfigResponse, error) {
+	appID, triggerID := req.GetAppId(), req.GetTriggerId()
+	if appID == "" || triggerID == "" {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id and a trigger id")
+	}
+	if len(s.deliveryIdentities) == 0 {
+		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no delivery identity")
+	}
+	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenTriggerConfig, appID)
+	if err != nil {
+		return nil, err
+	}
+	kind, stored, err := s.store.TriggerConfig(ctx, appID, triggerID)
+	if errors.Is(err, ErrUnknownTrigger) {
+		return nil, rpcErr(codes.NotFound, "secretd found no such trigger of the app")
+	}
+	if err != nil {
+		s.log.Error("secretd: trigger lookup", "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not look up the trigger")
+	}
+	opened, err := triggerconfig.Open(api.TriggerKind(kind), stored, s.deliveryIdentities)
+	if err != nil {
+		s.log.Warn("secretd: trigger credentials do not open", "app_id", logsanitize.Field(appID),
+			"trigger_id", logsanitize.Field(triggerID), "err", err)
+		s.metrics.refuse(rpcOpenTriggerConfig, ReasonEnvelope)
+		return nil, rpcErr(codes.FailedPrecondition, "secretd could not open the trigger credentials")
+	}
+	if err := s.store.RecordOpen(ctx, nodeID, appID, via, 1); err != nil {
+		clear(opened)
+		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
+	}
+	s.metrics.open(rpcOpenTriggerConfig, via)
+	return &secretdpb.OpenTriggerConfigResponse{ConfigJson: opened}, nil
 }
 
 // authorizeByReference checks a by-reference open of appID's material: the

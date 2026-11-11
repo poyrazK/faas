@@ -46,8 +46,11 @@ type config struct {
 	// edgeIdentityPath is optional (slice 3f): set, secretd also opens log
 	// drain headers with the edge seal domain.
 	edgeIdentityPath string
-	appsPerNodeHour                                 int
-	requireReferences                               bool
+	// deliveryIdentityPath is optional (slice 3g): set, secretd also opens
+	// broker trigger credentials with the delivery seal domain.
+	deliveryIdentityPath string
+	appsPerNodeHour      int
+	requireReferences    bool
 }
 
 func configFromEnv(getenv func(string) string) (config, error) {
@@ -61,6 +64,8 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		// The edge identity is optional: without it OpenLogDrainHeader
 		// refuses and gatewayd-internal keeps opening drains locally.
 		edgeIdentityPath: getenv("FAAS_SECRETD_EDGE_IDENTITY"),
+		// Optional too: without it OpenTriggerConfig refuses.
+		deliveryIdentityPath: getenv("FAAS_SECRETD_DELIVERY_IDENTITY"),
 	}
 	if cfg.metricsAddr != "" {
 		host, _, err := net.SplitHostPort(cfg.metricsAddr)
@@ -118,10 +123,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	var edgeIdentities []*age.X25519Identity
+	var edgeIdentities, deliveryIdentities []*age.X25519Identity
 	if cfg.edgeIdentityPath != "" {
 		if edgeIdentities, err = sealdomain.LoadReaderIdentities(cfg.edgeIdentityPath); err != nil {
 			return fmt.Errorf("secretd: edge identity: %w", err)
+		}
+	}
+	if cfg.deliveryIdentityPath != "" {
+		if deliveryIdentities, err = sealdomain.LoadReaderIdentities(cfg.deliveryIdentityPath); err != nil {
+			return fmt.Errorf("secretd: delivery identity: %w", err)
 		}
 	}
 	pool, err := db.OpenWithAppName(ctx, "", "faas-secretd")
@@ -168,12 +178,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	srv := grpc.NewServer(wire.ServerCredsOrEmpty(tlsCfg)...)
 	secretdpb.RegisterSecretdServer(srv, secretd.NewServer(store, identities, cfg.appsPerNodeHour, log).
-		RequireReferences(cfg.requireReferences).WithMetrics(metrics).WithEdgeIdentities(edgeIdentities))
+		RequireReferences(cfg.requireReferences).WithMetrics(metrics).WithEdgeIdentities(edgeIdentities).
+		WithDeliveryIdentities(deliveryIdentities))
 	go func() {
 		<-ctx.Done()
 		srv.GracefulStop()
 	}()
-	log.Info("secretd: serving", "listen", cfg.listen, "identities", len(identities), "edge_identities", len(edgeIdentities))
+	log.Info("secretd: serving", "listen", cfg.listen, "identities", len(identities), "edge_identities", len(edgeIdentities),
+		"delivery_identities", len(deliveryIdentities))
 	if err := srv.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 		return fmt.Errorf("secretd: serve: %w", err)
 	}
