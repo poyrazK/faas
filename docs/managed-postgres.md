@@ -1310,9 +1310,13 @@ only on databases the sweep suspends, so only while both modes above are `on`:
 - `shadow` (the default) logs `managed postgres plan excess due for deletion
   (shadow)` for each database past its 30 days.
 - `on` deletes them and logs `managed postgres plan excess delete scheduled`.
-  The suspension email then names the deletion date. Turn it on only once
-  every apid runs the release that added it: an older apid cannot read that
-  email's payload.
+  The suspension email then names the deletion date, and a database is
+  deleted only once the date its queued email named has come. A suspension
+  mailed earlier without a date, or never mailed, starts again when `on`
+  first sees it, so its owner gets a full 30 days' notice. apid refuses `on`
+  unless `FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=1`
+  and the producer outbox are on. Turn it on only once every apid runs the
+  release that added it: an older apid cannot read that email's payload.
 - `off` does nothing.
 
 While it is `on`, `GET /v1/postgres/databases` and the read show

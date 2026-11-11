@@ -3044,6 +3044,16 @@ type CommitSource struct {
 	Destination          string
 }
 
+// Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).
+type ComplimentaryAccount struct {
+	AccountID pgtype.UUID
+	Plan      string
+	Reason    string
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
 type ComputeNode struct {
 	ID                 pgtype.UUID
 	Name               string
@@ -8763,6 +8773,7 @@ type ManagedPostgresPlanExcessNotice struct {
 	Reason       string
 	RecordedAt   pgtype.Timestamptz
 	MailIntentID pgtype.UUID
+	DeleteAt     pgtype.Timestamptz
 }
 
 type ManagedPostgresResize struct {

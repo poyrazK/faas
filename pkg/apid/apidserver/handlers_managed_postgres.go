@@ -62,6 +62,8 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, managedpostgres.ErrNotInPlan):
 		problem = problem.WithHint("Choose what your plan includes (gregale postgres capabilities) or upgrade the plan.").WithDocs("https://gregale.dev/docs/plans")
+	case errors.Is(err, managedpostgres.ErrBranchLimit):
+		problem = problem.WithHint("Delete a branch (gregale postgres branch delete), wait for one to expire, or upgrade the plan.").WithDocs("https://gregale.dev/docs/postgres#branches")
 	case errors.Is(err, managedpostgres.ErrUsageLimitReached):
 		problem = problem.WithHint(managedpostgres.UsageLimitHint).WithDocs("https://gregale.dev/docs/managed-postgres")
 	case errors.Is(err, managedpostgres.ErrQuotaExceeded):

@@ -150,3 +150,47 @@ func TestPostgresStorePlanExcessNotices(t *testing.T) {
 		t.Fatalf("after lifting = %+v, %v; want none", notices, err)
 	}
 }
+
+// ADR-20261110184700: the deletion clock carries the date the linked email
+// named, and only a notice whose email named none is restarted.
+func TestPostgresStorePlanExcessDeletionClock(t *testing.T) {
+	store, pool, ctx, accountID := postgresStoreFixture(t)
+	at := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	dated := postgresReadyDatabase(t, store, accountID, "plan-dated", at)
+	shadowed := postgresReadyDatabase(t, store, accountID, "plan-shadowed", at.Add(time.Minute))
+	fresh := postgresReadyDatabase(t, store, accountID, "plan-fresh", at.Add(2*time.Minute))
+	ids := []string{dated.ID, shadowed.ID, fresh.ID}
+	suspended := map[string]string{dated.ID: PlanExcessDatabaseLimit, shadowed.ID: PlanExcessDatabaseLimit}
+	if _, err := store.SyncPlanExcessNotices(ctx, ids, suspended, at); err != nil {
+		t.Fatal(err)
+	}
+	deleteAt := at.Add(api.ManagedPostgresPlanExcessDeleteAfter)
+	// As the mail outbox links an email: dated named a date, shadowed none.
+	if _, err := pool.Exec(ctx, "UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=gen_random_uuid(),delete_at=$2 WHERE database_id=$1", dated.ID, deleteAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=gen_random_uuid() WHERE database_id=$1", shadowed.ID); err != nil {
+		t.Fatal(err)
+	}
+	suspended[fresh.ID] = PlanExcessDatabaseLimit
+	if _, err := store.SyncPlanExcessNotices(ctx, ids, suspended, at.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	clocks, err := store.PlanExcessSince(ctx, ids)
+	if err != nil || len(clocks) != 3 || !clocks[dated.ID].DeleteAt.Equal(deleteAt) || !clocks[shadowed.ID].DeleteAt.IsZero() {
+		t.Fatalf("clocks = %+v, %v", clocks, err)
+	}
+	now := at.Add(2 * time.Hour)
+	// fresh is unmailed but inside its window: left for the mail pass.
+	if n, err := store.RearmPlanExcessNotices(ctx, ids, now, now.Add(-api.InternalMailManagedPostgresPlanExcessTTL)); err != nil || n != 1 {
+		t.Fatalf("rearmed %d, %v; want shadowed only", n, err)
+	}
+	clocks, _ = store.PlanExcessSince(ctx, ids)
+	if !clocks[shadowed.ID].RecordedAt.Equal(now) || !clocks[dated.ID].RecordedAt.Equal(at) || !clocks[fresh.ID].RecordedAt.Equal(at.Add(time.Hour)) {
+		t.Fatalf("clocks after rearm = %+v", clocks)
+	}
+	notices, err := store.UnmailedPlanExcessNotices(ctx, now.Add(-api.InternalMailManagedPostgresPlanExcessTTL), 10)
+	if err != nil || len(notices) != 2 {
+		t.Fatalf("unmailed after rearm = %+v, %v; want shadowed and fresh", notices, err)
+	}
+}

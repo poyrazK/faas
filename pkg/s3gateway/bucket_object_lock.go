@@ -128,7 +128,7 @@ func (h *Handler) putBucketObjectLock(w http.ResponseWriter, r *http.Request, re
 }
 
 func (h *Handler) bucketObjectLockError(w http.ResponseWriter, r *http.Request, req requestContext, err error) {
-	if h.configurationAdmissionError(w, r, req, err) {
+	if objectLockPlanError(w, r, req, err) || h.configurationAdmissionError(w, r, req, err) {
 		return
 	}
 	if h.writeAWSChunkedError(w, r, req.requestID, err) {

@@ -155,3 +155,33 @@ func TestPGManagedPostgresPlanExcessSkipsWhatItMustNotMail(t *testing.T) {
 		})
 	}
 }
+
+// ADR-20261110184700: linking the email stores the deletion date it names on
+// the notice, so the cap sweep deletes only on a date the owner was mailed.
+func TestPGManagedPostgresPlanExcessStoresTheMailedDeletionDate(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for _, tc := range []struct {
+		name     string
+		deleteAt time.Time
+	}{
+		{"with a deletion date", now.Add(api.ManagedPostgresPlanExcessDeleteAfter)},
+		{"without one", time.Time{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := planExcessFixture(t)
+			id := account(t, f)
+			notice := planExcessNotice(t, f, "database_limit", "development", now.Add(-time.Minute))
+			notice.DeleteAt = tc.deleteAt
+			if err := f.service.NoticeManagedPostgresPlanExcess(t.Context(), id, notice); err != nil {
+				t.Fatal(err)
+			}
+			var stored *time.Time
+			if err := f.pool.QueryRow(t.Context(), "SELECT delete_at FROM managed_postgres_plan_excess_notices WHERE database_id=$1", notice.DatabaseID).Scan(&stored); err != nil {
+				t.Fatal(err)
+			}
+			if tc.deleteAt.IsZero() != (stored == nil) || (stored != nil && !stored.Equal(tc.deleteAt)) {
+				t.Fatalf("stored delete_at %v; want %v", stored, tc.deleteAt)
+			}
+		})
+	}
+}
