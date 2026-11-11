@@ -11,8 +11,11 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -189,7 +192,26 @@ func TestMetalWakeAfterMemoryPeerSharing(t *testing.T) {
 		}
 		return took
 	}
-	const cycles = 5
+	// FAAS_MEMORY_SHARE_BENCH_CYCLES raises the restores per measurement for
+	// a timing comparison; the default keeps the test short.
+	cycles := 5
+	if raw := os.Getenv("FAAS_MEMORY_SHARE_BENCH_CYCLES"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			t.Fatalf("FAAS_MEMORY_SHARE_BENCH_CYCLES=%q: want a positive integer", raw)
+		}
+		cycles = n
+	}
+	// extents logs how many extents the memory file has: every shared range
+	// is one, and a restore reads the file in that layout.
+	extents := func(label, path string) {
+		out, err := exec.Command("filefrag", path).CombinedOutput()
+		if err != nil {
+			t.Logf("%s: filefrag unavailable: %v", label, err)
+			return
+		}
+		t.Logf("%s: %s", label, strings.TrimSpace(string(out)))
+	}
 	measure := func(label string, g guest) {
 		for _, cold := range []bool{true, false} {
 			var took []time.Duration
@@ -209,6 +231,7 @@ func TestMetalWakeAfterMemoryPeerSharing(t *testing.T) {
 
 	a := park("peer-a")
 	b := park("peer-b")
+	extents("unshared", b.mem)
 	measure("unshared", b)
 
 	digestA, digestB := fileDigest(t, a.mem), fileDigest(t, b.mem)
@@ -219,6 +242,8 @@ func TestMetalWakeAfterMemoryPeerSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("share memory with images: %v", err)
 	}
+	extents("shared with images", b.mem)
+	measure("shared with images", b)
 	peerShared, err := storage.ShareMemoryWithPeers(ctx, b.mem, []string{a.mem})
 	if err != nil {
 		t.Fatalf("share memory with the other memory file: %v", err)
@@ -233,7 +258,8 @@ func TestMetalWakeAfterMemoryPeerSharing(t *testing.T) {
 	t.Logf("memory file: %d bytes logical, %d allocated; %d shared with images, %d with the other memory file",
 		size, allocated, imageShared, peerShared)
 
-	measure("shared", b)
+	extents("shared with images and peer", b.mem)
+	measure("shared with images and peer", b)
 	// The file that holds the shared blocks restores too.
 	wake(a, true)
 	if fileDigest(t, a.mem) != digestA || fileDigest(t, b.mem) != digestB {
