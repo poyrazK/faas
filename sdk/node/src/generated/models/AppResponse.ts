@@ -67,6 +67,10 @@ export type AppResponse = {
    * Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
    */
   function_concurrency?: number;
+  /**
+   * Names this function's typed client may call and their app slugs (ADR-20261111150000), set by functions-project deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy.
+   */
+  function_callables?: Record<string, string>;
   min_instances: number;
   /**
    * Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted lifecycle remains active until the first deploy.

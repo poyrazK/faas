@@ -112,6 +112,10 @@ export type UpdateAppRequest = {
    */
   function_concurrency?: number | null;
   /**
+   * Replaces the names a function's typed client may call and their app slugs (ADR-20261111150000); {} clears them. Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only.
+   */
+  function_callables?: any | null;
+  /**
    * Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment.
    */
   request_rate_limit_rps?: number | null;

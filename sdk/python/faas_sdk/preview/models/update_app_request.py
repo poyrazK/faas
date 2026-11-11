@@ -145,6 +145,7 @@ if TYPE_CHECKING:
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
     from ..models.service_replicas import ServiceReplicas
     from ..models.tracing_config import TracingConfig
+    from ..models.update_app_request_function_callables_type_0 import UpdateAppRequestFunctionCallablesType0
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
 
@@ -267,6 +268,9 @@ class UpdateAppRequest:
     function_concurrency: int | None | Unset = UNSET
     """Changes how many requests one Node or Python function worker serves at once. 0 or 1 restores one request per
     worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy."""
+    function_callables: None | Unset | UpdateAppRequestFunctionCallablesType0 = UNSET
+    """Replaces the names a function's typed client may call and their app slugs (ADR-20261111150000); {} clears
+    them. Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only."""
     request_rate_limit_rps: int | None | Unset = UNSET
     """Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values
     may only tighten the plan ceiling. Does not create a deployment."""
@@ -424,6 +428,7 @@ class UpdateAppRequest:
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
+        from ..models.update_app_request_function_callables_type_0 import UpdateAppRequestFunctionCallablesType0
 
         deploy_settings_condition: dict[str, Any] | Unset = UNSET
         if not isinstance(self.deploy_settings_condition, Unset):
@@ -624,6 +629,14 @@ class UpdateAppRequest:
             function_concurrency = UNSET
         else:
             function_concurrency = self.function_concurrency
+
+        function_callables: dict[str, Any] | None | Unset
+        if isinstance(self.function_callables, Unset):
+            function_callables = UNSET
+        elif isinstance(self.function_callables, UpdateAppRequestFunctionCallablesType0):
+            function_callables = self.function_callables.to_dict()
+        else:
+            function_callables = self.function_callables
 
         request_rate_limit_rps: int | None | Unset
         if isinstance(self.request_rate_limit_rps, Unset):
@@ -976,6 +989,8 @@ class UpdateAppRequest:
             field_dict["request_timeout_s"] = request_timeout_s
         if function_concurrency is not UNSET:
             field_dict["function_concurrency"] = function_concurrency
+        if function_callables is not UNSET:
+            field_dict["function_callables"] = function_callables
         if request_rate_limit_rps is not UNSET:
             field_dict["request_rate_limit_rps"] = request_rate_limit_rps
         if request_rate_limit_burst is not UNSET:
@@ -1084,6 +1099,7 @@ class UpdateAppRequest:
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
         from ..models.service_replicas import ServiceReplicas
         from ..models.tracing_config import TracingConfig
+        from ..models.update_app_request_function_callables_type_0 import UpdateAppRequestFunctionCallablesType0
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
 
@@ -1608,6 +1624,23 @@ class UpdateAppRequest:
             return cast(int | None | Unset, data)
 
         function_concurrency = _parse_function_concurrency(d.pop("function_concurrency", UNSET))
+
+        def _parse_function_callables(data: object) -> None | Unset | UpdateAppRequestFunctionCallablesType0:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                function_callables_type_0 = UpdateAppRequestFunctionCallablesType0.from_dict(data)
+
+                return function_callables_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | UpdateAppRequestFunctionCallablesType0, data)
+
+        function_callables = _parse_function_callables(d.pop("function_callables", UNSET))
 
         def _parse_request_rate_limit_rps(data: object) -> int | None | Unset:
             if data is None:
@@ -2211,6 +2244,7 @@ class UpdateAppRequest:
             retry_policy=retry_policy,
             request_timeout_s=request_timeout_s,
             function_concurrency=function_concurrency,
+            function_callables=function_callables,
             request_rate_limit_rps=request_rate_limit_rps,
             request_rate_limit_burst=request_rate_limit_burst,
             service_replicas=service_replicas,
