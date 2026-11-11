@@ -983,7 +983,9 @@ type Manager struct {
 	// instance whether or not they hold mu.
 	adoption atomic.Pointer[adoptionWriter]
 	// adoptAdmittedRuntimes: see WithAdoptAdmittedRuntimes.
-	adoptAdmittedRuntimes      bool
+	adoptAdmittedRuntimes bool
+	// flatTenantCgroups: see WithFlatTenantCgroups.
+	flatTenantCgroups          bool
 	resourceLinks              map[string]ownedResourceLink
 	linkProbe                  func(string, int) (*resourceLinkIdentity, error)
 	linkContext                func() (*resourceMountIdentity, error)
@@ -4436,6 +4438,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// cleans up via the same defer that releases the slot.
 	lease.Plan = req.Plan
 	lease.IsBuilder = false
+	m.stampCgroupParent(&lease)
 
 	// Stamp the per-instance memory cap (CLAUDE.md §11
 	// 'memory.max = plan + 8 MB'). Without this, l.MemoryMaxMiB
@@ -4873,6 +4876,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.Networkless = req.ExecutionOnly
 	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
 	lease.IsBuilder = req.ExportDir != ""
+	m.stampCgroupParent(&lease)
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
 		lease.BuildTimeoutSec = api.BuildTimeoutSeconds
@@ -5419,10 +5423,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		// because the VM is already up and leaking a host-side cap is
 		// strictly better than failing the wake.
 		if len(req.Sidecars) > 0 {
-			parentCgroup := ParentCgroupFor(req.Plan)
-			if lease.IsBuilder {
-				parentCgroup = BuilderCgroupParent
-			}
+			parentCgroup := vmCgroupParent(lease)
 			parentScope := filepath.Join(cgroupRoot, parentCgroup, PerInstanceScope(req.Instance))
 			// Main workload: matches the per-instance memory.max (the
 			// customer pays for the plan RAM, not the +8 MB overhead).

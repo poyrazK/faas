@@ -1862,7 +1862,7 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 // child is kept in sync for accurate cgroup inspection even though guest
 // processes do not join that host-side leaf.
 func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec, configuredMillicores int) error {
-	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	parentScope := filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance))
 	value, err := appCPUMax(l.Plan, configuredMillicores)
 	if err != nil {
 		return err
@@ -1901,7 +1901,7 @@ func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores i
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	scope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	scope := filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance))
 	revert := v.trackFenceValue(l.Instance, fenceCPUMax, value)
 	if err := writeCPUMaxValueTo(scope, value); err != nil {
 		revert()
@@ -4240,10 +4240,7 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 	if err := v.sweepMaterialised(l.Instance); err != nil {
 		return err
 	}
-	parent := ParentCgroupFor(l.Plan)
-	if l.IsBuilder {
-		parent = BuilderCgroupParent
-	}
+	parent := vmCgroupParent(l)
 	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(l.Instance))
 	if err := os.RemoveAll(scope); err != nil {
 		return fmt.Errorf("vmm: remove cgroup scope %s: %w", l.Instance, err)
@@ -5620,10 +5617,11 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	execFile = v.residentExecutable(FirecrackerBin, execFile)
 	argv := append(JailerCommand(JailerSpec{
 		Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns, ExecFile: execFile,
-		Plan:        l.Plan,
-		Networkless: l.Networkless,
-		IsBuilder:   l.IsBuilder,
-		CPUWeight:   l.CPUWeight,
+		Plan:         l.Plan,
+		ParentCgroup: l.cgroupParent,
+		Networkless:  l.Networkless,
+		IsBuilder:    l.IsBuilder,
+		CPUWeight:    l.CPUWeight,
 		MemoryMaxBytes: func() int64 {
 			if l.MemoryMaxMiB < 1 {
 				return 0

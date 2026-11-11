@@ -128,6 +128,12 @@ type Lease struct {
 	// map lookup. Empty for pre-issue-301 callers (legacy 2-level
 	// hierarchy); see ParentCgroupFor for the empty fallback.
 	Plan api.Plan
+	// cgroupParent is the parent cgroup a tenant VM was launched under:
+	// CgroupMountRoot when vmmd runs flat_tenant_cgroups
+	// (ADR-20261109172421 step 6.5), else empty for its plan's sub-slice.
+	// Unexported, so neither journal's lease record changes; a lease rebuilt
+	// from a record finds its parent again (tenantCgroupParent).
+	cgroupParent string
 	// IsBuilder selects the dedicated faas-cp-build.slice cgroup for an
 	// ephemeral builder VM. Builder memory must not be charged to vmmd's
 	// supervisor cgroup or to tenant RAM.

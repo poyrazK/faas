@@ -291,3 +291,31 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// adr: 20261109172421 — step 6.5: a VM launched flat is a leaf of the
+// tenant slice itself, listed without a plan; the plan sub-slices and pins
+// beside it are not VMs.
+func TestInstancesListsFlatTenantLeaves(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("cgroup v2 is Linux-only")
+	}
+	root := withFakeRoot(t)
+	for _, dir := range []string{
+		filepath.Join(fcvm.ParentCgroupFor(api.PlanHobby), "vm-alpha"),
+		filepath.Join(fcvm.CgroupMountRoot, "vm-flat"),
+		filepath.Join(fcvm.CgroupMountRoot, "faas-tenant-fence.slice"),
+		filepath.Join(fcvm.CgroupMountRoot, "faas-tenant-ibridge.slice"),
+	} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := New(root, nil).Instances()
+	if err != nil {
+		t.Fatalf("Instances: %v", err)
+	}
+	want := []InstanceInfo{{Instance: "vm-alpha", Plan: api.PlanHobby}, {Instance: "vm-flat"}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("Instances = %+v, want %+v", got, want)
+	}
+}
