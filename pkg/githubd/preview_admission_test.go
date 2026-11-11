@@ -11,6 +11,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 )
 
@@ -99,7 +100,7 @@ func TestHandlePullRequest_PreviewDatabaseProvidesDatastoreValue(t *testing.T) {
 		return []string{"DATABASE_URL"}, nil
 	}
 	allowed := false
-	svc.CapabilityAllowed = func(capability, _ string) bool {
+	svc.CapabilityAllowed = func(capability string, _ platformflags.Subject) bool {
 		return capability != PreviewDatabasesCapability || allowed
 	}
 	if _, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(42, strings.Repeat("a", 40))); !IsIgnored(err) {

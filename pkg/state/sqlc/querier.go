@@ -4864,13 +4864,16 @@ type Querier interface {
 	// provider, so a step that was sent but not recorded is sent again with the
 	// same target instead of a new one charged on top of it.
 	ManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ManagedPostgresOveragePendingParams) (ManagedPostgresOveragePendingRow, error)
+	// ADR-20261025094915 amendment 2026-11-11: the subject's stored choice; no
+	// row means it never chose and its plan's default applies.
+	ManagedPostgresOverageSetting(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	// ADR-20261031110037: managed PostgreSQL overage charges delivered per
 	// billing provider, usage subject and UTC month.
 	// Subjects that may owe overage for the month: those that reached the
 	// compute allowance (as the cap sweep recorded it), those with overage on,
 	// whose storage past the pool is billed (ADR-20261031110037 amendment 2), and
 	// those already charged or with a reserved step awaiting reconciliation.
-	ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, periodStart pgtype.Timestamptz) ([]ManagedPostgresOverageSubjectsRow, error)
+	ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, arg ManagedPostgresOverageSubjectsParams) ([]ManagedPostgresOverageSubjectsRow, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
 	ManagedPostgresPersonalDatabaseReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalDatabaseReferenceParams) (bool, error)
 	// ADR-20261031123259: whether a database of the reservation owner holds the
@@ -7648,6 +7651,9 @@ type Querier interface {
 	SelectSourceBuildRootfs(ctx context.Context, db DBTX, arg SelectSourceBuildRootfsParams) error
 	ServiceCapacityPlacement(ctx context.Context, db DBTX) ([]byte, error)
 	ServiceCapacityProtection(ctx context.Context, db DBTX) ([]byte, error)
+	// The apps of the PR preview sets that hold an app. A preview of an app bound
+	// without a project calls only these (ADR-20261105090226).
+	ServicePolicyPRPreviewSetMemberIDs(ctx context.Context, db DBTX, appID string) ([]string, error)
 	// Two IDs suffice to refuse an ambiguous service name, as production does.
 	ServicePolicyPreviewAppIDs(ctx context.Context, db DBTX, arg ServicePolicyPreviewAppIDsParams) ([]pgtype.UUID, error)
 	ServiceProjectReleaseStages(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ProjectReleaseStage, error)
@@ -7696,6 +7702,8 @@ type Querier interface {
 	SetCustomerOperationJobIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationJobIdentityParams) (int64, error)
 	SetCustomerOperationWorkflowIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationWorkflowIdentityParams) (int64, error)
 	SetDatabaseVMAlwaysOn(ctx context.Context, db DBTX, arg SetDatabaseVMAlwaysOnParams) (int64, error)
+	SetDatabaseVMComputeQuota(ctx context.Context, db DBTX, arg SetDatabaseVMComputeQuotaParams) (int64, error)
+	SetDatabaseVMHeld(ctx context.Context, db DBTX, arg SetDatabaseVMHeldParams) (int64, error)
 	// imaged records whether it stamped a before_checkpoint hook into the
 	// deployment's guest manifest; NULL stays for deployments built earlier.
 	SetDeploymentBeforeCheckpointHook(ctx context.Context, db DBTX, arg SetDeploymentBeforeCheckpointHookParams) (int64, error)

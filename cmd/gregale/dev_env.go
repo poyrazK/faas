@@ -115,6 +115,16 @@ func devEnvFileFingerprint(path string) ([sha256.Size]byte, error) {
 }
 
 func readDevEnvFile(path string) ([]secretsPair, [sha256.Size]byte, error) {
+	pairs, fingerprint, err := readDevEnvFileEntries(path)
+	if err == nil && len(pairs) == 0 {
+		return nil, [sha256.Size]byte{}, fmt.Errorf("env file contains no KEY=VALUE entries")
+	}
+	return pairs, fingerprint, err
+}
+
+// Local processes may intentionally clear the entire file. Remote secret sync
+// keeps its nonempty-file guard in readDevEnvFile.
+func readDevEnvFileEntries(path string) ([]secretsPair, [sha256.Size]byte, error) {
 	data, err := readDevEnvBytes(path)
 	if err != nil {
 		return nil, [sha256.Size]byte{}, err
@@ -138,9 +148,6 @@ func readDevEnvFile(path string) ([]secretsPair, [sha256.Size]byte, error) {
 		}
 		seen[pair.Key] = struct{}{}
 		pairs = append(pairs, pair)
-	}
-	if len(pairs) == 0 {
-		return nil, [sha256.Size]byte{}, fmt.Errorf("env file contains no KEY=VALUE entries")
 	}
 	fingerprint, err := devEnvFileFingerprint(path)
 	if err != nil {
