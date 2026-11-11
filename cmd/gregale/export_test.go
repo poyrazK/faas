@@ -2819,6 +2819,18 @@ func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
 	return applyFunctionHookLifecycle(ctx, client, slug, sourceDir, handler)
 }
 
+// InvalidAlertMetricError exposes the unknown --metric error (H32-18).
+var InvalidAlertMetricError = invalidAlertMetricError
+var RealtimeClientURL = realtimeClientURL
+var CmdEdgeRuleListsRm = cmdEdgeRuleListsRm
+var CmdAppScaling = cmdAppScaling
+var CmdEventsSchemaRollout = cmdEventsSchemaRollout
+var CmdOrgsSeatUsage = cmdOrgsSeatUsage
+
+type CustomerOperationTypesResult = customerOperationTypesResult
+
+var CustomerOperationTypesMessage = customerOperationTypesMessage
+
 // WorkerNoInstancesLine exposes the empty worker pool explanation.
 var WorkerNoInstancesLine = workerNoInstancesLine
 

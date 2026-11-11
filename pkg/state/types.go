@@ -1306,6 +1306,10 @@ type DeployToken struct {
 	Status        string
 	RevokedAt     *time.Time
 	RotatedFromID *string
+	// CreatedByAccountID is the member who minted or last rotated the
+	// token; "" for a token minted before the column existed. A token
+	// whose minter differs from AccountID authenticates as the minter.
+	CreatedByAccountID string
 }
 
 // App is a deployed application (or function). The Manifest carries the

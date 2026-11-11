@@ -1331,7 +1331,7 @@ var cliCommands = []cliCommand{
 			{Name: "add", Short: "Add an alert rule", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "name", Short: "rule name (3..120 chars)", Req: true, Value: "NAME"},
-				{Name: "metric", Short: "metric; MCP task gauges: mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale (includes min=0 observer heartbeat)", Value: "METRIC"},
+				{Name: "metric", Short: "metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat)", Value: "METRIC", ClosedSet: api.AllowedAlertRuleMetrics},
 				{Name: "comparison", Short: "gt|gte|lt|lte|above_baseline|below_baseline", Value: "OP"},
 				{Name: "threshold", Short: "threshold value", Value: "N"},
 				{Name: "window-spec", Short: "5m|15m|1h|6h|24h|7d|15d", Value: "WINDOW"},
@@ -1367,7 +1367,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug (linked app or picker in interactive mode)", Value: "slug"},
 				{Name: "name", Short: "rule name (3..120 chars)", Value: "NAME"},
 				{Name: flagNameEnabled, Short: "turn the rule on or off (--enabled=false pauses it)", Bool: true},
-				{Name: "metric", Short: "metric", Value: "METRIC"},
+				{Name: "metric", Short: "metric", Value: "METRIC", ClosedSet: api.AllowedAlertRuleMetrics},
 				{Name: "comparison", Short: "gt|gte|lt|lte|above_baseline|below_baseline", Value: "OP"},
 				{Name: "threshold", Short: "threshold value", Value: "N"},
 				{Name: "window-spec", Short: "5m|15m|1h|6h|24h|7d|15d", Value: "WINDOW"},
@@ -3247,7 +3247,9 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug to attach to", Req: true, Value: "SLUG"},
 				{Name: "environment", Short: "project environment to route this domain to", Value: "SLUG"},
 			}},
-			{Name: subRm, Short: "Remove a custom domain binding", Positionals: []string{"<domain>"}},
+			{Name: subRm, Short: "Remove a custom domain binding", Positionals: []string{"<domain>"}, Flags: []cliFlag{
+				{Name: "yes", Bool: true, Short: "confirm removal without prompting"},
+			}},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default", Positionals: []string{"<domain>"}},
 			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status", Notes: []string{"Exits nonzero while pending.", "Checks ownership and routing immediately; --wait waits for HTTPS readiness."}, Positionals: []string{"<domain>"}, Flags: []cliFlag{
 				{Name: "wait", Short: "wait for verified ownership, correct routing, and HTTPS"},
@@ -4022,7 +4024,7 @@ var cliCommands = []cliCommand{
 				{Name: "replace-file", Short: "replace every item from a file, or - for stdin", Value: "path|-"},
 				{Name: "description", Short: "new description", Value: "TEXT"},
 			}},
-			{Name: subRm, Short: "Delete a list no rule references", Positionals: []string{"<name>"}},
+			{Name: subRm, Short: "Delete a list no rule references", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "yes", Short: "accepted for consistency with edge rule delete; does not prompt", Bool: true}}},
 		},
 	},
 	{
@@ -4189,6 +4191,7 @@ var cliCommands = []cliCommand{
 				"gregale edge rule update RULE_ID --kind validate --validate-schema @schema.json --validate-mode block",
 				"gregale edge rule update RULE_ID --kind validate --validate-mode observe",
 			}, Flags: []cliFlag{
+				{Name: "app", Short: "app the rule belongs to (optional; checked before updating)", Value: "SLUG"},
 				{Name: "match-host", Short: "new host to match; @app covers every host the app serves", Value: "HOST"},
 				{Name: "match-path", Short: "new path to match", Value: "PATH"},
 				{Name: "match-method", Short: "replacement HTTP method (repeatable)", Value: "METHOD", Repeatable: true},
@@ -5383,8 +5386,8 @@ var cliCommands = []cliCommand{
 				}},
 			}},
 			{Name: "ls", Aliases: []string{"list"}, Short: "List orgs"},
-			{Name: "create", Short: "Create an org", Flags: []cliFlag{
-				{Name: "slug", Short: "org slug (lowercase alphanumeric + dashes)", Value: "SLUG", Req: true},
+			{Name: "create", Short: "Create an org", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+				{Name: "slug", Short: "org slug, or the first argument (lowercase alphanumeric + dashes)", Value: "SLUG"},
 				{Name: "name", Short: "display name", Value: "TEXT", Req: true},
 			}},
 			{Name: "info", Short: "Show one org", Positionals: []string{"<slug>"}},
@@ -6337,6 +6340,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-connection-age-seconds", Short: "new connection age cap", Value: "SECONDS"},
 				{Name: "enable", Short: "enable the endpoint"},
 				{Name: "disable", Short: "disable the endpoint"},
+				{Name: "enabled", Short: "--enabled or --enabled=false, as on create", Bool: true, ClosedSet: []string{"true", "false"}},
 			}},
 			{Name: "delete", Short: "Delete a managed realtime endpoint", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{{Name: "yes", Short: "confirm the deletion", Req: true, Bool: true}}, FlagsAfterPositionals: true},
 			{Name: "connections", Short: "List live connections for an endpoint", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{
@@ -6520,7 +6524,11 @@ var cliCommands = []cliCommand{
 			{Name: "info", Short: "Show a project and its workloads", Positionals: []string{"<slug>"}},
 			{Name: "environments", Aliases: []string{"envs"}, Short: "Manage project environments, releases and promotions", Notes: []string{"Qualify binds probes to release, config and secret revisions."}, Subcommands: []cliSub{
 				{Name: "list", Aliases: []string{"ls"}, Short: "List environments", Positionals: []string{"<project-slug>"}},
-				{Name: "create", Short: "Create or clone an environment"},
+				{Name: "create", Short: "Create or clone an environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
+					{Name: "from", Short: "source environment to clone", Value: "ENV"},
+					{Name: "protected", Short: "protect the environment from promotion", Bool: true},
+					{Name: "share-resources", Short: "explicitly share managed database and object-storage data", Bool: true},
+				}},
 				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Req: true, Short: "confirm environment deletion"}}},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},

@@ -5034,6 +5034,7 @@
       "account_id",
       "app_id",
       "created_at",
+      "created_by_account_id",
       "expires_at",
       "id",
       "label",
