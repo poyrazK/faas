@@ -68,3 +68,48 @@ func TestHookLifecycleUpdate(t *testing.T) {
 		t.Fatal("a hook declared in code and in the app must be refused")
 	}
 }
+
+// Per-function hook timeouts (ADR-20261110190000 §7) come from the entry or
+// config in code, reach the lifecycle, and apply only to declared hooks.
+func TestFunctionHookTimeouts(t *testing.T) {
+	fsys := fstest.MapFS{
+		"functions/api/handler.js": {Data: []byte("export const config = { afterRestoreTimeoutMs: 1500 };\nexport default { async fetch() {}, afterRestore() {}, beforeSnapshot() {} };\n")},
+		"functions/web/handler.js": {Data: []byte("export async function handler() { return {}; }\n")},
+	}
+	m, _, err := ApplyInlineConfigFS(&Manifest{Functions: []FunctionSpec{
+		{Name: "api", Root: "functions/api", BeforeSnapshotTimeoutMS: 800},
+	}}, fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plans, err := m.PlanFunctionsFS(fsys, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := plans[0].Spec
+	if spec.AfterRestoreTimeoutMS != 1500 || spec.BeforeSnapshotTimeoutMS != 800 {
+		t.Fatalf("timeouts = before %d after %d, want 800 from yaml and 1500 from code", spec.BeforeSnapshotTimeoutMS, spec.AfterRestoreTimeoutMS)
+	}
+	after, before, changed, err := spec.HookLifecycleUpdate(nil, nil)
+	if err != nil || !changed || after.TimeoutMS != 1500 || before.TimeoutMS != 800 {
+		t.Fatalf("lifecycle = after %+v before %+v changed %v err %v", after, before, changed, err)
+	}
+	// A timeout change alone re-applies the hook.
+	_, before, changed, _ = spec.HookLifecycleUpdate(after, &api.BeforeCheckpointHook{Path: functionlifetime.FunctionBeforeSnapshotPath, TimeoutMS: 500})
+	if !changed || before == nil || before.TimeoutMS != 800 {
+		t.Fatalf("timeout change: before %+v changed %v", before, changed)
+	}
+	if _, _, changed, _ = spec.HookLifecycleUpdate(after, &api.BeforeCheckpointHook{Path: functionlifetime.FunctionBeforeSnapshotPath, TimeoutMS: 800}); changed {
+		t.Fatal("matching lifecycle must not change")
+	}
+
+	// A timeout for a hook the code does not declare is refused.
+	bad := &Manifest{Functions: []FunctionSpec{{Name: "web", Root: "functions/web", AfterRestoreTimeoutMS: 900}}}
+	if _, err := bad.PlanFunctionsFS(fsys, "shop"); err == nil {
+		t.Fatal("after_restore_timeout_ms without afterRestore must be refused")
+	}
+	// Above the lifecycle hook limit is refused.
+	if err := validateFunctionSettings("functions[0]", FunctionSpec{AfterRestoreTimeoutMS: 5000}, api.MustLimitsFor(api.PlanPro)); err == nil {
+		t.Fatal("after_restore_timeout_ms above 2000 must be refused")
+	}
+}

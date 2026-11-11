@@ -259,18 +259,42 @@ func (s *pgCore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStorag
 }
 
 func (s *pgCore) DueObjectInventories(ctx context.Context, limit int32) ([]ObjectBucket, error) {
-	if limit < 1 || limit > 100 {
-		return nil, ErrConflict
-	}
-	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, sqlc.ObjectInventoriesDueParams{ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), RowLimit: limit})
+	due, err := s.DueObjectInventoryQueue(ctx, limit, nil)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ObjectBucket, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, objectBucketFromSQL(r))
+	out := make([]ObjectBucket, 0, len(due))
+	for _, d := range due {
+		out = append(out, d.Bucket)
 	}
 	return out, nil
+}
+
+func (s *pgCore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string) ([]ObjectInventoryDue, error) {
+	if limit < 1 || limit > 100 {
+		return nil, ErrConflict
+	}
+	ids := make([]pgtype.UUID, 0, len(skip))
+	for _, id := range skip {
+		ids = append(ids, mustPgUUID(id))
+	}
+	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, sqlc.ObjectInventoriesDueParams{LongKeys: api.ObjectStorageInventoryLongListingKeys, ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), Skip: ids, RowLimit: limit})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ObjectInventoryDue, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ObjectInventoryDue{Bucket: objectBucketFromSQL(r.ObjectBucket), Long: r.LongListing})
+	}
+	return out, nil
+}
+
+func (s *pgCore) ObjectInventoryBacklog(ctx context.Context) (ObjectInventoryBacklog, error) {
+	r, err := sqlc.New().ObjectInventoryBacklog(ctx, s.pool, sqlc.ObjectInventoryBacklogParams{ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), ProgressWindowSeconds: int64(api.ObjectInventoryScanProgressWindow / time.Second)})
+	if err != nil {
+		return ObjectInventoryBacklog{}, err
+	}
+	return ObjectInventoryBacklog{DueBuckets: r.DueBuckets, OldestObservationAge: time.Duration(max(r.OldestAgeSeconds, 0) * float64(time.Second))}, nil
 }
 
 func (s *pgCore) ClaimObjectInventory(ctx context.Context, bucket, token string) error {

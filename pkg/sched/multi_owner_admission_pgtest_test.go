@@ -61,7 +61,7 @@ func newOwnerFleet(t *testing.T) *ownerFleet {
 		}
 	}
 	perInstanceMB := ownerFleetAppRAMMB + api.PerVMOverheadMB
-	vcpus := api.MustLimitsFor(api.PlanPro).VCPU
+	vcpus := 2 // vCPU budget units per instance in the vCPU-bound node
 	f := &ownerFleet{pool: pool, store: store}
 	for i, shape := range []struct{ ceilingMB, vcpuBudget, vpcpus int }{
 		{ceilingMB: 4 * perInstanceMB, vcpuBudget: 160, vpcpus: 4},        // RAM: 4 instances
@@ -347,7 +347,7 @@ func TestPropertyOwnersAdmittingTogetherKeepNodeBudgets(t *testing.T) {
 		t.Fatal(err)
 	}
 	perInstanceMB := int64(ownerFleetAppRAMMB + api.PerVMOverheadMB)
-	vcpus := int64(api.MustLimitsFor(api.PlanPro).VCPU)
+	vcpus := int64(2) // as in the fleet setup
 	for _, n := range f.nodes {
 		u := used[n.ID]
 		full := u.ramMB+perInstanceMB > int64(n.AdmissionCeilingMB) || u.vcpu+vcpus > int64(n.VCPUBudget) ||

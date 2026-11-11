@@ -436,7 +436,13 @@ cannot also declare that hook in code; the deploy names the conflict.
 Lifecycle settings are app-wide, so only a production deploy changes them.
 
 The hooks have the [lifecycle hook contract](cold-wake.md#refresh-application-state-after-restore):
-`beforeSnapshot` and `afterRestore` have 500 ms. A failing `afterRestore`
+`beforeSnapshot` and `afterRestore` have 500 ms each. In a functions project,
+an entry (or its config in code) can give them up to 2 seconds with
+`before_snapshot_timeout_ms` and `after_restore_timeout_ms`
+(`beforeSnapshotTimeoutMs` and `afterRestoreTimeoutMs` in Node,
+`before_snapshot_timeout_ms` in Python's `@function`). Unlike other entry
+keys, an omitted timeout means the 500 ms default, and setting one for a hook
+the handler does not declare is refused. A failing `afterRestore`
 rejects the restored instance and Gregale cold-boots a fresh one. A failing
 `beforeSnapshot` on the first capture fails the deployment with
 `before_checkpoint_failed`, and declaring it turns off warm-tier snapshot

@@ -60,9 +60,9 @@ type UploadDeployOptions struct {
 // UploadStartRequest is the JSON body of POST /v1/uploads. total_size
 // is required and must be ≤ the per-plan SourceTarballMaxMB cap (Free
 // / Hobby 100 MB, Pro / Scale 250 MB); the handler returns 413 +
-// source_too_large otherwise. sha256_hex is recorded for the
-// build_provenance audit row only — the server does NOT re-verify it
-// at commit time (ADR-115 trust boundary).
+// source_too_large otherwise. sha256_hex is optional; when set it must
+// be 64 hex digits, and commit refuses an archive whose SHA-256 differs
+// (410 upload_checksum_mismatch; the session is cancelled).
 type UploadStartRequest struct {
 	AppSlug       string               `json:"app_slug"`
 	TotalSize     int64                `json:"total_size"`

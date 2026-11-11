@@ -87,12 +87,25 @@ type ManagedPostgresDatabase struct {
 	// database once the account has room; otherwise its delete is scheduled
 	// at this time.
 	RestoreSlotUntil string `json:"restore_slot_until,omitempty"`
+	// ExpiresAt is set on a restore made with ttl_seconds (a branch;
+	// ADR-20261106103654): its bindings are revoked and it is purged then.
+	ExpiresAt string `json:"expires_at,omitempty"`
 	// PlanExcess is set while the plan no longer includes the database and
 	// it is suspended (ADR-20261102125208): database_limit when it ranks
 	// past the plan's database limit, oldest first, or service_class when
 	// the plan does not include its class. Upgrading, deleting a database
 	// or resizing to an included class resumes it.
 	PlanExcess string `json:"plan_excess,omitempty"`
+	// Hold says why the platform stops this database's compute and refuses
+	// its connections while its state stays ready (ADR-20261110160000
+	// amendment 2026-11-10): compute_ceiling (the account used its monthly
+	// compute ceiling), egress (its apps and databases sent the plan's
+	// egress allowance), inactive (the account is suspended), plan_excess
+	// (see PlanExcess) or preview (a PR preview database once the account
+	// used 80% of its compute). Omitted while nothing holds it. It is read
+	// from the same rules as the cap sweep, which applies them within a few
+	// minutes.
+	Hold string `json:"hold,omitempty"`
 	// RestoreRange is the span a point-in-time restore from this database
 	// can target now; absent while it cannot be restored from.
 	RestoreRange *ManagedPostgresRestoreRange `json:"restore_range,omitempty"`
@@ -180,7 +193,41 @@ type ManagedPostgresUsageResponse struct {
 	// ComputeSuspendedAt is when the cap suspended the databases this month,
 	// present while compute_cap_state is suspended.
 	ComputeSuspendedAt *time.Time `json:"compute_suspended_at,omitempty"`
+	// The plan's monthly egress allowance, shared by the account's apps and
+	// databases (ADR-20261110160000): EgressBytes is what the databases sent,
+	// AppEgressBytes what the apps sent. EgressState is healthy, warning (at
+	// 80% of the allowance), overage (past it while the account's egress
+	// overage election bills database egress, up to twice the allowance) or
+	// held (the databases are stopped until the month ends or the plan
+	// grows); held is reported only while caps are enforced. All three are
+	// omitted on a plan without an egress allowance.
+	EgressAllowanceBytes int64  `json:"egress_allowance_bytes,omitempty"`
+	AppEgressBytes       int64  `json:"app_egress_bytes,omitempty"`
+	EgressState          string `json:"egress_state,omitempty"`
+	// Hold is set while every database of the account is held:
+	// compute_ceiling, egress or inactive, as on each database.
+	Hold string `json:"hold,omitempty"`
 }
+
+// Why the platform holds a managed database (ManagedPostgresDatabase.Hold).
+const (
+	ManagedPostgresHoldComputeCeiling = "compute_ceiling"
+	ManagedPostgresHoldEgress         = "egress"
+	ManagedPostgresHoldInactive       = "inactive"
+	ManagedPostgresHoldPlanExcess     = "plan_excess"
+	ManagedPostgresHoldPreview        = "preview"
+)
+
+// ManagedPostgresUsageResponse.EgressState values.
+const (
+	ManagedPostgresEgressHealthy = "healthy"
+	ManagedPostgresEgressWarning = "warning"
+	ManagedPostgresEgressHeld    = "held"
+	// ManagedPostgresEgressOverage: past the allowance while the account's
+	// egress overage election bills database egress (ADR-20261110160000
+	// slice 3); held at twice the allowance.
+	ManagedPostgresEgressOverage = "overage"
+)
 
 // ManagedPostgresOverage is GET and PUT /v1/postgres/overage. With overage on,
 // a paid account's databases keep running past the monthly compute allowance
@@ -257,9 +304,22 @@ type CreateManagedPostgresDatabaseRequest struct {
 }
 
 type RestoreManagedPostgresDatabaseRequest struct {
-	Name        string `json:"name"`
-	PointInTime string `json:"point_in_time"`
+	Name string `json:"name"`
+	// PointInTime is an RFC3339 time inside the source's restore range.
+	// Empty restores from the latest point (ADR-20261106103654): apid's
+	// clock minus a couple of seconds.
+	PointInTime string `json:"point_in_time,omitempty"`
+	// TTLSeconds, when set, purges the copy that long after it is created
+	// (a branch; ADR-20261106103654). From ManagedPostgresBranchTTLMinSeconds
+	// to ManagedPostgresBranchTTLMaxSeconds.
+	TTLSeconds int64 `json:"ttl_seconds,omitempty"`
 }
+
+// The bounds of a restore's ttl_seconds (ADR-20261106103654).
+const (
+	ManagedPostgresBranchTTLMinSeconds = 300
+	ManagedPostgresBranchTTLMaxSeconds = 30 * 24 * 3600
+)
 
 type ManagedPostgresBinding struct {
 	ID                   string `json:"id"`

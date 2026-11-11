@@ -835,6 +835,34 @@ func (p UsagePolicy) LineItems(snapshot UsageSnapshot) ([]UsageLineItem, error) 
 	return items, nil
 }
 
+// lastObservedAt is the snapshot's reported observation time: the oldest
+// observation of a live database, since freshness waits on the slowest one.
+// A deleted database's coverage is final and never ages into a freshness
+// requirement, so its last observation (often months old) is left out; with
+// only deleted databases the newest observation is reported, and a live
+// database not observed yet reports none. Hunt 32 H32-4: `postgres usage`
+// said fresh with observed_at from a database deleted the month before.
+func lastObservedAt(databases []UsageProgress) time.Time {
+	var oldestLive, newestTerminal time.Time
+	live := false
+	for _, progress := range databases {
+		if progress.Terminal {
+			if progress.ObservedAt.After(newestTerminal) {
+				newestTerminal = progress.ObservedAt
+			}
+			continue
+		}
+		if !live || progress.ObservedAt.Before(oldestLive) {
+			oldestLive = progress.ObservedAt
+		}
+		live = true
+	}
+	if live {
+		return oldestLive
+	}
+	return newestTerminal
+}
+
 func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
 	if !policy.Enabled {
 		return false
@@ -1157,6 +1185,10 @@ type Database struct {
 	// slot past its owner's database limit (ADR-20261031123259): when it
 	// passes with no room, the database's delete is scheduled.
 	RestoreSlotUntil time.Time
+	// ExpiresAt is when a restore made with a TTL (a branch) ends
+	// (ADR-20261106103654): the branch sweep revokes its bindings and purges
+	// it. Zero for every other database.
+	ExpiresAt time.Time
 	// Previews is what this database gives PR preview environments
 	// (ADR-20261102123523); empty reads as off.
 	Previews PreviewMode

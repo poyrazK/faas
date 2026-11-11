@@ -8,7 +8,7 @@ App target: a command that takes `--app` and no other arguments also accepts the
 
 Earlier names: commands keep working under the names they had before the command tree (`gregale crons list` is `gregale cron list`); `gregale help --all --operator` lists them, and [The CLI command tree](cli-command-tree.md) maps each one.
 
-Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. With an agent key, put `--wait-for-approval` before the command to wait for a person to decide a request that needs approval, then retry it once. Company projects: `gregale --org <slug> <command>` sends project commands to that organization's projects; command-local `--org` options keep their meaning. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
+Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. With an agent key, put `--wait-for-approval` before the command to wait for a person to decide a request that needs approval, then retry it once, and `--agent-reason TEXT` (or `GREGALE_AGENT_REASON`) to tell that person what the request is for. Company projects: `gregale --org <slug> <command>` sends project commands to that organization's projects; command-local `--org` options keep their meaning. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
 
 | Command | What it does |
 |---|---|
@@ -682,12 +682,13 @@ Change a drain&#39;s URL or credential, or pause and resume it
 
 Delete a log drain
 
-`gregale logs drain delete [--app <SLUG>] --id <ID> [<slug>]`
+`gregale logs drain delete [--app <SLUG>] --id <ID> [--yes] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug |  |
 | `--id <ID>` | log drain id | required |
+| `--yes` | confirm deletion without prompting |  |
 
 
 ## status
@@ -2537,7 +2538,7 @@ Apply a saved service binding plan if reviewed settings are unchanged
 
 Evaluate recorded binding evidence and runtime freshness for CI
 
-`gregale app binding check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--release <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--queue-require <NAME=consumer_readiness>] [--require-bindings] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+`gregale app binding check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--release <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--queue-require <NAME=consumer_readiness>] [--require-bindings] [--ignore-manifest] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2552,6 +2553,7 @@ Evaluate recorded binding evidence and runtime freshness for CI
 | `--object-storage-require <PREFIX=read|write|read_write>` | require recorded storage operation evidence (repeatable; no writes) |  |
 | `--queue-require <NAME=consumer_readiness>` | require recorded push queue readiness (repeatable; connectivity remains partial) |  |
 | `--require-bindings` | fail when no active binding is in scope (default: warn and pass) |  |
+| `--ignore-manifest` | do not require the databases ./gregale.yaml declares for the app |  |
 | `--wait` | poll read-only inventory while probes, refreshes or application acknowledgements are pending |  |
 | `--timeout <DURATION>` | maximum waiting or policy-aware preflight time (default 5m) |  |
 | `--poll-interval <DURATION>` | inventory polling interval with --wait (default 1s) |  |
@@ -2728,7 +2730,7 @@ Change an app&#39;s settings
 | `--route-metrics` | enable per-route gateway metrics (plan eligibility is checked by the API) |  |
 | `--no-route-metrics` | disable per-route gateway metrics |  |
 | `--consumer-auth-mode <optional|required>` | end-customer API-key policy: optional\|required | one of `optional` · `required` |
-| `--only-declared-routes` | reject undeclared paths before waking the app (OpenAPI or explicit route list) |  |
+| `--only-declared-routes` | reject undeclared paths before waking the app (OpenAPI or explicit route list); the edge-answered health path stays reachable |  |
 | `--no-only-declared-routes` | disable the declared-route pre-wake gate |  |
 | `--head-wakes[=true|false]` | wake a parked app for HEAD / | one of `true` · `false` |
 | `--crawler-policy <wake|cached|block>` | monitor/crawler wake policy | one of `wake` · `cached` · `block` |
@@ -3553,7 +3555,11 @@ Bind a custom domain to an app or project environment
 
 Remove a custom domain binding
 
-`gregale domain delete <domain>`
+`gregale domain delete [--yes] <domain>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | confirm removal without prompting |  |
 
 ### domain verify
 
@@ -3997,10 +4003,11 @@ Show one edge rule
 
 Update one edge rule
 
-`gregale edge rule update [--match-host <HOST>] [--match-path <PATH>] [--match-method <METHOD>]... [--match-header <NAME=VALUE>]... [--clear-match-headers] [--priority <N>] [--enable] [--disable] [--kind <KIND>] [--route-target-slug <SLUG>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--redirect-header <NAME:VALUE>]... [--headers-request-add <NAME:VALUE>]... [--headers-request-set <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-set <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--cors-allow-origin <ORIGIN>]... [--cors-allow-method <METHOD>]... [--cors-allow-header <HEADER>]... [--cors-expose-header <HEADER>]... [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-audience <AUDIENCE>]... [--jwt-algorithm <ALG>]... [--jwt-required-claim <NAME=VALUE>]... [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--ip-allow <CIDR>]... [--ip-deny <CIDR>]... [--geo-allow <CC>]... [--geo-deny <CC>]... [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-max-age-seconds <SECONDS>] [--cache-stale-while-revalidate-seconds <SECONDS>] [--cache-stale-if-error-seconds <SECONDS>] [--cache-vary-on <HEADER>]... [--cache-methods <METHOD>]... [--budget-ms <MS>] [--total-deadline-ms <MS>] [--budget-allow-override-header <HEADER>] [--retry-max-attempts <N>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-failure-threshold <RATIO>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-open-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--respond-status <CODE>] [--respond-body <JSON>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--challenge-difficulty <BITS>] [--challenge-pass-ttl <SECONDS>] [--challenge-max-difficulty <BITS>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--match <JSON|@FILE|->] [--clear-match] [--mode <MODE>] [--penalty-for <DURATION>] [--penalty-after <N>] [--penalty-within <DURATION>] [--clear-penalty] [--clear-expiry] [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--jwt-require-exp] [--name <NAME>] <id>`
+`gregale edge rule update [--app <SLUG>] [--match-host <HOST>] [--match-path <PATH>] [--match-method <METHOD>]... [--match-header <NAME=VALUE>]... [--clear-match-headers] [--priority <N>] [--enable] [--disable] [--kind <KIND>] [--route-target-slug <SLUG>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--redirect-header <NAME:VALUE>]... [--headers-request-add <NAME:VALUE>]... [--headers-request-set <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-set <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--cors-allow-origin <ORIGIN>]... [--cors-allow-method <METHOD>]... [--cors-allow-header <HEADER>]... [--cors-expose-header <HEADER>]... [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-audience <AUDIENCE>]... [--jwt-algorithm <ALG>]... [--jwt-required-claim <NAME=VALUE>]... [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--ip-allow <CIDR>]... [--ip-deny <CIDR>]... [--geo-allow <CC>]... [--geo-deny <CC>]... [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-max-age-seconds <SECONDS>] [--cache-stale-while-revalidate-seconds <SECONDS>] [--cache-stale-if-error-seconds <SECONDS>] [--cache-vary-on <HEADER>]... [--cache-methods <METHOD>]... [--budget-ms <MS>] [--total-deadline-ms <MS>] [--budget-allow-override-header <HEADER>] [--retry-max-attempts <N>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-failure-threshold <RATIO>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-open-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--respond-status <CODE>] [--respond-body <JSON>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--challenge-difficulty <BITS>] [--challenge-pass-ttl <SECONDS>] [--challenge-max-difficulty <BITS>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--match <JSON|@FILE|->] [--clear-match] [--mode <MODE>] [--penalty-for <DURATION>] [--penalty-after <N>] [--penalty-within <DURATION>] [--clear-penalty] [--clear-expiry] [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--jwt-require-exp] [--name <NAME>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app the rule belongs to (optional; checked before updating) |  |
 | `--match-host <HOST>` | new host to match; @app covers every host the app serves |  |
 | `--match-path <PATH>` | new path to match |  |
 | `--match-method <METHOD>` | replacement HTTP method (repeatable) |  |
@@ -4306,7 +4313,11 @@ Edit a list; referencing rules pick up the change within seconds
 
 Delete a list no rule references
 
-`gregale edge rule-list delete <name>`
+`gregale edge rule-list delete [--yes] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | accepted for consistency with edge rule delete; does not prompt |  |
 
 ### edge cache
 
@@ -4533,6 +4544,51 @@ Restore a database to a new database
 |---|---|---|
 | `--name <NAME>` | name for the restored database | required |
 | `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
+
+### postgres branch
+
+Make, list and delete copy-on-write branches of a database
+
+Examples:
+
+```sh
+gregale postgres branch orders pr-42 --ttl 2h
+gregale postgres attach pr-42 my-api-pr-42 --env DATABASE_URL
+gregale postgres branch delete orders pr-42 --yes
+```
+
+A branch is a restore: a new database that shares its source&#39;s storage until written to. `gregale postgres branch &lt;database&gt; &lt;name&gt;` is `branch create`.
+
+It counts toward the plan&#39;s database limit like any restore, and may take the one restore slot past it.
+
+With --ttl the branch&#39;s bindings are revoked and it is purged when the TTL ends; the source is never touched.
+
+#### postgres branch create
+
+Branch a database from its latest point or a chosen time
+
+`gregale postgres branch create [--since <live|TIMESTAMP>] [--ttl <DURATION>] <database> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <live|TIMESTAMP>` | live (default) or an RFC3339 time inside the source&#39;s restore range (also --from) |  |
+| `--ttl <DURATION>` | purge the branch this long after it is created, from 5m to 30d (e.g. 2h, 7d) |  |
+
+#### postgres branch list
+
+List a database&#39;s branches
+
+`gregale postgres branch list <database>`
+
+#### postgres branch delete
+
+Purge a branch; refuses databases that are not its branches
+
+`gregale postgres branch delete [--yes] <database> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
 
 ### postgres bindings
 
@@ -6039,7 +6095,11 @@ Update a receiver
 
 Delete a receiver
 
-`gregale webhook account delete <id>`
+`gregale webhook account delete [--yes] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 #### webhook account deliveries
 
@@ -6429,7 +6489,7 @@ Add an alert rule
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--name <NAME>` | rule name (3..120 chars) | required |
-| `--metric <METRIC>` | metric; MCP task gauges: mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale (includes min=0 observer heartbeat) |  |
+| `--metric <METRIC>` | metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat) | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
 | `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
@@ -6500,7 +6560,7 @@ Update one alert rule
 | `--app <slug>` | app slug (linked app or picker in interactive mode) |  |
 | `--name <NAME>` | rule name (3..120 chars) |  |
 | `--enabled` | turn the rule on or off (--enabled=false pauses it) |  |
-| `--metric <METRIC>` | metric |  |
+| `--metric <METRIC>` | metric | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
 | `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
@@ -6945,11 +7005,11 @@ List orgs
 
 Create an org
 
-`gregale org create --slug <SLUG> --name <TEXT>`
+`gregale org create [--slug <SLUG>] --name <TEXT> [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--slug <SLUG>` | org slug (lowercase alphanumeric + dashes) | required |
+| `--slug <SLUG>` | org slug, or the first argument (lowercase alphanumeric + dashes) |  |
 | `--name <TEXT>` | display name | required |
 
 ### org get

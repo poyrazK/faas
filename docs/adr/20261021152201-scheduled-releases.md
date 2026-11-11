@@ -102,7 +102,7 @@ account still shipped at `release_at`, with the freeze override they had once
 been allowed to make. Owner decision: block at start, no eager cancellation.
 
 - A schedule records `scheduled_by_account_id` and, for an API key,
-  `scheduled_by_key_id` (migration `20261110183012417`, no foreign keys so a
+  `scheduled_by_key_id` (migration `20261111081523417`, no foreign keys so a
   deleted account or key reads as gone).
 - Before a start, after the freeze check, `schedule.SchedulerStanding`
   requires: the account exists and is not suspended or pending deletion; the

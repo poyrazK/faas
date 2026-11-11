@@ -4725,10 +4725,9 @@ func TestParkWarmPoolDestroysPausedVMWithoutSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateInstanceWithMode: %v", err)
 	}
-	limits := api.MustLimitsFor(api.PlanPro)
 	if err := e.Ledger().Admit(Request{
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID,
-		Plan: api.PlanPro, RAMMB: app.RAMMB, VCPU: limits.VCPU,
+		Plan: api.PlanPro, RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindWarmPool,
 		NodeID: state.DefaultLocalNodeName,
 	}); err != nil {
