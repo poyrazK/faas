@@ -361,6 +361,7 @@ type EdgeRuleValidateResolved struct {
 	Methods             map[string]bool
 	MatchHeaders        map[string]string
 	SchemaDigest        [32]byte // SHA-256 of the raw schema body
+	Schema              []byte   `json:",omitempty"` // immutable source for recovery after LRU eviction
 	ContentTypes        []string // nil/empty = any Content-Type
 	ApplyWhileStreaming bool     // default false
 	RejectUnknownFields bool     // audit-tag-only; schema-side authoritative
@@ -397,6 +398,7 @@ type EdgeRuleValidateParamsResolved struct {
 type EdgeRuleParamSchemaResolved struct {
 	Set    bool
 	Digest [32]byte
+	Schema []byte `json:",omitempty"`
 	Kinds  map[string]api.EdgeRuleParamKind
 }
 
@@ -1528,6 +1530,7 @@ type JWTClaims struct {
 type EdgeValidateIn struct {
 	Body        []byte
 	ContentType string
+	Schema      []byte // parameter source when Digest overrides the body schema
 	// Digest, when set, selects a compiled parameter schema instead of
 	// the rule's body SchemaDigest.
 	Digest *[32]byte

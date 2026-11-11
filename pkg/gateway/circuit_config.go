@@ -34,10 +34,11 @@ const circuitConfigTTL = 30 * time.Second
 const circuitConfigLoadTimeout = 5 * time.Second
 
 type circuitConfigEntry struct {
-	cfg      circuit.Config
-	tuned    bool
-	loadedAt time.Time
-	loading  bool
+	cfg       circuit.Config
+	tuned     bool
+	loadedAt  time.Time
+	loading   bool
+	expiresAt time.Time
 }
 
 // CircuitConfigs caches each app's breaker tuning.
@@ -70,12 +71,17 @@ func (c *CircuitConfigs) For(appID string) (circuit.Config, bool) {
 		e = &circuitConfigEntry{}
 		c.m[appID] = e
 	}
-	stale := e.loadedAt.IsZero() || c.now().Sub(e.loadedAt) >= circuitConfigTTL
+	now := c.now()
+	expired := !e.expiresAt.IsZero() && !now.Before(e.expiresAt)
+	stale := expired || e.loadedAt.IsZero() || now.Sub(e.loadedAt) >= circuitConfigTTL
 	if stale && !e.loading {
 		e.loading = true
 		go c.load(appID)
 	}
 	cfg, tuned := e.cfg, e.tuned
+	if expired {
+		cfg, tuned = circuit.Config{}, false
+	}
 	c.mu.Unlock()
 	return cfg, tuned
 }
@@ -101,25 +107,47 @@ func (c *CircuitConfigs) load(appID string) {
 		// Keep the last known tuning; retry on the next lookup after the
 		// TTL rather than on every request.
 		e.loadedAt = c.now()
+		if !e.expiresAt.IsZero() && !c.now().Before(e.expiresAt) {
+			e.cfg, e.tuned, e.expiresAt = circuit.Config{}, false, time.Time{}
+		}
 		c.log.Warn("gateway: circuit breaker rule load failed; keeping previous tuning", "app_id", appID, "err", err)
 		return
 	}
 	e.loadedAt = c.now()
-	e.cfg, e.tuned = circuitConfigFromRules(rules)
+	e.cfg, e.tuned = circuit.Config{}, false
+	e.expiresAt = time.Time{}
+	if rule := activeCircuitConfigRule(rules, c.now()); rule != nil {
+		e.cfg, e.tuned = circuitConfigForRule(rule), true
+		e.expiresAt = rule.ExpiresAt
+	}
 }
 
 // circuitConfigFromRules is the first rule's tuning (rules arrive priority
 // ordered).
 func circuitConfigFromRules(rules []EdgeRuleCircuitBreakerResolved) (circuit.Config, bool) {
-	if len(rules) == 0 {
+	r := activeCircuitConfigRule(rules, time.Now())
+	if r == nil {
 		return circuit.Config{}, false
 	}
-	r := rules[0]
+	return circuitConfigForRule(r), true
+}
+
+func activeCircuitConfigRule(rules []EdgeRuleCircuitBreakerResolved, now time.Time) *EdgeRuleCircuitBreakerResolved {
+	for i := range rules {
+		r := &rules[i]
+		if !r.LogOnly && (r.ExpiresAt.IsZero() || now.Before(r.ExpiresAt)) {
+			return r
+		}
+	}
+	return nil
+}
+
+func circuitConfigForRule(r *EdgeRuleCircuitBreakerResolved) circuit.Config {
 	return circuit.Config{
 		FailureThreshold: r.FailureThreshold,
 		MinRequests:      r.MinRequests,
 		Window:           r.Window,
 		OpenDuration:     r.OpenDuration,
 		MaxOpenDuration:  r.MaxOpenDuration,
-	}, true
+	}
 }
