@@ -1379,6 +1379,9 @@ type Handler struct {
 	// (cmd/gatewayd-internal/main.go → secretbox.MultiOpen
 	// → publicAuthUnsealer closure).
 	publicAuthUnsealer PublicAuthUnsealer
+	// basicAuthVerifiers checks basic auth against verify-only verifiers
+	// (ADR-20261110210000 slice 3h); nil keeps the sealed path alone.
+	basicAuthVerifiers *BasicAuthVerifiers
 
 	// edgeRules (ADR-089 / issue #561 PR 3) is the
 	// per-host LRU-backed matcher consulted between the
@@ -5466,7 +5469,7 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 // every other credential compare in the platform
 // (api.HashAPIKey / cmd/apid webhook signing).
 func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
-	if h.publicAuthCache == nil || h.publicAuthUnsealer == nil {
+	if (h.publicAuthCache == nil || h.publicAuthUnsealer == nil) && h.basicAuthVerifiers == nil {
 		rec.status = http.StatusInternalServerError
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Auth chain not wired",
@@ -5521,13 +5524,11 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 	// PublicAuthUnsealer.UnsealBasicAuth on the
 	// secretbox-sealed BasicSealed blob stored on the apps
 	// row.
-	expectedUser, expectedPass, ok := h.publicAuthCache.Get(app.ID, app.PublicAuth.BasicSealed, func() (string, string, bool) {
-		u, p, err := h.publicAuthUnsealer.UnsealBasicAuth(r.Context(), app.PublicAuth.BasicSealed)
-		if err != nil {
-			return "", "", false
-		}
-		return u, p, true
-	})
+	//
+	// ADR-20261110210000 slice 3h: with verifiers, the credential is
+	// checked against its argon2id verifier and never opened; the sealed
+	// path stays as the fallback for a blob that has none yet.
+	matched, ok := h.basicAuthMatches(r, app, user, pass)
 	if !ok {
 		// Unseal failure is treated as a credential mismatch
 		// (401) so a brute-forcer can't tell the difference
@@ -5545,11 +5546,8 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	// (3) Constant-time compare of fixed-length digests, both
-	// evaluated. ConstantTimeCompare returns early on unequal
-	// lengths and || skipped the password compare on a wrong
-	// username, so timing revealed the username and both lengths.
-	if !basicCredentialsMatch(user, pass, expectedUser, expectedPass) {
+	// (3) The credential did not match.
+	if !matched {
 		// One audit row per app and client prefix a minute: a guessing
 		// flood wrote one per guess and filled the bounded audit queue.
 		if h.publicAuthGuesses.fail(guessKey) {

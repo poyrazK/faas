@@ -286,7 +286,9 @@ RULES = [
     (r"cors", "CORS presets"),
     (r"edge-protection|pre-auth|challenge|waf|bot", "Edge protection"),
     (r"edge-rule|edgerule|geo|asn|jwt|rewrite|redirect", "Edge rules (incl"),
-    (r"require-authn|public-auth|appaccess|app-access|authn|ip-allowlist", "App access control"),
+    # ADR-20261110210000 slice 3h: verify-only basic auth (app-basic-auth-verifiers,
+    # basicverifier, the gateway's basic-auth-verifiers).
+    (r"require-authn|public-auth|appaccess|app-access|authn|ip-allowlist|basic-auth-verifiers|basicverifier", "App access control"),
     (r"retry", "Gateway request retry"),
     (r"circuit", "Circuit breaking"),
     (r"static-egress|reserved-ip|egress-ip", "Static egress IP"),

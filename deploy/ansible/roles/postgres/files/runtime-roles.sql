@@ -117,6 +117,13 @@ BEGIN
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_open_audit FROM faas_runtime;
 		GRANT SELECT, INSERT ON public.secret_open_audit TO faas_secretd;
 	END IF;
+	-- ADR-20261110210000 slice 3h: basic-auth verifiers decide which
+	-- password every node's edge accepts for an app. Only apid, which has the
+	-- plaintext when the customer sets it, writes them.
+	IF to_regclass('public.app_basic_auth_verifiers') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.app_basic_auth_verifiers FROM faas_runtime;
+		GRANT SELECT, INSERT, DELETE ON public.app_basic_auth_verifiers TO faas_apid;
+	END IF;
 END
 $$;
 

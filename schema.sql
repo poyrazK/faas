@@ -31520,6 +31520,19 @@ CREATE TABLE public.app_api_routes (
 
 
 --
+-- Name: app_basic_auth_verifiers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_basic_auth_verifiers (
+    sealed_sha256 bytea NOT NULL,
+    verifier text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_basic_auth_verifiers_sealed_sha256_check CHECK ((octet_length(sealed_sha256) = 32)),
+    CONSTRAINT app_basic_auth_verifiers_verifier_check CHECK (((verifier ~~ '$argon2id$%'::text) AND (length(verifier) <= 256)))
+);
+
+
+--
 -- Name: app_binding_promotion_revisions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -60444,6 +60457,14 @@ ALTER TABLE ONLY public.app_api_routes
 
 ALTER TABLE ONLY public.app_application_standards
     ADD CONSTRAINT app_application_standards_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_basic_auth_verifiers app_basic_auth_verifiers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_basic_auth_verifiers
+    ADD CONSTRAINT app_basic_auth_verifiers_pkey PRIMARY KEY (sealed_sha256);
 
 
 --

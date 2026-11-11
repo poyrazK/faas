@@ -1189,6 +1189,15 @@
     }
   },
   {
+    "table": "app_basic_auth_verifiers",
+    "columns": [
+      "created_at",
+      "sealed_sha256",
+      "verifier"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_binding_promotion_revisions",
     "columns": [
       "app_id",

@@ -119,6 +119,29 @@ schedd delivers every webhook.
 The delivery identity stays on compute until every node runs this way and it
 is retired like the runtime identity.
 
+## Verify-only basic auth (slice 3h)
+
+Any node's edge checks basic auth for any app, so the edge stops opening the
+credential. apid stores an argon2id verifier for every credential it seals
+(`app_basic_auth_verifiers`, keyed by the SHA-256 of the sealed blob, written
+only by apid), and the edge checks presented credentials against it.
+
+1. **Deploy** the release with migration `20261111193000292`. New and
+   changed credentials get verifiers from then on.
+2. **Backfill** the rest where the edge identity is staged:
+   `gregalectl seal-domain migrate --domain edge --db-env <owner env>`. Its
+   report's `basic_auth_verifiers` counts `written` and `failed`; rerun until
+   `failed` is 0 (a failed blob does not open with the staged identities).
+3. **Verifier with fallback, fleet-wide:** set
+   `faas_gateway_basic_auth: verifier` and converge compute. Check
+   `gateway_basic_auth_verifier_missing_total` stays flat.
+4. **Verifier only:** set `faas_gateway_basic_auth: verifier-only`. The edge
+   never opens a basic-auth credential; one with no verifier refuses every
+   password until step 2 is rerun.
+
+An edge-key rotation re-seals credentials into new blobs; the same migrate
+command writes their verifiers before it returns.
+
 ## Rotation
 
 The runtime domain rotates as before (`docs/runbooks/seal-domain-key-escrow.md`).

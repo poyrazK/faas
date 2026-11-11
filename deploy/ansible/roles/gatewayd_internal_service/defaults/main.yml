@@ -133,3 +133,10 @@ faas_gateway_local_vmmd_socket: false
 # opens customer log drain headers through secretd, for the app's owner node
 # only, instead of with this node's edge identity.
 faas_gateway_secretd_log_drains: false
+
+# ADR-20261110210000 slice 3h: how the edge checks app basic auth. sealed
+# opens the credential with the edge identity (today's behaviour); verifier
+# checks apid's argon2id verifier and opens only a credential with none yet;
+# verifier-only never opens it (after gregalectl seal-domain migrate
+# --domain edge reports no basic_auth_verifiers.failed).
+faas_gateway_basic_auth: sealed

@@ -109,7 +109,7 @@ var computeOnly = []string{RoleCompute}
 var bothRoles = []string{RoleControlPlane, RoleCompute}
 
 var registry = []Spec{
-	{Domain: Runtime, Readers: []string{"vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
+	{Domain: Runtime, Readers: []string{"vmmd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("app_secrets", "ciphertext"),
 		cols("project_environment_secrets", "ciphertext"),
 		cols("app_config_guard_secrets", "ciphertext"),
@@ -144,7 +144,7 @@ var registry = []Spec{
 	// headers and sealed edge-rule request header values
 	// (ADR-20261108110000). gatewayd-public's DNS-provider token is not
 	// stored in these columns, so it is not a reader.
-	{Domain: Edge, Readers: []string{"gatewayd-internal"}, Roles: computeOnly, Wired: true, Columns: join(
+	{Domain: Edge, Readers: []string{"gatewayd-internal", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("apps", "public_auth_basic"),
 		cols("app_log_drains", "auth_header_sealed"),
 		cols("application_standard_log_destinations", "auth_header_sealed"),
@@ -170,7 +170,7 @@ var registry = []Spec{
 	// delivery too. apid merges an update without opening the stored config
 	// and seals new credentials to the domain and, for now, the fleet key:
 	// a schedd of the previous release opens them with the fleet key alone.
-	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
+	{Domain: Delivery, Readers: []string{"schedd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("execution_payloads", "sealed_payload"),
 		cols("app_webhooks", "secret_sealed", "previous_secret_sealed"),
 		cols("commit_sources", "sealed_connection"),

@@ -3282,6 +3282,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// cmd/apid uses). nil-safe: tests + dev boxes that don't
 	// wire either pass through the per-request unseal path.
 	handler.WithPublicAuth(deps.publicAuthCache, deps.publicAuthUnsealer)
+	// ADR-20261110210000 slice 3h: verify-only basic auth.
+	basicVerifiers, basicErr := basicAuthVerifiersFromEnv(osGetenv, deps.pgStore, metricsRegisterer)
+	if basicErr != nil {
+		return basicErr
+	}
+	if basicVerifiers != nil {
+		handler.WithBasicAuthVerifiers(basicVerifiers)
+	}
 	// ADR-119 — wire the per-service public-key allowlist into
 	// the Handler so applyIngressInternalSvc (handler.go:~4586
 	// area) can validate Authorization: Bearer JWTs on apps
