@@ -664,9 +664,10 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				if activity != nil {
 					aw := &activityWriter{ResponseWriter: w}
 					recorded := false
+					//nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
 					aw.onHijack = func() {
 						recorded = true
-						m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // as below
+						m.recordAgentActivity(r, acct, key, aw.status, activity)
 					}
 					next(aw, r, acct)
 					if !recorded {
