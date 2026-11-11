@@ -602,7 +602,7 @@ func cmdDev(args []string) int {
 	}
 	if !jsonOutput {
 		PrintOK(osStdout, "Developer environment: %s", canonicalAppURL(session.App))
-		PrintProgress(osStdout, "lease %s after the latest sync (expires %s unless renewed)", formatDevLease(lease), session.ExpiresAt.Local().Format(time.RFC822))
+		PrintProgress(osStdout, "lease %s after the latest sync (expires %s unless renewed)", formatDevLease(lease), session.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"))
 		if session.Postgres != nil {
 			PrintProgress(osStdout, "PostgreSQL: %s (%s); %s is injected when the binding is ready", session.Postgres.Name, session.Postgres.BindingState, session.Postgres.EnvironmentKey)
 		}
@@ -966,7 +966,7 @@ func cmdDevHistory(args []string) int {
 		if !item.WithinSLO {
 			mark = "slow"
 		}
-		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s%s\n", mark, item.CreatedAt.Local().Format("2006-01-02 15:04"), formatDevDuration(item.EditToLiveMS), item.DeploymentID, devHistoryPatchNote(item.Phases))
+		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s%s\n", mark, item.CreatedAt.UTC().Format("2006-01-02 15:04Z"), formatDevDuration(item.EditToLiveMS), item.DeploymentID, devHistoryPatchNote(item.Phases))
 	}
 	return 0
 }

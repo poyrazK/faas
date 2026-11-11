@@ -400,7 +400,9 @@ func cmdPostgresCreate(args []string) int {
 	scaleToZero := fs.Bool("scale-to-zero", true, "suspend compute when idle")
 	storage := fs.Int64("storage-bytes", 0, "storage limit in bytes (0 uses plan allowance)")
 	restoreWindow := fs.Int64("restore-window-seconds", 0, "point-in-time restore window (0 uses plan allowance)")
-	if err := fs.Parse(args); err != nil {
+	// `postgres create --help` shows the flags first; the name may come on
+	// either side of them (Hunt 33 H33-24).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if invalidPostgresChoice("postgres create", "class", *serviceClass, "availability", *availability) {
@@ -752,6 +754,9 @@ func cmdPostgresBindingsRotate(args []string) int {
 }
 
 func cmdPostgresBindingsDelete(args []string) int {
+	// Every other delete takes --yes; this one has no prompt, so it is
+	// accepted and changes nothing (Hunt 33 H33-61).
+	args = slices.DeleteFunc(slices.Clone(args), func(arg string) bool { return arg == "--yes" || arg == "-yes" || arg == "--yes=true" })
 	id, ok := onePostgresID("postgres bindings delete", args)
 	if !ok {
 		return 1
