@@ -54,6 +54,20 @@ func (s *server) projectDeploymentEnvironmentProtection(ctx context.Context, acc
 	return env.Protected, nil
 }
 
+// projectEnvironmentID returns the ID of a project's environment, or "" when
+// it cannot be read; the plan then names no URL for it rather than a wrong one.
+func (s *server) projectEnvironmentID(ctx context.Context, acct state.Account, projectSlug, environment string) string {
+	project, err := s.store.ProjectBySlug(ctx, acct.ID, projectSlug)
+	if err != nil {
+		return ""
+	}
+	env, err := s.store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, strings.TrimSpace(environment))
+	if err != nil {
+		return ""
+	}
+	return env.ID
+}
+
 // projectDeploymentEnvironmentConfigHash returns the latest non-secret
 // environment configuration identity for plan binding. An unconfigured
 // environment, and the implicit production target of a new project, both use

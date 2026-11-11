@@ -629,6 +629,8 @@ var NewObsPR3Env = newObsPR3Env
 var NewPgBackupPushedSampler = newPgBackupPushedSampler
 var NewPreviewJanitor = newPreviewJanitor
 var NewProjectLifecycleFixture = newProjectLifecycleFixture
+
+var CopyPromotedArtifactStamps = copyPromotedArtifactStamps
 var NewRuntimeConfigManager = newRuntimeConfigManager
 
 func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
@@ -2410,3 +2412,42 @@ func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provi
 var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode
 
 var KeyApprovalCategories = keyApprovalCategories
+
+// ProjectEnvironmentPlanURLs applies the two-service project fixture, adds a
+// staging environment and scans it (Hunt 33 H33-33). It returns the staging
+// environment ID, the apps' IDs by workload name and the staging plan.
+func ProjectEnvironmentPlanURLs(t *testing.T) (string, map[string]string, api.PlanResponse) {
+	t.Helper()
+	s, store, acct, key := projectSecretsTestServer(t, api.ScopesAdminOnly)
+	if rec := projectSecretsRequest(t, s, key, "/v1/projects", "", nil); rec.Code != 200 {
+		t.Fatalf("initial apply: %d %s", rec.Code, rec.Body)
+	}
+	project, err := store.MemStore.ProjectBySlug(t.Context(), acct.ID, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := store.MemStore.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps, err := store.MemStore.AppsForProject(t.Context(), acct.ID, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, app := range apps {
+		ids[app.WorkloadName] = app.ID
+	}
+	rec := projectSecretsRequest(t, s, key, "/v1/projects/scan", "", map[string]string{"environment": "staging"})
+	if rec.Code != 200 {
+		t.Fatalf("staging scan: %d %s", rec.Code, rec.Body)
+	}
+	var plan api.PlanResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	return env.ID, ids, plan
+}
+
+// ProjectEnvironmentWorkloadURL exposes the environment URL builder.
+var ProjectEnvironmentWorkloadURL = projectEnvironmentWorkloadURL

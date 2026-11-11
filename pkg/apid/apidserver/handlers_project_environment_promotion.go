@@ -1704,6 +1704,9 @@ func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store s
 	if err := store.SetDeploymentRootfs(ctx, created.ID, rootfsPath, rootfsKey, rootfsBytes); err != nil {
 		return state.Deployment{}, err
 	}
+	if err := copyPromotedArtifactStamps(ctx, store, source, created.ID); err != nil {
+		return state.Deployment{}, err
+	}
 	layers, err := store.ListDeploymentSidecarLayers(ctx, source.ID)
 	if err != nil {
 		return state.Deployment{}, err
@@ -1840,4 +1843,32 @@ func projectEnvironmentPromotionReleaseSetID(release *state.ProjectReleaseSet) s
 
 func decodeProjectEnvironmentPromotionToken(encoded string) (projectEnvironmentPromotionTokenWire, error) {
 	return promotionapi.DecodeToken(encoded)
+}
+
+// copyPromotedArtifactStamps carries what imaged recorded about the source's
+// built artifact onto the promoted copy, which shares that artifact but never
+// passes through imaged. Without runtime_base a source-built container app
+// boots on the plain base, where its runtime is missing (Hunt 33 H33-35:
+// `node server.js` exited 127 after every promote into production).
+func copyPromotedArtifactStamps(ctx context.Context, store state.Store, source state.Deployment, createdID string) error {
+	if source.RuntimeBase != "" {
+		stamper, ok := store.(state.DeploymentRuntimeBaseStore)
+		if !ok {
+			return errors.New("state: deployment runtime base stamping is unavailable")
+		}
+		if err := stamper.SetDeploymentRuntimeBase(ctx, createdID, source.RuntimeBase); err != nil {
+			return fmt.Errorf("copy runtime base to promoted deployment: %w", err)
+		}
+	}
+	if source.BeforeCheckpointHookKnown {
+		if err := store.SetDeploymentBeforeCheckpointHook(ctx, createdID, source.BeforeCheckpointHook); err != nil {
+			return fmt.Errorf("copy before_checkpoint hook to promoted deployment: %w", err)
+		}
+	}
+	if source.SecretReloadSignalKnown {
+		if err := store.SetDeploymentSecretReloadSignal(ctx, createdID, source.SecretReloadSignal); err != nil {
+			return fmt.Errorf("copy secret reload signal to promoted deployment: %w", err)
+		}
+	}
+	return nil
 }

@@ -13,6 +13,8 @@ import (
 )
 
 // attackModeTimeLayout is how the CLI prints attack mode's end.
+// attackModeTimeLayout prints UTC, like activity and audit (H32-5; Hunt 33
+// H33-21 found attack mode and dev sessions still in the local zone).
 const attackModeTimeLayout = "2006-01-02 15:04 MST"
 
 const edgeRulesAttackModeUsage = "usage: gregale edge rule attack-mode set [on|off|status] [--app SLUG] [--for 1h] [--json]"
@@ -80,7 +82,7 @@ func cmdEdgeRulesAttackMode(args []string) int {
 func renderEdgeAttackMode(w io.Writer, slug string, s api.EdgeAttackModeStatus, now time.Time) {
 	if !s.Active {
 		if s.ExpiresAt != nil && s.ExpiresAt.Before(now) {
-			_, _ = fmt.Fprintf(w, "Attack mode is off for %s (last ended %s).\n", slug, s.ExpiresAt.Local().Format(attackModeTimeLayout))
+			_, _ = fmt.Fprintf(w, "Attack mode is off for %s (last ended %s).\n", slug, s.ExpiresAt.UTC().Format(attackModeTimeLayout))
 			return
 		}
 		_, _ = fmt.Fprintf(w, "Attack mode is off for %s.\n", slug)
@@ -88,7 +90,7 @@ func renderEdgeAttackMode(w io.Writer, slug string, s api.EdgeAttackModeStatus, 
 	}
 	until := ""
 	if s.ExpiresAt != nil {
-		until = fmt.Sprintf(" until %s (%s left)", s.ExpiresAt.Local().Format(attackModeTimeLayout), s.ExpiresAt.Sub(now).Round(time.Minute))
+		until = fmt.Sprintf(" until %s (%s left)", s.ExpiresAt.UTC().Format(attackModeTimeLayout), s.ExpiresAt.Sub(now).Round(time.Minute))
 	}
 	_, _ = fmt.Fprintf(w, "Attack mode is ON for %s%s.\n", slug, until)
 	_, _ = fmt.Fprintln(w, "  Every visitor is challenged; browsers solve it once and continue.")

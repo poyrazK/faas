@@ -4572,6 +4572,22 @@ func TestQueueReceive_TimeoutReturns204(t *testing.T) {
 	}
 }
 
+// Hunt 33 H33-12: the long-poll wait is capped by the request budget, and
+// when that deadline fires first the wait ends in DeadlineExceeded. An idle
+// queue must still answer 204, not 503.
+func TestQueueReceive_BudgetDeadlineReturns204(t *testing.T) {
+	e := setupWithNotifier(t, api.PlanPro, func(_ context.Context, _ string, _ func(string) bool, _ time.Duration) (string, error) {
+		return "", context.DeadlineExceeded
+	})
+	mustSeedApp(t, e, "myapp")
+
+	rec := e.do(t, "POST", "/v1/apps/myapp/queues/receive", nil, nil)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestQueueReceive_IgnoresNonQueueCompletions(t *testing.T) {
 	var e testEnv
 	var ordinaryID, delayedID, queueID string
