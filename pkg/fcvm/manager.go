@@ -5839,7 +5839,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	// hand the caller a fresh instance that is not the capture.
 	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0
 	if sealed {
-		if err := m.openSealedSnapshot(req.Snapshot); err != nil {
+		if err := m.openSealedSnapshot(ctx, req.AppID, req.Snapshot); err != nil {
 			return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/secretd"
@@ -120,6 +121,22 @@ func (s *Store) RecordOpen(ctx context.Context, nodeID, appID, via string, entri
 		return fmt.Errorf("secretpg: record open: %w", err)
 	}
 	return nil
+}
+
+// CaptureKey implements secretd.Store: a live sealed capture's app and key.
+func (s *Store) CaptureKey(ctx context.Context, captureID string) (string, []byte, error) {
+	id, err := pgUUID(captureID)
+	if err != nil {
+		return "", nil, secretd.ErrUnknownCapture
+	}
+	row, err := s.q.CrashCaptureSealedKey(ctx, s.db, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, secretd.ErrUnknownCapture
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("secretpg: capture key: %w", err)
+	}
+	return uuid.UUID(row.AppID.Bytes).String(), row.SealedKey, nil
 }
 
 // DeleteExpiredGrants removes grants that expired before before.

@@ -17,3 +17,12 @@ CREATE TABLE secret_open_audit (
     entries   integer     NOT NULL,
     opened_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Projection of crash_captures (ADR-733), read by OpenCaptureKey: only the
+-- columns secretd reads.
+CREATE TABLE crash_captures (
+    id         uuid  NOT NULL PRIMARY KEY,
+    app_id     uuid  NOT NULL,
+    status     text  NOT NULL,
+    sealed_key bytea
+);

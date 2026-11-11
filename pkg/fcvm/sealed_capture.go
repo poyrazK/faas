@@ -8,8 +8,11 @@ package fcvm
 // SetHostIdentities), so any vmmd with the fleet identity can open it.
 
 import (
+	"context"
 	"errors"
 	"fmt"
+
+	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/crashcrypt"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -39,18 +42,37 @@ func (m *Manager) SealCaptureStorage(captureID string) (storage.StorageBackend, 
 	return crashcrypt.Backend{Inner: m.storage, Identity: identity}, sealed, nil
 }
 
+// CaptureKeyOpener opens a sealed capture's key somewhere other than this
+// node, by reference (ADR-20261110210000 slice 3d: the control plane's
+// secretd reads the sealed key from the capture's row). A RuntimeSecretOpener
+// that also implements it opens capture keys too.
+type CaptureKeyOpener interface {
+	OpenCaptureKey(ctx context.Context, appID, captureID string) (*age.X25519Identity, error)
+}
+
 // openSealedSnapshot attaches the decrypting backend to a sealed capture.
-func (m *Manager) openSealedSnapshot(snap *Snapshot) error {
+// With a runtime opener that opens capture keys, the key comes from it and
+// this node needs no runtime identity.
+func (m *Manager) openSealedSnapshot(ctx context.Context, appID string, snap *Snapshot) error {
 	if snap == nil || len(snap.SealedKey) == 0 {
 		return nil
 	}
 	if m.storage == nil {
 		return errors.New("fcvm: sealed capture requires a storage backend")
 	}
-	if len(m.hostIdentities) == 0 {
-		return ErrNoCaptureKey
+	var identity *age.X25519Identity
+	var err error
+	if remote, ok := m.runtimeOpener.(CaptureKeyOpener); ok && m.runtimeOpener != nil {
+		if appID == "" || snap.CaptureID == "" {
+			return errors.New("fcvm: remote capture key needs the app and capture ids")
+		}
+		identity, err = remote.OpenCaptureKey(ctx, appID, snap.CaptureID)
+	} else {
+		if len(m.hostIdentities) == 0 {
+			return ErrNoCaptureKey
+		}
+		identity, err = crashcrypt.OpenKey(m.hostIdentities, snap.CaptureID, snap.SealedKey)
 	}
-	identity, err := crashcrypt.OpenKey(m.hostIdentities, snap.CaptureID, snap.SealedKey)
 	if err != nil {
 		return err
 	}

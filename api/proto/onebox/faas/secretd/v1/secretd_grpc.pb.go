@@ -24,6 +24,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Secretd_OpenAppSecrets_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenAppSecrets"
 	Secretd_GrantPeer_FullMethodName      = "/onebox.faas.secretd.v1.Secretd/GrantPeer"
+	Secretd_OpenCaptureKey_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenCaptureKey"
 )
 
 // SecretdClient is the client API for Secretd service.
@@ -36,6 +37,11 @@ type SecretdClient interface {
 	// GrantPeer lets node_name open app_id's secrets until the returned expiry.
 	// Only the app's owner node may grant.
 	GrantPeer(ctx context.Context, in *GrantPeerRequest, opts ...grpc.CallOption) (*GrantPeerResponse, error)
+	// OpenCaptureKey opens the per-capture key of a sealed crash capture
+	// (ADR-733) by reference: secretd reads crash_captures.sealed_key itself
+	// and answers only when the capture belongs to app_id (ADR-20261110210000
+	// slice 3d).
+	OpenCaptureKey(ctx context.Context, in *OpenCaptureKeyRequest, opts ...grpc.CallOption) (*OpenCaptureKeyResponse, error)
 }
 
 type secretdClient struct {
@@ -66,6 +72,16 @@ func (c *secretdClient) GrantPeer(ctx context.Context, in *GrantPeerRequest, opt
 	return out, nil
 }
 
+func (c *secretdClient) OpenCaptureKey(ctx context.Context, in *OpenCaptureKeyRequest, opts ...grpc.CallOption) (*OpenCaptureKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OpenCaptureKeyResponse)
+	err := c.cc.Invoke(ctx, Secretd_OpenCaptureKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecretdServer is the server API for Secretd service.
 // All implementations must embed UnimplementedSecretdServer
 // for forward compatibility.
@@ -76,6 +92,11 @@ type SecretdServer interface {
 	// GrantPeer lets node_name open app_id's secrets until the returned expiry.
 	// Only the app's owner node may grant.
 	GrantPeer(context.Context, *GrantPeerRequest) (*GrantPeerResponse, error)
+	// OpenCaptureKey opens the per-capture key of a sealed crash capture
+	// (ADR-733) by reference: secretd reads crash_captures.sealed_key itself
+	// and answers only when the capture belongs to app_id (ADR-20261110210000
+	// slice 3d).
+	OpenCaptureKey(context.Context, *OpenCaptureKeyRequest) (*OpenCaptureKeyResponse, error)
 	mustEmbedUnimplementedSecretdServer()
 }
 
@@ -91,6 +112,9 @@ func (UnimplementedSecretdServer) OpenAppSecrets(context.Context, *OpenAppSecret
 }
 func (UnimplementedSecretdServer) GrantPeer(context.Context, *GrantPeerRequest) (*GrantPeerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GrantPeer not implemented")
+}
+func (UnimplementedSecretdServer) OpenCaptureKey(context.Context, *OpenCaptureKeyRequest) (*OpenCaptureKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OpenCaptureKey not implemented")
 }
 func (UnimplementedSecretdServer) mustEmbedUnimplementedSecretdServer() {}
 func (UnimplementedSecretdServer) testEmbeddedByValue()                 {}
@@ -149,6 +173,24 @@ func _Secretd_GrantPeer_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Secretd_OpenCaptureKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpenCaptureKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretdServer).OpenCaptureKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Secretd_OpenCaptureKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretdServer).OpenCaptureKey(ctx, req.(*OpenCaptureKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Secretd_ServiceDesc is the grpc.ServiceDesc for Secretd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -163,6 +205,10 @@ var Secretd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GrantPeer",
 			Handler:    _Secretd_GrantPeer_Handler,
+		},
+		{
+			MethodName: "OpenCaptureKey",
+			Handler:    _Secretd_OpenCaptureKey_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

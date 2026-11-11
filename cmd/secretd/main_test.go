@@ -125,6 +125,10 @@ func (ownedBy) UpsertGrant(_ context.Context, _, _, _ string, at time.Time) (tim
 
 func (ownedBy) RecordOpen(context.Context, string, string, string, int) error { return nil }
 
+func (ownedBy) CaptureKey(context.Context, string) (string, []byte, error) {
+	return "", nil, secretd.ErrUnknownCapture
+}
+
 // adr: 20261110210000 — the secret-opener feature leaves work end to end:
 // vmmd's client leaf, issued for its node, reaches secretd over mutual TLS;
 // secretd opens for the app's owner node, refuses another registered node,

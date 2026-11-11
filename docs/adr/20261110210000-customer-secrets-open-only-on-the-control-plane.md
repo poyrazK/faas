@@ -252,6 +252,47 @@ asking secretd is refused with `PermissionDenied`. Rollout: set
 `faas_vmmd_secretd_open` node by node, so peers are granted before any of
 them needs it.
 
+**Slice 3d (owner decisions 2026-11-11): nothing a node reads opens without
+secretd.** Moving the runtime identity off compute nodes is pointless while
+a rooted node can read the same plaintext elsewhere. Three paths remained:
+
+1. **Park snapshots are plaintext.** A snapshot's memory and vmstate hold
+   every secret the app loaded, and the shared artifact store they live in
+   is readable by every compute node (compute holds objectAdmin on the
+   artifacts bucket). *Decision: per-snapshot encryption.* Every snapshot
+   is written through the ADR-733 encrypting backend with a fresh age
+   identity sealed to the runtime recipient (sealing needs only the public
+   recipient, so nodes keep that). The sealed key lives on the snapshot row.
+   At restore vmmd asks secretd for the key by snapshot id; secretd reads
+   the sealed key from the row, checks the row's app against the caller's
+   ownership or grant, audits, opens and returns the per-snapshot identity.
+   The restore path already decrypts sealed captures
+   (`openSealedSnapshot`). Cost: one secretd round trip per restore plus a
+   streaming decrypt; it must be measured on the reference node against the
+   350 ms p95 restore target before it is turned on, and a node-local cache
+   of opened snapshot keys (memory only, per snapshot, dropped on park) keeps
+   the round trip off repeat restores.
+2. **Crash-capture keys** (ADR-733) are sealed to the same recipient and
+   opened by vmmd (forks) and imaged (staging). They take the same path:
+   `OpenCaptureKey(app_id, capture_id)` reads `crash_captures.sealed_key`.
+3. **Sidecar direct env** is sealed without an account binding, so secretd
+   must not open caller-supplied ciphertext for it (a node could submit
+   another tenant's). *Decision: row references.* secretd loads the
+   ciphertext from the app's own rows (`deployments.sidecars` of a
+   deployment of that app, with its re-seal overrides) and opens it there.
+   App secrets move to row references too, which closes slice 3a's
+   same-account residual: a node names what to open, never supplies it.
+
+Every key-by-reference RPC follows one rule: **the caller sends ids, never
+ciphertext; secretd reads the row, checks that it belongs to the app the
+caller owns or holds a grant for, and audits before answering.**
+
+Order: 3d-1 crash-capture keys (already sealed today), 3d-2 sidecar env by
+reference, 3d-3 snapshot sealing at the source + key by reference (behind a
+flag until the restore measurement), 3d-4 app secrets by reference, then
+node join stops staging the runtime identity and `fleet-seal verify`
+refuses a compute node that still holds it.
+
 When a domain has moved, node join stops staging its identity, deletes
 leftovers (the `faas_compute_fleet_key_retired` pattern), and
 `fleet-seal verify` refuses a compute node that still holds it.
@@ -436,6 +477,7 @@ Operations:
 | 1c | Placement inputs not compute-writable (per-node DB identity or CP-owned capacity), owner decision | 1a |
 | 2 | CI holds recipients only: key escrow on the control plane, `SEAL_DOMAIN_KEY_SOURCE=escrow`, escrow/rotate workflow, runbook (code in this PR); then the owner escrows, deletes the GitHub secrets and rotates | — |
 | 3 | `secretd` + `OpenWorkloadSecrets` (owner by protected `apps.node_id`, peers by owner-requested `secret_grants`) + audit + alerts; move `runtime`, then `build`, `edge`, `delivery`; `control` behind signd; node join stops staging, verify refuses leftovers | 1 |
+| 3d | Everything by reference: crash-capture keys, sidecar env, per-snapshot encryption with keys from secretd (latency-measured), app secrets; then the runtime identity leaves compute | 3 |
 | 4 | HSM hardware, ceremony runbook, Tier A wrapped identities for every control-plane reader, measurements | — |
 | 5 | Tier B envelope v3 + re-seal of every sealed column | 4 |
 

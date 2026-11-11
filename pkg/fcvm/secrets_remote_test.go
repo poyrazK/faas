@@ -5,6 +5,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"filippo.io/age"
+
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // adr: 20261110210000 — with a runtime opener (secretd), vmmd opens app
@@ -82,5 +86,49 @@ func TestNoOpenerNoIdentityStillRefuses(t *testing.T) {
 	_, err := m.UnsealRuntimeSecrets(context.Background(), "app-1", []SealedEnvEntry{{Key: "A", Ciphertext: []byte("c")}}, "acct")
 	if !errors.Is(err, ErrNoHostKey) {
 		t.Fatalf("err = %v, want ErrNoHostKey", err)
+	}
+}
+
+type fakeCaptureOpener struct {
+	fakeOpener
+	key   *age.X25519Identity
+	calls []string
+}
+
+func (f *fakeCaptureOpener) OpenCaptureKey(_ context.Context, appID, captureID string) (*age.X25519Identity, error) {
+	f.calls = append(f.calls, appID+"/"+captureID)
+	return f.key, nil
+}
+
+// Slice 3d: with a runtime opener that opens capture keys, a sealed capture
+// restores without any runtime identity on this node.
+func TestSealedCaptureKeyFromRuntimeOpener(t *testing.T) {
+	be, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	m.WithStorage(be)
+	opener := &fakeCaptureOpener{key: key}
+	m.SetRuntimeSecretOpener(opener)
+	snap := &Snapshot{CaptureID: "cap-1", SealedKey: []byte("sealed elsewhere")}
+	if err := m.openSealedSnapshot(context.Background(), "app-1", snap); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(opener.calls, ",") != "app-1/cap-1" || snap.Storage == nil {
+		t.Fatalf("calls = %v, storage = %v", opener.calls, snap.Storage)
+	}
+	if err := m.openSealedSnapshot(context.Background(), "", &Snapshot{CaptureID: "cap-1", SealedKey: []byte("x")}); err == nil {
+		t.Fatal("a capture without its app id opened remotely")
+	}
+	// Without an opener and without an identity, nothing opens (unchanged).
+	local := newTestManager(&fakeRunner{}, &fakeVMM{})
+	local.WithStorage(be)
+	if err := local.openSealedSnapshot(context.Background(), "app-1", &Snapshot{CaptureID: "cap-1", SealedKey: []byte("x")}); !errors.Is(err, ErrNoCaptureKey) {
+		t.Fatalf("local without identity = %v, want ErrNoCaptureKey", err)
 	}
 }

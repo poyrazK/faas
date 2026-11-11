@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
+	"github.com/onebox-faas/faas/pkg/crashcrypt"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/secretd"
 )
@@ -21,11 +22,25 @@ import (
 type grantKey struct{ app, node string }
 
 type fakeStore struct {
-	nodes   map[string]string // name -> id (active only)
-	apps    map[string]secretd.AppTarget
-	grants  map[grantKey]time.Time
-	opens   []string
-	failRec bool
+	nodes    map[string]string // name -> id (active only)
+	apps     map[string]secretd.AppTarget
+	grants   map[grantKey]time.Time
+	opens    []string
+	failRec  bool
+	captures map[string]fakeCapture
+}
+
+type fakeCapture struct {
+	app    string
+	sealed []byte
+}
+
+func (f *fakeStore) CaptureKey(_ context.Context, id string) (string, []byte, error) {
+	c, ok := f.captures[id]
+	if !ok {
+		return "", nil, secretd.ErrUnknownCapture
+	}
+	return c.app, c.sealed, nil
 }
 
 func (f *fakeStore) NodeIDByName(_ context.Context, name string) (string, error) {
@@ -231,5 +246,47 @@ func TestDistinctAppBudgetPerNode(t *testing.T) {
 	f.now = f.now.Add(61 * time.Minute)
 	if _, code := f.open(t, "app-3", entry); code != codes.OK {
 		t.Fatalf("after the window = %v", code)
+	}
+}
+
+// Slice 3d: a capture key opens by reference, for the capture's own app and
+// only for its owner or a granted peer.
+func TestOpenCaptureKeyByReference(t *testing.T) {
+	f := newFixture(t, 0)
+	const captureA = "11111111-1111-1111-1111-111111111111"
+	key, sealed, err := crashcrypt.NewKey(f.id.Recipient(), captureA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.store.captures = map[string]fakeCapture{captureA: {app: "app-a", sealed: sealed}}
+	open := func(app, capture string) (string, codes.Code) {
+		resp, err := f.server.OpenCaptureKey(f.ctx, &secretdpb.OpenCaptureKeyRequest{AppId: app, CaptureId: capture})
+		if err != nil {
+			return "", status.Code(err)
+		}
+		return resp.GetIdentity(), codes.OK
+	}
+	if got, code := open("app-a", captureA); code != codes.OK || got != key.String() {
+		t.Fatalf("owner open = %v", code)
+	}
+	if len(f.store.opens) != 1 || f.store.opens[0] != "n-owner/app-a/owner" {
+		t.Fatalf("audit = %v", f.store.opens)
+	}
+	// The caller owns app-a but names it for another app's capture: the
+	// capture's own app decides.
+	f.store.apps["app-c"] = secretd.AppTarget{OwnerNodeID: "n-owner", AccountID: "acct-a"}
+	if _, code := open("app-c", captureA); code != codes.PermissionDenied {
+		t.Fatalf("capture under another app = %v", code)
+	}
+	if _, code := open("app-a", "22222222-2222-2222-2222-222222222222"); code != codes.NotFound {
+		t.Fatalf("unknown capture = %v", code)
+	}
+	f.caller = "peer-node"
+	if _, code := open("app-a", captureA); code != codes.PermissionDenied {
+		t.Fatalf("ungranted peer = %v", code)
+	}
+	f.store.grants[grantKey{"app-a", "n-peer"}] = f.now.Add(time.Hour)
+	if got, code := open("app-a", captureA); code != codes.OK || got != key.String() {
+		t.Fatalf("granted peer = %v", code)
 	}
 }

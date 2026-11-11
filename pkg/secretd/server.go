@@ -28,6 +28,7 @@ import (
 
 	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/crashcrypt"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -51,10 +52,16 @@ type Store interface {
 	GrantValid(ctx context.Context, appID, nodeID string, at time.Time) (bool, error)
 	UpsertGrant(ctx context.Context, appID, nodeID, grantedByNodeID string, expiresAt time.Time) (time.Time, error)
 	RecordOpen(ctx context.Context, nodeID, appID, via string, entries int) error
+	// CaptureKey returns a live sealed crash capture's app id and sealed
+	// key, or ErrUnknownCapture.
+	CaptureKey(ctx context.Context, captureID string) (appID string, sealed []byte, err error)
 }
 
 // ErrUnknownNode is returned by Store.NodeIDByName.
 var ErrUnknownNode = errors.New("secretd: no active compute node has that name")
+
+// ErrUnknownCapture is returned by Store.CaptureKey.
+var ErrUnknownCapture = errors.New("secretd: no live sealed capture has that id")
 
 // Limits bound what one node may do.
 const (
@@ -259,6 +266,60 @@ func (s *Server) GrantPeer(ctx context.Context, req *secretdpb.GrantPeerRequest)
 		return nil, rpcErr(codes.Unavailable, "secretd could not record the grant")
 	}
 	return &secretdpb.GrantPeerResponse{ExpiresAt: expires.UTC().Format(time.RFC3339)}, nil
+}
+
+// OpenCaptureKey implements secretdpb.SecretdServer (ADR-20261110210000
+// slice 3d): the caller names a capture, never supplies its key; secretd
+// reads the sealed key and answers only when the capture belongs to the app
+// the caller owns or holds a grant for.
+func (s *Server) OpenCaptureKey(ctx context.Context, req *secretdpb.OpenCaptureKeyRequest) (*secretdpb.OpenCaptureKeyResponse, error) {
+	name, nodeID, err := s.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	appID, captureID := req.GetAppId(), req.GetCaptureId()
+	if appID == "" || captureID == "" {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id and a capture id")
+	}
+	target, err := s.store.AppTarget(ctx, appID)
+	if err != nil {
+		return nil, rpcErr(codes.NotFound, "secretd found no such app")
+	}
+	via, err := s.authorize(ctx, appID, nodeID, target)
+	if err != nil {
+		s.log.Warn("secretd: refused capture key", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.PermissionDenied, "secretd refused: the caller neither owns the app nor holds a grant for it")
+	}
+	captureApp, sealed, err := s.store.CaptureKey(ctx, captureID)
+	if errors.Is(err, ErrUnknownCapture) {
+		return nil, rpcErr(codes.NotFound, "secretd found no live sealed capture with that id")
+	}
+	if err != nil {
+		s.log.Error("secretd: capture lookup", "capture_id", logsanitize.Field(captureID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not look up the capture")
+	}
+	if captureApp != appID {
+		s.log.Warn("secretd: refused capture of another app", "node", logsanitize.Field(name),
+			"app_id", logsanitize.Field(appID), "capture_id", logsanitize.Field(captureID))
+		return nil, rpcErr(codes.PermissionDenied, "secretd refused: the capture belongs to another app")
+	}
+	if !s.budget.allow(nodeID, appID, s.now()) {
+		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
+		return nil, rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
+	}
+	if len(s.identities) == 0 {
+		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no runtime identity")
+	}
+	identity, err := crashcrypt.OpenKey(s.identities, captureID, sealed)
+	if err != nil {
+		s.log.Warn("secretd: capture key does not open", "capture_id", logsanitize.Field(captureID), "err", err)
+		return nil, rpcErr(codes.FailedPrecondition, "secretd could not open the capture key")
+	}
+	if err := s.store.RecordOpen(ctx, nodeID, appID, via, 1); err != nil {
+		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
+	}
+	return &secretdpb.OpenCaptureKeyResponse{Identity: identity.String()}, nil
 }
 
 // appBudget counts the distinct apps each node opened in a rolling window.

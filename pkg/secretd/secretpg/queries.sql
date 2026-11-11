@@ -21,3 +21,8 @@ DELETE FROM secret_grants WHERE expires_at <= sqlc.arg(before)::timestamptz;
 -- name: InsertSecretOpenAudit :exec
 INSERT INTO secret_open_audit (node_id, app_id, via, entries)
 VALUES (sqlc.arg(node_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(via)::text, sqlc.arg(entries)::integer);
+
+-- name: CrashCaptureSealedKey :one
+-- A live capture's app and sealed key (ADR-20261110210000 slice 3d).
+SELECT app_id, sealed_key FROM crash_captures
+ WHERE id = sqlc.arg(id)::uuid AND status <> 'expired' AND sealed_key IS NOT NULL;

@@ -11,6 +11,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const crashCaptureSealedKey = `-- name: CrashCaptureSealedKey :one
+SELECT app_id, sealed_key FROM crash_captures
+ WHERE id = $1::uuid AND status <> 'expired' AND sealed_key IS NOT NULL
+`
+
+type CrashCaptureSealedKeyRow struct {
+	AppID     pgtype.UUID
+	SealedKey []byte
+}
+
+// A live capture's app and sealed key (ADR-20261110210000 slice 3d).
+func (q *Queries) CrashCaptureSealedKey(ctx context.Context, db DBTX, id pgtype.UUID) (CrashCaptureSealedKeyRow, error) {
+	row := db.QueryRow(ctx, crashCaptureSealedKey, id)
+	var i CrashCaptureSealedKeyRow
+	err := row.Scan(&i.AppID, &i.SealedKey)
+	return i, err
+}
+
 const deleteExpiredSecretGrants = `-- name: DeleteExpiredSecretGrants :execrows
 DELETE FROM secret_grants WHERE expires_at <= $1::timestamptz
 `

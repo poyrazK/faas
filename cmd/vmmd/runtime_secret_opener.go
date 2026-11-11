@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"time"
 
+	"filippo.io/age"
+
 	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -91,3 +93,21 @@ func (o secretdOpener) OpenAppSecrets(ctx context.Context, appID string, entries
 	}
 	return resp.GetValues(), nil
 }
+
+// OpenCaptureKey implements fcvm.CaptureKeyOpener: secretd reads the sealed
+// key from the capture's row (ADR-20261110210000 slice 3d).
+func (o secretdOpener) OpenCaptureKey(ctx context.Context, appID, captureID string) (*age.X25519Identity, error) {
+	ctx, cancel := context.WithTimeout(ctx, secretdOpenTimeout)
+	defer cancel()
+	resp, err := o.rpc.OpenCaptureKey(ctx, &secretdpb.OpenCaptureKeyRequest{AppId: appID, CaptureId: captureID})
+	if err != nil {
+		return nil, fmt.Errorf("secretd: %w", err)
+	}
+	id, err := age.ParseX25519Identity(resp.GetIdentity())
+	if err != nil {
+		return nil, fmt.Errorf("secretd: capture key: %w", err)
+	}
+	return id, nil
+}
+
+var _ fcvm.CaptureKeyOpener = secretdOpener{}
