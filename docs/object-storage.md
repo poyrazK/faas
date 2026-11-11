@@ -400,8 +400,17 @@ gregale bucket lifecycle get my-api BUCKET_ID
 ```
 
 ```json
-{"rules": [{"id": "temporary", "status": "Enabled", "filter": {"prefix": "tmp/"}, "abort_incomplete_multipart_days": 7}]}
+{"rules": [
+  {"id": "temporary", "status": "Enabled", "filter": {"prefix": "tmp/"},
+   "expiration": {"days": 30}, "abort_incomplete_multipart_days": 7},
+  {"id": "old-versions", "status": "Enabled", "filter": {},
+   "noncurrent_version_expiration": {"noncurrent_days": 90}}
+]}
 ```
+
+`expiration.days` removes current objects that many days after upload, and
+`noncurrent_version_expiration.noncurrent_days` removes older versions once
+they have been noncurrent that long.
 
 Rules are checked hourly. Storage-class transitions are not supported. S3 SDKs
 can use `PutBucketLifecycleConfiguration` instead.
