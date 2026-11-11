@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,12 +58,13 @@ func TestInventorySweepCapacity(t *testing.T) {
 		{name: "mixed-200ms", latency: 200 * time.Millisecond, small: 2000, large: 16, largePages: 500, sweeps: 2},
 		{name: "steady-200ms", latency: 200 * time.Millisecond, small: 2000, large: 16, largePages: 500, sweeps: 2, listed: true},
 	}
+	t.Run("quiet-200ms", testInventorySweepQuietCapacity)
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
 			pool := pgtest.OpenMigrated(t)
 			st := state.NewPgStore(pool)
 			lister := &latencyLister{latency: sc.latency, keys: map[string]int{}}
-			svc, err := seedInventoryCapacity(t, st, lister, sc.small, sc.large, sc.largePages)
+			svc, err := seedInventoryCapacity(t, st, lister, sc.small, sc.large, sc.largePages, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,6 +122,8 @@ type latencyLister struct {
 	latency time.Duration
 	keys    map[string]int // physical bucket name → keys; written only while seeding
 	pages   atomic.Int64
+	mu      sync.Mutex
+	listed  map[string]int // physical bucket name → pages listed, when set
 }
 
 func (p *latencyLister) ListObjectsV2(ctx context.Context, physical string, r objectstorage.ObjectListRequest) (objectstorage.ObjectPage, error) {
@@ -131,6 +135,11 @@ func (p *latencyLister) ListObjectsV2(ctx context.Context, physical string, r ob
 	case <-timer.C:
 	}
 	p.pages.Add(1)
+	p.mu.Lock()
+	if p.listed != nil {
+		p.listed[physical]++
+	}
+	p.mu.Unlock()
 	total := p.keys[physical]
 	start := 0
 	if r.Cursor != "" {
@@ -164,9 +173,17 @@ func (h capacityHost) Logger() *slog.Logger {
 
 // seedInventoryCapacity creates small three-key buckets and large buckets of
 // largePages full pages, ten to an app, all ready and never inventoried.
-func seedInventoryCapacity(t *testing.T, st *state.PgStore, lister *latencyLister, small, large, largePages int) (Service, error) {
+// gatewaySafety configures gateway-safety accounting, which quiet buckets
+// need (ADR-20261110151628 §2).
+func seedInventoryCapacity(t *testing.T, st *state.PgStore, lister *latencyLister, small, large, largePages int, gatewaySafety bool) (Service, error) {
 	policy := api.ObjectStoragePolicy{MaxAccountBytes: 1 << 40, MaxBucketBytes: 1 << 40, MaxAccountKeys: api.MaxObjectStorageAccountKeys, MaxMonthlyCostMillicents: 1 << 40, MaxMonthlyRequests: 1 << 40, MaxMonthlyEgressBytes: 1 << 40, MaxMonthlyAuthorizations: 1 << 40, MaxReportAgeSeconds: 3600}
-	registry, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "ovh"}, Backends: []objectstorage.BackendConfig{{ID: "ovh", Driver: "fake", Region: "us-east-1", Namespace: "isolated", Endpoint: "https://s3.example.test", S3Region: "us-east-1", UsageReportsPath: "/var/spool/faas/ovh-usage.json"}}}, func(string) string { return "" }, map[string]objectstorage.Factory{"fake": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
+	config := objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "ovh"}, Backends: []objectstorage.BackendConfig{{ID: "ovh", Driver: "fake", Region: "us-east-1", Namespace: "isolated", Endpoint: "https://s3.example.test", S3Region: "us-east-1", UsageReportsPath: "/var/spool/faas/ovh-usage.json"}}}
+	if gatewaySafety {
+		since := time.Now().UTC().Add(-48 * time.Hour)
+		policy.AccountingMode, policy.GatewayMeteringSince, policy.MaxMonthlyCostMillicents = api.ObjectStorageGatewaySafetyV1, &since, 0
+		config.PublicEndpoint, config.Transfer = "https://s3.gregale.dev", objectstorage.ObjectTransferConfig{Profile: "proxied"}
+	}
+	registry, err := objectstorage.NewRegistry(config, func(string) string { return "" }, map[string]objectstorage.Factory{"fake": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
 		return lister, nil
 	}})
 	if err != nil {
@@ -234,4 +251,105 @@ func seedInventoryApp(ctx context.Context, st *state.PgStore, backend objectstor
 		}
 	}
 	return nil
+}
+
+// testInventorySweepQuietCapacity measures the sweep with object_inventory_quiet
+// on (ADR-20261110151628 step 5): 20,000 quiet one-page buckets listed two
+// hours ago, 1,000 active ones (written after their listing ten minutes ago)
+// and 1,000 quiet ones due for their daily verification. Only the last two
+// groups should be listed.
+func testInventorySweepQuietCapacity(t *testing.T) {
+	const quiet, active, verify = 20000, 1000, 1000
+	const latency = 200 * time.Millisecond
+	pool := pgtest.OpenMigrated(t)
+	st := state.NewPgStore(pool)
+	lister := &latencyLister{latency: latency, keys: map[string]int{}}
+	svc, err := seedInventoryCapacity(t, st, lister, quiet+active+verify, 0, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(lister.keys))
+	for name := range lister.keys {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	class := map[string]string{}
+	for i, name := range names {
+		switch {
+		case i < active:
+			class[name] = "active"
+		case i < active+verify:
+			class[name] = "verify"
+		default:
+			class[name] = "quiet"
+		}
+	}
+	ctx := t.Context()
+	if _, err = pool.Exec(ctx, `INSERT INTO object_storage_bucket_usage (bucket_id, baseline_bytes, baseline_keys, observed_bytes, observed_keys, observed_at, attempt_at)
+SELECT b.id, 3, 3, 3, 3, now() - a.age, now() - a.age FROM object_buckets b
+CROSS JOIN LATERAL (SELECT CASE WHEN b.physical_name = ANY($1::text[]) THEN interval '10 minutes'
+  WHEN b.physical_name = ANY($2::text[]) THEN interval '23 hours 30 minutes' ELSE interval '2 hours' END AS age) a
+ON CONFLICT (bucket_id) DO UPDATE SET observed_at = EXCLUDED.observed_at, attempt_at = EXCLUDED.attempt_at,
+observed_bytes = 3, observed_keys = 3, baseline_bytes = 3, baseline_keys = 3`, names[:active], names[active:active+verify]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO object_bucket_activity (bucket_id, mutated_at, active_since)
+SELECT id, now() - interval '1 minute', now() - interval '1 minute' FROM object_buckets WHERE physical_name = ANY($1::text[])`, names[:active]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO runtime_config_entries (id, config_key, scope, scope_id, desired_value, effective_value, version, apply_mode, status)
+VALUES (gen_random_uuid(), $1, 'global', '', '"on"', '"on"', 1, 'hot', 'applied')`, api.ObjectInventoryQuietConfigKey); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	due, err := st.DueObjectInventoryQueue(ctx, 100, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("due query over %d buckets: %s (%d rows)", len(names), time.Since(start).Round(time.Microsecond), len(due))
+	start = time.Now()
+	if due, err = st.DueObjectInventoryQueue(ctx, 100, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("due query without quiet buckets: %s (%d rows)", time.Since(start).Round(time.Microsecond), len(due))
+	start = time.Now()
+	backlog, err := st.ObjectInventoryBacklog(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("backlog query: %s: due %d, oldest active %s, oldest quiet %s", time.Since(start).Round(time.Microsecond), backlog.DueBuckets, backlog.OldestObservationAge.Round(time.Second), backlog.OldestQuietObservationAge.Round(time.Second))
+	if backlog.DueBuckets != active+verify {
+		t.Fatalf("due %d, want %d", backlog.DueBuckets, active+verify)
+	}
+	lister.mu.Lock()
+	lister.listed = map[string]int{}
+	lister.mu.Unlock()
+	cycle := time.Now()
+	for sweep := 1; sweep <= 6; sweep++ {
+		start := time.Now()
+		more, err := svc.reconcileObjectInventories(ctx, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lister.mu.Lock()
+		byClass := map[string]int{}
+		for name := range lister.listed {
+			byClass[class[name]]++
+		}
+		lister.mu.Unlock()
+		t.Logf("sweep %d: %s, listed so far %v, more %v", sweep, time.Since(start).Round(time.Millisecond), byClass, more)
+		if !more {
+			break
+		}
+	}
+	lister.mu.Lock()
+	defer lister.mu.Unlock()
+	byClass := map[string]int{}
+	for name := range lister.listed {
+		byClass[class[name]]++
+	}
+	t.Logf("cycle: %s for %d buckets of %d", time.Since(cycle).Round(time.Millisecond), len(lister.listed), len(names))
+	if byClass["quiet"] != 0 || byClass["active"] != active || byClass["verify"] != verify {
+		t.Fatalf("listed %v, want every active and verifying bucket and no quiet one", byClass)
+	}
 }

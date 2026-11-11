@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -76,4 +77,25 @@ func (m *MemStore) dropObjectMutationLocked(id string) {
 	}
 	delete(m.objectMutations, id)
 	m.markObjectBucketMutatedLocked(r.Bucket.ID)
+}
+
+// objectInventoryQuietModeLocked is object_inventory_quiet_mode(): the
+// applied object_inventory_quiet value, off when none is applied or valid.
+func (m *MemStore) objectInventoryQuietModeLocked() string {
+	row, ok := m.runtimeConfigs[runtimeConfigMapKey(api.ObjectInventoryQuietConfigKey, RuntimeConfigScopeGlobal, "")]
+	var mode string
+	if !ok || row.Status != RuntimeConfigApplied || json.Unmarshal(row.EffectiveValue, &mode) != nil || !api.ValidObjectInventoryQuiet(mode) {
+		return api.ObjectInventoryQuietOff
+	}
+	return mode
+}
+
+// objectUsageWithActivityLocked is a bucket's usage with its activity stamps,
+// as the Postgres queries join them.
+func (m *MemStore) objectUsageWithActivityLocked(bucket string) ObjectBucketUsage {
+	u := m.objectUsage[bucket]
+	if a, ok := m.objectBucketActivity[bucket]; ok {
+		u.MutatedAt, u.ActiveSince = a.mutatedAt, a.activeSince
+	}
+	return u
 }

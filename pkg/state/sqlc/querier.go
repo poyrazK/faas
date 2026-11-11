@@ -5186,7 +5186,12 @@ type Querier interface {
 	// A bucket whose listing is unfinished is due at once (ADR-20261030100835).
 	// The sweep's queue leaves out the buckets it already took (skip) and marks a
 	// long listing: one that continues, or a bucket whose last inventory counted
-	// more than long_keys keys (ADR-20261110151628 §1).
+	// more than long_keys keys (ADR-20261110151628 §1). With quiet set (gateway-
+	// safety accounting) and object_inventory_quiet on, a quiet bucket is due only
+	// once its observation is quiet_verify_seconds old, and it sorts by how close
+	// it is to quiet_max_age, as an active bucket's last attempt sorts by how
+	// close it is to 900 s (§2): a backlog of daily verifications never delays an
+	// active bucket that is nearer its limit.
 	ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectInventoriesDueParams) ([]ObjectInventoriesDueRow, error)
 	// ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
 	// counts what ObjectInventoriesDue would hand out now (same rule).
@@ -5195,7 +5200,9 @@ type Querier interface {
 	// (with an observation), or whose listing advanced within progress_window on
 	// an observation under scan_max_age, stays fresh on an older one and does not
 	// count (objectBucketInventoryStale). A bucket never observed counts from its
-	// creation.
+	// creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
+	// counts toward oldest_quiet_age_seconds instead, and an active bucket that
+	// was quiet on its observation counts from when it turned active.
 	ObjectInventoryBacklog(ctx context.Context, db DBTX, arg ObjectInventoryBacklogParams) (ObjectInventoryBacklogRow, error)
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)
 	ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error)
@@ -5217,6 +5224,10 @@ type Querier interface {
 	// row (ADR-20261030100835).
 	ObjectInventoryScanGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectInventoryScanGetRow, error)
 	ObjectInventoryScanStart(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectStorageInventoryScan, error)
+	// What a bucket's previous listing counted, and whether anything was admitted
+	// to the bucket since that listing started, read before a new listing is
+	// published (ADR-20261110151628 §2 verification).
+	ObjectInventoryVerificationRead(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectInventoryVerificationReadRow, error)
 	// A lifecycle scan pauses only for its own unsettled deletions and for a
 	// version protection job in its bucket (ADR-20261025115958).
 	ObjectLifecycleDeletionActive(ctx context.Context, db DBTX, arg ObjectLifecycleDeletionActiveParams) (bool, error)
