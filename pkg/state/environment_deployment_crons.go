@@ -59,9 +59,9 @@ func (m *MemStore) latestEnvironmentDeploymentLocked(appID, scope string) string
 	return latest.ID
 }
 
-func (m *MemStore) EnvironmentDeploymentCronStagingSnapshot(_ context.Context, accountID, appID, scope string) (api.DeploymentCronStagingSnapshot, error) {
+func (m *MemStore) EnvironmentDeploymentCronStagingSnapshot(ctx context.Context, accountID, appID, scope string) (api.DeploymentCronStagingSnapshot, error) {
 	if scope == "" {
-		return m.DeploymentCronStagingSnapshot(context.Background(), accountID, appID)
+		return m.DeploymentCronStagingSnapshot(ctx, accountID, appID)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
