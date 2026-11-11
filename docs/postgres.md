@@ -352,7 +352,11 @@ how many databases you have against your plan's limit. It can trail the
 databases by up to two hours.
 - Compute: `compute_cap_state` is `warning` at 80% of the month's allowance. At the
   allowance the databases are suspended until the 1st of next month or an
-  upgrade. A suspended database keeps its data.
+  upgrade, unless compute overage is on. A suspended database keeps its data.
+- Compute overage (`gregale postgres overage on|off`) keeps the databases
+  running past the allowance, up to twice it, and bills the excess. It is off
+  by default on Hobby and Pro and on by default on Scale; turning it off on
+  Scale is kept.
 - Storage: at the pooled storage limit, writes that would grow a database
   fail. Reads, deletes and `VACUUM` keep working, and nothing is suspended or
   deleted.
@@ -362,7 +366,8 @@ databases by up to two hours.
   `egress_state` is `warning` at 80% of the allowance and `held` once the two
   together reach it: the databases then refuse connections until the 1st of
   next month or an upgrade, and the account is emailed once that month. Data
-  a database sends your app counts as database egress.
+  a database sends your app counts as database egress; private network
+  transfer (Private Link) does not.
 - With egress overage on (`gregale billing egress-overage`), your apps use
   the allowance first and database egress past it is billed at $0.105 per GB.
   `egress_state` is then `overage`, and the databases are held only at twice

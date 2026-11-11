@@ -35,7 +35,18 @@ func (w *ScheddWaker) Wake(ctx context.Context, databaseID string) (Backend, err
 	if rt.GetVmmdTarget() == "" || rt.GetNodeId() == "" {
 		return Backend{}, errors.New("pgproxy: schedd returned no vmmd target or node")
 	}
-	return Backend{Target: rt.GetVmmdTarget(), Node: rt.GetNodeId()}, nil
+	return backendFromRuntime(rt.GetVmmdTarget(), rt.GetNodeId(), rt.GetReplicaVmmdTarget(), rt.GetStandbyNodeId()), nil
+}
+
+// backendFromRuntime is the backend schedd names. A standby serving reads
+// (ADR-1027 amendment 2026-11-11) runs on the standby node, never the
+// primary's; older schedulers name none.
+func backendFromRuntime(target, node, replicaTarget, standbyNode string) Backend {
+	b := Backend{Target: target, Node: node}
+	if replicaTarget != "" && standbyNode != "" && standbyNode != node {
+		b.ReplicaTarget, b.ReplicaNode = replicaTarget, standbyNode
+	}
+	return b
 }
 
 // nodeCN is the CN a database node's vmmd leaf carries: <id>.faas

@@ -26293,6 +26293,23 @@ END $$;
 
 
 --
+-- Name: retain_billing_plan_activation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retain_billing_plan_activation() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+BEGIN
+    IF NEW.plan IS DISTINCT FROM OLD.plan THEN
+        INSERT INTO public.billing_plan_activations(subject_id, from_plan, to_plan, effective_at)
+        VALUES (NEW.id, OLD.plan, NEW.plan, NEW.plan_changed_at);
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: retain_financial_usage_evidence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -33747,6 +33764,36 @@ CREATE TABLE public.billing_payment_recovery_receipts (
 
 
 --
+-- Name: billing_plan_activations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_plan_activations (
+    sequence bigint NOT NULL,
+    subject_id uuid NOT NULL,
+    from_plan text NOT NULL,
+    to_plan text NOT NULL,
+    effective_at timestamp with time zone NOT NULL,
+    CONSTRAINT billing_plan_activations_effective_at_check CHECK (isfinite(effective_at)),
+    CONSTRAINT billing_plan_activations_from_plan_check CHECK ((from_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT billing_plan_activations_to_plan_check CHECK ((to_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text])))
+);
+
+
+--
+-- Name: billing_plan_activations_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.billing_plan_activations ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.billing_plan_activations_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: billing_quota_warnings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33996,6 +34043,25 @@ CREATE TABLE public.billing_usage_deliveries (
     CONSTRAINT billing_usage_deliveries_mb_seconds_check CHECK ((mb_seconds >= 0)),
     CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
     CONSTRAINT billing_usage_deliveries_usage_source_chk CHECK (((usage_source IS NULL) OR (usage_source = ANY (ARRAY['usage_minutes'::text, 'ledger'::text]))))
+);
+
+
+--
+-- Name: billing_usage_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_usage_intents (
+    provider text NOT NULL,
+    account_id uuid NOT NULL,
+    meter text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    quantity bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT billing_usage_intents_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT billing_usage_intents_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'egress'::text]))),
+    CONSTRAINT billing_usage_intents_provider_check CHECK ((provider <> ''::text)),
+    CONSTRAINT billing_usage_intents_quantity_check CHECK ((quantity >= 0)),
+    CONSTRAINT billing_usage_intents_window_start_check CHECK ((window_start = (date_trunc('hour'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)))
 );
 
 
@@ -34887,6 +34953,31 @@ CREATE TABLE public.commit_sources (
     CONSTRAINT commit_sources_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
     CONSTRAINT commit_sources_relay_status_check CHECK ((relay_status = ANY (ARRAY['unconfigured'::text, 'healthy'::text, 'credential_unavailable'::text, 'database_unavailable'::text, 'schema_unqualified'::text, 'source_binding_unqualified'::text, 'replay_pending'::text, 'retention_unqualified'::text, 'cleanup_pending'::text, 'blocked_scan_pending'::text, 'blocked_status_pending'::text, 'handoff_pending'::text, 'status_unavailable'::text, 'blocked_events'::text])))
 );
+
+
+--
+-- Name: complimentary_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.complimentary_accounts (
+    account_id uuid NOT NULL,
+    plan text NOT NULL,
+    reason text NOT NULL,
+    granted_by uuid NOT NULL,
+    granted_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone,
+    CONSTRAINT complimentary_accounts_check CHECK (((expires_at IS NULL) OR (isfinite(expires_at) AND (expires_at > granted_at)))),
+    CONSTRAINT complimentary_accounts_granted_at_check CHECK (isfinite(granted_at)),
+    CONSTRAINT complimentary_accounts_plan_check CHECK ((plan = ANY (ARRAY['hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT complimentary_accounts_reason_check CHECK ((reason ~ '^[a-z0-9_]{1,64}$'::text))
+);
+
+
+--
+-- Name: TABLE complimentary_accounts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.complimentary_accounts IS 'Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).';
 
 
 --
@@ -36795,6 +36886,9 @@ CREATE TABLE public.database_vms (
     upgrade_result text,
     upgrade_lease_until timestamp with time zone,
     major_history jsonb DEFAULT '[]'::jsonb NOT NULL,
+    held boolean DEFAULT false NOT NULL,
+    compute_quota_unit_seconds bigint,
+    CONSTRAINT database_vms_compute_quota_check CHECK (((compute_quota_unit_seconds IS NULL) OR (compute_quota_unit_seconds > 0))),
     CONSTRAINT database_vms_last_error_check CHECK (((last_error IS NULL) OR (last_error ~ '^[a-z_]{1,64}$'::text))),
     CONSTRAINT database_vms_major_history CHECK ((jsonb_typeof(major_history) = 'array'::text)),
     CONSTRAINT database_vms_mem_mib_check CHECK (((mem_mib >= 128) AND (mem_mib <= 65536))),
@@ -57911,6 +58005,33 @@ CREATE TABLE public.source_build_rootfs_current (
 
 
 --
+-- Name: spend_cap_notice_outbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.spend_cap_notice_outbox (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    month timestamp with time zone NOT NULL,
+    cap_cents bigint NOT NULL,
+    observed_cents bigint NOT NULL,
+    reached_at timestamp with time zone NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    lease_token uuid,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    delivered_at timestamp with time zone,
+    CONSTRAINT spend_cap_notice_outbox_cap_cents_check CHECK ((cap_cents >= 0)),
+    CONSTRAINT spend_cap_notice_outbox_check CHECK ((observed_cents >= cap_cents)),
+    CONSTRAINT spend_cap_notice_outbox_check1 CHECK (((state = 'sending'::text) = (lease_token IS NOT NULL))),
+    CONSTRAINT spend_cap_notice_outbox_check2 CHECK (((state = 'delivered'::text) = (delivered_at IS NOT NULL))),
+    CONSTRAINT spend_cap_notice_outbox_delivered_at_check CHECK (((delivered_at IS NULL) OR isfinite(delivered_at))),
+    CONSTRAINT spend_cap_notice_outbox_month_check CHECK ((month = (date_trunc('month'::text, (month AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT spend_cap_notice_outbox_next_attempt_at_check CHECK (isfinite(next_attempt_at)),
+    CONSTRAINT spend_cap_notice_outbox_reached_at_check CHECK (isfinite(reached_at)),
+    CONSTRAINT spend_cap_notice_outbox_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sending'::text, 'delivered'::text])))
+);
+
+
+--
 -- Name: static_egress_provisioning_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -61395,6 +61516,14 @@ ALTER TABLE ONLY public.billing_payment_recovery_receipts
 
 
 --
+-- Name: billing_plan_activations billing_plan_activations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_plan_activations
+    ADD CONSTRAINT billing_plan_activations_pkey PRIMARY KEY (sequence);
+
+
+--
 -- Name: billing_quota_warnings billing_quota_warnings_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -61472,6 +61601,14 @@ ALTER TABLE ONLY public.billing_subscription_ends
 
 ALTER TABLE ONLY public.billing_usage_deliveries
     ADD CONSTRAINT billing_usage_deliveries_pkey PRIMARY KEY (provider, account_id, window_start);
+
+
+--
+-- Name: billing_usage_intents billing_usage_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_usage_intents
+    ADD CONSTRAINT billing_usage_intents_pkey PRIMARY KEY (provider, account_id, meter, window_start);
 
 
 --
@@ -62072,6 +62209,14 @@ ALTER TABLE ONLY public.commit_sources
 
 ALTER TABLE ONLY public.commit_sources
     ADD CONSTRAINT commit_sources_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: complimentary_accounts complimentary_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.complimentary_accounts
+    ADD CONSTRAINT complimentary_accounts_pkey PRIMARY KEY (account_id);
 
 
 --
@@ -72043,6 +72188,22 @@ ALTER TABLE ONLY public.source_build_rootfs
 
 
 --
+-- Name: spend_cap_notice_outbox spend_cap_notice_outbox_account_id_month_cap_cents_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.spend_cap_notice_outbox
+    ADD CONSTRAINT spend_cap_notice_outbox_account_id_month_cap_cents_key UNIQUE (account_id, month, cap_cents);
+
+
+--
+-- Name: spend_cap_notice_outbox spend_cap_notice_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.spend_cap_notice_outbox
+    ADD CONSTRAINT spend_cap_notice_outbox_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: static_egress_provisioning_grants static_egress_provisioning_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74391,6 +74552,13 @@ CREATE INDEX billing_payment_recovery_receipts_account_idx ON public.billing_pay
 
 
 --
+-- Name: billing_plan_activations_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_plan_activations_subject_idx ON public.billing_plan_activations USING btree (subject_id, effective_at, sequence);
+
+
+--
 -- Name: billing_run_items_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -74787,6 +74955,13 @@ CREATE UNIQUE INDEX commit_receipts_operation_identity ON public.commit_receipts
 --
 
 CREATE INDEX commit_receipts_source_history ON public.commit_receipts USING btree (account_id, source_id, accepted_at, id);
+
+
+--
+-- Name: complimentary_accounts_expires_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX complimentary_accounts_expires_at_idx ON public.complimentary_accounts USING btree (expires_at) WHERE (expires_at IS NOT NULL);
 
 
 --
@@ -82753,6 +82928,13 @@ COMMENT ON INDEX public.snapshots_live_idx IS 'Supports pkg/state/pgstore.go::La
 
 
 --
+-- Name: spend_cap_notice_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX spend_cap_notice_pending_idx ON public.spend_cap_notice_outbox USING btree (next_attempt_at, id) WHERE (state <> 'delivered'::text);
+
+
+--
 -- Name: static_egress_provisioning_account_ip_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -83968,6 +84150,13 @@ CREATE TRIGGER accounts_plan_changed_at BEFORE UPDATE OF plan ON public.accounts
 --
 
 CREATE TRIGGER accounts_quota_mail_revision_guard BEFORE UPDATE OF plan, email, status, past_due_at, deletion_requested_at, last_quota_warning_at, quota_mail_revision ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.advance_account_quota_mail_revision();
+
+
+--
+-- Name: accounts accounts_retain_billing_plan; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER accounts_retain_billing_plan AFTER UPDATE OF plan ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.retain_billing_plan_activation();
 
 
 --
@@ -89217,6 +89406,13 @@ CREATE TRIGGER orgs_plan_changed_at BEFORE UPDATE OF plan ON public.orgs FOR EAC
 
 
 --
+-- Name: orgs orgs_retain_billing_plan; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER orgs_retain_billing_plan AFTER UPDATE OF plan ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.retain_billing_plan_activation();
+
+
+--
 -- Name: outbound_app_bindings outbound_app_binding_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -93577,6 +93773,14 @@ ALTER TABLE ONLY public.billing_payment_recovery_receipts
 
 
 --
+-- Name: billing_plan_activations billing_plan_activations_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_plan_activations
+    ADD CONSTRAINT billing_plan_activations_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
 -- Name: billing_quota_warnings billing_quota_warnings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -93654,6 +93858,14 @@ ALTER TABLE ONLY public.billing_subscription_ends
 
 ALTER TABLE ONLY public.billing_usage_deliveries
     ADD CONSTRAINT billing_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_usage_intents billing_usage_intents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_usage_intents
+    ADD CONSTRAINT billing_usage_intents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -94166,6 +94378,14 @@ ALTER TABLE ONLY public.commit_sources
 
 ALTER TABLE ONLY public.commit_sources
     ADD CONSTRAINT commit_sources_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: complimentary_accounts complimentary_accounts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.complimentary_accounts
+    ADD CONSTRAINT complimentary_accounts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -106286,6 +106506,14 @@ ALTER TABLE ONLY public.source_build_rootfs
 
 ALTER TABLE ONLY public.source_build_rootfs
     ADD CONSTRAINT source_build_rootfs_publication_id_fkey FOREIGN KEY (publication_id) REFERENCES public.build_export_publications(id) ON DELETE CASCADE;
+
+
+--
+-- Name: spend_cap_notice_outbox spend_cap_notice_outbox_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.spend_cap_notice_outbox
+    ADD CONSTRAINT spend_cap_notice_outbox_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --

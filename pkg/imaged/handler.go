@@ -262,6 +262,10 @@ type Handler struct {
 	// reuse, so every renewal scans.
 	scannerIdentityProbe func(context.Context) (installedScanner, error)
 	scannerIdentityCache scannerIdentityCache
+	// scannerInstallStamp describes the installed scanner binary and
+	// database files; while it is unchanged a probed identity is kept past
+	// api.ScannerIdentityCacheTTL. Nil keeps the one-minute cache.
+	scannerInstallStamp func() string
 	// scannerDBUpdater refreshes the vulnerability database outside any scan.
 	scannerDBUpdater func(context.Context) error
 	// Active entries live only for a job; restart reconstructs work from durable

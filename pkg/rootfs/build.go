@@ -569,13 +569,35 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 	// the customer hit 503 on first wake) because the gap from
 	// "no signature written" to "schedd accepted the unsigned
 	// layer" is the compromise path the sig is meant to close.
-	if b.signer != nil {
-		sigKey := "sigs/" + in.StorageKey + ".sig"
-		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
-			return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
-		}
+	if err := b.signPublished(ctx, in.StorageKey, identity); err != nil {
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
 	}
 	return sizeMB, identity, nil
+}
+
+// digestSigner is a Signer that can sign a layer whose SHA-256 the caller
+// computed while publishing it, instead of reading the stored layer back to
+// hash it again. *cosign.LocalSigner and *signd.Client implement it.
+type digestSigner interface {
+	SignDigest(ctx context.Context, layerKey, sigKey, digestHex string, bytes int64) error
+}
+
+// signPublished signs the artifact just published under key, whose identity
+// publishArtifactIdentity computed from the bytes it streamed to storage. A
+// signer that takes a digest signs that one; any other reads the stored
+// layer back. Hashing a 1-2 GB layer a second time was about a quarter of
+// imaged's CPU per deploy (2026-11-11). A nil signer signs nothing.
+func (b *Builder) signPublished(ctx context.Context, key string, identity ArtifactIdentity) error {
+	if b.signer == nil {
+		return nil
+	}
+	sigKey := "sigs/" + key + ".sig"
+	if ds, ok := b.signer.(digestSigner); ok {
+		if digestHex, found := strings.CutPrefix(identity.Digest, "sha256:"); found && identity.Bytes > 0 {
+			return ds.SignDigest(ctx, key, sigKey, digestHex, identity.Bytes)
+		}
+	}
+	return b.signer.Sign(ctx, key, sigKey)
 }
 
 // emitSBOM runs the injected SBOM subprocess against the staging

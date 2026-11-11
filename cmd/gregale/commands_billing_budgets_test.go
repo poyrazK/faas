@@ -132,6 +132,9 @@ func TestFinancialBudgetCRUDCLI(t *testing.T) {
 		{[]string{"update", "--file", file, "--expected-revision", "7", "--key", "stable-retry", "--json", id}, "PUT", "/v1/billing/budgets/" + id},
 		{[]string{"delete", "--expected-revision", "7", "--key", "stable-retry", "--json", id}, "DELETE", "/v1/billing/budgets/" + id},
 		{[]string{"history", "--after-revision", "3", "--limit", "2", "--json", id}, "GET", "/v1/billing/budgets/" + id + "/revisions"},
+		// Hunt 33 H33-10: the ID before the flags, as the usage shows.
+		{[]string{"update", id, "--file", file, "--expected-revision", "7", "--key", "stable-retry", "--json"}, "PUT", "/v1/billing/budgets/" + id},
+		{[]string{"delete", id, "--expected-revision", "7", "--key", "stable-retry", "--json"}, "DELETE", "/v1/billing/budgets/" + id},
 	} {
 		method, path = tc.method, tc.path
 		offset := len(stdout.Bytes())
@@ -147,7 +150,7 @@ func TestFinancialBudgetCRUDCLI(t *testing.T) {
 			t.Fatalf("invalid args accepted: %v", bad)
 		}
 	}
-	if calls != 6 {
+	if calls != 8 {
 		t.Fatalf("invalid arguments reached API: %d", calls)
 	}
 }

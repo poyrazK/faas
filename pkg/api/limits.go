@@ -761,12 +761,18 @@ const (
 
 // A scan is reused only while the scanner and vulnerability database that
 // made it are still the installed ones (ADR-20261028102540). imaged reads that
-// identity with `grype version` and `grype db status` and keeps it this long;
-// every real scan also refreshes it.
+// identity with `grype version` and `grype db status` and keeps it
+// ScannerIdentityCacheTTL; every real scan also refreshes it. While a stat of
+// the Grype binary and of every file under GRYPE_DB_CACHE_DIR (at most
+// ScannerInstallStampMaxEntries entries) is unchanged it keeps the identity up
+// to ScannerIdentityUnchangedMaxAge: the probe took 3-10 s, and deploys are
+// rarer than one a minute, so every deploy paid it.
 const (
-	ScannerIdentityCacheTTL       = time.Minute
-	ScannerIdentityProbeTimeout   = 30 * time.Second
-	ScannerIdentityMaxOutputBytes = 64 << 10
+	ScannerIdentityCacheTTL        = time.Minute
+	ScannerIdentityUnchangedMaxAge = 6 * time.Hour
+	ScannerInstallStampMaxEntries  = 256
+	ScannerIdentityProbeTimeout    = 30 * time.Second
+	ScannerIdentityMaxOutputBytes  = 64 << 10
 )
 
 // Reused scans no longer run Grype often enough for its own update check to
@@ -2045,6 +2051,7 @@ const EnvironmentGitOpsMaxDeclaredRoutes = 50
 // These intervals do not grant authority to execute enforce-mode intent.
 const EnvironmentGitOpsReportLeaseDuration = time.Minute
 const EnvironmentGitOpsReportCheckInterval = time.Minute
+const EnvironmentGitOpsReportStaleAfter = 3 * EnvironmentGitOpsReportCheckInterval
 const EnvironmentGitOpsReportRetryInterval = 30 * time.Second
 const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 
@@ -2948,6 +2955,20 @@ const MaxObjectCopyDateHeaderBytes = 128
 // including exact-version protection reads. Further batches use durable retries.
 const ObjectOwnedCleanupBatchSize = 100
 
+// ObjectOwnedCleanupProtectedPages bounds how many version pages one cleanup
+// pass reads past versions it must keep (COMPLIANCE retention, or protection
+// the pass may not release) before it waits for the earliest of them to end
+// (ADR-20261111123000 decision 8). A pass that deleted something stops after
+// its page and continues on the next retry. ObjectOwnedCleanupProtectedRetryMin
+// and ObjectOwnedCleanupProtectedRetryMax bound that wait: protection without a
+// date is checked again after the minimum, and a far date is checked again
+// after the maximum in case the provider ended it early.
+const (
+	ObjectOwnedCleanupProtectedPages    = 3
+	ObjectOwnedCleanupProtectedRetryMin = time.Hour
+	ObjectOwnedCleanupProtectedRetryMax = 30 * 24 * time.Hour
+)
+
 // ObjectOwnedCleanupBucketBatch bounds the account grace sweep, including
 // buckets attached to app tombstones.
 const ObjectOwnedCleanupBucketBatch = 20
@@ -3071,6 +3092,10 @@ const (
 	// deletes cannot starve inventory (ADR-20261025115958).
 	ObjectInventoryDeletionDrain = 10 * time.Second
 	ObjectInventoryDeletionYield = ObjectInventoryDeletionDrain + ObjectCapacityInventoryTimeout
+	// ObjectBucketTransitionRetryAfterSeconds is the Retry-After a deletion
+	// refused by a running versioning or capacity inventory carries: about
+	// half of one inventory scan (ObjectCapacityInventoryTimeout).
+	ObjectBucketTransitionRetryAfterSeconds = 30
 	// A bucket's listing resumes across attempts from its last listed key
 	// (ADR-20261030100835). While it advanced within
 	// ObjectInventoryScanProgressWindow, its bucket stays fresh on an
@@ -3351,6 +3376,11 @@ const (
 	DevDebugIdleTimeout          = 30 * time.Minute
 	DevDebugMaxBytes       int64 = 256 << 20
 	DevDebugWakeTimeout          = 60 * time.Second
+	// DevDebugApprovalWindow is how long one person's approval lets an agent
+	// key open debugger tunnels to one developer app (ADR-20261111150000): a
+	// debugger opens a tunnel per connection, so a per-request approval would
+	// leave agents unable to debug. The window starts at the first attach.
+	DevDebugApprovalWindow = time.Hour
 	// MaxDelayedTaskDelaySeconds bounds how far a one-shot invocation may be
 	// scheduled into the future. A one-year ceiling prevents effectively
 	// immortal pending rows while still covering annual workflows.
@@ -8273,13 +8303,20 @@ const (
 	// biggest-over-quota accounts first). Matches spec §12. NaN lv-fc
 	// readings (lvs missing on dev/macOS) short-circuit the pressure branch.
 	SnapshotBudgetAlarmPct = 90.0
-	// SnapshotStaleRetention is how long a snapshot lives in stale state
-	// after the F2 FC-version sweep marks it before imaged evicts it
-	// (F-07). Spec §4.4 + ADR-005: stale snapshots must remain
-	// restore-able for a brief window so an operator rollback across a
-	// firecracker upgrade doesn't pay an extra cold boot. 7 days is the
-	// v1 box's typical reset cycle.
-	SnapshotStaleRetention = 7 * 24 * time.Hour
+	// SnapshotStaleRetention is how long a stale snapshot is kept, from its
+	// stale_at, before imaged deletes its row and files (F-07).
+	//
+	// It was 7 days, so that an operator rollback across a Firecracker
+	// upgrade would not pay a cold boot. But a snapshot only restores while
+	// stale=false (spec §6), and nothing ever clears stale, so a stale
+	// snapshot is never restored again. The window only held dead files: on
+	// 2026-11-11 production kept 361 stale snapshots, 47 GB, none of them
+	// Firecracker-version marks; 325 belonged to deployments still live.
+	//
+	// The hour covers a restore or replica fetch that read the row just
+	// before it was marked. imaged evicts on its GC tick, so files go
+	// within a tick of the hour passing.
+	SnapshotStaleRetention = time.Hour
 	// FcVolumeRoot is where the spec §8 lv-fc volume (app layers +
 	// snapshots) is mounted. Schedd statfs-es it to populate
 	// `fcvm_lv_fc_used_pct`; the gauge reports no data where the path is
@@ -10643,6 +10680,10 @@ const (
 	// schedd keeps across nodes (ADR-20261027090013 §12); a shape past it
 	// cold-boots every session.
 	SandboxWarmSnapshotsMax = 512
+	// SandboxTemplateSnapshotSweepSec is how often schedd drops the warm
+	// snapshots of deleted templates and deletes their objects on the node
+	// (ADR-20261027090013 §12).
+	SandboxTemplateSnapshotSweepSec = 300
 	// Measured charge and reservation of agent run VMs on agent nodes
 	// (ADR-20261027090015 §3, proposed; schedd agent_measured_charge). A run
 	// is charged max(memory, its version's p95 private peak,
