@@ -11,6 +11,11 @@ From an application directory:
 gregale dev
 ```
 
+Supported Node.js and Python apps automatically use their development server
+with hot reload. The CLI prints the selected mode, command, and whether the
+choice came from flags, the manifest, detection, or server eligibility. Use
+`gregale dev --watch=false` for a production-shaped developer build.
+
 The normal `dev` entry point runs the local source checks used by `dev setup`
 before provisioning. Blocking source errors include a `doctor --path` command;
 warnings remain visible. Source and app defaults come from the selected source
@@ -201,7 +206,7 @@ gregale dev --postgres         # provision an isolated database and inject DATAB
 gregale dev --postgres --postgres-region eu-central-1 # choose database placement
 gregale dev --postgres --postgres-seed "npm run seed" # seed a new database once
 gregale dev --postgres --postgres-seed "npm run seed" --reseed # run the seed again
-gregale dev --once --json      # emit one machine-readable edit-to-live receipt
+gregale dev --once --json      # emit mode and edit-to-live NDJSON records
 gregale dev --ttl 72h          # keep the environment 72h after the latest sync
 ```
 
@@ -339,7 +344,14 @@ readiness values come from the deployment stage timings. Build output is
 prefixed with `build |` so it stays distinguishable from the app-level
 `runtime |` stream in the same terminal.
 
-With `--json`, each successful sync emits one `developer_sync` receipt. It
+With `--json`, the confirmed session first emits a `developer_mode` NDJSON
+event with `mode` (`watch`, `build`, or `function`), `source`, and the selected
+development `command` when applicable. A server fallback includes `reason` and
+`detail`. This decision is local CLI output and is not stored in sync-history
+telemetry. `dev setup --json` includes the planned choice under `development`;
+RAM and access requirements are checked when the session starts.
+
+Each successful sync then emits one `developer_sync` receipt. It
 contains the deployment id, total edit-to-live milliseconds, the 15-second
 cached-edit target, a `within_slo` boolean, and the phase timings. Receipts are
 NDJSON so a long-running watcher can be consumed incrementally; no source,
@@ -489,13 +501,17 @@ dev:
 Live patches (above) only apply to apps that run their source files directly.
 For an app with a build step, such as TypeScript, Next.js, Vite or a uv
 Python project, every save otherwise waits for a full build.
-`gregale dev --watch` instead runs the app's own development server in the
-developer environment, so edits hot-reload in seconds:
+Plain `gregale dev` automatically runs a detected Node.js or Python development
+server when the source and environment support it. Source edits reach that
+server through live patches while the background developer build converges:
 
 ```bash
-gregale dev --watch                              # runs your dev script or framework
+gregale dev                                      # automatically picks the fast path
+gregale dev --watch=false                        # use a production-shaped build
+gregale dev --watch                              # require watch mode; report unsupported environments
 gregale dev --watch-command "next dev"           # or an explicit command
-gregale dev --all --watch                        # every app in the workspace that has one
+gregale dev --all                                # each app chooses its own mode
+gregale dev --all --watch=false                  # disable watch mode for every app
 ```
 
 or in `gregale.yaml`:
@@ -505,7 +521,13 @@ dev:
   watch: true          # or: watch: { command: "next dev" }
 ```
 
-Without a command, `--watch` picks one and prints it:
+Set `dev.watch: false` to disable automatic selection for the project. Explicit
+CLI flags override the manifest, and the manifest overrides detection. An
+explicit `--watch-command` enables watch mode; it cannot be combined with
+`--watch=false`. Settings are resolved when starting the loop; restart it to
+change the selected mode.
+
+Detection picks the following commands:
 
 | Your app | Command |
 | --- | --- |
@@ -518,9 +540,11 @@ Without a command, `--watch` picks one and prints it:
 The development server can listen wherever it likes: on `localhost` only,
 or on its own port (Vite's 5173, Astro's 4321). In a watch-mode environment
 Gregale forwards the app's port to the port the server actually opened, so no
-`--host` or `--port` flags are needed. With `gregale dev --all --watch`, apps
-for which no command can be picked keep production-shaped builds; a
-`dev.watch.command` in an app's own `gregale.yaml` is used for that app.
+`--host` or `--port` flags are needed. With `gregale dev --all`, each child reads
+its own manifest and detects its own command. Functions keep their runner;
+Go apps, Dockerfile builds, and apps without a detected development command
+keep production-shaped builds. A parent's explicit `--watch=false` is passed
+to every child and overrides per-app `dev.watch` settings.
 
 The developer environment's hostname is available to the development server
 as `GREGALE_DEV_HOST`. Vite-based servers accept it automatically (Gregale
@@ -529,7 +553,7 @@ in their own configuration:
 
 - **Next.js** serves hot reload only to origins listed in
   `allowedDevOrigins`, which it reads from `next.config` alone. In a terminal,
-  `gregale dev --watch` offers to add it: it creates `next.config.mjs`, or
+  `gregale dev` offers to add it for watch-mode sessions: it creates `next.config.mjs`, or
   edits a config that exports a plain object, and otherwise prints the line
   to add:
 
@@ -563,10 +587,18 @@ Watch mode needs:
 - authentication on the developer environment, because development servers
   serve source maps and error overlays.
 
-Otherwise the session is refused with `dev_watch_unsupported`. A watch-mode
+For an automatic choice, a `dev_watch_unsupported` rejection selects the existing
+production-shaped build and prints the server's explanation. It does not
+increase RAM or change authentication. Other failures, including transport and
+5xx errors, do not trigger another submission. If an older server accepts the
+request but reports watch mode off, the CLI uses that reported build mode.
+Explicit flags or manifest watch settings surface unsupported or unconfirmed
+watch settings as errors instead of silently changing the requested mode.
+
+A watch-mode
 environment runs your development server, not your production build, so check
 production behaviour with `gregale deploy` or a pull-request preview. Run
-`gregale dev` without `--watch` to go back to production-shaped developer
+`gregale dev --watch=false` to go back to production-shaped developer
 builds; the change applies from the next build.
 
 ## Run every app in a workspace

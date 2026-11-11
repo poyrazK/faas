@@ -74,6 +74,8 @@ type devAllOptions struct {
 	// command to run (devWatchSuggestion) or sets dev.watch itself; the
 	// others keep production-shaped developer builds.
 	watch bool
+	// watchSet preserves an explicit --watch=false when launching children.
+	watchSet bool
 }
 
 // devAllWatches reports whether a child for app gets --watch.
@@ -97,7 +99,9 @@ func (o devAllOptions) childArgs(app devAllApp, jsonMode bool) []string {
 	if o.ttl != "" {
 		args = append(args, "--ttl", o.ttl)
 	}
-	if o.devAllWatches(app) {
+	if !o.stop && o.watchSet && !o.watch {
+		args = append(args, "--watch=false")
+	} else if o.devAllWatches(app) {
 		args = append(args, "--watch")
 	}
 	if app.GoCommand != "" && !o.stop {
@@ -389,11 +393,6 @@ func runDevAll(ctx context.Context, apps []devAllApp, opts devAllOptions, launch
 		if jsonOutput {
 			out = newDevJSONTagger(app, &mu, stdout, stderr)
 		}
-		if opts.watch && !opts.stop && !opts.devAllWatches(app) && !jsonOutput {
-			mu.Lock()
-			_, _ = fmt.Fprintf(stdout, "%swatch mode: no development command detected; this app keeps production-shaped builds\n", prefix)
-			mu.Unlock()
-		}
 		process, err := launch(opts.childArgs(app, jsonOutput), app.childEnv(), out, errOut)
 		if err != nil {
 			_ = out.Close()
@@ -510,6 +509,7 @@ func cmdDevAll(sourceDir string, opts devAllOptions) int {
 // directory). Per-app config belongs in each member's gregale.yaml dev block,
 // which every child loop reads for its own source root.
 func cmdDevAllFromFlags(cwd, sourcePath string, explicit map[string]bool, opts devAllOptions) int {
+	opts.watchSet = explicit["watch"]
 	for _, flag := range []string{"name", "env-file", "service-override-file", "postgres-seed", "reseed", "debug", "debug-port"} {
 		if explicit[flag] {
 			return printErr("Invalid flags", fmt.Errorf("--%s cannot be combined with --all; set per-app values in each app's gregale.yaml dev block", flag))

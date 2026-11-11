@@ -3278,12 +3278,14 @@ var cliCommands = []cliCommand{
 		Examples: []string{"gregale dev --once", "gregale dev --path ./api --once", "gregale dev --all", "gregale dev --local"},
 		HelpNotes: []string{
 			"--local runs HTTP apps on this machine at http://localhost:<port>, using their development or start command and restarting on source edits. --watch-command overrides the app command. Functions use the production adapters and runner at http://<function>.localhost:<port>. Nothing is uploaded.",
+			"Remote development automatically selects hot reload for supported Node.js and Python apps. Explicit flags override dev.watch, and dev.watch overrides detection. Use --watch=false for production-shaped builds. Automatic selection falls back when the environment cannot support watch mode; explicit watch requests report the error.",
 		},
 		Flags: []cliFlag{
 			{Name: "path", Short: "source directory", Value: "DIR"},
 			{Name: "local", Short: "run HTTP apps or functions on this machine"},
 			{Name: "port", Short: "local port for --local (default 8787)", Value: "N"},
 			{Name: "no-reload", Short: "with --local, do not restart the app or functions when their files change"},
+			{Name: "watch", Short: "remote hot reload (automatic for supported apps; false uses production builds)", Bool: true},
 			{Name: "watch-command", Short: "development server command (with --local: HTTP app command)", Value: "CMD"},
 			{Name: "no-remote", Short: "with --local, do not connect to the developer session's database and buckets"},
 			{Name: "offline", Short: "with --local, run Postgres and buckets in Docker instead (with --postgres, --bucket)"},
