@@ -4627,7 +4627,7 @@ Rotate a binding, optionally waiting for the old credential
 | Flag | Meaning | |
 |---|---|---|
 | `--wait` | wait for the previous credential to retire |  |
-| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 5m) |  |
+| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 15m) |  |
 | `--poll-interval <DURATION>` | status polling interval while waiting (default 1s) |  |
 
 Examples:

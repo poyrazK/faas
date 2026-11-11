@@ -6142,7 +6142,7 @@ var cliCommands = []cliCommand{
 				{Name: "delete", Short: "Delete a binding", Positionals: []string{"<id>"}},
 				{Name: "rotate", Short: "Rotate a binding, optionally waiting for the old credential", Notes: []string{"Waits until the previous credential retires."}, Positionals: []string{"<id>"}, Flags: []cliFlag{
 					{Name: "wait", Short: "wait for the previous credential to retire"},
-					{Name: "wait-timeout", Short: "maximum time to wait for rotation (default 5m)", Value: "DURATION"},
+					{Name: "wait-timeout", Short: "maximum time to wait for rotation (default 15m)", Value: "DURATION"},
 					{Name: "poll-interval", Short: "status polling interval while waiting (default 1s)", Value: "DURATION"},
 				}, Examples: []string{"gregale postgres bindings rotate BINDING_ID --wait"}},
 			}},
