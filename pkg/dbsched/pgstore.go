@@ -85,7 +85,7 @@ func vmFromRow(r sqlc.DatabaseVm) (VM, error) {
 	vm := VM{
 		DatabaseID: uuid.UUID(r.DatabaseID.Bytes).String(), NodeID: r.NodeID, Major: int(r.PostgresMajor),
 		VcpuCount: int(r.VcpuCount), MemMiB: int(r.MemMib), VolumeBytes: r.VolumeBytes, State: State(r.State),
-		Bootstrapped: r.Bootstrapped, AlwaysOn: r.AlwaysOn, LastBackupAt: r.LastBackupAt.Time, LastError: r.LastError.String, LastActiveAt: r.LastActiveAt.Time,
+		Bootstrapped: r.Bootstrapped, AlwaysOn: r.AlwaysOn, Held: r.Held, ComputeQuotaUnitSeconds: r.ComputeQuotaUnitSeconds.Int64, LastBackupAt: r.LastBackupAt.Time, LastError: r.LastError.String, LastActiveAt: r.LastActiveAt.Time,
 		StateChangedAt: r.StateChangedAt.Time, CreatedAt: r.CreatedAt.Time,
 		RestoreWindowSeconds: r.RestoreWindowSeconds, RestoreTarget: r.RestoreTarget.Time, RestoreRecoveredTo: r.RestoreRecoveredTo.Time,
 		ResizePending: r.ResizePending, MoveNode: r.MoveNode.String, MoveLeaseUntil: r.MoveLeaseUntil.Time,
@@ -404,13 +404,47 @@ func (s *PgStore) SetAlwaysOn(ctx context.Context, id string, alwaysOn bool) err
 	if err != nil {
 		return fmt.Errorf("dbsched: set always-on %s: %w", id, err)
 	}
-	if n == 0 {
-		if _, err := s.Get(ctx, id); err != nil {
-			return err
-		}
-		return ErrConflict
+	return s.updated(ctx, id, n)
+}
+
+func (s *PgStore) SetHeld(ctx context.Context, id string, held bool) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
 	}
-	return nil
+	n, err := s.q.SetDatabaseVMHeld(ctx, s.pool, sqlc.SetDatabaseVMHeldParams{Held: held, DatabaseID: key})
+	if err != nil {
+		return fmt.Errorf("dbsched: set held %s: %w", id, err)
+	}
+	return s.updated(ctx, id, n)
+}
+
+func (s *PgStore) SetComputeQuota(ctx context.Context, id string, quotaUnitSeconds int64) error {
+	if quotaUnitSeconds < 0 {
+		return ErrInvalid
+	}
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.SetDatabaseVMComputeQuota(ctx, s.pool, sqlc.SetDatabaseVMComputeQuotaParams{
+		ComputeQuotaUnitSeconds: pgtype.Int8{Int64: quotaUnitSeconds, Valid: quotaUnitSeconds > 0}, DatabaseID: key})
+	if err != nil {
+		return fmt.Errorf("dbsched: set compute quota %s: %w", id, err)
+	}
+	return s.updated(ctx, id, n)
+}
+
+// updated turns an update of n rows into NotFound for a missing database
+// and Conflict for a deleting one.
+func (s *PgStore) updated(ctx context.Context, id string, n int64) error {
+	if n > 0 {
+		return nil
+	}
+	if _, err := s.Get(ctx, id); err != nil {
+		return err
+	}
+	return ErrConflict
 }
 
 func (s *PgStore) Touch(ctx context.Context, id string, at time.Time) error {

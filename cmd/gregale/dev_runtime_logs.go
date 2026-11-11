@@ -16,6 +16,27 @@ const (
 	devRuntimeLogRetryMax     = 5 * time.Second
 )
 
+// JSON mode follows the same stream for diagnostics, without rendering raw
+// application lines. Join on stop so no output survives the command's return.
+func startDevRuntimeLogs(ctx context.Context, client *Client, slug string, once, noLogs bool, onDiagnostic func(devDiagnostic)) func() {
+	if once || noLogs {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	if !jsonOutput {
+		PrintProgress(osStdout, "runtime logs attached (Ctrl-C to stop watching)")
+	}
+	go func() {
+		defer close(done)
+		followDevRuntimeLogsWithDiagnostics(ctx, client, slug, onDiagnostic)
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
 func followDevRuntimeLogsWithDiagnostics(ctx context.Context, client *Client, slug string, onDiagnostic func(devDiagnostic)) {
 	retry := devRuntimeLogRetryInitial
 	seen := make(map[string]struct{})
@@ -118,7 +139,9 @@ func renderDevRuntimeLogEventWithDiagnostics(event api.Event, onDiagnostic func(
 	switch event.Event {
 	case "log":
 		if event.Data != "" {
-			_, _ = fmt.Fprintln(osStdout, formatDevRuntimeLog(event.Data))
+			if !jsonOutput {
+				_, _ = fmt.Fprintln(osStdout, formatDevRuntimeLog(event.Data))
+			}
 			var entry api.LogEvent
 			line := event.Data
 			if err := json.Unmarshal([]byte(event.Data), &entry); err == nil && entry.Line != "" {
