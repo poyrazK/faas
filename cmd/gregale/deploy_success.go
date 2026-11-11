@@ -278,7 +278,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	if cache := formatArtifactCacheSummary(final.BuildCacheStatus, final.CacheKeySHA256); cache != "" {
 		PrintProgress(osStdout, "Artifact cache: %s", cache)
 	}
-	renderDeploymentHostingReceipt(osStdout, final.APIHostingReceipt)
+	renderDeploymentHostingReceiptFor(osStdout, final.APIHostingReceipt, appOK && app.Type == "function")
 	if !darkDeploy {
 		if summary, ok := deploymentWithReleaseSummary(ctx, c, appSlug, final.ID); ok {
 			renderDeploymentReleaseSummary(osStdout, summary, appSlug)
