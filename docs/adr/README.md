@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261111174418: Check developer runtime configuration before source upload](20261111174418-developer-configuration-preflight.md) — accepted; offline setup reports selected-file and planned-binding coverage, and sync verifies unresolved names only in the developer session
+
 - [ADR-20261111145512: Exact numbers with bounded edge validation arithmetic](20261111145512-edge-validation-exact-number-bounds.md) — accepted; preserve JSON numeric precision while bounding numeric token length, exponent expansion and aggregate arithmetic work
 
 - [ADR-20261111140000: Run ordinary HTTP apps with local development](20261111140000-local-http-app-development.md) — accepted; reuses framework commands and local Postgres/bucket bindings, with a stable loopback proxy, source reload, and owned process-group cleanup

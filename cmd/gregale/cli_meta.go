@@ -3363,7 +3363,9 @@ var cliCommands = []cliCommand{
 					{Name: "payload", Short: "JSON payload, @file, or - for stdin", Value: "JSON"},
 				}},
 			}},
-			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Flags: []cliFlag{
+			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Notes: []string{
+				"Setup checks required configuration offline against selected files and planned bindings. Unselected .env declarations do not prove delivery. --start verifies unresolved key names in the developer session before upload; values are never displayed.",
+			}, Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 				{Name: "env-file", Short: "validate and sync developer secrets", Value: "PATH"},
