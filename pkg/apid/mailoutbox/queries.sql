@@ -1230,7 +1230,9 @@ INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,fr
 VALUES($1,$2,$3,$4,$5,$6,'managed_postgres_plan_excess',1,$7,$8,$9,$10);
 
 -- name: LinkManagedPostgresPlanExcessNotice :execrows
-UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=sqlc.arg(intent_id)::uuid
+-- delete_at is the deletion date the email names (ADR-20261110184700): the
+-- database is deleted only on a date its owner was mailed.
+UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=sqlc.arg(intent_id)::uuid,delete_at=sqlc.narg(delete_at)::timestamptz
 WHERE database_id=sqlc.arg(database_id)::uuid AND mail_intent_id IS NULL;
 
 -- name: ShareManagedPostgresPlanExcessSubmissionAccount :one
