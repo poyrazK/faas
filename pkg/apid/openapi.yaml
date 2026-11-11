@@ -79251,6 +79251,27 @@ components:
           - unknown
           - stale
           - fresh
+        report_id:
+          type: string
+          description: Latest completed report matching the current revision, generation and intent version.
+        report_status:
+          type: string
+          enum:
+          - blocked
+          - partial
+          - failed
+          - drifted
+          - overridden
+          - converged
+        report_freshness:
+          type: string
+          enum:
+          - unknown
+          - stale
+          - fresh
+        report_observed_at:
+          type: string
+          format: date-time
         observed_commit_sha:
           type: string
         approved_revision_id:

@@ -106,8 +106,9 @@ func (a storeAuthAdapter) APIKeyProjectLimit(ctx context.Context, keyID string) 
 // An agent key's risky requests wait for a person's approval
 // (ADR-20261104140058).
 var (
-	_ middleware.AgentApprovalGate    = storeAuthAdapter{}
-	_ middleware.OrgAgentPolicyReader = storeAuthAdapter{}
+	_ middleware.AgentApprovalGate       = storeAuthAdapter{}
+	_ middleware.AgentApprovalWindowGate = storeAuthAdapter{}
+	_ middleware.OrgAgentPolicyReader    = storeAuthAdapter{}
 )
 
 // errNoApprovalStore fails a gated request closed on a store that cannot
@@ -128,6 +129,14 @@ func (a storeAuthAdapter) ConsumeAgentApproval(ctx context.Context, binding stat
 		return "", false, errNoApprovalStore
 	}
 	return store.ConsumeAgentApproval(ctx, binding)
+}
+
+func (a storeAuthAdapter) AgentApprovalUsedWithin(ctx context.Context, binding state.AgentApprovalBinding, window time.Duration) (string, bool, error) {
+	store, ok := a.Store.(state.AgentApprovalStore)
+	if !ok {
+		return "", false, nil
+	}
+	return store.AgentApprovalUsedWithin(ctx, binding, window)
 }
 
 func (a storeAuthAdapter) RecentAgentApprovalOutcome(ctx context.Context, binding state.AgentApprovalBinding, window time.Duration) (state.AgentApproval, bool, error) {

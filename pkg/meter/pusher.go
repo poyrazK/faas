@@ -140,10 +140,18 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 	// drifted into two parallel seams over the same provider
 	// surface. See providerOpsFor below.
 	ops := providerOpsFor(p.pusher)
+	comps, err := p.complimentaryIDs(ctx)
+	if err != nil {
+		return 0, err
+	}
 	pushed := 0
 	for _, acct := range accounts {
 		if acct.Plan == "free" {
 			// Free plan: no customer id, no overage — skip.
+			continue
+		}
+		if _, comp := comps[acct.ID]; comp {
+			// Complimentary (ADR-20261111140000): not billed, not held.
 			continue
 		}
 		if !usageDeliverable(acct, start) {
@@ -265,6 +273,10 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	for _, acct := range accounts {
 		byID[acct.ID] = acct
 	}
+	comps, err := p.complimentaryIDs(ctx)
+	if err != nil {
+		return 0, err
+	}
 	mode := providerUsageMode(p.pusher)
 	// Every supported provider's cap is a billing safety boundary.
 	caps, err := p.store.LoadAllOverageCapCents(ctx)
@@ -293,6 +305,9 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 			continue
 		}
 		if acct.Plan == "free" {
+			continue
+		}
+		if _, comp := comps[acct.ID]; comp {
 			continue
 		}
 		if !usageDeliverable(acct, window.Hour) {
@@ -394,7 +409,7 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 		p.log.Info("meter: push usage", "account", acct.ID, "hour", window.Hour,
 			"replay", true, "code", code, "mb_seconds", window.MBSeconds, "billable_mb_seconds", billableMBSeconds)
 	}
-	meterPushed, meterErr := p.pushPendingMeter(ctx, ops, byID, caps, grants, start, end, state.BillingMeterEgress)
+	meterPushed, meterErr := p.pushPendingMeter(ctx, ops, byID, comps, caps, grants, start, end, state.BillingMeterEgress)
 	pushed += meterPushed
 	if firstErr == nil {
 		firstErr = meterErr
@@ -407,7 +422,7 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 // records a durable receipt, and logs the would-be event without calling the
 // provider. Those receipts make the later shadow->live transition explicitly
 // non-retroactive.
-func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map[string]state.Account, caps map[string]int64, grants *monthGrants, start, end time.Time, meter state.BillingMeter) (int, error) {
+func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map[string]state.Account, comps map[string]struct{}, caps map[string]int64, grants *monthGrants, start, end time.Time, meter state.BillingMeter) (int, error) {
 	policyProvider, ok := p.pusher.(billing.MeterUsagePolicyProvider)
 	if !ok {
 		return 0, nil
@@ -442,6 +457,9 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 		acct, exists := byID[window.AccountID]
 		if !exists {
 			held.add(meter, UsageHeldUnknownSubject, window.Hour)
+			continue
+		}
+		if _, comp := comps[acct.ID]; comp {
 			continue
 		}
 		if acct.Plan == api.PlanFree {
@@ -1109,4 +1127,20 @@ func providerOpsFor(prov billing.Provider) providerOps {
 		// here would require a new histogram in metrics.go.
 		return providerOps{opLabel: "stripe", classify: classify, observe: stripeObserve}
 	}
+}
+
+// complimentaryIDs returns the accounts an operator made complimentary
+// (ADR-20261111140000): they hold a paid plan without a subscription, so
+// their usage is neither billed nor held as identity_incomplete. A store
+// without the capability has none.
+func (p *Pusher) complimentaryIDs(ctx context.Context) (map[string]struct{}, error) {
+	store, ok := p.store.(state.ComplimentaryAccountStore)
+	if !ok {
+		return nil, nil
+	}
+	ids, err := store.ComplimentaryAccountIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("meter: load complimentary accounts: %w", err)
+	}
+	return ids, nil
 }

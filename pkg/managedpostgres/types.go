@@ -123,6 +123,9 @@ func QuotaProblem(err error) (status int, code, title string) {
 	if errors.Is(err, ErrPreviewDatabaseLimit) {
 		return 403, "managed_postgres_preview_database_limit", "PR preview database limit reached"
 	}
+	if errors.Is(err, ErrBranchLimit) {
+		return 403, "managed_postgres_branch_limit", "Short-lived branch limit reached"
+	}
 	if errors.Is(err, ErrUsageLimitReached) {
 		return 403, "managed_postgres_usage_limit_reached", "Managed PostgreSQL monthly usage limit reached"
 	}
