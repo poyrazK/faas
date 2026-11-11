@@ -1,4 +1,4 @@
-# ADR-20261110170000: Object storage held above its ceiling is deleted after notice
+# ADR-20261111123000: Object storage held above its ceiling is deleted after notice
 
 - **Status:** accepted (owner, 2026-11-10: "Notify, then delete", on the billing launch review; amended the same day for Object Lock, decision 8, owner choice "30-day delete + lock cap"; open questions answered 2026-11-11: tighter lock caps, 30 days on every plan, newest first, a $0 cap starts the clock)
 - **Date:** 2026-11-10

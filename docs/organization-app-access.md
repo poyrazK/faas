@@ -153,7 +153,7 @@ API-key scopes and human MFA/verification still apply. App-scoped deploy tokens
 cannot administer an entire project. A deploy token acts as the member who
 minted or last rotated it, with that member's current role, so it stops working
 when they leave; tokens minted before 2026-11-10 act as the app's creator
-(ADR-20261110190000). Only a key's holder can rotate an organization key,
+(ADR-20261110190500). Only a key's holder can rotate an organization key,
 because rotation returns the new key's plaintext; owners and admins can still
 revoke anyone's. An organization key cannot manage its holder's personal
 account, keys or sessions (`/v1/keys`, `/v1/auth/sessions`, account deletion,
