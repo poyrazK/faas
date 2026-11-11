@@ -25,7 +25,7 @@ BEGIN
 	END IF;
 	ALTER ROLE faas_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 	FOREACH r IN ARRAY ARRAY['faas_apid', 'faas_schedd', 'faas_meterd', 'faas_githubd',
-		'faas_outboundd', 'faas_bridged', 'faas_mcp_bridge', 'faas_shared', 'faas_signd'] LOOP
+		'faas_outboundd', 'faas_bridged', 'faas_mcp_bridge', 'faas_shared', 'faas_signd', 'faas_secretd'] LOOP
 		IF to_regrole(r) IS NULL THEN
 			EXECUTE format('CREATE ROLE %I LOGIN', r);
 		END IF;
@@ -105,12 +105,17 @@ BEGIN
 	END IF;
 	-- ADR-20261110210000 §3: secretd's grants decide which peer node may open
 	-- an app's secrets, and its audit names every open. A compute login that
-	-- could write either would grant itself or erase what it opened.
+	-- could write either would grant itself or erase what it opened. Only
+	-- faas_secretd, the control plane's secretd, writes grants (after
+	-- checking the grantor owns the app) and appends to the audit, which
+	-- nobody updates or deletes.
 	IF to_regclass('public.secret_grants') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_grants FROM faas_runtime;
+		GRANT SELECT, INSERT, UPDATE, DELETE ON public.secret_grants TO faas_secretd;
 	END IF;
 	IF to_regclass('public.secret_open_audit') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_open_audit FROM faas_runtime;
+		GRANT SELECT, INSERT ON public.secret_open_audit TO faas_secretd;
 	END IF;
 END
 $$;

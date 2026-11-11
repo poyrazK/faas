@@ -428,6 +428,9 @@
       # ADR-20261109170000: signd logs in only as faas_signd, never as the
       # owner: it reads build claims and inserts artifact_signatures rows.
       faas_map faas-signd   faas_signd
+      # ADR-20261110210000 §3: secretd logs in only as faas_secretd, never as
+      # the owner: it reads apps and nodes and writes grants and its audit.
+      faas_map faas-secretd faas_secretd
   register: pg_ident
   failed_when: false
   notify: reload postgresql

@@ -664,3 +664,10 @@
         name: compute_only_service
         tasks_from: signd_client.yml
       when: faas_imaged_signd_target | default('') | length > 0
+
+    # ADR-20261110210000 §3: the secret opener's server leaf. vmmd's client
+    # leaf joins in slice 3c.
+    - name: pki renewal — secretd's server leaf
+      ansible.builtin.include_role:
+        name: secretd_service
+      when: faas_secretd_listen | default('') is match('tcp://')

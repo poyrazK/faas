@@ -147,6 +147,8 @@ RULES = [
     (r"^app-owner-(authority|writes|release-requests)$", "INFRA"),
     # ADR-20261110210000 §3: secretd, its peer grants and open audit.
     (r"^(secretd|secretpg|secret-grants|secret-open-audit)$", "INFRA"),
+    # ADR-20261110210000 §3: secretd's listener, budget and identity settings.
+    (r"^secretd-", "INFRA"),
     # Compile-on-first-use regexps for package-level patterns
     # (ADR-20261101215228 measurement); no capability of its own.
     (r"^lazyregexp$", "INFRA"),

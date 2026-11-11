@@ -15,7 +15,15 @@
     - restart faas-schedd for seal domains
     - restart faas-apid for seal domains
     - restart faas-apid-clone-worker for seal domains
+    - restart faas-secretd for seal domains
     - daemon-reload for seal domains
+
+# ADR-20261110210000 §3: secretd reads the runtime identity as a credential,
+# copied at start.
+- name: seal_domains — try-restart faas-secretd
+  ansible.builtin.command: systemctl try-restart faas-secretd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-secretd for seal domains
 
 - name: seal_domains — try-restart faas-outboundd
   ansible.builtin.command: systemctl try-restart faas-outboundd.service  # noqa: command-instead-of-module

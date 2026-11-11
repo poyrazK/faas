@@ -81,6 +81,20 @@ run compute gateway "${all[@]}" SEAL_DOMAIN_STORAGE_ON_COMPUTE=true || fail "com
 grep -qxF "faas_seal_domain_storage_identity_src: \"$work/gateway/out/storage.age\"" "$work/gateway/vars.yml" || fail "compute gateway is missing the storage identity: $(cat "$work/gateway/vars.yml")"
 ! grep -vE '^#' "$work/gateway/vars.yml" | grep -qE 'outbound|source|alerting|account|recipient_src' || fail "compute gateway got control-plane keys: $(cat "$work/gateway/vars.yml")"
 
+# Control plane with secretd (ADR-20261110210000 §3): the runtime identity
+# and recipient, still no other compute identity; --identities lists it.
+mkdir -p "$work/secretd"
+run control-plane secretd "${all[@]}" SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true || fail "control-plane secretd staging failed"
+grep -qxF "faas_seal_domain_runtime_identity_src: \"$work/secretd/out/runtime.age\"" "$work/secretd/vars.yml" || fail "secretd control plane is missing the runtime identity: $(cat "$work/secretd/vars.yml")"
+grep -qxF "faas_seal_domain_runtime_recipient_src: \"$work/secretd/out/runtime.age.pub\"" "$work/secretd/vars.yml" || fail "secretd control plane lost the runtime recipient"
+for unwanted in build_identity_src edge_identity_src edge_tls_identity_src; do
+  ! grep -q "$unwanted" "$work/secretd/vars.yml" || fail "secretd control plane got $unwanted"
+done
+listed="$(env -i PATH="$PATH" "${all[@]}" SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true bash "$script" --identities control-plane)"
+grep -qxF runtime <<<"$listed" || fail "--identities control-plane omits runtime with secretd: $listed"
+listed="$(env -i PATH="$PATH" "${all[@]}" bash "$script" --identities control-plane)"
+! grep -qxF runtime <<<"$listed" || fail "--identities control-plane lists runtime without secretd: $listed"
+
 # Half a pair, a malformed key, and variables CD owns all refuse.
 if run compute half SEAL_DOMAIN_RUNTIME_AGE_KEY="$(key runtime)" 2>/dev/null; then fail "half a pair was accepted"; fi
 if run compute bad SEAL_DOMAIN_RUNTIME_AGE_KEY="not-a-key" SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT="$(pub runtime)" 2>/dev/null; then

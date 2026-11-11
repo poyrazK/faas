@@ -177,6 +177,9 @@ jobs:
       # identities from the control plane's key escrow (scripts/ci/key_escrow.sh)
       # instead of the FLEET_AGE_KEY / SEAL_DOMAIN_*_AGE_KEY secrets.
       SEAL_DOMAIN_KEY_SOURCE: ${{ vars.SEAL_DOMAIN_KEY_SOURCE }}
+      # ADR-20261110210000 §3: true stages the runtime identity on the control
+      # plane too, for secretd (scripts/ci/seal_domain_vars.sh).
+      SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE }}
       # The canary app the activation observer gates on. Unset, it defaults
       # to an always-deployed app in scripts/ci/observe_remote_rollout.sh.
       ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
@@ -603,6 +606,9 @@ jobs:
           install -m 0644 \
             deploy/ansible/roles/signd_service/files/faas-signd.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-signd.service"
+          install -m 0644 \
+            deploy/ansible/roles/secretd_service/files/faas-secretd.service \
+            "${BUNDLE_ROOT}/optional-systemd/faas-secretd.service"
           install -m 0644 \
             deploy/ansible/roles/control_plane_service/files/faas-mcp-bridge.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-mcp-bridge.service"
@@ -1553,6 +1559,56 @@ jobs:
           exit 1
           REMOTE
 
+      # secretd_service converges before the release activates, so it can
+      # only start secretd once the binary is current. This step starts (or
+      # restarts) it from the release just activated and waits for its
+      # listener (ADR-20261110210000 §3). Without the role's drop-in secretd
+      # is off.
+      - name: Restart configured secret opener
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} "bash -s -- '${RELEASE_ID}'" <<'REMOTE'
+          set -euo pipefail
+          release_id="$1"
+          dropin=/etc/systemd/system/faas-secretd.service.d/50-faas-secretd.conf
+          source_unit="/opt/faas/releases/${release_id}/optional-systemd/faas-secretd.service"
+          installed_unit=/etc/systemd/system/faas-secretd.service
+
+          if [[ ! -s "$dropin" ]]; then
+            echo "faas-secretd is not configured; compute nodes keep opening runtime secrets themselves"
+            exit 0
+          fi
+          test -f "$source_unit"
+          test -x "/opt/faas/releases/${release_id}/bin/secretd"
+          if [[ -L "$installed_unit" || ( -e "$installed_unit" && ! -f "$installed_unit" ) ]]; then
+            echo "faas-secretd unit path is not a regular file" >&2
+            exit 1
+          fi
+          staged_unit="${installed_unit}.new-${release_id}"
+          trap 'rm -f -- "$staged_unit"' EXIT
+          install -o root -g root -m 0644 "$source_unit" "$staged_unit"
+          mv -Tf "$staged_unit" "$installed_unit"
+          trap - EXIT
+
+          listen="$(sed -n 's/^Environment=FAAS_SECRETD_LISTEN=tcp:\/\///p' "$dropin" | tail -1)"
+          port="${listen##*:}"
+          [[ "$port" =~ ^[0-9]+$ ]]
+          systemctl daemon-reload
+          systemctl reset-failed faas-secretd.service || true
+          systemctl enable faas-secretd.service
+          systemctl restart faas-secretd.service
+          for attempt in $(seq 1 30); do
+            if systemctl is-active --quiet faas-secretd.service &&
+               ss -Hltn "sport = :${port}" | grep -q .; then
+              exit 0
+            fi
+            sleep 2
+          done
+          journalctl -u faas-secretd.service -n 100 --no-pager >&2
+          exit 1
+          REMOTE
+
       - name: Converge Prometheus config and rules
         run: |
           set -euo pipefail
@@ -1711,6 +1767,9 @@ jobs:
       ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
       # ADR-20261110210000 §2, as in the deploy job.
       SEAL_DOMAIN_KEY_SOURCE: ${{ vars.SEAL_DOMAIN_KEY_SOURCE }}
+      # ADR-20261110210000 §3: true stages the runtime identity on the control
+      # plane too, for secretd (scripts/ci/seal_domain_vars.sh).
+      SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE }}
     steps:
       - name: Install pinned cosign verifier
         env:

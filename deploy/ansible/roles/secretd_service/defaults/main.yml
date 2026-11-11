@@ -1,0 +1,13 @@
+---
+# secretd_service (ADR-20261110210000 §3): the control plane's opener of
+# customer runtime secrets. Empty keeps secretd off, and every vmmd keeps
+# opening runtime secrets with its node's own runtime identity. A split box
+# sets "tcp://<control plane private address>:8098"; vmmd dials it once the
+# compute side is configured (slice 3c). secretd serves mutual TLS only, so a
+# tcp:// listener is the only kind it takes. It also needs the runtime
+# domain's identity on this host, which CD stages only while the GitHub
+# environment variable SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE is true.
+faas_secretd_listen: ""
+# How many distinct apps one compute node may open per rolling hour; empty
+# keeps secretd's default (pkg/secretd DefaultAppsPerNodeHour).
+faas_secretd_apps_per_node_hour: ""

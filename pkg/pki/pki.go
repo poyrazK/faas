@@ -282,7 +282,7 @@ func Roles() []Role {
 // for service-to-service authorization.
 func RoleUsesNodeIdentity(role Role) bool {
 	return role.Directory == "vmmd" || (role.Directory == "gatewayd" && role.Filename == "apid-client") ||
-		role.Directory == SigndClientDirectory
+		role.Directory == SigndClientDirectory || role.Directory == SecretdClientDirectory
 }
 
 // RolesForBox returns the subset of Roles() that a box running with

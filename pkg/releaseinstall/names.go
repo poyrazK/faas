@@ -25,6 +25,9 @@ var supportBinaryNames = []string{
 	// ADR-20261109170000: the control plane's artifact signer, started by
 	// the signd_service role from the active release.
 	"signd",
+	// ADR-20261110210000 §3: the control plane's secret opener, started by
+	// the secretd_service role from the active release.
+	"secretd",
 	"schedd-brokerq-apply",
 	"s3-gatewayd",
 	"vmmd-jail-helper",

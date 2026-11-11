@@ -79,6 +79,22 @@ const (
 	SigndClientDirectory = "signd-client"
 )
 
+// FeatureSecretOpener is the control plane's secret opener's mTLS
+// (ADR-20261110210000 §3): secretd's server leaf on the control plane, and
+// vmmd's secretd client leaf on each compute node. vmmd verifies secretd as
+// secretd.faas; secretd maps the client leaf's CN to the calling compute node
+// and opens an app's secrets only for its owner or a node the owner granted,
+// so the client leaf carries the node's identity (RoleUsesNodeIdentity).
+const FeatureSecretOpener = "secret-opener"
+
+// Secret opener leaf identities. The client leaf's CN is the compute node's
+// name; VmmdSecretdClient is only its placeholder in the role table.
+const (
+	SecretdServerName      = "secretd.faas"
+	VmmdSecretdClient      = "vmmd-secretd.faas"
+	SecretdClientDirectory = "secretd-client"
+)
+
 // SharedDirectoryFeatureLeaf reports whether a feature leaf may sit in a
 // required leaf's directory: only vmmd's relay client leaf does.
 func SharedDirectoryFeatureLeaf(role Role) bool {
@@ -87,7 +103,7 @@ func SharedDirectoryFeatureLeaf(role Role) bool {
 
 // Features lists the known feature-leaf sets.
 func Features() []string {
-	return []string{FeatureLiveQueries, FeaturePlatformLogs, FeatureOutboundRelay, FeatureArtifactSigner}
+	return []string{FeatureLiveQueries, FeaturePlatformLogs, FeatureOutboundRelay, FeatureArtifactSigner, FeatureSecretOpener}
 }
 
 // FeatureRoles returns the leaves a host of boxRole carries for feature, or
@@ -113,6 +129,9 @@ func FeatureRoles(feature, boxRole string) []Role {
 	case FeatureArtifactSigner:
 		controlPlane = []Role{{CommonName: SigndServerName, Kind: KindServer, Directory: "signd", Filename: "server", AltNames: ProductionSANs(SigndServerName)}}
 		compute = []Role{{CommonName: ImagedSigndClient, Kind: KindClient, Directory: SigndClientDirectory, Filename: "imaged", AltNames: ProductionSANs(ImagedSigndClient)}}
+	case FeatureSecretOpener:
+		controlPlane = []Role{{CommonName: SecretdServerName, Kind: KindServer, Directory: "secretd", Filename: "server", AltNames: ProductionSANs(SecretdServerName)}}
+		compute = []Role{{CommonName: VmmdSecretdClient, Kind: KindClient, Directory: SecretdClientDirectory, Filename: "vmmd", AltNames: ProductionSANs(VmmdSecretdClient)}}
 	default:
 		return nil
 	}

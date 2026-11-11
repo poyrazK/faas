@@ -10,7 +10,10 @@
 #
 #   control-plane  identities of the domains read there (outbound, source,
 #                  alerting, storage, control, delivery, account)
-#                  and the recipient of every domain (apid seals to it)
+#                  and the recipient of every domain (apid seals to it);
+#                  runtime's identity too when secretd opens runtime
+#                  secrets there (SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true,
+#                  ADR-20261110210000 §3)
 #   compute        identities of the domains read there (runtime, build, edge,
 #                  edge_tls, control, delivery), and storage's when the S3 gateway runs
 #                  on the compute nodes (SEAL_DOMAIN_STORAGE_ON_COMPUTE=true,
@@ -86,7 +89,11 @@ staged() { # ROLE DOMAIN
   case "$1/$2" in
     control-plane/outbound | control-plane/source | control-plane/alerting | control-plane/storage | control-plane/delivery)
       echo both ;;
-    control-plane/runtime | control-plane/build | control-plane/edge | control-plane/edge_tls)
+    control-plane/runtime)
+      # ADR-20261110210000 §3: secretd opens runtime secrets on the control
+      # plane once SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE is true.
+      if [[ "${SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE:-}" == true ]]; then echo both; else echo recipient; fi ;;
+    control-plane/build | control-plane/edge | control-plane/edge_tls)
       echo recipient ;;
     compute/runtime | compute/build | compute/edge | compute/edge_tls | compute/control | compute/delivery | control-plane/control | control-plane/account)
       echo identity ;;

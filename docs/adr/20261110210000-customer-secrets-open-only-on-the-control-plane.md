@@ -200,6 +200,28 @@ deploy yet; that is slice 3b.
   audited. Closing it means secretd loads the ciphertext itself by row
   reference (a later slice).
 
+**Slice 3b (implemented, off until configured): the daemon and its deploy.**
+
+- `cmd/secretd` runs on the control plane only (`FAAS_SECRETD_ROLE`), as
+  the OS user `faas-secretd`. It logs in to Postgres only as `faas_secretd`:
+  peer authentication, never mapped to the owner, a `faas_runtime` member
+  with explicit `SELECT, INSERT, UPDATE, DELETE` on `secret_grants` and
+  `SELECT, INSERT` on `secret_open_audit`.
+- It serves mutual TLS only, on `tcp://<private address>:8098`, which the
+  firewall opens to the compute CIDRs. The handshake admits only registered
+  compute nodes' leaves (the signd verifier). The pkg/pki feature
+  `secret-opener` issues the server leaf `secretd.faas` and, from slice 3c,
+  each node's client leaf, whose CN is the node's name.
+- The runtime identity reaches it only as a systemd credential, with
+  `_previous` beside it during a rotation. CD stages `runtime.age` on the
+  control plane only while the GitHub environment variable
+  `SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE` is `true`, and the seal_domains
+  role removes it from a control-plane host when it is not.
+- `secretd_service` installs it only where `faas_secretd_listen` is set; CD
+  restarts it from the active release. Expired grants are swept every 5 min.
+
+Until slice 3c nothing calls secretd, so turning it on changes no wake.
+
 When a domain has moved, node join stops staging its identity, deletes
 leftovers (the `faas_compute_fleet_key_retired` pattern), and
 `fleet-seal verify` refuses a compute node that still holds it.

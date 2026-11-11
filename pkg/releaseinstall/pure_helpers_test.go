@@ -90,7 +90,7 @@ func TestSupportBinaryNames_NonEmptyAndStable(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("SupportBinaryNames empty")
 	}
-	want := []string{"gregale", "gregalectl", "init", "mcp-bridged", "edgednsd", "signd", "schedd-brokerq-apply", "s3-gatewayd", "vmmd-jail-helper", "vmmd-guestdisk", "vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge", "vmmd-stream-bridge", "vmlinux", "firecracker-vmm", "sigstore-trusted-root.json", "base-provenance-legacy.txt"}
+	want := []string{"gregale", "gregalectl", "init", "mcp-bridged", "edgednsd", "signd", "secretd", "schedd-brokerq-apply", "s3-gatewayd", "vmmd-jail-helper", "vmmd-guestdisk", "vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge", "vmmd-stream-bridge", "vmlinux", "firecracker-vmm", "sigstore-trusted-root.json", "base-provenance-legacy.txt"}
 	if len(got) != len(want) {
 		t.Fatalf("SupportBinaryNames = %v, want %v", got, want)
 	}

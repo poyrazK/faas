@@ -216,8 +216,9 @@ func TestOwnerContractLeavesOnlyRoot(t *testing.T) {
 			t.Errorf("contracted faas_map maps %v to the owner, want only root", users)
 		}
 		// Daemons born after the owner contract began never logged in as the
-		// owner, so they never map to it (ADR-20261109170000: signd).
-		ownerless := map[string]bool{"faas-signd": true}
+		// owner, so they never map to it (ADR-20261109170000: signd;
+		// ADR-20261110210000: secretd).
+		ownerless := map[string]bool{"faas-signd": true, "faas-secretd": true}
 		for _, u := range users {
 			if ownerless[u] {
 				t.Errorf("contracted=%t: faas_map maps %s to the owner; it never needed it", contracted, u)
