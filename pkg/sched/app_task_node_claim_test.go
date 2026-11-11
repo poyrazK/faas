@@ -19,8 +19,18 @@ func (f nodeClaimBackend) Restore(ctx context.Context, request sched.AppTaskRest
 
 func newNodeOwnedAppTask(t *testing.T, ownerNodeID string) (*state.MemStore, state.AppTask) {
 	t.Helper()
-	ctx := context.Background()
+	return newNodeOwnedAppTaskOfKind(t, ownerNodeID, state.AppTaskKindManual)
+}
+
+func newNodeOwnedAppTaskOfKind(t *testing.T, ownerNodeID string, kind state.AppTaskKind) (*state.MemStore, state.AppTask) {
+	t.Helper()
 	store := state.NewMemStore()
+	return store, newNodeOwnedAppTaskIn(t, store, ownerNodeID, kind)
+}
+
+func newNodeOwnedAppTaskIn(t *testing.T, store state.Store, ownerNodeID string, kind state.AppTaskKind) state.AppTask {
+	t.Helper()
+	ctx := context.Background()
 	account, err := store.CreateAccount(ctx, "app-task-node-claim@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
@@ -42,14 +52,21 @@ func newNodeOwnedAppTask(t *testing.T, ownerNodeID string) (*state.MemStore, sta
 	if err := store.SetDeploymentRootfs(ctx, deployment.ID, "/tmp/app-task.ext4", "apps/app-task/node-claim.ext4", 4096); err != nil {
 		t.Fatalf("SetDeploymentRootfs: %v", err)
 	}
+	if _, ok := store.(*state.PgStore); ok {
+		// PostgreSQL creates customer intent as pending whatever status is
+		// supplied; model imaged's transition so the artifact is usable.
+		if err := store.UpdateDeploymentStatus(ctx, deployment.ID, state.DeploySnapshotting, ""); err != nil {
+			t.Fatalf("UpdateDeploymentStatus: %v", err)
+		}
+	}
 	task, err := store.CreateAppTask(ctx, state.CreateAppTaskParams{
 		AccountID: account.ID, AppID: app.ID, DeploymentID: deployment.ID,
-		Kind: state.AppTaskKindManual, Command: []string{"/bin/true"}, CreatedAt: time.Now().UTC().Add(-time.Second),
+		Kind: kind, Command: []string{"/bin/true"}, CreatedAt: time.Now().UTC().Add(-time.Second),
 	})
 	if err != nil {
 		t.Fatalf("CreateAppTask: %v", err)
 	}
-	return store, task
+	return task
 }
 
 func nodeClaimConfig(nodeID string) sched.AppTaskCoordinatorConfig {

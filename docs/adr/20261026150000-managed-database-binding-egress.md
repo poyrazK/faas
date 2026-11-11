@@ -79,3 +79,18 @@ during boot still applies after publication. Teardown drops it. Service calls
 are unchanged: they still require the caller's `running` instance row, and a
 booting managed probe resolves without its app-task flag, so its task lease
 cannot authenticate service calls before publication.
+
+## Amendment 2026-11-10 (2): booting guests make service calls
+
+Requiring a `running` row left service calls and service-alias lookups made
+at boot without a caller: an instance's row is `cold_booting` or `waking`, and
+carries no host address, until readiness passes. A readiness check that asks
+a sibling service failed the deployment, and a cold-boot wake of such an app
+failed the same way. gatewayd-internal now attributes such a caller when vmmd owns the
+address for a booting app guest and no serving row claims it: it reads the
+instance by the id vmmd reported and requires that row to be `cold_booting`
+or `waking` and to name the same app and deployment on this node
+(`bootingServiceCaller`, `cmd/gatewayd-internal/service_proxy_live_identity.go`).
+A serving row for the address still decides, a booting app task still has
+no service identity, and any mismatch answers none.
+Validation: `TestBootingServiceCallerRequiresMatchingBootingRow`.
