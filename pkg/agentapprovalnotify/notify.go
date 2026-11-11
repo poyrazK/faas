@@ -232,6 +232,16 @@ var categoryLabels = map[string]string{
 	api.AgentApprovalProduction:  "Production change",
 	api.AgentApprovalCredentials: "Credentials",
 	api.AgentApprovalBilling:     "Billing",
+	api.AgentApprovalBudget:      "Over budget",
+}
+
+// budgetCostLine is a budget request's added cost; empty otherwise.
+func budgetCostLine(line state.PendingAgentApprovalLine) string {
+	if line.Category != api.AgentApprovalBudget {
+		return ""
+	}
+	cents := api.CentsCeil(line.BudgetCostMillicents)
+	return fmt.Sprintf("Adds about $%d.%02d a month, past the agent's budget.", cents/100, cents%100)
 }
 
 // message is the email: the agent's waiting requests, each with its review
@@ -249,6 +259,9 @@ func message(agent string, lines []state.PendingAgentApprovalLine) (string, stri
 			label = line.Category
 		}
 		fmt.Fprintf(&b, "%s: %s %s\n", label, line.Method, line.Path)
+		if cost := budgetCostLine(line); cost != "" {
+			fmt.Fprintf(&b, "%s\n", cost)
+		}
 		if line.Reason != "" {
 			fmt.Fprintf(&b, "The agent's reason (its own words): %q\n", line.Reason)
 		}

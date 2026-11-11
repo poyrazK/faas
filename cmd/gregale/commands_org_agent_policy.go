@@ -13,15 +13,18 @@ import (
 // cmdOrgsAgentPolicy shows or sets whether agents may act in an
 // organization, and with which capabilities (ADR-20261101225122).
 func cmdOrgsAgentPolicy(args []string) int {
-	const usage = "usage: gregale org agent policy get --org <slug> | set --org <slug> --agents allow|deny [--capabilities LIST] [--approvals LIST|none] [--approval-channels NAMES]"
+	const usage = "usage: gregale org agent policy get --org <slug> | set --org <slug> --agents allow|deny [--capabilities LIST] [--approvals LIST|none] [--approval-channels NAMES] [--max-budget USD | --clear-max-budget]"
 	if len(args) == 0 || (args[0] != "get" && args[0] != "set") {
 		PrintUsage(os.Stderr, usage, "orgs")
 		return 1
 	}
 	fs := newFlagSet("orgs agent-policy "+args[0], flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
-	var agents, capabilities, approvals, approvalChannels string
+	var agents, capabilities, approvals, approvalChannels, maxBudget string
+	var clearMaxBudget bool
 	if args[0] == "set" {
+		fs.StringVar(&maxBudget, "max-budget", "", "ceiling on every agent's monthly budget, in US dollars (ADR-20261111114059)")
+		fs.BoolVar(&clearMaxBudget, "clear-max-budget", false, "remove the ceiling on agents' budgets")
 		fs.StringVar(&agents, "agents", "", "allow or deny agents in the org")
 		fs.StringVar(&capabilities, "capabilities", "", "comma-separated capabilities agents may get; empty for read-only")
 		fs.StringVar(&approvals, "approvals", "", "kinds of action every agent must have a person approve: delete,production,credentials,billing, all or none")
@@ -54,6 +57,18 @@ func cmdOrgsAgentPolicy(args []string) int {
 			return printErr("Invalid approvals", err)
 		}
 		req := api.OrgAgentPolicyRequest{AgentsAllowed: &allowed, AllowedScopes: &scopes, ApprovalCategories: floor}
+		switch {
+		case maxBudget != "" && clearMaxBudget:
+			return printErr("Invalid budget ceiling", fmt.Errorf("use --max-budget or --clear-max-budget, not both"))
+		case maxBudget != "":
+			cents, err := parseUSDCents(maxBudget)
+			if err != nil {
+				return printErr("Invalid budget ceiling", fmt.Errorf("%s", strings.Replace(err.Error(), "--set", "--max-budget", 1)))
+			}
+			req.MaxAgentBudgetCents = &cents
+		case clearMaxBudget:
+			req.ClearMaxAgentBudget = true
+		}
 		if flagWasSet(fs, "approval-channels") {
 			// Never nil: --approval-channels "" sends [] (none), not null.
 			channels := append([]string{}, splitList(approvalChannels)...)
@@ -82,6 +97,9 @@ func printAgentPolicy(policy api.OrgAgentPolicyResponse) {
 		_, _ = fmt.Fprintln(osStdout, "Approvals required for every agent: none beyond each connection's own")
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "Approvals required for every agent: %s\n", strings.Join(policy.ApprovalCategories, ", "))
+	}
+	if policy.MaxAgentBudgetCents != nil {
+		_, _ = fmt.Fprintf(osStdout, "Ceiling on every agent's monthly budget: %s\n", dollars(*policy.MaxAgentBudgetCents))
 	}
 	if len(policy.ApprovalChannels) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "Your channels that also get its agents' approval requests: %s\n", strings.Join(policy.ApprovalChannels, ", "))

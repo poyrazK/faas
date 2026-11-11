@@ -56,7 +56,9 @@ func AgentBudgetFor(ctx context.Context, store any, plan api.Plan, key APIKey) (
 		return AgentBudgetView{}, err
 	}
 	view := AgentBudgetView{Own: own}
-	if policies, ok := store.(OrgAgentStore); ok && key.OrgID != "" {
+	if policies, ok := store.(interface {
+		OrgAgentPolicy(ctx context.Context, orgID string) (OrgAgentPolicy, error)
+	}); ok && key.OrgID != "" {
 		policy, err := policies.OrgAgentPolicy(ctx, key.OrgID)
 		if err != nil {
 			return AgentBudgetView{}, err
