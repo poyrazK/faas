@@ -13,6 +13,11 @@ func (c *Client) AgentConnectionBudget(ctx context.Context, id string) (AgentBud
 	return out, err
 }
 
+// AgentConnectionSelfBudget reads the calling agent's own budget.
+func (c *Client) AgentConnectionSelfBudget(ctx context.Context) (AgentBudgetResponse, error) {
+	return c.AgentConnectionBudget(ctx, "self")
+}
+
 // SetAgentConnectionBudget sets an agent connection's budget; a person's
 // admin credential only.
 func (c *Client) SetAgentConnectionBudget(ctx context.Context, id string, req AgentBudgetRequest) (AgentBudgetResponse, error) {
