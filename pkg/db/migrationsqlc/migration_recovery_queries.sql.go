@@ -71,7 +71,8 @@ SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namesp
  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
  WHERE n.nspname=current_schema()
   AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend x WHERE x.classid='pg_catalog.pg_proc'::regclass AND x.objid=p.oid AND x.deptype='e')
-  AND (p.proowner<>to_regrole(quote_ident(current_user))::oid OR p.proacl IS NOT NULL))
+  AND (p.proowner<>to_regrole(quote_ident(current_user))::oid
+   OR EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee<>p.proowner)))
  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace
  WHERE n.nspname=current_schema()
   AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend x WHERE x.classid='pg_catalog.pg_type'::regclass AND x.objid IN (t.oid,t.typelem) AND x.deptype='e')
@@ -96,7 +97,8 @@ SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namesp
 // object or pass a privilege on. Objects an extension created are its own:
 // a trusted extension such as citext installs them owned by the bootstrap
 // superuser even when the migration role ran CREATE EXTENSION, and array
-// types follow their element type.
+// types follow their element type. Explicit owner-only function ACLs are
+// admitted too; explicit grants to every other role remain rejected.
 func (q *Queries) CheckMigrationRecoveryWriters(ctx context.Context, db DBTX) (pgtype.Bool, error) {
 	row := db.QueryRow(ctx, checkMigrationRecoveryWriters)
 	var valid pgtype.Bool
