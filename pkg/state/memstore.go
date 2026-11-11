@@ -20751,6 +20751,14 @@ func (m *MemStore) RecordInvoiceRefund(_ context.Context, refund InvoiceRefund) 
 			existing.Status = refund.Status
 		} else if oldState == invoiceRefundPending {
 			existing.Status = refund.Status
+		} else if oldState == invoiceRefundSettled && newState == invoiceRefundFailed {
+			// Matches PgStore: a refund that fails after settling is reversed.
+			settledDelta = -refund.AmountCents
+			if existing.Source == "credit" {
+				creditDelta -= refund.AmountCents
+				reverseCredit = true
+			}
+			existing.Status = refund.Status
 		}
 		storedRefund = existing
 	}
