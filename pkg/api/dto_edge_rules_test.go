@@ -307,17 +307,8 @@ func TestEdgeRuleValidateAction_Validate_Rejects(t *testing.T) {
 	}
 }
 
-// TestEdgeRuleValidateAction_Validate_Accepts is the positive twin
-// of TestEdgeRuleValidateAction_Validate_Rejects. PR-C added it
-// after anchoring edgeRuleValidateRefURLPattern (formerly
-// `\$ref|id`, now `"\s*(\$ref|\$id)\s*"\s*:\s*"(https?://|//)[^"]+"`).
-// The old regex over-matched: any string containing the substring
-// `id` anywhere tripped the rejection (e.g. `definitions` matched),
-// so internal JSON Pointers like `#/definitions/Foo` were wrongly
-// rejected. The new regex requires the key to be a top-level JSON
-// property name. The four rows below pin the post-fix behaviour:
-// internal pointers pass, literal `id` strings pass, property names
-// pass, RFC1918 URLs still get caught.
+// Valid local pointers, anchors and application properties containing "id"
+// remain accepted by the inline-schema compiler.
 func TestEdgeRuleValidateAction_Validate_Accepts(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -336,24 +327,15 @@ func TestEdgeRuleValidateAction_Validate_Accepts(t *testing.T) {
 				// URL value, not a key, so it does not match.
 				a.Schema = json.RawMessage(`{
 					"type": "object",
+					"definitions": {"Foo": {"type":"object"}},
 					"$ref": "#/definitions/Foo"
 				}`)
 			},
 		},
 		{
-			name: "schema-relative-ref",
+			name: "schema-local-anchor-ref",
 			mutate: func(a *EdgeRuleValidateAction) {
-				// Relative `$ref` (`../schemas/common.json`) is
-				// not a URL — the URL alternation in the regex
-				// (`https?://|//`) requires a scheme or
-				// protocol-relative prefix. The legacy regex
-				// matched the `$ref` substring unconditionally;
-				// the new regex requires the value to be
-				// URL-shaped before it counts.
-				a.Schema = json.RawMessage(`{
-					"type": "object",
-					"$ref": "../schemas/common.json"
-				}`)
+				a.Schema = json.RawMessage(`{"$defs":{"foo":{"$anchor":"foo","type":"object"}},"$ref":"#foo"}`)
 			},
 		},
 		{
@@ -384,7 +366,7 @@ func TestEdgeRuleValidateAction_Validate_Accepts(t *testing.T) {
 				// JSON property name, which `"id"` here is not.
 				a.Schema = json.RawMessage(`{
 					"type": "string",
-					"contains": "id"
+					"const": "id"
 				}`)
 			},
 		},
@@ -396,7 +378,7 @@ func TestEdgeRuleValidateAction_Validate_Accepts(t *testing.T) {
 			a := happyEdgeRuleValidateAction()
 			tc.mutate(&a)
 			if p := a.Validate(); p != nil {
-				t.Fatalf("Validate() = %v, want nil (POST-fix regex should accept this schema)", p)
+				t.Fatalf("Validate() = %v, want a valid inline schema", p)
 			}
 		})
 	}

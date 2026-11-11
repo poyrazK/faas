@@ -285,6 +285,21 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 
 func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.EdgeRule, req api.UpdateEdgeRuleRequest, check precondition) (ruleMutation, *api.Problem) {
 	var m ruleMutation
+	unlock, err := s.LockEdgeRuleMutations(ctx, []string{row.AppID})
+	if err != nil {
+		return m, api.ErrCapacity("edge-rule mutation lock is unavailable; the rule was not updated")
+	}
+	defer unlock(context.WithoutCancel(ctx))
+	// The row read by the caller identifies the lock only. Re-read before
+	// authorizing or computing invalidation hosts, since another edit may
+	// have moved the rule while this request waited for the lock.
+	row, prob := s.ruleForUpdate(ctx, acct, row.ID)
+	if prob != nil {
+		return m, prob
+	}
+	if prob := s.appBoundUpdateHostProblem(ctx, row.AppID, row.MatchHost); prob != nil {
+		return m, prob
+	}
 	// Validate the optional fields if present.
 	if req.MatchHost != nil {
 		if prob := api.ValidateEdgeRuleMatchHost(*req.MatchHost); prob != nil {
@@ -299,6 +314,9 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 			return m, api.ErrValidation("match_path must start with '/' and be ≤ 2048 chars")
 		}
 		if prob := TemplatedMatchPathProblem(*req.MatchPath); prob != nil {
+			return m, prob
+		}
+		if prob := api.ValidateEdgeRuleMatchPath(*req.MatchPath); prob != nil {
 			return m, prob
 		}
 	}
@@ -436,7 +454,7 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 			return m, prob
 		}
 	}
-	convergence, err := s.PrepareEdgeRuleMutation(ctx, row.AppID, row.ID, "updated", hosts...)
+	convergence, err := s.PrepareEdgeRuleMutationLocked(ctx, row.AppID, row.ID, "updated", unlock, hosts...)
 	if err != nil {
 		return m, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not updated")
 	}

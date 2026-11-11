@@ -63,6 +63,9 @@ type authReceiver struct {
 	// sandboxKey verifies sandbox session tokens, derived from the session
 	// key when sessions has one; nil answers SandboxTokenKeys Unavailable.
 	sandboxKey *sandboxtoken.PublicKey
+	// agents answers gateways' agent approval and activity calls; nil
+	// answers Unavailable (ADR-20261111150000).
+	agents AgentRequests
 }
 
 // sessionKeyHolder is a SessionOpener that can derive keys:
@@ -77,8 +80,11 @@ type SessionOpener interface {
 }
 
 // newAuthReceiver wires a production receiver.
-func newAuthReceiver(store authStore, tracing TracingReleased, sessions SessionOpener) *authReceiver {
+func newAuthReceiver(store authStore, tracing TracingReleased, sessions SessionOpener, opts ...AuthOption) *authReceiver {
 	r := &authReceiver{store: store, tracing: tracing, sessions: sessions}
+	for _, opt := range opts {
+		opt(r)
+	}
 	if holder, ok := sessions.(sessionKeyHolder); ok && holder != nil {
 		if issuer, err := sandboxtoken.NewIssuer(holder.BindingKey()); err == nil {
 			pub := issuer.PublicKey()
@@ -227,6 +233,6 @@ func (r *authReceiver) VerifySession(_ context.Context, req *apidpb.VerifySessio
 // services. tracing gates OTLP keys on the tracing capability; nil
 // releases everyone. sessions answers VerifySession; nil answers
 // Unavailable.
-func RegisterAuthReceiver(s *grpc.Server, store authStore, tracing TracingReleased, sessions SessionOpener) {
-	apidpb.RegisterAuthServer(s, newAuthReceiver(store, tracing, sessions))
+func RegisterAuthReceiver(s *grpc.Server, store authStore, tracing TracingReleased, sessions SessionOpener, opts ...AuthOption) {
+	apidpb.RegisterAuthServer(s, newAuthReceiver(store, tracing, sessions, opts...))
 }
