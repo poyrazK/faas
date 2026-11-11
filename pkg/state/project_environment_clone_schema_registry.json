@@ -72,6 +72,7 @@
       "method",
       "org_id",
       "path",
+      "reason",
       "status"
     ],
     "kind": "operational"
@@ -113,6 +114,7 @@
       "method",
       "org_id",
       "path",
+      "reason",
       "status"
     ],
     "kind": "account_identity"
@@ -2907,6 +2909,7 @@
       "root_dir",
       "route_metrics_enabled",
       "runtime",
+      "sandbox_template",
       "scaling_policy",
       "scaling_policy_revision",
       "scaling_revision",
@@ -5066,6 +5069,7 @@
       "account_id",
       "app_id",
       "created_at",
+      "created_by_account_id",
       "expires_at",
       "id",
       "label",
@@ -10215,6 +10219,7 @@
   {
     "table": "managed_postgres_overage_deliveries",
     "columns": [
+      "billed_egress_bytes",
       "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "delivered_millicents",
@@ -10230,8 +10235,11 @@
     "table": "managed_postgres_overage_pending",
     "columns": [
       "allowance_unit_seconds",
+      "app_egress_bytes",
+      "billed_egress_bytes",
       "billed_storage_byte_seconds",
       "billed_unit_seconds",
+      "egress_allowance_bytes",
       "from_millicents",
       "live",
       "period_start",
@@ -10242,6 +10250,7 @@
       "storage_pool_bytes",
       "subject_id",
       "target_millicents",
+      "used_egress_bytes",
       "used_storage_byte_seconds",
       "used_unit_seconds"
     ],
@@ -17474,6 +17483,105 @@
       "column": "id",
       "strategy": "shared"
     }
+  },
+  {
+    "table": "sandbox_ports",
+    "columns": [
+      "account_id",
+      "created_at",
+      "port",
+      "sandbox_id",
+      "visibility"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_session_usage",
+    "columns": [
+      "account_id",
+      "billable_mb_ms",
+      "cold_boot",
+      "expected_samples",
+      "final",
+      "frozen_ms",
+      "measured_ms",
+      "method",
+      "paused_ms",
+      "peak_private_mb",
+      "private_mb_ms",
+      "recorded_at",
+      "samples",
+      "sandbox_id",
+      "unpaused_private_mb_ms",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_sessions",
+    "columns": [
+      "account_id",
+      "close_requested_at",
+      "closed_at",
+      "created_at",
+      "expires_at",
+      "id",
+      "idle_timeout_sec",
+      "image_job_id",
+      "image_ref",
+      "instance_id",
+      "kind",
+      "labels",
+      "last_activity_at",
+      "lease_expires_at",
+      "lease_owner",
+      "lease_token",
+      "network_mode",
+      "node_id",
+      "outcome_code",
+      "outcome_message",
+      "preset",
+      "ram_mb",
+      "state",
+      "template_id",
+      "tenant_id",
+      "updated_at",
+      "workspace_snapshot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_templates",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "name",
+      "ready_cmd",
+      "ready_timeout_s",
+      "start_cmd",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_workspace_snapshots",
+    "columns": [
+      "account_id",
+      "bytes",
+      "created_at",
+      "delete_requested_at",
+      "expires_at",
+      "id",
+      "ready_at",
+      "reserved_bytes",
+      "sandbox_id",
+      "sha256",
+      "state",
+      "storage_key"
+    ],
+    "kind": "operational"
   },
   {
     "table": "static_egress_provisioning_grants",

@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "b087b1dd15603d64c21f64368520eaf32b5e882f0635646e9b98a89d26f470a3",
+      "revision": "c75d12128640e0d284d3b58eeac914a6c38b434c35331a3a0bb9d3849adfcf92",
       "files": [
         "faas.rules.yml"
       ],
@@ -4443,6 +4443,19 @@
           }
         },
         {
+          "id": "9d52405d79bc6d4c838aaf4308a6b881471df227d168bd21398b483138743e12",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryBacklog",
+          "definition": {
+            "expression_hash": "5dd83aae3ded71e55e00f929feaa626a57ee6b7a2e8cc95b5030678e31f21e91",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "258e7485386692bd4cd46e97169fc9e2856f824fa725e78e338682c387682dde"
+          }
+        },
+        {
           "id": "9d8d744f3206c924cc415e537fa5b875e6598e21db55ef14529a8ff8777c35f5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -4869,6 +4882,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "181a567448f7a40ed868df8d3dc6dd788190f539b2b6546f41efc25994f3a554"
+          }
+        },
+        {
+          "id": "ad67502e3fb5af0d089c3145ef5ba6c499a25522765d1a3861e8905e8919d684",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_compute_object_gateway",
+          "rule_name": "FaasS3GatewayDown",
+          "definition": {
+            "expression_hash": "f3eaf1a13e011ad0d13675f0f4c60727d8548276ca9aa5363f229c73cba84fcc",
+            "labels_hash": "6b0cb6db1e4730f77b9133acb63e8c85371038b874b109722ec5d129cca2b5e8",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "37499fab615f2f0bf48f427befc666e874cdd7549e4dca934b3eb09ee26e3528"
           }
         },
         {
@@ -7072,7 +7098,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "21a424440d30aaa933851abc52d7f86aa4ec37a76239bf045144981e4f72653c",
+      "revision": "614e40bb2cb8b671c57251b8b6da5b91d2d477b0421cd08de1ba017326e443c6",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -11710,6 +11736,19 @@
           }
         },
         {
+          "id": "9d52405d79bc6d4c838aaf4308a6b881471df227d168bd21398b483138743e12",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryBacklog",
+          "definition": {
+            "expression_hash": "5dd83aae3ded71e55e00f929feaa626a57ee6b7a2e8cc95b5030678e31f21e91",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "258e7485386692bd4cd46e97169fc9e2856f824fa725e78e338682c387682dde"
+          }
+        },
+        {
           "id": "9d8d744f3206c924cc415e537fa5b875e6598e21db55ef14529a8ff8777c35f5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -12162,6 +12201,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "181a567448f7a40ed868df8d3dc6dd788190f539b2b6546f41efc25994f3a554"
+          }
+        },
+        {
+          "id": "ad67502e3fb5af0d089c3145ef5ba6c499a25522765d1a3861e8905e8919d684",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_compute_object_gateway",
+          "rule_name": "FaasS3GatewayDown",
+          "definition": {
+            "expression_hash": "f3eaf1a13e011ad0d13675f0f4c60727d8548276ca9aa5363f229c73cba84fcc",
+            "labels_hash": "6b0cb6db1e4730f77b9133acb63e8c85371038b874b109722ec5d129cca2b5e8",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "37499fab615f2f0bf48f427befc666e874cdd7549e4dca934b3eb09ee26e3528"
           }
         },
         {

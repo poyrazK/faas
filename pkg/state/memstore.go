@@ -5840,7 +5840,7 @@ func (m *MemStore) ListApps(_ context.Context, accountID string) ([]App, error) 
 	defer m.mu.Unlock()
 	var out []App
 	for _, a := range m.apps {
-		if (a.AccountID == accountID || a.OrgID == accountID) && a.Status != AppDeleted {
+		if (a.AccountID == accountID || a.OrgID == accountID) && a.Status != AppDeleted && !a.SandboxTemplate {
 			out = append(out, a)
 		}
 	}
@@ -5856,7 +5856,7 @@ func (m *MemStore) ListAppsByOrg(_ context.Context, orgID string) ([]App, error)
 	defer m.mu.Unlock()
 	var out []App
 	for _, app := range m.apps {
-		if app.OrgID == orgID && app.Status != AppDeleted {
+		if app.OrgID == orgID && app.Status != AppDeleted && !app.SandboxTemplate {
 			out = append(out, app)
 		}
 	}
@@ -9545,7 +9545,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployRolledBack,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditData("abort_requested", reason)),
 		})
@@ -9615,7 +9615,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployTrafficChanged,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditDataWithDecision("advance", reason, decision)),
 		})
@@ -9653,7 +9653,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployTrafficChanged,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditDataWithDecision("promote", reason, decision)),
 		})
@@ -9685,7 +9685,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			predecessor.TrafficPercent = 100
 			m.putDeploymentLocked(expectedPredecessorID, predecessor)
 			m.putDeploymentLocked(target.ID, *target)
-			entry := DeploymentAudit{DeploymentID: uuid.MustParse(target.ID), Kind: DeployRolledBack, Actor: "operator:cli:recover_rollout", At: now,
+			entry := DeploymentAudit{DeploymentID: uuid.MustParse(target.ID), Kind: DeployRolledBack, Actor: rolloutRecoveryActor(ctx), At: now,
 				Data: json.RawMessage(withAuditDecision(rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx)), decision))}
 			if auditOverride != nil {
 				entry = *auditOverride
@@ -9724,7 +9724,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployRolledBack,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditDataWithDecision("abort", reason, decision)),
 		})

@@ -24843,6 +24843,10 @@ components:
           type: string
           enum: [database_limit, service_class]
           description: "Set while the plan no longer includes this database, for example after a subscription ended, and it is suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept), service_class when the plan does not include its class. Its data is kept. Upgrading, deleting a database or resizing to an included class resumes it."
+        hold:
+          type: string
+          enum: [compute_ceiling, egress, inactive, plan_excess, preview]
+          description: "Set while the platform stops this database's compute and refuses its connections although its state is ready: compute_ceiling once the account used its monthly compute ceiling; egress once its apps and databases sent the plan's monthly egress allowance; inactive while the account is suspended; plan_excess (see plan_excess); preview for a PR preview database once the account used 80% of its compute. Its data is kept. Omitted while nothing holds it; the platform applies a change within a few minutes."
         restore_range:
           $ref: '#/components/schemas/ManagedPostgresRestoreRange'
     ManagedPostgresRestoreRange:
@@ -24918,6 +24922,24 @@ components:
           description: When the compute cap suspended the account's databases this month; present while compute_cap_state is suspended.
           type: string
           format: date-time
+        egress_allowance_bytes:
+          description: The plan's monthly egress allowance, shared by the account's apps and databases. Absent on a plan without one.
+          type: integer
+          format: int64
+          minimum: 0
+        app_egress_bytes:
+          description: What the account's apps sent this month toward the shared egress allowance; egress_bytes is the databases' part.
+          type: integer
+          format: int64
+          minimum: 0
+        egress_state:
+          description: "healthy; warning at 80% of the shared egress allowance; overage past it while the account's egress overage election bills database egress (at Neon's price plus 5%, up to twice the allowance); held once apps and databases together reach the allowance (twice it with overage billed) and the platform enforces caps, until the month ends or the plan grows."
+          type: string
+          enum: [healthy, warning, overage, held]
+        hold:
+          description: Set while every database of the account is held, with the same reason each database reports.
+          type: string
+          enum: [compute_ceiling, egress, inactive]
     CreateManagedPostgresDatabaseRequest:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object
@@ -38371,6 +38393,10 @@ components:
         approval_id:
           type: string
           description: The approval request the write went through on, when it needed one.
+        reason:
+          type: string
+          maxLength: 280
+          description: "What the agent said this write was for (its Gregale-Agent-Reason header), if it said. Untrusted agent text."
         created_at: {type: string, format: date-time}
     AgentApprovalResponse:
       description: "One request of an agent connection that needed a person's approval."
@@ -38389,6 +38415,7 @@ components:
         expires_at: {type: string, format: date-time, description: After this time the request can no longer be approved or used.}
         decided_at: {type: string, format: date-time, description: When a person approved or denied it.}
         note: {type: string, maxLength: 280, description: "Why the person denied this request, if they said; absent otherwise."}
+        reason: {type: string, maxLength: 280, description: "What the agent said the request is for (Gregale-Agent-Reason on the request that opened it), if it said. Untrusted agent text: it never changes what is approved."}
     AgentApprovalsResponse:
       description: "Approval requests, newest first: an agent's own, or those pending that the caller may decide."
       type: object
@@ -42770,6 +42797,7 @@ components:
         review_url: {type: string, format: uri, description: "On agent.approval.requested: the page where a member who may decide opens it."}
         decided_at: {type: string, format: date-time, description: When the person approved or denied the request.}
         note: {type: string, maxLength: 280, description: "On agent.approval.denied: the reason the person gave the agent, if any."}
+        reason: {type: string, maxLength: 280, description: "The agent's own account of what the request is for, if it gave one. Untrusted agent text."}
       additionalProperties: true
     RolloutCompletedWebhookPayload:
       type: object

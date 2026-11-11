@@ -81,7 +81,9 @@ func (p *Provider) IssueLiveLogin(ctx context.Context, request managedpostgres.L
 		}
 	}
 	material := managedpostgres.CredentialMaterial{ProviderIdentityID: login.name, Username: login.name, Password: password,
-		Database: owner.Database, TLSMode: owner.TLSMode, Endpoints: direct}
+		// livequeryd is the platform's own client, so it verifies the
+		// endpoint's certificate whatever sslmode Neon's URI suggests.
+		Database: owner.Database, TLSMode: platformTLSMode, Endpoints: direct}
 	ref, _ := parseResourceRef(request.ProviderResourceID)
 	return managedpostgres.LiveLogin{CredentialMaterial: material, Awake: neonAwake(ref.projectID, direct)}, nil
 }

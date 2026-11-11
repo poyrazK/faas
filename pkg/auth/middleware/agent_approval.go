@@ -139,6 +139,7 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		ID: id, KeyID: key.ID, AccountID: key.AccountID, OrgID: key.OrgID, Category: rule.Category,
 		Method: binding.Method, Path: binding.Path, BodySHA256: binding.BodySHA256,
 		ExpiresAt: time.Now().Add(api.AgentApprovalTTL), ReviewURL: m.reviewURL(id), AgentName: key.Label,
+		Reason: api.SanitizeAgentReason(r.Header.Get(api.AgentReasonHeader)),
 	})
 	if errors.Is(err, state.ErrTooManyAgentApprovals) {
 		limit, observed := int64(api.MaxPendingAgentApprovals), int64(api.MaxPendingAgentApprovals)

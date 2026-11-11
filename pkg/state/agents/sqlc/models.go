@@ -160,6 +160,14 @@ type AgentVersion struct {
 	PauseDuringModelCalls bool
 }
 
+type App struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	Slug            string
+	Status          string
+	SandboxTemplate bool
+}
+
 type AppWebhook struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
@@ -178,10 +186,28 @@ type AppWebhookDelivery struct {
 	SourceEventID pgtype.UUID
 }
 
+type Deployment struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	Status    string
+	Error     pgtype.Text
+	RootfsKey string
+	CreatedAt pgtype.Timestamptz
+}
+
 type GithubInstallation struct {
 	AccountID      pgtype.UUID
 	InstallationID int64
 	SealedAt       pgtype.Timestamptz
+}
+
+type Job struct {
+	ID                         pgtype.UUID
+	AccountID                  pgtype.UUID
+	Status                     string
+	ImageStorageKey            pgtype.Text
+	ImageMaterializationStatus string
+	ImageMaterializationError  pgtype.Text
 }
 
 type ObjectBucket struct {
@@ -209,6 +235,90 @@ type PlatformTenant struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
 	Status    string
+}
+
+type SandboxPort struct {
+	SandboxID  pgtype.UUID
+	AccountID  pgtype.UUID
+	Port       int32
+	Visibility string
+	CreatedAt  pgtype.Timestamptz
+}
+
+type SandboxSession struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	TenantID            pgtype.UUID
+	Kind                string
+	Preset              string
+	RamMb               int32
+	NetworkMode         string
+	State               string
+	IdleTimeoutSec      int32
+	ExpiresAt           pgtype.Timestamptz
+	Labels              []byte
+	OutcomeCode         pgtype.Text
+	OutcomeMessage      pgtype.Text
+	LeaseOwner          pgtype.Text
+	LeaseToken          pgtype.Text
+	LeaseExpiresAt      pgtype.Timestamptz
+	NodeID              pgtype.Text
+	InstanceID          pgtype.Text
+	CloseRequestedAt    pgtype.Timestamptz
+	LastActivityAt      pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	ClosedAt            pgtype.Timestamptz
+	WorkspaceSnapshotID pgtype.UUID
+	TemplateID          pgtype.UUID
+	ImageRef            pgtype.Text
+	ImageJobID          pgtype.UUID
+}
+
+type SandboxSessionUsage struct {
+	SandboxID           pgtype.UUID
+	AccountID           pgtype.UUID
+	Method              int16
+	Samples             int32
+	ExpectedSamples     int32
+	MeasuredMs          int64
+	PausedMs            int64
+	FrozenMs            int64
+	PrivateMbMs         int64
+	UnpausedPrivateMbMs int64
+	BillableMbMs        int64
+	PeakPrivateMb       int64
+	ColdBoot            bool
+	Final               bool
+	RecordedAt          pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type SandboxTemplate struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	Name          string
+	AppID         pgtype.UUID
+	StartCmd      pgtype.Text
+	ReadyCmd      pgtype.Text
+	ReadyTimeoutS int32
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type SandboxWorkspaceSnapshot struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	SandboxID         pgtype.UUID
+	State             string
+	StorageKey        string
+	ReservedBytes     int64
+	Bytes             pgtype.Int8
+	Sha256            pgtype.Text
+	ExpiresAt         pgtype.Timestamptz
+	DeleteRequestedAt pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	ReadyAt           pgtype.Timestamptz
 }
 
 type WorkflowEvent struct {

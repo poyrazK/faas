@@ -33,7 +33,7 @@ func (q *Queries) LockAPIKey(ctx context.Context, db DBTX, arg LockAPIKeyParams)
 
 const lockDeployToken = `-- name: LockDeployToken :one
 SELECT id FROM deploy_tokens
-WHERE id = $1 AND account_id = $2 AND app_id = $3
+WHERE id = $1 AND coalesce(created_by_account_id, account_id) = $2::uuid AND app_id = $3
   AND status IN ('active', 'grace') AND expires_at > now()
 FOR SHARE
 `
@@ -44,6 +44,7 @@ type LockDeployTokenParams struct {
 	AppID     pgtype.UUID
 }
 
+// A token authenticates as its minter when it has one (ADR 20261110190000).
 func (q *Queries) LockDeployToken(ctx context.Context, db DBTX, arg LockDeployTokenParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, lockDeployToken, arg.ID, arg.AccountID, arg.AppID)
 	var id pgtype.UUID

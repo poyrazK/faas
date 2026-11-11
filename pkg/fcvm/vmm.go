@@ -773,6 +773,11 @@ func firecrackerControlLine(line []byte) bool {
 		// queue worker's customer log on production-us rc.294 (Hunt 14
 		// H14-5).
 		"spurious notification from api thread",
+		// Firecracker's vsock device losing a host-side stream, e.g. "vsock:
+		// error writing to local stream (lp=1027, pp=…): GuestMemoryMmap(
+		// IOError(Os { code: 32, kind: BrokenPipe … }))". It reached a
+		// function's customer log on production-us rc.336 (Hunt 32 H32-69).
+		"vsock: error ",
 	} {
 		if strings.Contains(body, marker) {
 			return true
@@ -1441,6 +1446,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if jobManifest != nil {
 		if err := v.stageJobManifestForOwner(ctx, stagingOwner, l.Instance, *jobManifest); err != nil {
 			return fmt.Errorf("vmm: stage job manifest: %w", err)
+		}
+	}
+	if len(l.SandboxManifest) > 0 {
+		if err := v.stageSandboxManifestForOwner(ctx, stagingOwner, l.Instance, []byte(l.SandboxManifest)); err != nil {
+			return fmt.Errorf("vmm: stage sandbox manifest: %w", err)
 		}
 	}
 	stagedRuntimeAt := time.Now()

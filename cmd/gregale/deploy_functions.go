@@ -903,7 +903,8 @@ func deployFunctionSet(ctx context.Context, d functionSetDeploy) int {
 		return printErr("Not logged in", err)
 	}
 	if d.deployOne == nil {
-		d.deployOne = func(args []string) int { return cmdDeployTarballToExisting(ctx, args, false) }
+		member := withFunctionSetMember(ctx)
+		d.deployOne = func(args []string) int { return cmdDeployTarballToExisting(member, args, false) }
 	}
 	if d.out == nil {
 		d.out = osStdout

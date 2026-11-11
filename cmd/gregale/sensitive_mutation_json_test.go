@@ -99,6 +99,11 @@ func TestSensitiveMutationJSONContract(t *testing.T) {
 			calls := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
+				// A rotation first checks the key is set (Hunt 32 H32-82).
+				if strings.HasPrefix(tc.path, "/v1/apps/demo/secrets/") && strings.HasSuffix(tc.path, "/rotate") && r.Method == http.MethodGet && r.URL.Path == "/v1/apps/demo/secrets" {
+					main.WriteJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{Key: "TOKEN"}}})
+					return
+				}
 				if tc.restart && r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/restart" && r.URL.RawQuery == "fresh=true" {
 					main.WriteJSONTest(w, api.AppRestartResponse{WakeID: "wake-json-1"})
 					return
@@ -149,6 +154,9 @@ func TestSensitiveMutationJSONContract(t *testing.T) {
 			wantCalls := 1
 			if tc.restart {
 				wantCalls++
+			}
+			if strings.HasPrefix(tc.path, "/v1/apps/demo/secrets/") && strings.HasSuffix(tc.path, "/rotate") {
+				wantCalls++ // the key-is-set check
 			}
 			if calls != wantCalls {
 				t.Fatalf("made %d API requests, want %d", calls, wantCalls)

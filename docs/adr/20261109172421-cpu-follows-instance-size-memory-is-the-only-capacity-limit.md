@@ -212,9 +212,14 @@ schema change ships before its first user.
       `app_cpu_*` keys become read-only catalog entries that no daemon
       reads. Snapshot refresh dates a snapshot's vCPU count from its
       instance row (ADR-20261106214916 §2) instead of replaying those keys.
+      *Merged (#6912), unreleased.*
    2. schedd and Postgres: the CPU admission gates go (`cpu_admission`,
       placement's and the ledger's vCPU and CPU budgets,
       `admission_reserve_node`'s CPU resources); CPU stays telemetry.
+      *Merged (#6925), unreleased. The capacity ledger books an instance's
+      size vCPUs (#6948), and the service capacity guard (ADR-422, #6964)
+      and migration admission (#6982) refuse on memory alone, so no
+      admission path refuses on CPU.*
    3. vmmd drops its plan CPU fallback (plan `cpu.max`, weight and startup
       boost for app instances). It ships a release after 1, once every
       schedd sends `cpu_weight` and `cpu_uncapped`. No vmmd CPU value reads
@@ -224,14 +229,27 @@ schema change ships before its first user.
       uses a 100 ms period (the per-plan periods ran from 100 ms to 1 s, at
       one core each); a VM without a weight of its own (a database VM) gets
       the cgroup default 100, a builder 256.
+      *Merged (#6935), unreleased; the builder-native metal smoke must pass
+      before it is released.*
    4. The per-plan fields in `pkg/api/limits.go`, the API and CLI fields
       that show them, and the SQL `plan_vcpus` fallbacks.
+      *The API and CLI show an app's size (#6944), the SQL capacity paths
+      count an instance's size vCPUs (#6948), and `CPUWeight`, `CPUQuotaUS`
+      and `CPUPeriodUS` are gone (#6998). Function executions boot at their
+      size's vCPUs too (one for every execution shape), so `VCPU` and
+      `VCPUPerPlan` are gone. The `service_capacity_policy.plan_vcpus` and
+      `cpu_overcommit` columns stay, unread: issued migrations that read them
+      must stay replayable, and the repo's replay tests run them against the
+      current schema.*
    5. The flat hierarchy: app instances directly under `faas-tenant.slice`,
       with vmmd still adopting VMs in the old sub-slices for a release.
    6. The dead `FaasCpuStarvation` alert (nothing feeds its throttle
       ratio) and the spec text.
+      *Merged (#6933), unreleased.*
 7. **Customer docs and plan pages** ("CPU follows memory: 1 vCPU per GB,
    bursts to idle CPU") once the change is tested on prod.
+   *Live since rc.337. This repo's plans page, UX spec and CLI help say it;
+   the web plan pages are separate.*
 
 ## Verification
 

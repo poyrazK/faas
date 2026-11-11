@@ -57,19 +57,38 @@ func (fn FunctionSpec) HookLifecycleUpdate(currentAfter *api.AfterRestoreHook, c
 	if wantBefore && beforePath != "" && beforePath != functionlifetime.FunctionBeforeSnapshotPath {
 		return nil, nil, false, fmt.Errorf("function %q declares beforeSnapshot in code and its app also has a before_checkpoint hook at %s; keep one: remove the app's hook or the code's", fn.Name, beforePath)
 	}
+	afterTimeout, beforeTimeout := 0, 0
+	if currentAfter != nil {
+		afterTimeout = currentAfter.TimeoutMS
+	}
+	if currentBefore != nil {
+		beforeTimeout = currentBefore.TimeoutMS
+	}
 	switch {
-	case wantAfter && afterPath != functionlifetime.FunctionAfterRestorePath:
-		after, changed = &api.AfterRestoreHook{Path: functionlifetime.FunctionAfterRestorePath}, true
+	case wantAfter && (afterPath != functionlifetime.FunctionAfterRestorePath || afterTimeout != fn.AfterRestoreTimeoutMS):
+		after, changed = &api.AfterRestoreHook{Path: functionlifetime.FunctionAfterRestorePath, TimeoutMS: fn.AfterRestoreTimeoutMS}, true
 	case !wantAfter && afterPath == functionlifetime.FunctionAfterRestorePath:
 		after, changed = &api.AfterRestoreHook{}, true
 	}
 	switch {
-	case wantBefore && beforePath != functionlifetime.FunctionBeforeSnapshotPath:
-		before, changed = &api.BeforeCheckpointHook{Path: functionlifetime.FunctionBeforeSnapshotPath}, true
+	case wantBefore && (beforePath != functionlifetime.FunctionBeforeSnapshotPath || beforeTimeout != fn.BeforeSnapshotTimeoutMS):
+		before, changed = &api.BeforeCheckpointHook{Path: functionlifetime.FunctionBeforeSnapshotPath, TimeoutMS: fn.BeforeSnapshotTimeoutMS}, true
 	case !wantBefore && beforePath == functionlifetime.FunctionBeforeSnapshotPath:
 		before, changed = &api.BeforeCheckpointHook{}, true
 	}
 	return after, before, changed, nil
+}
+
+// validateHookTimeouts refuses a hook timeout for a hook the code does not
+// declare: it would bound nothing (ADR-20261110190000 §7).
+func (fn FunctionSpec) validateHookTimeouts() error {
+	if fn.BeforeSnapshotTimeoutMS != 0 && !slices.Contains(fn.Hooks, FunctionHookBeforeSnapshot) {
+		return fmt.Errorf("function %q sets before_snapshot_timeout_ms but its handler declares no beforeSnapshot hook", fn.Name)
+	}
+	if fn.AfterRestoreTimeoutMS != 0 && !slices.Contains(fn.Hooks, FunctionHookAfterRestore) {
+		return fmt.Errorf("function %q sets after_restore_timeout_ms but its handler declares no afterRestore hook", fn.Name)
+	}
+	return nil
 }
 
 // FunctionHooksInDir returns the snapshot hooks a single function's handler

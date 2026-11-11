@@ -373,6 +373,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, p)
 		return
 	}
+	existing, ok := s.ownOrgAPIKey(w, r, acct, mem.OrgID, r.PathValue("id"))
+	if !ok {
+		return
+	}
 	// Resolve grace window from the per-account override (the
 	// same helper the legacy rotateKey uses). nil = plan default
 	// (api.DefaultAPIKeyGraceWindowDays = 7).
@@ -414,7 +418,7 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	// sign-in key cap and the password-change revocation find it, so a new
 	// label would let it escape both (bug hunt 2026-10-28 B25).
 	label := req.Label
-	if existing, err := s.store.GetAPIKey(r.Context(), acct.ID, id); err == nil && existing.Label == signInKeyLabel {
+	if existing.Label == signInKeyLabel {
 		label = ""
 	}
 	newKey, oldKey, err := s.rotateOrgAPIKeyWithActivity(r.Context(), mem.OrgID, id, hash, label, graceWindow, bindIP, bindUA, nil, activity)
@@ -507,4 +511,30 @@ func orgAPIKeyResponse(k state.APIKey) api.APIKeyResponse {
 		resp.RotatedFromID = *k.RotatedFromID
 	}
 	return resp
+}
+
+// ownOrgAPIKey loads the org key a rotation names and refuses one held by
+// another member. Rotation returns the new key's plaintext and the new key
+// keeps the old holder, so rotating someone else's key would hand the caller
+// a credential that acts as that member (account-flow audit 2026-11-10).
+// Admins can still revoke other members' keys.
+func (s *server) ownOrgAPIKey(w http.ResponseWriter, r *http.Request, acct state.Account, orgID, id string) (state.APIKey, bool) {
+	k, err := s.store.GetOrgAPIKey(r.Context(), orgID, id)
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "no such key")
+		return state.APIKey{}, false
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load key"))
+		return state.APIKey{}, false
+	}
+	if k.AccountID != actorAccount(r, acct).ID {
+		s.audit.Emit(r.Context(), "api_key.rotate_refused", &acct.ID, map[string]any{
+			"key_id": k.ID, "org_id": orgID, "reason": "not_holder",
+		})
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Not your key",
+			"only the member who holds a key can rotate it; revoke it instead with DELETE /v1/orgs/{slug}/keys/{id}"))
+		return state.APIKey{}, false
+	}
+	return k, true
 }

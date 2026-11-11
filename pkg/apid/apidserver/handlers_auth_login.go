@@ -475,6 +475,7 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	s.revokeSignInKeysAfterPasswordChange(r, acct)
+	s.removeForeignProviderLinks(r.Context(), accountID, "password_reset")
 	leftKeys := s.keysLeftAfterReset(r.Context(), acct)
 	s.mailKeysLeftAfterReset(r.Context(), acct, leftKeys)
 	if !s.passwordChangedAlertRequested() {
@@ -850,7 +851,15 @@ func writePasswordCheckUnavailable(w http.ResponseWriter) {
 // provider. Fresh OAuth accounts already default verified; this closes the
 // existing-password-account path when the customer later signs in through a
 // provider with the same verified address.
-func (s *server) verifyOAuthAccountEmail(ctx context.Context, acct state.Account) (state.Account, error) {
+func (s *server) verifyOAuthAccountEmail(ctx context.Context, acct state.Account, providerEmail string) (state.Account, error) {
+	// The provider proved its own (verified) address, not the account's: a
+	// provider linked to an account under another address must not mark the
+	// account's address verified, or a squatter who linked their own
+	// identity would verify the victim's address (account-flow audit
+	// 2026-11-10, ADR 20261111090000).
+	if !strings.EqualFold(strings.TrimSpace(providerEmail), strings.TrimSpace(acct.Email)) {
+		return acct, nil
+	}
 	return s.claimAccountByEmailOwnership(ctx, acct)
 }
 
@@ -887,6 +896,7 @@ func (s *server) revokePreVerificationCredentials(ctx context.Context, accountID
 		return fmt.Errorf("revoke pre-verification sessions: %w", err)
 	}
 	s.endPendingGrants(ctx, accountID, "ownership_claim")
+	s.removeForeignProviderLinks(ctx, accountID, "ownership_claim")
 	keys, err := s.store.ListAPIKeys(ctx, accountID)
 	if err != nil {
 		return fmt.Errorf("list pre-verification api keys: %w", err)
