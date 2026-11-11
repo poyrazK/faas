@@ -7221,6 +7221,41 @@ END $$;
 
 
 --
+-- Name: compute_node_identity_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compute_node_identity_check() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+DECLARE
+    current_mode text;
+    login text := session_user;
+    is_authorized boolean;
+BEGIN
+    IF NEW.id IS NOT DISTINCT FROM OLD.id AND NEW.name IS NOT DISTINCT FROM OLD.name THEN
+        RETURN NEW;
+    END IF;
+    EXECUTE format('SELECT mode FROM %I.app_owner_authority WHERE singleton', TG_TABLE_SCHEMA)
+        INTO current_mode;
+    IF current_mode IS NULL OR current_mode = 'any' THEN
+        RETURN NEW;
+    END IF;
+    is_authorized := to_regrole('faas_owner_authority') IS NOT NULL
+        AND pg_has_role(login, 'faas_owner_authority', 'MEMBER');
+    RAISE LOG 'faas_node_identity_change node=% name=%->% authorized=% login=% mode=%',
+        OLD.id, OLD.name, NEW.name, is_authorized, login, current_mode;
+    IF NOT is_authorized AND current_mode = 'enforce' THEN
+        RAISE EXCEPTION 'compute node identities are changed by the control plane'
+            USING ERRCODE = '42501',
+                  DETAIL = format('node=%s login=%s', OLD.id, login);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: compute_node_keys_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -32342,6 +32377,19 @@ CREATE TABLE public.app_owner_authority (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_owner_authority_mode_check CHECK ((mode = ANY (ARRAY['any'::text, 'observe'::text, 'enforce'::text]))),
     CONSTRAINT app_owner_authority_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: app_owner_release_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_owner_release_requests (
+    app_id uuid NOT NULL,
+    from_node_id uuid NOT NULL,
+    reason text DEFAULT 'pressure'::text NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_owner_release_requests_reason_check CHECK ((reason = 'pressure'::text))
 );
 
 
@@ -60462,6 +60510,14 @@ ALTER TABLE ONLY public.app_owner_authority
 
 
 --
+-- Name: app_owner_release_requests app_owner_release_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_release_requests
+    ADD CONSTRAINT app_owner_release_requests_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_owner_writes app_owner_writes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -73409,6 +73465,13 @@ CREATE INDEX app_openapi_docs_account_id_idx ON public.app_openapi_docs USING bt
 
 
 --
+-- Name: app_owner_release_requests_requested_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_owner_release_requests_requested_idx ON public.app_owner_release_requests USING btree (requested_at);
+
+
+--
 -- Name: app_owner_writes_unauthorized_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -85761,6 +85824,13 @@ CREATE TRIGGER compute_node_changed_trg AFTER INSERT OR UPDATE ON public.compute
 
 
 --
+-- Name: compute_nodes compute_node_identity_check; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_node_identity_check BEFORE UPDATE OF id, name ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.compute_node_identity_check();
+
+
+--
 -- Name: compute_node_keys compute_node_keys_changed_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -92312,6 +92382,14 @@ ALTER TABLE ONLY public.app_openapi_docs
 
 ALTER TABLE ONLY public.app_openapi_docs
     ADD CONSTRAINT app_openapi_docs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_owner_release_requests app_owner_release_requests_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_release_requests
+    ADD CONSTRAINT app_owner_release_requests_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

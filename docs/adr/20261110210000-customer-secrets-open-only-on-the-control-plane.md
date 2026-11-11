@@ -239,15 +239,46 @@ Postgres.**
   control plane's schedd claims new apps and runs
   `RebalanceOrphanedAppsCentral`, which chooses each orphan's destination
   with `ChooseOwnerNode` among the other admitting nodes with headroom.
-  Pressure rebalancing pauses in this mode until slice 1b.
+  Pressure rebalancing became a release request in slice 1b.
 - `faas_app_owner_unauthorized_writes` and `FaasAppOwnerUnauthorizedWrite`
   (runbook `docs/runbooks/FaasAppOwnerUnauthorizedWrite.md`, with the
   rollout: observe, switch, watch, enforce).
 
-**Slice 1b (next):** pressure rebalancing as a node's *release request*
-(a node may give an app away; the control plane picks the destination),
-placement grants for instances that run on a non-owner node, and the
-`secret_grants` table secretd checks.
+**Slice 1b (implemented): release requests and node identity.**
+
+- **Release requests.** Under control-plane authority, a pressured node's
+  schedd records `app_owner_release_requests(app_id, from_node_id)` instead
+  of moving the app (`Engine.RequestPressureRelease`, only for apps it owns).
+  The control plane's schedd processes them every 15 s
+  (`ProcessOwnerReleaseRequests`) through the same checks as an owner's own
+  pressure rebalance: the app is still the requester's, parked and out of
+  cooldown. The control plane chooses the destination, which can be the
+  app's overflow preference or any other peer with headroom. A request can
+  only make an app leave its owner. A forged row naming the wrong owner is
+  consumed without effect (tested).
+- **Node identity.** The control plane will map a caller's mTLS certificate
+  name to `compute_nodes.id` (slice 3). A compute login that could rename the
+  owner's row to its own name would pass that check, so
+  `compute_node_identity_check` refuses `UPDATE OF id, name` from logins
+  outside `faas_owner_authority` in enforce mode, and logs
+  `faas_node_identity_change` in observe. Deleting an owner's row is already
+  refused by `apps_node_id_fkey ON DELETE RESTRICT` (not deferrable).
+
+**Placement grants move to slice 3.** The owner's schedd also places
+instances on peer nodes (snapshot locality, replica spread). The database
+cannot tell which node wrote an `instances` row, because every compute node
+shares a login. So secretd decides from the caller's mTLS identity: the
+owner, as recorded in the database row that only the control plane can
+change, may open its app's secrets. A peer may open them only under a
+grant the owner asked secretd for over mTLS, recorded in `secret_grants`,
+which compute cannot write.
+
+**Still trusted from compute-writable rows** (residual, for slice 1c):
+placement inputs such as `compute_nodes.admission_ceiling_mb` and node
+readiness. A rooted node can inflate its own ceiling and so attract a larger
+share of new claims and recoveries. It cannot pick a tenant. The fix is a
+per-node database identity (certificate-authenticated logins) or
+control-plane-owned capacity rows. That choice is the owner's.
 
 What a rooted node still gets: the plaintext of workloads placed on it
 while it is compromised, which it could read from guest memory anyway.
@@ -323,9 +354,10 @@ Operations:
 |---|---|---|
 | 0 | GitHub environment policy + tag ruleset (done, §1); enable `faas_compute_fleet_key_retired` in prod; OIDC condition check | — |
 | 1a | Owner authority: apps trigger + `faas_owner_authority`, `FAAS_APP_OWNER_AUTHORITY=control-plane`, central ownership recovery, metric + alert (code in #7003) | — |
-| 1b | Pressure release requests, non-owner instance grants, `secret_grants` for secretd | 1a |
+| 1b | Pressure release requests, node identity trigger (code in #7003) | 1a |
+| 1c | Placement inputs not compute-writable (per-node DB identity or CP-owned capacity), owner decision | 1a |
 | 2 | CI holds recipients only: key escrow on the control plane, `SEAL_DOMAIN_KEY_SOURCE=escrow`, escrow/rotate workflow, runbook (code in this PR); then the owner escrows, deletes the GitHub secrets and rotates | — |
-| 3 | `secretd` + `OpenWorkloadSecrets` + audit + alerts; move `runtime`, then `build`, `edge`, `delivery`; `control` behind signd; node join stops staging, verify refuses leftovers | 1 |
+| 3 | `secretd` + `OpenWorkloadSecrets` (owner by protected `apps.node_id`, peers by owner-requested `secret_grants`) + audit + alerts; move `runtime`, then `build`, `edge`, `delivery`; `control` behind signd; node join stops staging, verify refuses leftovers | 1 |
 | 4 | HSM hardware, ceremony runbook, Tier A wrapped identities for every control-plane reader, measurements | — |
 | 5 | Tier B envelope v3 + re-seal of every sealed column | 4 |
 

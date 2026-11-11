@@ -22,9 +22,9 @@ import (
 //	control-plane  only the control plane's schedd assigns owners: it claims
 //	               unplaced apps and recovers orphaned ones with
 //	               Engine.RebalanceOrphanedAppsCentral; a compute node's schedd
-//	               wakes the apps it owns and never writes apps.node_id.
-//	               Pressure rebalancing pauses until it can be asked of the
-//	               control plane.
+//	               wakes the apps it owns and never writes apps.node_id. A
+//	               pressured node files a release request instead; the
+//	               control plane moves the app and picks the destination.
 //
 // Pair control-plane with app_owner_authority.mode = observe, then enforce,
 // so Postgres refuses an owner change from any compute login regardless of
@@ -63,6 +63,10 @@ func (a ownerAuthority) recoversOntoOwnNode(r role.Role) bool {
 func (a ownerAuthority) recoversCentrally(r role.Role) bool {
 	return a == ownerAuthorityControlPlane && r == role.RoleControlPlane
 }
+
+// ownerReleaseInterval is how often the control plane's schedd processes
+// pressured nodes' release requests.
+const ownerReleaseInterval = 15 * time.Second
 
 // ownerAuthorityWindow is how far back faas_app_owner_unauthorized_writes
 // counts; the alert fires on any non-zero value.

@@ -5709,6 +5709,14 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 		// threshold is the operator's cue to add capacity.
 		return nil
 	}
+	return e.rebalancePressured(ctx, appID, e.ownerNodeID)
+}
+
+// rebalancePressured moves the parked app appID off fromNodeID, its owner,
+// to a peer with headroom. The owner's schedd calls it for itself; under
+// control-plane owner authority (ADR-20261110210000 §4) the control plane
+// calls it for a node's release request.
+func (e *Engine) rebalancePressured(ctx context.Context, appID, fromNodeID string) error {
 	if appID == "" {
 		// Cold-start sweep is delegated to the watcher; the
 		// engine's per-app method is the per-tick path.
@@ -5726,7 +5734,7 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 		e.observePressure("no_eligibility")
 		return nil
 	}
-	if app.NodeID != e.ownerNodeID {
+	if app.NodeID != fromNodeID {
 		e.observePressure("no_eligibility")
 		return nil
 	}
@@ -5959,7 +5967,9 @@ func (e *Engine) findPeerWithHeadroom(ctx context.Context, app state.App) (strin
 	neededMB := int64(app.RAMMB) + int64(api.PerVMOverheadMB)
 	usedByNode := e.nodeUsageForNodes(ctx, nodes)
 	for _, n := range nodes {
-		if n.ID == e.ownerNodeID {
+		// The app's current owner: this node on the owner's own path,
+		// the requesting node on the control plane's.
+		if n.ID == app.NodeID || n.ID == e.ownerNodeID {
 			continue
 		}
 		used := usedByNode[n.ID]
@@ -5997,7 +6007,7 @@ func (e *Engine) findPeerWithHeadroom(ctx context.Context, app state.App) (strin
 // (it does) or surface the error (it doesn't — the fallback
 // path is the canonical recovery).
 func (e *Engine) findOverflowPeerWithHeadroom(ctx context.Context, app state.App, targetUUID string) (string, error) {
-	if targetUUID == e.ownerNodeID {
+	if targetUUID == e.ownerNodeID || targetUUID == app.NodeID {
 		return "", nil
 	}
 	n, err := e.store.ComputeNodeByID(ctx, targetUUID)

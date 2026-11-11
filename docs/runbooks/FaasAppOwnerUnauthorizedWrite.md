@@ -33,8 +33,11 @@ Per environment, in order:
    (`CP_ANSIBLE_VARS_B64`) and compute (`COMPUTE_ANSIBLE_VARS_B64`) and roll
    out. Compute schedds stop claiming, recovering and pressure-rebalancing;
    the control plane's schedd claims new apps and recovers orphaned ones
-   (`sched: ownership recovery: transferred app` in its journal). Pressure
-   rebalancing is paused in this mode.
+   (`sched: ownership recovery: transferred app` in its journal). A pressured
+   node files a row in `app_owner_release_requests` and the control plane
+   moves the app (`schedd: owner release requests processed`).
+   In enforce mode a node rename (`compute_nodes.id`/`name`) from a compute
+   login is also refused; in observe it logs `faas_node_identity_change`.
 4. **Watch a week.** `faas_app_owner_unauthorized_writes` stays 0 and the
    alert stays quiet. Any row in `app_owner_writes where not authorized` is
    a path still writing owners from a node: fix it before step 5.

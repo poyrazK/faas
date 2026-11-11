@@ -1575,6 +1575,13 @@ type AppOwnerAuthority struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type AppOwnerReleaseRequest struct {
+	AppID       pgtype.UUID
+	FromNodeID  pgtype.UUID
+	Reason      string
+	RequestedAt pgtype.Timestamptz
+}
+
 type AppOwnerWrite struct {
 	ID         int64
 	AppID      pgtype.UUID

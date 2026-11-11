@@ -2880,9 +2880,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// without churn on the API surface.
 	pressureReassignmentsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_pressure_reassignments_total",
-		Help: "Cross-node capacity-pressure rebalance decisions (Tier A9 / ADR-087), labelled by outcome ∈ {migrated, conflict, no_headroom, no_eligibility, no_peer, overflow_target_unavailable}. `migrated` is the §12 dashboard panel (sum over 5m for the rate); `no_headroom` is the tripwire for sustained full-cluster pressure (call the operator); `overflow_target_unavailable` is the Tier A10 / ADR-088 tripwire when the customer's preferred spill target is full or inactive. Single-registry: registered on every daemon (mirrors rebalanceDecisions / liveMigrationDecisions); only schedd increments via PressureReassignments.",
+		Help: "Cross-node capacity-pressure rebalance decisions (Tier A9 / ADR-087), labelled by outcome ∈ {migrated, conflict, no_headroom, no_eligibility, no_peer, overflow_target_unavailable, release_requested}. `release_requested` counts a node asking the control plane to move an app under control-plane owner authority (ADR-20261110210000). `migrated` is the §12 dashboard panel (sum over 5m for the rate); `no_headroom` is the tripwire for sustained full-cluster pressure (call the operator); `overflow_target_unavailable` is the Tier A10 / ADR-088 tripwire when the customer's preferred spill target is full or inactive. Single-registry: registered on every daemon (mirrors rebalanceDecisions / liveMigrationDecisions); only schedd increments via PressureReassignments.",
 	}, []string{"outcome"})
-	for _, outcome := range []string{"migrated", "conflict", "no_headroom", "no_eligibility", "no_peer", "overflow_target_unavailable"} {
+	for _, outcome := range []string{"migrated", "conflict", "no_headroom", "no_eligibility", "no_peer", "overflow_target_unavailable", "release_requested"} {
 		pressureReassignmentsTotal.WithLabelValues(outcome)
 	}
 	// ADR-088 / Tier A10: per-app overflow_node preference

@@ -1693,6 +1693,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.subscribeRebalancer != nil {
 			go subscribeWithReconnect(ctx, "central rebalancer", log, deps.subscribeRebalancer, pool, reb.Run)
 		}
+		// Pressured nodes' release requests: the control plane chooses
+		// where each app goes.
+		go func() {
+			tick := time.NewTicker(ownerReleaseInterval)
+			defer tick.Stop()
+			for {
+				if n, err := engine.ProcessOwnerReleaseRequests(ctx); err != nil && ctx.Err() == nil {
+					log.Warn("schedd: owner release requests", "err", err)
+				} else if n > 0 {
+					log.Info("schedd: owner release requests processed", "count", n)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-tick.C:
+				}
+			}
+		}()
 	}
 	if cfg.Role == role.RoleControlPlane && store != nil {
 		go runOwnerAuthorityMetrics(ctx, ops.Registry(), store, time.Minute, log)
@@ -1718,15 +1736,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reads the current sweep count when the handle is
 	// invoked. Spawned only when ownerNodeID is set — the
 	// legacy single-box posture has no peer to migrate to.
-	// ADR-20261110210000 §4: paused under control-plane owner authority.
-	if ownerNodeID != "" && owners.recoversOntoOwnNode(cfg.Role) {
+	// ADR-20261110210000 §4: under control-plane owner authority the node
+	// asks the control plane to move the app instead of moving it.
+	if ownerNodeID != "" {
+		relieve := engine.RebalancePressuredApps
+		if !owners.recoversOntoOwnNode(cfg.Role) {
+			relieve = engine.RequestPressureRelease
+		}
 		prReb := sched.NewPressureRebalancer(
 			pressureAgg,
 			pressureThreshold,
 			time.Duration(pressureReassess)*time.Second,
 			func(appID string) { engine.IncrementPressureSweepCounter(appID) },
 			func(ctx context.Context, appID string) error {
-				return engine.RebalancePressuredApps(ctx, appID)
+				return relieve(ctx, appID)
 			},
 			log,
 		)

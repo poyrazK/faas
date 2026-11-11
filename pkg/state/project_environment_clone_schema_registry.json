@@ -1883,6 +1883,16 @@
     "kind": "operational"
   },
   {
+    "table": "app_owner_release_requests",
+    "columns": [
+      "app_id",
+      "from_node_id",
+      "reason",
+      "requested_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_owner_writes",
     "columns": [
       "app_id",

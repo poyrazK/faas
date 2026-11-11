@@ -229,11 +229,66 @@ func TestAppOwnerAuthorityTrigger(t *testing.T) {
 		t.Fatalf("compute forged an owner record: %v", err)
 	}
 
+	// A compute login cannot give its own name to the owner's node row
+	// (the control plane maps an mTLS certificate's name to a node id).
+	if _, err := compute.Exec(ctx, `update compute_nodes set name = $2 where id = $1`, a.ID, "renamed-"+a.Name); sqlState(err) != "42501" {
+		t.Fatalf("enforce: compute renamed a node: %v", err)
+	}
+	if _, err := compute.Exec(ctx, `update compute_nodes set last_heartbeat_at = now() where id = $1`, a.ID); err != nil {
+		t.Fatalf("enforce: an ordinary node update was refused: %v", err)
+	}
+	if _, err := control.Exec(ctx, `update compute_nodes set name = $2 where id = $1`, b.ID, b.Name+"-renamed"); err != nil {
+		t.Fatalf("enforce: control-plane rename refused: %v", err)
+	}
+
 	// The control plane's own claim path still works under enforce.
 	if err := state.NewPgStore(control).SetAppNodeID(ctx, app, a.ID); err != nil {
 		t.Fatalf("control-plane SetAppNodeID under enforce: %v", err)
 	}
 	if got := ownerOf(); got != a.ID {
 		t.Fatalf("owner = %s, want %s", got, a.ID)
+	}
+}
+
+// Release requests on Postgres: one open request per app, refreshed by a
+// repeat, listed oldest first, and deleted only while unchanged.
+func TestAppOwnerReleaseRequestsPostgres(t *testing.T) {
+	store, _ := lifecycleCompletionPGStore(t)
+	ctx := t.Context()
+	first, _ := completionApplication(t, store)
+	second, _ := completionApplication(t, store)
+	node := completionNode(t, store, state.NodeLifecycleActive)
+
+	for _, app := range []string{first, second} {
+		if err := store.RequestAppOwnerRelease(ctx, app, node.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reqs, err := store.ListAppOwnerReleaseRequests(ctx, 10)
+	if err != nil || len(reqs) != 2 || reqs[0].AppID != first || reqs[1].AppID != second || reqs[0].FromNodeID != node.ID {
+		t.Fatalf("requests = %+v, %v", reqs, err)
+	}
+	if limited, _ := store.ListAppOwnerReleaseRequests(ctx, 1); len(limited) != 1 {
+		t.Fatalf("limit 1 returned %d", len(limited))
+	}
+	stale := reqs[0]
+	if err := store.RequestAppOwnerRelease(ctx, first, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The refreshed request survives a delete of the version read before it.
+	if err := store.DeleteAppOwnerReleaseRequest(ctx, first, stale.RequestedAt); err != nil {
+		t.Fatal(err)
+	}
+	reqs, _ = store.ListAppOwnerReleaseRequests(ctx, 10)
+	if len(reqs) != 2 {
+		t.Fatalf("a stale delete removed the refreshed request: %+v", reqs)
+	}
+	for _, r := range reqs {
+		if err := store.DeleteAppOwnerReleaseRequest(ctx, r.AppID, r.RequestedAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if reqs, _ := store.ListAppOwnerReleaseRequests(ctx, 10); len(reqs) != 0 {
+		t.Fatalf("requests left after delete: %+v", reqs)
 	}
 }
