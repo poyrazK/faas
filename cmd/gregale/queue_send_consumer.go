@@ -46,6 +46,13 @@ func unconsumedQueueWarning(ctx context.Context, client queueConsumerClient, slu
 			return ""
 		}
 	}
-	return fmt.Sprintf("no queue binding or consumer reads queue %q on %s. The message waits, and counts toward the app's queue depth limit, until one exists: gregale queue bindings create %s --name %s --queue-name %s",
-		queueName, slug, slug, queueName, queueName)
+	// A function app consumes by push as an HTTP workload; spelling it out
+	// keeps the suggestion runnable against servers that still default every
+	// binding to pull/worker (production-us 2026-11-07).
+	push := ""
+	if app.Type == "function" {
+		push = " --mode push --workload-class http"
+	}
+	return fmt.Sprintf("no queue binding or consumer reads queue %q on %s. The message waits, and counts toward the app's queue depth limit, until one exists: gregale queue bindings create %s --name %s --queue-name %s%s",
+		queueName, slug, slug, queueName, queueName, push)
 }
