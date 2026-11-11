@@ -110,6 +110,7 @@ func (t *memFinancialComputeTxn) initializeAccount() error {
 	}
 	month := financial.ComputeMonth(t.now)
 	b, err := t.book("", month)
+	newBook := errors.Is(err, ErrNotFound)
 	if errors.Is(err, ErrNotFound) {
 		b = financial.ComputeBook{AccountID: t.account, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0)}
 	} else if err != nil {
@@ -141,7 +142,11 @@ func (t *memFinancialComputeTxn) initializeAccount() error {
 		quantity += e.Quantity
 	}
 	b.QuantityCommitted = max(b.QuantityCommitted, quantity)
-	b.AllowanceGranted = max(b.AllowanceGranted, grant)
+	if newBook {
+		b.AllowanceGranted = grant
+	} else {
+		b.AllowanceGranted = min(b.AllowanceGranted, grant)
+	}
 	if err := computeAccountReprice(&b); err != nil {
 		return err
 	}

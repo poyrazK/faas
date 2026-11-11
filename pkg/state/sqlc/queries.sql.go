@@ -78369,6 +78369,7 @@ func (q *Queries) ProjectEnvironmentCloneSecretTargetExists(ctx context.Context,
 const projectEnvironmentHasActiveDeployments = `-- name: ProjectEnvironmentHasActiveDeployments :one
 SELECT EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
  WHERE a.project_id = $1::uuid AND d.scope = $2::text
+ AND a.status <> 'deleted' AND d.deleted_at IS NULL
  AND d.status NOT IN ('failed', 'superseded', 'cancelled'))
 `
 
@@ -78377,6 +78378,9 @@ type ProjectEnvironmentHasActiveDeploymentsParams struct {
 	Scope     string
 }
 
+// A deleted app's deployments never serve again, so they do not hold its
+// environment (Hunt 33 H33-37: staging stayed undeletable after every app
+// of the project was deleted).
 func (q *Queries) ProjectEnvironmentHasActiveDeployments(ctx context.Context, db DBTX, arg ProjectEnvironmentHasActiveDeploymentsParams) (bool, error) {
 	row := db.QueryRow(ctx, projectEnvironmentHasActiveDeployments, arg.ProjectID, arg.Scope)
 	var exists bool

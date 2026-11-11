@@ -154,7 +154,7 @@ func (s *server) updateFinancialBudget(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 	}
-	if !validateFinancialBudgetActivation(w, r, store, acct.ID, req.Spec) {
+	if req.Spec.Enabled && !validateFinancialBudgetActivation(w, r, store, acct.ID, req.Spec) {
 		return
 	}
 	row, err := store.UpdateFinancialBudget(r.Context(), acct.ID, r.PathValue("id"), req.ExpectedRevision, financialBudgetActor(r), req.Spec)
@@ -248,7 +248,7 @@ func validateFinancialBudgetActivation(w http.ResponseWriter, r *http.Request, s
 		if monitoring && (financial.NotificationOnly(spec) || stopping && commandOwnership && financial.PreviewStopping(spec)) {
 			return true
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Activate monitored notify, monitored compute-only stop_previews, or strict suspend_workloads (app/job gross compute or account net compute optionally combined with egress) with zero drain and no alert thresholds. Other policies must remain disabled drafts."))
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Activate monitored notify, monitored compute-only stop_previews, or strict suspend_workloads (app/job/project/environment gross compute or account net compute optionally combined with egress) with zero drain and no alert thresholds. Other policies must remain disabled drafts."))
 		return false
 	}
 	return true

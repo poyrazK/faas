@@ -33,6 +33,8 @@ const pooledSuffix = "-pooler"
 // verifier, so a rotated password starts a new pool.
 type poolKey struct {
 	databaseID, role, dbname, verifier string
+	// readOnly pools the read-only endpoint's servers apart (replica.go).
+	readOnly bool
 }
 
 // pool keeps a role's server connections to a database and the key a
@@ -68,8 +70,8 @@ type serverConn struct {
 	stopOnce sync.Once
 }
 
-func newServerConn(rw io.ReadWriteCloser, key backendKey) *serverConn {
-	return &serverConn{rw: rw, fe: pgproto3.NewFrontend(rw, rw), prepared: map[string]bool{}, key: key, stop: make(chan struct{})}
+func newServerConn(rw io.ReadWriteCloser, fe *pgproto3.Frontend, key backendKey) *serverConn {
+	return &serverConn{rw: rw, fe: fe, prepared: map[string]bool{}, key: key, stop: make(chan struct{})}
 }
 
 func (s *serverConn) close() {
@@ -234,7 +236,7 @@ func (pl *pool) open(ctx context.Context) (*serverConn, error) {
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)
 	defer cancel()
 	started := time.Now()
-	target, err := p.waker.Wake(wakeCtx, pl.key.databaseID)
+	woken, err := p.waker.Wake(wakeCtx, pl.key.databaseID)
 	p.cfg.Metrics.woke(time.Since(started))
 	if err != nil {
 		if f := wakeRefused(err); f != nil {
@@ -242,17 +244,13 @@ func (pl *pool) open(ctx context.Context) (*serverConn, error) {
 		}
 		return nil, err
 	}
-	rw, err := p.dialer.Dial(wakeCtx, target, pl.key.databaseID)
+	login, err := p.loginEndpoint(wakeCtx, woken, pl.key.readOnly, pl.key.databaseID, pl.params, pl.clientKey, pl.serverKey)
 	if err != nil {
 		return nil, err
 	}
-	srv := newServerConn(rw, backendKey{target: target, databaseID: pl.key.databaseID})
-	finishSetup := interruptSetup(wakeCtx, rw)
+	srv := newServerConn(login.rw, login.fe, backendKey{target: login.backend, databaseID: pl.key.databaseID})
+	finishSetup := login.finish
 	defer func() { _ = finishSetup() }()
-	if err := loginBackend(srv.fe, pl.params, pl.clientKey, pl.serverKey); err != nil {
-		srv.close()
-		return nil, err
-	}
 	var status [][]byte
 	for {
 		msg, err := srv.fe.Receive()
