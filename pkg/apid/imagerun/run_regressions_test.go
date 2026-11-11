@@ -19,6 +19,10 @@ func (s *interleavedRunStore) JobEnsureImageRun(ctx context.Context, in state.Im
 	return s.store.JobEnsureImageRun(ctx, in)
 }
 
+func (s *interleavedRunStore) JobGetByName(ctx context.Context, accountID, name string) (state.Job, error) {
+	return s.store.JobGetByName(ctx, accountID, name)
+}
+
 func (s *interleavedRunStore) JobRunCreate(ctx context.Context, jobID, accountID, trigger string, parallelism, retry, timeout *int, env json.RawMessage, tasks int, options ...state.JobRunOptions) (state.JobRun, []state.JobTask, error) {
 	s.beforeCreate()
 	return s.store.JobRunCreate(ctx, jobID, accountID, trigger, parallelism, retry, timeout, env, tasks, options...)
