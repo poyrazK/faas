@@ -116,6 +116,10 @@ type Querier interface {
 	AdvanceRuntimeUpgradeOperation(ctx context.Context, db DBTX, arg AdvanceRuntimeUpgradeOperationParams) (RuntimeUpgradeOperation, error)
 	AdvanceSecretKeyRetirementFence(ctx context.Context, db DBTX) error
 	AdvanceSnapshotRecoveryGeneration(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int64, error)
+	// ADR-20261111150000: the key's approval with the same binding that was first
+	// used within the window, newest use first. A windowed rule lets it cover
+	// the same request again until the window closes.
+	AgentApprovalUsedWithin(ctx context.Context, db DBTX, arg AgentApprovalUsedWithinParams) (pgtype.UUID, error)
 	AlertRuleEpisodeOpen(ctx context.Context, db DBTX, ruleID pgtype.UUID) (bool, error)
 	AppBindingRefreshInventory(ctx context.Context, db DBTX, arg AppBindingRefreshInventoryParams) ([]AppBindingRefreshInventoryRow, error)
 	AppBindingRuntimeInventory(ctx context.Context, db DBTX, arg AppBindingRuntimeInventoryParams) ([]AppBindingRuntimeInventoryRow, error)

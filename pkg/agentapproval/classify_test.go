@@ -140,6 +140,26 @@ func specMutations(t *testing.T) []string {
 
 // Every listed route must exist, so a renamed route cannot silently fall out
 // of a category; every DELETE outside the exemptions needs approval.
+// ADR-20261111150000: the debugger tunnel is a read that needs approval, and
+// one approval covers it for a window; other reads stay ungated.
+func TestClassifyGatedReads(t *testing.T) {
+	rule, ok := Classify("GET /v1/apps/{slug}/debug")
+	if !ok || rule.Category != api.AgentApprovalCredentials || rule.Target != TargetNone || rule.Window != api.DevDebugApprovalWindow {
+		t.Fatalf("Classify(debug tunnel) = %+v, %v; want credentials with the debugger window", rule, ok)
+	}
+	if !RecordedRead("GET /v1/apps/{name}/debug") {
+		t.Error("the debugger tunnel must be written to the agent activity log")
+	}
+	for _, pattern := range []string{"GET /v1/apps/{slug}", "GET /v1/apps/{slug}/logs", "POST /v1/keys"} {
+		if RecordedRead(pattern) {
+			t.Errorf("RecordedRead(%q) = true; want false", pattern)
+		}
+	}
+	if rule, _ := Classify("POST /v1/keys"); rule.Window != 0 {
+		t.Errorf("Classify(POST /v1/keys).Window = %v; other approvals stay single-use", rule.Window)
+	}
+}
+
 func TestClassificationCoversTheSpec(t *testing.T) {
 	ops := map[string]bool{}
 	for _, op := range specMutations(t) {

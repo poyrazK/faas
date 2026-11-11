@@ -153,6 +153,18 @@ func exerciseAgentApprovals(t *testing.T, store contractTestStore) {
 	if err != nil || used.Status != api.AgentApprovalConsumed || used.DecidedBy != acct.ID {
 		t.Fatalf("consumed request = %+v, %v", used, err)
 	}
+	// adr: 20261111150000 — a windowed rule finds the approval it used
+	// within the window of its first use, for the same binding only.
+	if id, ok, err := store.AgentApprovalUsedWithin(ctx, binding, time.Hour); err != nil || !ok || id != first.ID {
+		t.Fatalf("used within the window = %v, %v, %v; want %s", id, ok, err, first.ID)
+	}
+	if _, ok, err := store.AgentApprovalUsedWithin(ctx, other, time.Hour); err != nil || ok {
+		t.Fatalf("another binding within the window = %v, %v; want nothing", ok, err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if _, ok, err := store.AgentApprovalUsedWithin(ctx, binding, 5*time.Millisecond); err != nil || ok {
+		t.Fatalf("past the window = %v, %v; want nothing", ok, err)
+	}
 
 	denied, err := store.RequestAgentApproval(ctx, request)
 	if err != nil || denied.ID == first.ID {
