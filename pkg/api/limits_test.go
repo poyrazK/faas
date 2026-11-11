@@ -255,11 +255,6 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			ConcurrencyPerVMBound: 4,
 			// Issue #395 / ADR-045: Free gets 16 keys / 4 KB per value.
 			EnvVarsMax: 16, EnvValueMaxBytes: 4096,
-			// ADR-044: per-plan CPUWeight/CPUQuotaUS/CPUPeriodUS — issue
-			// #301 acceptance #1+#2. The 2/4/8/16 ratio is the literal
-			// value from the issue; the quota is the spec's literal
-			// "100ms/100ms, 200ms/100ms, 500ms/100ms, 1000ms/100ms".
-			CPUWeight: 2, CPUQuotaUS: 100_000, CPUPeriodUS: 100_000,
 			MaxQueueDepth: 0, MaxDelayedTasksPerApp: 0, MaxSourceBytesPerInvocation: 0, AsyncInvokeAllowed: false,
 			// Issue #394: Free is gated out of queues entirely (spec §4.4
 			// paid-only), so MaxQueueAttempts is moot — 0 matches the
@@ -420,9 +415,6 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			TrustedSignerCountMax: 4,
 			// Issue #395 / ADR-045: Hobby gets 32 keys / 8 KB per value.
 			EnvVarsMax: 32, EnvValueMaxBytes: 8192,
-			// ADR-044: see PlanFree. Hobby's tight quota is the
-			// load-bearing signal in the cpu-fairness e2e (cmd/e2e/cpu_fairness_test.go).
-			CPUWeight: 4, CPUQuotaUS: 200_000, CPUPeriodUS: 200_000,
 			MaxQueueDepth: 10_000, MaxDelayedTasksPerApp: 5, MaxSourceBytesPerInvocation: 64 * 1024, AsyncInvokeAllowed: true,
 			// ADR-20261022105723: 100 MiB of pending queue messages per account, kept 1 day.
 			MaxQueueBacklogBytesPerAccount: 100 << 20, QueueMessageRetentionSeconds: 86_400,
@@ -595,8 +587,6 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #462 / ADR-058: Pro unlocks warm-floor + max-instances
 			// ceiling (was min-instances only at the pre-#462 contract).
 			MinInstancesAllowed: true, CustomMetricsAllowed: true, CustomMetricsPerApp: 50, CustomMetricSeriesPerApp: 500, MaxInstancesAllowed: true,
-			// ADR-044: see PlanFree.
-			CPUWeight: 8, CPUQuotaUS: 500_000, CPUPeriodUS: 500_000,
 			MaxQueueDepth: 100_000, MaxDelayedTasksPerApp: 50, MaxSourceBytesPerInvocation: 256 * 1024, AsyncInvokeAllowed: true,
 			// ADR-20261022105723: 1 GiB of pending queue messages per account, kept 4 days.
 			MaxQueueBacklogBytesPerAccount: 1 << 30, QueueMessageRetentionSeconds: 4 * 86_400,
@@ -762,10 +752,6 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #462 / ADR-058: Scale unlocks warm-floor +
 			// max-instances ceiling (same as Pro).
 			MinInstancesAllowed: true, CustomMetricsAllowed: true, CustomMetricsPerApp: 200, CustomMetricSeriesPerApp: 2000, MaxInstancesAllowed: true,
-			// ADR-044: see PlanFree. Scale's 1000ms/100ms quota is the
-			// upper bound — 10 vCPU worth of compute at the per-instance
-			// level, gated by the §1 56 GB hard fence at the slice level.
-			CPUWeight: 16, CPUQuotaUS: 1_000_000, CPUPeriodUS: 1_000_000,
 			MaxQueueDepth: 1_000_000, MaxDelayedTasksPerApp: 1_000_000, MaxSourceBytesPerInvocation: 1024 * 1024, AsyncInvokeAllowed: true,
 			// ADR-20261022105723: 10 GiB of pending queue messages per account, kept 14 days.
 			MaxQueueBacklogBytesPerAccount: 10 << 30, QueueMessageRetentionSeconds: 14 * 86_400,
