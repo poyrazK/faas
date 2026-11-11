@@ -111,3 +111,10 @@ was exercised in an isolated PostgreSQL database. The schema snapshot/hash and
 SQLC were regenerated from a fresh local database,
 and both SDKs were regenerated against the integrated spec. The pull request's
 checks are the integration gate. Deployment qualification remains pending.
+
+PR CI caught an additional ED009 integration gap: the clone schema registry
+did not list the new `trigger_records.operator_replay` column, which would
+block environment clone admission. The registry now includes the column under
+the table's existing operational classification, so replay work stays with
+its source environment. The canonical schema and clone coverage tests guard
+this boundary.
