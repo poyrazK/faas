@@ -73,10 +73,17 @@ The owner chose an organization-owned installation, ADR first.
 
 ## Rollout
 
-Slice 1 (this change): migration, state field, organization connect start and
-callback, listing, binding through organization installations, tests.
-Slice 2: organization disconnect and reconciliation surfaces, dashboard entry
-point (the dashboard form needs the `organization` field). During a mixed
+Slice 1: migration, state field, organization connect start and callback,
+listing, binding through organization installations, tests.
+Slice 2: the organization page shows the company's installations to members;
+owners and admins get a Connect GitHub form that sends the `organization`
+field and returns to the page, and a CSRF-protected Disconnect form
+(`POST /dashboard/orgs/{slug}/github/{installationID}/disconnect`, role
+rechecked). Disconnecting deletes the row, which unlinks projects and apps
+stored in the company's namespace, and also unlinks company projects still
+stored under a creator's namespace; it records `org.github.disconnected`.
+Live re-verification of a company installation stays with githubd's
+reconciliation, as for personal ones. During a mixed
 apid rollout, a flow started on a new apid and completed on an old one
 ignores the organization and connects the installation to the member's own
 account, which that member could already do; nothing reaches the

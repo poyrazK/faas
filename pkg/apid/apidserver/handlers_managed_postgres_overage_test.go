@@ -81,16 +81,17 @@ func TestManagedPostgresOverageIsRefusedOnFree(t *testing.T) {
 	if r := e.Do(t, http.MethodPut, "/v1/postgres/overage", map[string]any{"enabled": true}, nil); r.Code != http.StatusForbidden || !strings.Contains(r.Body.String(), "managed_postgres_not_in_plan") {
 		t.Fatalf("free overage = %d %s, want a plan refusal", r.Code, r.Body)
 	}
-	r := e.Do(t, http.MethodGet, "/v1/postgres/overage", nil, nil)
-	if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), `"enabled":false`) {
-		t.Fatalf("free overage read = %d %s", r.Code, r.Body)
+	// ADR-20261110184700: Free includes no managed PostgreSQL, so even the
+	// read is a plan refusal.
+	if r := e.Do(t, http.MethodGet, "/v1/postgres/overage", nil, nil); r.Code != http.StatusForbidden || !strings.Contains(r.Body.String(), "managed_postgres_not_in_plan") {
+		t.Fatalf("free overage read = %d %s, want a plan refusal", r.Code, r.Body)
 	}
 }
 
-// Free has no overage, and only enforced compute caps stop a Free database
-// past its 5 compute-unit hours; under the default shadow mode it ran all
-// month at Gregale's cost (bug hunt 2026-10-27 H12).
-func TestManagedPostgresFreeCreateNeedsEnforcedCaps(t *testing.T) {
+// Free has no overage, and under the default shadow mode a Free database ran
+// all month at Gregale's cost (bug hunt 2026-10-27 H12). Free now includes no
+// managed PostgreSQL at all (ADR-20261110184700).
+func TestManagedPostgresFreeCreateIsNotInPlan(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanFree)
 	service, _, _ := resizeAPIService(t, (*e.Acct()).ID)
 	(*(*e.S()).ManagedPostgres()) = service

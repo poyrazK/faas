@@ -14,6 +14,13 @@ faas_cp_slice_cpu_quota: 400%
 # (weight 100) and the other plans rise to it.
 faas_tenant_plan_slice_cpu_weight: 16
 
+# faas-tenant-ibridge.slice's CPUWeight. With flat tenant cgroups
+# (ADR-20261109172421 step 6.5) the bridges compete with every instance's
+# cpu.weight (ram_mb / 16, about 3,000 for a full 47.6 GB host), so 1000
+# keeps a quarter of a saturated host available to them; they take only
+# what forwarding needs.
+faas_tenant_ibridge_cpu_weight: 1000
+
 # faas-obs.slice limits (ADR-20261023124955 §1). Prometheus, Alertmanager and
 # Grafana (and, once enabled, Loki and Promtail) run here instead of in
 # system.slice, whose 2,048 MB budget is for the OS. The memory cap fences

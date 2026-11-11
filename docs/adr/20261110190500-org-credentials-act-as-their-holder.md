@@ -1,4 +1,4 @@
-# ADR 20261110190000 · Organization credentials act as the member who holds them
+# ADR 20261110190500 · Organization credentials act as the member who holds them
 
 - **Status:** accepted
 - **Date:** 2026-11-10

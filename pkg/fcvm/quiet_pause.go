@@ -124,9 +124,10 @@ type quietState struct {
 // whose traffic or lifecycle does not pass through vmmd's forward path are
 // never quiet-paused: private-network peers talk guest to guest, warm-pool
 // entries are already paused, and execution, app-task, qualification and
-// builder VMs are not request-driven.
+// builder VMs are not request-driven. A sandbox session VM is execution-only
+// but driven by its calls, which pass through vmmd (ADR-20261027090013 §5).
 func quietPauseAfterFor(req WakeRequest, qualificationOnly bool) time.Duration {
-	if req.QuietPauseAfter <= 0 || req.ExecutionOnly || req.AppTaskOnly || qualificationOnly ||
+	if req.QuietPauseAfter <= 0 || (req.ExecutionOnly && req.sandboxID == "") || req.AppTaskOnly || qualificationOnly ||
 		req.KeepPaused || req.ExportDir != "" || req.PrivateNetworkID != "" {
 		return 0
 	}
@@ -138,7 +139,7 @@ func quietPauseAfterFor(req WakeRequest, qualificationOnly bool) time.Duration {
 // to Freeze and Thaw. The caller holds m.mu.
 func (m *Manager) quietEligibleLocked(id string, inst *Instance) bool {
 	if inst == nil || m.quietPauseAfter(inst) <= 0 || inst.Paused || inst.Frozen || inst.IsJob ||
-		inst.ExecutionOnly || inst.AppTaskOnly || inst.QualificationOnly || inst.TailCount > 0 {
+		(inst.ExecutionOnly && inst.SandboxID == "") || inst.AppTaskOnly || inst.QualificationOnly || inst.TailCount > 0 {
 		return false
 	}
 	if functionExecutionBusy(inst) || functionMigrationActive(inst) {

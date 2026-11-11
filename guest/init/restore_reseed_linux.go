@@ -73,8 +73,10 @@ func reseedRestoredWorkloads() (restoreReseedStats, error) {
 // restore with fresh state. An agent run guest holds it the same way: its
 // preset snapshot is taken while guest-init waits for the run, so the
 // harness and everything it starts begin after the restore (ADR-20261027090010 §2).
+// A sandbox session guest holds it like an agent run: every command arrives
+// after the restore (ADR-20261027090013 §2).
 func restoreReseedContractHolds() bool {
-	return activeRestoreReseedBarrier.Load() != nil || warmBuilderEnabled.Load() || agentRunGuest.Load()
+	return activeRestoreReseedBarrier.Load() != nil || warmBuilderEnabled.Load() || agentRunGuest.Load() || sandboxGuest.Load()
 }
 
 // agentRunGuest is set by agent mode before it can be captured.

@@ -71,7 +71,9 @@ func TestProbeDSNPrefersDirectEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Host != "direct.example:5432" || parsed.Query().Get("sslmode") != "require" {
+	// The platform's own connections verify Neon's certificate even when the
+	// material, like Neon's connection URI, says only sslmode=require.
+	if parsed.Host != "direct.example:5432" || parsed.Query().Get("sslmode") != "verify-full" {
 		t.Fatalf("dsn = %q", dsn)
 	}
 	if parsed.User.Username() != "gregale" {

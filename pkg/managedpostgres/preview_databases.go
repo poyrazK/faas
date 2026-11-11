@@ -59,7 +59,7 @@ var ErrPreviewDatabaseLimit error = previewDatabaseLimitError{}
 type previewDatabaseLimitError struct{}
 
 func (previewDatabaseLimitError) Error() string {
-	return "the account holds as many PR preview databases as its plan allows; close a pull request or tear its preview down first"
+	return "the account holds as many PR preview databases as it may (its plan's allowance or its share of the platform); close a pull request or tear its preview down first"
 }
 
 func (previewDatabaseLimitError) Unwrap() error { return ErrQuotaExceeded }
@@ -189,13 +189,13 @@ func (s *Service) EnsurePreviewDatabase(ctx context.Context, request PreviewData
 			return Database{}, err
 		}
 	}
-	if err := s.admitFleet(ctx, PolicySubject(ctx, request.AccountID), true); err != nil {
+	if err := s.admitPreviewFleet(ctx, PolicySubject(ctx, request.AccountID)); err != nil {
 		return Database{}, err
 	}
 	reservation.ID, reservation.AccountID, reservation.OrgID = s.newID(), request.AccountID, Organization(ctx)
 	reservation.Name, reservation.Preview = PreviewDatabaseName(source.Name, request.Owner), request.Owner
 	reservation.State, reservation.DesiredGeneration, reservation.CreatedAt, reservation.UpdatedAt = StateProvisioning, 1, now, now
-	database, _, err := store.ReservePreview(ctx, reservation, request.Limit)
+	database, _, err := store.ReservePreview(ctx, reservation, s.previewLimit(request.Limit))
 	if err != nil {
 		return Database{}, err
 	}

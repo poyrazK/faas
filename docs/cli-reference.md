@@ -2692,7 +2692,7 @@ Change an app&#39;s settings
 | `--size <SIZE>` | set RAM/CPU resource size | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--profile <SIZE>` | deprecated: use --size |  |
 | `--ram <MB>` | set RAM in MB |  |
-| `--cpu-millicores <250|500|1000>` | set sustained CPU allowance | one of `250` · `500` · `1000` |
+| `--cpu-millicores <250|500|1000>` | cap CPU at 250 or 500 millicores; 1000 (the default) leaves it uncapped | one of `250` · `500` · `1000` |
 | `--max-concurrency <N>` | set the maximum instances (replicas) the app scales to |  |
 | `--concurrency-overflow <value>` | set saturated concurrency behavior | one of `queue` · `drop` |
 | `--max-queue-depth <N>` | set maximum queued requests (0 uses plan default) |  |
@@ -2789,7 +2789,7 @@ Preview or change resources and settings
 | `--size <SIZE>` | RAM/CPU resource size | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--profile <SIZE>` | deprecated: use --size |  |
 | `--ram <MB>` | RAM in MB |  |
-| `--cpu-millicores <250|500|1000>` | sustained CPU allowance | one of `250` · `500` · `1000` |
+| `--cpu-millicores <250|500|1000>` | cap CPU at 250 or 500 millicores; 1000 (the default) leaves it uncapped | one of `250` · `500` · `1000` |
 | `--max-concurrency <N>` | maximum instances (replicas) the app scales to |  |
 | `--concurrency-overflow <POLICY>` | saturated concurrency behavior | one of `queue` · `drop` |
 | `--max-queue-depth <N>` | maximum queued requests at warm saturation |  |
@@ -2839,7 +2839,7 @@ Read, guard or recover scaling configuration; prints JSON
 | `--expected-app-id <UUID>` | immutable app UUID required for writes |  |
 | `--expected-environment-id <UUID>` | immutable environment UUID required for named writes |  |
 | `--ram <MB>` | RAM in MB |  |
-| `--cpu-millicores <MILLICORES>` | CPU allowance |  |
+| `--cpu-millicores <MILLICORES>` | CPU cap: 250 or 500 millicores, or 1000 for none |  |
 | `--max-concurrency <COUNT>` | most instances the app runs at once |  |
 | `--min <COUNT>` | minimum warm instance count, including zero |  |
 

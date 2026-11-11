@@ -1987,6 +1987,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if agentRunner != nil {
 		grpcHandler.WithAgentRunner(agentRunner)
 		log.Info("agent runs enabled", "nodes", os.Getenv("FAAS_SCHEDD_AGENT_RUN_NODES"))
+		// ADR-20261027090013: sandbox sessions need their own switch too.
+		if agentRunner.SandboxesEnabled() {
+			grpcHandler.WithSandboxRunner(agentRunner)
+			log.Info("sandbox sessions enabled")
+		}
 	}
 	// An empty NodeName is the single-box, Unix-socket posture. Passing a
 	// typed nil *PGNodeVerifier as the resolver still creates a non-nil

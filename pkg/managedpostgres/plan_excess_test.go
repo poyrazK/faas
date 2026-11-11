@@ -24,7 +24,8 @@ func TestParsePlanExcessEnforcementMode(t *testing.T) {
 
 func TestPlanExcess(t *testing.T) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	free, _ := api.ManagedPostgresLimitsFor(api.PlanFree)
+	hobby, _ := api.ManagedPostgresLimitsFor(api.PlanHobby)
+	freeLimits, _ := api.ManagedPostgresLimitsFor(api.PlanFree)
 	pro, _ := api.ManagedPostgresLimitsFor(api.PlanPro)
 	database := func(id string, age int, class ServiceClass) Database {
 		return Database{ID: id, ProviderResourceID: "proj-" + id, State: StateReady, Spec: Spec{Class: class},
@@ -45,9 +46,13 @@ func TestPlanExcess(t *testing.T) {
 	}{
 		{name: "an unknown plan suspends nothing",
 			databases: []Database{database("a", 1, ClassProduction), database("b", 2, ClassProduction)}},
-		{name: "free keeps the oldest database",
+		{name: "free includes no database, so every ranked one is past it",
+			databases: []Database{slot, deleting, pending, database("a", 1, ClassDevelopment), database("b", 2, ClassBurstable)},
+			limits:    freeLimits,
+			want:      map[string]string{"a": PlanExcessDatabaseLimit, "b": PlanExcessDatabaseLimit}},
+		{name: "hobby keeps the oldest database",
 			databases: []Database{database("c", 3, ClassDevelopment), database("a", 1, ClassDevelopment), database("b", 2, ClassBurstable)},
-			limits:    free,
+			limits:    hobby,
 			want:      map[string]string{"b": PlanExcessDatabaseLimit, "c": PlanExcessDatabaseLimit}},
 		{name: "a class the plan lacks is past it, and still counts toward the limit",
 			databases: []Database{database("a", 1, ClassProduction), database("b", 2, ClassBurstable), database("c", 3, ClassDevelopment), database("d", 4, ClassDevelopment)},
@@ -55,11 +60,11 @@ func TestPlanExcess(t *testing.T) {
 			want:      map[string]string{"a": PlanExcessServiceClass, "d": PlanExcessDatabaseLimit}},
 		{name: "the restore slot, a deleting database and one not yet provisioned are not ranked",
 			databases: []Database{slot, deleting, pending, database("a", 1, ClassDevelopment), database("b", 2, ClassDevelopment)},
-			limits:    free,
+			limits:    hobby,
 			want:      map[string]string{"b": PlanExcessDatabaseLimit}},
 		{name: "the same creation time ranks by ID",
 			databases: []Database{database("y", 1, ClassDevelopment), database("x", 1, ClassDevelopment)},
-			limits:    free,
+			limits:    hobby,
 			want:      map[string]string{"y": PlanExcessDatabaseLimit}},
 	}
 	for _, test := range tests {
@@ -75,7 +80,7 @@ func TestPlanExcess(t *testing.T) {
 func TestCapEnforcerSuspendsDatabasesPastThePlan(t *testing.T) {
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	month := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	free, _ := api.ManagedPostgresLimitsFor(api.PlanFree)
+	hobby, _ := api.ManagedPostgresLimitsFor(api.PlanHobby)
 	pro, _ := api.ManagedPostgresLimitsFor(api.PlanPro)
 	type run struct {
 		mode, excess CapEnforcementMode
@@ -137,11 +142,21 @@ func TestCapEnforcerSuspendsDatabasesPastThePlan(t *testing.T) {
 	const scope1, scope2 = 100 + 17850, 50 + 17850
 
 	t.Run("on suspends a scope past the plan and leaves a shared one running", func(t *testing.T) {
-		set, summary := sweep(t, run{mode: CapEnforcementOn, excess: CapEnforcementOn, plan: free})
+		set, summary := sweep(t, run{mode: CapEnforcementOn, excess: CapEnforcementOn, plan: hobby})
 		if want := map[string]int64{"proj-1": scope1, "proj-2": 50}; !maps.Equal(set, want) {
 			t.Fatalf("quotas %v; want %v", set, want)
 		}
 		if summary.PlanExcessDatabases != 2 || summary.PlanExcessScopesSuspended != 1 || summary.PlanExcessScopesShared != 1 {
+			t.Fatalf("summary %+v", summary)
+		}
+	})
+	t.Run("free includes no database, so every scope is suspended", func(t *testing.T) {
+		free, _ := api.ManagedPostgresLimitsFor(api.PlanFree)
+		set, summary := sweep(t, run{mode: CapEnforcementOn, excess: CapEnforcementOn, plan: free})
+		if want := map[string]int64{"proj-1": 100, "proj-2": 50}; !maps.Equal(set, want) {
+			t.Fatalf("quotas %v; want %v", set, want)
+		}
+		if summary.PlanExcessDatabases != 3 || summary.PlanExcessScopesSuspended != 2 || summary.PlanExcessScopesShared != 0 {
 			t.Fatalf("summary %+v", summary)
 		}
 	})
@@ -158,19 +173,19 @@ func TestCapEnforcerSuspendsDatabasesPastThePlan(t *testing.T) {
 		}
 	})
 	t.Run("shadow only logs", func(t *testing.T) {
-		set, summary := sweep(t, run{mode: CapEnforcementOn, excess: CapEnforcementShadow, plan: free})
+		set, summary := sweep(t, run{mode: CapEnforcementOn, excess: CapEnforcementShadow, plan: hobby})
 		if set["proj-2"] != scope2 || summary.PlanExcessScopesShadowed != 1 || summary.PlanExcessScopesSuspended != 0 {
 			t.Fatalf("quotas %v, summary %+v", set, summary)
 		}
 	})
 	t.Run("on writes nothing while the compute cap is in shadow", func(t *testing.T) {
-		set, summary := sweep(t, run{mode: CapEnforcementShadow, excess: CapEnforcementOn, plan: free})
+		set, summary := sweep(t, run{mode: CapEnforcementShadow, excess: CapEnforcementOn, plan: hobby})
 		if len(set) != 0 || summary.PlanExcessScopesShadowed != 1 || summary.PlanExcessScopesSuspended != 0 {
 			t.Fatalf("quotas %v, summary %+v", set, summary)
 		}
 	})
 	t.Run("off does not look", func(t *testing.T) {
-		set, summary := sweep(t, run{mode: CapEnforcementOn, excess: CapEnforcementOff, plan: free})
+		set, summary := sweep(t, run{mode: CapEnforcementOn, excess: CapEnforcementOff, plan: hobby})
 		if set["proj-2"] != scope2 || summary.PlanExcessDatabases != 0 {
 			t.Fatalf("quotas %v, summary %+v", set, summary)
 		}
@@ -229,7 +244,7 @@ func (s *planExcessNoticeTestStore) UnmailedPlanExcessNotices(_ context.Context,
 func TestCapEnforcerNoticesDatabasesPastThePlan(t *testing.T) {
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	month := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	free, _ := api.ManagedPostgresLimitsFor(api.PlanFree)
+	hobby, _ := api.ManagedPostgresLimitsFor(api.PlanHobby)
 	pro, _ := api.ManagedPostgresLimitsFor(api.PlanPro)
 	provider := &capTestProvider{
 		fakeProvider: &fakeProvider{capabilities: testCapabilities()},
@@ -255,7 +270,7 @@ func TestCapEnforcerNoticesDatabasesPastThePlan(t *testing.T) {
 	}
 	store := &planExcessNoticeTestStore{capTestStore: &capTestStore{databases: []Database{database("db-1", "proj-1", 1), database("db-2", "proj-2", 2)}},
 		notices: map[string]PlanExcessNotice{}, mailed: map[string]bool{}}
-	plan := free
+	plan := hobby
 	var mailed []PlanExcessNotice
 	notify := func(_ context.Context, n PlanExcessNotice) error {
 		mailed = append(mailed, n)
@@ -295,7 +310,7 @@ func TestCapEnforcerNoticesDatabasesPastThePlan(t *testing.T) {
 	if sweep(CapEnforcementOn); len(store.notices) != 0 {
 		t.Fatalf("after the upgrade notices = %+v; want none", store.notices)
 	}
-	plan = free
+	plan = hobby
 	if sweep(CapEnforcementOn); len(mailed) != 2 {
 		t.Fatalf("a second suspension mailed %d times in all; want 2", len(mailed))
 	}

@@ -81,7 +81,20 @@ operation still enforces its own authorization and admission checks.
   changing the email, removing a sign-in method and setting up two-factor
   authentication need a sign-in from the last 15 minutes. An older browser
   session is sent to the sign-in page first (`recent_sign_in_required` from
-  the API).
+  the API). Deleting the account and transferring an organization's
+  ownership from such a browser need the same recent sign-in.
+- **Approving a CLI or agent (MCP) sign-in** in the browser needs a verified
+  email, and a sign-in from the last 15 minutes (with two-factor
+  authentication on, a code from the last 15 minutes). An older browser
+  signs in again and comes back to the same code.
+- **Two-factor changes:** turning two-factor authentication on signs out
+  every other browser and revokes CLI and agent sign-in keys; hand-made API
+  keys keep working. Turning it off with your password also needs a code
+  from the last 5 minutes; without your authenticator, use a recovery code
+  or the emailed disable link.
+- **Sign-in keys and recovery:** CLI and agent sign-in keys are also revoked
+  when you confirm an email change and when an operator signs out your
+  browsers or resets your two-factor authentication.
 - **Sessions:** `gregale account sessions list`, `gregale account sessions
   revoke SESSION_ID`, or `--all` to sign out every browser. A sign-in from a
   browser and network none of your recent sessions used sends an email. A
