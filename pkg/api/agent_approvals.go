@@ -17,6 +17,11 @@ const (
 	AgentApprovalBilling     = "billing"
 )
 
+// AgentApprovalBudget is a request that would take an agent past its
+// monthly budget (ADR-20261111114059). It is not one of the categories a
+// connection chooses: the budget itself decides when it applies.
+const AgentApprovalBudget = "budget"
+
 // AgentApprovalCategories lists every category, in display order. An agent
 // connection that chose none gets all of them.
 var AgentApprovalCategories = []string{AgentApprovalDelete, AgentApprovalProduction, AgentApprovalCredentials, AgentApprovalBilling}
