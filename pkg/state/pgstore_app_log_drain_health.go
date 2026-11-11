@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (s *PgStore) UpsertAppLogDrainHealth(ctx context.Context, health AppLogDrainHealth) error {
@@ -148,34 +150,13 @@ func (s *PgStore) ListAppLogDrainHealthForApp(ctx context.Context, appID string)
 }
 
 func (s *PgStore) ListAppLogDrainDeliveryAnalytics(ctx context.Context, drainID string, from, to time.Time) ([]AppLogDrainDeliveryAnalytics, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT drain_id, bucket_start, delivered_total, failed_total, dropped_total,
-		       retries_total, dead_letter_total, delivery_latency_nanos_total,
-		       delivery_latency_samples, pending_records, pending_bytes, sampled_at
-		FROM app_log_drain_delivery_analytics
-		WHERE drain_id = $1 AND bucket_start >= $2 AND bucket_start <= $3
-		ORDER BY bucket_start
-	`, drainID, from, to)
+	rows, err := sqlc.New().ListLogDrainAnalyticsWithBaseline(ctx, s.pool, sqlc.ListLogDrainAnalyticsWithBaselineParams{DrainID: mustPgUUID(drainID), WindowFrom: pgtype.Timestamptz{Time: from, Valid: true}, WindowUntil: pgtype.Timestamptz{Time: to, Valid: true}})
 	if err != nil {
-		return nil, fmt.Errorf("state: list app log drain delivery analytics: %w", err)
+		return nil, fmt.Errorf("list log drain analytics with baseline: %w", err)
 	}
-	defer rows.Close()
-	out := make([]AppLogDrainDeliveryAnalytics, 0)
-	for rows.Next() {
-		var sample AppLogDrainDeliveryAnalytics
-		if err := rows.Scan(&sample.DrainID, &sample.BucketStart, &sample.DeliveredTotal,
-			&sample.FailedTotal, &sample.DroppedTotal, &sample.RetriesTotal,
-			&sample.DeadLetterTotal, &sample.DeliveryLatencyNanosTotal,
-			&sample.DeliveryLatencySamples, &sample.PendingRecords, &sample.PendingBytes,
-			&sample.SampledAt); err != nil {
-			return nil, fmt.Errorf("state: scan app log drain delivery analytics: %w", err)
-		}
-		sample.BucketStart = sample.BucketStart.UTC()
-		sample.SampledAt = sample.SampledAt.UTC()
-		out = append(out, sample)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: list app log drain delivery analytics rows: %w", err)
+	out := make([]AppLogDrainDeliveryAnalytics, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, AppLogDrainDeliveryAnalytics{DrainID: pgUUIDString(r.DrainID), BucketStart: r.BucketStart.Time.UTC(), SampledAt: r.SampledAt.Time.UTC(), DeliveredTotal: r.DeliveredTotal, FailedTotal: r.FailedTotal, DroppedTotal: r.DroppedTotal, RetriesTotal: r.RetriesTotal, DeadLetterTotal: r.DeadLetterTotal, DeliveryLatencyNanosTotal: r.DeliveryLatencyNanosTotal, DeliveryLatencySamples: r.DeliveryLatencySamples, PendingRecords: int(r.PendingRecords), PendingBytes: r.PendingBytes})
 	}
 	return out, nil
 }

@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"sort"
 	"time"
 )
@@ -52,37 +56,25 @@ func (s *PgStore) PutCustomMetricOfKind(ctx context.Context, appID, name, kind s
 	if distinctLimit <= 0 {
 		return fmt.Errorf("state: put custom metric %q: distinct limit must be > 0", name)
 	}
-	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO app_custom_metrics (app_id, name, value, observed_at, kind)
-		SELECT $1::uuid, $2::text, $3::double precision, $4::timestamptz, $6::text
-		WHERE EXISTS (
-			-- Always allow a push to a name the app already holds: it is
-			-- an upsert and cannot grow the row count.
-			SELECT 1 FROM app_custom_metrics
-			 WHERE app_id = $1::uuid AND name = $2::text
-		) OR (
-			SELECT count(*) FROM app_custom_metrics WHERE app_id = $1::uuid
-		) < $5::int
-		ON CONFLICT (app_id, name) DO UPDATE
-		   SET value = EXCLUDED.value, observed_at = EXCLUDED.observed_at, kind = EXCLUDED.kind
-		 WHERE app_custom_metrics.observed_at <= EXCLUDED.observed_at
-	`, appID, name, value, observedAt, distinctLimit, kind)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		return fmt.Errorf("state: put custom metric %q for app %s: %w", name, appID, err)
+		return fmt.Errorf("begin custom metric admission: %w", err)
 	}
-	if tag.RowsAffected() > 0 {
-		return nil
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	if err = q.LockCustomMetricAdmission(ctx, tx, appID); err != nil {
+		return fmt.Errorf("lock custom metric admission: %w", err)
 	}
-	// Zero rows: either the stored value is newer (kept), or the WHERE
-	// admitted nothing because the name is new and the app is at its cap.
-	var exists bool
-	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app_custom_metrics WHERE app_id = $1::uuid AND name = $2::text)`, appID, name).Scan(&exists); err != nil {
-		return fmt.Errorf("state: put custom metric %q for app %s: %w", name, appID, err)
+	admitted, err := q.PutCustomMetricOfKind(ctx, tx, sqlc.PutCustomMetricOfKindParams{
+		AppID: mustPgUUID(appID), Name: name, Value: value, ObservedAt: pgtype.Timestamptz{Time: observedAt, Valid: true}, Kind: kind, DistinctLimit: int32(distinctLimit), ClockSkewSeconds: int32(api.CustomMetricClockSkew / time.Second),
+	})
+	if err != nil {
+		return fmt.Errorf("put custom metric %q for app %s: %w", name, appID, err)
 	}
-	if exists {
-		return nil
+	if !admitted {
+		return ErrCustomMetricLimit
 	}
-	return ErrCustomMetricLimit
+	return tx.Commit(ctx)
 }
 
 // AddCustomMetricCounter adds delta to the counter's total under the same
@@ -127,30 +119,23 @@ func (s *PgStore) AddCustomMetricOfKind(ctx context.Context, appID, name, kind s
 	if distinctLimit <= 0 {
 		return fmt.Errorf("state: add custom metric %q: distinct limit must be > 0", name)
 	}
-	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO app_custom_metrics (app_id, name, value, observed_at, kind)
-		SELECT $1::uuid, $2::text, LEAST(GREATEST($3::double precision, 0), $7::double precision), $4::timestamptz, $6::text
-		WHERE EXISTS (
-			SELECT 1 FROM app_custom_metrics
-			 WHERE app_id = $1::uuid AND name = $2::text
-		) OR (
-			SELECT count(*) FROM app_custom_metrics WHERE app_id = $1::uuid
-		) < $5::int
-		ON CONFLICT (app_id, name) DO UPDATE
-		   SET value = LEAST(GREATEST(
-		           CASE WHEN app_custom_metrics.kind = EXCLUDED.kind
-		                THEN app_custom_metrics.value + $3::double precision
-		                ELSE $3::double precision END, 0), $7::double precision),
-		       observed_at = GREATEST(app_custom_metrics.observed_at, EXCLUDED.observed_at),
-		       kind = EXCLUDED.kind
-	`, appID, name, delta, observedAt, distinctLimit, kind, customMetricMaxTotal)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		return fmt.Errorf("state: add custom metric %q for app %s: %w", name, appID, err)
+		return fmt.Errorf("begin custom metric admission: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	if err = q.LockCustomMetricAdmission(ctx, tx, appID); err != nil {
+		return fmt.Errorf("lock custom metric admission: %w", err)
+	}
+	admitted, err := q.AddCustomMetricOfKind(ctx, tx, sqlc.AddCustomMetricOfKindParams{AppID: mustPgUUID(appID), Name: name, Kind: kind, Delta: delta, ObservedAt: pgtype.Timestamptz{Time: observedAt, Valid: true}, DistinctLimit: int32(distinctLimit), MaxTotal: customMetricMaxTotal, ClockSkewSeconds: int32(api.CustomMetricClockSkew / time.Second)})
+	if err != nil {
+		return fmt.Errorf("add custom metric %q for app %s: %w", name, appID, err)
+	}
+	if !admitted {
 		return ErrCustomMetricLimit
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // ListCustomMetrics returns every stored gauge for an app, name-ordered so
@@ -161,28 +146,13 @@ func (s *PgStore) AddCustomMetricOfKind(ctx context.Context, appID, name, kind s
 // so filtering by wall-clock age in the store would make a back-dated
 // evaluation silently wrong.
 func (s *PgStore) ListCustomMetrics(ctx context.Context, appID string) ([]CustomMetric, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT m.name, m.value, m.observed_at, m.kind,
-		       EXISTS (SELECT 1 FROM app_custom_metric_series s
-		                WHERE s.app_id = m.app_id AND s.name = m.name)
-		  FROM app_custom_metrics m
-		 WHERE m.app_id = $1::uuid
-		 ORDER BY m.name
-	`, appID)
+	rows, err := sqlc.New().ListCustomMetrics(ctx, s.pool, mustPgUUID(appID))
 	if err != nil {
-		return nil, fmt.Errorf("state: list custom metrics for app %s: %w", appID, err)
+		return nil, fmt.Errorf("list custom metrics for app %s: %w", appID, err)
 	}
-	defer rows.Close()
-	out := make([]CustomMetric, 0, 4)
-	for rows.Next() {
-		var m CustomMetric
-		if err := rows.Scan(&m.Name, &m.Value, &m.ObservedAt, &m.Kind, &m.Labelled); err != nil {
-			return nil, fmt.Errorf("state: scan custom metric for app %s: %w", appID, err)
-		}
-		out = append(out, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: list custom metrics for app %s: %w", appID, err)
+	out := make([]CustomMetric, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, CustomMetric{Name: row.Name, Value: row.Value, ObservedAt: row.ObservedAt.Time, Kind: row.Kind, Labelled: row.Labelled})
 	}
 	return out, nil
 }
@@ -191,10 +161,8 @@ func (s *PgStore) ListCustomMetrics(ctx context.Context, appID string) ([]Custom
 // not exist is not an error: the caller's intent is "this metric is gone",
 // and that is already true.
 func (s *PgStore) DeleteCustomMetric(ctx context.Context, appID, name string) error {
-	if _, err := s.pool.Exec(ctx, `
-		DELETE FROM app_custom_metrics WHERE app_id = $1::uuid AND name = $2::text
-	`, appID, name); err != nil {
-		return fmt.Errorf("state: delete custom metric %q for app %s: %w", name, appID, err)
+	if err := sqlc.New().DeleteCustomMetric(ctx, s.pool, sqlc.DeleteCustomMetricParams{AppID: mustPgUUID(appID), Name: name}); err != nil {
+		return fmt.Errorf("delete custom metric %q for app %s: %w", name, appID, err)
 	}
 	return nil
 }
@@ -207,11 +175,8 @@ type CustomMetricSample struct {
 }
 
 // CustomMetricExportStore is the bounded, cross-app read the custom-metric
-// exporter scrapes. Gauges observed before since are left out — a stopped
-// pusher must show as a gap, not a flat line (ADR-202 freshness). Counters
-// are always returned: their total is Gregale's own and stays true while
-// nothing is added, and a series that vanished between sparse increments
-// would lose the next one to rate() (ADR-20261104142830).
+// exporter scrapes. Only values observed at or after since are returned —
+// a stopped pusher must show as a gap, not a flat line (ADR-202 freshness).
 type CustomMetricExportStore interface {
 	ListFreshCustomMetrics(ctx context.Context, since time.Time, limit int) ([]CustomMetricSample, error)
 }
@@ -224,27 +189,15 @@ var (
 // ListFreshCustomMetrics returns at most limit fresh gauges, and every counter, across all apps,
 // ordered by app and name so a capped scrape is deterministic.
 func (s *PgStore) ListFreshCustomMetrics(ctx context.Context, since time.Time, limit int) ([]CustomMetricSample, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT app_id::text, name, value
-		  FROM app_custom_metrics
-		 WHERE observed_at >= $1::timestamptz OR kind = 'counter'
-		 ORDER BY app_id, name
-		 LIMIT $2::int
-	`, since, limit)
+	rows, err := sqlc.New().ListFreshCustomMetrics(ctx, s.pool, sqlc.ListFreshCustomMetricsParams{
+		Since: pgtype.Timestamptz{Time: since, Valid: true}, Until: pgtype.Timestamptz{Time: since.Add(time.Duration(api.CustomMetricFreshnessSeconds) * time.Second), Valid: true}, RowLimit: int32(limit),
+	})
 	if err != nil {
-		return nil, fmt.Errorf("state: list fresh custom metrics: %w", err)
+		return nil, fmt.Errorf("list fresh custom metrics: %w", err)
 	}
-	defer rows.Close()
-	var out []CustomMetricSample
-	for rows.Next() {
-		var sample CustomMetricSample
-		if err := rows.Scan(&sample.AppID, &sample.Name, &sample.Value); err != nil {
-			return nil, fmt.Errorf("state: scan fresh custom metric: %w", err)
-		}
-		out = append(out, sample)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: list fresh custom metrics: %w", err)
+	out := make([]CustomMetricSample, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, CustomMetricSample{AppID: row.AppID, Name: row.Name, Value: row.Value})
 	}
 	return out, nil
 }
@@ -304,7 +257,11 @@ func (m *MemStore) PutCustomMetricOfKind(_ context.Context, appID, name, kind st
 		return ErrCustomMetricLimit
 	}
 	if exists && observedAt.Before(prev.ObservedAt) {
-		return nil
+		now := time.Now()
+		legacyFuture := prev.ObservedAt.After(now.Add(api.CustomMetricClockSkew))
+		if !legacyFuture || observedAt.After(now.Add(api.CustomMetricClockSkew)) {
+			return nil
+		}
 	}
 	byName[name] = CustomMetric{Name: name, Value: value, ObservedAt: observedAt, Kind: kind}
 	return nil

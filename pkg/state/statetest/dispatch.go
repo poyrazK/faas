@@ -3393,6 +3393,7 @@ func (s *Pg) WithInvocationVersionSnapshot(p0 context.Context, p1 func(state.Inv
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"RequestTelemetryAnalyticsTimeseriesGrouped": true,
 	"ListAllApps":                                   true,
 	"ListAllInstances":                              true,
 	"OperatorAlertCollectionHistory":                true,
@@ -5045,4 +5046,13 @@ func (s *Pg) SetDeploymentFailed(ctx context.Context, id, code, detail string) (
 		return o.SetDeploymentFailed(ctx, id, code, detail)
 	}
 	return s.PgStore.SetDeploymentFailed(ctx, id, code, detail)
+}
+
+func (s *Store) RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error) {
+	if override, ok := s.over.(interface {
+		RequestTelemetryAnalyticsTimeseriesGrouped(context.Context, sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error)
+	}); ok {
+		return override.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, arg)
+	}
+	return s.Store.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, arg)
 }

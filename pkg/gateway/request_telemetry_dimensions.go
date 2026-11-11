@@ -79,7 +79,7 @@ func normalizeTelemetryReferrer(raw string) string {
 	if host == "" {
 		return telemetryOtherDimension
 	}
-	if len([]rune(host)) > 253 || strings.IndexFunc(host, func(r rune) bool {
+	if len(host) > 253 || strings.IndexFunc(host, func(r rune) bool {
 		return unicode.IsSpace(r) || r == '/' || r == '?' || r == '#'
 	}) >= 0 {
 		return telemetryOtherDimension

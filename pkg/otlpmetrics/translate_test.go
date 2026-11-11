@@ -320,3 +320,43 @@ func TestTranslate_UntimedPointUsesNow(t *testing.T) {
 		t.Fatalf("points = %+v, want one point stamped now", res.Points)
 	}
 }
+
+func TestTranslateBoundsGaugeValuesAndProducerClock(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		value  float64
+		at     time.Duration
+		reject bool
+	}{
+		{"oversized gauge", 1e100, 0, true},
+		{"future producer", 1, 24 * time.Hour, true},
+		{"clock skew clamped", 1, time.Second, false},
+		{"upper gauge bound", 1e12, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Translate(request(gauge("orders", dbl(tc.value, tc.at))), now)
+			if tc.reject {
+				if got.Rejected != 1 || len(got.Points) != 0 {
+					t.Fatalf("expected rejection: %+v", got)
+				}
+				return
+			}
+			if len(got.Points) != 1 || !got.Points[0].ObservedAt.Equal(now) {
+				t.Fatalf("not stamped at receipt time: %+v", got)
+			}
+		})
+	}
+	// A large cumulative counter is history, not a scaling gauge.
+	got := Translate(request(sum("requests", true, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, dbl(1e15, 0))), now)
+	if len(got.Points) != 1 || got.Rejected != 0 {
+		t.Fatalf("counter incorrectly rejected: %+v", got)
+	}
+}
+
+func TestTranslateRejectsUnsignedFutureTimestampOverflow(t *testing.T) {
+	point := &metricspb.NumberDataPoint{TimeUnixNano: ^uint64(0), Value: &metricspb.NumberDataPoint_AsDouble{AsDouble: 1}}
+	got := Translate(request(gauge("orders", point)), now)
+	if got.Rejected != 1 || len(got.Points) != 0 {
+		t.Fatalf("future timestamp wrapped into accepted history: %+v", got)
+	}
+}

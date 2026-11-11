@@ -105,47 +105,7 @@ const emptySeriesLabel = "no data"
 // defaults: min = 0 (latency, error rate and cold-boot
 // rate are all non-negative), max = peak value.
 func renderPoints(points []appmetrics.SparklinePoint, width, height int, color string) string {
-	if len(points) == 0 {
-		return ""
-	}
-	minY := 0.0
-	maxY := points[0].Value
-	for _, p := range points {
-		if p.Value > maxY {
-			maxY = p.Value
-		}
-	}
-	if maxY == minY {
-		// All values identical. Spread over a thin strip so the
-		// line is visible — a degenerate flat line at a single
-		// y-coordinate is invisible in a 1px stroke.
-		maxY = minY + 1
-	}
-	innerW := float64(width - padLeft - padRight)
-	innerH := float64(height - padTop - padBottom)
-	if len(points) == 1 {
-		// Single point — render as a centred dot rather than a
-		// polyline (the path would be a single coord with no
-		// adjoining line, which is invisible at 1px stroke).
-		cx := float64(width) / 2
-		cy := float64(padTop) + innerH*(1-(points[0].Value-minY)/(maxY-minY))
-		return fmt.Sprintf(`<circle cx="%.2f" cy="%.2f" r="1.5" fill=%q stroke="none"/>`, cx, cy, color)
-	}
-	var b strings.Builder
-	// step is the horizontal interval between buckets. For a
-	// single-bucket series we already short-circuited; here
-	// len(points) >= 2 so step > 0.
-	step := innerW / float64(len(points)-1)
-	for i, p := range points {
-		x := float64(padLeft) + step*float64(i)
-		y := float64(padTop) + innerH*(1-(p.Value-minY)/(maxY-minY))
-		if i == 0 {
-			fmt.Fprintf(&b, "%.2f,%.2f", x, y)
-		} else {
-			fmt.Fprintf(&b, " %.2f,%.2f", x, y)
-		}
-	}
-	return fmt.Sprintf(`<polyline fill="none" stroke=%q stroke-width="1.25" stroke-linejoin="round" points="%s"/>`, color, b.String())
+	return renderFiniteSparkline(points, width, height, color, "", false)
 }
 
 // renderArea projects a SparklinePoint slice into a
@@ -154,44 +114,7 @@ func renderPoints(points []appmetrics.SparklinePoint, width, height int, color s
 // to the bottom edge, painted with the configured opacity.
 // Empty input → empty string.
 func renderArea(points []appmetrics.SparklinePoint, width, height int, color, opacity string) string {
-	if len(points) == 0 {
-		return ""
-	}
-	minY := 0.0
-	maxY := points[0].Value
-	for _, p := range points {
-		if p.Value > maxY {
-			maxY = p.Value
-		}
-	}
-	if maxY == minY {
-		maxY = minY + 1
-	}
-	innerW := float64(width - padLeft - padRight)
-	innerH := float64(height - padTop - padBottom)
-	bottom := float64(height - padBottom)
-	if len(points) == 1 {
-		cx := float64(width) / 2
-		cy := float64(padTop) + innerH*(1-(points[0].Value-minY)/(maxY-minY))
-		return fmt.Sprintf(`<circle cx="%.2f" cy="%.2f" r="1.5" fill=%q fill-opacity=%q stroke="none"/>`,
-			cx, cy, color, opacity)
-	}
-	step := innerW / float64(len(points)-1)
-	coords := make([]string, 0, len(points))
-	for i, p := range points {
-		x := float64(padLeft) + step*float64(i)
-		y := float64(padTop) + innerH*(1-(p.Value-minY)/(maxY-minY))
-		coords = append(coords, fmt.Sprintf("%.2f,%.2f", x, y))
-	}
-	// The path: M (first x, bottom) L (each point) L (last x, bottom) Z.
-	// We compute the first/last x from the same step so the
-	// closed edge lines up with the polyline ends.
-	firstX := float64(padLeft)
-	lastX := float64(padLeft) + step*float64(len(points)-1)
-	path := fmt.Sprintf("M %.2f,%.2f L %s L %.2f,%.2f Z",
-		firstX, bottom, strings.Join(coords, " L "), lastX, bottom)
-	return fmt.Sprintf(`<path d=%q fill=%q fill-opacity=%q stroke="none"/>`,
-		path, color, opacity)
+	return renderFiniteSparkline(points, width, height, color, opacity, true)
 }
 
 // trendLabel returns a coarse trend descriptor for the
@@ -200,6 +123,13 @@ func renderArea(points []appmetrics.SparklinePoint, width, height int, color, op
 // jitter reads as "flat" so the screen reader doesn't
 // mis-describe a noisy-but-stationary series as "rising".
 func trendLabel(points []appmetrics.SparklinePoint) string {
+	finite := make([]appmetrics.SparklinePoint, 0, len(points))
+	for _, p := range points {
+		if finiteSparklineValue(p.Value) {
+			finite = append(finite, p)
+		}
+	}
+	points = finite
 	if len(points) == 0 {
 		return emptySeriesLabel
 	}
@@ -247,7 +177,7 @@ func RenderLatencySparkline(s LatencySparklineView, width, height int) template.
 	if height == 0 {
 		height = defaultHeight
 	}
-	all := len(s.P50) + len(s.P95) + len(s.P99)
+	all := finiteSparklineCount(s.P50) + finiteSparklineCount(s.P95) + finiteSparklineCount(s.P99)
 	if all == 0 {
 		return template.HTML("")
 	}
@@ -293,7 +223,7 @@ func RenderAreaSparkline(points []appmetrics.SparklinePoint, width, height int, 
 	if opacity == "" {
 		opacity = areaOpacity
 	}
-	if len(points) == 0 {
+	if finiteSparklineCount(points) == 0 {
 		return template.HTML("")
 	}
 	label := trendLabel(points)
@@ -341,7 +271,7 @@ func RenderUsageSparkline(points []appmetrics.SparklinePoint, width, height int)
 	if height == 0 {
 		height = 100
 	}
-	if len(points) == 0 {
+	if finiteSparklineCount(points) == 0 {
 		return template.HTML("")
 	}
 	label := "daily GB-hours, " + trendLabel(points)

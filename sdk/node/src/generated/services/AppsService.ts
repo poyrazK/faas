@@ -3784,7 +3784,7 @@ export class AppsService {
     /**
      * Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods.
      */
-    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS',
+    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER',
     /**
      * Return grouped series for the selected dimension. Omitted preserves the app-wide points shape; route/method filters require group_by=route or omission.
      */

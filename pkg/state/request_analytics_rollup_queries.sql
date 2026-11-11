@@ -127,11 +127,11 @@ WITH filtered AS NOT MATERIALIZED (
     SELECT CASE WHEN sqlc.arg(hourly)::bool THEN date_bin('1 hour', bucket_start, 'epoch'::timestamptz)
                 ELSE 'epoch'::timestamptz END AS bucket,
            CASE WHEN sqlc.arg(group_by)::text = 'status' THEN status::text ELSE dimension END AS dimension,
-           CASE WHEN sqlc.arg(group_by)::text = 'route' THEN method ELSE '' END AS method,
+           CASE WHEN sqlc.arg(group_by)::text = 'route' THEN request_analytics_method(method) ELSE '' END AS method,
            requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist, latency_hist_int4
     FROM filtered
     WHERE (sqlc.arg(route)::text = '' OR dimension = sqlc.arg(route)::text)
-      AND (sqlc.arg(method)::text = '' OR method = sqlc.arg(method)::text)
+      AND (sqlc.arg(method)::text = '' OR request_analytics_method(method) = sqlc.arg(method)::text)
 ), top_groups AS (
     SELECT dimension, method
     FROM grouped
@@ -210,11 +210,11 @@ WITH filtered AS NOT MATERIALIZED (
       AND rh.bucket_start <  sqlc.arg(hours_until)::timestamptz
 )
 SELECT dimension::text AS route,
-       method::text AS method,
+       request_analytics_method(method)::text AS method,
        deployment_id::uuid AS deployment_id,
        SUM(requests)::bigint AS requests
 FROM filtered
-GROUP BY dimension, method, deployment_id;
+GROUP BY dimension, request_analytics_method(method), deployment_id;
 
 -- name: RequestTelemetryExistsBetween :one
 -- Whether the app has raw telemetry received in [window_from, window_until).
@@ -245,3 +245,152 @@ ON CONFLICT (app_id, bucket_start) DO NOTHING;
 INSERT INTO request_analytics_rollup_batches (batch_id, node_id)
 VALUES (sqlc.arg(batch_id), sqlc.arg(node_id))
 ON CONFLICT (batch_id) DO NOTHING;
+
+-- name: RequestAnalyticsRollupByDeployment :many
+WITH window_rows AS (
+ SELECT app_id,account_id,bucket_start,dimension_kind,dimension,method,deployment_id,requests FROM request_analytics_minutes m
+ WHERE m.app_id=sqlc.arg(app_id)::uuid AND m.account_id=sqlc.arg(account_id)::uuid AND m.dimension_kind='route'
+ AND ((m.bucket_start>=sqlc.arg(window_from)::timestamptz AND m.bucket_start<sqlc.arg(hours_from)::timestamptz)
+ OR (m.bucket_start>=sqlc.arg(hours_until)::timestamptz AND m.bucket_start<sqlc.arg(window_until)::timestamptz))
+ UNION ALL
+ SELECT app_id,account_id,bucket_start,dimension_kind,dimension,method,deployment_id,requests FROM request_analytics_hours m
+ WHERE m.app_id=sqlc.arg(app_id)::uuid AND m.account_id=sqlc.arg(account_id)::uuid AND m.dimension_kind='route'
+ AND m.bucket_start>=sqlc.arg(hours_from)::timestamptz AND m.bucket_start<sqlc.arg(hours_until)::timestamptz
+), per_deployment AS (
+ SELECT m.deployment_id::text AS deployment_id,
+  coalesce(max(d.commit_sha),'')::text AS commit_sha,coalesce(max(d.tag),'')::text AS deployment_tag,
+  coalesce(max(to_char(d.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')),'')::text AS deployment_created_at,
+  sum(m.requests)::bigint AS requests
+ FROM window_rows m LEFT JOIN deployments d ON d.id=m.deployment_id AND d.app_id=m.app_id
+ WHERE m.app_id=sqlc.arg(app_id)::uuid AND m.account_id=sqlc.arg(account_id)::uuid
+   AND m.dimension_kind='route' AND m.bucket_start>=sqlc.arg(window_from)::timestamptz AND m.bucket_start<sqlc.arg(window_until)::timestamptz
+ GROUP BY m.deployment_id
+)
+SELECT *,sum(requests) OVER()::bigint AS total_requests FROM per_deployment
+ORDER BY requests DESC,deployment_id ASC LIMIT sqlc.arg(deployment_limit)::integer;
+
+-- name: RequestAnalyticsRollupByRouteDeployment :many
+-- Per-route deployment split for the customer analytics window. Routes are
+-- bounded to the same top-N surface as route analytics, and each route keeps
+-- only its top deployments by request count; the remaining revisions are
+-- folded into __other__ so the response cardinality is bounded by
+-- route_limit * (deployment_limit + 1).
+WITH window_rows AS (
+ SELECT app_id,account_id,bucket_start,dimension_kind,dimension,method,deployment_id,requests FROM request_analytics_minutes m
+ WHERE m.app_id=sqlc.arg(app_id)::uuid AND m.account_id=sqlc.arg(account_id)::uuid AND m.dimension_kind='route'
+ AND ((m.bucket_start>=sqlc.arg(window_from)::timestamptz AND m.bucket_start<sqlc.arg(hours_from)::timestamptz)
+ OR (m.bucket_start>=sqlc.arg(hours_until)::timestamptz AND m.bucket_start<sqlc.arg(window_until)::timestamptz))
+ UNION ALL
+ SELECT app_id,account_id,bucket_start,dimension_kind,dimension,method,deployment_id,requests FROM request_analytics_hours m
+ WHERE m.app_id=sqlc.arg(app_id)::uuid AND m.account_id=sqlc.arg(account_id)::uuid AND m.dimension_kind='route'
+ AND m.bucket_start>=sqlc.arg(hours_from)::timestamptz AND m.bucket_start<sqlc.arg(hours_until)::timestamptz
+), filtered AS (
+    SELECT m.dimension AS route,request_analytics_method(m.method)::text AS method,m.deployment_id::text AS deployment_id,
+           coalesce(d.commit_sha,'') AS commit_sha,coalesce(d.tag,'') AS deployment_tag,
+           coalesce(to_char(d.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),'') AS deployment_created_at,
+           m.requests AS request_count,false AS guest_resource_usage_available,0::integer AS guest_cpu_time_ms
+    FROM window_rows m LEFT JOIN deployments d ON d.id=m.deployment_id AND d.app_id=m.app_id
+    WHERE m.app_id=sqlc.arg(app_id)::uuid AND m.account_id=sqlc.arg(account_id)::uuid
+      AND m.dimension_kind='route' AND m.bucket_start>=sqlc.arg(window_from)::timestamptz AND m.bucket_start<sqlc.arg(window_until)::timestamptz
+), per_route_deployment AS (
+    SELECT route,
+           method,
+           deployment_id,
+           COALESCE(MAX(NULLIF(commit_sha, '')), '') AS commit_sha,
+           COALESCE(MAX(NULLIF(deployment_tag, '')), '') AS deployment_tag,
+           COALESCE(MAX(NULLIF(deployment_created_at, '')), '') AS deployment_created_at,
+           SUM(request_count)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE guest_resource_usage_available), 0)::bigint AS guest_cpu_measured_requests,
+           COALESCE(
+               ROUND(
+                   SUM(guest_cpu_time_ms::numeric * request_count)
+                       FILTER (WHERE guest_resource_usage_available)
+                   / NULLIF(SUM(request_count) FILTER (WHERE guest_resource_usage_available), 0)
+               ),
+               0
+           )::int AS guest_cpu_avg_ms
+    FROM filtered
+    GROUP BY route, method, deployment_id
+), top_routes AS (
+    SELECT route, method
+    FROM per_route_deployment
+    GROUP BY route, method
+    ORDER BY SUM(requests) DESC, route ASC, method ASC
+    LIMIT sqlc.arg('route_limit')::int
+), ranked_deployments AS (
+    SELECT per_route_deployment.*,
+           ROW_NUMBER() OVER (
+               PARTITION BY per_route_deployment.route, per_route_deployment.method
+               ORDER BY per_route_deployment.requests DESC, per_route_deployment.deployment_id ASC
+           ) AS deployment_rank
+    FROM per_route_deployment
+    JOIN top_routes USING (route, method)
+)
+SELECT route,
+       method,
+       CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END AS deployment_id,
+       CASE WHEN MAX(deployment_rank) <= sqlc.arg('deployment_limit')::int THEN COALESCE(MAX(commit_sha), '') ELSE '' END AS commit_sha,
+       CASE WHEN MAX(deployment_rank) <= sqlc.arg('deployment_limit')::int THEN COALESCE(MAX(deployment_tag), '') ELSE '' END AS deployment_tag,
+       CASE WHEN MAX(deployment_rank) <= sqlc.arg('deployment_limit')::int THEN COALESCE(MAX(deployment_created_at), '') ELSE '' END AS deployment_created_at,
+       SUM(requests)::bigint AS requests,
+       CASE WHEN MAX(deployment_rank) > sqlc.arg('deployment_limit')::int THEN 0
+            ELSE COALESCE(MAX(guest_cpu_measured_requests), 0)::bigint END AS guest_cpu_measured_requests,
+       CASE WHEN MAX(deployment_rank) > sqlc.arg('deployment_limit')::int THEN 0
+            ELSE COALESCE(MAX(guest_cpu_avg_ms), 0)::int END AS guest_cpu_avg_ms
+FROM ranked_deployments
+GROUP BY route,
+         method,
+         CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END
+ORDER BY route ASC,
+         method ASC,
+         CASE WHEN CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END = '__other__' THEN 1 ELSE 0 END,
+         MAX(deployment_created_at) DESC,
+         CASE WHEN deployment_rank <= sqlc.arg('deployment_limit')::int THEN deployment_id ELSE '__other__' END ASC;
+
+
+-- name: RecordRequestAnalyticsWindow :exec
+WITH audit AS (
+ INSERT INTO request_analytics_rollup_audit(app_id,audited_since)
+ VALUES(sqlc.arg(app_id)::uuid,clock_timestamp()) ON CONFLICT(app_id) DO NOTHING
+ RETURNING app_id
+)
+INSERT INTO request_analytics_rollup_windows(id,app_id,bucket_start,state)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(bucket_start)::timestamptz,sqlc.arg(state)::text)
+ON CONFLICT(id) DO NOTHING;
+
+-- name: CompleteRequestAnalyticsWindow :exec
+DELETE FROM request_analytics_rollup_windows WHERE id=sqlc.arg(id)::uuid AND state='pending';
+
+-- name: RequestAnalyticsCoverageGaps :many
+-- Prefer independent gateway counting proof for rollups, while raw responses
+-- require raw delivery proof. Later heartbeats never rewrite historical proof.
+WITH participating_nodes AS (
+ SELECT node_name FROM request_analytics_coverage_watermarks WHERE registered_at < sqlc.arg(window_until)::timestamptz AND source_at >= sqlc.arg(window_from)::timestamptz
+ UNION
+ SELECT name AS node_name FROM compute_nodes WHERE active AND created_at < sqlc.arg(window_until)::timestamptz
+ UNION
+ SELECT node_name FROM request_analytics_coverage_intervals WHERE covered_since < sqlc.arg(window_until)::timestamptz AND covered_until>=sqlc.arg(window_from)::timestamptz
+), evidence AS (
+ SELECT n.node_name, CASE WHEN sqlc.arg(rollups)::boolean AND EXISTS(
+ SELECT 1 FROM request_analytics_coverage_intervals i WHERE i.node_name=n.node_name AND i.source_kind='analytics'
+ AND i.covered_since<=sqlc.arg(window_from)::timestamptz AND i.covered_until>=sqlc.arg(window_until)::timestamptz
+ ) THEN 'analytics' ELSE 'raw' END::text AS source_kind FROM participating_nodes n
+), gaps AS (
+ SELECT 'telemetry_coverage_unknown'::text AS reason WHERE NOT EXISTS(SELECT 1 FROM evidence)
+ OR (sqlc.arg(rollups)::boolean AND EXISTS(SELECT 1 FROM evidence WHERE source_kind='raw') AND NOT EXISTS(
+ SELECT 1 FROM request_analytics_rollup_audit WHERE app_id=sqlc.arg(app_id)::uuid AND audited_since<=sqlc.arg(window_from)::timestamptz))
+ OR EXISTS(SELECT 1 FROM request_analytics_coverage_gaps g JOIN evidence e USING(node_name,source_kind)
+ WHERE g.app_id=sqlc.arg(app_id)::uuid AND g.history_incomplete AND g.gap_from>sqlc.arg(window_from)::timestamptz)
+ OR EXISTS(SELECT 1 FROM evidence e WHERE NOT EXISTS(
+ SELECT 1 FROM request_analytics_coverage_intervals i WHERE i.node_name=e.node_name AND i.source_kind=e.source_kind
+ AND i.covered_since<=sqlc.arg(window_from)::timestamptz AND i.covered_until>=sqlc.arg(window_until)::timestamptz))
+ UNION
+ SELECT 'telemetry_window_incomplete'::text WHERE EXISTS(
+ SELECT 1 FROM request_analytics_coverage_gaps g JOIN evidence e USING(node_name,source_kind)
+ WHERE g.app_id=sqlc.arg(app_id)::uuid AND g.gap_from<sqlc.arg(window_until)::timestamptz AND g.gap_until>=sqlc.arg(window_from)::timestamptz)
+ UNION
+ SELECT CASE WHEN state='lost' THEN 'telemetry_window_incomplete' ELSE 'telemetry_ingestion_pending' END
+ FROM request_analytics_rollup_windows WHERE sqlc.arg(rollups)::boolean AND app_id=sqlc.arg(app_id)::uuid
+ AND bucket_start<sqlc.arg(window_until)::timestamptz AND bucket_start+interval '1 minute'>sqlc.arg(window_from)::timestamptz
+)
+SELECT DISTINCT reason::text AS reason FROM gaps ORDER BY reason;

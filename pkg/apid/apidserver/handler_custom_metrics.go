@@ -104,6 +104,7 @@ func (s *server) putCustomMetric(w http.ResponseWriter, r *http.Request, acct st
 // the aggregate stays the series' maximum instead of being overwritten.
 func (s *server) savePushedCustomMetric(ctx context.Context, appID, name string, value float64, caps customMetricCaps) error {
 	now := time.Now()
+	freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
 	if series, ok := s.store.(state.CustomMetricSeriesStore); ok && caps.series > 0 {
 		rows, err := s.store.ListCustomMetrics(ctx, appID)
 		if err != nil {
@@ -156,7 +157,6 @@ func (s *server) listCustomMetrics(w http.ResponseWriter, r *http.Request, acct 
 		MaxSeries:  caps.series,
 	}
 	now := time.Now()
-	freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
 	for _, row := range rows {
 		out.Metrics = append(out.Metrics, api.CustomMetricResponse{
 			Name:       row.Name,
@@ -166,7 +166,7 @@ func (s *server) listCustomMetrics(w http.ResponseWriter, r *http.Request, acct 
 			// Stale is computed here rather than left to the client so
 			// the API and the scheduler cannot disagree about which rows
 			// are driving scaling.
-			Stale:  now.Sub(row.ObservedAt) > freshness,
+			Stale:  !api.CustomMetricFresh(row.ObservedAt, now),
 			Series: customMetricSeriesValues(series[row.Name], now, freshness),
 		})
 	}
@@ -203,7 +203,7 @@ func customMetricSeriesValues(rows []state.CustomMetricSeries, now time.Time, fr
 		}
 		out = append(out, api.CustomMetricSeriesValue{
 			Key: row.SeriesKey, Labels: labels, Value: row.Value,
-			ObservedAt: row.ObservedAt.UTC(), Stale: now.Sub(row.ObservedAt) > freshness,
+			ObservedAt: row.ObservedAt.UTC(), Stale: row.ObservedAt.After(now) || now.Sub(row.ObservedAt) > freshness,
 		})
 	}
 	return out

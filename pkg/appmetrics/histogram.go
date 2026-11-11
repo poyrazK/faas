@@ -15,7 +15,7 @@ import (
 // Semantics (matches PromQL histogram_quantile):
 //   - skip the +Inf bucket (it would otherwise return +Inf for q<1)
 //   - find the first bucket whose cumulative ≥ q·N
-//   - interpolate linearly in (prevNonEmptyUpper, upper) by count ratio
+//   - interpolate linearly in (previousUpper, upper) by count ratio
 //
 // NaN / +Inf from the upstream vector query surface as 0 here too
 // (PromQL emits the literal string "NaN" / "+Inf" in the value field,
@@ -72,9 +72,7 @@ func HistogramQuantile(q float64, buckets map[string]float64) float64 {
 			frac := (target - prevCum) / countInBucket
 			return prevUpper + frac*(p.le-prevUpper)
 		}
-		if p.cum > 0 {
-			prevUpper = p.le
-		}
+		prevUpper = p.le
 		prevCum = p.cum
 	}
 	return prevUpper

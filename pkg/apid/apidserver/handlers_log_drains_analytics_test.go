@@ -46,14 +46,17 @@ func TestGetAppLogDrainAnalyticsReturnsHourlyCustomerSafeSummary(t *testing.T) {
 	if got.LogDrainID != drain.ID || got.Window != "24h" || got.BucketInterval != "1h" || len(got.Buckets) != 3 {
 		t.Fatalf("analytics response = %+v, want three hourly buckets", got)
 	}
-	if got.Summary.Delivered != 20 || got.Summary.Failed != 2 || got.Summary.Dropped != 1 || got.Summary.Retries != 4 {
+	if got.Summary.Delivered != 10 || got.Summary.Failed != 1 || got.Summary.Dropped != 0 || got.Summary.Retries != 2 {
 		t.Fatalf("analytics summary = %+v", got.Summary)
 	}
-	if want := 20.0 / 23.0; got.Summary.SuccessRate != want {
+	if got.Complete == nil || *got.Complete || len(got.CoverageGaps) == 0 {
+		t.Fatalf("missing baseline was not disclosed: %+v", got)
+	}
+	if want := 10.0 / 11.0; got.Summary.SuccessRate != want {
 		t.Fatalf("success rate = %v, want %v", got.Summary.SuccessRate, want)
 	}
-	if got.Summary.AverageLatencyMS != 150 {
-		t.Fatalf("average latency = %v, want 150ms", got.Summary.AverageLatencyMS)
+	if got.Summary.AverageLatencyMS != 200 {
+		t.Fatalf("average latency = %v, want 200ms", got.Summary.AverageLatencyMS)
 	}
 	if got.Buckets[1].Delivered != 5 || got.Buckets[1].Failed != 1 || got.Buckets[1].Retries != 1 {
 		t.Fatalf("middle analytics bucket = %+v", got.Buckets[1])

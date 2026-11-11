@@ -9,4 +9,4 @@
  * (`telemetry_ingestion_pending`), or requests lost or a gateway restarted during the window (`telemetry_window_incomplete`).
  *
  */
-export type RequestAnalyticsTelemetryGap = 'telemetry_coverage_missing' | 'telemetry_coverage_stale' | 'telemetry_disabled' | 'telemetry_sampled' | 'telemetry_ingestion_pending' | 'telemetry_window_incomplete';
+export type RequestAnalyticsTelemetryGap = 'telemetry_coverage_unknown' | 'telemetry_coverage_missing' | 'telemetry_coverage_stale' | 'telemetry_disabled' | 'telemetry_sampled' | 'telemetry_ingestion_pending' | 'telemetry_window_incomplete';

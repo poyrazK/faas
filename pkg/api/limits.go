@@ -9465,6 +9465,8 @@ const (
 	// an OTLP data point may be stamped. A later stamp would keep the value
 	// fresh after its pusher stopped (ADR-20261031144636).
 	CustomMetricMaxFutureSkewSeconds = 300
+	// Accepted producer skew is clamped to receipt time.
+	CustomMetricClockSkew = CustomMetricMaxFutureSkewSeconds * time.Second
 
 	// CustomMetricExportMaxSeries caps one ADR-745 exporter scrape. The
 	// per-app name cap already bounds the table; this bounds a scrape even
@@ -15405,6 +15407,7 @@ const (
 	RequestAnalyticsRollupDimensionsBufferMax = 10 * RequestAnalyticsRollupDimensionsMax
 	// App minutes whose lost rollups wait to be recorded as gaps.
 	RequestAnalyticsRollupPendingGapsMax = 100_000
+	RequestAnalyticsDimensionMaxBytes    = 512
 	RequestAnalyticsRollupSeenEventsMax  = 200_000
 	RequestAnalyticsRollupPendingRowsMax = 200_000
 )

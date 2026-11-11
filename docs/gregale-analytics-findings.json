@@ -1,0 +1,620 @@
+{
+  "repository": "/workspace/faas",
+  "commit": "46aad2a12e4d1be39d0948b6942cb18d8e71d0b2",
+  "date": "2026-11-11",
+  "scope": "Gregale analytics investigation and remediation of AN-001 through AN-018; user authorized all fixes",
+  "findings": [
+    {
+      "id": "AN-001",
+      "priority": "P1",
+      "status": "fixed_regression_verified",
+      "title": "Unicode referrer poisons the shared rollup transaction",
+      "locations": [
+        "pkg/apid/receivers/request_analytics_rollups.go:227",
+        "pkg/state/request_analytics_rollups.go:52",
+        "pkg/gateway/request_telemetry_dimensions.go:82"
+      ],
+      "trigger": "171 copies of U+754C in a referrer hostname pass the gateway character bound, then are truncated at byte 512 inside a UTF-8 sequence.",
+      "impact": "Postgres SQLSTATE 22021 rolls back all apps in the same apid flush; the invalid row is restored and retried indefinitely.",
+      "evidence": "TestInvestigationUnicodeReferrerAcceptedBeforeRollups and TestInvestigationUnicodeReferrerBlocksSharedRollupFlush passed; two consecutive flushes persisted zero rows for either app.",
+      "suggested_fix": "Use UTF-8-safe byte bounds and isolate permanently invalid rows.",
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Bound UTF-8 referrers by bytes, normalize invalid dimension strings, and truncate at valid rune boundaries.",
+        "files": [
+          "pkg/gateway/request_telemetry_dimensions.go",
+          "pkg/apid/receivers/request_analytics_rollups.go",
+          "pkg/requestanalytics/aggregator.go"
+        ],
+        "regression_tests": [
+          "TestTelemetryReferrerUsesUTF8ByteBound",
+          "TestRollupUnicodeAndMethodsRemainBounded",
+          "TestUnicodeReferrerCannotBlockOtherAppsRollups"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-002",
+      "priority": "P1",
+      "status": "fixed_regression_verified",
+      "title": "Raw enrichment failures discard healthy rollup totals",
+      "locations": [
+        "pkg/apid/apidserver/handlers_request_analytics.go:376",
+        "pkg/apid/apidserver/handlers_request_analytics.go:437",
+        "pkg/apid/apidserver/handlers_request_analytics.go:503"
+      ],
+      "trigger": "Default route overview has usable rollups, but dependency or deployment raw reads time out.",
+      "impact": "Entire overview fails; API/CLI/MCP become unavailable and the dashboard drops the panel despite available traffic totals.",
+      "evidence": "TestInvestigationOptionalDependencyTimeoutDiscardsHealthyRollups passed: healthy rollups returned 100 requests, dependency timeout discarded the response.",
+      "suggested_fix": "Bound optional enrichments independently and return available totals with explicit omissions.",
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Give optional dependency, usage and deployment enrichments independent budgets and return available totals with explicit omissions.",
+        "files": [
+          "pkg/apid/analyticsrollup/optional.go",
+          "pkg/apid/apidserver/handlers_request_analytics.go"
+        ],
+        "regression_tests": [
+          "TestAnalyticsHealthyRollupsSurviveLockedRawEnrichments"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-003",
+      "priority": "P1",
+      "status": "fixed_regression_verified",
+      "title": "Rollup buffer loss is invisible to analytics completeness",
+      "locations": [
+        "pkg/apid/receivers/request_analytics_rollups.go:142",
+        "pkg/apid/receivers/request_analytics_rollups.go:392",
+        "pkg/state/pgstore_route_analytics.go:61"
+      ],
+      "trigger": "The 200000-row rollup pending buffer is full; Add returns false but the receiver ignores it and acknowledges inserted.",
+      "impact": "Rollups undercount; existing coverage still chooses rollups and gateway-only completeness can report complete.",
+      "evidence": "TestInvestigationFullRollupBufferStillAcknowledgesTelemetry passed with local Postgres: dropped analytics request, inserted acknowledgement, rollup coverage still selected, no telemetry gaps.",
+      "suggested_fix": "Record durable app/window rollup loss and pending watermarks and include them in completeness.",
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Persist legacy pending markers before acknowledging observations, complete them only after counts and loss evidence commit, and durably mark overflow loss before acknowledgement. Preserve gateway idempotent batch commits and shared aggregation. A crash between split writes and marker completion conservatively leaves the window pending.",
+        "files": [
+          "pkg/apid/receivers/request_analytics_rollups.go",
+          "pkg/state/request_analytics_rollups.go",
+          "migrations/20261111162527186_analytics_ingestion_coverage.sql"
+        ],
+        "regression_tests": [
+          "TestRollupsPersistPendingAndLostEvidence",
+          "TestAnalyticsPendingMarkerCommitsWithCountsAndLossRemains",
+          "TestAnalyticsCoverageRetentionKeepsCurrentEvidence"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-004",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "CLI renderer hides incomplete or unknown telemetry",
+      "locations": [
+        "cmd/gregale/commands_analytics.go:113"
+      ],
+      "trigger": "API returns telemetry_complete=false and telemetry_gaps, including zero-request output.",
+      "impact": "CLI prints normal totals without any completeness warning.",
+      "evidence": "TestInvestigationCLIHidesIncompleteTelemetry passed with false completeness and telemetry_window_incomplete.",
+      "suggested_fix": "Display incomplete and unknown states and associated gaps in human-readable output.",
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Render incomplete and unknown telemetry, gap reasons and unavailable optional details even when the response has no groups.",
+        "files": [
+          "cmd/gregale/commands_analytics.go"
+        ],
+        "regression_tests": [
+          "TestAnalyticsRendererShowsMissingEvidenceForEmptyResults"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-005",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Capped deployment samples invent traffic and cost for other deployments",
+      "locations": [
+        "pkg/apid/apidserver/handlers_request_analytics.go:665",
+        "pkg/dashboard/templates/app_detail.html:842",
+        "api/openapi.yaml:115448"
+      ],
+      "trigger": "Uncapped route total is 100 while only 10 requests from the sole deployment remain in raw telemetry.",
+      "impact": "The response and dashboard label 90 requests and 90% of route cost as other deployments although all traffic used the sole listed deployment.",
+      "evidence": "TestInvestigationRound2CappedSamplesInventOtherDeployments passed: 90 phantom other-deployment requests and 900/1000 millicents misattributed.",
+      "suggested_fix": "Compute deployment totals from deployment-keyed rollups; keep unsampled evidence explicitly unknown rather than inventing omitted deployments.",
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Read deployment counts from the same uncapped rollups as route totals; enrich CPU only by explicit deployment identity. Keep unobserved sampled traffic/cost unallocated instead of inventing other deployments.",
+        "files": [
+          "pkg/state/request_analytics_deployments.go",
+          "pkg/apid/apidserver/request_analytics_deployments_source.go",
+          "pkg/apid/apidserver/handlers_request_analytics.go"
+        ],
+        "regression_tests": [
+          "TestAnalyticsDeploymentRollupsUseUncappedPopulation",
+          "TestAnalyticsDeploymentSamplesDoNotInventOtherTraffic"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-006",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Sampled measures join disjoint __other__ cohorts",
+      "locations": [
+        "pkg/apid/analyticsrollup/analyticsrollup.go:172",
+        "pkg/apid/apidserver/handlers_request_analytics_source.go:41",
+        "pkg/state/queries.sql:4152"
+      ],
+      "trigger": "Ingest caps cause raw top-50 membership to differ from uncapped rollup top-50 membership.",
+      "impact": "CPU, RSS and guest/cold-request measures attached to __other__ can describe different countries/routes/consumers than the reported traffic.",
+      "evidence": "Real Postgres top-50 reproduction passed: rollup __other__ contained DE requests with 100ms CPU, while attached CPU was FR's 1ms from the disjoint raw __other__ population.",
+      "suggested_fix": "Select sampled measures using the rollup membership, or omit folded-group measures when cohort equivalence cannot be established.",
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Omit sampled measures for folded __other__ groups whose underlying cohort cannot be matched.",
+        "files": [
+          "pkg/apid/analyticsrollup/analyticsrollup.go"
+        ],
+        "regression_tests": [
+          "TestByDimensionNeverJoinsFoldedSampleCohorts"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-007",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Log-drain analytics drops the opening partial hour of its advertised window",
+      "locations": [
+        "pkg/apid/apidserver/app_log_drain_analytics.go:63",
+        "pkg/apid/apidserver/app_log_drain_analytics.go:72"
+      ],
+      "trigger": "A 1h lookback spans two hour buckets and deliveries occurred in the opening partial hour.",
+      "impact": "Deliveries inside from/to are silently treated as baseline; near the hour boundary the API can report almost none of the requested hour.",
+      "evidence": "Real HTTP handler probe passed: 100 deliveries at 11:59:59.999 fell after returned from=11:51:11 yet summary.delivered was zero.",
+      "suggested_fix": "Retain sufficient time granularity to honor the requested window, or return an explicit effective aligned window and partial coverage.",
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Include the opening hourly bucket, expose requested/effective bounds, and return the actual baseline and final observation timestamps.",
+        "files": [
+          "pkg/apid/apidserver/app_log_drain_analytics.go",
+          "pkg/apid/apidserver/handlers_dashboard_log_drains.go"
+        ],
+        "regression_tests": [
+          "TestLogDrainAnalyticsIncludesOpeningHourAndMarksUnknownBaselines"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-008",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Later telemetry losses contaminate completed historical windows",
+      "locations": [
+        "migrations/20261009061628470_route_removal_app_coverage.sql:91",
+        "pkg/state/pgstore_route_analytics.go:66"
+      ],
+      "trigger": "A historical [now-3h, now-2h) query is repeated after a loss at now-30m.",
+      "impact": "The unchanged historical window changes from complete to incomplete because the app-gap check has no until bound; current node state also contaminates historical assessments.",
+      "evidence": "Real Postgres reproduction passed: mature healthy coverage initially returned no gaps; adding only the later gap returned telemetry_window_incomplete for the same historical range.",
+      "suggested_fix": "Use interval-aware historical loss evidence; where historical completeness cannot be established, return unknown rather than asserting a later loss occurred in the queried range.",
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Preserve gateway healthy intervals and app gap intervals and check only evidence overlapping the requested historical window. Missing proof, legacy losses, and windows before durable auditing remain unknown.",
+        "files": [
+          "pkg/state/request_analytics_rollup_queries.sql",
+          "pkg/state/pgstore_route_analytics.go",
+          "migrations/20261111162527186_analytics_ingestion_coverage.sql",
+          "migrations/20261111163357221_analytics_counting_coverage_history.sql"
+        ],
+        "regression_tests": [
+          "TestAnalyticsHistoricalCoverageSurvivesLaterLossAndNodeOutage",
+          "TestRequestTelemetryCompletenessPG",
+          "TestAnalyticsCountingHistoryIgnoresLaterRawLoss"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-009",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Grouped timeseries returns null points and breaks Python SDK parsing",
+      "locations": [
+        "pkg/apid/apidserver/handlers_request_analytics.go:1158",
+        "pkg/api/dto.go:12533",
+        "sdk/python/faas_sdk/models/request_analytics_timeseries_response.py:163",
+        "sdk/python/faas_sdk/preview/models/request_analytics_timeseries_response.py:163"
+      ],
+      "trigger": "GET analytics/timeseries with group_by=country or another supported grouping.",
+      "impact": "The successful response has points:null despite the required array schema. Both stable and preview Python clients raise TypeError before reading series.",
+      "evidence": "Actual grouped HTTP response saved as grouped-timeseries-response.json. Both SDK parsers failed with NoneType object is not iterable; points=[] positive controls decoded successfully.",
+      "suggested_fix": "Initialize Points to an empty slice in grouped responses and retain a server-to-SDK contract test.",
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Initialize grouped timeseries points as an empty array and retain array shape in degraded custom metric history. Verify stable and preview Python decoding.",
+        "files": [
+          "pkg/apid/apidserver/handlers_request_analytics.go",
+          "pkg/apid/apidserver/handlers_custom_metric_series.go"
+        ],
+        "regression_tests": [
+          "TestAnalyticsGroupedHTTPResponseHasArrayPoints",
+          "AnalyticsContracts.test_grouped_points_remain_an_array"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-010",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Missing log-drain baseline leaks lifetime counters into a short-window summary",
+      "locations": [
+        "pkg/apid/apidserver/app_log_drain_analytics.go:135",
+        "pkg/apid/apidserver/app_log_drain_analytics.go:49"
+      ],
+      "trigger": "An existing drain resumes after a reporting gap, with its last earlier sample outside the narrow baseline query.",
+      "impact": "The first in-window cumulative counter is treated as all-new activity; delivered/failed/retry counts and success rates can be badly inflated.",
+      "evidence": "Real HTTP probe passed: 1000 deliveries three hours ago plus five new deliveries produced 1005 delivered for the requested last hour.",
+      "suggested_fix": "Fetch the last valid baseline before the window, validate its coverage, and expose missing-baseline uncertainty instead of counting lifetime totals.",
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Fetch the latest prior baseline, exclude unknown first deltas or sample gaps, and disclose incomplete history through API and dashboard coverage fields.",
+        "files": [
+          "pkg/state/log_drain_analytics_queries.sql",
+          "pkg/apid/apidserver/app_log_drain_analytics.go",
+          "pkg/dashboard/templates/log_drains.html"
+        ],
+        "regression_tests": [
+          "TestLogDrainAnalyticsIncludesOpeningHourAndMarksUnknownBaselines",
+          "TestGetAppLogDrainAnalyticsReturnsHourlyCustomerSafeSummary"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-011",
+      "priority": "P1",
+      "status": "fixed_regression_verified",
+      "title": "Custom HTTP methods bypass bounded route/method dimensions and break analytics SDK decoding",
+      "locations": [
+        "pkg/gateway/handler.go:6651",
+        "pkg/gateway/handler.go:8684",
+        "pkg/apid/receivers/request_analytics_rollups.go:188",
+        "pkg/apid/receivers/request_analytics_rollups.go:388"
+      ],
+      "trigger": "Requests use distinct valid HTTP method tokens such as X000 through X064. Gateway folds their route labels but retains each original method; the rollup writer accepts every method up to 16 bytes.",
+      "impact": "One app can create arbitrary route/method keys despite the bounded route-label design, increasing shared buffer and database load. Persisted groups contain methods outside the API enum; a single returned such group breaks stable and preview Python analytics parsing. Exhausting the shared buffer can amplify AN-003.",
+      "evidence": "Real gateway ServeHTTP probe accepted 65 custom methods and emitted 65 original method values under one __route_other__ label. Feeding those exact observations through the actual rollup writer and migration persisted 65 distinct method groups in isolated local Postgres. Both stable and preview Python group parsers rejected the persisted X000 method; GET positive controls passed.",
+      "suggested_fix": "Normalize or reject unsupported method dimensions consistently before rollup aggregation, bound method cardinality per app, align storage and OpenAPI/SDK enums, and keep unsupported traffic in an explicit bounded category.",
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Normalize nonstandard analytics methods to one OTHER category at gateway/receiver/read boundaries, preserve forwarded HTTP methods, and acknowledge unsupported raw methods after aggregation without violating the debugger table CHECK. Regenerate SDK method enums.",
+        "files": [
+          "pkg/api/request_analytics_method.go",
+          "pkg/gateway/handler.go",
+          "pkg/apid/receivers/request_telemetry.go",
+          "pkg/state/request_analytics_rollup_queries.sql",
+          "api/openapi.yaml",
+          "pkg/requestanalytics/aggregator.go"
+        ],
+        "regression_tests": [
+          "TestCustomMethodsShareOneTelemetryMethodCategory",
+          "TestUnsupportedMethodCountsWithoutInvalidRawInsert",
+          "TestAnalyticsReadsNormalizeLegacyHTTPMethods",
+          "AnalyticsContracts.test_bounded_other_method_and_unknown_coverage"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-012",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Shared percentile helper understates latency and reports slow-only traffic as zero",
+      "locations": [
+        "pkg/appmetrics/histogram.go:75",
+        "pkg/appmetrics/histogram.go:80",
+        "pkg/apid/apidserver/handlers_slo.go:300",
+        "pkg/apid/servicemap/build.go:223"
+      ],
+      "trigger": "All observations exceed one or more empty lower histogram buckets, or all observations exceed the largest finite bucket.",
+      "impact": "Account app metrics, account SLOs and service maps report artificially low percentiles. If all traffic lies in the overflow bucket, p50/p95/p99 can be zero despite slow requests.",
+      "evidence": "TestInvestigationHistogramQuantileSkipsZeroBounds compared the production helper directly with Prometheus v0.315.1 BucketQuantile: 500ms vs 750ms for empty lower buckets; 0ms vs the correct 1000ms finite cap for overflow-only traffic. See round3-tests.log.",
+      "suggested_fix": "Use the immediately preceding finite bucket boundary even when its cumulative count is zero; cap overflow quantiles at the highest finite boundary. Add independent Prometheus conformance cases.",
+      "investigation_round": 3,
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Interpolate from the immediately preceding finite bucket even when empty, and cap overflow observations at the highest finite bound.",
+        "files": [
+          "pkg/appmetrics/histogram.go"
+        ],
+        "regression_tests": [
+          "TestHistogramQuantileEmptyBoundsAndOverflow",
+          "TestHistogramQuantile"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-013",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Dashboard log pagination silently loses unseen entries as its window advances",
+      "locations": [
+        "pkg/apid/logsearch/dashboard.go:15",
+        "pkg/apid/logsearch/dashboard.go:38",
+        "pkg/apid/logsearch/dashboard.go:56"
+      ],
+      "trigger": "A dashboard search uses a relative window such as since=1h; the user follows NextURL after time has passed.",
+      "impact": "NextURL preserves the duration and cursor but recomputes since/until. Unseen events in the original opening interval disappear before the user reaches them; the dashboard also ignores an explicit until parameter.",
+      "evidence": "TestInvestigationDashboardPaginationLosesUnseenOpeningMinute seeded 101 events inside a one-hour window. Page one returned 100; the exact next-page URL returned the remaining event immediately, but zero events one minute later. See round3-tests.log.",
+      "suggested_fix": "Freeze the first page effective absolute since/until values in pagination URLs and preserve both parameters when parsing subsequent dashboard pages.",
+      "investigation_round": 3,
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Freeze effective absolute since/until bounds in dashboard pagination URLs and preserve until when parsing subsequent pages.",
+        "files": [
+          "pkg/apid/logsearch/dashboard.go"
+        ],
+        "regression_tests": [
+          "TestDashboardPaginationPreservesOriginalWindow"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-014",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Concurrent PostgreSQL custom metric writes exceed the distinct-name quota",
+      "locations": [
+        "pkg/state/custom_metrics.go:49",
+        "pkg/state/custom_metrics.go:58",
+        "pkg/apid/apidserver/handlers_otlp_metrics.go:63",
+        "pkg/api/limits.go:8776"
+      ],
+      "trigger": "Concurrent pushes of distinct new names observe the same app count below the five-name cap.",
+      "impact": "The count subquery and insert share a statement but do not serialize admissions across distinct names. REST pushes and concurrent OTLP exports can violate the per-app storage and Prometheus cardinality bound; MemStore mutex tests mask the production race.",
+      "evidence": "round3-custom-metrics-probe.go executed the exact migrations and production PgStore writer in an isolated local schema: four seeded metrics plus 16 simultaneous new names all succeeded, leaving 20 rows for cap=5. A test-only BEFORE INSERT advisory-lock barrier synchronized legitimate overlapping statements after their quota predicates; the production SQL was unchanged. A subsequent sequential new name was correctly rejected. See round3-custom-metrics.log.",
+      "suggested_fix": "Serialize per-app admission with an app-row lock or transaction-scoped advisory lock, or enforce the quota with an equivalent database invariant; cover concurrent distinct-name writers using PostgreSQL.",
+      "investigation_round": 3,
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Serialize per-app PostgreSQL admission in a read-committed transaction using a canonical UUID advisory-lock key before evaluating the distinct-name quota.",
+        "files": [
+          "pkg/state/custom_metrics.go",
+          "pkg/state/custom_metric_queries.sql",
+          "pkg/state/custom_metric_series.go"
+        ],
+        "regression_tests": [
+          "TestCustomMetricConcurrentAdmissionAndObservationOrdering"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-015",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Delayed OTLP exports overwrite newer custom metric values and freshness",
+      "locations": [
+        "pkg/state/custom_metrics.go:60",
+        "pkg/apid/apidserver/handlers_otlp_metrics.go:93",
+        "pkg/otlpmetrics/translate.go:110"
+      ],
+      "trigger": "A retry or delayed export for the same metric arrives after a more recent observation was already stored. Translate selects the newest observation only within one request.",
+      "impact": "The unconditional upsert moves observed_at backward and replaces the current value/kind. A current scaling signal or exported history can disappear when an old batch crosses the freshness cutoff; cumulative counters can falsely move backward.",
+      "evidence": "Real OTLP translation plus PgStore probe first stored fresh orders_pending=42, then a ten-minute-old value=3. ListCustomMetrics returned the old timestamp/value, and ListFreshCustomMetrics dropped the previously present signal. See round3-custom-metrics.log.",
+      "suggested_fix": "Make the conflict update conditional on observation ordering, define equal-time behavior and metric-kind changes, and keep stale/retried writes from replacing newer stored observations.",
+      "investigation_round": 3,
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Condition updates on observation time, ignoring stale retries without discarding newer values/kinds/timestamps. Permit recovery from legacy invalid future records.",
+        "files": [
+          "pkg/state/custom_metrics.go",
+          "pkg/state/custom_metric_queries.sql"
+        ],
+        "regression_tests": [
+          "TestCustomMetricConcurrentAdmissionAndObservationOrdering"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-016",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Future OTLP timestamps defeat custom metric freshness and stale detection",
+      "locations": [
+        "pkg/otlpmetrics/translate.go:106",
+        "pkg/state/custom_metrics.go:143",
+        "pkg/sched/targets/trigger.go:1052",
+        "pkg/apid/apidserver/handler_custom_metrics.go:112"
+      ],
+      "trigger": "An OTLP producer sends a future timestamp, for example from a misconfigured clock, then stops pushing.",
+      "impact": "No future-skew bound is applied. The exporter only checks a lower timestamp cutoff and the scheduler/UI compare negative ages with the freshness limit. A stopped producer can therefore keep an old backlog looking fresh, continuing a flat history and an active scaling signal until the future date.",
+      "evidence": "Real OTLP translation and local PostgreSQL accepted a sample dated one year ahead. At a simulated clock six hours after the last push, ListFreshCustomMetrics still returned it and the scheduler freshness predicate was true; a same-value ordinary timestamp control correctly expired. See round3-custom-metrics.log. This probe exercised the export store and freshness predicate, not a running scheduler.",
+      "suggested_fix": "Reject timestamps beyond a small documented clock-skew allowance and enforce an upper bound when determining freshness, preferably separating receipt time from producer observation time.",
+      "investigation_round": 3,
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Reject gross future producer timestamps including unsigned overflow, clamp accepted small clock skew to receipt time, exclude future stored records from exports, and share safe freshness checks with scheduler/UI.",
+        "files": [
+          "pkg/otlpmetrics/translate.go",
+          "pkg/api/scaling_targets.go",
+          "pkg/state/custom_metrics.go",
+          "pkg/sched/targets/trigger.go"
+        ],
+        "regression_tests": [
+          "TestTranslateBoundsGaugeValuesAndProducerClock",
+          "TestTranslateRejectsUnsignedFutureTimestampOverflow",
+          "TestCustomMetricFreshRejectsFutureAndExpiredObservations",
+          "TestCustomMetricConcurrentAdmissionAndObservationOrdering"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-017",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "Normal idle Prometheus NaN samples corrupt dashboard latency chart coordinates",
+      "locations": [
+        "pkg/appmetrics/range.go:228",
+        "pkg/promql/client.go:373",
+        "pkg/dashboard/views/render.go:139"
+      ],
+      "trigger": "A histogram query_range spans an idle interval with zero observations. histogram_quantile returns the valid Prometheus string NaN for that interval.",
+      "impact": "QueryRange accepts the non-finite value, FetchRange preserves it, and the SVG renderer emits NaN coordinates inside all percentile polylines. A normal no-observation interval corrupts otherwise valid latency trends instead of rendering an explicit gap.",
+      "evidence": "TestInvestigationIdleNaNReachesDashboardSVG used the real HTTP client, range fetcher and SVG renderer with a valid matrix containing 10, NaN, 20. The output contains points=\"2.00,20.00 90.00,NaN 178.00,4.00\". Prometheus BucketQuantile independently verified idle histograms return NaN; an all-finite positive control rendered valid coordinates. See round3-tests.log, round3-idle-control.log and round3-idle-latency.svg.",
+      "suggested_fix": "Represent non-finite range values as missing observations, render separate finite segments across gaps, and preserve correct time spacing without emitting invalid numeric coordinates.",
+      "investigation_round": 3,
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Render finite chart segments separated by gaps while preserving original x positions; suppress all-missing charts and omit nonfinite custom metric JSON points.",
+        "files": [
+          "pkg/dashboard/views/render_finite.go",
+          "pkg/dashboard/views/render.go",
+          "pkg/apid/apidserver/handlers_custom_metric_series.go"
+        ],
+        "regression_tests": [
+          "TestSparklinesKeepNonFiniteGaps"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    },
+    {
+      "id": "AN-018",
+      "priority": "P2",
+      "status": "fixed_regression_verified",
+      "title": "OTLP gauge ingestion bypasses the shared value bound and can overflow scaling arithmetic",
+      "locations": [
+        "pkg/otlpmetrics/translate.go:102",
+        "pkg/api/scaling_targets.go:313",
+        "pkg/sched/scalesignal/scalesignal.go:136",
+        "pkg/apid/apidserver/handler_custom_metrics.go:56"
+      ],
+      "trigger": "An OTLP gauge contains a finite nonnegative value larger than CustomMetricMaxValue=1e12; the translator checks only sign and finiteness.",
+      "impact": "The same invalid gauge rejected by the regular push endpoint is accepted through OTLP and persisted. Extremely large values overflow the float-to-int conversion in backlog replica calculation; the progress fallback reduces the desired count to concurrency+1, severely underestimating the signal rather than reaching the applicable cap.",
+      "evidence": "Real OTLP translation and local PgStore accepted a gauge of 1e100 while ValidateCustomMetricValue rejected it. Actual scalesignal.Arbitrate at zero concurrency and target=10 returned Desired=1; the max-valid-value control returned 100000000000 before plan clamping. See round3-custom-metrics.log.",
+      "suggested_fix": "Apply the shared custom metric value validation to OTLP gauges and saturate replica arithmetic before converting oversized float results to int. Handle cumulative counter bounds separately if their contract differs.",
+      "investigation_round": 3,
+      "remediation_status": "verified",
+      "original_status": "confirmed_unfixed",
+      "resolution": {
+        "summary": "Apply the shared maximum value validation to OTLP gauges and saturate replica demand before converting floats to integers. Preserve cumulative-counter semantics.",
+        "files": [
+          "pkg/otlpmetrics/translate.go",
+          "pkg/sched/scalesignal/scalesignal.go"
+        ],
+        "regression_tests": [
+          "TestTranslateBoundsGaugeValuesAndProducerClock",
+          "TestArbitrateSaturatesOversizedReplicaDemand"
+        ],
+        "branch": "fix/gregale-analytics-findings"
+      }
+    }
+  ],
+  "candidates_under_verification": [],
+  "ruled_out": [
+    {
+      "candidate": "Go SDK return evaluation discards populated output",
+      "result": "Standalone probe on pinned Go 1.26.10 returns the mutated struct correctly; not a finding."
+    },
+    {
+      "candidate": "Rollup retention uses personal instead of resource-owner plan",
+      "result": "Both rollup and raw retention join app_resource_accounts; not a finding."
+    }
+  ],
+  "fix_policy": "All 18 fixes authorized by the user and implemented locally; no production deployment or external publication.",
+  "unconfirmed_leads": [
+    {
+      "candidate": "QueryScalar decoder accepts the scalar resultType label but expects the vector result array shape.",
+      "locations": [
+        "pkg/promql/client.go:126"
+      ],
+      "status": "not_counted_as_finding",
+      "next_step": "Probe a genuine scalar payload and locate a first-party scalar-valued query. Existing count(...) queries return vectors; do not claim they fail without evidence."
+    }
+  ],
+  "remediation_branch": "fix/gregale-analytics-findings",
+  "investigation_validation": {
+    "existing_tests": "Targeted analyticsrollup and receivers tests passed",
+    "reproductions": "Five individual temporary probes passed. The first aggregate invocation had a temporary probe compilation error, corrected and rerun successfully for receivers.",
+    "production_tested": false,
+    "round2": "All six candidate behaviors reproduced: four handler/helper probes, two real-Postgres subtests, and stable/preview Python parser checks with positive controls. See round2-tests.log and round2-python-sdk.log.",
+    "round2_method": "Gateway HTTP, real rollup-to-Postgres, stable Python and preview Python method checks passed; see round2-gateway-methods.log, round2-method-rollup.log and round2-method-sdk.log.",
+    "repository_working_tree": "clean after investigation",
+    "round3": {
+      "new_confirmed_findings": 7,
+      "targeted_tests": "Histogram comparison against upstream Prometheus, dashboard log pagination and HTTP matrix-to-SVG tests passed; the idle case also passed independent zero-observation and finite-value controls.",
+      "postgres_probes": "Four independent behaviors reproduced with real OTLP translation / production PgStore writes in a unique local schema: concurrent quota admission, sample ordering, future timestamps and oversized values. Exact custom metric migrations applied only to this schema; it was cleaned up.",
+      "dependencies": "The upstream Prometheus comparison needed additional transitive dependencies. A copied round3-go.mod and round3-go.sum outside the checkout isolate those additions; the repository module files are unchanged.",
+      "logs": [
+        "round3-tests.log",
+        "round3-custom-metrics.log",
+        "round3-idle-control.log"
+      ],
+      "repository_working_tree": "clean; git status --porcelain=v1 returned no changes",
+      "production_tested": false
+    }
+  },
+  "remediation_validation": {
+    "core": "App metrics, chart views, log search, OTLP translation, scaling arbitration and all pkg/api tests passed.",
+    "boundaries": "Receiver, rollup, real gateway, CLI, MCP and OTLP regression selections passed.",
+    "postgres": "Quota race/order/future recovery, historical coverage, unsampled deployment counts, pending/loss atomicity, Unicode shared flush and retention passed in disposable local Postgres databases.",
+    "api": "Analytics, grouped HTTP response, missing-baseline drain history, custom metrics and existing affected API regressions passed.",
+    "sdk": "Stable and preview Python analytics contract tests passed; generated Node SDK TypeScript build passed; public specification and embedded OpenAPI match source.",
+    "schema": "Migration expand/contract lint, protocol version-skew, SQLC regeneration check, schema migration digest, and clone classification checks passed.",
+    "lint": "Changed-package lint plus affected-package reruns and test-store guard passed.",
+    "logs": [
+      "fix-core-final.log",
+      "fix-boundary-tests.log",
+      "fix-state-final.log",
+      "fix-history-final.log",
+      "fix-storage-final.log",
+      "fix-apid-final.log",
+      "fix-sdk-python-tests.log",
+      "fix-sdk-node-build.log",
+      "fix-lint.log",
+      "fix-lint-final.log",
+      "fix-schema-targets.log",
+      "fix-migration-lint.log",
+      "fix-version-skew.log",
+      "fix-sqlc-check.log",
+      "fix-sdk-spec-check.log"
+    ],
+    "deployment": "Not deployed. Apply the expand migration first, update every apid writer, then advance the audit start as documented in docs/adr/20261111140000-analytics-correctness.md. Mixed-version and earlier missing evidence remain unknown."
+  },
+  "integration_base": "1c3ca6851",
+  "integration_validation": "Rebased onto current main; local integration regressions and pull-request CI are being run."
+}

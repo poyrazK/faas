@@ -33,10 +33,12 @@ type RequestAnalyticsRollup struct {
 	LatencyHist   [api.RequestAnalyticsLatencyBuckets]int64
 }
 
-// RequestAnalyticsCoverage is the first minute an app's rollups hold.
+// RequestAnalyticsCoverage records a first covered minute and/or a pending
+// batch marker to clear atomically with the committed rollups.
 type RequestAnalyticsCoverage struct {
 	AppID        uuid.UUID
 	CoveredSince time.Time
+	PendingID    uuid.UUID
 }
 
 // RequestAnalyticsGap is an app minute whose rollups apid lost.
@@ -181,6 +183,18 @@ func addRequestAnalyticsRollupsTx(ctx context.Context, tx pgx.Tx, rows []Request
 			return fmt.Errorf("add hourly request analytics rollups: %w", mapErr(err))
 		}
 	}
+	firstCoverage := make([]RequestAnalyticsCoverage, 0, len(coverage))
+	for _, c := range coverage {
+		if c.PendingID != uuid.Nil {
+			if err := q.CompleteRequestAnalyticsWindow(ctx, tx, NewPgtypeUUID(c.PendingID)); err != nil {
+				return fmt.Errorf("complete analytics pending window: %w", err)
+			}
+		}
+		if !c.CoveredSince.IsZero() {
+			firstCoverage = append(firstCoverage, c)
+		}
+	}
+	coverage = firstCoverage
 	if len(coverage) > 0 {
 		arg := sqlc.RecordRequestAnalyticsRollupCoverageParams{
 			AppIds:       make([]pgtype.UUID, len(coverage)),
@@ -370,4 +384,14 @@ func RequestAnalyticsHistPercentile(hist []int64, maxMS int32, q float64) int {
 		}
 	}
 	return int(maxMS)
+}
+
+// RequestAnalyticsWindowStore persists pending and lost windows separately
+// from count batches so a failed/crashed flush cannot masquerade as complete.
+type RequestAnalyticsWindowStore interface {
+	RecordRequestAnalyticsWindow(context.Context, uuid.UUID, uuid.UUID, time.Time, string) error
+}
+
+func (s *PgStore) RecordRequestAnalyticsWindow(ctx context.Context, id, app uuid.UUID, at time.Time, kind string) error {
+	return sqlc.New().RecordRequestAnalyticsWindow(ctx, s.pool, sqlc.RecordRequestAnalyticsWindowParams{ID: NewPgtypeUUID(id), AppID: NewPgtypeUUID(app), BucketStart: pgtype.Timestamptz{Time: at, Valid: true}, State: kind})
 }

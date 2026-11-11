@@ -1,8 +1,10 @@
+// adr: 20261111140000 — byte-bounded UTF-8 analytics dimensions.
 package gateway
 
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,5 +66,11 @@ func TestCollapseRequestTelemetryKeepsDimensionsSeparate(t *testing.T) {
 	got := collapseRequestTelemetry([]RequestTelemetryRow{base, other})
 	if len(got) != 2 {
 		t.Fatalf("collapsed rows = %d, want 2 for distinct countries", len(got))
+	}
+}
+
+func TestTelemetryReferrerUsesUTF8ByteBound(t *testing.T) {
+	if got := normalizeTelemetryReferrer("https://" + strings.Repeat("界", 171)); got != telemetryOtherDimension {
+		t.Fatalf("oversized UTF-8 referrer survived: %q", got)
 	}
 }

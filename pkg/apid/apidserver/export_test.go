@@ -2403,3 +2403,9 @@ func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provi
 
 // PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
 var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode
+
+var AppLogDrainAnalyticsResponseForTest = appLogDrainAnalyticsResponse
+
+func RequestAnalyticsResponseForTest(ctx context.Context, store state.Store, app state.App, acct state.Account, from, until time.Time) (api.RequestAnalyticsResponse, error) {
+	return (&server{store: store}).requestAnalyticsResponse(ctx, app, acct, requestAnalyticsWindow{From: from, Until: until, AsOf: until, Since: until.Sub(from), RequestedSince: "1h"}, "route")
+}

@@ -14,6 +14,10 @@ import type { RequestAnalyticsTelemetryGap } from './RequestAnalyticsTelemetryGa
  *
  */
 export type RequestAnalyticsResponse = {
+  /**
+   * Optional enrichment sections unavailable within their query budgets; traffic totals remain available.
+   */
+  omitted?: Array<string>;
   slug: string;
   /**
    * Effective lookback duration after retention clamping.

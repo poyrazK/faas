@@ -106994,3 +106994,104 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+
+CREATE FUNCTION public.request_analytics_method(method text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+ SELECT CASE WHEN method IN ('GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','OTHER') THEN method ELSE 'OTHER' END
+$$;
+
+CREATE TABLE public.request_analytics_rollup_audit (
+ app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
+ audited_since timestamptz NOT NULL
+);
+
+CREATE TABLE public.request_analytics_rollup_windows (
+ id uuid PRIMARY KEY,
+ app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ bucket_start timestamptz NOT NULL,
+ state text NOT NULL CHECK(state IN ('pending','lost'))
+);
+CREATE INDEX request_analytics_rollup_windows_retention_idx ON public.request_analytics_rollup_windows(bucket_start);
+CREATE INDEX request_analytics_rollup_windows_app_idx ON public.request_analytics_rollup_windows(app_id,bucket_start);
+
+-- Preserve positive delivery evidence across later restarts or outages.
+-- The latest heartbeat alone cannot describe a completed historical window.
+CREATE TABLE public.request_analytics_coverage_watermarks (
+ node_name text NOT NULL CHECK(node_name<>''),
+ source_kind text NOT NULL DEFAULT 'raw' CHECK(source_kind IN ('raw','analytics')),
+ PRIMARY KEY(node_name,source_kind),
+ registered_at timestamptz NOT NULL,
+ previous_source_at timestamptz NOT NULL,
+ source_at timestamptz NOT NULL CHECK(source_at>=previous_source_at)
+);
+CREATE TABLE public.request_analytics_coverage_intervals (
+ node_name text NOT NULL CHECK(node_name<>''),
+ source_kind text NOT NULL DEFAULT 'raw' CHECK(source_kind IN ('raw','analytics')),
+ covered_since timestamptz NOT NULL,
+ covered_until timestamptz NOT NULL CHECK(covered_until>=covered_since),
+ PRIMARY KEY(node_name,source_kind,covered_since)
+);
+CREATE INDEX request_analytics_coverage_intervals_retention_idx ON public.request_analytics_coverage_intervals(covered_until);
+CREATE TABLE public.request_analytics_coverage_gaps (
+ node_name text NOT NULL CHECK(node_name<>''),
+ source_kind text NOT NULL DEFAULT 'raw' CHECK(source_kind IN ('raw','analytics')),
+ app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ gap_from timestamptz NOT NULL,
+ gap_until timestamptz NOT NULL CHECK(gap_until>=gap_from),
+ history_incomplete boolean NOT NULL DEFAULT false,
+ PRIMARY KEY(node_name,source_kind,app_id,gap_from)
+);
+
+CREATE INDEX request_analytics_coverage_gaps_app_idx ON public.request_analytics_coverage_gaps(app_id,gap_from,gap_until);
+CREATE INDEX request_analytics_coverage_gaps_retention_idx ON public.request_analytics_coverage_gaps(gap_until);
+CREATE FUNCTION public.request_analytics_record_coverage_interval() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE previous_stamp timestamptz:=NEW.source_at;
+BEGIN
+ IF TG_OP='UPDATE' THEN previous_stamp:=least(OLD.source_at,NEW.source_at); END IF;
+ INSERT INTO request_analytics_coverage_watermarks(node_name,registered_at,previous_source_at,source_at)
+ VALUES(NEW.node_name,coalesce((SELECT created_at FROM compute_nodes WHERE name=NEW.node_name),previous_stamp),previous_stamp,NEW.source_at)
+ ON CONFLICT(node_name,source_kind) DO UPDATE SET previous_source_at=EXCLUDED.previous_source_at,source_at=EXCLUDED.source_at;
+ IF NEW.healthy_since IS NOT NULL AND NEW.source_at>=NEW.healthy_since THEN
+  INSERT INTO request_analytics_coverage_intervals(node_name,covered_since,covered_until)
+  VALUES(NEW.node_name,NEW.healthy_since,NEW.source_at)
+  ON CONFLICT(node_name,source_kind,covered_since) DO UPDATE SET covered_until=greatest(request_analytics_coverage_intervals.covered_until,EXCLUDED.covered_until);
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER request_analytics_record_coverage_interval AFTER INSERT OR UPDATE ON public.request_telemetry_coverage
+ FOR EACH ROW EXECUTE FUNCTION public.request_analytics_record_coverage_interval();
+
+CREATE FUNCTION public.request_analytics_record_coverage_gap() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE first_gap timestamptz:=NEW.last_gap_at; kind text:=CASE WHEN TG_TABLE_NAME='request_analytics_app_gaps' THEN 'analytics' ELSE 'raw' END;
+BEGIN
+ SELECT least(first_gap,previous_source_at) INTO first_gap FROM request_analytics_coverage_watermarks WHERE node_name=NEW.node_name AND source_kind=kind;
+ first_gap:=coalesce(first_gap,NEW.last_gap_at);
+ IF TG_OP='UPDATE' AND OLD.pending_count>0 THEN first_gap:=least(first_gap,OLD.last_gap_at); END IF;
+ INSERT INTO request_analytics_coverage_gaps(node_name,source_kind,app_id,gap_from,gap_until)
+ VALUES(NEW.node_name,kind,NEW.app_id,first_gap,greatest(first_gap,NEW.updated_at))
+ ON CONFLICT(node_name,source_kind,app_id,gap_from) DO UPDATE SET gap_until=greatest(request_analytics_coverage_gaps.gap_until,EXCLUDED.gap_until);
+ RETURN NEW;
+END $$;
+CREATE TRIGGER request_analytics_record_coverage_gap AFTER INSERT OR UPDATE ON public.request_telemetry_app_gaps
+ FOR EACH ROW EXECUTE FUNCTION public.request_analytics_record_coverage_gap();
+
+CREATE FUNCTION public.request_analytics_record_counting_interval() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE previous_stamp timestamptz:=NEW.heartbeat_at; until_stamp timestamptz;
+BEGIN
+ IF TG_OP='UPDATE' THEN previous_stamp:=least(OLD.heartbeat_at,NEW.heartbeat_at); END IF;
+ INSERT INTO request_analytics_coverage_watermarks(node_name,source_kind,registered_at,previous_source_at,source_at)
+ VALUES(NEW.node_name,'analytics',coalesce((SELECT created_at FROM compute_nodes WHERE name=NEW.node_name),previous_stamp),previous_stamp,NEW.heartbeat_at)
+ ON CONFLICT(node_name,source_kind) DO UPDATE SET previous_source_at=EXCLUDED.previous_source_at,source_at=EXCLUDED.source_at;
+ SELECT least(NEW.heartbeat_at,c.source_at) INTO until_stamp FROM request_telemetry_coverage c
+ WHERE c.node_name=NEW.node_name AND c.boot_id=NEW.boot_id AND c.enabled AND c.sampling_basis_points=10000;
+ IF NEW.counting_since IS NOT NULL AND until_stamp>=NEW.counting_since THEN
+ INSERT INTO request_analytics_coverage_intervals(node_name,source_kind,covered_since,covered_until)
+ VALUES(NEW.node_name,'analytics',NEW.counting_since,until_stamp)
+ ON CONFLICT(node_name,source_kind,covered_since) DO UPDATE SET covered_until=greatest(request_analytics_coverage_intervals.covered_until,EXCLUDED.covered_until);
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER request_analytics_record_counting_interval AFTER INSERT OR UPDATE ON public.request_analytics_node_coverage
+ FOR EACH ROW EXECUTE FUNCTION public.request_analytics_record_counting_interval();
+CREATE TRIGGER request_analytics_record_counting_gap AFTER INSERT OR UPDATE ON public.request_analytics_app_gaps
+ FOR EACH ROW EXECUTE FUNCTION public.request_analytics_record_coverage_gap();

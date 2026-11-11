@@ -1,12 +1,13 @@
 from typing import Literal
 
-RequestAnalyticsTimeseriesSeriesMethod = Literal["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+RequestAnalyticsTimeseriesSeriesMethod = Literal["DELETE", "GET", "HEAD", "OPTIONS", "OTHER", "PATCH", "POST", "PUT"]
 
 REQUEST_ANALYTICS_TIMESERIES_SERIES_METHOD_VALUES: set[RequestAnalyticsTimeseriesSeriesMethod] = {
     "DELETE",
     "GET",
     "HEAD",
     "OPTIONS",
+    "OTHER",
     "PATCH",
     "POST",
     "PUT",

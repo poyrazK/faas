@@ -48,24 +48,29 @@ func (s *server) getAppLogDrainAnalytics(w http.ResponseWriter, r *http.Request,
 	}
 	to := time.Now().UTC()
 	from := to.Add(-duration)
-	firstBucket := from.Truncate(appLogDrainAnalyticsBucketInterval).Add(appLogDrainAnalyticsBucketInterval)
+	firstBucket := from.Truncate(appLogDrainAnalyticsBucketInterval)
 	samples, err := s.store.ListAppLogDrainDeliveryAnalytics(r.Context(), drain.ID,
-		firstBucket.Add(-appLogDrainAnalyticsBucketInterval), to.Truncate(appLogDrainAnalyticsBucketInterval))
+		firstBucket, to.Truncate(appLogDrainAnalyticsBucketInterval))
 	if err != nil {
 		s.log.WarnContext(r.Context(), "read app log drain analytics", slog.String("err", err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("could not read log drain analytics"))
 		return
 	}
-	writeJSON(w, http.StatusOK, appLogDrainAnalyticsResponse(samples, drain.ID, window, from, to))
+	writeJSON(w, http.StatusOK, appLogDrainAnalyticsResponse(samples, drain.ID, window, from, to, drain.CreatedAt))
 }
 
-func appLogDrainAnalyticsResponse(samples []state.AppLogDrainDeliveryAnalytics, drainID, window string, from, to time.Time) api.AppLogDrainAnalyticsResponse {
-	firstBucket := from.Truncate(appLogDrainAnalyticsBucketInterval).Add(appLogDrainAnalyticsBucketInterval)
+func appLogDrainAnalyticsResponse(samples []state.AppLogDrainDeliveryAnalytics, drainID, window string, from, to time.Time, createdAt ...time.Time) api.AppLogDrainAnalyticsResponse {
+	firstBucket := from.Truncate(appLogDrainAnalyticsBucketInterval)
 	out := api.AppLogDrainAnalyticsResponse{
 		LogDrainID: drainID, Window: window, BucketInterval: "1h",
-		From: api.FormatAlertTime(from), To: api.FormatAlertTime(to),
+		From: api.FormatAlertTime(firstBucket), To: api.FormatAlertTime(to),
+		RequestedFrom: api.FormatAlertTime(from), WindowAligned: !from.Equal(firstBucket), CoverageGaps: []string{},
 		Buckets: make([]api.AppLogDrainAnalyticsBucket, 0, 30),
 	}
+	complete := true
+	out.Complete = &complete
+	effectiveFrom, effectiveTo := firstBucket, to
+	var latencyNanos, latencySamples int64
 	var previous state.AppLogDrainDeliveryAnalytics
 	hasPrevious := false
 	for _, sample := range samples {
@@ -74,10 +79,47 @@ func appLogDrainAnalyticsResponse(samples []state.AppLogDrainDeliveryAnalytics, 
 			hasPrevious = true
 			continue
 		}
-		bucket := appLogDrainAnalyticsBucketResponse(sample, previous, hasPrevious)
+		baselineKnown := hasPrevious
+		if !baselineKnown && len(createdAt) > 0 && !createdAt[0].Before(firstBucket) && !sample.SampledAt.Before(createdAt[0]) {
+			baselineKnown = true
+		}
+		gap := ""
+		if !baselineKnown {
+			gap = "baseline_missing"
+		} else if hasPrevious && sample.BucketStart.Sub(previous.BucketStart) > appLogDrainAnalyticsBucketInterval {
+			baselineKnown = false
+			gap = "sample_gap"
+		}
+		if gap != "" {
+			complete = false
+			if len(out.CoverageGaps) == 0 || out.CoverageGaps[len(out.CoverageGaps)-1] != gap {
+				out.CoverageGaps = append(out.CoverageGaps, gap)
+			}
+		}
+		if len(out.Buckets) == 0 && baselineKnown {
+			if hasPrevious && !previous.SampledAt.IsZero() {
+				effectiveFrom = previous.SampledAt.UTC()
+			}
+			if !hasPrevious && len(createdAt) > 0 {
+				effectiveFrom = createdAt[0].UTC()
+			}
+		}
+		if !sample.SampledAt.IsZero() && !sample.SampledAt.After(to) {
+			effectiveTo = sample.SampledAt.UTC()
+		}
+		latencyNanos += analyticsDelta(sample.DeliveryLatencyNanosTotal, previous.DeliveryLatencyNanosTotal, baselineKnown)
+		latencySamples += analyticsDelta(sample.DeliveryLatencySamples, previous.DeliveryLatencySamples, baselineKnown)
+		bucket := appLogDrainAnalyticsBucketResponse(sample, previous, baselineKnown)
 		out.Buckets = append(out.Buckets, bucket)
 		previous = sample
 		hasPrevious = true
+	}
+	out.From = api.FormatAlertTime(effectiveFrom)
+	out.To = api.FormatAlertTime(effectiveTo)
+	out.WindowAligned = !effectiveFrom.Equal(from) || !effectiveTo.Equal(to)
+	if len(out.Buckets) == 0 {
+		complete = false
+		out.CoverageGaps = append(out.CoverageGaps, "no_samples")
 	}
 	for _, bucket := range out.Buckets {
 		out.Summary.Delivered += bucket.Delivered
@@ -87,7 +129,6 @@ func appLogDrainAnalyticsResponse(samples []state.AppLogDrainDeliveryAnalytics, 
 		out.Summary.DeadLetters += bucket.DeadLetters
 	}
 	out.Summary.SuccessRate = deliverySuccessRate(out.Summary.Delivered, out.Summary.Failed, out.Summary.Dropped)
-	latencyNanos, latencySamples := analyticsLatencyTotals(samples, firstBucket)
 	if latencySamples > 0 {
 		out.Summary.AverageLatencyMS = float64(latencyNanos) / float64(latencySamples) / float64(time.Millisecond)
 	}
@@ -114,26 +155,11 @@ func appLogDrainAnalyticsBucketResponse(sample, previous state.AppLogDrainDelive
 	return bucket
 }
 
-func analyticsLatencyTotals(samples []state.AppLogDrainDeliveryAnalytics, firstBucket time.Time) (int64, int64) {
-	var previous state.AppLogDrainDeliveryAnalytics
-	hasPrevious := false
-	var nanos, count int64
-	for _, sample := range samples {
-		if sample.BucketStart.Before(firstBucket) {
-			previous = sample
-			hasPrevious = true
-			continue
-		}
-		nanos += analyticsDelta(sample.DeliveryLatencyNanosTotal, previous.DeliveryLatencyNanosTotal, hasPrevious)
-		count += analyticsDelta(sample.DeliveryLatencySamples, previous.DeliveryLatencySamples, hasPrevious)
-		previous = sample
-		hasPrevious = true
-	}
-	return nanos, count
-}
-
 func analyticsDelta(current, previous int64, hasPrevious bool) int64 {
-	if !hasPrevious || current < previous {
+	if !hasPrevious {
+		return 0
+	}
+	if current < previous {
 		return current
 	}
 	return current - previous

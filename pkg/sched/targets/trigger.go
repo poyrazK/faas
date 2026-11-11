@@ -1078,13 +1078,12 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				}
 			}
 			series := t.labelledCustomSeries(ctx, app.ID, customTargets)
-			freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
 			for _, ct := range customTargets {
 				row, ok := stored[ct.Name]
 				if len(ct.Labels) > 0 {
 					row, ok = series[ct.Name+"\x00"+api.CustomMetricSeriesKey(ct.Labels)]
 				}
-				fresh := ok && now.Sub(row.ObservedAt) <= freshness
+				fresh := ok && api.CustomMetricFresh(row.ObservedAt, now)
 				obs = append(obs, scalesignal.Observation{
 					Metric:   api.ScalingMetricCustom,
 					Target:   ct.Value,

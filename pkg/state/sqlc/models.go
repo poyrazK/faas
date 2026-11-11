@@ -14106,6 +14106,30 @@ type RequestAnalyticsAppGap struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type RequestAnalyticsCoverageGap struct {
+	NodeName          string
+	SourceKind        string
+	AppID             pgtype.UUID
+	GapFrom           pgtype.Timestamptz
+	GapUntil          pgtype.Timestamptz
+	HistoryIncomplete bool
+}
+
+type RequestAnalyticsCoverageInterval struct {
+	NodeName     string
+	SourceKind   string
+	CoveredSince pgtype.Timestamptz
+	CoveredUntil pgtype.Timestamptz
+}
+
+type RequestAnalyticsCoverageWatermark struct {
+	NodeName         string
+	SourceKind       string
+	RegisteredAt     pgtype.Timestamptz
+	PreviousSourceAt pgtype.Timestamptz
+	SourceAt         pgtype.Timestamptz
+}
+
 // Hourly request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952 amendment 2).
 type RequestAnalyticsHour struct {
 	AppID           pgtype.UUID
@@ -14153,6 +14177,11 @@ type RequestAnalyticsNodeCoverage struct {
 	UnattributedDroppedTotal int64
 }
 
+type RequestAnalyticsRollupAudit struct {
+	AppID        pgtype.UUID
+	AuditedSince pgtype.Timestamptz
+}
+
 // Gateway analytics rollup batches apid applied; written only by apid, swept only by meterd (ADR-20261103113952 amendment 5).
 type RequestAnalyticsRollupBatch struct {
 	BatchID   pgtype.UUID
@@ -14171,6 +14200,13 @@ type RequestAnalyticsRollupCoverage struct {
 type RequestAnalyticsRollupGap struct {
 	AppID       pgtype.UUID
 	BucketStart pgtype.Timestamptz
+}
+
+type RequestAnalyticsRollupWindow struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	BucketStart pgtype.Timestamptz
+	State       string
 }
 
 type RequestAuditEvent struct {

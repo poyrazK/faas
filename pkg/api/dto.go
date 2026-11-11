@@ -12612,6 +12612,8 @@ type RequestAnalyticsGroup struct {
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
 type RequestAnalyticsResponse struct {
+	// Omitted names optional enrichments unavailable within their query budget.
+	Omitted               []string                                 `json:"omitted,omitempty"`
 	Slug                  string                                   `json:"slug"`
 	Since                 string                                   `json:"since"`
 	From                  string                                   `json:"from"`

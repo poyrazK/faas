@@ -20,7 +20,7 @@ export type RequestAnalyticsTimeseriesResponse = {
   /**
    * Exact method filter when a route-level series was requested.
    */
-  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER';
   /**
    * Effective series lookback after retention clamping.
    */

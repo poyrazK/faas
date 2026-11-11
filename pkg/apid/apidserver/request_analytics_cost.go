@@ -126,3 +126,8 @@ func allocateRequestAnalyticsRouteCost(routes []api.RequestAnalyticsRoute, other
 	}
 	return requestCount, allocatedMillicents, allocations[len(routes)]
 }
+
+func proportionMillicents(total, part, whole int64) int64 {
+	shares, _, _ := allocateRequestShareMillicents([]int64{part, whole - part}, total)
+	return shares[0]
+}

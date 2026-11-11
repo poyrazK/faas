@@ -420,6 +420,8 @@ sql:
       - "pkg/state/service_wake_ahead_queries.sql"
       - "pkg/state/snapshot_recovery_queries.sql"
       - "pkg/state/telemetry_coverage_queries.sql"
+      - "pkg/state/custom_metric_queries.sql"
+      - "pkg/state/log_drain_analytics_queries.sql"
       - "pkg/state/trigger_metrics_queries.sql"
       - "pkg/state/work_admission_queries.sql"
       - "pkg/state/worker_recovery_queries.sql"

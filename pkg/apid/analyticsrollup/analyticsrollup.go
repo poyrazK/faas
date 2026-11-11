@@ -349,7 +349,7 @@ func ByDimension(groups []Group, sampled []sqlc.RequestTelemetryAnalyticsByDimen
 			Requests: g.Requests, ErrorRequests: g.ErrorRequests, ColdBoots: g.ColdBoots,
 			RequestTimeMs: g.RequestTimeMS, P50Ms: g.P(0.50), P95Ms: g.P(0.95), P99Ms: g.P(0.99),
 		}
-		if s, ok := raw[key{g.Dimension, g.Method}]; ok {
+		if s, ok := raw[key{g.Dimension, g.Method}]; ok && g.Dimension != OtherDimension {
 			row.ColdRequestP95Ms = s.ColdRequestP95Ms
 			row.WakeBootP95Ms = s.WakeBootP95Ms
 			row.GuestExecutionP50Ms = s.GuestExecutionP50Ms

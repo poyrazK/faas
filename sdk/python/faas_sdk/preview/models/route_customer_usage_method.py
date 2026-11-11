@@ -1,12 +1,13 @@
 from typing import Literal
 
-RouteCustomerUsageMethod = Literal["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+RouteCustomerUsageMethod = Literal["DELETE", "GET", "HEAD", "OPTIONS", "OTHER", "PATCH", "POST", "PUT"]
 
 ROUTE_CUSTOMER_USAGE_METHOD_VALUES: set[RouteCustomerUsageMethod] = {
     "DELETE",
     "GET",
     "HEAD",
     "OPTIONS",
+    "OTHER",
     "PATCH",
     "POST",
     "PUT",

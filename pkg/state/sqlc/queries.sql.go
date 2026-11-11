@@ -99795,7 +99795,7 @@ WITH filtered AS (
             WHEN 'consumer_id' THEN COALESCE(consumer_id::text, '__anonymous__')
             ELSE route
         END::text AS dimension,
-        CASE WHEN $5::text = 'route' THEN method ELSE '' END AS method,
+        CASE WHEN $5::text = 'route' THEN request_analytics_method(method)::text ELSE '' END AS method,
         latency_ms,
         cold_boot,
         status,
@@ -100090,7 +100090,7 @@ func (q *Queries) RequestTelemetryAnalyticsByDimension(ctx context.Context, db D
 
 const requestTelemetryAnalyticsByRoute = `-- name: RequestTelemetryAnalyticsByRoute :many
 WITH filtered AS (
-    SELECT route, method, latency_ms, cold_boot, status,
+    SELECT route, request_analytics_method(method)::text AS method, latency_ms, cold_boot, status,
            count::bigint AS request_count
     FROM request_telemetry
     WHERE app_id = $1
@@ -100202,7 +100202,7 @@ func (q *Queries) RequestTelemetryAnalyticsByRoute(ctx context.Context, db DBTX,
 const requestTelemetryAnalyticsByRouteDeployment = `-- name: RequestTelemetryAnalyticsByRouteDeployment :many
 WITH filtered AS (
     SELECT route,
-           method,
+           request_analytics_method(method)::text AS method,
            deployment_id::text AS deployment_id,
            commit_sha,
            deployment_tag,
@@ -100428,7 +100428,7 @@ WITH buckets AS (
       AND received_at >= $3::timestamptz
       AND received_at <  $4::timestamptz
       AND ($5::text = '' OR route = $5::text)
-      AND ($6::text = '' OR method = $6::text)
+      AND ($6::text = '' OR request_analytics_method(method) = $6::text)
 ), latency_values AS (
     SELECT bucket_start,
            latency_ms,
@@ -100544,7 +100544,7 @@ WITH buckets AS (
                WHEN 'consumer_id' THEN COALESCE(consumer_id::text, '__anonymous__')
                ELSE route
            END::text AS dimension,
-           CASE WHEN $5::text = 'route' THEN method ELSE '' END AS method,
+           CASE WHEN $5::text = 'route' THEN request_analytics_method(method)::text ELSE '' END AS method,
            latency_ms,
            cold_boot,
            status,
@@ -100555,7 +100555,7 @@ WITH buckets AS (
       AND received_at >= $3::timestamptz
       AND received_at <  $4::timestamptz
       AND ($6::text = '' OR route = $6::text)
-      AND ($7::text = '' OR method = $7::text)
+      AND ($7::text = '' OR request_analytics_method(method) = $7::text)
 ), top_groups AS (
     SELECT dimension, method
     FROM filtered

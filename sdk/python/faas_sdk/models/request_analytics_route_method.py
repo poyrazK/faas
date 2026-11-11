@@ -1,12 +1,13 @@
 from typing import Literal
 
-RequestAnalyticsRouteMethod = Literal["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+RequestAnalyticsRouteMethod = Literal["DELETE", "GET", "HEAD", "OPTIONS", "OTHER", "PATCH", "POST", "PUT"]
 
 REQUEST_ANALYTICS_ROUTE_METHOD_VALUES: set[RequestAnalyticsRouteMethod] = {
     "DELETE",
     "GET",
     "HEAD",
     "OPTIONS",
+    "OTHER",
     "PATCH",
     "POST",
     "PUT",
