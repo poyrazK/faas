@@ -44,7 +44,7 @@ type LockDeployTokenParams struct {
 	AppID     pgtype.UUID
 }
 
-// A token authenticates as its minter when it has one (ADR 20261110190000).
+// A token authenticates as its minter when it has one (ADR 20261110190500).
 func (q *Queries) LockDeployToken(ctx context.Context, db DBTX, arg LockDeployTokenParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, lockDeployToken, arg.ID, arg.AccountID, arg.AppID)
 	var id pgtype.UUID
