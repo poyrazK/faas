@@ -194,9 +194,11 @@ URLs and dashboard lists also enforce departure and role changes.
 A company project links its repository through the company's own GitHub
 installation, never a member's personal one
 ([ADR-20261110200000](adr/20261110200000-organization-owned-github-installations.md)).
-An owner or admin connects it from Connect GitHub with the company selected
-(the form's `organization` field); the role is checked again when GitHub
-returns. An installation belongs to one Gregale owner, so disconnect it from a
+An owner or admin connects it from the GitHub section of the organization's
+dashboard page (Connect GitHub for the company); the role is checked again
+when GitHub returns. The same section lists the company's installations to
+every member and lets owners and admins disconnect one, which unlinks every
+company project bound through it. An installation belongs to one Gregale owner, so disconnect it from a
 personal account before connecting it for the company. Owners and admins then
 set `repo_full_name` with `PATCH /v1/orgs/{organization}/projects/{slug}`;
 members list the company's installations at
