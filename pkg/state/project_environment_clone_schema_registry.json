@@ -10182,6 +10182,16 @@
     "kind": "account_identity"
   },
   {
+    "table": "login_failure_budgets",
+    "columns": [
+      "email_hash",
+      "failures",
+      "notified_at",
+      "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "magic_link_tokens",
     "columns": [
       "account_id",

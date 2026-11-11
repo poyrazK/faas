@@ -5081,6 +5081,7 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"},
 			{Name: "token-stdin", Short: "read a pre-minted token from stdin (CI)"},
+			{Name: "insecure-storage", Short: "save the key to a plaintext file instead of the OS keychain (WSL, containers, SSH)", Bool: true},
 		},
 	},
 	{
