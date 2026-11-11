@@ -18,7 +18,7 @@ func (s *server) createImageRun(w http.ResponseWriter, r *http.Request, acct sta
 
 // ensureSessionImage caches a seller image for a sandbox session in the
 // image-run cache (ADR-20261027090013).
-func (s *server) ensureSessionImage(ctx context.Context, acct state.Account, image string) (string, string, *api.Problem) {
+func (s *server) ensureSessionImage(ctx context.Context, acct state.Account, src api.SandboxImageSource) (string, string, *api.Problem) {
 	if !s.imageRunsEnabled {
 		return "", "", api.ErrSandboxUnsupported("image", "seller images need image runs, which are off on this control-plane host; name a preset")
 	}
@@ -26,7 +26,7 @@ func (s *server) ensureSessionImage(ctx context.Context, acct state.Account, ima
 	if h.Store == nil {
 		return "", "", api.ErrCapacity("image runs are unavailable on this control-plane host")
 	}
-	job, ref, prob := h.EnsureSessionImage(ctx, acct, image)
+	job, ref, prob := h.EnsureSessionImage(ctx, acct, src)
 	return job.ID, ref, prob
 }
 

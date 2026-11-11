@@ -275,9 +275,9 @@ func TestCreateRules(t *testing.T) {
 func TestCreateFromASellerImage(t *testing.T) {
 	f := newFixture(t)
 	var ensured []string
-	f.h.EnsureImage = func(_ context.Context, _ state.Account, image string) (string, string, *api.Problem) {
-		ensured = append(ensured, image)
-		if image == "full" {
+	f.h.EnsureImage = func(_ context.Context, _ state.Account, src api.SandboxImageSource) (string, string, *api.Problem) {
+		ensured = append(ensured, src.Image)
+		if src.Image == "full" {
 			return "", "", api.ErrImageRunCacheFull(api.PlanPro, 1, 1)
 		}
 		return "11111111-1111-1111-1111-111111111111", "ghcr.io/acme/box:latest", nil
@@ -299,6 +299,36 @@ func TestCreateFromASellerImage(t *testing.T) {
 	}
 	if len(f.store.sessions) != 1 {
 		t.Fatalf("sessions = %d", len(f.store.sessions))
+	}
+}
+
+// pull and registry_auth go with an image and reach the image cache with
+// it; without an image, or with an unknown pull, nothing is cached.
+func TestCreateImagePullAndRegistryAuth(t *testing.T) {
+	f := newFixture(t)
+	var got []api.SandboxImageSource
+	f.h.EnsureImage = func(_ context.Context, _ state.Account, src api.SandboxImageSource) (string, string, *api.Problem) {
+		got = append(got, src)
+		return "11111111-1111-1111-1111-111111111111", "ghcr.io/acme/box:latest", nil
+	}
+	for _, body := range []string{
+		`{"preset":"codex","pull":"always"}`,
+		`{"preset":"codex","registry_auth":{"username":"ci","password":"token"}}`,
+		`{"image":"ghcr.io/acme/box","pull":"sometimes"}`,
+	} {
+		if _, code := f.create(t, pro(), body); code != http.StatusBadRequest {
+			t.Fatalf("%s = %d, want 400", body, code)
+		}
+	}
+	if len(got) != 0 {
+		t.Fatalf("a refused request reached the image cache: %+v", got)
+	}
+	if _, code := f.create(t, pro(), `{"image":"ghcr.io/acme/box","pull":"always","registry_auth":{"username":"ci","password":"token"}}`); code != http.StatusCreated {
+		t.Fatalf("create = %d", code)
+	}
+	if len(got) != 1 || got[0].Image != "ghcr.io/acme/box" || got[0].Pull != api.ImageRunPullAlways || got[0].RegistryAuth == nil ||
+		got[0].RegistryAuth.Username != "ci" || got[0].RegistryAuth.Password != "token" {
+		t.Fatalf("ensured %+v", got)
 	}
 }
 

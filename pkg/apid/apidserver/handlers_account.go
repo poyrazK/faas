@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/accountexport"
 	"github.com/onebox-faas/faas/pkg/db"
+	mailpkg "github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -420,6 +421,10 @@ func (s *server) cancelDeletion(ctx context.Context, acct state.Account, via str
 	s.audit.Emit(ctx, "account.deletion_restored", &fresh.ID, map[string]any{
 		"via": via,
 	})
+	// The owner asked for the deletion; tell them it was cancelled, so a
+	// restore they did not make is noticed (ADR-20261111150000).
+	subject, body := mailpkg.AccountDeletionCancelledBody(fresh.Email, time.Now().UTC())
+	s.sendSecurityNotice(ctx, fresh, "account_deletion_cancelled", subject, body)
 	return fresh, nil
 }
 
