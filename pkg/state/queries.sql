@@ -29681,3 +29681,18 @@ WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::text::u
 
 -- name: ClearCustomDomainCertificateAttempt :exec
 UPDATE custom_domains SET cert_retry_at=NULL WHERE domain=sqlc.arg(domain)::text::citext;
+
+-- name: AppPreviewDatabaseEnvKeys :many
+-- ADR-20261102123523: the environment keys a PR preview of this app gets from
+-- its own preview databases, mirroring previewdb.Manager.Prepare: the app's
+-- bindings in the scopes production serves on personally owned databases
+-- with previews on.
+SELECT DISTINCT b.environment_key
+FROM managed_postgres_bindings b
+JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.database_account_id
+JOIN orgs o ON o.id = d.org_id AND o.personal_org AND o.personal_owner_account_id = b.account_id
+WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
+  AND b.scope IN ('default', 'production') AND b.state NOT IN ('deleting', 'deleted')
+  AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
+  AND d.state NOT IN ('deleting', 'deleted')
+ORDER BY b.environment_key;

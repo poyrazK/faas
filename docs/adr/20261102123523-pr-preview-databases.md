@@ -116,6 +116,7 @@
 - **Consequences:**
   - An account can hold more databases than `DatabasesMax` while previews are open. Each one is a scale-to-zero development database inside the account's pooled compute, and it is gone when its PR is.
   - On Neon, an empty preview database is a new project (a few seconds to create), and a copy is a branch (shared pages until written).
+  - githubd's preview datastore check (ADR-20261108140000) counts a key the preview's own database binds as provided, when the capability is on. Before 2026-11-11 it read only the `pr-preview` scope and refused previews whose Compose service reads `DATABASE_URL` even though the preview would have received one.
   - On the native backend (ADR-1027), both are a database VM. A copy is a full restore with no shared pages, so its storage costs what its source does.
   - A held preview database fails its preview's queries for the rest of the month. That is the point of the hold: production keeps the last fifth of the ceiling.
   - On Neon a copy is a branch of its source's project and would go with it. Deleting the source through Gregale purges the copies first.

@@ -1786,6 +1786,47 @@ func (q *Queries) AppOpenMonitorIncident(ctx context.Context, db DBTX, arg AppOp
 	return i, err
 }
 
+const appPreviewDatabaseEnvKeys = `-- name: AppPreviewDatabaseEnvKeys :many
+SELECT DISTINCT b.environment_key
+FROM managed_postgres_bindings b
+JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.database_account_id
+JOIN orgs o ON o.id = d.org_id AND o.personal_org AND o.personal_owner_account_id = b.account_id
+WHERE b.account_id = $1 AND b.app_id = $2
+  AND b.scope IN ('default', 'production') AND b.state NOT IN ('deleting', 'deleted')
+  AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
+  AND d.state NOT IN ('deleting', 'deleted')
+ORDER BY b.environment_key
+`
+
+type AppPreviewDatabaseEnvKeysParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// ADR-20261102123523: the environment keys a PR preview of this app gets from
+// its own preview databases, mirroring previewdb.Manager.Prepare: the app's
+// bindings in the scopes production serves on personally owned databases
+// with previews on.
+func (q *Queries) AppPreviewDatabaseEnvKeys(ctx context.Context, db DBTX, arg AppPreviewDatabaseEnvKeysParams) ([]string, error) {
+	rows, err := db.Query(ctx, appPreviewDatabaseEnvKeys, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var environment_key string
+		if err := rows.Scan(&environment_key); err != nil {
+			return nil, err
+		}
+		items = append(items, environment_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const appQueueBindingConsumerInventory = `-- name: AppQueueBindingConsumerInventory :many
 SELECT b.id AS binding_id, COALESCE(consumer.id::text, '') AS consumer_id,
        COALESCE(consumer.enabled, false) AS consumer_enabled,
